@@ -84,12 +84,14 @@ function Products() {
       const spinTime = parseInt(spinTimestamp);
       const hoursPassed = (now - spinTime) / (1000 * 60 * 60);
       
-      // If less than 24 hours, use stored spin
+      // If less than 24 hours
       if (hoursPassed < 24) {
-        setSpinResult(JSON.parse(storedSpin));
+        const spinData = JSON.parse(storedSpin);
+        setSpinResult(spinData);
+        // Don't show spin wheel even if checked out (must wait 24 hours)
         return;
       } else {
-        // Clear expired spin
+        // Clear expired spin (after 24 hours)
         localStorage.removeItem('spinResult');
         localStorage.removeItem('spinTimestamp');
         localStorage.removeItem('spinSelectedProducts');

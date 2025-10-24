@@ -123,11 +123,13 @@ export const GlobalProvider = ({ children }) => {
                 return;
             }
             
-            // Check spin product limit
-            const spinResult = localStorage.getItem('spinResult');
+            // Check spin product limit (only if spin is active and not checked out)
+            const spinResultStr = localStorage.getItem('spinResult');
+            const spinResult = spinResultStr ? JSON.parse(spinResultStr) : null;
             const spinSelectedProducts = JSON.parse(localStorage.getItem('spinSelectedProducts') || '[]');
             
-            if (spinResult && spinSelectedProducts.length >= 3 && !spinSelectedProducts.includes(id)) {
+            // Only enforce 3-product limit if spin is active and not checked out
+            if (spinResult && !spinResult.hasCheckedOut && spinSelectedProducts.length >= 3 && !spinSelectedProducts.includes(id)) {
                 toast.error('You can only select 3 products with your spin discount!');
                 setIsCartLoading(false);
                 setLoadingProductId(null);
@@ -145,8 +147,8 @@ export const GlobalProvider = ({ children }) => {
             console.log(res.data.msg);
             toast.success(res.data.msg)
             
-            // Track spin selected products
-            if (spinResult && !spinSelectedProducts.includes(id)) {
+            // Track spin selected products (only if spin is active and not checked out)
+            if (spinResult && !spinResult.hasCheckedOut && !spinSelectedProducts.includes(id)) {
                 spinSelectedProducts.push(id);
                 localStorage.setItem('spinSelectedProducts', JSON.stringify(spinSelectedProducts));
             }

@@ -57,8 +57,8 @@ function ProductDetailPage() {
     const getDiscountedPrice = () => {
         const spinResult = getSpinDiscount();
         
-        // If no active spin, return regular price
-        if (!spinResult) {
+        // If no active spin or already checked out, return regular price
+        if (!spinResult || spinResult.hasCheckedOut) {
             return product.discountedPrice || product.price;
         }
         

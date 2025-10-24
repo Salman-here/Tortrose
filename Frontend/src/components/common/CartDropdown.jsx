@@ -60,8 +60,8 @@ const CartDropdown = () => {
     const spinResult = getSpinDiscount();
     const spinSelectedProducts = JSON.parse(localStorage.getItem('spinSelectedProducts') || '[]');
     
-    // Check if this product is selected for spin discount
-    if (!spinResult || !spinSelectedProducts.includes(product._id)) {
+    // Don't apply discount if spin is checked out or product not selected
+    if (!spinResult || spinResult.hasCheckedOut || !spinSelectedProducts.includes(product._id)) {
       return product.discountedPrice || product.price;
     }
     

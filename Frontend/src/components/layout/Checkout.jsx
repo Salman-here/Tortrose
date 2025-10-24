@@ -21,7 +21,7 @@ export default function Checkout() {
 
 
   const { cartItems, handleQtyInc, handleQtyDec, handleRemoveCartItem, isCartLoading,
-    qtyUpdateId
+    qtyUpdateId, fetchCart
   } = useGlobal();
 
   // Get spin discount from localStorage
@@ -50,7 +50,8 @@ export default function Checkout() {
     const spinResult = getSpinDiscount();
     const spinSelectedProducts = JSON.parse(localStorage.getItem('spinSelectedProducts') || '[]');
     
-    if (!spinResult || !spinSelectedProducts.includes(product._id)) {
+    // Don't apply discount if spin is checked out or product not selected
+    if (!spinResult || spinResult.hasCheckedOut || !spinSelectedProducts.includes(product._id)) {
       return product.discountedPrice || product.price;
     }
     
@@ -200,7 +201,7 @@ export default function Checkout() {
         subtotal,
         shippingCost: 0,
         tax: 0,
-        discount,
+        discount: 0,
         totalAmount,
       },
 
@@ -229,7 +230,31 @@ export default function Checkout() {
       console.log(res.data);
       toast.success(res.data.msg)
 
-      if (order.paymentMethod == 'cash_on_delivery') return
+      if (order.paymentMethod == 'cash_on_delivery') {
+        setIsProcessing(false);
+        
+        // Redirect to success page after a short delay
+        setTimeout(() => {
+          // Mark spin as used and clear cart AFTER redirect (so order summary doesn't update)
+          const spinResult = JSON.parse(localStorage.getItem('spinResult') || '{}');
+          spinResult.hasCheckedOut = true;
+          localStorage.setItem('spinResult', JSON.stringify(spinResult));
+          localStorage.removeItem('spinSelectedProducts');
+          
+          // Clear cart in background
+          axios.delete('http://localhost:5000/api/cart/clear', {
+            headers: { Authorization: `Bearer ${token}` }
+          }).then(() => {
+            fetchCart(); // Refresh cart state
+          }).catch(error => {
+            console.error('Error clearing cart:', error);
+          });
+          
+          navigate('/success');
+        }, 1500);
+        return;
+      }
+      
       await stripe.redirectToCheckout({ sessionId: res.data.id })
 
 
