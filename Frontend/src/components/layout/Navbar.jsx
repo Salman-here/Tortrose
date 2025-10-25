@@ -50,8 +50,10 @@ function Navbar() {
       text-white shadow-lg px-3 md:px-8 lg:px-12 border-b border-white/10`}>
 
             {/* Left: Logo */}
-            <Link to="/">
-                <p className="font-bold text-lg md:text-xl text-[white] lg:text-2xl tracking-wide ">ShopVerse</p>
+            <Link to="/" className="group">
+                <span className="font-bold text-lg md:text-xl lg:text-2xl bg-gradient-to-r from-sky-400 to-blue-500 bg-clip-text text-transparent tracking-wide group-hover:from-sky-300 group-hover:to-blue-400 transition-all duration-300">
+                    genZ Winners
+                </span>
             </Link>
 
             {/* Center: Admin Dashboard + Dropdown (only if logged in) */}
