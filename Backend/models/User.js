@@ -8,21 +8,23 @@ const userSchema = mongoose.Schema({
     username: { type: String, required: true },
     avatar: { type: String, default: 'https://res.cloudinary.com/dus5sac8g/image/upload/v1756983317/Profile_Picture_dxq4w8.jpg' },
     email: { type: String, required: true }, 
-    password: { type: String, required: true },
+    password: { type: String, required: false }, // Not required for OAuth users
     role: { type: String, enum: ['user', 'admin', 'seller'], default: 'user' },
     status: { type: String, enum: ['active', 'blocked'], default: 'active' },
     wishlist: [
         { type: mongoose.Schema.Types.ObjectId, ref: 'Product', required: true }
     ],
     resetPasswordToken: { type: String },
-    resetPasswordTokenExpiry: { type: String }, 
+    resetPasswordTokenExpiry: { type: String },
+    profilePicture: { type: String }, // For Google OAuth profile picture
+    isVerified: { type: Boolean, default: false }, // For email verification
 })
 
 
 
 userSchema.pre('save', async function (next) {
-
-    if (!this.isModified('password')) return next()
+    // Skip hashing if password is not modified or is null (OAuth users)
+    if (!this.isModified('password') || !this.password) return next()
 
     try {
         const salt = await bcrypt.genSalt(10)

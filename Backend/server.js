@@ -185,6 +185,11 @@ app.use(express.urlencoded({ extended: true }));
 const ConnectDB = require('./config/db')
 ConnectDB()
 
+// Initialize Passport
+const passport = require('passport')
+require('./middleware/googleStreatgy')
+app.use(passport.initialize())
+
 const resetPasswordRoutes = require('./routes/resetPasswordRoutes')
 const productRoutes = require('./routes/productRoutes')
 const authRoutes = require('./routes/authRoutes')

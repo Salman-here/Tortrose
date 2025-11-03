@@ -302,7 +302,7 @@ const UserProfile = () => {
                   {/* Profile Picture Section */}
                   <div className="flex flex-col items-center">
                     <div className="relative mb-4">
-                      {userData.avatar ? (
+                      {(userData.avatar || userData.profilePicture) ? (
                         <>
                           <div className={`flex ${isWaiting || isUploading ? 'flex' : 'hidden'} bg-gray-100 z-1  flex-col justify-center items-center  absolute top-0 left-0 w-32 h-32 rounded-full`}>
                             <p className='animate-spin'>
@@ -313,7 +313,7 @@ const UserProfile = () => {
                             </p>
                           </div>
                           <img
-                            src={userData.avatar || 'https://res.cloudinary.com/dus5sac8g/image/upload/v1756983317/Profile_Picture_dxq4w8.jpg'}
+                            src={userData.avatar || userData.profilePicture || 'https://res.cloudinary.com/dus5sac8g/image/upload/v1756983317/Profile_Picture_dxq4w8.jpg'}
                             alt="Profile"
                             className="w-32 h-32 rounded-full object-cover border-4 border-gray-200"
                           />

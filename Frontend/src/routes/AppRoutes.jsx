@@ -24,6 +24,7 @@ import UserProfile from '../components/layout/Profile'
 import UserOrdersManagement from '../components/layout/UserOrdersManagement'
 import UserOrderDetail from '../components/layout/UserOrderDetail'
 import Success from '../components/layout/Success'
+import GoogleAuthSuccess from '../components/auth/GoogleAuthSuccess'
 import { ToastContainer } from 'react-toastify'
 
 function AppRoutes() {
@@ -54,6 +55,7 @@ function AppRoutes() {
                 </Route>
                 <Route path='/login' element={<Login />} />
                 <Route path='/signup' element={<SignUp />} />
+                <Route path='/auth/google/success' element={<GoogleAuthSuccess />} />
 
                 <Route path={'/success'} element={
                     <ProtectedRoute >

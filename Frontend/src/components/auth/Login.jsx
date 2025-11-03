@@ -132,7 +132,8 @@ const GlassLoginPage = () => {
             
             <div className="mt-6">
               <button
-                onClick={() => alert('Google sign in clicked!')}
+                onClick={() => window.location.href = `${import.meta.env.VITE_API_URL}api/auth/google`}
+                type="button"
                 className="w-full flex items-center justify-center gap-3 py-3 px-4 bg-white/50 hover:bg-white/70 text-gray-700 font-medium rounded-lg transition duration-300 border border-gray-200/50"
               >
                 <svg className="w-5 h-5" viewBox="0 0 24 24">
