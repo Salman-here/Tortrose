@@ -89,11 +89,7 @@ function ProductDetailPage() {
         : 0;
 
     const handleImgShow = (idx) => {
-        setMainImg(() => {
-            let arr = product.images[idx].url.split('w=')
-            let width = 600
-            return arr[0] + width
-        });
+        setMainImg(product.images[idx].url);
         setSelectedIdx(idx);
     };
 
@@ -136,11 +132,7 @@ function ProductDetailPage() {
                 `${import.meta.env.VITE_API_URL}api/products/get-single-product/${id}`
             );
             setProduct(res.data.product);
-            setMainImg(() => {
-                let arr = res.data.product.image.split('w=')
-                let width = 600
-                return arr[0] + width
-            });
+            setMainImg(res.data.product.image);
             setImageLoading(true);
             
             // Fetch seller's store data
@@ -250,7 +242,8 @@ function ProductDetailPage() {
                                         exit="hidden"
                                         onLoad={() => setImageLoading(false)}
                                         onError={(e) => {
-                                            e.target.src = "https://via.placeholder.com/500x500?text=Image+Not+Found";
+                                            e.target.onerror = null; // Prevent infinite loop
+                                            e.target.src = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='500' height='500'%3E%3Crect width='500' height='500' fill='%23f3f4f6'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' font-family='sans-serif' font-size='24' fill='%239ca3af'%3EImage Not Found%3C/text%3E%3C/svg%3E";
                                         }}
                                     />
                                 </AnimatePresence>

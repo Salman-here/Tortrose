@@ -313,7 +313,8 @@ const ProductCard = ({
                 exit="hidden"
                 onLoad={() => setImageLoaded(true)}
                 onError={(e) => {
-                  e.target.src = "https://via.placeholder.com/300x300?text=Image+Not+Found";
+                  e.target.onerror = null; // Prevent infinite loop
+                  e.target.src = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Crect width='300' height='300' fill='%23f3f4f6'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' font-family='sans-serif' font-size='18' fill='%239ca3af'%3EImage Not Found%3C/text%3E%3C/svg%3E";
                 }}
               />
             </AnimatePresence>
