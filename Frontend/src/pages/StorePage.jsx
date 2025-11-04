@@ -263,7 +263,7 @@ const StorePage = () => {
                             <p className="text-sm text-gray-500 mt-2">This store hasn't added any products</p>
                         </motion.div>
                     ) : (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-6">
+                        <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4 md:gap-6">
                             {products.map((product, idx) => (
                                 <motion.div
                                     key={product._id}

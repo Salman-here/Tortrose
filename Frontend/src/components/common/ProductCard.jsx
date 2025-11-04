@@ -151,7 +151,7 @@ const ProductCard = ({
       whileHover="hover"
       onHoverStart={() => setIsHovered(true)}
       onHoverEnd={() => setIsHovered(false)}
-      className="relative bg-white rounded-2xl p-4 shadow-sm hover:shadow-xl border border-gray-100 flex flex-col overflow-hidden group"
+      className="relative bg-white rounded-xl sm:rounded-2xl p-2 sm:p-3 md:p-4 shadow-sm hover:shadow-xl border border-gray-100 flex flex-col overflow-hidden group"
     // style={{
     //   background: "linear-gradient(to bottom, #ffffff, #fafafa)"
     // }}
@@ -169,7 +169,7 @@ const ProductCard = ({
       />
 
       {/* Badges */}
-      <div className="absolute top-3 left-3 z-2 flex flex-col items-start gap-2">
+      <div className="absolute top-1.5 left-1.5 sm:top-2 sm:left-2 md:top-3 md:left-3 z-2 flex flex-col items-start gap-1 sm:gap-1.5 md:gap-2">
         <AnimatePresence>
           {isFeatured && (
             <motion.span
@@ -177,9 +177,9 @@ const ProductCard = ({
               initial="hidden"
               animate="visible"
               exit="hidden"
-              className="px-2 py-1 bg-gradient-to-r from-purple-600 to-indigo-600 text-white text-xs font-semibold rounded-full flex items-center gap-1 shadow-md"
+              className="px-1.5 py-0.5 sm:px-2 sm:py-1 bg-gradient-to-r from-purple-600 to-indigo-600 text-white text-[10px] sm:text-xs font-semibold rounded-full flex items-center gap-0.5 sm:gap-1 shadow-md"
             >
-              <Zap size={10} fill="currentColor" /> Featured
+              <Zap size={8} className="sm:w-[10px] sm:h-[10px]" fill="currentColor" /> <span className="hidden sm:inline">Featured</span><span className="sm:hidden">⭐</span>
             </motion.span>
           )}
         </AnimatePresence>
@@ -192,9 +192,9 @@ const ProductCard = ({
               animate="visible"
               exit="hidden"
               transition={{ delay: 0.1 }}
-              className="px-2 py-1 bg-gradient-to-r from-yellow-500 to-orange-500 text-white text-xs font-semibold rounded-full shadow-md animate-pulse"
+              className="px-1.5 py-0.5 sm:px-2 sm:py-1 bg-gradient-to-r from-yellow-500 to-orange-500 text-white text-[10px] sm:text-xs font-semibold rounded-full shadow-md animate-pulse"
             >
-              🎉 SPIN PRIZE!
+              🎉 <span className="hidden sm:inline">SPIN PRIZE!</span>
             </motion.span>
           )}
           {!hasSpinDiscount && discountPercentage > 0 && (
@@ -204,7 +204,7 @@ const ProductCard = ({
               animate="visible"
               exit="hidden"
               transition={{ delay: 0.1 }}
-              className="px-2 py-1 bg-gradient-to-r from-red-500 to-pink-500 text-white text-xs font-semibold rounded-full shadow-md"
+              className="px-1.5 py-0.5 sm:px-2 sm:py-1 bg-gradient-to-r from-red-500 to-pink-500 text-white text-[10px] sm:text-xs font-semibold rounded-full shadow-md"
             >
               -{discountPercentage}%
             </motion.span>
@@ -219,9 +219,9 @@ const ProductCard = ({
               animate="visible"
               exit="hidden"
               transition={{ delay: 0.2 }}
-              className="px-2 py-1 bg-gray-600 text-white text-xs font-semibold rounded-full shadow-md"
+              className="px-1.5 py-0.5 sm:px-2 sm:py-1 bg-gray-600 text-white text-[10px] sm:text-xs font-semibold rounded-full shadow-md"
             >
-              Out of Stock
+              <span className="hidden sm:inline">Out of Stock</span><span className="sm:hidden">Sold</span>
             </motion.span>
           )}
         </AnimatePresence>
@@ -229,7 +229,7 @@ const ProductCard = ({
 
       {/* Action Buttons */}
       <motion.div
-        className="absolute top-3 right-3 z-2 flex flex-col gap-2"
+        className="absolute top-1.5 right-1.5 sm:top-2 sm:right-2 md:top-3 md:right-3 z-2 flex flex-col gap-1 sm:gap-1.5 md:gap-2"
         initial={{ opacity: 0, x: 10 }}
         animate={{
           opacity: isHovered ? 1 : 0.8,
@@ -243,7 +243,7 @@ const ProductCard = ({
           whileHover="hover"
           whileTap="tap"
           onClick={handleWishlistToggle}
-          className={`p-2.5 rounded-full shadow-md backdrop-blur-sm ${isInWishlist
+          className={`p-1.5 sm:p-2 md:p-2.5 rounded-full shadow-md backdrop-blur-sm ${isInWishlist
             ? "bg-red-100 text-red-500"
             : "bg-white/90 text-gray-600 hover:bg-red-50 hover:text-red-500"
             } transition-colors`}
@@ -256,7 +256,8 @@ const ProductCard = ({
             transition={{ duration: 0.3 }}
           >
             <Heart
-              size={18}
+              size={14}
+              className="sm:w-4 sm:h-4 md:w-[18px] md:h-[18px]"
               fill={isInWishlist ? "currentColor" : "none"}
             />
           </motion.div>
@@ -269,14 +270,15 @@ const ProductCard = ({
           whileTap="tap"
           onClick={handleAddToCartClick}
           disabled={stock === 0}
-          className={`p-2.5 rounded-full shadow-md backdrop-blur-sm ${isInCart
+          className={`p-1.5 sm:p-2 md:p-2.5 rounded-full shadow-md backdrop-blur-sm ${isInCart
             ? "bg-blue-100 text-blue-600"
             : "bg-white/90 text-gray-600 hover:bg-blue-50 hover:text-blue-600"
             } transition-colors`}
           title={isInCart ? "View in cart" : "Add to cart"}
         >
           <ShoppingCart
-            size={18}
+            size={14}
+            className="sm:w-4 sm:h-4 md:w-[18px] md:h-[18px]"
             fill={isInCart ? "currentColor" : "none"}
           />
         </motion.button>
@@ -287,16 +289,16 @@ const ProductCard = ({
             initial="rest"
             whileHover="hover"
             whileTap="tap"
-            className="p-2.5 bg-white/90 text-gray-600 rounded-full shadow-md backdrop-blur-sm hover:bg-gray-50 hover:text-gray-800 transition-colors"
+            className="p-1.5 sm:p-2 md:p-2.5 bg-white/90 text-gray-600 rounded-full shadow-md backdrop-blur-sm hover:bg-gray-50 hover:text-gray-800 transition-colors"
             title="Quick view"
           >
-            <Eye size={18} />
+            <Eye size={14} className="sm:w-4 sm:h-4 md:w-[18px] md:h-[18px]" />
           </motion.button>
         </Link>
       </motion.div>
 
       {/* Product Image */}
-      <div className="relative overflow-hidden rounded-xl mb-4 aspect-square bg-gradient-to-br from-gray-100 to-gray-200">
+      <div className="relative overflow-hidden rounded-lg sm:rounded-xl mb-2 sm:mb-3 md:mb-4 aspect-square bg-gradient-to-br from-gray-100 to-gray-200">
         <Link to={`/single-product/${_id}`} className="block w-full h-full">
           <div className="relative w-full h-full flex items-center justify-center">
             <AnimatePresence mode="wait">
@@ -370,15 +372,15 @@ const ProductCard = ({
 
       {/* Product Details */}
       <div className="flex flex-col flex-grow">
-        <div className="mb-2">
-          <span className="text-xs font-medium text-gray-500 uppercase tracking-wider">
+        <div className="mb-1 sm:mb-1.5 md:mb-2">
+          <span className="text-[10px] sm:text-xs font-medium text-gray-500 uppercase tracking-wider">
             {category}
           </span>
         </div>
 
         <Link to={`/single-product/${_id}`}>
           <motion.h3
-            className="font-semibold text-gray-900 mb-2 line-clamp-2 hover:text-blue-600 transition-colors min-h-[3rem]"
+            className="font-semibold text-xs sm:text-sm md:text-base text-gray-900 mb-1 sm:mb-1.5 md:mb-2 line-clamp-2 hover:text-blue-600 transition-colors min-h-[2.5rem] sm:min-h-[3rem]"
             whileHover={{ x: 2 }}
             transition={{ type: "spring", stiffness: 500, damping: 15 }}
           >
@@ -387,7 +389,7 @@ const ProductCard = ({
         </Link>
 
         {/* Rating */}
-        <div className="flex items-center gap-1.5 mb-3">
+        <div className="flex items-center gap-1 sm:gap-1.5 mb-2 sm:mb-2.5 md:mb-3">
           <div className="flex">
             {[...Array(5)].map((_, i) => (
               <motion.div
@@ -396,27 +398,27 @@ const ProductCard = ({
                 transition={{ type: "spring", stiffness: 500, damping: 15 }}
               >
                 <Star
-                  size={14}
-                  className={i < Math.floor(rating || 0) ? "text-amber-400 fill-amber-400" : "text-gray-300"}
+                  size={10}
+                  className={`sm:w-3 sm:h-3 md:w-[14px] md:h-[14px] ${i < Math.floor(rating || 0) ? "text-amber-400 fill-amber-400" : "text-gray-300"}`}
                 />
               </motion.div>
             ))}
           </div>
-          <span className="text-xs text-gray-500 ml-1">
+          <span className="text-[10px] sm:text-xs text-gray-500 ml-0.5 sm:ml-1">
             ({rating?.toFixed(1) || 0})
           </span>
-          <span className="text-xs text-gray-400">•</span>
-          <span className="text-xs text-gray-500">
+          <span className="text-[10px] sm:text-xs text-gray-400 hidden sm:inline">•</span>
+          <span className="text-[10px] sm:text-xs text-gray-500 hidden sm:inline">
             {numReviews || 0} review{numReviews !== 1 ? 's' : ''}
           </span>
         </div>
 
         {/* Price */}
-        <div className="mt-auto flex items-center gap-2 mb-4">
+        <div className="mt-auto flex items-center gap-1 sm:gap-1.5 md:gap-2 mb-2 sm:mb-3 md:mb-4">
           {hasSpinDiscount && spinResult && !spinResult.hasCheckedOut ? (
             <>
               <motion.span
-                className="text-xl font-bold text-orange-600"
+                className="text-base sm:text-lg md:text-xl font-bold text-orange-600"
                 initial={{ scale: 0.9 }}
                 animate={{ scale: 1 }}
                 transition={{ type: "spring", stiffness: 500, damping: 15 }}
@@ -424,7 +426,7 @@ const ProductCard = ({
                 ${displayPrice.toFixed(2)}
               </motion.span>
               <motion.span
-                className="text-sm text-gray-500 line-through"
+                className="text-xs sm:text-sm text-gray-500 line-through"
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 transition={{ delay: 0.2, duration: 0.4 }}
@@ -435,7 +437,7 @@ const ProductCard = ({
           ) : originalDisplayPrice ? (
             <>
               <motion.span
-                className="text-xl font-bold text-gray-900"
+                className="text-base sm:text-lg md:text-xl font-bold text-gray-900"
                 initial={{ scale: 0.9 }}
                 animate={{ scale: 1 }}
                 transition={{ type: "spring", stiffness: 500, damping: 15 }}
@@ -443,7 +445,7 @@ const ProductCard = ({
                 ${displayPrice.toFixed(2)}
               </motion.span>
               <motion.span
-                className="text-sm text-gray-500 line-through"
+                className="text-xs sm:text-sm text-gray-500 line-through"
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 transition={{ delay: 0.2, duration: 0.4 }}
@@ -452,7 +454,7 @@ const ProductCard = ({
               </motion.span>
             </>
           ) : (
-            <span className="text-xl font-bold text-gray-900">
+            <span className="text-base sm:text-lg md:text-xl font-bold text-gray-900">
               ${displayPrice.toFixed(2)}
             </span>
           )}
@@ -466,7 +468,7 @@ const ProductCard = ({
           whileTap={stock > 0 ? "tap" : ""}
           onClick={() => stock > 0 && handleAddToCartClick()}
           disabled={stock === 0 || loadingProductId === _id}
-          className={`relative py-3 px-4 rounded-xl font-semibold text-center transition-colors overflow-hidden ${stock === 0
+          className={`relative py-2 sm:py-2.5 md:py-3 px-2 sm:px-3 md:px-4 rounded-lg sm:rounded-xl font-semibold text-center transition-colors overflow-hidden text-xs sm:text-sm md:text-base ${stock === 0
             ? "bg-gray-200 text-gray-500 cursor-not-allowed"
             : isInCart
               ? "bg-red-100 text-red-700 hover:bg-red-200"
@@ -475,17 +477,17 @@ const ProductCard = ({
         >
           {
             stock === 0 ? (
-              "Out of Stock"
+              <span className="hidden sm:inline">Out of Stock</span>
             ) :
               isCartLoading && loadingProductId === _id ? (
                 <motion.span
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   transition={{ duration: 0.3 }}
-                  className=" flex items-center justify-center text-sm gap-2"
+                  className="flex items-center justify-center gap-1 sm:gap-2"
                 >
-                  <span className="animate-spin"> <Loader2 /> </span>
-                  <span>{isInCart ? 'Removing...' : 'Adding...'}</span>
+                  <span className="animate-spin"> <Loader2 size={14} className="sm:w-4 sm:h-4" /> </span>
+                  <span className="hidden sm:inline">{isInCart ? 'Removing...' : 'Adding...'}</span>
                 </motion.span>
               ) :
 
@@ -495,18 +497,18 @@ const ProductCard = ({
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     transition={{ duration: 0.3 }}
-                    className="flex items-center justify-center gap-2"
+                    className="flex items-center justify-center gap-1 sm:gap-2"
                   >
-                    <X size={16} /> Remove from Cart
+                    <X size={14} className="sm:w-4 sm:h-4" /> <span className="hidden sm:inline">Remove</span>
                   </motion.span>
                 ) : (
                   <motion.span
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     transition={{ duration: 0.3 }}
-                    className="flex items-center justify-center gap-2"
+                    className="flex items-center justify-center gap-1 sm:gap-2"
                   >
-                    <ShoppingCart size={16} /> Add to Cart
+                    <ShoppingCart size={14} className="sm:w-4 sm:h-4" /> <span className="hidden sm:inline">Add to Cart</span><span className="sm:hidden">Add</span>
                   </motion.span>
                 )
           }
@@ -524,21 +526,21 @@ const ProductCard = ({
 
         {/* View details link */}
         <motion.div
-          className="mt-3 flex justify-center"
+          className="mt-2 sm:mt-2.5 md:mt-3 flex justify-center"
           initial={{ opacity: 0 }}
           animate={{ opacity: isHovered ? 1 : 0.7 }}
           transition={{ duration: 0.3 }}
         >
           <Link
             to={`/single-product/${_id}`}
-            className="text-sm text-indigo-600 hover:text-indigo-800 font-medium flex items-center gap-1 transition-colors"
+            className="text-xs sm:text-sm text-indigo-600 hover:text-indigo-800 font-medium flex items-center gap-0.5 sm:gap-1 transition-colors"
           >
-            View details
+            <span className="hidden sm:inline">View details</span><span className="sm:hidden">Details</span>
             <motion.span
               animate={{ x: isHovered ? 3 : 0 }}
               transition={{ type: "spring", stiffness: 500, damping: 15 }}
             >
-              <ChevronRight size={14} />
+              <ChevronRight size={12} className="sm:w-[14px] sm:h-[14px]" />
             </motion.span>
           </Link>
         </motion.div>
