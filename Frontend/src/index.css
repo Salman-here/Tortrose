@@ -87,9 +87,7 @@ a {
     transition: color 0.3s ease;
 }
 
-a:hover {
-    color: var(--color-error);
-}
+/* Removed global hover color - let components handle their own hover states */
 
 /* ====================
    Buttons
@@ -109,10 +107,18 @@ a:hover {
 /* ====================
    Inputs & Forms
 ==================== */
+/* Removed global input styles to prevent conflicts with Tailwind classes */
+/* Use specific classes for styled inputs instead */
 input,
 select,
 textarea {
     font-family: inherit;
+}
+
+/* Optional: Add a class for legacy styled inputs if needed */
+.legacy-input,
+.legacy-select,
+.legacy-textarea {
     border: 2px solid lightgray;
     border-radius: 6px;
     padding: 10px;
@@ -120,9 +126,9 @@ textarea {
     transition: border 0.2s ease;
 }
 
-input:focus,
-select:focus,
-textarea:focus {
+.legacy-input:focus,
+.legacy-select:focus,
+.legacy-textarea:focus {
     border-color: var(--color-primary);
 }
 
@@ -206,3 +212,24 @@ textarea:focus {
     min-height: calc(100vh - 80px);
 }
 
+
+/* ====================
+   Gradient Text Utility
+==================== */
+.gradient-text {
+    background: linear-gradient(to right, #38bdf8, #3b82f6);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+/* Ensure bg-clip-text works properly */
+.bg-clip-text {
+    -webkit-background-clip: text !important;
+    background-clip: text !important;
+}
+
+.text-transparent {
+    -webkit-text-fill-color: transparent !important;
+    color: transparent !important;
+}
