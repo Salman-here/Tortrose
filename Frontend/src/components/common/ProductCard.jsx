@@ -39,8 +39,8 @@ const ProductCard = ({
   const [isHovered, setIsHovered] = useState(false);
   const [activeImageIndex, setActiveImageIndex] = useState(0);
 
-  const isInWishlist = wishlistItems?.some((item) => item._id === _id);
-  const isInCart = cartItems?.cart?.some((item) => item.product._id === _id);
+  const isInWishlist = wishlistItems?.some((item) => item?._id === _id);
+  const isInCart = cartItems?.cart?.some((item) => item?.product?._id === _id);
 
   // Determine which price to show
   const displayPrice = hasSpinDiscount ? spinDiscountedPrice : (discountedPrice || price);

@@ -1,7 +1,13 @@
 const jwt = require('jsonwebtoken')
 
 const verifyToken = async (req, res, next) => {
-    const token = req.header('Authorization')?.split(' ')[1]
+    const authHeader = req.header('Authorization')
+    console.log('=== AUTH MIDDLEWARE ===');
+    console.log('Authorization header:', authHeader);
+    
+    const token = authHeader?.split(' ')[1]
+    console.log('Extracted token:', token);
+    
     if (!token) return res.status(401).json({ msg: 'No token provided!' })
 
     try {
@@ -12,6 +18,8 @@ const verifyToken = async (req, res, next) => {
         next()
     } catch (error) {
         console.error('Token verification error:', error);
+        console.error('Error name:', error.name);
+        console.error('Error message:', error.message);
         res.status(403).json({ msg: 'Login required' }) 
     }  
 }
