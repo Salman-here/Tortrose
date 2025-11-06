@@ -337,6 +337,7 @@ const Sidebar = ({ activeTab, setActiveTab }) => {
         { id: 'users', label: 'User Management', icon: <Users size={20} />, link: '/admin-dashboard/user-management' },
         { id: 'products', label: 'Product Management', icon: <Package size={20} />, link: '/admin-dashboard/product-management' },
         { id: 'orders', label: 'Order Management', icon: <ShoppingBag size={20} />, link: '/admin-dashboard/order-management' },
+        { id: 'tax', label: 'Tax Configuration', icon: <DollarSign size={20} />, link: '/admin-dashboard/tax-configuration' },
     ];
 
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);

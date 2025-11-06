@@ -329,7 +329,7 @@ const AccountOverview = () => {
                                                         {order.orderStatus.charAt(0).toUpperCase() + order.orderStatus.slice(1)}
                                                     </span>
                                                     <p className="text-lg font-semibold text-gray-900 mt-1">
-                                                        {formatCurrency(order.orderSummary.totalAmount)}
+                                                        {formatCurrency(order.orderSummary.totalAmount || order.orderSummary.subtotal || 0)}
                                                     </p>
                                                 </div>
                                             </div>

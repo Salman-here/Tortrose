@@ -18,11 +18,88 @@ export default function Checkout() {
 
   const [isProcessing, setIsProcessing] = useState(false);
   const navigate = useNavigate();
+  
+  // Tax and Shipping state
+  const [taxConfig, setTaxConfig] = useState(null);
+  const [shippingMethods, setShippingMethods] = useState([]);
+  const [selectedShippingMethod, setSelectedShippingMethod] = useState(null);
 
 
   const { cartItems, handleQtyInc, handleQtyDec, handleRemoveCartItem, isCartLoading,
     qtyUpdateId, fetchCart
   } = useGlobal();
+
+  // Fetch tax configuration on mount
+  useEffect(() => {
+    fetchTaxConfig();
+  }, []);
+
+  // Fetch shipping methods when cart changes
+  useEffect(() => {
+    if (cartItems?.cart && cartItems.cart.length > 0) {
+      fetchShippingMethods();
+    }
+  }, [cartItems?.cart?.length]);
+
+  const fetchTaxConfig = async () => {
+    try {
+      const res = await axios.get(`${import.meta.env.VITE_API_URL}api/tax/config`);
+      if (res.data.success) {
+        setTaxConfig(res.data.taxConfig);
+      }
+    } catch (error) {
+      console.error('Error fetching tax config:', error);
+    }
+  };
+
+  const fetchShippingMethods = async () => {
+    try {
+      const cartItemsData = cartItems.cart.map(item => ({
+        productId: item.product._id
+      }));
+      
+      const res = await axios.post(
+        `${import.meta.env.VITE_API_URL}api/shipping/cart`,
+        { cartItems: cartItemsData }
+      );
+      
+      if (res.data.success) {
+        // Get first seller's shipping methods (for single seller)
+        const sellerIds = Object.keys(res.data.shippingMethods);
+        if (sellerIds.length > 0) {
+          const methods = res.data.shippingMethods[sellerIds[0]].methods;
+          setShippingMethods(methods);
+          // Set default shipping method - prefer free shipping if available
+          if (methods.length > 0) {
+            const freeShipping = methods.find(m => m.type === 'free');
+            setSelectedShippingMethod(freeShipping || methods[0]);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching shipping methods:', error);
+      // Set default shipping if API fails
+      setShippingMethods([
+        { type: 'standard', cost: 5.99, deliveryDays: 5, isActive: true }
+      ]);
+      setSelectedShippingMethod({ type: 'standard', cost: 5.99, deliveryDays: 5, isActive: true });
+    }
+  };
+
+  // Calculate tax based on subtotal
+  const calculateTax = (subtotal) => {
+    if (!taxConfig || taxConfig.type === 'none') return 0;
+    
+    if (taxConfig.type === 'percentage') {
+      return (subtotal * taxConfig.value) / 100;
+    }
+    
+    if (taxConfig.type === 'fixed') {
+      return taxConfig.value;
+    }
+    
+    return 0;
+  };
 
   // Get spin discount from localStorage
   const getSpinDiscount = () => {
@@ -105,7 +182,7 @@ export default function Checkout() {
   const selectedShipping = watch("shippingMethod");
   const billingSameAsShipping = watch("billingSameAsShipping");
 
-  // Subtotal with spin discounts applied (no shipping or tax)
+  // Subtotal with spin discounts applied
   const subtotal = useMemo(() => {
     if (!cartItems?.cart) return 0;
     return cartItems.cart.reduce((total, item) => {
@@ -114,7 +191,10 @@ export default function Checkout() {
     }, 0);
   }, [cartItems]);
   
-  const totalAmount = subtotal; // Total is just the subtotal (no shipping, no tax)
+  // Calculate tax and shipping
+  const tax = useMemo(() => calculateTax(subtotal), [subtotal, taxConfig]);
+  const shippingCost = selectedShippingMethod ? selectedShippingMethod.cost : 0;
+  const totalAmount = subtotal + tax + shippingCost;
 
   // Prevent Enter key from submitting the form
   const handleKeyDown = (e) => {
@@ -150,6 +230,13 @@ export default function Checkout() {
         "country",
       ]);
       if (!valid) return;
+      
+      // Validate shipping method is selected
+      if (!selectedShippingMethod) {
+        toast.error("Please select a shipping method");
+        return;
+      }
+      
       setCurrentStep((p) => p + 1);
       return;
     }
@@ -163,13 +250,15 @@ export default function Checkout() {
 
   // Final form submit
   const onPlaceOrder = async (data) => {
-    // if (currentStep == steps.length - 1) return console.log(currentStep)
+    // Validate shipping method is selected
+    if (!selectedShippingMethod) {
+      toast.error("Please select a shipping method");
+      setIsProcessing(false);
+      return;
+    }
+    
     setIsProcessing(true);
-
-    // Final total (no shipping, no tax)
-    const totalAmount = subtotal;
     console.log("cartItems::::", cartItems);
-
 
     // Get spin discount info
     const spinResult = getSpinDiscount();
@@ -204,16 +293,15 @@ export default function Checkout() {
       },
 
       shippingMethod: {
-        name: "standard",
-        price: 0,
-        estimatedDays: "3-5 days",
+        name: selectedShippingMethod.type,
+        price: selectedShippingMethod.cost,
+        estimatedDays: selectedShippingMethod.deliveryDays,
       },
 
       orderSummary: {
         subtotal,
-        shippingCost: 0,
-        tax: 0,
-        discount: 0,
+        shippingCost,
+        tax,
         totalAmount,
       },
 
@@ -546,6 +634,60 @@ export default function Checkout() {
                             </div>
                           </div>
 
+                          {/* Shipping Method Selection */}
+                          <div className="mt-6">
+                            <label className="block text-sm font-medium text-gray-700 mb-3">
+                              <div className="flex items-center gap-2">
+                                <Truck className="w-5 h-5" />
+                                Select Shipping Method
+                              </div>
+                            </label>
+                            <div className="space-y-3">
+                              {shippingMethods.map((method) => (
+                                <motion.div
+                                  key={method.type}
+                                  whileHover={{ scale: 1.01 }}
+                                  onClick={() => setSelectedShippingMethod(method)}
+                                  className={`border-2 rounded-lg p-4 cursor-pointer transition-all ${
+                                    selectedShippingMethod?.type === method.type
+                                      ? 'border-blue-600 bg-blue-50 ring-2 ring-blue-100'
+                                      : 'border-gray-300 hover:border-gray-400'
+                                  }`}
+                                >
+                                  <div className="flex justify-between items-center">
+                                    <div className="flex items-center gap-3">
+                                      <div className={`p-2 rounded-full ${
+                                        selectedShippingMethod?.type === method.type
+                                          ? 'bg-blue-100 text-blue-600'
+                                          : 'bg-gray-100 text-gray-600'
+                                      }`}>
+                                        <Truck className="w-5 h-5" />
+                                      </div>
+                                      <div>
+                                        <div className="flex items-center gap-2">
+                                          <h4 className="font-medium capitalize">
+                                            {method.type} Shipping
+                                          </h4>
+                                          {method.type === 'free' && (
+                                            <span className="px-2 py-0.5 text-xs font-semibold bg-green-100 text-green-700 rounded-full">
+                                              Recommended
+                                            </span>
+                                          )}
+                                        </div>
+                                        <p className="text-sm text-gray-500">
+                                          Delivery in {method.deliveryDays} {method.deliveryDays === 1 ? 'day' : 'days'}
+                                        </p>
+                                      </div>
+                                    </div>
+                                    <span className="font-semibold text-lg">
+                                      ${method.cost.toFixed(2)}
+                                    </span>
+                                  </div>
+                                </motion.div>
+                              ))}
+                            </div>
+                          </div>
+
                           <div className="mt-6">
                             <label className="block text-sm font-medium text-gray-700 mb-2">Delivery Instructions (Optional)</label>
                             <textarea
@@ -771,6 +913,27 @@ export default function Checkout() {
               </div>
 
               <div className="space-y-3 pt-2">
+                <div className="flex justify-between text-gray-700">
+                  <span>Subtotal</span>
+                  <span className="font-medium">${subtotal.toFixed(2)}</span>
+                </div>
+                
+                {selectedShippingMethod && (
+                  <div className="flex justify-between text-gray-700">
+                    <span>Shipping ({selectedShippingMethod.type})</span>
+                    <span className="font-medium">${shippingCost.toFixed(2)}</span>
+                  </div>
+                )}
+                
+                {tax > 0 && (
+                  <div className="flex justify-between text-gray-700">
+                    <span>
+                      Tax {taxConfig?.type === 'percentage' && `(${taxConfig.value}%)`}
+                    </span>
+                    <span className="font-medium">${tax.toFixed(2)}</span>
+                  </div>
+                )}
+                
                 <div className="flex justify-between text-lg font-semibold border-t pt-3">
                   <span>Total</span>
                   <span className="text-blue-600">${totalAmount.toFixed(2)}</span>

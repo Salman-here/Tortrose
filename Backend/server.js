@@ -200,6 +200,8 @@ const uploadRoutes = require('./routes/uploadRoutes')
 const sessionRoutes = require('./routes/sessionRoutes')
 const spinRoutes = require('./routes/spinRoutes')
 const storeRoutes = require('./routes/storeRoutes')
+const taxRoutes = require('./routes/taxRoutes')
+const shippingRoutes = require('./routes/shippingRoutes')
 const { getOrderDetail } = require('./controllers/orderController')
 const Cart = require('./models/Cart')
 const { sendEmail } = require('./controllers/mailController')
@@ -216,6 +218,8 @@ app.use('/api/upload', uploadRoutes)
 app.use('/api/session', sessionRoutes)
 app.use('/api/spin', spinRoutes)
 app.use('/api/stores', storeRoutes)
+app.use('/api/tax', taxRoutes)
+app.use('/api/shipping', shippingRoutes)
 
  
 

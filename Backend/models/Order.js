@@ -31,10 +31,22 @@ const orderSchema = mongoose.Schema(
         },
 
         shippingMethod: {
-            name: { type: String, required: true, enum: ["standard", "express", "overnight"] },
+            name: { type: String, required: true },
             price: { type: Number, required: true },
-            estimatedDays: { type: String, required: true, enum: ["3-5 days", "1-2 days", "next day"] }
+            estimatedDays: { type: Number, required: true },
+            seller: { type: mongoose.Schema.Types.ObjectId, ref: "User" }
         },
+
+        sellerShipping: [
+            {
+                seller: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+                shippingMethod: {
+                    name: { type: String, required: true },
+                    price: { type: Number, required: true },
+                    estimatedDays: { type: Number, required: true }
+                }
+            }
+        ],
 
         orderSummary: {
             subtotal: { type: Number, required: true },

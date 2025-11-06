@@ -3,6 +3,8 @@ const Cart = require('../models/Cart');
 const Order = require('../models/Order');
 const Product = require('../models/Product')
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY)
+const TaxConfig = require('../models/TaxConfig');
+const { calculateTax } = require('./taxController');
 
 
 exports.placeOrder = async (req, res) => {
@@ -48,17 +50,15 @@ exports.placeOrder = async (req, res) => {
 
         console.log(order.shippingMethod);
 
+        // Get shipping cost from order (already selected by user)
+        const shippingCost = order.shippingMethod.price || 0;
 
-        // Calculate shipping cost
-        const shippingCost =
-            order.shippingMethod.name === "standard"
-                ? 5
-                : order.shippingMethod.name === "express"
-                    ? 10
-                    : 20;
-
-        // Tax
-        const tax = subtotal * 0.05; // 5% tax
+        // Fetch tax configuration and calculate tax
+        let tax = 0;
+        const taxConfig = await TaxConfig.findOne({ isActive: true });
+        if (taxConfig) {
+            tax = calculateTax(subtotal, taxConfig);
+        }
 
         // Final total
         const totalAmount = subtotal + shippingCost + tax;
@@ -95,6 +95,7 @@ exports.placeOrder = async (req, res) => {
                 name: order.shippingMethod.name,
                 price: order.shippingMethod.price,
                 estimatedDays: order.shippingMethod.estimatedDays,
+                seller: order.shippingMethod.seller || null
             },
 
             orderSummary: {
@@ -116,6 +117,11 @@ exports.placeOrder = async (req, res) => {
                 value: order.spinDiscount.value,
                 label: order.spinDiscount.label
             };
+        }
+        
+        // Add seller shipping info if provided (for multi-seller orders)
+        if (order.sellerShipping && Array.isArray(order.sellerShipping)) {
+            newOrder.sellerShipping = order.sellerShipping;
         }
         
         if (order.instructions && order.instructions !== '') newOrder.instructions = order.instructions
@@ -166,17 +172,19 @@ exports.placeOrder = async (req, res) => {
                 quantity: 1
             },
 
-            // TAX
-            {
+            // TAX (only if tax > 0)
+            ...(newOrder.orderSummary.tax > 0 ? [{
                 price_data: {
                     currency: 'usd',
                     product_data: {
-                        name: `Tax (5%)`,
+                        name: taxConfig && taxConfig.type === 'percentage' 
+                            ? `Tax (${taxConfig.value}%)` 
+                            : 'Tax',
                     },
                     unit_amount: Math.round(newOrder.orderSummary.tax * 100)
                 },
                 quantity: 1
-            }
+            }] : [])
         ]
 
         // console.log(line_items);

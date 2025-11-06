@@ -293,7 +293,7 @@ const OrderList = ({
                                         </span>
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                        ${order.orderSummary.totalAmount.toLocaleString()}
+                                        ${(order.orderSummary.totalAmount || order.orderSummary.subtotal || 0).toFixed(2)}
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                                         <Link to={`/${currentUser?.role === 'seller' ? 'seller' : 'admin'}-dashboard/order/${order._id}`}>
@@ -359,7 +359,7 @@ const OrderList = ({
                                     </span>
                                 </span>
                                 <span className="text-sm sm:text-base font-semibold text-gray-800">
-                                    ${order.orderSummary.totalAmount.toLocaleString()}
+                                    ${(order.orderSummary.totalAmount || order.orderSummary.subtotal || 0).toFixed(2)}
                                 </span>
                             </div>
                             <Link to={`/${currentUser?.role === 'seller' ? 'seller' : 'admin'}-dashboard/order/${order._id}`}>

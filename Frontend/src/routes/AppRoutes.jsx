@@ -19,6 +19,8 @@ import ProductManagement from '../components/layout/ProductManagement'
 import OrderDetail from '../components/layout/OrderDetail'
 import UserManagement from '../components/layout/UserManagement'
 import UserDashboard from '../components/layout/UserDashboard'
+import TaxConfiguration from '../components/layout/TaxConfiguration'
+import ShippingConfiguration from '../components/layout/ShippingConfiguration'
 import AccountOverview from '../components/layout/AccountOverview'
 import UserProfile from '../components/layout/Profile'
 import UserOrdersManagement from '../components/layout/UserOrdersManagement'
@@ -138,6 +140,11 @@ function AppRoutes() {
                             <UserManagement />
                         </ProtectedRoute>
                     } />
+                    <Route path='/admin-dashboard/tax-configuration' element={
+                        <ProtectedRoute role={'admin'}>
+                            <TaxConfiguration />
+                        </ProtectedRoute>
+                    } />
                 </Route>
 
                 {/* SELLER DASHBOARD */}
@@ -165,6 +172,11 @@ function AppRoutes() {
                     <Route path='/seller-dashboard/store-settings' element={
                         <ProtectedRoute role={'seller'}>
                             <StoreSettings />
+                        </ProtectedRoute>
+                    } />
+                    <Route path='/seller-dashboard/shipping-configuration' element={
+                        <ProtectedRoute role={'seller'}>
+                            <ShippingConfiguration />
                         </ProtectedRoute>
                     } />
                 </Route>

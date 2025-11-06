@@ -258,25 +258,30 @@ const OrderDetail = () => {
                         <div className="space-y-2">
                             <div className="flex justify-between">
                                 <span className="text-gray-600">Subtotal</span>
-                                <span className="font-medium">${order?.orderSummary.subtotal.toLocaleString()}</span>
+                                <span className="text-gray-800">${order?.orderSummary.subtotal.toFixed(2)}</span>
                             </div>
-                            <div className="flex justify-between">
-                                <span className="text-gray-600">Shipping</span>
-                                <span className="font-medium">${order?.orderSummary.shippingCost.toLocaleString()}</span>
-                            </div>
-                            <div className="flex justify-between">
-                                <span className="text-gray-600">Tax</span>
-                                <span className="font-medium">${order?.orderSummary.tax.toLocaleString()}</span>
-                            </div>
-                            {order?.orderSummary.discount > 0 && (
-                                <div className="flex justify-between text-green-600">
-                                    <span>Discount</span>
-                                    <span>- ${order?.orderSummary.discount.toLocaleString()}</span>
+                            
+                            {order?.orderSummary.shippingCost > 0 && (
+                                <div className="flex justify-between">
+                                    <span className="text-gray-600">
+                                        Shipping ({order?.shippingMethod?.name})
+                                    </span>
+                                    <span className="text-gray-800">
+                                        ${order?.orderSummary.shippingCost.toFixed(2)}
+                                    </span>
                                 </div>
                             )}
-                            <div className="flex justify-between pt-2 border-t border-gray-200">
-                                <span className="text-lg font-medium text-gray-800">Total</span>
-                                <span className="text-lg font-bold text-gray-800">$ {order?.orderSummary.totalAmount.toLocaleString()}</span>
+                            
+                            {order?.orderSummary.tax > 0 && (
+                                <div className="flex justify-between">
+                                    <span className="text-gray-600">Tax</span>
+                                    <span className="text-gray-800">${order?.orderSummary.tax.toFixed(2)}</span>
+                                </div>
+                            )}
+                            
+                            <div className="flex justify-between pt-2 border-t">
+                                <span className="text-lg font-medium text-gray-800">Total Amount</span>
+                                <span className="text-lg font-bold text-gray-800">${(order?.orderSummary.totalAmount || order?.orderSummary.subtotal || 0).toFixed(2)}</span>
                             </div>
                         </div>
                     </div>

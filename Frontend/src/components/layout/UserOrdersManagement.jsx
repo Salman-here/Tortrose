@@ -250,7 +250,7 @@ const UserOrdersManagement = () => {
                                                     <StatusBadge status={order.orderStatus} />
                                                     <div className="text-right">
                                                         <p className="text-lg font-semibold text-gray-900">
-                                                            {formatCurrency(order.orderSummary.totalAmount)}
+                                                            {formatCurrency(order.orderSummary.totalAmount || order.orderSummary.subtotal || 0)}
                                                         </p>
                                                         <Link to={`/user-dashboard/order/detail/${order._id}`}>
                                                         <button className="text-blue-600 hover:text-blue-800 text-sm font-medium flex items-center mt-1">
