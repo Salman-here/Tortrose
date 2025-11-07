@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { CheckCircle, Minus, Plus, CreditCard, DollarSign, Truck, MapPin, User, Mail, Phone, Home, Navigation, CreditCardIcon, X, Loader2 } from "lucide-react";
+import { CheckCircle, Minus, Plus, CreditCard, DollarSign, Truck, MapPin, User, Mail, Phone, Home, Navigation, CreditCardIcon, X, Loader2, ChevronDown, ChevronUp } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { useGlobal } from "../../contexts/GlobalContext";
 import axios from "axios";
@@ -21,8 +21,9 @@ export default function Checkout() {
   
   // Tax and Shipping state
   const [taxConfig, setTaxConfig] = useState(null);
-  const [shippingMethods, setShippingMethods] = useState([]);
-  const [selectedShippingMethod, setSelectedShippingMethod] = useState(null);
+  const [sellerShippingMethods, setSellerShippingMethods] = useState({}); // { sellerId: { seller, methods } }
+  const [selectedShippingPerSeller, setSelectedShippingPerSeller] = useState({}); // { sellerId: method }
+  const [expandedSellers, setExpandedSellers] = useState({}); // { sellerId: boolean }
 
 
   const { cartItems, handleQtyInc, handleQtyDec, handleRemoveCartItem, isCartLoading,
@@ -64,25 +65,23 @@ export default function Checkout() {
       );
       
       if (res.data.success) {
-        // Get first seller's shipping methods (for single seller)
-        const sellerIds = Object.keys(res.data.shippingMethods);
-        if (sellerIds.length > 0) {
-          const methods = res.data.shippingMethods[sellerIds[0]].methods;
-          setShippingMethods(methods);
-          // Set default shipping method - prefer free shipping if available
+        const shippingData = res.data.shippingMethods;
+        setSellerShippingMethods(shippingData);
+        
+        // Set default shipping method for each seller - prefer free shipping
+        const defaultSelections = {};
+        Object.keys(shippingData).forEach(sellerId => {
+          const methods = shippingData[sellerId].methods;
           if (methods.length > 0) {
             const freeShipping = methods.find(m => m.type === 'free');
-            setSelectedShippingMethod(freeShipping || methods[0]);
+            defaultSelections[sellerId] = freeShipping || methods[0];
           }
-        }
+        });
+        setSelectedShippingPerSeller(defaultSelections);
       }
     } catch (error) {
       console.error('Error fetching shipping methods:', error);
-      // Set default shipping if API fails
-      setShippingMethods([
-        { type: 'standard', cost: 5.99, deliveryDays: 5, isActive: true }
-      ]);
-      setSelectedShippingMethod({ type: 'standard', cost: 5.99, deliveryDays: 5, isActive: true });
+      toast.error('Failed to load shipping methods');
     }
   };
 
@@ -193,8 +192,30 @@ export default function Checkout() {
   
   // Calculate tax and shipping
   const tax = useMemo(() => calculateTax(subtotal), [subtotal, taxConfig]);
-  const shippingCost = selectedShippingMethod ? selectedShippingMethod.cost : 0;
+  
+  // Calculate total shipping cost from all sellers
+  const shippingCost = useMemo(() => {
+    return Object.values(selectedShippingPerSeller).reduce((total, method) => {
+      return total + (method?.cost || 0);
+    }, 0);
+  }, [selectedShippingPerSeller]);
+  
   const totalAmount = subtotal + tax + shippingCost;
+  
+  // Group cart items by seller
+  const cartItemsBySeller = useMemo(() => {
+    if (!cartItems?.cart) return {};
+    
+    const grouped = {};
+    cartItems.cart.forEach(item => {
+      const sellerId = item.product.seller;
+      if (!grouped[sellerId]) {
+        grouped[sellerId] = [];
+      }
+      grouped[sellerId].push(item);
+    });
+    return grouped;
+  }, [cartItems]);
 
   // Prevent Enter key from submitting the form
   const handleKeyDown = (e) => {
@@ -231,9 +252,12 @@ export default function Checkout() {
       ]);
       if (!valid) return;
       
-      // Validate shipping method is selected
-      if (!selectedShippingMethod) {
-        toast.error("Please select a shipping method");
+      // Validate shipping method is selected for all sellers
+      const sellerIds = Object.keys(sellerShippingMethods);
+      const hasAllShippingSelected = sellerIds.every(sellerId => selectedShippingPerSeller[sellerId]);
+      
+      if (!hasAllShippingSelected) {
+        toast.error("Please select a shipping method for all sellers");
         return;
       }
       
@@ -250,9 +274,12 @@ export default function Checkout() {
 
   // Final form submit
   const onPlaceOrder = async (data) => {
-    // Validate shipping method is selected
-    if (!selectedShippingMethod) {
-      toast.error("Please select a shipping method");
+    // Validate shipping method is selected for all sellers
+    const sellerIds = Object.keys(sellerShippingMethods);
+    const hasAllShippingSelected = sellerIds.every(sellerId => selectedShippingPerSeller[sellerId]);
+    
+    if (!hasAllShippingSelected) {
+      toast.error("Please select a shipping method for all sellers");
       setIsProcessing(false);
       return;
     }
@@ -263,6 +290,23 @@ export default function Checkout() {
     // Get spin discount info
     const spinResult = getSpinDiscount();
     const spinSelectedProducts = JSON.parse(localStorage.getItem('spinSelectedProducts') || '[]');
+    
+    // Build seller shipping array
+    const sellerShipping = Object.entries(selectedShippingPerSeller).map(([sellerId, method]) => ({
+      seller: sellerId,
+      shippingMethod: {
+        name: method.type,
+        price: method.cost,
+        estimatedDays: method.deliveryDays
+      }
+    }));
+    
+    // Use first seller's shipping as primary (for backward compatibility)
+    const primaryShipping = sellerShipping[0]?.shippingMethod || {
+      name: 'standard',
+      price: 0,
+      estimatedDays: 5
+    };
     
     const order = {
       orderItems: cartItems.cart.map((item) => {
@@ -293,10 +337,13 @@ export default function Checkout() {
       },
 
       shippingMethod: {
-        name: selectedShippingMethod.type,
-        price: selectedShippingMethod.cost,
-        estimatedDays: selectedShippingMethod.deliveryDays,
+        name: primaryShipping.name,
+        price: primaryShipping.price,
+        estimatedDays: primaryShipping.estimatedDays,
+        seller: sellerShipping[0]?.seller
       },
+      
+      sellerShipping: sellerShipping, // Multi-seller shipping details
 
       orderSummary: {
         subtotal,
@@ -634,7 +681,7 @@ export default function Checkout() {
                             </div>
                           </div>
 
-                          {/* Shipping Method Selection */}
+                          {/* Shipping Method Selection - Grouped by Seller */}
                           <div className="mt-6">
                             <label className="block text-sm font-medium text-gray-700 mb-3">
                               <div className="flex items-center gap-2">
@@ -642,50 +689,225 @@ export default function Checkout() {
                                 Select Shipping Method
                               </div>
                             </label>
-                            <div className="space-y-3">
-                              {shippingMethods.map((method) => (
-                                <motion.div
-                                  key={method.type}
-                                  whileHover={{ scale: 1.01 }}
-                                  onClick={() => setSelectedShippingMethod(method)}
-                                  className={`border-2 rounded-lg p-4 cursor-pointer transition-all ${
-                                    selectedShippingMethod?.type === method.type
-                                      ? 'border-blue-600 bg-blue-50 ring-2 ring-blue-100'
-                                      : 'border-gray-300 hover:border-gray-400'
-                                  }`}
-                                >
-                                  <div className="flex justify-between items-center">
-                                    <div className="flex items-center gap-3">
-                                      <div className={`p-2 rounded-full ${
-                                        selectedShippingMethod?.type === method.type
-                                          ? 'bg-blue-100 text-blue-600'
-                                          : 'bg-gray-100 text-gray-600'
-                                      }`}>
-                                        <Truck className="w-5 h-5" />
+                            
+                            {Object.keys(sellerShippingMethods).length === 0 ? (
+                              <p className="text-gray-500 text-sm">Loading shipping options...</p>
+                            ) : (
+                              <>
+                                {/* Info Message for Multi-Seller Orders */}
+                                {Object.keys(sellerShippingMethods).length > 1 && (
+                                  <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                                    <div className="flex gap-3">
+                                      <div className="flex-shrink-0">
+                                        <svg className="w-5 h-5 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
+                                          <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                                        </svg>
                                       </div>
-                                      <div>
-                                        <div className="flex items-center gap-2">
-                                          <h4 className="font-medium capitalize">
-                                            {method.type} Shipping
-                                          </h4>
-                                          {method.type === 'free' && (
-                                            <span className="px-2 py-0.5 text-xs font-semibold bg-green-100 text-green-700 rounded-full">
-                                              Recommended
-                                            </span>
-                                          )}
-                                        </div>
-                                        <p className="text-sm text-gray-500">
-                                          Delivery in {method.deliveryDays} {method.deliveryDays === 1 ? 'day' : 'days'}
+                                      <div className="flex-1">
+                                        <h4 className="text-sm font-semibold text-blue-900 mb-1">
+                                          Multiple Seller's products in Your Cart!
+                                        </h4>
+                                        <p className="text-xs text-blue-800">
+                                          Your items are from <span className="font-semibold">{Object.keys(sellerShippingMethods).length} different sellers</span>. 
+                                          Each seller has their own shipping methods and costs. Please select a shipping method for each seller's products below.
                                         </p>
                                       </div>
                                     </div>
-                                    <span className="font-semibold text-lg">
-                                      ${method.cost.toFixed(2)}
-                                    </span>
                                   </div>
-                                </motion.div>
-                              ))}
-                            </div>
+                                )}
+                                
+                                <div className="space-y-6">
+                                {Object.entries(sellerShippingMethods).map(([sellerId, { seller, methods }]) => {
+                                  const sellerProducts = cartItemsBySeller[sellerId] || [];
+                                  const isExpanded = expandedSellers[sellerId] === true; // Default to collapsed
+                                  const hasMultipleProducts = sellerProducts.length > 1;
+                                  
+                                  return (
+                                    <div key={sellerId} className="border border-gray-200 rounded-lg p-4 bg-gray-50">
+                                      {/* Products from this Seller */}
+                                      <div className="mb-3">
+                                        {sellerProducts.length > 0 && (
+                                          <div className="space-y-2">
+                                            {/* Collapsed View - Summary with Remove All */}
+                                            {!isExpanded && (
+                                              <div className="flex items-center justify-between p-3 bg-white rounded-lg">
+                                                <div className="flex items-center gap-3">
+                                                  <div className="relative">
+                                                    <img
+                                                      className="h-12 w-12 rounded object-cover"
+                                                      src={sellerProducts[0].product.image}
+                                                      alt={sellerProducts[0].product.name}
+                                                    />
+                                                    {sellerProducts.length > 1 && (
+                                                      <div className="absolute -top-1 -right-1 bg-blue-600 text-white text-xs font-bold rounded-full w-5 h-5 flex items-center justify-center">
+                                                        {sellerProducts.length}
+                                                      </div>
+                                                    )}
+                                                  </div>
+                                                  <div>
+                                                    <p className="font-medium text-sm text-gray-900">
+                                                      {sellerProducts.length === 1 
+                                                        ? sellerProducts[0].product.name
+                                                        : `${sellerProducts.length} items`
+                                                      }
+                                                    </p>
+                                                    <p className="text-xs text-gray-500">
+                                                      Total: ${sellerProducts.reduce((sum, item) => 
+                                                        sum + (getDiscountedPrice(item.product) * item.qty), 0
+                                                      ).toFixed(2)}
+                                                    </p>
+                                                  </div>
+                                                </div>
+                                                <button
+                                                  type="button"
+                                                  onClick={async () => {
+                                                    // Remove all products from this seller sequentially
+                                                    for (const item of sellerProducts) {
+                                                      await handleRemoveCartItem(item.product._id);
+                                                    }
+                                                  }}
+                                                  className="text-gray-400 hover:text-red-600 transition-colors"
+                                                  title="Remove all items"
+                                                >
+                                                  <X className="w-5 h-5" />
+                                                </button>
+                                              </div>
+                                            )}
+                                            
+                                            {/* Expanded View - All Products with Individual Remove */}
+                                            <AnimatePresence>
+                                              {isExpanded && (
+                                                <motion.div
+                                                  initial={{ opacity: 0, height: 0 }}
+                                                  animate={{ opacity: 1, height: 'auto' }}
+                                                  exit={{ opacity: 0, height: 0 }}
+                                                  transition={{ duration: 0.2 }}
+                                                  className="space-y-2"
+                                                >
+                                                  {sellerProducts.map((item) => {
+                                                    const itemPrice = getDiscountedPrice(item.product);
+                                                    const originalPrice = item.product.discountedPrice || item.product.price;
+                                                    const hasSpinDiscount = itemPrice < originalPrice;
+                                                    
+                                                    return (
+                                                      <div key={item._id} className="flex items-center gap-3 p-2 bg-white rounded-lg relative">
+                                                        <img
+                                                          className="h-12 w-12 rounded object-cover"
+                                                          src={item.product.image}
+                                                          alt={item.product.name}
+                                                        />
+                                                        <div className="flex-1">
+                                                          <p className="font-medium text-sm text-gray-900">{item.product.name}</p>
+                                                          <p className="text-xs text-gray-500">Qty: {item.qty}</p>
+                                                        </div>
+                                                        <div className="text-right">
+                                                          <span className="font-semibold text-sm">${(itemPrice * item.qty).toFixed(2)}</span>
+                                                          {hasSpinDiscount && (
+                                                            <p className="text-xs text-gray-500 line-through">${(originalPrice * item.qty).toFixed(2)}</p>
+                                                          )}
+                                                        </div>
+                                                        <button
+                                                          type="button"
+                                                          onClick={() => handleRemoveCartItem(item.product._id)}
+                                                          className="absolute top-2 right-2 text-gray-400 hover:text-red-600 transition-colors"
+                                                        >
+                                                          <X className="w-4 h-4" />
+                                                        </button>
+                                                      </div>
+                                                    );
+                                                  })}
+                                                </motion.div>
+                                              )}
+                                            </AnimatePresence>
+                                            
+                                            {/* Expand/Collapse Button */}
+                                            <button
+                                              type="button"
+                                              onClick={() => setExpandedSellers(prev => ({
+                                                ...prev,
+                                                [sellerId]: !isExpanded
+                                              }))}
+                                              className="w-full flex items-center justify-center gap-2 py-2 text-sm text-blue-600 hover:text-blue-700 font-medium"
+                                            >
+                                              {isExpanded ? (
+                                                <>
+                                                  <ChevronUp className="w-4 h-4" />
+                                                  Collapse
+                                                </>
+                                              ) : (
+                                                <>
+                                                  <ChevronDown className="w-4 h-4" />
+                                                  {sellerProducts.length === 1 ? 'View details' : `View all ${sellerProducts.length} items`}
+                                                </>
+                                              )}
+                                            </button>
+                                          </div>
+                                        )}
+                                      </div>
+                                    
+                                    {/* Shipping Options for these Products */}
+                                    <div className="space-y-2 pt-3 border-t border-gray-300">
+                                      <div className="flex items-center justify-between mb-2">
+                                        <p className="text-xs font-medium text-gray-600">Choose shipping method:</p>
+                                        <p className="text-xs text-gray-500">
+                                          {methods.length === 1 
+                                            ? '1 method available'
+                                            : `${methods.length} methods available`
+                                          }
+                                        </p>
+                                      </div>
+                                      {methods.map((method) => (
+                                        <motion.div
+                                          key={method.type}
+                                          whileHover={{ scale: 1.01 }}
+                                          onClick={() => setSelectedShippingPerSeller(prev => ({
+                                            ...prev,
+                                            [sellerId]: method
+                                          }))}
+                                          className={`border-2 rounded-lg p-3 cursor-pointer transition-all ${
+                                            selectedShippingPerSeller[sellerId]?.type === method.type
+                                              ? 'border-blue-600 bg-blue-50 ring-2 ring-blue-100'
+                                              : 'border-gray-300 hover:border-gray-400 bg-white'
+                                          }`}
+                                        >
+                                          <div className="flex justify-between items-center">
+                                            <div className="flex items-center gap-3">
+                                              <div className={`p-2 rounded-full ${
+                                                selectedShippingPerSeller[sellerId]?.type === method.type
+                                                  ? 'bg-blue-100 text-blue-600'
+                                                  : 'bg-gray-100 text-gray-600'
+                                              }`}>
+                                                <Truck className="w-4 h-4" />
+                                              </div>
+                                              <div>
+                                                <div className="flex items-center gap-2">
+                                                  <h5 className="font-medium capitalize text-sm">
+                                                    {method.type} Shipping
+                                                  </h5>
+                                                  {method.type === 'free' && (
+                                                    <span className="px-2 py-0.5 text-xs font-semibold bg-green-100 text-green-700 rounded-full">
+                                                      Recommended
+                                                    </span>
+                                                  )}
+                                                </div>
+                                                <p className="text-xs text-gray-500">
+                                                  Delivery in {method.deliveryDays} {method.deliveryDays === 1 ? 'day' : 'days'}
+                                                </p>
+                                              </div>
+                                            </div>
+                                            <span className="font-semibold">
+                                              ${method.cost.toFixed(2)}
+                                            </span>
+                                          </div>
+                                        </motion.div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                  );
+                                })}
+                              </div>
+                              </>
+                            )}
                           </div>
 
                           <div className="mt-6">
@@ -918,10 +1140,24 @@ export default function Checkout() {
                   <span className="font-medium">${subtotal.toFixed(2)}</span>
                 </div>
                 
-                {selectedShippingMethod && (
-                  <div className="flex justify-between text-gray-700">
-                    <span>Shipping ({selectedShippingMethod.type})</span>
-                    <span className="font-medium">${shippingCost.toFixed(2)}</span>
+                {/* Shipping breakdown by seller */}
+                {Object.keys(selectedShippingPerSeller).length > 0 && (
+                  <div className="space-y-1">
+                    <div className="flex justify-between text-gray-700 font-medium">
+                      <span>Shipping</span>
+                      <span>${shippingCost.toFixed(2)}</span>
+                    </div>
+                    {Object.entries(selectedShippingPerSeller).map(([sellerId, method]) => {
+                      const sellerInfo = sellerShippingMethods[sellerId];
+                      return (
+                        <div key={sellerId} className="flex justify-between text-xs text-gray-500 pl-4">
+                          <span className="capitalize">
+                            {method.type} shipping
+                          </span>
+                          <span>${method.cost.toFixed(2)}</span>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
                 

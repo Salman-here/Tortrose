@@ -339,14 +339,28 @@ const OrderDetail = () => {
                                 </span>
                             </div>
                             
-                            {order?.orderSummary.shippingCost > 0 && (
-                                <div className="flex justify-between">
-                                    <span className="text-gray-600">
-                                        Shipping ({order?.shippingMethod?.name})
-                                    </span>
-                                    <span className="text-gray-800">
-                                        ${order?.orderSummary.shippingCost.toFixed(2)}
-                                    </span>
+                            {(order?.orderSummary.shippingCost >= 0 || order?.sellerShipping?.length > 0) && (
+                                <div className="space-y-1">
+                                    <div className="flex justify-between">
+                                        <span className="text-gray-600 font-medium">
+                                            Shipping
+                                        </span>
+                                        <span className="text-gray-800">
+                                            ${(order?.orderSummary.shippingCost || 0).toFixed(2)}
+                                        </span>
+                                    </div>
+                                    {order?.sellerShipping && order.sellerShipping.length > 0 && (
+                                        <div className="pl-4 space-y-1">
+                                            {order.sellerShipping.map((sellerShip, index) => (
+                                                <div key={index} className="flex justify-between text-xs text-gray-500">
+                                                    <span className="capitalize">
+                                                        {sellerShip.shippingMethod.name} ({sellerShip.shippingMethod.estimatedDays} days)
+                                                    </span>
+                                                    <span>${sellerShip.shippingMethod.price.toFixed(2)}</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
                                 </div>
                             )}
                             

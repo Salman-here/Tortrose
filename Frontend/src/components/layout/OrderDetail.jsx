@@ -261,16 +261,43 @@ const OrderDetail = () => {
                                 <span className="text-gray-800">${order?.orderSummary.subtotal.toFixed(2)}</span>
                             </div>
                             
-                            {order?.orderSummary.shippingCost > 0 && (
-                                <div className="flex justify-between">
-                                    <span className="text-gray-600">
-                                        Shipping ({order?.shippingMethod?.name})
-                                    </span>
-                                    <span className="text-gray-800">
-                                        ${order?.orderSummary.shippingCost.toFixed(2)}
-                                    </span>
-                                </div>
-                            )}
+                            {(() => {
+                                // Calculate shipping cost based on user role
+                                let displayShippingCost = order?.orderSummary.shippingCost || 0;
+                                let filteredShipping = order?.sellerShipping || [];
+                                
+                                if (currentUser?.role === 'seller' && order?.sellerShipping) {
+                                    // Filter to show only seller's shipping
+                                    filteredShipping = order.sellerShipping.filter(sellerShip => 
+                                        sellerShip.seller === currentUser.id || sellerShip.seller === currentUser._id
+                                    );
+                                    // Calculate only seller's shipping cost
+                                    displayShippingCost = filteredShipping.reduce((sum, sellerShip) => 
+                                        sum + (sellerShip.shippingMethod.price || 0), 0
+                                    );
+                                }
+                                
+                                return displayShippingCost > 0 || filteredShipping.length > 0 ? (
+                                    <div className="space-y-1">
+                                        <div className="flex justify-between">
+                                            <span className="text-gray-600 font-medium">Shipping</span>
+                                            <span className="text-gray-800">${displayShippingCost.toFixed(2)}</span>
+                                        </div>
+                                        {filteredShipping.length > 0 && (
+                                            <div className="pl-4 space-y-1">
+                                                {filteredShipping.map((sellerShip, index) => (
+                                                    <div key={index} className="flex justify-between text-xs text-gray-500">
+                                                        <span>
+                                                            {sellerShip.shippingMethod.name} ({sellerShip.shippingMethod.estimatedDays} days)
+                                                        </span>
+                                                        <span>${sellerShip.shippingMethod.price.toFixed(2)}</span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                ) : null;
+                            })()}
                             
                             {order?.orderSummary.tax > 0 && (
                                 <div className="flex justify-between">

@@ -276,9 +276,17 @@ exports.getOrders = async (req, res) => {
                             sum + (item.price * item.quantity), 0
                         )
                         
+                        // Get seller's actual shipping cost from sellerShipping array
+                        let sellerShipping = 0;
+                        if (order.sellerShipping && order.sellerShipping.length > 0) {
+                            const sellerShippingInfo = order.sellerShipping.find(
+                                ss => ss.seller.toString() === userId.toString()
+                            );
+                            sellerShipping = sellerShippingInfo ? sellerShippingInfo.shippingMethod.price : 0;
+                        }
+                        
                         const totalOrderValue = order.orderSummary.subtotal
                         const sellerProportion = totalOrderValue > 0 ? sellerSubtotal / totalOrderValue : 0
-                        const sellerShipping = order.orderSummary.shippingCost * sellerProportion
                         const sellerTax = order.orderSummary.tax * sellerProportion
                         const sellerTotal = sellerSubtotal + sellerShipping + sellerTax
                         
@@ -444,10 +452,18 @@ exports.getOrderDetail = async (req, res) => {
             // Create a modified order object with only seller's items
             const sellerSubtotal = sellerOrderItems.reduce((sum, item) => sum + (item.price * item.quantity), 0)
             
-            // Calculate proportional shipping and tax based on seller's portion
+            // Get seller's actual shipping cost from sellerShipping array
+            let sellerShipping = 0;
+            if (order.sellerShipping && order.sellerShipping.length > 0) {
+                const sellerShippingInfo = order.sellerShipping.find(
+                    ss => ss.seller.toString() === userId.toString()
+                );
+                sellerShipping = sellerShippingInfo ? sellerShippingInfo.shippingMethod.price : 0;
+            }
+            
+            // Calculate proportional tax based on seller's portion
             const totalOrderValue = order.orderSummary.subtotal
             const sellerProportion = totalOrderValue > 0 ? sellerSubtotal / totalOrderValue : 0
-            const sellerShipping = order.orderSummary.shippingCost * sellerProportion
             const sellerTax = order.orderSummary.tax * sellerProportion
             const sellerTotal = sellerSubtotal + sellerShipping + sellerTax
             
