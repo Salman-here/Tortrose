@@ -98,21 +98,51 @@ exports.getExchangeRates = async (req, res) => {
             });
         }
         
-        // Fetch fresh rates from API (using exchangerate-api.com - free tier)
-        const response = await axios.get('https://api.exchangerate-api.com/v4/latest/USD');
+        // Try multiple sources for best accuracy
+        let rates = null;
         
-        console.log('📊 Fetched exchange rates from API:', {
-            PKR: response.data.rates.PKR,
-            EUR: response.data.rates.EUR,
-            GBP: response.data.rates.GBP
-        });
+        // Source 1: exchangerate.host (free, accurate, Google-quality data)
+        try {
+            const response = await axios.get('https://api.exchangerate.host/latest?base=USD&symbols=PKR,EUR,GBP');
+            if (response.data.success && response.data.rates) {
+                rates = {
+                    USD: 1,
+                    PKR: response.data.rates.PKR,
+                    EUR: response.data.rates.EUR,
+                    GBP: response.data.rates.GBP
+                };
+                console.log('✅ Fetched rates from exchangerate.host:', rates);
+            }
+        } catch (error) {
+            console.log('⚠️ exchangerate.host failed, trying backup...');
+        }
         
-        const rates = {
-            USD: 1,
-            PKR: response.data.rates.PKR || 284.6, // Updated fallback rate
-            EUR: response.data.rates.EUR || 0.92,
-            GBP: response.data.rates.GBP || 0.79
-        };
+        // Source 2: Fallback to exchangerate-api.com
+        if (!rates) {
+            try {
+                const response = await axios.get('https://api.exchangerate-api.com/v4/latest/USD');
+                rates = {
+                    USD: 1,
+                    PKR: response.data.rates.PKR,
+                    EUR: response.data.rates.EUR,
+                    GBP: response.data.rates.GBP
+                };
+                console.log('✅ Fetched rates from exchangerate-api.com:', rates);
+            } catch (error) {
+                console.log('⚠️ exchangerate-api.com also failed');
+            }
+        }
+        
+        // Source 3: Use fallback rates if all APIs fail
+        if (!rates) {
+            rates = {
+                USD: 1,
+                PKR: 284.6,
+                EUR: 0.92,
+                GBP: 0.79
+            };
+            console.log('⚠️ Using fallback rates:', rates);
+        }
         
         // Update cache
         exchangeRatesCache = rates;
