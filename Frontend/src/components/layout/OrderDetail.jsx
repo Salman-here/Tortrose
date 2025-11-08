@@ -15,10 +15,12 @@ import {
 import { Link, useParams } from "react-router-dom";
 import Loader from "../common/Loader";
 import { useAuth } from "../../contexts/AuthContext";
+import { useCurrency } from "../../contexts/CurrencyContext";
 
 
 const OrderDetail = () => {
     const { currentUser } = useAuth();
+    const { formatPrice } = useCurrency();
 
     const [order, setOrder] = useState(null)
 
@@ -229,23 +231,23 @@ const OrderDetail = () => {
                                             </span>
                                         )}
                                         <div className="mt-2 sm:hidden">
-                                            <p className="text-sm font-semibold text-gray-800">${item.price.toLocaleString()}</p>
+                                            <p className="text-sm font-semibold text-gray-800">{formatPrice(item.price)}</p>
                                             {item.hasSpinDiscount && item.originalPrice && (
                                                 <p className="text-xs text-gray-400 line-through">
-                                                    ${item.originalPrice.toLocaleString()}
+                                                    {formatPrice(item.originalPrice)}
                                                 </p>
                                             )}
-                                            <p className="text-xs text-gray-500 mt-1">Subtotal: ${(item.price * item.quantity).toLocaleString()}</p>
+                                            <p className="text-xs text-gray-500 mt-1">Subtotal: {formatPrice(item.price * item.quantity)}</p>
                                         </div>
                                     </div>
                                     <div className="text-right hidden sm:block flex-shrink-0">
-                                        <p className="text-sm sm:text-base font-medium text-gray-800">${item.price.toLocaleString()}</p>
+                                        <p className="text-sm sm:text-base font-medium text-gray-800">{formatPrice(item.price)}</p>
                                         {item.hasSpinDiscount && item.originalPrice && (
                                             <p className="text-xs text-gray-400 line-through">
-                                                ${item.originalPrice.toLocaleString()}
+                                                {formatPrice(item.originalPrice)}
                                             </p>
                                         )}
-                                        <p className="text-xs sm:text-sm text-gray-500 mt-1">Subtotal: ${(item.price * item.quantity).toLocaleString()}</p>
+                                        <p className="text-xs sm:text-sm text-gray-500 mt-1">Subtotal: {formatPrice(item.price * item.quantity)}</p>
                                     </div>
                                 </motion.div>
                             ))}
@@ -258,7 +260,7 @@ const OrderDetail = () => {
                         <div className="space-y-2">
                             <div className="flex justify-between">
                                 <span className="text-gray-600">Subtotal</span>
-                                <span className="text-gray-800">${order?.orderSummary.subtotal.toFixed(2)}</span>
+                                <span className="text-gray-800">{formatPrice(order?.orderSummary.subtotal)}</span>
                             </div>
                             
                             {(() => {
@@ -289,7 +291,7 @@ const OrderDetail = () => {
                                     <div className="space-y-1">
                                         <div className="flex justify-between">
                                             <span className="text-gray-600 font-medium">Shipping</span>
-                                            <span className="text-gray-800">${displayShippingCost.toFixed(2)}</span>
+                                            <span className="text-gray-800">{formatPrice(displayShippingCost)}</span>
                                         </div>
                                         {filteredShipping.length > 0 && (
                                             <div className="pl-4 space-y-1">
@@ -298,7 +300,7 @@ const OrderDetail = () => {
                                                         <span>
                                                             {sellerShip.shippingMethod.name} ({sellerShip.shippingMethod.estimatedDays} days)
                                                         </span>
-                                                        <span>${sellerShip.shippingMethod.price.toFixed(2)}</span>
+                                                        <span>{formatPrice(sellerShip.shippingMethod.price)}</span>
                                                     </div>
                                                 ))}
                                             </div>
@@ -310,14 +312,14 @@ const OrderDetail = () => {
                             {order?.orderSummary.tax > 0 && (
                                 <div className="flex justify-between">
                                     <span className="text-gray-600">Tax</span>
-                                    <span className="text-gray-800">${order?.orderSummary.tax.toFixed(2)}</span>
+                                    <span className="text-gray-800">{formatPrice(order?.orderSummary.tax)}</span>
                                 </div>
                             )}
                             
                             <div className="flex justify-between pt-2 border-t">
                                 <span className="text-lg font-medium text-gray-800">Total Amount</span>
                                 <span className="text-lg font-bold text-gray-800">
-                                    ${(() => {
+                                    {(() => {
                                         // Recalculate total using actual shipping cost
                                         const subtotal = order?.orderSummary.subtotal || 0;
                                         const tax = order?.orderSummary.tax || 0;
@@ -339,7 +341,7 @@ const OrderDetail = () => {
                                             }
                                         }
                                         
-                                        return (subtotal + tax + actualShipping).toFixed(2);
+                                        return formatPrice(subtotal + tax + actualShipping);
                                     })()}
                                 </span>
                             </div>

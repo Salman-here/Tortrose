@@ -14,9 +14,11 @@ import {
     CreditCard,
 } from "lucide-react";
 import { Link, useParams } from "react-router-dom";
+import { useCurrency } from "../../contexts/CurrencyContext";
 import Loader from "../common/Loader";
 
 const OrderDetail = () => {
+    const { formatPrice } = useCurrency();
     const [order, setOrder] = useState(null);
 
     const getStatusIcon = (status) => {
@@ -291,32 +293,29 @@ const OrderDetail = () => {
                                         )}
                                         <div className="mt-2 sm:hidden">
                                             <p className="text-sm font-semibold text-gray-800">
-                                                ${item.price.toLocaleString()}
+                                                {formatPrice(item.price)}
                                             </p>
                                             {item.hasSpinDiscount && item.originalPrice && (
                                                 <p className="text-xs text-gray-400 line-through">
-                                                    ${item.originalPrice.toLocaleString()}
+                                                    {formatPrice(item.originalPrice)}
                                                 </p>
                                             )}
                                             <p className="text-xs text-gray-500 mt-1">
-                                                Subtotal: ${(item.price * item.quantity).toLocaleString()}
+                                                Subtotal: {formatPrice(item.price * item.quantity)}
                                             </p>
                                         </div>
                                     </div>
                                     <div className="text-right hidden sm:block flex-shrink-0">
                                         <p className="text-sm sm:text-base font-medium text-gray-800">
-                                            ${item.price.toLocaleString()}
+                                            {formatPrice(item.price)}
                                         </p>
                                         {item.hasSpinDiscount && item.originalPrice && (
                                             <p className="text-xs text-gray-400 line-through">
-                                                ${item.originalPrice.toLocaleString()}
+                                                {formatPrice(item.originalPrice)}
                                             </p>
                                         )}
                                         <p className="text-xs sm:text-sm text-gray-500 mt-1">
-                                            Subtotal: $
-                                            {(
-                                                item.price * item.quantity
-                                            ).toLocaleString()}
+                                            Subtotal: {formatPrice(item.price * item.quantity)}
                                         </p>
                                     </div>
                                 </motion.div>
@@ -335,7 +334,7 @@ const OrderDetail = () => {
                                     Subtotal
                                 </span>
                                 <span className="text-gray-800">
-                                    ${order?.orderSummary.subtotal.toFixed(2)}
+                                    {formatPrice(order?.orderSummary.subtotal)}
                                 </span>
                             </div>
                             
@@ -356,7 +355,7 @@ const OrderDetail = () => {
                                                 Shipping
                                             </span>
                                             <span className="text-gray-800">
-                                                ${actualShippingCost.toFixed(2)}
+                                                {formatPrice(actualShippingCost)}
                                             </span>
                                         </div>
                                         {order?.sellerShipping && order.sellerShipping.length > 0 && (
@@ -366,7 +365,7 @@ const OrderDetail = () => {
                                                         <span className="capitalize">
                                                             {sellerShip.shippingMethod.name} ({sellerShip.shippingMethod.estimatedDays} days)
                                                         </span>
-                                                        <span>${sellerShip.shippingMethod.price.toFixed(2)}</span>
+                                                        <span>{formatPrice(sellerShip.shippingMethod.price)}</span>
                                                     </div>
                                                 ))}
                                             </div>
@@ -381,7 +380,7 @@ const OrderDetail = () => {
                                         Tax
                                     </span>
                                     <span className="text-gray-800">
-                                        ${order?.orderSummary.tax.toFixed(2)}
+                                        {formatPrice(order?.orderSummary.tax)}
                                     </span>
                                 </div>
                             )}
@@ -391,7 +390,7 @@ const OrderDetail = () => {
                                     Total Amount
                                 </span>
                                 <span className="text-lg font-bold text-gray-800">
-                                    ${(() => {
+                                    {(() => {
                                         // Recalculate total using actual shipping cost
                                         const subtotal = order?.orderSummary.subtotal || 0;
                                         const tax = order?.orderSummary.tax || 0;
@@ -404,7 +403,7 @@ const OrderDetail = () => {
                                             );
                                         }
                                         
-                                        return (subtotal + tax + actualShipping).toFixed(2);
+                                        return formatPrice(subtotal + tax + actualShipping);
                                     })()}
                                 </span>
                             </div>

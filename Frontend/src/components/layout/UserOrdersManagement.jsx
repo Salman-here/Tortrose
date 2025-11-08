@@ -17,6 +17,7 @@ import {
 import axios from 'axios';
 import Loader from '../common/Loader';
 import { Link } from 'react-router-dom';
+import { useCurrency } from '../../contexts/CurrencyContext';
 
 // Animation variants
 const containerVariants = {
@@ -65,6 +66,7 @@ const statusConfig = {
 
 
 const UserOrdersManagement = () => {
+    const { formatPrice } = useCurrency();
     const [orders, setOrders] = useState([]);
     const [selectedOrder, setSelectedOrder] = useState(null);
     const [searchTerm, setSearchTerm] = useState('');
@@ -116,12 +118,9 @@ const UserOrdersManagement = () => {
         return new Date(dateString).toLocaleDateString(undefined, options);
     };
 
-    // Format currency
+    // Format currency - now using currency context
     const formatCurrency = (amount) => {
-        return new Intl.NumberFormat('en-US', {
-            style: 'currency',
-            currency: 'USD',
-        }).format(amount);
+        return formatPrice(amount);
     };
 
     // Get status badge

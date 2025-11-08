@@ -3,8 +3,10 @@ import { motion } from 'framer-motion';
 import { Truck, Zap, Gift, Save, Loader2, Clock, DollarSign } from 'lucide-react';
 import axios from 'axios';
 import { toast } from 'react-toastify';
+import { useCurrency } from '../../contexts/CurrencyContext';
 
 export default function ShippingConfiguration() {
+  const { currency, convertPrice, convertToUSD, getCurrencySymbol } = useCurrency();
   const [methods, setMethods] = useState([
     { type: 'free', cost: 0, deliveryDays: 5, isActive: true },
     { type: 'standard', cost: 5.99, deliveryDays: 5, isActive: false },
@@ -224,24 +226,31 @@ export default function ShippingConfiguration() {
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     <div className="flex items-center gap-2">
                       <DollarSign className="w-4 h-4" />
-                      Shipping Cost
+                      Shipping Cost ({getCurrencySymbol()})
+                      <span className="text-xs text-gray-500">in {currency}</span>
                     </div>
                   </label>
                   <div className="relative">
-                    <DollarSign className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+                    <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500 font-medium">
+                      {getCurrencySymbol()}
+                    </span>
                     <input
                       type="number"
                       min="0"
                       step="0.01"
-                      value={method.cost}
-                      onChange={(e) => handleMethodChange(method.type, 'cost', parseFloat(e.target.value) || 0)}
+                      value={method.type === 'free' ? 0 : convertPrice(method.cost).toFixed(2)}
+                      onChange={(e) => {
+                        const costInCurrency = parseFloat(e.target.value) || 0;
+                        const costInUSD = convertToUSD(costInCurrency);
+                        handleMethodChange(method.type, 'cost', costInUSD);
+                      }}
                       disabled={!method.isActive || method.type === 'free'}
                       className="w-full border rounded-lg pl-9 pr-4 py-2 focus:border-blue-600 outline-none disabled:bg-gray-100 disabled:cursor-not-allowed"
                       placeholder="0.00"
                     />
                   </div>
                   {method.type === 'free' && (
-                    <p className="text-xs text-gray-500 mt-1">Free shipping must be $0.00</p>
+                    <p className="text-xs text-gray-500 mt-1">Free shipping must be {getCurrencySymbol()}0.00</p>
                   )}
                 </div>
 
@@ -269,7 +278,7 @@ export default function ShippingConfiguration() {
                   <div className="mt-4 p-3 bg-white rounded-lg border border-gray-200">
                     <p className="text-xs font-medium text-gray-700 mb-1">Preview:</p>
                     <p className="text-sm text-gray-900">
-                      ${method.cost.toFixed(2)} • {method.deliveryDays} {method.deliveryDays === 1 ? 'day' : 'days'}
+                      {getCurrencySymbol()}{convertPrice(method.cost).toFixed(2)} • {method.deliveryDays} {method.deliveryDays === 1 ? 'day' : 'days'}
                     </p>
                   </div>
                 )}

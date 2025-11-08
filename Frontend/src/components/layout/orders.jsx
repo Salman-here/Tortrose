@@ -12,9 +12,11 @@ import { toast } from 'react-toastify'
 import { Link } from 'react-router-dom';
 import Loader from '../common/Loader';
 import { useAuth } from '../../contexts/AuthContext';
+import { useCurrency } from '../../contexts/CurrencyContext';
 
 const OrderManagement = () => {
     const { currentUser } = useAuth();
+    const { formatPrice } = useCurrency();
 
     const fetchOrders = async () => {
 
@@ -114,6 +116,7 @@ const OrderManagement = () => {
                 getStatusColor={getStatusColor}
                 loading={loading}
                 currentUser={currentUser}
+                formatPrice={formatPrice}
             />
             {/* {selectedOrder ? (
                 <OrderDetail
@@ -143,7 +146,8 @@ const OrderList = ({
     getStatusIcon,
     getStatusColor,
     loading,
-    currentUser
+    currentUser,
+    formatPrice
 }) => {
     return (
         <motion.div
@@ -293,12 +297,12 @@ const OrderList = ({
                                         </span>
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                        ${(() => {
+                                        {(() => {
                                             // For sellers, backend already filtered the order summary
                                             // For admin, recalculate using actual shipping cost
                                             if (currentUser?.role === 'seller') {
                                                 // Use the already-filtered values from backend
-                                                return (order.orderSummary.totalAmount || order.orderSummary.subtotal || 0).toFixed(2);
+                                                return formatPrice(order.orderSummary.totalAmount || order.orderSummary.subtotal || 0);
                                             }
                                             
                                             // Admin: recalculate total using actual shipping cost
@@ -310,7 +314,7 @@ const OrderList = ({
                                                     sum + (sellerShip.shippingMethod.price || 0), 0
                                                 );
                                             }
-                                            return (subtotal + tax + actualShipping).toFixed(2);
+                                            return formatPrice(subtotal + tax + actualShipping);
                                         })()}
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
@@ -377,12 +381,12 @@ const OrderList = ({
                                     </span>
                                 </span>
                                 <span className="text-sm sm:text-base font-semibold text-gray-800">
-                                    ${(() => {
+                                    {(() => {
                                         // For sellers, backend already filtered the order summary
                                         // For admin, recalculate using actual shipping cost
                                         if (currentUser?.role === 'seller') {
                                             // Use the already-filtered values from backend
-                                            return (order.orderSummary.totalAmount || order.orderSummary.subtotal || 0).toFixed(2);
+                                            return formatPrice(order.orderSummary.totalAmount || order.orderSummary.subtotal || 0);
                                         }
                                         
                                         // Admin: recalculate total using actual shipping cost
@@ -394,7 +398,7 @@ const OrderList = ({
                                                 sum + (sellerShip.shippingMethod.price || 0), 0
                                             );
                                         }
-                                        return (subtotal + tax + actualShipping).toFixed(2);
+                                        return formatPrice(subtotal + tax + actualShipping);
                                     })()}
                                 </span>
                             </div>

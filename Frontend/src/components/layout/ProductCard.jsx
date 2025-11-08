@@ -1,8 +1,10 @@
 import React from "react";
 import { motion } from "framer-motion";
 import { Edit, Trash2 } from "lucide-react";
+import { useCurrency } from "../../contexts/CurrencyContext";
 
 const ProductCard = ({ product, index, onEditProduct, setDeleteConfirm }) => {
+    const { formatPrice } = useCurrency();
     return (
         <motion.div
             key={product._id}
@@ -40,15 +42,15 @@ const ProductCard = ({ product, index, onEditProduct, setDeleteConfirm }) => {
                     {product.discountedPrice > 0 ? (
                         <div className="flex items-center gap-2">
                             <span className="text-gray-400 line-through text-md">
-                                ${product.price.toFixed(2)}
+                                {formatPrice(product.price)}
                             </span>
                             <span className="text-red-600 font-semibold text-md">
-                                ${product.discountedPrice.toFixed(2)}
+                                {formatPrice(product.discountedPrice)}
                             </span>
                         </div>
                     ) : (
                         <span className="text-gray-900 font-semibold text-md">
-                            ${product.price.toFixed(2)}
+                            {formatPrice(product.price)}
                         </span>
                     )}
                 </div>

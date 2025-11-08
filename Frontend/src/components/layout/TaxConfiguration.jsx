@@ -3,8 +3,10 @@ import { motion } from 'framer-motion';
 import { DollarSign, Percent, Ban, Save, Loader2 } from 'lucide-react';
 import axios from 'axios';
 import { toast } from 'react-toastify';
+import { useCurrency } from '../../contexts/CurrencyContext';
 
 export default function TaxConfiguration() {
+  const { currency, convertPrice, convertToUSD, getCurrencySymbol } = useCurrency();
   const [taxType, setTaxType] = useState('none');
   const [taxValue, setTaxValue] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
@@ -192,18 +194,25 @@ export default function TaxConfiguration() {
                   className="mt-4"
                 >
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Tax Amount ($)
+                    Tax Amount ({getCurrencySymbol()})
+                    <span className="text-xs text-gray-500 ml-2">in {currency}</span>
                   </label>
                   <div className="relative">
-                    <DollarSign className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
+                    <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500 font-medium">
+                      {getCurrencySymbol()}
+                    </span>
                     <input
                       type="number"
                       min="0"
                       step="0.01"
-                      value={taxValue}
-                      onChange={(e) => setTaxValue(e.target.value)}
+                      value={convertPrice(taxValue).toFixed(2)}
+                      onChange={(e) => {
+                        const amountInCurrency = parseFloat(e.target.value) || 0;
+                        const amountInUSD = convertToUSD(amountInCurrency);
+                        setTaxValue(amountInUSD);
+                      }}
                       className="w-full border rounded-lg pl-10 pr-4 py-3 focus:border-blue-600 outline-none"
-                      placeholder="Enter amount"
+                      placeholder={`Enter amount in ${currency}`}
                     />
                   </div>
                 </motion.div>
@@ -238,22 +247,22 @@ export default function TaxConfiguration() {
             <p className="text-sm text-gray-600">
               {taxType === 'none' && 'No tax will be applied to orders.'}
               {taxType === 'percentage' && `${taxValue}% tax will be calculated on order subtotal.`}
-              {taxType === 'fixed' && `$${taxValue} tax will be added to all orders.`}
+              {taxType === 'fixed' && `${getCurrencySymbol()}${convertPrice(taxValue).toFixed(2)} tax will be added to all orders.`}
             </p>
             {taxType !== 'none' && (
               <div className="mt-3 text-sm text-gray-600">
-                <p className="font-medium">Example (Subtotal: $100.00):</p>
+                <p className="font-medium">Example (Subtotal: {getCurrencySymbol()}{convertPrice(100).toFixed(2)}):</p>
                 <p>
-                  Tax:{' '}
+                  Tax: {getCurrencySymbol()}
                   {taxType === 'percentage'
-                    ? `$${((100 * taxValue) / 100).toFixed(2)}`
-                    : `$${parseFloat(taxValue).toFixed(2)}`}
+                    ? `${convertPrice((100 * taxValue) / 100).toFixed(2)}`
+                    : `${convertPrice(taxValue).toFixed(2)}`}
                 </p>
                 <p className="font-semibold">
-                  Total:{' '}
+                  Total: {getCurrencySymbol()}
                   {taxType === 'percentage'
-                    ? `$${(100 + (100 * taxValue) / 100).toFixed(2)}`
-                    : `$${(100 + parseFloat(taxValue || 0)).toFixed(2)}`}
+                    ? `${convertPrice(100 + (100 * taxValue) / 100).toFixed(2)}`
+                    : `${convertPrice(100 + parseFloat(taxValue || 0)).toFixed(2)}`}
                 </p>
               </div>
             )}

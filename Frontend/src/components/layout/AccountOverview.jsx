@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import axios from 'axios';
 import { useAuth } from '../../contexts/AuthContext';
+import { useCurrency } from '../../contexts/CurrencyContext';
 import Loader from '../common/Loader';
 import { Link } from 'react-router-dom';
 
@@ -58,6 +59,7 @@ const AccountOverview = () => {
     const {
         currentUser
     } = useAuth()
+    const { formatPrice } = useCurrency()
     const [orders, setOrders] = useState([]);
     const [userData, setUserData] = useState(currentUser);
     const [recentOrders, setRecentOrders] = useState([]);
@@ -165,12 +167,9 @@ const AccountOverview = () => {
         }
     };
 
-    // Format currency
+    // Format currency - now using currency context
     const formatCurrency = (amount) => {
-        return new Intl.NumberFormat('en-US', {
-            style: 'currency',
-            currency: 'USD',
-        }).format(amount);
+        return formatPrice(amount);
     };
 
 

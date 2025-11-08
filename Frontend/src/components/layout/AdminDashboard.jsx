@@ -36,6 +36,7 @@ import { Link, Navigate, Outlet, useLocation } from 'react-router-dom';
 import OrderManagement from './orders';
 import StoreOverview from './StoreOverview';
 import ProductManagement from './ProductManagement';
+import { useCurrency } from '../../contexts/CurrencyContext';
 
 
 
@@ -486,6 +487,7 @@ const Sidebar = ({ activeTab, setActiveTab }) => {
 // import { X, Star } from "lucide-react";
 
 const ProductForm = ({ product, setProduct, onSave, onClose, uploadingImages }) => {
+    const { currency, convertPrice, convertToUSD, getCurrencySymbol } = useCurrency();
     const [newTag, setNewTag] = useState("");
     const [newImage, setNewImage] = useState("");
 
@@ -637,46 +639,62 @@ const ProductForm = ({ product, setProduct, onSave, onClose, uploadingImages }) 
 
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">
-                                Price ($) *
+                                Price ({getCurrencySymbol()}) *
+                                <span className="text-xs text-gray-500 ml-2">in {currency}</span>
                             </label>
-                            <input
-                                type="number"
-                                min="0"
-                                step="0.01"
-                                required
-                                disabled={uploadingImages}
-                                value={product.price}
-                                onChange={(e) =>
-                                    setProduct({
-                                        ...product,
-                                        price: parseFloat(e.target.value) || 0,
-                                    })
-                                }
-                                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
-                                placeholder="Enter price"
-                            />
+                            <div className="relative">
+                                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 font-medium">
+                                    {getCurrencySymbol()}
+                                </span>
+                                <input
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    required
+                                    disabled={uploadingImages}
+                                    value={convertPrice(product.price).toFixed(2)}
+                                    onChange={(e) => {
+                                        const priceInCurrency = parseFloat(e.target.value) || 0;
+                                        const priceInUSD = convertToUSD(priceInCurrency);
+                                        setProduct({
+                                            ...product,
+                                            price: priceInUSD,
+                                        });
+                                    }}
+                                    className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    placeholder={`Enter price in ${currency}`}
+                                />
+                            </div>
                         </div>
 
                         {/* Optional discounted price */}
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">
-                                Discounted Price ($)
+                                Discounted Price ({getCurrencySymbol()})
+                                <span className="text-xs text-gray-500 ml-2">in {currency}</span>
                             </label>
-                            <input
-                                type="number"
-                                min="0"
-                                step="0.01"
-                                disabled={uploadingImages}
-                                value={product.discountedPrice}
-                                onChange={(e) =>
-                                    setProduct({
-                                        ...product,
-                                        discountedPrice: parseFloat(e.target.value) || 0,
-                                    })
-                                }
-                                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
-                                placeholder="Enter discounted price (optional)"
-                            />
+                            <div className="relative">
+                                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 font-medium">
+                                    {getCurrencySymbol()}
+                                </span>
+                                <input
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    disabled={uploadingImages}
+                                    value={product.discountedPrice ? convertPrice(product.discountedPrice).toFixed(2) : ''}
+                                    onChange={(e) => {
+                                        const priceInCurrency = parseFloat(e.target.value) || 0;
+                                        const priceInUSD = convertToUSD(priceInCurrency);
+                                        setProduct({
+                                            ...product,
+                                            discountedPrice: priceInUSD,
+                                        });
+                                    }}
+                                    className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    placeholder={`Enter discounted price in ${currency} (optional)`}
+                                />
+                            </div>
                         </div>
                     </div>
 

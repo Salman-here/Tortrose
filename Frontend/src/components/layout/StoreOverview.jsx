@@ -2,10 +2,12 @@ import React from "react";
 import { motion } from "framer-motion";
 import { Package, TriangleAlert, AlertCircle, Star, DollarSign } from "lucide-react";
 import { useOutletContext } from "react-router-dom";
+import { useCurrency } from "../../contexts/CurrencyContext";
 
 
 
 const StoreOverview = () => {
+    const { formatPrice } = useCurrency();
     const {
         products,
         orders
@@ -38,7 +40,7 @@ const StoreOverview = () => {
         { label: 'Out of Stock', value: outOfStock, icon: <TriangleAlert size={24} />, color: 'red' },
         { label: 'Low Stock', value: `${lowStock}`, icon: <AlertCircle size={24} />, color: 'red' },
         { label: 'Featured Products', value: featuredProducts, icon: <Star size={24} />, color: 'yellow' },
-        { label: 'Total Revenue', value: `$${totalRevenue.toFixed(2)}`, icon: <DollarSign size={24} />, color: 'green' }
+        { label: 'Total Revenue', value: formatPrice(totalRevenue), icon: <DollarSign size={24} />, color: 'green' }
     ];
 
     return (
@@ -98,7 +100,7 @@ const StoreOverview = () => {
                                         />
                                         <div className="flex-1">
                                             <p className="font-medium text-gray-800">{product.name}</p>
-                                            <p className="text-sm text-gray-600">${product.price}</p>
+                                            <p className="text-sm text-gray-600">{formatPrice(product.price)}</p>
                                         </div>
                                         <div className={`px-2 py-1 rounded-full text-xs font-medium ${product.stock > 0 ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
                                             }`}>
