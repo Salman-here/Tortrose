@@ -392,12 +392,21 @@ export default function Checkout() {
         setIsProcessing(false);
         
         // Redirect to success page after a short delay
-        setTimeout(() => {
+        setTimeout(async () => {
           // Mark spin as used and clear cart AFTER redirect (so order summary doesn't update)
           const spinResult = JSON.parse(localStorage.getItem('spinResult') || '{}');
           spinResult.hasCheckedOut = true;
           localStorage.setItem('spinResult', JSON.stringify(spinResult));
           localStorage.removeItem('spinSelectedProducts');
+          
+          // If user is logged in, also mark as checked out in database
+          try {
+            await axios.patch(`${import.meta.env.VITE_API_URL}api/user/spin/checkout`, {}, {
+              headers: { Authorization: `Bearer ${token}` }
+            });
+          } catch (error) {
+            console.error('Error marking spin as checked out in database:', error);
+          }
           
           // Clear cart in background
           axios.delete(`${import.meta.env.VITE_API_URL}api/cart/clear`, {

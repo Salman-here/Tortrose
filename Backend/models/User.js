@@ -18,6 +18,16 @@ const userSchema = mongoose.Schema({
     resetPasswordTokenExpiry: { type: String },
     profilePicture: { type: String }, // For Google OAuth profile picture
     isVerified: { type: Boolean, default: false }, // For email verification
+    
+    // Spin wheel data
+    spinResult: {
+        label: { type: String },
+        value: { type: Number },
+        type: { type: String }, // 'percentage', 'fixed', 'free'
+        hasCheckedOut: { type: Boolean, default: false }
+    },
+    spinTimestamp: { type: Number }, // Timestamp when user spun
+    spinSelectedProducts: [{ type: String }] // Product IDs selected for spin discount
 })
 
 

@@ -75,8 +75,37 @@ function Products() {
     applySpinDiscount()
   }, [products, spinResult])
 
-  const checkActiveSpin = () => {
-    // Check localStorage for existing spin (works for all users)
+  const checkActiveSpin = async () => {
+    // If user is logged in, check database first
+    if (currentUser) {
+      try {
+        const token = localStorage.getItem('jwtToken');
+        const res = await axios.get(`${import.meta.env.VITE_API_URL}api/user/spin/get`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        
+        const { spinResult: dbSpinResult, spinTimestamp: dbSpinTimestamp, spinSelectedProducts: dbSpinProducts } = res.data.spinData;
+        
+        if (dbSpinResult && dbSpinTimestamp) {
+          const now = new Date().getTime();
+          const hoursPassed = (now - dbSpinTimestamp) / (1000 * 60 * 60);
+          
+          if (hoursPassed < 24) {
+            // Valid spin in database
+            setSpinResult(dbSpinResult);
+            // Sync to localStorage for consistency
+            localStorage.setItem('spinResult', JSON.stringify(dbSpinResult));
+            localStorage.setItem('spinTimestamp', dbSpinTimestamp.toString());
+            localStorage.setItem('spinSelectedProducts', JSON.stringify(dbSpinProducts || []));
+            return;
+          }
+        }
+      } catch (error) {
+        console.error('Error fetching spin data:', error);
+      }
+    }
+    
+    // For non-logged-in users or if no DB spin, check localStorage
     const storedSpin = localStorage.getItem('spinResult');
     const spinTimestamp = localStorage.getItem('spinTimestamp');
     
@@ -89,18 +118,39 @@ function Products() {
       if (hoursPassed < 24) {
         const spinData = JSON.parse(storedSpin);
         setSpinResult(spinData);
-        // Don't show spin wheel even if checked out (must wait 24 hours)
+        
+        // If user is logged in, save to database
+        if (currentUser) {
+          try {
+            const token = localStorage.getItem('jwtToken');
+            await axios.post(`${import.meta.env.VITE_API_URL}api/user/spin/save`, {
+              spinResult: spinData,
+              spinTimestamp: spinTime,
+              spinSelectedProducts: JSON.parse(localStorage.getItem('spinSelectedProducts') || '[]')
+            }, {
+              headers: { Authorization: `Bearer ${token}` }
+            });
+          } catch (error) {
+            console.error('Error saving spin to database:', error);
+          }
+        }
         return;
       } else {
-        // Clear expired spin (after 24 hours)
+        // Clear expired spin
         localStorage.removeItem('spinResult');
         localStorage.removeItem('spinTimestamp');
         localStorage.removeItem('spinSelectedProducts');
       }
     }
 
-    // Auto-show spin wheel if no active spin (user can close it)
-    setShowSpinWheel(true);
+    // Check if spinner was already shown in this session
+    const spinnerShownThisSession = sessionStorage.getItem('spinnerShown');
+    
+    // Auto-show spin wheel only if no active spin AND not shown in this session
+    if (!spinnerShownThisSession) {
+      setShowSpinWheel(true);
+      sessionStorage.setItem('spinnerShown', 'true');
+    }
   };
 
   const applySpinDiscount = () => {
@@ -131,11 +181,29 @@ function Products() {
     setDisplayProducts(discountedProducts);
   };
 
-  const handleSpinComplete = (result) => {
+  const handleSpinComplete = async (result) => {
+    const timestamp = new Date().getTime();
+    
     // Store in localStorage
     localStorage.setItem('spinResult', JSON.stringify(result));
-    localStorage.setItem('spinTimestamp', new Date().getTime().toString());
+    localStorage.setItem('spinTimestamp', timestamp.toString());
     localStorage.setItem('spinSelectedProducts', JSON.stringify([]));
+    
+    // If user is logged in, also save to database
+    if (currentUser) {
+      try {
+        const token = localStorage.getItem('jwtToken');
+        await axios.post(`${import.meta.env.VITE_API_URL}api/user/spin/save`, {
+          spinResult: result,
+          spinTimestamp: timestamp,
+          spinSelectedProducts: []
+        }, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+      } catch (error) {
+        console.error('Error saving spin to database:', error);
+      }
+    }
     
     // Update state immediately for dynamic update
     setSpinResult(result);

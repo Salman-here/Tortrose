@@ -1,6 +1,6 @@
 
 const express = require('express')
-const { getUsers, toggleBlockUser, toggleAdminUser, deleteUser, getSingle, updateUser } = require('../controllers/userController')
+const { getUsers, toggleBlockUser, toggleAdminUser, deleteUser, getSingle, updateUser, saveSpinResult, getSpinResult, updateSpinProducts, markSpinCheckedOut } = require('../controllers/userController')
 const verifyToken = require('../middleware/authMiddleware')
 const router = express.Router()
 
@@ -10,5 +10,11 @@ router.patch('/admin-toggle/:id' , verifyToken, toggleAdminUser)
 router.delete('/delete/:id' , verifyToken, deleteUser)
 router.get('/single' , verifyToken, getSingle)
 router.patch('/update' , verifyToken, updateUser)
+
+// Spin wheel routes
+router.post('/spin/save', verifyToken, saveSpinResult)
+router.get('/spin/get', verifyToken, getSpinResult)
+router.patch('/spin/products', verifyToken, updateSpinProducts)
+router.patch('/spin/checkout', verifyToken, markSpinCheckedOut)
 
 module.exports = router
