@@ -24,6 +24,7 @@ function Products() {
   const [displayProducts, setDisplayProducts] = useState([])
 
   const priceRangeRef = useRef(null)
+  const isInitialMount = useRef(true)
   const navigate = useNavigate()
   const location = useLocation()
   const { currentUser } = useAuth()
@@ -71,12 +72,15 @@ function Products() {
     checkActiveSpin()
   }, [])
   
-  // Re-check spin when user logs in
+  // Re-check spin when user logs in (skip initial mount)
   useEffect(() => {
+    if (isInitialMount.current) {
+      isInitialMount.current = false;
+      return;
+    }
+    
     if (currentUser) {
       console.log('👤 User logged in, re-checking spin status');
-      // Clear session flag when user logs in to re-check their account status
-      sessionStorage.removeItem('spinnerShown');
       checkActiveSpin()
     }
   }, [currentUser])
@@ -124,16 +128,54 @@ function Products() {
         }
         
         // If we reach here, user has no active spin in DB (or it expired)
-        // Clear localStorage to be safe
-        localStorage.removeItem('spinResult');
-        localStorage.removeItem('spinTimestamp');
-        localStorage.removeItem('spinSelectedProducts');
+        // But check localStorage first - user might have spun as guest
+        const storedSpin = localStorage.getItem('spinResult');
+        const storedTimestamp = localStorage.getItem('spinTimestamp');
+        
+        if (storedSpin && storedTimestamp) {
+          const now = new Date().getTime();
+          const spinTime = parseInt(storedTimestamp);
+          const hoursPassed = (now - spinTime) / (1000 * 60 * 60);
+          
+          if (hoursPassed < 24) {
+            // Valid guest spin in localStorage - save it to this account
+            console.log('💾 Found valid guest spin, saving to account');
+            const spinData = JSON.parse(storedSpin);
+            setSpinResult(spinData);
+            
+            try {
+              const token = localStorage.getItem('jwtToken');
+              await axios.post(`${import.meta.env.VITE_API_URL}api/user/spin/save`, {
+                spinResult: spinData,
+                spinTimestamp: spinTime,
+                spinSelectedProducts: JSON.parse(localStorage.getItem('spinSelectedProducts') || '[]')
+              }, {
+                headers: { Authorization: `Bearer ${token}` }
+              });
+              console.log('✅ Guest spin saved to account');
+            } catch (error) {
+              console.error('❌ Error saving guest spin to account:', error);
+            }
+            return; // Don't show spinner - user has active spin
+          } else {
+            // Expired guest spin - clear it
+            console.log('🗑️ Clearing expired guest spin');
+            localStorage.removeItem('spinResult');
+            localStorage.removeItem('spinTimestamp');
+            localStorage.removeItem('spinSelectedProducts');
+          }
+        } else {
+          // No localStorage data either - clear to be safe
+          localStorage.removeItem('spinResult');
+          localStorage.removeItem('spinTimestamp');
+          localStorage.removeItem('spinSelectedProducts');
+        }
       } catch (error) {
         console.error('❌ Error fetching spin data:', error);
       }
     }
     
-    // For non-logged-in users or if no DB spin, check localStorage
+    // For non-logged-in users, check localStorage
     const storedSpin = localStorage.getItem('spinResult');
     const spinTimestamp = localStorage.getItem('spinTimestamp');
     
