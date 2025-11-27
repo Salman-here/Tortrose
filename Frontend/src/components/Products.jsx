@@ -13,6 +13,7 @@ import SpinBanner from './common/SpinBanner'
 import { toast } from 'react-toastify'
 import { useAuth } from '../contexts/AuthContext'
 import CurrencySelector from './common/CurrencySelector'
+import { useCurrency } from '../contexts/CurrencyContext'
 
 
 function Products() {
@@ -29,6 +30,7 @@ function Products() {
   const navigate = useNavigate()
   const location = useLocation()
   const { currentUser } = useAuth()
+  const { formatPrice } = useCurrency()
 
   const {
     register,
@@ -299,7 +301,15 @@ function Products() {
     setSpinResult(result);
     setShowSpinWheel(false);
     
-    toast.success(`🎉 You won ${result.label}! Select up to 3 products now!`);
+    // Format the toast message with proper currency conversion
+    let prizeText = result.label;
+    if (result.type === 'fixed') {
+      prizeText = `All products ${formatPrice(result.value)}`;
+    } else if (result.type === 'free') {
+      prizeText = 'All products FREE';
+    }
+    
+    toast.success(`🎉 You won ${prizeText}! Select up to 3 products now!`);
   };
 
   useEffect(() => {

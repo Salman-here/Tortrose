@@ -1,7 +1,9 @@
 import { motion } from 'framer-motion';
 import { Users, Clock, Trophy, AlertCircle, Gift, Sparkles } from 'lucide-react';
+import { useCurrency } from '../../contexts/CurrencyContext';
 
 export default function SpinBanner({ spinResult, selectedCount = 0, onOpenSpinner }) {
+  const { formatPrice } = useCurrency();
   // Show "Spin to Win" banner if no spin result yet
   if (!spinResult) {
     return (
@@ -44,7 +46,7 @@ export default function SpinBanner({ spinResult, selectedCount = 0, onOpenSpinne
           <div className="flex items-start gap-2 text-xs sm:text-sm">
             <AlertCircle size={16} className="flex-shrink-0 mt-0.5" />
             <p className="break-words">
-              <strong>Limited Time Offer:</strong> Spin once every 24 hours for a chance to win amazing discounts! Prizes include FREE products, $0.99 deals, and up to 99% OFF!
+              <strong>Limited Time Offer:</strong> Spin once every 24 hours for a chance to win amazing discounts! Prizes include FREE products, {formatPrice(0.99)} deals, and up to 99% OFF!
             </p>
           </div>
         </motion.div>
@@ -56,7 +58,7 @@ export default function SpinBanner({ spinResult, selectedCount = 0, onOpenSpinne
     if (spinResult.type === 'free') {
       return 'FREE';
     } else if (spinResult.type === 'fixed') {
-      return `$${spinResult.value}`;
+      return formatPrice(spinResult.value);
     } else {
       return `${spinResult.value}% OFF`;
     }
@@ -150,7 +152,7 @@ export default function SpinBanner({ spinResult, selectedCount = 0, onOpenSpinne
               <ul className="space-y-1 text-white/90 text-xs break-words">
                 <li>• <strong>2,350 lucky winners</strong> will receive their orders at the exclusive discount price</li>
                 <li>• Come back in <strong>{timeRemaining}</strong> to spin again and win amazing prizes</li>
-                <li>• Next spin could win you <strong>ALL products at $0.00</strong> - 100% FREE!</li>
+                <li>• Next spin could win you <strong>ALL products at {formatPrice(0)}</strong> - 100% FREE!</li>
                 <li>• Check back regularly to see if you're one of the winners</li>
               </ul>
             </div>
