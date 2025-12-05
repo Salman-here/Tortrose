@@ -19,6 +19,15 @@ const userSchema = mongoose.Schema({
     profilePicture: { type: String }, // For Google OAuth profile picture
     isVerified: { type: Boolean, default: false }, // For email verification
     
+    // Seller information
+    sellerInfo: {
+        phoneNumber: { type: String },
+        address: { type: String },
+        city: { type: String },
+        country: { type: String },
+        businessName: { type: String }
+    },
+    
     // Spin wheel data
     spinResult: {
         label: { type: String },

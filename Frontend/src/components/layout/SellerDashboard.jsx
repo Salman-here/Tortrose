@@ -68,10 +68,12 @@ const SellerDashboard = () => {
                     Authorization: `Bearer ${token}`
                 }
             });
+            console.log('📦 Seller Products:', res.data.products);
             setProducts(res.data.products);
         } catch (err) {
             console.log(err);
             toast.error(err.response?.data?.msg || 'Failed to fetch products');
+            setProducts([]); // Set empty array on error
         } finally {
             setLoading(false);
         }
@@ -211,9 +213,11 @@ const SellerDashboard = () => {
             const res = await axios.get(`${import.meta.env.VITE_API_URL}api/order/get?${query}`,
                 { headers: { Authorization: `Bearer ${token}` } }
             );
+            console.log('📋 Seller Orders:', res.data?.orders || []);
             setOrders(res.data?.orders || []);
         } catch (error) {
             console.error(error);
+            setOrders([]); // Set empty array on error
         }
     };
 

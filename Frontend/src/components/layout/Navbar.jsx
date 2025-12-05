@@ -61,49 +61,10 @@ function Navbar() {
                 </Link>
             </div>
 
-            {/* Center: Admin Dashboard + Dropdown (only if logged in) */}
+            {/* Center: User Dropdown (only if logged in) */}
             <div className="flex justify-center">
                 {currentUser && (
-
-                    <div className="flex gap-2 sm:gap-3 md:gap-4 items-center">
-                        {
-                            currentUser.role == 'admin' && (
-                                <Link to={'/admin-dashboard/store-overview'}>
-                                    <motion.button
-
-                                        initial={{ scale: 1 }}
-                                        whileHover={{ scale: 1.05 }}
-                                        whileTap={{ scale: 0.9 }}
-                                        transition={{ duration: 0.3 }}
-                                        className="rounded bg-sky-800 px-2 py-1.5 sm:px-3 sm:py-2 font-semibold cursor-pointer text-xs sm:text-sm md:text-base"
-                                    >
-                                        <span className="hidden sm:inline">Admin Dashboard</span>
-                                        <span className="sm:hidden">Admin</span>
-                                    </motion.button>
-                                </Link>
-
-                            )
-                        }
-                        {
-                            currentUser.role == 'seller' && (
-                                <Link to={'/seller-dashboard/store-overview'}>
-                                    <motion.button
-
-                                        initial={{ scale: 1 }}
-                                        whileHover={{ scale: 1.05 }}
-                                        whileTap={{ scale: 0.9 }}
-                                        transition={{ duration: 0.3 }}
-                                        className="rounded bg-green-700 px-2 py-1.5 sm:px-3 sm:py-2 font-semibold cursor-pointer text-xs sm:text-sm md:text-base"
-                                    >
-                                        <span className="hidden sm:inline">Seller Dashboard</span>
-                                        <span className="sm:hidden">Seller</span>
-                                    </motion.button>
-                                </Link>
-
-                            )
-                        }
-                        <NavDropdown />
-                    </div>
+                    <NavDropdown />
                 )}
             </div>
 

@@ -229,11 +229,10 @@ exports.markSpinCheckedOut = async (req, res) => {
     }
 }
 
-// Become a seller - create store and update user role
+// Become a seller - update user role and save seller information
 exports.becomeSeller = async (req, res) => {
     const { id: _id } = req.user
-    const { storeName, description } = req.body
-    const Store = require('../models/Store')
+    const { phoneNumber, address, city, country, businessName } = req.body
 
     try {
         // Check if user exists
@@ -245,90 +244,49 @@ exports.becomeSeller = async (req, res) => {
             return res.status(400).json({ message: 'You are already a seller or admin' })
         }
 
-        // Check if user already has a store
-        const existingStore = await Store.findOne({ seller: _id })
-        if (existingStore) {
-            return res.status(400).json({ message: 'You already have a store' })
+        // Validate required fields
+        if (!phoneNumber || phoneNumber.trim().length < 10) {
+            return res.status(400).json({ message: 'Please provide a valid phone number (at least 10 digits)' })
+        }
+        if (!address || address.trim().length < 5) {
+            return res.status(400).json({ message: 'Please provide a valid address' })
+        }
+        if (!city || city.trim().length < 2) {
+            return res.status(400).json({ message: 'Please provide your city' })
+        }
+        if (!country || country.trim().length < 2) {
+            return res.status(400).json({ message: 'Please provide your country' })
         }
 
-        // Validate store name
-        if (!storeName || storeName.trim().length < 3) {
-            return res.status(400).json({ message: 'Store name must be at least 3 characters' })
-        }
-
-        // Check if store name already exists (case-insensitive)
-        const storeNameExists = await Store.findOne({ 
-            storeName: { $regex: new RegExp(`^${storeName.trim()}$`, 'i') }
-        })
-        if (storeNameExists) {
-            return res.status(400).json({ message: 'Store name already exists. Please choose another name.' })
-        }
-
-        // Generate unique slug
-        let storeSlug = storeName
-            .toLowerCase()
-            .trim()
-            .replace(/[^\w\s-]/g, '')
-            .replace(/\s+/g, '-')
-            .replace(/-+/g, '-')
-
-        // Ensure slug is unique
-        let slugExists = await Store.findOne({ storeSlug })
-        let counter = 1
-        while (slugExists) {
-            storeSlug = `${storeName.toLowerCase().replace(/[^\w\s-]/g, '').replace(/\s+/g, '-')}-${counter}`
-            slugExists = await Store.findOne({ storeSlug })
-            counter++
-        }
-
-        // Handle file uploads (logo and banner)
-        let logoUrl = ''
-        let bannerUrl = ''
-
-        if (req.files) {
-            const cloudinary = require('../utils/cloudinary')
-            
-            if (req.files.logo) {
-                const logoResult = await cloudinary.uploader.upload(req.files.logo[0].path, {
-                    folder: 'stores/logos',
-                    transformation: [{ width: 400, height: 400, crop: 'fill' }]
-                })
-                logoUrl = logoResult.secure_url
-            }
-
-            if (req.files.banner) {
-                const bannerResult = await cloudinary.uploader.upload(req.files.banner[0].path, {
-                    folder: 'stores/banners',
-                    transformation: [{ width: 1200, height: 400, crop: 'fill' }]
-                })
-                bannerUrl = bannerResult.secure_url
-            }
-        }
-
-        // Create the store
-        const newStore = new Store({
-            seller: _id,
-            storeName: storeName.trim(),
-            storeSlug,
-            description: description?.trim() || '',
-            logo: logoUrl,
-            banner: bannerUrl
-        })
-
-        await newStore.save()
-
-        // Update user role to seller
+        // Update user role to seller and save seller information
         user.role = 'seller'
+        user.sellerInfo = {
+            phoneNumber: phoneNumber.trim(),
+            address: address.trim(),
+            city: city.trim(),
+            country: country.trim(),
+            businessName: businessName?.trim() || ''
+        }
+        
         await user.save()
 
-        res.status(201).json({ 
+        // Generate new JWT token with updated role
+        const jwt = require('jsonwebtoken')
+        const token = jwt.sign(
+            { id: user._id, role: user.role },
+            process.env.JWT_SECRET,
+            { expiresIn: '7d' }
+        )
+
+        res.status(200).json({ 
             message: 'Congratulations! You are now a seller',
-            store: newStore,
+            token: token, // New token with seller role
             user: {
                 id: user._id,
                 username: user.username,
                 email: user.email,
-                role: user.role
+                role: user.role,
+                sellerInfo: user.sellerInfo
             }
         })
     } catch (error) {

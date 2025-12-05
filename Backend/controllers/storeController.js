@@ -26,7 +26,7 @@ const generateUniqueSlug = async (storeName) => {
 // Create a new store
 exports.createStore = async (req, res) => {
     try {
-        const { storeName, description, logo, banner, socialLinks } = req.body;
+        const { storeName, description, logo, banner, socialLinks, address } = req.body;
         const sellerId = req.user.id;
 
         // Check if seller already has a store
@@ -63,7 +63,14 @@ exports.createStore = async (req, res) => {
             description: description || '',
             logo: logo || '',
             banner: banner || '',
-            socialLinks: socialLinks || {}
+            socialLinks: socialLinks || {},
+            address: address || {
+                street: '',
+                city: '',
+                state: '',
+                country: '',
+                postalCode: ''
+            }
         });
 
         await newStore.save();
@@ -115,7 +122,7 @@ exports.getMyStore = async (req, res) => {
 // Update store
 exports.updateStore = async (req, res) => {
     try {
-        const { storeName, description, logo, banner, socialLinks } = req.body;
+        const { storeName, description, logo, banner, socialLinks, address } = req.body;
         const sellerId = req.user.id;
 
         // Find seller's store
@@ -168,6 +175,18 @@ exports.updateStore = async (req, res) => {
                 tiktok: socialLinks.tiktok || ''
             };
             store.markModified('socialLinks'); // Mark nested object as modified
+        }
+
+        if (address !== undefined) {
+            console.log('Updating address:', address);
+            store.address = {
+                street: address.street || '',
+                city: address.city || '',
+                state: address.state || '',
+                country: address.country || '',
+                postalCode: address.postalCode || ''
+            };
+            store.markModified('address'); // Mark nested object as modified
         }
 
         await store.save();
@@ -496,8 +515,27 @@ exports.getStoreAnalytics = async (req, res) => {
 // Apply for store verification (seller only)
 exports.applyForVerification = async (req, res) => {
     try {
-        const { applicationMessage } = req.body;
+        const { applicationMessage, contactEmail, contactPhone } = req.body;
         const sellerId = req.user.id;
+
+        // Validate required fields
+        if (!applicationMessage || !applicationMessage.trim()) {
+            return res.status(400).json({ msg: 'Application message is required' });
+        }
+
+        if (!contactEmail || !contactEmail.trim()) {
+            return res.status(400).json({ msg: 'Contact email is required' });
+        }
+
+        if (!contactPhone || !contactPhone.trim()) {
+            return res.status(400).json({ msg: 'Contact phone number is required' });
+        }
+
+        // Basic email validation
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(contactEmail)) {
+            return res.status(400).json({ msg: 'Please provide a valid email address' });
+        }
 
         const store = await Store.findOne({ seller: sellerId });
 
@@ -515,6 +553,8 @@ exports.applyForVerification = async (req, res) => {
 
         store.verification.status = 'pending';
         store.verification.appliedAt = new Date();
+        store.verification.contactEmail = contactEmail.trim();
+        store.verification.contactPhone = contactPhone.trim();
         store.verification.applicationMessage = applicationMessage || '';
         store.verification.rejectionReason = '';
 

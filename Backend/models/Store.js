@@ -23,6 +23,28 @@ const storeSchema = new mongoose.Schema({
     maxlength: [500, 'Description cannot exceed 500 characters'],
     default: ''
   },
+  address: {
+    street: {
+      type: String,
+      default: ''
+    },
+    city: {
+      type: String,
+      default: ''
+    },
+    state: {
+      type: String,
+      default: ''
+    },
+    country: {
+      type: String,
+      default: ''
+    },
+    postalCode: {
+      type: String,
+      default: ''
+    }
+  },
   logo: {
     type: String, // Cloudinary URL
     default: ''
@@ -91,6 +113,14 @@ const storeSchema = new mongoose.Schema({
       ref: 'User'
     },
     applicationMessage: {
+      type: String,
+      default: ''
+    },
+    contactEmail: {
+      type: String,
+      default: ''
+    },
+    contactPhone: {
       type: String,
       default: ''
     },

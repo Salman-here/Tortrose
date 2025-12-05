@@ -264,6 +264,34 @@ const StorePage = () => {
                                         {store.description}
                                     </motion.p>
                                 )}
+                                
+                                {/* Store Address */}
+                                {store?.address && (store.address.street || store.address.city || store.address.country) && (
+                                    <motion.div 
+                                        className="mb-4 p-3 bg-gray-50 rounded-lg border border-gray-200"
+                                        initial={{ opacity: 0 }}
+                                        animate={{ opacity: 1 }}
+                                        transition={{ duration: 0.4, delay: 0.45 }}
+                                    >
+                                        <div className="flex items-start gap-2 text-sm text-gray-700">
+                                            <svg className="w-5 h-5 text-gray-500 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                                            </svg>
+                                            <div>
+                                                <p className="font-medium text-gray-800 mb-1">Store Location</p>
+                                                {store.address.street && <p>{store.address.street}</p>}
+                                                <p>
+                                                    {[store.address.city, store.address.state, store.address.postalCode]
+                                                        .filter(Boolean)
+                                                        .join(', ')}
+                                                </p>
+                                                {store.address.country && <p>{store.address.country}</p>}
+                                            </div>
+                                        </div>
+                                    </motion.div>
+                                )}
+                                
                                 <motion.div 
                                     className="flex flex-wrap gap-4 text-sm"
                                     initial={{ opacity: 0 }}

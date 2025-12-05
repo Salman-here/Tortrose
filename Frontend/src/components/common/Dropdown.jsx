@@ -23,9 +23,34 @@ const NavDropdown = () => {
     const navigate = useNavigate()
     
     // Build menu items based on user role
-    const menuItems = [
-        { label: "Your Dashboard", icon: <LayoutDashboard size={20} />, onClick: () => navigate('/user-dashboard/account-overview') },
-    ];
+    const menuItems = [];
+    
+    // Add Admin Dashboard for admins
+    if (currentUser?.role === 'admin') {
+        menuItems.push({ 
+            label: "Admin Dashboard", 
+            icon: <Crown size={20} className="text-blue-500" />, 
+            onClick: () => navigate('/admin-dashboard/store-overview'),
+            highlight: true
+        });
+    }
+    
+    // Add Seller Dashboard for sellers
+    if (currentUser?.role === 'seller') {
+        menuItems.push({ 
+            label: "Seller Dashboard", 
+            icon: <Store size={20} className="text-green-500" />, 
+            onClick: () => navigate('/seller-dashboard/store-overview'),
+            highlight: true
+        });
+    }
+    
+    // Add User Dashboard for everyone
+    menuItems.push({ 
+        label: "Your Dashboard", 
+        icon: <LayoutDashboard size={20} />, 
+        onClick: () => navigate('/user-dashboard/account-overview') 
+    });
     
     // Add "Become a Seller" option only for regular users (not sellers or admins)
     if (currentUser?.role === 'user') {
@@ -85,7 +110,11 @@ const NavDropdown = () => {
                                 <button
                                     key={index}
                                     onClick={item.onClick}
-                                    className="w-full text-left px-4 py-2 text-gray-700 hover:bg-gray-100 flex items-center gap-2 transition-colors"
+                                    className={`w-full text-left px-4 py-2 flex items-center gap-2 transition-colors ${
+                                        item.highlight 
+                                            ? 'bg-gradient-to-r from-blue-50 to-purple-50 text-gray-800 hover:from-blue-100 hover:to-purple-100 font-semibold' 
+                                            : 'text-gray-700 hover:bg-gray-100'
+                                    }`}
                                 >
                                     {item.icon} {item.label}
                                 </button>

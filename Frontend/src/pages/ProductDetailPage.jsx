@@ -33,8 +33,8 @@ function ProductDetailPage() {
     const [storeData, setStoreData] = useState(null);
     const commentRef = useRef();
 
-    const isInWishlist = wishlistItems?.some((item) => item._id === product._id);
-    const isInCart = cartItems?.cart?.some((item) => item.product._id === product._id);
+    const isInWishlist = product && wishlistItems?.some((item) => item._id === product._id);
+    const isInCart = product && cartItems?.cart?.some((item) => item.product?._id === product._id);
     
     // Get spin discount from localStorage
     const getSpinDiscount = () => {

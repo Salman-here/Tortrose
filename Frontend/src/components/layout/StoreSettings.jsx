@@ -42,6 +42,13 @@ const StoreSettings = () => {
         logo: '',
         banner: '',
         storeSlug: '',
+        address: {
+            street: '',
+            city: '',
+            state: '',
+            country: '',
+            postalCode: ''
+        },
         socialLinks: {
             website: '',
             facebook: '',
@@ -68,6 +75,8 @@ const StoreSettings = () => {
 
     const [showVerificationModal, setShowVerificationModal] = useState(false);
     const [applicationMessage, setApplicationMessage] = useState('');
+    const [contactEmail, setContactEmail] = useState('');
+    const [contactPhone, setContactPhone] = useState('');
     const [applyingVerification, setApplyingVerification] = useState(false);
 
     useEffect(() => {
@@ -96,12 +105,24 @@ const StoreSettings = () => {
             console.log('Fetched store data:', res.data.store);
             console.log('Social links from backend:', res.data.store.socialLinks);
 
+            const defaultAddress = {
+                street: '',
+                city: '',
+                state: '',
+                country: '',
+                postalCode: ''
+            };
+
             setStoreData({
                 storeName: res.data.store.storeName,
                 description: res.data.store.description,
                 logo: res.data.store.logo,
                 banner: res.data.store.banner,
                 storeSlug: res.data.store.storeSlug,
+                address: {
+                    ...defaultAddress,
+                    ...(res.data.store.address || {})
+                },
                 socialLinks: {
                     ...defaultSocialLinks,
                     ...(res.data.store.socialLinks || {})
@@ -149,17 +170,40 @@ const StoreSettings = () => {
             return;
         }
 
+        if (!contactEmail.trim()) {
+            toast.error('Please provide your contact email');
+            return;
+        }
+
+        if (!contactPhone.trim()) {
+            toast.error('Please provide your contact phone number');
+            return;
+        }
+
+        // Basic email validation
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(contactEmail)) {
+            toast.error('Please provide a valid email address');
+            return;
+        }
+
         try {
             setApplyingVerification(true);
             const token = localStorage.getItem('jwtToken');
             await axios.post(
                 `${import.meta.env.VITE_API_URL}api/stores/verification/apply`,
-                { applicationMessage },
+                { 
+                    applicationMessage,
+                    contactEmail: contactEmail.trim(),
+                    contactPhone: contactPhone.trim()
+                },
                 { headers: { Authorization: `Bearer ${token}` } }
             );
             toast.success('Verification application submitted successfully!');
             setShowVerificationModal(false);
             setApplicationMessage('');
+            setContactEmail('');
+            setContactPhone('');
             fetchVerificationStatus();
         } catch (error) {
             toast.error(error.response?.data?.msg || 'Failed to submit verification application');
@@ -186,6 +230,16 @@ const StoreSettings = () => {
             console.log('Updated storeData:', updated);
             return updated;
         });
+    };
+
+    const handleAddressChange = (field, value) => {
+        setStoreData(prev => ({
+            ...prev,
+            address: {
+                ...prev.address,
+                [field]: value
+            }
+        }));
     };
 
     const handleLogoUpload = async (e) => {
@@ -447,6 +501,86 @@ const StoreSettings = () => {
                         <p className="text-xs text-gray-500 mt-1">
                             {storeData.description.length}/500 characters
                         </p>
+                    </div>
+
+                    {/* Store Address Section */}
+                    <div className="border-t pt-6">
+                        <h3 className="text-lg font-semibold text-gray-800 mb-4">Store Address (Optional)</h3>
+                        <p className="text-sm text-gray-600 mb-4">Add your store's physical address to display on your store page</p>
+                        
+                        <div className="space-y-4">
+                            {/* Street Address */}
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                    Street Address
+                                </label>
+                                <input
+                                    type="text"
+                                    value={storeData.address.street}
+                                    onChange={(e) => handleAddressChange('street', e.target.value)}
+                                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                                    placeholder="123 Main Street"
+                                />
+                            </div>
+
+                            {/* City and State */}
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                                        City
+                                    </label>
+                                    <input
+                                        type="text"
+                                        value={storeData.address.city}
+                                        onChange={(e) => handleAddressChange('city', e.target.value)}
+                                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                                        placeholder="New York"
+                                    />
+                                </div>
+
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                                        State/Province
+                                    </label>
+                                    <input
+                                        type="text"
+                                        value={storeData.address.state}
+                                        onChange={(e) => handleAddressChange('state', e.target.value)}
+                                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                                        placeholder="NY"
+                                    />
+                                </div>
+                            </div>
+
+                            {/* Country and Postal Code */}
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                                        Country
+                                    </label>
+                                    <input
+                                        type="text"
+                                        value={storeData.address.country}
+                                        onChange={(e) => handleAddressChange('country', e.target.value)}
+                                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                                        placeholder="United States"
+                                    />
+                                </div>
+
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                                        Postal Code
+                                    </label>
+                                    <input
+                                        type="text"
+                                        value={storeData.address.postalCode}
+                                        onChange={(e) => handleAddressChange('postalCode', e.target.value)}
+                                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                                        placeholder="10001"
+                                    />
+                                </div>
+                            </div>
+                        </div>
                     </div>
 
                     {/* Logo Upload */}
@@ -738,22 +872,62 @@ const StoreSettings = () => {
                         <p className="text-gray-600 text-sm mb-4">
                             Tell us why your store should be verified. Verified stores get a badge that builds trust with customers.
                         </p>
-                        <textarea
-                            value={applicationMessage}
-                            onChange={(e) => setApplicationMessage(e.target.value)}
-                            rows={5}
-                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 mb-4"
-                            placeholder="Explain why your store should be verified (e.g., established business, quality products, good customer service, etc.)"
-                            maxLength={500}
-                        />
-                        <p className="text-xs text-gray-500 mb-4">
-                            {applicationMessage.length}/500 characters
-                        </p>
+                        
+                        {/* Contact Email */}
+                        <div className="mb-4">
+                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                                Contact Email <span className="text-red-500">*</span>
+                            </label>
+                            <input
+                                type="email"
+                                value={contactEmail}
+                                onChange={(e) => setContactEmail(e.target.value)}
+                                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                placeholder="your@email.com"
+                                required
+                            />
+                        </div>
+
+                        {/* Contact Phone */}
+                        <div className="mb-4">
+                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                                Contact Phone <span className="text-red-500">*</span>
+                            </label>
+                            <input
+                                type="tel"
+                                value={contactPhone}
+                                onChange={(e) => setContactPhone(e.target.value)}
+                                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                placeholder="+1 234 567 8900"
+                                required
+                            />
+                        </div>
+
+                        {/* Application Message */}
+                        <div className="mb-4">
+                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                                Application Message <span className="text-red-500">*</span>
+                            </label>
+                            <textarea
+                                value={applicationMessage}
+                                onChange={(e) => setApplicationMessage(e.target.value)}
+                                rows={4}
+                                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                placeholder="Explain why your store should be verified (e.g., established business, quality products, good customer service, etc.)"
+                                maxLength={500}
+                                required
+                            />
+                            <p className="text-xs text-gray-500 mt-1">
+                                {applicationMessage.length}/500 characters
+                            </p>
+                        </div>
                         <div className="flex gap-4">
                             <button
                                 onClick={() => {
                                     setShowVerificationModal(false);
                                     setApplicationMessage('');
+                                    setContactEmail('');
+                                    setContactPhone('');
                                 }}
                                 className="flex-1 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
                                 disabled={applyingVerification}
@@ -762,7 +936,7 @@ const StoreSettings = () => {
                             </button>
                             <button
                                 onClick={handleApplyVerification}
-                                disabled={applyingVerification || !applicationMessage.trim()}
+                                disabled={applyingVerification || !applicationMessage.trim() || !contactEmail.trim() || !contactPhone.trim()}
                                 className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                             >
                                 {applyingVerification ? (

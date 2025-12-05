@@ -43,6 +43,8 @@ const StoreOverview = () => {
         return formatPrice(usdAmount);
     };
 
+    console.log('📊 StoreOverview - Products:', products.length, 'Orders:', orders.length);
+    
     const totalProducts = products.length;
     const outOfStock = products.filter(p => p.stock === 0).length;
     const lowStock = products.filter(p => p.stock <= 10 && p.stock !== 0).length;
@@ -53,6 +55,8 @@ const StoreOverview = () => {
         }
         return sum + 0
     }, 0);
+    
+    console.log('💰 Total Revenue:', totalRevenue);
 
 
     const stats = [
