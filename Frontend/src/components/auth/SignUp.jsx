@@ -106,7 +106,7 @@ const GlassSignUpPage = () => {
               {step === 1 ? 'Create Account' : 'Verify Email'}
             </h2>
             <p className="text-gray-600">
-              {step === 1 ? 'Join our community today' : 'Ener the OTP sent to your email'}
+              {step === 1 ? 'Join our community today' : 'Enter the OTP sent to your email'}
             </p>
           </div>
           
