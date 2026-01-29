@@ -25,7 +25,17 @@ export default function Success() {
     const fetchSession = async (sessionId) => {
         try {
             const res = await axios.get(`${import.meta.env.VITE_API_URL}api/session/${sessionId}`);
-            setSession(res.data?.session);
+            const sessionData = res.data?.session;
+            setSession(sessionData);
+            
+            // Track purchase with GSM
+            if (sessionData && window.GSM) {
+                window.GSM.trackPurchase({
+                    orderId: sessionData.metadata?.orderId || sessionData.id,
+                    amount: sessionData.amount_total / 100,
+                    customerEmail: sessionData.customer_details?.email
+                });
+            }
         } catch (error) {
             console.error(error);
             toast.error(error.response?.data?.msg)

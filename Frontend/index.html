@@ -33,78 +33,95 @@
      <!-- <script>(function(s){s.dataset.zone='10125635',s.src='https://al5sm.com/tag.min.js'})([document.documentElement, document.body].filter(Boolean).pop().appendChild(document.createElement('script')))</script> -->
 
 
-     <!-- GSM Cashback Tracking -->
+     
+
+
+     <!-- GSM Cashback Tracking Script -->
 <script>
 (function() {
-  var config = {
-    brandId: '697b284bbef9e1868b1ee927',
-    apiUrl: 'http://localhost:3000'
-  };
-
-  function captureTracking() {
-    var urlParams = new URLSearchParams(window.location.search);
-    var trackingCode = urlParams.get('gsm_tracking');
-    if (trackingCode) {
-      var trackingData = {
-        code: trackingCode,
-        timestamp: Date.now(),
-        expiresAt: Date.now() + (7 * 24 * 60 * 60 * 1000)
-      };
-      localStorage.setItem('gsm_tracking', JSON.stringify(trackingData));
-      console.log('[GSM] Tracking captured:', trackingCode);
-    }
-  }
-
-  function getTrackingCode() {
-    try {
-      var data = localStorage.getItem('gsm_tracking');
-      if (!data) return null;
-      var tracking = JSON.parse(data);
-      if (Date.now() > tracking.expiresAt) {
-        localStorage.removeItem('gsm_tracking');
-        return null;
-      }
-      return tracking.code;
-    } catch (e) {
-      return null;
-    }
-  }
-
   window.GSM = {
-    trackPurchase: function(orderData) {
-      var trackingCode = getTrackingCode();
-      if (!trackingCode) {
-        console.log('[GSM] No tracking code');
-        return;
+    brandId: '697b284bbef9e1868b1ee927',
+    apiUrl: 'http://localhost:3000',
+    
+    init: function() {
+      var urlParams = new URLSearchParams(window.location.search);
+      var trackingCode = urlParams.get('gsm_tracking');
+      
+      if (trackingCode) {
+        localStorage.setItem('gsm_tracking_code', trackingCode);
+        localStorage.setItem('gsm_tracking_expires', Date.now() + 7*24*60*60*1000);
+        console.log('✅ GSM tracking code captured:', trackingCode);
       }
-      fetch(config.apiUrl + '/purchases', {
+    },
+    
+    trackPurchase: function(data) {
+      var trackingCode = localStorage.getItem('gsm_tracking_code');
+      var expires = localStorage.getItem('gsm_tracking_expires');
+      
+      if (!trackingCode) {
+        console.log('❌ No GSM tracking code found');
+        return Promise.resolve({ success: false, message: 'No tracking code' });
+      }
+      
+      if (Date.now() > parseInt(expires)) {
+        console.log('❌ GSM tracking code expired');
+        localStorage.removeItem('gsm_tracking_code');
+        localStorage.removeItem('gsm_tracking_expires');
+        return Promise.resolve({ success: false, message: 'Tracking code expired' });
+      }
+      
+      console.log('📤 Sending purchase to GSM:', {
+        orderId: data.orderId,
+        amount: data.amount,
+        trackingCode: trackingCode
+      });
+      
+      return fetch(this.apiUrl + '/purchases/webhook/purchase', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer ' + localStorage.getItem('token')
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          productId: orderData.productId,
-          amount: orderData.amount,
-          orderId: orderData.orderId,
-          trackingCode: trackingCode
+          trackingCode: trackingCode,
+          orderId: data.orderId,
+          amount: data.amount,
+          currency: data.currency || 'USD',
+          customerEmail: data.customerEmail || '',
+          purchaseDate: new Date().toISOString(),
+          status: 'completed'
         })
-      }).then(function(res) {
-        if (res.ok) {
-          console.log('[GSM] Purchase tracked');
-          localStorage.removeItem('gsm_tracking');
+      })
+      .then(function(response) { return response.json(); })
+      .then(function(result) {
+        if (result.success) {
+          console.log('✅ Purchase tracked successfully!', result);
+          console.log('💰 Tokens earned:', result.tokensEarned);
+          localStorage.removeItem('gsm_tracking_code');
+          localStorage.removeItem('gsm_tracking_expires');
+        } else {
+          console.error('❌ Failed to track purchase:', result);
         }
-      }).catch(function(err) {
-        console.error('[GSM] Error:', err);
+        return result;
+      })
+      .catch(function(err) {
+        console.error('❌ Error tracking purchase:', err);
+        return { success: false, error: err.message };
       });
     }
   };
-
-  captureTracking();
-  console.log('[GSM] Initialized for brand:', config.brandId);
+  
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function() {
+      window.GSM.init();
+    });
+  } else {
+    window.GSM.init();
+  }
 })();
 </script>
-     
+
+
+
+
+
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="preconnect" href="https://fonts.googleapis.com">
