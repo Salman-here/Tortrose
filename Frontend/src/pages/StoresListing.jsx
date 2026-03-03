@@ -104,9 +104,10 @@ const StoresListing = () => {
                     transition={{ duration: 0.5, delay: 0.2 }}
                 >
                     <div className="grid gap-3" style={{ gridTemplateColumns: '1fr 180px' }}>
-                        <div className="relative">
-                            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none"
-                                    size={17} style={{ color: 'hsl(var(--muted-foreground))' }} />
+                        <div className="search-input-wrapper">
+                            <div className="search-input-icon" style={{ left: '0.875rem', top: '50%', transform: 'translateY(-50%)' }}>
+                                <Search size={17} />
+                            </div>
                             <input
                                 type="text"
                                 value={searchQuery}

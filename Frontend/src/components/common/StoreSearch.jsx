@@ -54,12 +54,12 @@ const StoreSearch = () => {
 
     return (
         <div ref={searchRef} className="relative w-full max-w-md">
-            <div className="relative">
+            <div className="search-input-wrapper">
                 <input type="text" value={query} onChange={(e) => setQuery(e.target.value)}
                     onKeyDown={handleKeyDown} onFocus={() => query.trim().length > 0 && setIsOpen(true)}
                     placeholder="Search for stores..."
                     className="glass-input glass-input-search" />
-                <div className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                <div className="search-input-icon" style={{ left: '0.875rem', top: '50%', transform: 'translateY(-50%)' }}>
                     {loading ? <Loader2 size={20} className="animate-spin" /> : <Search size={20} />}
                 </div>
             </div>

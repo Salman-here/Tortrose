@@ -389,6 +389,28 @@ input, select, textarea {
     outline: none;
 }
 
+.search-input-wrapper {
+    position: relative;
+}
+
+.search-input-icon {
+    position: absolute;
+    left: 0.875rem !important;
+    top: 50% !important;
+    transform: translateY(-50%) !important;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    line-height: 0;
+    z-index: 2;
+    color: hsl(var(--muted-foreground));
+}
+
+.search-input-icon svg {
+    display: block;
+}
+
 .glass-input-search {
     padding-left: 2.75rem !important;
 }
