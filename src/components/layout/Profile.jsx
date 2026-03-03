@@ -78,6 +78,14 @@ const UserProfile = () => {
   const [isUploading, setIsUploading] = useState(false);
   const [isWaiting, setIsWaiting] = useState(false);
 
+  if (!userData) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <p className="text-gray-500">Please log in to view your profile.</p>
+      </div>
+    );
+  }
+
   const handleInputChange = (e) => {
     const { name, value } = e.target;
     setFormData(prev => ({
