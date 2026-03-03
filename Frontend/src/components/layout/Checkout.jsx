@@ -435,40 +435,43 @@ export default function Checkout() {
   // };
 
   return (
-    <div className="min-h-screen py-12 px-4 sm:px-6 lg:px-8">
+    <div className="min-h-screen py-8 sm:py-12 px-3 sm:px-6 lg:px-8">
       <div className="max-w-6xl mx-auto">
-        <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-gray-900">Checkout</h1>
-          <p className="mt-2 text-gray-600">Complete your purchase with confidence</p>
+        <div className="text-center mb-6 sm:mb-8">
+          <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight" style={{ color: 'hsl(var(--foreground))' }}>Checkout</h1>
+          <p className="mt-1.5 text-sm sm:text-base" style={{ color: 'hsl(var(--muted-foreground))' }}>Complete your purchase with confidence</p>
         </div>
 
-
-        <div className="grid md:grid-cols-3 gap-8">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 lg:gap-8">
           <form
-            className="md:col-span-2 bg-white/80 backdrop-blur-sm rounded-xl shadow-lg border border-white/60 p-6"
-
-
+            className="lg:col-span-2 glass-panel p-4 sm:p-6"
           >
 
             {/* Progress Steps */}
-            <div className="mb-12">
+            <div className="mb-8 sm:mb-12">
               <div className="flex items-center justify-between relative">
-                <div className="absolute top-1/2 left-0 right-0 h-1 bg-gray-200 transform -translate-y-1/2 -z-10"></div>
+                <div className="absolute top-1/2 left-0 right-0 h-1 transform -translate-y-1/2 -z-10" style={{ background: 'hsl(var(--muted))' }}></div>
                 <div
-                  className="absolute top-1/2 left-0 h-1 bg-indigo-500 transform -translate-y-1/2 -z-10 transition-all duration-500"
-                  style={{ width: `${(currentStep / (steps.length - 1)) * 100}%` }}
+                  className="absolute top-1/2 left-0 h-1 transform -translate-y-1/2 -z-10 transition-all duration-500"
+                  style={{ width: `${(currentStep / (steps.length - 1)) * 100}%`, background: 'linear-gradient(90deg, hsl(220, 70%, 55%), hsl(260, 60%, 60%))' }}
                 ></div>
 
                 {steps.map((step, index) => (
                   <div key={step} className="flex flex-col items-center relative">
-                    <div className={`w-10 h-10 rounded-full flex items-center justify-center border-2 ${index <= currentStep ? "bg-indigo-600 border-indigo-600 text-white" : "bg-white border-gray-300 text-gray-500"} transition-colors duration-300`}>
+                    <div className={`w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center border-2 text-sm sm:text-base transition-colors duration-300`}
+                      style={{
+                        background: index <= currentStep ? 'linear-gradient(135deg, hsl(220, 70%, 55%), hsl(260, 60%, 60%))' : 'hsl(var(--muted))',
+                        borderColor: index <= currentStep ? 'hsl(220, 70%, 55%)' : 'hsl(var(--border))',
+                        color: index <= currentStep ? 'white' : 'hsl(var(--muted-foreground))',
+                      }}>
                       {index < currentStep ? (
-                        <CheckCircle className="w-5 h-5" />
+                        <CheckCircle className="w-4 h-4 sm:w-5 sm:h-5" />
                       ) : (
-                        <span>{index + 1}</span>
+                        <span className="text-xs sm:text-sm font-semibold">{index + 1}</span>
                       )}
                     </div>
-                    <span className={`mt-2 text-sm font-medium ${index <= currentStep ? "text-indigo-600" : "text-gray-500"}`}>
+                    <span className={`mt-1.5 text-xs sm:text-sm font-medium`}
+                      style={{ color: index <= currentStep ? 'hsl(220, 70%, 55%)' : 'hsl(var(--muted-foreground))' }}>
                       {step}
                     </span>
                   </div>
@@ -489,9 +492,9 @@ export default function Checkout() {
                 {/* CART STEP */}
                 {currentStep === 0 && (
                   <div>
-                    <h2 className="text-xl font-semibold mb-6 flex items-center gap-2">
-                      <div className="p-2 bg-blue-100 rounded-full">
-                        <Truck className="w-5 h-5 text-blue-600" />
+                    <h2 className="text-lg sm:text-xl font-semibold mb-4 sm:mb-6 flex items-center gap-2" style={{ color: 'hsl(var(--foreground))' }}>
+                      <div className="p-2 rounded-full" style={{ background: 'hsla(220, 70%, 55%, 0.12)' }}>
+                        <Truck className="w-5 h-5" style={{ color: 'hsl(220, 70%, 55%)' }} />
                       </div>
                       Your Cart
                     </h2>
@@ -499,10 +502,11 @@ export default function Checkout() {
                     {
                       !cartItems?.cart || cartItems.cart.length === 0 ? (
                         <div className="text-center py-8">
-                          <p className="text-gray-500">Your cart is empty</p>
+                          <p style={{ color: 'hsl(var(--muted-foreground))' }}>Your cart is empty</p>
                           <button
                             type="button"
-                            className="mt-4 text-blue-600 hover:text-blue-800"
+                            className="mt-4 font-medium"
+                            style={{ color: 'hsl(var(--primary))' }}
                             onClick={() => navigate('/')}
                           >
                             Continue Shopping
@@ -524,7 +528,7 @@ export default function Checkout() {
                                 initial={{ opacity: 0, y: 10 }}
                                 animate={{ opacity: 1, y: 0 }}
                                 transition={{ duration: 0.3 }}
-                                className="flex items-center relative justify-between p-4 border border-[lightgray] shadow-md shadow-[lightgray] rounded-lg"
+                                className="flex items-center relative justify-between p-3 sm:p-4 glass-inner rounded-xl"
                               >
                                 <div className="flex items-center  gap-4">
                                   <AnimatePresence mode="wait">
@@ -534,7 +538,8 @@ export default function Checkout() {
                                           initial={{ opacity: 0 }}
                                           animate={{ opacity: 1 }}
                                           exit={{ opacity: 0 }}
-                                          className="w-full h-full  absolute backdrop-blur-lg text-blue-900 top-0 left-0 z-2 flex justify-center items-center gap-1 rounded ">
+                                          className="w-full h-full absolute backdrop-blur-lg top-0 left-0 z-2 flex justify-center items-center gap-1 rounded-xl"
+                                          style={{ color: 'hsl(220, 70%, 55%)' }}>
                                           Processing <span className="animate-spin"> <Loader2 /> </span>
                                         </motion.div>
                                       )
@@ -546,11 +551,11 @@ export default function Checkout() {
                                     alt={name}
                                   />
                                   <div>
-                                    <h4 className="font-medium text-gray-900">{name}</h4>
+                                    <h4 className="font-medium text-sm sm:text-base" style={{ color: 'hsl(var(--foreground))' }}>{name}</h4>
                                     {/* SPIN WHEEL DISABLED - spin discount badge removed */}
                                     {/* {hasSpinDiscount && (<p className="text-xs text-green-600 font-semibold">🎉 Spin Discount Applied!</p>)} */}
-                                    <p className="">
-                                      <span className="font-bold text-gray-600">{formatPrice(itemPrice)}</span>
+                                    <p>
+                                      <span className="font-bold text-sm" style={{ color: 'hsl(var(--muted-foreground))' }}>{formatPrice(itemPrice)}</span>
                                     </p>
                                     <QuantitySelector
                                       qty={qty}
@@ -578,9 +583,9 @@ export default function Checkout() {
                 {/* SHIPPING STEP */}
                 {currentStep === 1 && (
                   <div>
-                    <h2 className="text-xl font-semibold mb-6 flex items-center gap-2">
-                      <div className="p-2 bg-blue-100 rounded-full">
-                        <MapPin className="w-5 h-5 text-blue-600" />
+                    <h2 className="text-lg sm:text-xl font-semibold mb-4 sm:mb-6 flex items-center gap-2" style={{ color: 'hsl(var(--foreground))' }}>
+                      <div className="p-2 rounded-full" style={{ background: 'hsla(220, 70%, 55%, 0.12)' }}>
+                        <MapPin className="w-5 h-5" style={{ color: 'hsl(220, 70%, 55%)' }} />
                       </div>
                       Shipping Information
                     </h2>
@@ -873,10 +878,10 @@ export default function Checkout() {
                           </div>
 
                           <div className="mt-6">
-                            <label className="block text-sm font-medium text-gray-700 mb-2">Delivery Instructions (Optional)</label>
+                            <label className="block text-sm font-medium mb-2" style={{ color: 'hsl(var(--foreground))' }}>Delivery Instructions (Optional)</label>
                             <textarea
                               placeholder="Any special delivery instructions?"
-                              className="w-full h-24 border rounded-lg px-4 py-3 focus:border-blue-600 outline-none resize-none"
+                              className="glass-input w-full h-24 resize-none"
                               {...register("instructions")}
                             />
                           </div>
@@ -893,9 +898,9 @@ export default function Checkout() {
                 {/* PAYMENT STEP */}
                 {currentStep === 2 && (
                   <div>
-                    <h2 className="text-xl font-semibold mb-6 flex items-center gap-2">
-                      <div className="p-2 bg-blue-100 rounded-full">
-                        <CreditCard className="w-5 h-5 text-blue-600" />
+                    <h2 className="text-lg sm:text-xl font-semibold mb-4 sm:mb-6 flex items-center gap-2" style={{ color: 'hsl(var(--foreground))' }}>
+                      <div className="p-2 rounded-full" style={{ background: 'hsla(220, 70%, 55%, 0.12)' }}>
+                        <CreditCard className="w-5 h-5" style={{ color: 'hsl(220, 70%, 55%)' }} />
                       </div>
                       Payment Method
                     </h2>
@@ -925,9 +930,9 @@ export default function Checkout() {
                         animate={{ opacity: 1, height: "auto" }}
                         exit={{ opacity: 0, height: 0 }}
                         transition={{ duration: 0.3 }}
-                        className="bg-blue-50 p-4 rounded-lg mb-6"
+                        className="glass-inner p-4 rounded-xl mb-6"
                       >
-                        <p className="text-blue-800 text-sm">
+                        <p className="text-sm" style={{ color: 'hsl(220, 70%, 55%)' }}>
                           You will be redirected to Stripe's secure payment page to complete your transaction.
                         </p>
                       </motion.div>
@@ -939,10 +944,10 @@ export default function Checkout() {
                         <input
                           type="checkbox"
                           id="billingSameAsShipping"
-                          className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                          className="h-4 w-4 rounded accent-[hsl(220,70%,55%)]"
                           {...register("billingSameAsShipping")}
                         />
-                        <label htmlFor="billingSameAsShipping" className="ml-2 block text-sm text-gray-900">
+                        <label htmlFor="billingSameAsShipping" className="ml-2 block text-sm" style={{ color: 'hsl(var(--foreground))' }}>
                           Billing address same as shipping address
                         </label>
                       </div>
@@ -1002,17 +1007,21 @@ export default function Checkout() {
 
             {/* Navigation Buttons */}
             {currentStep < steps.length && (
-              <div className="flex justify-between mt-8">
+              <div className="flex justify-between mt-6 sm:mt-8">
                 <button
                   type="button"
                   onClick={prevStep}
                   disabled={currentStep === 0 || isProcessing}
-                  className={`px-6 py-3 rounded-lg font-medium flex items-center gap-2 ${currentStep === 0 || isProcessing
-                    ? "bg-gray-200 text-gray-500 cursor-not-allowed"
-                    : "bg-linear-to-r from-indigo-600 to-sky-500 text-white hover:from-indigo-700 hover:to-sky-600"
-                    } transition-colors`}
+                  className={`px-4 sm:px-6 py-2.5 sm:py-3 rounded-xl font-medium flex items-center gap-2 text-sm sm:text-base transition-all ${currentStep === 0 || isProcessing
+                    ? "opacity-40 cursor-not-allowed"
+                    : "hover:-translate-y-0.5"
+                    }`}
+                  style={{
+                    background: currentStep === 0 || isProcessing ? 'hsl(var(--muted))' : 'linear-gradient(135deg, hsl(220, 70%, 55%), hsl(260, 60%, 60%))',
+                    color: currentStep === 0 || isProcessing ? 'hsl(var(--muted-foreground))' : 'white',
+                  }}
                 >
-                  <Navigation className="w-5 h-5 rotate-180" />
+                  <Navigation className="w-4 h-4 sm:w-5 sm:h-5 rotate-180" />
                   Back
                 </button>
 
@@ -1021,21 +1030,22 @@ export default function Checkout() {
                     type="button"
                     onClick={handleSubmit(onPlaceOrder)}
                     disabled={isSubmitting || isProcessing || !cartItems?.cart || cartItems.cart.length == 0}
-                    className="px-6 py-3 rounded-lg font-medium bg-linear-to-r from-indigo-600 to-sky-500 text-white hover:from-indigo-700 hover:to-sky-600 disabled:opacity-60 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+                    className="px-4 sm:px-6 py-2.5 sm:py-3 rounded-xl font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-all hover:-translate-y-0.5 flex items-center gap-2 text-sm sm:text-base glow-soft"
+                    style={{ background: 'linear-gradient(135deg, hsl(220, 70%, 55%), hsl(260, 60%, 60%))', color: 'white' }}
                   >
                     {isProcessing ? (
                       <>
-                        <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                        <div className="w-4 h-4 sm:w-5 sm:h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
                         Processing...
                       </>
                     ) : paymentMethod === "cash_on_delivery" ? (
                       <>
-                        <CheckCircle className="w-5 h-5" />
+                        <CheckCircle className="w-4 h-4 sm:w-5 sm:h-5" />
                         Place Order
                       </>
                     ) : (
                       <>
-                        <CreditCard className="w-5 h-5" />
+                        <CreditCard className="w-4 h-4 sm:w-5 sm:h-5" />
                         Pay Securely
                       </>
                     )}
@@ -1045,13 +1055,17 @@ export default function Checkout() {
                     type="button"
                     onClick={nextStep}
                     disabled={!cartItems?.cart || cartItems.cart.length == 0}
-                    className={`px-6 py-3 rounded-lg font-medium flex items-center gap-2 ${!cartItems?.cart || cartItems.cart.length === 0
-                      ? "bg-gray-200 text-gray-500 cursor-not-allowed"
-                      : "bg-linear-to-r from-indigo-600 to-sky-500 text-white hover:from-indigo-700 hover:to-sky-600"
-                      } transition-colors`}
+                    className={`px-4 sm:px-6 py-2.5 sm:py-3 rounded-xl font-medium flex items-center gap-2 text-sm sm:text-base transition-all ${!cartItems?.cart || cartItems.cart.length === 0
+                      ? "opacity-40 cursor-not-allowed"
+                      : "hover:-translate-y-0.5 glow-soft"
+                      }`}
+                    style={{
+                      background: !cartItems?.cart || cartItems.cart.length === 0 ? 'hsl(var(--muted))' : 'linear-gradient(135deg, hsl(220, 70%, 55%), hsl(260, 60%, 60%))',
+                      color: !cartItems?.cart || cartItems.cart.length === 0 ? 'hsl(var(--muted-foreground))' : 'white',
+                    }}
                   >
                     Next
-                    <Navigation className="w-5 h-5" />
+                    <Navigation className="w-4 h-4 sm:w-5 sm:h-5" />
                   </button>
                 )}
               </div>
@@ -1059,9 +1073,9 @@ export default function Checkout() {
           </form>
 
           {/* Order Summary */}
-          <div className="md:col-span-1">
-            <div className="sticky top-6 bg-white rounded-xl shadow-lg p-6">
-              <h3 className="text-lg font-semibold mb-4 pb-2 border-b">Order Summary</h3>
+          <div className="lg:col-span-1">
+            <div className="sticky top-6 glass-panel p-4 sm:p-6">
+              <h3 className="text-lg font-semibold mb-4 pb-2 border-b" style={{ color: 'hsl(var(--foreground))', borderColor: 'hsl(var(--border))' }}>Order Summary</h3>
 
               <div className="max-h-80 overflow-y-auto mb-4">
                 {cartItems.cart.map((item) => {
@@ -1069,7 +1083,7 @@ export default function Checkout() {
                   // const hasSpinDiscount = false; // SPIN WHEEL DISABLED
 
                   return (
-                    <div key={item._id} className="flex items-center justify-between py-3 border-b">
+                    <div key={item._id} className="flex items-center justify-between py-3" style={{ borderBottom: '1px solid hsl(var(--border))' }}>
                       <div className="flex items-center gap-3">
                         <img
                           className="h-12 w-12 rounded object-cover"
@@ -1077,8 +1091,8 @@ export default function Checkout() {
                           alt={item.product.name}
                         />
                         <div>
-                          <p className="font-medium text-sm">{item.product.name}</p>
-                          <p className="text-gray-500 text-sm">Qty: {item.qty}</p>
+                          <p className="font-medium text-xs sm:text-sm" style={{ color: 'hsl(var(--foreground))' }}>{item.product.name}</p>
+                          <p className="text-xs sm:text-sm" style={{ color: 'hsl(var(--muted-foreground))' }}>Qty: {item.qty}</p>
                           {/* SPIN WHEEL DISABLED - spin discount badge removed */}
                           {/* {hasSpinDiscount && (<p className="text-xs text-green-600 font-semibold">🎉 Spin Discount Applied!</p>)} */}
                         </div>
@@ -1094,25 +1108,22 @@ export default function Checkout() {
               </div>
 
               <div className="space-y-3 pt-2">
-                <div className="flex justify-between text-gray-700">
+                <div className="flex justify-between text-sm" style={{ color: 'hsl(var(--muted-foreground))' }}>
                   <span>Subtotal</span>
-                  <span className="font-medium">{formatPrice(subtotal)}</span>
+                  <span className="font-medium" style={{ color: 'hsl(var(--foreground))' }}>{formatPrice(subtotal)}</span>
                 </div>
                 
-                {/* Shipping breakdown by seller */}
                 {Object.keys(selectedShippingPerSeller).length > 0 && (
                   <div className="space-y-1">
-                    <div className="flex justify-between text-gray-700 font-medium">
+                    <div className="flex justify-between text-sm font-medium" style={{ color: 'hsl(var(--muted-foreground))' }}>
                       <span>Shipping</span>
-                      <span>{formatPrice(shippingCost)}</span>
+                      <span style={{ color: 'hsl(var(--foreground))' }}>{formatPrice(shippingCost)}</span>
                     </div>
                     {Object.entries(selectedShippingPerSeller).map(([sellerId, method]) => {
                       const sellerInfo = sellerShippingMethods[sellerId];
                       return (
-                        <div key={sellerId} className="flex justify-between text-xs text-gray-500 pl-4">
-                          <span className="capitalize">
-                            {method.type} shipping
-                          </span>
+                        <div key={sellerId} className="flex justify-between text-xs pl-4" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                          <span className="capitalize">{method.type} shipping</span>
                           <span>{formatPrice(method.cost)}</span>
                         </div>
                       );
@@ -1121,17 +1132,15 @@ export default function Checkout() {
                 )}
                 
                 {tax > 0 && (
-                  <div className="flex justify-between text-gray-700">
-                    <span>
-                      Tax {taxConfig?.type === 'percentage' && `(${taxConfig.value}%)`}
-                    </span>
-                    <span className="font-medium">{formatPrice(tax)}</span>
+                  <div className="flex justify-between text-sm" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                    <span>Tax {taxConfig?.type === 'percentage' && `(${taxConfig.value}%)`}</span>
+                    <span className="font-medium" style={{ color: 'hsl(var(--foreground))' }}>{formatPrice(tax)}</span>
                   </div>
                 )}
                 
-                <div className="flex justify-between text-lg font-semibold border-t pt-3">
+                <div className="flex justify-between text-base sm:text-lg font-semibold pt-3" style={{ borderTop: '1px solid hsl(var(--border))', color: 'hsl(var(--foreground))' }}>
                   <span>Total</span>
-                  <span className="text-blue-600">{formatPrice(totalAmount)}</span>
+                  <span style={{ color: 'hsl(220, 70%, 55%)' }}>{formatPrice(totalAmount)}</span>
                 </div>
               </div>
             </div>
@@ -1152,30 +1161,29 @@ const InputField = React.forwardRef(({ icon, error, ...props }, ref) => (
           {icon}
         </div>
       )}
-
       <input
         ref={ref}
-        className={`w-full border rounded-lg px-4 py-3 focus:border-blue-600 outline-none ${icon ? "pl-10" : ""} ${error ? "border-red-500" : ""}`}
+        className={`glass-input w-full ${icon ? "pl-10" : ""} ${error ? "border-red-400" : ""}`}
         {...props}
       />
     </div>
     {error?.message && (
-      <p className="text-xs text-red-500 mt-1">{String(error.message)}</p>
+      <p className="text-xs mt-1" style={{ color: 'hsl(0, 72%, 55%)' }}>{String(error.message)}</p>
     )}
   </div>
 ));
 
 function QuantitySelector({ qty, onIncrement, onDecrement }) {
   return (
-    <div className="flex items-center bg-gray-100 w-max rounded-lg px-2 py-1 mt-2">
+    <div className="flex items-center glass-inner w-max rounded-xl px-2 py-1 mt-2">
       <motion.button
         type="button"
         whileTap={{ scale: 0.9 }}
         onClick={onDecrement}
-        className="p-1 rounded-lg hover:bg-gray-200 transition-colors"
+        className="p-1 rounded-lg hover:bg-white/15 transition-colors"
         aria-label="Decrease quantity"
       >
-        <Minus className="w-4 h-4 text-gray-600" />
+        <Minus className="w-4 h-4" style={{ color: 'hsl(var(--muted-foreground))' }} />
       </motion.button>
       <AnimatePresence mode="popLayout">
         <motion.span
@@ -1184,7 +1192,8 @@ function QuantitySelector({ qty, onIncrement, onDecrement }) {
           animate={{ scale: 1 }}
           exit={{ scale: 0 }}
           transition={{ duration: 0.2 }}
-          className="px-4 text-sm font-medium text-gray-900 select-none"
+          className="px-3 sm:px-4 text-sm font-semibold select-none"
+          style={{ color: 'hsl(var(--foreground))' }}
         >
           {qty}
         </motion.span>
@@ -1193,10 +1202,10 @@ function QuantitySelector({ qty, onIncrement, onDecrement }) {
         type="button"
         whileTap={{ scale: 0.9 }}
         onClick={onIncrement}
-        className="p-1 rounded-lg hover:bg-gray-200 transition-colors"
+        className="p-1 rounded-lg hover:bg-white/15 transition-colors"
         aria-label="Increase quantity"
       >
-        <Plus className="w-4 h-4 text-gray-600" />
+        <Plus className="w-4 h-4" style={{ color: 'hsl(var(--muted-foreground))' }} />
       </motion.button>
     </div>
   );
@@ -1222,7 +1231,8 @@ const ShippingOption = React.forwardRef(({ value, title, price, days, selected, 
 ));
 
 const PaymentOption = React.forwardRef(({ value, title, description, icon, selected, ...props }, ref) => (
-  <label className={`border rounded-lg p-4 cursor-pointer transition-all ${selected ? "border-blue-600 bg-blue-50 ring-2 ring-blue-100" : "border-gray-300 hover:border-gray-400"}`}>
+  <label className={`glass-inner rounded-xl p-4 cursor-pointer transition-all ${selected ? "ring-2" : "hover:bg-white/10"}`}
+    style={{ ringColor: selected ? 'hsl(220, 70%, 55%)' : undefined }}>
     <input
       type="radio"
       value={value}
@@ -1231,12 +1241,12 @@ const PaymentOption = React.forwardRef(({ value, title, description, icon, selec
       {...props}
     />
     <div className="flex items-start gap-3">
-      <div className={`p-2 rounded-full ${selected ? "bg-blue-100 text-blue-600" : "bg-gray-100 text-gray-600"}`}>
+      <div className="p-2 rounded-full" style={{ background: selected ? 'hsla(220, 70%, 55%, 0.15)' : 'hsl(var(--muted))', color: selected ? 'hsl(220, 70%, 55%)' : 'hsl(var(--muted-foreground))' }}>
         {icon}
       </div>
       <div>
-        <h4 className="font-medium">{title}</h4>
-        <p className="text-sm text-gray-500 mt-1">{description}</p>
+        <h4 className="font-medium text-sm sm:text-base" style={{ color: 'hsl(var(--foreground))' }}>{title}</h4>
+        <p className="text-xs sm:text-sm mt-0.5" style={{ color: 'hsl(var(--muted-foreground))' }}>{description}</p>
       </div>
     </div>
   </label>

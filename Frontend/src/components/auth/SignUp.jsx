@@ -93,11 +93,11 @@ const GlassSignUpPage = () => {
                 </div>
                 <div>
                   <label htmlFor="password" className="block text-sm font-medium mb-1">Password</label>
-                  <div className="relative">
+                  <div className="relative flex items-center">
                     <input id="password" type={showPassword ? 'text' : 'password'} value={form.password} onChange={handleChange}
-                      className="glass-input" placeholder="••••••••" required disabled={loading} />
+                      className="glass-input pr-10" placeholder="••••••••" required disabled={loading} />
                     <button type="button" onClick={() => setShowPassword(!showPassword)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                      className="absolute right-3 flex items-center justify-center transition-colors cursor-pointer" style={{ color: 'hsl(var(--muted-foreground))' }}>
                       {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                     </button>
                   </div>
