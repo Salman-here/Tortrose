@@ -398,3 +398,29 @@ input, select, textarea {
     background: rgba(255, 255, 255, 0.14);
     box-shadow: 0 0 0 3px hsl(220, 70%, 55%, 0.15);
 }
+
+/* ====================
+   Glass Checkbox
+==================== */
+.glass-checkbox-box {
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    border-radius: 8px;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.glass-checkbox-box:has(input:checked) {
+    background: rgba(255, 255, 255, 0.18);
+    border-color: hsl(220, 70%, 55%);
+    box-shadow: 0 0 12px -2px hsl(220, 70%, 55%, 0.3), var(--glass-inner-glow);
+}
+
+.glass-checkbox-box:has(input:checked) svg {
+    display: block !important;
+}
+
+.glass-checkbox-label:has(input:checked) {
+    background: rgba(255, 255, 255, 0.08);
+}

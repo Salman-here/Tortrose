@@ -135,10 +135,15 @@ function Products() {
           ? <p className='text-sm italic' style={{ color: 'hsl(var(--muted-foreground))' }}>No categories available</p>
           : <div className='flex flex-col gap-1'>
             {categories.map(category => (
-              <label key={category} className='flex items-center gap-3 cursor-pointer py-1.5 px-2 rounded-xl hover:bg-white/10 transition-colors'>
-                <input type='checkbox' value={category} {...register('categories')}
-                  className='w-4 h-4 rounded accent-indigo-600 cursor-pointer' />
-                <span className='text-sm'>{category}</span>
+              <label key={category} className='glass-checkbox-label flex items-center gap-3 cursor-pointer py-2 px-3 rounded-xl transition-all hover:bg-white/10'>
+                <span className='glass-checkbox-box relative w-5 h-5 rounded-lg border border-white/25 bg-white/8 backdrop-blur-sm flex items-center justify-center shrink-0 transition-all'>
+                  <input type='checkbox' value={category} {...register('categories')}
+                    className='absolute inset-0 opacity-0 cursor-pointer peer' />
+                  <svg className='w-3 h-3 hidden peer-checked:block' style={{ color: 'hsl(var(--primary))' }} viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="2 6 5 9 10 3" />
+                  </svg>
+                </span>
+                <span className='text-sm font-medium'>{category}</span>
               </label>
             ))}
           </div>
@@ -152,10 +157,15 @@ function Products() {
           ? <p className='text-sm italic' style={{ color: 'hsl(var(--muted-foreground))' }}>No brands available</p>
           : <div className='flex flex-col gap-1'>
             {brands.map(brand => (
-              <label key={brand} className='flex items-center gap-3 cursor-pointer py-1.5 px-2 rounded-xl hover:bg-white/10 transition-colors'>
-                <input type='checkbox' value={brand} {...register('brands')}
-                  className='w-4 h-4 rounded accent-indigo-600 cursor-pointer' />
-                <span className='text-sm'>{brand}</span>
+              <label key={brand} className='glass-checkbox-label flex items-center gap-3 cursor-pointer py-2 px-3 rounded-xl transition-all hover:bg-white/10'>
+                <span className='glass-checkbox-box relative w-5 h-5 rounded-lg border border-white/25 bg-white/8 backdrop-blur-sm flex items-center justify-center shrink-0 transition-all'>
+                  <input type='checkbox' value={brand} {...register('brands')}
+                    className='absolute inset-0 opacity-0 cursor-pointer peer' />
+                  <svg className='w-3 h-3 hidden peer-checked:block' style={{ color: 'hsl(200, 80%, 55%)' }} viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="2 6 5 9 10 3" />
+                  </svg>
+                </span>
+                <span className='text-sm font-medium'>{brand}</span>
               </label>
             ))}
           </div>
