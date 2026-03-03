@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
-import { motion } from 'framer-motion';
-import { Store, Search, Home, ChevronRight, Sparkles, Heart } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Store, Search, Home, ChevronRight, Sparkles, Heart, ChevronDown, Check } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import axios from 'axios';
 import StoreCard from '../components/common/StoreCard';
@@ -11,6 +11,23 @@ const StoresListing = () => {
     const [loading, setLoading] = useState(true);
     const [searchQuery, setSearchQuery] = useState('');
     const [sortBy, setSortBy] = useState('newest');
+    const [sortOpen, setSortOpen] = useState(false);
+    const sortRef = useRef(null);
+
+    const sortOptions = [
+        { value: 'newest', label: 'Newest First' },
+        { value: 'views', label: 'Most Viewed' },
+        { value: 'name', label: 'Name (A-Z)' },
+    ];
+
+    // Close dropdown on outside click
+    useEffect(() => {
+        const handleClick = (e) => {
+            if (sortRef.current && !sortRef.current.contains(e.target)) setSortOpen(false);
+        };
+        document.addEventListener('mousedown', handleClick);
+        return () => document.removeEventListener('mousedown', handleClick);
+    }, []);
 
     useEffect(() => {
         fetchStores();
@@ -116,15 +133,46 @@ const StoresListing = () => {
                                 className="glass-input glass-input-search"
                             />
                         </div>
-                        <select
-                            value={sortBy}
-                            onChange={(e) => setSortBy(e.target.value)}
-                            className="glass-input cursor-pointer font-medium"
-                        >
-                            <option value="newest">Newest First</option>
-                            <option value="views">Most Viewed</option>
-                            <option value="name">Name (A-Z)</option>
-                        </select>
+                        <div className="relative" ref={sortRef}>
+                            <motion.button
+                                whileTap={{ scale: 0.97 }}
+                                onClick={() => setSortOpen(!sortOpen)}
+                                className="glass-inner flex items-center justify-between gap-2 px-4 py-2.5 rounded-xl cursor-pointer font-medium text-sm w-full"
+                                style={{ color: 'hsl(var(--foreground))', minWidth: 170 }}
+                            >
+                                <span>{sortOptions.find(o => o.value === sortBy)?.label}</span>
+                                <ChevronDown size={16} style={{ color: 'hsl(var(--muted-foreground))', transform: sortOpen ? 'rotate(180deg)' : 'rotate(0)', transition: 'transform 0.2s ease' }} />
+                            </motion.button>
+                            <AnimatePresence>
+                                {sortOpen && (
+                                    <motion.div
+                                        initial={{ opacity: 0, y: -6, scale: 0.97 }}
+                                        animate={{ opacity: 1, y: 4, scale: 1 }}
+                                        exit={{ opacity: 0, y: -6, scale: 0.97 }}
+                                        transition={{ duration: 0.18 }}
+                                        className="absolute right-0 top-full z-50 glass-panel-strong p-1.5 rounded-xl min-w-[170px]"
+                                        style={{ boxShadow: '0 8px 32px rgba(0,0,0,0.18)' }}
+                                    >
+                                        {sortOptions.map(opt => (
+                                            <button
+                                                key={opt.value}
+                                                onClick={() => { setSortBy(opt.value); setSortOpen(false); }}
+                                                className="flex items-center justify-between w-full px-3.5 py-2.5 rounded-lg text-sm font-medium transition-all duration-150"
+                                                style={{
+                                                    color: sortBy === opt.value ? 'hsl(220, 70%, 55%)' : 'hsl(var(--foreground))',
+                                                    background: sortBy === opt.value ? 'hsla(220, 70%, 55%, 0.08)' : 'transparent',
+                                                }}
+                                                onMouseEnter={e => { if (sortBy !== opt.value) e.currentTarget.style.background = 'hsla(var(--foreground), 0.05)'; }}
+                                                onMouseLeave={e => { e.currentTarget.style.background = sortBy === opt.value ? 'hsla(220, 70%, 55%, 0.08)' : 'transparent'; }}
+                                            >
+                                                <span>{opt.label}</span>
+                                                {sortBy === opt.value && <Check size={15} style={{ color: 'hsl(220, 70%, 55%)' }} />}
+                                            </button>
+                                        ))}
+                                    </motion.div>
+                                )}
+                            </AnimatePresence>
+                        </div>
                     </div>
                 </motion.div>
 
