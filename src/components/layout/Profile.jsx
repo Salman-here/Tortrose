@@ -67,8 +67,8 @@ const UserProfile = () => {
   const [loading, setLoading] = useState(true)
 
   const [formData, setFormData] = useState({
-    username: userData.username,
-    email: userData.email,
+    username: userData?.username || '',
+    email: userData?.email || '',
     currentPassword: '',
     newPassword: '',
     confirmPassword: ''
