@@ -2,90 +2,73 @@ import React, { useState } from "react";
 import { motion } from "framer-motion";
 import { Home, Users, ShoppingCart, PieChart } from "lucide-react";
 
-// -----------------------------------------------------------------------------
-// Minimal Viable Product (MVP) Admin Dashboard
-// - Clean, small, functional, modern design
-// - KPI cards + sample table only
-// - Tailwind CSS for styling
-// - No backend integration
-// -----------------------------------------------------------------------------
-
 export default function AdminDashboardMVP() {
-    const [kpis] = useState({
-        revenue: 48230,
-        orders: 1281,
-        customers: 932,
-        conversion: 3.7,
-    });
+  const [kpis] = useState({ revenue: 48230, orders: 1281, customers: 932, conversion: 3.7 });
 
-    const recentOrders = [
-        { id: "#3421", name: "Aisha", amount: "$120", status: "Delivered" },
-        { id: "#3420", name: "Bilal", amount: "$320", status: "Processing" },
-        { id: "#3419", name: "Sara", amount: "$75", status: "Canceled" },
-    ];
+  const recentOrders = [
+    { id: "#3421", name: "Aisha", amount: "$120", status: "Delivered" },
+    { id: "#3420", name: "Bilal", amount: "$320", status: "Processing" },
+    { id: "#3419", name: "Sara", amount: "$75", status: "Canceled" },
+  ];
 
-    return (
-        <div className="min-h-screen bg-gray-50 p-6">
-            <h1 className="text-2xl font-bold mb-6">Admin Dashboard</h1>
+  const kpiCards = [
+    { title: "Revenue", value: `$${kpis.revenue.toLocaleString()}`, icon: <Home size={18} />, color: 'hsl(150, 60%, 45%)' },
+    { title: "Orders", value: kpis.orders, icon: <ShoppingCart size={18} />, color: 'hsl(220, 70%, 55%)' },
+    { title: "Customers", value: kpis.customers, icon: <Users size={18} />, color: 'hsl(260, 60%, 55%)' },
+    { title: "Conversion", value: `${kpis.conversion}%`, icon: <PieChart size={18} />, color: 'hsl(200, 80%, 50%)' },
+  ];
 
-            {/* KPI CARDS */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-                <KpiCard title="Revenue" value={`$${kpis.revenue.toLocaleString()}`} icon={<Home size={18} />} />
-                <KpiCard title="Orders" value={kpis.orders} icon={<ShoppingCart size={18} />} />
-                <KpiCard title="Customers" value={kpis.customers} icon={<Users size={18} />} />
-                <KpiCard title="Conversion" value={`${kpis.conversion}%`} icon={<PieChart size={18} />} />
-            </div>
+  return (
+    <div className="min-h-screen p-4 sm:p-6">
+      <h1 className="text-2xl font-extrabold tracking-tight mb-6" style={{ color: 'hsl(var(--foreground))' }}>Admin Dashboard</h1>
 
-            {/* RECENT ORDERS */}
-            <div className="bg-white border rounded-lg p-4">
-                <h2 className="text-lg font-semibold mb-4">Recent Orders</h2>
-                <table className="w-full text-sm">
-                    <thead className="text-left text-xs text-gray-500">
-                        <tr>
-                            <th className="pb-2">Order ID</th>
-                            <th className="pb-2">Customer</th>
-                            <th className="pb-2">Amount</th>
-                            <th className="pb-2">Status</th>
-                        </tr>
-                    </thead>
-                    <tbody className="divide-y">
-                        {recentOrders.map((row) => (
-                            <tr key={row.id} className="hover:bg-gray-50">
-                                <td className="py-3">{row.id}</td>
-                                <td className="py-3">{row.name}</td>
-                                <td className="py-3">{row.amount}</td>
-                                <td className="py-3">
-                                    <StatusBadge>{row.status}</StatusBadge>
-                                </td>
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>
-            </div>
-        </div>
-    );
-}
-
-function KpiCard({ title, value, icon }) {
-    return (
-        <motion.div whileHover={{ y: -4 }} className="bg-white border rounded-lg p-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+        {kpiCards.map((card, i) => (
+          <motion.div key={i} whileHover={{ y: -3 }} className="glass-card p-5">
             <div className="flex items-center justify-between">
-                <div>
-                    <div className="text-xs text-gray-500">{title}</div>
-                    <div className="text-xl font-semibold mt-1">{value}</div>
-                </div>
-                <div className="w-11 h-11 rounded-lg bg-gray-100 flex items-center justify-center">{icon}</div>
+              <div>
+                <div className="text-xs font-medium" style={{ color: 'hsl(var(--muted-foreground))' }}>{card.title}</div>
+                <div className="text-xl font-extrabold mt-1" style={{ color: 'hsl(var(--foreground))' }}>{card.value}</div>
+              </div>
+              <div className="glass-inner w-11 h-11 rounded-xl flex items-center justify-center" style={{ color: card.color }}>{card.icon}</div>
             </div>
-        </motion.div>
-    );
+          </motion.div>
+        ))}
+      </div>
+
+      <div className="glass-panel overflow-hidden">
+        <div className="p-4 sm:p-5" style={{ borderBottom: '1px solid var(--glass-border)' }}>
+          <h2 className="text-lg font-semibold" style={{ color: 'hsl(var(--foreground))' }}>Recent Orders</h2>
+        </div>
+        <table className="w-full text-sm">
+          <thead>
+            <tr style={{ borderBottom: '1px solid var(--glass-border)' }}>
+              {['Order ID', 'Customer', 'Amount', 'Status'].map(h => (
+                <th key={h} className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider" style={{ color: 'hsl(var(--muted-foreground))' }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {recentOrders.map((row) => (
+              <tr key={row.id} className="transition-colors hover:bg-white/5" style={{ borderBottom: '1px solid var(--glass-border-subtle)' }}>
+                <td className="px-4 py-3 font-medium" style={{ color: 'hsl(var(--foreground))' }}>{row.id}</td>
+                <td className="px-4 py-3" style={{ color: 'hsl(var(--muted-foreground))' }}>{row.name}</td>
+                <td className="px-4 py-3 font-semibold" style={{ color: 'hsl(var(--foreground))' }}>{row.amount}</td>
+                <td className="px-4 py-3"><StatusBadge>{row.status}</StatusBadge></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
 }
 
 function StatusBadge({ children }) {
-    const color =
-        children === "Delivered"
-            ? "bg-green-100 text-green-700"
-            : children === "Processing"
-                ? "bg-yellow-100 text-yellow-700"
-                : "bg-red-100 text-red-700";
-    return <span className={`px-2 py-1 rounded-full text-xs ${color}`}>{children}</span>;
+  const styles = children === "Delivered"
+    ? { bg: 'rgba(16, 185, 129, 0.12)', color: 'hsl(150, 60%, 40%)' }
+    : children === "Processing"
+      ? { bg: 'rgba(234, 179, 8, 0.12)', color: 'hsl(45, 93%, 40%)' }
+      : { bg: 'rgba(239, 68, 68, 0.12)', color: 'hsl(0, 72%, 55%)' };
+  return <span className="px-2.5 py-1 rounded-full text-xs font-medium" style={{ background: styles.bg, color: styles.color }}>{children}</span>;
 }
