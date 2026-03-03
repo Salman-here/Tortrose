@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { useAuth } from '../../contexts/AuthContext';
-import { Sparkles } from 'lucide-react';
+import { Sparkles, Eye, EyeOff } from 'lucide-react';
 import GlassBackground from '../common/GlassBackground';
 
 const GlassLoginPage = () => {
@@ -58,7 +58,7 @@ const GlassLoginPage = () => {
                     className="glass-input" placeholder="•••••••" required />
                   <button type="button" onClick={() => setShowPassword(!showPassword)}
                     className="absolute right-3 top-1/2 -translate-y-1/2 transition-colors" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                    {showPassword ? '🙈' : '👁️'}
+                    {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                   </button>
                 </div>
               </div>

@@ -112,17 +112,17 @@ const StoresListing = () => {
                                 value={searchQuery}
                                 onChange={(e) => setSearchQuery(e.target.value)}
                                 placeholder="Search for stores..."
-                                className="glass-input pl-10 pr-4"
+                                className="glass-input pl-10 pr-4 w-full"
                             />
                         </div>
                         <select
                             value={sortBy}
                             onChange={(e) => setSortBy(e.target.value)}
-                            className="glass-input cursor-pointer font-medium"
+                            className="glass-input cursor-pointer font-medium w-full md:w-48 shrink-0"
                         >
-                            <option value="newest">✨ Newest First</option>
-                            <option value="views">👁️ Most Viewed</option>
-                            <option value="name">🔤 Name (A-Z)</option>
+                            <option value="newest">Newest First</option>
+                            <option value="views">Most Viewed</option>
+                            <option value="name">Name (A-Z)</option>
                         </select>
                     </div>
                 </motion.div>
