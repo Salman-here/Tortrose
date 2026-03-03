@@ -133,7 +133,7 @@ const StoresListing = () => {
                                 className="glass-input glass-input-search"
                             />
                         </div>
-                        <div className="relative" ref={sortRef}>
+                        <div className="relative" ref={sortRef} style={{ zIndex: 100 }}>
                             <motion.button
                                 whileTap={{ scale: 0.97 }}
                                 onClick={() => setSortOpen(!sortOpen)}
