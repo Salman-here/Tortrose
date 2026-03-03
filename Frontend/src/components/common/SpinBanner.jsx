@@ -1,3 +1,4 @@
+/* SPIN WHEEL DISABLED
 import { motion } from 'framer-motion';
 import { Users, Clock, Trophy, AlertCircle, Gift, Sparkles } from 'lucide-react';
 import { useCurrency } from '../../contexts/CurrencyContext';
@@ -221,3 +222,4 @@ export default function SpinBanner({ spinResult, selectedCount = 0, onOpenSpinne
     </motion.div>
   );
 }
+SPIN WHEEL DISABLED */

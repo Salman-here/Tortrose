@@ -91,7 +91,7 @@ const ProductManagement = () => {
                         className={`flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 rounded-lg text-sm sm:text-base ${
                             selectMode 
                                 ? 'bg-gray-600 text-white' 
-                                : 'bg-purple-600 text-white'
+                                : 'bg-indigo-600 text-white'
                         }`}
                     >
                         {selectMode ? <Square size={16} className="sm:w-5 sm:h-5" /> : <CheckSquare size={16} className="sm:w-5 sm:h-5" />}
@@ -101,7 +101,7 @@ const ProductManagement = () => {
                         whileHover={{ scale: 1.02 }}
                         whileTap={{ scale: 0.98 }}
                         onClick={handleCreateProduct}
-                        className="flex items-center gap-1.5 sm:gap-2 bg-blue-600 text-white px-3 sm:px-4 py-2 rounded-lg text-sm sm:text-base"
+                        className="flex items-center gap-1.5 sm:gap-2 bg-linear-to-r from-indigo-600 to-sky-500 hover:from-indigo-700 hover:to-sky-600 text-white px-3 sm:px-4 py-2 rounded-lg text-sm sm:text-base transition-colors"
                     >
                         <Plus size={16} className="sm:w-5 sm:h-5" />
                         <span>Add</span>
@@ -172,7 +172,7 @@ const ProductManagement = () => {
                                                     onClick={() => handleSelectProduct(product)}
                                                     className={`p-2 rounded-lg shadow-lg ${
                                                         selectedProducts.find(p => p._id === product._id)
-                                                            ? 'bg-blue-600 text-white'
+                                                            ? 'bg-indigo-600 text-white'
                                                             : 'bg-white text-gray-600'
                                                     }`}
                                                 >

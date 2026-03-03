@@ -1,214 +1,187 @@
 // src/components/CartDropdown.jsx
-import React, { useState, useRef, useEffect } from "react";
+import React from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowBigRightDash, CarIcon, CatIcon, ChevronRight, Cross, Loader2, Minus, MoveRight, Plus, ShoppingCart, SquareArrowRight, X } from "lucide-react";
+import { ArrowRight, Loader2, Minus, Plus, ShoppingBag, ShoppingCart, Trash2, X } from "lucide-react";
 import { useGlobal } from "../../contexts/GlobalContext";
 import { useAuth } from "../../contexts/AuthContext";
 import { useCurrency } from "../../contexts/CurrencyContext";
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { toast } from "react-toastify";
 import Loader from '../common/Loader'
 
 const CartDropdown = () => {
-
-  const {
-    fetchCart,
-    cartItems,
-    handleQtyInc,
-    handleQtyDec,
-    isOpen,
-    setIsOpen,
-    dropdownRef,
-    toggleCart,
-    handleRemoveCartItem,
-    isCartLoading,
-    qtyUpdateId
-  } = useGlobal()
-
-  const {
-    currentUser
-  } = useAuth()
+  const { cartItems, handleQtyInc, handleQtyDec, isOpen, dropdownRef, toggleCart, handleRemoveCartItem, isCartLoading, qtyUpdateId } = useGlobal()
+  const { currentUser } = useAuth()
   const { formatPrice } = useCurrency()
-  const navigate = useNavigate()
+
+  const isEmpty = !currentUser || !cartItems?.cart || cartItems.cart.length === 0
+
+  const subtotal = isEmpty ? 0 : cartItems.cart.reduce((total, item) => {
+    if (!item.product) return total
+    return total + ((item.product.discountedPrice || item.product.price) * item.qty)
+  }, 0)
 
   const handleGoToCheckout = () => {
-    if (!cartItems?.cart || cartItems.cart.length == 0) return toast.error('No items in the cart')
+    if (isEmpty) return toast.error('Your cart is empty')
   }
-
-  // Get spin discount from localStorage
-  const getSpinDiscount = () => {
-    const spinResult = localStorage.getItem('spinResult');
-    const spinTimestamp = localStorage.getItem('spinTimestamp');
-    
-    if (!spinResult || !spinTimestamp) return null;
-    
-    const now = new Date().getTime();
-    const spinTime = parseInt(spinTimestamp);
-    const hoursPassed = (now - spinTime) / (1000 * 60 * 60);
-    
-    // Check if spin is still valid (less than 24 hours)
-    if (hoursPassed >= 24) {
-      localStorage.removeItem('spinResult');
-      localStorage.removeItem('spinTimestamp');
-      localStorage.removeItem('spinSelectedProducts');
-      return null;
-    }
-    
-    return JSON.parse(spinResult);
-  };
-
-  // Calculate discounted price for a product
-  const getDiscountedPrice = (product) => {
-    // Return 0 if product is null
-    if (!product) return 0;
-    
-    const spinResult = getSpinDiscount();
-    const spinSelectedProducts = JSON.parse(localStorage.getItem('spinSelectedProducts') || '[]');
-    
-    // Don't apply discount if spin is checked out or product not selected
-    if (!spinResult || spinResult.hasCheckedOut || !spinSelectedProducts.includes(product._id)) {
-      return product.discountedPrice || product.price;
-    }
-    
-    let discountedPrice = product.price;
-    
-    if (spinResult.type === 'free') {
-      discountedPrice = 0;
-    } else if (spinResult.type === 'fixed') {
-      discountedPrice = spinResult.value;
-    } else if (spinResult.type === 'percentage') {
-      discountedPrice = product.price * (1 - spinResult.value / 100);
-    }
-    
-    return Math.max(0, discountedPrice);
-  };
-
 
   return (
     <div ref={dropdownRef}>
+      {/* Backdrop */}
       <AnimatePresence>
         {isOpen && (
           <motion.div
-            initial={{ opacity: 0, x: '100%' }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: '100%' }}
-            transition={{ duration: 0.2, ease: 'easeIn' }}
-            className="w-[350px] h-screen p-2 fixed top-0 right-0 bg-white shadow-xl rounded-xl z-50 overflow-hidden"
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/30 backdrop-blur-sm z-40"
+            onClick={toggleCart}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Panel */}
+      <AnimatePresence>
+        {isOpen && (
+          <motion.div
+            initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }}
+            transition={{ type: 'tween', ease: 'easeInOut', duration: 0.3 }}
+            className="fixed top-0 right-0 h-full w-[380px] max-w-full bg-white/90 backdrop-blur-xl z-50 flex flex-col shadow-2xl shadow-indigo-900/20 border-l border-white/50"
           >
-            <button
-              onClick={toggleCart}
-              className="w-full button flex py-1 justify-center items-center cursor-pointer">
-              <ChevronRight size={35} />
-            </button>
-            <div className="p-4 border-b font-semibold border-[lightgray] text-gray-800">Your Cart</div>
-            <div className=" h-[70%] overflow-y-auto divide-y-[1px] divide-[lightgray]">
-              {
-                !currentUser || !cartItems?.cart || cartItems.cart.length == 0 ? (
-                  <p className="text-[gray] ml-4 mt-2">
-                    No items in the cart
-                  </p>
-                ) :
-                  isCartLoading ? (<div className="w-full h-full flex justify-center items-center">
-                    <Loader />
-                  </div>) :
-                  cartItems.cart.map((item, index) => {
-                    const {product, qty, _id: id } = item
-              
-              // Skip if product is null (deleted product)
-              if (!product) return null;
-              
-              const {
-                _id,
-                name,
-                price,
-                discountedPrice,
-                image,
-                    } = product
-              // console.log(_id);
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-white/20 bg-linear-to-r from-indigo-600 to-sky-500">
+              <div className="flex items-center gap-2.5">
+                <ShoppingBag size={20} className="text-white" />
+                <h2 className="text-lg font-bold text-white">Your Cart</h2>
+                {!isEmpty && (
+                  <span className="bg-white/25 text-white text-xs font-bold px-2 py-0.5 rounded-full">
+                    {cartItems.cart.length}
+                  </span>
+                )}
+              </div>
+              <motion.button
+                whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}
+                onClick={toggleCart}
+                className="p-1.5 rounded-lg bg-white/15 hover:bg-white/25 text-white transition-colors">
+                <X size={18} />
+              </motion.button>
+            </div>
 
-
-              return (
-              <div key={index} className="relative p-4 flex justify-between items-center">
-                <AnimatePresence mode="wait">
-                  {
-                    qtyUpdateId === id && (
-                      <motion.div
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        exit={{ opacity: 0 }}
-                        className="w-full h-full  absolute backdrop-blur-lg text-blue-900 top-0 left-0 z-2 flex justify-center items-center gap-1 rounded ">
-                        Processing <span className="animate-spin"> <Loader2 /> </span>
-                      </motion.div>
-                    )
-                  }
-                </AnimatePresence>
-                <div className=" flex flex-col">
-                  <div className=" flex">
-
-                    <img
-                      className="h-[50px] w-[50px] mr-2 rounded object-cover object-center"
-                      src={image} alt="" />
-                    <div>
-
-                      <h4 className="font-medium text-gray-900">{name}</h4>
-                      <QuantitySelector 
-                        qty={qty} 
-                        onIncrement={() => { handleQtyInc(item._id) }} 
-                        onDecrement={() => { handleQtyDec(item._id) }}
-                        disableIncrease={true}
-                      />
-
-                    </div>
-                    <motion.button
-                      whileHover={{ scale: 1.2 }}
-                      whileTap={{ scale: 0.8 }}
-                      onClick={() => {
-                        handleRemoveCartItem(_id)
-                      }}
-                      className="absolute cursor-pointer top-2 right-2">
-                      <X size={20} />
-                    </motion.button>
-
+            {/* Items */}
+            <div className="flex-1 overflow-y-auto">
+              {isCartLoading ? (
+                <div className="h-full flex items-center justify-center">
+                  <Loader />
+                </div>
+              ) : isEmpty ? (
+                <motion.div
+                  initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
+                  className="h-full flex flex-col items-center justify-center gap-4 p-8 text-center">
+                  <div className="p-5 rounded-2xl bg-indigo-50">
+                    <ShoppingCart size={40} className="text-indigo-300" />
                   </div>
+                  <div>
+                    <p className="font-semibold text-slate-700 text-lg">Your cart is empty</p>
+                    <p className="text-sm text-slate-400 mt-1">Add some products to get started</p>
+                  </div>
+                  <motion.div whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}>
+                    <Link to="/products" onClick={toggleCart}
+                      className="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-5 py-2.5 rounded-xl text-sm transition-colors">
+                      Browse Products <ArrowRight size={16} />
+                    </Link>
+                  </motion.div>
+                </motion.div>
+              ) : (
+                <div className="divide-y divide-slate-100">
+                  {cartItems.cart.map((item, index) => {
+                    const { product, qty, _id: id } = item
+                    if (!product) return null
+                    const { _id, name, price, discountedPrice, image } = product
+                    const displayPrice = discountedPrice || price
+                    const hasDiscount = discountedPrice && discountedPrice < price
 
-                </div>
-                <div className="flex flex-col items-end">
-                  <span className="font-semibold text-gray-800">{formatPrice(getDiscountedPrice(product))}</span>
-                  {getDiscountedPrice(product) < (discountedPrice || price) && (
-                    <span className="text-xs text-gray-500 line-through">{formatPrice(discountedPrice || price)}</span>
-                  )}
-                </div>
-              </div>
-              )
-                  }
+                    return (
+                      <div key={index} className="relative p-4">
+                        <AnimatePresence>
+                          {qtyUpdateId === id && (
+                            <motion.div
+                              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                              className="absolute inset-0 backdrop-blur-sm bg-white/70 z-10 flex items-center justify-center gap-2 rounded-lg">
+                              <Loader2 size={18} className="animate-spin text-indigo-600" />
+                              <span className="text-sm text-indigo-700 font-medium">Updating…</span>
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
 
-                  )}
+                        <div className="flex gap-3">
+                          {/* Product image */}
+                          <div className="relative shrink-0">
+                            <img src={image} alt={name}
+                              className="w-16 h-16 rounded-xl object-cover object-center border border-slate-100 shadow-sm" />
+                            {hasDiscount && (
+                              <span className="absolute -top-1.5 -right-1.5 bg-rose-500 text-white text-[9px] font-bold px-1 py-0.5 rounded-full">
+                                SALE
+                              </span>
+                            )}
+                          </div>
+
+                          {/* Info */}
+                          <div className="flex-1 min-w-0">
+                            <h4 className="font-semibold text-slate-800 text-sm leading-snug truncate pr-6">{name}</h4>
+                            <div className="flex items-baseline gap-1.5 mt-1">
+                              <span className="font-bold text-indigo-600 text-sm">{formatPrice(displayPrice)}</span>
+                              {hasDiscount && (
+                                <span className="text-xs text-slate-400 line-through">{formatPrice(price)}</span>
+                              )}
+                            </div>
+                            <QuantitySelector
+                              qty={qty}
+                              onIncrement={() => handleQtyInc(item._id)}
+                              onDecrement={() => handleQtyDec(item._id)}
+                              disableIncrease={true}
+                            />
+                          </div>
+
+                          {/* Line total + remove */}
+                          <div className="flex flex-col items-end justify-between shrink-0">
+                            <motion.button
+                              whileHover={{ scale: 1.15 }} whileTap={{ scale: 0.85 }}
+                              onClick={() => handleRemoveCartItem(_id)}
+                              className="p-1.5 rounded-lg hover:bg-rose-50 text-slate-300 hover:text-rose-500 transition-colors cursor-pointer">
+                              <Trash2 size={15} />
+                            </motion.button>
+                            <span className="text-sm font-bold text-slate-700">
+                              {formatPrice(displayPrice * qty)}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
             </div>
-            <div className="p-4 border-t border-[lightgray] flex justify-between items-center">
-              <div className=" text-white w-max text-[15px] bg-[#b64141] px-4 py-2 rounded transition">
-                <span className="font-semibold">
-                  Subtotal: {formatPrice(
-                    cartItems.cart.reduce((total, item) => {
-                      const itemPrice = getDiscountedPrice(item.product);
-                      return total + (itemPrice * item.qty);
-                    }, 0)
-                  )}
-                </span>
-              </div>
 
-              <button
-                disabled={isCartLoading}
-                className="button text-white px-4 py-2 rounded transition">
-                <Link
-                  onClick={handleGoToCheckout} to={'/checkout'}>
-                  Checkout
+            {/* Footer */}
+            {!isEmpty && (
+              <div className="border-t border-slate-100/60 p-4 bg-white/60 backdrop-blur-md space-y-3">
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-500 text-sm font-medium">Subtotal</span>
+                  <span className="text-slate-800 font-bold text-lg">{formatPrice(subtotal)}</span>
+                </div>
+                <p className="text-xs text-slate-400 text-center">Taxes & shipping calculated at checkout</p>
+                <Link to="/checkout" onClick={handleGoToCheckout}>
+                  <motion.button
+                    whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
+                    disabled={isCartLoading}
+                    className="w-full py-3 rounded-xl bg-linear-to-r from-indigo-600 to-sky-500 hover:from-indigo-700 hover:to-sky-600 text-white font-bold text-sm flex items-center justify-center gap-2 shadow-md shadow-indigo-300/40 transition-all cursor-pointer">
+                    Proceed to Checkout <ArrowRight size={16} />
+                  </motion.button>
                 </Link>
-              </button>
-            </div>
+              </div>
+            )}
           </motion.div>
         )}
       </AnimatePresence>
-    </div >
+    </div>
   );
 };
 
@@ -216,42 +189,22 @@ export default CartDropdown;
 
 function QuantitySelector({ qty, onIncrement, onDecrement, disableIncrease = false }) {
   return (
-    <div className="flex items-center bg-white/70 backdrop-blur-md  w-max border-gray-200 rounded-full px-2 py-1 mt-2 shadow-sm">
-      {/* Decrement Button */}
-      <motion.p
-        whileTap={{ scale: 0.9 }}
-        onClick={onDecrement}
-        className="p-1 rounded-full hover:bg-gray-200 transition-colors cursor-pointer"
-      >
-        <Minus className="w-4 h-4 text-gray-600" />
-      </motion.p>
-
-      {/* Qty Number with Animation */}
+    <div className="flex items-center w-max bg-slate-100 rounded-full px-1 py-0.5 mt-2 gap-1">
+      <motion.button whileTap={{ scale: 0.85 }} onClick={onDecrement}
+        className="p-1 rounded-full hover:bg-white hover:shadow-sm transition-all cursor-pointer">
+        <Minus className="w-3 h-3 text-slate-600" />
+      </motion.button>
       <AnimatePresence mode="popLayout">
-        <motion.span
-          key={qty}
-          initial={{ scale: 0 }}
-          animate={{ scale: 1 }}
-          exit={{ scale: 0 }}
-          transition={{ duration: 0.2, ease: 'easeIn' }}
-          className="px-4 text-sm font-medium text-gray-900 select-none"
-        >
-          {qty}
-        </motion.span>
+        <motion.span key={qty} initial={{ scale: 0.6, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.6, opacity: 0 }}
+          transition={{ duration: 0.15 }}
+          className="w-6 text-center text-xs font-bold text-slate-800 select-none">{qty}</motion.span>
       </AnimatePresence>
-
-      {/* Increment Button - Disabled */}
-      <motion.p
-        whileTap={!disableIncrease ? { scale: 0.9 } : {}}
-        onClick={disableIncrease ? () => toast.error('Quantity increase is disabled. Only 1 item per product allowed.') : onIncrement}
-        className={`p-1 rounded-full transition-colors ${
-          disableIncrease 
-            ? 'opacity-40 cursor-not-allowed' 
-            : 'hover:bg-gray-200 cursor-pointer'
-        }`}
-      >
-        <Plus className="w-4 h-4 text-gray-600" />
-      </motion.p>
+      <motion.button
+        whileTap={!disableIncrease ? { scale: 0.85 } : {}}
+        onClick={disableIncrease ? () => toast.error('Only 1 item per product allowed.') : onIncrement}
+        className={`p-1 rounded-full transition-all ${disableIncrease ? 'opacity-30 cursor-not-allowed' : 'hover:bg-white hover:shadow-sm cursor-pointer'}`}>
+        <Plus className="w-3 h-3 text-slate-600" />
+      </motion.button>
     </div>
-  );
+  )
 }

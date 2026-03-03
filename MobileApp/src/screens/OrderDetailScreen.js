@@ -10,16 +10,14 @@ import {
   View,
   Text,
   ScrollView,
-  Image,
   StyleSheet,
   TouchableOpacity,
   Alert,
   RefreshControl,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import axios from 'axios';
-import { API_BASE_URL } from '../config/api';
+import api from '../config/api';
 import { useCurrency } from '../contexts/CurrencyContext';
 import {
   colors,
@@ -131,10 +129,7 @@ export default function OrderDetailScreen({ route, navigation }) {
   const fetchOrderDetail = useCallback(async () => {
     try {
       setError(null);
-      const token = await AsyncStorage.getItem('jwtToken');
-      const res = await axios.get(`${API_BASE_URL}/api/order/detail/${orderId}`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const res = await api.get(`/api/order/detail/${orderId}`);
       
       setOrder(res.data.order);
     } catch (err) {
@@ -167,12 +162,7 @@ export default function OrderDetailScreen({ route, navigation }) {
           onPress: async () => {
             try {
               setCancelling(true);
-              const token = await AsyncStorage.getItem('jwtToken');
-              await axios.put(
-                `${API_BASE_URL}/api/order/cancel/${orderId}`,
-                {},
-                { headers: { Authorization: `Bearer ${token}` } }
-              );
+              await api.patch(`/api/order/cancel/${orderId}`, {});
               
               Alert.alert('Success', 'Your order has been cancelled.');
               fetchOrderDetail();
@@ -362,6 +352,9 @@ export default function OrderDetailScreen({ route, navigation }) {
             <Image
               source={{ uri: item.image || 'https://via.placeholder.com/80' }}
               style={styles.itemImage}
+              contentFit="cover"
+              cachePolicy="memory-disk"
+              transition={150}
             />
             <View style={styles.itemInfo}>
               <Text style={styles.itemName} numberOfLines={2}>{item.name}</Text>

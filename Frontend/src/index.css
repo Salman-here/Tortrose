@@ -5,7 +5,11 @@
 ==================== */
 body {
     font-family: 'Inter', 'Lato', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    background-color: var(--color-bg);
+    background-color: #EEF2FF;
+    background-image:
+        radial-gradient(ellipse 90% 65% at -5% -10%, rgba(99, 102, 241, 0.13) 0%, transparent 55%),
+        radial-gradient(ellipse 70% 55% at 105% 108%, rgba(14, 165, 233, 0.10) 0%, transparent 55%);
+    background-attachment: fixed;
     color: var(--color-text-primary);
     line-height: 1.6;
     font-size: 16px;
@@ -14,33 +18,52 @@ body {
 }
 
 /* ====================
-   Custom Properties
+   Custom Properties (Design Tokens)
 ==================== */
 :root {
     /* Backgrounds */
-    --color-bg: #F4F6F8; /* Light neutral background */
-    --color-surface: #FFFFFF; /* Card / container background */
+    --color-bg: #EEF2FF;          /* Indigo-50 – light themed background */
+    --color-surface: #FFFFFF;     /* Card / container background */
+    --color-surface-raised: #F1F5F9; /* Slightly elevated surface (slate-100) */
 
     /* Text */
-    --color-text-primary: #1F2937; /* Rich dark gray */
-    --color-text-secondary: #6B7280; /* Medium gray for secondary text */
+    --color-text-primary: #1E293B;   /* Slate-800 – rich but not harsh */
+    --color-text-secondary: #64748B; /* Slate-500 – secondary text */
+    --color-text-muted: #94A3B8;     /* Slate-400 – placeholders */
 
-    /* Primary Accent */
-    --color-primary: #4F46E5; /* Indigo – premium modern vibe */
-    --color-primary-hover: #4338CA;
+    /* Primary – Indigo */
+    --color-primary: #6366F1;        /* Indigo-500 */
+    --color-primary-dark: #4F46E5;   /* Indigo-600 */
+    --color-primary-hover: #4338CA;  /* Indigo-700 */
+    --color-primary-light: #EEF2FF;  /* Indigo-50 */
 
-    /* Secondary Accent */
-    --color-secondary: #EC4899; /* Vibrant pink-magenta */
-    --color-secondary-hover: #DB2777;
+    /* Secondary – Sky */
+    --color-secondary: #0EA5E9;      /* Sky-500 */
+    --color-secondary-hover: #0284C7;/* Sky-600 */
+
+    /* Accent – Sky light */
+    --color-accent: #38BDF8;         /* Sky-400 */
+    --color-accent-light: #E0F2FE;   /* Sky-100 */
 
     /* Status Colors */
-    --color-success: #22C55E; /* Fresh green */
-    --color-error: #EF4444; /* Warm red */
-    --color-warning: #F59E0B; /* Golden amber */
+    --color-success: #10B981;        /* Emerald-500 */
+    --color-success-light: #D1FAE5;  /* Emerald-100 */
+    --color-error: #F43F5E;          /* Rose-500 */
+    --color-error-light: #FFE4E6;    /* Rose-100 */
+    --color-warning: #F59E0B;        /* Amber-500 */
+    --color-warning-light: #FEF3C7;  /* Amber-100 */
 
     /* Borders & Shadows */
-    --color-border: #E5E7EB;
-    --shadow-soft: 0 4px 20px rgba(0, 0, 0, 0.05);
+    --color-border: #E2E8F0;         /* Slate-200 */
+    --color-border-light: #F1F5F9;   /* Slate-100 */
+    --shadow-soft: 0 1px 3px rgba(0,0,0,0.06), 0 4px 16px rgba(0,0,0,0.04);
+    --shadow-card: 0 4px 24px rgba(99, 102, 241, 0.06), 0 1px 3px rgba(0,0,0,0.08);
+    --shadow-elevated: 0 10px 40px rgba(0,0,0,0.12), 0 2px 8px rgba(0,0,0,0.06);
+
+    /* Gradients */
+    --gradient-primary: linear-gradient(135deg, #6366F1 0%, #0EA5E9 100%);
+    --gradient-hero: linear-gradient(135deg, #1E1B4B 0%, #1E3A5F 50%, #0C4A6E 100%);
+    --gradient-surface: linear-gradient(180deg, #FFFFFF 0%, #F8FAFC 100%);
 }
 
 /* ====================

@@ -28,7 +28,7 @@ const StoreInfo = ({ storeName, storeSlug, storeLogo, sellerUsername, storeId, t
         <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
-            className="bg-gradient-to-br from-blue-50 to-purple-50 rounded-lg border border-blue-200 p-4 shadow-sm"
+            className="bg-white/80 backdrop-blur-sm rounded-lg border border-white/60 p-4 shadow-sm"
         >
             <p className="text-xs text-gray-600 mb-2 uppercase tracking-wide">Sold by</p>
             
@@ -41,13 +41,13 @@ const StoreInfo = ({ storeName, storeSlug, storeLogo, sellerUsername, storeId, t
                             className="w-12 h-12 rounded-full object-cover border-2 border-white shadow-sm group-hover:scale-105 transition-transform"
                         />
                     ) : (
-                        <div className="w-12 h-12 rounded-full bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center border-2 border-white shadow-sm group-hover:scale-105 transition-transform">
+                        <div className="w-12 h-12 rounded-full bg-linear-to-br from-indigo-500 to-sky-400 flex items-center justify-center border-2 border-white shadow-sm group-hover:scale-105 transition-transform">
                             <Store size={24} className="text-white" />
                         </div>
                     )}
                     <div className="flex-1">
                         <div className="flex items-center justify-between gap-2 mb-1">
-                            <h3 className="font-semibold text-gray-900 group-hover:text-blue-600 transition-colors flex items-center gap-1.5">
+                            <h3 className="font-semibold text-gray-900 group-hover:text-indigo-600 transition-colors flex items-center gap-1.5">
                                 {storeName}
                                 {verification?.isVerified && (
                                     <VerifiedBadge size="sm" />
@@ -79,7 +79,7 @@ const StoreInfo = ({ storeName, storeSlug, storeLogo, sellerUsername, storeId, t
                 <motion.button
                     whileHover={{ scale: 1.02 }}
                     whileTap={{ scale: 0.98 }}
-                    className="w-full px-4 py-2 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-lg hover:from-blue-700 hover:to-purple-700 transition-all flex items-center justify-center gap-2 shadow-md"
+                    className="w-full px-4 py-2 bg-linear-to-r from-indigo-600 to-sky-500 text-white rounded-lg hover:from-indigo-700 hover:to-sky-600 transition-all flex items-center justify-center gap-2 shadow-md"
                 >
                     <Store size={16} />
                     Visit Store

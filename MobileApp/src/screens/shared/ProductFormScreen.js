@@ -15,10 +15,10 @@ import {
   ScrollView,
   Alert,
   SafeAreaView,
-  Image,
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import api from '../../config/api';
@@ -248,7 +248,7 @@ export default function ProductFormScreen({ navigation, route }) {
             >
               {images.map((uri, index) => (
                 <View key={index} style={styles.imageWrapper}>
-                  <Image source={{ uri }} style={styles.imagePreview} />
+                  <Image source={{ uri }} style={styles.imagePreview} contentFit="cover" cachePolicy="memory-disk" transition={150} />
                   <TouchableOpacity
                     style={styles.removeImageButton}
                     onPress={() => removeImage(index)}

@@ -12,10 +12,11 @@ import {
     Truck,
 } from 'lucide-react';
 import axios from 'axios';
-import { toast, ToastContainer } from 'react-toastify';
+import { toast } from 'react-toastify';
 import { Link, Outlet, useLocation } from 'react-router-dom';
 import { uploadImageToCloudinary } from '../../utils/uploadToCloudinary';
 import { useCurrency } from '../../contexts/CurrencyContext';
+import { useAuth } from '../../contexts/AuthContext';
 
 const SellerDashboard = () => {
     const [isMobile, setIsMobile] = useState(false);
@@ -243,8 +244,7 @@ const SellerDashboard = () => {
 
     return (
         <div className="min-h-screen relative bg-gray-50 flex">
-            <ToastContainer position='top-center' autoClose={2300} />
-            
+
             <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} />
 
             <div className={`flex-1 ${!isMobile && 'ml-64'} `}>
@@ -274,128 +274,112 @@ const SellerDashboard = () => {
 export default SellerDashboard;
 
 
-// Sidebar Component for Seller (without User Management)
+// Sidebar Component for Seller
 const Sidebar = ({ activeTab, setActiveTab }) => {
+    const { currentUser } = useAuth();
+
     const menuItems = [
-        { id: 'overview', label: 'Store Overview', icon: <BarChart3 size={20} />, link: '/seller-dashboard/store-overview' },
-        { id: 'products', label: 'Product Management', icon: <Package size={20} />, link: '/seller-dashboard/product-management' },
-        { id: 'orders', label: 'Order Management', icon: <ShoppingBag size={20} />, link: '/seller-dashboard/order-management' },
-        { id: 'shipping', label: 'Shipping Methods', icon: <Truck size={20} />, link: '/seller-dashboard/shipping-configuration' },
-        { id: 'store', label: 'Store Settings', icon: <Store size={20} />, link: '/seller-dashboard/store-settings' },
+        { id: 'overview', label: 'Store Overview', icon: <BarChart3 size={18} />, link: '/seller-dashboard/store-overview' },
+        { id: 'products', label: 'Product Management', icon: <Package size={18} />, link: '/seller-dashboard/product-management' },
+        { id: 'orders', label: 'Order Management', icon: <ShoppingBag size={18} />, link: '/seller-dashboard/order-management' },
+        { id: 'shipping', label: 'Shipping Methods', icon: <Truck size={18} />, link: '/seller-dashboard/shipping-configuration' },
+        { id: 'store', label: 'Store Settings', icon: <Store size={18} />, link: '/seller-dashboard/store-settings' },
     ];
 
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
     const [isMobile, setIsMobile] = useState(false);
-    
-    useEffect(() => {
-        const checkIsMobile = () => {
-            setIsMobile(window.innerWidth < 1024);
-        };
-        checkIsMobile();
-        window.addEventListener('resize', checkIsMobile);
-        checkUrl();
-        return () => {
-            window.removeEventListener('resize', checkIsMobile);
-        };
-    }, []);
-
     const location = useLocation();
 
-    const checkUrl = () => {
-        menuItems.forEach(item => {
-            if (item.link === location.pathname) handleTabClick(item.id);
-        });
-    };
+    useEffect(() => {
+        const checkIsMobile = () => setIsMobile(window.innerWidth < 1024);
+        checkIsMobile();
+        window.addEventListener('resize', checkIsMobile);
+        return () => window.removeEventListener('resize', checkIsMobile);
+    }, []);
 
-    const handleTabClick = (tabId) => {
-        setActiveTab(tabId);
-        if (isMobile) {
-            setIsSidebarOpen(false);
-        }
-    };
+    useEffect(() => {
+        menuItems.forEach(item => { if (item.link === location.pathname) setActiveTab(item.id); });
+    }, [location]);
 
-    const toggleSidebar = () => {
-        setIsSidebarOpen(!isSidebarOpen);
-    };
+    const handleTabClick = (tabId) => { setActiveTab(tabId); if (isMobile) setIsSidebarOpen(false); };
+
+    const SidebarContent = () => (
+        <div className="flex flex-col h-full bg-linear-to-b from-slate-900 via-emerald-950 to-slate-900">
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 pt-6 pb-4">
+                <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-emerald-500/30 flex items-center justify-center text-emerald-200 font-bold text-sm border border-emerald-400/30">
+                        {currentUser?.username?.[0]?.toUpperCase() || 'S'}
+                    </div>
+                    <div>
+                        <p className="text-white font-semibold text-sm leading-tight truncate max-w-[120px]">{currentUser?.username || 'Seller'}</p>
+                        <span className="text-[10px] font-medium bg-emerald-500/30 text-emerald-300 px-1.5 py-0.5 rounded-full">Seller</span>
+                    </div>
+                </div>
+                {isMobile && (
+                    <button onClick={() => setIsSidebarOpen(false)} className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white/70 transition-colors">
+                        <X size={16} />
+                    </button>
+                )}
+            </div>
+
+            <div className="mx-4 h-px bg-white/10 mb-4" />
+
+            {/* Nav */}
+            <nav className="flex-1 px-3 space-y-1 overflow-y-auto">
+                {menuItems.map(item => {
+                    const isActive = activeTab === item.id;
+                    return (
+                        <Link key={item.id} to={item.link}>
+                            <motion.button whileHover={{ x: 2 }} onClick={() => handleTabClick(item.id)}
+                                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${isActive
+                                    ? 'bg-emerald-500/25 text-white border border-emerald-400/30 shadow-sm'
+                                    : 'text-white/60 hover:text-white hover:bg-white/8'}`}>
+                                <span className={`${isActive ? 'text-emerald-300' : 'text-white/50'}`}>{item.icon}</span>
+                                {item.label}
+                                {isActive && <div className="ml-auto w-1.5 h-1.5 rounded-full bg-emerald-400" />}
+                            </motion.button>
+                        </Link>
+                    );
+                })}
+            </nav>
+
+            {/* Footer */}
+            <div className="px-3 pb-5 pt-4 border-t border-white/10 mt-4">
+                <Link to="/">
+                    <motion.button whileHover={{ x: 2 }}
+                        className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-white/50 hover:text-white hover:bg-white/8 transition-all">
+                        <LayoutPanelLeft size={18} className="text-white/40" />
+                        Back to Store
+                    </motion.button>
+                </Link>
+            </div>
+        </div>
+    );
 
     return (
         <>
             {isMobile && (
-                <button
-                    onClick={toggleSidebar}
-                    className="fixed top-3 left-3 z-1 bg-green-700 text-white p-2 rounded-md shadow-lg lg:hidden"
-                    aria-label="Open menu"
-                >
-                    <Menu size={24} />
-                </button>
+                <motion.button whileTap={{ scale: 0.95 }} onClick={() => setIsSidebarOpen(true)}
+                    className="fixed top-4 left-4 z-50 bg-emerald-600 text-white p-2.5 rounded-xl shadow-lg shadow-emerald-500/30">
+                    <Menu size={20} />
+                </motion.button>
             )}
 
             <AnimatePresence>
                 {isMobile && isSidebarOpen && (
-                    <motion.div
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        exit={{ opacity: 0 }}
-                        className="fixed inset-0 bg-black/60 bg-opacity-50 z-40 lg:hidden"
-                        onClick={() => setIsSidebarOpen(false)}
-                    />
+                    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                        className="fixed inset-0 bg-black/50 backdrop-blur-sm z-40"
+                        onClick={() => setIsSidebarOpen(false)} />
                 )}
             </AnimatePresence>
 
             <motion.div
                 initial={isMobile ? { x: '-100%' } : false}
-                animate={
-                    isMobile
-                        ? { x: isSidebarOpen ? 0 : '-100%' }
-                        : { x: 0 }
-                }
-                transition={{ type: 'tween', ease: 'easeInOut', duration: 0.3 }}
-                className={`fixed top-0 left-0 min-h-full w-64 bg-white shadow-lg flex flex-col z-40 ${isMobile && !isSidebarOpen ? '-translate-x-full' : 'translate-x-0'
-                    } lg:translate-x-0`}
-            >
-                <div className="flex justify-between items-center p-6 border-b">
-                    <h1 className="text-xl font-bold text-gray-800">Seller Dashboard</h1>
-                    {isMobile && (
-                        <button
-                            onClick={() => setIsSidebarOpen(false)}
-                            className="text-gray-500 hover:text-gray-700 transition-colors"
-                            aria-label="Close menu"
-                        >
-                            <X size={24} />
-                        </button>
-                    )}
-                </div>
-
-                <nav className="flex-1 p-4 overflow-y-auto">
-                    <ul className="space-y-2">
-                        {menuItems.map(item => (
-                            <Link key={item.id} to={item.link}>
-                                <li>
-                                    <button
-                                        onClick={() => handleTabClick(item.id)}
-                                        className={`w-full flex items-center space-x-3 p-3 rounded-lg transition-colors ${activeTab === item.id
-                                            ? 'bg-green-100 text-green-700'
-                                            : 'text-gray-600 hover:bg-gray-100'
-                                            }`}
-                                    >
-                                        {item.icon}
-                                        <span className="font-medium">{item.label}</span>
-                                    </button>
-                                </li>
-                            </Link>
-                        ))}
-                        <Link to={'/'}>
-                            <li>
-                                <button
-                                    className={`w-full flex items-center space-x-3 p-3 rounded-lg transition-colors text-gray-600 hover:bg-gray-100`}
-                                >
-                                    <LayoutPanelLeft size={20} />
-                                    <span className="font-medium">Home Page</span>
-                                </button>
-                            </li>
-                        </Link>
-                    </ul>
-                </nav>
+                animate={isMobile ? { x: isSidebarOpen ? 0 : '-100%' } : { x: 0 }}
+                transition={{ type: 'tween', ease: 'easeInOut', duration: 0.28 }}
+                className="fixed top-0 left-0 h-full w-64 z-50 shadow-2xl overflow-hidden">
+                <SidebarContent />
             </motion.div>
         </>
     );

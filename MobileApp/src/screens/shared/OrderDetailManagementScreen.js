@@ -14,9 +14,9 @@ import {
   StyleSheet,
   Alert,
   SafeAreaView,
-  Image,
   RefreshControl,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import api from '../../config/api';
 import Loader from '../../components/common/Loader';
@@ -232,7 +232,9 @@ export default function OrderDetailManagementScreen({ route, navigation }) {
                 <Image
                   source={{ uri: item.product.images[0] }}
                   style={styles.itemImage}
-                  resizeMode="cover"
+                  contentFit="cover"
+                  cachePolicy="memory-disk"
+                  transition={150}
                 />
               ) : (
                 <View style={[styles.itemImage, styles.itemImagePlaceholder]}>

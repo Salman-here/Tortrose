@@ -11,7 +11,7 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../contexts/AuthContext';
 import { useGlobal } from '../contexts/GlobalContext';
-import { View, Text, StyleSheet, Animated, Platform } from 'react-native';
+import { View, Text, StyleSheet, Animated, Platform, Alert } from 'react-native';
 import { 
   colors, 
   spacing, 
@@ -25,6 +25,8 @@ import {
 import LoginScreen from '../screens/auth/LoginScreen';
 import SignUpScreen from '../screens/auth/SignUpScreen';
 import ForgotPasswordScreen from '../screens/auth/ForgotPasswordScreen';
+import OTPVerificationScreen from '../screens/auth/OTPVerificationScreen';
+import ChangePasswordScreen from '../screens/ChangePasswordScreen';
 
 // Main Screens
 import HomeScreen from '../screens/HomeScreen';
@@ -47,6 +49,7 @@ import AdminTaxConfigurationScreen from '../screens/admin/AdminTaxConfigurationS
 import SellerDashboardScreen from '../screens/seller/SellerDashboardScreen';
 import SellerStoreSettingsScreen from '../screens/seller/SellerStoreSettingsScreen';
 import SellerShippingConfigurationScreen from '../screens/seller/SellerShippingConfigurationScreen';
+import SellerAnalyticsScreen from '../screens/seller/SellerAnalyticsScreen';
 
 // Shared Screens
 import ProductManagementScreen from '../screens/shared/ProductManagementScreen';
@@ -55,14 +58,70 @@ import OrderManagementScreen from '../screens/shared/OrderManagementScreen';
 import OrderDetailManagementScreen from '../screens/shared/OrderDetailManagementScreen';
 import StoreOverviewScreen from '../screens/shared/StoreOverviewScreen';
 
+// Payment Screens
+import PaymentSuccessScreen from '../screens/PaymentSuccessScreen';
+import PaymentCancelScreen from '../screens/PaymentCancelScreen';
+
 // New Feature Screens
-import SpinWheelScreen from '../screens/SpinWheelScreen';
 import TrustedStoresScreen from '../screens/TrustedStoresScreen';
 import BecomeSellerScreen from '../screens/BecomeSellerScreen';
 import StoreVerificationScreen from '../screens/admin/StoreVerificationScreen';
+import NotificationsScreen from '../screens/NotificationsScreen';
+import SettingsScreen from '../screens/SettingsScreen';
+import EditProfileScreen from '../screens/EditProfileScreen';
 
 const Stack = createStackNavigator();
 const Tab = createBottomTabNavigator();
+
+/**
+ * Role guard HOC factory.
+ * Returns a React component that checks `currentUser.role` before rendering.
+ * If the user lacks the required role it shows an Alert and navigates back.
+ * @param {React.ComponentType} Component - Screen to guard
+ * @param {string[]} allowedRoles - e.g. ['admin'] or ['seller', 'admin']
+ */
+function createRoleGuard(Component, allowedRoles) {
+  return function RoleGuardedScreen(props) {
+    const { currentUser } = useAuth();
+    const { navigation } = props;
+    const hasAccess = currentUser && allowedRoles.includes(currentUser.role);
+
+    useEffect(() => {
+      if (!hasAccess) {
+        Alert.alert(
+          'Access Denied',
+          currentUser
+            ? 'You do not have permission to access this page.'
+            : 'Please log in to continue.',
+          [{ text: 'OK', onPress: () => navigation.goBack() }]
+        );
+      }
+    }, [hasAccess, navigation]);
+
+    if (!hasAccess) return null;
+    return <Component {...props} />;
+  };
+}
+
+// Guarded admin screens (admin only)
+const GuardedAdminDashboard = createRoleGuard(AdminDashboardScreen, ['admin']);
+const GuardedAdminUserManagement = createRoleGuard(AdminUserManagementScreen, ['admin']);
+const GuardedAdminTaxConfiguration = createRoleGuard(AdminTaxConfigurationScreen, ['admin']);
+const GuardedStoreVerification = createRoleGuard(StoreVerificationScreen, ['admin']);
+const GuardedAdminStoreOverview = createRoleGuard(StoreOverviewScreen, ['admin']);
+const GuardedAdminProductManagement = createRoleGuard(ProductManagementScreen, ['admin']);
+const GuardedAdminOrderManagement = createRoleGuard(OrderManagementScreen, ['admin']);
+
+// Guarded seller screens (seller or admin)
+const GuardedSellerDashboard = createRoleGuard(SellerDashboardScreen, ['seller', 'admin']);
+const GuardedSellerAnalytics = createRoleGuard(SellerAnalyticsScreen, ['seller', 'admin']);
+const GuardedSellerStoreOverview = createRoleGuard(StoreOverviewScreen, ['seller', 'admin']);
+const GuardedSellerProductManagement = createRoleGuard(ProductManagementScreen, ['seller', 'admin']);
+const GuardedSellerOrderManagement = createRoleGuard(OrderManagementScreen, ['seller', 'admin']);
+const GuardedSellerStoreSettings = createRoleGuard(SellerStoreSettingsScreen, ['seller', 'admin']);
+const GuardedSellerShippingConfiguration = createRoleGuard(SellerShippingConfigurationScreen, ['seller', 'admin']);
+const GuardedProductForm = createRoleGuard(ProductFormScreen, ['seller', 'admin']);
+const GuardedOrderDetailManagement = createRoleGuard(OrderDetailManagementScreen, ['seller', 'admin']);
 
 // Helper function to calculate cart item count - exported for testing
 export const calculateCartItemCount = (cartItems) => {
@@ -201,7 +260,7 @@ export default function AppNavigator() {
   // Default screen options for stack navigator - defined inside component to ensure styles are available
   const defaultScreenOptions = {
     headerStyle: {
-      backgroundColor: colors.dark,
+      backgroundColor: colors.primaryDark,
       elevation: 0,
       shadowOpacity: 0,
       borderBottomWidth: 0,
@@ -248,7 +307,17 @@ export default function AppNavigator() {
       <Stack.Screen
         name="ForgotPassword"
         component={ForgotPasswordScreen}
-        options={{ title: 'Forgot Password' }}
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="OTPVerification"
+        component={OTPVerificationScreen}
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="ChangePassword"
+        component={ChangePasswordScreen}
+        options={{ headerShown: false }}
       />
 
       {/* Product & Store Screens */}
@@ -267,12 +336,12 @@ export default function AppNavigator() {
       <Stack.Screen
         name="Checkout"
         component={CheckoutScreen}
-        options={{ title: 'Checkout' }}
+        options={{ headerShown: false }}
       />
       <Stack.Screen
         name="Orders"
         component={OrdersScreen}
-        options={{ title: 'My Orders' }}
+        options={{ headerShown: false }}
       />
       <Stack.Screen
         name="OrderDetail"
@@ -280,100 +349,115 @@ export default function AppNavigator() {
         options={{ title: 'Order Details' }}
       />
 
-      {/* Admin Dashboard */}
+      {/* Admin Dashboard (role-guarded: admin only) */}
       <Stack.Screen
         name="AdminDashboard"
-        component={AdminDashboardScreen}
+        component={GuardedAdminDashboard}
         options={{ title: 'Admin Dashboard' }}
       />
       <Stack.Screen
         name="AdminStoreOverview"
-        component={StoreOverviewScreen}
+        component={GuardedAdminStoreOverview}
         initialParams={{ isAdmin: true }}
         options={{ title: 'Store Overview' }}
       />
       <Stack.Screen
         name="AdminProductManagement"
-        component={ProductManagementScreen}
+        component={GuardedAdminProductManagement}
         initialParams={{ isAdmin: true }}
         options={{ title: 'Product Management' }}
       />
       <Stack.Screen
         name="AdminOrderManagement"
-        component={OrderManagementScreen}
+        component={GuardedAdminOrderManagement}
         initialParams={{ isAdmin: true }}
         options={{ title: 'Order Management' }}
       />
       <Stack.Screen
         name="AdminUserManagement"
-        component={AdminUserManagementScreen}
+        component={GuardedAdminUserManagement}
         options={{ title: 'User Management' }}
       />
       <Stack.Screen
         name="AdminTaxConfiguration"
-        component={AdminTaxConfigurationScreen}
+        component={GuardedAdminTaxConfiguration}
         options={{ title: 'Tax Configuration' }}
       />
       <Stack.Screen
         name="StoreVerification"
-        component={StoreVerificationScreen}
+        component={GuardedStoreVerification}
         options={{ title: 'Store Verification' }}
       />
 
-      {/* Seller Dashboard */}
+      {/* Seller Dashboard (role-guarded: seller or admin) */}
       <Stack.Screen
         name="SellerDashboard"
-        component={SellerDashboardScreen}
+        component={GuardedSellerDashboard}
         options={{ title: 'Seller Dashboard' }}
       />
       <Stack.Screen
+        name="SellerAnalytics"
+        component={GuardedSellerAnalytics}
+        options={{ title: 'Store Analytics' }}
+      />
+      <Stack.Screen
         name="SellerStoreOverview"
-        component={StoreOverviewScreen}
+        component={GuardedSellerStoreOverview}
         initialParams={{ isAdmin: false }}
         options={{ title: 'Store Overview' }}
       />
       <Stack.Screen
         name="SellerProductManagement"
-        component={ProductManagementScreen}
+        component={GuardedSellerProductManagement}
         initialParams={{ isAdmin: false }}
         options={{ title: 'Product Management' }}
       />
       <Stack.Screen
         name="SellerOrderManagement"
-        component={OrderManagementScreen}
+        component={GuardedSellerOrderManagement}
         initialParams={{ isAdmin: false }}
         options={{ title: 'Order Management' }}
       />
       <Stack.Screen
         name="SellerStoreSettings"
-        component={SellerStoreSettingsScreen}
+        component={GuardedSellerStoreSettings}
         options={{ title: 'Store Settings' }}
       />
       <Stack.Screen
         name="SellerShippingConfiguration"
-        component={SellerShippingConfigurationScreen}
+        component={GuardedSellerShippingConfiguration}
         options={{ title: 'Shipping Configuration' }}
       />
 
-      {/* Shared Screens */}
+      {/* Shared Screens (role-guarded: seller or admin) */}
       <Stack.Screen
         name="ProductForm"
-        component={ProductFormScreen}
-        options={({ route }) => ({ 
-          title: route.params?.productId ? 'Edit Product' : 'Add Product' 
+        component={GuardedProductForm}
+        options={({ route }) => ({
+          title: route.params?.productId ? 'Edit Product' : 'Add Product'
         })}
       />
       <Stack.Screen
         name="OrderDetailManagement"
-        component={OrderDetailManagementScreen}
+        component={GuardedOrderDetailManagement}
         options={{ title: 'Order Details' }}
       />
 
       {/* Feature Screens */}
       <Stack.Screen
-        name="SpinWheel"
-        component={SpinWheelScreen}
-        options={{ title: 'Spin & Win' }}
+        name="Notifications"
+        component={NotificationsScreen}
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="Settings"
+        component={SettingsScreen}
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="EditProfile"
+        component={EditProfileScreen}
+        options={{ headerShown: false }}
       />
       <Stack.Screen
         name="TrustedStores"
@@ -384,6 +468,18 @@ export default function AppNavigator() {
         name="BecomeSeller"
         component={BecomeSellerScreen}
         options={{ title: 'Become a Seller' }}
+      />
+
+      {/* Payment Result Screens */}
+      <Stack.Screen
+        name="PaymentSuccess"
+        component={PaymentSuccessScreen}
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="PaymentCancel"
+        component={PaymentCancelScreen}
+        options={{ headerShown: false }}
       />
     </Stack.Navigator>
   );

@@ -1,8 +1,7 @@
 /**
  * AdminTaxConfigurationScreen
- * Modern admin screen for managing tax configurations
- * 
- * Requirements: 26.1, 26.2, 26.3, 26.4, 26.5, 26.6
+ * Admin screen for managing the global tax configuration
+ * Uses single global config model: { type: 'none'|'percentage'|'fixed', value: number, isActive: boolean }
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
@@ -15,10 +14,10 @@ import {
   ScrollView,
   Alert,
   RefreshControl,
-  Modal,
+  Switch,
+  ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
-  ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import {
@@ -29,49 +28,43 @@ import {
   borderRadius,
   shadows,
   typography,
-  cardStyles,
-  buttonStyles,
-  inputStyles,
-  layout,
 } from '../../styles/theme';
 import api from '../../config/api';
-import Loader from '../../components/common/Loader';
-import EmptyState from '../../components/common/EmptyState';
+import { Loader } from '../../components/common';
 
-// Tax rate display format helper - exported for testing
-export const formatTaxRate = (rate) => {
-  if (rate === null || rate === undefined || isNaN(rate)) return '0%';
-  return `${parseFloat(rate).toFixed(2)}%`;
-};
+const TAX_TYPES = [
+  { key: 'none', label: 'No Tax', icon: 'close-circle-outline', color: colors.gray, desc: 'Customers are not charged any tax' },
+  { key: 'percentage', label: 'Percentage (%)', icon: 'trending-up-outline', color: colors.info, desc: 'Tax calculated as a percentage of subtotal' },
+  { key: 'fixed', label: 'Fixed Amount', icon: 'cash-outline', color: colors.success, desc: 'A flat tax amount added to every order' },
+];
 
 export default function AdminTaxConfigurationScreen() {
-  const [taxConfigs, setTaxConfigs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [modalVisible, setModalVisible] = useState(false);
-  const [editingTax, setEditingTax] = useState(null);
   const [saving, setSaving] = useState(false);
-  const [deleting, setDeleting] = useState(null);
 
-  // Form state
-  const [formData, setFormData] = useState({
-    region: '',
-    rate: '',
-    description: '',
-  });
-  const [formErrors, setFormErrors] = useState({});
+  // Config state (mirrors backend model)
+  const [taxType, setTaxType] = useState('none');
+  const [taxValue, setTaxValue] = useState('');
+  const [isActive, setIsActive] = useState(true);
+  const [valueError, setValueError] = useState('');
 
   useEffect(() => {
-    fetchTaxConfigs();
+    fetchTaxConfig();
   }, []);
 
-  const fetchTaxConfigs = async () => {
+  const fetchTaxConfig = async () => {
     try {
-      const response = await api.get('/api/tax/get-all');
-      setTaxConfigs(response.data.taxes || response.data || []);
+      const res = await api.get('/api/tax/config');
+      const config = res.data.taxConfig;
+      if (config) {
+        setTaxType(config.type || 'none');
+        setTaxValue(config.value !== undefined ? String(config.value) : '0');
+        setIsActive(config.isActive !== false);
+      }
     } catch (error) {
-      console.log('Error fetching tax configs:', error);
-      Alert.alert('Error', 'Failed to load tax configurations');
+      console.error('Error fetching tax config:', error);
+      Alert.alert('Error', 'Failed to load tax configuration');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -80,283 +73,48 @@ export default function AdminTaxConfigurationScreen() {
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
-    fetchTaxConfigs();
+    fetchTaxConfig();
   }, []);
 
-  const validateForm = () => {
-    const errors = {};
-    
-    if (!formData.region.trim()) {
-      errors.region = 'Region is required';
+  const validate = () => {
+    if (taxType === 'none') return true;
+    const val = parseFloat(taxValue);
+    if (isNaN(val) || val < 0) {
+      setValueError('Please enter a valid non-negative number');
+      return false;
     }
-    
-    const rate = parseFloat(formData.rate);
-    if (isNaN(rate) || rate < 0 || rate > 100) {
-      errors.rate = 'Rate must be between 0 and 100';
+    if (taxType === 'percentage' && val > 100) {
+      setValueError('Percentage cannot exceed 100');
+      return false;
     }
-    
-    setFormErrors(errors);
-    return Object.keys(errors).length === 0;
-  };
-
-  const openAddModal = () => {
-    setEditingTax(null);
-    setFormData({ region: '', rate: '', description: '' });
-    setFormErrors({});
-    setModalVisible(true);
-  };
-
-  const openEditModal = (tax) => {
-    setEditingTax(tax);
-    setFormData({
-      region: tax.region || '',
-      rate: tax.rate?.toString() || '',
-      description: tax.description || '',
-    });
-    setFormErrors({});
-    setModalVisible(true);
-  };
-
-  const closeModal = () => {
-    setModalVisible(false);
-    setEditingTax(null);
-    setFormData({ region: '', rate: '', description: '' });
-    setFormErrors({});
+    setValueError('');
+    return true;
   };
 
   const handleSave = async () => {
-    if (!validateForm()) return;
-
+    if (!validate()) return;
     setSaving(true);
     try {
-      const payload = {
-        region: formData.region.trim(),
-        rate: parseFloat(formData.rate),
-        description: formData.description.trim(),
-      };
-
-      if (editingTax) {
-        await api.put(`/api/tax/update/${editingTax._id}`, payload);
-        Alert.alert('Success', 'Tax rule updated successfully');
-      } else {
-        await api.post('/api/tax/create', payload);
-        Alert.alert('Success', 'Tax rule created successfully');
-      }
-      
-      closeModal();
-      fetchTaxConfigs();
+      await api.put('/api/tax/config', {
+        type: taxType,
+        value: taxType === 'none' ? 0 : parseFloat(taxValue) || 0,
+      });
+      Alert.alert('Success', 'Tax configuration updated successfully');
     } catch (error) {
-      console.log('Error saving tax config:', error);
-      Alert.alert('Error', error.response?.data?.message || 'Failed to save tax rule');
+      console.error('Error saving tax config:', error);
+      Alert.alert('Error', error.response?.data?.msg || 'Failed to update tax configuration');
     } finally {
       setSaving(false);
     }
   };
 
-  const handleDelete = (tax) => {
-    Alert.alert(
-      'Delete Tax Rule',
-      `Are you sure you want to delete the tax rule for "${tax.region}"?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: () => confirmDelete(tax),
-        },
-      ]
-    );
+  const getPreviewText = () => {
+    const val = parseFloat(taxValue) || 0;
+    if (taxType === 'none') return 'No tax will be applied to orders';
+    if (taxType === 'percentage') return `A $${val}% tax will be added to every order subtotal`;
+    if (taxType === 'fixed') return `A fixed $${val.toFixed(2)} tax will be added to every order`;
+    return '';
   };
-
-  const confirmDelete = async (tax) => {
-    setDeleting(tax._id);
-    try {
-      await api.delete(`/api/tax/delete/${tax._id}`);
-      Alert.alert('Success', 'Tax rule deleted successfully');
-      fetchTaxConfigs();
-    } catch (error) {
-      console.log('Error deleting tax config:', error);
-      Alert.alert('Error', 'Failed to delete tax rule');
-    } finally {
-      setDeleting(null);
-    }
-  };
-
-  const renderTaxCard = (tax) => {
-    const isDeleting = deleting === tax._id;
-    
-    return (
-      <View key={tax._id} style={styles.taxCard}>
-        <View style={styles.taxCardHeader}>
-          <View style={styles.taxCardLeft}>
-            <View style={styles.iconContainer}>
-              <Ionicons name="receipt-outline" size={24} color={colors.primary} />
-            </View>
-            <View style={styles.taxInfo}>
-              <Text style={styles.regionText}>{tax.region}</Text>
-              {tax.description && (
-                <Text style={styles.descriptionText} numberOfLines={1}>
-                  {tax.description}
-                </Text>
-              )}
-            </View>
-          </View>
-          <View style={styles.rateContainer}>
-            <Text style={styles.rateText}>{formatTaxRate(tax.rate)}</Text>
-          </View>
-        </View>
-        
-        <View style={styles.taxCardActions}>
-          <TouchableOpacity
-            style={styles.editButton}
-            onPress={() => openEditModal(tax)}
-            disabled={isDeleting}
-          >
-            <Ionicons name="pencil-outline" size={18} color={colors.primary} />
-            <Text style={styles.editButtonText}>Edit</Text>
-          </TouchableOpacity>
-          
-          <TouchableOpacity
-            style={styles.deleteButton}
-            onPress={() => handleDelete(tax)}
-            disabled={isDeleting}
-          >
-            {isDeleting ? (
-              <ActivityIndicator size="small" color={colors.error} />
-            ) : (
-              <>
-                <Ionicons name="trash-outline" size={18} color={colors.error} />
-                <Text style={styles.deleteButtonText}>Delete</Text>
-              </>
-            )}
-          </TouchableOpacity>
-        </View>
-      </View>
-    );
-  };
-
-  const renderModal = () => (
-    <Modal
-      visible={modalVisible}
-      animationType="slide"
-      transparent={true}
-      onRequestClose={closeModal}
-    >
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={styles.modalOverlay}
-      >
-        <View style={styles.modalContent}>
-          {/* Modal Header */}
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>
-              {editingTax ? 'Edit Tax Rule' : 'Add Tax Rule'}
-            </Text>
-            <TouchableOpacity onPress={closeModal} style={styles.closeButton}>
-              <Ionicons name="close" size={24} color={colors.gray} />
-            </TouchableOpacity>
-          </View>
-
-          <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
-            {/* Region Input */}
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Region *</Text>
-              <TextInput
-                style={[
-                  styles.input,
-                  formErrors.region && styles.inputError,
-                ]}
-                value={formData.region}
-                onChangeText={(text) => {
-                  setFormData({ ...formData, region: text });
-                  if (formErrors.region) {
-                    setFormErrors({ ...formErrors, region: null });
-                  }
-                }}
-                placeholder="e.g., California, EU, Canada"
-                placeholderTextColor={colors.grayLight}
-              />
-              {formErrors.region && (
-                <Text style={styles.errorText}>{formErrors.region}</Text>
-              )}
-            </View>
-
-            {/* Rate Input */}
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Tax Rate (%) *</Text>
-              <View style={styles.rateInputContainer}>
-                <TextInput
-                  style={[
-                    styles.input,
-                    styles.rateInput,
-                    formErrors.rate && styles.inputError,
-                  ]}
-                  value={formData.rate}
-                  onChangeText={(text) => {
-                    // Only allow numbers and decimal point
-                    const cleaned = text.replace(/[^0-9.]/g, '');
-                    setFormData({ ...formData, rate: cleaned });
-                    if (formErrors.rate) {
-                      setFormErrors({ ...formErrors, rate: null });
-                    }
-                  }}
-                  keyboardType="decimal-pad"
-                  placeholder="0.00"
-                  placeholderTextColor={colors.grayLight}
-                />
-                <View style={styles.percentBadge}>
-                  <Text style={styles.percentText}>%</Text>
-                </View>
-              </View>
-              {formErrors.rate && (
-                <Text style={styles.errorText}>{formErrors.rate}</Text>
-              )}
-            </View>
-
-            {/* Description Input */}
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Description (Optional)</Text>
-              <TextInput
-                style={[styles.input, styles.textArea]}
-                value={formData.description}
-                onChangeText={(text) => setFormData({ ...formData, description: text })}
-                placeholder="Add a description for this tax rule"
-                placeholderTextColor={colors.grayLight}
-                multiline
-                numberOfLines={3}
-                textAlignVertical="top"
-              />
-            </View>
-          </ScrollView>
-
-          {/* Modal Footer */}
-          <View style={styles.modalFooter}>
-            <TouchableOpacity
-              style={styles.cancelButton}
-              onPress={closeModal}
-              disabled={saving}
-            >
-              <Text style={styles.cancelButtonText}>Cancel</Text>
-            </TouchableOpacity>
-            
-            <TouchableOpacity
-              style={[styles.saveButton, saving && styles.saveButtonDisabled]}
-              onPress={handleSave}
-              disabled={saving}
-            >
-              {saving ? (
-                <ActivityIndicator size="small" color={colors.white} />
-              ) : (
-                <Text style={styles.saveButtonText}>
-                  {editingTax ? 'Update' : 'Create'}
-                </Text>
-              )}
-            </TouchableOpacity>
-          </View>
-        </View>
-      </KeyboardAvoidingView>
-    </Modal>
-  );
 
   if (loading) {
     return (
@@ -367,84 +125,115 @@ export default function AdminTaxConfigurationScreen() {
   }
 
   return (
-    <View style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
-        <View style={styles.headerLeft}>
-          <View style={styles.headerIconContainer}>
-            <Ionicons name="calculator-outline" size={24} color={colors.white} />
-          </View>
-          <View>
-            <Text style={styles.headerTitle}>Tax Configuration</Text>
-            <Text style={styles.headerSubtitle}>
-              {taxConfigs.length} {taxConfigs.length === 1 ? 'rule' : 'rules'} configured
-            </Text>
-          </View>
-        </View>
-      </View>
-
-      {/* Content */}
-      {taxConfigs.length === 0 ? (
-        <ScrollView
-          contentContainerStyle={styles.emptyContainer}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={onRefresh}
-              colors={[colors.primary]}
-              tintColor={colors.primary}
-            />
-          }
-        >
-          <EmptyState
-            icon="receipt-outline"
-            title="No Tax Rules"
-            subtitle="Add tax rules to configure tax rates for different regions"
-            actionLabel="Add Tax Rule"
-            onAction={openAddModal}
+    <KeyboardAvoidingView
+      style={{ flex: 1 }}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+    >
+      <ScrollView
+        style={styles.container}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            colors={[colors.primary]}
+            tintColor={colors.primary}
           />
-        </ScrollView>
-      ) : (
-        <ScrollView
-          style={styles.scrollView}
-          contentContainerStyle={styles.scrollContent}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={onRefresh}
-              colors={[colors.primary]}
-              tintColor={colors.primary}
-            />
-          }
-          showsVerticalScrollIndicator={false}
-        >
-          {/* Info Card */}
-          <View style={styles.infoCard}>
-            <Ionicons name="information-circle-outline" size={20} color={colors.info} />
-            <Text style={styles.infoText}>
-              Tax rates are applied based on the customer's shipping region during checkout.
-            </Text>
-          </View>
-
-          {/* Tax Rules List */}
-          <View style={styles.taxList}>
-            {taxConfigs.map(renderTaxCard)}
-          </View>
-        </ScrollView>
-      )}
-
-      {/* Floating Action Button */}
-      <TouchableOpacity
-        style={styles.fab}
-        onPress={openAddModal}
-        activeOpacity={0.8}
+        }
       >
-        <Ionicons name="add" size={28} color={colors.white} />
-      </TouchableOpacity>
+        {/* Header Card */}
+        <View style={styles.heroCard}>
+          <View style={styles.heroIconWrap}>
+            <Ionicons name="calculator" size={32} color={colors.white} />
+          </View>
+          <Text style={styles.heroTitle}>Tax Configuration</Text>
+          <Text style={styles.heroSubtitle}>Set a global tax rule applied to all orders at checkout</Text>
+        </View>
 
-      {/* Modal */}
-      {renderModal()}
-    </View>
+        {/* Info Banner */}
+        <View style={styles.infoBanner}>
+          <Ionicons name="information-circle-outline" size={18} color={colors.info} />
+          <Text style={styles.infoText}>
+            This is a global tax rule. It applies uniformly to all orders across all sellers.
+          </Text>
+        </View>
+
+        {/* Tax Type Selection */}
+        <Text style={styles.sectionLabel}>TAX TYPE</Text>
+        <View style={styles.card}>
+          {TAX_TYPES.map((type, idx) => (
+            <TouchableOpacity
+              key={type.key}
+              style={[
+                styles.typeRow,
+                idx < TAX_TYPES.length - 1 && styles.typeRowBorder,
+                taxType === type.key && styles.typeRowActive,
+              ]}
+              onPress={() => { setTaxType(type.key); setValueError(''); }}
+              activeOpacity={0.7}
+            >
+              <View style={[styles.typeIconWrap, { backgroundColor: taxType === type.key ? type.color + '20' : colors.light }]}>
+                <Ionicons name={type.icon} size={22} color={taxType === type.key ? type.color : colors.gray} />
+              </View>
+              <View style={styles.typeInfo}>
+                <Text style={[styles.typeLabel, taxType === type.key && { color: type.color }]}>{type.label}</Text>
+                <Text style={styles.typeDesc}>{type.desc}</Text>
+              </View>
+              <View style={[styles.radioOuter, taxType === type.key && { borderColor: type.color }]}>
+                {taxType === type.key && <View style={[styles.radioInner, { backgroundColor: type.color }]} />}
+              </View>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        {/* Value Input (hidden for 'none') */}
+        {taxType !== 'none' && (
+          <>
+            <Text style={styles.sectionLabel}>{taxType === 'percentage' ? 'TAX RATE (%)' : 'FIXED AMOUNT ($)'}</Text>
+            <View style={styles.card}>
+              <View style={styles.valueInputRow}>
+                <View style={styles.prefixBadge}>
+                  <Text style={styles.prefixText}>{taxType === 'percentage' ? '%' : '$'}</Text>
+                </View>
+                <TextInput
+                  style={[styles.valueInput, valueError ? styles.valueInputError : null]}
+                  value={taxValue}
+                  onChangeText={(t) => { setTaxValue(t.replace(/[^0-9.]/g, '')); setValueError(''); }}
+                  keyboardType="decimal-pad"
+                  placeholder={taxType === 'percentage' ? 'e.g. 10' : 'e.g. 5.00'}
+                  placeholderTextColor={colors.grayLight}
+                />
+              </View>
+              {valueError ? <Text style={styles.errorText}>{valueError}</Text> : null}
+            </View>
+          </>
+        )}
+
+        {/* Live Preview */}
+        <View style={styles.previewCard}>
+          <Ionicons name="eye-outline" size={18} color={colors.secondary} />
+          <Text style={styles.previewText}>{getPreviewText()}</Text>
+        </View>
+
+        {/* Save Button */}
+        <TouchableOpacity
+          style={[styles.saveButton, saving && styles.saveButtonDisabled]}
+          onPress={handleSave}
+          disabled={saving}
+          activeOpacity={0.85}
+        >
+          {saving ? (
+            <ActivityIndicator size="small" color={colors.white} />
+          ) : (
+            <>
+              <Ionicons name="checkmark-circle-outline" size={20} color={colors.white} />
+              <Text style={styles.saveButtonText}>Save Tax Configuration</Text>
+            </>
+          )}
+        </TouchableOpacity>
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -460,56 +249,44 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: colors.background,
   },
-  
-  // Header
-  header: {
-    backgroundColor: colors.primary,
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.lg,
-    paddingBottom: spacing.xl,
-    borderBottomLeftRadius: borderRadius.xxl,
-    borderBottomRightRadius: borderRadius.xxl,
-  },
-  headerLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  headerIconContainer: {
-    width: 48,
-    height: 48,
-    borderRadius: borderRadius.lg,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: spacing.md,
-  },
-  headerTitle: {
-    ...typography.h2,
-    color: colors.white,
-  },
-  headerSubtitle: {
-    ...typography.bodySmall,
-    color: 'rgba(255, 255, 255, 0.8)',
-    marginTop: spacing.xs,
-  },
-
-  // Empty State
-  emptyContainer: {
-    flex: 1,
-    justifyContent: 'center',
-  },
-
-  // Scroll View
-  scrollView: {
-    flex: 1,
-  },
   scrollContent: {
     padding: spacing.lg,
-    paddingBottom: 100,
+    paddingBottom: spacing.xxl * 2,
   },
 
-  // Info Card
-  infoCard: {
+  // Hero Card
+  heroCard: {
+    backgroundColor: colors.primaryDark,
+    borderRadius: borderRadius.xxl,
+    padding: spacing.xl,
+    alignItems: 'center',
+    marginBottom: spacing.lg,
+    ...shadows.md,
+  },
+  heroIconWrap: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: spacing.md,
+  },
+  heroTitle: {
+    fontSize: fontSize.xxl,
+    fontWeight: fontWeight.bold,
+    color: colors.white,
+    marginBottom: spacing.xs,
+  },
+  heroSubtitle: {
+    ...typography.bodySmall,
+    color: 'rgba(255,255,255,0.75)',
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+
+  // Info Banner
+  infoBanner: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     backgroundColor: colors.infoSubtle,
@@ -518,248 +295,157 @@ const styles = StyleSheet.create({
     marginBottom: spacing.lg,
     borderLeftWidth: 4,
     borderLeftColor: colors.info,
+    gap: spacing.sm,
   },
   infoText: {
     ...typography.bodySmall,
     color: colors.infoDark,
     flex: 1,
-    marginLeft: spacing.sm,
     lineHeight: 20,
   },
 
-  // Tax List
-  taxList: {
-    gap: spacing.md,
+  // Section Labels
+  sectionLabel: {
+    fontSize: fontSize.xs,
+    fontWeight: fontWeight.bold,
+    color: colors.textSecondary,
+    letterSpacing: 0.8,
+    marginBottom: spacing.sm,
+    marginLeft: spacing.xs,
   },
 
-  // Tax Card
-  taxCard: {
+  // Card
+  card: {
     backgroundColor: colors.white,
     borderRadius: borderRadius.xl,
-    padding: spacing.lg,
-    ...shadows.md,
-    borderWidth: 1,
-    borderColor: colors.light,
+    marginBottom: spacing.lg,
+    ...shadows.sm,
+    overflow: 'hidden',
   },
-  taxCardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: spacing.md,
-  },
-  taxCardLeft: {
+
+  // Type Selection
+  typeRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    flex: 1,
-  },
-  iconContainer: {
-    width: 44,
-    height: 44,
-    borderRadius: borderRadius.lg,
-    backgroundColor: colors.primarySubtle,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: spacing.md,
-  },
-  taxInfo: {
-    flex: 1,
-  },
-  regionText: {
-    ...typography.h4,
-    color: colors.text,
-  },
-  descriptionText: {
-    ...typography.bodySmall,
-    color: colors.textSecondary,
-    marginTop: spacing.xs,
-  },
-  rateContainer: {
-    backgroundColor: colors.successLighter,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    borderRadius: borderRadius.full,
-  },
-  rateText: {
-    ...typography.bodySemibold,
-    color: colors.successDark,
-  },
-  taxCardActions: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
+    padding: spacing.md,
     gap: spacing.md,
-    paddingTop: spacing.md,
-    borderTopWidth: 1,
-    borderTopColor: colors.light,
   },
-  editButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.md,
-    borderRadius: borderRadius.md,
-    backgroundColor: colors.primarySubtle,
-  },
-  editButtonText: {
-    ...typography.bodySmall,
-    color: colors.primary,
-    marginLeft: spacing.xs,
-    fontWeight: fontWeight.medium,
-  },
-  deleteButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.md,
-    borderRadius: borderRadius.md,
-    backgroundColor: colors.errorSubtle,
-    minWidth: 80,
-    justifyContent: 'center',
-  },
-  deleteButtonText: {
-    ...typography.bodySmall,
-    color: colors.error,
-    marginLeft: spacing.xs,
-    fontWeight: fontWeight.medium,
-  },
-
-  // FAB
-  fab: {
-    position: 'absolute',
-    right: spacing.lg,
-    bottom: spacing.xxl,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: colors.primary,
-    justifyContent: 'center',
-    alignItems: 'center',
-    ...shadows.lg,
-  },
-
-  // Modal
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: colors.overlay,
-    justifyContent: 'flex-end',
-  },
-  modalContent: {
-    backgroundColor: colors.white,
-    borderTopLeftRadius: borderRadius.xxl,
-    borderTopRightRadius: borderRadius.xxl,
-    maxHeight: '85%',
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: spacing.lg,
+  typeRowBorder: {
     borderBottomWidth: 1,
     borderBottomColor: colors.light,
   },
-  modalTitle: {
-    ...typography.h3,
-    color: colors.text,
+  typeRowActive: {
+    backgroundColor: colors.lighter,
   },
-  closeButton: {
-    width: 40,
-    height: 40,
-    borderRadius: borderRadius.full,
-    backgroundColor: colors.light,
+  typeIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: borderRadius.lg,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  modalBody: {
-    padding: spacing.lg,
+  typeInfo: {
+    flex: 1,
   },
-  modalFooter: {
-    flexDirection: 'row',
-    padding: spacing.lg,
-    gap: spacing.md,
-    borderTopWidth: 1,
-    borderTopColor: colors.light,
+  typeLabel: {
+    fontSize: fontSize.md,
+    fontWeight: fontWeight.semibold,
+    color: colors.text,
+    marginBottom: 2,
+  },
+  typeDesc: {
+    ...typography.bodySmall,
+    color: colors.textSecondary,
+  },
+  radioOuter: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 2,
+    borderColor: colors.grayLight,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  radioInner: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
   },
 
-  // Form
-  inputGroup: {
-    marginBottom: spacing.lg,
-  },
-  inputLabel: {
-    ...typography.label,
-    color: colors.text,
-    marginBottom: spacing.sm,
-  },
-  input: {
-    backgroundColor: colors.lighter,
-    borderRadius: borderRadius.lg,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-    fontSize: fontSize.md,
-    color: colors.text,
-    borderWidth: 1.5,
-    borderColor: colors.light,
-  },
-  inputError: {
-    borderColor: colors.error,
-    backgroundColor: colors.errorSubtle,
-  },
-  textArea: {
-    minHeight: 80,
-    textAlignVertical: 'top',
-    paddingTop: spacing.md,
-  },
-  rateInputContainer: {
+  // Value Input
+  valueInputRow: {
     flexDirection: 'row',
     alignItems: 'center',
   },
-  rateInput: {
+  prefixBadge: {
+    width: 50,
+    height: 56,
+    backgroundColor: colors.primarySubtle,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderRightWidth: 1,
+    borderRightColor: colors.light,
+  },
+  prefixText: {
+    fontSize: fontSize.lg,
+    fontWeight: fontWeight.bold,
+    color: colors.primary,
+  },
+  valueInput: {
     flex: 1,
-    borderTopRightRadius: 0,
-    borderBottomRightRadius: 0,
-  },
-  percentBadge: {
-    backgroundColor: colors.primary,
     paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md + 2,
-    borderTopRightRadius: borderRadius.lg,
-    borderBottomRightRadius: borderRadius.lg,
+    paddingVertical: spacing.md,
+    fontSize: fontSize.xl,
+    fontWeight: fontWeight.semibold,
+    color: colors.text,
   },
-  percentText: {
-    ...typography.bodySemibold,
-    color: colors.white,
+  valueInputError: {
+    backgroundColor: colors.errorSubtle,
   },
   errorText: {
     ...typography.bodySmall,
     color: colors.error,
     marginTop: spacing.xs,
+    paddingHorizontal: spacing.md,
+    paddingBottom: spacing.sm,
   },
 
-  // Buttons
-  cancelButton: {
-    flex: 1,
-    paddingVertical: spacing.md,
+  // Preview
+  previewCard: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.sm,
+    backgroundColor: colors.secondarySubtle,
     borderRadius: borderRadius.lg,
-    backgroundColor: colors.light,
-    alignItems: 'center',
-    justifyContent: 'center',
+    padding: spacing.md,
+    marginBottom: spacing.lg,
+    borderLeftWidth: 4,
+    borderLeftColor: colors.secondary,
   },
-  cancelButtonText: {
-    ...typography.bodySemibold,
-    color: colors.gray,
+  previewText: {
+    ...typography.bodySmall,
+    color: colors.secondaryDark,
+    flex: 1,
+    lineHeight: 20,
   },
+
+  // Save Button
   saveButton: {
-    flex: 1,
-    paddingVertical: spacing.md,
-    borderRadius: borderRadius.lg,
-    backgroundColor: colors.primary,
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    ...shadows.primarySm,
+    gap: spacing.sm,
+    backgroundColor: colors.primary,
+    borderRadius: borderRadius.xl,
+    paddingVertical: spacing.lg,
+    ...shadows.md,
   },
   saveButtonDisabled: {
     opacity: 0.6,
   },
   saveButtonText: {
-    ...typography.bodySemibold,
+    fontSize: fontSize.lg,
+    fontWeight: fontWeight.bold,
     color: colors.white,
   },
 });

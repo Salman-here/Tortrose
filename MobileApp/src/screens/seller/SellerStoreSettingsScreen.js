@@ -15,9 +15,13 @@ import {
   ScrollView,
   Alert,
   SafeAreaView,
-  Image,
   RefreshControl,
+  Modal,
+  KeyboardAvoidingView,
+  Platform,
+  ActivityIndicator,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import api from '../../config/api';
@@ -47,8 +51,19 @@ export default function SellerStoreSettingsScreen({ navigation }) {
   const [banner, setBanner] = useState(null);
   const [errors, setErrors] = useState({});
 
+  // Verification state
+  const [verification, setVerification] = useState(null);
+  const [showVerificationModal, setShowVerificationModal] = useState(false);
+  const [verificationForm, setVerificationForm] = useState({
+    applicationMessage: '',
+    contactEmail: '',
+    contactPhone: '',
+  });
+  const [submittingVerification, setSubmittingVerification] = useState(false);
+
   useEffect(() => {
     fetchSettings();
+    fetchVerificationStatus();
   }, []);
 
   const fetchSettings = async () => {
@@ -70,9 +85,43 @@ export default function SellerStoreSettingsScreen({ navigation }) {
     }
   };
 
+  const fetchVerificationStatus = async () => {
+    try {
+      const response = await api.get('/api/stores/verification/status');
+      setVerification(response.data);
+    } catch (error) {
+      // Verification status not critical; silently ignore
+      console.log('Verification status unavailable:', error?.response?.status);
+    }
+  };
+
+  const submitVerificationApplication = async () => {
+    const { applicationMessage, contactEmail, contactPhone } = verificationForm;
+    if (!applicationMessage.trim() || !contactEmail.trim() || !contactPhone.trim()) {
+      Alert.alert('Missing Fields', 'Please fill in all fields before submitting.');
+      return;
+    }
+    setSubmittingVerification(true);
+    try {
+      await api.post('/api/stores/verification/apply', {
+        applicationMessage: applicationMessage.trim(),
+        contactEmail: contactEmail.trim(),
+        contactPhone: contactPhone.trim(),
+      });
+      setShowVerificationModal(false);
+      setVerificationForm({ applicationMessage: '', contactEmail: '', contactPhone: '' });
+      await fetchVerificationStatus();
+      Alert.alert('Application Submitted', 'Your verification request has been submitted. We will review it shortly.');
+    } catch (error) {
+      Alert.alert('Submission Failed', error.response?.data?.msg || error.response?.data?.message || 'Failed to submit verification request.');
+    } finally {
+      setSubmittingVerification(false);
+    }
+  };
+
   const onRefresh = useCallback(() => {
     setRefreshing(true);
-    fetchSettings();
+    Promise.all([fetchSettings(), fetchVerificationStatus()]).finally(() => setRefreshing(false));
   }, []);
 
   const updateField = useCallback((field, value) => {
@@ -143,6 +192,8 @@ export default function SellerStoreSettingsScreen({ navigation }) {
   }
 
   const isVerified = store?.verification?.isVerified;
+  const verificationStatus = verification?.status || (isVerified ? 'verified' : 'none');
+  const canApplyForVerification = verificationStatus === 'none' || verificationStatus === 'rejected';
 
   return (
     <SafeAreaView style={styles.container}>
@@ -168,26 +219,56 @@ export default function SellerStoreSettingsScreen({ navigation }) {
 
         {/* Verification Status */}
         <View style={styles.section}>
-          <View style={styles.verificationCard}>
+          <Text style={styles.sectionTitle}>Store Verification</Text>
+          <View style={[
+            styles.verificationCard,
+            verificationStatus === 'verified' && styles.verificationCardSuccess,
+            verificationStatus === 'pending' && styles.verificationCardWarning,
+            verificationStatus === 'rejected' && styles.verificationCardError,
+          ]}>
             <View style={styles.verificationIcon}>
               <Ionicons
-                name={isVerified ? 'shield-checkmark' : 'shield-outline'}
+                name={
+                  verificationStatus === 'verified' ? 'shield-checkmark' :
+                  verificationStatus === 'pending' ? 'time-outline' :
+                  verificationStatus === 'rejected' ? 'close-circle-outline' : 'shield-outline'
+                }
                 size={32}
-                color={isVerified ? colors.success : colors.grayLight}
+                color={
+                  verificationStatus === 'verified' ? colors.success :
+                  verificationStatus === 'pending' ? colors.warning :
+                  verificationStatus === 'rejected' ? colors.error : colors.grayLight
+                }
               />
             </View>
             <View style={styles.verificationInfo}>
               <Text style={styles.verificationTitle}>
-                {isVerified ? 'Verified Store' : 'Not Verified'}
+                {verificationStatus === 'verified' ? 'Verified Store' :
+                 verificationStatus === 'pending' ? 'Pending Review' :
+                 verificationStatus === 'rejected' ? 'Application Rejected' : 'Not Verified'}
               </Text>
               <Text style={styles.verificationText}>
-                {isVerified
-                  ? 'Your store is verified and trusted by customers'
-                  : 'Contact admin to get your store verified'}
+                {verificationStatus === 'verified' ? 'Your store is verified and trusted by customers' :
+                 verificationStatus === 'pending' ? 'Your application is being reviewed by our team' :
+                 verificationStatus === 'rejected'
+                   ? (verification?.rejectionReason ? `Reason: ${verification.rejectionReason}` : 'Your application was rejected. You may reapply.')
+                   : 'Get your store verified to build customer trust'}
               </Text>
             </View>
             {isVerified && <VerifiedBadge size="md" />}
           </View>
+          {canApplyForVerification && (
+            <TouchableOpacity
+              style={styles.applyVerificationBtn}
+              onPress={() => setShowVerificationModal(true)}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="shield-checkmark-outline" size={18} color={colors.white} />
+              <Text style={styles.applyVerificationBtnText}>
+                {verificationStatus === 'rejected' ? 'Reapply for Verification' : 'Apply for Verification'}
+              </Text>
+            </TouchableOpacity>
+          )}
         </View>
 
         {/* Images Section */}
@@ -202,7 +283,7 @@ export default function SellerStoreSettingsScreen({ navigation }) {
             activeOpacity={0.8}
           >
             {banner ? (
-              <Image source={{ uri: banner }} style={styles.bannerImage} resizeMode="cover" />
+              <Image source={{ uri: banner }} style={styles.bannerImage} contentFit="cover" cachePolicy="memory-disk" transition={200} />
             ) : (
               <View style={styles.bannerPlaceholder}>
                 <Ionicons name="image-outline" size={32} color={colors.grayLight} />
@@ -222,7 +303,7 @@ export default function SellerStoreSettingsScreen({ navigation }) {
             activeOpacity={0.8}
           >
             {logo ? (
-              <Image source={{ uri: logo }} style={styles.logoImage} resizeMode="cover" />
+              <Image source={{ uri: logo }} style={styles.logoImage} contentFit="cover" cachePolicy="memory-disk" transition={200} />
             ) : (
               <View style={styles.logoPlaceholder}>
                 <Ionicons name="storefront-outline" size={32} color={colors.grayLight} />
@@ -291,6 +372,82 @@ export default function SellerStoreSettingsScreen({ navigation }) {
         {/* Bottom Spacing */}
         <View style={styles.bottomSpacing} />
       </ScrollView>
+
+      {/* Verification Application Modal */}
+      <Modal
+        visible={showVerificationModal}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setShowVerificationModal(false)}
+      >
+        <KeyboardAvoidingView
+          style={styles.modalOverlay}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
+          <View style={styles.modalSheet}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Apply for Verification</Text>
+              <TouchableOpacity onPress={() => setShowVerificationModal(false)} style={styles.modalClose}>
+                <Ionicons name="close" size={24} color={colors.text} />
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={styles.modalBody} keyboardShouldPersistTaps="handled">
+              <Text style={styles.modalHint}>
+                Provide your contact information and a message explaining why your store should be verified.
+              </Text>
+
+              <Text style={styles.label}>Contact Email <Text style={styles.required}>*</Text></Text>
+              <TextInput
+                style={styles.input}
+                value={verificationForm.contactEmail}
+                onChangeText={(v) => setVerificationForm(p => ({ ...p, contactEmail: v }))}
+                placeholder="your@email.com"
+                placeholderTextColor={colors.grayLight}
+                keyboardType="email-address"
+                autoCapitalize="none"
+              />
+
+              <Text style={[styles.label, { marginTop: spacing.md }]}>Contact Phone <Text style={styles.required}>*</Text></Text>
+              <TextInput
+                style={styles.input}
+                value={verificationForm.contactPhone}
+                onChangeText={(v) => setVerificationForm(p => ({ ...p, contactPhone: v }))}
+                placeholder="+1 234 567 8900"
+                placeholderTextColor={colors.grayLight}
+                keyboardType="phone-pad"
+              />
+
+              <Text style={[styles.label, { marginTop: spacing.md }]}>Application Message <Text style={styles.required}>*</Text></Text>
+              <TextInput
+                style={[styles.input, styles.textArea]}
+                value={verificationForm.applicationMessage}
+                onChangeText={(v) => setVerificationForm(p => ({ ...p, applicationMessage: v }))}
+                placeholder="Describe your store and why it should be verified..."
+                placeholderTextColor={colors.grayLight}
+                multiline
+                numberOfLines={5}
+                textAlignVertical="top"
+              />
+
+              <TouchableOpacity
+                style={[styles.submitButton, submittingVerification && styles.submitButtonDisabled, { marginTop: spacing.lg }]}
+                onPress={submitVerificationApplication}
+                disabled={submittingVerification}
+                activeOpacity={0.8}
+              >
+                {submittingVerification
+                  ? <ActivityIndicator color={colors.white} size="small" />
+                  : <>
+                      <Ionicons name="shield-checkmark-outline" size={20} color={colors.white} />
+                      <Text style={styles.submitButtonText}>Submit Application</Text>
+                    </>
+                }
+              </TouchableOpacity>
+              <View style={{ height: spacing.xl }} />
+            </ScrollView>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -342,7 +499,11 @@ const styles = StyleSheet.create({
     backgroundColor: colors.lighter,
     borderRadius: borderRadius.lg,
     padding: spacing.md,
+    marginBottom: spacing.md,
   },
+  verificationCardSuccess: { backgroundColor: colors.successSubtle },
+  verificationCardWarning: { backgroundColor: colors.warningSubtle },
+  verificationCardError: { backgroundColor: colors.errorSubtle },
   verificationIcon: {
     marginRight: spacing.md,
   },
@@ -356,6 +517,55 @@ const styles = StyleSheet.create({
   verificationText: {
     ...typography.bodySmall,
     color: colors.textSecondary,
+  },
+  applyVerificationBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.sm,
+    backgroundColor: colors.primary,
+    borderRadius: borderRadius.lg,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.lg,
+  },
+  applyVerificationBtnText: {
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.semibold,
+    color: colors.white,
+  },
+  // Verification Modal
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: colors.overlay,
+    justifyContent: 'flex-end',
+  },
+  modalSheet: {
+    backgroundColor: colors.white,
+    borderTopLeftRadius: borderRadius.xxl || 24,
+    borderTopRightRadius: borderRadius.xxl || 24,
+    maxHeight: '90%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: spacing.lg,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.light,
+  },
+  modalTitle: {
+    ...typography.h4,
+  },
+  modalClose: {
+    padding: spacing.xs,
+  },
+  modalBody: {
+    padding: spacing.lg,
+  },
+  modalHint: {
+    ...typography.bodySmall,
+    color: colors.textSecondary,
+    marginBottom: spacing.lg,
   },
   // Image Pickers
   bannerPicker: {

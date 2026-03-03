@@ -19,9 +19,9 @@ const ProductCard = ({
   numReviews,
   isFeatured,
   idx,
-  spinDiscountedPrice,
-  hasSpinDiscount,
-  spinResult
+  // spinDiscountedPrice, // SPIN WHEEL DISABLED
+  // hasSpinDiscount, // SPIN WHEEL DISABLED
+  // spinResult // SPIN WHEEL DISABLED
 }) => {
   const {
     wishlistItems,
@@ -44,9 +44,9 @@ const ProductCard = ({
   const isInWishlist = wishlistItems?.some((item) => item?._id === _id);
   const isInCart = cartItems?.cart?.some((item) => item?.product?._id === _id);
 
-  // Determine which price to show
-  const displayPrice = hasSpinDiscount ? spinDiscountedPrice : (discountedPrice || price);
-  const originalDisplayPrice = hasSpinDiscount ? price : (discountedPrice ? price : null);
+  // SPIN WHEEL DISABLED - simplified price display
+  const displayPrice = discountedPrice || price;
+  const originalDisplayPrice = discountedPrice ? price : null;
 
   const discountPercentage = originalDisplayPrice && displayPrice < originalDisplayPrice
     ? Math.round(((originalDisplayPrice - displayPrice) / originalDisplayPrice) * 100)
@@ -179,7 +179,7 @@ const ProductCard = ({
               initial="hidden"
               animate="visible"
               exit="hidden"
-              className="px-1.5 py-0.5 sm:px-2 sm:py-1 bg-gradient-to-r from-purple-600 to-indigo-600 text-white text-[10px] sm:text-xs font-semibold rounded-full flex items-center gap-0.5 sm:gap-1 shadow-md"
+              className="px-1.5 py-0.5 sm:px-2 sm:py-1 bg-linear-to-r from-indigo-500 to-sky-400 text-white text-[10px] sm:text-xs font-semibold rounded-full flex items-center gap-0.5 sm:gap-1 shadow-md"
             >
               <Zap size={8} className="sm:w-[10px] sm:h-[10px]" fill="currentColor" /> <span className="hidden sm:inline">Featured</span><span className="sm:hidden">⭐</span>
             </motion.span>
@@ -187,26 +187,16 @@ const ProductCard = ({
         </AnimatePresence>
 
         <AnimatePresence>
-          {hasSpinDiscount && spinResult && !spinResult.hasCheckedOut && (
+          {/* SPIN WHEEL DISABLED - spin prize badge removed */}
+          {/* {hasSpinDiscount && spinResult && !spinResult.hasCheckedOut && (<motion.span ...>🎉 SPIN PRIZE!</motion.span>)} */}
+          {discountPercentage > 0 && (
             <motion.span
               variants={badgeVariants}
               initial="hidden"
               animate="visible"
               exit="hidden"
               transition={{ delay: 0.1 }}
-              className="px-1.5 py-0.5 sm:px-2 sm:py-1 bg-gradient-to-r from-yellow-500 to-orange-500 text-white text-[10px] sm:text-xs font-semibold rounded-full shadow-md animate-pulse"
-            >
-              🎉 <span className="hidden sm:inline">SPIN PRIZE!</span>
-            </motion.span>
-          )}
-          {!hasSpinDiscount && discountPercentage > 0 && (
-            <motion.span
-              variants={badgeVariants}
-              initial="hidden"
-              animate="visible"
-              exit="hidden"
-              transition={{ delay: 0.1 }}
-              className="px-1.5 py-0.5 sm:px-2 sm:py-1 bg-gradient-to-r from-red-500 to-pink-500 text-white text-[10px] sm:text-xs font-semibold rounded-full shadow-md"
+              className="px-1.5 py-0.5 sm:px-2 sm:py-1 bg-linear-to-r from-red-500 to-pink-500 text-white text-[10px] sm:text-xs font-semibold rounded-full shadow-md"
             >
               -{discountPercentage}%
             </motion.span>
@@ -274,7 +264,7 @@ const ProductCard = ({
           disabled={stock === 0}
           className={`p-1.5 sm:p-2 md:p-2.5 rounded-full shadow-md backdrop-blur-sm ${isInCart
             ? "bg-blue-100 text-blue-600"
-            : "bg-white/90 text-gray-600 hover:bg-blue-50 hover:text-blue-600"
+            : "bg-white/90 text-gray-600 hover:bg-sky-50 hover:text-indigo-600"
             } transition-colors`}
           title={isInCart ? "View in cart" : "Add to cart"}
         >
@@ -300,7 +290,7 @@ const ProductCard = ({
       </motion.div>
 
       {/* Product Image */}
-      <div className="relative overflow-hidden rounded-lg sm:rounded-xl mb-2 sm:mb-3 md:mb-4 aspect-square bg-gradient-to-br from-gray-100 to-gray-200">
+      <div className="relative overflow-hidden rounded-lg sm:rounded-xl mb-2 sm:mb-3 md:mb-4 aspect-square bg-linear-to-br from-slate-100 to-slate-200">
         <Link to={`/single-product/${_id}`} className="block w-full h-full">
           <div className="relative w-full h-full flex items-center justify-center">
             <AnimatePresence mode="wait">
@@ -324,7 +314,7 @@ const ProductCard = ({
             {/* Loading shimmer effect */}
             {!imageLoaded && (
               <motion.div
-                className="absolute inset-0 bg-gradient-to-r from-gray-200 via-gray-300 to-gray-200 bg-[length:200%_100%]"
+                className="absolute inset-0 bg-linear-to-r from-slate-200 via-slate-300 to-slate-200 bg-size-[200%_100%]"
                 animate={{
                   backgroundPosition: ['0% 0%', '100% 0%', '0% 0%'],
                 }}
@@ -383,7 +373,7 @@ const ProductCard = ({
 
         <Link to={`/single-product/${_id}`}>
           <motion.h3
-            className="font-semibold text-xs sm:text-sm md:text-base text-gray-900 mb-1 sm:mb-1.5 md:mb-2 line-clamp-2 hover:text-blue-600 transition-colors min-h-[2.5rem] sm:min-h-[3rem]"
+            className="font-semibold text-xs sm:text-sm md:text-base text-gray-900 mb-1 sm:mb-1.5 md:mb-2 line-clamp-2 hover:text-indigo-600 transition-colors min-h-[2.5rem] sm:min-h-[3rem]"
             whileHover={{ x: 2 }}
             transition={{ type: "spring", stiffness: 500, damping: 15 }}
           >
@@ -418,26 +408,9 @@ const ProductCard = ({
 
         {/* Price */}
         <div className="mt-auto flex items-center gap-1 sm:gap-1.5 md:gap-2 mb-2 sm:mb-3 md:mb-4">
-          {hasSpinDiscount && spinResult && !spinResult.hasCheckedOut ? (
-            <>
-              <motion.span
-                className="text-base sm:text-lg md:text-xl font-bold text-orange-600"
-                initial={{ scale: 0.9 }}
-                animate={{ scale: 1 }}
-                transition={{ type: "spring", stiffness: 500, damping: 15 }}
-              >
-                {formatPrice(displayPrice)}
-              </motion.span>
-              <motion.span
-                className="text-xs sm:text-sm text-gray-500 line-through"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                transition={{ delay: 0.2, duration: 0.4 }}
-              >
-                {formatPrice(price)}
-              </motion.span>
-            </>
-          ) : originalDisplayPrice ? (
+          {/* SPIN WHEEL DISABLED - spin price display removed */}
+          {/* {hasSpinDiscount && spinResult && !spinResult.hasCheckedOut ? ( ... ) : ...} */}
+          {originalDisplayPrice ? (
             <>
               <motion.span
                 className="text-base sm:text-lg md:text-xl font-bold text-gray-900"
@@ -475,7 +448,7 @@ const ProductCard = ({
             ? "bg-gray-200 text-gray-500 cursor-not-allowed"
             : isInCart
               ? "bg-red-100 text-red-700 hover:bg-red-200"
-              : "bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:from-blue-700 hover:to-indigo-700"
+              : "bg-linear-to-r from-indigo-600 to-sky-500 text-white hover:from-indigo-700 hover:to-sky-600"
             }`}
         >
           {

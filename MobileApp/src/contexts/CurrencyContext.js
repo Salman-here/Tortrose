@@ -1,7 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import axios from 'axios';
-import { API_BASE_URL } from '../config/api';
+import api, { API_BASE_URL } from '../config/api';
 
 const CurrencyContext = createContext();
 
@@ -64,7 +63,7 @@ export const CurrencyProvider = ({ children }) => {
 
   const fetchExchangeRates = async () => {
     try {
-      const res = await axios.get(`${API_BASE_URL}/api/currency/rates`);
+      const res = await api.get('/api/currency/rates');
       if (res.data.success && res.data.rates) {
         setExchangeRates({ ...DEFAULT_RATES, ...res.data.rates });
       }
@@ -75,19 +74,15 @@ export const CurrencyProvider = ({ children }) => {
 
   const setCurrency = async (newCurrency) => {
     if (!CURRENCIES[newCurrency]) return;
-    
+
     setCurrencyState(newCurrency);
     await AsyncStorage.setItem('userCurrency', newCurrency);
 
     // Try to save to backend if user is logged in
     try {
-      const token = await AsyncStorage.getItem('jwtToken');
-      if (token) {
-        await axios.patch(
-          `${API_BASE_URL}/api/currency/update`,
-          { currency: newCurrency },
-          { headers: { Authorization: `Bearer ${token}` } }
-        );
+      const savedToken = await AsyncStorage.getItem('jwtToken');
+      if (savedToken) {
+        await api.patch('/api/currency/update', { currency: newCurrency });
       }
     } catch (error) {
       // Silently fail - local storage is the primary source

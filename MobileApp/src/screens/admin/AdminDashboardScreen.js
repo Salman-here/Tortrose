@@ -16,8 +16,7 @@ import {
   TouchableOpacity,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import axios from 'axios';
-import { API_BASE_URL } from '../../config/api';
+import api, { API_BASE_URL } from '../../config/api';
 import { useAuth } from '../../contexts/AuthContext';
 import StatCard, {
   UsersStatCard,
@@ -74,7 +73,7 @@ export const calculateAdminStats = (users, stores, products, orders) => {
 };
 
 export default function AdminDashboardScreen({ navigation }) {
-  const { currentUser, token } = useAuth();
+  const { currentUser } = useAuth();
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [stats, setStats] = useState({
@@ -93,23 +92,28 @@ export default function AdminDashboardScreen({ navigation }) {
 
   const fetchDashboardData = async () => {
     try {
-      const headers = { Authorization: `Bearer ${token}` };
-      
-      // Fetch all data in parallel
+      // Fetch all data in parallel using the api instance (auto-injects auth token)
+      // Use limit=500 to cap data transfer while keeping accurate dashboard stats
       const [usersRes, storesRes, productsRes, ordersRes] = await Promise.all([
-        axios.get(`${API_BASE_URL}/api/users/all`, { headers }).catch(() => ({ data: [] })),
-        axios.get(`${API_BASE_URL}/api/stores/all`, { headers }).catch(() => ({ data: { stores: [] } })),
-        axios.get(`${API_BASE_URL}/api/products/get-products`, { headers }).catch(() => ({ data: [] })),
-        axios.get(`${API_BASE_URL}/api/order/all`, { headers }).catch(() => ({ data: [] })),
+        api.get('/api/user/get').catch(() => ({ data: [] })),
+        api.get('/api/stores/all').catch(() => ({ data: { stores: [] } })),
+        api.get('/api/products/get-products?limit=50&page=1').catch(() => ({ data: [] })),
+        api.get('/api/order/get').catch(() => ({ data: [] })),
       ]);
 
       const users = usersRes.data?.users || usersRes.data || [];
       const stores = storesRes.data?.stores || [];
       const products = productsRes.data?.products || productsRes.data || [];
+      // Use pagination total for accurate product count even with page limits
+      const totalProductsFromPagination = productsRes.data?.pagination?.totalProducts;
       const orders = ordersRes.data?.orders || ordersRes.data || [];
 
-      // Calculate stats
-      setStats(calculateAdminStats(users, stores, products, orders));
+      // Calculate stats (pass totalProducts override for paginated endpoint)
+      const computedStats = calculateAdminStats(users, stores, products, orders);
+      if (totalProductsFromPagination !== undefined) {
+        computedStats.totalProducts = totalProductsFromPagination;
+      }
+      setStats(computedStats);
 
       // Get recent activity (last 5 orders)
       const sortedOrders = [...orders].sort((a, b) => 

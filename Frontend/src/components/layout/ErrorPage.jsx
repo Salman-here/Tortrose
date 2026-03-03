@@ -72,7 +72,7 @@ const ErrorPage = ({
     };
 
     return (
-        <div className="h flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
+        <div className="h flex items-center justify-center p-4">
             <motion.div
                 className="bg-white rounded-2xl shadow-xl p-6 md:p-8 w-full max-w-md"
                 variants={containerVariants}

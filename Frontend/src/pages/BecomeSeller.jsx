@@ -102,7 +102,7 @@ export default function BecomeSeller() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 py-12 px-4">
+    <div className="min-h-screen py-12 px-4">
       <div className="max-w-4xl mx-auto">
         {/* Back Button */}
         <button
@@ -120,11 +120,11 @@ export default function BecomeSeller() {
           className="text-center mb-8"
         >
           <div className="flex justify-center mb-4">
-            <div className="bg-gradient-to-r from-purple-600 to-blue-600 p-4 rounded-full">
+            <div className="bg-linear-to-r from-indigo-600 to-sky-500 p-4 rounded-full shadow-lg shadow-indigo-300/40">
               <Store size={48} className="text-white" />
             </div>
           </div>
-          <h1 className="text-4xl sm:text-5xl font-bold bg-gradient-to-r from-purple-600 to-blue-600 bg-clip-text text-transparent mb-3">
+          <h1 className="text-4xl sm:text-5xl font-bold bg-linear-to-r from-indigo-600 to-sky-500 bg-clip-text text-transparent mb-3">
             Become a Seller - FREE
           </h1>
           <p className="text-gray-600 text-lg max-w-2xl mx-auto mb-2">
@@ -142,9 +142,9 @@ export default function BecomeSeller() {
           transition={{ delay: 0.1 }}
           className="grid md:grid-cols-3 gap-6 mb-8"
         >
-          <div className="bg-white rounded-2xl shadow-lg p-6 text-center">
-            <div className="bg-purple-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
-              <TrendingUp size={32} className="text-purple-600" />
+          <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-md border border-white/60 p-6 text-center">
+            <div className="bg-indigo-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
+              <TrendingUp size={32} className="text-indigo-600" />
             </div>
             <h3 className="text-xl font-bold mb-2">Grow Your Business</h3>
             <p className="text-gray-600 text-sm">
@@ -152,9 +152,9 @@ export default function BecomeSeller() {
             </p>
           </div>
 
-          <div className="bg-white rounded-2xl shadow-lg p-6 text-center">
-            <div className="bg-blue-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
-              <Shield size={32} className="text-blue-600" />
+          <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-md border border-white/60 p-6 text-center">
+            <div className="bg-sky-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
+              <Shield size={32} className="text-sky-600" />
             </div>
             <h3 className="text-xl font-bold mb-2">Secure Platform</h3>
             <p className="text-gray-600 text-sm">
@@ -162,7 +162,7 @@ export default function BecomeSeller() {
             </p>
           </div>
 
-          <div className="bg-white rounded-2xl shadow-lg p-6 text-center">
+          <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-md border border-white/60 p-6 text-center">
             <div className="bg-green-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
               <BarChart3 size={32} className="text-green-600" />
             </div>
@@ -178,7 +178,7 @@ export default function BecomeSeller() {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.2 }}
-          className="bg-white rounded-2xl shadow-lg p-8 mb-8"
+          className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-md border border-white/60 p-8 mb-8"
         >
           <h2 className="text-2xl font-bold mb-6 flex items-center gap-2">
             <Sparkles className="text-yellow-500" size={28} />
@@ -196,7 +196,7 @@ export default function BecomeSeller() {
               '24/7 seller support'
             ].map((benefit, idx) => (
               <div key={idx} className="flex items-center gap-3">
-                <CheckCircle size={20} className="text-green-500 flex-shrink-0" />
+                <CheckCircle size={20} className="text-green-500 shrink-0" />
                 <span className="text-gray-700">{benefit}</span>
               </div>
             ))}
@@ -209,7 +209,7 @@ export default function BecomeSeller() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.3 }}
-            className="bg-gradient-to-r from-purple-600 to-blue-600 rounded-2xl shadow-2xl p-8 text-center text-white"
+            className="bg-linear-to-r from-indigo-600 to-sky-500 rounded-2xl shadow-2xl shadow-indigo-300/40 p-8 text-center text-white"
           >
             <h2 className="text-3xl font-bold mb-4">Ready to Start Selling?</h2>
             <p className="text-white/90 mb-2 max-w-2xl mx-auto text-lg">
@@ -223,7 +223,7 @@ export default function BecomeSeller() {
               onClick={() => setShowForm(true)}
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
-              className="bg-white text-purple-600 font-bold text-lg px-12 py-4 rounded-full shadow-lg hover:shadow-xl transition-all inline-flex items-center gap-3"
+              className="bg-white text-indigo-600 font-bold text-lg px-12 py-4 rounded-full shadow-lg hover:shadow-xl transition-all inline-flex items-center gap-3"
             >
               <Store size={24} />
               Get Started
@@ -237,9 +237,9 @@ export default function BecomeSeller() {
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            className="bg-white rounded-2xl shadow-2xl p-8"
+            className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl border border-white/60 p-8"
           >
-            <h2 className="text-3xl font-bold mb-2 text-center bg-gradient-to-r from-purple-600 to-blue-600 bg-clip-text text-transparent">
+            <h2 className="text-3xl font-bold mb-2 text-center bg-linear-to-r from-indigo-600 to-sky-500 bg-clip-text text-transparent">
               Seller Information
             </h2>
             <p className="text-gray-600 text-center mb-6">
@@ -249,8 +249,8 @@ export default function BecomeSeller() {
             <form onSubmit={handleBecomeSeller} className="space-y-6">
               {/* Phone Number */}
               <div>
-                <label className="block text-gray-700 font-semibold mb-2 flex items-center gap-2">
-                  <Phone size={18} className="text-purple-600" />
+                <label className="flex text-gray-700 font-semibold mb-2 items-center gap-2">
+                  <Phone size={18} className="text-indigo-600" />
                   Phone Number <span className="text-red-500">*</span>
                 </label>
                 <input
@@ -259,15 +259,15 @@ export default function BecomeSeller() {
                   value={formData.phoneNumber}
                   onChange={handleInputChange}
                   placeholder="+1 234 567 8900"
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none transition-all"
+                  className="w-full px-4 py-3 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-400 focus:border-indigo-400 bg-white/70 outline-none transition-all"
                   required
                 />
               </div>
 
               {/* Business Name (Optional) */}
               <div>
-                <label className="block text-gray-700 font-semibold mb-2 flex items-center gap-2">
-                  <Store size={18} className="text-purple-600" />
+                <label className="flex text-gray-700 font-semibold mb-2 items-center gap-2">
+                  <Store size={18} className="text-indigo-600" />
                   Business Name (Optional)
                 </label>
                 <input
@@ -276,15 +276,15 @@ export default function BecomeSeller() {
                   value={formData.businessName}
                   onChange={handleInputChange}
                   placeholder="Your business or brand name"
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none transition-all"
+                  className="w-full px-4 py-3 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-400 focus:border-indigo-400 bg-white/70 outline-none transition-all"
                   maxLength={100}
                 />
               </div>
 
               {/* Address */}
               <div>
-                <label className="block text-gray-700 font-semibold mb-2 flex items-center gap-2">
-                  <MapPin size={18} className="text-purple-600" />
+                <label className="flex text-gray-700 font-semibold mb-2 items-center gap-2">
+                  <MapPin size={18} className="text-indigo-600" />
                   Address <span className="text-red-500">*</span>
                 </label>
                 <input
@@ -293,7 +293,7 @@ export default function BecomeSeller() {
                   value={formData.address}
                   onChange={handleInputChange}
                   placeholder="Street address"
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none transition-all"
+                  className="w-full px-4 py-3 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-400 focus:border-indigo-400 bg-white/70 outline-none transition-all"
                   required
                 />
               </div>
@@ -310,7 +310,7 @@ export default function BecomeSeller() {
                     value={formData.city}
                     onChange={handleInputChange}
                     placeholder="Your city"
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none transition-all"
+                    className="w-full px-4 py-3 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-400 focus:border-indigo-400 bg-white/70 outline-none transition-all"
                     required
                   />
                 </div>
@@ -325,7 +325,7 @@ export default function BecomeSeller() {
                     value={formData.country}
                     onChange={handleInputChange}
                     placeholder="Your country"
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none transition-all"
+                    className="w-full px-4 py-3 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-400 focus:border-indigo-400 bg-white/70 outline-none transition-all"
                     required
                   />
                 </div>
@@ -348,7 +348,7 @@ export default function BecomeSeller() {
                   disabled={loading}
                   whileHover={{ scale: loading ? 1 : 1.02 }}
                   whileTap={{ scale: loading ? 1 : 0.98 }}
-                  className="flex-1 bg-gradient-to-r from-purple-600 to-blue-600 text-white font-bold py-2 sm:py-3 px-2 sm:px-6 rounded-lg shadow-lg hover:shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-1 sm:gap-2 text-xs sm:text-base min-w-0"
+                  className="flex-1 bg-linear-to-r from-indigo-600 to-sky-500 text-white font-bold py-2 sm:py-3 px-2 sm:px-6 rounded-lg shadow-lg shadow-indigo-300/30 hover:shadow-xl hover:from-indigo-700 hover:to-sky-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-1 sm:gap-2 text-xs sm:text-base min-w-0"
                 >
                   {loading ? (
                     <>

@@ -103,49 +103,9 @@ export default function Checkout() {
     return 0;
   };
 
-  // Get spin discount from localStorage
-  const getSpinDiscount = () => {
-    const spinResult = localStorage.getItem('spinResult');
-    const spinTimestamp = localStorage.getItem('spinTimestamp');
-    
-    if (!spinResult || !spinTimestamp) return null;
-    
-    const now = new Date().getTime();
-    const spinTime = parseInt(spinTimestamp);
-    const hoursPassed = (now - spinTime) / (1000 * 60 * 60);
-    
-    if (hoursPassed >= 24) {
-      localStorage.removeItem('spinResult');
-      localStorage.removeItem('spinTimestamp');
-      localStorage.removeItem('spinSelectedProducts');
-      return null;
-    }
-    
-    return JSON.parse(spinResult);
-  };
-
-  // Calculate discounted price for a product
-  const getDiscountedPrice = (product) => {
-    const spinResult = getSpinDiscount();
-    const spinSelectedProducts = JSON.parse(localStorage.getItem('spinSelectedProducts') || '[]');
-    
-    // Don't apply discount if spin is checked out or product not selected
-    if (!spinResult || spinResult.hasCheckedOut || !spinSelectedProducts.includes(product._id)) {
-      return product.discountedPrice || product.price;
-    }
-    
-    let discountedPrice = product.price;
-    
-    if (spinResult.type === 'free') {
-      discountedPrice = 0;
-    } else if (spinResult.type === 'fixed') {
-      discountedPrice = spinResult.value;
-    } else if (spinResult.type === 'percentage') {
-      discountedPrice = product.price * (1 - spinResult.value / 100);
-    }
-    
-    return Math.max(0, discountedPrice);
-  };
+  // SPIN WHEEL DISABLED - getSpinDiscount and getDiscountedPrice removed
+  // const getSpinDiscount = () => { ... }
+  // const getDiscountedPrice = (product) => { ... }
 
   const {
     register,
@@ -184,11 +144,11 @@ export default function Checkout() {
   const selectedShipping = watch("shippingMethod");
   const billingSameAsShipping = watch("billingSameAsShipping");
 
-  // Subtotal with spin discounts applied
+  // Subtotal (spin discounts disabled)
   const subtotal = useMemo(() => {
     if (!cartItems?.cart) return 0;
     return cartItems.cart.reduce((total, item) => {
-      const itemPrice = getDiscountedPrice(item.product);
+      const itemPrice = item.product.discountedPrice || item.product.price; // SPIN WHEEL DISABLED - was getDiscountedPrice(item.product)
       return total + (itemPrice * item.qty);
     }, 0);
   }, [cartItems]);
@@ -290,10 +250,10 @@ export default function Checkout() {
     setIsProcessing(true);
     console.log("cartItems::::", cartItems);
 
-    // Get spin discount info
-    const spinResult = getSpinDiscount();
-    const spinSelectedProducts = JSON.parse(localStorage.getItem('spinSelectedProducts') || '[]');
-    
+    // SPIN WHEEL DISABLED - spin discount info removed
+    // const spinResult = getSpinDiscount();
+    // const spinSelectedProducts = JSON.parse(localStorage.getItem('spinSelectedProducts') || '[]');
+
     // Build seller shipping array
     const sellerShipping = Object.entries(selectedShippingPerSeller).map(([sellerId, method]) => ({
       seller: sellerId,
@@ -313,17 +273,13 @@ export default function Checkout() {
     
     const order = {
       orderItems: cartItems.cart.map((item) => {
-        const discountedPrice = getDiscountedPrice(item.product);
-        const originalPrice = item.product.discountedPrice || item.product.price;
-        const hasSpinDiscount = spinResult && !spinResult.hasCheckedOut && spinSelectedProducts.includes(item.product._id);
-        
+        const itemPrice = item.product.discountedPrice || item.product.price; // SPIN WHEEL DISABLED - was getDiscountedPrice(item.product)
+
         return {
           id: item.product._id,
           name: item.product.name,
           image: item.product.image,
-          price: discountedPrice, // Use spin discounted price
-          originalPrice: hasSpinDiscount ? originalPrice : undefined, // Store original price if spin discount applied
-          hasSpinDiscount: hasSpinDiscount, // Flag for spin discount
+          price: itemPrice,
           quantity: item.qty,
         };
       }),
@@ -361,16 +317,11 @@ export default function Checkout() {
           : "cash_on_delivery",
     };
     
-    // Add spin discount info if applicable
-    if (spinResult && !spinResult.hasCheckedOut && spinSelectedProducts.length > 0) {
-      order.spinDiscount = {
-        applied: true,
-        type: spinResult.type,
-        value: spinResult.value,
-        label: spinResult.label
-      };
-    }
-    
+    // SPIN WHEEL DISABLED - spin discount info removed
+    // if (spinResult && !spinResult.hasCheckedOut && spinSelectedProducts.length > 0) {
+    //   order.spinDiscount = { applied: true, type: spinResult.type, value: spinResult.value, label: spinResult.label };
+    // }
+
     if (data.instructions !== '') order.instructions = data.instructions
 
     console.log("Order Object:", order);
@@ -410,21 +361,13 @@ export default function Checkout() {
         
         // Redirect to success page after a short delay
         setTimeout(async () => {
-          // Mark spin as used and clear cart AFTER redirect (so order summary doesn't update)
-          const spinResult = JSON.parse(localStorage.getItem('spinResult') || '{}');
-          spinResult.hasCheckedOut = true;
-          localStorage.setItem('spinResult', JSON.stringify(spinResult));
-          localStorage.removeItem('spinSelectedProducts');
-          
-          // If user is logged in, also mark as checked out in database
-          try {
-            await axios.patch(`${import.meta.env.VITE_API_URL}api/user/spin/checkout`, {}, {
-              headers: { Authorization: `Bearer ${token}` }
-            });
-          } catch (error) {
-            console.error('Error marking spin as checked out in database:', error);
-          }
-          
+          // SPIN WHEEL DISABLED - spin checkout marking removed
+          // const spinResult = JSON.parse(localStorage.getItem('spinResult') || '{}');
+          // spinResult.hasCheckedOut = true;
+          // localStorage.setItem('spinResult', JSON.stringify(spinResult));
+          // localStorage.removeItem('spinSelectedProducts');
+          // try { await axios.patch(`${import.meta.env.VITE_API_URL}api/user/spin/checkout`, {}, { headers: { Authorization: `Bearer ${token}` } }); } catch (error) { console.error('Error marking spin as checked out:', error); }
+
           // Clear cart in background
           axios.delete(`${import.meta.env.VITE_API_URL}api/cart/clear`, {
             headers: { Authorization: `Bearer ${token}` }
@@ -492,7 +435,7 @@ export default function Checkout() {
   // };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 py-12 px-4 sm:px-6 lg:px-8">
+    <div className="min-h-screen py-12 px-4 sm:px-6 lg:px-8">
       <div className="max-w-6xl mx-auto">
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold text-gray-900">Checkout</h1>
@@ -502,7 +445,7 @@ export default function Checkout() {
 
         <div className="grid md:grid-cols-3 gap-8">
           <form
-            className="md:col-span-2 bg-white rounded-xl shadow-lg p-6"
+            className="md:col-span-2 bg-white/80 backdrop-blur-sm rounded-xl shadow-lg border border-white/60 p-6"
 
 
           >
@@ -512,20 +455,20 @@ export default function Checkout() {
               <div className="flex items-center justify-between relative">
                 <div className="absolute top-1/2 left-0 right-0 h-1 bg-gray-200 transform -translate-y-1/2 -z-10"></div>
                 <div
-                  className="absolute top-1/2 left-0 h-1 bg-blue-600 transform -translate-y-1/2 -z-10 transition-all duration-500"
+                  className="absolute top-1/2 left-0 h-1 bg-indigo-500 transform -translate-y-1/2 -z-10 transition-all duration-500"
                   style={{ width: `${(currentStep / (steps.length - 1)) * 100}%` }}
                 ></div>
 
                 {steps.map((step, index) => (
                   <div key={step} className="flex flex-col items-center relative">
-                    <div className={`w-10 h-10 rounded-full flex items-center justify-center border-2 ${index <= currentStep ? "bg-blue-600 border-blue-600 text-white" : "bg-white border-gray-300 text-gray-500"} transition-colors duration-300`}>
+                    <div className={`w-10 h-10 rounded-full flex items-center justify-center border-2 ${index <= currentStep ? "bg-indigo-600 border-indigo-600 text-white" : "bg-white border-gray-300 text-gray-500"} transition-colors duration-300`}>
                       {index < currentStep ? (
                         <CheckCircle className="w-5 h-5" />
                       ) : (
                         <span>{index + 1}</span>
                       )}
                     </div>
-                    <span className={`mt-2 text-sm font-medium ${index <= currentStep ? "text-blue-600" : "text-gray-500"}`}>
+                    <span className={`mt-2 text-sm font-medium ${index <= currentStep ? "text-indigo-600" : "text-gray-500"}`}>
                       {step}
                     </span>
                   </div>
@@ -571,11 +514,10 @@ export default function Checkout() {
                             const { product, qty } = item;
                             const { _id, name, price, image, discountedPrice } = product;
                             
-                            // Get spin discounted price
-                            const itemPrice = getDiscountedPrice(product);
-                            const originalPrice = discountedPrice || price;
-                            const hasSpinDiscount = itemPrice < originalPrice;
-                            
+                            // SPIN WHEEL DISABLED - was getDiscountedPrice(product)
+                            const itemPrice = discountedPrice || price;
+                            // const hasSpinDiscount = false; // SPIN WHEEL DISABLED
+
                             return (
                               <motion.div
                                 key={item._id}
@@ -605,14 +547,10 @@ export default function Checkout() {
                                   />
                                   <div>
                                     <h4 className="font-medium text-gray-900">{name}</h4>
-                                    {hasSpinDiscount && (
-                                      <p className="text-xs text-green-600 font-semibold">🎉 Spin Discount Applied!</p>
-                                    )}
+                                    {/* SPIN WHEEL DISABLED - spin discount badge removed */}
+                                    {/* {hasSpinDiscount && (<p className="text-xs text-green-600 font-semibold">🎉 Spin Discount Applied!</p>)} */}
                                     <p className="">
                                       <span className="font-bold text-gray-600">{formatPrice(itemPrice)}</span>
-                                      {hasSpinDiscount && (
-                                        <span className="line-through text-gray-400 ml-2">{formatPrice(originalPrice)}</span>
-                                      )}
                                     </p>
                                     <QuantitySelector
                                       qty={qty}
@@ -765,7 +703,7 @@ export default function Checkout() {
                                                       alt={sellerProducts[0].product.name}
                                                     />
                                                     {sellerProducts.length > 1 && (
-                                                      <div className="absolute -top-1 -right-1 bg-blue-600 text-white text-xs font-bold rounded-full w-5 h-5 flex items-center justify-center">
+                                                      <div className="absolute -top-1 -right-1 bg-indigo-600 text-white text-xs font-bold rounded-full w-5 h-5 flex items-center justify-center">
                                                         {sellerProducts.length}
                                                       </div>
                                                     )}
@@ -778,8 +716,8 @@ export default function Checkout() {
                                                       }
                                                     </p>
                                                     <p className="text-xs text-gray-500">
-                                                      Total: ${sellerProducts.reduce((sum, item) => 
-                                                        sum + (getDiscountedPrice(item.product) * item.qty), 0
+                                                      Total: ${sellerProducts.reduce((sum, item) =>
+                                                        sum + ((item.product.discountedPrice || item.product.price) * item.qty), 0 // SPIN WHEEL DISABLED - was getDiscountedPrice(item.product)
                                                       ).toFixed(2)}
                                                     </p>
                                                   </div>
@@ -811,10 +749,9 @@ export default function Checkout() {
                                                   className="space-y-2"
                                                 >
                                                   {sellerProducts.map((item) => {
-                                                    const itemPrice = getDiscountedPrice(item.product);
-                                                    const originalPrice = item.product.discountedPrice || item.product.price;
-                                                    const hasSpinDiscount = itemPrice < originalPrice;
-                                                    
+                                                    const itemPrice = item.product.discountedPrice || item.product.price; // SPIN WHEEL DISABLED - was getDiscountedPrice(item.product)
+                                                    // const hasSpinDiscount = false; // SPIN WHEEL DISABLED
+
                                                     return (
                                                       <div key={item._id} className="flex items-center gap-3 p-2 bg-white rounded-lg relative">
                                                         <img
@@ -828,9 +765,8 @@ export default function Checkout() {
                                                         </div>
                                                         <div className="text-right">
                                                           <span className="font-semibold text-sm">{formatPrice(itemPrice * item.qty)}</span>
-                                                          {hasSpinDiscount && (
-                                                            <p className="text-xs text-gray-500 line-through">{formatPrice(originalPrice * item.qty)}</p>
-                                                          )}
+                                                          {/* SPIN WHEEL DISABLED - spin discount strikethrough removed */}
+                                                          {/* {hasSpinDiscount && (<p className="text-xs text-gray-500 line-through">{formatPrice(originalPrice * item.qty)}</p>)} */}
                                                         </div>
                                                         <button
                                                           type="button"
@@ -1073,7 +1009,7 @@ export default function Checkout() {
                   disabled={currentStep === 0 || isProcessing}
                   className={`px-6 py-3 rounded-lg font-medium flex items-center gap-2 ${currentStep === 0 || isProcessing
                     ? "bg-gray-200 text-gray-500 cursor-not-allowed"
-                    : "bg-blue-600 text-white hover:bg-blue-700"
+                    : "bg-linear-to-r from-indigo-600 to-sky-500 text-white hover:from-indigo-700 hover:to-sky-600"
                     } transition-colors`}
                 >
                   <Navigation className="w-5 h-5 rotate-180" />
@@ -1085,7 +1021,7 @@ export default function Checkout() {
                     type="button"
                     onClick={handleSubmit(onPlaceOrder)}
                     disabled={isSubmitting || isProcessing || !cartItems?.cart || cartItems.cart.length == 0}
-                    className="px-6 py-3 rounded-lg font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:bg-blue-400 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+                    className="px-6 py-3 rounded-lg font-medium bg-linear-to-r from-indigo-600 to-sky-500 text-white hover:from-indigo-700 hover:to-sky-600 disabled:opacity-60 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
                   >
                     {isProcessing ? (
                       <>
@@ -1111,7 +1047,7 @@ export default function Checkout() {
                     disabled={!cartItems?.cart || cartItems.cart.length == 0}
                     className={`px-6 py-3 rounded-lg font-medium flex items-center gap-2 ${!cartItems?.cart || cartItems.cart.length === 0
                       ? "bg-gray-200 text-gray-500 cursor-not-allowed"
-                      : "bg-blue-600 text-white hover:bg-blue-700"
+                      : "bg-linear-to-r from-indigo-600 to-sky-500 text-white hover:from-indigo-700 hover:to-sky-600"
                       } transition-colors`}
                   >
                     Next
@@ -1129,10 +1065,9 @@ export default function Checkout() {
 
               <div className="max-h-80 overflow-y-auto mb-4">
                 {cartItems.cart.map((item) => {
-                  const itemPrice = getDiscountedPrice(item.product);
-                  const originalPrice = item.product.discountedPrice || item.product.price;
-                  const hasSpinDiscount = itemPrice < originalPrice;
-                  
+                  const itemPrice = item.product.discountedPrice || item.product.price; // SPIN WHEEL DISABLED - was getDiscountedPrice(item.product)
+                  // const hasSpinDiscount = false; // SPIN WHEEL DISABLED
+
                   return (
                     <div key={item._id} className="flex items-center justify-between py-3 border-b">
                       <div className="flex items-center gap-3">
@@ -1144,16 +1079,14 @@ export default function Checkout() {
                         <div>
                           <p className="font-medium text-sm">{item.product.name}</p>
                           <p className="text-gray-500 text-sm">Qty: {item.qty}</p>
-                          {hasSpinDiscount && (
-                            <p className="text-xs text-green-600 font-semibold">🎉 Spin Discount Applied!</p>
-                          )}
+                          {/* SPIN WHEEL DISABLED - spin discount badge removed */}
+                          {/* {hasSpinDiscount && (<p className="text-xs text-green-600 font-semibold">🎉 Spin Discount Applied!</p>)} */}
                         </div>
                       </div>
                       <div className="text-right">
                         <span className="font-semibold">{formatPrice(itemPrice * item.qty)}</span>
-                        {hasSpinDiscount && (
-                          <p className="text-xs text-gray-500 line-through">{formatPrice(originalPrice * item.qty)}</p>
-                        )}
+                        {/* SPIN WHEEL DISABLED - spin discount strikethrough removed */}
+                        {/* {hasSpinDiscount && (<p className="text-xs text-gray-500 line-through">{formatPrice(originalPrice * item.qty)}</p>)} */}
                       </div>
                     </div>
                   );

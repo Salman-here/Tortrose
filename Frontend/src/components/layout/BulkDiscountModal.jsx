@@ -256,7 +256,7 @@ const BulkDiscountModal = ({ isOpen, onClose, selectedProducts, onSuccess }) => 
                                 <button
                                     onClick={handleApplyDiscount}
                                     disabled={isLoading}
-                                    className="w-full bg-blue-600 text-white py-2.5 sm:py-3 rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors text-sm sm:text-base font-medium"
+                                    className="w-full bg-linear-to-r from-indigo-600 to-sky-500 hover:from-indigo-700 hover:to-sky-600 disabled:opacity-60 disabled:cursor-not-allowed text-white py-2.5 sm:py-3 rounded-lg transition-colors text-sm sm:text-base font-medium"
                                 >
                                     {isLoading ? 'Applying...' : 'Apply Discount'}
                                 </button>
@@ -340,7 +340,7 @@ const BulkDiscountModal = ({ isOpen, onClose, selectedProducts, onSuccess }) => 
                                 <button
                                     onClick={handleUpdatePrice}
                                     disabled={isLoading}
-                                    className="w-full bg-blue-600 text-white py-2.5 sm:py-3 rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors text-sm sm:text-base font-medium"
+                                    className="w-full bg-linear-to-r from-indigo-600 to-sky-500 hover:from-indigo-700 hover:to-sky-600 disabled:opacity-60 disabled:cursor-not-allowed text-white py-2.5 sm:py-3 rounded-lg transition-colors text-sm sm:text-base font-medium"
                                 >
                                     {isLoading ? 'Updating...' : 'Update Prices'}
                                 </button>

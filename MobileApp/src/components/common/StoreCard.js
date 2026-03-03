@@ -6,14 +6,14 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { 
-  View, 
-  Text, 
-  Image, 
-  TouchableOpacity, 
+import {
+  View,
+  Text,
+  TouchableOpacity,
   StyleSheet,
   Animated,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import VerifiedBadge from '../VerifiedBadge';
@@ -117,7 +117,9 @@ const StoreCard = ({
             <Image
               source={{ uri: banner }}
               style={styles.banner}
-              resizeMode="cover"
+              contentFit="cover"
+              cachePolicy="memory-disk"
+              transition={200}
               onError={() => setBannerError(true)}
             />
           ) : (
@@ -136,7 +138,9 @@ const StoreCard = ({
               <Image
                 source={{ uri: logo }}
                 style={[styles.logo, compact && styles.logoCompact]}
-                resizeMode="cover"
+                contentFit="cover"
+                cachePolicy="memory-disk"
+                transition={150}
                 onError={() => setLogoError(true)}
               />
             ) : (
@@ -257,7 +261,7 @@ export const StoreListItem = ({ store, onPress, showTrustButton = true }) => {
     >
       {/* Logo */}
       {logo ? (
-        <Image source={{ uri: logo }} style={styles.listItemLogo} resizeMode="cover" />
+        <Image source={{ uri: logo }} style={styles.listItemLogo} contentFit="cover" cachePolicy="memory-disk" transition={150} />
       ) : (
         <View style={[styles.listItemLogo, styles.listItemLogoPlaceholder]}>
           <Ionicons name="storefront" size={24} color={colors.white} />

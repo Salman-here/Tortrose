@@ -6,23 +6,21 @@
  */
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { 
-  View, 
-  Text, 
-  FlatList, 
-  StyleSheet, 
+import {
+  View,
+  Text,
+  FlatList,
+  StyleSheet,
   TouchableOpacity,
   RefreshControl,
   ActivityIndicator,
-  Image,
   Alert,
   TextInput,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import axios from 'axios';
 import Toast from 'react-native-toast-message';
-import { API_BASE_URL } from '../../config/api';
+import api from '../../config/api';
 import { useAuth } from '../../contexts/AuthContext';
 import VerifiedBadge from '../../components/VerifiedBadge';
 import Loader from '../../components/common/Loader';
@@ -89,17 +87,12 @@ export default function StoreVerificationScreen({ navigation }) {
     }
 
     try {
-      const token = await AsyncStorage.getItem('jwtToken');
-      const response = await axios.get(
-        `${API_BASE_URL}/api/stores/admin/all`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-
+      const response = await api.get('/api/stores/admin/all');
       setStores(response.data.stores || response.data.data?.stores || []);
     } catch (error) {
       console.error('Error fetching stores:', error);
       try {
-        const response = await axios.get(`${API_BASE_URL}/api/stores`);
+        const response = await api.get('/api/stores');
         setStores(response.data.stores || []);
       } catch (fallbackError) {
         Toast.show({
@@ -144,16 +137,11 @@ export default function StoreVerificationScreen({ navigation }) {
     setProcessingStoreId(storeId);
 
     try {
-      const token = await AsyncStorage.getItem('jwtToken');
-      const endpoint = action === 'verify' 
-        ? `${API_BASE_URL}/api/stores/${storeId}/verify`
-        : `${API_BASE_URL}/api/stores/${storeId}/unverify`;
+      const endpoint = action === 'verify'
+        ? `/api/stores/${storeId}/verify`
+        : `/api/stores/${storeId}/unverify`;
 
-      await axios.patch(
-        endpoint,
-        {},
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
+      await api.patch(endpoint, {});
 
       setStores(prev => prev.map(store => {
         if (store._id === storeId) {
@@ -215,7 +203,7 @@ export default function StoreVerificationScreen({ navigation }) {
       <View style={styles.storeCard}>
         <View style={styles.storeHeader}>
           {item.logo ? (
-            <Image source={{ uri: item.logo }} style={styles.storeLogo} />
+            <Image source={{ uri: item.logo }} style={styles.storeLogo} contentFit="cover" cachePolicy="memory-disk" transition={150} />
           ) : (
             <View style={styles.storeLogoPlaceholder}>
               <Ionicons name="storefront" size={24} color={colors.grayLight} />

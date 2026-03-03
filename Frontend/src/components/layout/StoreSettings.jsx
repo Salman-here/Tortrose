@@ -378,14 +378,14 @@ const StoreSettings = () => {
                     </div>
                     <div className="bg-white p-6 rounded-2xl shadow-lg border border-gray-100 hover:shadow-xl transition-shadow">
                         <p className="text-gray-600 text-sm font-medium mb-2">Total Sales</p>
-                        <p className="text-3xl font-bold text-purple-600">{formatCompactPrice(analytics.totalSales || 0)}</p>
+                        <p className="text-3xl font-bold text-sky-600">{formatCompactPrice(analytics.totalSales || 0)}</p>
                     </div>
                 </div>
             )}
 
             {/* Verification Status Card */}
             {hasStore && (
-                <div className="bg-gradient-to-br from-blue-50 to-purple-50 rounded-2xl shadow-lg border border-blue-100 p-6 md:p-8 mb-6">
+                <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg border border-white/60 p-6 md:p-8 mb-6">
                     <div className="flex items-center justify-between mb-4">
                         <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">
                             {verification.isVerified ? (
@@ -407,7 +407,7 @@ const StoreSettings = () => {
                         {!verification.isVerified && verification.status === 'none' && (
                             <button
                                 onClick={() => setShowVerificationModal(true)}
-                                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-all text-sm font-medium"
+                                className="px-4 py-2 bg-linear-to-r from-indigo-600 to-sky-500 hover:from-indigo-700 hover:to-sky-600 text-white rounded-lg transition-all text-sm font-medium"
                             >
                                 Apply for Verification
                             </button>
@@ -802,7 +802,7 @@ const StoreSettings = () => {
                             <Link
                                 to={`/store/${storeData.storeSlug}`}
                                 target="_blank"
-                                className="px-4 sm:px-6 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 shadow-lg hover:shadow-xl transition-all flex items-center justify-center gap-2 text-sm sm:text-base font-medium"
+                                className="px-4 sm:px-6 py-3 bg-linear-to-r from-indigo-600 to-sky-500 hover:from-indigo-700 hover:to-sky-600 text-white rounded-xl shadow-lg hover:shadow-xl transition-all flex items-center justify-center gap-2 text-sm sm:text-base font-medium"
                             >
                                 <Eye size={20} />
                                 <span className="hidden sm:inline">Preview Store</span>
@@ -937,7 +937,7 @@ const StoreSettings = () => {
                             <button
                                 onClick={handleApplyVerification}
                                 disabled={applyingVerification || !applicationMessage.trim() || !contactEmail.trim() || !contactPhone.trim()}
-                                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                                className="flex-1 px-4 py-2 bg-linear-to-r from-indigo-600 to-sky-500 hover:from-indigo-700 hover:to-sky-600 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg flex items-center justify-center gap-2 transition-colors"
                             >
                                 {applyingVerification ? (
                                     <>

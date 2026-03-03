@@ -269,7 +269,7 @@ const UserProfile = () => {
                       whileHover={{ scale: 1.05 }}
                       whileTap={{ scale: 0.95 }}
                       onClick={() => setIsEditing(true)}
-                      className="flex items-center bg-blue-600 text-white px-3 py-2 text-sm md:px-4 md:text-base rounded-lg"
+                      className="flex items-center bg-linear-to-r from-indigo-600 to-sky-500 hover:from-indigo-700 hover:to-sky-600 text-white px-3 py-2 text-sm md:px-4 md:text-base rounded-lg transition-colors"
                     >
                       <Edit3 className="h-4 w-4 mr-1 md:mr-2" />
                       <span className="hidden sm:inline">Edit Username</span>
@@ -328,7 +328,7 @@ const UserProfile = () => {
                       )}
                       <label
                         htmlFor="profile-upload"
-                        className="absolute z-2 bottom-0 right-0 bg-blue-600 text-white p-2 rounded-full cursor-pointer shadow-md"
+                        className="absolute z-2 bottom-0 right-0 bg-linear-to-br from-indigo-600 to-sky-500 text-white p-2 rounded-full cursor-pointer shadow-md"
                       >
                         {isUploading ? (
                           <div className="h-5 w-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
@@ -405,7 +405,7 @@ const UserProfile = () => {
                       whileHover={{ scale: 1.05 }}
                       whileTap={{ scale: 0.95 }}
                       onClick={() => setShowPasswordFields(true)}
-                      className="flex items-center bg-blue-600 text-white px-3 py-2 text-sm md:px-4 md:text-base rounded-lg"
+                      className="flex items-center bg-linear-to-r from-indigo-600 to-sky-500 hover:from-indigo-700 hover:to-sky-600 text-white px-3 py-2 text-sm md:px-4 md:text-base rounded-lg transition-colors"
                     >
                       <Lock className="h-4 w-4 mr-1 md:mr-2" />
                       <span className="hidden sm:inline">Change Password</span>

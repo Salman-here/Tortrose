@@ -11,10 +11,9 @@ import {
   Platform 
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import axios from 'axios';
+import * as SecureStore from 'expo-secure-store';
 import Toast from 'react-native-toast-message';
-import { API_BASE_URL } from '../config/api';
+import api from '../config/api';
 import { useAuth } from '../contexts/AuthContext';
 import { colors, spacing, fontSize, borderRadius, shadows } from '../styles/theme';
 
@@ -87,23 +86,17 @@ export default function BecomeSellerScreen({ navigation }) {
     setLoading(true);
 
     try {
-      const token = await AsyncStorage.getItem('jwtToken');
-
-      const res = await axios.post(
-        `${API_BASE_URL}/api/user/become-seller`,
-        {
-          phoneNumber: formData.phoneNumber.trim(),
-          address: formData.address.trim(),
-          city: formData.city.trim(),
-          country: formData.country.trim(),
-          businessName: formData.businessName.trim()
-        },
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
+      const res = await api.post('/api/user/become-seller', {
+        phoneNumber: formData.phoneNumber.trim(),
+        address: formData.address.trim(),
+        city: formData.city.trim(),
+        country: formData.country.trim(),
+        businessName: formData.businessName.trim()
+      });
 
       // Save the new token with updated role
       if (res.data.token) {
-        await AsyncStorage.setItem('jwtToken', res.data.token);
+        await SecureStore.setItemAsync('jwtToken', res.data.token);
       }
 
       Toast.show({
@@ -388,7 +381,7 @@ const styles = StyleSheet.create({
   headerIcon: {
     backgroundColor: 'rgba(255, 255, 255, 0.2)',
     padding: spacing.md,
-    borderRadius: borderRadius.round,
+    borderRadius: borderRadius.full,
     marginBottom: spacing.md,
   },
   headerTitle: {
@@ -508,7 +501,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.white,
     paddingHorizontal: spacing.xl,
     paddingVertical: spacing.md,
-    borderRadius: borderRadius.round,
+    borderRadius: borderRadius.full,
     gap: spacing.sm,
   },
   getStartedText: {
@@ -550,7 +543,7 @@ const styles = StyleSheet.create({
     color: colors.text,
   },
   required: {
-    color: colors.danger,
+    color: colors.error,
   },
   input: {
     backgroundColor: colors.light,
@@ -559,7 +552,7 @@ const styles = StyleSheet.create({
     fontSize: fontSize.md,
     color: colors.text,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: colors.light,
   },
   rowInputs: {
     flexDirection: 'row',

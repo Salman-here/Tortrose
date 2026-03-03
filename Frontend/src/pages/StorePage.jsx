@@ -115,20 +115,16 @@ const StorePage = () => {
     if (notFound) {
         return (
             <div className="flex flex-col items-center justify-center min-h-screen p-4">
-                <Store size={80} className="text-gray-300 mb-4" />
-                <h1 className="text-3xl font-bold text-gray-800 mb-2">Store Not Found</h1>
-                <p className="text-gray-600 mb-6">The store you're looking for doesn't exist or has been removed.</p>
-                <div className="flex gap-4">
-                    <button
-                        onClick={() => navigate('/stores')}
-                        className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-                    >
+                <Store size={64} className="text-slate-300 mb-4" />
+                <h1 className="text-2xl font-bold text-slate-800 mb-2">Store Not Found</h1>
+                <p className="text-slate-500 mb-6 text-center">The store you're looking for doesn't exist or has been removed.</p>
+                <div className="flex gap-3">
+                    <button onClick={() => navigate('/stores')}
+                        className="px-6 py-2.5 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 font-semibold text-sm transition-colors">
                         Browse All Stores
                     </button>
-                    <button
-                        onClick={() => navigate('/')}
-                        className="px-6 py-3 border border-gray-300 rounded-lg hover:bg-gray-50"
-                    >
+                    <button onClick={() => navigate('/')}
+                        className="px-6 py-2.5 border border-slate-200 text-slate-600 rounded-xl hover:bg-slate-50 font-semibold text-sm transition-colors">
                         Go Home
                     </button>
                 </div>
@@ -137,8 +133,8 @@ const StorePage = () => {
     }
 
     return (
-        <motion.div 
-            className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 py-8"
+        <motion.div
+            className="min-h-screen py-8"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ duration: 0.5 }}
@@ -146,52 +142,54 @@ const StorePage = () => {
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                 {/* Breadcrumb */}
                 <motion.div
-                    className="flex items-center text-sm text-gray-500 mb-6"
+                    className="flex items-center text-sm text-slate-500 mb-6"
                     initial={{ opacity: 0, y: -10 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.3 }}
                 >
-                    <Link to="/" className="hover:text-blue-600 flex items-center gap-1 transition-colors">
-                        <Home size={16} />
+                    <Link to="/" className="hover:text-indigo-600 flex items-center gap-1 transition-colors">
+                        <Home size={15} />
                         <span>Home</span>
                     </Link>
-                    <ChevronRight size={16} className="mx-2" />
-                    <Link to="/stores" className="hover:text-blue-600 transition-colors">
-                        Stores
-                    </Link>
-                    <ChevronRight size={16} className="mx-2" />
-                    <span className="text-gray-800 font-medium truncate">{store?.storeName}</span>
+                    <ChevronRight size={14} className="mx-1.5 text-slate-400" />
+                    <Link to="/stores" className="hover:text-indigo-600 transition-colors">Stores</Link>
+                    <ChevronRight size={14} className="mx-1.5 text-slate-400" />
+                    <span className="text-slate-800 font-medium truncate">{store?.storeName}</span>
                 </motion.div>
 
                 {/* Store Header Card */}
-                <motion.div 
-                    className="bg-white rounded-2xl shadow-lg overflow-hidden mb-8"
+                <motion.div
+                    className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-md border border-white/60 overflow-hidden mb-8"
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.5, delay: 0.1 }}
                 >
-                    {/* Banner */}
-                    {store?.banner && (
-                        <div className="w-full h-48 md:h-64 overflow-hidden relative">
+                    {/* Banner or fallback gradient */}
+                    {store?.banner ? (
+                        <div className="w-full h-44 md:h-60 overflow-hidden relative">
                             <motion.img
                                 src={store.banner}
                                 alt={`${store.storeName} banner`}
                                 className="w-full h-full object-cover"
-                                initial={{ scale: 1.1 }}
+                                initial={{ scale: 1.08 }}
                                 animate={{ scale: 1 }}
-                                transition={{ duration: 0.6 }}
+                                transition={{ duration: 0.7 }}
                             />
-                            <div className="absolute inset-0 bg-gradient-to-t from-black/30 to-transparent" />
+                            <div className="absolute inset-0 bg-linear-to-t from-black/40 to-transparent" />
+                        </div>
+                    ) : (
+                        <div className="w-full h-24 bg-linear-to-r from-indigo-600 via-indigo-500 to-sky-500 relative">
+                            <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,rgba(255,255,255,0.12),transparent_60%)]" />
                         </div>
                     )}
 
                     {/* Store Info */}
-                    <div className={`p-6 md:p-8 ${store?.banner ? 'pt-8 md:pt-10' : ''}`}>
+                    <div className="p-6 md:p-8">
                         <div className="flex flex-col md:flex-row gap-6 items-start">
-                            {/* Logo */}
-                            <motion.div 
-                                className={`${store?.banner ? 'absolute -mt-20 md:-mt-24' : ''} flex-shrink-0`}
-                                initial={{ scale: 0.8, opacity: 0 }}
+                            {/* Logo — pull up to overlap banner */}
+                            <motion.div
+                                className={`shrink-0 relative z-10 ${store?.banner ? '-mt-16 md:-mt-20' : '-mt-12'}`}
+                                initial={{ scale: 0.85, opacity: 0 }}
                                 animate={{ scale: 1, opacity: 1 }}
                                 transition={{ duration: 0.4, delay: 0.2 }}
                             >
@@ -199,114 +197,73 @@ const StorePage = () => {
                                     <img
                                         src={store.logo}
                                         alt={store.storeName}
-                                        className="w-24 h-24 md:w-32 md:h-32 rounded-full object-cover border-4 border-white shadow-xl ring-2 ring-gray-100"
+                                        className="w-20 h-20 md:w-28 md:h-28 rounded-2xl object-cover border-4 border-white shadow-xl"
                                     />
                                 ) : (
-                                    <div className="w-24 h-24 md:w-32 md:h-32 rounded-full bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center border-4 border-white shadow-xl ring-2 ring-gray-100">
-                                        <Store size={48} className="text-white" />
+                                    <div className="w-20 h-20 md:w-28 md:h-28 rounded-2xl bg-linear-to-br from-indigo-500 to-sky-400 flex items-center justify-center border-4 border-white shadow-xl">
+                                        <Store size={36} className="text-white" />
                                     </div>
                                 )}
                             </motion.div>
 
                             {/* Store Details */}
-                            <div className={`flex-1 ${store?.banner ? 'mt-8 md:mt-0 md:ml-40' : ''}`}>
-                                <div className="flex items-center gap-3 mb-3">
-                                    <motion.h1 
-                                        className="text-2xl md:text-3xl lg:text-4xl font-bold text-gray-900 flex items-center gap-2"
-                                        initial={{ opacity: 0, x: -20 }}
+                            <div className="flex-1 min-w-0">
+                                <div className="flex flex-wrap items-center gap-2 mb-2">
+                                    <motion.h1
+                                        className="text-xl md:text-2xl lg:text-3xl font-bold text-slate-900"
+                                        initial={{ opacity: 0, x: -15 }}
                                         animate={{ opacity: 1, x: 0 }}
                                         transition={{ duration: 0.4, delay: 0.3 }}
                                     >
                                         {store?.storeName}
-                                        {store?.verification?.isVerified && (
-                                            <VerifiedBadge size="lg" />
-                                        )}
                                     </motion.h1>
-                                    {/* Trust Button - Compact */}
-                                    <motion.div
-                                        initial={{ opacity: 0, scale: 0.9 }}
-                                        animate={{ opacity: 1, scale: 1 }}
-                                        transition={{ duration: 0.3, delay: 0.4 }}
-                                    >
-                                        {store && (
-                                            <TrustButton
-                                                storeId={store._id}
-                                                storeName={store.storeName}
-                                                initialTrustCount={trustStatus.trustCount || store.trustCount || 0}
-                                                initialIsTrusted={trustStatus.isTrusted}
-                                                compact={true}
-                                                onTrustChange={(isTrusted, newCount) => {
-                                                    console.log('Trust changed:', { isTrusted, newCount });
-                                                    setTrustStatus({ isTrusted, trustCount: newCount });
-                                                    // Also update the store object to keep it in sync
-                                                    setStore(prev => ({ ...prev, trustCount: newCount }));
-                                                }}
-                                            />
-                                        )}
-                                    </motion.div>
+                                    {store?.verification?.isVerified && <VerifiedBadge size="lg" />}
+                                    {store && (
+                                        <TrustButton
+                                            storeId={store._id}
+                                            storeName={store.storeName}
+                                            initialTrustCount={trustStatus.trustCount || store.trustCount || 0}
+                                            initialIsTrusted={trustStatus.isTrusted}
+                                            compact={true}
+                                            onTrustChange={(isTrusted, newCount) => {
+                                                setTrustStatus({ isTrusted, trustCount: newCount });
+                                                setStore(prev => ({ ...prev, trustCount: newCount }));
+                                            }}
+                                        />
+                                    )}
                                 </div>
-                                {/* Trusters Count */}
-                                <motion.p 
-                                    className="text-sm text-gray-500 mb-3"
-                                    initial={{ opacity: 0 }}
-                                    animate={{ opacity: 1 }}
-                                    transition={{ duration: 0.4, delay: 0.35 }}
-                                >
+
+                                <p className="text-xs text-slate-400 mb-3">
                                     {trustStatus.trustCount || store?.trustCount || 0} {(trustStatus.trustCount || store?.trustCount || 0) === 1 ? 'truster' : 'trusters'}
-                                </motion.p>
+                                </p>
+
                                 {store?.description && (
-                                    <motion.p 
-                                        className="text-gray-600 mb-4 max-w-3xl leading-relaxed"
-                                        initial={{ opacity: 0 }}
-                                        animate={{ opacity: 1 }}
-                                        transition={{ duration: 0.4, delay: 0.4 }}
-                                    >
-                                        {store.description}
-                                    </motion.p>
+                                    <p className="text-slate-600 text-sm mb-4 max-w-2xl leading-relaxed">{store.description}</p>
                                 )}
-                                
+
                                 {/* Store Address */}
                                 {store?.address && (store.address.street || store.address.city || store.address.country) && (
-                                    <motion.div 
-                                        className="mb-4 p-3 bg-gray-50 rounded-lg border border-gray-200"
-                                        initial={{ opacity: 0 }}
-                                        animate={{ opacity: 1 }}
-                                        transition={{ duration: 0.4, delay: 0.45 }}
-                                    >
-                                        <div className="flex items-start gap-2 text-sm text-gray-700">
-                                            <svg className="w-5 h-5 text-gray-500 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-                                            </svg>
-                                            <div>
-                                                <p className="font-medium text-gray-800 mb-1">Store Location</p>
-                                                {store.address.street && <p>{store.address.street}</p>}
-                                                <p>
-                                                    {[store.address.city, store.address.state, store.address.postalCode]
-                                                        .filter(Boolean)
-                                                        .join(', ')}
-                                                </p>
-                                                {store.address.country && <p>{store.address.country}</p>}
-                                            </div>
+                                    <div className="mb-4 flex items-start gap-2 text-sm text-slate-600 bg-white/60 backdrop-blur-sm rounded-xl border border-white/50 p-3">
+                                        <svg className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                                        </svg>
+                                        <div>
+                                            {store.address.street && <p>{store.address.street}</p>}
+                                            <p>{[store.address.city, store.address.state, store.address.postalCode].filter(Boolean).join(', ')}</p>
+                                            {store.address.country && <p>{store.address.country}</p>}
                                         </div>
-                                    </motion.div>
+                                    </div>
                                 )}
-                                
-                                <motion.div 
-                                    className="flex flex-wrap gap-4 text-sm"
-                                    initial={{ opacity: 0 }}
-                                    animate={{ opacity: 1 }}
-                                    transition={{ duration: 0.4, delay: 0.5 }}
-                                >
-                                    <div className="flex items-center gap-2 px-3 py-1.5 bg-blue-50 text-blue-700 rounded-full">
-                                        <Package size={16} />
-                                        <span className="font-medium">{products.length} Products</span>
-                                    </div>
-                                    <div className="flex items-center gap-2 px-3 py-1.5 bg-purple-50 text-purple-700 rounded-full">
-                                        <Eye size={16} />
-                                        <span className="font-medium">{store?.views || 0} Views</span>
-                                    </div>
-                                </motion.div>
+
+                                <div className="flex flex-wrap gap-2 text-xs">
+                                    <span className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 text-indigo-700 rounded-full font-medium border border-indigo-100">
+                                        <Package size={13} />{products.length} Products
+                                    </span>
+                                    <span className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 text-slate-600 rounded-full font-medium border border-slate-200">
+                                        <Eye size={13} />{store?.views || 0} Views
+                                    </span>
+                                </div>
 
                                 {/* Social Links */}
                                 {store?.socialLinks && Object.values(store.socialLinks).some(link => link) && (
@@ -333,7 +290,7 @@ const StorePage = () => {
                                                 href={store.socialLinks.facebook}
                                                 target="_blank"
                                                 rel="noopener noreferrer"
-                                                className="flex items-center gap-2 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-all"
+                                                className="flex items-center gap-2 px-3 py-2 bg-sky-500 hover:bg-sky-600 text-white rounded-lg transition-all"
                                                 title="Facebook"
                                             >
                                                 <svg className="w-4 h-4 fill-white" viewBox="0 0 24 24">
@@ -347,7 +304,7 @@ const StorePage = () => {
                                                 href={store.socialLinks.instagram}
                                                 target="_blank"
                                                 rel="noopener noreferrer"
-                                                className="flex items-center gap-2 px-3 py-2 bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 hover:from-purple-700 hover:via-pink-700 hover:to-orange-600 text-white rounded-lg transition-all"
+                                                className="flex items-center gap-2 px-3 py-2 bg-linear-to-br from-purple-600 via-pink-600 to-orange-500 hover:from-purple-700 hover:via-pink-700 hover:to-orange-600 text-white rounded-lg transition-all"
                                                 title="Instagram"
                                             >
                                                 <svg className="w-4 h-4 fill-white" viewBox="0 0 24 24">
@@ -405,7 +362,7 @@ const StorePage = () => {
                             {/* Share Button */}
                             <motion.button
                                 onClick={handleShare}
-                                className="px-5 py-2.5 border-2 border-gray-200 rounded-xl hover:bg-gray-50 hover:border-gray-300 flex items-center gap-2 transition-all font-medium text-gray-700"
+                                className="px-5 py-2.5 bg-white/70 backdrop-blur-sm border border-white/60 rounded-xl hover:bg-white/90 flex items-center gap-2 transition-all font-medium text-slate-700 shadow-sm"
                                 whileHover={{ scale: 1.05 }}
                                 whileTap={{ scale: 0.95 }}
                                 initial={{ opacity: 0, scale: 0.9 }}
@@ -440,7 +397,7 @@ const StorePage = () => {
                         </div>
                     ) : products.length === 0 ? (
                         <motion.div 
-                            className="flex flex-col items-center justify-center h-64 bg-white rounded-2xl shadow-sm"
+                            className="flex flex-col items-center justify-center h-64 bg-white/70 backdrop-blur-sm rounded-2xl shadow-sm border border-white/60"
                             initial={{ opacity: 0, scale: 0.9 }}
                             animate={{ opacity: 1, scale: 1 }}
                             transition={{ duration: 0.4 }}

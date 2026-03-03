@@ -12,10 +12,11 @@ import {
   FlatList,
   StyleSheet,
   RefreshControl,
+  SafeAreaView,
+  TouchableOpacity,
 } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import axios from 'axios';
-import { API_BASE_URL } from '../config/api';
+import { Ionicons } from '@expo/vector-icons';
+import api from '../config/api';
 import { useCurrency } from '../contexts/CurrencyContext';
 import { useAuth } from '../contexts/AuthContext';
 import {
@@ -56,16 +57,12 @@ export default function OrdersScreen({ navigation }) {
   const fetchOrders = useCallback(async () => {
     try {
       setError(null);
-      const token = await AsyncStorage.getItem('jwtToken');
-      
-      if (!token) {
+      if (!currentUser) {
         setIsLoading(false);
         return;
       }
 
-      const res = await axios.get(`${API_BASE_URL}/api/order/user-orders`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const res = await api.get('/api/order/user-orders');
       
       // Sort orders by date (newest first) - Property 10
       const sortedOrders = sortOrdersByDate(res.data.orders || []);
@@ -119,65 +116,71 @@ export default function OrdersScreen({ navigation }) {
 
   const keyExtractor = useCallback((item) => item._id, []);
 
+  const heroHeader = (
+    <View style={styles.heroHeader}>
+      <TouchableOpacity style={styles.heroBackBtn} onPress={() => navigation.goBack()} activeOpacity={0.7}>
+        <Ionicons name="arrow-back" size={22} color={colors.white} />
+      </TouchableOpacity>
+      <Text style={styles.heroTitle}>My Orders</Text>
+      {orders.length > 0 && (
+        <View style={styles.heroBadge}>
+          <Text style={styles.heroBadgeText}>{orders.length} {orders.length === 1 ? 'order' : 'orders'}</Text>
+        </View>
+      )}
+    </View>
+  );
+
   // Show login prompt for guests
   if (!currentUser) {
     return (
-      <View style={styles.container}>
-        <LoginRequired
-          onLogin={handleLogin}
-          onBrowse={handleStartShopping}
-        />
-      </View>
+      <SafeAreaView style={styles.container}>
+        {heroHeader}
+        <LoginRequired onLogin={handleLogin} onBrowse={handleStartShopping} />
+      </SafeAreaView>
     );
   }
 
   // Show loading state
   if (isLoading) {
     return (
-      <View style={styles.loadingContainer}>
-        <Loader size="large" />
-      </View>
+      <SafeAreaView style={styles.container}>
+        {heroHeader}
+        <View style={styles.loadingContainer}>
+          <Loader size="large" />
+        </View>
+      </SafeAreaView>
     );
   }
 
   // Show error state
   if (error) {
     return (
-      <View style={styles.container}>
-        <ErrorState
-          message={error}
-          onRetry={fetchOrders}
-        />
-      </View>
+      <SafeAreaView style={styles.container}>
+        {heroHeader}
+        <ErrorState message={error} onRetry={fetchOrders} />
+      </SafeAreaView>
     );
   }
 
   // Show empty state
   if (orders.length === 0) {
     return (
-      <View style={styles.container}>
+      <SafeAreaView style={styles.container}>
+        {heroHeader}
         <EmptyOrders onBrowse={handleStartShopping} />
-      </View>
+      </SafeAreaView>
     );
   }
 
   return (
-    <View style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>My Orders</Text>
-        <Text style={styles.headerSubtitle}>
-          {orders.length} {orders.length === 1 ? 'order' : 'orders'}
-        </Text>
-      </View>
-
-      {/* Orders List */}
+    <SafeAreaView style={styles.container}>
       <FlatList
         data={orders}
         keyExtractor={keyExtractor}
         renderItem={renderOrderItem}
         contentContainerStyle={styles.listContent}
         showsVerticalScrollIndicator={false}
+        ListHeaderComponent={heroHeader}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -188,7 +191,7 @@ export default function OrdersScreen({ navigation }) {
         }
         ListFooterComponent={<View style={styles.listFooter} />}
       />
-    </View>
+    </SafeAreaView>
   );
 }
 
@@ -201,26 +204,43 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: colors.background,
   },
-  header: {
+  heroHeader: {
+    backgroundColor: colors.primaryDark,
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: spacing.lg,
-    paddingTop: spacing.lg,
-    paddingBottom: spacing.md,
-    backgroundColor: colors.white,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.light,
+    paddingVertical: spacing.lg,
+    gap: spacing.md,
   },
-  headerTitle: {
-    ...typography.h2,
-    marginBottom: spacing.xs,
+  heroBackBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  headerSubtitle: {
-    ...typography.bodySmall,
-    color: colors.textSecondary,
+  heroTitle: {
+    flex: 1,
+    fontSize: fontSize.xxl,
+    fontWeight: fontWeight.bold,
+    color: colors.white,
+  },
+  heroBadge: {
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    borderRadius: borderRadius.full,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+  },
+  heroBadgeText: {
+    color: colors.white,
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.medium,
   },
   listContent: {
     padding: spacing.md,
+    flexGrow: 1,
   },
   firstCard: {
     marginTop: 0,

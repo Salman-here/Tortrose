@@ -56,7 +56,7 @@ export default function CurrencySelector() {
                         <span className="font-medium text-xs">{code}</span>
                       </div>
                       {currency === code && (
-                        <div className="w-1.5 h-1.5 bg-blue-600 rounded-full" />
+                        <div className="w-1.5 h-1.5 bg-indigo-600 rounded-full" />
                       )}
                     </div>
                   </motion.button>

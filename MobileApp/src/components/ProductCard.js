@@ -6,16 +6,16 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { 
-  View, 
-  Text, 
-  Image, 
-  TouchableOpacity, 
-  StyleSheet, 
-  ActivityIndicator, 
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  StyleSheet,
+  ActivityIndicator,
   Dimensions,
   Animated,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../contexts/AuthContext';
 import { useGlobal } from '../contexts/GlobalContext';
@@ -69,10 +69,9 @@ const ShimmerPlaceholder = ({ style }) => {
   );
 };
 
-export default function ProductCard({ 
-  product, 
-  index = 0, 
-  spinResult, 
+function ProductCard({
+  product,
+  index = 0,
   onPress,
   compact = false,
 }) {
@@ -133,8 +132,6 @@ export default function ProductCard({
     rating, 
     numReviews,
     isFeatured, 
-    spinDiscountedPrice, 
-    hasSpinDiscount,
     brand,
   } = product;
 
@@ -142,9 +139,8 @@ export default function ProductCard({
   const isInCart = cartItems?.cart?.some((item) => item?.product?._id === _id);
   const isOutOfStock = stock === 0;
 
-  // Price calculations
-  const displayPrice = hasSpinDiscount ? spinDiscountedPrice : (discountedPrice || price);
-  const originalDisplayPrice = hasSpinDiscount ? price : (discountedPrice ? price : null);
+  const displayPrice = discountedPrice || price;
+  const originalDisplayPrice = discountedPrice ? price : null;
   const discountPercentage = originalDisplayPrice && displayPrice < originalDisplayPrice 
     ? Math.round(((originalDisplayPrice - displayPrice) / originalDisplayPrice) * 100) 
     : 0;
@@ -232,12 +228,7 @@ export default function ProductCard({
               <Text style={styles.badgeText}>Featured</Text>
             </View>
           )}
-          {hasSpinDiscount && spinResult && !spinResult.hasCheckedOut && (
-            <View style={styles.spinBadge}>
-              <Text style={styles.badgeText}>🎉 SPIN PRIZE!</Text>
-            </View>
-          )}
-          {!hasSpinDiscount && discountPercentage > 0 && (
+          {discountPercentage > 0 && (
             <View style={styles.discountBadge}>
               <Text style={styles.badgeText}>-{discountPercentage}%</Text>
             </View>
@@ -294,10 +285,12 @@ export default function ProductCard({
               <Ionicons name="image-outline" size={40} color={colors.grayLight} />
             </View>
           ) : (
-            <Image 
-              source={{ uri: imageSource }} 
-              style={[styles.image, imageLoading && styles.imageHidden]} 
-              resizeMode="contain" 
+            <Image
+              source={{ uri: imageSource }}
+              style={[styles.image, imageLoading && styles.imageHidden]}
+              contentFit="contain"
+              cachePolicy="memory-disk"
+              transition={200}
               onLoad={() => setImageLoading(false)}
               onError={() => {
                 setImageLoading(false);
@@ -341,12 +334,7 @@ export default function ProductCard({
 
           {/* Price */}
           <View style={styles.priceContainer}>
-            {hasSpinDiscount && spinResult && !spinResult.hasCheckedOut ? (
-              <>
-                <Text style={styles.spinPrice}>{formatPrice(displayPrice)}</Text>
-                <Text style={styles.originalPrice}>{formatPrice(price)}</Text>
-              </>
-            ) : originalDisplayPrice ? (
+            {originalDisplayPrice ? (
               <>
                 <Text style={styles.price}>{formatPrice(displayPrice)}</Text>
                 <Text style={styles.originalPrice}>{formatPrice(originalDisplayPrice)}</Text>
@@ -410,7 +398,9 @@ export function CompactProductCard({ product, onPress }) {
         <Image
           source={{ uri: imageSource }}
           style={[styles.compactImage, imageLoading && styles.imageHidden]}
-          resizeMode="cover"
+          contentFit="cover"
+          cachePolicy="memory-disk"
+          transition={200}
           onLoad={() => setImageLoading(false)}
         />
       </View>
@@ -423,6 +413,8 @@ export function CompactProductCard({ product, onPress }) {
     </TouchableOpacity>
   );
 }
+
+export default React.memo(ProductCard);
 
 const styles = StyleSheet.create({
   animatedContainer: {
@@ -458,13 +450,7 @@ const styles = StyleSheet.create({
     borderRadius: borderRadius.full, 
     gap: 3,
   },
-  spinBadge: { 
-    backgroundColor: colors.spinPrize, 
-    paddingHorizontal: spacing.sm, 
-    paddingVertical: 3, 
-    borderRadius: borderRadius.full,
-  },
-  discountBadge: { 
+  discountBadge: {
     backgroundColor: colors.discount, 
     paddingHorizontal: spacing.sm, 
     paddingVertical: 3, 
@@ -594,12 +580,7 @@ const styles = StyleSheet.create({
   price: { 
     ...typography.price,
   },
-  spinPrice: { 
-    fontSize: fontSize.lg, 
-    fontWeight: fontWeight.bold, 
-    color: colors.spinPrize,
-  },
-  originalPrice: { 
+  originalPrice: {
     fontSize: fontSize.sm, 
     color: colors.textSecondary, 
     textDecorationLine: 'line-through',

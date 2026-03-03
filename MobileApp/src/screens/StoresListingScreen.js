@@ -17,8 +17,7 @@ import {
   RefreshControl,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import axios from 'axios';
-import { API_BASE_URL } from '../config/api';
+import api from '../config/api';
 import { useAuth } from '../contexts/AuthContext';
 import StoreCard from '../components/common/StoreCard';
 import Loader from '../components/common/Loader';
@@ -60,7 +59,7 @@ export default function StoresListingScreen({ navigation }) {
 
   const fetchStores = async () => {
     try {
-      const res = await axios.get(`${API_BASE_URL}/api/stores/all?sort=${sortBy}`);
+      const res = await api.get(`/api/stores/all?sort=${sortBy}`);
       setStores(res.data.stores || []);
     } catch (error) {
       console.error('Error fetching stores:', error);
@@ -109,38 +108,29 @@ export default function StoresListingScreen({ navigation }) {
   ), [currentUser]);
 
   const renderHeader = useCallback(() => (
-    <View style={styles.headerContainer}>
-      {/* Title Section */}
-      <View style={styles.titleSection}>
-        <View style={styles.titleRow}>
-          <View style={styles.iconContainer}>
-            <Ionicons name="storefront" size={28} color={colors.white} />
+    <View>
+      {/* Hero Header */}
+      <View style={styles.heroHeader}>
+        <View style={styles.heroTitleRow}>
+          <View>
+            <Text style={styles.heroTitle}>Discover Stores</Text>
+            <Text style={styles.heroSubtitle}>Explore amazing sellers & products</Text>
           </View>
-          <View style={styles.titleTextContainer}>
-            <Text style={styles.title}>Discover Stores</Text>
-            <Text style={styles.subtitle}>Explore amazing sellers and their products</Text>
-          </View>
+          {currentUser && (
+            <TouchableOpacity
+              style={styles.trustedButton}
+              onPress={() => navigation.navigate('TrustedStores')}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="heart" size={15} color={colors.white} />
+              <Text style={styles.trustedButtonText}>Trusted</Text>
+            </TouchableOpacity>
+          )}
         </View>
-        
-        {currentUser && (
-          <TouchableOpacity
-            style={styles.trustedButton}
-            onPress={() => navigation.navigate('TrustedStores')}
-            activeOpacity={0.8}
-          >
-            <Ionicons name="heart" size={16} color={colors.white} />
-            <Text style={styles.trustedButtonText}>Trusted</Text>
-          </TouchableOpacity>
-        )}
-      </View>
 
-      {/* Search Section */}
-      <View style={styles.searchSection}>
-        <View style={[
-          styles.searchInputContainer,
-          searchQuery.length > 0 && styles.searchInputActive,
-        ]}>
-          <Ionicons name="search" size={20} color={colors.gray} />
+        {/* Search inside hero */}
+        <View style={styles.searchBox}>
+          <Ionicons name="search" size={18} color={colors.gray} />
           <TextInput
             style={styles.searchInput}
             placeholder="Search stores..."
@@ -150,11 +140,8 @@ export default function StoresListingScreen({ navigation }) {
             returnKeyType="search"
           />
           {searchQuery.length > 0 && (
-            <TouchableOpacity 
-              onPress={handleClearSearch}
-              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            >
-              <Ionicons name="close-circle" size={20} color={colors.gray} />
+            <TouchableOpacity onPress={handleClearSearch} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <Ionicons name="close-circle" size={18} color={colors.gray} />
             </TouchableOpacity>
           )}
         </View>
@@ -163,15 +150,9 @@ export default function StoresListingScreen({ navigation }) {
       {/* Results Count */}
       <View style={styles.resultsRow}>
         <Text style={styles.resultsText}>
-          {searchQuery ? (
-            <>
-              Found <Text style={styles.resultsCount}>{filteredStores.length}</Text> {filteredStores.length === 1 ? 'store' : 'stores'}
-            </>
-          ) : (
-            <>
-              <Text style={styles.resultsCount}>{filteredStores.length}</Text> {filteredStores.length === 1 ? 'store' : 'stores'} available
-            </>
-          )}
+          {searchQuery ? `Found ` : ``}
+          <Text style={styles.resultsCount}>{filteredStores.length}</Text>
+          {` ${filteredStores.length === 1 ? 'store' : 'stores'}${searchQuery ? '' : ' available'}`}
         </Text>
       </View>
     </View>
@@ -219,6 +200,10 @@ export default function StoresListingScreen({ navigation }) {
         }
         ListEmptyComponent={renderEmptyComponent}
         showsVerticalScrollIndicator={false}
+        initialNumToRender={6}
+        maxToRenderPerBatch={6}
+        windowSize={5}
+        removeClippedSubviews={true}
       />
     </SafeAreaView>
   );
@@ -229,47 +214,33 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.background,
   },
-  headerContainer: {
-    backgroundColor: colors.white,
-    paddingBottom: spacing.md,
-    marginBottom: spacing.md,
-    ...shadows.sm,
+  // Hero Header
+  heroHeader: {
+    backgroundColor: colors.primaryDark,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.lg,
+    paddingBottom: spacing.xl,
   },
-  titleSection: {
+  heroTitleRow: {
     flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    padding: spacing.lg,
+    marginBottom: spacing.md,
   },
-  titleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
+  heroTitle: {
+    fontSize: fontSize.xxl,
+    fontWeight: fontWeight.bold,
+    color: colors.white,
+    marginBottom: 2,
   },
-  iconContainer: {
-    width: 50,
-    height: 50,
-    borderRadius: borderRadius.xl,
-    backgroundColor: colors.primary,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: spacing.md,
-  },
-  titleTextContainer: {
-    flex: 1,
-  },
-  title: {
-    ...typography.h2,
-  },
-  subtitle: {
-    ...typography.bodySmall,
-    color: colors.textSecondary,
-    marginTop: 2,
+  heroSubtitle: {
+    fontSize: fontSize.sm,
+    color: 'rgba(255,255,255,0.75)',
   },
   trustedButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.heart,
+    backgroundColor: 'rgba(255,255,255,0.2)',
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
     borderRadius: borderRadius.lg,
@@ -280,32 +251,23 @@ const styles = StyleSheet.create({
     fontWeight: fontWeight.semibold,
     fontSize: fontSize.sm,
   },
-  searchSection: {
-    paddingHorizontal: spacing.lg,
-    marginBottom: spacing.md,
-  },
-  searchInputContainer: {
+  searchBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.light,
+    backgroundColor: colors.white,
     borderRadius: borderRadius.xl,
     paddingHorizontal: spacing.md,
-    height: 48,
-    borderWidth: 2,
-    borderColor: colors.light,
-  },
-  searchInputActive: {
-    borderColor: colors.primary,
-    backgroundColor: colors.white,
+    height: 46,
+    gap: spacing.sm,
   },
   searchInput: {
     flex: 1,
-    marginLeft: spacing.sm,
     fontSize: fontSize.md,
     color: colors.text,
   },
   resultsRow: {
     paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
   },
   resultsText: {
     ...typography.bodySmall,

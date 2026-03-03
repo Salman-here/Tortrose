@@ -4,17 +4,11 @@ const Fuse = require('fuse.js')
 
 
 exports.getProducts = async (req, res) => {
-    // console.log('query  request:', { ...req.query });
-    const { categories, brands, priceRange, search } = { ...req.query }
-    if (!categories && !brands && !search && priceRange) {
-        let products = await Product.find()
-        return res.status(200).json({ msg: 'fetched products successfully.', products: products })
-    }
+    const { categories, brands, priceRange, search, page = 1, limit = 12 } = { ...req.query }
+    const pageNum = Math.max(1, parseInt(page, 10) || 1);
+    const limitNum = Math.min(50, Math.max(1, parseInt(limit, 10) || 12));
+    const skip = (pageNum - 1) * limitNum;
 
-    console.log("ddd", req.query);
-
-
-    // return res.status(404).json({ msg: 'fetched products successfully.' })
     try {
         let query = {}
         if (categories) query.category = Array.isArray(categories) ? { $in: categories } : categories
@@ -23,36 +17,38 @@ exports.getProducts = async (req, res) => {
             const [min, max] = priceRange.split(',')
             query.price = { $gte: Number(min), $lte: Number(max) }
         }
-        // console.log(query);  
 
         let products = await Product.find(query)
-        // console.log("data:", data);
 
-
+        // Apply fuzzy search with Fuse.js if search term is present
         if (search) {
-            // console.log("Search term:", search);
-
             const fuse = new Fuse(products, {
                 threshold: 0.4,
                 keys: ['name', 'description', 'brand', 'tags', 'category']
             })
-
             const results = fuse.search(search)
             products = results.map(r => r.item)
-            // console.log("Search results:", results);
         }
-        console.log(products.length);
 
+        const totalProducts = products.length;
+        const totalPages = Math.ceil(totalProducts / limitNum);
+        const paginatedProducts = products.slice(skip, skip + limitNum);
 
-
-
-
-        res.status(200).json({ msg: 'fetched products successfully.', products: products })
+        res.status(200).json({
+            msg: 'fetched products successfully.',
+            products: paginatedProducts,
+            pagination: {
+                page: pageNum,
+                limit: limitNum,
+                totalProducts,
+                totalPages,
+                hasMore: pageNum < totalPages,
+            }
+        })
     } catch (error) {
         console.error('Server error while fetching products:::', error.message);
-        // res.status(500).json({ msg: 'Server error while fetching products.', products: data })
+        res.status(500).json({ msg: 'Server error while fetching products.' })
     }
-
 }
 
 exports.getSingleProduct = async (req, res) => {

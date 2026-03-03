@@ -63,9 +63,10 @@ export default function OrderManagementScreen({ navigation, route }) {
 
   const fetchOrders = async () => {
     try {
-      const endpoint = isAdmin ? '/api/order/all' : '/api/order/seller';
+      const endpoint = '/api/order/get';
       const response = await api.get(endpoint);
-      setOrders(response.data || []);
+      const orders = response.data?.orders || response.data || [];
+      setOrders(orders);
     } catch (error) {
       console.error('Error fetching orders:', error);
       Alert.alert('Error', 'Failed to fetch orders');

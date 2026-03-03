@@ -261,7 +261,7 @@ const OrderList = ({
                                         <div className="flex flex-col gap-1">
                                             <span className="text-xs lg:text-sm">{order.orderId}</span>
                                             {order.spinDiscount?.applied && (
-                                                <span className="inline-flex items-center gap-1 px-1 py-0.5 bg-gradient-to-r from-purple-100 to-pink-100 text-purple-700 text-[8px] font-semibold rounded-full border border-purple-200 w-fit">
+                                                <span className="inline-flex items-center gap-1 px-1 py-0.5 bg-linear-to-r from-indigo-100 to-sky-100 text-indigo-700 text-[8px] font-semibold rounded-full border border-indigo-200 w-fit">
                                                     🎉
                                                 </span>
                                             )}
@@ -351,7 +351,7 @@ const OrderList = ({
                                 <div className="min-w-0 flex-1">
                                     <h2 className="font-semibold text-sm sm:text-base text-gray-800 truncate">{order.orderId}</h2>
                                     {order.spinDiscount?.applied && (
-                                        <span className="inline-flex items-center gap-1 mt-1 px-1.5 py-0.5 bg-gradient-to-r from-purple-100 to-pink-100 text-purple-700 text-[9px] sm:text-[10px] font-semibold rounded-full border border-purple-200">
+                                        <span className="inline-flex items-center gap-1 mt-1 px-1.5 py-0.5 bg-linear-to-r from-indigo-100 to-sky-100 text-indigo-700 text-[9px] sm:text-[10px] font-semibold rounded-full border border-indigo-200">
                                             🎉 Spin Discount
                                         </span>
                                     )}
@@ -405,7 +405,7 @@ const OrderList = ({
                             </div>
                             <Link to={`/${currentUser?.role === 'seller' ? 'seller' : 'admin'}-dashboard/order/${order._id}`}>
                                 <button
-                                    className="mt-3 w-full bg-blue-600 hover:bg-blue-700 text-white text-xs sm:text-sm font-medium py-2 rounded-md transition-colors"
+                                    className="mt-3 w-full bg-linear-to-r from-indigo-600 to-sky-500 hover:from-indigo-700 hover:to-sky-600 text-white text-xs sm:text-sm font-medium py-2 rounded-md transition-colors"
                                 >
                                     View Details
                                 </button>

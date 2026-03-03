@@ -48,7 +48,7 @@ export default function Success() {
     };
 
     return (
-        <div className="flex justify-center items-center min-h-screen bg-gradient-to-br from-white via-gray-50 to-gray-100 px-4">
+        <div className="flex justify-center items-center min-h-screen px-4">
             <motion.div
                 className="bg-white shadow-2xl rounded-2xl p-8 max-w-lg w-full text-center"
                 initial={{ opacity: 0, scale: 0.8, y: 40 }}

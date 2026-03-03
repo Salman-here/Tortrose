@@ -16,8 +16,7 @@ import {
   TouchableOpacity,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import axios from 'axios';
-import { API_BASE_URL } from '../../config/api';
+import api from '../../config/api';
 import { useAuth } from '../../contexts/AuthContext';
 import StatCard, {
   ProductsStatCard,
@@ -30,6 +29,7 @@ import ActionCard, {
   OrderManagementAction,
   StoreSettingsAction,
   ShippingConfigAction,
+  StoreAnalyticsAction,
 } from '../../components/common/ActionCard';
 import OrderCard from '../../components/common/OrderCard';
 import Loader from '../../components/common/Loader';
@@ -71,7 +71,7 @@ export const calculateSellerStats = (products, orders) => {
 };
 
 export default function SellerDashboardScreen({ navigation }) {
-  const { currentUser, token } = useAuth();
+  const { currentUser } = useAuth();
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [store, setStore] = useState(null);
@@ -90,31 +90,23 @@ export default function SellerDashboardScreen({ navigation }) {
 
   const fetchDashboardData = async () => {
     try {
-      const headers = { Authorization: `Bearer ${token}` };
-      
-      // Fetch store info
-      const storeRes = await axios.get(
-        `${API_BASE_URL}/api/stores/my-store`,
-        { headers }
-      ).catch(() => ({ data: { store: null } }));
-      
+      // Fetch store info using api instance (auto-injects auth token)
+      const storeRes = await api.get('/api/stores/my-store')
+        .catch(() => ({ data: { store: null } }));
+
       setStore(storeRes.data?.store);
 
       // Fetch products
-      const productsRes = await axios.get(
-        `${API_BASE_URL}/api/products/seller/products`,
-        { headers }
-      ).catch(() => ({ data: { products: [] } }));
-      
-      const fetchedProducts = productsRes.data?.products || [];
+      const productsRes = await api.get('/api/products/get-seller-products')
+        .catch(() => ({ data: [] }));
+
+      const fetchedProducts = productsRes.data?.products || productsRes.data || [];
       setProducts(fetchedProducts);
 
-      // Fetch orders
-      const ordersRes = await axios.get(
-        `${API_BASE_URL}/api/orders/seller`,
-        { headers }
-      ).catch(() => ({ data: { orders: [] } }));
-      
+      // Fetch orders (backend filters by seller role automatically)
+      const ordersRes = await api.get('/api/order/get')
+        .catch(() => ({ data: { orders: [] } }));
+
       const fetchedOrders = ordersRes.data?.orders || [];
       setOrders(fetchedOrders);
 
@@ -234,6 +226,9 @@ export default function SellerDashboardScreen({ navigation }) {
           <ShippingConfigAction
             onPress={() => navigation.navigate('SellerShippingConfiguration')}
           />
+          <StoreAnalyticsAction
+            onPress={() => navigation.navigate('SellerAnalytics')}
+          />
         </View>
 
         {/* Recent Orders */}
@@ -256,7 +251,7 @@ export default function SellerDashboardScreen({ navigation }) {
                 <OrderCard
                   key={order._id}
                   order={order}
-                  onPress={() => navigation.navigate('SellerOrderDetail', { orderId: order._id })}
+                  onPress={() => navigation.navigate('OrderDetailManagement', { orderId: order._id, isAdmin: false })}
                   showCustomer={true}
                 />
               ))}

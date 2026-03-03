@@ -306,7 +306,7 @@ const StoreVerifications = () => {
                                             className="w-24 h-24 rounded-2xl object-cover border-4 border-white shadow-lg ring-2 ring-blue-100"
                                         />
                                     ) : (
-                                        <div className="w-24 h-24 rounded-2xl bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center shadow-lg ring-2 ring-blue-100">
+                                        <div className="w-24 h-24 rounded-2xl bg-linear-to-br from-indigo-500 to-sky-400 flex items-center justify-center shadow-lg ring-2 ring-indigo-100">
                                             <Store size={36} className="text-white" />
                                         </div>
                                     )}
@@ -430,7 +430,7 @@ const StoreVerifications = () => {
                             animate={{ opacity: 1, y: 0 }}
                             transition={{ duration: 0.3, delay: idx * 0.1 }}
                             whileHover={{ y: -4, transition: { duration: 0.2 } }}
-                            className="bg-gradient-to-br from-green-50 to-emerald-50 rounded-2xl shadow-lg hover:shadow-2xl transition-all border border-green-200 p-6 md:p-8"
+                            className="bg-linear-to-br from-green-50 to-emerald-50 rounded-2xl shadow-lg hover:shadow-2xl transition-all border border-green-200 p-6 md:p-8"
                         >
                             <div className="flex flex-col md:flex-row gap-6">
                                 {/* Store Logo */}
@@ -442,7 +442,7 @@ const StoreVerifications = () => {
                                             className="w-24 h-24 rounded-2xl object-cover border-4 border-white shadow-lg ring-2 ring-green-200"
                                         />
                                     ) : (
-                                        <div className="w-24 h-24 rounded-2xl bg-gradient-to-br from-green-500 to-emerald-500 flex items-center justify-center shadow-lg ring-2 ring-green-200">
+                                        <div className="w-24 h-24 rounded-2xl bg-linear-to-br from-green-500 to-emerald-500 flex items-center justify-center shadow-lg ring-2 ring-green-200">
                                             <Store size={36} className="text-white" />
                                         </div>
                                     )}
@@ -587,7 +587,7 @@ const StoreVerifications = () => {
                                             className="w-24 h-24 rounded-2xl object-cover border-4 border-white shadow-lg ring-2 ring-gray-100"
                                         />
                                     ) : (
-                                        <div className="w-24 h-24 rounded-2xl bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center shadow-lg ring-2 ring-gray-100">
+                                        <div className="w-24 h-24 rounded-2xl bg-linear-to-br from-indigo-500 to-sky-400 flex items-center justify-center shadow-lg ring-2 ring-indigo-100">
                                             <Store size={36} className="text-white" />
                                         </div>
                                     )}

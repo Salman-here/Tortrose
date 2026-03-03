@@ -12,11 +12,11 @@ import {
   FlatList,
   StyleSheet,
   TouchableOpacity,
-  Image,
   SafeAreaView,
   Alert,
   Animated,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../contexts/AuthContext';
 import { useGlobal } from '../contexts/GlobalContext';
@@ -34,7 +34,6 @@ export default function CartScreen({ navigation }) {
     handleQtyDec,
     isCartLoading,
     qtyUpdateId,
-    spinResult,
   } = useGlobal();
   const { formatPrice } = useCurrency();
 
@@ -47,30 +46,7 @@ export default function CartScreen({ navigation }) {
   // Calculate discounted price for a product
   const getDiscountedPrice = (product) => {
     if (!product) return 0;
-    
-    if (!spinResult || spinResult.hasCheckedOut) {
-      return product.discountedPrice || product.price;
-    }
-
-    // Check if product is in spin selected products
-    const spinSelectedProducts = spinResult.selectedProducts || [];
-    if (!spinSelectedProducts.includes(product._id)) {
-      return product.discountedPrice || product.price;
-    }
-
-    let discountedPrice = product.price;
-    const type = spinResult.type || spinResult.discountType;
-    const value = spinResult.value || spinResult.discount;
-
-    if (type === 'free') {
-      discountedPrice = 0;
-    } else if (type === 'fixed') {
-      discountedPrice = value;
-    } else if (type === 'percentage') {
-      discountedPrice = product.price * (1 - value / 100);
-    }
-
-    return Math.max(0, discountedPrice);
+    return product.discountedPrice || product.price;
   };
 
   // Calculate subtotal
@@ -95,14 +71,16 @@ export default function CartScreen({ navigation }) {
     navigation.navigate('Checkout');
   };
 
+  const subtotal = calculateSubtotal();
+
   // Guest View
   if (!currentUser) {
     return (
       <SafeAreaView style={styles.container}>
-        <View style={styles.header}>
-          <Text style={styles.headerTitle}>Your Cart</Text>
+        <View style={styles.heroHeader}>
+          <Text style={styles.heroTitle}>Shopping Cart</Text>
         </View>
-        <LoginRequired 
+        <LoginRequired
           onAction={() => navigation.navigate('Login')}
           style={styles.emptyStateContainer}
         />
@@ -114,10 +92,10 @@ export default function CartScreen({ navigation }) {
   if (!cartItems?.cart || cartItems.cart.length === 0) {
     return (
       <SafeAreaView style={styles.container}>
-        <View style={styles.header}>
-          <Text style={styles.headerTitle}>Your Cart</Text>
+        <View style={styles.heroHeader}>
+          <Text style={styles.heroTitle}>Shopping Cart</Text>
         </View>
-        <EmptyCart 
+        <EmptyCart
           onAction={() => navigation.navigate('Home')}
           style={styles.emptyStateContainer}
         />
@@ -127,7 +105,6 @@ export default function CartScreen({ navigation }) {
 
   const renderCartItem = ({ item }) => {
     const { product, qty, _id: itemId } = item;
-    
     if (!product) return null;
 
     const discountedPrice = getDiscountedPrice(product);
@@ -143,50 +120,57 @@ export default function CartScreen({ navigation }) {
             <Text style={styles.overlayText}>Updating...</Text>
           </View>
         )}
-        
-        <Image
-          source={{ uri: product.image || product.images?.[0]?.url }}
-          style={styles.itemImage}
-          resizeMode="cover"
-        />
-        
+
+        <TouchableOpacity onPress={() => navigation.navigate('ProductDetail', { productId: product._id })} activeOpacity={0.85}>
+          <Image
+            source={{ uri: product.image || product.images?.[0]?.url }}
+            style={styles.itemImage}
+            contentFit="cover"
+            cachePolicy="memory-disk"
+            transition={150}
+          />
+        </TouchableOpacity>
+
         <View style={styles.itemDetails}>
+          {product.category && <Text style={styles.itemCategory}>{product.category}</Text>}
           <Text style={styles.itemName} numberOfLines={2}>{product.name}</Text>
-          
+
+          <View style={styles.priceRow}>
+            <Text style={[styles.itemPrice, hasDiscount && styles.itemPriceDiscount]}>
+              {formatPrice(discountedPrice)}
+            </Text>
+            {hasDiscount && (
+              <Text style={styles.itemOriginalPrice}>{formatPrice(originalPrice)}</Text>
+            )}
+          </View>
+
           {/* Quantity Selector */}
-          <View style={styles.quantityContainer}>
+          <View style={styles.bottomRow}>
+            <View style={styles.quantityContainer}>
+              <TouchableOpacity
+                style={styles.qtyButton}
+                onPress={() => handleQtyDec(itemId)}
+                disabled={isUpdating}
+              >
+                <Ionicons name="remove" size={16} color={qty <= 1 ? colors.grayLight : colors.primary} />
+              </TouchableOpacity>
+              <Text style={styles.qtyText}>{qty}</Text>
+              <TouchableOpacity
+                style={[styles.qtyButton, styles.qtyButtonAdd]}
+                onPress={() => handleQtyInc(itemId)}
+              >
+                <Ionicons name="add" size={16} color={colors.primary} />
+              </TouchableOpacity>
+            </View>
+
             <TouchableOpacity
-              style={styles.qtyButton}
-              onPress={() => handleQtyDec(itemId)}
+              style={styles.removeButton}
+              onPress={() => handleRemoveCartItem(product._id)}
               disabled={isUpdating}
             >
-              <Ionicons name="remove" size={18} color={colors.gray} />
-            </TouchableOpacity>
-            <Text style={styles.qtyText}>{qty}</Text>
-            <TouchableOpacity
-              style={[styles.qtyButton, styles.qtyButtonDisabled]}
-              onPress={() => handleQtyInc(itemId)}
-              disabled={true}
-            >
-              <Ionicons name="add" size={18} color={colors.grayLight} />
+              <Ionicons name="trash-outline" size={18} color={colors.error} />
             </TouchableOpacity>
           </View>
-        </View>
-
-        <View style={styles.itemPriceContainer}>
-          <Text style={[styles.itemPrice, hasDiscount && styles.itemPriceDiscount]}>
-            {formatPrice(discountedPrice)}
-          </Text>
-          {hasDiscount && (
-            <Text style={styles.itemOriginalPrice}>{formatPrice(originalPrice)}</Text>
-          )}
-          <TouchableOpacity
-            style={styles.removeButton}
-            onPress={() => handleRemoveCartItem(product._id)}
-            disabled={isUpdating}
-          >
-            <Ionicons name="close" size={20} color={colors.gray} />
-          </TouchableOpacity>
         </View>
       </View>
     );
@@ -194,9 +178,12 @@ export default function CartScreen({ navigation }) {
 
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Your Cart</Text>
-        <Text style={styles.itemCount}>{cartItems.cart.length} items</Text>
+      {/* Hero Header */}
+      <View style={styles.heroHeader}>
+        <Text style={styles.heroTitle}>Shopping Cart</Text>
+        <View style={styles.heroCountBadge}>
+          <Text style={styles.heroCount}>{cartItems.cart.length} {cartItems.cart.length === 1 ? 'item' : 'items'}</Text>
+        </View>
       </View>
 
       {isCartLoading && cartItems.cart.length === 0 ? (
@@ -208,22 +195,41 @@ export default function CartScreen({ navigation }) {
           renderItem={renderCartItem}
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
+          ListFooterComponent={
+            <View style={styles.orderSummary}>
+              <Text style={styles.summaryTitle}>Order Summary</Text>
+              <View style={styles.summaryRow}>
+                <Text style={styles.summaryLabel}>Subtotal ({cartItems.cart.length} {cartItems.cart.length === 1 ? 'item' : 'items'})</Text>
+                <Text style={styles.summaryValue}>{formatPrice(subtotal)}</Text>
+              </View>
+              <View style={styles.summaryRow}>
+                <Text style={styles.summaryLabel}>Shipping & Tax</Text>
+                <Text style={[styles.summaryValue, styles.calculatedAtCheckout]}>Calculated at checkout</Text>
+              </View>
+              <View style={[styles.summaryRow, styles.totalRow]}>
+                <Text style={styles.totalLabel}>Subtotal</Text>
+                <Text style={styles.totalValue}>{formatPrice(subtotal)}</Text>
+              </View>
+            </View>
+          }
         />
       )}
 
       {/* Footer */}
       <View style={styles.footer}>
-        <View style={styles.subtotalContainer}>
-          <Text style={styles.subtotalLabel}>Subtotal</Text>
-          <Text style={styles.subtotalValue}>{formatPrice(calculateSubtotal())}</Text>
+        <View style={styles.footerTop}>
+          <Text style={styles.footerTotalLabel}>Subtotal</Text>
+          <Text style={styles.footerTotalValue}>{formatPrice(subtotal)}</Text>
         </View>
         <TouchableOpacity
-          style={styles.checkoutButton}
+          style={[styles.checkoutButton, isCartLoading && styles.checkoutButtonDisabled]}
           onPress={handleCheckout}
           disabled={isCartLoading}
+          activeOpacity={0.85}
         >
-          <Text style={styles.checkoutButtonText}>Checkout</Text>
-          <Ionicons name="arrow-forward" size={20} color={colors.white} />
+          <Ionicons name="lock-closed-outline" size={18} color={colors.white} />
+          <Text style={styles.checkoutButtonText}>Secure Checkout</Text>
+          <Ionicons name="arrow-forward" size={18} color={colors.white} />
         </TouchableOpacity>
       </View>
     </SafeAreaView>
@@ -235,51 +241,56 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.background,
   },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: colors.white,
+  // Hero Header
+  heroHeader: {
+    backgroundColor: colors.primaryDark,
     paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.lg,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.light,
-  },
-  headerTitle: {
-    fontSize: fontSize.xl,
-    fontWeight: fontWeight.bold,
-    color: colors.text,
-  },
-  itemCount: {
-    fontSize: fontSize.sm,
-    color: colors.textSecondary,
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
+    paddingTop: spacing.lg,
+    paddingBottom: spacing.xl,
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  heroTitle: {
+    fontSize: fontSize.xxl,
+    fontWeight: fontWeight.bold,
+    color: colors.white,
+  },
+  heroCountBadge: {
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    borderRadius: borderRadius.full,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+  },
+  heroCount: {
+    color: colors.white,
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.medium,
   },
   emptyStateContainer: {
     flex: 1,
   },
   listContent: {
     padding: spacing.md,
+    paddingBottom: spacing.xxxl,
   },
+  // Cart Item
   cartItem: {
     flexDirection: 'row',
     backgroundColor: colors.white,
-    borderRadius: borderRadius.lg,
+    borderRadius: borderRadius.xl,
     padding: spacing.md,
     marginBottom: spacing.md,
-    ...shadows.sm,
+    ...shadows.md,
     position: 'relative',
+    overflow: 'hidden',
   },
   itemOverlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    backgroundColor: 'rgba(255, 255, 255, 0.92)',
     justifyContent: 'center',
     alignItems: 'center',
-    borderRadius: borderRadius.lg,
+    borderRadius: borderRadius.xl,
     zIndex: 10,
     flexDirection: 'row',
     gap: spacing.sm,
@@ -287,48 +298,38 @@ const styles = StyleSheet.create({
   overlayText: {
     color: colors.primary,
     fontWeight: fontWeight.medium,
+    fontSize: fontSize.sm,
   },
   itemImage: {
-    width: 70,
-    height: 70,
-    borderRadius: borderRadius.md,
+    width: 90,
+    height: 90,
+    borderRadius: borderRadius.lg,
     backgroundColor: colors.light,
   },
   itemDetails: {
     flex: 1,
     marginLeft: spacing.md,
-    justifyContent: 'space-between',
+  },
+  itemCategory: {
+    fontSize: fontSize.xs,
+    color: colors.primary,
+    fontWeight: fontWeight.semibold,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 2,
   },
   itemName: {
     fontSize: fontSize.md,
-    fontWeight: fontWeight.medium,
+    fontWeight: fontWeight.semibold,
     color: colors.text,
-    marginBottom: spacing.sm,
+    marginBottom: spacing.xs,
+    lineHeight: 20,
   },
-  quantityContainer: {
+  priceRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.lighter,
-    borderRadius: borderRadius.full,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
-    alignSelf: 'flex-start',
-  },
-  qtyButton: {
-    padding: spacing.xs,
-  },
-  qtyButtonDisabled: {
-    opacity: 0.4,
-  },
-  qtyText: {
-    fontSize: fontSize.md,
-    fontWeight: fontWeight.medium,
-    color: colors.text,
-    paddingHorizontal: spacing.md,
-  },
-  itemPriceContainer: {
-    alignItems: 'flex-end',
-    justifyContent: 'space-between',
+    gap: spacing.sm,
+    marginBottom: spacing.sm,
   },
   itemPrice: {
     fontSize: fontSize.lg,
@@ -336,35 +337,134 @@ const styles = StyleSheet.create({
     color: colors.text,
   },
   itemPriceDiscount: {
-    color: '#f59e0b',
+    color: colors.warning,
   },
   itemOriginalPrice: {
     fontSize: fontSize.sm,
-    color: colors.textSecondary,
+    color: colors.textLight,
     textDecorationLine: 'line-through',
   },
-  removeButton: {
-    padding: spacing.xs,
+  bottomRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
+  quantityContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.primarySubtle,
+    borderRadius: borderRadius.full,
+    paddingHorizontal: spacing.xs,
+    paddingVertical: spacing.xs,
+    borderWidth: 1,
+    borderColor: colors.primaryLighter,
+  },
+  qtyButton: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: colors.white,
+    ...shadows.sm,
+  },
+  qtyButtonAdd: {
+    backgroundColor: colors.white,
+  },
+  qtyText: {
+    fontSize: fontSize.md,
+    fontWeight: fontWeight.bold,
+    color: colors.primary,
+    paddingHorizontal: spacing.md,
+    minWidth: 30,
+    textAlign: 'center',
+  },
+  removeButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: colors.errorLighter,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  // Order Summary
+  orderSummary: {
+    backgroundColor: colors.white,
+    borderRadius: borderRadius.xl,
+    padding: spacing.lg,
+    marginBottom: spacing.md,
+    ...shadows.sm,
+  },
+  summaryTitle: {
+    fontSize: fontSize.lg,
+    fontWeight: fontWeight.bold,
+    color: colors.text,
+    marginBottom: spacing.md,
+    paddingBottom: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.light,
+  },
+  summaryRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: spacing.sm,
+  },
+  summaryLabel: {
+    fontSize: fontSize.md,
+    color: colors.textSecondary,
+  },
+  summaryValue: {
+    fontSize: fontSize.md,
+    color: colors.text,
+    fontWeight: fontWeight.medium,
+  },
+  calculatedAtCheckout: {
+    fontSize: fontSize.sm,
+    color: colors.textSecondary,
+    fontWeight: fontWeight.regular,
+    fontStyle: 'italic',
+  },
+  totalRow: {
+    borderTopWidth: 1,
+    borderTopColor: colors.light,
+    paddingTop: spacing.sm,
+    marginTop: spacing.xs,
+    marginBottom: 0,
+  },
+  totalLabel: {
+    fontSize: fontSize.lg,
+    fontWeight: fontWeight.bold,
+    color: colors.text,
+  },
+  totalValue: {
+    fontSize: fontSize.xl,
+    fontWeight: fontWeight.bold,
+    color: colors.primary,
+  },
+  // Footer
   footer: {
     backgroundColor: colors.white,
-    padding: spacing.lg,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    paddingBottom: spacing.xl,
     borderTopWidth: 1,
     borderTopColor: colors.light,
     ...shadows.lg,
   },
-  subtotalContainer: {
+  footerTop: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: spacing.md,
   },
-  subtotalLabel: {
-    fontSize: fontSize.md,
+  footerTotalLabel: {
+    fontSize: fontSize.sm,
     color: colors.textSecondary,
+    fontWeight: fontWeight.medium,
   },
-  subtotalValue: {
-    fontSize: fontSize.xl,
+  footerTotalValue: {
+    fontSize: fontSize.xxl,
     fontWeight: fontWeight.bold,
     color: colors.text,
   },
@@ -377,51 +477,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: spacing.sm,
   },
+  checkoutButtonDisabled: {
+    opacity: 0.6,
+  },
   checkoutButtonText: {
     color: colors.white,
     fontSize: fontSize.lg,
-    fontWeight: fontWeight.semibold,
-  },
-  // Empty states
-  emptyContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: spacing.xl,
-  },
-  emptyTitle: {
-    fontSize: fontSize.xl,
-    fontWeight: fontWeight.bold,
-    color: colors.text,
-    marginTop: spacing.lg,
-    marginBottom: spacing.sm,
-  },
-  emptySubtitle: {
-    fontSize: fontSize.md,
-    color: colors.textSecondary,
-    textAlign: 'center',
-    marginBottom: spacing.xl,
-  },
-  loginButton: {
-    backgroundColor: colors.primary,
-    paddingVertical: spacing.md,
-    paddingHorizontal: spacing.xxxl,
-    borderRadius: borderRadius.lg,
-  },
-  loginButtonText: {
-    color: colors.white,
-    fontSize: fontSize.md,
-    fontWeight: fontWeight.semibold,
-  },
-  shopButton: {
-    backgroundColor: colors.primary,
-    paddingVertical: spacing.md,
-    paddingHorizontal: spacing.xxxl,
-    borderRadius: borderRadius.lg,
-  },
-  shopButtonText: {
-    color: colors.white,
-    fontSize: fontSize.md,
     fontWeight: fontWeight.semibold,
   },
 });

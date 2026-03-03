@@ -165,7 +165,7 @@ const OrderDetail = () => {
                         {order?.isPaid ? 'Paid' : 'Unpaid'}
                     </span>
                     {order?.spinDiscount?.applied && (
-                        <span className="px-2 sm:px-3 py-1 text-xs sm:text-sm rounded-full bg-gradient-to-r from-purple-500 to-pink-500 text-white font-semibold flex items-center gap-1">
+                        <span className="px-2 sm:px-3 py-1 text-xs sm:text-sm rounded-full bg-linear-to-r from-indigo-500 to-sky-400 text-white font-semibold flex items-center gap-1">
                             🎉 <span className="hidden xs:inline">Spin Discount:</span> {order.spinDiscount.label}
                         </span>
                     )}
@@ -226,7 +226,7 @@ const OrderDetail = () => {
                                         <h3 className="text-sm sm:text-base font-medium text-gray-800 break-words">{item.name}</h3>
                                         <p className="text-xs sm:text-sm text-gray-500 mt-1">Quantity: {item.quantity}</p>
                                         {item.hasSpinDiscount && (
-                                            <span className="inline-flex items-center gap-1 mt-1 px-1.5 sm:px-2 py-0.5 bg-gradient-to-r from-purple-100 to-pink-100 text-purple-700 text-[10px] sm:text-xs font-semibold rounded-full border border-purple-200">
+                                            <span className="inline-flex items-center gap-1 mt-1 px-1.5 sm:px-2 py-0.5 bg-linear-to-r from-indigo-100 to-sky-100 text-indigo-700 text-[10px] sm:text-xs font-semibold rounded-full border border-indigo-200">
                                                 🎉 Spin Discount
                                             </span>
                                         )}
@@ -367,7 +367,7 @@ const OrderDetail = () => {
                                         order?.orderStatus !== 'cancelled' && order?.orderStatus !== 'delivered' && (
                                             <button
                                                 onClick={() => setIsUpdating(true)}
-                                                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 flex items-center space-x-2"
+                                                className="px-4 py-2 bg-linear-to-r from-indigo-600 to-sky-500 hover:from-indigo-700 hover:to-sky-600 text-white rounded-md flex items-center space-x-2 transition-colors"
                                             >
                                                 <Edit className="w-4 h-4" />
                                                 <span>Update Status</span>
@@ -397,7 +397,7 @@ const OrderDetail = () => {
                                     <div className="flex space-x-2">
                                         <button
                                             onClick={handleStatusUpdate}
-                                            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                                            className="px-4 py-2 bg-linear-to-r from-indigo-600 to-sky-500 hover:from-indigo-700 hover:to-sky-600 text-white rounded-md transition-colors"
                                         >
                                             Save Changes
                                         </button>

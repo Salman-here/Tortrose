@@ -40,10 +40,10 @@ const StoreCard = ({ store, idx }) => {
                         alt={store.storeName}
                         className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
                     />
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent" />
+                    <div className="absolute inset-0 bg-linear-to-t from-black/20 to-transparent" />
                 </div>
             ) : (
-                <div className="h-24 sm:h-28 md:h-32 bg-gradient-to-br from-blue-500 via-purple-500 to-pink-500 relative overflow-hidden">
+                <div className="h-24 sm:h-28 md:h-32 bg-linear-to-br from-indigo-500 to-sky-400 relative overflow-hidden">
                     <div className="absolute inset-0 bg-white/10 backdrop-blur-sm" />
                 </div>
             )}
@@ -56,10 +56,10 @@ const StoreCard = ({ store, idx }) => {
                         <img
                             src={store.logo}
                             alt={store.storeName}
-                            className="w-16 h-16 sm:w-18 sm:h-18 md:w-20 md:h-20 rounded-full object-cover border-3 sm:border-4 border-white shadow-xl ring-2 ring-gray-100 group-hover:ring-blue-200 transition-all"
+                            className="w-16 h-16 sm:w-18 sm:h-18 md:w-20 md:h-20 rounded-full object-cover border-3 sm:border-4 border-white shadow-xl ring-2 ring-white/60 group-hover:ring-indigo-200 transition-all"
                         />
                     ) : (
-                        <div className="w-16 h-16 sm:w-18 sm:h-18 md:w-20 md:h-20 rounded-full bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center border-3 sm:border-4 border-white shadow-xl ring-2 ring-gray-100 group-hover:ring-blue-200 transition-all">
+                        <div className="w-16 h-16 sm:w-18 sm:h-18 md:w-20 md:h-20 rounded-full bg-linear-to-br from-indigo-500 to-sky-400 flex items-center justify-center border-3 sm:border-4 border-white shadow-xl ring-2 ring-white/60 group-hover:ring-indigo-200 transition-all">
                             <Store size={24} className="sm:w-7 sm:h-7 md:w-8 md:h-8 text-white" />
                         </div>
                     )}
@@ -67,7 +67,7 @@ const StoreCard = ({ store, idx }) => {
 
                 {/* Store Name & Trust Button */}
                 <div className="flex items-center justify-between gap-2 mb-1 sm:mb-1.5 md:mb-2">
-                    <h3 className="font-bold text-sm sm:text-base md:text-lg text-gray-900 truncate group-hover:text-blue-600 transition-colors flex-1 flex items-center gap-1.5">
+                    <h3 className="font-bold text-sm sm:text-base md:text-lg text-gray-900 truncate group-hover:text-indigo-600 transition-colors flex-1 flex items-center gap-1.5">
                         {store.storeName}
                         {store.verification?.isVerified && (
                             <VerifiedBadge size="sm" />
@@ -102,12 +102,12 @@ const StoreCard = ({ store, idx }) => {
 
                 {/* Stats */}
                 <div className="flex items-center gap-2 sm:gap-3 md:gap-4 text-xs sm:text-sm pt-2 sm:pt-2.5 md:pt-3 border-t border-gray-100">
-                    <div className="flex items-center gap-1 sm:gap-1.5 text-blue-600 font-medium">
+                    <div className="flex items-center gap-1 sm:gap-1.5 text-sky-600 font-medium">
                         <Package size={12} className="sm:w-4 sm:h-4" />
                         <span className="hidden sm:inline">{store.productCount || 0} items</span>
                         <span className="sm:hidden">{store.productCount || 0}</span>
                     </div>
-                    <div className="flex items-center gap-1 sm:gap-1.5 text-purple-600 font-medium">
+                    <div className="flex items-center gap-1 sm:gap-1.5 text-sky-600 font-medium">
                         <Eye size={12} className="sm:w-4 sm:h-4" />
                         <span className="hidden sm:inline">{store.views || 0} views</span>
                         <span className="sm:hidden">{store.views || 0}</span>

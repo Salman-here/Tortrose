@@ -276,10 +276,10 @@ const UserManagement = () => {
           >
             <div>
               <h3 className="text-lg font-medium text-gray-600">Admins</h3>
-              <p className="text-3xl font-bold text-purple-600">{adminUsers}</p>
+              <p className="text-3xl font-bold text-sky-600">{adminUsers}</p>
             </div>
-            <div className="bg-purple-100 p-3 rounded-full">
-              <Shield className="w-8 h-8 text-purple-600" />
+            <div className="bg-sky-100 p-3 rounded-full">
+              <Shield className="w-8 h-8 text-sky-600" />
             </div>
           </motion.div>
         </div>
@@ -394,7 +394,7 @@ const UserManagement = () => {
                                 </td>
                                 <td className="py-4 px-6 whitespace-nowrap">
                                   <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                                    user.role === 'admin' ? 'bg-purple-100 text-purple-800' : 
+                                    user.role === 'admin' ? 'bg-indigo-100 text-indigo-800' :
                                     user.role === 'seller' ? 'bg-green-100 text-green-800' : 
                                     'bg-gray-100 text-gray-800'
                                   }`}>
@@ -423,7 +423,7 @@ const UserManagement = () => {
                                             onClick={() => handleChangeRole(user)}
                                             className={`p-2 rounded-lg ${
                                               user.role === 'admin' ? 'text-gray-600 hover:bg-gray-100' : 
-                                              user.role === 'seller' ? 'text-purple-600 hover:bg-purple-100' :
+                                              user.role === 'seller' ? 'text-indigo-600 hover:bg-indigo-100' :
                                               'text-green-600 hover:bg-green-100'
                                             }`}
                                             title={
@@ -484,7 +484,7 @@ const UserManagement = () => {
                   <button
                     key={page}
                     onClick={() => paginate(page)}
-                    className={`px-3 py-1 rounded-lg ${currentPage === page ? 'bg-blue-600 text-white' : 'text-gray-700 hover:bg-gray-100'}`}
+                    className={`px-3 py-1 rounded-lg ${currentPage === page ? 'bg-indigo-600 text-white' : 'text-gray-700 hover:bg-gray-100'}`}
                   >
                     {page}
                   </button>
@@ -648,7 +648,7 @@ const UserManagement = () => {
                   className={`w-full px-4 py-2 rounded-lg text-left ${
                     selectedUser.role === 'admin'
                       ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                      : 'bg-purple-50 hover:bg-purple-100 text-purple-700'
+                      : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700'
                   }`}
                 >
                   👑 Admin {selectedUser.role === 'admin' && '(Current)'}

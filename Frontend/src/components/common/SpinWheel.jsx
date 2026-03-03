@@ -1,3 +1,4 @@
+/* SPIN WHEEL DISABLED
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Gift, Sparkles, Trophy, Zap, Star } from 'lucide-react';
@@ -456,3 +457,4 @@ export default function SpinWheel({ onSpinComplete, onClose }) {
     </motion.div>
   );
 }
+SPIN WHEEL DISABLED */

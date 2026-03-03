@@ -11,16 +11,15 @@ import {
   Text,
   FlatList,
   StyleSheet,
-  Image,
   SafeAreaView,
   RefreshControl,
   TouchableOpacity,
   Linking,
   Share,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
-import axios from 'axios';
-import { API_BASE_URL } from '../config/api';
+import api from '../config/api';
 import { useAuth } from '../contexts/AuthContext';
 import ProductCard from '../components/ProductCard';
 import TrustButton from '../components/TrustButton';
@@ -53,7 +52,7 @@ export default function StoreScreen({ route, navigation }) {
       return;
     }
     try {
-      const res = await axios.get(`${API_BASE_URL}/api/stores/${slug}`);
+      const res = await api.get(`/api/stores/${slug}`);
       setStore(res.data.store);
       setProducts(res.data.products || []);
     } catch (error) {
@@ -144,7 +143,9 @@ export default function StoreScreen({ route, navigation }) {
           <Image
             source={{ uri: store.banner }}
             style={styles.banner}
-            resizeMode="cover"
+            contentFit="cover"
+            cachePolicy="memory-disk"
+            transition={200}
             onError={() => setBannerError(true)}
           />
         ) : (
@@ -172,7 +173,9 @@ export default function StoreScreen({ route, navigation }) {
             <Image
               source={{ uri: store.logo }}
               style={styles.storeLogo}
-              resizeMode="cover"
+              contentFit="cover"
+              cachePolicy="memory-disk"
+              transition={150}
               onError={() => setLogoError(true)}
             />
           ) : (
@@ -289,6 +292,10 @@ export default function StoreScreen({ route, navigation }) {
           />
         }
         showsVerticalScrollIndicator={false}
+        initialNumToRender={8}
+        maxToRenderPerBatch={8}
+        windowSize={5}
+        removeClippedSubviews={true}
       />
     </SafeAreaView>
   );

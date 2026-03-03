@@ -59,7 +59,7 @@ const statusConfig = {
     pending: { color: 'bg-orange-100 text-orange-800', icon: Clock },
     confirmed: { color: 'bg-blue-100 text-blue-800', icon: CheckCircle },
     processing: { color: 'bg-yellow-100 text-yellow-800', icon: Package },
-    shipped: { color: 'bg-purple-100 text-purple-800', icon: Truck },
+    shipped: { color: 'bg-sky-100 text-sky-800', icon: Truck },
     delivered: { color: 'bg-green-100 text-green-800', icon: CheckCircle },
     cancelled: { color: 'bg-red-100 text-red-800', icon: XCircle }
 };

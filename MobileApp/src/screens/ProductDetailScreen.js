@@ -11,18 +11,22 @@ import {
   Text,
   ScrollView,
   StyleSheet,
-  Image,
   TouchableOpacity,
   SafeAreaView,
   Dimensions,
   FlatList,
   Share,
   Animated,
+  Modal,
+  TextInput,
+  KeyboardAvoidingView,
+  Platform,
+  ActivityIndicator,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
-import axios from 'axios';
 import Toast from 'react-native-toast-message';
-import { API_BASE_URL } from '../config/api';
+import api from '../config/api';
 import { useAuth } from '../contexts/AuthContext';
 import { useGlobal } from '../contexts/GlobalContext';
 import { useCurrency } from '../contexts/CurrencyContext';
@@ -43,7 +47,6 @@ export default function ProductDetailScreen({ route, navigation }) {
     handleAddToCart,
     isCartLoading,
     loadingProductId,
-    spinResult,
   } = useGlobal();
   const { formatPrice, convertPrice, getCurrencySymbol } = useCurrency();
 
@@ -52,9 +55,15 @@ export default function ProductDetailScreen({ route, navigation }) {
   const [selectedImageIndex, setSelectedImageIndex] = useState(0);
   const [storeData, setStoreData] = useState(null);
   const flatListRef = useRef(null);
-  
+
   // Animation for bottom bar
   const bottomBarAnim = useRef(new Animated.Value(0)).current;
+
+  // Review modal state
+  const [reviewModalVisible, setReviewModalVisible] = useState(false);
+  const [reviewRating, setReviewRating] = useState(5);
+  const [reviewComment, setReviewComment] = useState('');
+  const [submittingReview, setSubmittingReview] = useState(false);
 
   const isInWishlist = product && wishlistItems?.some((item) => item._id === product._id);
   const isInCart = product && cartItems?.cart?.some((item) => item.product?._id === product._id);
@@ -85,13 +94,13 @@ export default function ProductDetailScreen({ route, navigation }) {
   const fetchProduct = async () => {
     setIsLoading(true);
     try {
-      const res = await axios.get(`${API_BASE_URL}/api/products/get-single-product/${productId}`);
+      const res = await api.get(`/api/products/get-single-product/${productId}`);
       setProduct(res.data.product);
 
       // Fetch store data
       if (res.data.product.seller) {
         try {
-          const storeRes = await axios.get(`${API_BASE_URL}/api/stores/seller/${res.data.product.seller}`);
+          const storeRes = await api.get(`/api/stores/seller/${res.data.product.seller}`);
           setStoreData(storeRes.data.store);
         } catch (error) {
           console.log('No store configured for this seller');
@@ -112,32 +121,12 @@ export default function ProductDetailScreen({ route, navigation }) {
   // Calculate discounted price
   const getDiscountedPrice = () => {
     if (!product) return 0;
-    
-    if (!spinResult || spinResult.hasCheckedOut) {
-      return product.discountedPrice || product.price;
-    }
-
-    let discountedPrice = product.price;
-    const type = spinResult.type || spinResult.discountType;
-    const value = spinResult.value || spinResult.discount;
-
-    if (type === 'free') {
-      discountedPrice = 0;
-    } else if (type === 'fixed') {
-      discountedPrice = value;
-    } else if (type === 'percentage') {
-      discountedPrice = product.price * (1 - value / 100);
-    }
-
-    return Math.max(0, discountedPrice);
+    return product.discountedPrice || product.price;
   };
 
   const displayPrice = getDiscountedPrice();
-  const originalPrice = product?.discountedPrice || product?.price;
-  const hasSpinDiscount = displayPrice < originalPrice;
-  const discountPercentage = hasSpinDiscount
-    ? Math.round(((originalPrice - displayPrice) / originalPrice) * 100)
-    : product?.discountedPrice && product.discountedPrice < product.price
+  const originalPrice = product?.price;
+  const discountPercentage = product?.discountedPrice && product.discountedPrice < product.price
     ? Math.round(((product.price - product.discountedPrice) / product.price) * 100)
     : 0;
 
@@ -159,6 +148,33 @@ export default function ProductDetailScreen({ route, navigation }) {
       return;
     }
     handleAddToCart(product._id);
+  };
+
+  const handleSubmitReview = async () => {
+    if (!currentUser) {
+      navigation.navigate('Login');
+      return;
+    }
+    if (!reviewComment.trim()) {
+      Toast.show({ type: 'error', text1: 'Error', text2: 'Please write a comment for your review' });
+      return;
+    }
+    setSubmittingReview(true);
+    try {
+      await api.post(`/api/products/add-review/${productId}`, {
+        rating: reviewRating,
+        comment: reviewComment.trim(),
+      });
+      Toast.show({ type: 'success', text1: 'Review Submitted!', text2: 'Thank you for your feedback.' });
+      setReviewModalVisible(false);
+      setReviewComment('');
+      setReviewRating(5);
+      fetchProduct(); // Refresh to show new review
+    } catch (error) {
+      Toast.show({ type: 'error', text1: 'Error', text2: error.response?.data?.msg || 'Failed to submit review' });
+    } finally {
+      setSubmittingReview(false);
+    }
   };
 
   const scrollToImage = (index) => {
@@ -222,7 +238,9 @@ export default function ProductDetailScreen({ route, navigation }) {
                 <Image
                   source={{ uri: item.url }}
                   style={styles.mainImage}
-                  resizeMode="contain"
+                  contentFit="contain"
+                  cachePolicy="memory-disk"
+                  transition={200}
                 />
               </View>
             )}
@@ -237,12 +255,7 @@ export default function ProductDetailScreen({ route, navigation }) {
                 <Text style={styles.badgeText}>Featured</Text>
               </View>
             )}
-            {hasSpinDiscount && (
-              <View style={styles.spinBadge}>
-                <Text style={styles.badgeText}>🎉 SPIN PRIZE!</Text>
-              </View>
-            )}
-            {!hasSpinDiscount && discountPercentage > 0 && (
+            {discountPercentage > 0 && (
               <View style={styles.discountBadge}>
                 <Text style={styles.badgeText}>-{discountPercentage}% OFF</Text>
               </View>
@@ -285,7 +298,9 @@ export default function ProductDetailScreen({ route, navigation }) {
                 <Image
                   source={{ uri: img.url }}
                   style={styles.thumbnailImage}
-                  resizeMode="cover"
+                  contentFit="cover"
+                  cachePolicy="memory-disk"
+                  transition={150}
                 />
               </TouchableOpacity>
             ))}
@@ -311,20 +326,15 @@ export default function ProductDetailScreen({ route, navigation }) {
 
           {/* Price */}
           <View style={styles.priceSection}>
-            {hasSpinDiscount && (
-              <View style={styles.spinDiscountBadge}>
-                <Text style={styles.spinDiscountText}>🎉 Spin Discount Applied!</Text>
-              </View>
-            )}
             <View style={styles.priceRow}>
-              <Text style={[styles.price, hasSpinDiscount && styles.spinPrice]}>
+              <Text style={styles.price}>
                 {formatPrice(displayPrice)}
               </Text>
               {discountPercentage > 0 && (
                 <>
                   <Text style={styles.originalPrice}>{formatPrice(originalPrice)}</Text>
-                  <View style={[styles.saveBadge, hasSpinDiscount && styles.spinSaveBadge]}>
-                    <Text style={[styles.saveText, hasSpinDiscount && styles.spinSaveText]}>
+                  <View style={styles.saveBadge}>
+                    <Text style={styles.saveText}>
                       Save {discountPercentage}%
                     </Text>
                   </View>
@@ -365,7 +375,7 @@ export default function ProductDetailScreen({ route, navigation }) {
             >
               <View style={styles.storeInfo}>
                 {storeData.storeLogo ? (
-                  <Image source={{ uri: storeData.storeLogo }} style={styles.storeLogo} />
+                  <Image source={{ uri: storeData.storeLogo }} style={styles.storeLogo} contentFit="cover" cachePolicy="memory-disk" transition={150} />
                 ) : (
                   <View style={styles.storeLogoPlaceholder}>
                     <Ionicons name="storefront" size={24} color={colors.white} />
@@ -398,8 +408,130 @@ export default function ProductDetailScreen({ route, navigation }) {
               <Text style={styles.detailValue}>{product.brand}</Text>
             </View>
           </View>
+
+          {/* Reviews Section */}
+          <View style={styles.reviewsSection}>
+            <View style={styles.reviewsHeader}>
+              <View>
+                <Text style={styles.reviewsTitle}>Customer Reviews</Text>
+                <Text style={styles.reviewsSubtitle}>{product.numReviews || 0} review{product.numReviews !== 1 ? 's' : ''}</Text>
+              </View>
+              <TouchableOpacity
+                style={styles.writeReviewBtn}
+                onPress={() => {
+                  if (!currentUser) { navigation.navigate('Login'); return; }
+                  setReviewModalVisible(true);
+                }}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="create-outline" size={16} color={colors.white} />
+                <Text style={styles.writeReviewBtnText}>Write a Review</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Reviews List */}
+            {product.reviews && product.reviews.length > 0 ? (
+              product.reviews.slice(0, 5).map((review, index) => (
+                <View key={index} style={styles.reviewCard}>
+                  <View style={styles.reviewCardHeader}>
+                    <View style={styles.reviewAvatar}>
+                      <Text style={styles.reviewAvatarText}>
+                        {(review.user?.name || review.name || 'U')[0].toUpperCase()}
+                      </Text>
+                    </View>
+                    <View style={styles.reviewCardInfo}>
+                      <Text style={styles.reviewerName}>{review.user?.name || review.name || 'Anonymous'}</Text>
+                      <View style={styles.reviewStars}>
+                        {[1,2,3,4,5].map(star => (
+                          <Ionicons key={star} name={star <= review.rating ? 'star' : 'star-outline'} size={13} color={colors.star} />
+                        ))}
+                      </View>
+                    </View>
+                  </View>
+                  <Text style={styles.reviewComment}>{review.comment}</Text>
+                </View>
+              ))
+            ) : (
+              <View style={styles.noReviewsWrap}>
+                <Ionicons name="chatbubble-ellipses-outline" size={36} color={colors.grayLight} />
+                <Text style={styles.noReviewsText}>No reviews yet. Be the first!</Text>
+              </View>
+            )}
+          </View>
         </View>
       </ScrollView>
+
+      {/* Review Modal */}
+      <Modal
+        visible={reviewModalVisible}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setReviewModalVisible(false)}
+      >
+        <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <View style={styles.modalSheet}>
+            {/* Modal Header */}
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Write a Review</Text>
+              <TouchableOpacity onPress={() => setReviewModalVisible(false)} style={styles.modalCloseBtn}>
+                <Ionicons name="close" size={22} color={colors.text} />
+              </TouchableOpacity>
+            </View>
+
+            {/* Product name in modal */}
+            <Text style={styles.modalProductName} numberOfLines={1}>{product.name}</Text>
+
+            {/* Star Rating Picker */}
+            <Text style={styles.modalLabel}>Your Rating</Text>
+            <View style={styles.starPicker}>
+              {[1, 2, 3, 4, 5].map(star => (
+                <TouchableOpacity key={star} onPress={() => setReviewRating(star)} style={styles.starPickerBtn} activeOpacity={0.7}>
+                  <Ionicons
+                    name={star <= reviewRating ? 'star' : 'star-outline'}
+                    size={36}
+                    color={colors.star}
+                  />
+                </TouchableOpacity>
+              ))}
+            </View>
+            <Text style={styles.ratingLabel}>
+              {reviewRating === 1 ? '😞 Poor' : reviewRating === 2 ? '😕 Fair' : reviewRating === 3 ? '😐 Good' : reviewRating === 4 ? '😊 Very Good' : '😍 Excellent'}
+            </Text>
+
+            {/* Comment Input */}
+            <Text style={styles.modalLabel}>Your Review</Text>
+            <TextInput
+              style={styles.reviewInput}
+              value={reviewComment}
+              onChangeText={setReviewComment}
+              placeholder="Share your experience with this product..."
+              placeholderTextColor={colors.grayLight}
+              multiline
+              numberOfLines={4}
+              textAlignVertical="top"
+              maxLength={500}
+            />
+            <Text style={styles.charCount}>{reviewComment.length}/500</Text>
+
+            {/* Submit Button */}
+            <TouchableOpacity
+              style={[styles.submitReviewBtn, submittingReview && styles.submitReviewBtnDisabled]}
+              onPress={handleSubmitReview}
+              disabled={submittingReview}
+              activeOpacity={0.85}
+            >
+              {submittingReview ? (
+                <ActivityIndicator size="small" color={colors.white} />
+              ) : (
+                <>
+                  <Ionicons name="send" size={18} color={colors.white} />
+                  <Text style={styles.submitReviewBtnText}>Submit Review</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
 
       {/* Bottom Action Bar */}
       <Animated.View 
@@ -507,12 +639,6 @@ const styles = StyleSheet.create({
     borderRadius: borderRadius.full,
     gap: 4,
   },
-  spinBadge: {
-    backgroundColor: '#f59e0b',
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs,
-    borderRadius: borderRadius.full,
-  },
   discountBadge: {
     backgroundColor: colors.error,
     paddingHorizontal: spacing.md,
@@ -617,19 +743,6 @@ const styles = StyleSheet.create({
   priceSection: {
     marginBottom: spacing.lg,
   },
-  spinDiscountBadge: {
-    backgroundColor: '#fef3c7',
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs,
-    borderRadius: borderRadius.full,
-    alignSelf: 'flex-start',
-    marginBottom: spacing.sm,
-  },
-  spinDiscountText: {
-    fontSize: fontSize.sm,
-    fontWeight: fontWeight.semibold,
-    color: '#92400e',
-  },
   priceRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -639,9 +752,6 @@ const styles = StyleSheet.create({
     fontSize: fontSize.title,
     fontWeight: fontWeight.bold,
     color: colors.text,
-  },
-  spinPrice: {
-    color: '#f59e0b',
   },
   originalPrice: {
     fontSize: fontSize.lg,
@@ -654,16 +764,10 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
     borderRadius: borderRadius.sm,
   },
-  spinSaveBadge: {
-    backgroundColor: '#fef3c7',
-  },
   saveText: {
     fontSize: fontSize.sm,
     fontWeight: fontWeight.semibold,
     color: colors.error,
-  },
-  spinSaveText: {
-    color: '#92400e',
   },
   description: {
     fontSize: fontSize.md,
@@ -827,5 +931,181 @@ const styles = StyleSheet.create({
     color: colors.success,
     fontSize: fontSize.lg,
     fontWeight: fontWeight.semibold,
+  },
+
+  // Reviews Section
+  reviewsSection: {
+    borderTopWidth: 1,
+    borderTopColor: colors.light,
+    paddingTop: spacing.lg,
+    marginTop: spacing.lg,
+  },
+  reviewsHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: spacing.lg,
+  },
+  reviewsTitle: {
+    fontSize: fontSize.lg,
+    fontWeight: fontWeight.bold,
+    color: colors.text,
+  },
+  reviewsSubtitle: {
+    fontSize: fontSize.xs,
+    color: colors.textSecondary,
+    marginTop: 2,
+  },
+  writeReviewBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    backgroundColor: colors.primary,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: borderRadius.full,
+  },
+  writeReviewBtnText: {
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.semibold,
+    color: colors.white,
+  },
+  reviewCard: {
+    backgroundColor: colors.lighter,
+    borderRadius: borderRadius.lg,
+    padding: spacing.md,
+    marginBottom: spacing.md,
+  },
+  reviewCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: spacing.sm,
+    gap: spacing.md,
+  },
+  reviewAvatar: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: colors.primary,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  reviewAvatarText: {
+    fontSize: fontSize.md,
+    fontWeight: fontWeight.bold,
+    color: colors.white,
+  },
+  reviewCardInfo: { flex: 1 },
+  reviewerName: {
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.semibold,
+    color: colors.text,
+    marginBottom: 2,
+  },
+  reviewStars: { flexDirection: 'row', gap: 2 },
+  reviewComment: {
+    fontSize: fontSize.sm,
+    color: colors.textSecondary,
+    lineHeight: 20,
+  },
+  noReviewsWrap: {
+    alignItems: 'center',
+    paddingVertical: spacing.xl,
+    gap: spacing.sm,
+  },
+  noReviewsText: {
+    fontSize: fontSize.sm,
+    color: colors.textSecondary,
+  },
+
+  // Review Modal
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalSheet: {
+    backgroundColor: colors.white,
+    borderTopLeftRadius: borderRadius.xxl,
+    borderTopRightRadius: borderRadius.xxl,
+    padding: spacing.xl,
+    paddingBottom: spacing.xxxl,
+    ...shadows.xl,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: spacing.xs,
+  },
+  modalTitle: {
+    fontSize: fontSize.xl,
+    fontWeight: fontWeight.bold,
+    color: colors.text,
+  },
+  modalCloseBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: colors.lighter,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalProductName: {
+    fontSize: fontSize.sm,
+    color: colors.textSecondary,
+    marginBottom: spacing.lg,
+  },
+  modalLabel: {
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.semibold,
+    color: colors.text,
+    marginBottom: spacing.sm,
+  },
+  starPicker: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  starPickerBtn: { padding: spacing.xs },
+  ratingLabel: {
+    textAlign: 'center',
+    fontSize: fontSize.md,
+    color: colors.textSecondary,
+    marginBottom: spacing.lg,
+  },
+  reviewInput: {
+    backgroundColor: colors.lighter,
+    borderRadius: borderRadius.lg,
+    borderWidth: 1.5,
+    borderColor: colors.light,
+    padding: spacing.md,
+    fontSize: fontSize.md,
+    color: colors.text,
+    minHeight: 100,
+    marginBottom: spacing.xs,
+  },
+  charCount: {
+    fontSize: fontSize.xs,
+    color: colors.grayLight,
+    textAlign: 'right',
+    marginBottom: spacing.lg,
+  },
+  submitReviewBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.sm,
+    backgroundColor: colors.primary,
+    borderRadius: borderRadius.xl,
+    paddingVertical: spacing.lg,
+    ...shadows.md,
+  },
+  submitReviewBtnDisabled: { opacity: 0.6 },
+  submitReviewBtnText: {
+    fontSize: fontSize.lg,
+    fontWeight: fontWeight.bold,
+    color: colors.white,
   },
 });

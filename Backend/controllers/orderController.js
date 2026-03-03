@@ -204,12 +204,21 @@ exports.placeOrder = async (req, res) => {
 
         // console.log(line_items);
 
+        // Support mobile deep-link redirects when platform === 'mobile'
+        const isMobile = order.platform === 'mobile';
+        const successUrl = isMobile
+            ? `tortrose://payment-success?session_id={CHECKOUT_SESSION_ID}&orderId=${newOrder.orderId}`
+            : `${process.env.FRONTEND_URL}/success?session_id={CHECKOUT_SESSION_ID}`;
+        const cancelUrl = isMobile
+            ? `tortrose://payment-cancel?orderId=${newOrder.orderId}`
+            : `${process.env.FRONTEND_URL}/checkout`;
+
         const session = await stripe.checkout.sessions.create({
             payment_method_types: ['card'],
             mode: 'payment',
             line_items,
-            success_url: `${process.env.FRONTEND_URL}/success?session_id={CHECKOUT_SESSION_ID}`,
-            cancel_url: `${process.env.FRONTEND_URL}/checkout`,
+            success_url: successUrl,
+            cancel_url: cancelUrl,
             metadata: { orderId: newOrder.orderId }
         })
 

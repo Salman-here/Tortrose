@@ -2,6 +2,7 @@ const dotenv = require('dotenv')
 dotenv.config()
 
 const cors = require('cors')
+const rateLimit = require('express-rate-limit')
 const express = require('express')
 const app = express()
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY)
@@ -129,14 +130,14 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
         <p>We have successfully received your payment of <strong>USD ${order.orderSummary.totalAmount}</strong> for your order <strong>#${order.orderId}</strong>.</p>
         <p>Your order is now confirmed and will be delivered to you shortly.</p>
         <p style="text-align: center;">
-          <a href="http://localhost:5173/user-dashboard/order/detail/${order._id}" class="button">View Your Order</a>
+          <a href="${process.env.FRONTEND_URL}/user-dashboard/order/detail/${order._id}" class="button">View Your Order</a>
         </p>
-        <p>Thank you for shopping with <strong>ShopVerse</strong>. We’ll notify you as soon as your order is shipped.</p>
-        <p>Stay safe,<br/>The ShopVerse Team</p>
+        <p>Thank you for shopping with <strong>Tortrose</strong>. We’ll notify you as soon as your order is shipped.</p>
+        <p>Stay safe,<br/>The Tortrose Team</p>
       </div>
     </div>
     <div class="footer">
-      &copy; ${new Date().getFullYear()} ShopVerse. All rights reserved.
+      &copy; ${new Date().getFullYear()} Tortrose. All rights reserved.
     </div>
   </div>
 </body>
@@ -178,7 +179,32 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
 });
 
 
-app.use(cors())
+// CORS - Restrict to known origins (React Native apps are not browser-based, not affected by CORS)
+const allowedOrigins = [
+  process.env.FRONTEND_URL,
+  'http://localhost:3000',
+  'http://localhost:5173',
+].filter(Boolean);
+
+app.use(cors({
+  origin: (origin, callback) => {
+    // Allow requests with no origin (mobile apps, server-to-server, Postman)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    return callback(new Error('CORS policy: origin not allowed'));
+  },
+  credentials: true,
+}));
+
+// Rate Limiting - Protect auth endpoints from brute force
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 20, // max 20 auth requests per 15 min per IP
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { msg: 'Too many requests, please try again later.' },
+});
+
 app.use(express.json())
 app.use(express.urlencoded({ extended: true }));
 
@@ -198,7 +224,7 @@ const orderRoutes = require('./routes/orderRoutes')
 const userRoutes = require('./routes/userRoutes')
 const uploadRoutes = require('./routes/uploadRoutes')
 const sessionRoutes = require('./routes/sessionRoutes')
-const spinRoutes = require('./routes/spinRoutes')
+// const spinRoutes = require('./routes/spinRoutes') // SPIN WHEEL DISABLED
 const storeRoutes = require('./routes/storeRoutes')
 const taxRoutes = require('./routes/taxRoutes')
 const shippingRoutes = require('./routes/shippingRoutes')
@@ -211,14 +237,14 @@ const User = require('./models/User')
 
 
 app.use('/api/products', productRoutes)
-app.use('/api/auth', authRoutes)
-app.use('/api/password', resetPasswordRoutes)
+app.use('/api/auth', authLimiter, authRoutes)
+app.use('/api/password', authLimiter, resetPasswordRoutes)
 app.use('/api/cart', cartRoutes)
 app.use('/api/order', orderRoutes)
 app.use('/api/user', userRoutes)
 app.use('/api/upload', uploadRoutes)
 app.use('/api/session', sessionRoutes)
-app.use('/api/spin', spinRoutes)
+// app.use('/api/spin', spinRoutes) // SPIN WHEEL DISABLED
 app.use('/api/stores', trustRoutes)
 app.use('/api/stores', storeRoutes)
 app.use('/api/tax', taxRoutes)

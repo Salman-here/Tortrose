@@ -77,7 +77,6 @@ export const colors = {
   verified: '#3b82f6',
   featured: '#8b5cf6',
   discount: '#ef4444',
-  spinPrize: '#10b981',
 
   // Navbar gradient colors (matching website)
   navbarStart: '#374151',

@@ -92,13 +92,13 @@ const GlassSignUpPage = () => {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-sky-50 to-blue-100 p-4">
+    <div className="min-h-screen flex items-center justify-center p-4">
       <Link to="/">
-        <button className="absolute top-3 left-3 bg-white text-green-800 px-3 py-2 font-bold rounded cursor-pointer hover:bg-gray-100 transition-colors z-50">
-          Home
+        <button className="absolute top-3 left-3 bg-white/80 backdrop-blur-sm text-indigo-700 px-4 py-2 font-semibold rounded-xl border border-white/60 cursor-pointer hover:bg-white transition-colors z-50 shadow-sm text-sm">
+          ← Home
         </button>
       </Link>
-      <div className="w-full max-w-md bg-white/30 backdrop-blur-lg rounded-2xl shadow-xl overflow-hidden border border-white/50">
+      <div className="w-full max-w-md bg-white/60 backdrop-blur-xl rounded-2xl shadow-2xl shadow-indigo-200/40 overflow-hidden border border-white/60">
         <div className="p-8">
           <div className="text-center mb-8">
             <img src="/tortrose-logo.svg" alt="Tortrose" className="h-12 mx-auto mb-4" />
@@ -121,7 +121,7 @@ const GlassSignUpPage = () => {
                     type="text"
                     value={form.username}
                     onChange={handleChange}
-                    className="w-full px-4 py-3 bg-white/50 border border-gray-200/50 rounded-lg focus:outline-none focus:ring-2 focus:ring-sky-300/50 text-gray-700 placeholder-gray-400 transition duration-300"
+                    className="w-full px-4 py-3 bg-white/70 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-400/50 focus:border-indigo-400 text-gray-700 placeholder-gray-400 transition duration-300"
                     placeholder="johndoe"
                     required
                     disabled={loading}
@@ -135,7 +135,7 @@ const GlassSignUpPage = () => {
                     type="email"
                     value={form.email}
                     onChange={handleChange}
-                    className="w-full px-4 py-3 bg-white/50 border border-gray-200/50 rounded-lg focus:outline-none focus:ring-2 focus:ring-sky-300/50 text-gray-700 placeholder-gray-400 transition duration-300"
+                    className="w-full px-4 py-3 bg-white/70 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-400/50 focus:border-indigo-400 text-gray-700 placeholder-gray-400 transition duration-300"
                     placeholder="john@example.com"
                     required
                     disabled={loading}
@@ -150,7 +150,7 @@ const GlassSignUpPage = () => {
                       type={showPassword ? 'text' : 'password'}
                       value={form.password}
                       onChange={handleChange}
-                      className="w-full px-4 py-3 bg-white/50 border border-gray-200/50 rounded-lg focus:outline-none focus:ring-2 focus:ring-sky-300/50 text-gray-700 placeholder-gray-400 transition duration-300"
+                      className="w-full px-4 py-3 bg-white/70 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-400/50 focus:border-indigo-400 text-gray-700 placeholder-gray-400 transition duration-300"
                       placeholder="••••••••"
                       required
                       disabled={loading}
@@ -178,7 +178,7 @@ const GlassSignUpPage = () => {
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full mt-8 py-3 px-4 bg-sky-500/80 hover:bg-sky-600/80 text-white font-semibold rounded-lg transition duration-300 transform hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-sky-300/50 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                className="w-full mt-8 py-3 px-4 bg-linear-to-r from-indigo-600 to-sky-500 hover:from-indigo-700 hover:to-sky-600 text-white font-semibold rounded-xl transition-all duration-300 transform hover:-translate-y-0.5 focus:outline-none shadow-lg shadow-indigo-300/40 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {loading ? 'Sending OTP...' : 'Send OTP'}
               </button>
@@ -201,7 +201,7 @@ const GlassSignUpPage = () => {
                     type="text"
                     value={otp}
                     onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                    className="w-full px-4 py-3 bg-white/50 border border-gray-200/50 rounded-lg focus:outline-none focus:ring-2 focus:ring-sky-300/50 text-gray-700 text-center text-2xl font-bold tracking-widest placeholder-gray-400 transition duration-300"
+                    className="w-full px-4 py-3 bg-white/70 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-400/50 focus:border-indigo-400 text-gray-700 text-center text-2xl font-bold tracking-widest placeholder-gray-400 transition duration-300"
                     placeholder="000000"
                     maxLength={6}
                     required
@@ -215,7 +215,7 @@ const GlassSignUpPage = () => {
                     type="button"
                     onClick={handleResendOTP}
                     disabled={loading}
-                    className="font-medium text-sky-600 hover:text-sky-700 underline transition duration-300 disabled:opacity-50"
+                    className="font-medium text-indigo-600 hover:text-indigo-700 underline transition duration-300 disabled:opacity-50"
                   >
                     Resend OTP
                   </button>
@@ -225,7 +225,7 @@ const GlassSignUpPage = () => {
               <button
                 type="submit"
                 disabled={loading || otp.length !== 6}
-                className="w-full mt-8 py-3 px-4 bg-sky-500/80 hover:bg-sky-600/80 text-white font-semibold rounded-lg transition duration-300 transform hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-sky-300/50 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                className="w-full mt-8 py-3 px-4 bg-linear-to-r from-indigo-600 to-sky-500 hover:from-indigo-700 hover:to-sky-600 text-white font-semibold rounded-xl transition-all duration-300 transform hover:-translate-y-0.5 focus:outline-none shadow-lg shadow-indigo-300/40 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {loading ? 'Verifying...' : 'Verify & Sign Up'}
               </button>
@@ -259,7 +259,7 @@ const GlassSignUpPage = () => {
                   <button
                     onClick={() => window.location.href = `${import.meta.env.VITE_API_URL}api/auth/google`}
                     type="button"
-                    className="w-full flex items-center justify-center gap-3 py-3 px-4 bg-white/50 hover:bg-white/70 text-gray-700 font-medium rounded-lg transition duration-300 border border-gray-200/50"
+                    className="w-full flex items-center justify-center gap-3 py-3 px-4 bg-white/70 hover:bg-white/90 text-gray-700 font-medium rounded-xl transition duration-300 border border-slate-200 shadow-sm"
                   >
                     <svg className="w-5 h-5" viewBox="0 0 24 24">
                       <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
@@ -276,7 +276,7 @@ const GlassSignUpPage = () => {
                 Already have an account?{' '}
                 <button 
                   onClick={() => navigate("/login")}
-                  className="font-medium text-sky-600 hover:text-sky-700 underline transition duration-300"
+                  className="font-medium text-indigo-600 hover:text-indigo-700 underline transition duration-300"
                 >
                   Log in
                 </button>
@@ -285,7 +285,7 @@ const GlassSignUpPage = () => {
           )}
         </div>
         
-        <div className="py-4 px-8 bg-white/20 border-t border-gray-200/30 text-center">
+        <div className="py-4 px-8 bg-white/30 border-t border-white/40 text-center">
           <p className="text-xs text-gray-500">By signing up, you agree to our Terms and Privacy Policy</p>
         </div>
       </div>

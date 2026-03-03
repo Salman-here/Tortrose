@@ -151,7 +151,7 @@ const StoreSearch = () => {
                                                     className="w-10 h-10 rounded-full object-cover border border-gray-200"
                                                 />
                                             ) : (
-                                                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center">
+                                                <div className="w-10 h-10 rounded-full bg-linear-to-br from-indigo-500 to-sky-400 flex items-center justify-center">
                                                     <Store size={20} className="text-white" />
                                                 </div>
                                             )}

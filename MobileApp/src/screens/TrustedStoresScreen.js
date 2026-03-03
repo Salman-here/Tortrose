@@ -1,19 +1,17 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { 
-  View, 
-  Text, 
-  FlatList, 
-  StyleSheet, 
+import {
+  View,
+  Text,
+  FlatList,
+  StyleSheet,
   TouchableOpacity,
   RefreshControl,
   ActivityIndicator,
-  Image 
 } from 'react-native';
+import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import axios from 'axios';
 import Toast from 'react-native-toast-message';
-import { API_BASE_URL } from '../config/api';
+import api from '../config/api';
 import { useAuth } from '../contexts/AuthContext';
 import TrustButton from '../components/TrustButton';
 import VerifiedBadge from '../components/VerifiedBadge';
@@ -32,11 +30,7 @@ export default function TrustedStoresScreen({ navigation }) {
     }
 
     try {
-      const token = await AsyncStorage.getItem('jwtToken');
-      const response = await axios.get(
-        `${API_BASE_URL}/api/stores/trusted`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
+      const response = await api.get('/api/stores/trusted');
 
       if (response.data.success) {
         setTrustedStores(response.data.data.trustedStores);
@@ -80,7 +74,7 @@ export default function TrustedStoresScreen({ navigation }) {
       >
         <View style={styles.storeHeader}>
           {item.logo ? (
-            <Image source={{ uri: item.logo }} style={styles.storeLogo} />
+            <Image source={{ uri: item.logo }} style={styles.storeLogo} contentFit="cover" cachePolicy="memory-disk" transition={150} />
           ) : (
             <View style={styles.storeLogoPlaceholder}>
               <Ionicons name="storefront" size={24} color={colors.textSecondary} />
@@ -309,7 +303,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingTop: spacing.md,
     borderTopWidth: 1,
-    borderTopColor: colors.border,
+    borderTopColor: colors.light,
   },
   trustInfo: {
     flexDirection: 'row',

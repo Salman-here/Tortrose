@@ -112,7 +112,7 @@ const NavDropdown = () => {
                                     onClick={item.onClick}
                                     className={`w-full text-left px-4 py-2 flex items-center gap-2 transition-colors ${
                                         item.highlight 
-                                            ? 'bg-gradient-to-r from-blue-50 to-purple-50 text-gray-800 hover:from-blue-100 hover:to-purple-100 font-semibold' 
+                                            ? 'bg-linear-to-r from-indigo-50 to-sky-50 text-gray-800 hover:from-indigo-100 hover:to-sky-100 font-semibold'
                                             : 'text-gray-700 hover:bg-gray-100'
                                     }`}
                                 >

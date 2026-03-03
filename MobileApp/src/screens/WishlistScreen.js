@@ -12,11 +12,11 @@ import {
   FlatList,
   StyleSheet,
   TouchableOpacity,
-  Image,
   SafeAreaView,
   RefreshControl,
   Alert,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../contexts/AuthContext';
 import { useGlobal } from '../contexts/GlobalContext';
@@ -108,8 +108,8 @@ export default function WishlistScreen({ navigation }) {
   if (!currentUser) {
     return (
       <SafeAreaView style={styles.container}>
-        <View style={styles.header}>
-          <Text style={styles.headerTitle}>Wishlist</Text>
+        <View style={styles.heroHeader}>
+          <Text style={styles.heroTitle}>Wishlist</Text>
         </View>
         <LoginRequired
           onLogin={handleLogin}
@@ -123,8 +123,8 @@ export default function WishlistScreen({ navigation }) {
   if (isLoading) {
     return (
       <SafeAreaView style={styles.container}>
-        <View style={styles.header}>
-          <Text style={styles.headerTitle}>Wishlist</Text>
+        <View style={styles.heroHeader}>
+          <Text style={styles.heroTitle}>Wishlist</Text>
         </View>
         <View style={styles.loadingContainer}>
           <Loader size="large" />
@@ -137,8 +137,8 @@ export default function WishlistScreen({ navigation }) {
   if (!wishlistItems || wishlistItems.length === 0) {
     return (
       <SafeAreaView style={styles.container}>
-        <View style={styles.header}>
-          <Text style={styles.headerTitle}>Wishlist</Text>
+        <View style={styles.heroHeader}>
+          <Text style={styles.heroTitle}>Wishlist</Text>
         </View>
         <EmptyWishlist onBrowse={handleBrowseProducts} />
       </SafeAreaView>
@@ -163,7 +163,9 @@ export default function WishlistScreen({ navigation }) {
             <Image
               source={{ uri: item.image || item.images?.[0]?.url }}
               style={styles.itemImage}
-              resizeMode="cover"
+              contentFit="cover"
+              cachePolicy="memory-disk"
+              transition={200}
             />
             {isOutOfStock && (
               <View style={styles.outOfStockOverlay}>
@@ -269,11 +271,11 @@ export default function WishlistScreen({ navigation }) {
 
   return (
     <SafeAreaView style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Wishlist</Text>
-        <View style={styles.itemCountBadge}>
-          <Text style={styles.itemCount}>{wishlistItems.length}</Text>
+      {/* Hero Header */}
+      <View style={styles.heroHeader}>
+        <Text style={styles.heroTitle}>Wishlist</Text>
+        <View style={styles.heroBadge}>
+          <Text style={styles.heroBadgeText}>{wishlistItems.length} {wishlistItems.length === 1 ? 'item' : 'items'}</Text>
         </View>
       </View>
 
@@ -284,6 +286,10 @@ export default function WishlistScreen({ navigation }) {
         renderItem={renderWishlistItem}
         contentContainerStyle={styles.listContent}
         showsVerticalScrollIndicator={false}
+        initialNumToRender={8}
+        maxToRenderPerBatch={8}
+        windowSize={5}
+        removeClippedSubviews={true}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -308,29 +314,30 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: colors.white,
+  heroHeader: {
+    backgroundColor: colors.primaryDark,
     paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.lg,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.light,
+    paddingTop: spacing.lg,
+    paddingBottom: spacing.xl,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
-  headerTitle: {
-    ...typography.h2,
+  heroTitle: {
+    fontSize: fontSize.xxl,
+    fontWeight: fontWeight.bold,
+    color: colors.white,
   },
-  itemCountBadge: {
-    backgroundColor: colors.primary,
+  heroBadge: {
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    borderRadius: borderRadius.full,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.xs,
-    borderRadius: borderRadius.full,
   },
-  itemCount: {
-    ...typography.caption,
+  heroBadgeText: {
     color: colors.white,
-    fontWeight: fontWeight.semibold,
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.medium,
   },
   listContent: {
     padding: spacing.md,

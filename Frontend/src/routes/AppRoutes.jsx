@@ -33,7 +33,6 @@ import StoresListing from '../pages/StoresListing'
 import TrustedStoresPage from '../pages/TrustedStoresPage'
 import StoreVerifications from '../pages/admin/StoreVerifications'
 import BecomeSeller from '../pages/BecomeSeller'
-import { ToastContainer } from 'react-toastify'
 
 function AppRoutes() {
     const navigate = useNavigate()

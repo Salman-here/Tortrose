@@ -36,57 +36,15 @@ function ProductDetailPage() {
     const isInWishlist = product && wishlistItems?.some((item) => item._id === product._id);
     const isInCart = product && cartItems?.cart?.some((item) => item.product?._id === product._id);
     
-    // Get spin discount from localStorage
-    const getSpinDiscount = () => {
-        const spinResult = localStorage.getItem('spinResult');
-        const spinTimestamp = localStorage.getItem('spinTimestamp');
-        
-        if (!spinResult || !spinTimestamp) return null;
-        
-        const now = new Date().getTime();
-        const spinTime = parseInt(spinTimestamp);
-        const hoursPassed = (now - spinTime) / (1000 * 60 * 60);
-        
-        if (hoursPassed >= 24) {
-            localStorage.removeItem('spinResult');
-            localStorage.removeItem('spinTimestamp');
-            localStorage.removeItem('spinSelectedProducts');
-            return null;
-        }
-        
-        return JSON.parse(spinResult);
-    };
+    // SPIN WHEEL DISABLED - getSpinDiscount and getDiscountedPrice removed
+    // const getSpinDiscount = () => { ... }
+    // const getDiscountedPrice = () => { ... }
 
-    // Calculate discounted price for the product
-    const getDiscountedPrice = () => {
-        const spinResult = getSpinDiscount();
-        
-        // If no active spin or already checked out, return regular price
-        if (!spinResult || spinResult.hasCheckedOut) {
-            return product.discountedPrice || product.price;
-        }
-        
-        // Apply spin discount to ALL products (not just cart items)
-        let discountedPrice = product.price;
-        
-        if (spinResult.type === 'free') {
-            discountedPrice = 0;
-        } else if (spinResult.type === 'fixed') {
-            discountedPrice = spinResult.value;
-        } else if (spinResult.type === 'percentage') {
-            discountedPrice = product.price * (1 - spinResult.value / 100);
-        }
-        
-        return Math.max(0, discountedPrice);
-    };
+    const displayPrice = product.discountedPrice || product.price;
+    const originalPrice = product.price;
+    // const hasSpinDiscount = false; // SPIN WHEEL DISABLED
 
-    const displayPrice = getDiscountedPrice();
-    const originalPrice = product.discountedPrice || product.price;
-    const hasSpinDiscount = displayPrice < originalPrice;
-    
-    const discountPercentage = hasSpinDiscount
-        ? Math.round(((originalPrice - displayPrice) / originalPrice) * 100)
-        : product.discountedPrice && product.discountedPrice < product.price
+    const discountPercentage = product.discountedPrice && product.discountedPrice < product.price
         ? Math.round(((product.price - product.discountedPrice) / product.price) * 100)
         : 0;
 
@@ -196,7 +154,7 @@ function ProductDetailPage() {
 
     return (
         <motion.div
-            className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 py-8"
+            className="min-h-screen py-8"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ duration: 0.5 }}
@@ -204,25 +162,25 @@ function ProductDetailPage() {
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                 {/* Breadcrumb */}
                 <motion.div
-                    className="flex items-center text-sm text-gray-500 mb-6"
+                    className="flex items-center text-sm text-slate-500 mb-6"
                     variants={fadeIn}
                     initial="hidden"
                     animate="visible"
                 >
                     <Link to={'/'}>
-                        <button className='flex hover:text-blue-600 items-center'>
+                        <button className='flex hover:text-indigo-600 items-center'>
                             <span className=" cursor-pointer">Home</span>
                         </button>
                     </Link>
                     <ChevronRight size={16} className="mx-2" />
                     <span className="">{product.category}</span>
                     <ChevronRight size={16} className="mx-2" />
-                    <span className="text-gray-800 font-medium truncate">{product.name}</span>
+                    <span className="text-slate-800 font-medium truncate">{product.name}</span>
                 </motion.div>
 
                 {/* Product Card */}
                 <motion.div
-                    className="bg-white rounded-2xl shadow-lg overflow-hidden mb-10"
+                    className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-md border border-white/60 overflow-hidden mb-10"
                     variants={fadeIn}
                     initial="hidden"
                     animate="visible"
@@ -253,7 +211,7 @@ function ProductDetailPage() {
                                 {/* Loading shimmer */}
                                 {imageLoading && (
                                     <motion.div
-                                        className="absolute inset-0 bg-gradient-to-r from-gray-200 via-gray-300 to-gray-200 bg-[length:200%_100%]"
+                                        className="absolute inset-0 bg-linear-to-r from-slate-200 via-slate-300 to-slate-200 bg-size-[200%_100%]"
                                         animate={{
                                             backgroundPosition: ['0% 0%', '100% 0%', '0% 0%'],
                                         }}
@@ -293,27 +251,21 @@ function ProductDetailPage() {
                                             initial={{ scale: 0 }}
                                             animate={{ scale: 1 }}
                                             transition={{ type: "spring", stiffness: 500, damping: 15 }}
-                                            className="px-3 py-1 bg-gradient-to-r from-purple-600 to-indigo-600 text-white text-xs font-semibold rounded-full flex items-center gap-1"
+                                            className="px-3 py-1 bg-linear-to-r from-indigo-500 to-sky-400 text-white text-xs font-semibold rounded-full flex items-center gap-1"
                                         >
                                             <Zap size={12} fill="currentColor" /> Featured
                                         </motion.span>
                                     )}
-                                    {hasSpinDiscount && (
+                                    {/* SPIN WHEEL DISABLED - spin prize badge removed */}
+                                    {/* {hasSpinDiscount && (
+                                        <motion.span ...>🎉 SPIN PRIZE!</motion.span>
+                                    )} */}
+                                    {discountPercentage > 0 && (
                                         <motion.span
                                             initial={{ scale: 0 }}
                                             animate={{ scale: 1 }}
                                             transition={{ type: "spring", stiffness: 500, damping: 15, delay: 0.1 }}
-                                            className="px-3 py-1 bg-gradient-to-r from-yellow-500 to-orange-500 text-white text-xs font-semibold rounded-full animate-pulse"
-                                        >
-                                            🎉 SPIN PRIZE!
-                                        </motion.span>
-                                    )}
-                                    {!hasSpinDiscount && discountPercentage > 0 && (
-                                        <motion.span
-                                            initial={{ scale: 0 }}
-                                            animate={{ scale: 1 }}
-                                            transition={{ type: "spring", stiffness: 500, damping: 15, delay: 0.1 }}
-                                            className="px-3 py-1 bg-gradient-to-r from-red-500 to-pink-500 text-white text-xs font-semibold rounded-full"
+                                            className="px-3 py-1 bg-linear-to-r from-red-500 to-pink-500 text-white text-xs font-semibold rounded-full"
                                         >
                                             -{discountPercentage}% OFF
                                         </motion.span>
@@ -330,9 +282,9 @@ function ProductDetailPage() {
                                             onClick={() => handleImgShow(idx)}
                                             whileHover={{ scale: 1.05 }}
                                             whileTap={{ scale: 0.95 }}
-                                            className={`flex-shrink-0 w-16 h-16 rounded-lg overflow-hidden border-2 transition-all ${idx === selectedIdx
-                                                ? 'border-blue-500 shadow-md'
-                                                : 'border-gray-200 hover:border-gray-300'
+                                            className={`shrink-0 w-16 h-16 rounded-lg overflow-hidden border-2 transition-all ${idx === selectedIdx
+                                                ? 'border-indigo-400 shadow-md'
+                                                : 'border-slate-200 hover:border-slate-300'
                                                 }`}
                                         >
                                             <img
@@ -386,22 +338,17 @@ function ProductDetailPage() {
                                 className="mb-6"
                                 variants={fadeIn}
                             >
-                                {hasSpinDiscount && (
-                                    <div className="mb-2">
-                                        <span className="px-3 py-1 bg-gradient-to-r from-yellow-500 to-orange-500 text-white text-sm font-semibold rounded-full animate-pulse">
-                                            🎉 Spin Discount Applied!
-                                        </span>
-                                    </div>
-                                )}
+                                {/* SPIN WHEEL DISABLED - spin discount badge removed */}
+                                {/* {hasSpinDiscount && (<div className="mb-2"><span>🎉 Spin Discount Applied!</span></div>)} */}
                                 {discountPercentage > 0 ? (
                                     <div className="flex items-center gap-3">
-                                        <span className={`text-3xl font-bold ${hasSpinDiscount ? 'text-orange-600' : 'text-gray-900'}`}>
+                                        <span className="text-3xl font-bold text-gray-900">
                                             {getCurrencySymbol()}{convertPrice(displayPrice).toFixed(2)}
                                         </span>
                                         <span className="text-xl text-gray-500 line-through">
                                             {getCurrencySymbol()}{convertPrice(originalPrice).toFixed(2)}
                                         </span>
-                                        <span className={`px-2 py-1 text-sm font-semibold rounded ${hasSpinDiscount ? 'bg-orange-100 text-orange-700' : 'bg-red-100 text-red-700'}`}>
+                                        <span className="px-2 py-1 text-sm font-semibold rounded bg-red-100 text-red-700">
                                             Save {discountPercentage}%
                                         </span>
                                     </div>
@@ -432,7 +379,7 @@ function ProductDetailPage() {
                                     <span>Free Shipping</span>
                                 </div> */}
                                 <div className="flex items-center gap-2 text-sm text-gray-600">
-                                    <RotateCcw size={18} className="text-purple-500" />
+                                    <RotateCcw size={18} className="text-indigo-500" />
                                     <span>30-Day Returns</span>
                                 </div>
                                 {/* <div className="flex items-center gap-2 text-sm text-gray-600">
@@ -447,7 +394,7 @@ function ProductDetailPage() {
                                     variants={fadeIn}
                                 >
                                     {product.tags.map((tag) => (
-                                        <span key={tag} className="px-3 py-1 bg-blue-50 text-blue-700 text-sm font-medium rounded-full">
+                                        <span key={tag} className="px-3 py-1 bg-sky-50 text-sky-700 text-sm font-medium rounded-full border border-sky-100">
                                             {tag}
                                         </span>
                                     ))}
@@ -467,7 +414,7 @@ function ProductDetailPage() {
                                         ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
                                         : isInCart
                                             ? 'bg-green-100 text-green-700 hover:bg-green-200'
-                                            : 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:from-blue-700 hover:to-indigo-700'
+                                            : 'bg-linear-to-r from-indigo-600 to-sky-500 text-white hover:from-indigo-700 hover:to-sky-600'
                                         }`}
                                 >
                                     {
@@ -570,7 +517,7 @@ function ProductDetailPage() {
 
                 {/* Reviews Section */}
                 <motion.div
-                    className="bg-white rounded-2xl shadow-lg overflow-hidden p-6 md:p-8"
+                    className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-md border border-white/60 overflow-hidden p-6 md:p-8"
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.5, delay: 0.2 }}
@@ -580,7 +527,7 @@ function ProductDetailPage() {
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                         {/* Add Review */}
                         <motion.div
-                            className="bg-gray-50 p-6 rounded-xl"
+                            className="bg-white/60 backdrop-blur-sm p-6 rounded-xl border border-white/50"
                             initial={{ opacity: 0, x: -20 }}
                             animate={{ opacity: 1, x: 0 }}
                             transition={{ duration: 0.5, delay: 0.3 }}
@@ -615,7 +562,7 @@ function ProductDetailPage() {
                                         ref={commentRef}
                                         id="comment"
                                         rows="4"
-                                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                                        className="w-full px-4 py-3 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-400 focus:border-indigo-400 bg-white/70 transition-colors"
                                         placeholder="Share your experience with this product..."
                                     />
                                 </div>
@@ -624,7 +571,7 @@ function ProductDetailPage() {
                                     type="submit"
                                     whileHover={{ scale: 1.02 }}
                                     whileTap={{ scale: 0.98 }}
-                                    className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 px-4 rounded-lg transition-colors"
+                                    className="w-full bg-linear-to-r from-indigo-600 to-sky-500 hover:from-indigo-700 hover:to-sky-600 text-white font-semibold py-3 px-4 rounded-lg transition-all shadow-md shadow-indigo-300/30"
                                 >
                                     Submit Review
                                 </motion.button>
@@ -649,7 +596,7 @@ function ProductDetailPage() {
                                                     animate={{ opacity: 1, y: 0 }}
                                                     exit={{ opacity: 0, y: -10 }}
                                                     transition={{ duration: 0.3, delay: index * 0.1 }}
-                                                    className="bg-white p-4 rounded-lg border border-gray-200 shadow-sm"
+                                                    className="bg-white/70 backdrop-blur-sm p-4 rounded-lg border border-white/60 shadow-sm"
                                                 >
                                                     <div className="flex items-start gap-3">
                                                         <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">

@@ -11,7 +11,7 @@ function App() {
 
   return (
     <>
-      
+      <ToastContainer position='top-center' autoClose={2300} />
       <AppRoutes />
     </>
   )

@@ -131,6 +131,16 @@ export const ShippingConfigAction = ({ onPress }) => (
   />
 );
 
+export const StoreAnalyticsAction = ({ onPress }) => (
+  <ActionCard
+    title="Store Analytics"
+    subtitle="Views, sales & performance"
+    icon="bar-chart-outline"
+    color={colors.info}
+    onPress={onPress}
+  />
+);
+
 // Preset action cards for admin dashboard
 export const UserManagementAction = ({ onPress, badge }) => (
   <ActionCard

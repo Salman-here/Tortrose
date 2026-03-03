@@ -1,10 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import axios from 'axios';
 import Toast from 'react-native-toast-message';
-import { API_BASE_URL } from '../config/api';
+import api from '../config/api';
 import { useAuth } from '../contexts/AuthContext';
 import { colors, spacing, fontSize, borderRadius } from '../styles/theme';
 
@@ -44,11 +42,7 @@ const TrustButton = ({
       if (!currentUser || !storeId) return;
 
       try {
-        const token = await AsyncStorage.getItem('jwtToken');
-        const response = await axios.get(
-          `${API_BASE_URL}/api/stores/${storeId}/trust-status`,
-          { headers: { Authorization: `Bearer ${token}` } }
-        );
+        const response = await api.get(`/api/stores/${storeId}/trust-status`);
 
         setIsTrusted(response.data.data.isTrusted);
         setTrustCount(response.data.data.trustCount);
@@ -77,18 +71,12 @@ const TrustButton = ({
     const previousTrustCount = trustCount;
 
     try {
-      const token = await AsyncStorage.getItem('jwtToken');
-      const config = { headers: { Authorization: `Bearer ${token}` } };
-
       if (isTrusted) {
         // Optimistic update
         setIsTrusted(false);
         setTrustCount(prev => Math.max(0, prev - 1));
 
-        const response = await axios.delete(
-          `${API_BASE_URL}/api/stores/${storeId}/trust`,
-          config
-        );
+        const response = await api.delete(`/api/stores/${storeId}/trust`);
 
         setTrustCount(response.data.data.trustCount);
         Toast.show({
@@ -105,11 +93,7 @@ const TrustButton = ({
         setIsTrusted(true);
         setTrustCount(prev => prev + 1);
 
-        const response = await axios.post(
-          `${API_BASE_URL}/api/stores/${storeId}/trust`,
-          {},
-          config
-        );
+        const response = await api.post(`/api/stores/${storeId}/trust`, {});
 
         setTrustCount(response.data.data.trustCount);
         Toast.show({
@@ -232,7 +216,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.xs,
-    borderRadius: borderRadius.round,
+    borderRadius: borderRadius.full,
     gap: spacing.xs,
   },
   fullButton: {

@@ -6,23 +6,21 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { 
-  View, 
-  Text, 
-  ScrollView, 
-  StyleSheet, 
+import {
+  View,
+  Text,
+  ScrollView,
+  StyleSheet,
   TouchableOpacity,
   RefreshControl,
-  Image,
   FlatList,
   Alert,
   ActivityIndicator,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import axios from 'axios';
 import Toast from 'react-native-toast-message';
-import { API_BASE_URL } from '../../config/api';
+import api from '../../config/api';
 import { useAuth } from '../../contexts/AuthContext';
 import VerifiedBadge from '../../components/VerifiedBadge';
 import Loader from '../../components/common/Loader';
@@ -82,23 +80,14 @@ export default function StoreOverviewScreen({ route, navigation }) {
     }
 
     try {
-      const token = await AsyncStorage.getItem('jwtToken');
-      const headers = token ? { Authorization: `Bearer ${token}` } : {};
-
       // Fetch store details
-      const storeResponse = await axios.get(
-        `${API_BASE_URL}/api/stores/${storeId}`,
-        { headers }
-      );
+      const storeResponse = await api.get(`/api/stores/${storeId}`);
       const storeData = storeResponse.data.store || storeResponse.data;
       setStore(storeData);
 
       // Fetch store products
       try {
-        const productsResponse = await axios.get(
-          `${API_BASE_URL}/api/products/get-products?store=${storeId}`,
-          { headers }
-        );
+        const productsResponse = await api.get(`/api/products/get-products?store=${storeId}`);
         const productsData = productsResponse.data.products || productsResponse.data || [];
         setProducts(productsData);
       } catch (err) {
@@ -109,10 +98,7 @@ export default function StoreOverviewScreen({ route, navigation }) {
       // Fetch store orders (admin only)
       if (isAdmin && currentUser?.role === 'admin') {
         try {
-          const ordersResponse = await axios.get(
-            `${API_BASE_URL}/api/order/store/${storeId}`,
-            { headers }
-          );
+          const ordersResponse = await api.get(`/api/order/store/${storeId}`);
           const ordersData = ordersResponse.data.orders || ordersResponse.data || [];
           setOrders(ordersData);
           
@@ -199,12 +185,7 @@ export default function StoreOverviewScreen({ route, navigation }) {
     const action = isVerified ? 'unverify' : 'verify';
 
     try {
-      const token = await AsyncStorage.getItem('jwtToken');
-      const endpoint = `${API_BASE_URL}/api/stores/${storeId}/${action}`;
-
-      await axios.patch(endpoint, {}, { 
-        headers: { Authorization: `Bearer ${token}` } 
-      });
+      await api.patch(`/api/stores/${storeId}/${action}`, {});
 
       setStore(prev => ({
         ...prev,
@@ -247,9 +228,12 @@ export default function StoreOverviewScreen({ route, navigation }) {
       onPress={() => navigation.navigate('ProductDetail', { productId: item._id })}
     >
       {item.image || item.images?.[0]?.url ? (
-        <Image 
-          source={{ uri: item.image || item.images[0].url }} 
-          style={styles.productImage} 
+        <Image
+          source={{ uri: item.image || item.images[0].url }}
+          style={styles.productImage}
+          contentFit="cover"
+          cachePolicy="memory-disk"
+          transition={150}
         />
       ) : (
         <View style={styles.productImagePlaceholder}>
@@ -354,7 +338,7 @@ export default function StoreOverviewScreen({ route, navigation }) {
         {/* Store Header */}
         <View style={styles.header}>
           {store.banner ? (
-            <Image source={{ uri: store.banner }} style={styles.banner} />
+            <Image source={{ uri: store.banner }} style={styles.banner} contentFit="cover" cachePolicy="memory-disk" transition={200} />
           ) : (
             <View style={styles.bannerPlaceholder}>
               <Ionicons name="image-outline" size={48} color={colors.grayLight} />
@@ -364,7 +348,7 @@ export default function StoreOverviewScreen({ route, navigation }) {
           <View style={styles.storeInfoContainer}>
             <View style={styles.logoContainer}>
               {store.logo ? (
-                <Image source={{ uri: store.logo }} style={styles.logo} />
+                <Image source={{ uri: store.logo }} style={styles.logo} contentFit="cover" cachePolicy="memory-disk" transition={150} />
               ) : (
                 <View style={styles.logoPlaceholder}>
                   <Ionicons name="storefront" size={32} color={colors.primary} />

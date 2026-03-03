@@ -53,13 +53,6 @@ export const API_ENDPOINTS = {
     ADMIN_TOGGLE: '/api/user/admin-toggle',
     DELETE: '/api/user/delete',
   },
-  SPIN: {
-    SAVE_RESULT: '/api/spin/save-result',
-    GET_ACTIVE: '/api/spin/get-active',
-    ADD_PRODUCTS: '/api/spin/add-products',
-    CHECKOUT: '/api/spin/checkout',
-    CAN_ADD_TO_CART: '/api/spin/can-add-to-cart',
-  },
   CART: {
     GET: '/api/cart/get',
     ADD: '/api/cart/add',
@@ -73,7 +66,7 @@ export const API_ENDPOINTS = {
 };
 
 import axios from 'axios';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as SecureStore from 'expo-secure-store';
 
 // Create axios instance
 const api = axios.create({
@@ -84,37 +77,31 @@ const api = axios.create({
   },
 });
 
-// Request interceptor to add auth token
+// Request interceptor to add auth token (reads from SecureStore)
 api.interceptors.request.use(
   async (config) => {
     try {
-      // Try both token keys for compatibility
-      let token = await AsyncStorage.getItem('jwtToken');
-      if (!token) {
-        token = await AsyncStorage.getItem('token');
-      }
+      const token = await SecureStore.getItemAsync('jwtToken');
       if (token) {
         config.headers.Authorization = `Bearer ${token}`;
       }
     } catch (error) {
-      console.log('Error getting token:', error);
+      console.log('Error getting token from SecureStore:', error);
     }
     return config;
   },
-  (error) => {
-    return Promise.reject(error);
-  }
+  (error) => Promise.reject(error)
 );
 
-// Response interceptor for error handling
+// Response interceptor — clear token on 401
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
     if (error.response?.status === 401) {
-      // Token expired or invalid
-      await AsyncStorage.removeItem('token');
-      await AsyncStorage.removeItem('jwtToken');
-      await AsyncStorage.removeItem('user');
+      try {
+        await SecureStore.deleteItemAsync('jwtToken');
+        await SecureStore.deleteItemAsync('currentUser');
+      } catch (_) {}
     }
     return Promise.reject(error);
   }

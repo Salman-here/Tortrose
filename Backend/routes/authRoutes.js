@@ -11,9 +11,13 @@ router.post('/verify-otp', verifyOTPAndRegister)
 router.post('/registerr', registerr)
 router.post('/login', login)
 
+// Web Google OAuth
 router.get("/google", passport.authenticate("google", { scope: ["profile", "email"] }));
 
-// callback route
+// Mobile Google OAuth — passes state=mobile so callback can redirect to deep link
+router.get("/google/mobile", passport.authenticate("google", { scope: ["profile", "email"], state: "mobile" }));
+
+// callback route (shared for web + mobile, distinguished by state)
 router.get("/google/callback", passport.authenticate("google", { failureRedirect: "/login", session: false }), googleCallback);
 
 module.exports = router

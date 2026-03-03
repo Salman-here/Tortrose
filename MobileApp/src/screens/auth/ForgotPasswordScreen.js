@@ -17,12 +17,11 @@ import {
   Platform,
   ScrollView,
   ActivityIndicator,
-  Animated,
+  StatusBar,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import axios from 'axios';
 import Toast from 'react-native-toast-message';
-import { API_BASE_URL } from '../../config/api';
+import api from '../../config/api';
 import { 
   colors, 
   spacing, 
@@ -62,7 +61,7 @@ export default function ForgotPasswordScreen({ navigation }) {
 
     setIsLoading(true);
     try {
-      const res = await axios.post(`${API_BASE_URL}/api/auth/forgot-password`, { email });
+      const res = await api.post('/api/password/forgot', { email });
       setIsSuccess(true);
       Toast.show({
         type: 'success',
@@ -90,167 +89,93 @@ export default function ForgotPasswordScreen({ navigation }) {
 
   return (
     <SafeAreaView style={styles.container}>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={styles.keyboardView}
-      >
-        <ScrollView
-          contentContainerStyle={styles.scrollContent}
-          keyboardShouldPersistTaps="handled"
-        >
-          {/* Back Button */}
-          <TouchableOpacity
-            style={styles.backButton}
-            onPress={() => navigation.goBack()}
-            accessibilityLabel="Go back"
-            accessibilityRole="button"
-          >
-            <Ionicons name="arrow-back" size={24} color={colors.primary} />
-            <Text style={styles.backButtonText}>Back</Text>
-          </TouchableOpacity>
-
-          {/* Glass Card */}
-          <View style={styles.card}>
-            {/* Header */}
-            <View style={styles.header}>
-              <View style={styles.iconContainer}>
-                <Ionicons 
-                  name={isSuccess ? "checkmark-circle" : "lock-closed"} 
-                  size={48} 
-                  color={isSuccess ? colors.success : colors.primary} 
-                />
-              </View>
-              <Text style={styles.logo}>Tortrose</Text>
-              <Text style={styles.title}>
-                {isSuccess ? 'Check Your Email' : 'Forgot Password?'}
-              </Text>
-              <Text style={styles.subtitle}>
-                {isSuccess 
-                  ? `We've sent a password reset link to ${email}`
-                  : "No worries! Enter your email and we'll send you a reset link"
-                }
-              </Text>
+      <StatusBar barStyle="light-content" backgroundColor={colors.primaryDark} />
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.keyboardView}>
+        <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+          {/* Header */}
+          <View style={styles.topHeader}>
+            <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
+              <Ionicons name="arrow-back" size={22} color={colors.white} />
+            </TouchableOpacity>
+            <View style={styles.logoRow}>
+              <View style={styles.logoIcon}><Ionicons name="storefront" size={20} color={colors.white} /></View>
+              <Text style={styles.logoText}>Tortrose</Text>
             </View>
+            <View style={{ width: 40 }} />
+          </View>
 
+          {/* Hero */}
+          <View style={styles.heroSection}>
+            <View style={styles.heroIconWrap}>
+              <Ionicons name={isSuccess ? 'checkmark-circle' : 'lock-open-outline'} size={36} color={colors.white} />
+            </View>
+            <Text style={styles.heroTitle}>{isSuccess ? 'Email Sent! 📧' : 'Reset Password 🔐'}</Text>
+            <Text style={styles.heroSubtitle}>
+              {isSuccess ? `We sent a reset link to\n${email}` : "Enter your email and we'll send you a link to reset your password"}
+            </Text>
+          </View>
+
+          {/* Card */}
+          <View style={styles.card}>
             {!isSuccess ? (
-              /* Form */
-              <View style={styles.form}>
-                {/* Email Input */}
+              <>
                 <View style={styles.inputGroup}>
                   <Text style={styles.label}>Email Address</Text>
-                  <View style={[
-                    styles.inputContainer,
-                    error && styles.inputContainerError
-                  ]}>
-                    <Ionicons 
-                      name="mail-outline" 
-                      size={20} 
-                      color={error ? colors.error : colors.gray} 
-                      style={styles.inputIcon}
-                    />
+                  <View style={[styles.inputContainer, error && styles.inputError]}>
+                    <Ionicons name="mail-outline" size={20} color={error ? colors.error : colors.grayLight} style={styles.inputIcon} />
                     <TextInput
                       style={styles.input}
                       placeholder="john@example.com"
                       placeholderTextColor={colors.grayLight}
                       value={email}
-                      onChangeText={(text) => {
-                        setEmail(text);
-                        if (error) setError('');
-                      }}
+                      onChangeText={(t) => { setEmail(t); if (error) setError(''); }}
                       keyboardType="email-address"
                       autoCapitalize="none"
                       autoCorrect={false}
-                      autoComplete="email"
-                      accessibilityLabel="Email address input"
                     />
                   </View>
-                  {error ? (
-                    <View style={styles.errorContainer}>
-                      <Ionicons name="alert-circle" size={14} color={colors.error} />
-                      <Text style={styles.errorText}>{error}</Text>
-                    </View>
-                  ) : null}
+                  {error ? <Text style={styles.errorText}>{error}</Text> : null}
                 </View>
 
-                {/* Submit Button */}
-                <TouchableOpacity
-                  style={[styles.submitButton, isLoading && styles.submitButtonDisabled]}
-                  onPress={handleForgotPassword}
-                  disabled={isLoading}
-                  accessibilityLabel="Send reset link"
-                  accessibilityRole="button"
-                >
-                  {isLoading ? (
-                    <ActivityIndicator color={colors.white} />
-                  ) : (
+                <TouchableOpacity style={[styles.submitButton, isLoading && styles.submitButtonDisabled]} onPress={handleForgotPassword} disabled={isLoading} activeOpacity={0.85}>
+                  {isLoading ? <ActivityIndicator color={colors.white} /> : (
                     <>
-                      <Ionicons name="send" size={20} color={colors.white} />
+                      <Ionicons name="send" size={18} color={colors.white} />
                       <Text style={styles.submitButtonText}>Send Reset Link</Text>
                     </>
                   )}
                 </TouchableOpacity>
 
-                {/* Back to Login */}
-                <TouchableOpacity
-                  style={styles.backToLogin}
-                  onPress={() => navigation.navigate('Login')}
-                  accessibilityLabel="Back to login"
-                  accessibilityRole="button"
-                >
+                <TouchableOpacity style={styles.backToLogin} onPress={() => navigation.navigate('Login')}>
                   <Ionicons name="arrow-back" size={16} color={colors.primary} />
-                  <Text style={styles.backToLoginText}>Back to Login</Text>
+                  <Text style={styles.backToLoginText}>Back to Sign In</Text>
                 </TouchableOpacity>
-              </View>
+              </>
             ) : (
-              /* Success State */
               <View style={styles.successContainer}>
                 <View style={styles.successIconContainer}>
-                  <Ionicons name="mail-open" size={64} color={colors.success} />
+                  <Ionicons name="mail-open" size={52} color={colors.success} />
                 </View>
-                
-                <Text style={styles.successText}>
-                  Check your inbox and click the link to reset your password.
-                </Text>
-                
-                <Text style={styles.successNote}>
-                  Didn't receive the email? Check your spam folder or try again.
-                </Text>
-
-                <View style={styles.successActions}>
-                  <TouchableOpacity
-                    style={styles.tryAgainButton}
-                    onPress={handleTryAgain}
-                    accessibilityLabel="Try again with different email"
-                    accessibilityRole="button"
-                  >
-                    <Ionicons name="refresh" size={18} color={colors.primary} />
-                    <Text style={styles.tryAgainText}>Try Again</Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={styles.loginButton}
-                    onPress={() => navigation.navigate('Login')}
-                    accessibilityLabel="Return to login"
-                    accessibilityRole="button"
-                  >
-                    <Text style={styles.loginButtonText}>Return to Login</Text>
-                    <Ionicons name="arrow-forward" size={18} color={colors.white} />
-                  </TouchableOpacity>
-                </View>
+                <Text style={styles.successTitle}>Check your inbox!</Text>
+                <Text style={styles.successText}>Click the link in the email to create a new password. The link expires in 15 minutes.</Text>
+                <Text style={styles.successNote}>Didn't receive it? Check your spam folder.</Text>
+                <TouchableOpacity style={styles.tryAgainButton} onPress={handleTryAgain}>
+                  <Ionicons name="refresh" size={18} color={colors.primary} />
+                  <Text style={styles.tryAgainText}>Try a Different Email</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.loginButton} onPress={() => navigation.navigate('Login')}>
+                  <Text style={styles.loginButtonText}>Return to Sign In</Text>
+                  <Ionicons name="arrow-forward" size={18} color={colors.white} />
+                </TouchableOpacity>
               </View>
             )}
 
-            {/* Footer */}
-            <View style={styles.footer}>
-              <Text style={styles.footerText}>
-                Remember your password?{' '}
-                <Text 
-                  style={styles.footerLink}
-                  onPress={() => navigation.navigate('Login')}
-                >
-                  Sign in
-                </Text>
-              </Text>
+            <View style={styles.divider}><View style={styles.dividerLine} /></View>
+            <View style={styles.signInRow}>
+              <Text style={styles.signInText}>Remember your password?</Text>
+              <TouchableOpacity onPress={() => navigation.navigate('Login')}>
+                <Text style={styles.signInLink}> Sign In</Text>
+              </TouchableOpacity>
             </View>
           </View>
         </ScrollView>
@@ -260,223 +185,43 @@ export default function ForgotPasswordScreen({ navigation }) {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#e0f2fe',
-  },
-  keyboardView: {
-    flex: 1,
-  },
-  scrollContent: {
-    flexGrow: 1,
-    padding: spacing.lg,
-    justifyContent: 'center',
-  },
-  backButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    position: 'absolute',
-    top: spacing.lg,
-    left: spacing.lg,
-    backgroundColor: colors.white,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    borderRadius: borderRadius.md,
-    zIndex: 10,
-    ...shadows.sm,
-  },
-  backButtonText: {
-    color: colors.primary,
-    fontWeight: fontWeight.semibold,
-    marginLeft: spacing.xs,
-  },
-  card: {
-    backgroundColor: 'rgba(255, 255, 255, 0.7)',
-    borderRadius: borderRadius.xxl,
-    padding: spacing.xl,
-    ...shadows.lg,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.5)',
-  },
-  header: {
-    alignItems: 'center',
-    marginBottom: spacing.xl,
-  },
-  iconContainer: {
-    width: 80,
-    height: 80,
-    borderRadius: borderRadius.full,
-    backgroundColor: 'rgba(99, 102, 241, 0.1)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: spacing.lg,
-  },
-  logo: {
-    fontSize: fontSize.xxl,
-    fontWeight: fontWeight.bold,
-    color: colors.dark,
-    marginBottom: spacing.md,
-  },
-  title: {
-    fontSize: fontSize.xxl,
-    fontWeight: fontWeight.semibold,
-    color: colors.dark,
-    marginBottom: spacing.sm,
-    textAlign: 'center',
-  },
-  subtitle: {
-    fontSize: fontSize.md,
-    color: colors.textSecondary,
-    textAlign: 'center',
-    lineHeight: 22,
-    paddingHorizontal: spacing.md,
-  },
-  form: {
-    gap: spacing.lg,
-  },
-  inputGroup: {
-    gap: spacing.xs,
-  },
-  label: {
-    fontSize: fontSize.sm,
-    fontWeight: fontWeight.medium,
-    color: colors.text,
-  },
-  inputContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.5)',
-    borderRadius: borderRadius.lg,
-    borderWidth: 1,
-    borderColor: 'rgba(229, 231, 235, 0.5)',
-    paddingHorizontal: spacing.md,
-  },
-  inputContainerError: {
-    borderColor: colors.error,
-    backgroundColor: 'rgba(239, 68, 68, 0.05)',
-  },
-  inputIcon: {
-    marginRight: spacing.sm,
-  },
-  input: {
-    flex: 1,
-    paddingVertical: spacing.md,
-    fontSize: fontSize.md,
-    color: colors.text,
-  },
-  errorContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: spacing.xs,
-    gap: spacing.xs,
-  },
-  errorText: {
-    fontSize: fontSize.sm,
-    color: colors.error,
-  },
-  submitButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.primary,
-    paddingVertical: spacing.md,
-    borderRadius: borderRadius.lg,
-    gap: spacing.sm,
-    ...shadows.md,
-  },
-  submitButtonDisabled: {
-    opacity: 0.7,
-  },
-  submitButtonText: {
-    color: colors.white,
-    fontSize: fontSize.lg,
-    fontWeight: fontWeight.semibold,
-  },
-  backToLogin: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: spacing.md,
-    gap: spacing.xs,
-  },
-  backToLoginText: {
-    color: colors.primary,
-    fontSize: fontSize.md,
-    fontWeight: fontWeight.medium,
-  },
-  // Success state styles
-  successContainer: {
-    alignItems: 'center',
-    paddingVertical: spacing.lg,
-  },
-  successIconContainer: {
-    width: 100,
-    height: 100,
-    borderRadius: borderRadius.full,
-    backgroundColor: 'rgba(16, 185, 129, 0.1)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: spacing.xl,
-  },
-  successText: {
-    fontSize: fontSize.md,
-    color: colors.text,
-    textAlign: 'center',
-    marginBottom: spacing.md,
-    lineHeight: 22,
-  },
-  successNote: {
-    fontSize: fontSize.sm,
-    color: colors.textSecondary,
-    textAlign: 'center',
-    marginBottom: spacing.xl,
-  },
-  successActions: {
-    width: '100%',
-    gap: spacing.md,
-  },
-  tryAgainButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(99, 102, 241, 0.1)',
-    paddingVertical: spacing.md,
-    borderRadius: borderRadius.lg,
-    gap: spacing.sm,
-  },
-  tryAgainText: {
-    color: colors.primary,
-    fontSize: fontSize.md,
-    fontWeight: fontWeight.medium,
-  },
-  loginButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.primary,
-    paddingVertical: spacing.md,
-    borderRadius: borderRadius.lg,
-    gap: spacing.sm,
-    ...shadows.md,
-  },
-  loginButtonText: {
-    color: colors.white,
-    fontSize: fontSize.md,
-    fontWeight: fontWeight.semibold,
-  },
-  footer: {
-    marginTop: spacing.xl,
-    paddingTop: spacing.lg,
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(229, 231, 235, 0.3)',
-    alignItems: 'center',
-  },
-  footerText: {
-    fontSize: fontSize.sm,
-    color: colors.textSecondary,
-  },
-  footerLink: {
-    color: '#0ea5e9',
-    fontWeight: fontWeight.medium,
-  },
+  container: { flex: 1, backgroundColor: colors.primaryDark },
+  keyboardView: { flex: 1 },
+  scrollContent: { flexGrow: 1, paddingBottom: spacing.xxxl },
+  topHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: spacing.lg, paddingTop: spacing.lg, paddingBottom: spacing.sm },
+  backButton: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.15)', justifyContent: 'center', alignItems: 'center' },
+  logoRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  logoIcon: { width: 36, height: 36, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.2)', justifyContent: 'center', alignItems: 'center' },
+  logoText: { fontSize: fontSize.xl, fontWeight: fontWeight.bold, color: colors.white },
+  heroSection: { paddingHorizontal: spacing.xl, paddingVertical: spacing.xl, paddingBottom: spacing.xxxl, alignItems: 'center' },
+  heroIconWrap: { width: 72, height: 72, borderRadius: 36, backgroundColor: 'rgba(255,255,255,0.15)', justifyContent: 'center', alignItems: 'center', marginBottom: spacing.lg },
+  heroTitle: { fontSize: fontSize.title, fontWeight: fontWeight.extrabold, color: colors.white, marginBottom: spacing.sm, textAlign: 'center' },
+  heroSubtitle: { fontSize: fontSize.md, color: 'rgba(255,255,255,0.75)', lineHeight: 22, textAlign: 'center' },
+  card: { backgroundColor: colors.white, borderTopLeftRadius: borderRadius.xxxl, borderTopRightRadius: borderRadius.xxxl, padding: spacing.xxl, paddingTop: spacing.xxxl, flex: 1, minHeight: 380 },
+  inputGroup: { marginBottom: spacing.lg },
+  label: { fontSize: fontSize.sm, fontWeight: fontWeight.semibold, color: colors.dark, marginBottom: spacing.sm, letterSpacing: 0.3 },
+  inputContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.lighter, borderRadius: borderRadius.xl, borderWidth: 1.5, borderColor: colors.light, paddingHorizontal: spacing.md, height: 56 },
+  inputError: { borderColor: colors.error, backgroundColor: colors.errorSubtle },
+  inputIcon: { marginRight: spacing.sm },
+  input: { flex: 1, fontSize: fontSize.md, color: colors.text, paddingVertical: 0 },
+  errorText: { fontSize: fontSize.sm, color: colors.error, marginTop: spacing.xs, marginLeft: spacing.xs },
+  submitButton: { flexDirection: 'row', backgroundColor: colors.primary, paddingVertical: spacing.lg, borderRadius: borderRadius.xl, alignItems: 'center', justifyContent: 'center', gap: spacing.sm, ...shadows.primaryMd, marginBottom: spacing.lg },
+  submitButtonDisabled: { opacity: 0.7 },
+  submitButtonText: { color: colors.white, fontSize: fontSize.lg, fontWeight: fontWeight.bold },
+  backToLogin: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: spacing.md, gap: spacing.xs },
+  backToLoginText: { color: colors.primary, fontSize: fontSize.md, fontWeight: fontWeight.semibold },
+  successContainer: { alignItems: 'center', paddingVertical: spacing.lg },
+  successIconContainer: { width: 96, height: 96, borderRadius: 48, backgroundColor: colors.successSubtle, justifyContent: 'center', alignItems: 'center', marginBottom: spacing.xl },
+  successTitle: { fontSize: fontSize.xxl, fontWeight: fontWeight.bold, color: colors.dark, marginBottom: spacing.md, textAlign: 'center' },
+  successText: { fontSize: fontSize.md, color: colors.text, textAlign: 'center', marginBottom: spacing.md, lineHeight: 22 },
+  successNote: { fontSize: fontSize.sm, color: colors.textSecondary, textAlign: 'center', marginBottom: spacing.xl },
+  tryAgainButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: colors.primarySubtle, paddingVertical: spacing.md, borderRadius: borderRadius.xl, gap: spacing.sm, width: '100%', marginBottom: spacing.md },
+  tryAgainText: { color: colors.primary, fontSize: fontSize.md, fontWeight: fontWeight.semibold },
+  loginButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: colors.primary, paddingVertical: spacing.md, borderRadius: borderRadius.xl, gap: spacing.sm, width: '100%', ...shadows.primaryMd },
+  loginButtonText: { color: colors.white, fontSize: fontSize.md, fontWeight: fontWeight.semibold },
+  divider: { marginVertical: spacing.xl },
+  dividerLine: { height: 1, backgroundColor: colors.light },
+  signInRow: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center' },
+  signInText: { fontSize: fontSize.md, color: colors.textSecondary },
+  signInLink: { fontSize: fontSize.md, color: colors.primary, fontWeight: fontWeight.bold },
 });

@@ -276,7 +276,9 @@ exports.login = async (req, res) => {
 exports.googleCallback = async (req, res) => {
     try {
         const user = req.user;
-        
+        // When initiated from mobile, passport preserves state=mobile through OAuth flow
+        const isMobile = req.query.state === 'mobile';
+
         const payload = {
             id: user._id,
             username: user.username,
@@ -286,11 +288,20 @@ exports.googleCallback = async (req, res) => {
         }
 
         const token = jwt.sign(payload, process.env.JWT_SECRET);
-        
-        // Redirect to frontend with token
+
+        if (isMobile) {
+            // Redirect to app deep link — WebBrowser.openAuthSessionAsync will intercept this
+            return res.redirect(`tortrose://auth/google/success?token=${encodeURIComponent(token)}`);
+        }
+
+        // Web redirect
         res.redirect(`${process.env.FRONTEND_URL}/auth/google/success?token=${token}`);
     } catch (error) {
         console.error('Google callback error:', error);
+        const isMobile = req.query.state === 'mobile';
+        if (isMobile) {
+            return res.redirect('tortrose://auth/google/error');
+        }
         res.redirect(`${process.env.FRONTEND_URL}/login?error=auth_failed`);
     }
 }

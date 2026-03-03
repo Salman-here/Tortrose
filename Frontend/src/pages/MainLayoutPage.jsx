@@ -1,6 +1,5 @@
 import React, { useEffect } from 'react'
 import { Link, Outlet, useLocation } from 'react-router-dom'
-import { ToastContainer } from 'react-toastify'
 import Navbar from '../components/layout/Navbar'
 import CartDropdown from '../components/common/CartDropdown'
 import { useGlobal } from '../contexts/GlobalContext'
@@ -32,10 +31,6 @@ function MainLayoutPage() {
 
   return (
     <div className='relative'>
-      <ToastContainer
-        autoClose={2200}
-        position='top-center' />
-
       <AnimatePresence mode='wait'>
         {
           isOpen && (

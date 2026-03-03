@@ -198,7 +198,7 @@ const OrderDetail = () => {
                         {order?.isPaid ? "Paid" : "Unpaid"}
                     </span>
                     {order?.spinDiscount?.applied && (
-                        <span className="px-2 sm:px-3 py-1 text-xs sm:text-sm rounded-full bg-gradient-to-r from-purple-500 to-pink-500 text-white font-semibold flex items-center gap-1 whitespace-nowrap">
+                        <span className="px-2 sm:px-3 py-1 text-xs sm:text-sm rounded-full bg-linear-to-r from-indigo-500 to-sky-400 text-white font-semibold flex items-center gap-1 whitespace-nowrap">
                             🎉 <span className="hidden sm:inline">Spin Discount:</span> {order.spinDiscount.label}
                         </span>
                     )}
@@ -287,7 +287,7 @@ const OrderDetail = () => {
                                             Quantity: {item.quantity}
                                         </p>
                                         {item.hasSpinDiscount && (
-                                            <span className="inline-flex items-center gap-1 mt-1 px-1.5 sm:px-2 py-0.5 bg-gradient-to-r from-purple-100 to-pink-100 text-purple-700 text-[10px] sm:text-xs font-semibold rounded-full border border-purple-200">
+                                            <span className="inline-flex items-center gap-1 mt-1 px-1.5 sm:px-2 py-0.5 bg-linear-to-r from-indigo-100 to-sky-100 text-indigo-700 text-[10px] sm:text-xs font-semibold rounded-full border border-indigo-200">
                                                 🎉 Spin Discount
                                             </span>
                                         )}

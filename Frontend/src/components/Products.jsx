@@ -6,10 +6,10 @@ import axios from 'axios'
 import Loader from './common/Loader'
 import ProductCard from './common/ProductCard'
 import StoreSearch from './common/StoreSearch'
-import { PackageX, RefreshCw, Filter, X, Gift } from 'lucide-react'
+import { PackageX, RefreshCw, Filter, X } from 'lucide-react'
 import ErrorPage from './layout/ErrorPage'
-import SpinWheel from './common/SpinWheel'
-import SpinBanner from './common/SpinBanner'
+// import SpinWheel from './common/SpinWheel' // SPIN WHEEL DISABLED
+// import SpinBanner from './common/SpinBanner' // SPIN WHEEL DISABLED
 import { toast } from 'react-toastify'
 import { useAuth } from '../contexts/AuthContext'
 import CurrencySelector from './common/CurrencySelector'
@@ -21,12 +21,12 @@ function Products() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [isFilterOpen, setIsFilterOpen] = useState(false)
-  const [showSpinWheel, setShowSpinWheel] = useState(false)
-  const [spinResult, setSpinResult] = useState(null)
-  const [displayProducts, setDisplayProducts] = useState([])
+  // const [showSpinWheel, setShowSpinWheel] = useState(false) // SPIN WHEEL DISABLED
+  // const [spinResult, setSpinResult] = useState(null) // SPIN WHEEL DISABLED
+  // const [displayProducts, setDisplayProducts] = useState([]) // SPIN WHEEL DISABLED
 
   const priceRangeRef = useRef(null)
-  const isInitialMount = useRef(true)
+  // const isInitialMount = useRef(true) // SPIN WHEEL DISABLED
   const navigate = useNavigate()
   const location = useLocation()
   const { currentUser } = useAuth()
@@ -72,27 +72,21 @@ function Products() {
 
   useEffect(() => {
     fetchProducts()
-    checkActiveSpin()
+    // checkActiveSpin() // SPIN WHEEL DISABLED
   }, [])
-  
-  // Re-check spin when user logs in (skip initial mount)
-  useEffect(() => {
-    if (isInitialMount.current) {
-      isInitialMount.current = false;
-      return;
-    }
-    
-    if (currentUser) {
-      console.log('👤 User logged in, re-checking spin status');
-      checkActiveSpin()
-    }
-  }, [currentUser])
 
-  useEffect(() => {
-    console.log('🎨 Applying spin discount. spinResult:', spinResult);
-    applySpinDiscount()
-  }, [products, spinResult])
+  // SPIN WHEEL DISABLED - re-check spin useEffect removed
+  // useEffect(() => {
+  //   if (isInitialMount.current) { isInitialMount.current = false; return; }
+  //   if (currentUser) { checkActiveSpin() }
+  // }, [currentUser])
 
+  // SPIN WHEEL DISABLED - applySpinDiscount useEffect removed
+  // useEffect(() => {
+  //   applySpinDiscount()
+  // }, [products, spinResult])
+
+  /* SPIN WHEEL DISABLED - checkActiveSpin function
   const checkActiveSpin = async () => {
     // If user is logged in, check database first
     if (currentUser) {
@@ -239,7 +233,9 @@ function Products() {
       sessionStorage.setItem('spinnerShown', 'true');
     }
   };
+  SPIN WHEEL DISABLED */
 
+  /* SPIN WHEEL DISABLED - applySpinDiscount function
   const applySpinDiscount = () => {
     if (!spinResult || spinResult.hasCheckedOut) {
       setDisplayProducts(products);
@@ -267,7 +263,9 @@ function Products() {
 
     setDisplayProducts(discountedProducts);
   };
+  SPIN WHEEL DISABLED */
 
+  /* SPIN WHEEL DISABLED - handleSpinComplete function
   const handleSpinComplete = async (result) => {
     const timestamp = new Date().getTime();
     console.log('🎰 Spin completed:', result);
@@ -311,6 +309,7 @@ function Products() {
     
     toast.success(`🎉 You won ${prizeText}! Select up to 3 products now!`);
   };
+  SPIN WHEEL DISABLED */
 
   useEffect(() => {
     fetchProducts()
@@ -377,17 +376,136 @@ function Products() {
     </motion.button>
   </div>
 
+  // Active filter count for badge
+  const activeFilterCount = filters.categories.length + filters.brands.length +
+    (filters.priceRange[0] !== '0' || filters.priceRange[1] !== '5000' ? 1 : 0)
+
+  // Shared sidebar content to avoid duplication
+  const FilterSidebarContent = ({ onClose }) => (
+    <div className='flex flex-col gap-6 p-6'>
+      {/* Header */}
+      <div className='flex justify-between items-center'>
+        <div className='flex items-center gap-2'>
+          <div className='p-1.5 rounded-lg bg-indigo-100'>
+            <Filter size={16} className='text-indigo-600' />
+          </div>
+          <h1 className='text-lg font-bold text-slate-800'>Filters</h1>
+          {activeFilterCount > 0 && (
+            <span className='ml-1 text-xs font-bold bg-indigo-500 text-white rounded-full px-2 py-0.5'>
+              {activeFilterCount}
+            </span>
+          )}
+        </div>
+        {onClose && (
+          <button onClick={onClose} className='p-1.5 rounded-lg hover:bg-slate-100 transition-colors'>
+            <X size={20} className='text-slate-500' />
+          </button>
+        )}
+      </div>
+
+      {/* Search */}
+      <div>
+        <label className='block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2'>Search</label>
+        <form onSubmit={(e) => { e.preventDefault(); fetchProducts(); onClose && onClose(); }}>
+          <input
+            className='w-full px-3 py-2.5 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100 text-sm text-slate-700 placeholder-slate-400 transition-all'
+            placeholder='Search products...'
+            type='text'
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </form>
+      </div>
+
+      {/* Categories */}
+      <div>
+        <label className='block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3'>Categories</label>
+        {!categories || categories.length === 0
+          ? <p className='text-sm text-slate-400 italic'>No categories available</p>
+          : <div className='flex flex-col gap-1'>
+            {categories.map(category => (
+              <label key={category} className='flex items-center gap-3 cursor-pointer py-1.5 px-2 rounded-lg hover:bg-indigo-50 group transition-colors'>
+                <input type='checkbox' value={category} {...register('categories')}
+                  className='w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer' />
+                <span className='text-sm text-slate-700 group-hover:text-indigo-700 transition-colors'>{category}</span>
+              </label>
+            ))}
+          </div>
+        }
+      </div>
+
+      {/* Brands */}
+      <div>
+        <label className='block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3'>Brands</label>
+        {!brands || brands.length === 0
+          ? <p className='text-sm text-slate-400 italic'>No brands available</p>
+          : <div className='flex flex-col gap-1'>
+            {brands.map(brand => (
+              <label key={brand} className='flex items-center gap-3 cursor-pointer py-1.5 px-2 rounded-lg hover:bg-indigo-50 group transition-colors'>
+                <input type='checkbox' value={brand} {...register('brands')}
+                  className='w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer' />
+                <span className='text-sm text-slate-700 group-hover:text-indigo-700 transition-colors'>{brand}</span>
+              </label>
+            ))}
+          </div>
+        }
+      </div>
+
+      {/* Price Range */}
+      <div>
+        <label className='block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3'>Price Range</label>
+        <input type='range' min={0} max={5000} defaultValue={0}
+          {...register('priceRange')} ref={priceRangeRef}
+          onChange={(e) => setValue('priceRange', [e.target.value, 5000])}
+          className='w-full h-2 rounded-full appearance-none cursor-pointer accent-indigo-600 bg-slate-200'
+        />
+        <div className='flex justify-between mt-2'>
+          <span className='text-xs font-semibold text-indigo-600 bg-indigo-50 px-2 py-1 rounded-lg'>
+            ${filters.priceRange[0]}
+          </span>
+          <span className='text-xs font-semibold text-slate-500 bg-slate-100 px-2 py-1 rounded-lg'>
+            ${filters.priceRange[1]}
+          </span>
+        </div>
+      </div>
+
+      {/* Active Filters Pills */}
+      {activeFilterCount > 0 && (
+        <div className='flex flex-wrap gap-2'>
+          {filters.categories.map(c => (
+            <span key={c} className='inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-indigo-100 text-indigo-700'>
+              {c}
+            </span>
+          ))}
+          {filters.brands.map(b => (
+            <span key={b} className='inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-sky-100 text-sky-700'>
+              {b}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* Reset Button */}
+      <motion.button
+        whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }}
+        onClick={() => { reset({ categories: [], brands: [], search: '', priceRange: ['0', '5000'] }); if (priceRangeRef.current) priceRangeRef.current.value = 0; }}
+        className='w-full py-2.5 rounded-xl border-2 border-indigo-200 text-indigo-600 font-semibold text-sm hover:bg-indigo-50 transition-all'>
+        Reset All Filters
+      </motion.button>
+    </div>
+  )
+
   return (
     <div className='relative flex flex-col lg:flex-row min-h-screen'>
       {/* Mobile Filter Toggle Button */}
       <div className='lg:hidden fixed bottom-6 right-6 z-40'>
         <motion.button
-          whileHover={{ scale: 1.05 }}
-          whileTap={{ scale: 0.95 }}
+          whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
           onClick={() => setIsFilterOpen(true)}
-          className='bg-blue-600 text-white p-4 rounded-full shadow-lg flex items-center justify-center'
+          className='bg-linear-to-r from-indigo-500 to-sky-400 text-white pl-4 pr-5 py-3 rounded-full shadow-xl shadow-indigo-300/40 flex items-center gap-2 font-semibold text-sm'
         >
-          <Filter size={24} />
+          <Filter size={18} />
+          Filters {activeFilterCount > 0 && `(${activeFilterCount})`}
         </motion.button>
       </div>
 
@@ -396,248 +514,43 @@ function Products() {
         {isFilterOpen && (
           <>
             <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 0.5 }}
-              exit={{ opacity: 0 }}
-              className="fixed inset-0 bg-black z-30 lg:hidden"
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black/50 backdrop-blur-sm z-30 lg:hidden"
               onClick={() => setIsFilterOpen(false)}
             />
             <motion.aside
-              initial={{ x: '-100%' }}
-              animate={{ x: 0 }}
-              exit={{ x: '-100%' }}
-              transition={{ type: 'tween', ease: 'easeInOut' }}
-              className='fixed top-0 left-0 h-full w-80 max-w-full bg-white z-40 overflow-y-auto lg:hidden shadow-xl'
+              initial={{ x: '-100%' }} animate={{ x: 0 }} exit={{ x: '-100%' }}
+              transition={{ type: 'tween', ease: 'easeInOut', duration: 0.28 }}
+              className='fixed top-0 left-0 h-full w-80 max-w-full bg-white z-40 overflow-y-auto lg:hidden shadow-2xl'
             >
-              <div className='p-6 flex flex-col gap-6'>
-                <div className='flex justify-between items-center'>
-                  <h1 className='text-2xl font-bold'>Filters</h1>
-                  <button onClick={() => setIsFilterOpen(false)}>
-                    <X size={24} />
-                  </button>
-                </div>
-
-                {/* Search */}
-                <form onSubmit={(e) => {
-                  e.preventDefault()
-                  fetchProducts()
-                  setIsFilterOpen(false)
-                }}>
-                  <h2 className='text-md font-semibold mb-1'>SEARCH</h2>
-                  <input
-                    className='p-2 rounded w-full border border-gray-300 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500'
-                    placeholder='Search products...'
-                    type='text'
-                    name='search'
-                    onChange={(e) => {
-                      setSearch(e.target.value)
-                    }}
-                  />
-                </form>
-
-                {/* Categories */}
-                <div className='flex flex-col gap-1'>
-                  <h2 className='text-md font-semibold mb-1'>CATEGORIES</h2>
-                  {
-                    !categories || categories.length === 0
-                      ? <p className='text-gray-500'>No categories available.</p>
-                      : categories.map(category => (
-                        <label key={category} className='flex gap-2 items-center cursor-pointer py-1'>
-                          <input type='checkbox' value={category} {...register('categories')} />
-                          <span className='text-gray-700'>{category}</span>
-                        </label>
-                      ))
-                  }
-                </div>
-
-                {/* Brands */}
-                <div className='flex flex-col gap-1'>
-                  <h2 className='text-md font-semibold mb-1'>BRANDS</h2>
-                  {
-                    !brands || brands.length === 0
-                      ? <p className='text-gray-500'>No brands available.</p>
-                      : brands.map(brand => (
-                        <label key={brand} className='flex gap-2 items-center cursor-pointer py-1'>
-                          <input type='checkbox' value={brand} {...register('brands')} />
-                          <span className='text-gray-700'>{brand}</span>
-                        </label>
-                      ))
-                  }
-                </div>
-
-                {/* Price Range */}
-                <div>
-                  <h2 className='text-md font-semibold mb-1'>PRICE RANGE</h2>
-                  <input
-                    type='range'
-                    min={0}
-                    max={5000}
-                    defaultValue={0}
-                    {...register('priceRange')}
-                    ref={priceRangeRef}
-                    onChange={(e) => {
-                      setValue('priceRange', [e.target.value, 5000])
-                    }}
-                    className='w-full'
-                  />
-                  <p className='text-sm text-gray-600'>
-                    ${filters.priceRange[0]} - ${filters.priceRange[1]}
-                  </p>
-                </div>
-
-                {/* Reset Button */}
-                <motion.button
-                  whileHover={{ scale: 1.05 }}
-                  whileTap={{ scale: 0.95 }}
-                  onClick={() => {
-                    reset({
-                      categories: [],
-                      brands: [],
-                      search: '',
-                      priceRange: ["0", "5000"]
-                    })
-                    priceRangeRef.current.value = 0
-                  }}
-                  className='bg-green-600 text-white font-semibold text-lg py-2 rounded'
-                >
-                  Reset Filters
-                </motion.button>
-              </div>
+              <FilterSidebarContent onClose={() => setIsFilterOpen(false)} />
             </motion.aside>
           </>
         )}
       </AnimatePresence>
 
       {/* Filter Sidebar for Desktop */}
-      <aside className='hidden lg:flex lg:flex-col m-5 rounded-xl gap-6 p-6 bg-white shadow-md w-80 flex-shrink-0'>
-        <h1 className='text-2xl font-bold'>Filters</h1>
-
-        {/* Search */}
-        <form onSubmit={(e) => {
-          e.preventDefault()
-          fetchProducts()
-        }}>
-          <h2 className='text-md font-semibold mb-1'>SEARCH</h2>
-          <input
-            className='p-2 rounded w-full border border-gray-300 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500'
-            placeholder='Search products...'
-            type='text'
-            name='search'
-            onChange={(e) => {
-              setSearch(e.target.value)
-            }}
-          />
-        </form>
-
-        {/* Categories */}
-        <div className='flex flex-col gap-1'>
-          <h2 className='text-md font-semibold mb-1'>CATEGORIES</h2>
-          {
-            !categories || categories.length === 0
-              ? <p className='text-gray-500'>No categories available.</p>
-              : categories.map(category => (
-                <label key={category} className='flex gap-2 items-center cursor-pointer py-1'>
-                  <input type='checkbox' value={category} {...register('categories')} />
-                  <span className='text-gray-700'>{category}</span>
-                </label>
-              ))
-          }
-        </div>
-
-        {/* Brands */}
-        <div className='flex flex-col gap-1'>
-          <h2 className='text-md font-semibold mb-1'>BRANDS</h2>
-          {
-            !brands || brands.length === 0
-              ? <p className='text-gray-500'>No brands available.</p>
-              : brands.map(brand => (
-                <label key={brand} className='flex gap-2 items-center cursor-pointer py-1'>
-                  <input type='checkbox' value={brand} {...register('brands')} />
-                  <span className='text-gray-700'>{brand}</span>
-                </label>
-              ))
-          }
-        </div>
-
-        {/* Price Range */}
-        <div>
-          <h2 className='text-md font-semibold mb-1'>PRICE RANGE</h2>
-          <input
-            type='range'
-            min={0}
-            max={5000}
-            defaultValue={0}
-            {...register('priceRange')}
-            ref={priceRangeRef}
-            onChange={(e) => {
-              setValue('priceRange', [e.target.value, 5000])
-            }}
-            className='w-full'
-          />
-          <p className='text-sm text-gray-600'>
-            ${filters.priceRange[0]} - ${filters.priceRange[1]}
-          </p>
-        </div>
-
-        {/* Reset Button */}
-        <motion.button
-          whileHover={{ scale: 1.05 }}
-          whileTap={{ scale: 0.95 }}
-          onClick={() => {
-            reset({
-              categories: [],
-              brands: [],
-              search: '',
-              priceRange: ["0", "5000"]
-            })
-            priceRangeRef.current.value = 0
-          }}
-          className='bg-green-600 text-white font-semibold text-lg py-2 rounded'
-        >
-          Reset Filters
-        </motion.button>
+      <aside className='hidden lg:block m-5 rounded-2xl bg-white shadow-sm border border-slate-100 w-72 shrink-0 self-start sticky top-24 overflow-y-auto max-h-[calc(100vh-7rem)] filter-sb'>
+        <FilterSidebarContent onClose={null} />
       </aside>
 
       {/* Product Grid */}
       <main className='flex-1 p-4 lg:p-6'>
-        {/* Spin Banner - Always show */}
-        {!spinResult && (
-          <SpinBanner 
-            spinResult={null}
-            onOpenSpinner={() => setShowSpinWheel(true)}
-          />
-        )}
-        
-        {spinResult && !spinResult.hasCheckedOut && (
-          <SpinBanner 
-            spinResult={spinResult} 
-            selectedCount={JSON.parse(localStorage.getItem('spinSelectedProducts') || '[]').length}
-          />
-        )}
-
-        {spinResult && spinResult.hasCheckedOut && (
-          <SpinBanner spinResult={spinResult} />
-        )}
-
         {/* Store Search */}
         <div className='mb-6 flex flex-col gap-4'>
-          <div className='flex items-center justify-center'>
-            <StoreSearch />
-          </div>
-          <div className='flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3'>
-            <div className='flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-4'>
-              <h1 className='text-xl sm:text-2xl lg:text-3xl font-bold'>Products</h1>
-              <Link to='/stores' className='text-xs sm:text-sm font-medium text-blue-600 hover:text-blue-700 hover:underline transition-colors flex items-center gap-1'>
-                <span>Browse Stores</span>
-                <svg className="w-3 h-3 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                </svg>
+          <StoreSearch />
+          <div className='flex flex-col sm:flex-row justify-between items-center gap-3'>
+            <div className='flex items-center gap-3'>
+              <h1 className='text-2xl lg:text-3xl font-bold text-slate-800'>Products</h1>
+              <Link to='/stores'
+                className='text-sm font-medium text-indigo-600 hover:text-indigo-700 transition-colors flex items-center gap-1 bg-indigo-50 px-3 py-1.5 rounded-full'>
+                Browse Stores →
               </Link>
             </div>
             <div className='flex items-center gap-3'>
-              <div className='text-xs sm:text-sm text-gray-500'>
-                {products.length} {products.length === 1 ? 'product' : 'products'} found
-              </div>
+              <span className='text-sm text-slate-500 bg-slate-100 px-3 py-1.5 rounded-full font-medium'>
+                {products.length} {products.length === 1 ? 'product' : 'products'}
+              </span>
               <CurrencySelector />
             </div>
           </div>
@@ -650,19 +563,23 @@ function Products() {
         ) : (
           <>
             {products.length === 0 ? (
-              <div className='flex flex-col items-center justify-center h-64 text-gray-500'>
-                <PackageX size={65} strokeWidth={1} />
-                <p className='text-lg font-medium mt-4'>No products to show</p>
-                <p className='text-sm mt-2'>Try adjusting your filters</p>
-              </div>
+              <motion.div
+                initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
+                className='flex flex-col items-center justify-center h-64 text-slate-400'>
+                <div className='p-6 rounded-2xl bg-slate-100 mb-4'>
+                  <PackageX size={48} strokeWidth={1.5} />
+                </div>
+                <p className='text-lg font-semibold text-slate-600'>No products found</p>
+                <p className='text-sm mt-1'>Try adjusting your filters or search term</p>
+              </motion.div>
             ) : (
               <div className='grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4 lg:gap-6'>
-                {displayProducts.map((prod, idx) => (
-                  <ProductCard 
-                    key={prod._id} 
-                    idx={idx} 
+                {products.map((prod, idx) => (
+                  <ProductCard
+                    key={prod._id}
+                    idx={idx}
                     {...prod}
-                    spinResult={spinResult}
+                    // spinResult={spinResult} // SPIN WHEEL DISABLED
                   />
                 ))}
               </div>
@@ -671,15 +588,12 @@ function Products() {
         )}
       </main>
 
-      {/* Spin Wheel Modal */}
-      <AnimatePresence>
+      {/* SPIN WHEEL DISABLED - SpinWheel modal removed */}
+      {/* <AnimatePresence>
         {showSpinWheel && (
-          <SpinWheel 
-            onSpinComplete={handleSpinComplete}
-            onClose={() => setShowSpinWheel(false)}
-          />
+          <SpinWheel onSpinComplete={handleSpinComplete} onClose={() => setShowSpinWheel(false)} />
         )}
-      </AnimatePresence>
+      </AnimatePresence> */}
     </div>
   )
 }
