@@ -103,8 +103,8 @@ const StoresListing = () => {
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.5, delay: 0.2 }}
                 >
-                    <div className="flex flex-col md:flex-row gap-3">
-                        <div className="flex-1 relative">
+                    <div className="grid gap-3" style={{ gridTemplateColumns: '1fr 180px' }}>
+                        <div className="relative">
                             <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none"
                                     size={17} style={{ color: 'hsl(var(--muted-foreground))' }} />
                             <input
@@ -112,13 +112,14 @@ const StoresListing = () => {
                                 value={searchQuery}
                                 onChange={(e) => setSearchQuery(e.target.value)}
                                 placeholder="Search for stores..."
-                                className="glass-input pl-10 pr-4 w-full"
+                                className="glass-input"
+                                style={{ paddingLeft: '2.5rem' }}
                             />
                         </div>
                         <select
                             value={sortBy}
                             onChange={(e) => setSortBy(e.target.value)}
-                            className="glass-input cursor-pointer font-medium w-full md:w-48 shrink-0"
+                            className="glass-input cursor-pointer font-medium"
                         >
                             <option value="newest">Newest First</option>
                             <option value="views">Most Viewed</option>
