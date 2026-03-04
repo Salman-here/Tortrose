@@ -38,6 +38,11 @@ import StoresListing from '../pages/StoresListing'
 import TrustedStoresPage from '../pages/TrustedStoresPage'
 import StoreVerifications from '../pages/admin/StoreVerifications'
 import BecomeSeller from '../pages/BecomeSeller'
+import TermsOfService from '../pages/TermsOfService'
+import PrivacyPolicy from '../pages/PrivacyPolicy'
+import AboutPage from '../pages/AboutPage'
+import ContactPage from '../pages/ContactPage'
+import FAQPage from '../pages/FAQPage'
 
 function AppRoutes() {
     const navigate = useNavigate()
@@ -66,6 +71,12 @@ function AppRoutes() {
                         </ProtectedRoute>
                     } />
 
+                    {/* INFO & LEGAL PAGES */}
+                    <Route path='/terms' element={<TermsOfService />} />
+                    <Route path='/privacy' element={<PrivacyPolicy />} />
+                    <Route path='/about' element={<AboutPage />} />
+                    <Route path='/contact' element={<ContactPage />} />
+                    <Route path='/faq' element={<FAQPage />} />
 
                     {/* PROTECTED ROUTES - Checkout requires login */}
                     <Route path={'/checkout'} element={

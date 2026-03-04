@@ -3,6 +3,7 @@ import { Link, Outlet, useLocation } from 'react-router-dom'
 import Navbar from '../components/layout/Navbar'
 import CartDropdown from '../components/common/CartDropdown'
 import GlassBackground from '../components/common/GlassBackground'
+import Footer from '../components/layout/Footer'
 import { useGlobal } from '../contexts/GlobalContext'
 import { AnimatePresence, motion } from 'framer-motion'
 
@@ -49,6 +50,7 @@ function MainLayoutPage() {
       <div className='mt-[90px] sm:mt-[96px] relative z-10'>
         <Outlet />
       </div>
+      <Footer />
     </div>
   )
 }
