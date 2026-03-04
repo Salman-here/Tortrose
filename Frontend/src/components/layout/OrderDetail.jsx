@@ -116,11 +116,9 @@ const OrderDetail = () => {
                                         <div className="mt-2 sm:hidden">
                                             <p className="text-sm font-semibold" style={{ color: 'hsl(var(--foreground))' }}>{formatPrice(item.price)}</p>
                                         </div>
-                                        </div>
                                     </div>
                                     <div className="text-right hidden sm:block flex-shrink-0">
                                         <p className="text-sm sm:text-base font-medium" style={{ color: 'hsl(var(--foreground))' }}>{formatPrice(item.price)}</p>
-                                        <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>Subtotal: {formatPrice(item.price * item.quantity)}</p>
                                         <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>Subtotal: {formatPrice(item.price * item.quantity)}</p>
                                     </div>
                                 </motion.div>
