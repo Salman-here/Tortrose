@@ -69,6 +69,12 @@ import StoreVerificationScreen from '../screens/admin/StoreVerificationScreen';
 import NotificationsScreen from '../screens/NotificationsScreen';
 import SettingsScreen from '../screens/SettingsScreen';
 import EditProfileScreen from '../screens/EditProfileScreen';
+import AdminNotificationsScreen from '../screens/admin/AdminNotificationsScreen';
+import SellerNotificationsScreen from '../screens/seller/SellerNotificationsScreen';
+import AdminAnalyticsScreen from '../screens/admin/AdminAnalyticsScreen';
+import NotificationSettingsScreen from '../screens/shared/NotificationSettingsScreen';
+import SellerHomeScreen from '../screens/seller/SellerHomeScreen';
+import UserDashboardScreen from '../screens/UserDashboardScreen';
 
 const Stack = createStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -111,8 +117,22 @@ const GuardedStoreVerification = createRoleGuard(StoreVerificationScreen, ['admi
 const GuardedAdminStoreOverview = createRoleGuard(StoreOverviewScreen, ['admin']);
 const GuardedAdminProductManagement = createRoleGuard(ProductManagementScreen, ['admin']);
 const GuardedAdminOrderManagement = createRoleGuard(OrderManagementScreen, ['admin']);
+const GuardedAdminNotifications = createRoleGuard(AdminNotificationsScreen, ['admin']);
+const GuardedAdminAnalytics = createRoleGuard(AdminAnalyticsScreen, ['admin']);
 
 // Guarded seller screens (seller or admin)
+const GuardedSellerDashboard = createRoleGuard(SellerDashboardScreen, ['seller', 'admin']);
+const GuardedSellerAnalytics = createRoleGuard(SellerAnalyticsScreen, ['seller', 'admin']);
+const GuardedSellerStoreOverview = createRoleGuard(StoreOverviewScreen, ['seller', 'admin']);
+const GuardedSellerProductManagement = createRoleGuard(ProductManagementScreen, ['seller', 'admin']);
+const GuardedSellerOrderManagement = createRoleGuard(OrderManagementScreen, ['seller', 'admin']);
+const GuardedSellerStoreSettings = createRoleGuard(SellerStoreSettingsScreen, ['seller', 'admin']);
+const GuardedSellerShippingConfiguration = createRoleGuard(SellerShippingConfigurationScreen, ['seller', 'admin']);
+const GuardedProductForm = createRoleGuard(ProductFormScreen, ['seller', 'admin']);
+const GuardedOrderDetailManagement = createRoleGuard(OrderDetailManagementScreen, ['seller', 'admin']);
+const GuardedSellerNotifications = createRoleGuard(SellerNotificationsScreen, ['seller', 'admin']);
+const GuardedSellerHome = createRoleGuard(SellerHomeScreen, ['seller', 'admin']);
+const GuardedNotificationSettings = createRoleGuard(NotificationSettingsScreen, ['seller', 'admin']);
 const GuardedSellerDashboard = createRoleGuard(SellerDashboardScreen, ['seller', 'admin']);
 const GuardedSellerAnalytics = createRoleGuard(SellerAnalyticsScreen, ['seller', 'admin']);
 const GuardedSellerStoreOverview = createRoleGuard(StoreOverviewScreen, ['seller', 'admin']);
@@ -388,6 +408,16 @@ export default function AppNavigator() {
         component={GuardedStoreVerification}
         options={{ title: 'Store Verification' }}
       />
+      <Stack.Screen
+        name="AdminNotifications"
+        component={GuardedAdminNotifications}
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="AdminAnalytics"
+        component={GuardedAdminAnalytics}
+        options={{ title: 'Platform Analytics' }}
+      />
 
       {/* Seller Dashboard (role-guarded: seller or admin) */}
       <Stack.Screen
@@ -427,6 +457,26 @@ export default function AppNavigator() {
         name="SellerShippingConfiguration"
         component={GuardedSellerShippingConfiguration}
         options={{ title: 'Shipping Configuration' }}
+      />
+      <Stack.Screen
+        name="SellerNotifications"
+        component={GuardedSellerNotifications}
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="SellerHome"
+        component={GuardedSellerHome}
+        options={{ title: 'Seller Home' }}
+      />
+      <Stack.Screen
+        name="NotificationSettings"
+        component={GuardedNotificationSettings}
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="UserDashboard"
+        component={UserDashboardScreen}
+        options={{ headerShown: false }}
       />
 
       {/* Shared Screens (role-guarded: seller or admin) */}
