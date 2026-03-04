@@ -2,6 +2,7 @@ import React, { useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { Shield, Eye, Database, Lock, UserCheck, Bell, Trash2, Globe } from 'lucide-react';
 import { motion } from 'framer-motion';
+import SEOHead from '../components/common/SEOHead';
 
 const sections = [
   {
@@ -47,13 +48,15 @@ const sections = [
 ];
 
 function PrivacyPolicy() {
-  useEffect(() => {
-    document.title = 'Privacy Policy — Tortrose';
-    window.scrollTo(0, 0);
-  }, []);
+  useEffect(() => { window.scrollTo(0, 0); }, []);
 
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
+      <SEOHead
+        title="Privacy Policy"
+        description="Learn how Tortrose collects, uses, and protects your personal data. Your privacy matters to us."
+        canonical="/privacy"
+      />
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}

@@ -6,6 +6,7 @@ import { Link } from 'react-router-dom';
 import axios from 'axios';
 import StoreCard from '../components/common/StoreCard';
 import Loader from '../components/common/Loader';
+import SEOHead from '../components/common/SEOHead';
 
 const StoresListing = () => {
     const [stores, setStores] = useState([]);
@@ -70,7 +71,12 @@ const StoresListing = () => {
             animate={{ opacity: 1 }}
             transition={{ duration: 0.5 }}
         >
-            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                <SEOHead
+                    title="Browse All Stores"
+                    description="Discover amazing independent sellers and their unique products on Tortrose. Find trusted stores worldwide."
+                    canonical="/stores"
+                />
                 {/* Breadcrumb */}
                 <motion.div
                     className="flex items-center text-sm mb-6"

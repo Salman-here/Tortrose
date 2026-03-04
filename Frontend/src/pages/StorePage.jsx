@@ -8,6 +8,7 @@ import ProductCard from '../components/common/ProductCard';
 import Loader from '../components/common/Loader';
 import TrustButton from '../components/common/TrustButton';
 import VerifiedBadge from '../components/common/VerifiedBadge';
+import SEOHead from '../components/common/SEOHead';
 
 const StorePage = () => {
     const { slug } = useParams();
@@ -139,6 +140,11 @@ const StorePage = () => {
             transition={{ duration: 0.5 }}
         >
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                <SEOHead
+                    title={store?.storeName || 'Store'}
+                    description={store?.description || `Shop products from ${store?.storeName} on Tortrose.`}
+                    canonical={`/stores/${slug}`}
+                />
                 {/* Breadcrumb */}
                 <motion.div
                     className="flex items-center text-sm mb-6"

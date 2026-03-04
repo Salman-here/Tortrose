@@ -3,6 +3,7 @@ import { Mail, MessageSquare, MapPin, Clock, Send, Phone, HelpCircle } from 'luc
 import { motion } from 'framer-motion';
 import { toast } from 'react-toastify';
 import { Link } from 'react-router-dom';
+import SEOHead from '../components/common/SEOHead';
 
 const contactMethods = [
   { icon: <Mail size={22} />, title: 'Email Us', value: 'support@tortrose.com', desc: 'We respond within 24 hours' },
@@ -14,10 +15,7 @@ function ContactPage() {
   const [form, setForm] = useState({ name: '', email: '', subject: '', message: '' });
   const [sending, setSending] = useState(false);
 
-  useEffect(() => {
-    document.title = 'Contact Us — Tortrose';
-    window.scrollTo(0, 0);
-  }, []);
+  useEffect(() => { window.scrollTo(0, 0); }, []);
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -35,6 +33,11 @@ function ContactPage() {
 
   return (
     <div className="max-w-5xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
+      <SEOHead
+        title="Contact Us"
+        description="Get in touch with the Tortrose team. We respond within 24 hours for all support and seller inquiries."
+        canonical="/contact"
+      />
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}

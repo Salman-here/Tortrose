@@ -5,6 +5,7 @@ import { Store, ArrowLeft, Sparkles, CheckCircle, TrendingUp, Shield, BarChart3,
 import { toast } from 'react-toastify';
 import axios from 'axios';
 import { useAuth } from '../contexts/AuthContext';
+import SEOHead from '../components/common/SEOHead';
 
 export default function BecomeSeller() {
   const navigate = useNavigate();
@@ -45,6 +46,11 @@ export default function BecomeSeller() {
 
   return (
     <div className="min-h-screen py-12 px-4">
+      <SEOHead
+        title="Become a Seller — Start Selling for Free"
+        description="Join Tortrose as a seller. Create your free store, list products, and reach customers worldwide with powerful analytics and tools."
+        canonical="/become-seller"
+      />
       <div className="max-w-4xl mx-auto">
         <button onClick={() => navigate(-1)} className="flex items-center gap-2 mb-6 transition-colors text-sm font-medium" style={{ color: 'hsl(var(--muted-foreground))' }}>
           <ArrowLeft size={20} /> <span>Back</span>

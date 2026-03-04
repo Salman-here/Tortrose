@@ -4,6 +4,7 @@ import Navbar from '../components/layout/Navbar'
 import CartDropdown from '../components/common/CartDropdown'
 import GlassBackground from '../components/common/GlassBackground'
 import Footer from '../components/layout/Footer'
+import SEOHead from '../components/common/SEOHead'
 import { useGlobal } from '../contexts/GlobalContext'
 import { AnimatePresence, motion } from 'framer-motion'
 
@@ -33,6 +34,7 @@ function MainLayoutPage() {
 
   return (
     <div className='relative min-h-screen'>
+      <SEOHead canonical="/" />
       <GlassBackground />
       <AnimatePresence mode='wait'>
         {

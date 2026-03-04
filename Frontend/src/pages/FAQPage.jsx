@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { HelpCircle, ChevronDown, ShoppingBag, CreditCard, Truck, RotateCcw, Store, Shield } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import SEOHead from '../components/common/SEOHead';
 
 const faqCategories = [
   {
@@ -88,13 +89,28 @@ function FAQItem({ q, a }) {
 }
 
 function FAQPage() {
-  useEffect(() => {
-    document.title = 'FAQ — Tortrose Help Center';
-    window.scrollTo(0, 0);
-  }, []);
+  useEffect(() => { window.scrollTo(0, 0); }, []);
+
+  const faqJsonLd = {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": faqCategories.flatMap(cat =>
+      cat.questions.map(item => ({
+        "@type": "Question",
+        "name": item.q,
+        "acceptedAnswer": { "@type": "Answer", "text": item.a }
+      }))
+    )
+  };
 
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
+      <SEOHead
+        title="FAQ — Help Center"
+        description="Find answers to common questions about shopping, payments, shipping, returns, selling, and trust on Tortrose."
+        canonical="/faq"
+        jsonLd={faqJsonLd}
+      />
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}

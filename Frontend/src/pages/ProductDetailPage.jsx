@@ -5,6 +5,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { Heart, ShoppingCart, Star, ChevronRight, ChevronLeft, Zap, Sparkles, Share2, RotateCcw, Loader2, Home, Tag, Package } from 'lucide-react';
 import Loader from '../components/common/Loader';
 import StoreInfo from '../components/common/StoreInfo';
+import SEOHead from '../components/common/SEOHead';
 import { toast } from 'react-toastify';
 import { useGlobal } from '../contexts/GlobalContext';
 import { useCurrency } from '../contexts/CurrencyContext';
@@ -134,6 +135,33 @@ function ProductDetailPage() {
             transition={{ duration: 0.5 }}
         >
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                <SEOHead
+                    title={product.name}
+                    description={product.description?.slice(0, 155) || `Buy ${product.name} on Tortrose.`}
+                    canonical={`/product/${id}`}
+                    ogType="product"
+                    ogImage={product.image}
+                    jsonLd={{
+                        "@context": "https://schema.org",
+                        "@type": "Product",
+                        "name": product.name,
+                        "description": product.description,
+                        "image": product.image,
+                        "offers": {
+                            "@type": "Offer",
+                            "price": product.discountedPrice || product.price,
+                            "priceCurrency": "USD",
+                            "availability": product.stock > 0 ? "https://schema.org/InStock" : "https://schema.org/OutOfStock"
+                        },
+                        ...(product.rating && {
+                            "aggregateRating": {
+                                "@type": "AggregateRating",
+                                "ratingValue": product.rating,
+                                "reviewCount": product.numReviews || 0
+                            }
+                        })
+                    }}
+                />
                 {/* Breadcrumb */}
                 <motion.div
                     className="flex items-center text-sm mb-6"

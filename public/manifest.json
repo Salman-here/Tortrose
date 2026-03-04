@@ -1,0 +1,18 @@
+{
+  "name": "Tortrose — Modern Marketplace",
+  "short_name": "Tortrose",
+  "description": "Shop unique products from trusted independent sellers worldwide.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0a0a0f",
+  "theme_color": "#4466ee",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -5,128 +5,133 @@
   <meta charset="UTF-8" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <!-- Primary Meta -->
+  <title>Tortrose — Modern Marketplace for Unique Products</title>
+  <meta name="description" content="Shop unique products from trusted independent sellers on Tortrose. Secure payments, global shipping, multi-currency support, and a community-driven trust system." />
+  <meta name="keywords" content="marketplace, online shopping, independent sellers, unique products, trusted stores, global shipping, Tortrose" />
+  <meta name="author" content="Tortrose" />
+
+  <!-- Theme & PWA -->
+  <meta name="theme-color" content="#4466ee" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Tortrose" />
+  <link rel="manifest" href="/manifest.json" />
+
+  <!-- Canonical -->
+  <link rel="canonical" href="https://tortrose.com/" />
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="Tortrose" />
+  <meta property="og:title" content="Tortrose — Modern Marketplace for Unique Products" />
+  <meta property="og:description" content="Shop unique products from trusted independent sellers. Secure payments, global shipping, and multi-currency support." />
+  <meta property="og:url" content="https://tortrose.com/" />
+  <meta property="og:image" content="https://tortrose.com/tortrose-logo.svg" />
+  <meta property="og:locale" content="en_US" />
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Tortrose — Modern Marketplace for Unique Products" />
+  <meta name="twitter:description" content="Shop unique products from trusted independent sellers. Secure payments, global shipping, and multi-currency support." />
+  <meta name="twitter:image" content="https://tortrose.com/tortrose-logo.svg" />
+
+  <!-- Monetag -->
   <meta name="monetag" content="f4ef594788483f710c46efabfbd34701">
-  <!-- Google AdSense -->
-  <!-- <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-8889081457352257"
-    crossorigin="anonymous"></script> -->
 
+  <!-- JSON-LD: Organization -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "Organization",
+    "name": "Tortrose",
+    "url": "https://tortrose.com",
+    "logo": "https://tortrose.com/tortrose-logo.svg",
+    "description": "A modern marketplace for unique products from trusted independent sellers.",
+    "sameAs": []
+  }
+  </script>
 
-    <!-- viginite banner ad tag   -->
-  <!-- <script>(function(s){s.dataset.zone='10121090',s.src='https://gizokraijaw.net/vignette.min.js'})([document.documentElement, document.body].filter(Boolean).pop().appendChild(document.createElement('script')))</script> -->
+  <!-- JSON-LD: WebSite with SearchAction -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "WebSite",
+    "name": "Tortrose",
+    "url": "https://tortrose.com",
+    "potentialAction": {
+      "@type": "SearchAction",
+      "target": "https://tortrose.com/?search={search_term_string}",
+      "query-input": "required name=search_term_string"
+    }
+  }
+  </script>
 
-
-  <!-- push notifications ad tag -->
-  <!-- <script src="https://3nbf4.com/act/files/tag.min.js?z=10108136" data-cfasync="false" async></script> -->
-
-
-  <!-- in page push ad tag -->
-   <!-- <script>(function(s){s.dataset.zone='10125612',s.src='https://forfrogadiertor.com/tag.min.js'})([document.documentElement, document.body].filter(Boolean).pop().appendChild(document.createElement('script')))</script> -->
-
-
-   <!-- native banner that covers full page -->
-    <!-- <script>(function(s){s.dataset.zone='10125619',s.src='https://groleegni.net/vignette.min.js'})([document.documentElement, document.body].filter(Boolean).pop().appendChild(document.createElement('script')))</script> -->
-
-
-
-
-    <!-- on click ads popunder ad  -->
-     <!-- <script>(function(s){s.dataset.zone='10125635',s.src='https://al5sm.com/tag.min.js'})([document.documentElement, document.body].filter(Boolean).pop().appendChild(document.createElement('script')))</script> -->
-
-
-     
-
-
-<!-- GSM Cashback Tracking Script -->
-<script>
-(function() {
-  window.GSM = {
-    brandId: '697b9599afb2ae3c366b6753',
-    apiUrl: 'https://gsm-v2-api-5ffdf926b962.herokuapp.com',
-    
-    init: function() {
-      var urlParams = new URLSearchParams(window.location.search);
-      var trackingCode = urlParams.get('gsm_tracking');
-      
-      if (trackingCode) {
-        localStorage.setItem('gsm_tracking_code', trackingCode);
-        localStorage.setItem('gsm_tracking_expires', Date.now() + 7*24*60*60*1000);
-        console.log('✅ GSM tracking code captured:', trackingCode);
-      }
-    },
-    
-    trackPurchase: function(data) {
-      var trackingCode = localStorage.getItem('gsm_tracking_code');
-      var expires = localStorage.getItem('gsm_tracking_expires');
-      
-      if (!trackingCode) {
-        console.log('❌ No GSM tracking code found');
-        return Promise.resolve({ success: false, message: 'No tracking code' });
-      }
-      
-      if (Date.now() > parseInt(expires)) {
-        console.log('❌ GSM tracking code expired');
-        localStorage.removeItem('gsm_tracking_code');
-        localStorage.removeItem('gsm_tracking_expires');
-        return Promise.resolve({ success: false, message: 'Tracking code expired' });
-      }
-      
-      console.log('📤 Sending purchase to GSM:', {
-        orderId: data.orderId,
-        amount: data.amount,
-        trackingCode: trackingCode
-      });
-      
-      return fetch(this.apiUrl + '/purchases/webhook/purchase', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          trackingCode: trackingCode,
-          orderId: data.orderId,
-          amount: data.amount,
-          currency: data.currency || 'USD',
-          customerEmail: data.customerEmail || '',
-          purchaseDate: new Date().toISOString(),
-          status: 'completed'
-        })
-      })
-      .then(function(response) { return response.json(); })
-      .then(function(result) {
-        if (result.success) {
-          console.log('✅ Purchase tracked successfully!', result);
-          console.log('💰 Tokens earned:', result.tokensEarned);
+  <!-- GSM Cashback Tracking Script -->
+  <script>
+  (function() {
+    window.GSM = {
+      brandId: '697b9599afb2ae3c366b6753',
+      apiUrl: 'https://gsm-v2-api-5ffdf926b962.herokuapp.com',
+      init: function() {
+        var urlParams = new URLSearchParams(window.location.search);
+        var trackingCode = urlParams.get('gsm_tracking');
+        if (trackingCode) {
+          localStorage.setItem('gsm_tracking_code', trackingCode);
+          localStorage.setItem('gsm_tracking_expires', Date.now() + 7*24*60*60*1000);
+        }
+      },
+      trackPurchase: function(data) {
+        var trackingCode = localStorage.getItem('gsm_tracking_code');
+        var expires = localStorage.getItem('gsm_tracking_expires');
+        if (!trackingCode) return Promise.resolve({ success: false, message: 'No tracking code' });
+        if (Date.now() > parseInt(expires)) {
           localStorage.removeItem('gsm_tracking_code');
           localStorage.removeItem('gsm_tracking_expires');
-        } else {
-          console.error('❌ Failed to track purchase:', result);
+          return Promise.resolve({ success: false, message: 'Tracking code expired' });
         }
-        return result;
-      })
-      .catch(function(err) {
-        console.error('❌ Error tracking purchase:', err);
-        return { success: false, error: err.message };
-      });
-    }
-  };
-  
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', function() {
+        return fetch(this.apiUrl + '/purchases/webhook/purchase', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            trackingCode: trackingCode,
+            orderId: data.orderId,
+            amount: data.amount,
+            currency: data.currency || 'USD',
+            customerEmail: data.customerEmail || '',
+            purchaseDate: new Date().toISOString(),
+            status: 'completed'
+          })
+        })
+        .then(function(response) { return response.json(); })
+        .then(function(result) {
+          if (result.success) {
+            localStorage.removeItem('gsm_tracking_code');
+            localStorage.removeItem('gsm_tracking_expires');
+          }
+          return result;
+        })
+        .catch(function(err) {
+          return { success: false, error: err.message };
+        });
+      }
+    };
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', function() { window.GSM.init(); });
+    } else {
       window.GSM.init();
-    });
-  } else {
-    window.GSM.init();
-  }
-})();
-</script>
+    }
+  })();
+  </script>
 
-
+  <!-- Fonts (trimmed to essential families) -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link
-    href="https://fonts.googleapis.com/css2?family=Lato:ital,wght@0,100;0,300;0,400;0,700;0,900;1,100;1,300;1,400;1,700;1,900&family=Montserrat:ital,wght@0,100..900;1,100..900&family=Orbitron:wght@400..900&family=Oswald:wght@200..700&family=Outfit:wght@100..900&family=Pacifico&family=Poppins:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&family=Quicksand:wght@300..700&display=swap"
-    rel="stylesheet">
-  <title>Tortrose</title>
+  <link href="https://fonts.googleapis.com/css2?family=Lato:wght@300;400;700;900&family=Montserrat:wght@400;500;600;700;800;900&family=Orbitron:wght@400..900&family=Outfit:wght@300;400;500;600;700&family=Poppins:wght@300;400;500;600;700&family=Quicksand:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <!-- DNS Prefetch for API -->
+  <link rel="dns-prefetch" href="https://gsm-v2-api-5ffdf926b962.herokuapp.com">
 </head>
 
 <body>

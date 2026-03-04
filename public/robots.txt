@@ -1,0 +1,11 @@
+User-agent: *
+Allow: /
+
+Disallow: /admin-dashboard
+Disallow: /seller-dashboard
+Disallow: /user-dashboard
+Disallow: /checkout
+Disallow: /payment-success
+Disallow: /payment-cancel
+
+Sitemap: https://tortrose.com/sitemap.xml

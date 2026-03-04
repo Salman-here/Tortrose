@@ -2,6 +2,7 @@ import React, { useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { FileText, Shield, Users, AlertTriangle, Scale, Globe, Mail } from 'lucide-react';
 import { motion } from 'framer-motion';
+import SEOHead from '../components/common/SEOHead';
 
 const sections = [
   {
@@ -47,13 +48,15 @@ const sections = [
 ];
 
 function TermsOfService() {
-  useEffect(() => {
-    document.title = 'Terms of Service — Tortrose';
-    window.scrollTo(0, 0);
-  }, []);
+  useEffect(() => { window.scrollTo(0, 0); }, []);
 
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
+      <SEOHead
+        title="Terms of Service"
+        description="Read the Tortrose Terms of Service governing your use of our marketplace platform, user accounts, seller obligations, and more."
+        canonical="/terms"
+      />
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}

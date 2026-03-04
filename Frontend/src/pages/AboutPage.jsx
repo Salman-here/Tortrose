@@ -2,6 +2,7 @@ import React, { useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { Heart, Globe, Shield, Zap, Users, Star, TrendingUp, Award } from 'lucide-react';
 import { motion } from 'framer-motion';
+import SEOHead from '../components/common/SEOHead';
 
 const values = [
   { icon: <Shield size={22} />, title: 'Trust & Safety', desc: 'Every store is verified. Our trust system lets the community vouch for quality sellers.' },
@@ -18,13 +19,15 @@ const stats = [
 ];
 
 function AboutPage() {
-  useEffect(() => {
-    document.title = 'About Tortrose — Modern Marketplace';
-    window.scrollTo(0, 0);
-  }, []);
+  useEffect(() => { window.scrollTo(0, 0); }, []);
 
   return (
     <div className="max-w-5xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
+      <SEOHead
+        title="About Us"
+        description="Learn about Tortrose — a modern marketplace built on trust for independent sellers and conscious shoppers worldwide."
+        canonical="/about"
+      />
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
