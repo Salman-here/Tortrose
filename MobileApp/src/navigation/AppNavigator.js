@@ -488,13 +488,21 @@ export default function AppNavigator() {
 const styles = StyleSheet.create({
   // Tab Bar Styles
   tabBar: {
-    backgroundColor: colors.white,
+    backgroundColor: 'rgba(255, 255, 255, 0.82)',
     borderTopWidth: 1,
-    borderTopColor: colors.light,
+    borderTopColor: 'rgba(255, 255, 255, 0.25)',
     paddingTop: spacing.sm,
     paddingBottom: Platform.OS === 'ios' ? spacing.xl : spacing.sm,
     height: Platform.OS === 'ios' ? 85 : 65,
-    ...shadows.sm,
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    elevation: 0,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.06,
+    shadowRadius: 16,
   },
   tabBarLabel: {
     fontSize: fontSize.xs,
