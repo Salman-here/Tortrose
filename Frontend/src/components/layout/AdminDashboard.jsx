@@ -168,31 +168,30 @@ const AdminDashboard = () => {
         return 'Admin Dashboard';
     };
 
-    // Build notifications from local data, filtered by user preferences
-    const buildNotifications = () => {
-        let prefs = {};
-        try { prefs = JSON.parse(localStorage.getItem('notificationPrefs')) || {}; } catch {}
-        const notifs = [];
-        if (prefs.stockAlerts !== false) {
+    // Fetch notifications from backend API
+    const fetchNotifications = async () => {
+        setNotificationsLoading(true);
+        const token = localStorage.getItem('jwtToken');
+        try {
+            const res = await axios.get(`${import.meta.env.VITE_API_URL}api/analytics/admin/notifications`, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+            setNotifications(res.data.notifications || []);
+        } catch {
+            // Fallback to local data
+            const notifs = [];
             products.filter(p => p.stock === 0).forEach(p => {
-                notifs.push({ id: `s-${p._id}`, type: 'critical', title: `${p.name} is out of stock`, description: 'Update inventory immediately', time: new Date().toISOString() });
+                notifs.push({ id: `s-${p._id}`, type: 'critical', title: `${p.name} is out of stock`, description: 'Update inventory', time: new Date().toISOString() });
             });
-        }
-        if (prefs.lowStockAlerts !== false) {
-            products.filter(p => p.stock > 0 && p.stock <= 10).forEach(p => {
-                notifs.push({ id: `l-${p._id}`, type: 'warning', title: `${p.name} running low`, description: `${p.stock} units left`, time: new Date().toISOString() });
-            });
-        }
-        if (prefs.orderAlerts !== false) {
             orders.filter(o => o.orderStatus === 'pending').slice(0, 5).forEach(o => {
                 notifs.push({ id: `o-${o._id}`, type: 'info', title: `Pending order #${o.orderId}`, description: o.shippingInfo?.fullName || '', time: o.createdAt });
             });
-        }
-        return notifs;
+            setNotifications(notifs);
+        } finally { setNotificationsLoading(false); }
     };
 
     const handleBellClick = () => {
-        if (!notificationsOpen) setNotifications(buildNotifications());
+        if (!notificationsOpen) fetchNotifications();
         setNotificationsOpen(!notificationsOpen);
     };
 
@@ -262,8 +261,8 @@ const AdminDashboard = () => {
                                             animate={{ opacity: 1, y: 0, scale: 1 }}
                                             exit={{ opacity: 0, y: 8, scale: 0.96 }}
                                             transition={{ duration: 0.2 }}
-                                            className="absolute right-0 top-full mt-2 w-80 sm:w-96 overflow-hidden z-50"
-                                            style={{ borderRadius: 20, maxHeight: '70vh', background: 'rgba(240,240,245,0.88)', backdropFilter: 'blur(60px) saturate(180%)', WebkitBackdropFilter: 'blur(60px) saturate(180%)', border: '1px solid rgba(255,255,255,0.5)', boxShadow: '0 20px 60px rgba(0,0,0,0.18), 0 4px 20px rgba(0,0,0,0.1)' }}>
+                                            className="absolute right-0 top-full mt-2 w-80 sm:w-96 overflow-hidden z-50 glass-panel-strong"
+                                            style={{ maxHeight: '70vh' }}>
                                             <div className="p-4 flex items-center justify-between" style={{ borderBottom: '1px solid var(--glass-border)' }}>
                                                 <h3 className="text-sm font-bold" style={{ color: 'hsl(var(--foreground))' }}>Notifications</h3>
                                                 <span className="text-[10px] font-medium px-2 py-0.5 rounded-full"
@@ -272,7 +271,11 @@ const AdminDashboard = () => {
                                                 </span>
                                             </div>
                                             <div className="overflow-y-auto" style={{ maxHeight: 'calc(70vh - 60px)' }}>
-                                                {notifications.length === 0 ? (
+                                                {notificationsLoading ? (
+                                                    <div className="flex items-center justify-center py-8">
+                                                        <Loader2 size={20} className="animate-spin" style={{ color: 'hsl(var(--muted-foreground))' }} />
+                                                    </div>
+                                                ) : notifications.length === 0 ? (
                                                     <div className="text-center py-8 px-4">
                                                         <Bell size={28} style={{ color: 'hsl(var(--muted-foreground))' }} className="mx-auto mb-2 opacity-50" />
                                                         <p className="text-sm" style={{ color: 'hsl(var(--muted-foreground))' }}>All caught up!</p>
@@ -524,12 +527,12 @@ const ProductForm = ({ product, setProduct, onSave, onClose, uploadingImages }) 
             className="fixed inset-0 bg-black/50 backdrop-blur-md flex items-start justify-center p-4 pt-8 sm:pt-12 z-50 overflow-y-auto">
             <motion.div initial={{ scale: 0.92, opacity: 0, y: 30 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.92, opacity: 0, y: 30 }}
                 transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-                className="w-full max-w-4xl mb-8"
-                style={{ background: 'rgba(245,245,250,0.92)', backdropFilter: 'blur(40px) saturate(180%)', WebkitBackdropFilter: 'blur(40px) saturate(180%)', borderRadius: 24, border: '1px solid rgba(255,255,255,0.5)', boxShadow: '0 24px 80px rgba(0,0,0,0.2), 0 8px 32px rgba(0,0,0,0.1)' }}>
-                <div className="max-h-[85vh] overflow-y-auto" style={{ borderRadius: 24 }}>
+                className="w-full max-w-4xl mb-8 glass-panel-strong"
+                style={{ boxShadow: '0 24px 80px rgba(0,0,0,0.2), 0 8px 32px rgba(0,0,0,0.1)' }}>
+                <div className="max-h-[85vh] overflow-y-auto" style={{ borderRadius: 28 }}>
 
                 {/* Header */}
-                <div className="sticky top-0 z-10 p-5 sm:p-6 flex justify-between items-center" style={{ borderBottom: '1px solid rgba(0,0,0,0.08)', background: 'rgba(245,245,250,0.95)', backdropFilter: 'blur(20px)', borderRadius: '24px 24px 0 0' }}>
+                <div className="sticky top-0 z-10 p-5 sm:p-6 flex justify-between items-center glass-panel-strong" style={{ borderBottom: '1px solid var(--glass-border)', borderRadius: '28px 28px 0 0' }}>
                     <div>
                         <h3 className="text-xl font-bold" style={{ color: 'hsl(var(--foreground))' }}>
                             {product._id ? "Edit Product" : "Add New Product"}

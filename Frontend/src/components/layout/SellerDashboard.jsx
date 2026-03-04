@@ -291,8 +291,8 @@ const SellerDashboard = () => {
                                             animate={{ opacity: 1, y: 0, scale: 1 }}
                                             exit={{ opacity: 0, y: 8, scale: 0.96 }}
                                             transition={{ duration: 0.2 }}
-                                            className="absolute right-0 top-full mt-2 w-80 sm:w-96 overflow-hidden z-50"
-                                            style={{ borderRadius: 20, maxHeight: '70vh', background: 'rgba(240,240,245,0.88)', backdropFilter: 'blur(60px) saturate(180%)', WebkitBackdropFilter: 'blur(60px) saturate(180%)', border: '1px solid rgba(255,255,255,0.5)', boxShadow: '0 20px 60px rgba(0,0,0,0.18), 0 4px 20px rgba(0,0,0,0.1)' }}>
+                                            className="absolute right-0 top-full mt-2 w-80 sm:w-96 overflow-hidden z-50 glass-panel-strong"
+                                            style={{ maxHeight: '70vh' }}>
                                             <div className="p-4 flex items-center justify-between" style={{ borderBottom: '1px solid var(--glass-border)' }}>
                                                 <h3 className="text-sm font-bold" style={{ color: 'hsl(var(--foreground))' }}>Notifications</h3>
                                                 <span className="text-[10px] font-medium px-2 py-0.5 rounded-full"
@@ -593,12 +593,12 @@ const ProductForm = ({ product, setProduct, onSave, onClose, uploadingImages }) 
             className="fixed inset-0 bg-black/50 backdrop-blur-md flex items-start justify-center p-4 pt-8 sm:pt-12 z-50 overflow-y-auto">
             <motion.div initial={{ scale: 0.92, opacity: 0, y: 30 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.92, opacity: 0, y: 30 }}
                 transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-                className="w-full max-w-4xl mb-8"
-                style={{ background: 'rgba(245,245,250,0.92)', backdropFilter: 'blur(40px) saturate(180%)', WebkitBackdropFilter: 'blur(40px) saturate(180%)', borderRadius: 24, border: '1px solid rgba(255,255,255,0.5)', boxShadow: '0 24px 80px rgba(0,0,0,0.2), 0 8px 32px rgba(0,0,0,0.1)' }}>
-                <div className="max-h-[85vh] overflow-y-auto" style={{ borderRadius: 24 }}>
+                className="w-full max-w-4xl mb-8 glass-panel-strong"
+                style={{ boxShadow: '0 24px 80px rgba(0,0,0,0.2), 0 8px 32px rgba(0,0,0,0.1)' }}>
+                <div className="max-h-[85vh] overflow-y-auto" style={{ borderRadius: 28 }}>
 
                 {/* Header */}
-                <div className="sticky top-0 z-10 p-5 sm:p-6 flex justify-between items-center" style={{ borderBottom: '1px solid rgba(0,0,0,0.08)', background: 'rgba(245,245,250,0.95)', backdropFilter: 'blur(20px)', borderRadius: '24px 24px 0 0' }}>
+                <div className="sticky top-0 z-10 p-5 sm:p-6 flex justify-between items-center glass-panel-strong" style={{ borderBottom: '1px solid var(--glass-border)', borderRadius: '28px 28px 0 0' }}>
                     <div>
                         <h3 className="text-xl font-bold" style={{ color: 'hsl(var(--foreground))' }}>
                             {product._id ? "Edit Product" : "Add New Product"}

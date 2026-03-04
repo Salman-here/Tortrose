@@ -39,7 +39,18 @@ const userSchema = mongoose.Schema({
     spinSelectedProducts: [{ type: String }], // Product IDs selected for spin discount
     
     // Currency preference
-    currency: { type: String, enum: ['USD', 'PKR', 'EUR', 'GBP'], default: 'USD' }
+    currency: { type: String, enum: ['USD', 'PKR', 'EUR', 'GBP'], default: 'USD' },
+
+    // Notification preferences
+    notificationPrefs: {
+        stockAlerts: { type: Boolean, default: true },
+        lowStockAlerts: { type: Boolean, default: true },
+        orderAlerts: { type: Boolean, default: true },
+        paymentAlerts: { type: Boolean, default: true },
+        deliveryAlerts: { type: Boolean, default: true },
+        storeCreation: { type: Boolean, default: true },
+        storeVerification: { type: Boolean, default: true },
+    }
 })
 
 

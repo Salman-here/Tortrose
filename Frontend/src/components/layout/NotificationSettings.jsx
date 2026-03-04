@@ -1,13 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import {
-    Bell, BellOff, Package, ShoppingBag, Store, Shield,
-    Settings, Save, CheckCircle
+    Bell, Package, ShoppingBag, Store, Shield,
+    Settings, Save, CheckCircle, Loader2
 } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
 import { toast } from 'react-toastify';
-
-const STORAGE_KEY = 'notificationPrefs';
+import axios from 'axios';
 
 const defaultPrefs = {
     stockAlerts: true,
@@ -23,30 +22,64 @@ const NotificationSettings = () => {
     const location = useLocation();
     const isAdmin = location.pathname.includes('admin-dashboard');
 
-    const [prefs, setPrefs] = useState(() => {
-        try {
-            const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
-            return { ...defaultPrefs, ...saved };
-        } catch { return defaultPrefs; }
-    });
+    const [prefs, setPrefs] = useState(defaultPrefs);
     const [saved, setSaved] = useState(false);
+    const [loading, setLoading] = useState(true);
+    const [saving, setSaving] = useState(false);
+
+    // Fetch prefs from backend
+    useEffect(() => {
+        const fetchPrefs = async () => {
+            const token = localStorage.getItem('jwtToken');
+            try {
+                const res = await axios.get(`${import.meta.env.VITE_API_URL}api/analytics/notification-prefs`, {
+                    headers: { Authorization: `Bearer ${token}` }
+                });
+                setPrefs({ ...defaultPrefs, ...res.data.prefs });
+            } catch {
+                // Fallback to defaults
+            } finally {
+                setLoading(false);
+            }
+        };
+        fetchPrefs();
+    }, []);
 
     const handleToggle = (key) => {
         setPrefs(prev => ({ ...prev, [key]: !prev[key] }));
         setSaved(false);
     };
 
-    const handleSave = () => {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(prefs));
-        setSaved(true);
-        toast.success('Notification preferences saved');
-        setTimeout(() => setSaved(false), 2000);
+    const handleSave = async () => {
+        setSaving(true);
+        const token = localStorage.getItem('jwtToken');
+        try {
+            await axios.put(`${import.meta.env.VITE_API_URL}api/analytics/notification-prefs`,
+                { prefs },
+                { headers: { Authorization: `Bearer ${token}` } }
+            );
+            setSaved(true);
+            toast.success('Notification preferences saved');
+            setTimeout(() => setSaved(false), 2000);
+        } catch {
+            toast.error('Failed to save preferences');
+        } finally {
+            setSaving(false);
+        }
     };
 
-    const handleResetDefaults = () => {
+    const handleResetDefaults = async () => {
         setPrefs(defaultPrefs);
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(defaultPrefs));
-        toast.info('Reset to defaults');
+        const token = localStorage.getItem('jwtToken');
+        try {
+            await axios.put(`${import.meta.env.VITE_API_URL}api/analytics/notification-prefs`,
+                { prefs: defaultPrefs },
+                { headers: { Authorization: `Bearer ${token}` } }
+            );
+            toast.info('Reset to defaults');
+        } catch {
+            toast.error('Failed to reset');
+        }
     };
 
     const sections = [
@@ -76,6 +109,14 @@ const NotificationSettings = () => {
             ]
         }] : []),
     ];
+
+    if (loading) {
+        return (
+            <div className="flex items-center justify-center min-h-[60vh]">
+                <Loader2 size={32} className="animate-spin" style={{ color: 'hsl(var(--muted-foreground))' }} />
+            </div>
+        );
+    }
 
     return (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="p-4 sm:p-6 max-w-3xl mx-auto space-y-6">
@@ -148,10 +189,10 @@ const NotificationSettings = () => {
                     style={{ color: 'hsl(var(--muted-foreground))' }}>
                     Reset to defaults
                 </motion.button>
-                <motion.button whileTap={{ scale: 0.95 }} onClick={handleSave}
-                    className="px-6 py-2.5 rounded-xl text-sm font-semibold text-white flex items-center gap-2"
+                <motion.button whileTap={{ scale: 0.95 }} onClick={handleSave} disabled={saving}
+                    className="px-6 py-2.5 rounded-xl text-sm font-semibold text-white flex items-center gap-2 disabled:opacity-60"
                     style={{ background: 'linear-gradient(135deg, hsl(220, 70%, 55%), hsl(200, 80%, 50%))', boxShadow: '0 0 20px -4px hsl(220, 70%, 55%, 0.3)' }}>
-                    {saved ? <><CheckCircle size={16} /> Saved!</> : <><Save size={16} /> Save Preferences</>}
+                    {saving ? <><Loader2 size={16} className="animate-spin" /> Saving...</> : saved ? <><CheckCircle size={16} /> Saved!</> : <><Save size={16} /> Save Preferences</>}
                 </motion.button>
             </motion.div>
         </motion.div>
