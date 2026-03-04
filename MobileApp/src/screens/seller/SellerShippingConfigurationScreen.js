@@ -1,35 +1,20 @@
 /**
- * SellerShippingConfigurationScreen
- * Manage shipping methods and configuration
- * 
- * Requirements: 23.1, 23.2, 23.3, 23.4, 23.5
+ * SellerShippingConfigurationScreen — Liquid Glass
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  StyleSheet,
-  ScrollView,
-  Alert,
-  SafeAreaView,
-  RefreshControl,
+  View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView,
+  Alert, RefreshControl, ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import api from '../../config/api';
 import Loader from '../../components/common/Loader';
 import EmptyState from '../../components/common/EmptyState';
+import GlassBackground from '../../components/common/GlassBackground';
+import GlassPanel from '../../components/common/GlassPanel';
 import {
-  colors,
-  spacing,
-  fontSize,
-  borderRadius,
-  shadows,
-  fontWeight,
-  typography,
-  buttonStyles,
+  colors, spacing, fontSize, borderRadius, fontWeight, typography, glass,
 } from '../../styles/theme';
 
 export default function SellerShippingConfigurationScreen({ navigation }) {
@@ -39,473 +24,156 @@ export default function SellerShippingConfigurationScreen({ navigation }) {
   const [shippingMethods, setShippingMethods] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [editingMethod, setEditingMethod] = useState(null);
-  const [formData, setFormData] = useState({
-    name: '',
-    price: '',
-    estimatedDays: '',
-  });
+  const [formData, setFormData] = useState({ name: '', price: '', estimatedDays: '' });
   const [errors, setErrors] = useState({});
 
-  useEffect(() => {
-    fetchConfig();
-  }, []);
+  useEffect(() => { fetchConfig(); }, []);
 
   const fetchConfig = async () => {
-    try {
-      const response = await api.get('/api/shipping/methods');
-      setShippingMethods(response.data?.methods || []);
-    } catch (error) {
-      console.error('Error fetching config:', error);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
+    try { const res = await api.get('/api/shipping/methods'); setShippingMethods(res.data?.methods || []); }
+    catch (e) { console.error('Error:', e); }
+    finally { setLoading(false); setRefreshing(false); }
   };
 
-  const onRefresh = useCallback(() => {
-    setRefreshing(true);
-    fetchConfig();
-  }, []);
-
-  const resetForm = useCallback(() => {
-    setFormData({ name: '', price: '', estimatedDays: '' });
-    setErrors({});
-    setEditingMethod(null);
-    setShowForm(false);
-  }, []);
-
-  const handleEdit = useCallback((method) => {
-    setEditingMethod(method);
-    setFormData({
-      name: method.name || '',
-      price: method.price?.toString() || '',
-      estimatedDays: method.estimatedDays?.toString() || '',
-    });
-    setShowForm(true);
-  }, []);
-
+  const onRefresh = useCallback(() => { setRefreshing(true); fetchConfig(); }, []);
+  const resetForm = useCallback(() => { setFormData({ name: '', price: '', estimatedDays: '' }); setErrors({}); setEditingMethod(null); setShowForm(false); }, []);
+  const handleEdit = useCallback((method) => { setEditingMethod(method); setFormData({ name: method.name || '', price: method.price?.toString() || '', estimatedDays: method.estimatedDays?.toString() || '' }); setShowForm(true); }, []);
+  
   const handleDelete = useCallback((method) => {
-    Alert.alert(
-      'Delete Shipping Method',
-      `Are you sure you want to delete "${method.name}"?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await api.delete(`/api/shipping/methods/${method._id}`);
-              setShippingMethods(prev => prev.filter(m => m._id !== method._id));
-              Alert.alert('Success', 'Shipping method deleted');
-            } catch (error) {
-              Alert.alert('Error', 'Failed to delete shipping method');
-            }
-          },
-        },
-      ]
-    );
+    Alert.alert('Delete', `Delete "${method.name}"?`, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: async () => {
+        try { await api.delete(`/api/shipping/methods/${method._id}`); setShippingMethods(prev => prev.filter(m => m._id !== method._id)); }
+        catch (e) { Alert.alert('Error', 'Failed to delete'); }
+      }},
+    ]);
   }, []);
-
-  const validateForm = () => {
-    const newErrors = {};
-    if (!formData.name.trim()) {
-      newErrors.name = 'Method name is required';
-    }
-    if (!formData.price || isNaN(parseFloat(formData.price)) || parseFloat(formData.price) < 0) {
-      newErrors.price = 'Valid price is required';
-    }
-    if (!formData.estimatedDays || isNaN(parseInt(formData.estimatedDays)) || parseInt(formData.estimatedDays) < 1) {
-      newErrors.estimatedDays = 'Valid delivery days is required';
-    }
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
-  };
 
   const saveMethod = async () => {
-    if (!validateForm()) return;
+    const newErrors = {};
+    if (!formData.name.trim()) newErrors.name = 'Required';
+    if (!formData.price || isNaN(parseFloat(formData.price))) newErrors.price = 'Required';
+    if (!formData.estimatedDays || isNaN(parseInt(formData.estimatedDays))) newErrors.estimatedDays = 'Required';
+    setErrors(newErrors);
+    if (Object.keys(newErrors).length > 0) return;
 
     setSaving(true);
     try {
-      const methodData = {
-        name: formData.name.trim(),
-        price: parseFloat(formData.price),
-        estimatedDays: parseInt(formData.estimatedDays),
-      };
-
+      const data = { name: formData.name.trim(), price: parseFloat(formData.price), estimatedDays: parseInt(formData.estimatedDays) };
       if (editingMethod) {
-        await api.put(`/api/shipping/methods/${editingMethod._id}`, methodData);
-        setShippingMethods(prev =>
-          prev.map(m => m._id === editingMethod._id ? { ...m, ...methodData } : m)
-        );
-        Alert.alert('Success', 'Shipping method updated');
+        await api.put(`/api/shipping/methods/${editingMethod._id}`, data);
+        setShippingMethods(prev => prev.map(m => m._id === editingMethod._id ? { ...m, ...data } : m));
       } else {
-        const response = await api.post('/api/shipping/methods', methodData);
-        setShippingMethods(prev => [...prev, response.data.method || methodData]);
-        Alert.alert('Success', 'Shipping method added');
+        const res = await api.post('/api/shipping/methods', data);
+        setShippingMethods(prev => [...prev, res.data.method || data]);
       }
       resetForm();
-    } catch (error) {
-      Alert.alert('Error', error.response?.data?.message || 'Failed to save shipping method');
-    } finally {
-      setSaving(false);
-    }
+    } catch (e) { Alert.alert('Error', e.response?.data?.message || 'Failed to save'); }
+    finally { setSaving(false); }
   };
 
-  if (loading) {
-    return (
-      <SafeAreaView style={styles.container}>
-        <Loader fullScreen message="Loading shipping methods..." />
-      </SafeAreaView>
-    );
-  }
+  if (loading) return <GlassBackground><Loader fullScreen message="Loading shipping methods..." /></GlassBackground>;
 
   return (
-    <SafeAreaView style={styles.container}>
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={onRefresh}
-            colors={[colors.primary]}
-            tintColor={colors.primary}
-          />
-        }
-      >
-        {/* Header */}
-        <View style={styles.header}>
-          <View style={styles.headerIcon}>
-            <Ionicons name="car-outline" size={28} color={colors.primary} />
-          </View>
+    <GlassBackground>
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />}>
+        
+        <GlassPanel variant="floating" style={styles.header}>
+          <View style={styles.headerIcon}><Ionicons name="car-outline" size={28} color={colors.primary} /></View>
           <Text style={styles.headerTitle}>Shipping Configuration</Text>
           <Text style={styles.headerSubtitle}>Manage your shipping methods</Text>
-        </View>
+        </GlassPanel>
 
-        {/* Shipping Methods List */}
-        <View style={styles.section}>
+        <View style={styles.content}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Shipping Methods</Text>
             {!showForm && (
-              <TouchableOpacity
-                style={styles.addButton}
-                onPress={() => setShowForm(true)}
-                activeOpacity={0.8}
-              >
-                <Ionicons name="add" size={20} color={colors.white} />
-                <Text style={styles.addButtonText}>Add</Text>
+              <TouchableOpacity style={styles.addButton} onPress={() => setShowForm(true)} activeOpacity={0.8}>
+                <Ionicons name="add" size={20} color="white" /><Text style={styles.addButtonText}>Add</Text>
               </TouchableOpacity>
             )}
           </View>
 
           {shippingMethods.length === 0 && !showForm ? (
-            <EmptyState
-              icon="car-outline"
-              title="No shipping methods"
-              subtitle="Add your first shipping method to start"
-              actionLabel="Add Shipping Method"
-              onAction={() => setShowForm(true)}
-              compact
-            />
+            <EmptyState icon="car-outline" title="No shipping methods" subtitle="Add your first shipping method" actionLabel="Add Method" onAction={() => setShowForm(true)} compact />
           ) : (
-            <View style={styles.methodsList}>
-              {shippingMethods.map((method, index) => (
-                <View key={method._id || index} style={styles.methodCard}>
-                  <View style={styles.methodIcon}>
-                    <Ionicons name="cube-outline" size={24} color={colors.primary} />
-                  </View>
-                  <View style={styles.methodInfo}>
-                    <Text style={styles.methodName}>{method.name}</Text>
-                    <View style={styles.methodDetails}>
-                      <Text style={styles.methodPrice}>${method.price?.toFixed(2)}</Text>
-                      <Text style={styles.methodDays}>
-                        {method.estimatedDays} {method.estimatedDays === 1 ? 'day' : 'days'}
-                      </Text>
-                    </View>
-                  </View>
-                  <View style={styles.methodActions}>
-                    <TouchableOpacity
-                      style={styles.actionButton}
-                      onPress={() => handleEdit(method)}
-                      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                    >
-                      <Ionicons name="create-outline" size={20} color={colors.primary} />
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={styles.actionButton}
-                      onPress={() => handleDelete(method)}
-                      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                    >
-                      <Ionicons name="trash-outline" size={20} color={colors.error} />
-                    </TouchableOpacity>
+            shippingMethods.map((method, index) => (
+              <GlassPanel key={method._id || index} variant="card" style={styles.methodCard}>
+                <View style={styles.methodIcon}><Ionicons name="cube-outline" size={24} color={colors.primary} /></View>
+                <View style={styles.methodInfo}>
+                  <Text style={styles.methodName}>{method.name}</Text>
+                  <View style={{ flexDirection: 'row', gap: spacing.md }}>
+                    <Text style={styles.methodPrice}>${method.price?.toFixed(2)}</Text>
+                    <Text style={styles.methodDays}>{method.estimatedDays} {method.estimatedDays === 1 ? 'day' : 'days'}</Text>
                   </View>
                 </View>
-              ))}
-            </View>
+                <TouchableOpacity style={styles.actionBtn} onPress={() => handleEdit(method)}><Ionicons name="create-outline" size={20} color={colors.primary} /></TouchableOpacity>
+                <TouchableOpacity style={styles.actionBtn} onPress={() => handleDelete(method)}><Ionicons name="trash-outline" size={20} color={colors.error} /></TouchableOpacity>
+              </GlassPanel>
+            ))
+          )}
+
+          {showForm && (
+            <GlassPanel variant="card" style={styles.formSection}>
+              <View style={styles.sectionHeader}>
+                <Text style={styles.sectionTitle}>{editingMethod ? 'Edit Method' : 'Add Method'}</Text>
+                <TouchableOpacity onPress={resetForm}><Ionicons name="close" size={24} color={colors.textSecondary} /></TouchableOpacity>
+              </View>
+              <Text style={styles.label}>Name <Text style={{ color: colors.error }}>*</Text></Text>
+              <TextInput style={[styles.input, errors.name && styles.inputError]} value={formData.name}
+                onChangeText={(v) => { setFormData(p => ({ ...p, name: v })); if (errors.name) setErrors(p => ({ ...p, name: null })); }}
+                placeholder="e.g., Standard Shipping" placeholderTextColor={colors.textSecondary} />
+              <View style={{ flexDirection: 'row', gap: spacing.md, marginTop: spacing.md }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.label}>Price ($) *</Text>
+                  <TextInput style={[styles.input, errors.price && styles.inputError]} value={formData.price}
+                    onChangeText={(v) => { setFormData(p => ({ ...p, price: v })); }} placeholder="0.00" placeholderTextColor={colors.textSecondary} keyboardType="decimal-pad" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.label}>Est. Days *</Text>
+                  <TextInput style={[styles.input, errors.estimatedDays && styles.inputError]} value={formData.estimatedDays}
+                    onChangeText={(v) => { setFormData(p => ({ ...p, estimatedDays: v })); }} placeholder="3" placeholderTextColor={colors.textSecondary} keyboardType="number-pad" />
+                </View>
+              </View>
+              <TouchableOpacity style={[styles.submitButton, saving && { opacity: 0.6 }]} onPress={saveMethod} disabled={saving} activeOpacity={0.8}>
+                {saving ? <ActivityIndicator color="white" /> : (
+                  <><Ionicons name={editingMethod ? 'checkmark-circle' : 'add-circle'} size={22} color="white" />
+                  <Text style={styles.submitButtonText}>{editingMethod ? 'Update' : 'Add'}</Text></>
+                )}
+              </TouchableOpacity>
+            </GlassPanel>
           )}
         </View>
 
-        {/* Add/Edit Form */}
-        {showForm && (
-          <View style={styles.section}>
-            <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>
-                {editingMethod ? 'Edit Shipping Method' : 'Add Shipping Method'}
-              </Text>
-              <TouchableOpacity onPress={resetForm}>
-                <Ionicons name="close" size={24} color={colors.textSecondary} />
-              </TouchableOpacity>
-            </View>
-
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>
-                Method Name <Text style={styles.required}>*</Text>
-              </Text>
-              <TextInput
-                style={[styles.input, errors.name && styles.inputError]}
-                value={formData.name}
-                onChangeText={(value) => {
-                  setFormData(prev => ({ ...prev, name: value }));
-                  if (errors.name) setErrors(prev => ({ ...prev, name: null }));
-                }}
-                placeholder="e.g., Standard Shipping"
-                placeholderTextColor={colors.grayLight}
-              />
-              {errors.name && <Text style={styles.errorText}>{errors.name}</Text>}
-            </View>
-
-            <View style={styles.row}>
-              <View style={styles.halfInput}>
-                <Text style={styles.label}>
-                  Price ($) <Text style={styles.required}>*</Text>
-                </Text>
-                <TextInput
-                  style={[styles.input, errors.price && styles.inputError]}
-                  value={formData.price}
-                  onChangeText={(value) => {
-                    setFormData(prev => ({ ...prev, price: value }));
-                    if (errors.price) setErrors(prev => ({ ...prev, price: null }));
-                  }}
-                  placeholder="0.00"
-                  placeholderTextColor={colors.grayLight}
-                  keyboardType="decimal-pad"
-                />
-                {errors.price && <Text style={styles.errorText}>{errors.price}</Text>}
-              </View>
-
-              <View style={styles.halfInput}>
-                <Text style={styles.label}>
-                  Est. Days <Text style={styles.required}>*</Text>
-                </Text>
-                <TextInput
-                  style={[styles.input, errors.estimatedDays && styles.inputError]}
-                  value={formData.estimatedDays}
-                  onChangeText={(value) => {
-                    setFormData(prev => ({ ...prev, estimatedDays: value }));
-                    if (errors.estimatedDays) setErrors(prev => ({ ...prev, estimatedDays: null }));
-                  }}
-                  placeholder="3"
-                  placeholderTextColor={colors.grayLight}
-                  keyboardType="number-pad"
-                />
-                {errors.estimatedDays && <Text style={styles.errorText}>{errors.estimatedDays}</Text>}
-              </View>
-            </View>
-
-            <TouchableOpacity
-              style={[styles.submitButton, saving && styles.submitButtonDisabled]}
-              onPress={saveMethod}
-              disabled={saving}
-              activeOpacity={0.8}
-            >
-              {saving ? (
-                <Loader size="small" color={colors.white} />
-              ) : (
-                <>
-                  <Ionicons
-                    name={editingMethod ? 'checkmark-circle' : 'add-circle'}
-                    size={22}
-                    color={colors.white}
-                  />
-                  <Text style={styles.submitButtonText}>
-                    {editingMethod ? 'Update Method' : 'Add Method'}
-                  </Text>
-                </>
-              )}
-            </TouchableOpacity>
-          </View>
-        )}
-
-        {/* Bottom Spacing */}
-        <View style={styles.bottomSpacing} />
+        <View style={{ height: 100 }} />
       </ScrollView>
-    </SafeAreaView>
+    </GlassBackground>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.background,
-  },
-  // Header
-  header: {
-    backgroundColor: colors.white,
-    padding: spacing.xl,
-    alignItems: 'center',
-    borderBottomWidth: 1,
-    borderBottomColor: colors.light,
-  },
-  headerIcon: {
-    width: 60,
-    height: 60,
-    borderRadius: borderRadius.full,
-    backgroundColor: colors.primaryLighter,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: spacing.md,
-  },
-  headerTitle: {
-    ...typography.h2,
-    marginBottom: spacing.xs,
-  },
-  headerSubtitle: {
-    ...typography.body,
-    color: colors.textSecondary,
-  },
-  // Sections
-  section: {
-    backgroundColor: colors.white,
-    marginTop: spacing.md,
-    padding: spacing.lg,
-  },
-  sectionHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: spacing.md,
-  },
-  sectionTitle: {
-    ...typography.h4,
-  },
-  addButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.primary,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    borderRadius: borderRadius.lg,
-    gap: spacing.xs,
-  },
-  addButtonText: {
-    ...typography.bodySemibold,
-    color: colors.white,
-    fontSize: fontSize.sm,
-  },
-  // Methods List
-  methodsList: {
-    gap: spacing.sm,
-  },
-  methodCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.lighter,
-    borderRadius: borderRadius.lg,
-    padding: spacing.md,
-  },
-  methodIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: borderRadius.lg,
-    backgroundColor: colors.primaryLighter,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: spacing.md,
-  },
-  methodInfo: {
-    flex: 1,
-  },
-  methodName: {
-    ...typography.bodySemibold,
-    marginBottom: spacing.xs,
-  },
-  methodDetails: {
-    flexDirection: 'row',
-    gap: spacing.md,
-  },
-  methodPrice: {
-    ...typography.bodySmall,
-    color: colors.primary,
-    fontWeight: fontWeight.semibold,
-  },
-  methodDays: {
-    ...typography.bodySmall,
-    color: colors.textSecondary,
-  },
-  methodActions: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-  },
-  actionButton: {
-    width: 36,
-    height: 36,
-    borderRadius: borderRadius.md,
-    backgroundColor: colors.white,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  // Form
-  inputGroup: {
-    marginBottom: spacing.lg,
-  },
-  label: {
-    ...typography.bodySemibold,
-    marginBottom: spacing.sm,
-  },
-  required: {
-    color: colors.error,
-  },
-  input: {
-    backgroundColor: colors.lighter,
-    borderRadius: borderRadius.lg,
-    padding: spacing.md,
-    fontSize: fontSize.md,
-    color: colors.text,
-    borderWidth: 2,
-    borderColor: colors.lighter,
-  },
-  inputError: {
-    borderColor: colors.error,
-  },
-  errorText: {
-    ...typography.caption,
-    color: colors.error,
-    marginTop: spacing.xs,
-  },
-  row: {
-    flexDirection: 'row',
-    gap: spacing.md,
-  },
-  halfInput: {
-    flex: 1,
-  },
-  // Submit
-  submitButton: {
-    ...buttonStyles.primary,
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: spacing.sm,
-    marginTop: spacing.md,
-  },
-  submitButtonDisabled: {
-    opacity: 0.7,
-  },
-  submitButtonText: {
-    ...buttonStyles.primaryText,
-  },
-  // Bottom
-  bottomSpacing: {
-    height: spacing.xxl,
-  },
+  scroll: { paddingBottom: spacing.xxl },
+  header: { alignItems: 'center', margin: spacing.lg, padding: spacing.xl },
+  headerIcon: { width: 60, height: 60, borderRadius: 30, backgroundColor: 'rgba(99,102,241,0.12)', justifyContent: 'center', alignItems: 'center', marginBottom: spacing.md },
+  headerTitle: { ...typography.h2, color: colors.text, marginBottom: spacing.xs },
+  headerSubtitle: { ...typography.body, color: colors.textSecondary },
+  content: { paddingHorizontal: spacing.lg },
+  sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.md },
+  sectionTitle: { ...typography.h4, color: colors.text },
+  addButton: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.primary, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: borderRadius.lg, gap: spacing.xs },
+  addButtonText: { ...typography.bodySemibold, color: 'white', fontSize: fontSize.sm },
+  methodCard: { flexDirection: 'row', alignItems: 'center', padding: spacing.md, marginBottom: spacing.sm },
+  methodIcon: { width: 44, height: 44, borderRadius: borderRadius.lg, backgroundColor: 'rgba(99,102,241,0.12)', justifyContent: 'center', alignItems: 'center', marginRight: spacing.md },
+  methodInfo: { flex: 1 },
+  methodName: { ...typography.bodySemibold, color: colors.text, marginBottom: spacing.xs },
+  methodPrice: { ...typography.bodySmall, color: colors.primary, fontWeight: fontWeight.semibold },
+  methodDays: { ...typography.bodySmall, color: colors.textSecondary },
+  actionBtn: { width: 36, height: 36, borderRadius: borderRadius.md, backgroundColor: 'rgba(255,255,255,0.08)', justifyContent: 'center', alignItems: 'center', marginLeft: spacing.xs },
+  formSection: { padding: spacing.lg, marginTop: spacing.md },
+  label: { ...typography.bodySemibold, color: colors.text, marginBottom: spacing.sm },
+  input: { backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: borderRadius.lg, padding: spacing.md, fontSize: fontSize.md, color: colors.text, borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)' },
+  inputError: { borderColor: colors.error },
+  submitButton: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: spacing.sm, backgroundColor: colors.primary, borderRadius: borderRadius.xl, paddingVertical: spacing.lg, marginTop: spacing.lg },
+  submitButtonText: { fontSize: fontSize.md, fontWeight: fontWeight.bold, color: 'white' },
 });
