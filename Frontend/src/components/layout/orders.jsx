@@ -159,7 +159,7 @@ const OrderManagement = () => {
                                                 <td className="px-5 py-4">
                                                     <span className="px-2.5 py-1 text-[10px] rounded-full flex items-center gap-1 w-fit font-semibold" style={{ background: ss.bg, color: ss.color }}>
                                                         {getStatusIcon(order.orderStatus)}
-                                                        {order.orderStatus.charAt(0).toUpperCase() + order.orderStatus.slice(1)}
+                                                        {(order.orderStatus || 'unknown').charAt(0).toUpperCase() + (order.orderStatus || 'unknown').slice(1)}
                                                     </span>
                                                 </td>
                                                 <td className="px-5 py-4 text-sm font-bold" style={{ color: 'hsl(var(--foreground))', letterSpacing: '-0.03em' }}>
@@ -202,7 +202,7 @@ const OrderManagement = () => {
                                                     </div>
                                                     <span className="px-2 py-0.5 text-[10px] rounded-full flex items-center gap-1 font-semibold shrink-0" style={{ background: ss.bg, color: ss.color }}>
                                                         {getStatusIcon(order.orderStatus)}
-                                                        {order.orderStatus.charAt(0).toUpperCase() + order.orderStatus.slice(1)}
+                                                        {(order.orderStatus || 'unknown').charAt(0).toUpperCase() + (order.orderStatus || 'unknown').slice(1)}
                                                     </span>
                                                 </div>
                                                 <div className="flex justify-between items-center">
