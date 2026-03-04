@@ -123,17 +123,8 @@ export const GlobalProvider = ({ children }) => {
                 return;
             }
             
-            // SPIN WHEEL DISABLED - spin product limit check removed
-            // const spinResultStr = localStorage.getItem('spinResult');
-            // const spinResult = spinResultStr ? JSON.parse(spinResultStr) : null;
-            // const spinSelectedProducts = JSON.parse(localStorage.getItem('spinSelectedProducts') || '[]');
-            // if (spinResult && !spinResult.hasCheckedOut && spinSelectedProducts.length >= 3 && !spinSelectedProducts.includes(id)) {
-            //     toast.error('You can only select 3 products with your spin discount!');
-            //     setIsCartLoading(false);
-            //     setLoadingProductId(null);
-            //     return;
-            // }
 
+            const token = localStorage.getItem('jwtToken')
             const token = localStorage.getItem('jwtToken')
             const res = await axios.post(`${import.meta.env.VITE_API_URL}api/cart/add/${id}`, {
             },
@@ -145,12 +136,8 @@ export const GlobalProvider = ({ children }) => {
             console.log(res.data.msg);
             toast.success(res.data.msg)
             
-            // SPIN WHEEL DISABLED - spin selected products tracking removed
-            // if (spinResult && !spinResult.hasCheckedOut && !spinSelectedProducts.includes(id)) {
-            //     spinSelectedProducts.push(id);
-            //     localStorage.setItem('spinSelectedProducts', JSON.stringify(spinSelectedProducts));
-            // }
 
+            // Update cart items with fresh data from backend
             // Update cart items with fresh data from backend
             setCartItems((prev) => ({ ...prev, cart: res.data.cart, totalCartPrice: res.data.totalCartPrice }))
 
@@ -268,11 +255,8 @@ export const GlobalProvider = ({ children }) => {
                 }
             )
             
-            // SPIN WHEEL DISABLED - spin selected products removal removed
-            // const spinSelectedProducts = JSON.parse(localStorage.getItem('spinSelectedProducts') || '[]');
-            // const updatedSpinProducts = spinSelectedProducts.filter(productId => productId !== id);
-            // localStorage.setItem('spinSelectedProducts', JSON.stringify(updatedSpinProducts));
 
+            setCartItems((prev) => ({ ...prev, cart: res.data.cart, totalCartPrice: res.data.totalCartPrice }))
             setCartItems((prev) => ({ ...prev, cart: res.data.cart, totalCartPrice: res.data.totalCartPrice }))
             console.log(res.data.msg);
             toast.info(res.data?.msg || 'Item removed from your cart')

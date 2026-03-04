@@ -133,15 +133,6 @@ const GuardedOrderDetailManagement = createRoleGuard(OrderDetailManagementScreen
 const GuardedSellerNotifications = createRoleGuard(SellerNotificationsScreen, ['seller', 'admin']);
 const GuardedSellerHome = createRoleGuard(SellerHomeScreen, ['seller', 'admin']);
 const GuardedNotificationSettings = createRoleGuard(NotificationSettingsScreen, ['seller', 'admin']);
-const GuardedSellerDashboard = createRoleGuard(SellerDashboardScreen, ['seller', 'admin']);
-const GuardedSellerAnalytics = createRoleGuard(SellerAnalyticsScreen, ['seller', 'admin']);
-const GuardedSellerStoreOverview = createRoleGuard(StoreOverviewScreen, ['seller', 'admin']);
-const GuardedSellerProductManagement = createRoleGuard(ProductManagementScreen, ['seller', 'admin']);
-const GuardedSellerOrderManagement = createRoleGuard(OrderManagementScreen, ['seller', 'admin']);
-const GuardedSellerStoreSettings = createRoleGuard(SellerStoreSettingsScreen, ['seller', 'admin']);
-const GuardedSellerShippingConfiguration = createRoleGuard(SellerShippingConfigurationScreen, ['seller', 'admin']);
-const GuardedProductForm = createRoleGuard(ProductFormScreen, ['seller', 'admin']);
-const GuardedOrderDetailManagement = createRoleGuard(OrderDetailManagementScreen, ['seller', 'admin']);
 
 // Helper function to calculate cart item count - exported for testing
 export const calculateCartItemCount = (cartItems) => {

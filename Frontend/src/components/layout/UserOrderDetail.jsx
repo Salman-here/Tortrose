@@ -87,11 +87,6 @@ const OrderDetail = () => {
                         <span className="px-2.5 py-1 text-xs rounded-full font-medium" style={order?.isPaid ? { background: 'rgba(16, 185, 129, 0.12)', color: 'hsl(150, 60%, 40%)' } : { background: 'rgba(239, 68, 68, 0.12)', color: 'hsl(0, 72%, 55%)' }}>
                             {order?.isPaid ? "Paid" : "Unpaid"}
                         </span>
-                        {order?.spinDiscount?.applied && (
-                            <span className="px-2.5 py-1 text-xs rounded-full font-semibold text-white flex items-center gap-1" style={{ background: 'linear-gradient(135deg, hsl(220, 70%, 55%), hsl(200, 80%, 50%))' }}>
-                                Spin Discount: {order.spinDiscount.label}
-                            </span>
-                        )}
                     </div>
                 </div>
             </div>
@@ -233,20 +228,15 @@ const OrderDetail = () => {
                                     <div className="flex-1 min-w-0">
                                         <h3 className="text-sm sm:text-base font-semibold break-words" style={{ color: 'hsl(var(--foreground))' }}>{item.name}</h3>
                                         <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>Quantity: {item.quantity}</p>
-                                        {item.hasSpinDiscount && (
-                                            <span className="inline-flex items-center gap-1 mt-1 px-2 py-0.5 text-[10px] font-semibold rounded-full" style={{ background: 'rgba(99, 102, 241, 0.12)', color: 'hsl(220, 70%, 55%)', border: '1px solid rgba(99, 102, 241, 0.2)' }}>
-                                                Spin Discount
-                                            </span>
-                                        )}
                                         <div className="mt-2 sm:hidden">
                                             <p className="text-sm font-semibold" style={{ color: 'hsl(var(--foreground))' }}>{formatPrice(item.price)}</p>
-                                            {item.hasSpinDiscount && item.originalPrice && <p className="text-xs line-through" style={{ color: 'hsl(var(--muted-foreground))' }}>{formatPrice(item.originalPrice)}</p>}
+                                            <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>Subtotal: {formatPrice(item.price * item.quantity)}</p>
                                             <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>Subtotal: {formatPrice(item.price * item.quantity)}</p>
                                         </div>
                                     </div>
                                     <div className="text-right hidden sm:block shrink-0">
                                         <p className="text-sm font-semibold" style={{ color: 'hsl(var(--foreground))' }}>{formatPrice(item.price)}</p>
-                                        {item.hasSpinDiscount && item.originalPrice && <p className="text-xs line-through" style={{ color: 'hsl(var(--muted-foreground))' }}>{formatPrice(item.originalPrice)}</p>}
+                                            <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>Subtotal: {formatPrice(item.price * item.quantity)}</p>
                                         <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>Subtotal: {formatPrice(item.price * item.quantity)}</p>
                                     </div>
                                 </motion.div>

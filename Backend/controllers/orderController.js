@@ -41,7 +41,7 @@ exports.placeOrder = async (req, res) => {
         const orderItems = await Product.find({ _id: { $in: productIds } })
         console.log('db product items:::', orderItems);
 
-        // Use prices from frontend (includes spin discounts)
+        // Calculate subtotal from frontend prices
         const subtotal = order.orderItems.reduce((acc, item) => {
             return acc + item.price * item.quantity
         }, 0)
@@ -78,14 +78,11 @@ exports.placeOrder = async (req, res) => {
             user: userId,
             orderId: `ORD-${Date.now()}`,
 
-            // Use order items from frontend with spin discount prices
             orderItems: order.orderItems.map((item) => ({
                 productId: item.id,
                 name: item.name,
                 image: item.image,
-                price: item.price, // Already discounted price from frontend
-                originalPrice: item.originalPrice, // Original price before spin discount
-                hasSpinDiscount: item.hasSpinDiscount || false, // Spin discount flag
+                price: item.price,
                 quantity: item.quantity,
             })),
 
@@ -118,15 +115,7 @@ exports.placeOrder = async (req, res) => {
             paymentMethod: order.paymentMethod,
         });
         
-        // Add spin discount info if provided
-        if (order.spinDiscount && order.spinDiscount.applied) {
-            newOrder.spinDiscount = {
-                applied: true,
-                type: order.spinDiscount.type,
-                value: order.spinDiscount.value,
-                label: order.spinDiscount.label
-            };
-        }
+        
         
         // Add seller shipping info if provided (for multi-seller orders)
         if (order.sellerShipping && Array.isArray(order.sellerShipping)) {

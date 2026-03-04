@@ -13,8 +13,6 @@ const orderSchema = mongoose.Schema(
                 image: { type: String },
                 price: { type: Number, required: true },
                 quantity: { type: Number, required: true },
-                originalPrice: { type: Number }, // Original price before spin discount
-                hasSpinDiscount: { type: Boolean, default: false }, // Flag for spin discount
                 // _id: false 
             }
         ],
@@ -53,13 +51,6 @@ const orderSchema = mongoose.Schema(
             shippingCost: { type: Number, required: true },
             tax: { type: Number, default: 0.00 },
             totalAmount: { type: Number, required: true }
-        },
-
-        spinDiscount: {
-            applied: { type: Boolean, default: false },
-            type: { type: String, enum: ['free', 'fixed', 'percentage'] },
-            value: { type: Number },
-            label: { type: String } // e.g., "100% OFF", "$0.99", "60% OFF"
         },
 
         orderStatus: {

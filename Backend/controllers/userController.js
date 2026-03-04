@@ -145,52 +145,6 @@ exports.updateUser = async (req, res) => {
     }
 }
 
-// SPIN WHEEL DISABLED
-// // Save spin result to user account
-// exports.saveSpinResult = async (req, res) => {
-//     const { id: _id } = req.user
-//     const { spinResult, spinTimestamp, spinSelectedProducts } = req.body
-//     try {
-//         const user = await User.findById(_id)
-//         if (!user) return res.status(404).json({ msg: 'User not found!' })
-//         user.spinResult = spinResult
-//         user.spinTimestamp = spinTimestamp
-//         user.spinSelectedProducts = spinSelectedProducts || []
-//         await user.save()
-//         res.status(200).json({ msg: 'Spin result saved successfully', spinData: { spinResult: user.spinResult, spinTimestamp: user.spinTimestamp, spinSelectedProducts: user.spinSelectedProducts } })
-//     } catch (error) { console.error(error); res.status(500).json({ msg: 'Server error while saving spin result.' }) }
-// }
-// // Get spin result from user account
-// exports.getSpinResult = async (req, res) => {
-//     const { id: _id } = req.user
-//     try {
-//         const user = await User.findById(_id).select('spinResult spinTimestamp spinSelectedProducts')
-//         if (!user) return res.status(404).json({ msg: 'User not found!' })
-//         res.status(200).json({ msg: 'Spin data fetched successfully', spinData: { spinResult: user.spinResult, spinTimestamp: user.spinTimestamp, spinSelectedProducts: user.spinSelectedProducts } })
-//     } catch (error) { console.error(error); res.status(500).json({ msg: 'Server error while fetching spin result.' }) }
-// }
-// // Update spin selected products
-// exports.updateSpinProducts = async (req, res) => {
-//     const { id: _id } = req.user
-//     const { spinSelectedProducts } = req.body
-//     try {
-//         const user = await User.findById(_id)
-//         if (!user) return res.status(404).json({ msg: 'User not found!' })
-//         user.spinSelectedProducts = spinSelectedProducts
-//         await user.save()
-//         res.status(200).json({ msg: 'Spin products updated successfully', spinSelectedProducts: user.spinSelectedProducts })
-//     } catch (error) { console.error(error); res.status(500).json({ msg: 'Server error while updating spin products.' }) }
-// }
-// // Mark spin as checked out
-// exports.markSpinCheckedOut = async (req, res) => {
-//     const { id: _id } = req.user
-//     try {
-//         const user = await User.findById(_id)
-//         if (!user) return res.status(404).json({ msg: 'User not found!' })
-//         if (user.spinResult) { user.spinResult.hasCheckedOut = true; await user.save() }
-//         res.status(200).json({ msg: 'Spin marked as checked out', spinResult: user.spinResult })
-//     } catch (error) { console.error(error); res.status(500).json({ msg: 'Server error while marking spin as checked out.' }) }
-// }
 
 // Become a seller - update user role and save seller information
 exports.becomeSeller = async (req, res) => {

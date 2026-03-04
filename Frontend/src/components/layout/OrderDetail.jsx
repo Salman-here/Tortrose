@@ -73,12 +73,6 @@ const OrderDetail = () => {
                         style={order?.isPaid ? { background: 'rgba(16, 185, 129, 0.12)', color: 'hsl(150, 60%, 40%)' } : { background: 'rgba(239, 68, 68, 0.12)', color: 'hsl(0, 72%, 55%)' }}>
                         {order?.isPaid ? 'Paid' : 'Unpaid'}
                     </span>
-                    {order?.spinDiscount?.applied && (
-                        <span className="px-2 sm:px-3 py-1 text-xs sm:text-sm rounded-full text-white font-semibold flex items-center gap-1"
-                            style={{ background: 'linear-gradient(135deg, hsl(220, 70%, 55%), hsl(200, 80%, 50%))' }}>
-                            <span className="hidden xs:inline">Spin Discount:</span> {order.spinDiscount.label}
-                        </span>
-                    )}
                 </div>
             </div>
 
@@ -121,12 +115,12 @@ const OrderDetail = () => {
                                         <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>Quantity: {item.quantity}</p>
                                         <div className="mt-2 sm:hidden">
                                             <p className="text-sm font-semibold" style={{ color: 'hsl(var(--foreground))' }}>{formatPrice(item.price)}</p>
-                                            {item.hasSpinDiscount && item.originalPrice && <p className="text-xs line-through" style={{ color: 'hsl(var(--muted-foreground))' }}>{formatPrice(item.originalPrice)}</p>}
+                                        </div>
                                         </div>
                                     </div>
                                     <div className="text-right hidden sm:block flex-shrink-0">
                                         <p className="text-sm sm:text-base font-medium" style={{ color: 'hsl(var(--foreground))' }}>{formatPrice(item.price)}</p>
-                                        {item.hasSpinDiscount && item.originalPrice && <p className="text-xs line-through" style={{ color: 'hsl(var(--muted-foreground))' }}>{formatPrice(item.originalPrice)}</p>}
+                                        <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>Subtotal: {formatPrice(item.price * item.quantity)}</p>
                                         <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>Subtotal: {formatPrice(item.price * item.quantity)}</p>
                                     </div>
                                 </motion.div>

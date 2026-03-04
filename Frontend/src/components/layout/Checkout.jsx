@@ -103,10 +103,8 @@ export default function Checkout() {
     return 0;
   };
 
-  // SPIN WHEEL DISABLED - getSpinDiscount and getDiscountedPrice removed
-  // const getSpinDiscount = () => { ... }
-  // const getDiscountedPrice = (product) => { ... }
 
+  const {
   const {
     register,
     handleSubmit,
@@ -144,11 +142,11 @@ export default function Checkout() {
   const selectedShipping = watch("shippingMethod");
   const billingSameAsShipping = watch("billingSameAsShipping");
 
-  // Subtotal (spin discounts disabled)
+  // Subtotal
   const subtotal = useMemo(() => {
     if (!cartItems?.cart) return 0;
     return cartItems.cart.reduce((total, item) => {
-      const itemPrice = item.product.discountedPrice || item.product.price; // SPIN WHEEL DISABLED - was getDiscountedPrice(item.product)
+      const itemPrice = item.product.discountedPrice || item.product.price;
       return total + (itemPrice * item.qty);
     }, 0);
   }, [cartItems]);
@@ -250,10 +248,8 @@ export default function Checkout() {
     setIsProcessing(true);
     console.log("cartItems::::", cartItems);
 
-    // SPIN WHEEL DISABLED - spin discount info removed
-    // const spinResult = getSpinDiscount();
-    // const spinSelectedProducts = JSON.parse(localStorage.getItem('spinSelectedProducts') || '[]');
 
+    // Build seller shipping array
     // Build seller shipping array
     const sellerShipping = Object.entries(selectedShippingPerSeller).map(([sellerId, method]) => ({
       seller: sellerId,
@@ -273,7 +269,7 @@ export default function Checkout() {
     
     const order = {
       orderItems: cartItems.cart.map((item) => {
-        const itemPrice = item.product.discountedPrice || item.product.price; // SPIN WHEEL DISABLED - was getDiscountedPrice(item.product)
+        const itemPrice = item.product.discountedPrice || item.product.price;
 
         return {
           id: item.product._id,
@@ -317,11 +313,8 @@ export default function Checkout() {
           : "cash_on_delivery",
     };
     
-    // SPIN WHEEL DISABLED - spin discount info removed
-    // if (spinResult && !spinResult.hasCheckedOut && spinSelectedProducts.length > 0) {
-    //   order.spinDiscount = { applied: true, type: spinResult.type, value: spinResult.value, label: spinResult.label };
-    // }
 
+    if (data.instructions !== '') order.instructions = data.instructions
     if (data.instructions !== '') order.instructions = data.instructions
 
     console.log("Order Object:", order);
@@ -361,13 +354,8 @@ export default function Checkout() {
         
         // Redirect to success page after a short delay
         setTimeout(async () => {
-          // SPIN WHEEL DISABLED - spin checkout marking removed
-          // const spinResult = JSON.parse(localStorage.getItem('spinResult') || '{}');
-          // spinResult.hasCheckedOut = true;
-          // localStorage.setItem('spinResult', JSON.stringify(spinResult));
-          // localStorage.removeItem('spinSelectedProducts');
-          // try { await axios.patch(`${import.meta.env.VITE_API_URL}api/user/spin/checkout`, {}, { headers: { Authorization: `Bearer ${token}` } }); } catch (error) { console.error('Error marking spin as checked out:', error); }
 
+          // Clear cart in background
           // Clear cart in background
           axios.delete(`${import.meta.env.VITE_API_URL}api/cart/clear`, {
             headers: { Authorization: `Bearer ${token}` }

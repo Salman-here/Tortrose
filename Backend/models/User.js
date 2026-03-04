@@ -28,16 +28,6 @@ const userSchema = mongoose.Schema({
         businessName: { type: String }
     },
     
-    // Spin wheel data
-    spinResult: {
-        label: { type: String },
-        value: { type: Number },
-        type: { type: String }, // 'percentage', 'fixed', 'free'
-        hasCheckedOut: { type: Boolean, default: false }
-    },
-    spinTimestamp: { type: Number }, // Timestamp when user spun
-    spinSelectedProducts: [{ type: String }], // Product IDs selected for spin discount
-    
     // Currency preference
     currency: { type: String, enum: ['USD', 'PKR', 'EUR', 'GBP'], default: 'USD' },
 

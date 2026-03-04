@@ -17,7 +17,6 @@ const getMenuItemsForRole = (role) => {
   const baseItems = [
     { id: 'orders', title: 'My Orders', icon: 'receipt-outline', screen: 'Orders' },
     { id: 'trusted', title: 'Trusted Stores', icon: 'shield-checkmark-outline', screen: 'TrustedStores' },
-    { id: 'spin', title: 'Spin & Win', icon: 'gift-outline', screen: 'SpinWheel' },
   ];
 
   switch (role) {
@@ -118,7 +117,7 @@ describe('ProfileScreen Property Tests', () => {
           // Base items should always be present
           expect(menuIds).toContain('orders');
           expect(menuIds).toContain('trusted');
-          expect(menuIds).toContain('spin');
+          return true;
           return true;
         }),
         { numRuns: 100 }
