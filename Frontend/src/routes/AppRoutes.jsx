@@ -21,6 +21,7 @@ import UserManagement from '../components/layout/UserManagement'
 import UserDashboard from '../components/layout/UserDashboard'
 import TaxConfiguration from '../components/layout/TaxConfiguration'
 import ShippingConfiguration from '../components/layout/ShippingConfiguration'
+import SellerHome from '../components/layout/SellerHome'
 import AccountOverview from '../components/layout/AccountOverview'
 import UserProfile from '../components/layout/Profile'
 import UserOrdersManagement from '../components/layout/UserOrdersManagement'
@@ -171,6 +172,16 @@ function AppRoutes() {
                         <SellerDashboard />
                     </ProtectedRoute>}>
 
+                    <Route index element={
+                        <ProtectedRoute role={'seller'}>
+                            <SellerHome />
+                        </ProtectedRoute>
+                    } />
+                    <Route path='/seller-dashboard/seller-home' element={
+                        <ProtectedRoute role={'seller'}>
+                            <SellerHome />
+                        </ProtectedRoute>
+                    } />
                     <Route path='/seller-dashboard/store-overview' element={
                         <ProtectedRoute role={'seller'}>
                             <StoreOverview />
