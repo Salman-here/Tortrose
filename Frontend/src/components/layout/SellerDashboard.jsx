@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     BarChart3, Package, X, Menu, LayoutPanelLeft, ShoppingBag,
     Star, Store, Truck, Bell, Settings, ChevronLeft, Search, Loader2,
+    TrendingUp, AlertTriangle, CheckCircle, Clock, DollarSign, Info,
 } from 'lucide-react';
 import axios from 'axios';
 import { toast } from 'react-toastify';
@@ -34,6 +35,10 @@ const SellerDashboard = () => {
     const [loading, setLoading] = useState(true);
     const [uploadingImages, setUploadingImages] = useState(false);
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+    const [notificationsOpen, setNotificationsOpen] = useState(false);
+    const [notifications, setNotifications] = useState([]);
+    const [notificationsLoading, setNotificationsLoading] = useState(false);
+    const notifRef = useRef(null);
 
     const fetchFilters = async () => {
         try {
@@ -169,9 +174,48 @@ const SellerDashboard = () => {
         if (path.includes('order-management')) return 'Order Management';
         if (path.includes('shipping-configuration')) return 'Shipping';
         if (path.includes('store-settings')) return 'Store Settings';
+        if (path.includes('analytics')) return 'Analytics';
         if (path.includes('seller-home')) return 'Dashboard';
         return 'Dashboard';
     };
+
+    const fetchNotifications = async () => {
+        setNotificationsLoading(true);
+        try {
+            const token = localStorage.getItem('jwtToken');
+            const res = await axios.get(`${import.meta.env.VITE_API_URL}api/analytics/notifications`, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+            setNotifications(res.data.notifications || []);
+        } catch (err) {
+            // Fallback to local notifications from products/orders
+            const localNotifs = [];
+            products.filter(p => p.stock === 0).forEach(p => {
+                localNotifs.push({ id: `s-${p._id}`, type: 'critical', category: 'stock', title: `${p.name} is out of stock`, description: 'Update inventory', time: new Date().toISOString() });
+            });
+            products.filter(p => p.stock > 0 && p.stock <= 10).forEach(p => {
+                localNotifs.push({ id: `l-${p._id}`, type: 'warning', category: 'stock', title: `${p.name} running low`, description: `${p.stock} units left`, time: new Date().toISOString() });
+            });
+            orders.filter(o => o.orderStatus === 'pending').slice(0, 5).forEach(o => {
+                localNotifs.push({ id: `o-${o._id}`, type: 'info', category: 'order', title: `Pending order ${o.orderId}`, description: o.shippingInfo?.fullName, time: o.createdAt });
+            });
+            setNotifications(localNotifs);
+        } finally { setNotificationsLoading(false); }
+    };
+
+    const handleBellClick = () => {
+        if (!notificationsOpen) fetchNotifications();
+        setNotificationsOpen(!notificationsOpen);
+    };
+
+    // Close notifications on outside click
+    useEffect(() => {
+        const handler = (e) => {
+            if (notifRef.current && !notifRef.current.contains(e.target)) setNotificationsOpen(false);
+        };
+        document.addEventListener('mousedown', handler);
+        return () => document.removeEventListener('mousedown', handler);
+    }, []);
 
     return (
         <div className="min-h-screen relative flex">
@@ -208,8 +252,9 @@ const SellerDashboard = () => {
 
                         <div className="flex items-center gap-2 sm:gap-3">
                             {/* Notifications Bell */}
-                            <div className="relative">
+                            <div className="relative" ref={notifRef}>
                                 <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
+                                    onClick={handleBellClick}
                                     className="p-2.5 rounded-xl glass-inner relative" style={{ color: 'hsl(var(--foreground))' }}>
                                     <Bell size={18} />
                                     {(pendingOrders + lowStockProducts + outOfStockProducts) > 0 && (
@@ -219,6 +264,82 @@ const SellerDashboard = () => {
                                         </span>
                                     )}
                                 </motion.button>
+
+                                {/* Notifications Dropdown */}
+                                <AnimatePresence>
+                                    {notificationsOpen && (
+                                        <motion.div
+                                            initial={{ opacity: 0, y: 8, scale: 0.96 }}
+                                            animate={{ opacity: 1, y: 0, scale: 1 }}
+                                            exit={{ opacity: 0, y: 8, scale: 0.96 }}
+                                            transition={{ duration: 0.2 }}
+                                            className="absolute right-0 top-full mt-2 w-80 sm:w-96 glass-panel-strong overflow-hidden z-50"
+                                            style={{ borderRadius: 20, maxHeight: '70vh' }}>
+                                            <div className="p-4 flex items-center justify-between" style={{ borderBottom: '1px solid var(--glass-border)' }}>
+                                                <h3 className="text-sm font-bold" style={{ color: 'hsl(var(--foreground))' }}>Notifications</h3>
+                                                <span className="text-[10px] font-medium px-2 py-0.5 rounded-full"
+                                                    style={{ background: 'rgba(99,102,241,0.12)', color: 'hsl(220,70%,55%)' }}>
+                                                    {notifications.length} alerts
+                                                </span>
+                                            </div>
+                                            <div className="overflow-y-auto" style={{ maxHeight: 'calc(70vh - 60px)' }}>
+                                                {notificationsLoading ? (
+                                                    <div className="flex items-center justify-center py-8">
+                                                        <Loader2 size={20} className="animate-spin" style={{ color: 'hsl(var(--muted-foreground))' }} />
+                                                    </div>
+                                                ) : notifications.length === 0 ? (
+                                                    <div className="text-center py-8 px-4">
+                                                        <Bell size={28} style={{ color: 'hsl(var(--muted-foreground))' }} className="mx-auto mb-2 opacity-50" />
+                                                        <p className="text-sm" style={{ color: 'hsl(var(--muted-foreground))' }}>All caught up!</p>
+                                                    </div>
+                                                ) : (
+                                                    <div className="p-2 space-y-1">
+                                                        {notifications.map((n, i) => {
+                                                            const iconMap = {
+                                                                critical: <AlertTriangle size={14} />,
+                                                                warning: <AlertTriangle size={14} />,
+                                                                info: <Info size={14} />,
+                                                                success: <CheckCircle size={14} />,
+                                                            };
+                                                            const colorMap = {
+                                                                critical: { bg: 'rgba(239,68,68,0.12)', color: 'hsl(0,72%,55%)' },
+                                                                warning: { bg: 'rgba(245,158,11,0.12)', color: 'hsl(45,80%,40%)' },
+                                                                info: { bg: 'rgba(99,102,241,0.12)', color: 'hsl(220,70%,55%)' },
+                                                                success: { bg: 'rgba(16,185,129,0.12)', color: 'hsl(150,60%,45%)' },
+                                                            };
+                                                            const cs = colorMap[n.type] || colorMap.info;
+                                                            const linkTo = n.orderId
+                                                                ? `/seller-dashboard/order/${n.orderId}`
+                                                                : '/seller-dashboard/product-management';
+                                                            return (
+                                                                <Link key={n.id || i} to={linkTo} onClick={() => setNotificationsOpen(false)}>
+                                                                    <motion.div
+                                                                        initial={{ opacity: 0, x: 10 }}
+                                                                        animate={{ opacity: 1, x: 0 }}
+                                                                        transition={{ delay: i * 0.03 }}
+                                                                        className="flex items-start gap-3 p-3 rounded-xl transition-all hover:bg-white/5 cursor-pointer">
+                                                                        <div className="p-1.5 rounded-lg mt-0.5 shrink-0" style={{ background: cs.bg, color: cs.color }}>
+                                                                            {iconMap[n.type]}
+                                                                        </div>
+                                                                        <div className="flex-1 min-w-0">
+                                                                            <p className="text-xs font-semibold truncate" style={{ color: 'hsl(var(--foreground))' }}>{n.title}</p>
+                                                                            {n.description && (
+                                                                                <p className="text-[11px] mt-0.5 truncate" style={{ color: 'hsl(var(--muted-foreground))' }}>{n.description}</p>
+                                                                            )}
+                                                                            <p className="text-[10px] mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                                                                                {n.time ? new Date(n.time).toLocaleDateString('en', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Just now'}
+                                                                            </p>
+                                                                        </div>
+                                                                    </motion.div>
+                                                                </Link>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </motion.div>
+                                    )}
+                                </AnimatePresence>
                             </div>
 
                             {/* User Avatar */}
@@ -306,6 +427,7 @@ const SellerSidebar = ({ activeTab, setActiveTab, isSidebarOpen, setIsSidebarOpe
 
     const menuItems = [
         { id: 'home', label: 'Dashboard', icon: <BarChart3 size={18} />, link: '/seller-dashboard/seller-home' },
+        { id: 'analytics', label: 'Analytics', icon: <TrendingUp size={18} />, link: '/seller-dashboard/analytics' },
         { id: 'overview', label: 'Store Overview', icon: <Store size={18} />, link: '/seller-dashboard/store-overview' },
         { id: 'products', label: 'Products', icon: <Package size={18} />, link: '/seller-dashboard/product-management', badge: lowStockProducts },
         { id: 'orders', label: 'Orders', icon: <ShoppingBag size={18} />, link: '/seller-dashboard/order-management', badge: pendingOrders },
