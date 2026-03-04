@@ -74,14 +74,19 @@ export const AuthProvider = ({ children }) => {
 
     // LOGIN FUNCTION
     const login = async (data, reset) => {
-        const res = await axios.post(`${import.meta.env.VITE_API_URL}api/auth/login`, data);
-        toast.success(res.data.msg);
-        localStorage.setItem("jwtToken", res.data.token);
-        setCurrentUser(res.data.user);
-        reset();
-        navigate('/')
-        // fetchCart()
-        location.reload()
+        try {
+            const res = await axios.post(`${import.meta.env.VITE_API_URL}api/auth/login`, data);
+            toast.success(res.data.msg);
+            localStorage.setItem("jwtToken", res.data.token);
+            setCurrentUser(res.data.user);
+            reset();
+            navigate('/')
+            location.reload()
+        } catch (error) {
+            console.error(error);
+            // Re-throw so Login component can catch and show inline error
+            throw error;
+        }
     };
 
     // ✅ LOGOUT FUNCTION

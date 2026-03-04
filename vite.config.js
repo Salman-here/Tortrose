@@ -9,7 +9,7 @@ export default defineConfig({
     tailwindcss(),
   ],
   define: {
-    'import.meta.env.VITE_API_URL': JSON.stringify('https://genzwinners-backend.vercel.app/'),
+    'import.meta.env.VITE_API_URL': JSON.stringify('/'),
   },
   server: {
     proxy: {
