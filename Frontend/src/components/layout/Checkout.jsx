@@ -105,7 +105,6 @@ export default function Checkout() {
 
 
   const {
-  const {
     register,
     handleSubmit,
     watch,
