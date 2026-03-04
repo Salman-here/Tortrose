@@ -5,7 +5,7 @@ const cors = require('cors')
 const rateLimit = require('express-rate-limit')
 const express = require('express')
 const app = express()
-app.set('trust proxy', 1)
+app.set('trust proxy', Number(process.env.TRUST_PROXY_HOPS || 1))
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY)
 const mongoose = require('mongoose')
 const Order = require('./models/Order')
@@ -204,6 +204,9 @@ const authLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { msg: 'Too many requests, please try again later.' },
+  // Avoid proxy/header validation crashes on hosted environments
+  validate: false,
+  keyGenerator: (req) => req.headers['cf-connecting-ip'] || req.ip || req.socket?.remoteAddress || 'unknown',
   handler: (req, res, _next, options) => {
     return res.status(options.statusCode).json(options.message)
   },
@@ -255,8 +258,12 @@ app.use('/api/tax', taxRoutes)
 app.use('/api/shipping', shippingRoutes)
 app.use('/api/currency', currencyRoutes)
 
- 
-
+// Centralized JSON error responses
+app.use((err, req, res, next) => {
+  console.error('Unhandled server error:', err)
+  if (res.headersSent) return next(err)
+  return res.status(err?.status || 500).json({ msg: err?.message || 'Internal Server Error' })
+})
 
 const PORT = process.env.PORT || 5000
 app.listen(PORT, () => {

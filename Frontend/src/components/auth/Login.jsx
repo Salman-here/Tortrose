@@ -25,7 +25,11 @@ const GlassLoginPage = () => {
       await login({ email: form.email, password: form.password }, () => setForm({ email: '', password: '', rememberMe: false }));
     } catch (error) {
       console.error(error);
-      setError(error.response?.data?.msg || 'Login failed. Please check your credentials and try again.');
+      const responseMsg = error.response?.data?.msg;
+      const fallbackMsg = typeof error.response?.data === 'string' && error.response.data.includes('Internal Server Error')
+        ? 'Server error during login. Please try again in a moment.'
+        : 'Login failed. Please check your credentials and try again.';
+      setError(responseMsg || fallbackMsg);
     }
   };
 

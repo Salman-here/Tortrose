@@ -247,7 +247,7 @@ exports.login = async (req, res) => {
             return res.status(400).json({ msg: 'Email and password are required.' })
         }
 
-        const userFound = await User.findOne({ email })
+        const userFound = await User.findOne({ email }).select('+password')
         if (!userFound) return res.status(404).json({ msg: 'User not Found!' })
 
         if (userFound.status === 'blocked') {
