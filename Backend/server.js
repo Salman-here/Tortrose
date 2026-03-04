@@ -5,6 +5,7 @@ const cors = require('cors')
 const rateLimit = require('express-rate-limit')
 const express = require('express')
 const app = express()
+app.set('trust proxy', 1)
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY)
 const mongoose = require('mongoose')
 const Order = require('./models/Order')
@@ -203,6 +204,9 @@ const authLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { msg: 'Too many requests, please try again later.' },
+  handler: (req, res, _next, options) => {
+    return res.status(options.statusCode).json(options.message)
+  },
 });
 
 app.use(express.json())

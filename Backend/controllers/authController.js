@@ -240,13 +240,19 @@ exports.registerr = async (req, res) => {
 }
 
 exports.login = async (req, res) => {
-    const { email, password } = req.body
-
     try {
+        const { email, password } = req.body || {}
+
+        if (!email || !password) {
+            return res.status(400).json({ msg: 'Email and password are required.' })
+        }
+
         const userFound = await User.findOne({ email })
         if (!userFound) return res.status(404).json({ msg: 'User not Found!' })
 
-        if (userFound.status === 'blocked') return res.status(403).json({ msg: 'Your account is blocked. For further details contact support.' })
+        if (userFound.status === 'blocked') {
+            return res.status(403).json({ msg: 'Your account is blocked. For further details contact support.' })
+        }
 
         // Check if user has a password (not OAuth user)
         if (!userFound.password) {
@@ -261,15 +267,15 @@ exports.login = async (req, res) => {
             username: userFound.username,
             email: userFound.email,
             role: userFound.role,
-            avatar: userFound.avatar  
+            avatar: userFound.avatar
         }
 
         const token = jwt.sign(payload, process.env.JWT_SECRET)
 
-        res.status(200).json({ msg: 'Log in successfull.', token: token, user: payload })
+        return res.status(200).json({ msg: 'Log in successfull.', token: token, user: payload })
     } catch (error) {
-        console.error(error);
-        res.status(409).json({ msg: 'Log in failed.' })
+        console.error('Login error:', error)
+        return res.status(500).json({ msg: 'Log in failed. Please try again.' })
     }
 }
 
