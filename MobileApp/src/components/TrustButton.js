@@ -1,269 +1,102 @@
+/**
+ * TrustButton — Liquid Glass Design
+ */
+
 import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import Toast from 'react-native-toast-message';
 import api from '../config/api';
 import { useAuth } from '../contexts/AuthContext';
-import { colors, spacing, fontSize, borderRadius } from '../styles/theme';
+import { colors, spacing, fontSize, borderRadius, fontWeight, glass, shadows } from '../styles/theme';
 
-/**
- * TrustButton Component
- * Allows users to trust/untrust stores
- * 
- * @param {Object} props
- * @param {string} props.storeId - The store's ID
- * @param {string} props.storeName - The store's name for toast messages
- * @param {number} props.initialTrustCount - Initial trust count
- * @param {boolean} props.initialIsTrusted - Initial trust status
- * @param {boolean} props.compact - Use compact mode for cards
- * @param {Function} props.onTrustChange - Callback when trust status changes
- */
-const TrustButton = ({ 
-  storeId, 
-  storeName, 
-  initialTrustCount = 0, 
-  initialIsTrusted = false, 
-  compact = false,
-  onTrustChange 
-}) => {
+const TrustButton = ({ storeId, storeName, initialTrustCount = 0, initialIsTrusted = false, compact = false, iconOnly = false, onTrustChange }) => {
   const [isTrusted, setIsTrusted] = useState(initialIsTrusted);
   const [trustCount, setTrustCount] = useState(initialTrustCount);
   const [isLoading, setIsLoading] = useState(false);
   const { currentUser } = useAuth();
 
-  useEffect(() => {
-    setIsTrusted(initialIsTrusted);
-    setTrustCount(initialTrustCount);
-  }, [initialIsTrusted, initialTrustCount]);
+  useEffect(() => { setIsTrusted(initialIsTrusted); setTrustCount(initialTrustCount); }, [initialIsTrusted, initialTrustCount]);
 
-  // Fetch trust status when component mounts
   useEffect(() => {
-    const fetchTrustStatus = async () => {
+    const fetchStatus = async () => {
       if (!currentUser || !storeId) return;
-
-      try {
-        const response = await api.get(`/api/stores/${storeId}/trust-status`);
-
-        setIsTrusted(response.data.data.isTrusted);
-        setTrustCount(response.data.data.trustCount);
-      } catch (error) {
-        console.log('Could not fetch trust status:', error.message);
-      }
+      try { const r = await api.get(`/api/stores/${storeId}/trust-status`); setIsTrusted(r.data.data.isTrusted); setTrustCount(r.data.data.trustCount); } catch {}
     };
-
-    fetchTrustStatus();
+    fetchStatus();
   }, [storeId, currentUser]);
 
-  const handleTrustToggle = async () => {
-    if (!currentUser) {
-      Toast.show({
-        type: 'info',
-        text1: 'Login Required',
-        text2: 'Please login to trust stores'
-      });
-      return;
-    }
-
+  const handleToggle = async () => {
+    if (!currentUser) { Toast.show({ type: 'info', text1: 'Login Required', text2: 'Please login to trust stores' }); return; }
     setIsLoading(true);
-    
-    // Store previous state for rollback
-    const previousIsTrusted = isTrusted;
-    const previousTrustCount = trustCount;
-
+    const prev = isTrusted; const prevCount = trustCount;
     try {
       if (isTrusted) {
-        // Optimistic update
-        setIsTrusted(false);
-        setTrustCount(prev => Math.max(0, prev - 1));
-
-        const response = await api.delete(`/api/stores/${storeId}/trust`);
-
-        setTrustCount(response.data.data.trustCount);
-        Toast.show({
-          type: 'success',
-          text1: 'Untrusted',
-          text2: `You no longer trust ${storeName}`
-        });
-
-        if (onTrustChange) {
-          onTrustChange(false, response.data.data.trustCount);
-        }
+        setIsTrusted(false); setTrustCount(c => Math.max(0, c - 1));
+        const r = await api.delete(`/api/stores/${storeId}/trust`); setTrustCount(r.data.data.trustCount);
+        Toast.show({ type: 'success', text1: 'Untrusted', text2: `You no longer trust ${storeName}` });
+        onTrustChange?.(false, r.data.data.trustCount);
       } else {
-        // Optimistic update
-        setIsTrusted(true);
-        setTrustCount(prev => prev + 1);
-
-        const response = await api.post(`/api/stores/${storeId}/trust`, {});
-
-        setTrustCount(response.data.data.trustCount);
-        Toast.show({
-          type: 'success',
-          text1: 'Trusted',
-          text2: `You now trust ${storeName}`
-        });
-
-        if (onTrustChange) {
-          onTrustChange(true, response.data.data.trustCount);
-        }
+        setIsTrusted(true); setTrustCount(c => c + 1);
+        const r = await api.post(`/api/stores/${storeId}/trust`, {}); setTrustCount(r.data.data.trustCount);
+        Toast.show({ type: 'success', text1: 'Trusted', text2: `You now trust ${storeName}` });
+        onTrustChange?.(true, r.data.data.trustCount);
       }
     } catch (error) {
-      // Rollback on error
-      setIsTrusted(previousIsTrusted);
-      setTrustCount(previousTrustCount);
-
-      const errorMessage = error.response?.data?.message || error.message || 'Failed to update trust status';
-      
-      if (error.response?.status === 400) {
-        if (error.response?.data?.message?.includes('already trusted')) {
-          setIsTrusted(true);
-          Toast.show({ type: 'info', text1: 'Info', text2: 'You already trust this store' });
-        } else if (error.response?.data?.message?.includes('not trusted')) {
-          setIsTrusted(false);
-          Toast.show({ type: 'info', text1: 'Info', text2: 'You have not trusted this store' });
-        } else {
-          Toast.show({ type: 'error', text1: 'Error', text2: errorMessage });
-        }
-      } else {
-        Toast.show({ type: 'error', text1: 'Error', text2: errorMessage });
-      }
-    } finally {
-      setIsLoading(false);
-    }
+      setIsTrusted(prev); setTrustCount(prevCount);
+      Toast.show({ type: 'error', text1: 'Error', text2: error.response?.data?.message || 'Failed to update' });
+    } finally { setIsLoading(false); }
   };
 
-  // Compact mode for store cards
-  if (compact) {
+  if (iconOnly) {
     return (
-      <TouchableOpacity
-        onPress={handleTrustToggle}
-        disabled={isLoading || !currentUser}
-        style={[
-          styles.compactButton,
-          isTrusted ? styles.trustedButton : styles.untrustedButton,
-          (isLoading || !currentUser) && styles.disabledButton
-        ]}
-      >
-        {isLoading ? (
-          <ActivityIndicator size="small" color={isTrusted ? colors.white : colors.gray} />
-        ) : (
-          <>
-            <Ionicons 
-              name={isTrusted ? 'checkmark' : 'add'} 
-              size={14} 
-              color={isTrusted ? colors.white : colors.text} 
-            />
-            <Text style={[
-              styles.compactText,
-              isTrusted ? styles.trustedText : styles.untrustedText
-            ]}>
-              {isTrusted ? 'Trusting' : 'Trust'}
-            </Text>
-          </>
-        )}
+      <TouchableOpacity onPress={handleToggle} disabled={isLoading || !currentUser} style={[styles.iconBtn, isTrusted && styles.iconBtnTrusted, (isLoading || !currentUser) && { opacity: 0.5 }]}>
+        {isLoading ? <ActivityIndicator size="small" color={isTrusted ? '#fff' : colors.text} /> :
+          <Ionicons name={isTrusted ? 'heart' : 'heart-outline'} size={18} color={isTrusted ? '#fff' : colors.text} />}
       </TouchableOpacity>
     );
   }
 
-  // Full mode for store pages
-  return (
-    <View style={styles.container}>
-      <TouchableOpacity
-        onPress={handleTrustToggle}
-        disabled={isLoading || !currentUser}
-        style={[
-          styles.fullButton,
-          isTrusted ? styles.trustedButton : styles.untrustedButton,
-          (isLoading || !currentUser) && styles.disabledButton
-        ]}
-      >
-        {isLoading ? (
-          <ActivityIndicator size="small" color={isTrusted ? colors.white : colors.gray} />
-        ) : (
-          <>
-            <Ionicons 
-              name={isTrusted ? 'checkmark' : 'add'} 
-              size={18} 
-              color={isTrusted ? colors.white : colors.text} 
-            />
-            <Text style={[
-              styles.fullText,
-              isTrusted ? styles.trustedText : styles.untrustedText
-            ]}>
-              {isTrusted ? 'Trusting' : 'Trust'}
-            </Text>
-          </>
-        )}
+  if (compact) {
+    return (
+      <TouchableOpacity onPress={handleToggle} disabled={isLoading || !currentUser}
+        style={[styles.compactBtn, isTrusted ? styles.trustedBtn : styles.untrustedBtn, (isLoading || !currentUser) && { opacity: 0.5 }]}>
+        {isLoading ? <ActivityIndicator size="small" color={isTrusted ? '#fff' : colors.text} /> :
+          <><Ionicons name={isTrusted ? 'checkmark' : 'add'} size={14} color={isTrusted ? '#fff' : colors.text} />
+          <Text style={[styles.compactText, isTrusted ? { color: '#fff' } : { color: colors.text }]}>{isTrusted ? 'Trusting' : 'Trust'}</Text></>}
       </TouchableOpacity>
-      
-      <View style={styles.countContainer}>
+    );
+  }
+
+  return (
+    <View style={styles.fullContainer}>
+      <TouchableOpacity onPress={handleToggle} disabled={isLoading || !currentUser}
+        style={[styles.fullBtn, isTrusted ? styles.trustedBtn : styles.untrustedBtn, (isLoading || !currentUser) && { opacity: 0.5 }]}>
+        {isLoading ? <ActivityIndicator size="small" color={isTrusted ? '#fff' : colors.text} /> :
+          <><Ionicons name={isTrusted ? 'checkmark' : 'add'} size={18} color={isTrusted ? '#fff' : colors.text} />
+          <Text style={[styles.fullText, isTrusted ? { color: '#fff' } : { color: colors.text }]}>{isTrusted ? 'Trusting' : 'Trust'}</Text></>}
+      </TouchableOpacity>
+      <View style={styles.countWrap}>
         <Text style={styles.countNumber}>{trustCount}</Text>
-        <Text style={styles.countLabel}>
-          {trustCount === 1 ? 'truster' : 'trusters'}
-        </Text>
+        <Text style={styles.countLabel}>{trustCount === 1 ? 'truster' : 'trusters'}</Text>
       </View>
     </View>
   );
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.md,
-  },
-  compactButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs,
-    borderRadius: borderRadius.full,
-    gap: spacing.xs,
-  },
-  fullButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
-    borderRadius: borderRadius.md,
-    gap: spacing.sm,
-  },
-  trustedButton: {
-    backgroundColor: colors.success,
-  },
-  untrustedButton: {
-    backgroundColor: colors.light,
-  },
-  disabledButton: {
-    opacity: 0.5,
-  },
-  compactText: {
-    fontSize: fontSize.xs,
-    fontWeight: '600',
-  },
-  fullText: {
-    fontSize: fontSize.md,
-    fontWeight: '500',
-  },
-  trustedText: {
-    color: colors.white,
-  },
-  untrustedText: {
-    color: colors.text,
-  },
-  countContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-  },
-  countNumber: {
-    fontSize: fontSize.md,
-    fontWeight: '600',
-    color: colors.text,
-  },
-  countLabel: {
-    fontSize: fontSize.sm,
-    color: colors.textSecondary,
-  },
+  iconBtn: { width: 36, height: 36, borderRadius: 12, backgroundColor: glass.bgSubtle, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: glass.borderSubtle },
+  iconBtnTrusted: { backgroundColor: colors.success, borderColor: colors.success },
+  compactBtn: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, gap: 4 },
+  fullBtn: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing.lg, paddingVertical: spacing.sm, borderRadius: 14, gap: spacing.sm, flex: 1 },
+  trustedBtn: { backgroundColor: colors.success },
+  untrustedBtn: { backgroundColor: glass.bg, borderWidth: 1, borderColor: glass.border },
+  compactText: { fontSize: fontSize.xs, fontWeight: fontWeight.semibold },
+  fullText: { fontSize: fontSize.md, fontWeight: fontWeight.medium },
+  fullContainer: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  countWrap: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  countNumber: { fontSize: fontSize.md, fontWeight: fontWeight.semibold, color: colors.text },
+  countLabel: { fontSize: fontSize.sm, color: colors.textSecondary },
 });
 
 export default TrustButton;

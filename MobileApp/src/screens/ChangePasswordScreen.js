@@ -1,3 +1,7 @@
+/**
+ * ChangePasswordScreen — Liquid Glass Design
+ */
+
 import React, { useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
@@ -6,7 +10,9 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import Toast from 'react-native-toast-message';
 import api from '../config/api';
-import { colors, spacing, fontSize, borderRadius, shadows, fontWeight, typography } from '../styles/theme';
+import GlassBackground from '../components/common/GlassBackground';
+import GlassPanel from '../components/common/GlassPanel';
+import { colors, spacing, fontSize, borderRadius, shadows, fontWeight, glass } from '../styles/theme';
 
 export default function ChangePasswordScreen({ navigation }) {
   const [currentPassword, setCurrentPassword] = useState('');
@@ -25,8 +31,7 @@ export default function ChangePasswordScreen({ navigation }) {
     else if (newPassword.length < 8) e.newPassword = 'Password must be at least 8 characters';
     if (!confirmPassword.trim()) e.confirmPassword = 'Please confirm your new password';
     else if (newPassword !== confirmPassword) e.confirmPassword = 'Passwords do not match';
-    if (currentPassword && newPassword && currentPassword === newPassword)
-      e.newPassword = 'New password must be different from current password';
+    if (currentPassword && newPassword && currentPassword === newPassword) e.newPassword = 'New password must be different';
     setErrors(e);
     return Object.keys(e).length === 0;
   };
@@ -39,29 +44,19 @@ export default function ChangePasswordScreen({ navigation }) {
       Toast.show({ type: 'success', text1: 'Password Changed', text2: 'Your password has been updated successfully' });
       setTimeout(() => navigation.goBack(), 1500);
     } catch (error) {
-      const msg = error.response?.data?.msg || 'Failed to change password';
-      Toast.show({ type: 'error', text1: 'Error', text2: msg });
-    } finally {
-      setLoading(false);
-    }
+      Toast.show({ type: 'error', text1: 'Error', text2: error.response?.data?.msg || 'Failed to change password' });
+    } finally { setLoading(false); }
   };
 
-  const renderPasswordField = (label, value, setter, show, setShow, fieldKey, placeholder) => (
+  const renderField = (label, value, setter, show, setShow, fieldKey, placeholder) => (
     <View style={styles.fieldGroup}>
       <Text style={styles.label}>{label}</Text>
       <View style={[styles.inputWrap, errors[fieldKey] && styles.inputWrapError]}>
-        <Ionicons name="lock-closed-outline" size={20} color={errors[fieldKey] ? colors.error : colors.gray} style={styles.inputIcon} />
-        <TextInput
-          style={styles.input}
-          value={value}
-          onChangeText={(t) => { setter(t); setErrors(prev => ({ ...prev, [fieldKey]: null })); }}
-          placeholder={placeholder}
-          placeholderTextColor={colors.grayLight}
-          secureTextEntry={!show}
-          autoCapitalize="none"
-        />
-        <TouchableOpacity onPress={() => setShow(!show)} style={styles.eyeBtn}>
-          <Ionicons name={show ? 'eye-off-outline' : 'eye-outline'} size={20} color={colors.gray} />
+        <Ionicons name="lock-closed-outline" size={18} color={errors[fieldKey] ? colors.error : 'rgba(255,255,255,0.4)'} style={{ marginRight: spacing.sm }} />
+        <TextInput style={styles.input} value={value} onChangeText={(t) => { setter(t); setErrors(prev => ({ ...prev, [fieldKey]: null })); }}
+          placeholder={placeholder} placeholderTextColor="rgba(255,255,255,0.3)" secureTextEntry={!show} autoCapitalize="none" />
+        <TouchableOpacity onPress={() => setShow(!show)} style={{ padding: spacing.sm }}>
+          <Ionicons name={show ? 'eye-off-outline' : 'eye-outline'} size={18} color="rgba(255,255,255,0.4)" />
         </TouchableOpacity>
       </View>
       {errors[fieldKey] ? <Text style={styles.errorText}>{errors[fieldKey]}</Text> : null}
@@ -69,175 +64,69 @@ export default function ChangePasswordScreen({ navigation }) {
   );
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <ScrollView style={styles.container} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-        {/* Hero Header */}
-        <View style={styles.hero}>
-          <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()} activeOpacity={0.7}>
-            <Ionicons name="arrow-back" size={22} color={colors.white} />
+    <GlassBackground>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <ScrollView contentContainerStyle={{ padding: spacing.md, paddingBottom: spacing.xxl }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+          {/* Header */}
+          <GlassPanel variant="floating" style={styles.header}>
+            <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
+              <Ionicons name="arrow-back" size={20} color={colors.text} />
+            </TouchableOpacity>
+            <Text style={styles.headerTitle}>Change Password</Text>
+            <View style={{ width: 36 }} />
+          </GlassPanel>
+
+          {/* Hero */}
+          <GlassPanel variant="strong" style={styles.hero}>
+            <View style={styles.heroIcon}>
+              <Ionicons name="shield-checkmark" size={32} color={colors.primary} />
+            </View>
+            <Text style={styles.heroTitle}>Security Update</Text>
+            <Text style={styles.heroSub}>Keep your account secure with a strong password</Text>
+          </GlassPanel>
+
+          {/* Form */}
+          <GlassPanel variant="card" style={styles.card}>
+            {renderField('Current Password', currentPassword, setCurrentPassword, showCurrent, setShowCurrent, 'currentPassword', 'Enter your current password')}
+            {renderField('New Password', newPassword, setNewPassword, showNew, setShowNew, 'newPassword', 'At least 8 characters')}
+            {renderField('Confirm New Password', confirmPassword, setConfirmPassword, showConfirm, setShowConfirm, 'confirmPassword', 'Re-enter new password')}
+          </GlassPanel>
+
+          {/* Tip */}
+          <GlassPanel variant="inner" style={styles.tipCard}>
+            <Ionicons name="bulb-outline" size={16} color={colors.warning} />
+            <Text style={styles.tipText}>Use a mix of letters, numbers, and symbols for a stronger password.</Text>
+          </GlassPanel>
+
+          {/* Submit */}
+          <TouchableOpacity style={[styles.submitBtn, loading && { opacity: 0.6 }]} onPress={handleChangePassword} disabled={loading}>
+            {loading ? <ActivityIndicator size="small" color="#fff" /> : (
+              <><Ionicons name="checkmark-circle-outline" size={20} color="#fff" /><Text style={styles.submitText}>Update Password</Text></>
+            )}
           </TouchableOpacity>
-          <View style={styles.heroIconWrap}>
-            <Ionicons name="shield-checkmark" size={36} color={colors.white} />
-          </View>
-          <Text style={styles.heroTitle}>Change Password</Text>
-          <Text style={styles.heroSubtitle}>Keep your account secure with a strong password</Text>
-        </View>
-
-        {/* Form Card */}
-        <View style={styles.card}>
-          {renderPasswordField('Current Password', currentPassword, setCurrentPassword, showCurrent, setShowCurrent, 'currentPassword', 'Enter your current password')}
-          {renderPasswordField('New Password', newPassword, setNewPassword, showNew, setShowNew, 'newPassword', 'At least 8 characters')}
-          {renderPasswordField('Confirm New Password', confirmPassword, setConfirmPassword, showConfirm, setShowConfirm, 'confirmPassword', 'Re-enter new password')}
-        </View>
-
-        {/* Password Tip */}
-        <View style={styles.tipCard}>
-          <Ionicons name="bulb-outline" size={18} color={colors.warning} />
-          <Text style={styles.tipText}>Use a mix of letters, numbers, and symbols for a stronger password.</Text>
-        </View>
-
-        {/* Submit Button */}
-        <TouchableOpacity style={[styles.submitBtn, loading && styles.submitBtnDisabled]} onPress={handleChangePassword} disabled={loading} activeOpacity={0.85}>
-          {loading ? <ActivityIndicator size="small" color={colors.white} /> : (
-            <>
-              <Ionicons name="checkmark-circle-outline" size={20} color={colors.white} />
-              <Text style={styles.submitBtnText}>Update Password</Text>
-            </>
-          )}
-        </TouchableOpacity>
-
-        <View style={{ height: spacing.xxl }} />
-      </ScrollView>
-    </KeyboardAvoidingView>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </GlassBackground>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.background },
-  content: { paddingBottom: spacing.xxl },
-
-  // Hero
-  hero: {
-    backgroundColor: colors.primaryDark,
-    alignItems: 'center',
-    paddingTop: spacing.xxl,
-    paddingBottom: spacing.xxxl,
-    paddingHorizontal: spacing.xl,
-  },
-  backBtn: {
-    position: 'absolute',
-    top: spacing.lg,
-    left: spacing.lg,
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: 'rgba(255,255,255,0.15)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  heroIconWrap: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: spacing.md,
-  },
-  heroTitle: {
-    fontSize: fontSize.xxl,
-    fontWeight: fontWeight.bold,
-    color: colors.white,
-    marginBottom: spacing.xs,
-  },
-  heroSubtitle: {
-    fontSize: fontSize.sm,
-    color: 'rgba(255,255,255,0.75)',
-    textAlign: 'center',
-  },
-
-  // Card
-  card: {
-    backgroundColor: colors.white,
-    borderRadius: borderRadius.xxl,
-    margin: spacing.lg,
-    padding: spacing.lg,
-    ...shadows.md,
-  },
+  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing.md, paddingVertical: spacing.md, marginBottom: spacing.md },
+  backBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: glass.bgSubtle, justifyContent: 'center', alignItems: 'center' },
+  headerTitle: { flex: 1, textAlign: 'center', fontSize: fontSize.lg, fontWeight: fontWeight.bold, color: colors.text },
+  hero: { alignItems: 'center', padding: spacing.xl, marginBottom: spacing.md },
+  heroIcon: { width: 64, height: 64, borderRadius: 32, backgroundColor: 'rgba(99,102,241,0.12)', justifyContent: 'center', alignItems: 'center', marginBottom: spacing.md },
+  heroTitle: { fontSize: fontSize.xxl, fontWeight: fontWeight.bold, color: colors.text, marginBottom: 4 },
+  heroSub: { fontSize: fontSize.sm, color: colors.textSecondary, textAlign: 'center' },
+  card: { padding: spacing.lg, marginBottom: spacing.md },
   fieldGroup: { marginBottom: spacing.lg },
-  label: {
-    fontSize: fontSize.sm,
-    fontWeight: fontWeight.semibold,
-    color: colors.text,
-    marginBottom: spacing.sm,
-  },
-  inputWrap: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.lighter,
-    borderRadius: borderRadius.lg,
-    borderWidth: 1.5,
-    borderColor: colors.light,
-    paddingHorizontal: spacing.md,
-  },
-  inputWrapError: {
-    borderColor: colors.error,
-    backgroundColor: colors.errorSubtle,
-  },
-  inputIcon: { marginRight: spacing.sm },
-  input: {
-    flex: 1,
-    paddingVertical: spacing.md,
-    fontSize: fontSize.md,
-    color: colors.text,
-  },
-  eyeBtn: {
-    padding: spacing.sm,
-  },
-  errorText: {
-    fontSize: fontSize.xs,
-    color: colors.error,
-    marginTop: spacing.xs,
-    marginLeft: spacing.xs,
-  },
-
-  // Tip
-  tipCard: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: spacing.sm,
-    backgroundColor: colors.warningSubtle,
-    borderRadius: borderRadius.lg,
-    marginHorizontal: spacing.lg,
-    marginBottom: spacing.lg,
-    padding: spacing.md,
-    borderLeftWidth: 3,
-    borderLeftColor: colors.warning,
-  },
-  tipText: {
-    fontSize: fontSize.sm,
-    color: colors.warningDark,
-    flex: 1,
-    lineHeight: 20,
-  },
-
-  // Submit
-  submitBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.sm,
-    backgroundColor: colors.primary,
-    borderRadius: borderRadius.xl,
-    paddingVertical: spacing.lg,
-    marginHorizontal: spacing.lg,
-    ...shadows.md,
-  },
-  submitBtnDisabled: { opacity: 0.6 },
-  submitBtnText: {
-    fontSize: fontSize.lg,
-    fontWeight: fontWeight.bold,
-    color: colors.white,
-  },
+  label: { fontSize: fontSize.sm, fontWeight: fontWeight.semibold, color: colors.text, marginBottom: spacing.sm },
+  inputWrap: { flexDirection: 'row', alignItems: 'center', backgroundColor: glass.bgSubtle, borderRadius: 14, borderWidth: 1, borderColor: glass.borderSubtle, paddingHorizontal: spacing.md },
+  inputWrapError: { borderColor: colors.error, backgroundColor: 'rgba(239,68,68,0.08)' },
+  input: { flex: 1, paddingVertical: 13, fontSize: fontSize.md, color: colors.text },
+  errorText: { fontSize: fontSize.xs, color: colors.error, marginTop: 4, marginLeft: 4 },
+  tipCard: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm, padding: spacing.md, marginBottom: spacing.lg },
+  tipText: { fontSize: fontSize.sm, color: colors.textSecondary, flex: 1, lineHeight: 20 },
+  submitBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.sm, backgroundColor: colors.primary, borderRadius: 16, paddingVertical: 16, ...shadows.md },
+  submitText: { fontSize: fontSize.lg, fontWeight: fontWeight.bold, color: '#fff' },
 });
-

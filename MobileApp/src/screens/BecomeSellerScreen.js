@@ -1,147 +1,61 @@
+/**
+ * BecomeSellerScreen — Liquid Glass Design
+ */
+
 import React, { useState, useEffect } from 'react';
-import { 
-  View, 
-  Text, 
-  ScrollView, 
-  StyleSheet, 
-  TouchableOpacity,
-  TextInput,
-  ActivityIndicator,
-  KeyboardAvoidingView,
-  Platform 
-} from 'react-native';
+import { View, Text, ScrollView, StyleSheet, TouchableOpacity, TextInput, ActivityIndicator, KeyboardAvoidingView, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as SecureStore from 'expo-secure-store';
 import Toast from 'react-native-toast-message';
 import api from '../config/api';
 import { useAuth } from '../contexts/AuthContext';
-import { colors, spacing, fontSize, borderRadius, shadows } from '../styles/theme';
+import GlassBackground from '../components/common/GlassBackground';
+import GlassPanel from '../components/common/GlassPanel';
+import { colors, spacing, fontSize, borderRadius, shadows, fontWeight, glass } from '../styles/theme';
 
 export default function BecomeSellerScreen({ navigation }) {
   const { currentUser, fetchAndUpdateCurrentUser } = useAuth();
   const [loading, setLoading] = useState(false);
   const [showForm, setShowForm] = useState(false);
-  const [formData, setFormData] = useState({
-    phoneNumber: '',
-    address: '',
-    city: '',
-    country: '',
-    businessName: ''
-  });
+  const [formData, setFormData] = useState({ phoneNumber: '', address: '', city: '', country: '', businessName: '' });
 
-  // Redirect if already a seller or admin
-  useEffect(() => {
-    if (currentUser?.role === 'seller' || currentUser?.role === 'admin') {
-      navigation.replace('SellerDashboard');
-    }
-  }, [currentUser, navigation]);
+  useEffect(() => { if (currentUser?.role === 'seller' || currentUser?.role === 'admin') navigation.replace('SellerDashboard'); }, [currentUser]);
 
-  const handleInputChange = (name, value) => {
-    setFormData(prev => ({ ...prev, [name]: value }));
-  };
+  const handleInputChange = (name, value) => setFormData(prev => ({ ...prev, [name]: value }));
 
   const validateForm = () => {
-    if (!formData.phoneNumber || formData.phoneNumber.trim().length < 10) {
-      Toast.show({
-        type: 'error',
-        text1: 'Invalid Phone',
-        text2: 'Please enter a valid phone number (at least 10 digits)'
-      });
-      return false;
-    }
-
-    if (!formData.address || formData.address.trim().length < 5) {
-      Toast.show({
-        type: 'error',
-        text1: 'Invalid Address',
-        text2: 'Please enter a valid address'
-      });
-      return false;
-    }
-
-    if (!formData.city || formData.city.trim().length < 2) {
-      Toast.show({
-        type: 'error',
-        text1: 'Invalid City',
-        text2: 'Please enter your city'
-      });
-      return false;
-    }
-
-    if (!formData.country || formData.country.trim().length < 2) {
-      Toast.show({
-        type: 'error',
-        text1: 'Invalid Country',
-        text2: 'Please enter your country'
-      });
-      return false;
-    }
-
+    if (!formData.phoneNumber || formData.phoneNumber.trim().length < 10) { Toast.show({ type: 'error', text1: 'Invalid Phone', text2: 'At least 10 digits' }); return false; }
+    if (!formData.address || formData.address.trim().length < 5) { Toast.show({ type: 'error', text1: 'Invalid Address' }); return false; }
+    if (!formData.city || formData.city.trim().length < 2) { Toast.show({ type: 'error', text1: 'Invalid City' }); return false; }
+    if (!formData.country || formData.country.trim().length < 2) { Toast.show({ type: 'error', text1: 'Invalid Country' }); return false; }
     return true;
   };
 
   const handleBecomeSeller = async () => {
     if (!validateForm()) return;
-
     setLoading(true);
-
     try {
-      const res = await api.post('/api/user/become-seller', {
-        phoneNumber: formData.phoneNumber.trim(),
-        address: formData.address.trim(),
-        city: formData.city.trim(),
-        country: formData.country.trim(),
-        businessName: formData.businessName.trim()
-      });
-
-      // Save the new token with updated role
-      if (res.data.token) {
-        await SecureStore.setItemAsync('jwtToken', res.data.token);
-      }
-
-      Toast.show({
-        type: 'success',
-        text1: '🎉 Congratulations!',
-        text2: 'You are now a seller!'
-      });
-
-      // Refresh user data
-      if (fetchAndUpdateCurrentUser) {
-        await fetchAndUpdateCurrentUser();
-      }
-
-      // Navigate to seller dashboard
-      setTimeout(() => {
-        navigation.replace('SellerDashboard');
-      }, 1500);
-
-    } catch (error) {
-      console.error('Error becoming seller:', error);
-      Toast.show({
-        type: 'error',
-        text1: 'Error',
-        text2: error.response?.data?.message || 'Failed to create seller account'
-      });
-    } finally {
-      setLoading(false);
-    }
+      const res = await api.post('/api/user/become-seller', { phoneNumber: formData.phoneNumber.trim(), address: formData.address.trim(), city: formData.city.trim(), country: formData.country.trim(), businessName: formData.businessName.trim() });
+      if (res.data.token) await SecureStore.setItemAsync('jwtToken', res.data.token);
+      Toast.show({ type: 'success', text1: '🎉 Congratulations!', text2: 'You are now a seller!' });
+      if (fetchAndUpdateCurrentUser) await fetchAndUpdateCurrentUser();
+      setTimeout(() => navigation.replace('SellerDashboard'), 1500);
+    } catch (error) { Toast.show({ type: 'error', text1: 'Error', text2: error.response?.data?.message || 'Failed to create seller account' }); }
+    finally { setLoading(false); }
   };
 
   if (!currentUser) {
     return (
-      <View style={styles.authContainer}>
-        <Ionicons name="lock-closed" size={64} color={colors.textSecondary} />
-        <Text style={styles.authTitle}>Login Required</Text>
-        <Text style={styles.authDescription}>
-          Please login to become a seller
-        </Text>
-        <TouchableOpacity
-          style={styles.loginButton}
-          onPress={() => navigation.navigate('Login')}
-        >
-          <Text style={styles.loginButtonText}>Login</Text>
-        </TouchableOpacity>
-      </View>
+      <GlassBackground>
+        <View style={styles.center}>
+          <GlassPanel variant="panel" style={{ alignItems: 'center', padding: spacing.xxl }}>
+            <Ionicons name="lock-closed" size={56} color="rgba(255,255,255,0.4)" />
+            <Text style={{ fontSize: fontSize.xl, fontWeight: fontWeight.bold, color: colors.text, marginTop: spacing.lg }}>Login Required</Text>
+            <Text style={{ fontSize: fontSize.md, color: colors.textSecondary, textAlign: 'center', marginVertical: spacing.md }}>Please login to become a seller</Text>
+            <TouchableOpacity style={styles.primaryBtn} onPress={() => navigation.navigate('Login')}><Text style={styles.primaryBtnText}>Login</Text></TouchableOpacity>
+          </GlassPanel>
+        </View>
+      </GlassBackground>
     );
   }
 
@@ -151,446 +65,118 @@ export default function BecomeSellerScreen({ navigation }) {
     { icon: 'bar-chart', title: 'Analytics & Insights', description: 'Track your performance' },
   ];
 
-  const features = [
-    'Full store management dashboard',
-    'Product listing & inventory control',
-    'Order management system',
-    'Secure payment processing',
-    'Real-time sales analytics',
-    'Customer communication tools',
-    'Marketing & promotion features',
-    '24/7 seller support'
-  ];
+  const features = ['Full store management dashboard', 'Product listing & inventory control', 'Order management system', 'Secure payment processing', 'Real-time sales analytics', 'Customer communication tools', 'Marketing & promotion features', '24/7 seller support'];
 
   return (
-    <KeyboardAvoidingView 
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-    >
-      <ScrollView showsVerticalScrollIndicator={false}>
-        {/* Header */}
-        <View style={styles.header}>
-          <View style={styles.headerIcon}>
-            <Ionicons name="storefront" size={48} color={colors.white} />
-          </View>
-          <Text style={styles.headerTitle}>Become a Seller - FREE</Text>
-          <Text style={styles.headerSubtitle}>
-            Join thousands of successful sellers and start your e-commerce journey today
-          </Text>
-          <Text style={styles.freeText}>
-            🎁 Create your store for FREE - No hidden costs!
-          </Text>
-        </View>
+    <GlassBackground>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ padding: spacing.md, paddingBottom: spacing.xxxl }}>
+          {/* Hero Header */}
+          <GlassPanel variant="strong" style={styles.heroPanel}>
+            <View style={styles.heroIcon}><Ionicons name="storefront" size={40} color={colors.primary} /></View>
+            <Text style={styles.heroTitle}>Become a Seller — FREE</Text>
+            <Text style={styles.heroSub}>Join thousands of successful sellers and start your e-commerce journey today</Text>
+            <View style={styles.freeBadge}><Ionicons name="gift-outline" size={16} color={colors.warning} /><Text style={styles.freeText}>Create your store for FREE — No hidden costs!</Text></View>
+          </GlassPanel>
 
-        <View style={styles.content}>
           {!showForm ? (
             <>
               {/* Benefits */}
               <View style={styles.benefitsGrid}>
-                {benefits.map((benefit, index) => (
-                  <View key={index} style={styles.benefitCard}>
-                    <View style={[styles.benefitIcon, { backgroundColor: `${colors.primary}20` }]}>
-                      <Ionicons name={benefit.icon} size={28} color={colors.primary} />
-                    </View>
-                    <Text style={styles.benefitTitle}>{benefit.title}</Text>
-                    <Text style={styles.benefitDescription}>{benefit.description}</Text>
-                  </View>
+                {benefits.map((b, i) => (
+                  <GlassPanel key={i} variant="card" style={styles.benefitCard}>
+                    <View style={styles.benefitIcon}><Ionicons name={b.icon} size={24} color={colors.primary} /></View>
+                    <Text style={styles.benefitTitle}>{b.title}</Text>
+                    <Text style={styles.benefitDesc}>{b.description}</Text>
+                  </GlassPanel>
                 ))}
               </View>
 
               {/* Features */}
-              <View style={styles.featuresSection}>
-                <View style={styles.featuresTitleRow}>
-                  <Ionicons name="sparkles" size={24} color="#eab308" />
-                  <Text style={styles.featuresTitle}>What You'll Get</Text>
+              <GlassPanel variant="card" style={styles.featuresCard}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginBottom: spacing.md }}>
+                  <Ionicons name="sparkles" size={20} color={colors.warning} />
+                  <Text style={{ fontSize: fontSize.xl, fontWeight: fontWeight.bold, color: colors.text }}>What You'll Get</Text>
                 </View>
-                <View style={styles.featuresList}>
-                  {features.map((feature, index) => (
-                    <View key={index} style={styles.featureItem}>
-                      <Ionicons name="checkmark-circle" size={20} color={colors.success} />
-                      <Text style={styles.featureText}>{feature}</Text>
-                    </View>
-                  ))}
-                </View>
-              </View>
+                {features.map((f, i) => (
+                  <View key={i} style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginBottom: spacing.sm }}>
+                    <Ionicons name="checkmark-circle" size={18} color={colors.success} />
+                    <Text style={{ fontSize: fontSize.md, color: colors.text }}>{f}</Text>
+                  </View>
+                ))}
+              </GlassPanel>
 
               {/* CTA */}
-              <View style={styles.ctaSection}>
-                <Text style={styles.ctaTitle}>Ready to Start Selling?</Text>
-                <Text style={styles.ctaSubtitle}>
-                  Click the button below to provide your details and activate your seller account!
-                </Text>
-                <Text style={styles.ctaFree}>
-                  ✨ 100% FREE - No setup fees, no monthly charges!
-                </Text>
-                <TouchableOpacity
-                  style={styles.getStartedButton}
-                  onPress={() => setShowForm(true)}
-                >
-                  <Ionicons name="storefront" size={24} color="#9333ea" />
-                  <Text style={styles.getStartedText}>Get Started</Text>
+              <GlassPanel variant="strong" style={styles.ctaPanel}>
+                <Text style={{ fontSize: fontSize.xl, fontWeight: fontWeight.bold, color: colors.text, textAlign: 'center' }}>Ready to Start Selling?</Text>
+                <Text style={{ fontSize: fontSize.md, color: colors.textSecondary, textAlign: 'center', marginTop: spacing.sm }}>Click below to provide your details and activate your seller account!</Text>
+                <TouchableOpacity style={styles.getStartedBtn} onPress={() => setShowForm(true)}>
+                  <Ionicons name="storefront" size={22} color="#fff" /><Text style={{ fontSize: fontSize.lg, fontWeight: fontWeight.bold, color: '#fff' }}>Get Started</Text>
                 </TouchableOpacity>
-              </View>
+              </GlassPanel>
             </>
           ) : (
-            /* Form */
-            <View style={styles.formSection}>
-              <Text style={styles.formTitle}>Seller Information</Text>
-              <Text style={styles.formSubtitle}>
-                Please provide your contact details to activate your seller account
-              </Text>
+            <GlassPanel variant="card" style={{ padding: spacing.lg }}>
+              <Text style={{ fontSize: fontSize.xl, fontWeight: fontWeight.bold, color: colors.primary, textAlign: 'center' }}>Seller Information</Text>
+              <Text style={{ fontSize: fontSize.md, color: colors.textSecondary, textAlign: 'center', marginTop: 4, marginBottom: spacing.xl }}>Please provide your contact details</Text>
 
-              {/* Phone Number */}
-              <View style={styles.inputGroup}>
-                <View style={styles.labelRow}>
-                  <Ionicons name="call" size={18} color={colors.primary} />
-                  <Text style={styles.label}>Phone Number <Text style={styles.required}>*</Text></Text>
+              {[
+                { key: 'phoneNumber', icon: 'call', label: 'Phone Number *', placeholder: '+1 234 567 8900', keyboard: 'phone-pad' },
+                { key: 'businessName', icon: 'storefront', label: 'Business Name (Optional)', placeholder: 'Your brand name' },
+                { key: 'address', icon: 'location', label: 'Address *', placeholder: 'Street address' },
+              ].map(({ key, icon, label, placeholder, keyboard }) => (
+                <View key={key} style={styles.inputGroup}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 4 }}>
+                    <Ionicons name={icon} size={16} color={colors.primary} /><Text style={styles.label}>{label}</Text>
+                  </View>
+                  <TextInput style={styles.glassInput} placeholder={placeholder} placeholderTextColor="rgba(255,255,255,0.3)" value={formData[key]} onChangeText={v => handleInputChange(key, v)} keyboardType={keyboard || 'default'} />
                 </View>
-                <TextInput
-                  style={styles.input}
-                  placeholder="+1 234 567 8900"
-                  value={formData.phoneNumber}
-                  onChangeText={(value) => handleInputChange('phoneNumber', value)}
-                  keyboardType="phone-pad"
-                />
+              ))}
+
+              <View style={{ flexDirection: 'row', gap: spacing.md }}>
+                {[{ key: 'city', label: 'City *', placeholder: 'Your city' }, { key: 'country', label: 'Country *', placeholder: 'Your country' }].map(({ key, label, placeholder }) => (
+                  <View key={key} style={[styles.inputGroup, { flex: 1 }]}>
+                    <Text style={styles.label}>{label}</Text>
+                    <TextInput style={styles.glassInput} placeholder={placeholder} placeholderTextColor="rgba(255,255,255,0.3)" value={formData[key]} onChangeText={v => handleInputChange(key, v)} />
+                  </View>
+                ))}
               </View>
 
-              {/* Business Name */}
-              <View style={styles.inputGroup}>
-                <View style={styles.labelRow}>
-                  <Ionicons name="storefront" size={18} color={colors.primary} />
-                  <Text style={styles.label}>Business Name (Optional)</Text>
-                </View>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Your business or brand name"
-                  value={formData.businessName}
-                  onChangeText={(value) => handleInputChange('businessName', value)}
-                  maxLength={100}
-                />
-              </View>
-
-              {/* Address */}
-              <View style={styles.inputGroup}>
-                <View style={styles.labelRow}>
-                  <Ionicons name="location" size={18} color={colors.primary} />
-                  <Text style={styles.label}>Address <Text style={styles.required}>*</Text></Text>
-                </View>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Street address"
-                  value={formData.address}
-                  onChangeText={(value) => handleInputChange('address', value)}
-                />
-              </View>
-
-              {/* City & Country */}
-              <View style={styles.rowInputs}>
-                <View style={[styles.inputGroup, { flex: 1 }]}>
-                  <Text style={styles.label}>City <Text style={styles.required}>*</Text></Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="Your city"
-                    value={formData.city}
-                    onChangeText={(value) => handleInputChange('city', value)}
-                  />
-                </View>
-                <View style={[styles.inputGroup, { flex: 1 }]}>
-                  <Text style={styles.label}>Country <Text style={styles.required}>*</Text></Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="Your country"
-                    value={formData.country}
-                    onChangeText={(value) => handleInputChange('country', value)}
-                  />
-                </View>
-              </View>
-
-              {/* Buttons */}
-              <View style={styles.buttonRow}>
-                <TouchableOpacity
-                  style={styles.backButton}
-                  onPress={() => setShowForm(false)}
-                >
-                  <Text style={styles.backButtonText}>Back</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.submitButton, loading && styles.disabledButton]}
-                  onPress={handleBecomeSeller}
-                  disabled={loading}
-                >
-                  {loading ? (
-                    <ActivityIndicator size="small" color={colors.white} />
-                  ) : (
-                    <>
-                      <Ionicons name="storefront" size={20} color={colors.white} />
-                      <Text style={styles.submitButtonText}>Activate Account</Text>
-                    </>
-                  )}
+              <View style={{ flexDirection: 'row', gap: spacing.md, marginTop: spacing.lg }}>
+                <TouchableOpacity style={styles.backFormBtn} onPress={() => setShowForm(false)}><Text style={{ fontWeight: fontWeight.semibold, color: colors.text }}>Back</Text></TouchableOpacity>
+                <TouchableOpacity style={[styles.submitFormBtn, loading && { opacity: 0.6 }]} onPress={handleBecomeSeller} disabled={loading}>
+                  {loading ? <ActivityIndicator size="small" color="#fff" /> : <><Ionicons name="storefront" size={18} color="#fff" /><Text style={{ fontWeight: fontWeight.bold, color: '#fff' }}>Activate Account</Text></>}
                 </TouchableOpacity>
               </View>
-            </View>
+            </GlassPanel>
           )}
-        </View>
-      </ScrollView>
-    </KeyboardAvoidingView>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </GlassBackground>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.background,
-  },
-  authContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: spacing.xl,
-    backgroundColor: colors.background,
-  },
-  authTitle: {
-    fontSize: fontSize.xl,
-    fontWeight: 'bold',
-    color: colors.text,
-    marginTop: spacing.lg,
-  },
-  authDescription: {
-    fontSize: fontSize.md,
-    color: colors.textSecondary,
-    textAlign: 'center',
-    marginTop: spacing.sm,
-    marginBottom: spacing.xl,
-  },
-  loginButton: {
-    backgroundColor: colors.primary,
-    paddingHorizontal: spacing.xl,
-    paddingVertical: spacing.md,
-    borderRadius: borderRadius.md,
-  },
-  loginButtonText: {
-    color: colors.white,
-    fontSize: fontSize.md,
-    fontWeight: '600',
-  },
-  header: {
-    backgroundColor: '#9333ea',
-    padding: spacing.xl,
-    alignItems: 'center',
-  },
-  headerIcon: {
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    padding: spacing.md,
-    borderRadius: borderRadius.full,
-    marginBottom: spacing.md,
-  },
-  headerTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: colors.white,
-    textAlign: 'center',
-  },
-  headerSubtitle: {
-    fontSize: fontSize.md,
-    color: 'rgba(255, 255, 255, 0.9)',
-    textAlign: 'center',
-    marginTop: spacing.sm,
-  },
-  freeText: {
-    fontSize: fontSize.lg,
-    fontWeight: 'bold',
-    color: '#fbbf24',
-    marginTop: spacing.md,
-  },
-  content: {
-    padding: spacing.md,
-  },
-  benefitsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.md,
-    marginBottom: spacing.xl,
-  },
-  benefitCard: {
-    flex: 1,
-    minWidth: '30%',
-    backgroundColor: colors.white,
-    borderRadius: borderRadius.lg,
-    padding: spacing.md,
-    alignItems: 'center',
-    ...shadows.sm,
-  },
-  benefitIcon: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: spacing.sm,
-  },
-  benefitTitle: {
-    fontSize: fontSize.md,
-    fontWeight: 'bold',
-    color: colors.text,
-    textAlign: 'center',
-  },
-  benefitDescription: {
-    fontSize: fontSize.xs,
-    color: colors.textSecondary,
-    textAlign: 'center',
-    marginTop: spacing.xs,
-  },
-  featuresSection: {
-    backgroundColor: colors.white,
-    borderRadius: borderRadius.lg,
-    padding: spacing.lg,
-    marginBottom: spacing.xl,
-    ...shadows.sm,
-  },
-  featuresTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    marginBottom: spacing.md,
-  },
-  featuresTitle: {
-    fontSize: fontSize.xl,
-    fontWeight: 'bold',
-    color: colors.text,
-  },
-  featuresList: {
-    gap: spacing.sm,
-  },
-  featureItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-  },
-  featureText: {
-    fontSize: fontSize.md,
-    color: colors.text,
-  },
-  ctaSection: {
-    backgroundColor: '#9333ea',
-    borderRadius: borderRadius.lg,
-    padding: spacing.xl,
-    alignItems: 'center',
-    ...shadows.md,
-  },
-  ctaTitle: {
-    fontSize: fontSize.xl,
-    fontWeight: 'bold',
-    color: colors.white,
-  },
-  ctaSubtitle: {
-    fontSize: fontSize.md,
-    color: 'rgba(255, 255, 255, 0.9)',
-    textAlign: 'center',
-    marginTop: spacing.sm,
-  },
-  ctaFree: {
-    fontSize: fontSize.lg,
-    fontWeight: 'bold',
-    color: '#fbbf24',
-    marginTop: spacing.md,
-    marginBottom: spacing.lg,
-  },
-  getStartedButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.white,
-    paddingHorizontal: spacing.xl,
-    paddingVertical: spacing.md,
-    borderRadius: borderRadius.full,
-    gap: spacing.sm,
-  },
-  getStartedText: {
-    fontSize: fontSize.lg,
-    fontWeight: 'bold',
-    color: '#9333ea',
-  },
-  formSection: {
-    backgroundColor: colors.white,
-    borderRadius: borderRadius.lg,
-    padding: spacing.lg,
-    ...shadows.sm,
-  },
-  formTitle: {
-    fontSize: fontSize.xl,
-    fontWeight: 'bold',
-    color: '#9333ea',
-    textAlign: 'center',
-  },
-  formSubtitle: {
-    fontSize: fontSize.md,
-    color: colors.textSecondary,
-    textAlign: 'center',
-    marginTop: spacing.xs,
-    marginBottom: spacing.xl,
-  },
-  inputGroup: {
-    marginBottom: spacing.md,
-  },
-  labelRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-    marginBottom: spacing.xs,
-  },
-  label: {
-    fontSize: fontSize.md,
-    fontWeight: '600',
-    color: colors.text,
-  },
-  required: {
-    color: colors.error,
-  },
-  input: {
-    backgroundColor: colors.light,
-    borderRadius: borderRadius.md,
-    padding: spacing.md,
-    fontSize: fontSize.md,
-    color: colors.text,
-    borderWidth: 1,
-    borderColor: colors.light,
-  },
-  rowInputs: {
-    flexDirection: 'row',
-    gap: spacing.md,
-  },
-  buttonRow: {
-    flexDirection: 'row',
-    gap: spacing.md,
-    marginTop: spacing.lg,
-  },
-  backButton: {
-    flex: 1,
-    backgroundColor: colors.light,
-    paddingVertical: spacing.md,
-    borderRadius: borderRadius.md,
-    alignItems: 'center',
-  },
-  backButtonText: {
-    fontSize: fontSize.md,
-    fontWeight: '600',
-    color: colors.text,
-  },
-  submitButton: {
-    flex: 2,
-    flexDirection: 'row',
-    backgroundColor: '#9333ea',
-    paddingVertical: spacing.md,
-    borderRadius: borderRadius.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.sm,
-  },
-  disabledButton: {
-    opacity: 0.6,
-  },
-  submitButtonText: {
-    fontSize: fontSize.md,
-    fontWeight: 'bold',
-    color: colors.white,
-  },
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: spacing.xl },
+  primaryBtn: { backgroundColor: colors.primary, paddingHorizontal: spacing.xl, paddingVertical: spacing.md, borderRadius: 16 },
+  primaryBtnText: { color: '#fff', fontSize: fontSize.md, fontWeight: fontWeight.semibold },
+  heroPanel: { alignItems: 'center', padding: spacing.xl, marginBottom: spacing.md },
+  heroIcon: { width: 72, height: 72, borderRadius: 36, backgroundColor: 'rgba(99,102,241,0.12)', justifyContent: 'center', alignItems: 'center', marginBottom: spacing.md },
+  heroTitle: { fontSize: 24, fontWeight: fontWeight.bold, color: colors.text, textAlign: 'center', marginBottom: spacing.sm },
+  heroSub: { fontSize: fontSize.md, color: colors.textSecondary, textAlign: 'center', marginBottom: spacing.md },
+  freeBadge: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, backgroundColor: 'rgba(234,179,8,0.12)', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20 },
+  freeText: { fontSize: fontSize.sm, fontWeight: fontWeight.semibold, color: colors.warning },
+  benefitsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginBottom: spacing.md },
+  benefitCard: { flex: 1, minWidth: '30%', alignItems: 'center', padding: spacing.md },
+  benefitIcon: { width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(99,102,241,0.12)', justifyContent: 'center', alignItems: 'center', marginBottom: spacing.sm },
+  benefitTitle: { fontSize: fontSize.sm, fontWeight: fontWeight.bold, color: colors.text, textAlign: 'center' },
+  benefitDesc: { fontSize: fontSize.xs, color: colors.textSecondary, textAlign: 'center', marginTop: 2 },
+  featuresCard: { padding: spacing.lg, marginBottom: spacing.md },
+  ctaPanel: { alignItems: 'center', padding: spacing.xl },
+  getStartedBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.sm, backgroundColor: colors.primary, paddingHorizontal: spacing.xxl, paddingVertical: 16, borderRadius: 20, marginTop: spacing.lg, ...shadows.md },
+  inputGroup: { marginBottom: spacing.md },
+  label: { fontSize: fontSize.sm, fontWeight: fontWeight.semibold, color: colors.text, marginBottom: 4 },
+  glassInput: { backgroundColor: glass.bgSubtle, borderRadius: 14, padding: spacing.md, fontSize: fontSize.md, color: colors.text, borderWidth: 1, borderColor: glass.borderSubtle },
+  backFormBtn: { flex: 1, backgroundColor: glass.bg, paddingVertical: 14, borderRadius: 14, alignItems: 'center' },
+  submitFormBtn: { flex: 2, flexDirection: 'row', backgroundColor: colors.primary, paddingVertical: 14, borderRadius: 14, alignItems: 'center', justifyContent: 'center', gap: spacing.sm },
 });
