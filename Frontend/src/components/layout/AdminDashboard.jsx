@@ -15,6 +15,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { toast } from 'react-toastify';
 import { Link, Navigate, Outlet, useLocation } from 'react-router-dom';
 import GlassBackground from '../common/GlassBackground';
+import Loader from '../common/Loader';
 import { useCurrency } from '../../contexts/CurrencyContext';
 
 
