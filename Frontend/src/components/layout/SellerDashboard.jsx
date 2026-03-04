@@ -174,10 +174,7 @@ const SellerDashboard = () => {
     };
 
     return (
-        <div className="min-h-screen relative flex" style={{
-            background: 'linear-gradient(135deg, hsl(230, 35%, 88%) 0%, hsl(210, 40%, 90%) 25%, hsl(250, 30%, 92%) 50%, hsl(200, 35%, 88%) 75%, hsl(280, 25%, 90%) 100%)',
-            backgroundAttachment: 'fixed'
-        }}>
+        <div className="min-h-screen relative flex">
             {/* Sidebar */}
             <SellerSidebar
                 activeTab={activeTab}
@@ -340,7 +337,7 @@ const SellerSidebar = ({ activeTab, setActiveTab, isSidebarOpen, setIsSidebarOpe
                 transition={{ type: 'tween', ease: 'easeInOut', duration: 0.28 }}
                 className="fixed top-0 left-0 h-full w-64 z-50 shadow-2xl overflow-hidden"
             >
-                <div className="flex flex-col h-full glass-panel-strong" style={{ borderRadius: 0 }}>
+                <div className="flex flex-col h-full glass-panel-strong water-shimmer" style={{ borderRadius: 0 }}>
                     {/* Logo / Brand */}
                     <div className="px-5 pt-6 pb-4">
                         <div className="flex items-center justify-between">

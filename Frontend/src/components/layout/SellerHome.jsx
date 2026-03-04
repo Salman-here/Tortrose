@@ -2,7 +2,8 @@ import React from 'react';
 import { motion } from 'framer-motion';
 import {
     Package, ShoppingBag, DollarSign, TriangleAlert, TrendingUp,
-    AlertCircle, Star, ArrowRight, Clock, CheckCircle, Truck, Eye
+    AlertCircle, ArrowRight, Clock, CheckCircle, Truck, Eye,
+    Sparkles, BarChart3, Zap
 } from 'lucide-react';
 import { useOutletContext, Link } from 'react-router-dom';
 import { useCurrency } from '../../contexts/CurrencyContext';
@@ -43,7 +44,7 @@ const SellerHome = () => {
         { label: 'View Products', desc: `${totalProducts} products`, icon: <Package size={18} />, link: '/seller-dashboard/product-management', color: 'hsl(200, 80%, 50%)' },
         { label: 'Manage Orders', desc: `${pendingOrders} pending`, icon: <ShoppingBag size={18} />, link: '/seller-dashboard/order-management', color: 'hsl(30, 90%, 50%)' },
         { label: 'Store Overview', desc: 'Stats & analytics', icon: <Eye size={18} />, link: '/seller-dashboard/store-overview', color: 'hsl(150, 60%, 45%)' },
-        { label: 'Store Settings', desc: 'Update your store', icon: <Star size={18} />, link: '/seller-dashboard/store-settings', color: 'hsl(280, 60%, 55%)' },
+        { label: 'Store Settings', desc: 'Update your store', icon: <BarChart3 size={18} />, link: '/seller-dashboard/store-settings', color: 'hsl(280, 60%, 55%)' },
     ];
 
     const getStatusIcon = (status) => {
@@ -73,27 +74,42 @@ const SellerHome = () => {
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="p-4 sm:p-6 max-w-7xl mx-auto">
 
             {/* Welcome */}
-            <div className="mb-6">
-                <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight" style={{ color: 'hsl(var(--foreground))' }}>
-                    {greeting()}, {currentUser?.username || 'Seller'} 👋
-                </h1>
-                <p className="text-sm mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                    Here's what's happening with your store today
-                </p>
-            </div>
+            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
+                className="glass-panel-strong water-shimmer p-6 sm:p-8 mb-6">
+                <div className="flex items-start sm:items-center justify-between flex-col sm:flex-row gap-4">
+                    <div>
+                        <div className="tag-pill mb-3">
+                            <Sparkles size={12} /> Seller Hub
+                        </div>
+                        <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight" style={{ color: 'hsl(var(--foreground))' }}>
+                            {greeting()}, {currentUser?.username || 'Seller'}
+                        </h1>
+                        <p className="text-sm mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                            Here's what's happening with your store today
+                        </p>
+                    </div>
+                    <Link to="/seller-dashboard/product-management">
+                        <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
+                            className="px-5 py-2.5 rounded-xl text-sm font-semibold text-white flex items-center gap-2"
+                            style={{ background: 'linear-gradient(135deg, hsl(220, 70%, 55%), hsl(200, 80%, 50%))', boxShadow: '0 0 20px -4px hsl(220, 70%, 55%, 0.3)' }}>
+                            <Zap size={16} /> Add Product
+                        </motion.button>
+                    </Link>
+                </div>
+            </motion.div>
 
             {/* Stats Grid */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
                 {stats.map((stat, i) => (
                     <motion.div key={stat.label} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: i * 0.05 }} whileHover={{ y: -3 }} className="glass-card p-5">
+                        transition={{ delay: i * 0.05 }} className="glass-card water-shimmer p-5">
                         <div className="flex items-center justify-between mb-3">
                             <div className="inline-flex p-2.5 rounded-xl" style={{ background: stat.bg, color: stat.color }}>
                                 {stat.icon}
                             </div>
                         </div>
                         <p className="text-xs font-medium mb-1" style={{ color: 'hsl(var(--muted-foreground))' }}>{stat.label}</p>
-                        <p className="text-2xl font-extrabold" style={{ color: 'hsl(var(--foreground))' }}>{stat.value}</p>
+                        <p className="text-2xl font-extrabold" style={{ color: 'hsl(var(--foreground))', letterSpacing: '-0.03em' }}>{stat.value}</p>
                     </motion.div>
                 ))}
             </div>
@@ -124,7 +140,7 @@ const SellerHome = () => {
                             </div>
                             <div className="flex-1">
                                 <p className="text-sm font-semibold" style={{ color: 'hsl(var(--foreground))' }}>{lowStock} product{lowStock > 1 ? 's' : ''} running low</p>
-                                <p className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>Stock ≤ 10 units remaining</p>
+                                <p className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>Stock below 10 units</p>
                             </div>
                             <Link to="/seller-dashboard/product-management">
                                 <ArrowRight size={16} style={{ color: 'hsl(var(--muted-foreground))' }} />
@@ -138,7 +154,7 @@ const SellerHome = () => {
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 {/* Quick Actions */}
                 <div className="lg:col-span-1">
-                    <div className="glass-panel p-5">
+                    <div className="glass-panel water-shimmer p-5">
                         <h3 className="text-base font-semibold mb-4" style={{ color: 'hsl(var(--foreground))' }}>Quick Actions</h3>
                         <div className="space-y-2">
                             {quickActions.map((action, i) => (
@@ -162,7 +178,7 @@ const SellerHome = () => {
 
                 {/* Recent Orders */}
                 <div className="lg:col-span-2">
-                    <div className="glass-panel p-5">
+                    <div className="glass-panel water-shimmer p-5">
                         <div className="flex items-center justify-between mb-4">
                             <h3 className="text-base font-semibold" style={{ color: 'hsl(var(--foreground))' }}>Recent Orders</h3>
                             <Link to="/seller-dashboard/order-management">
@@ -234,7 +250,7 @@ const SellerHome = () => {
                     <motion.div key={item.label} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
                         transition={{ delay: 0.3 + i * 0.05 }}
                         className="glass-inner rounded-xl p-4 text-center">
-                        <p className="text-2xl font-extrabold" style={{ color: item.color }}>{item.count}</p>
+                        <p className="text-2xl font-extrabold" style={{ color: item.color, letterSpacing: '-0.03em' }}>{item.count}</p>
                         <p className="text-[11px] font-medium mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>{item.label}</p>
                     </motion.div>
                 ))}

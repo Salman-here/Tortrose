@@ -1,121 +1,125 @@
 import React from "react";
 import { motion } from "framer-motion";
-import { Edit, Trash2 } from "lucide-react";
+import { Edit, Trash2, Star, Package, TrendingDown } from "lucide-react";
 import { useCurrency } from "../../contexts/CurrencyContext";
 
 const ProductCard = ({ product, index, onEditProduct, setDeleteConfirm }) => {
     const { formatPrice } = useCurrency();
+    const hasDiscount = product.discountedPrice > 0;
+    const discountPercent = hasDiscount ? Math.round(((product.price - product.discountedPrice) / product.price) * 100) : 0;
+
     return (
         <motion.div
-            key={product._id}
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.4, delay: index * 0.05 }}
-            whileHover={{ scale: 1.03 }}
-            className="bg-white rounded-2xl shadow-sm hover:shadow-xl overflow-hidden flex flex-col border border-gray-100"
+            className="glass-card water-shimmer overflow-hidden flex flex-col group"
         >
             {/* Image */}
-            <div className="relative group h-[250px] overflow-hidden">
+            <div className="relative h-[220px] overflow-hidden" style={{ background: 'rgba(255,255,255,0.04)' }}>
                 <motion.img
                     src={product.image}
                     alt={product.name}
-                    className="h-full w-full object-contain object-center rounded p-2 transition-transform duration-500 group-hover:scale-110"
+                    className="h-full w-full object-contain object-center p-3 transition-transform duration-500 group-hover:scale-110"
                 />
-                {product.discountedPrice > 0 && (
-                    <span className="absolute top-2 right-2 bg-red-500 text-white text-[10px] px-2 py-1 rounded-full shadow-sm">
-                        SALE
+                {hasDiscount && (
+                    <span className="absolute top-3 right-3 px-2.5 py-1 rounded-full text-[10px] font-bold text-white"
+                        style={{ background: 'linear-gradient(135deg, hsl(0, 72%, 55%), hsl(340, 65%, 55%))' }}>
+                        -{discountPercent}%
                     </span>
                 )}
+                {product.stock === 0 && (
+                    <div className="absolute inset-0 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(2px)' }}>
+                        <span className="px-3 py-1.5 rounded-full text-xs font-bold text-white"
+                            style={{ background: 'hsl(0, 72%, 55%)' }}>
+                            Out of Stock
+                        </span>
+                    </div>
+                )}
+
+                {/* Hover Actions */}
+                <div className="absolute top-3 left-3 flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                    <motion.button whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}
+                        onClick={() => onEditProduct(product)}
+                        className="p-2 rounded-xl shadow-lg"
+                        style={{ background: 'var(--glass-bg-strong)', backdropFilter: 'blur(16px)', border: '1px solid var(--glass-border)', color: 'hsl(var(--primary))' }}>
+                        <Edit size={16} />
+                    </motion.button>
+                    <motion.button whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}
+                        onClick={() => setDeleteConfirm(product._id)}
+                        className="p-2 rounded-xl shadow-lg"
+                        style={{ background: 'var(--glass-bg-strong)', backdropFilter: 'blur(16px)', border: '1px solid var(--glass-border)', color: 'hsl(0, 72%, 55%)' }}>
+                        <Trash2 size={16} />
+                    </motion.button>
+                </div>
             </div>
 
+            {/* Divider */}
+            <div className="h-px" style={{ background: 'var(--glass-border)' }} />
+
             {/* Content */}
-            <div className="p-4 flex flex-col flex-grow">
-                {/* Title */}
-                <h3 className="text-xl font-semibold text-gray-800 truncate">
-                    {product.name}
-                </h3>
-                <p className="text-sm text-gray-500">{product.brand}</p>
-                <p className="text-sm text-gray-400 mb-2">{product.category}</p>
+            <div className="p-4 flex flex-col flex-grow gap-2">
+                <div>
+                    <h3 className="text-base font-semibold truncate" style={{ color: 'hsl(var(--foreground))' }}>
+                        {product.name}
+                    </h3>
+                    <div className="flex items-center gap-2 mt-0.5">
+                        <span className="text-xs font-medium" style={{ color: 'hsl(var(--muted-foreground))' }}>{product.brand}</span>
+                        <span className="w-1 h-1 rounded-full" style={{ background: 'hsl(var(--muted-foreground))' }} />
+                        <span className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>{product.category}</span>
+                    </div>
+                </div>
 
                 {/* Price */}
-                <div className="mb-2">
-                    {product.discountedPrice > 0 ? (
-                        <div className="flex items-center gap-2">
-                            <span className="text-gray-400 line-through text-md">
-                                {formatPrice(product.price)}
-                            </span>
-                            <span className="text-red-600 font-semibold text-md">
+                <div className="flex items-baseline gap-2">
+                    {hasDiscount ? (
+                        <>
+                            <span className="text-lg font-extrabold" style={{ color: 'hsl(var(--foreground))', letterSpacing: '-0.03em' }}>
                                 {formatPrice(product.discountedPrice)}
                             </span>
-                        </div>
+                            <span className="text-sm line-through" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                                {formatPrice(product.price)}
+                            </span>
+                        </>
                     ) : (
-                        <span className="text-gray-900 font-semibold text-md">
+                        <span className="text-lg font-extrabold" style={{ color: 'hsl(var(--foreground))', letterSpacing: '-0.03em' }}>
                             {formatPrice(product.price)}
                         </span>
                     )}
                 </div>
 
-                {/* Stock Badge */}
-                <div>
+                {/* Stock & Rating Row */}
+                <div className="flex items-center justify-between mt-auto pt-2" style={{ borderTop: '1px solid var(--glass-border-subtle)' }}>
+                    <div className="flex items-center gap-1.5">
+                        {product.stock > 0 ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold"
+                                style={product.stock <= 10
+                                    ? { background: 'rgba(245, 158, 11, 0.12)', color: 'hsl(45, 80%, 40%)' }
+                                    : { background: 'rgba(16, 185, 129, 0.12)', color: 'hsl(150, 60%, 40%)' }
+                                }>
+                                <Package size={10} />
+                                {product.stock <= 10 ? `Low: ${product.stock}` : `${product.stock} in stock`}
+                            </span>
+                        ) : (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold"
+                                style={{ background: 'rgba(239, 68, 68, 0.12)', color: 'hsl(0, 72%, 55%)' }}>
+                                <TrendingDown size={10} /> Out
+                            </span>
+                        )}
+                    </div>
 
-                    <span
-                        className={`text-sm px-2 py-0.5 rounded-full self-start ${product.stock > 0
-                            ? "bg-green-100 text-green-700"
-                            : "bg-red-500 text-white"
-                            }`}
-                    >
-                        {product.stock > 0 ? `${product.stock} in stock` : "Out of stock"}
-                    </span>
-                    {
-                        product.stock <= 10 && product.stock !== 0 && <span className='text-sm ml-2 bg-red-400  p-1 rounded-full text-white' >Low Stock</span>
-                    }
-                </div>
-
-                {/* Rating */}
-                <div className="flex items-center mt-2">
-                    {[1, 2, 3, 4, 5].map((star) => (
-                        <motion.svg
-                            key={star}
-                            xmlns="http://www.w3.org/2000/svg"
-                            fill={star <= product.rating ? "currentColor" : "none"}
-                            viewBox="0 0 24 24"
-                            strokeWidth={1.2}
-                            stroke="currentColor"
-                            className={`w-4 h-4 ${star <= product.rating ? "text-yellow-400" : "text-gray-300"
-                                }`}
-                            whileHover={{ scale: 1.2, rotate: 5 }}
-                            transition={{ type: "spring", stiffness: 300 }}
-                        >
-                            <path
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                                d="M11.48 3.5a.562.562 0 011.04 0l2.12 4.3a.56.56 0 00.42.31l4.75.69c.5.07.7.69.34 1.04l-3.43 3.34a.56.56 0 00-.16.49l.81 4.72c.08.5-.44.88-.88.65L12 17.35l-4.24 2.23c-.45.23-.97-.15-.88-.65l.81-4.72a.56.56 0 00-.16-.49L4.1 9.84a.56.56 0 01.34-1.04l4.75-.69a.56.56 0 00.42-.31L11.48 3.5z"
-                            />
-                        </motion.svg>
-                    ))}
-                    <span className="ml-1 text-xs text-gray-500">
-                        ({product.numReviews})
-                    </span>
-                </div>
-
-                {/* Actions */}
-                <div className="flex justify-end gap-2 mt-auto pt-3">
-                    <motion.button
-                        whileHover={{ scale: 1.1, rotate: -5 }}
-                        whileTap={{ scale: 0.9 }}
-                        onClick={() => onEditProduct(product)}
-                        className="p-2 rounded-full hover:bg-indigo-50 text-indigo-600 transition"
-                    >
-                        <Edit size={20} />
-                    </motion.button>
-                    <motion.button
-                        whileHover={{ scale: 1.1, rotate: 5 }}
-                        whileTap={{ scale: 0.9 }}
-                        onClick={() => setDeleteConfirm(product._id)}
-                        className="p-2 rounded-full hover:bg-red-50 text-red-600 transition"
-                    >
-                        <Trash2 size={20} />
-                    </motion.button>
+                    <div className="flex items-center gap-1">
+                        {[1, 2, 3, 4, 5].map(star => (
+                            <Star key={star} size={12}
+                                style={{
+                                    color: star <= product.rating ? 'hsl(45, 93%, 47%)' : 'hsl(var(--muted-foreground))',
+                                    fill: star <= product.rating ? 'hsl(45, 93%, 47%)' : 'none'
+                                }} />
+                        ))}
+                        <span className="text-[10px] ml-0.5" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                            ({product.numReviews})
+                        </span>
+                    </div>
                 </div>
             </div>
         </motion.div>
