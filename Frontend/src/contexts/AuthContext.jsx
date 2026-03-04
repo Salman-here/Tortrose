@@ -74,19 +74,14 @@ export const AuthProvider = ({ children }) => {
 
     // LOGIN FUNCTION
     const login = async (data, reset) => {
-        try {
-            const res = await axios.post(`${import.meta.env.VITE_API_URL}api/auth/login`, data);
-            toast.success(res.data.msg);
-            localStorage.setItem("jwtToken", res.data.token);
-            setCurrentUser(res.data.user);
-            reset();
-            navigate('/')
-            // fetchCart()
-            location.reload()
-        } catch (error) {
-            console.error(error);
-            toast.error(error.response?.data?.msg || "Login failed");
-        }
+        const res = await axios.post(`${import.meta.env.VITE_API_URL}api/auth/login`, data);
+        toast.success(res.data.msg);
+        localStorage.setItem("jwtToken", res.data.token);
+        setCurrentUser(res.data.user);
+        reset();
+        navigate('/')
+        // fetchCart()
+        location.reload()
     };
 
     // ✅ LOGOUT FUNCTION
