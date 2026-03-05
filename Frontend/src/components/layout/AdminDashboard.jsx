@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { createPortal } from 'react-dom';
 import {
     BarChart3, Package, Plus, Edit, Trash2, Search, Filter,
     ChevronLeft, ChevronRight, X, Home, Tag, Star,
@@ -45,7 +46,19 @@ const AdminDashboard = () => {
     const [notificationsOpen, setNotificationsOpen] = useState(false);
     const [notifications, setNotifications] = useState([]);
     const [notificationsLoading, setNotificationsLoading] = useState(false);
-    const notifRef = useRef(null);
+    const notifTriggerRef = useRef(null);
+    const notifMenuRef = useRef(null);
+    const [notifPos, setNotifPos] = useState({ top: 0, right: 0 });
+
+    const updateNotifPosition = useCallback(() => {
+        if (notifTriggerRef.current) {
+            const rect = notifTriggerRef.current.getBoundingClientRect();
+            setNotifPos({
+                top: rect.bottom + 8,
+                right: window.innerWidth - rect.right,
+            });
+        }
+    }, []);
 
     const fetchFilters = async () => {
         try {
@@ -198,11 +211,87 @@ const AdminDashboard = () => {
 
     useEffect(() => {
         const handler = (e) => {
-            if (notifRef.current && !notifRef.current.contains(e.target)) setNotificationsOpen(false);
+            const clickedTrigger = notifTriggerRef.current?.contains(e.target);
+            const clickedMenu = notifMenuRef.current?.contains(e.target);
+            if (!clickedTrigger && !clickedMenu) setNotificationsOpen(false);
         };
         document.addEventListener('mousedown', handler);
         return () => document.removeEventListener('mousedown', handler);
     }, []);
+
+    useEffect(() => {
+        if (notificationsOpen) {
+            updateNotifPosition();
+            window.addEventListener('scroll', updateNotifPosition, true);
+            window.addEventListener('resize', updateNotifPosition);
+            return () => {
+                window.removeEventListener('scroll', updateNotifPosition, true);
+                window.removeEventListener('resize', updateNotifPosition);
+            };
+        }
+    }, [notificationsOpen, updateNotifPosition]);
+
+    const notificationsDropdown = (
+        <AnimatePresence>
+            {notificationsOpen && (
+                <motion.div
+                    ref={notifMenuRef}
+                    initial={{ opacity: 0, y: 8, scale: 0.96 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: 8, scale: 0.96 }}
+                    transition={{ duration: 0.2 }}
+                    className="fixed right-0 w-80 sm:w-96 overflow-hidden z-[100] glass-panel-strong"
+                    style={{ top: notifPos.top, right: notifPos.right, maxHeight: '70vh' }}>
+                    <div className="p-4 flex items-center justify-between" style={{ borderBottom: '1px solid var(--glass-border)' }}>
+                        <h3 className="text-sm font-bold" style={{ color: 'hsl(var(--foreground))' }}>Notifications</h3>
+                        <span className="text-[10px] font-medium px-2 py-0.5 rounded-full"
+                            style={{ background: 'rgba(99,102,241,0.12)', color: 'hsl(220,70%,55%)' }}>
+                            {notifications.length} alerts
+                        </span>
+                    </div>
+                    <div className="overflow-y-auto" style={{ maxHeight: 'calc(70vh - 60px)' }}>
+                        {notificationsLoading ? (
+                                <div className="flex items-center justify-center py-8">
+                                <Loader size={20} className="animate-spin" style={{ color: 'hsl(var(--muted-foreground))' }} />
+                            </div>
+                        ) : notifications.length === 0 ? (
+                            <div className="text-center py-8 px-4">
+                                <Bell size={28} style={{ color: 'hsl(var(--muted-foreground))' }} className="mx-auto mb-2 opacity-50" />
+                                <p className="text-sm" style={{ color: 'hsl(var(--muted-foreground))' }}>All caught up!</p>
+                            </div>
+                        ) : (
+                            <div className="p-2 space-y-1">
+                                {notifications.map((n, i) => {
+                                    const iconMap = { critical: <AlertTriangle size={14} />, warning: <AlertTriangle size={14} />, info: <Info size={14} />, success: <CheckCircle size={14} /> };
+                                    const colorMap = {
+                                        critical: { bg: 'rgba(239,68,68,0.12)', color: 'hsl(0,72%,55%)' },
+                                        warning: { bg: 'rgba(245,158,11,0.12)', color: 'hsl(45,80%,40%)' },
+                                        info: { bg: 'rgba(99,102,241,0.12)', color: 'hsl(220,70%,55%)' },
+                                        success: { bg: 'rgba(16,185,129,0.12)', color: 'hsl(150,60%,45%)' },
+                                    };
+                                    const cs = colorMap[n.type] || colorMap.info;
+                                    return (
+                                        <motion.div key={n.id || i}
+                                            initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.03 }}
+                                            className="flex items-start gap-3 p-3 rounded-xl transition-all hover:bg-white/5">
+                                            <div className="p-1.5 rounded-lg mt-0.5 shrink-0" style={{ background: cs.bg, color: cs.color }}>{iconMap[n.type]}</div>
+                                            <div className="flex-1 min-w-0">
+                                                <p className="text-xs font-semibold truncate" style={{ color: 'hsl(var(--foreground))' }}>{n.title}</p>
+                                                {n.description && <p className="text-[11px] mt-0.5 truncate" style={{ color: 'hsl(var(--muted-foreground))' }}>{n.description}</p>}
+                                                <p className="text-[10px] mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                                                    {n.time ? new Date(n.time).toLocaleDateString('en', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Just now'}
+                                                </p>
+                                            </div>
+                                        </motion.div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
+                </motion.div>
+            )}
+        </AnimatePresence>
+    );
 
     return (
         <div className="min-h-screen relative flex" style={{ background: 'linear-gradient(135deg, hsl(230, 35%, 88%) 0%, hsl(210, 40%, 90%) 25%, hsl(250, 30%, 92%) 50%, hsl(200, 35%, 88%) 75%, hsl(280, 25%, 90%) 100%)', backgroundAttachment: 'fixed' }}>
@@ -241,10 +330,15 @@ const AdminDashboard = () => {
 
                         <div className="flex items-center gap-2 sm:gap-3">
                             {/* Notifications Bell */}
-                            <div className="relative" ref={notifRef}>
-                                <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
+                            <div className="relative">
+                                <motion.button
+                                    ref={notifTriggerRef}
+                                    whileHover={{ scale: 1.05 }}
+                                    whileTap={{ scale: 0.95 }}
                                     onClick={handleBellClick}
-                                    className="p-2.5 rounded-xl glass-inner relative" style={{ color: 'hsl(var(--foreground))' }}>
+                                    className="p-2.5 rounded-xl glass-inner relative"
+                                    style={{ color: 'hsl(var(--foreground))' }}
+                                >
                                     <Bell size={18} />
                                     {(pendingOrders + lowStockProducts + outOfStockProducts) > 0 && (
                                         <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] flex items-center justify-center rounded-full text-[10px] font-bold text-white px-1"
@@ -253,66 +347,6 @@ const AdminDashboard = () => {
                                         </span>
                                     )}
                                 </motion.button>
-
-                                {/* Notifications Dropdown */}
-                                <AnimatePresence>
-                                    {notificationsOpen && (
-                                        <motion.div
-                                            initial={{ opacity: 0, y: 8, scale: 0.96 }}
-                                            animate={{ opacity: 1, y: 0, scale: 1 }}
-                                            exit={{ opacity: 0, y: 8, scale: 0.96 }}
-                                            transition={{ duration: 0.2 }}
-                                            className="absolute right-0 top-full mt-2 w-80 sm:w-96 overflow-hidden z-50 glass-floating"
-                                            style={{ maxHeight: '70vh' }}>
-                                            <div className="p-4 flex items-center justify-between" style={{ borderBottom: '1px solid var(--glass-border)' }}>
-                                                <h3 className="text-sm font-bold" style={{ color: 'hsl(var(--foreground))' }}>Notifications</h3>
-                                                <span className="text-[10px] font-medium px-2 py-0.5 rounded-full"
-                                                    style={{ background: 'rgba(99,102,241,0.12)', color: 'hsl(220,70%,55%)' }}>
-                                                    {notifications.length} alerts
-                                                </span>
-                                            </div>
-                                            <div className="overflow-y-auto" style={{ maxHeight: 'calc(70vh - 60px)' }}>
-                                                {notificationsLoading ? (
-                                                     <div className="flex items-center justify-center py-8">
-                                                        <Loader size={20} className="animate-spin" style={{ color: 'hsl(var(--muted-foreground))' }} />
-                                                    </div>
-                                                ) : notifications.length === 0 ? (
-                                                    <div className="text-center py-8 px-4">
-                                                        <Bell size={28} style={{ color: 'hsl(var(--muted-foreground))' }} className="mx-auto mb-2 opacity-50" />
-                                                        <p className="text-sm" style={{ color: 'hsl(var(--muted-foreground))' }}>All caught up!</p>
-                                                    </div>
-                                                ) : (
-                                                    <div className="p-2 space-y-1">
-                                                        {notifications.map((n, i) => {
-                                                            const iconMap = { critical: <AlertTriangle size={14} />, warning: <AlertTriangle size={14} />, info: <Info size={14} />, success: <CheckCircle size={14} /> };
-                                                            const colorMap = {
-                                                                critical: { bg: 'rgba(239,68,68,0.12)', color: 'hsl(0,72%,55%)' },
-                                                                warning: { bg: 'rgba(245,158,11,0.12)', color: 'hsl(45,80%,40%)' },
-                                                                info: { bg: 'rgba(99,102,241,0.12)', color: 'hsl(220,70%,55%)' },
-                                                                success: { bg: 'rgba(16,185,129,0.12)', color: 'hsl(150,60%,45%)' },
-                                                            };
-                                                            const cs = colorMap[n.type] || colorMap.info;
-                                                            return (
-                                                                <motion.div key={n.id || i}
-                                                                    initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.03 }}
-                                                                    className="flex items-start gap-3 p-3 rounded-xl transition-all hover:bg-white/5">
-                                                                    <div className="p-1.5 rounded-lg mt-0.5 shrink-0" style={{ background: cs.bg, color: cs.color }}>{iconMap[n.type]}</div>
-                                                                    <div className="flex-1 min-w-0">
-                                                                        <p className="text-xs font-semibold truncate" style={{ color: 'hsl(var(--foreground))' }}>{n.title}</p>
-                                                                        {n.description && <p className="text-[11px] mt-0.5 truncate" style={{ color: 'hsl(var(--muted-foreground))' }}>{n.description}</p>}
-                                                                        <p className="text-[10px] mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                                                                            {n.time ? new Date(n.time).toLocaleDateString('en', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Just now'}
-                                                                        </p>
-                                                                    </div>
-                                                                </motion.div>
-                                                            );
-                                                        })}
-                                                    </div>
-                                                )}
-                                            </div>
-                                        </motion.div>
-                                    )}
-                                </AnimatePresence>
                             </div>
 
                             {/* Admin Avatar */}
@@ -359,8 +393,9 @@ const AdminDashboard = () => {
                 </div>
             </div>
 
+            {createPortal(notificationsDropdown, document.body)}
+
             {/* Product Form Modal */}
-            <AnimatePresence>
                 {isFormOpen && (
                     <ProductForm
                         product={editingProduct}
