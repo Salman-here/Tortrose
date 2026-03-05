@@ -56,8 +56,7 @@ const NavDropdown = () => {
                         animate={{ opacity: 1, y: 0, scale: 1 }}
                         exit={{ opacity: 0, y: -10, scale: 0.95 }}
                         transition={{ duration: 0.2 }}
-                        className="absolute right-0 mt-2 w-56 overflow-hidden z-50 p-1"
-                        style={{ backdropFilter: 'blur(44px)', WebkitBackdropFilter: 'blur(44px)', background: 'var(--glass-strong-bg)', border: '1px solid var(--glass-border)', borderRadius: 'var(--glass-radius)' }}
+                        className="absolute right-0 mt-2 w-56 glass-panel-strong overflow-hidden z-50 p-1"
                     >
                         {menuItems.map((item, index) =>
                             item.divider ? (
