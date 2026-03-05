@@ -1,5 +1,11 @@
 User-agent: *
 Allow: /
+Allow: /stores
+Allow: /about
+Allow: /contact
+Allow: /faq
+Allow: /become-seller
+Allow: /trusted-stores
 
 Disallow: /admin-dashboard
 Disallow: /seller-dashboard
@@ -7,5 +13,9 @@ Disallow: /user-dashboard
 Disallow: /checkout
 Disallow: /payment-success
 Disallow: /payment-cancel
+Disallow: /login
+Disallow: /signup
+Disallow: /forgot-password
+Disallow: /reset-password
 
 Sitemap: https://tortrose.com/sitemap.xml

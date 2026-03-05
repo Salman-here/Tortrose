@@ -3,7 +3,7 @@ import { Helmet } from 'react-helmet-async';
 const SITE_NAME = 'Tortrose';
 const SITE_URL = 'https://tortrose.com';
 const DEFAULT_DESCRIPTION = 'Tortrose — A modern marketplace for unique products from trusted independent sellers. Shop securely with multi-currency support and global shipping.';
-const DEFAULT_IMAGE = `${SITE_URL}/tortrose-logo.svg`;
+const DEFAULT_IMAGE = `${SITE_URL}/og-image.png`;
 
 export default function SEOHead({
   title,
