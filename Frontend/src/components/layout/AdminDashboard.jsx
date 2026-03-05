@@ -396,6 +396,7 @@ const AdminDashboard = () => {
             {createPortal(notificationsDropdown, document.body)}
 
             {/* Product Form Modal */}
+            <AnimatePresence>
                 {isFormOpen && (
                     <ProductForm
                         product={editingProduct}
