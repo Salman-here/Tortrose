@@ -28,6 +28,7 @@ import CurrencySelector from '../components/CurrencySelector';
 import { Loader, EmptySearch } from '../components/common';
 import GlassBackground from '../components/common/GlassBackground';
 import GlassPanel from '../components/common/GlassPanel';
+import TortroseLogo from '../components/common/TortroseLogo';
 import { useAuth } from '../contexts/AuthContext';
 import { useGlobal } from '../contexts/GlobalContext';
 import { useCurrency } from '../contexts/CurrencyContext';
@@ -205,10 +206,7 @@ export default function HomeScreen({ navigation }) {
       {/* Hero Header — Glass style matching website nav */}
       <GlassPanel variant="floating" style={styles.heroHeader}>
         <View style={styles.heroTopBar}>
-          <View style={styles.logoRow}>
-            <View style={styles.logoIconWrap}><Ionicons name="storefront" size={18} color={colors.primary} /></View>
-            <Text style={styles.logoText}>Tortrose</Text>
-          </View>
+          <TortroseLogo width={140} height={32} />
           <View style={styles.heroTopRight}>
             <CurrencySelector />
             {!currentUser ? (

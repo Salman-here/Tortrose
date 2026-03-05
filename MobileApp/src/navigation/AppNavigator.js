@@ -12,6 +12,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../contexts/AuthContext';
 import { useGlobal } from '../contexts/GlobalContext';
 import { View, Text, StyleSheet, Animated, Platform, Alert } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { 
   colors, 
   spacing, 
@@ -222,6 +223,7 @@ function TabBarIcon({ route, focused, color, size }) {
 function MainTabs() {
   const { cartItems } = useGlobal();
   const cartCount = calculateCartItemCount(cartItems);
+  const insets = useSafeAreaInsets();
 
   return (
     <Tab.Navigator
@@ -236,7 +238,13 @@ function MainTabs() {
         },
         tabBarActiveTintColor: colors.primary,
         tabBarInactiveTintColor: colors.grayLight,
-        tabBarStyle: styles.tabBar,
+        tabBarStyle: [
+          styles.tabBar,
+          {
+            paddingBottom: Math.max(insets.bottom, Platform.OS === 'ios' ? spacing.xl : spacing.sm),
+            height: (Platform.OS === 'ios' ? 85 : 65) + Math.max(insets.bottom - (Platform.OS === 'ios' ? spacing.xl : spacing.sm), 0),
+          },
+        ],
         tabBarLabelStyle: styles.tabBarLabel,
         tabBarItemStyle: styles.tabBarItem,
         headerShown: false,
@@ -443,8 +451,6 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: 'rgba(255, 255, 255, 0.25)',
     paddingTop: spacing.sm,
-    paddingBottom: Platform.OS === 'ios' ? spacing.xl : spacing.sm,
-    height: Platform.OS === 'ios' ? 85 : 65,
     position: 'absolute',
     left: 0,
     right: 0,
