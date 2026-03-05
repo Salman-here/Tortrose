@@ -43,13 +43,10 @@ function Navbar() {
 
                 {/* Left: Logo + Nav Links */}
                 <div className="flex items-center gap-6">
-                    <Link to="/" className="flex items-center gap-2 shrink-0">
+                    <Link to="/" className="flex items-center shrink-0">
                         <div className="glass-inner p-1.5 rounded-xl">
                             <img src="/tortrose-logo.svg" alt="Tortrose" className="h-7 sm:h-8" />
                         </div>
-                        <span className="font-extrabold text-lg tracking-tight hidden sm:inline">
-                            <span className="gradient-text">Tort</span><span style={{ color: 'hsl(var(--foreground))' }}>rose</span>
-                        </span>
                     </Link>
                     <div className="hidden md:flex items-center gap-1">
                         {navLinks.map(link => (

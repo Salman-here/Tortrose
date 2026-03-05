@@ -1,29 +1,22 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 50" width="200" height="50">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 50" width="220" height="50">
   <defs>
-    <linearGradient id="logoGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#0ea5e9;stop-opacity:1" />
-      <stop offset="50%" style="stop-color:#3b82f6;stop-opacity:1" />
-      <stop offset="100%" style="stop-color:#8b5cf6;stop-opacity:1" />
-    </linearGradient>
-    <linearGradient id="iconGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#0ea5e9;stop-opacity:1" />
-      <stop offset="100%" style="stop-color:#8b5cf6;stop-opacity:1" />
+    <linearGradient id="logoGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#6366f1;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#a855f7;stop-opacity:1" />
     </linearGradient>
   </defs>
   
-  <!-- Icon: Abstract T with rose petal accent -->
-  <g transform="translate(5, 8)">
-    <!-- Main T shape -->
-    <rect x="0" y="0" width="24" height="5" rx="2" fill="url(#iconGradient)"/>
-    <rect x="9" y="3" width="6" height="28" rx="2" fill="url(#iconGradient)"/>
-    <!-- Rose petal accent -->
-    <circle cx="22" cy="26" r="6" fill="url(#logoGradient)" opacity="0.9"/>
-    <circle cx="18" cy="22" r="4" fill="url(#logoGradient)" opacity="0.7"/>
-    <circle cx="26" cy="22" r="3" fill="url(#logoGradient)" opacity="0.5"/>
+  <!-- Rose icon mark -->
+  <g transform="translate(5, 3) scale(0.088)">
+    <path d="M256 80 C200 80 140 130 140 200 C140 230 155 260 180 280 L256 340 L332 280 C357 260 372 230 372 200 C372 130 312 80 256 80Z" fill="url(#logoGrad)" opacity="0.4"/>
+    <path d="M256 60 C180 100 130 160 160 240 C170 270 200 300 256 320 C312 300 342 270 352 240 C382 160 332 100 256 60Z" fill="url(#logoGrad)" opacity="0.7"/>
+    <ellipse cx="256" cy="200" rx="60" ry="80" fill="url(#logoGrad)" opacity="0.9"/>
+    <ellipse cx="256" cy="190" rx="22" ry="30" fill="white" opacity="0.5"/>
+    <circle cx="256" cy="185" r="10" fill="white" opacity="0.7"/>
+    <path d="M200 280 L256 360 L312 280 C290 310 222 310 200 280Z" fill="url(#logoGrad)"/>
   </g>
   
-  <!-- Text: Tortrose with inline font -->
-  <text x="42" y="35" font-family="system-ui, -apple-system, sans-serif" font-size="26" font-weight="700" fill="url(#logoGradient)" style="font-weight: 700;">
+  <text x="52" y="35" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="26" font-weight="800" letter-spacing="-0.5" fill="url(#logoGrad)">
     Tortrose
   </text>
 </svg>
