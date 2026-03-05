@@ -1,22 +1,15 @@
 /**
- * SellerDashboardScreen — Liquid Glass Design
- * Main dashboard for sellers with statistics and quick actions
+ * SellerDashboardScreen — Professional Liquid Glass Design
+ * Clean grid layout with compact navigation tiles and recent orders
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  View, Text, ScrollView, StyleSheet, RefreshControl, TouchableOpacity,
+  View, Text, ScrollView, StyleSheet, RefreshControl, TouchableOpacity, Dimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import api from '../../config/api';
 import { useAuth } from '../../contexts/AuthContext';
-import StatCard, {
-  ProductsStatCard, OrdersStatCard, RevenueStatCard, PendingOrdersStatCard,
-} from '../../components/common/StatCard';
-import ActionCard, {
-  ProductManagementAction, OrderManagementAction,
-  StoreSettingsAction, ShippingConfigAction, StoreAnalyticsAction,
-} from '../../components/common/ActionCard';
 import OrderCard from '../../components/common/OrderCard';
 import Loader from '../../components/common/Loader';
 import { EmptyOrders } from '../../components/common/EmptyState';
@@ -25,6 +18,9 @@ import GlassPanel from '../../components/common/GlassPanel';
 import {
   colors, spacing, fontSize, borderRadius, fontWeight, typography,
 } from '../../styles/theme';
+
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const TILE_GAP = spacing.sm;
 
 export const calculateSellerStats = (products, orders) => {
   const totalProducts = products?.length || 0;
@@ -36,6 +32,51 @@ export const calculateSellerStats = (products, orders) => {
   }, 0) || 0;
   return { totalProducts, totalOrders, pendingOrders, revenue };
 };
+
+/* ── Mini Stat Card ── */
+const MiniStat = ({ icon, iconColor, label, value, onPress }) => {
+  const Wrapper = onPress ? TouchableOpacity : View;
+  const wrapperProps = onPress ? { onPress, activeOpacity: 0.7 } : {};
+  const formatValue = (v) => {
+    if (typeof v === 'number') {
+      if (v >= 1000000) return `${(v / 1000000).toFixed(1)}M`;
+      if (v >= 1000) return `${(v / 1000).toFixed(1)}K`;
+      return v.toLocaleString();
+    }
+    return v;
+  };
+  return (
+    <Wrapper {...wrapperProps} style={styles.miniStat}>
+      <GlassPanel variant="card" style={styles.miniStatInner}>
+        <View style={[styles.miniStatIcon, { backgroundColor: `${iconColor}15` }]}>
+          <Ionicons name={icon} size={18} color={iconColor} />
+        </View>
+        <View style={styles.miniStatContent}>
+          <Text style={styles.miniStatValue}>{formatValue(value)}</Text>
+          <Text style={styles.miniStatLabel} numberOfLines={1}>{label}</Text>
+        </View>
+      </GlassPanel>
+    </Wrapper>
+  );
+};
+
+/* ── Quick Action Tile ── */
+const QuickTile = ({ icon, color, label, onPress, badge }) => (
+  <TouchableOpacity onPress={onPress} activeOpacity={0.7} style={styles.quickTile}>
+    <GlassPanel variant="inner" style={styles.quickTileInner}>
+      <View style={[styles.quickTileIcon, { backgroundColor: `${color}15` }]}>
+        <Ionicons name={icon} size={22} color={color} />
+        {badge > 0 && (
+          <View style={[styles.tileBadge, { backgroundColor: color }]}>
+            <Text style={styles.tileBadgeText}>{badge > 99 ? '99+' : badge}</Text>
+          </View>
+        )}
+      </View>
+      <Text style={styles.quickTileLabel} numberOfLines={1}>{label}</Text>
+      <Ionicons name="chevron-forward" size={14} color={colors.grayLight} />
+    </GlassPanel>
+  </TouchableOpacity>
+);
 
 export default function SellerDashboardScreen({ navigation }) {
   const { currentUser } = useAuth();
@@ -68,6 +109,15 @@ export default function SellerDashboardScreen({ navigation }) {
 
   if (isLoading) return <GlassBackground><Loader fullScreen message="Loading dashboard..." /></GlassBackground>;
 
+  const quickActions = [
+    { icon: 'cube-outline', color: colors.secondary, label: 'Products', onPress: () => navigation.navigate('SellerProductManagement'), badge: stats.totalProducts },
+    { icon: 'receipt-outline', color: colors.info, label: 'Orders', onPress: () => navigation.navigate('SellerOrderManagement'), badge: stats.pendingOrders },
+    { icon: 'storefront-outline', color: colors.primary, label: 'Store', onPress: () => navigation.navigate('SellerStoreSettings') },
+    { icon: 'car-outline', color: colors.warning, label: 'Shipping', onPress: () => navigation.navigate('SellerShippingConfiguration') },
+    { icon: 'bar-chart-outline', color: colors.success, label: 'Analytics', onPress: () => navigation.navigate('SellerAnalytics') },
+    { icon: 'notifications-outline', color: colors.error, label: 'Alerts', onPress: () => navigation.navigate('SellerNotifications') },
+  ];
+
   return (
     <GlassBackground>
       <ScrollView
@@ -75,61 +125,56 @@ export default function SellerDashboardScreen({ navigation }) {
         contentContainerStyle={styles.scroll}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />}
       >
-        {/* Header */}
+        {/* ── Header ── */}
         <GlassPanel variant="strong" style={styles.header}>
-          <View style={styles.headerContent}>
-            <View style={styles.headerIcon}>
-              <Ionicons name="storefront" size={28} color={colors.primary} />
+          <View style={styles.headerRow}>
+            <View style={styles.headerAvatar}>
+              <Ionicons name="storefront" size={22} color={colors.white} />
             </View>
-            <View style={styles.headerText}>
-              <Text style={styles.headerTitle}>{store?.name || 'Seller Dashboard'}</Text>
-              <Text style={styles.headerSubtitle}>Welcome back, {currentUser?.name?.split(' ')[0] || 'Seller'}</Text>
+            <View style={styles.headerInfo}>
+              <Text style={styles.headerGreeting}>Welcome back</Text>
+              <Text style={styles.headerName}>{currentUser?.name?.split(' ')[0] || 'Seller'}</Text>
             </View>
+            {store && (
+              <TouchableOpacity
+                style={styles.viewStoreBtn}
+                onPress={() => navigation.navigate('Store', { storeSlug: store.slug })}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.viewStoreBtnText}>View Store</Text>
+                <Ionicons name="open-outline" size={14} color={colors.primary} />
+              </TouchableOpacity>
+            )}
           </View>
-          {store && (
-            <TouchableOpacity style={styles.viewStoreButton} onPress={() => navigation.navigate('Store', { storeSlug: store.slug })} activeOpacity={0.8}>
-              <Text style={styles.viewStoreText}>View Store</Text>
-              <Ionicons name="arrow-forward" size={16} color={colors.primary} />
-            </TouchableOpacity>
+          {store?.name && (
+            <View style={styles.storeNameRow}>
+              <Ionicons name="business-outline" size={14} color={colors.textSecondary} />
+              <Text style={styles.storeName}>{store.name}</Text>
+            </View>
           )}
         </GlassPanel>
 
-        {/* Statistics */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Overview</Text>
-          <View style={styles.statsGrid}>
-            <View style={styles.statRow}>
-              <View style={styles.statWrapper}>
-                <ProductsStatCard value={stats.totalProducts} onPress={() => navigation.navigate('SellerProductManagement')} />
-              </View>
-              <View style={styles.statWrapper}>
-                <OrdersStatCard value={stats.totalOrders} onPress={() => navigation.navigate('SellerOrderManagement')} />
-              </View>
-            </View>
-            <View style={styles.statRow}>
-              <View style={styles.statWrapper}>
-                <RevenueStatCard value={stats.revenue} />
-              </View>
-              <View style={styles.statWrapper}>
-                <PendingOrdersStatCard value={stats.pendingOrders} onPress={() => navigation.navigate('SellerOrderManagement')} />
-              </View>
-            </View>
+        {/* ── Stats Grid ── */}
+        <View style={styles.statsGrid}>
+          <MiniStat icon="cube-outline" iconColor={colors.secondary} label="Products" value={stats.totalProducts} onPress={() => navigation.navigate('SellerProductManagement')} />
+          <MiniStat icon="receipt-outline" iconColor={colors.info} label="Orders" value={stats.totalOrders} onPress={() => navigation.navigate('SellerOrderManagement')} />
+          <MiniStat icon="cash-outline" iconColor={colors.success} label="Revenue" value={`$${stats.revenue.toLocaleString()}`} />
+          <MiniStat icon="time-outline" iconColor={colors.warning} label="Pending" value={stats.pendingOrders} onPress={() => navigation.navigate('SellerOrderManagement')} />
+        </View>
+
+        {/* ── Quick Actions ── */}
+        <View style={styles.sectionContainer}>
+          <Text style={styles.sectionTitle}>Quick Actions</Text>
+          <View style={styles.actionsGrid}>
+            {quickActions.map((action, i) => (
+              <QuickTile key={i} {...action} />
+            ))}
           </View>
         </View>
 
-        {/* Quick Actions */}
-        <GlassPanel variant="card" style={styles.actionsSection}>
-          <Text style={styles.sectionTitle}>Quick Actions</Text>
-          <ProductManagementAction onPress={() => navigation.navigate('SellerProductManagement')} badge={stats.totalProducts} />
-          <OrderManagementAction onPress={() => navigation.navigate('SellerOrderManagement')} badge={stats.pendingOrders} />
-          <StoreSettingsAction onPress={() => navigation.navigate('SellerStoreSettings')} />
-          <ShippingConfigAction onPress={() => navigation.navigate('SellerShippingConfiguration')} />
-          <StoreAnalyticsAction onPress={() => navigation.navigate('SellerAnalytics')} />
-        </GlassPanel>
-
-        {/* Recent Orders */}
-        <GlassPanel variant="card" style={styles.actionsSection}>
-          <View style={styles.sectionHeader}>
+        {/* ── Recent Orders ── */}
+        <GlassPanel variant="card" style={styles.ordersPanel}>
+          <View style={styles.ordersHeader}>
             <Text style={styles.sectionTitle}>Recent Orders</Text>
             {orders.length > 0 && (
               <TouchableOpacity onPress={() => navigation.navigate('SellerOrderManagement')} activeOpacity={0.7}>
@@ -158,28 +203,54 @@ export default function SellerDashboardScreen({ navigation }) {
 
 const styles = StyleSheet.create({
   scroll: { paddingBottom: spacing.xxl },
-  header: { margin: spacing.lg, padding: spacing.lg },
-  headerContent: { flexDirection: 'row', alignItems: 'center', marginBottom: spacing.md },
-  headerIcon: {
-    width: 50, height: 50, borderRadius: borderRadius.lg,
-    backgroundColor: 'rgba(99,102,241,0.12)', justifyContent: 'center', alignItems: 'center', marginRight: spacing.md,
+
+  /* Header */
+  header: { marginHorizontal: spacing.lg, marginTop: spacing.lg, padding: spacing.lg },
+  headerRow: { flexDirection: 'row', alignItems: 'center' },
+  headerAvatar: {
+    width: 44, height: 44, borderRadius: 22,
+    backgroundColor: colors.primary, justifyContent: 'center', alignItems: 'center',
   },
-  headerText: { flex: 1 },
-  headerTitle: { fontSize: fontSize.xl, fontWeight: fontWeight.bold, color: colors.text, marginBottom: 2 },
-  headerSubtitle: { ...typography.body, color: colors.textSecondary },
-  viewStoreButton: {
-    flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start',
-    backgroundColor: 'rgba(99,102,241,0.12)', paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm, borderRadius: borderRadius.lg, gap: spacing.xs,
+  headerInfo: { flex: 1, marginLeft: spacing.md },
+  headerGreeting: { fontSize: fontSize.sm, color: colors.textSecondary },
+  headerName: { fontSize: fontSize.xl, fontWeight: fontWeight.bold, color: colors.text },
+  viewStoreBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    backgroundColor: `${colors.primary}12`, paddingHorizontal: spacing.md, paddingVertical: spacing.xs,
+    borderRadius: borderRadius.full,
   },
-  viewStoreText: { ...typography.bodySemibold, color: colors.primary, fontSize: fontSize.sm },
-  section: { padding: spacing.lg, paddingBottom: 0 },
-  actionsSection: { marginHorizontal: spacing.lg, marginTop: spacing.lg, padding: spacing.lg },
-  sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.md },
-  sectionTitle: { ...typography.bodySemibold, color: colors.text, marginBottom: spacing.md },
-  viewAllText: { ...typography.caption, color: colors.primary, fontWeight: fontWeight.semibold },
-  statsGrid: { gap: spacing.md },
-  statRow: { flexDirection: 'row', gap: spacing.md },
-  statWrapper: { flex: 1 },
+  viewStoreBtnText: { fontSize: fontSize.xs, fontWeight: fontWeight.semibold, color: colors.primary },
+  storeNameRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: spacing.sm, paddingTop: spacing.sm, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: 'rgba(0,0,0,0.06)' },
+  storeName: { fontSize: fontSize.sm, color: colors.textSecondary },
+
+  /* Stats */
+  statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, paddingHorizontal: spacing.lg, marginTop: spacing.md },
+  miniStat: { width: (SCREEN_WIDTH - spacing.lg * 2 - TILE_GAP) / 2 },
+  miniStatInner: { flexDirection: 'row', alignItems: 'center', padding: spacing.md },
+  miniStatIcon: { width: 36, height: 36, borderRadius: 18, justifyContent: 'center', alignItems: 'center', marginRight: spacing.sm },
+  miniStatContent: { flex: 1 },
+  miniStatValue: { fontSize: fontSize.lg, fontWeight: fontWeight.bold, color: colors.text },
+  miniStatLabel: { fontSize: fontSize.xs, color: colors.textSecondary, marginTop: 1 },
+
+  /* Quick Actions */
+  sectionContainer: { paddingHorizontal: spacing.lg, marginTop: spacing.lg },
+  sectionTitle: { fontSize: fontSize.md, fontWeight: fontWeight.semibold, color: colors.text, marginBottom: spacing.sm },
+  actionsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+  quickTile: { width: (SCREEN_WIDTH - spacing.lg * 2 - TILE_GAP * 2) / 3 },
+  quickTileInner: { padding: spacing.md, alignItems: 'center', minHeight: 90 },
+  quickTileIcon: {
+    width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center', marginBottom: spacing.xs,
+  },
+  quickTileLabel: { fontSize: fontSize.xs, fontWeight: fontWeight.medium, color: colors.text, textAlign: 'center', marginBottom: 2 },
+  tileBadge: {
+    position: 'absolute', top: -4, right: -6,
+    minWidth: 18, height: 18, borderRadius: 9, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 4,
+  },
+  tileBadgeText: { fontSize: 9, fontWeight: fontWeight.bold, color: colors.white },
+
+  /* Orders */
+  ordersPanel: { marginHorizontal: spacing.lg, marginTop: spacing.lg, padding: spacing.lg },
+  ordersHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.sm },
+  viewAllText: { fontSize: fontSize.sm, color: colors.primary, fontWeight: fontWeight.semibold },
   ordersContainer: { gap: spacing.sm },
 });
