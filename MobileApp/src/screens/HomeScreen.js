@@ -27,6 +27,7 @@ import ProductCard from '../components/ProductCard';
 import CurrencySelector from '../components/CurrencySelector';
 import { Loader, EmptySearch } from '../components/common';
 import GlassBackground from '../components/common/GlassBackground';
+import GlassPanel from '../components/common/GlassPanel';
 import { useAuth } from '../contexts/AuthContext';
 import { useGlobal } from '../contexts/GlobalContext';
 import { useCurrency } from '../contexts/CurrencyContext';
@@ -201,23 +202,23 @@ export default function HomeScreen({ navigation }) {
 
   const renderHeader = () => (
     <View>
-      {/* Hero Header */}
-      <View style={styles.heroHeader}>
+      {/* Hero Header — Glass style matching website nav */}
+      <GlassPanel variant="floating" style={styles.heroHeader}>
         <View style={styles.heroTopBar}>
           <View style={styles.logoRow}>
-            <View style={styles.logoIconWrap}><Ionicons name="storefront" size={18} color={colors.white} /></View>
+            <View style={styles.logoIconWrap}><Ionicons name="storefront" size={18} color={colors.primary} /></View>
             <Text style={styles.logoText}>Tortrose</Text>
           </View>
           <View style={styles.heroTopRight}>
             <CurrencySelector />
             {!currentUser ? (
               <TouchableOpacity style={styles.loginButton} onPress={() => navigation.navigate('Login')}>
-                <Ionicons name="person-outline" size={16} color={colors.white} />
+                <Ionicons name="person-outline" size={16} color={colors.primary} />
                 <Text style={styles.loginButtonText}>Sign In</Text>
               </TouchableOpacity>
             ) : (
               <TouchableOpacity style={styles.cartIconBtn} onPress={() => navigation.navigate('Cart')}>
-                <Ionicons name="bag-outline" size={22} color={colors.white} />
+                <Ionicons name="bag-outline" size={22} color={colors.primary} />
               </TouchableOpacity>
             )}
           </View>
@@ -251,7 +252,7 @@ export default function HomeScreen({ navigation }) {
             )}
           </View>
           <TouchableOpacity style={[styles.filterButton, hasActiveFilters && styles.filterButtonActive]} onPress={() => setShowFilters(true)}>
-            <Ionicons name="options-outline" size={22} color={colors.white} />
+            <Ionicons name="options-outline" size={22} color={colors.primary} />
             {hasActiveFilters && (
               <View style={styles.filterBadge}>
                 <Text style={styles.filterBadgeText}>{selectedCategories.length + selectedBrands.length}</Text>
@@ -259,7 +260,7 @@ export default function HomeScreen({ navigation }) {
             )}
           </TouchableOpacity>
         </View>
-      </View>
+      </GlassPanel>
 
       {/* Quick Stats Banner */}
       <View style={styles.statsBanner}>
@@ -575,29 +576,29 @@ export default function HomeScreen({ navigation }) {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  // Hero Header
-  heroHeader: { backgroundColor: colors.primaryDark, paddingBottom: spacing.xxxl },
-  heroTopBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: spacing.lg, paddingTop: spacing.sm, paddingBottom: spacing.md },
+  // Hero Header — Glass style
+  heroHeader: { marginHorizontal: spacing.md, marginTop: spacing.sm, marginBottom: spacing.sm, paddingBottom: spacing.md },
+  heroTopBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingBottom: spacing.md },
   logoRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  logoIconWrap: { width: 32, height: 32, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.2)', justifyContent: 'center', alignItems: 'center' },
-  logoText: { fontSize: fontSize.xl, fontWeight: fontWeight.bold, color: colors.white },
+  logoIconWrap: { width: 32, height: 32, borderRadius: 8, backgroundColor: 'rgba(99,102,241,0.12)', justifyContent: 'center', alignItems: 'center' },
+  logoText: { fontSize: fontSize.xl, fontWeight: fontWeight.bold, color: colors.text },
   heroTopRight: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  loginButton: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.2)', paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: borderRadius.lg, gap: spacing.xs },
-  loginButtonText: { color: colors.white, fontWeight: fontWeight.semibold, fontSize: fontSize.sm },
-  cartIconBtn: { width: 38, height: 38, borderRadius: 19, backgroundColor: 'rgba(255,255,255,0.15)', justifyContent: 'center', alignItems: 'center' },
-  greetingSection: { paddingHorizontal: spacing.xl, paddingBottom: spacing.lg },
-  greetingText: { fontSize: fontSize.title, fontWeight: fontWeight.extrabold, color: colors.white, marginBottom: spacing.xs },
-  greetingSubtext: { fontSize: fontSize.sm, color: 'rgba(255,255,255,0.7)' },
+  loginButton: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(99,102,241,0.1)', paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: borderRadius.lg, gap: spacing.xs },
+  loginButtonText: { color: colors.primary, fontWeight: fontWeight.semibold, fontSize: fontSize.sm },
+  cartIconBtn: { width: 38, height: 38, borderRadius: 19, backgroundColor: 'rgba(99,102,241,0.1)', justifyContent: 'center', alignItems: 'center' },
+  greetingSection: { paddingBottom: spacing.md },
+  greetingText: { fontSize: fontSize.title, fontWeight: fontWeight.extrabold, color: colors.text, marginBottom: spacing.xs },
+  greetingSubtext: { fontSize: fontSize.sm, color: colors.textSecondary },
   // Search
-  searchContainer: { flexDirection: 'row', paddingHorizontal: spacing.lg, paddingBottom: spacing.lg, gap: spacing.sm },
-  searchInputContainer: { flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: borderRadius.xl, paddingHorizontal: spacing.md, height: 50, gap: spacing.sm },
-  searchInput: { flex: 1, fontSize: fontSize.md, color: colors.white },
-  filterButton: { backgroundColor: 'rgba(255,255,255,0.2)', width: 50, height: 50, borderRadius: borderRadius.xl, justifyContent: 'center', alignItems: 'center' },
-  filterButtonActive: { backgroundColor: colors.secondary },
+  searchContainer: { flexDirection: 'row', gap: spacing.sm },
+  searchInputContainer: { flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(99,102,241,0.08)', borderRadius: borderRadius.xl, paddingHorizontal: spacing.md, height: 48, gap: spacing.sm, borderWidth: 1, borderColor: 'rgba(99,102,241,0.15)' },
+  searchInput: { flex: 1, fontSize: fontSize.md, color: colors.text },
+  filterButton: { backgroundColor: 'rgba(99,102,241,0.1)', width: 48, height: 48, borderRadius: borderRadius.xl, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: 'rgba(99,102,241,0.15)' },
+  filterButtonActive: { backgroundColor: colors.primary },
   filterBadge: { position: 'absolute', top: -4, right: -4, backgroundColor: colors.error, width: 18, height: 18, borderRadius: 9, justifyContent: 'center', alignItems: 'center' },
   filterBadgeText: { color: colors.white, fontSize: fontSize.xs, fontWeight: fontWeight.bold },
   // Stats banner
-  statsBanner: { flexDirection: 'row', backgroundColor: colors.white, marginHorizontal: spacing.lg, marginTop: -spacing.xl, borderRadius: borderRadius.xl, padding: spacing.md, ...shadows.md, justifyContent: 'space-around' },
+  statsBanner: { flexDirection: 'row', backgroundColor: 'rgba(255,255,255,0.7)', marginHorizontal: spacing.md, marginTop: spacing.sm, borderRadius: borderRadius.xl, padding: spacing.md, borderWidth: 1, borderColor: 'rgba(255,255,255,0.5)', ...shadows.sm, justifyContent: 'space-around' },
   statItem: { alignItems: 'center', flex: 1, gap: 2 },
   statText: { fontSize: fontSize.sm, fontWeight: fontWeight.bold, color: colors.dark },
   statLabel: { fontSize: fontSize.xs, color: colors.textSecondary },

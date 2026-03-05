@@ -61,10 +61,10 @@ export default function GlassBackground({ children, style, variant = 'default' }
       <LinearGradient colors={gradientColors} style={styles.gradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
         {/* Floating orbs for depth */}
         <View style={styles.orbContainer} pointerEvents="none">
-          <Orb size={200} color="rgba(99, 102, 241, 0.08)" initialX={-50} initialY={100} duration={8000} />
-          <Orb size={160} color="rgba(139, 92, 246, 0.06)" initialX={SCREEN_WIDTH - 100} initialY={300} duration={10000} />
-          <Orb size={120} color="rgba(59, 130, 246, 0.07)" initialX={50} initialY={SCREEN_HEIGHT - 300} duration={9000} />
-          <Orb size={180} color="rgba(168, 85, 247, 0.05)" initialX={SCREEN_WIDTH - 150} initialY={50} duration={11000} />
+          <Orb size={200} color={Platform.OS === 'ios' ? 'rgba(99, 102, 241, 0.08)' : 'rgba(99, 102, 241, 0.12)'} initialX={-50} initialY={100} duration={8000} />
+          <Orb size={160} color={Platform.OS === 'ios' ? 'rgba(139, 92, 246, 0.06)' : 'rgba(139, 92, 246, 0.1)'} initialX={SCREEN_WIDTH - 100} initialY={300} duration={10000} />
+          <Orb size={120} color={Platform.OS === 'ios' ? 'rgba(59, 130, 246, 0.07)' : 'rgba(59, 130, 246, 0.11)'} initialX={50} initialY={SCREEN_HEIGHT - 300} duration={9000} />
+          <Orb size={180} color={Platform.OS === 'ios' ? 'rgba(168, 85, 247, 0.05)' : 'rgba(168, 85, 247, 0.09)'} initialX={SCREEN_WIDTH - 150} initialY={50} duration={11000} />
         </View>
         {children}
       </LinearGradient>

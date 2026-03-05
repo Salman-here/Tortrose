@@ -11,36 +11,32 @@ import { borderRadius as br, shadows, spacing } from '../../styles/theme';
 
 const VARIANTS = {
   default: {
-    backgroundColor: Platform.OS === 'ios' ? 'rgba(255,255,255,0.45)' : 'rgba(255,255,255,0.72)',
-    borderColor: 'rgba(255,255,255,0.5)',
-    blurIntensity: 40,
+    ios: { backgroundColor: 'rgba(255,255,255,0.45)', borderColor: 'rgba(255,255,255,0.5)', blurIntensity: 40 },
+    android: { backgroundColor: 'rgba(255,255,255,0.82)', borderColor: 'rgba(200,200,220,0.4)' },
   },
   card: {
-    backgroundColor: Platform.OS === 'ios' ? 'rgba(255,255,255,0.5)' : 'rgba(255,255,255,0.78)',
-    borderColor: 'rgba(255,255,255,0.55)',
-    blurIntensity: 50,
+    ios: { backgroundColor: 'rgba(255,255,255,0.5)', borderColor: 'rgba(255,255,255,0.55)', blurIntensity: 50 },
+    android: { backgroundColor: 'rgba(255,255,255,0.88)', borderColor: 'rgba(200,200,220,0.45)' },
   },
   strong: {
-    backgroundColor: Platform.OS === 'ios' ? 'rgba(255,255,255,0.6)' : 'rgba(255,255,255,0.85)',
-    borderColor: 'rgba(255,255,255,0.65)',
-    blurIntensity: 60,
+    ios: { backgroundColor: 'rgba(255,255,255,0.6)', borderColor: 'rgba(255,255,255,0.65)', blurIntensity: 60 },
+    android: { backgroundColor: 'rgba(255,255,255,0.92)', borderColor: 'rgba(200,200,220,0.5)' },
   },
   floating: {
-    backgroundColor: Platform.OS === 'ios' ? 'rgba(255,255,255,0.55)' : 'rgba(255,255,255,0.82)',
-    borderColor: 'rgba(255,255,255,0.6)',
-    blurIntensity: 55,
+    ios: { backgroundColor: 'rgba(255,255,255,0.55)', borderColor: 'rgba(255,255,255,0.6)', blurIntensity: 55 },
+    android: { backgroundColor: 'rgba(255,255,255,0.9)', borderColor: 'rgba(200,200,220,0.45)' },
   },
   inner: {
-    backgroundColor: Platform.OS === 'ios' ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.6)',
-    borderColor: 'rgba(255,255,255,0.4)',
-    blurIntensity: 30,
+    ios: { backgroundColor: 'rgba(255,255,255,0.3)', borderColor: 'rgba(255,255,255,0.4)', blurIntensity: 30 },
+    android: { backgroundColor: 'rgba(255,255,255,0.75)', borderColor: 'rgba(200,200,220,0.35)' },
   },
 };
 
 export default function GlassPanel({ children, style, variant = 'default' }) {
-  const v = VARIANTS[variant] || VARIANTS.default;
+  const config = VARIANTS[variant] || VARIANTS.default;
 
   if (Platform.OS === 'ios') {
+    const v = config.ios;
     return (
       <View
         style={[
@@ -58,9 +54,10 @@ export default function GlassPanel({ children, style, variant = 'default' }) {
     );
   }
 
-  // Android fallback
+  // Android — higher opacity, subtle colored border, and a soft shadow for depth
+  const v = config.android;
   return (
-    <View style={[styles.panel, { backgroundColor: v.backgroundColor, borderColor: v.borderColor }, style]}>
+    <View style={[styles.panel, styles.androidPanel, { backgroundColor: v.backgroundColor, borderColor: v.borderColor }, style]}>
       {children}
     </View>
   );
@@ -73,5 +70,10 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
     overflow: 'hidden',
     ...shadows.md,
+  },
+  androidPanel: {
+    // Extra shadow depth for Android since no blur is available
+    elevation: 4,
+    shadowColor: 'rgba(99, 102, 241, 0.15)',
   },
 });
