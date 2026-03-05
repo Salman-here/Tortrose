@@ -53,10 +53,7 @@ export default function GlassPanel({ children, style, variant = 'default' }) {
           tint="light"
           style={StyleSheet.absoluteFill}
         />
-        {/* Content rendered directly — no inner wrapper */}
-        <View style={styles.content} pointerEvents="box-none">
-          {children}
-        </View>
+        {children}
       </View>
     );
   }
@@ -76,8 +73,5 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
     overflow: 'hidden',
     ...shadows.md,
-  },
-  content: {
-    // Transparent passthrough — no extra borders or padding
   },
 });
