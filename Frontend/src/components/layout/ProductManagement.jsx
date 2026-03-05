@@ -106,10 +106,10 @@ const ProductManagement = () => {
             {createPortal(
                 <AnimatePresence>
                     {deleteConfirm && (
-                        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-black/50 backdrop-blur-md flex items-center justify-center p-4 z-[110]">
+                        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-[110]">
                             <motion.div initial={{ scale: 0.92, opacity: 0, y: 20 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.92, opacity: 0, y: 20 }}
                                 transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-                                className="max-w-md w-full p-6 glass-floating"
+                                className="max-w-md w-full p-6 glass-panel-strong"
                                 style={{ boxShadow: '0 24px 80px rgba(0,0,0,0.2)' }}>
                                 <div className="text-center mb-5">
                                     <div className="mx-auto w-14 h-14 rounded-2xl flex items-center justify-center mb-3" style={{ background: 'rgba(239,68,68,0.12)' }}>

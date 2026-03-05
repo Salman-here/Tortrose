@@ -635,15 +635,15 @@ const ProductForm = ({ product, setProduct, onSave, onClose, uploadingImages }) 
 
     return (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/50 backdrop-blur-md flex items-start justify-center p-4 pt-8 sm:pt-12 z-50 overflow-y-auto">
+            className="fixed inset-0 bg-black/40 flex items-start justify-center p-4 pt-8 sm:pt-12 z-50 overflow-y-auto">
             <motion.div initial={{ scale: 0.92, opacity: 0, y: 30 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.92, opacity: 0, y: 30 }}
                 transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-                className="w-full max-w-4xl mb-8 glass-floating"
+                className="w-full max-w-4xl mb-8 glass-panel-strong"
                 style={{ boxShadow: '0 24px 80px rgba(0,0,0,0.2), 0 8px 32px rgba(0,0,0,0.1)' }}>
                 <div className="max-h-[85vh] overflow-y-auto" style={{ borderRadius: 28 }}>
 
                 {/* Header */}
-                <div className="sticky top-0 z-10 p-5 sm:p-6 flex justify-between items-center glass-floating" style={{ borderBottom: '1px solid var(--glass-border)', borderRadius: '24px 24px 0 0' }}>
+                <div className="sticky top-0 z-10 p-5 sm:p-6 flex justify-between items-center glass-panel-strong" style={{ borderBottom: '1px solid var(--glass-border)', borderRadius: '24px 24px 0 0' }}>
                     <div>
                         <h3 className="text-xl font-bold" style={{ color: 'hsl(var(--foreground))' }}>
                             {product._id ? "Edit Product" : "Add New Product"}

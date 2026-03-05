@@ -45,11 +45,11 @@ const BulkDiscountModal = ({ isOpen, onClose, selectedProducts, onSuccess }) => 
 
     return createPortal(
         <AnimatePresence>
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-black/50 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 z-[110]" onClick={handleClose}>
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-black/40 flex items-center justify-center p-3 sm:p-4 z-[110]" onClick={handleClose}>
                 <motion.div initial={{ scale: 0.92, opacity: 0, y: 20 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.92, opacity: 0, y: 20 }}
                     transition={{ type: 'spring', damping: 25, stiffness: 300 }}
                     onClick={(e) => e.stopPropagation()}
-                    className="max-w-2xl w-full max-h-[95vh] overflow-y-auto glass-floating"
+                    className="max-w-2xl w-full max-h-[95vh] overflow-y-auto glass-panel-strong"
                     style={{ boxShadow: '0 24px 80px rgba(0,0,0,0.2), 0 8px 32px rgba(0,0,0,0.1)' }}>
                     
                     {/* Header */}
