@@ -56,7 +56,7 @@
   </g>
 
   <!-- Brand text -->
-  <text x="52" y="33" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="25" font-weight="800" letter-spacing="-0.5" fill="url(#logoGrad)">
+  <text x="52" y="33" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="24" font-weight="500" letter-spacing="0" fill="#6366f1">
     Tortrose
   </text>
 </svg>
