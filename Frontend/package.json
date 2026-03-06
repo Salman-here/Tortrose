@@ -1,12 +1,11 @@
 {
-  "name": "to-do-list",
+  "name": "tortrose-frontend",
   "private": true,
   "version": "0.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "vercel-build": "npm install --legacy-peer-deps && vite build",
     "lint": "eslint .",
     "preview": "vite preview --host 0.0.0.0 --port 4173"
   },
