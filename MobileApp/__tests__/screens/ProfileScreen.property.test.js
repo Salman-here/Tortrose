@@ -16,7 +16,11 @@ import * as fc from 'fast-check';
 const getMenuItemsForRole = (role) => {
   const baseItems = [
     { id: 'orders', title: 'My Orders', icon: 'receipt-outline', screen: 'Orders' },
+    { id: 'addresses', title: 'Saved Addresses', icon: 'location-outline', screen: 'SavedAddresses' },
+    { id: 'notifications', title: 'Notifications', icon: 'notifications-outline', screen: 'Notifications' },
     { id: 'trusted', title: 'Trusted Stores', icon: 'shield-checkmark-outline', screen: 'TrustedStores' },
+    { id: 'change-password', title: 'Change Password', icon: 'lock-closed-outline', screen: 'ChangePassword' },
+    { id: 'settings', title: 'Settings', icon: 'settings-outline', screen: 'Settings' },
   ];
 
   switch (role) {
@@ -124,11 +128,11 @@ describe('ProfileScreen Property Tests', () => {
       );
     });
 
-    it('should have exactly 4 menu items for any role', () => {
+    it('should have exactly 7 menu items for any role', () => {
       fc.assert(
         fc.property(userArbitrary, (user) => {
           const menuItems = getMenuItemsForRole(user.role);
-          expect(menuItems.length).toBe(4);
+          expect(menuItems.length).toBe(7);
           return true;
         }),
         { numRuns: 100 }

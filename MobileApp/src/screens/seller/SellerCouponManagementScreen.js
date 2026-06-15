@@ -23,7 +23,7 @@ export default function SellerCouponManagementScreen({ navigation }) {
   const { palette } = useTheme();
   const styles = buildStyles(palette);
 
-  const { formatPrice } = useCurrency();
+  const { currency, formatPrice, getCurrencySymbol } = useCurrency();
   const [coupons, setCoupons] = useState([]);
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -47,7 +47,7 @@ export default function SellerCouponManagementScreen({ navigation }) {
       const [couponRes, productRes, analyticsRes] = await Promise.all([
         api.get('/api/coupons/seller'),
         api.get('/api/products/get-seller-products'),
-        api.get('/api/coupons/analytics').catch(() => ({ data: null })),
+        api.get(`/api/coupons/analytics?currency=${currency}`).catch(() => ({ data: null })),
       ]);
       setCoupons(couponRes.data?.coupons || []);
       setProducts(productRes.data?.products || productRes.data || []);
@@ -71,9 +71,17 @@ export default function SellerCouponManagementScreen({ navigation }) {
     }
     setSaving(true);
     try {
-      const payload = { ...form, discountValue: Number(form.discountValue), maxUses: form.maxUses ? Number(form.maxUses) : undefined, maxUsesPerUser: Number(form.maxUsesPerUser) || 1, minOrderAmount: form.minOrderAmount ? Number(form.minOrderAmount) : 0, maxDiscountAmount: form.maxDiscountAmount ? Number(form.maxDiscountAmount) : undefined };
+      const payload = {
+        ...form,
+        currency,
+        discountValue: Number(form.discountValue),
+        maxUses: form.maxUses ? Number(form.maxUses) : undefined,
+        maxUsesPerUser: Number(form.maxUsesPerUser) || 1,
+        minOrderAmount: form.minOrderAmount ? Number(form.minOrderAmount) : 0,
+        maxDiscountAmount: form.maxDiscountAmount ? Number(form.maxDiscountAmount) : undefined,
+      };
       if (editingCoupon) {
-        await api.put(`/api/coupons/${editingCoupon._id}`, payload);
+        await api.put(`/api/coupons/update/${editingCoupon._id}`, payload);
         Toast.show({ type: 'success', text1: 'Updated!', text2: 'Coupon updated successfully' });
       } else {
         await api.post('/api/coupons/create', payload);
@@ -89,14 +97,14 @@ export default function SellerCouponManagementScreen({ navigation }) {
     Alert.alert('Delete Coupon', 'Are you sure?', [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Delete', style: 'destructive', onPress: async () => {
-        try { await api.delete(`/api/coupons/${id}`); setCoupons(prev => prev.filter(c => c._id !== id)); Toast.show({ type: 'success', text1: 'Deleted!' }); } catch { Alert.alert('Error', 'Failed to delete'); }
+        try { await api.delete(`/api/coupons/delete/${id}`); setCoupons(prev => prev.filter(c => c._id !== id)); Toast.show({ type: 'success', text1: 'Deleted!' }); } catch { Alert.alert('Error', 'Failed to delete'); }
       }},
     ]);
   };
 
   const handleToggle = async (coupon) => {
     try {
-      await api.patch(`/api/coupons/${coupon._id}/toggle`);
+      await api.patch(`/api/coupons/toggle/${coupon._id}`);
       setCoupons(prev => prev.map(c => c._id === coupon._id ? { ...c, isActive: !c.isActive } : c));
     } catch { Alert.alert('Error', 'Failed to toggle coupon'); }
   };
@@ -128,7 +136,7 @@ export default function SellerCouponManagementScreen({ navigation }) {
           </View>
         </View>
         <Text style={styles.couponDiscount}>
-          {item.discountType === 'percentage' ? `${item.discountValue}% off` : `${formatPrice(item.discountValue)} off`}
+          {item.discountType === 'percentage' ? `${item.discountValue}% off` : `${formatPrice(item.discountValue, { sourceCurrency: item.currency || currency })} off`}
         </Text>
         {item.description ? <Text style={styles.couponDesc} numberOfLines={2}>{item.description}</Text> : null}
         <View style={styles.couponMeta}>
@@ -251,7 +259,7 @@ export default function SellerCouponManagementScreen({ navigation }) {
                             <Text style={{ color: palette.colors.primary, fontWeight: fontWeight.bold, letterSpacing: 1 }}>{c.code}</Text>
                           </View>
                           <Text style={{ color: palette.colors.text, fontWeight: fontWeight.semibold, fontSize: fontSize.sm }}>
-                            {c.discountType === 'percentage' ? `${c.discountValue}%` : formatPrice(c.discountValue)} off
+                            {c.discountType === 'percentage' ? `${c.discountValue}%` : formatPrice(c.discountValue, { sourceCurrency: c.currency || currency })} off
                           </Text>
                         </View>
                         <View style={{ paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999, backgroundColor: c.isActive && !isExpired ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)' }}>
@@ -325,7 +333,7 @@ export default function SellerCouponManagementScreen({ navigation }) {
               <View style={{ flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.md }}>
                 {['percentage', 'fixed'].map(type => (
                   <TouchableOpacity key={type} style={[styles.typeBtn, form.discountType === type && styles.typeBtnActive]} onPress={() => setForm(p => ({ ...p, discountType: type }))}>
-                    <Text style={[styles.typeBtnText, form.discountType === type && styles.typeBtnTextActive]}>{type === 'percentage' ? '% Percentage' : '$ Fixed'}</Text>
+                    <Text style={[styles.typeBtnText, form.discountType === type && styles.typeBtnTextActive]}>{type === 'percentage' ? '% Percentage' : `${getCurrencySymbol()} Fixed`}</Text>
                   </TouchableOpacity>
                 ))}
               </View>
@@ -373,7 +381,7 @@ export default function SellerCouponManagementScreen({ navigation }) {
               <View style={{ flexDirection: 'row', gap: spacing.sm }}>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.fieldLabel}>Min Order</Text>
-                  <TextInput style={styles.modalInput} value={form.minOrderAmount} onChangeText={v => setForm(p => ({ ...p, minOrderAmount: v }))} placeholder="$0" placeholderTextColor="rgba(255,255,255,0.3)" keyboardType="numeric" />
+                  <TextInput style={styles.modalInput} value={form.minOrderAmount} onChangeText={v => setForm(p => ({ ...p, minOrderAmount: v }))} placeholder={`${getCurrencySymbol()}0`} placeholderTextColor="rgba(255,255,255,0.3)" keyboardType="numeric" />
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.fieldLabel}>Max Discount</Text>

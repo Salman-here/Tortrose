@@ -1,11 +1,7 @@
-// API Configuration
-// Change this to your backend URL
-// For local development on Android emulator: http://10.0.2.2:5000
-// For local development on physical device: http://YOUR_LOCAL_IP:5000
-// For production: your deployed backend URL
+import axios from 'axios';
+import * as SecureStore from 'expo-secure-store';
 
-// Use environment variable or fallback to localhost for development
-export const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:5000';
+export const API_BASE_URL = (process.env.EXPO_PUBLIC_API_URL || 'https://rozare.up.railway.app').replace(/\/$/, '');
 
 export const API_ENDPOINTS = {
   AUTH: {
@@ -18,6 +14,8 @@ export const API_ENDPOINTS = {
   },
   PRODUCTS: {
     GET_ALL: '/api/products/get-products',
+    GET_SELLER: '/api/products/get-seller-products',
+    GET_ADMIN: '/api/products/admin-products',
     GET_BY_ID: '/api/products/get-single-product',
     CREATE: '/api/products/add',
     UPDATE: '/api/products/edit',
@@ -26,23 +24,29 @@ export const API_ENDPOINTS = {
     ADD_TO_WISHLIST: '/api/products/add-to-wishlist',
     REMOVE_FROM_WISHLIST: '/api/products/delete-from-wishlist',
     BULK_DISCOUNT: '/api/products/bulk-discount',
+    BULK_PRICE_UPDATE: '/api/products/bulk-price-update',
+    BULK_DELETE: '/api/products/bulk-delete',
     REMOVE_DISCOUNT: '/api/products/remove-discount',
   },
+  UPLOAD: {
+    PRODUCT_IMAGE: '/api/upload/product-image',
+    PROFILE_IMAGE: '/api/upload/profile-image',
+  },
   ORDERS: {
-    GET_ALL: '/api/orders',
-    GET_BY_ID: '/api/orders',
-    CREATE: '/api/orders',
-    UPDATE: '/api/orders',
+    GET_ALL: '/api/order/get',
+    MY_ORDERS: '/api/order/user-orders',
+    PLACE: '/api/order/place',
   },
   STORES: {
     GET_ALL: '/api/stores',
+    GET_ALL_ADMIN: '/api/stores/all',
+    MY_STORE: '/api/stores/my-store',
+    UPDATE: '/api/stores/update',
     GET_BY_SLUG: '/api/stores',
-    TRUST: '/api/stores', // POST /:storeId/trust
-    UNTRUST: '/api/stores', // DELETE /:storeId/trust
-    TRUST_STATUS: '/api/stores', // GET /:storeId/trust-status
     TRUSTED_STORES: '/api/stores/trusted',
-    VERIFY: '/api/stores', // POST /:storeId/verify
-    UNVERIFY: '/api/stores', // POST /:storeId/unverify
+    PRODUCT_CURRENCY: '/api/stores/product-currency',
+    PRODUCT_CURRENCY_CONVERT: '/api/stores/product-currency/convert',
+    PRODUCT_CURRENCY_CANCEL: '/api/stores/product-currency/cancel',
   },
   USER: {
     PROFILE: '/api/user/profile',
@@ -53,6 +57,7 @@ export const API_ENDPOINTS = {
     BLOCK_TOGGLE: '/api/user/block-toggle',
     ADMIN_TOGGLE: '/api/user/admin-toggle',
     DELETE: '/api/user/delete',
+    SHIPPING_INFO: '/api/user/shipping-info',
   },
   CART: {
     GET: '/api/cart/get',
@@ -60,9 +65,49 @@ export const API_ENDPOINTS = {
     REMOVE: '/api/cart/remove',
     QTY_INC: '/api/cart/qty-inc',
     QTY_DEC: '/api/cart/qty-dec',
+    CLEAR: '/api/cart/clear',
   },
   CURRENCY: {
     GET_RATES: '/api/currency/rates',
+    UPDATE: '/api/currency/update',
+  },
+  PAYMENTS: {
+    SELLER_SUMMARY: '/api/payments/seller/summary',
+    SELLER_ACCOUNT: '/api/payments/seller/account',
+    SELLER_WITHDRAWALS: '/api/payments/seller/withdrawals',
+    ADMIN_OVERVIEW: '/api/payments/admin/overview',
+    ADMIN_WITHDRAWAL: '/api/payments/admin/withdrawals',
+  },
+  SHIPPING: {
+    SELLER: '/api/shipping/seller',
+    METHODS: '/api/shipping/methods',
+    CART: '/api/shipping/cart',
+  },
+  COUPONS: {
+    CREATE: '/api/coupons/create',
+    SELLER: '/api/coupons/seller',
+    ANALYTICS: '/api/coupons/analytics',
+    UPDATE: '/api/coupons/update',
+    DELETE: '/api/coupons/delete',
+    TOGGLE: '/api/coupons/toggle',
+    VALIDATE: '/api/coupons/validate',
+    CHECKOUT: '/api/coupons/checkout-coupons',
+  },
+  USER_WHATSAPP: {
+    STATUS: '/api/user-whatsapp/status',
+    SEND_OTP: '/api/user-whatsapp/send-otp',
+    VERIFY_OTP: '/api/user-whatsapp/verify-otp',
+    UNLINK: '/api/user-whatsapp/unlink',
+  },
+  SELLER_WHATSAPP: {
+    PREFS: '/api/seller-whatsapp/prefs',
+    SEND_OTP: '/api/seller-whatsapp/send-otp',
+    VERIFY_OTP: '/api/seller-whatsapp/verify-otp',
+  },
+  LOCATIONS: {
+    COUNTRIES: '/api/locations/countries',
+    STATES: '/api/locations/states',
+    CITIES: '/api/locations/cities',
   },
   SUBSCRIPTION: {
     STATUS: '/api/subscription/status',
@@ -75,19 +120,14 @@ export const API_ENDPOINTS = {
   },
 };
 
-import axios from 'axios';
-import * as SecureStore from 'expo-secure-store';
-
-// Create axios instance
 const api = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 10000,
+  timeout: 15000,
   headers: {
     'Content-Type': 'application/json',
   },
 });
 
-// Request interceptor to add auth token (reads from SecureStore)
 api.interceptors.request.use(
   async (config) => {
     try {
@@ -103,7 +143,6 @@ api.interceptors.request.use(
   (error) => Promise.reject(error)
 );
 
-// Response interceptor — clear token on 401
 api.interceptors.response.use(
   (response) => response,
   async (error) => {

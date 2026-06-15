@@ -18,16 +18,24 @@ import GlassPanel from '../../components/common/GlassPanel';
 import ChatBot from '../../components/ChatBot';
 import { spacing, fontSize, borderRadius, fontWeight, typography } from '../../styles/theme';
 import { useTheme } from '../../contexts/ThemeContext';
+import { useCurrency } from '../../contexts/CurrencyContext';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const TILE_GAP = spacing.sm;
 
-export const calculateSellerStats = (products, orders) => {
+export const calculateSellerStats = (products, orders, convertAmount = (amount) => Number(amount || 0), targetCurrency = 'USD') => {
   const totalProducts = products?.length || 0;
   const totalOrders = orders?.length || 0;
-  const pendingOrders = orders?.filter(o => o.status === 'pending' || o.status === 'processing').length || 0;
+  const pendingOrders = orders?.filter(o => {
+    const status = o.orderStatus || o.status;
+    return status === 'pending' || status === 'confirmed' || status === 'processing';
+  }).length || 0;
   const revenue = orders?.reduce((sum, order) => {
-    if (order.status !== 'cancelled') return sum + (order.total || 0);
+    const status = order.orderStatus || order.status;
+    if (status !== 'cancelled') {
+      const total = order.orderSummary?.totalAmount ?? order.totalAmount ?? order.total ?? 0;
+      return sum + convertAmount(total, order.currency || targetCurrency, targetCurrency);
+    }
     return sum;
   }, 0) || 0;
   return { totalProducts, totalOrders, pendingOrders, revenue };
@@ -35,6 +43,7 @@ export const calculateSellerStats = (products, orders) => {
 
 export default function SellerDashboardScreen({ navigation }) {
   const { palette } = useTheme();
+  const { currency, convertAmount, formatAmount } = useCurrency();
   const styles = buildStyles(palette);
 
   /* ── Mini Stat Card ── */
@@ -106,7 +115,7 @@ export default function SellerDashboardScreen({ navigation }) {
       setProducts(fetchedProducts);
       const fetchedOrders = ordersRes.data?.orders || [];
       setOrders(fetchedOrders);
-      setStats(calculateSellerStats(fetchedProducts, fetchedOrders));
+      setStats(calculateSellerStats(fetchedProducts, fetchedOrders, convertAmount, currency));
       setSubscription(subRes.data?.subscription);
     } catch (error) { console.error('Error fetching dashboard data:', error); }
     finally { setIsLoading(false); setRefreshing(false); }
@@ -123,6 +132,7 @@ export default function SellerDashboardScreen({ navigation }) {
   const quickActions = [
     { icon: 'cube-outline', color: palette.colors.secondary, label: 'Products', onPress: () => navigation.navigate('SellerProductManagement'), badge: stats.totalProducts },
     { icon: 'receipt-outline', color: palette.colors.info, label: 'Orders', onPress: () => navigation.navigate('SellerOrderManagement'), badge: stats.pendingOrders },
+    { icon: 'wallet-outline', color: '#10b981', label: 'Payments', onPress: () => navigation.navigate('SellerPayments') },
     { icon: 'storefront-outline', color: palette.colors.primary, label: 'Store', onPress: () => navigation.navigate('SellerStoreSettings') },
     { icon: 'car-outline', color: palette.colors.warning, label: 'Shipping', onPress: () => navigation.navigate('SellerShippingConfiguration') },
     { icon: 'pricetag-outline', color: '#f97316', label: 'Coupons', onPress: () => navigation.navigate('SellerCouponManagement') },
@@ -177,7 +187,7 @@ export default function SellerDashboardScreen({ navigation }) {
             {store && (
               <TouchableOpacity
                 style={styles.viewStoreBtn}
-                onPress={() => navigation.navigate('Store', { storeSlug: store.slug })}
+                onPress={() => navigation.navigate('Store', { storeSlug: store.storeSlug || store.slug })}
                 activeOpacity={0.8}
               >
                 <Text style={styles.viewStoreBtnText}>View Store</Text>
@@ -197,7 +207,7 @@ export default function SellerDashboardScreen({ navigation }) {
         <View style={styles.statsGrid}>
           <MiniStat icon="cube-outline" iconColor={palette.colors.secondary} label="Products" value={stats.totalProducts} onPress={() => navigation.navigate('SellerProductManagement')} />
           <MiniStat icon="receipt-outline" iconColor={palette.colors.info} label="Orders" value={stats.totalOrders} onPress={() => navigation.navigate('SellerOrderManagement')} />
-          <MiniStat icon="cash-outline" iconColor={palette.colors.success} label="Revenue" value={`$${stats.revenue.toLocaleString()}`} />
+          <MiniStat icon="cash-outline" iconColor={palette.colors.success} label="Revenue" value={formatAmount(stats.revenue)} />
           <MiniStat icon="time-outline" iconColor={palette.colors.warning} label="Pending" value={stats.pendingOrders} onPress={() => navigation.navigate('SellerOrderManagement')} />
         </View>
 

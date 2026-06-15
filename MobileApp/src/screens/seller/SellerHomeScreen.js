@@ -16,12 +16,14 @@ import GlassPanel from '../../components/common/GlassPanel';
 import { spacing, fontSize, fontWeight, borderRadius, typography } from '../../styles/theme';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
+import { useCurrency } from '../../contexts/CurrencyContext';
 
 export default function SellerHomeScreen({ navigation }) {
   const { palette } = useTheme();
   const styles = buildStyles(palette);
 
   const { currentUser } = useAuth();
+  const { currency, convertAmount, formatAmount } = useCurrency();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [products, setProducts] = useState([]);
@@ -50,7 +52,11 @@ export default function SellerHomeScreen({ navigation }) {
   const deliveredOrders = orders.filter(o => o.orderStatus === 'delivered' || o.status === 'delivered').length;
   const outOfStock = products.filter(p => p.stock === 0).length;
   const lowStock = products.filter(p => p.stock > 0 && p.stock <= 10).length;
-  const totalRevenue = orders.reduce((sum, o) => o.isPaid ? sum + (o.orderSummary?.totalAmount || o.totalAmount || 0) : sum, 0);
+  const totalRevenue = orders.reduce((sum, o) => {
+    if (!o.isPaid) return sum;
+    const total = o.orderSummary?.totalAmount || o.totalAmount || 0;
+    return sum + convertAmount(total, o.currency || currency, currency);
+  }, 0);
   const conversion = totalOrders > 0 ? `${((deliveredOrders / totalOrders) * 100).toFixed(0)}%` : '0%';
 
   const greeting = () => {
@@ -86,7 +92,7 @@ export default function SellerHomeScreen({ navigation }) {
 
         {/* Stats */}
         <View style={styles.statsGrid}>
-          <StatCard title="Revenue" value={`$${totalRevenue.toFixed(0)}`} icon="cash-outline" iconColor={palette.colors.success} iconBgColor="rgba(16,185,129,0.12)" />
+          <StatCard title="Revenue" value={formatAmount(totalRevenue, { decimals: 0 })} icon="cash-outline" iconColor={palette.colors.success} iconBgColor="rgba(16,185,129,0.12)" />
           <StatCard title="Orders" value={totalOrders} icon="cart-outline" iconColor={palette.colors.info} iconBgColor="rgba(99,102,241,0.12)" />
           <StatCard title="Products" value={totalProducts} icon="cube-outline" iconColor={palette.colors.primary} iconBgColor="rgba(14,165,233,0.12)" />
           <StatCard title="Conversion" value={conversion} icon="trending-up-outline" iconColor="#8b5cf6" iconBgColor="rgba(139,92,246,0.12)" />
@@ -155,7 +161,7 @@ export default function SellerHomeScreen({ navigation }) {
                     <Text style={styles.orderCustomer}>{order.shippingInfo?.fullName || order.shippingAddress?.fullName || 'Customer'}</Text>
                   </View>
                   <View style={{ alignItems: 'flex-end' }}>
-                    <Text style={styles.orderTotal}>${(order.orderSummary?.totalAmount || order.totalAmount || 0).toFixed(2)}</Text>
+                    <Text style={styles.orderTotal}>{formatAmount(convertAmount(order.orderSummary?.totalAmount || order.totalAmount || 0, order.currency || currency, currency))}</Text>
                     <View style={[styles.orderStatusBadge, { backgroundColor: statusColor + '20' }]}>
                       <Text style={[styles.orderStatusText, { color: statusColor }]}>{status}</Text>
                     </View>

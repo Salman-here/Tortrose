@@ -19,13 +19,13 @@ import { openWhatsAppVerify } from '../../utils/whatsapp';
 
 const STATUS_TABS = [
   { id: 'all', label: 'All' }, { id: 'pending', label: 'Pending' },
-  { id: 'processing', label: 'Processing' }, { id: 'shipped', label: 'Shipped' },
+  { id: 'confirmed', label: 'Confirmed' }, { id: 'processing', label: 'Processing' }, { id: 'shipped', label: 'Shipped' },
   { id: 'delivered', label: 'Delivered' }, { id: 'cancelled', label: 'Cancelled' },
 ];
 
 export const filterOrdersByStatus = (orders, status) => {
   if (!status || status === 'all') return orders;
-  return orders.filter(o => o.status === status);
+  return orders.filter(o => (o.orderStatus || o.status) === status);
 };
 
 export default function OrderManagementScreen({ navigation, route }) {
@@ -52,7 +52,11 @@ export default function OrderManagementScreen({ navigation, route }) {
   const handleOrderPress = useCallback((order) => { navigation.navigate('OrderDetailManagement', { orderId: order._id, isAdmin }); }, [navigation, isAdmin]);
 
   const filteredOrders = filterOrdersByStatus(orders, activeTab);
-  const statusCounts = orders.reduce((acc, o) => { acc[o.status] = (acc[o.status] || 0) + 1; return acc; }, {});
+  const statusCounts = orders.reduce((acc, o) => {
+    const key = o.orderStatus || o.status || 'pending';
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
 
   const renderHeader = useCallback(() => (
     <View style={styles.headerContainer}>

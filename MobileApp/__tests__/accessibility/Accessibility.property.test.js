@@ -250,7 +250,7 @@ describe('Accessibility Property Tests', () => {
     test('valid accessibility labels are non-empty strings', () => {
       fc.assert(
         fc.property(
-          fc.string({ minLength: 1, maxLength: 100 }),
+          fc.string({ minLength: 1, maxLength: 100 }).filter(label => label.trim().length > 0),
           (label) => {
             expect(hasValidAccessibilityLabel(label)).toBe(true);
           }

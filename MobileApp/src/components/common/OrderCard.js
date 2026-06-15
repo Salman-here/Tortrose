@@ -11,25 +11,39 @@ import {
   colors, spacing, fontSize, fontWeight, borderRadius, statusColors, typography,
 } from '../../styles/theme';
 import { useTheme } from '../../contexts/ThemeContext';
+import { useCurrency } from '../../contexts/CurrencyContext';
 
 const OrderCard = ({ order, onPress, showCustomer = false, showItems = false, onWhatsApp, style }) => {
   const { palette } = useTheme();
+  const { formatPrice } = useCurrency();
   const c = palette.colors;
   const g = palette.glass;
   if (!order) return null;
-  const { _id, orderItems = [], orderSummary = {}, status = 'pending', createdAt, user, shippingInfo } = order;
+  const {
+    _id,
+    orderItems = [],
+    orderSummary = {},
+    orderStatus,
+    status = 'pending',
+    createdAt,
+    user,
+    shippingInfo,
+    currency,
+  } = order;
 
   const formatOrderId = (id) => id ? `#${id.slice(-8).toUpperCase()}` : 'N/A';
   const formatDate = (d) => {
     if (!d) return 'N/A';
     return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   };
-  const formatPrice = (p) => typeof p === 'number' ? `$${p.toFixed(2)}` : '$0.00';
   const getStatusStyle = (s) => statusColors[s?.toLowerCase()] || statusColors.pending;
 
-  const statusStyle = getStatusStyle(status);
-  const itemCount = orderItems.reduce((sum, item) => sum + (item.qty || 1), 0);
+  const displayStatus = orderStatus || status;
+  const statusStyle = getStatusStyle(displayStatus);
+  const itemCount = orderItems.reduce((sum, item) => sum + (item.quantity || item.qty || 1), 0);
   const customerName = showCustomer ? (user?.name || shippingInfo?.fullName || 'Unknown Customer') : null;
+  const orderTotal = orderSummary.totalAmount ?? order.totalAmount ?? order.total ?? 0;
+  const orderCurrency = currency || order.orderCurrency || 'USD';
 
   return (
     <TouchableOpacity onPress={onPress} activeOpacity={0.7} style={style}>
@@ -41,7 +55,7 @@ const OrderCard = ({ order, onPress, showCustomer = false, showItems = false, on
           </View>
           <View style={[styles.statusBadge, { backgroundColor: statusStyle.bg }]}>
             <Text style={[styles.statusText, { color: statusStyle.text }]}>
-              {status?.charAt(0).toUpperCase() + status?.slice(1) || 'Pending'}
+              {displayStatus?.charAt(0).toUpperCase() + displayStatus?.slice(1) || 'Pending'}
             </Text>
           </View>
         </View>
@@ -57,8 +71,8 @@ const OrderCard = ({ order, onPress, showCustomer = false, showItems = false, on
           <View style={styles.itemsPreview}>
             {orderItems.slice(0, 3).map((item, index) => (
               <View key={index} style={styles.itemPreviewImage}>
-                {item.product?.image ? (
-                  <Image source={{ uri: item.product.image }} style={[styles.itemImage, { borderColor: g.borderSubtle }]} contentFit="cover" cachePolicy="memory-disk" transition={150} />
+                {item.image || item.product?.image || item.productId?.image ? (
+                  <Image source={{ uri: item.image || item.product?.image || item.productId?.image }} style={[styles.itemImage, { borderColor: g.borderSubtle }]} contentFit="cover" cachePolicy="memory-disk" transition={150} />
                 ) : (
                   <View style={[styles.itemImagePlaceholder, { backgroundColor: g.bgSubtle, borderColor: g.borderSubtle }]}>
                     <Ionicons name="cube-outline" size={16} color={c.textLight} />
@@ -77,7 +91,7 @@ const OrderCard = ({ order, onPress, showCustomer = false, showItems = false, on
         <View style={[styles.footer, { borderTopColor: g.borderSubtle }]}>
           <View style={styles.summaryRow}>
             <Text style={[styles.itemCount, { color: c.textSecondary }]}>{itemCount} {itemCount === 1 ? 'item' : 'items'}</Text>
-            <Text style={[styles.totalAmount, { color: c.primary }]}>{formatPrice(orderSummary.totalAmount)}</Text>
+            <Text style={[styles.totalAmount, { color: c.primary }]}>{formatPrice(orderTotal, { sourceCurrency: orderCurrency })}</Text>
           </View>
           {onWhatsApp && (() => {
             const confirmedByEmail = order?.confirmation?.confirmedAt && order?.confirmation?.confirmedVia === 'email';
@@ -112,20 +126,22 @@ const OrderCard = ({ order, onPress, showCustomer = false, showItems = false, on
 };
 
 export const CompactOrderCard = ({ order, onPress }) => {
+  const { formatPrice } = useCurrency();
   if (!order) return null;
-  const { _id, status = 'pending', orderSummary = {} } = order;
-  const statusStyle = statusColors[status?.toLowerCase()] || statusColors.pending;
+  const { _id, status = 'pending', orderStatus, orderSummary = {}, currency } = order;
+  const displayStatus = orderStatus || status;
+  const statusStyle = statusColors[displayStatus?.toLowerCase()] || statusColors.pending;
   const formatOrderId = (id) => id ? `#${id.slice(-6).toUpperCase()}` : 'N/A';
-  const formatPrice = (p) => typeof p === 'number' ? `$${p.toFixed(2)}` : '$0.00';
+  const orderTotal = orderSummary.totalAmount ?? order.totalAmount ?? order.total ?? 0;
 
   return (
     <TouchableOpacity style={styles.compactContainer} onPress={onPress} activeOpacity={0.7}>
       <View style={[styles.statusDot, { backgroundColor: statusStyle.solid }]} />
       <View style={styles.compactContent}>
         <Text style={styles.compactOrderId}>{formatOrderId(_id)}</Text>
-        <Text style={styles.compactStatus}>{status}</Text>
+        <Text style={styles.compactStatus}>{displayStatus}</Text>
       </View>
-      <Text style={styles.compactAmount}>{formatPrice(orderSummary.totalAmount)}</Text>
+      <Text style={styles.compactAmount}>{formatPrice(orderTotal, { sourceCurrency: currency || 'USD' })}</Text>
       <Ionicons name="chevron-forward" size={16} color={colors.grayLight} />
     </TouchableOpacity>
   );

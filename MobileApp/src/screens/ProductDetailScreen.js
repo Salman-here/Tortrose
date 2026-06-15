@@ -32,7 +32,7 @@ export default function ProductDetailScreen({ route, navigation }) {
   const { productId } = route.params;
   const { currentUser } = useAuth();
   const { wishlistItems, handleAddToWishlist, handleDeleteFromWishlist, cartItems, handleAddToCart, isCartLoading, loadingProductId } = useGlobal();
-  const { formatPrice, formatProductPrice } = useCurrency();
+  const { formatProductPrice } = useCurrency();
 
   const [product, setProduct] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -66,7 +66,7 @@ export default function ProductDetailScreen({ route, navigation }) {
   }, [productId]);
 
   const handleShare = async () => {
-    try { await Share.share({ message: `Check out ${product.name} on Rozare! ${formatPrice(displayPrice)}`, title: product.name }); } catch {}
+    try { await Share.share({ message: `Check out ${product.name} on Rozare! ${formatProductPrice(product, { field: product.discountedPrice ? 'discountedPrice' : 'price' })}`, title: product.name }); } catch {}
   };
 
   const fetchProduct = async () => {

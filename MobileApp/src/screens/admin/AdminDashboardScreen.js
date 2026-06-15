@@ -16,19 +16,24 @@ import GlassPanel from '../../components/common/GlassPanel';
 import ChatBot from '../../components/ChatBot';
 import { spacing, fontSize, borderRadius, fontWeight, typography, shadows } from '../../styles/theme';
 import { useTheme } from '../../contexts/ThemeContext';
+import { useCurrency } from '../../contexts/CurrencyContext';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const TILE_GAP = spacing.sm;
 const TILE_SIZE = (SCREEN_WIDTH - spacing.lg * 2 - TILE_GAP) / 2;
 
-export const calculateAdminStats = (users, stores, products, orders) => {
+export const calculateAdminStats = (users, stores, products, orders, convertAmount = (amount) => Number(amount || 0), targetCurrency = 'USD') => {
   const totalUsers = users?.length || 0;
   const totalStores = stores?.length || 0;
   const totalProducts = products?.length || 0;
   const totalOrders = orders?.length || 0;
   const pendingVerifications = stores?.filter(s => !s.verification?.isVerified).length || 0;
   const revenue = orders?.reduce((sum, order) => {
-    if (order.status !== 'cancelled') return sum + (order.totalAmount || order.total || 0);
+    const status = order.orderStatus || order.status;
+    if (status !== 'cancelled') {
+      const total = order.orderSummary?.totalAmount ?? order.totalAmount ?? order.total ?? 0;
+      return sum + convertAmount(total, order.currency || targetCurrency, targetCurrency);
+    }
     return sum;
   }, 0) || 0;
   return { totalUsers, totalStores, totalProducts, totalOrders, pendingVerifications, revenue };
@@ -40,6 +45,7 @@ const getStatusLabel = (status) => {
 
 export default function AdminDashboardScreen({ navigation }) {
   const { palette } = useTheme();
+  const { currency, convertAmount, formatAmount } = useCurrency();
   const styles = buildStyles(palette);
 
   const getStatusColor = (status) => {
@@ -117,7 +123,7 @@ export default function AdminDashboardScreen({ navigation }) {
       const products = productsRes.data?.products || productsRes.data || [];
       const totalProductsFromPagination = productsRes.data?.pagination?.totalProducts;
       const orders = ordersRes.data?.orders || ordersRes.data || [];
-      const computedStats = calculateAdminStats(users, stores, products, orders);
+      const computedStats = calculateAdminStats(users, stores, products, orders, convertAmount, currency);
       if (totalProductsFromPagination !== undefined) computedStats.totalProducts = totalProductsFromPagination;
       setStats(computedStats);
       const sortedOrders = [...orders].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
@@ -135,6 +141,7 @@ export default function AdminDashboardScreen({ navigation }) {
     { icon: 'shield-checkmark-outline', color: palette.colors.info, label: 'Verifications', onPress: () => navigation.navigate('StoreVerification'), badge: stats.pendingVerifications },
     { icon: 'business-outline', color: palette.colors.secondary, label: 'All Stores', onPress: () => navigation.navigate('AdminStoreOverview') },
     { icon: 'bar-chart-outline', color: palette.colors.info, label: 'Analytics', onPress: () => navigation.navigate('AdminAnalytics') },
+    { icon: 'wallet-outline', color: '#10b981', label: 'Payments', onPress: () => navigation.navigate('AdminPayments') },
     { icon: 'grid-outline', color: palette.colors.warning, label: 'Products', onPress: () => navigation.navigate('AdminProductManagement') },
     { icon: 'list-outline', color: palette.colors.success, label: 'Orders', onPress: () => navigation.navigate('AdminOrderManagement'), badge: stats.totalOrders },
     { icon: 'calculator-outline', color: palette.colors.error, label: 'Tax Config', onPress: () => navigation.navigate('AdminTaxConfiguration') },
@@ -179,7 +186,7 @@ export default function AdminDashboardScreen({ navigation }) {
             <StatPill icon="storefront-outline" iconColor={palette.colors.warning} label="Stores" value={stats.totalStores} onPress={() => navigation.navigate('StoreVerification')} />
             <StatPill icon="cube-outline" iconColor={palette.colors.secondary} label="Products" value={stats.totalProducts} onPress={() => navigation.navigate('AdminProductManagement')} />
             <StatPill icon="receipt-outline" iconColor={palette.colors.info} label="Orders" value={stats.totalOrders} onPress={() => navigation.navigate('AdminOrderManagement')} />
-            <StatPill icon="cash-outline" iconColor={palette.colors.success} label="Revenue" value={`$${typeof stats.revenue === 'number' ? stats.revenue.toLocaleString() : stats.revenue}`} />
+            <StatPill icon="cash-outline" iconColor={palette.colors.success} label="Revenue" value={formatAmount(stats.revenue)} />
             <StatPill icon="hourglass-outline" iconColor={palette.colors.error} label="Pending" value={stats.pendingVerifications} onPress={() => navigation.navigate('StoreVerification')} />
           </ScrollView>
         </View>
@@ -211,15 +218,15 @@ export default function AdminDashboardScreen({ navigation }) {
                 activeOpacity={0.7}
                 onPress={() => navigation.navigate('OrderDetailManagement', { orderId: order._id, isAdmin: true })}
               >
-                <View style={[styles.activityDot, { backgroundColor: getStatusColor(order.status) }]} />
+                <View style={[styles.activityDot, { backgroundColor: getStatusColor(order.orderStatus || order.status) }]} />
                 <View style={styles.activityInfo}>
                   <Text style={styles.activityOrderId}>#{order._id?.slice(-6).toUpperCase()}</Text>
                   <Text style={styles.activityDate}>{new Date(order.createdAt).toLocaleDateString()}</Text>
                 </View>
                 <View style={styles.activityRight}>
-                  <Text style={styles.activityAmount}>${(order.totalAmount || order.total || 0).toFixed(2)}</Text>
-                  <View style={[styles.statusChip, { backgroundColor: `${getStatusColor(order.status)}18` }]}>
-                    <Text style={[styles.statusChipText, { color: getStatusColor(order.status) }]}>{getStatusLabel(order.status)}</Text>
+                  <Text style={styles.activityAmount}>{formatAmount(convertAmount(order.orderSummary?.totalAmount ?? order.totalAmount ?? order.total ?? 0, order.currency || currency, currency))}</Text>
+                  <View style={[styles.statusChip, { backgroundColor: `${getStatusColor(order.orderStatus || order.status)}18` }]}>
+                    <Text style={[styles.statusChipText, { color: getStatusColor(order.orderStatus || order.status) }]}>{getStatusLabel(order.orderStatus || order.status)}</Text>
                   </View>
                 </View>
               </TouchableOpacity>

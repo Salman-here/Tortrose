@@ -1,5 +1,5 @@
 /**
- * ChatBot — Mobile AI Assistant
+ * ChatBot - Mobile AI Assistant
  * Role-aware with tool calling, rate limits, contextual chips, TTS, and embedded dashboard mode
  */
 
@@ -10,52 +10,153 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Speech from 'expo-speech';
+import * as ImagePicker from 'expo-image-picker';
+import * as DocumentPicker from 'expo-document-picker';
+import {
+  RecordingPresets,
+  requestRecordingPermissionsAsync,
+  setAudioModeAsync,
+  useAudioRecorder,
+  useAudioRecorderState,
+} from 'expo-audio';
 import api from '../config/api';
 import { useAuth } from '../contexts/AuthContext';
+import { useCurrency } from '../contexts/CurrencyContext';
 import {
   spacing, fontSize, borderRadius, fontWeight,
 } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 
-// Uses our own backend (no Supabase) — the /api/ai-chat/once endpoint handles
+// Uses our own backend (no Supabase) - the /api/ai-chat/once endpoint handles
 // non-streaming tool execution loop server-side and returns the final response.
 const AI_CHAT_ONCE_URL = null; // Set dynamically from api.defaults.baseURL below
 
+const sanitizeAssistantText = (text = '') => String(text || '')
+  .split('\n')
+  .filter((line) => {
+    const trimmed = line.trim();
+    if (!trimmed) return true;
+    if (trimmed.startsWith('[Tool memory:')) return false;
+    if (/^Action note:/i.test(trimmed)) return false;
+    if (/^tool memory:/i.test(trimmed)) return false;
+    return true;
+  })
+  .join('\n')
+  .replace(/\n{3,}/g, '\n\n')
+  .trim();
+
 const ROLE_CHIPS = {
   user: [
-    { label: '👗 Find outfit', msg: "I'm looking for a new outfit, can you help me?" },
-    { label: '📦 Track order', msg: 'Track my recent order' },
-    { label: '🎨 Style advice', msg: 'Give me some fashion advice for this season' },
-    { label: '🏪 Browse stores', msg: 'Show me popular stores' },
+    { label: 'Find outfit', msg: "I'm looking for a new outfit, can you help me?" },
+    { label: 'Track order', msg: 'Track my recent order' },
+    { label: 'Style advice', msg: 'Give me some fashion advice for this season' },
+    { label: 'Browse stores', msg: 'Show me popular stores' },
   ],
   seller: [
-    { label: '📊 Analytics', msg: 'Show me my store analytics — revenue, orders, top products' },
-    { label: '📦 Add product', msg: 'I want to add a new product to my store' },
-    { label: '💰 Discount', msg: 'Help me apply a bulk discount to my products' },
-    { label: '📋 Orders', msg: 'Show me my recent orders and their statuses' },
-    { label: '🚀 Growth tips', msg: 'Give me strategies to grow my store and increase sales' },
+    { label: 'Analytics', msg: 'Show me my store analytics - revenue, orders, top products' },
+    { label: 'Add product', msg: 'I want to add a new product to my store' },
+    { label: 'Discount', msg: 'Help me apply a bulk discount to my products' },
+    { label: 'Orders', msg: 'Show me my recent orders and their statuses' },
+    { label: 'Growth tips', msg: 'Give me strategies to grow my store and increase sales' },
   ],
   admin: [
-    { label: '👥 Users', msg: 'Show me a summary of all users on the platform' },
-    { label: '📊 Stats', msg: 'Give me platform-wide analytics — users, revenue, orders' },
-    { label: '🛡️ Complaints', msg: 'Show me all pending complaints' },
-    { label: '🏪 Verifications', msg: 'Show me pending store verifications' },
-    { label: '⚙️ Tax config', msg: 'Show me the current tax configuration' },
+    { label: 'Users', msg: 'Show me a summary of all users on the platform' },
+    { label: 'Stats', msg: 'Give me platform-wide analytics - users, revenue, orders' },
+    { label: 'Complaints', msg: 'Show me all pending complaints' },
+    { label: 'Verifications', msg: 'Show me pending store verifications' },
+    { label: 'Tax config', msg: 'Show me the current tax configuration' },
   ],
 };
 
 const ROLE_GREETINGS = {
   user: (name, g) => name
-    ? `${g}, ${name}! 👋 I'm your personal shopping stylist. I can help you find outfits, give style advice, track orders, and more!`
-    : `${g}! 👋 I'm your personal shopping stylist. How can I help you today?`,
-  seller: (name, g) => `${g}, ${name || 'Seller'}! 🚀 I'm your business assistant. I can manage products, analyze performance, handle orders, and suggest growth strategies.`,
-  admin: (name, g) => `${g}, ${name || 'Admin'}! 🛡️ I'm your platform command center. I can manage users, analytics, complaints, verifications, and more.`,
+    ? `${g}, ${name}! I'm your personal shopping stylist. I can help you find outfits, give style advice, track orders, and more!`
+    : `${g}! I'm your personal shopping stylist. How can I help you today?`,
+  seller: (name, g) => `${g}, ${name || 'Seller'}! I'm your business assistant. I can manage products, analyze performance, handle orders, and suggest growth strategies.`,
+  admin: (name, g) => `${g}, ${name || 'Admin'}! I'm your platform command center. I can manage users, analytics, complaints, verifications, and more.`,
 };
 
 const ROLE_TITLES = {
   user: { title: 'AI Stylist', subtitle: 'Personal Shopping Assistant' },
   seller: { title: 'Business Assistant', subtitle: 'Store Management & Growth' },
   admin: { title: 'Platform Commander', subtitle: 'Full Admin Control' },
+};
+
+const MAX_ATTACHMENTS = 10;
+const MAX_ATTACHMENT_BYTES = 15 * 1024 * 1024;
+const SUPPORTED_DOCUMENT_TYPES = [
+  'image/*',
+  'audio/*',
+  'text/*',
+  'application/json',
+  'text/csv',
+  'text/tab-separated-values',
+  'application/pdf',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.ms-excel',
+];
+
+const inferMimeType = (name = '', fallback = 'application/octet-stream') => {
+  const ext = String(name || '').split('?')[0].split('#')[0].split('.').pop()?.toLowerCase();
+  const map = {
+    jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp',
+    csv: 'text/csv', tsv: 'text/tab-separated-values', txt: 'text/plain', json: 'application/json',
+    pdf: 'application/pdf', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', xls: 'application/vnd.ms-excel',
+    m4a: 'audio/mp4', mp4: 'audio/mp4', mp3: 'audio/mpeg', wav: 'audio/wav', webm: 'audio/webm',
+    ogg: 'audio/ogg', oga: 'audio/ogg', opus: 'audio/ogg', flac: 'audio/flac', '3gp': 'audio/3gpp',
+  };
+  return map[ext] || fallback;
+};
+
+const formatBytes = (bytes = 0) => {
+  const value = Number(bytes || 0);
+  if (!value) return '';
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+};
+
+const formatRecordingTime = (seconds = 0) => {
+  const total = Math.max(0, Number(seconds) || 0);
+  const mins = Math.floor(total / 60);
+  const secs = Math.floor(total % 60);
+  return `${mins}:${String(secs).padStart(2, '0')}`;
+};
+
+const buildAttachmentFromAsset = (asset = {}, fallbackType = 'file') => {
+  const uri = asset.uri || asset.url || '';
+  const name = asset.name || asset.fileName || asset.filename || `${fallbackType}-${Date.now()}`;
+  const type = asset.mimeType || asset.type || inferMimeType(name, fallbackType === 'image' ? 'image/jpeg' : 'application/octet-stream');
+  const id = `${name}-${asset.size || asset.fileSize || 0}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return {
+    id,
+    uri,
+    url: uri,
+    name,
+    type,
+    mimeType: type,
+    size: asset.size || asset.fileSize || 0,
+    file: asset.file,
+    previewUrl: type.startsWith('image/') ? uri : '',
+  };
+};
+
+const getAttachmentDisplayType = (attachment = {}) => {
+  const type = attachment.type || attachment.mimeType || '';
+  if (type.startsWith('image/')) return 'image';
+  if (type.startsWith('audio/')) return 'audio';
+  return 'file';
+};
+
+const buildUploadPart = (attachment = {}) => {
+  if (Platform.OS === 'web' && attachment.file) return attachment.file;
+  const uri = attachment.uri || attachment.url || attachment.previewUrl;
+  if (!uri) return null;
+  const name = attachment.name || `attachment-${Date.now()}`;
+  const type = attachment.mimeType || attachment.type || inferMimeType(name);
+  return { uri, name, type };
 };
 
 // ─── Execute tool calls via backend API ───
@@ -112,7 +213,7 @@ async function executeToolCall(name, args) {
       case 'show_style_advice': return { styleAdvice: args };
       case 'suggest_outfit': return { outfitSuggestion: args };
       case 'get_my_orders': {
-        const res = await api.get(`/api/order/get-user-orders${args.status ? `?status=${args.status}` : ''}`);
+        const res = await api.get(`/api/order/user-orders${args.status ? `?status=${args.status}` : ''}`);
         return { orders: (res.data.orders || []).slice(0, 5).map(o => ({ orderId: o.orderId, status: o.orderStatus, total: o.orderSummary?.totalAmount, date: o.createdAt })) };
       }
       case 'get_order_detail': { const res = await api.get(`/api/ai-actions/order-detail?orderId=${args.orderId}`); return res.data; }
@@ -241,7 +342,27 @@ async function executeToolCall(name, args) {
 // ─── Non-streaming AI call via our backend ───
 // Uses /api/ai-chat/once which handles the tool execution loop server-side
 // and returns the final response with tool results included.
-async function callAI(messages) {
+async function callAI(messages, attachments = []) {
+  const uploadAttachments = (Array.isArray(attachments) ? attachments : [])
+    .map(buildUploadPart)
+    .filter(Boolean);
+
+  if (uploadAttachments.length) {
+    const form = new FormData();
+    form.append('messages', JSON.stringify(messages));
+    uploadAttachments.forEach((part, index) => {
+      if (Platform.OS === 'web' && typeof File !== 'undefined' && part instanceof File) {
+        form.append('attachments', part, part.name || attachments[index]?.name || `attachment-${index + 1}`);
+      } else {
+        form.append('attachments', part);
+      }
+    });
+    const resp = await api.post('/api/ai-chat/once', form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return resp.data;
+  }
+
   const resp = await api.post('/api/ai-chat/once', { messages });
   return resp.data;
 }
@@ -250,6 +371,7 @@ async function callAI(messages) {
 export default function ChatBot({ embedded = false, dashboardRole = null, visible = true, onClose, navigation }) {
   const { currentUser } = useAuth();
   const { palette } = useTheme();
+  const { formatPrice } = useCurrency();
   const c = palette.colors;
   const styles = makeStyles(palette);
   const effectiveRole = dashboardRole || currentUser?.role || 'user';
@@ -259,11 +381,133 @@ export default function ChatBot({ embedded = false, dashboardRole = null, visibl
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [ttsEnabled, setTtsEnabled] = useState(false);
+  const [pendingAttachments, setPendingAttachments] = useState([]);
+  const [recordingBusy, setRecordingBusy] = useState(false);
   const [contextualChips, setContextualChips] = useState([]);
   const [rateLimit, setRateLimit] = useState({ used: 0, limit: -1, remaining: -1 });
   const [userContext, setUserContext] = useState(null);
 
+  const audioRecorder = useAudioRecorder(RecordingPresets.LOW_QUALITY);
+  const recorderState = useAudioRecorderState(audioRecorder, 250);
   const flatListRef = useRef(null);
+
+  const addPendingAttachments = useCallback((items = []) => {
+    const nextItems = (Array.isArray(items) ? items : [items]).filter(item => item?.uri || item?.file);
+    if (!nextItems.length) return;
+
+    const accepted = [];
+    const tooLarge = [];
+    nextItems.forEach((item) => {
+      if (item.size && item.size > MAX_ATTACHMENT_BYTES) tooLarge.push(item.name || 'Attachment');
+      else accepted.push(item);
+    });
+
+    if (tooLarge.length) {
+      Alert.alert('Attachment too large', `${tooLarge.slice(0, 3).join(', ')} is over 15MB. Please choose a smaller file.`);
+    }
+
+    if (!accepted.length) return;
+    setPendingAttachments((prev) => {
+      const available = Math.max(0, MAX_ATTACHMENTS - prev.length);
+      const merged = [...prev, ...accepted.slice(0, available)];
+      if (accepted.length > available) {
+        Alert.alert('Attachment limit', `You can send up to ${MAX_ATTACHMENTS} files at once.`);
+      }
+      return merged;
+    });
+  }, []);
+
+  const removePendingAttachment = useCallback((id) => {
+    setPendingAttachments(prev => prev.filter(item => item.id !== id));
+  }, []);
+
+  const pickImages = useCallback(async () => {
+    if (loading) return;
+    try {
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert('Permission needed', 'Please allow photo access to attach product images.');
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsMultipleSelection: true,
+        quality: 0.85,
+      });
+      if (result.canceled) return;
+      const attachments = (result.assets || []).map(asset => buildAttachmentFromAsset(asset, 'image'));
+      addPendingAttachments(attachments);
+    } catch (error) {
+      Alert.alert('Image upload', error.message || 'Could not attach image.');
+    }
+  }, [addPendingAttachments, loading]);
+
+  const pickFiles = useCallback(async () => {
+    if (loading) return;
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: SUPPORTED_DOCUMENT_TYPES,
+        multiple: true,
+        copyToCacheDirectory: true,
+        base64: false,
+      });
+      if (result.canceled) return;
+      const attachments = (result.assets || []).map(asset => buildAttachmentFromAsset(asset, 'file'));
+      addPendingAttachments(attachments);
+    } catch (error) {
+      Alert.alert('File upload', error.message || 'Could not attach file.');
+    }
+  }, [addPendingAttachments, loading]);
+
+  const stopVoiceRecording = useCallback(async () => {
+    if (recordingBusy || !recorderState.isRecording) return;
+    setRecordingBusy(true);
+    try {
+      await audioRecorder.stop();
+      await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => {});
+      const uri = audioRecorder.uri || audioRecorder.getStatus?.()?.url;
+      if (!uri) {
+        Alert.alert('Voice note', 'No voice audio was captured.');
+        return;
+      }
+      const ext = String(uri).split('?')[0].split('.').pop()?.toLowerCase() || (Platform.OS === 'android' ? '3gp' : 'm4a');
+      const name = `voice-note-${Date.now()}.${ext}`;
+      addPendingAttachments([buildAttachmentFromAsset({
+        uri,
+        name,
+        mimeType: inferMimeType(name, 'audio/mp4'),
+        fileSize: 0,
+      }, 'audio')]);
+    } catch (error) {
+      Alert.alert('Voice note', error.message || 'Could not stop recording.');
+    } finally {
+      setRecordingBusy(false);
+    }
+  }, [addPendingAttachments, audioRecorder, recorderState.isRecording, recordingBusy]);
+
+  const startVoiceRecording = useCallback(async () => {
+    if (loading || recordingBusy) return;
+    if (recorderState.isRecording) {
+      await stopVoiceRecording();
+      return;
+    }
+    setRecordingBusy(true);
+    try {
+      const permission = await requestRecordingPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert('Permission needed', 'Please allow microphone access to send voice notes.');
+        return;
+      }
+      await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+      await audioRecorder.prepareToRecordAsync();
+      audioRecorder.record();
+    } catch (error) {
+      Alert.alert('Voice note', error.message || 'Could not start recording.');
+      await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => {});
+    } finally {
+      setRecordingBusy(false);
+    }
+  }, [audioRecorder, loading, recorderState.isRecording, recordingBusy, stopVoiceRecording]);
 
   // Rate limit
   const checkRateLimit = useCallback(async () => {
@@ -320,9 +564,10 @@ export default function ChatBot({ embedded = false, dashboardRole = null, visibl
   }, [ttsEnabled]);
 
   // Send
-  const sendMessage = async (text) => {
+  const sendMessage = async (text, attachments = pendingAttachments) => {
+    const attachmentsToSend = Array.isArray(attachments) ? attachments : [];
     const msgText = (text || input).trim();
-    if (!msgText || loading) return;
+    if ((!msgText && attachmentsToSend.length === 0) || loading || recorderState.isRecording) return;
 
     if (rateLimit.remaining === 0 && rateLimit.limit !== -1) {
       Alert.alert('Limit', !currentUser ? 'Please log in for more messages!' : 'Daily message limit reached.');
@@ -332,9 +577,27 @@ export default function ChatBot({ embedded = false, dashboardRole = null, visibl
     const rl = await incrementRateLimit();
     if (!rl) return;
 
-    const userMsg = { id: Date.now().toString(), role: 'user', content: msgText };
+    const visibleContent = msgText || (
+      attachmentsToSend.length > 1
+        ? `${attachmentsToSend.length} files attached`
+        : `${getAttachmentDisplayType(attachmentsToSend[0]) === 'image' ? 'Image' : getAttachmentDisplayType(attachmentsToSend[0]) === 'audio' ? 'Voice note' : 'File'} attached`
+    );
+    const displayAttachments = attachmentsToSend.map(attachment => ({
+      id: attachment.id,
+      type: getAttachmentDisplayType(attachment),
+      url: attachment.previewUrl || attachment.url || attachment.uri || '',
+      name: attachment.name || 'Attachment',
+      size: attachment.size || 0,
+    }));
+    const userMsg = {
+      id: Date.now().toString(),
+      role: 'user',
+      content: visibleContent,
+      ...(displayAttachments.length ? { attachments: displayAttachments } : {}),
+    };
     setMessages(prev => [...prev, userMsg]);
     setInput('');
+    setPendingAttachments([]);
     setLoading(true);
 
     const aiMessages = messages
@@ -346,13 +609,13 @@ export default function ChatBot({ embedded = false, dashboardRole = null, visibl
           content: toolMemory ? `${m.content}\n\n${toolMemory}` : m.content,
         };
       });
-    aiMessages.push({ role: 'user', content: msgText });
+    aiMessages.push({ role: 'user', content: visibleContent });
 
     try {
       // The backend /api/ai-chat/once handles the ENTIRE tool execution loop
       // server-side and returns: { message, toolResults, clientActions, role }
-      const response = await callAI(aiMessages);
-      const assistantContent = response.message?.content || "Sorry, I couldn't process that.";
+      const response = await callAI(aiMessages, attachmentsToSend);
+      const assistantContent = sanitizeAssistantText(response.message?.content || "Sorry, I couldn't process that.");
       const toolResults = (response.toolResults || []).map(tr => ({
         name: tr.tool,
         result: tr.result,
@@ -387,13 +650,13 @@ export default function ChatBot({ embedded = false, dashboardRole = null, visibl
       for (const tr of toolResults) {
         if (tr.name === 'search_products' && tr.result?.data?.products?.length > 0) {
           setContextualChips([
-            { label: '🔍 More like this', msg: `Show me more products similar to ${tr.result.data.products[0].name}` },
-            { label: '💰 Cheaper options', msg: 'Show me cheaper alternatives' },
+            { label: 'More like this', msg: `Show me more products similar to ${tr.result.data.products[0].name}` },
+            { label: 'Cheaper options', msg: 'Show me cheaper alternatives' },
           ]);
         } else if (['get_seller_analytics', 'get_admin_analytics'].includes(tr.name)) {
           setContextualChips([
-            { label: '📈 More details', msg: 'Give me a deeper breakdown of the analytics' },
-            { label: '🚀 Growth tips', msg: 'Based on this data, what should I do to grow?' },
+            { label: 'More details', msg: 'Give me a deeper breakdown of the analytics' },
+            { label: 'Growth tips', msg: 'Based on this data, what should I do to grow?' },
           ]);
         }
       }
@@ -407,8 +670,8 @@ export default function ChatBot({ embedded = false, dashboardRole = null, visibl
       setMessages(prev => [...prev, assistantMsg]);
       if (ttsEnabled && assistantContent) speak(assistantContent);
     } catch (err) {
-      const errorMsg = err.message?.includes('Rate limit') ? 'Too many requests — please try again shortly!'
-        : 'Sorry, please try again! 🙏';
+      const errorMsg = err.message?.includes('Rate limit') ? 'Too many requests - please try again shortly!'
+        : 'Sorry, please try again!';
       setMessages(prev => [...prev, { id: (Date.now() + 1).toString(), role: 'assistant', content: errorMsg }]);
     } finally {
       setLoading(false);
@@ -421,6 +684,36 @@ export default function ChatBot({ embedded = false, dashboardRole = null, visibl
   };
 
   // ─── Render ───
+  const renderAttachmentPreview = (attachment, compact = false) => {
+    const type = getAttachmentDisplayType(attachment);
+    if (type === 'image' && attachment.url) {
+      return (
+        <Image
+          source={{ uri: attachment.url }}
+          style={compact ? styles.pendingImage : styles.messageImage}
+          resizeMode="cover"
+        />
+      );
+    }
+    return (
+      <View style={compact ? styles.pendingFile : styles.messageFile}>
+        <Ionicons
+          name={type === 'audio' ? 'mic' : 'document-text-outline'}
+          size={compact ? 16 : 18}
+          color={compact ? c.primary : c.textSecondary}
+        />
+        <View style={{ flex: 1 }}>
+          <Text style={compact ? styles.pendingFileName : styles.messageFileName} numberOfLines={1}>
+            {attachment.name || (type === 'audio' ? 'Voice note' : 'Attached file')}
+          </Text>
+          {!!attachment.size && (
+            <Text style={compact ? styles.pendingFileMeta : styles.messageFileMeta}>{formatBytes(attachment.size)}</Text>
+          )}
+        </View>
+      </View>
+    );
+  };
+
   const renderMessage = ({ item }) => {
     const isUser = item.role === 'user';
     return (
@@ -431,7 +724,16 @@ export default function ChatBot({ embedded = false, dashboardRole = null, visibl
           </View>
         )}
         <View style={[styles.msgBubble, isUser ? styles.userBubble : styles.botBubble]}>
-          <Text style={[styles.msgText, isUser && { color: '#fff' }]}>{item.content}</Text>
+          <Text style={[styles.msgText, isUser && { color: '#fff' }]}>{isUser ? item.content : sanitizeAssistantText(item.content)}</Text>
+          {!!item.attachments?.length && (
+            <View style={styles.messageAttachments}>
+              {item.attachments.map((attachment, index) => (
+                <View key={attachment.id || `${attachment.name || 'attachment'}-${index}`}>
+                  {renderAttachmentPreview(attachment)}
+                </View>
+              ))}
+            </View>
+          )}
           {/* Tool results */}
           {item.toolResults?.map((tr, i) => (
             <View key={i}>
@@ -443,7 +745,7 @@ export default function ChatBot({ embedded = false, dashboardRole = null, visibl
                       <View style={styles.productDot} />
                       <View style={{ flex: 1 }}>
                         <Text style={styles.productName} numberOfLines={1}>{p.name}</Text>
-                        <Text style={styles.productPrice}>${(p.discountedPrice || p.price || 0).toFixed(2)}</Text>
+                        <Text style={styles.productPrice}>{formatPrice(p.discountedPrice || p.price || 0, { sourceCurrency: p.currency || p.priceCurrency || 'USD' })}</Text>
                       </View>
                       <Ionicons name="chevron-forward" size={14} color={c.textLight} />
                     </TouchableOpacity>
@@ -472,7 +774,7 @@ export default function ChatBot({ embedded = false, dashboardRole = null, visibl
                 <View style={styles.styleCard}>
                   <View style={styles.styleCardHeader}>
                     <Ionicons name="color-palette" size={14} color={c.secondary} />
-                    <Text style={styles.styleCardTitle}>Style Advice — {tr.result.styleAdvice.occasion}</Text>
+                    <Text style={styles.styleCardTitle}>Style Advice - {tr.result.styleAdvice.occasion}</Text>
                   </View>
                   <Text style={styles.styleCardText}>{tr.result.styleAdvice.advice}</Text>
                   {tr.result.styleAdvice.colorPalette?.length > 0 && (
@@ -498,7 +800,7 @@ export default function ChatBot({ embedded = false, dashboardRole = null, visibl
                   <View style={styles.styleCardHeader}>
                     <Ionicons name="shirt" size={14} color={c.secondary} />
                     <Text style={styles.styleCardTitle}>
-                      Outfit — {tr.result.outfitSuggestion.occasion || 'Suggested'}
+                      Outfit - {tr.result.outfitSuggestion.occasion || 'Suggested'}
                     </Text>
                   </View>
                   {tr.result.outfitSuggestion.pieces?.map((pc, pi) => (
@@ -604,23 +906,82 @@ export default function ChatBot({ embedded = false, dashboardRole = null, visibl
         </ScrollView>
       )}
 
+      {!!pendingAttachments.length && (
+        <View style={styles.pendingTray}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.pendingList}>
+            {pendingAttachments.map((attachment) => (
+              <View key={attachment.id} style={styles.pendingItem}>
+                {renderAttachmentPreview(attachment, true)}
+                <TouchableOpacity
+                  onPress={() => removePendingAttachment(attachment.id)}
+                  style={styles.pendingRemove}
+                  accessibilityLabel={`Remove ${attachment.name || 'attachment'}`}
+                >
+                  <Ionicons name="close" size={12} color="#fff" />
+                </TouchableOpacity>
+              </View>
+            ))}
+          </ScrollView>
+        </View>
+      )}
+
+      {recorderState.isRecording && (
+        <View style={styles.recordingBar}>
+          <View style={styles.recordingDot} />
+          <Text style={styles.recordingText}>
+            Recording voice note {formatRecordingTime(Math.floor((recorderState.durationMillis || 0) / 1000))}
+          </Text>
+          <TouchableOpacity onPress={stopVoiceRecording} disabled={recordingBusy} style={styles.stopRecordingBtn}>
+            <Text style={styles.stopRecordingText}>Stop</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
       {/* Input */}
       <View style={styles.inputContainer}>
+        <TouchableOpacity
+          onPress={pickImages}
+          disabled={loading || recorderState.isRecording}
+          style={[styles.composerBtn, (loading || recorderState.isRecording) && { opacity: 0.45 }]}
+          accessibilityLabel="Attach product image"
+        >
+          <Ionicons name="image-outline" size={18} color={c.primary} />
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={pickFiles}
+          disabled={loading || recorderState.isRecording}
+          style={[styles.composerBtn, (loading || recorderState.isRecording) && { opacity: 0.45 }]}
+          accessibilityLabel="Attach product file"
+        >
+          <Ionicons name="attach" size={19} color={c.primary} />
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={recorderState.isRecording ? stopVoiceRecording : startVoiceRecording}
+          disabled={loading || recordingBusy}
+          style={[
+            styles.composerBtn,
+            recorderState.isRecording && styles.recordingComposerBtn,
+            (loading || recordingBusy) && { opacity: 0.45 },
+          ]}
+          accessibilityLabel={recorderState.isRecording ? 'Stop voice recording' : 'Record voice note'}
+        >
+          <Ionicons name={recorderState.isRecording ? 'stop' : 'mic-outline'} size={18} color={recorderState.isRecording ? '#fff' : c.primary} />
+        </TouchableOpacity>
         <TextInput
           style={styles.input}
           value={input}
           onChangeText={setInput}
-          placeholder={effectiveRole === 'seller' ? 'Ask your business assistant...' : effectiveRole === 'admin' ? 'Command the platform...' : 'Ask your stylist...'}
+          placeholder={recorderState.isRecording ? 'Recording voice note...' : effectiveRole === 'seller' ? 'Ask your business assistant...' : effectiveRole === 'admin' ? 'Command the platform...' : 'Ask your stylist...'}
           placeholderTextColor={c.textLight}
           returnKeyType="send"
           onSubmitEditing={() => sendMessage()}
-          editable={!loading}
+          editable={!loading && !recorderState.isRecording}
           multiline={false}
         />
         <TouchableOpacity
           onPress={() => sendMessage()}
-          disabled={!input.trim() || loading}
-          style={[styles.sendBtn, (!input.trim() || loading) && { opacity: 0.4 }]}
+          disabled={(!input.trim() && pendingAttachments.length === 0) || loading || recorderState.isRecording}
+          style={[styles.sendBtn, ((!input.trim() && pendingAttachments.length === 0) || loading || recorderState.isRecording) && { opacity: 0.4 }]}
           accessibilityLabel="Send message"
         >
           <Ionicons name="send" size={16} color="#fff" />
@@ -675,6 +1036,11 @@ const makeStyles = (palette) => {
     userBubble: { backgroundColor: c.primary, borderBottomRightRadius: borderRadius.xs },
     botBubble: { backgroundColor: g.bgSubtle, borderBottomLeftRadius: borderRadius.xs, borderWidth: 1, borderColor: g.borderSubtle },
     msgText: { fontSize: fontSize.sm, lineHeight: 20, color: c.text },
+    messageAttachments: { marginTop: spacing.sm, gap: spacing.xs },
+    messageImage: { width: 190, height: 150, borderRadius: borderRadius.lg, backgroundColor: c.surfaceVariant },
+    messageFile: { minWidth: 170, maxWidth: 220, flexDirection: 'row', alignItems: 'center', gap: spacing.xs, padding: spacing.sm, borderRadius: borderRadius.md, backgroundColor: 'rgba(255,255,255,0.22)' },
+    messageFileName: { fontSize: 11, fontWeight: fontWeight.semibold, color: c.text },
+    messageFileMeta: { fontSize: 9, color: c.textLight, marginTop: 1 },
 
     // Tool results
     productResults: { marginTop: spacing.sm, gap: spacing.xs },
@@ -706,9 +1072,24 @@ const makeStyles = (palette) => {
     chipsContainer: { paddingHorizontal: spacing.md, paddingVertical: spacing.xs, gap: spacing.xs },
     chip: { backgroundColor: c.primarySubtle, borderWidth: 1, borderColor: c.primaryLighter, paddingHorizontal: spacing.md, paddingVertical: spacing.xs + 2, borderRadius: borderRadius.full },
     chipText: { fontSize: 11, fontWeight: fontWeight.medium, color: c.primary },
+    pendingTray: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: c.border, backgroundColor: c.surface },
+    pendingList: { paddingHorizontal: spacing.md, paddingVertical: spacing.xs, gap: spacing.sm },
+    pendingItem: { position: 'relative' },
+    pendingImage: { width: 56, height: 56, borderRadius: borderRadius.md, backgroundColor: c.surfaceVariant },
+    pendingFile: { width: 150, height: 56, flexDirection: 'row', alignItems: 'center', gap: spacing.xs, paddingHorizontal: spacing.sm, borderRadius: borderRadius.md, backgroundColor: c.primarySubtle, borderWidth: 1, borderColor: c.primaryLighter },
+    pendingFileName: { fontSize: 10, fontWeight: fontWeight.semibold, color: c.text },
+    pendingFileMeta: { fontSize: 8, color: c.textSecondary, marginTop: 1 },
+    pendingRemove: { position: 'absolute', top: -6, right: -6, width: 20, height: 20, borderRadius: 10, backgroundColor: c.error, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: c.surface },
+    recordingBar: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, paddingHorizontal: spacing.md, paddingVertical: spacing.xs, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: c.border, backgroundColor: c.errorSubtle },
+    recordingDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: c.error },
+    recordingText: { flex: 1, fontSize: 11, fontWeight: fontWeight.medium, color: c.error },
+    stopRecordingBtn: { paddingHorizontal: spacing.sm, paddingVertical: 4, borderRadius: borderRadius.full, backgroundColor: c.error },
+    stopRecordingText: { fontSize: 10, fontWeight: fontWeight.bold, color: '#fff' },
 
     // Input
     inputContainer: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: c.border, gap: spacing.sm, backgroundColor: c.surface },
+    composerBtn: { width: 34, height: 34, borderRadius: 11, backgroundColor: c.primarySubtle, borderWidth: 1, borderColor: c.primaryLighter, justifyContent: 'center', alignItems: 'center' },
+    recordingComposerBtn: { backgroundColor: c.error, borderColor: c.error },
     input: { flex: 1, backgroundColor: g.bgSubtle, borderRadius: borderRadius.lg, paddingHorizontal: spacing.md, paddingVertical: Platform.OS === 'ios' ? spacing.sm + 2 : spacing.sm, fontSize: fontSize.sm, color: c.text, borderWidth: 1, borderColor: g.borderSubtle },
     sendBtn: { width: 36, height: 36, borderRadius: 12, backgroundColor: c.primary, justifyContent: 'center', alignItems: 'center' },
   });

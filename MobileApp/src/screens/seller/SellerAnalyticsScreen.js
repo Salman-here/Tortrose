@@ -14,6 +14,7 @@ import GlassBackground from '../../components/common/GlassBackground';
 import GlassPanel from '../../components/common/GlassPanel';
 import { spacing, fontSize, fontWeight, borderRadius, typography } from '../../styles/theme';
 import { useTheme } from '../../contexts/ThemeContext';
+import { useCurrency } from '../../contexts/CurrencyContext';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -30,6 +31,7 @@ export default function SellerAnalyticsScreen({ navigation }) {
   const { palette } = useTheme();
   const styles = buildStyles(palette);
   const STATUS_COLORS = getStatusColors(palette);
+  const { currency, convertAmount, formatAmount } = useCurrency();
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -40,7 +42,7 @@ export default function SellerAnalyticsScreen({ navigation }) {
   const fetchAnalytics = async () => {
     setLoading(true); setError(null);
     try {
-      const res = await api.get(`/api/analytics/seller?days=${timeRange}`);
+      const res = await api.get(`/api/analytics/seller?days=${timeRange}&currency=${currency}`);
       setAnalytics(res.data.analytics);
     } catch (e) {
       // Fallback: try to build from local data
@@ -74,7 +76,10 @@ export default function SellerAnalyticsScreen({ navigation }) {
       const key = new Date(o.createdAt).toISOString().slice(0, 10);
       if (dayBuckets[key]) {
         dayBuckets[key].orders++;
-        if (o.isPaid || o.status !== 'cancelled') dayBuckets[key].revenue += (o.orderSummary?.totalAmount || o.totalAmount || o.total || 0);
+        if (o.isPaid || o.status !== 'cancelled') {
+          const total = o.orderSummary?.totalAmount || o.totalAmount || o.total || 0;
+          dayBuckets[key].revenue += convertAmount(total, o.currency || currency, currency);
+        }
       }
     });
 
@@ -84,8 +89,9 @@ export default function SellerAnalyticsScreen({ navigation }) {
       o.orderItems?.forEach(item => {
         const id = item.productId || item._id;
         if (!productMap[id]) productMap[id] = { name: item.name, revenue: 0, sold: 0 };
-        productMap[id].revenue += (item.price || 0) * (item.quantity || item.qty || 1);
-        productMap[id].sold += (item.quantity || item.qty || 1);
+        const qty = item.quantity || item.qty || 1;
+        productMap[id].revenue += convertAmount((item.price || 0) * qty, item.currency || o.currency || currency, currency);
+        productMap[id].sold += qty;
       });
     });
 
@@ -102,7 +108,11 @@ export default function SellerAnalyticsScreen({ navigation }) {
       if (statusCounts[s] !== undefined) statusCounts[s]++;
     });
 
-    const totalRevenue = filtered.reduce((s, o) => o.status !== 'cancelled' ? s + (o.orderSummary?.totalAmount || o.totalAmount || o.total || 0) : s, 0);
+    const totalRevenue = filtered.reduce((sum, o) => {
+      if (o.status === 'cancelled') return sum;
+      const total = o.orderSummary?.totalAmount || o.totalAmount || o.total || 0;
+      return sum + convertAmount(total, o.currency || currency, currency);
+    }, 0);
     const paidOrders = filtered.filter(o => o.status !== 'cancelled').length;
     const totalUnitsSold = filtered.reduce((s, o) => o.status !== 'cancelled' ? s + (o.orderItems?.reduce((a, i) => a + (i.quantity || i.qty || 1), 0) || 0) : s, 0);
 
@@ -121,8 +131,8 @@ export default function SellerAnalyticsScreen({ navigation }) {
     });
   };
 
-  useEffect(() => { fetchAnalytics(); }, [timeRange]);
-  const onRefresh = useCallback(() => { setRefreshing(true); fetchAnalytics(); }, [timeRange]);
+  useEffect(() => { fetchAnalytics(); }, [timeRange, currency]);
+  const onRefresh = useCallback(() => { setRefreshing(true); fetchAnalytics(); }, [timeRange, currency]);
 
   if (loading) return <GlassBackground><SafeAreaView style={{flex:1}}><Loader fullScreen message="Loading analytics..." /></SafeAreaView></GlassBackground>;
 
@@ -145,9 +155,9 @@ export default function SellerAnalyticsScreen({ navigation }) {
   const s = analytics.summary;
 
   const summaryStats = [
-    { label: 'Total Revenue', value: `$${(s.totalRevenue || 0).toFixed(2)}`, icon: 'cash-outline', color: palette.colors.success, bg: 'rgba(16,185,129,0.12)' },
+    { label: 'Total Revenue', value: formatAmount(s.totalRevenue || 0), icon: 'cash-outline', color: palette.colors.success, bg: 'rgba(16,185,129,0.12)' },
     { label: 'Paid Orders', value: s.paidOrders || 0, icon: 'receipt-outline', color: palette.colors.info, bg: 'rgba(99,102,241,0.12)' },
-    { label: 'Avg Order Value', value: `$${(s.avgOrderValue || 0).toFixed(2)}`, icon: 'trending-up-outline', color: '#0ea5e9', bg: 'rgba(14,165,233,0.12)' },
+    { label: 'Avg Order Value', value: formatAmount(s.avgOrderValue || 0), icon: 'trending-up-outline', color: '#0ea5e9', bg: 'rgba(14,165,233,0.12)' },
     { label: 'Units Sold', value: s.totalUnitsSold || 0, icon: 'cube-outline', color: '#8b5cf6', bg: 'rgba(139,92,246,0.12)' },
   ];
 
@@ -298,7 +308,7 @@ export default function SellerAnalyticsScreen({ navigation }) {
                 <Text style={styles.topRank}>#{i + 1}</Text>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.topName} numberOfLines={1}>{p.name}</Text>
-                  <Text style={styles.topMeta}>${p.revenue?.toFixed(2)} · {p.sold} sold</Text>
+                  <Text style={styles.topMeta}>{formatAmount(p.revenue || 0)} - {p.sold} sold</Text>
                 </View>
               </View>
             ))}

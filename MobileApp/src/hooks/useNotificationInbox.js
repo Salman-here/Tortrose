@@ -17,8 +17,8 @@ export const NOTIF_READ_KEY = 'notifications_read_ids';
 
 export function categorizeNotification(type) {
   if (!type) return 'system';
-  if (type.startsWith('order_') || type === 'order_placed' || type === 'order_confirmed' || type === 'order_processing') return 'order';
   if (type === 'order_shipped' || type === 'order_delivered') return 'delivery';
+  if (type.startsWith('order_') || type === 'order_placed' || type === 'order_confirmed' || type === 'order_processing') return 'order';
   if (type === 'new_order_received' || type === 'low_stock' || type === 'store_verified' || type === 'new_review' || type === 'subscription_expiring' || type === 'payout_received') return 'seller';
   if (type === 'price_drop' || type === 'back_in_stock' || type === 'wishlist_sale' || type === 'coupon_available' || type === 'cart_reminder') return 'promo';
   return 'system';

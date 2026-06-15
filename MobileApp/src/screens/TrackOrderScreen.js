@@ -1,12 +1,20 @@
 /**
- * TrackOrderScreen — Guest order tracking via email + order ID
+ * TrackOrderScreen - Guest order tracking via email + order ID
  * Liquid Glass Design
  */
 
 import React, { useState, useCallback } from 'react';
 import {
-  View, Text, ScrollView, TextInput, TouchableOpacity,
-  StyleSheet, KeyboardAvoidingView, Platform, ActivityIndicator, RefreshControl,
+  View,
+  Text,
+  ScrollView,
+  TextInput,
+  TouchableOpacity,
+  StyleSheet,
+  KeyboardAvoidingView,
+  Platform,
+  ActivityIndicator,
+  RefreshControl,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
@@ -28,6 +36,11 @@ const statusConfig = {
   cancelled: { icon: 'close-circle', color: '#ef4444', label: 'Cancelled' },
 };
 
+const getSelectedOptions = (item) => {
+  if (!item?.selectedOptions || typeof item.selectedOptions !== 'object') return [];
+  return Object.entries(item.selectedOptions).filter(([, value]) => value);
+};
+
 export default function TrackOrderScreen({ navigation }) {
   const { palette } = useTheme();
   const styles = buildStyles(palette);
@@ -40,6 +53,7 @@ export default function TrackOrderScreen({ navigation }) {
   const [showItems, setShowItems] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const { formatPrice } = useCurrency();
+  const orderMoney = useCallback((amount) => formatPrice(amount || 0, { sourceCurrency: order?.currency || 'USD' }), [formatPrice, order?.currency]);
 
   const onRefresh = useCallback(async () => {
     if (!email.trim() || !orderId.trim() || !order) return;
@@ -74,11 +88,11 @@ export default function TrackOrderScreen({ navigation }) {
 
   const currentStepIndex = order ? statusSteps.indexOf(order.orderStatus) : -1;
   const isCancelled = order?.orderStatus === 'cancelled';
+  const orderItems = order?.orderItems || [];
 
   return (
     <GlassBackground>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-        {/* Header */}
         <GlassPanel variant="floating" style={styles.header}>
           <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
             <Ionicons name="arrow-back" size={20} color={palette.colors.text} />
@@ -90,8 +104,11 @@ export default function TrackOrderScreen({ navigation }) {
           <Ionicons name="search-outline" size={22} color={palette.colors.primary} />
         </GlassPanel>
 
-        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ padding: spacing.md, paddingBottom: spacing.xxxl }} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={palette.colors.primary} />}>
-          {/* Search Form */}
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={{ padding: spacing.md, paddingBottom: spacing.xxxl }}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={palette.colors.primary} />}
+        >
           <GlassPanel variant="card" style={styles.formCard}>
             <View style={styles.inputGroup}>
               <View style={styles.inputLabel}>
@@ -138,10 +155,8 @@ export default function TrackOrderScreen({ navigation }) {
             </TouchableOpacity>
           </GlassPanel>
 
-          {/* Order Result */}
           {order && (
             <GlassPanel variant="card" style={styles.resultCard}>
-              {/* Order Header */}
               <View style={styles.orderHeader}>
                 <View>
                   <Text style={styles.orderIdLabel}>Order ID</Text>
@@ -149,11 +164,10 @@ export default function TrackOrderScreen({ navigation }) {
                 </View>
                 <View style={{ alignItems: 'flex-end' }}>
                   <Text style={styles.orderIdLabel}>Total</Text>
-                  <Text style={styles.totalValue}>{formatPrice(order.orderSummary?.totalAmount)}</Text>
+                  <Text style={styles.totalValue}>{orderMoney(order.orderSummary?.totalAmount)}</Text>
                 </View>
               </View>
 
-              {/* Status Progress */}
               {isCancelled ? (
                 <View style={styles.cancelledBanner}>
                   <Ionicons name="close-circle" size={28} color="#ef4444" />
@@ -179,7 +193,6 @@ export default function TrackOrderScreen({ navigation }) {
                 </View>
               )}
 
-              {/* Shipping Info */}
               <View style={styles.infoSection}>
                 <Text style={styles.infoTitle}>Shipping To</Text>
                 <Text style={styles.infoText}>
@@ -189,30 +202,35 @@ export default function TrackOrderScreen({ navigation }) {
                 </Text>
               </View>
 
-              {/* Order Items Toggle */}
               <TouchableOpacity style={styles.itemsToggle} onPress={() => setShowItems(!showItems)}>
-                <Text style={styles.itemsToggleText}>Order Items ({order.orderItems?.length})</Text>
+                <Text style={styles.itemsToggleText}>Order Items ({orderItems.length})</Text>
                 <Ionicons name={showItems ? 'chevron-up' : 'chevron-down'} size={18} color={palette.colors.text} />
               </TouchableOpacity>
 
-              {showItems && order.orderItems?.map((item, i) => (
-                <View key={i} style={styles.orderItem}>
-                  {item.image && (
-                    <Image source={{ uri: item.image }} style={styles.orderItemImage} contentFit="cover" />
-                  )}
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.orderItemName} numberOfLines={2}>{item.name}</Text>
-                    <Text style={styles.orderItemQty}>Qty: {item.quantity} × {formatPrice(item.price)}</Text>
+              {showItems && orderItems.map((item, i) => {
+                const selectedOptions = getSelectedOptions(item);
+                return (
+                  <View key={item._id || `${item.productId || item.name}-${i}`} style={styles.orderItem}>
+                    {item.image && (
+                      <Image source={{ uri: item.image }} style={styles.orderItemImage} contentFit="cover" />
+                    )}
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <Text style={styles.orderItemName} numberOfLines={2}>{item.name}</Text>
+                      <Text style={styles.orderItemQty}>Qty: {item.quantity} x {orderMoney(item.price)}</Text>
+                      {item.selectedColor && <Text style={styles.orderItemOption}>Color: {item.selectedColor}</Text>}
+                      {selectedOptions.map(([name, value]) => (
+                        <Text key={name} style={styles.orderItemOption}>{name}: {value}</Text>
+                      ))}
+                    </View>
+                    <Text style={styles.orderItemTotal}>{orderMoney(item.price * item.quantity)}</Text>
                   </View>
-                  <Text style={styles.orderItemTotal}>{formatPrice(item.price * item.quantity)}</Text>
-                </View>
-              ))}
+                );
+              })}
 
-              {/* Payment Info */}
               <View style={styles.paymentInfo}>
                 <Text style={styles.paymentLabel}>Payment</Text>
                 <Text style={styles.paymentValue}>
-                  {order.paymentMethod === 'cash_on_delivery' ? 'Cash on Delivery' : 'Stripe'} ·{' '}
+                  {order.paymentMethod === 'cash_on_delivery' ? 'Cash on Delivery' : 'Stripe'} -{' '}
                   <Text style={{ color: order.isPaid ? '#22c55e' : '#f59e0b' }}>
                     {order.isPaid ? 'Paid' : 'Unpaid'}
                   </Text>
@@ -225,7 +243,6 @@ export default function TrackOrderScreen({ navigation }) {
             </GlassPanel>
           )}
 
-          {/* Not Found */}
           {searched && !order && !loading && (
             <GlassPanel variant="card" style={styles.emptyCard}>
               <Ionicons name="cube-outline" size={56} color="rgba(255,255,255,0.3)" />
@@ -252,7 +269,7 @@ const buildStyles = (p) => StyleSheet.create({
   trackBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.sm, backgroundColor: p.colors.primary, paddingVertical: 14, borderRadius: 16, marginTop: spacing.sm, ...shadows.md },
   trackBtnText: { color: '#fff', fontSize: fontSize.md, fontWeight: fontWeight.bold },
   resultCard: { padding: spacing.lg, marginBottom: spacing.md },
-  orderHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: spacing.lg },
+  orderHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: spacing.lg, gap: spacing.md },
   orderIdLabel: { fontSize: fontSize.xs, color: p.colors.textSecondary },
   orderIdValue: { fontSize: fontSize.lg, fontWeight: fontWeight.bold, color: p.colors.primary, marginTop: 2 },
   totalValue: { fontSize: fontSize.lg, fontWeight: fontWeight.bold, color: p.colors.text, marginTop: 2 },
@@ -272,10 +289,11 @@ const buildStyles = (p) => StyleSheet.create({
   orderItemImage: { width: 44, height: 44, borderRadius: 10 },
   orderItemName: { fontSize: fontSize.sm, fontWeight: fontWeight.medium, color: p.colors.text },
   orderItemQty: { fontSize: fontSize.xs, color: p.colors.textSecondary, marginTop: 2 },
-  orderItemTotal: { fontSize: fontSize.sm, fontWeight: fontWeight.bold, color: p.colors.text },
-  paymentInfo: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: p.glass.bgSubtle, borderRadius: 14, padding: spacing.md, marginTop: spacing.md },
+  orderItemOption: { fontSize: fontSize.xs, color: p.colors.textSecondary, marginTop: 2 },
+  orderItemTotal: { fontSize: fontSize.sm, fontWeight: fontWeight.bold, color: p.colors.text, textAlign: 'right', maxWidth: 96 },
+  paymentInfo: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: p.glass.bgSubtle, borderRadius: 14, padding: spacing.md, marginTop: spacing.md, gap: spacing.sm },
   paymentLabel: { fontSize: fontSize.sm, color: p.colors.textSecondary },
-  paymentValue: { fontSize: fontSize.sm, fontWeight: fontWeight.medium, color: p.colors.text },
+  paymentValue: { fontSize: fontSize.sm, fontWeight: fontWeight.medium, color: p.colors.text, textAlign: 'right', flex: 1 },
   dateText: { fontSize: fontSize.xs, color: p.colors.textSecondary, textAlign: 'center', marginTop: spacing.md },
   emptyCard: { alignItems: 'center', padding: spacing.xxl },
   emptyTitle: { fontSize: fontSize.lg, fontWeight: fontWeight.bold, color: p.colors.text, marginTop: spacing.md },

@@ -37,6 +37,8 @@ export default function StoreScreen({ route, navigation }) {
   const [trustSheetVisible, setTrustSheetVisible] = useState(false);
   const [search, setSearch] = useState('');
   const [activeCategory, setActiveCategory] = useState('All');
+  const [currentPage, setCurrentPage] = useState(1);
+  const pageSize = 12;
 
   const categories = React.useMemo(() => {
     const set = new Set();
@@ -52,6 +54,14 @@ export default function StoreScreen({ route, navigation }) {
       return (p.name || '').toLowerCase().includes(q) || (p.description || '').toLowerCase().includes(q);
     });
   }, [products, search, activeCategory]);
+
+  useEffect(() => { setCurrentPage(1); }, [search, activeCategory]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredProducts.length / pageSize));
+  const visibleProducts = React.useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return filteredProducts.slice(start, start + pageSize);
+  }, [filteredProducts, currentPage]);
 
   const fetchStore = useCallback(async () => {
     if (!slug) { setIsLoading(false); return; }
@@ -201,9 +211,34 @@ export default function StoreScreen({ route, navigation }) {
   return (
     <GlassBackground>
       <FlatList
-        data={filteredProducts} keyExtractor={(item) => item._id} numColumns={2}
+        data={visibleProducts} keyExtractor={(item) => item._id} numColumns={2}
         columnWrapperStyle={styles.row} contentContainerStyle={styles.listContent}
         ListHeaderComponent={renderHeader} renderItem={renderProduct}
+        ListFooterComponent={filteredProducts.length > pageSize ? (
+          <GlassPanel variant="card" style={styles.paginationCard}>
+            <Text style={styles.paginationText}>
+              Page {currentPage} of {totalPages}
+            </Text>
+            <View style={styles.paginationActions}>
+              <TouchableOpacity
+                style={[styles.pageButton, currentPage <= 1 && styles.pageButtonDisabled]}
+                onPress={() => setCurrentPage(page => Math.max(1, page - 1))}
+                disabled={currentPage <= 1}
+              >
+                <Ionicons name="chevron-back" size={18} color={currentPage <= 1 ? palette.colors.textLight : palette.colors.primary} />
+                <Text style={[styles.pageButtonText, currentPage <= 1 && styles.pageButtonTextDisabled]}>Previous</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.pageButton, currentPage >= totalPages && styles.pageButtonDisabled]}
+                onPress={() => setCurrentPage(page => Math.min(totalPages, page + 1))}
+                disabled={currentPage >= totalPages}
+              >
+                <Text style={[styles.pageButtonText, currentPage >= totalPages && styles.pageButtonTextDisabled]}>Next</Text>
+                <Ionicons name="chevron-forward" size={18} color={currentPage >= totalPages ? palette.colors.textLight : palette.colors.primary} />
+              </TouchableOpacity>
+            </View>
+          </GlassPanel>
+        ) : null}
         ListEmptyComponent={() => <EmptyProducts onAdd={null} />}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[palette.colors.primary]} tintColor={palette.colors.primary} />}
         showsVerticalScrollIndicator={false} initialNumToRender={8} maxToRenderPerBatch={8} windowSize={5} removeClippedSubviews
@@ -244,4 +279,11 @@ const buildStyles = (p) => StyleSheet.create({
   catChipActive: { backgroundColor: p.colors.primary, borderColor: p.colors.primary },
   catChipText: { fontSize: fontSize.xs, color: p.colors.textSecondary, fontWeight: fontWeight.semibold },
   catChipTextActive: { color: '#fff' },
+  paginationCard: { marginHorizontal: spacing.md, marginTop: spacing.md, padding: spacing.md, alignItems: 'center' },
+  paginationText: { fontSize: fontSize.sm, color: p.colors.textSecondary, fontWeight: fontWeight.semibold, marginBottom: spacing.sm },
+  paginationActions: { flexDirection: 'row', gap: spacing.sm },
+  pageButton: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: borderRadius.full, backgroundColor: `${p.colors.primary}14`, borderWidth: 1, borderColor: `${p.colors.primary}25` },
+  pageButtonDisabled: { opacity: 0.45, backgroundColor: p.glass.bgSubtle, borderColor: p.glass.borderSubtle },
+  pageButtonText: { fontSize: fontSize.sm, color: p.colors.primary, fontWeight: fontWeight.bold },
+  pageButtonTextDisabled: { color: p.colors.textLight },
 });

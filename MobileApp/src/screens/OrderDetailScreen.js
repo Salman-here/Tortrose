@@ -54,6 +54,7 @@ export default function OrderDetailScreen({ route, navigation }) {
   const [error, setError] = useState(null);
   const [reordering, setReordering] = useState(false);
   const [sharingInvoice, setSharingInvoice] = useState(false);
+  const orderMoney = useCallback((amount) => formatPrice(amount || 0, { sourceCurrency: order?.currency || 'USD' }), [formatPrice, order?.currency]);
 
   const fetchOrderDetail = useCallback(async () => {
     try { setError(null); const res = await api.get(`/api/order/detail/${orderId}`); setOrder(res.data.order); }
@@ -126,7 +127,7 @@ export default function OrderDetailScreen({ route, navigation }) {
   const tax = order.orderSummary?.tax || 0;
   let actualShipping = order.orderSummary?.shippingCost || 0;
   if (order.sellerShipping?.length > 0) actualShipping = order.sellerShipping.reduce((s, ss) => s + (ss.shippingMethod?.price || 0), 0);
-  const total = subtotal + tax + actualShipping;
+  const total = order.orderSummary?.totalAmount ?? (subtotal + tax + actualShipping - (order.orderSummary?.couponDiscount || 0));
 
   return (
     <GlassBackground>
@@ -161,7 +162,7 @@ export default function OrderDetailScreen({ route, navigation }) {
                 You confirmed via {order.confirmation.confirmedVia || 'email'}
               </Text>
               <Text style={{ fontSize: fontSize.xs, color: palette.colors.textSecondary, marginTop: 2 }}>
-                {formatDate(order.confirmation.confirmedAt)} — seller has been notified.
+                {formatDate(order.confirmation.confirmedAt)} - seller has been notified.
               </Text>
             </View>
           </GlassPanel>
@@ -207,22 +208,33 @@ export default function OrderDetailScreen({ route, navigation }) {
         {/* Items */}
         <GlassPanel variant="card" style={styles.section}>
           <Text style={styles.sectionTitle}>Order Items ({order.orderItems?.length || 0})</Text>
-          {order.orderItems?.map((item, index) => (
-            <View key={index} style={[styles.orderItem, index === order.orderItems.length - 1 && { borderBottomWidth: 0 }]}>
-              <Image source={{ uri: item.image || 'https://via.placeholder.com/80' }} style={styles.itemImage} contentFit="cover" cachePolicy="memory-disk" transition={150} />
-              <View style={styles.itemInfo}>
-                <Text style={styles.itemName} numberOfLines={2}>{item.name}</Text>
-                {item.selectedColor && (
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
-                    <Ionicons name="color-palette-outline" size={12} color={palette.colors.primary} />
-                    <Text style={{ fontSize: 11, color: palette.colors.primary, fontWeight: fontWeight.medium }}>{item.selectedColor}</Text>
-                  </View>
-                )}
-                <Text style={styles.itemQty}>Qty: {item.quantity || item.qty}</Text>
-                <Text style={styles.itemPrice}>{formatPrice(item.price)}</Text>
+          {order.orderItems?.map((item, index) => {
+            const selectedOptions = item.selectedOptions && typeof item.selectedOptions === 'object'
+              ? Object.entries(item.selectedOptions).filter(([, value]) => value)
+              : [];
+            return (
+              <View key={index} style={[styles.orderItem, index === order.orderItems.length - 1 && { borderBottomWidth: 0 }]}>
+                <Image source={{ uri: item.image || 'https://via.placeholder.com/80' }} style={styles.itemImage} contentFit="cover" cachePolicy="memory-disk" transition={150} />
+                <View style={styles.itemInfo}>
+                  <Text style={styles.itemName} numberOfLines={2}>{item.name}</Text>
+                  {item.selectedColor && (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
+                      <Ionicons name="color-palette-outline" size={12} color={palette.colors.primary} />
+                      <Text style={{ fontSize: 11, color: palette.colors.primary, fontWeight: fontWeight.medium }}>{item.selectedColor}</Text>
+                    </View>
+                  )}
+                  {selectedOptions.map(([name, value]) => (
+                    <View key={name} style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
+                      <Ionicons name="options-outline" size={12} color={palette.colors.primary} />
+                      <Text style={{ fontSize: 11, color: palette.colors.primary, fontWeight: fontWeight.medium }}>{name}: {value}</Text>
+                    </View>
+                  ))}
+                  <Text style={styles.itemQty}>Qty: {item.quantity || item.qty}</Text>
+                  <Text style={styles.itemPrice}>{orderMoney(item.price)}</Text>
+                </View>
               </View>
-            </View>
-          ))}
+            );
+          })}
         </GlassPanel>
 
         {/* Shipping */}
@@ -247,8 +259,8 @@ export default function OrderDetailScreen({ route, navigation }) {
               <Ionicons name={order.paymentMethod === 'cash_on_delivery' ? 'cash-outline' : 'card-outline'} size={22} color={palette.colors.primary} />
               <Text style={{ ...typography.bodySemibold, marginLeft: spacing.sm }}>{order.paymentMethod === 'cash_on_delivery' ? 'Cash on Delivery' : 'Card Payment'}</Text>
             </View>
-            <View style={[styles.paymentBadge, { backgroundColor: order.paymentStatus === 'paid' ? palette.colors.successLight : palette.colors.warningLight }]}>
-              <Text style={{ fontSize: fontSize.xs, fontWeight: fontWeight.semibold, color: order.paymentStatus === 'paid' ? palette.colors.success : palette.colors.warning }}>{order.paymentStatus === 'paid' ? 'Paid' : 'Unpaid'}</Text>
+            <View style={[styles.paymentBadge, { backgroundColor: order.isPaid ? palette.colors.successLight : palette.colors.warningLight }]}>
+              <Text style={{ fontSize: fontSize.xs, fontWeight: fontWeight.semibold, color: order.isPaid ? palette.colors.success : palette.colors.warning }}>{order.isPaid ? 'Paid' : 'Unpaid'}</Text>
             </View>
           </View>
         </GlassPanel>
@@ -257,11 +269,14 @@ export default function OrderDetailScreen({ route, navigation }) {
         <GlassPanel variant="card" style={styles.section}>
           <Text style={styles.sectionTitle}>Order Summary</Text>
           <View style={styles.innerCard}>
-            <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Subtotal</Text><Text style={styles.summaryValue}>{formatPrice(subtotal)}</Text></View>
-            <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Shipping</Text><Text style={styles.summaryValue}>{formatPrice(actualShipping)}</Text></View>
-            <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Tax</Text><Text style={styles.summaryValue}>{formatPrice(tax)}</Text></View>
+            <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Subtotal</Text><Text style={styles.summaryValue}>{orderMoney(subtotal)}</Text></View>
+            <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Shipping</Text><Text style={styles.summaryValue}>{orderMoney(actualShipping)}</Text></View>
+            <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Tax</Text><Text style={styles.summaryValue}>{orderMoney(tax)}</Text></View>
+            {(order.orderSummary?.couponDiscount || 0) > 0 && (
+              <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Coupon Discount</Text><Text style={[styles.summaryValue, { color: palette.colors.success }]}>-{orderMoney(order.orderSummary.couponDiscount)}</Text></View>
+            )}
             <View style={styles.divider} />
-            <View style={styles.summaryRow}><Text style={styles.totalLabel}>Total</Text><Text style={styles.totalValue}>{formatPrice(total)}</Text></View>
+            <View style={styles.summaryRow}><Text style={styles.totalLabel}>Total</Text><Text style={styles.totalValue}>{orderMoney(total)}</Text></View>
           </View>
         </GlassPanel>
 

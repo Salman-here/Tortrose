@@ -27,6 +27,7 @@
         "CAMERA",
         "READ_EXTERNAL_STORAGE",
         "WRITE_EXTERNAL_STORAGE",
+        "RECORD_AUDIO",
         "RECEIVE_BOOT_COMPLETED",
         "VIBRATE"
       ],
@@ -57,7 +58,8 @@
       ],
       "infoPlist": {
         "NSCameraUsageDescription": "Rozare needs camera access to let you take product photos.",
-        "NSPhotoLibraryUsageDescription": "Rozare needs photo library access to let you upload product images."
+        "NSPhotoLibraryUsageDescription": "Rozare needs photo library access to let you upload product images.",
+        "NSMicrophoneUsageDescription": "Rozare needs microphone access so you can send voice notes to the AI assistant."
       }
     },
     "web": {
@@ -90,7 +92,7 @@
         }
       ],
       "@sentry/react-native",
-      "expo-sharing"
+      "expo-audio"
     ],
     "updates": {
       "fallbackToCacheTimeout": 0

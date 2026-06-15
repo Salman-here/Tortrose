@@ -9,17 +9,17 @@ import { useTheme } from '../../contexts/ThemeContext';
 import { spacing, fontSize, fontWeight, borderRadius } from '../../styles/theme';
 
 const PRESETS = [
-  { label: 'Under $25', min: 0, max: 25 },
-  { label: '$25 - $100', min: 25, max: 100 },
-  { label: '$100 - $500', min: 100, max: 500 },
-  { label: 'Over $500', min: 500, max: 99999 },
+  { label: 'Under', min: 0, max: 25 },
+  { label: 'Range', min: 25, max: 100 },
+  { label: 'Range', min: 100, max: 500 },
+  { label: 'Over', min: 500, max: 99999 },
 ];
 
 export default function PriceRangeFilter({ min, max, onChange }) {
   const { palette } = useTheme();
   const colors = palette.colors;
   const styles = makeStyles(palette);
-  const { formatPrice } = useCurrency();
+  const { formatAmount } = useCurrency();
   const [minStr, setMinStr] = useState(min ? String(min) : '');
   const [maxStr, setMaxStr] = useState(max ? String(max) : '');
 
@@ -57,9 +57,14 @@ export default function PriceRangeFilter({ min, max, onChange }) {
       <View style={styles.presetRow}>
         {PRESETS.map((p) => {
           const active = String(min) === String(p.min) && String(max) === String(p.max);
+          const label = p.min === 0
+            ? `Under ${formatAmount(p.max, { decimals: 0 })}`
+            : p.max >= 99999
+              ? `Over ${formatAmount(p.min, { decimals: 0 })}`
+              : `${formatAmount(p.min, { decimals: 0 })} - ${formatAmount(p.max, { decimals: 0 })}`;
           return (
-            <TouchableOpacity key={p.label} style={[styles.presetChip, active && styles.presetChipActive]} onPress={() => applyPreset(p)} accessibilityLabel={p.label}>
-              <Text style={[styles.presetText, active && styles.presetTextActive]}>{p.label}</Text>
+            <TouchableOpacity key={`${p.min}-${p.max}`} style={[styles.presetChip, active && styles.presetChipActive]} onPress={() => applyPreset(p)} accessibilityLabel={label}>
+              <Text style={[styles.presetText, active && styles.presetTextActive]}>{label}</Text>
             </TouchableOpacity>
           );
         })}

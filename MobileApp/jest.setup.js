@@ -18,6 +18,37 @@ jest.mock('expo-secure-store', () => ({
   deleteItemAsync: jest.fn(),
 }));
 
+// Mock Expo native modules that are safe to no-op in unit/property tests.
+jest.mock('expo-notifications', () => ({
+  addNotificationReceivedListener: jest.fn(() => ({ remove: jest.fn() })),
+}));
+
+jest.mock('expo-haptics', () => ({
+  ImpactFeedbackStyle: { Light: 'Light', Medium: 'Medium', Heavy: 'Heavy' },
+  NotificationFeedbackType: { Success: 'Success', Warning: 'Warning', Error: 'Error' },
+  impactAsync: jest.fn(() => Promise.resolve()),
+  notificationAsync: jest.fn(() => Promise.resolve()),
+  selectionAsync: jest.fn(() => Promise.resolve()),
+}));
+
+jest.mock('expo-document-picker', () => ({
+  getDocumentAsync: jest.fn(() => Promise.resolve({ canceled: true, assets: null })),
+}));
+
+jest.mock('expo-audio', () => ({
+  RecordingPresets: { LOW_QUALITY: {}, HIGH_QUALITY: {} },
+  requestRecordingPermissionsAsync: jest.fn(() => Promise.resolve({ granted: true })),
+  setAudioModeAsync: jest.fn(() => Promise.resolve()),
+  useAudioRecorder: jest.fn(() => ({
+    uri: null,
+    record: jest.fn(),
+    stop: jest.fn(() => Promise.resolve()),
+    prepareToRecordAsync: jest.fn(() => Promise.resolve()),
+    getStatus: jest.fn(() => ({ url: null })),
+  })),
+  useAudioRecorderState: jest.fn(() => ({ isRecording: false, durationMillis: 0 })),
+}));
+
 // Mock axios
 jest.mock('axios', () => ({
   get: jest.fn(),
@@ -31,6 +62,10 @@ jest.mock('axios', () => ({
     put: jest.fn(),
     patch: jest.fn(),
     delete: jest.fn(),
+    interceptors: {
+      request: { use: jest.fn() },
+      response: { use: jest.fn() },
+    },
   })),
 }));
 

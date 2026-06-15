@@ -10,13 +10,14 @@ import {
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
-import api from '../../config/api';
+import api, { API_ENDPOINTS } from '../../config/api';
 import SmartTagGenerator from '../../components/SmartTagGenerator';
 import Loader from '../../components/common/Loader';
 import GlassBackground from '../../components/common/GlassBackground';
 import GlassPanel from '../../components/common/GlassPanel';
 import { spacing, fontSize, borderRadius, fontWeight, typography } from '../../styles/theme';
 import { useTheme } from '../../contexts/ThemeContext';
+import { useCurrency } from '../../contexts/CurrencyContext';
 import { PRESET_CATEGORIES, isPresetCategory, MAX_TAGS, MAX_DESCRIPTION_LENGTH } from '../../utils/categories';
 
 export const getFormMode = (product) => product && product._id ? 'edit' : 'create';
@@ -30,19 +31,37 @@ export const validateProductForm = (data) => {
   return { isValid: Object.keys(errors).length === 0, errors };
 };
 
+const normalizeImageUri = (image) => {
+  if (!image) return '';
+  if (typeof image === 'string') return image;
+  return image.url || image.secure_url || image.imageUrl || image.uri || '';
+};
+
+const isRemoteImage = (uri) => /^https?:\/\//i.test(String(uri || ''));
+
+const getImageMimeType = (uri) => {
+  const clean = String(uri || '').split('?')[0].toLowerCase();
+  if (clean.endsWith('.png')) return 'image/png';
+  if (clean.endsWith('.webp')) return 'image/webp';
+  if (clean.endsWith('.gif')) return 'image/gif';
+  return 'image/jpeg';
+};
+
 export default function ProductFormScreen({ navigation, route }) {
   const { palette } = useTheme();
   const styles = buildStyles(palette);
+  const { currency: accountCurrency, currencies, normalizeCurrency } = useCurrency();
 
   const { product, isAdmin } = route.params || {};
   const isEditMode = getFormMode(product) === 'edit';
+  const initialProductCurrency = normalizeCurrency(product?.currency || product?.priceCurrency || accountCurrency || 'USD');
 
   const [formData, setFormData] = useState({
     name: product?.name || '', description: product?.description || '',
     price: product?.price?.toString() || '', discountedPrice: product?.discountedPrice?.toString() || '',
     stock: product?.stock?.toString() || '', category: product?.category || '', brand: product?.brand || '',
   });
-  const [images, setImages] = useState(product?.images || []);
+  const [images, setImages] = useState((product?.images || (product?.image ? [product.image] : [])).map(normalizeImageUri).filter(Boolean));
   const [tags, setTags] = useState(product?.tags || []);
   const [optionGroups, setOptionGroups] = useState(product?.optionGroups || []);
   const [newGroupName, setNewGroupName] = useState('');
@@ -53,6 +72,12 @@ export default function ProductFormScreen({ navigation, route }) {
   const [isFeatured, setIsFeatured] = useState(!!product?.isFeatured);
   const [canFeature, setCanFeature] = useState(true);
   const [featuredStats, setFeaturedStats] = useState({ current: 0, max: 6, allowed: true, plan: 'free_trial' });
+  const [productCurrencyInfo, setProductCurrencyInfo] = useState({
+    activeCurrency: initialProductCurrency,
+    status: 'active',
+    canAddProduct: true,
+  });
+  const [productCurrencyLoading, setProductCurrencyLoading] = useState(!isAdmin && !isEditMode);
 
   // Category combobox
   const [showCategoryPicker, setShowCategoryPicker] = useState(false);
@@ -74,6 +99,11 @@ export default function ProductFormScreen({ navigation, route }) {
   }, [categorySearch]);
 
   const tagsAtLimit = tags.length >= MAX_TAGS;
+  const productCurrency = isEditMode
+    ? initialProductCurrency
+    : normalizeCurrency(productCurrencyInfo.activeCurrency || accountCurrency || 'USD');
+  const productCurrencySymbol = currencies[productCurrency]?.symbol || productCurrency;
+  const creationBlockedByCurrency = !isEditMode && !isAdmin && productCurrencyInfo.status === 'pending_conversion';
 
   // Fetch featured product stats (entitlement + count/limit).
   useEffect(() => {
@@ -92,6 +122,40 @@ export default function ProductFormScreen({ navigation, route }) {
     return () => { cancelled = true; };
   }, [isAdmin]);
 
+  useEffect(() => {
+    if (isAdmin || isEditMode) {
+      setProductCurrencyLoading(false);
+      return undefined;
+    }
+
+    let cancelled = false;
+    (async () => {
+      setProductCurrencyLoading(true);
+      try {
+        const res = await api.get(API_ENDPOINTS.STORES.PRODUCT_CURRENCY);
+        const info = res.data?.productCurrency || {};
+        if (!cancelled) {
+          setProductCurrencyInfo({
+            ...info,
+            activeCurrency: normalizeCurrency(info.activeCurrency || accountCurrency || 'USD'),
+          });
+        }
+      } catch (_) {
+        if (!cancelled) {
+          setProductCurrencyInfo({
+            activeCurrency: normalizeCurrency(accountCurrency || 'USD'),
+            status: 'active',
+            canAddProduct: true,
+          });
+        }
+      } finally {
+        if (!cancelled) setProductCurrencyLoading(false);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [accountCurrency, isAdmin, isEditMode, normalizeCurrency]);
+
   const updateField = useCallback((field, value) => {
     setFormData(prev => ({ ...prev, [field]: value }));
     if (errors[field]) setErrors(prev => ({ ...prev, [field]: null }));
@@ -105,6 +169,31 @@ export default function ProductFormScreen({ navigation, route }) {
   }, []);
 
   const removeImage = useCallback((index) => { setImages(prev => prev.filter((_, i) => i !== index)); }, []);
+
+  const uploadProductImage = async (uri) => {
+    const cleanUri = normalizeImageUri(uri);
+    if (!cleanUri || isRemoteImage(cleanUri)) return cleanUri;
+
+    const formData = new FormData();
+    const mimeType = getImageMimeType(cleanUri);
+    const extension = mimeType.split('/')[1] || 'jpg';
+    formData.append('productImage', {
+      uri: cleanUri,
+      type: mimeType,
+      name: `product_${Date.now()}_${Math.random().toString(36).slice(2)}.${extension}`,
+    });
+
+    const res = await api.post(API_ENDPOINTS.UPLOAD.PRODUCT_IMAGE, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return res.data?.imageUrl;
+  };
+
+  const prepareImagesForSave = async () => {
+    const normalized = images.map(normalizeImageUri).filter(Boolean).slice(0, 5);
+    const uploaded = await Promise.all(normalized.map(uploadProductImage));
+    return uploaded.filter(Boolean);
+  };
 
   const handleImproveDescription = async () => {
     const desc = formData.description?.trim();
@@ -154,13 +243,43 @@ export default function ProductFormScreen({ navigation, route }) {
   };
 
   const saveProduct = async () => {
+    if (creationBlockedByCurrency) {
+      Alert.alert(
+        'Product currency needs conversion',
+        productCurrencyInfo.message || `Convert existing products to ${productCurrencyInfo.pendingCurrency || productCurrency}, or cancel the pending currency change before adding new products.`
+      );
+      return;
+    }
+
     const validation = validateProductForm(formData);
     if (!validation.isValid) { setErrors(validation.errors); setTouched({ name: true, price: true, stock: true }); return; }
     setLoading(true);
     try {
-      const productData = { name: formData.name.trim(), description: formData.description.trim().slice(0, MAX_DESCRIPTION_LENGTH), price: parseFloat(formData.price), discountedPrice: formData.discountedPrice ? parseFloat(formData.discountedPrice) : null, stock: parseInt(formData.stock), category: formData.category.trim(), brand: formData.brand.trim(), images, tags: tags.slice(0, MAX_TAGS), optionGroups: optionGroups.filter(g => g.name && g.values.length > 0), isFeatured: canFeature ? isFeatured : false };
-      if (isEditMode) { await api.put(`/api/products/edit/${product._id}`, { product: productData }); Alert.alert('Success', 'Product updated', [{ text: 'OK', onPress: () => navigation.goBack() }]); }
-      else { await api.post('/api/products/add', { product: productData }); Alert.alert('Success', 'Product created', [{ text: 'OK', onPress: () => navigation.goBack() }]); }
+      const uploadedImages = await prepareImagesForSave();
+      const price = parseFloat(formData.price);
+      const discountedPrice = formData.discountedPrice ? parseFloat(formData.discountedPrice) : 0;
+      const safeDiscountedPrice = Number.isFinite(discountedPrice) ? discountedPrice : 0;
+      const productData = {
+        name: formData.name.trim(),
+        description: formData.description.trim().slice(0, MAX_DESCRIPTION_LENGTH),
+        price,
+        discountedPrice: safeDiscountedPrice,
+        currency: productCurrency,
+        priceCurrency: productCurrency,
+        priceInputAmount: price,
+        discountedPriceCurrency: productCurrency,
+        discountedPriceInputAmount: safeDiscountedPrice,
+        stock: parseInt(formData.stock, 10),
+        category: formData.category.trim(),
+        brand: formData.brand.trim(),
+        image: uploadedImages[0] || '',
+        images: uploadedImages,
+        tags: tags.slice(0, MAX_TAGS),
+        optionGroups: optionGroups.filter(g => g.name && g.values.length > 0),
+        isFeatured: canFeature ? isFeatured : false,
+      };
+      if (isEditMode) { await api.put(`${API_ENDPOINTS.PRODUCTS.UPDATE}/${product._id}`, { product: productData }); Alert.alert('Success', 'Product updated', [{ text: 'OK', onPress: () => navigation.goBack() }]); }
+      else { await api.post(API_ENDPOINTS.PRODUCTS.CREATE, { product: productData }); Alert.alert('Success', 'Product created', [{ text: 'OK', onPress: () => navigation.goBack() }]); }
     } catch (e) { Alert.alert('Error', e.response?.data?.message || e.response?.data?.msg || 'Failed to save'); }
     finally { setLoading(false); }
   };
@@ -215,6 +334,19 @@ export default function ProductFormScreen({ navigation, route }) {
 
           <GlassPanel variant="card" style={styles.section}>
             <Text style={styles.sectionTitle}>Product Details</Text>
+            <View style={styles.currencyNotice}>
+              <Ionicons name={creationBlockedByCurrency ? 'warning-outline' : 'cash-outline'} size={18} color={creationBlockedByCurrency ? palette.colors.warning : palette.colors.primary} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.currencyNoticeTitle}>
+                  {isEditMode ? `Editing in ${productCurrency}` : productCurrencyLoading ? 'Loading product currency...' : `Prices save in ${productCurrency}`}
+                </Text>
+                <Text style={styles.currencyNoticeText}>
+                  {creationBlockedByCurrency
+                    ? productCurrencyInfo.message || 'Finish the pending currency conversion before adding products.'
+                    : 'This matches the product currency selected in Store Settings.'}
+                </Text>
+              </View>
+            </View>
             {renderInput('name', 'Product Name', { placeholder: 'Enter product name', required: true })}
 
             {/* Description with AI improver */}
@@ -264,7 +396,7 @@ export default function ProductFormScreen({ navigation, route }) {
                 <View style={styles.inputGroup}>
                   <Text style={styles.label}>Price <Text style={{ color: palette.colors.error }}>*</Text></Text>
                   <View style={[styles.inputContainer, touched.price && errors.price && styles.inputError]}>
-                    <Text style={styles.inputPrefix}>$</Text>
+                    <Text style={styles.inputPrefix}>{productCurrencySymbol}</Text>
                     <TextInput
                       style={[styles.input, { paddingLeft: spacing.xs }]}
                       value={formData.price}
@@ -278,7 +410,7 @@ export default function ProductFormScreen({ navigation, route }) {
                   {touched.price && errors.price && <Text style={styles.errorText}>{errors.price}</Text>}
                 </View>
               </View>
-              <View style={{ flex: 1 }}>{renderInput('discountedPrice', 'Sale Price', { placeholder: '0.00', keyboardType: 'decimal-pad', prefix: '$' })}</View>
+              <View style={{ flex: 1 }}>{renderInput('discountedPrice', 'Sale Price', { placeholder: '0.00', keyboardType: 'decimal-pad', prefix: productCurrencySymbol })}</View>
             </View>
             {renderInput('stock', 'Stock', { placeholder: '0', keyboardType: 'number-pad', required: true })}
 
@@ -433,13 +565,13 @@ export default function ProductFormScreen({ navigation, route }) {
             </View>
             {!canFeature && (
               <TouchableOpacity onPress={() => navigation.navigate('SellerSubscription')} style={{ marginTop: spacing.md, alignSelf: 'flex-start' }}>
-                <Text style={{ ...typography.caption, color: '#8B5CF6', fontWeight: fontWeight.bold }}>Upgrade to unlock →</Text>
+                <Text style={{ ...typography.caption, color: '#8B5CF6', fontWeight: fontWeight.bold }}>Upgrade to unlock</Text>
               </TouchableOpacity>
             )}
           </GlassPanel>
 
           <View style={styles.submitContainer}>
-            <TouchableOpacity style={[styles.submitButton, loading && { opacity: 0.6 }]} onPress={saveProduct} disabled={loading} activeOpacity={0.8}>
+            <TouchableOpacity style={[styles.submitButton, (loading || productCurrencyLoading || creationBlockedByCurrency) && { opacity: 0.6 }]} onPress={saveProduct} disabled={loading || productCurrencyLoading || creationBlockedByCurrency} activeOpacity={0.8}>
               {loading ? <Loader size="small" color="white" /> : (
                 <><Ionicons name={isEditMode ? 'checkmark-circle' : 'add-circle'} size={22} color="white" />
                 <Text style={styles.submitButtonText}>{isEditMode ? 'Update' : 'Create'} Product</Text></>
@@ -540,6 +672,9 @@ const buildStyles = (p) => StyleSheet.create({
   headerSubtitle: { ...typography.body, color: p.colors.textSecondary, textAlign: 'center' },
   section: { marginHorizontal: spacing.lg, marginTop: spacing.md, padding: spacing.lg },
   sectionTitle: { ...typography.h4, color: p.colors.text, marginBottom: spacing.md },
+  currencyNotice: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm, padding: spacing.md, borderRadius: borderRadius.lg, backgroundColor: p.glass.bgSubtle, borderWidth: 1, borderColor: p.glass.borderSubtle, marginBottom: spacing.lg },
+  currencyNoticeTitle: { ...typography.bodySemibold, color: p.colors.text },
+  currencyNoticeText: { ...typography.caption, color: p.colors.textSecondary, marginTop: 2 },
   imagesContainer: { gap: spacing.md },
   imageWrapper: { position: 'relative' },
   imagePreview: { width: 100, height: 100, borderRadius: borderRadius.lg, backgroundColor: 'rgba(255,255,255,0.06)' },

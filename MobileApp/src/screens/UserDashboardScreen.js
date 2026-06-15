@@ -22,14 +22,14 @@ export default function UserDashboardScreen({ navigation }) {
   const styles = buildStyles(palette);
 
   const { currentUser } = useAuth();
-  const { formatPrice } = useCurrency();
+  const { convertAmount, formatAmount, currency } = useCurrency();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [orders, setOrders] = useState([]);
 
   const fetchData = async () => {
     try {
-      const res = await api.get('/api/order/my-orders');
+      const res = await api.get('/api/order/user-orders');
       setOrders(res.data?.orders || res.data || []);
     } catch (e) { console.error(e); }
     finally { setLoading(false); setRefreshing(false); }
@@ -44,11 +44,8 @@ export default function UserDashboardScreen({ navigation }) {
   const deliveredOrders = orders.filter(o => o.status === 'delivered' || o.orderStatus === 'delivered').length;
   const totalSpent = orders.reduce((acc, o) => {
     if (o.isPaid) {
-      const subtotal = o.orderSummary?.subtotal || 0;
-      const tax = o.orderSummary?.tax || 0;
-      let shipping = o.orderSummary?.shippingCost || 0;
-      if (o.sellerShipping?.length > 0) shipping = o.sellerShipping.reduce((s, ss) => s + (ss.shippingMethod?.price || 0), 0);
-      return acc + subtotal + tax + shipping;
+      const total = o.orderSummary?.totalAmount ?? 0;
+      return acc + convertAmount(total, o.currency || 'USD', currency);
     }
     return acc;
   }, 0);
@@ -61,6 +58,7 @@ export default function UserDashboardScreen({ navigation }) {
   const menuItems = [
     { label: 'My Orders', desc: `${orders.length} orders`, icon: 'receipt-outline', screen: 'Orders', color: palette.colors.primary },
     { label: 'AI Shopping Assistant', desc: 'Chat to shop, track & more', icon: 'sparkles-outline', screen: 'AIChat', color: '#6366f1' },
+    { label: 'WhatsApp AI', desc: 'Link buyer WhatsApp', icon: 'logo-whatsapp', screen: 'UserWhatsAppSettings', color: '#22C55E' },
     { label: 'Edit Profile', desc: 'Update your info', icon: 'person-outline', screen: 'EditProfile', color: '#8b5cf6' },
     { label: 'Wishlist', desc: 'Saved items', icon: 'heart-outline', screen: 'MainTabs', params: { screen: 'Wishlist' }, color: palette.colors.error },
     { label: 'Trusted Stores', desc: 'Stores you follow', icon: 'shield-checkmark-outline', screen: 'TrustedStores', color: palette.colors.success },
@@ -101,7 +99,7 @@ export default function UserDashboardScreen({ navigation }) {
         <View style={[styles.statsRow, { marginTop: spacing.md }]}>
           <GlassPanel variant="card" style={[styles.miniStat, { flex: 1 }]}>  
             <Ionicons name="card-outline" size={18} color={palette.colors.info} style={{ marginBottom: 4 }} />
-            <Text style={[styles.miniStatValue, { color: palette.colors.info, fontSize: fontSize.lg }]}>{formatPrice(totalSpent)}</Text>
+            <Text style={[styles.miniStatValue, { color: palette.colors.info, fontSize: fontSize.lg }]}>{formatAmount(totalSpent)}</Text>
             <Text style={styles.miniStatLabel}>Total Spent</Text>
           </GlassPanel>
         </View>

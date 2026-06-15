@@ -161,7 +161,7 @@ exports.qtyDecrement = async (req, res) => {
         const userCart = await Cart.findOne({ user: userId })
 
         // console.log('user cart:::', userCart);
-        const cartItem = userCart.cartItems.find(item => item.equals(id))
+        const cartItem = userCart.cartItems.find(item => item._id.equals(id))
         // console.log('cart to increase qty', cartItem);
 
         if (cartItem.qty == 1) return res.status(401).json({ msg: 'Quantity cannot be less than 1' })
@@ -185,7 +185,11 @@ exports.removeCartItem = async (req, res) => {
 
     try {
         let userCart = await Cart.findOne({ user: userId })
-        userCart.cartItems = userCart.cartItems.filter(item => !item.product.equals(id))
+        userCart.cartItems = userCart.cartItems.filter(item => {
+            const isCartLine = item._id?.equals?.(id);
+            const isProduct = item.product?.equals?.(id);
+            return !(isCartLine || isProduct);
+        })
         // console.log('from remove item', userCart);
         await userCart.populate('cartItems.product')
 

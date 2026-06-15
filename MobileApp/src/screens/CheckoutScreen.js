@@ -5,19 +5,20 @@
 import React, { useState, useEffect } from 'react';
 import {
   View, Text, ScrollView, TextInput, TouchableOpacity,
-  StyleSheet, KeyboardAvoidingView, Platform, Modal, Alert,
+  StyleSheet, KeyboardAvoidingView, Platform, Modal, Alert, ActivityIndicator,
 } from 'react-native';
 import { Image } from 'expo-image';
 import Toast from 'react-native-toast-message';
 import { Ionicons } from '@expo/vector-icons';
 import * as WebBrowser from 'expo-web-browser';
-import api from '../config/api';
+import api, { API_ENDPOINTS } from '../config/api';
 import { useAuth } from '../contexts/AuthContext';
 import { useGlobal } from '../contexts/GlobalContext';
 import { useCurrency } from '../contexts/CurrencyContext';
 import { Loader, InlineLoader } from '../components/common';
 import GlassBackground from '../components/common/GlassBackground';
 import GlassPanel from '../components/common/GlassPanel';
+import LocationAutocomplete from '../components/common/LocationAutocomplete';
 import { trackCheckoutStep, trackPaymentEvent, trackError } from '../utils/breadcrumbs';
 import { spacing, fontSize, borderRadius, shadows, fontWeight } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
@@ -28,14 +29,21 @@ export default function CheckoutScreen({ navigation }) {
 
   const { currentUser } = useAuth();
   const { cartItems, fetchCart } = useGlobal();
-  const { formatPrice } = useCurrency();
+  const {
+    currency,
+    convertAmount,
+    formatAmount,
+    formatProductPrice,
+    getProductCurrency,
+    getProductPriceNumber,
+  } = useCurrency();
 
   const [isProcessing, setIsProcessing] = useState(false);
   const [errors, setErrors] = useState({});
   const [paymentMethod, setPaymentMethod] = useState('cash_on_delivery');
   const [formData, setFormData] = useState({
     fullName: '', email: '', phone: '', address: '',
-    city: '', state: '', postalCode: '', country: 'Pakistan',
+    city: '', state: '', stateCode: '', postalCode: '', country: 'Pakistan', countryCode: 'PK',
   });
   const [savedShippingInfo, setSavedShippingInfo] = useState(null);
   const [showUpdatePrompt, setShowUpdatePrompt] = useState(false);
@@ -43,6 +51,7 @@ export default function CheckoutScreen({ navigation }) {
 
   const [shippingCost, setShippingCost] = useState(0);
   const [shippingLabel, setShippingLabel] = useState('Loading...');
+  const [sellerShipping, setSellerShipping] = useState([]);
   const [tax, setTax] = useState(0);
   const [taxLabel, setTaxLabel] = useState('Tax');
   const [summaryLoading, setSummaryLoading] = useState(true);
@@ -53,10 +62,40 @@ export default function CheckoutScreen({ navigation }) {
   const [couponLoading, setCouponLoading] = useState(false);
   const [couponDiscount, setCouponDiscount] = useState(0);
 
-  const getDiscountedPrice = (product) => product?.discountedPrice || product?.price || 0;
+  const getEffectivePriceField = (product) => (
+    Number(product?.discountedPrice || 0) > 0 && Number(product?.discountedPrice) < Number(product?.price)
+      ? 'discountedPrice'
+      : 'price'
+  );
+
+  const getSourcePrice = (product) => {
+    const price = Number(product?.price || 0);
+    const discountedPrice = Number(product?.discountedPrice || 0);
+    return discountedPrice > 0 && discountedPrice < price ? discountedPrice : price;
+  };
+
+  const productPriceInCheckoutCurrency = (product, amount = undefined) => {
+    if (!product) return 0;
+    if (amount !== undefined) return convertAmount(amount, getProductCurrency(product), currency);
+    return getProductPriceNumber(product, getEffectivePriceField(product));
+  };
+
+  const shippingMethodCurrency = (method, sellerInfo = null) => method?.currency || method?.costCurrency || sellerInfo?.seller?.currency || currency;
+  const shippingCostInCheckoutCurrency = (method, sellerInfo = null) =>
+    convertAmount(method?.cost || 0, shippingMethodCurrency(method, sellerInfo), currency);
+
+  const couponCurrency = (coupon) => coupon?.currency || currency;
+  const couponAmountInCheckoutCurrency = (amount, coupon = null) =>
+    convertAmount(amount || 0, couponCurrency(coupon), currency);
+
+  const getShippingMethodTitle = (method) => ({
+    free: 'Free Shipping',
+    standard: 'Standard Shipping',
+    fast: 'Fast Shipping',
+  }[method?.type] || `${method?.type || 'Shipping'} Shipping`);
 
   const subtotal = cartItems?.cart?.reduce((total, item) => {
-    return total + (getDiscountedPrice(item.product) * (item.qty || item.quantity || 1));
+    return total + (productPriceInCheckoutCurrency(item.product) * (item.qty || item.quantity || 1));
   }, 0) || 0;
 
   const totalAmount = subtotal + shippingCost + tax - couponDiscount;
@@ -77,7 +116,7 @@ export default function CheckoutScreen({ navigation }) {
   useEffect(() => {
     if (!cartItems?.cart?.length) return;
     fetchSummary();
-  }, [cartItems?.cart]);
+  }, [cartItems?.cart, subtotal, currency]);
 
   const fetchSummary = async () => {
     setSummaryLoading(true);
@@ -85,7 +124,7 @@ export default function CheckoutScreen({ navigation }) {
       const taxRes = await api.get('/api/tax/config');
       const taxConfig = taxRes.data.taxConfig;
       if (taxConfig && taxConfig.type !== 'none') {
-        const computedTax = taxConfig.type === 'percentage' ? subtotal * (taxConfig.value / 100) : taxConfig.value;
+        const computedTax = taxConfig.type === 'percentage' ? subtotal * (taxConfig.value / 100) : Number(taxConfig.value || 0);
         setTax(computedTax);
         setTaxLabel(taxConfig.type === 'percentage' ? `Tax (${taxConfig.value}%)` : `Tax (Fixed)`);
       } else { setTax(0); setTaxLabel('Tax'); }
@@ -93,20 +132,37 @@ export default function CheckoutScreen({ navigation }) {
 
     try {
       const cartPayload = cartItems.cart.map(item => ({ productId: item.product?._id, qty: item.qty || item.quantity || 1 }));
-      const shipRes = await api.post('/api/shipping/cart', { cartItems: cartPayload });
+      const shipRes = await api.post(API_ENDPOINTS.SHIPPING.CART, { cartItems: cartPayload });
       const sellerMap = shipRes.data.shippingMethods || {};
-      let totalShipping = 0; let methodNames = [];
-      Object.values(sellerMap).forEach(sellerData => {
+      let totalShipping = 0;
+      const methodNames = [];
+      const nextSellerShipping = [];
+      Object.entries(sellerMap).forEach(([sellerId, sellerData]) => {
         const methods = sellerData.methods || [];
         if (methods.length > 0) {
-          const sorted = [...methods].sort((a, b) => a.cost - b.cost);
-          totalShipping += sorted[0].cost;
-          methodNames.push(sorted[0].type);
+          const sorted = [...methods].sort((a, b) => shippingCostInCheckoutCurrency(a, sellerData) - shippingCostInCheckoutCurrency(b, sellerData));
+          const selectedMethod = sorted[0];
+          const selectedCost = shippingCostInCheckoutCurrency(selectedMethod, sellerData);
+          totalShipping += selectedCost;
+          methodNames.push(getShippingMethodTitle(selectedMethod));
+          nextSellerShipping.push({
+            seller: sellerId,
+            shippingMethod: {
+              name: selectedMethod.type || 'free',
+              price: selectedCost,
+              estimatedDays: selectedMethod.deliveryDays || 5,
+            },
+          });
         }
       });
       setShippingCost(totalShipping);
-      setShippingLabel(`Shipping (${methodNames.length > 0 ? methodNames[0] : 'standard'})`);
-    } catch { setShippingCost(0); setShippingLabel('Shipping (free)'); }
+      setSellerShipping(nextSellerShipping);
+      setShippingLabel(methodNames.length > 0 ? `Shipping (${methodNames.length === 1 ? methodNames[0] : `${methodNames.length} sellers`})` : 'Shipping (Free)');
+    } catch {
+      setShippingCost(0);
+      setSellerShipping([]);
+      setShippingLabel('Shipping (Free)');
+    }
     setSummaryLoading(false);
   };
 
@@ -117,10 +173,11 @@ export default function CheckoutScreen({ navigation }) {
 
   const validateForm = () => {
     const newErrors = {};
-    const required = ['fullName', 'email', 'phone', 'address', 'city', 'state', 'postalCode'];
+    const required = ['fullName', 'email', 'phone', 'address', 'country', 'city', 'postalCode'];
     for (let field of required) {
       if (!formData[field]?.trim()) newErrors[field] = `${field.replace(/([A-Z])/g, ' $1').trim()} is required`;
     }
+    if (!formData.countryCode) newErrors.country = 'Please select your country from the list';
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (formData.email && !emailRegex.test(formData.email)) newErrors.email = 'Please enter a valid email address';
     const phoneDigits = formData.phone?.replace(/[\s\-\(\)\+]/g, '') || '';
@@ -142,8 +199,10 @@ export default function CheckoutScreen({ navigation }) {
         address: savedShippingInfo.address || '',
         city: savedShippingInfo.city || '',
         state: savedShippingInfo.state || '',
+        stateCode: savedShippingInfo.stateCode || '',
         postalCode: savedShippingInfo.postalCode || '',
         country: savedShippingInfo.country || 'Pakistan',
+        countryCode: savedShippingInfo.countryCode || 'PK',
       });
       Toast.show({ type: 'success', text1: 'Auto-Filled!', text2: 'Shipping info loaded from your profile' });
     }
@@ -159,22 +218,24 @@ export default function CheckoutScreen({ navigation }) {
     setCouponLoading(true);
     try {
       const productIds = cartItems.cart.map(item => item.product._id);
-      const res = await api.post('/api/coupons/validate', { code: couponCode.trim(), productIds });
+      const res = await api.post(API_ENDPOINTS.COUPONS.VALIDATE, { code: couponCode.trim(), productIds, currency });
       if (res.data.valid) {
         const coupon = res.data.coupon;
         let discount = 0;
+        const applicableIds = (coupon.applicableProductIds || []).map(id => String(id));
         cartItems.cart.forEach(item => {
-          if (coupon.applicableProductIds.includes(item.product._id)) {
-            const price = getDiscountedPrice(item.product);
+          if (applicableIds.includes(String(item.product._id))) {
+            const price = productPriceInCheckoutCurrency(item.product);
             const qty = item.qty || item.quantity || 1;
             if (coupon.discountType === 'percentage') discount += (price * qty * coupon.discountValue) / 100;
-            else discount += coupon.discountValue;
+            else discount += couponAmountInCheckoutCurrency(coupon.discountValue, coupon);
           }
         });
-        if (coupon.maxDiscountAmount && discount > coupon.maxDiscountAmount) discount = coupon.maxDiscountAmount;
+        const maxDiscount = coupon.maxDiscountAmount ? couponAmountInCheckoutCurrency(coupon.maxDiscountAmount, coupon) : null;
+        if (maxDiscount && discount > maxDiscount) discount = maxDiscount;
         setCouponDiscount(discount);
         setAppliedCoupon(coupon);
-        Toast.show({ type: 'success', text1: 'Coupon Applied!', text2: `${coupon.discountType === 'percentage' ? `${coupon.discountValue}%` : formatPrice(coupon.discountValue)} off` });
+        Toast.show({ type: 'success', text1: 'Coupon Applied!', text2: `${coupon.discountType === 'percentage' ? `${coupon.discountValue}%` : formatAmount(couponAmountInCheckoutCurrency(coupon.discountValue, coupon))} off` });
       }
     } catch (err) {
       Toast.show({ type: 'error', text1: 'Invalid Coupon', text2: err.response?.data?.msg || 'Coupon not valid' });
@@ -186,28 +247,69 @@ export default function CheckoutScreen({ navigation }) {
     Toast.show({ type: 'info', text1: 'Coupon removed' });
   };
 
-  const buildOrder = () => ({
-    orderItems: cartItems.cart.map(item => ({
-      id: item.product._id, name: item.product.name,
-      image: item.product.image || item.product.images?.[0]?.url,
-      price: getDiscountedPrice(item.product), quantity: item.qty || item.quantity || 1,
-      selectedColor: item.selectedColor || null,
-    })),
-    shippingInfo: formData,
-    shippingMethod: { name: 'standard', price: shippingCost, estimatedDays: 5 },
-    orderSummary: { subtotal, shippingCost, tax, couponDiscount, totalAmount },
-    appliedCoupons: appliedCoupon ? [{ couponId: appliedCoupon._id, code: appliedCoupon.code, discountType: appliedCoupon.discountType, discountValue: appliedCoupon.discountValue, applicableProductIds: appliedCoupon.applicableProductIds }] : [],
-    paymentMethod: paymentMethod === 'card' ? 'stripe' : 'cash_on_delivery',
-    platform: paymentMethod === 'card' ? 'mobile' : undefined,
-  });
+  const buildOrder = () => {
+    const primaryShipping = sellerShipping[0]?.shippingMethod || {
+      name: shippingCost === 0 ? 'free' : 'standard',
+      price: shippingCost,
+      estimatedDays: 5,
+    };
+
+    return {
+      orderItems: cartItems.cart.map(item => {
+        const sourcePrice = getSourcePrice(item.product);
+        return {
+          id: item.product._id,
+          name: item.product.name,
+          image: item.product.image || item.product.images?.[0]?.url,
+          price: productPriceInCheckoutCurrency(item.product, sourcePrice),
+          sourcePrice,
+          sourceCurrency: getProductCurrency(item.product),
+          quantity: item.qty || item.quantity || 1,
+          selectedColor: item.selectedColor || null,
+          selectedOptions: item.selectedOptions || undefined,
+        };
+      }),
+      shippingInfo: formData,
+      buyerLocation: {
+        country: formData.country || 'Pakistan',
+        countryCode: formData.countryCode || '',
+        region: formData.state || '',
+        regionCode: formData.stateCode || '',
+        city: formData.city || '',
+        cityStateCode: formData.stateCode || '',
+        town: '',
+        townStateCode: '',
+        lat: '',
+        lng: '',
+      },
+      shippingMethod: { ...primaryShipping, seller: sellerShipping[0]?.seller },
+      sellerShipping,
+      orderSummary: { subtotal, shippingCost, tax, couponDiscount, totalAmount },
+      currency,
+      appliedCoupons: appliedCoupon ? [{
+        couponId: appliedCoupon._id,
+        code: appliedCoupon.code,
+        discountType: appliedCoupon.discountType,
+        discountValue: appliedCoupon.discountType === 'fixed'
+          ? couponAmountInCheckoutCurrency(appliedCoupon.discountValue, appliedCoupon)
+          : appliedCoupon.discountValue,
+        currency,
+        sourceDiscountValue: appliedCoupon.discountValue,
+        sourceCurrency: couponCurrency(appliedCoupon),
+        applicableProductIds: appliedCoupon.applicableProductIds,
+      }] : [],
+      paymentMethod: paymentMethod === 'card' ? 'stripe' : 'cash_on_delivery',
+      platform: paymentMethod === 'card' ? 'mobile' : undefined,
+    };
+  };
 
   const completeOrder = async (order, shouldSaveInfo) => {
     if (shouldSaveInfo) {
       try { await api.patch('/api/user/shipping-info', { shippingInfo: formData }); setSavedShippingInfo(formData); } catch {}
     }
     if (paymentMethod !== 'card') {
-      Toast.show({ type: 'success', text1: '🎉 Order Placed!', text2: 'Your order has been placed successfully' });
-      await api.delete('/api/cart/clear');
+      Toast.show({ type: 'success', text1: 'Order Placed!', text2: 'Your order has been placed successfully' });
+      await api.delete(API_ENDPOINTS.CART.CLEAR);
       fetchCart();
       setTimeout(() => { navigation.reset({ index: 0, routes: [{ name: 'MainTabs' }, { name: 'Orders' }] }); }, 1200);
     }
@@ -294,7 +396,7 @@ export default function CheckoutScreen({ navigation }) {
           </TouchableOpacity>
           <View style={{ flex: 1 }}>
             <Text style={styles.headerTitle}>Checkout</Text>
-            <Text style={styles.headerSubtitle}>{cartItems.cart.length} items · {formatPrice(totalAmount)}</Text>
+            <Text style={styles.headerSubtitle}>{cartItems.cart.length} items - {formatAmount(totalAmount)}</Text>
           </View>
           <View style={styles.lockIcon}>
             <Ionicons name="lock-closed" size={18} color={palette.colors.primary} />
@@ -310,7 +412,10 @@ export default function CheckoutScreen({ navigation }) {
               <View style={styles.badge}><Text style={styles.badgeText}>{cartItems.cart.length}</Text></View>
             </View>
             {cartItems.cart.map((item, index) => {
-              const price = getDiscountedPrice(item.product);
+              const priceField = getEffectivePriceField(item.product);
+              const selectedOptions = item.selectedOptions && typeof item.selectedOptions === 'object'
+                ? Object.entries(item.selectedOptions).filter(([, value]) => value)
+                : [];
               return (
                 <View key={index} style={styles.cartItem}>
                   <Image source={{ uri: item.product?.image || item.product?.images?.[0]?.url }} style={styles.cartItemImage} contentFit="cover" cachePolicy="memory-disk" transition={150} />
@@ -322,9 +427,15 @@ export default function CheckoutScreen({ navigation }) {
                         <Text style={{ fontSize: 11, color: palette.colors.primary }}>{item.selectedColor}</Text>
                       </View>
                     )}
+                    {selectedOptions.map(([name, value]) => (
+                      <View key={name} style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+                        <Ionicons name="options-outline" size={11} color={palette.colors.primary} />
+                        <Text style={{ fontSize: 11, color: palette.colors.primary }}>{name}: {value}</Text>
+                      </View>
+                    ))}
                     <Text style={styles.cartItemQty}>Qty: {item.qty || item.quantity || 1}</Text>
                   </View>
-                  <Text style={styles.cartItemPrice}>{formatPrice(price)}</Text>
+                  <Text style={styles.cartItemPrice}>{formatProductPrice(item.product, { field: priceField })}</Text>
                 </View>
               );
             })}
@@ -346,14 +457,78 @@ export default function CheckoutScreen({ navigation }) {
             {renderInput('email', 'Email Address', { icon: 'mail-outline', keyboardType: 'email-address', autoCapitalize: 'none' })}
             {renderInput('phone', 'Phone Number', { icon: 'call-outline', keyboardType: 'phone-pad' })}
             {renderInput('address', 'Street Address', { icon: 'home-outline', multiline: true, numberOfLines: 2 })}
-            <View style={styles.row}>
-              {renderInput('city', 'City', { halfWidth: true })}
-              {renderInput('state', 'State/Province', { halfWidth: true })}
-            </View>
-            <View style={styles.row}>
-              {renderInput('postalCode', 'Postal Code', { halfWidth: true, keyboardType: 'numeric' })}
-              {renderInput('country', 'Country', { halfWidth: true })}
-            </View>
+            <LocationAutocomplete
+              type="country"
+              label="Country"
+              required
+              value={formData.country}
+              code={formData.countryCode}
+              placeholder="Select country"
+              error={errors.country}
+              onSelect={(option) => {
+                setFormData(prev => ({
+                  ...prev,
+                  country: option.name,
+                  countryCode: option.isoCode,
+                  state: '',
+                  stateCode: '',
+                  city: '',
+                }));
+                setErrors(prev => ({ ...prev, country: null, city: null, state: null }));
+              }}
+              onClear={() => {
+                setFormData(prev => ({ ...prev, country: '', countryCode: '', state: '', stateCode: '', city: '' }));
+                setErrors(prev => ({ ...prev, country: 'Country is required' }));
+              }}
+            />
+            <LocationAutocomplete
+              type="state"
+              label="State / Province"
+              value={formData.state}
+              code={formData.stateCode}
+              countryCode={formData.countryCode}
+              countryName={formData.country}
+              placeholder="Select state"
+              disabled={!formData.countryCode && !formData.country}
+              error={errors.state}
+              onSelect={(option) => {
+                setFormData(prev => ({
+                  ...prev,
+                  state: option.name,
+                  stateCode: option.isoCode,
+                  city: '',
+                }));
+                setErrors(prev => ({ ...prev, state: null }));
+              }}
+              onClear={() => setFormData(prev => ({ ...prev, state: '', stateCode: '', city: '' }))}
+            />
+            <LocationAutocomplete
+              type="city"
+              label="City"
+              required
+              value={formData.city}
+              countryCode={formData.countryCode}
+              countryName={formData.country}
+              stateCode={formData.stateCode}
+              stateName={formData.state}
+              placeholder="Select city"
+              disabled={!formData.countryCode && !formData.country}
+              error={errors.city}
+              onSelect={(option) => {
+                setFormData(prev => ({
+                  ...prev,
+                  city: option.name,
+                  state: prev.state || option.stateName || '',
+                  stateCode: prev.stateCode || option.stateCode || '',
+                }));
+                setErrors(prev => ({ ...prev, city: null }));
+              }}
+              onClear={() => {
+                setFormData(prev => ({ ...prev, city: '' }));
+                setErrors(prev => ({ ...prev, city: 'City is required' }));
+              }}
+            />
+            {renderInput('postalCode', 'Postal Code', { keyboardType: 'numeric' })}
           </GlassPanel>
 
           {/* Coupon Code */}
@@ -368,7 +543,7 @@ export default function CheckoutScreen({ navigation }) {
                 <View style={{ flex: 1 }}>
                   <Text style={{ fontSize: fontSize.md, fontWeight: fontWeight.bold, color: palette.colors.success }}>{appliedCoupon.code}</Text>
                   <Text style={{ fontSize: fontSize.xs, color: palette.colors.textSecondary }}>
-                    {appliedCoupon.discountType === 'percentage' ? `${appliedCoupon.discountValue}% off` : `${formatPrice(appliedCoupon.discountValue)} off`} · Saving {formatPrice(couponDiscount)}
+                    {appliedCoupon.discountType === 'percentage' ? `${appliedCoupon.discountValue}% off` : `${formatAmount(couponAmountInCheckoutCurrency(appliedCoupon.discountValue, appliedCoupon))} off`} - Saving {formatAmount(couponDiscount)}
                   </Text>
                 </View>
                 <TouchableOpacity onPress={handleRemoveCoupon}><Ionicons name="close-circle" size={22} color={palette.colors.error} /></TouchableOpacity>
@@ -423,12 +598,12 @@ export default function CheckoutScreen({ navigation }) {
               <Text style={styles.sectionTitle}>Order Summary</Text>
               {summaryLoading && <Loader size="small" />}
             </View>
-            <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Subtotal</Text><Text style={styles.summaryValue}>{formatPrice(subtotal)}</Text></View>
-            <View style={styles.summaryRow}><Text style={styles.summaryLabel}>{shippingLabel}</Text><Text style={[styles.summaryValue, shippingCost === 0 && { color: palette.colors.success }]}>{shippingCost === 0 ? 'Free' : formatPrice(shippingCost)}</Text></View>
-            {tax > 0 && <View style={styles.summaryRow}><Text style={styles.summaryLabel}>{taxLabel}</Text><Text style={styles.summaryValue}>{formatPrice(tax)}</Text></View>}
-            {couponDiscount > 0 && <View style={styles.summaryRow}><Text style={[styles.summaryLabel, { color: palette.colors.success }]}>Coupon Discount</Text><Text style={[styles.summaryValue, { color: palette.colors.success }]}>-{formatPrice(couponDiscount)}</Text></View>}
+            <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Subtotal</Text><Text style={styles.summaryValue}>{formatAmount(subtotal)}</Text></View>
+            <View style={styles.summaryRow}><Text style={styles.summaryLabel}>{shippingLabel}</Text><Text style={[styles.summaryValue, shippingCost === 0 && { color: palette.colors.success }]}>{shippingCost === 0 ? 'Free' : formatAmount(shippingCost)}</Text></View>
+            {tax > 0 && <View style={styles.summaryRow}><Text style={styles.summaryLabel}>{taxLabel}</Text><Text style={styles.summaryValue}>{formatAmount(tax)}</Text></View>}
+            {couponDiscount > 0 && <View style={styles.summaryRow}><Text style={[styles.summaryLabel, { color: palette.colors.success }]}>Coupon Discount</Text><Text style={[styles.summaryValue, { color: palette.colors.success }]}>-{formatAmount(couponDiscount)}</Text></View>}
             <View style={styles.divider} />
-            <View style={styles.summaryRow}><Text style={styles.totalLabel}>Total</Text><Text style={styles.totalValue}>{formatPrice(totalAmount)}</Text></View>
+            <View style={styles.summaryRow}><Text style={styles.totalLabel}>Total</Text><Text style={styles.totalValue}>{formatAmount(totalAmount)}</Text></View>
           </GlassPanel>
         </ScrollView>
 
@@ -436,7 +611,7 @@ export default function CheckoutScreen({ navigation }) {
         <GlassPanel variant="floating" style={styles.footer}>
           <View style={{ flex: 1 }}>
             <Text style={styles.footerLabel}>Total</Text>
-            <Text style={styles.footerValue}>{formatPrice(totalAmount)}</Text>
+            <Text style={styles.footerValue}>{formatAmount(totalAmount)}</Text>
           </View>
           <TouchableOpacity style={[styles.placeOrderBtn, isProcessing && { opacity: 0.6 }]} onPress={handlePlaceOrder} disabled={isProcessing}>
             {isProcessing ? <InlineLoader size="small" color="#fff" /> : (

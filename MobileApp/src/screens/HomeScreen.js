@@ -43,7 +43,7 @@ export default function HomeScreen({ navigation }) {
 
   const { currentUser } = useAuth();
   const { fetchCart, unreadNotifCount } = useGlobal();
-  const { formatPrice } = useCurrency();
+  const { currency } = useCurrency();
   const [showAI, setShowAI] = useState(false);
   
   const [products, setProducts] = useState([]);
@@ -81,8 +81,10 @@ export default function HomeScreen({ navigation }) {
       if (searchQuery) {
         params.append('search', searchQuery);
       }
-      if (priceRange.min > 0) params.append('minPrice', priceRange.min);
-      if (priceRange.max && priceRange.max > 0) params.append('maxPrice', priceRange.max);
+      if (priceRange.min > 0 || (priceRange.max && priceRange.max > 0)) {
+        params.append('priceRange', `${priceRange.min || 0},${priceRange.max || ''}`);
+      }
+      params.append('currency', currency);
       params.append('page', pageNum);
       params.append('limit', LIMIT);
 
@@ -125,7 +127,7 @@ export default function HomeScreen({ navigation }) {
       setRefreshing(false);
       setLoadingMore(false);
     }
-  }, [selectedCategories, selectedBrands, searchQuery, priceRange.min, priceRange.max]);
+  }, [selectedCategories, selectedBrands, searchQuery, priceRange.min, priceRange.max, currency]);
 
   const fetchFilters = async () => {
     try {
@@ -260,7 +262,7 @@ export default function HomeScreen({ navigation }) {
         {/* Greeting */}
         <View style={styles.greetingSection}>
           <Text style={styles.greetingText}>
-            {currentUser ? `Hello, ${currentUser.name?.split(' ')[0] || 'there'}! 👋` : 'Discover Amazing Deals 🛍️'}
+            {currentUser ? `Hello, ${currentUser.name?.split(' ')[0] || 'there'}!` : 'Discover Amazing Deals'}
           </Text>
           <Text style={styles.greetingSubtext}>Find the best products from verified stores</Text>
         </View>

@@ -1,5 +1,5 @@
-/**
- * SellerSubdomainManagementScreen — Liquid Glass
+﻿/**
+ * SellerSubdomainManagementScreen - Liquid Glass
  * Manage custom subdomain, monitor traffic and performance
  */
 
@@ -16,10 +16,12 @@ import GlassBackground from '../../components/common/GlassBackground';
 import GlassPanel from '../../components/common/GlassPanel';
 import { spacing, fontSize, fontWeight, borderRadius, typography } from '../../styles/theme';
 import { useTheme } from '../../contexts/ThemeContext';
+import { useCurrency } from '../../contexts/CurrencyContext';
 
 export default function SellerSubdomainManagementScreen({ navigation }) {
   const { palette } = useTheme();
   const styles = buildStyles(palette);
+  const { currency, formatPrice } = useCurrency();
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -33,12 +35,12 @@ export default function SellerSubdomainManagementScreen({ navigation }) {
   const fetchData = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await api.get('/api/subdomain/analytics/seller');
+      const res = await api.get(`/api/subdomain/analytics/seller?currency=${currency}`);
       setData(res.data);
       setNewSlug(res.data.subdomain?.slug || '');
     } catch (e) { Alert.alert('Error', 'Failed to load subdomain data'); }
     finally { setLoading(false); setRefreshing(false); }
-  }, []);
+  }, [currency]);
 
   useEffect(() => { fetchData(); }, []);
   const onRefresh = useCallback(() => { setRefreshing(true); fetchData(); }, [fetchData]);
@@ -91,7 +93,7 @@ export default function SellerSubdomainManagementScreen({ navigation }) {
   const stats = [
     { label: 'Views', value: analytics.totalViews || 0, icon: 'eye-outline', color: palette.colors.primary },
     { label: 'Orders', value: analytics.totalOrders || 0, icon: 'receipt-outline', color: palette.colors.success },
-    { label: 'Revenue', value: `$${(analytics.totalRevenue || 0).toLocaleString()}`, icon: 'cash-outline', color: palette.colors.info },
+    { label: 'Revenue', value: formatPrice(analytics.totalRevenue || 0, { sourceCurrency: analytics.currency || currency }), icon: 'cash-outline', color: palette.colors.info },
     { label: 'Conversion', value: `${analytics.conversionRate || 0}%`, icon: 'trending-up-outline', color: palette.colors.secondary },
   ];
 
@@ -236,7 +238,7 @@ export default function SellerSubdomainManagementScreen({ navigation }) {
             {[
               { q: 'What is a subdomain?', a: 'A custom URL like yourstore.rozare.com for direct store access.' },
               { q: 'When does it activate?', a: 'After your store is verified via Store Settings.' },
-              { q: 'Can I change it?', a: 'Yes! Change it anytime — old URL stops working immediately.' },
+              { q: 'Can I change it?', a: 'Yes. Change it anytime; the old URL stops working immediately.' },
             ].map((faq, i) => (
               <View key={i} style={styles.faqItem}>
                 <Text style={styles.faqQ}>{faq.q}</Text>

@@ -1,5 +1,5 @@
 /**
- * PersonalizedSliders — themed Recommended / Trending / Recently Viewed / Price Drops
+ * PersonalizedSliders - themed Recommended / Trending / Recently Viewed / Price Drops
  */
 import React, { useEffect, useState, useCallback } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet } from 'react-native';
@@ -8,7 +8,7 @@ import { Ionicons } from '@expo/vector-icons';
 import api from '../../config/api';
 import { useCurrency } from '../../contexts/CurrencyContext';
 import { useTheme } from '../../contexts/ThemeContext';
-import { getRecentlyViewed, subscribeRecentlyViewed } from '../../utils/recentlyViewed';
+import { clearRecentlyViewed, getRecentlyViewed, subscribeRecentlyViewed } from '../../utils/recentlyViewed';
 import { SliderSkeleton } from './Skeleton';
 import { spacing, fontSize, fontWeight, borderRadius } from '../../styles/theme';
 
@@ -97,7 +97,16 @@ export default function PersonalizedSliders({ navigation }) {
         getRecentlyViewed(),
       ]);
       const all = allRes.data?.products || [];
-      const viewed = viewedIds.map((id) => all.find((p) => p._id === id)).filter(Boolean).slice(0, 10);
+      const allById = new Map(all.map((product) => [product._id, product]));
+      const missingIds = viewedIds.filter((id) => !allById.has(id)).slice(0, 10);
+      const fetchedMissing = await Promise.allSettled(
+        missingIds.map((id) => api.get(`/api/products/get-single-product/${id}`))
+      );
+      fetchedMissing.forEach((result) => {
+        const product = result.status === 'fulfilled' ? result.value?.data?.product : null;
+        if (product?._id) allById.set(product._id, product);
+      });
+      const viewed = viewedIds.map((id) => allById.get(id)).filter(Boolean).slice(0, 10);
       setRecentlyViewed(viewed);
       const preferredCategories = [...new Set(viewed.map((p) => p.category))];
       const preferredBrands = [...new Set(viewed.map((p) => p.brand))];
@@ -121,6 +130,11 @@ export default function PersonalizedSliders({ navigation }) {
     } finally { setLoading(false); }
   }, []);
 
+  const handleClearRecentlyViewed = useCallback(async () => {
+    await clearRecentlyViewed();
+    setRecentlyViewed([]);
+  }, []);
+
   useEffect(() => {
     fetchData();
     const unsub = subscribeRecentlyViewed(() => fetchData());
@@ -135,7 +149,7 @@ export default function PersonalizedSliders({ navigation }) {
           <View style={[styles.sectionIcon, { backgroundColor: colors.primarySubtle }]}>
             <Ionicons name="sparkles" size={18} color={colors.primary} />
           </View>
-          <Text style={styles.sectionTitle}>Loading personalized picks…</Text>
+          <Text style={styles.sectionTitle}>Loading personalized picks...</Text>
         </View>
         <SliderSkeleton count={3} />
       </View>
@@ -167,6 +181,12 @@ export default function PersonalizedSliders({ navigation }) {
 
       {expanded && (
         <View>
+          {recentlyViewed.length > 0 && (
+            <TouchableOpacity style={styles.clearRecentBtn} activeOpacity={0.8} onPress={handleClearRecentlyViewed}>
+              <Ionicons name="trash-outline" size={14} color={colors.textSecondary} />
+              <Text style={styles.clearRecentText}>Clear recently viewed</Text>
+            </TouchableOpacity>
+          )}
           <Section sectionKey="recent" icon="time-outline" title="Recently Viewed" subtitle="Continue where you left off" color={colors.info} products={recentlyViewed} formatPrice={formatPrice} navigation={navigation} palette={palette} />
           <Section sectionKey="picked" icon="sparkles" title="Picked for You" subtitle="Based on what you've explored" color={colors.primary} products={picked} formatPrice={formatPrice} navigation={navigation} palette={palette} />
           <Section sectionKey="drops" icon="pricetag" title="Price Drops" subtitle="Hot deals right now" color={colors.error} products={priceDrops} formatPrice={formatPrice} navigation={navigation} palette={palette} />
@@ -194,6 +214,21 @@ const makeStyles = (palette) => { const colors = palette.colors; const glass = p
   cardPriceRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   cardPrice: { fontSize: fontSize.md, fontWeight: fontWeight.bold, color: colors.text },
   cardOriginalPrice: { fontSize: fontSize.xs, color: colors.textSecondary, textDecorationLine: 'line-through' },
+  clearRecentBtn: {
+    alignSelf: 'flex-end',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    marginRight: spacing.lg,
+    marginBottom: spacing.xs,
+    borderRadius: borderRadius.full,
+    backgroundColor: glass.bgSubtle,
+    borderWidth: 1,
+    borderColor: glass.borderSubtle,
+  },
+  clearRecentText: { fontSize: fontSize.xs, fontWeight: fontWeight.medium, color: colors.textSecondary },
   toggleBtn: {
     flexDirection: 'row',
     alignItems: 'center',

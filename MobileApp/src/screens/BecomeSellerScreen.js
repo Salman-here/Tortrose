@@ -11,6 +11,7 @@ import api from '../config/api';
 import { useAuth } from '../contexts/AuthContext';
 import GlassBackground from '../components/common/GlassBackground';
 import GlassPanel from '../components/common/GlassPanel';
+import LocationAutocomplete from '../components/common/LocationAutocomplete';
 import { spacing, fontSize, borderRadius, shadows, fontWeight } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 
@@ -22,7 +23,16 @@ export default function BecomeSellerScreen({ navigation }) {
   const [loading, setLoading] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [formStep, setFormStep] = useState(1); // 1: seller info, 2: store setup
-  const [formData, setFormData] = useState({ phoneNumber: '', address: '', city: '', country: '', businessName: '' });
+  const [formData, setFormData] = useState({
+    phoneNumber: '',
+    address: '',
+    city: '',
+    state: '',
+    stateCode: '',
+    country: '',
+    countryCode: '',
+    businessName: '',
+  });
   const [storeData, setStoreData] = useState({ storeName: '', storeDescription: '', website: '', instagram: '', facebook: '', twitter: '' });
 
   useEffect(() => { if (currentUser?.role === 'seller' || currentUser?.role === 'admin') navigation.replace('SellerDashboard'); }, [currentUser]);
@@ -32,8 +42,8 @@ export default function BecomeSellerScreen({ navigation }) {
   const validateForm = () => {
     if (!formData.phoneNumber || formData.phoneNumber.trim().length < 10) { Toast.show({ type: 'error', text1: 'Invalid Phone', text2: 'At least 10 digits' }); return false; }
     if (!formData.address || formData.address.trim().length < 5) { Toast.show({ type: 'error', text1: 'Invalid Address' }); return false; }
-    if (!formData.city || formData.city.trim().length < 2) { Toast.show({ type: 'error', text1: 'Invalid City' }); return false; }
-    if (!formData.country || formData.country.trim().length < 2) { Toast.show({ type: 'error', text1: 'Invalid Country' }); return false; }
+    if (!formData.country || !formData.countryCode) { Toast.show({ type: 'error', text1: 'Select Country', text2: 'Please choose your country from the list.' }); return false; }
+    if (!formData.city || formData.city.trim().length < 2) { Toast.show({ type: 'error', text1: 'Select City', text2: 'Please choose your city from the list.' }); return false; }
     return true;
   };
 
@@ -53,7 +63,12 @@ export default function BecomeSellerScreen({ navigation }) {
       }
       const payload = {
         phoneNumber: formData.phoneNumber.trim(), address: formData.address.trim(),
-        city: formData.city.trim(), country: formData.country.trim(), businessName: formData.businessName.trim(),
+        city: formData.city.trim(),
+        state: formData.state.trim(),
+        stateCode: formData.stateCode.trim(),
+        country: formData.country.trim(),
+        countryCode: formData.countryCode.trim(),
+        businessName: formData.businessName.trim(),
         storeName: !skipStore && storeData.storeName ? storeData.storeName.trim() : '',
         storeDescription: !skipStore && storeData.storeDescription ? storeData.storeDescription.trim() : '',
         socialLinks: Object.keys(socialLinks).length > 0 ? socialLinks : undefined,
@@ -169,14 +184,59 @@ export default function BecomeSellerScreen({ navigation }) {
                     </View>
                   ))}
 
-                  <View style={{ flexDirection: 'row', gap: spacing.md }}>
-                    {[{ key: 'city', label: 'City *', placeholder: 'Your city' }, { key: 'country', label: 'Country *', placeholder: 'Your country' }].map(({ key, label, placeholder }) => (
-                      <View key={key} style={[styles.inputGroup, { flex: 1 }]}>
-                        <Text style={styles.label}>{label}</Text>
-                        <TextInput style={styles.glassInput} placeholder={placeholder} placeholderTextColor="rgba(255,255,255,0.3)" value={formData[key]} onChangeText={v => handleInputChange(key, v)} />
-                      </View>
-                    ))}
-                  </View>
+                  <LocationAutocomplete
+                    type="country"
+                    label="Country"
+                    required
+                    value={formData.country}
+                    code={formData.countryCode}
+                    placeholder="Select country"
+                    onSelect={(option) => setFormData(prev => ({
+                      ...prev,
+                      country: option.name,
+                      countryCode: option.isoCode,
+                      state: '',
+                      stateCode: '',
+                      city: '',
+                    }))}
+                    onClear={() => setFormData(prev => ({ ...prev, country: '', countryCode: '', state: '', stateCode: '', city: '' }))}
+                  />
+                  <LocationAutocomplete
+                    type="state"
+                    label="State / Province"
+                    value={formData.state}
+                    code={formData.stateCode}
+                    countryCode={formData.countryCode}
+                    countryName={formData.country}
+                    placeholder="Select state"
+                    disabled={!formData.countryCode && !formData.country}
+                    onSelect={(option) => setFormData(prev => ({
+                      ...prev,
+                      state: option.name,
+                      stateCode: option.isoCode,
+                      city: '',
+                    }))}
+                    onClear={() => setFormData(prev => ({ ...prev, state: '', stateCode: '', city: '' }))}
+                  />
+                  <LocationAutocomplete
+                    type="city"
+                    label="City"
+                    required
+                    value={formData.city}
+                    countryCode={formData.countryCode}
+                    countryName={formData.country}
+                    stateCode={formData.stateCode}
+                    stateName={formData.state}
+                    placeholder="Select city"
+                    disabled={!formData.countryCode && !formData.country}
+                    onSelect={(option) => setFormData(prev => ({
+                      ...prev,
+                      city: option.name,
+                      state: prev.state || option.stateName || '',
+                      stateCode: prev.stateCode || option.stateCode || '',
+                    }))}
+                    onClear={() => setFormData(prev => ({ ...prev, city: '' }))}
+                  />
 
                   <View style={{ flexDirection: 'row', gap: spacing.md, marginTop: spacing.lg }}>
                     <TouchableOpacity style={styles.backFormBtn} onPress={() => setShowForm(false)}><Text style={{ fontWeight: fontWeight.semibold, color: palette.colors.text }}>Back</Text></TouchableOpacity>

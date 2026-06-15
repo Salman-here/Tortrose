@@ -23,7 +23,7 @@ export default function CartScreen({ navigation }) {
 
   const { currentUser } = useAuth();
   const { cartItems, fetchCart, handleRemoveCartItem, handleQtyInc, handleQtyDec, isCartLoading, qtyUpdateId } = useGlobal();
-  const { formatPrice } = useCurrency();
+  const { formatAmount, formatProductPrice, getProductPriceNumber } = useCurrency();
 
   const [refreshing, setRefreshing] = useState(false);
 
@@ -35,13 +35,17 @@ export default function CartScreen({ navigation }) {
     setRefreshing(false);
   }, [fetchCart]);
 
-  const getDiscountedPrice = (product) => product?.discountedPrice || product?.price || 0;
+  const getEffectivePriceField = (product) => (
+    Number(product?.discountedPrice || 0) > 0 && Number(product?.discountedPrice) < Number(product?.price)
+      ? 'discountedPrice'
+      : 'price'
+  );
 
   const calculateSubtotal = () => {
     if (!cartItems?.cart) return 0;
     return cartItems.cart.reduce((total, item) => {
       if (!item.product) return total;
-      return total + (getDiscountedPrice(item.product) * item.qty);
+      return total + (getProductPriceNumber(item.product, getEffectivePriceField(item.product)) * (item.qty || 1));
     }, 0);
   };
 
@@ -88,8 +92,11 @@ export default function CartScreen({ navigation }) {
   const renderCartItem = ({ item }) => {
     const { product, qty, _id: itemId } = item;
     if (!product) return null;
-    const discountedPrice = getDiscountedPrice(product);
+    const priceField = getEffectivePriceField(product);
     const isUpdating = qtyUpdateId === itemId;
+    const selectedOptions = item.selectedOptions && typeof item.selectedOptions === 'object'
+      ? Object.entries(item.selectedOptions).filter(([, value]) => value)
+      : [];
 
     return (
       <GlassPanel variant="card" style={styles.cartItem}>
@@ -111,7 +118,13 @@ export default function CartScreen({ navigation }) {
               <Text style={{ fontSize: 11, color: palette.colors.textSecondary }}>Color: {item.selectedColor}</Text>
             </View>
           )}
-          <Text style={styles.itemPrice}>{formatPrice(discountedPrice)}</Text>
+          {selectedOptions.map(([name, value]) => (
+            <View key={name} style={styles.optionRow}>
+              <Ionicons name="options-outline" size={12} color={palette.colors.textSecondary} />
+              <Text style={styles.optionText}>{name}: {value}</Text>
+            </View>
+          ))}
+          <Text style={styles.itemPrice}>{formatProductPrice(product, { field: priceField })}</Text>
           <View style={styles.bottomRow}>
             <View style={styles.quantityContainer}>
               <TouchableOpacity style={styles.qtyButton} onPress={() => handleQtyDec(itemId)} disabled={isUpdating}>
@@ -122,7 +135,7 @@ export default function CartScreen({ navigation }) {
                 <Ionicons name="add" size={16} color={palette.colors.primary} />
               </TouchableOpacity>
             </View>
-            <TouchableOpacity style={styles.removeButton} onPress={() => handleRemoveCartItem(product._id)} disabled={isUpdating}>
+            <TouchableOpacity style={styles.removeButton} onPress={() => handleRemoveCartItem(itemId)} disabled={isUpdating}>
               <Ionicons name="trash-outline" size={18} color={palette.colors.error} />
             </TouchableOpacity>
           </View>
@@ -155,7 +168,7 @@ export default function CartScreen({ navigation }) {
                 <Text style={styles.summaryTitle}>Order Summary</Text>
                 <View style={styles.summaryRow}>
                   <Text style={styles.summaryLabel}>Subtotal ({cartItems.cart.length} items)</Text>
-                  <Text style={styles.summaryValue}>{formatPrice(subtotal)}</Text>
+                  <Text style={styles.summaryValue}>{formatAmount(subtotal)}</Text>
                 </View>
                 <View style={styles.summaryRow}>
                   <Text style={styles.summaryLabel}>Shipping & Tax</Text>
@@ -163,7 +176,7 @@ export default function CartScreen({ navigation }) {
                 </View>
                 <View style={[styles.summaryRow, styles.totalRow]}>
                   <Text style={styles.totalLabel}>Subtotal</Text>
-                  <Text style={styles.totalValue}>{formatPrice(subtotal)}</Text>
+                  <Text style={styles.totalValue}>{formatAmount(subtotal)}</Text>
                 </View>
               </GlassPanel>
             }
@@ -172,7 +185,7 @@ export default function CartScreen({ navigation }) {
         <GlassPanel variant="floating" style={styles.footer}>
           <View style={styles.footerTop}>
             <Text style={styles.footerTotalLabel}>Subtotal</Text>
-            <Text style={styles.footerTotalValue}>{formatPrice(subtotal)}</Text>
+            <Text style={styles.footerTotalValue}>{formatAmount(subtotal)}</Text>
           </View>
           <TouchableOpacity style={[styles.checkoutButton, isCartLoading && { opacity: 0.6 }]} onPress={handleCheckout} disabled={isCartLoading} activeOpacity={0.85}>
             <Ionicons name="lock-closed-outline" size={18} color={palette.colors.white} />
@@ -200,6 +213,8 @@ const buildStyles = (p) => StyleSheet.create({
   itemCategory: { fontSize: fontSize.xs, color: p.colors.primary, fontWeight: fontWeight.semibold, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 2 },
   itemName: { fontSize: fontSize.md, fontWeight: fontWeight.semibold, color: p.colors.text, marginBottom: spacing.xs, lineHeight: 20 },
   itemPrice: { fontSize: fontSize.lg, fontWeight: fontWeight.bold, color: p.colors.text, marginBottom: spacing.sm },
+  optionRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 2 },
+  optionText: { fontSize: 11, color: p.colors.textSecondary },
   bottomRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   quantityContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: borderRadius.full, paddingHorizontal: spacing.xs, paddingVertical: spacing.xs, borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' },
   qtyButton: { width: 28, height: 28, borderRadius: 14, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.15)' },

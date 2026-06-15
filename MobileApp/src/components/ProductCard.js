@@ -34,7 +34,7 @@ function ProductCard({ product, index = 0, onPress, compact = false }) {
   const navigation = useNavigation();
   const { currentUser } = useAuth();
   const { wishlistItems, handleAddToWishlist, handleDeleteFromWishlist, cartItems, handleAddToCart, isCartLoading, loadingProductId } = useGlobal();
-  const { formatPrice, formatProductPrice } = useCurrency();
+  const { formatProductPrice } = useCurrency();
   const { palette } = useTheme();
   const c = palette.colors;
   const g = palette.glass;
@@ -72,7 +72,7 @@ function ProductCard({ product, index = 0, onPress, compact = false }) {
   };
 
   const handleAddToCartClick = () => { if (!currentUser) { navigation.navigate('Login'); return; } handleAddToCart(_id, null, product); };
-  const imageSource = images?.[0]?.url || image;
+  const imageSource = (typeof images?.[0] === 'string' ? images[0] : images?.[0]?.url) || image;
   const isLoading = isCartLoading && loadingProductId === _id;
 
   const renderStars = () => {
@@ -80,7 +80,7 @@ function ProductCard({ product, index = 0, onPress, compact = false }) {
     for (let i = 0; i < 5; i++) {
       if (i < full) stars.push(<Ionicons key={i} name="star" size={11} color={colors.star} />);
       else if (i === full && half) stars.push(<Ionicons key={i} name="star-half" size={11} color={colors.star} />);
-      else stars.push(<Ionicons key={i} name="star-outline" size={11} color={colors.star} />);
+      else stars.push(<Ionicons key={i} name="star-outline" size={11} color={c.textSecondary} />);
     }
     return stars;
   };
@@ -134,7 +134,7 @@ function ProductCard({ product, index = 0, onPress, compact = false }) {
         {/* Details */}
         <View style={styles.detailsContainer}>
           <Text style={[styles.category, { color: c.textSecondary }]} numberOfLines={1}>{category}</Text>
-          <Text style={[styles.name, { color: c.text }]} numberOfLines={2}>{name}</Text>
+          <Text style={[styles.name, { color: c.text }]} numberOfLines={3}>{name}</Text>
           <View style={styles.ratingContainer}><View style={{ flexDirection: 'row', marginRight: 4 }}>{renderStars()}</View><Text style={[styles.ratingText, { color: c.textSecondary }]}>({rating?.toFixed(1) || '0.0'})</Text></View>
           <View style={styles.priceContainer}>
             <Text style={[styles.price, { color: c.text }]}>{formatProductPrice(product, { field: discountedPrice ? 'discountedPrice' : 'price' })}</Text>
@@ -157,7 +157,7 @@ export function CompactProductCard({ product, onPress }) {
   const [imageLoading, setImageLoading] = useState(true);
   if (!product) return null;
   const { name, image, images, discountedPrice, rating } = product;
-  const imageSource = images?.[0]?.url || image;
+  const imageSource = (typeof images?.[0] === 'string' ? images[0] : images?.[0]?.url) || image;
   return (
     <TouchableOpacity style={styles.compactContainer} onPress={onPress} activeOpacity={0.9}>
       <View style={styles.compactImageContainer}>
@@ -192,7 +192,7 @@ const styles = StyleSheet.create({
   outOfStockText: { color: '#fff', fontWeight: fontWeight.semibold, backgroundColor: 'rgba(0,0,0,0.6)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 },
   detailsContainer: { padding: spacing.md },
   category: { fontSize: fontSize.xs, color: colors.textSecondary, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 2 },
-  name: { fontSize: fontSize.sm, fontWeight: fontWeight.semibold, color: colors.text, marginBottom: spacing.sm, minHeight: 36, lineHeight: 18 },
+  name: { fontSize: fontSize.sm, fontWeight: fontWeight.semibold, color: colors.text, marginBottom: spacing.sm, minHeight: 54, lineHeight: 18 },
   ratingContainer: { flexDirection: 'row', alignItems: 'center', marginBottom: spacing.sm },
   ratingText: { fontSize: fontSize.xs, color: colors.textSecondary },
   priceContainer: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: spacing.md },
