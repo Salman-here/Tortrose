@@ -162,18 +162,22 @@ function ProductDetailPage() {
 
     // Related products by category (excludes current product)
     useEffect(() => {
-        if (!product?.category) return;
+        if (!product?._id) return;
         let cancelled = false;
         (async () => {
             try {
-                const params = new URLSearchParams({ categories: product.category, limit: '12' });
-                appendLocationParams(params);
-                const categoryRes = await axios.get(
-                    `${import.meta.env.VITE_API_URL}api/products/get-products?${params.toString()}`
-                );
-                let list = (categoryRes.data.products || [])
-                    .filter(p => p._id !== product._id)
-                    .slice(0, 8);
+                let list = [];
+
+                if (product.category) {
+                    const params = new URLSearchParams({ categories: product.category, limit: '12' });
+                    appendLocationParams(params);
+                    const categoryRes = await axios.get(
+                        `${import.meta.env.VITE_API_URL}api/products/get-products?${params.toString()}`
+                    );
+                    list = (categoryRes.data.products || [])
+                        .filter(p => p._id !== product._id)
+                        .slice(0, 8);
+                }
 
                 if (list.length < 4) {
                     const fallbackParams = new URLSearchParams({ limit: '12', sortBy: 'relevance' });

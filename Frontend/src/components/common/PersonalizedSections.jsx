@@ -5,6 +5,7 @@ import { Sparkles, TrendingUp, DollarSign, Clock, Gift, ChevronLeft, ChevronRigh
 import axios from 'axios'
 import { useAuth } from '../../contexts/AuthContext'
 import { useCurrency } from '../../contexts/CurrencyContext'
+import { useBuyerLocation } from '../../contexts/BuyerLocationContext'
 import { getStoreSubdomainUrl } from '../../utils/subdomainHelper'
 
 const SliderProductCard = ({ product, formatPrice }) => {
@@ -282,6 +283,7 @@ const CollapsibleSection = ({ icon: Icon, title, subtitle, color, bgStyle, child
 const PersonalizedSections = () => {
   const { currentUser } = useAuth()
   const { formatPrice } = useCurrency()
+  const { appendLocationParams, locationQueryString } = useBuyerLocation()
 
   const [pickedForYou, setPickedForYou] = useState([])
   const [trending, setTrending] = useState([])
@@ -291,12 +293,14 @@ const PersonalizedSections = () => {
 
   useEffect(() => {
     fetchPersonalizedData()
-  }, [currentUser])
+  }, [currentUser, locationQueryString])
 
   const fetchPersonalizedData = async () => {
     setLoading(true)
     try {
-      const res = await axios.get(`${import.meta.env.VITE_API_URL}api/products/get-products?limit=50`)
+      const params = new URLSearchParams({ limit: '50', sortBy: 'relevance', sortOrder: 'desc' })
+      appendLocationParams(params)
+      const res = await axios.get(`${import.meta.env.VITE_API_URL}api/products/get-products?${params.toString()}`)
       const allProducts = res.data.products || []
 
       const viewedIds = JSON.parse(localStorage.getItem('viewedProducts') || '[]')
