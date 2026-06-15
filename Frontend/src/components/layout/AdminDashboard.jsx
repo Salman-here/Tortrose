@@ -40,6 +40,7 @@ const getAdminMenuItems = ({ pendingOrders = 0, lowStockProducts = 0 } = {}) => 
     { id: 'ai-assistant', label: 'AI Assistant', icon: <Bot size={18} />, action: 'ai-chat' },
 ]);
 
+const DASHBOARD_PRODUCTS_PER_PAGE = 12;
 
 const AdminDashboard = () => {
     const { currentUser } = useAuth();
@@ -63,6 +64,14 @@ const AdminDashboard = () => {
     const [selectedCategory, setSelectedCategory] = useState('all');
     const [deleteConfirm, setDeleteConfirm] = useState(null);
     const [loading, setLoading] = useState(true);
+    const [productPage, setProductPage] = useState(1);
+    const [productPagination, setProductPagination] = useState({
+        page: 1,
+        limit: DASHBOARD_PRODUCTS_PER_PAGE,
+        totalProducts: 0,
+        totalPages: 1,
+        hasMore: false,
+    });
     const [uploadingImages, setUploadingImages] = useState(false);
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
     const [notificationsOpen, setNotificationsOpen] = useState(false);
@@ -95,19 +104,39 @@ const AdminDashboard = () => {
         setLoading(true);
         try {
             const query = serializeFilters();
-            const res = await axios.get(`${import.meta.env.VITE_API_URL}api/products/get-products?${query}`);
-            setProducts(res.data.products);
-        } catch (err) { console.log(err); } finally { setLoading(false); }
+            const token = getAuthToken();
+            const res = await axios.get(`${import.meta.env.VITE_API_URL}api/products/admin-products?${query}`, {
+                headers: { Authorization: `Bearer ${token}` },
+            });
+            setProducts(Array.isArray(res.data.products) ? res.data.products : []);
+            setProductPagination({
+                page: res.data.pagination?.page || productPage,
+                limit: res.data.pagination?.limit || DASHBOARD_PRODUCTS_PER_PAGE,
+                totalProducts: res.data.pagination?.totalProducts || 0,
+                totalPages: Math.max(1, res.data.pagination?.totalPages || 1),
+                hasMore: Boolean(res.data.pagination?.hasMore),
+            });
+        } catch (err) {
+            console.log(err);
+            toast.error(err.response?.data?.msg || 'Failed to fetch admin products');
+            setProducts([]);
+            setProductPagination(prev => ({ ...prev, totalProducts: 0, totalPages: 1, hasMore: false }));
+        } finally { setLoading(false); }
     };
 
     const serializeFilters = () => {
         let params = new URLSearchParams();
         if (selectedCategory !== 'all') params.append('categories', selectedCategory);
         if (searchTerm !== '') params.append('search', searchTerm);
+        params.append('page', productPage);
+        params.append('limit', DASHBOARD_PRODUCTS_PER_PAGE);
+        params.append('sortBy', 'newest');
+        params.append('sortOrder', 'desc');
         return params.toString();
     };
 
-    useEffect(() => { fetchProducts(); fetchOrders(); }, [searchTerm, selectedCategory]);
+    useEffect(() => { setProductPage(1); }, [searchTerm, selectedCategory]);
+    useEffect(() => { fetchProducts(); fetchOrders(); }, [searchTerm, selectedCategory, productPage]);
 
     const handleCreateProduct = () => {
         setEditingProduct({
@@ -168,10 +197,34 @@ const AdminDashboard = () => {
         setDeleteConfirm(null);
     };
 
+    const handleBulkDeleteProducts = async (productIds = []) => {
+        try {
+            const ids = Array.isArray(productIds) ? productIds.filter(Boolean) : [];
+            if (ids.length === 0) {
+                toast.error('Select at least one product to delete.');
+                return false;
+            }
+            const token = getAuthToken();
+            const res = await axios.post(`${import.meta.env.VITE_API_URL}api/products/bulk-delete`,
+                { productIds: ids },
+                { headers: { Authorization: `Bearer ${token}` } });
+            toast.success(res.data.msg || 'Selected products deleted');
+            fetchProducts();
+            fetchFilters();
+            return true;
+        } catch (error) {
+            toast.error(error.response?.data?.msg || 'Failed to delete selected products');
+            return false;
+        }
+    };
+
     const fetchOrders = async () => {
         const token = getAuthToken();
         try {
-            const query = serializeFilters();
+            const params = new URLSearchParams();
+            if (selectedCategory !== 'all') params.append('categories', selectedCategory);
+            if (searchTerm !== '') params.append('search', searchTerm);
+            const query = params.toString();
             const res = await axios.get(`${import.meta.env.VITE_API_URL}api/order/get?${query}`,
                 { headers: { Authorization: `Bearer ${token}` } });
             setOrders(res.data?.orders || []);
@@ -183,10 +236,17 @@ const AdminDashboard = () => {
     const outOfStockProducts = products.filter(p => p.stock === 0).length;
 
     const outletContext = useMemo(() => ({
+        dashboardRole: 'admin',
         products, orders, categories, searchTerm, setSearchTerm,
         selectedCategory, setSelectedCategory, deleteConfirm, setDeleteConfirm,
-        handleEditProduct, handleCreateProduct, handleDeleteProduct, loading, fetchProducts
-    }), [products, orders, categories, searchTerm, selectedCategory, deleteConfirm, loading]);
+        handleEditProduct, handleCreateProduct, handleDeleteProduct, handleBulkDeleteProducts, loading, fetchProducts,
+        productPagination,
+        currentPage: productPagination.page,
+        totalPages: productPagination.totalPages,
+        totalProducts: productPagination.totalProducts,
+        pageSize: productPagination.limit,
+        setProductPage,
+    }), [products, orders, categories, searchTerm, selectedCategory, deleteConfirm, loading, productPagination]);
 
     const location = useLocation();
 

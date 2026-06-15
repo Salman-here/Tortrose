@@ -38,6 +38,8 @@ const getSellerMenuItems = ({ pendingOrders = 0, lowStockProducts = 0 } = {}) =>
     { id: 'ai-assistant', label: 'AI Assistant', icon: <Bot size={18} />, action: 'ai-chat' },
 ]);
 
+const DASHBOARD_PRODUCTS_PER_PAGE = 12;
+
 const normalizeDashboardProduct = (product = {}) => ({
     ...product,
     name: product.name || '',
@@ -111,6 +113,14 @@ const SellerDashboard = () => {
     const [selectedCategory, setSelectedCategory] = useState('all');
     const [deleteConfirm, setDeleteConfirm] = useState(null);
     const [loading, setLoading] = useState(true);
+    const [productPage, setProductPage] = useState(1);
+    const [productPagination, setProductPagination] = useState({
+        page: 1,
+        limit: DASHBOARD_PRODUCTS_PER_PAGE,
+        totalProducts: 0,
+        totalPages: 1,
+        hasMore: false,
+    });
     const [uploadingImages, setUploadingImages] = useState(false);
     const [featuredStats, setFeaturedStats] = useState({ current: 0, max: 6, allowed: true, plan: 'free_trial' });
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -187,9 +197,17 @@ const SellerDashboard = () => {
                 headers: { Authorization: `Bearer ${token}` }
             });
             setProducts(Array.isArray(res.data.products) ? res.data.products.map(normalizeDashboardProduct) : []);
+            setProductPagination({
+                page: res.data.pagination?.page || productPage,
+                limit: res.data.pagination?.limit || DASHBOARD_PRODUCTS_PER_PAGE,
+                totalProducts: res.data.pagination?.totalProducts || 0,
+                totalPages: Math.max(1, res.data.pagination?.totalPages || 1),
+                hasMore: Boolean(res.data.pagination?.hasMore),
+            });
         } catch (err) {
             toast.error(err.response?.data?.msg || 'Failed to fetch products');
             setProducts([]);
+            setProductPagination(prev => ({ ...prev, totalProducts: 0, totalPages: 1, hasMore: false }));
         } finally { setLoading(false); }
     };
 
@@ -197,10 +215,15 @@ const SellerDashboard = () => {
         let params = new URLSearchParams();
         if (selectedCategory !== 'all') params.append('categories', selectedCategory);
         if (searchTerm !== '') params.append('search', searchTerm);
+        params.append('page', productPage);
+        params.append('limit', DASHBOARD_PRODUCTS_PER_PAGE);
+        params.append('sortBy', 'newest');
+        params.append('sortOrder', 'desc');
         return params.toString();
     };
 
-    useEffect(() => { fetchProducts(); fetchOrders(); }, [searchTerm, selectedCategory]);
+    useEffect(() => { setProductPage(1); }, [searchTerm, selectedCategory]);
+    useEffect(() => { fetchProducts(); fetchOrders(); }, [searchTerm, selectedCategory, productPage]);
 
     const handleCreateProduct = () => {
         if (productCurrencyState.status === 'pending_conversion') {
@@ -335,7 +358,10 @@ const SellerDashboard = () => {
     const fetchOrders = async () => {
         const token = getAuthToken();
         try {
-            const query = serializeFilters();
+            const params = new URLSearchParams();
+            if (selectedCategory !== 'all') params.append('categories', selectedCategory);
+            if (searchTerm !== '') params.append('search', searchTerm);
+            const query = params.toString();
             const res = await axios.get(`${import.meta.env.VITE_API_URL}api/order/get?${query}`,
                 { headers: { Authorization: `Bearer ${token}` } });
             setOrders(res.data?.orders || []);
@@ -347,15 +373,22 @@ const SellerDashboard = () => {
     const outOfStockProducts = products.filter(p => p.stock === 0).length;
 
     const outletContext = useMemo(() => ({
+        dashboardRole: 'seller',
         products, orders, categories, searchTerm, setSearchTerm,
         selectedCategory, setSelectedCategory, deleteConfirm, setDeleteConfirm,
         handleEditProduct, handleCreateProduct, handleDeleteProduct, handleBulkDeleteProducts, loading, fetchProducts,
+        productPagination,
+        currentPage: productPagination.page,
+        totalPages: productPagination.totalPages,
+        totalProducts: productPagination.totalProducts,
+        pageSize: productPagination.limit,
+        setProductPage,
         isFormOpen, editingProduct, setEditingProduct, handleSaveProduct, uploadingImages,
         closeForm: () => { setIsFormOpen(false); setEditingProduct(null); },
         canFeature: subscriptionData?.status === 'trial' || subscriptionData?.bonusFeaturesActive === true || ['active', 'free_period'].includes(subscriptionData?.status),
         featuredStats, fetchFeaturedStats,
         productCurrencyState, fetchProductCurrencyState, handleConvertProductCurrency, handleCancelProductCurrencyChange,
-    }), [products, orders, categories, searchTerm, selectedCategory, deleteConfirm, loading, isFormOpen, editingProduct, uploadingImages, subscriptionData, featuredStats, productCurrencyState]);
+    }), [products, orders, categories, searchTerm, selectedCategory, deleteConfirm, loading, productPagination, isFormOpen, editingProduct, uploadingImages, subscriptionData, featuredStats, productCurrencyState]);
 
     const location = useLocation();
 

@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { Plus, Search, Filter, Package, Tag, CheckSquare, Square, Trash2, Store, AlertTriangle } from "lucide-react";
+import { Plus, Search, Filter, Package, Tag, CheckSquare, Square, Trash2, Store, AlertTriangle, ChevronLeft, ChevronRight } from "lucide-react";
 import Loader from '../common/Loader'
 import ProductCard from "./ProductCard";
 import { useOutletContext, useNavigate } from "react-router-dom";
@@ -12,7 +12,7 @@ import { getAuthToken } from "../../utils/cookieHelper";
 
 const ProductManagement = () => {
     const context = useOutletContext() || {};
-    const { products = [], loading, categories = [], searchTerm = '', setSearchTerm, selectedCategory = 'all', setSelectedCategory, deleteConfirm, setDeleteConfirm, handleEditProduct, handleCreateProduct, handleDeleteProduct, handleBulkDeleteProducts, fetchProducts, isFormOpen, editingProduct, setEditingProduct, handleSaveProduct, uploadingImages, closeForm, canFeature, featuredStats, productCurrencyState, handleConvertProductCurrency, handleCancelProductCurrencyChange } = context;
+    const { dashboardRole = 'seller', products = [], loading, categories = [], searchTerm = '', setSearchTerm, selectedCategory = 'all', setSelectedCategory, deleteConfirm, setDeleteConfirm, handleEditProduct, handleCreateProduct, handleDeleteProduct, handleBulkDeleteProducts, fetchProducts, isFormOpen, editingProduct, setEditingProduct, handleSaveProduct, uploadingImages, closeForm, canFeature, featuredStats, productCurrencyState, handleConvertProductCurrency, handleCancelProductCurrencyChange, currentPage = 1, totalPages = 1, totalProducts = products.length, pageSize = 12, setProductPage } = context;
     const safeProducts = Array.isArray(products) ? products : [];
     const safeCategories = Array.isArray(categories) ? categories : [];
     const [selectedProducts, setSelectedProducts] = useState([]);
@@ -22,10 +22,33 @@ const ProductManagement = () => {
     const [hasStore, setHasStore] = useState(true);
     const [storeLoading, setStoreLoading] = useState(true);
     const navigate = useNavigate();
+    const isAdminDashboard = dashboardRole === 'admin';
     const hasPendingCurrencyChange = productCurrencyState?.status === 'pending_conversion';
-    const canAddProduct = hasStore && !hasPendingCurrencyChange;
+    const canAddProduct = (isAdminDashboard || hasStore) && !hasPendingCurrencyChange;
+    const safeTotalPages = Math.max(1, Number(totalPages) || 1);
+    const safeCurrentPage = Math.min(safeTotalPages, Math.max(1, Number(currentPage) || 1));
+    const pageNumbers = useMemo(() => {
+        const pages = [];
+        const maxVisible = 5;
+        let start = Math.max(1, safeCurrentPage - Math.floor(maxVisible / 2));
+        const end = Math.min(safeTotalPages, start + maxVisible - 1);
+        if (end - start + 1 < maxVisible) start = Math.max(1, end - maxVisible + 1);
+        for (let page = start; page <= end; page += 1) pages.push(page);
+        return pages;
+    }, [safeCurrentPage, safeTotalPages]);
+
+    const goToPage = (page) => {
+        const nextPage = Math.min(safeTotalPages, Math.max(1, page));
+        setProductPage?.(nextPage);
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    };
 
     useEffect(() => {
+        if (isAdminDashboard) {
+            setHasStore(true);
+            setStoreLoading(false);
+            return;
+        }
         const checkStore = async () => {
             try {
                 const token = getAuthToken();
@@ -63,7 +86,7 @@ const ProductManagement = () => {
             finally { setStoreLoading(false); }
         };
         checkStore();
-    }, []);
+    }, [isAdminDashboard]);
 
     const handleToggleSelectMode = () => { setSelectMode(!selectMode); setSelectedProducts([]); };
     const handleSelectProduct = (product) => { setSelectedProducts(prev => prev.find(p => p._id === product._id) ? prev.filter(p => p._id !== product._id) : [...prev, product]); };
@@ -229,6 +252,47 @@ const ProductManagement = () => {
                                     <ProductCard product={product} index={index} onEditProduct={handleEditProduct} setDeleteConfirm={setDeleteConfirm} selectMode={selectMode} />
                                 </div>
                             ))}
+                        </div>
+                    )}
+
+                    {safeProducts.length > 0 && (
+                        <div className="mt-6 flex flex-col sm:flex-row items-center justify-between gap-3">
+                            <p className="text-xs sm:text-sm" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                                Showing {((safeCurrentPage - 1) * pageSize) + 1}-{Math.min(safeCurrentPage * pageSize, totalProducts || safeProducts.length)} of {totalProducts || safeProducts.length} products
+                            </p>
+                            <div className="flex items-center gap-1.5">
+                                <button
+                                    type="button"
+                                    onClick={() => goToPage(safeCurrentPage - 1)}
+                                    disabled={safeCurrentPage <= 1}
+                                    className="h-9 w-9 rounded-xl glass-button flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed"
+                                    aria-label="Previous products page"
+                                >
+                                    <ChevronLeft size={16} />
+                                </button>
+                                {pageNumbers.map(page => (
+                                    <button
+                                        key={page}
+                                        type="button"
+                                        onClick={() => goToPage(page)}
+                                        className="h-9 min-w-9 px-3 rounded-xl text-sm font-semibold transition-all"
+                                        style={page === safeCurrentPage
+                                            ? { background: 'linear-gradient(135deg, hsl(220, 70%, 55%), hsl(260, 60%, 60%))', color: 'white' }
+                                            : { background: 'var(--glass-inner)', color: 'hsl(var(--foreground))', border: '1px solid var(--glass-border)' }}
+                                    >
+                                        {page}
+                                    </button>
+                                ))}
+                                <button
+                                    type="button"
+                                    onClick={() => goToPage(safeCurrentPage + 1)}
+                                    disabled={safeCurrentPage >= safeTotalPages}
+                                    className="h-9 w-9 rounded-xl glass-button flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed"
+                                    aria-label="Next products page"
+                                >
+                                    <ChevronRight size={16} />
+                                </button>
+                            </div>
                         </div>
                     )}
                 </div>

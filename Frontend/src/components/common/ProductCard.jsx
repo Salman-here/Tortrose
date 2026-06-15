@@ -163,7 +163,7 @@ const ProductCard = memo(({
         <div className="flex items-center gap-1 sm:gap-1.5 mb-2 sm:mb-2.5">
           <div className="flex">
             {[...Array(5)].map((_, i) => (
-              <Star key={i} size={10} className={`sm:w-3 sm:h-3 ${i < Math.floor(rating || 0) ? "text-amber-400 fill-amber-400" : "text-white/30"}`} />
+              <Star key={i} size={10} className={`sm:w-3 sm:h-3 ${i < Math.floor(rating || 0) ? "text-amber-400 fill-amber-400" : "text-slate-400/90"}`} />
             ))}
           </div>
           <span className="text-[10px] sm:text-xs ml-0.5" style={{ color: 'hsl(var(--muted-foreground))' }}>({rating?.toFixed(1) || 0})</span>

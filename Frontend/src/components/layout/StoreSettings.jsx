@@ -13,6 +13,8 @@ import StoreThemeSettings from './StoreThemeSettings';
 import { DEFAULT_STORE_THEME_ID, normalizeThemeSelection } from '../../utils/storeThemes';
 import LocationAutocomplete from '../common/LocationAutocomplete';
 
+const GPS_RADIUS_VISIBILITY_ENABLED = false;
+
 const DEFAULT_VISIBILITY = {
     mode: 'country',
     country: '',
@@ -31,7 +33,7 @@ const DEFAULT_VISIBILITY = {
 
 const normalizeVisibilityForm = (visibility = {}, address = {}) => {
     const coordinates = visibility?.location?.coordinates;
-    return {
+    const normalized = {
         ...DEFAULT_VISIBILITY,
         ...visibility,
         country: visibility.country || address.country || '',
@@ -43,6 +45,10 @@ const normalizeVisibilityForm = (visibility = {}, address = {}) => {
         lng: Array.isArray(coordinates) && coordinates[0] !== undefined ? String(coordinates[0]) : String(visibility.lng || ''),
         lat: Array.isArray(coordinates) && coordinates[1] !== undefined ? String(coordinates[1]) : String(visibility.lat || ''),
     };
+    if (!GPS_RADIUS_VISIBILITY_ENABLED && normalized.mode === 'radius') {
+        normalized.mode = normalized.city ? 'city' : normalized.region ? 'region' : normalized.country ? 'country' : 'global';
+    }
+    return normalized;
 };
 
 const visibilityModes = [
@@ -51,7 +57,7 @@ const visibilityModes = [
     { mode: 'region', label: 'State', desc: 'Visible in one province or state' },
     { mode: 'city', label: 'City', desc: 'Visible in one city' },
     { mode: 'town', label: 'Town', desc: 'Visible in one town or area' },
-    { mode: 'radius', label: 'Radius', desc: 'Visible near your chosen map point' },
+    ...(GPS_RADIUS_VISIBILITY_ENABLED ? [{ mode: 'radius', label: 'Radius', desc: 'Visible near your chosen map point' }] : []),
 ];
 
 const StoreVisibilitySettings = ({
@@ -149,7 +155,7 @@ const StoreVisibilitySettings = ({
                                 townStateCode: '',
                             })}
                         />
-                        {(visibility.mode === 'region' || visibility.mode === 'city' || visibility.mode === 'town' || visibility.mode === 'radius') && (
+                        {(visibility.mode === 'region' || visibility.mode === 'city' || visibility.mode === 'town') && (
                             <LocationAutocomplete
                                 type="state"
                                 label="State/Province"
@@ -170,7 +176,7 @@ const StoreVisibilitySettings = ({
                                 onClear={() => handleVisibilityPatch({ region: '', regionCode: '', city: '', cityStateCode: '', town: '', townStateCode: '' })}
                             />
                         )}
-                        {(visibility.mode === 'city' || visibility.mode === 'town' || visibility.mode === 'radius') && (
+                        {(visibility.mode === 'city' || visibility.mode === 'town') && (
                             <LocationAutocomplete
                                 type="city"
                                 label="City"
@@ -185,8 +191,6 @@ const StoreVisibilitySettings = ({
                                 onSelect={(option) => handleVisibilityPatch({
                                     city: option.name,
                                     cityStateCode: option.stateCode || visibility.regionCode,
-                                    lat: visibility.mode === 'radius' ? String(option.latitude ?? visibility.lat ?? '') : visibility.lat,
-                                    lng: visibility.mode === 'radius' ? String(option.longitude ?? visibility.lng ?? '') : visibility.lng,
                                     town: '',
                                     townStateCode: '',
                                 })}
@@ -214,7 +218,7 @@ const StoreVisibilitySettings = ({
                         )}
                     </div>
 
-                    {visibility.mode === 'radius' && (
+                    {GPS_RADIUS_VISIBILITY_ENABLED && visibility.mode === 'radius' && (
                         <div className="rounded-2xl p-4 space-y-4" style={{ background: 'var(--glass-inner)', border: '1px solid var(--glass-border)' }}>
                             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                                 <div>
@@ -417,6 +421,9 @@ const StoreSettings = () => {
     const handleVisibilityPatch = (patch) => { setStoreData(prev => ({ ...prev, visibility: { ...prev.visibility, ...patch } })); };
 
     const useSellerCurrentPosition = () => {
+        // GPS/radius visibility is intentionally disabled for now. Keep this
+        // dormant so radius targeting can be restored without rebuilding it.
+        if (!GPS_RADIUS_VISIBILITY_ENABLED) return;
         if (!navigator.geolocation) {
             toast.error('Location is not available in this browser.');
             return;
@@ -444,7 +451,7 @@ const StoreSettings = () => {
         if (v.mode === 'region' && !String(v.region || '').trim()) return 'State or province is required.';
         if (v.mode === 'city' && !String(v.city || '').trim()) return 'City is required.';
         if (v.mode === 'town' && !String(v.town || '').trim()) return 'Town or area is required.';
-        if (v.mode === 'radius' && (!String(v.lat || '').trim() || !String(v.lng || '').trim())) return 'Use GPS or enter latitude and longitude for radius visibility.';
+        if (GPS_RADIUS_VISIBILITY_ENABLED && v.mode === 'radius' && (!String(v.lat || '').trim() || !String(v.lng || '').trim())) return 'Use GPS or enter latitude and longitude for radius visibility.';
         return null;
     };
 

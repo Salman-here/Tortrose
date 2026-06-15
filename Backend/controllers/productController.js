@@ -335,6 +335,28 @@ const fuzzyRankProducts = (products, search) => {
     });
 };
 
+const parsePagination = (page = 1, limit = 24, maxLimit = 100) => {
+    const pageNum = Math.max(1, parseInt(page, 10) || 1);
+    const limitNum = Math.min(maxLimit, Math.max(1, parseInt(limit, 10) || 24));
+    const skip = (pageNum - 1) * limitNum;
+    return { pageNum, limitNum, skip };
+};
+
+const paginateProductArray = (products, pageNum, limitNum, skip) => {
+    const totalProducts = products.length;
+    const totalPages = Math.max(1, Math.ceil(totalProducts / limitNum));
+    return {
+        products: products.slice(skip, skip + limitNum),
+        pagination: {
+            page: pageNum,
+            limit: limitNum,
+            totalProducts,
+            totalPages,
+            hasMore: pageNum < totalPages,
+        },
+    };
+};
+
 exports.getProducts = async (req, res) => {
     const {
         categories,
@@ -1125,7 +1147,17 @@ exports.removeDiscount = async (req, res) => {
 // Get seller's products
 exports.getSellerProducts = async (req, res) => {
     const { role, id: userId } = req.user
-    const { categories, brands, priceRange, search, currency } = { ...req.query }
+    const {
+        categories,
+        brands,
+        priceRange,
+        search,
+        currency,
+        page = 1,
+        limit = 24,
+        sortBy = 'newest',
+        sortOrder = 'desc',
+    } = { ...req.query }
 
     try {
         if (role !== 'seller') {
@@ -1138,25 +1170,101 @@ exports.getSellerProducts = async (req, res) => {
         if (brands) query.brand = Array.isArray(brands) ? { $in: brands } : brands
         const parsedPriceRange = parsePriceRange(priceRange);
         const requestedCurrency = normalizeCurrency(currency || req.user?.currency || 'USD');
+        const { pageNum, limitNum, skip } = parsePagination(page, limit, 100);
 
         let products = await Product.find(query)
+            .sort({ createdAt: -1 })
+            .populate({
+                path: 'seller',
+                select: 'username email',
+                populate: {
+                    path: 'store',
+                    select: 'storeName storeSlug isActive blockedAt verification',
+                },
+            })
+            .lean()
 
         if (search) {
-            const fuse = new Fuse(products, {
-                threshold: 0.4,
-                keys: ['name', 'description', 'brand', 'tags', 'category']
-            })
-
-            const results = fuse.search(search)
-            products = results.map(r => r.item)
+            products = fuzzyRankProducts(products, search)
         }
 
         products = await attachComparablePrices(products, requestedCurrency);
         products = filterByComparablePriceRange(products, parsedPriceRange);
+        products = applySorting(products, sortBy, sortOrder, { [String(userId)]: products.length }, 1);
+        const paginated = paginateProductArray(products, pageNum, limitNum, skip);
 
-        res.status(200).json({ msg: 'Fetched seller products successfully.', products: products })
+        res.status(200).json({
+            msg: 'Fetched seller products successfully.',
+            products: paginated.products,
+            pagination: paginated.pagination,
+        })
     } catch (error) {
         console.error('Server error while fetching seller products:::', error.message);
         res.status(500).json({ msg: 'Server error while fetching seller products.' })
+    }
+}
+
+exports.getAdminProducts = async (req, res) => {
+    const { role } = req.user
+    const {
+        categories,
+        brands,
+        priceRange,
+        search,
+        currency,
+        page = 1,
+        limit = 24,
+        sortBy = 'newest',
+        sortOrder = 'desc',
+    } = { ...req.query }
+
+    try {
+        if (role !== 'admin') {
+            return res.status(403).json({ msg: 'Only admins can access this endpoint' })
+        }
+
+        const query = {}
+        if (categories) query.category = Array.isArray(categories) ? { $in: categories } : categories
+        if (brands) query.brand = Array.isArray(brands) ? { $in: brands } : brands
+
+        const parsedPriceRange = parsePriceRange(priceRange)
+        const requestedCurrency = normalizeCurrency(currency || req.user?.currency || 'USD')
+        const { pageNum, limitNum, skip } = parsePagination(page, limit, 100)
+
+        let products = await Product.find(query)
+            .sort({ createdAt: -1 })
+            .populate({
+                path: 'seller',
+                select: 'username email',
+                populate: {
+                    path: 'store',
+                    select: 'storeName storeSlug isActive blockedAt verification',
+                },
+            })
+            .lean()
+
+        if (search) {
+            products = fuzzyRankProducts(products, search)
+        }
+
+        products = await attachComparablePrices(products, requestedCurrency)
+        products = filterByComparablePriceRange(products, parsedPriceRange)
+
+        const sellerProductCounts = {}
+        products.forEach(product => {
+            const sellerId = product.seller?._id?.toString() || product.seller?.toString() || 'admin'
+            sellerProductCounts[sellerId] = (sellerProductCounts[sellerId] || 0) + 1
+        })
+        products = applySorting(products, sortBy, sortOrder, sellerProductCounts, Object.keys(sellerProductCounts).length || 1)
+        const paginated = paginateProductArray(products, pageNum, limitNum, skip)
+
+        res.status(200).json({
+            msg: 'Fetched admin products successfully.',
+            products: paginated.products,
+            pagination: paginated.pagination,
+        })
+    } catch (error) {
+        console.error('Server error while fetching admin products:::', error.message)
+        res.status(500).json({ msg: 'Server error while fetching admin products.' })
     }
 }

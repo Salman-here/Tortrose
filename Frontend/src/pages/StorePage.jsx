@@ -100,6 +100,28 @@ const StorePage = ({ slugOverride = null }) => {
         }
     }, [store?._id, store?.seller]);
 
+    useEffect(() => {
+        const root = document.documentElement;
+        const theme = getStoreTheme(store?.storeTheme);
+        const clearThemeNav = () => {
+            root.style.removeProperty('--store-theme-nav-bg');
+            root.style.removeProperty('--store-theme-nav-border');
+            root.style.removeProperty('--store-theme-nav-fg');
+            root.style.removeProperty('--store-theme-nav-accent');
+        };
+
+        if (!store || isDefaultStoreTheme(theme)) {
+            clearThemeNav();
+            return clearThemeNav;
+        }
+
+        root.style.setProperty('--store-theme-nav-bg', theme.palette.panel || 'rgba(255,255,255,0.72)');
+        root.style.setProperty('--store-theme-nav-border', theme.palette.chipBorder || 'var(--glass-border)');
+        root.style.setProperty('--store-theme-nav-fg', theme.palette.text || 'hsl(var(--foreground))');
+        root.style.setProperty('--store-theme-nav-accent', theme.palette.primary || 'hsl(var(--primary))');
+        return clearThemeNav;
+    }, [store]);
+
     const fetchStoreCoupons = async (sellerId) => {
         if (!sellerId || typeof sellerId !== 'string') {
             setStoreCoupons([]);

@@ -6,7 +6,7 @@ import {
   Sparkles, Palette, Clock, ArrowRight, Volume2, VolumeX, Trash2,
   Heart, MapPin, Bell, Ticket, CheckCircle, XCircle, Search,
   ShoppingBag, BarChart3, Shield, Megaphone, Settings,
-  Plus, Star, Eye, ShoppingCart, Maximize2, Store, ImagePlus, FileText
+  Plus, Star, Eye, ShoppingCart, Maximize2, Store, ImagePlus, FileText, Mic, Square
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
@@ -45,12 +45,27 @@ const stripAttachmentMetadata = (content = '') => (
   String(content || '').replace(PRODUCT_IMAGE_ATTACHMENT_RE, '').trim()
 );
 
+const sanitizeAssistantContent = (content = '') => (
+  String(content || '')
+    .split(/\r?\n/)
+    .filter((line) => {
+      const trimmed = line.trim().replace(/^_+|_+$/g, '');
+      return !trimmed.includes('[Tool memory:') && !/^Action note:/i.test(trimmed);
+    })
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+);
+
 const normalizeChatMessage = (message) => {
   const attachments = extractImageAttachments(message.content, message.attachments);
   const cleanContent = stripAttachmentMetadata(message.content);
+  const visibleContent = message.role === 'assistant'
+    ? sanitizeAssistantContent(cleanContent)
+    : cleanContent;
   return {
     role: message.role,
-    content: cleanContent || (attachments.length ? 'Image attached' : ''),
+    content: visibleContent || (attachments.length ? 'Image attached' : ''),
     ...(attachments.length ? { attachments } : {}),
     ...(Array.isArray(message.toolEvents) && message.toolEvents.length > 0 ? { toolEvents: message.toolEvents } : {}),
   };
@@ -421,6 +436,8 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const isUploadingProductImage = false;
   const [pendingProductImages, setPendingProductImages] = useState([]);
+  const [isRecordingVoice, setIsRecordingVoice] = useState(false);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
 
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
@@ -428,6 +445,9 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
   const abortRef = useRef(null);
   const hasLoadedHistory = useRef(false);
   const pendingProductImagesRef = useRef([]);
+  const mediaRecorderRef = useRef(null);
+  const recordingChunksRef = useRef([]);
+  const recordingStreamRef = useRef(null);
 
   // Derived
   const role = ['user', 'seller', 'admin'].includes(dashboardRole) ? dashboardRole : (currentUser?.role || 'user');
@@ -436,6 +456,10 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
   const chips = ROLE_CHIPS[role] || ROLE_CHIPS.user;
   const titles = ROLE_TITLES[role] || ROLE_TITLES.user;
   const canUploadProductAttachment = authToken && (role === 'seller' || role === 'admin');
+  const canRecordVoice = Boolean(authToken)
+    && typeof navigator !== 'undefined'
+    && Boolean(navigator.mediaDevices?.getUserMedia)
+    && typeof MediaRecorder !== 'undefined';
 
   // ─── Load initial messages from parent (AI Chat page) ───
   useEffect(() => {
@@ -535,7 +559,20 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
     pendingProductImagesRef.current.forEach(image => {
       if (image?.previewUrl) URL.revokeObjectURL(image.previewUrl);
     });
+    if (mediaRecorderRef.current?.state === 'recording') {
+      mediaRecorderRef.current.stop();
+    }
+    recordingStreamRef.current?.getTracks?.().forEach(track => track.stop());
   }, []);
+
+  useEffect(() => {
+    if (!isRecordingVoice) {
+      setRecordingSeconds(0);
+      return undefined;
+    }
+    const timer = window.setInterval(() => setRecordingSeconds(value => value + 1), 1000);
+    return () => window.clearInterval(timer);
+  }, [isRecordingVoice]);
 
   // ─── Handle client-side actions from the server ───
   const handleClientAction = useCallback((action, args) => {
@@ -592,13 +629,106 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
   }, []);
 
   // ─── Send message (SSE streaming with server-side tool execution) ───
+  const stopRecordingStream = useCallback(() => {
+    recordingStreamRef.current?.getTracks?.().forEach(track => track.stop());
+    recordingStreamRef.current = null;
+  }, []);
+
+  const startVoiceRecording = useCallback(async () => {
+    if (!canRecordVoice) {
+      toast.error('Voice recording is not available in this browser.');
+      return;
+    }
+    if (isLoading || isRecordingVoice) return;
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const preferredMime = [
+        'audio/webm;codecs=opus',
+        'audio/webm',
+        'audio/ogg;codecs=opus',
+        'audio/mp4',
+      ].find(type => MediaRecorder.isTypeSupported?.(type));
+      const recorder = new MediaRecorder(stream, preferredMime ? { mimeType: preferredMime } : undefined);
+
+      recordingChunksRef.current = [];
+      recordingStreamRef.current = stream;
+      mediaRecorderRef.current = recorder;
+
+      recorder.ondataavailable = (event) => {
+        if (event.data?.size > 0) recordingChunksRef.current.push(event.data);
+      };
+
+      recorder.onstop = () => {
+        const mimeType = recorder.mimeType || preferredMime || 'audio/webm';
+        const blob = new Blob(recordingChunksRef.current, { type: mimeType });
+        recordingChunksRef.current = [];
+        stopRecordingStream();
+        setIsRecordingVoice(false);
+
+        if (!blob.size) {
+          toast.error('No voice audio was captured.');
+          return;
+        }
+        if (blob.size > 15 * 1024 * 1024) {
+          toast.error('Voice note is larger than 15MB. Please record a shorter note.');
+          return;
+        }
+
+        const extension = mimeType.includes('ogg') ? 'ogg' : mimeType.includes('mp4') ? 'm4a' : 'webm';
+        const file = new File([blob], `voice-note-${Date.now()}.${extension}`, { type: mimeType });
+        const voiceAttachment = {
+          id: `${file.name}-${file.size}-${Math.random().toString(36).slice(2)}`,
+          file,
+          previewUrl: '',
+          name: file.name,
+          size: file.size,
+          type: file.type || 'audio/webm',
+        };
+
+        setPendingProductImages(prev => {
+          const combined = [...prev, voiceAttachment];
+          const kept = combined.slice(0, 8);
+          combined.slice(8).forEach(item => {
+            if (item?.previewUrl) URL.revokeObjectURL(item.previewUrl);
+          });
+          return kept;
+        });
+        toast.success('Voice note attached. Send when ready.');
+      };
+
+      recorder.start();
+      setIsRecordingVoice(true);
+    } catch (error) {
+      stopRecordingStream();
+      setIsRecordingVoice(false);
+      toast.error(error?.message || 'Could not start voice recording.');
+    }
+  }, [canRecordVoice, isLoading, isRecordingVoice, stopRecordingStream]);
+
+  const stopVoiceRecording = useCallback(() => {
+    const recorder = mediaRecorderRef.current;
+    if (recorder?.state === 'recording') {
+      recorder.stop();
+    } else {
+      stopRecordingStream();
+      setIsRecordingVoice(false);
+    }
+  }, [stopRecordingStream]);
+
+  const formatRecordingTime = (seconds = 0) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${String(secs).padStart(2, '0')}`;
+  };
+
   const sendMessage = useCallback(async (text, attachments = []) => {
     const trimmedText = String(text || '').trim();
     const pendingAttachments = Array.isArray(attachments) ? attachments : (attachments ? [attachments] : []);
     if ((!trimmedText && pendingAttachments.length === 0) || isLoading) return;
 
     const displayAttachments = pendingAttachments.map(attachment => ({
-      type: attachment.type?.startsWith('image/') ? 'image' : 'file',
+      type: attachment.type?.startsWith('image/') ? 'image' : attachment.type?.startsWith('audio/') ? 'audio' : 'file',
       url: attachment.previewUrl || attachment.url || '',
       name: attachment.name || 'Attachment',
     }));
@@ -606,7 +736,7 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
     const visibleContent = trimmedText || (
       pendingAttachments.length > 1
         ? `${pendingAttachments.length} files attached`
-        : `${pendingAttachments[0]?.type?.startsWith('image/') ? 'Image' : 'File'} attached`
+        : `${pendingAttachments[0]?.type?.startsWith('image/') ? 'Image' : pendingAttachments[0]?.type?.startsWith('audio/') ? 'Voice note' : 'File'} attached`
     );
     const apiUserMsg = {
       role: 'user',
@@ -622,6 +752,9 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
     setMessages(prev => [...prev, userMsg]);
     setInput('');
     setPendingProductImages(prev => {
+      prev.forEach(attachment => {
+        if (attachment?.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+      });
       return [];
     });
     setShowChips(false);
@@ -637,7 +770,9 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
           .filter(attachment => attachment?.type === 'image' && /^https?:\/\//i.test(attachment.url || ''))
           .map(attachment => `[Attached product image: ${attachment.url}]`)
           .join('\n');
-        const baseContent = stripAttachmentMetadata(m.content);
+        const baseContent = m.role === 'assistant'
+          ? sanitizeAssistantContent(stripAttachmentMetadata(m.content))
+          : stripAttachmentMetadata(m.content);
         const content = attachmentMemory
           ? `${baseContent || 'Image attached'}\n\n${attachmentMemory}`
           : baseContent;
@@ -726,7 +861,7 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
               setMessages(prev => {
                 const copy = [...prev];
                 const last = copy[copy.length - 1];
-                if (last?.isStreaming) last.content += chunk;
+                if (last?.isStreaming) last.content = sanitizeAssistantContent(`${last.content || ''}${chunk}`);
                 return copy;
               });
               continue;
@@ -864,7 +999,7 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
       : [];
     const visibleUserContent = isUser
       ? (stripAttachmentMetadata(msg.content) || (imageAttachments.length ? 'Image attached' : ''))
-      : msg.content;
+      : sanitizeAssistantContent(msg.content);
 
     return (
       <motion.div
@@ -909,7 +1044,7 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
                   p: ({ node, ...props }) => <p {...props} className="mb-1" />,
                 }}
               >
-                {msg.content || ''}
+                {visibleUserContent || ''}
               </ReactMarkdown>
             ) : (
               <div className="space-y-2">
@@ -933,8 +1068,8 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
                     className="flex items-center gap-2 rounded-xl px-2.5 py-2 text-xs"
                     style={{ background: 'rgba(255,255,255,0.12)' }}
                   >
-                    <FileText size={14} className="shrink-0" />
-                    <span className="truncate">{attachment.name || 'Attached file'}</span>
+                    {attachment.type === 'audio' ? <Mic size={14} className="shrink-0" /> : <FileText size={14} className="shrink-0" />}
+                    <span className="truncate">{attachment.name || (attachment.type === 'audio' ? 'Voice note' : 'Attached file')}</span>
                   </div>
                 ))}
                 {visibleUserContent && <p>{visibleUserContent}</p>}
@@ -1298,7 +1433,7 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
                       className="h-16 w-full rounded-xl flex flex-col items-center justify-center px-1 text-center"
                       style={{ background: 'hsl(var(--background) / 0.7)', color: 'hsl(var(--muted-foreground))', border: '1px solid hsl(var(--border))' }}
                     >
-                      <FileText size={16} />
+                      {image.type?.startsWith('audio/') ? <Mic size={16} /> : <FileText size={16} />}
                       <span className="text-[9px] leading-tight mt-1 line-clamp-2">{image.name}</span>
                     </div>
                   )}
@@ -1318,6 +1453,18 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
                 </div>
               ))}
             </div>
+          </div>
+        )}
+        {isRecordingVoice && (
+          <div
+            className="mb-2 rounded-2xl px-3 py-2 flex items-center justify-between gap-3"
+            style={{ background: 'rgba(239,68,68,0.10)', border: '1px solid rgba(239,68,68,0.25)', color: 'hsl(0, 72%, 55%)' }}
+          >
+            <span className="inline-flex items-center gap-2 text-xs font-semibold">
+              <span className="h-2.5 w-2.5 rounded-full animate-pulse" style={{ background: 'hsl(0, 72%, 55%)' }} />
+              Recording voice note
+            </span>
+            <span className="text-xs font-mono">{formatRecordingTime(recordingSeconds)}</span>
           </div>
         )}
         <form
@@ -1359,19 +1506,36 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
                 </button>
               </>
             )}
+            {canRecordVoice && (
+              <button
+                type="button"
+                onClick={isRecordingVoice ? stopVoiceRecording : startVoiceRecording}
+                disabled={isLoading && !isRecordingVoice}
+                className="h-8 w-8 shrink-0 rounded-xl flex items-center justify-center transition-all disabled:opacity-40 hover:scale-[1.04] active:scale-95"
+                style={{
+                  background: isRecordingVoice ? 'rgba(239,68,68,0.14)' : 'hsl(var(--background) / 0.7)',
+                  color: isRecordingVoice ? 'hsl(0, 72%, 55%)' : 'hsl(var(--muted-foreground))',
+                  border: isRecordingVoice ? '1px solid rgba(239,68,68,0.32)' : '1px solid hsl(var(--border))',
+                }}
+                title={isRecordingVoice ? 'Stop voice recording' : 'Record voice note'}
+                aria-label={isRecordingVoice ? 'Stop voice recording' : 'Record voice note'}
+              >
+                {isRecordingVoice ? <Square size={14} fill="currentColor" /> : <Mic size={15} />}
+              </button>
+            )}
             <input
               ref={inputRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder={isLoading ? 'AI is thinking…' : 'Ask Rozare anything…'}
-              disabled={isLoading || isUploadingProductImage}
+              placeholder={isRecordingVoice ? 'Recording voice note...' : isLoading ? 'AI is thinking...' : 'Ask Rozare anything...'}
+              disabled={isLoading || isUploadingProductImage || isRecordingVoice}
               className="flex-1 bg-transparent text-sm outline-none min-w-0 placeholder:opacity-60"
               style={{ color: 'hsl(var(--foreground))' }}
             />
           </div>
           <button
             type="submit"
-            disabled={isLoading || isUploadingProductImage || (!input.trim() && pendingProductImages.length === 0)}
+            disabled={isLoading || isUploadingProductImage || isRecordingVoice || (!input.trim() && pendingProductImages.length === 0)}
             className="h-11 w-11 shrink-0 rounded-2xl flex items-center justify-center transition-all disabled:opacity-40 hover:scale-[1.04] active:scale-95"
             style={{
               background: BRAND_GRADIENT,

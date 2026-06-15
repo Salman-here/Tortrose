@@ -1,6 +1,5 @@
 import { useState } from 'react';
-import { MapPin, Crosshair, RotateCcw, ChevronDown, ChevronUp } from 'lucide-react';
-import { toast } from 'react-toastify';
+import { MapPin, RotateCcw, ChevronDown, ChevronUp } from 'lucide-react';
 import { useBuyerLocation } from '../../contexts/BuyerLocationContext';
 import LocationAutocomplete from './LocationAutocomplete';
 
@@ -10,10 +9,8 @@ const BuyerLocationSelector = ({ compact = false }) => {
     detecting,
     updateBuyerLocation,
     resetBuyerLocation,
-    useCurrentPosition,
   } = useBuyerLocation();
   const [open, setOpen] = useState(!compact);
-  const [locating, setLocating] = useState(false);
 
   const summary = buyerLocation.town
     || buyerLocation.city
@@ -24,18 +21,6 @@ const BuyerLocationSelector = ({ compact = false }) => {
   const fieldsClass = compact
     ? 'space-y-3 mt-4'
     : 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mt-4';
-
-  const handleCurrentPosition = async () => {
-    try {
-      setLocating(true);
-      await useCurrentPosition();
-      toast.success('Location enabled for radius-based stores.');
-    } catch (error) {
-      toast.error(error.message || 'Could not get your location.');
-    } finally {
-      setLocating(false);
-    }
-  };
 
   return (
     <div
@@ -60,20 +45,11 @@ const BuyerLocationSelector = ({ compact = false }) => {
             </p>
           </div>
         </div>
-        <div className={compact ? 'grid grid-cols-2 gap-2 w-full' : 'flex gap-2'}>
-          <button
-            type="button"
-            onClick={handleCurrentPosition}
-            disabled={locating}
-            className="glass-button px-3 py-2 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 disabled:opacity-60 min-w-0"
-          >
-            <Crosshair size={14} />
-            <span className="truncate">{locating ? 'Locating...' : 'Use GPS'}</span>
-          </button>
+        <div className={compact ? 'w-full' : 'flex gap-2'}>
           <button
             type="button"
             onClick={() => setOpen(prev => !prev)}
-            className="glass-button px-3 py-2 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 min-w-0"
+            className="glass-button px-3 py-2 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 min-w-0 w-full"
           >
             {open ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
             <span className="truncate">{open ? 'Close' : 'Change'}</span>
@@ -178,9 +154,6 @@ const BuyerLocationSelector = ({ compact = false }) => {
             onClear={() => updateBuyerLocation({ town: '', townStateCode: '' })}
           />
           <div className={compact ? 'flex flex-col gap-2 pt-1' : 'sm:col-span-2 lg:col-span-4 flex flex-wrap items-center gap-2 pt-1'}>
-            <span className="text-xs leading-snug" style={{ color: 'hsl(var(--muted-foreground))' }}>
-              GPS is only needed for sellers who use a custom radius.
-            </span>
             <button
               type="button"
               onClick={resetBuyerLocation}

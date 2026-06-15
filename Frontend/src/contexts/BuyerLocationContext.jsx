@@ -5,6 +5,7 @@ import { useAuth } from './AuthContext';
 const BuyerLocationContext = createContext(null);
 
 const STORAGE_KEY = 'rozare:buyer-location';
+const GPS_RADIUS_LOCATION_ENABLED = false;
 
 const emptyLocation = {
   country: '',
@@ -138,7 +139,7 @@ export const BuyerLocationProvider = ({ children }) => {
     if (buyerLocation.cityStateCode) params.set('buyerCityStateCode', buyerLocation.cityStateCode);
     if (buyerLocation.town) params.set('buyerTown', buyerLocation.town);
     if (buyerLocation.townStateCode) params.set('buyerTownStateCode', buyerLocation.townStateCode);
-    if (buyerLocation.lat && buyerLocation.lng) {
+    if (GPS_RADIUS_LOCATION_ENABLED && buyerLocation.lat && buyerLocation.lng) {
       params.set('buyerLat', buyerLocation.lat);
       params.set('buyerLng', buyerLocation.lng);
     }

@@ -120,7 +120,7 @@ const UserManagement = () => {
 
   return (
     <div className="min-h-screen p-4 md:p-6 mt-4 md:mt-8">
-      <div className="max-w-7xl mx-auto">
+      <div className="max-w-[1600px] mx-auto">
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
           <motion.h1 className="text-2xl md:text-3xl font-extrabold tracking-tight flex items-center gap-2" initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} style={{ color: 'hsl(var(--foreground))' }}>
             <UserCog className="w-7 h-7 md:w-8 md:h-8" /> User Management
@@ -128,7 +128,7 @@ const UserManagement = () => {
         </div>
 
         {/* Stats */}
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4 mb-8">
           {statsCards.map((card, i) => (
             <motion.div key={i} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.1 }} whileHover={{ y: -3 }} className="glass-card p-5">
               <div className="flex justify-between items-center">
@@ -144,19 +144,19 @@ const UserManagement = () => {
 
         {/* Filters */}
         <motion.div className="glass-panel p-4 sm:p-6 mb-6" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4 }}>
-          <div className="flex flex-col md:flex-row gap-4 justify-between">
-            <div className="search-input-wrapper flex-1 max-w-md">
+          <div className="flex flex-col xl:flex-row gap-4 justify-between">
+            <div className="search-input-wrapper flex-1 min-w-0 xl:max-w-xl">
               <div className="search-input-icon"><Search size={16} /></div>
               <input type="text" placeholder="Search by username or email..." className="glass-input glass-input-search" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
             </div>
-            <div className="flex gap-3">
-              <div className="flex items-center gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 xl:w-auto">
+              <div className="flex items-center gap-2 min-w-0">
                 <Filter size={16} style={{ color: 'hsl(var(--muted-foreground))' }} />
-                <select className="glass-input cursor-pointer font-medium text-sm" value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}>
+                <select className="glass-input cursor-pointer font-medium text-sm min-w-0" value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}>
                   <option value="all">All Roles</option><option value="admin">Admin</option><option value="seller">Seller</option><option value="user">User</option>
                 </select>
               </div>
-              <select className="glass-input cursor-pointer font-medium text-sm" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+              <select className="glass-input cursor-pointer font-medium text-sm min-w-0" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
                 <option value="all">All Status</option><option value="active">Active</option><option value="blocked">Blocked</option>
               </select>
             </div>
@@ -173,11 +173,20 @@ const UserManagement = () => {
           ) : (
             <div className="overflow-x-auto">
               {loading ? <div className='flex justify-center items-center min-h-[250px]'><Loader /></div> : (
-                <table className="w-full">
+                <table className="w-full min-w-[1180px] table-fixed">
+                  <colgroup>
+                    <col className="w-[22%]" />
+                    <col className="w-[24%]" />
+                    <col className="w-[8%]" />
+                    <col className="w-[8%]" />
+                    <col className="w-[17%]" />
+                    <col className="w-[13%]" />
+                    <col className="w-[8%]" />
+                  </colgroup>
                   <thead>
                     <tr style={{ borderBottom: '1px solid var(--glass-border)' }}>
                       {['User', 'Contact', 'Role', 'Status', 'Seller Plan', 'Store', 'Actions'].map(h => (
-                        <th key={h} className="py-3 px-6 text-left text-xs font-semibold uppercase tracking-wider" style={{ color: 'hsl(var(--muted-foreground))' }}>{h}</th>
+                        <th key={h} className="py-3 px-4 text-left text-xs font-semibold uppercase tracking-wider" style={{ color: 'hsl(var(--muted-foreground))' }}>{h}</th>
                       ))}
                     </tr>
                   </thead>
@@ -186,30 +195,30 @@ const UserManagement = () => {
                       {users.map((user, index) => (
                         <motion.tr key={user._id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.3, delay: index * 0.05 }}
                           className="transition-colors hover:bg-white/5" style={{ borderBottom: '1px solid var(--glass-border-subtle)' }}>
-                          <td className="py-4 px-6 whitespace-nowrap">
+                          <td className="py-4 px-4">
                             <div className="flex items-center">
                               <div className="flex-shrink-0 h-10 w-10 rounded-full glass-inner flex items-center justify-center">
                                 <User className="h-5 w-5" style={{ color: 'hsl(var(--primary))' }} />
                               </div>
-                              <div className="ml-4">
-                                <div className="text-sm font-medium" style={{ color: 'hsl(var(--foreground))' }}>{user.username}</div>
+                              <div className="ml-4 min-w-0">
+                                <div className="text-sm font-medium truncate" style={{ color: 'hsl(var(--foreground))' }}>{user.username}</div>
                                 <div className="text-xs flex items-center gap-1 mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
                                   <CalendarDays size={12} /> Joined {formatDate(user.createdAt)}
                                 </div>
                               </div>
                             </div>
                           </td>
-                          <td className="py-4 px-6 min-w-[220px]">
-                            <div className="text-sm flex items-center gap-1.5" style={{ color: 'hsl(var(--foreground))' }}><Mail size={13} /> {user.email}</div>
+                          <td className="py-4 px-4">
+                            <div className="text-sm flex items-center gap-1.5 min-w-0" style={{ color: 'hsl(var(--foreground))' }}><Mail size={13} className="shrink-0" /> <span className="truncate">{user.email}</span></div>
                             {user.role === 'seller' && (
-                              <div className="text-xs flex items-center gap-1.5 mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                                <MessageCircle size={13} /> {sellerWhatsApp(user) || 'No WhatsApp linked'}
+                              <div className="text-xs flex items-center gap-1.5 mt-1 min-w-0" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                                <MessageCircle size={13} className="shrink-0" /> <span className="truncate">{sellerWhatsApp(user) || 'No WhatsApp linked'}</span>
                               </div>
                             )}
                           </td>
-                          <td className="py-4 px-6 whitespace-nowrap">{getRoleBadge(user.role)}</td>
-                          <td className="py-4 px-6 whitespace-nowrap">{getStatusBadge(user.status)}</td>
-                          <td className="py-4 px-6 min-w-[190px]">
+                          <td className="py-4 px-4 whitespace-nowrap">{getRoleBadge(user.role)}</td>
+                          <td className="py-4 px-4 whitespace-nowrap">{getStatusBadge(user.status)}</td>
+                          <td className="py-4 px-4">
                             {user.role === 'seller' ? (
                               <div>
                                 <div className="text-sm font-semibold flex items-center gap-1.5 capitalize" style={{ color: 'hsl(var(--foreground))' }}>
@@ -222,21 +231,21 @@ const UserManagement = () => {
                               </div>
                             ) : <span className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>Not a seller</span>}
                           </td>
-                          <td className="py-4 px-6 min-w-[190px]">
+                          <td className="py-4 px-4">
                             {user.role === 'seller' ? (
                               <div>
-                                <div className="text-sm font-semibold flex items-center gap-1.5" style={{ color: 'hsl(var(--foreground))' }}>
-                                  <Store size={13} /> {user.store?.storeName || 'No store'}
+                                <div className="text-sm font-semibold flex items-center gap-1.5 min-w-0" style={{ color: 'hsl(var(--foreground))' }}>
+                                  <Store size={13} className="shrink-0" /> <span className="truncate">{user.store?.storeName || 'No store'}</span>
                                 </div>
-                                <div className="text-xs mt-1 font-mono" style={{ color: 'hsl(var(--muted-foreground))' }}>{user.store?.storeSlug ? `${user.store.storeSlug}.rozare.com` : 'No subdomain'}</div>
+                                <div className="text-xs mt-1 font-mono truncate" style={{ color: 'hsl(var(--muted-foreground))' }}>{user.store?.storeSlug ? `${user.store.storeSlug}.rozare.com` : 'No subdomain'}</div>
                                 <div className="text-[11px] mt-1" style={{ color: user.store?.isActive === false ? 'hsl(0, 72%, 55%)' : 'hsl(150, 60%, 40%)' }}>
                                   {user.store?.isActive === false ? `Blocked ${formatDate(user.store?.blockedAt)}` : 'Store active'}
                                 </div>
                               </div>
                             ) : <span className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>-</span>}
                           </td>
-                          <td className="py-4 px-6 whitespace-nowrap text-sm font-medium">
-                            <div className="flex flex-wrap gap-2">
+                          <td className="py-4 px-4 whitespace-nowrap text-sm font-medium">
+                            <div className="flex flex-col gap-2 items-end">
                               {currentUser.email === user.email ? <span className="text-xs font-medium px-2 py-1" style={{ color: 'hsl(var(--muted-foreground))' }}>You</span> : (
                                 <>
                                   {isSellerSubscriptionBlocked(user) && (

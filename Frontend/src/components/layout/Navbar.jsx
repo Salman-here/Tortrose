@@ -72,7 +72,12 @@ function Navbar() {
                 ? 'top-0 left-0 right-0 glass-panel-strong backdrop-blur-md'
                 : 'top-4 left-3 right-3 sm:left-4 sm:right-4 glass-panel backdrop-blur-sm'
             }`}
-            style={{ borderRadius: isScrolled ? '0' : '24px' }}
+            style={{
+                borderRadius: isScrolled ? '0' : '24px',
+                background: 'var(--store-theme-nav-bg, var(--glass-bg))',
+                borderColor: 'var(--store-theme-nav-border, var(--glass-border))',
+                color: 'var(--store-theme-nav-fg, hsl(var(--foreground)))',
+            }}
         >
             {/* Top row — fixed height */}
             <div className={`flex justify-between items-center ${isScrolled ? 'h-[60px]' : 'h-[60px] sm:h-[64px]'}`}>
@@ -89,7 +94,7 @@ function Navbar() {
                             <Link key={link.to} to={link.to}
                                 onClick={(e) => handleNavClick(e, link.to)}
                                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-medium hover:bg-white/10 transition-all duration-300"
-                                style={{ color: 'hsl(var(--foreground))' }}>
+                                style={{ color: 'var(--store-theme-nav-fg, hsl(var(--foreground)))' }}>
                                 {link.label}
                             </Link>
                         ))}
@@ -105,7 +110,7 @@ function Navbar() {
                 <div className="flex items-center gap-1.5 sm:gap-2 md:gap-3">
                     <button onClick={toggleTheme}
                         className="p-1.5 sm:p-2 rounded-xl glass-button transition-all duration-300"
-                        style={{ color: 'hsl(var(--foreground))' }}
+                        style={{ color: 'var(--store-theme-nav-fg, hsl(var(--foreground)))' }}
                         aria-label="Toggle dark mode">
                         <motion.div key={isDark ? 'moon' : 'sun'} initial={{ rotate: -90, opacity: 0 }} animate={{ rotate: 0, opacity: 1 }} transition={{ duration: 0.3 }}>
                             {isDark ? <Sun size={16} className="sm:w-[18px] sm:h-[18px]" /> : <Moon size={16} className="sm:w-[18px] sm:h-[18px]" />}
@@ -114,7 +119,7 @@ function Navbar() {
 
                     <button ref={cartBtn} onClick={toggleCart}
                         className="relative flex items-center gap-1.5 px-2 sm:px-2.5 py-1.5 sm:py-2 rounded-xl glass-button text-sm font-medium"
-                        style={{ color: 'hsl(var(--foreground))' }}>
+                        style={{ color: 'var(--store-theme-nav-fg, hsl(var(--foreground)))' }}>
                         <ShoppingCart size={16} className="sm:w-[18px] sm:h-[18px]" />
                         <span className="hidden sm:inline">Cart</span>
                         {(cartItems?.cart?.length || 0) > 0 && (
@@ -171,7 +176,7 @@ function Navbar() {
                                 const accentColor =
                                     item.accent === 'gold' ? '#f59e0b' :
                                     item.accent === 'emerald' ? '#10b981' :
-                                    'hsl(var(--foreground))';
+                                    'var(--store-theme-nav-fg, hsl(var(--foreground)))';
                                 return (
                                     <Link key={item.to} to={item.to}
                                         onClick={(e) => { setMobileMenuOpen(false); handleNavClick(e, item.to); }}
@@ -179,7 +184,7 @@ function Navbar() {
                                         style={{
                                             background: active ? 'var(--glass-bg-strong)' : 'transparent',
                                             border: active ? '1px solid var(--glass-border)' : '1px solid transparent',
-                                            color: 'hsl(var(--foreground))',
+                                            color: 'var(--store-theme-nav-fg, hsl(var(--foreground)))',
                                         }}>
                                         <span className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0"
                                             style={{ background: 'var(--glass-bg)', color: accentColor }}>

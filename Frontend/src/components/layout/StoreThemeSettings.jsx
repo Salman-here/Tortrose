@@ -27,20 +27,28 @@ const isEliteThemeEligible = (subscription) => (
     subscription?.plan === 'elite' && ['active', 'free_period'].includes(subscription?.status)
 );
 
-const ThemePreview = ({ theme, selected, saving, onSelect }) => (
+const THEMES_COMING_SOON = true;
+
+const ThemePreview = ({ theme, selected, saving, onSelect, disabled = false }) => (
     <motion.button
         type="button"
-        whileHover={{ y: -3 }}
-        whileTap={{ scale: 0.98 }}
-        onClick={onSelect}
-        disabled={saving}
-        className="text-left rounded-2xl p-3 border transition-all overflow-hidden"
+        whileHover={disabled ? {} : { y: -3 }}
+        whileTap={disabled ? {} : { scale: 0.98 }}
+        onClick={disabled ? undefined : onSelect}
+        disabled={saving || disabled}
+        className={`text-left rounded-2xl p-3 border transition-all overflow-hidden relative ${disabled ? 'cursor-not-allowed opacity-90' : ''}`}
         style={{
             background: theme.palette.panel || 'rgba(255,255,255,0.68)',
             borderColor: selected ? theme.palette.primary : 'var(--glass-border)',
             boxShadow: selected ? `0 18px 45px -28px ${theme.colors.primary}` : '0 18px 45px -34px rgba(15,23,42,0.45)',
         }}
     >
+        {disabled && (
+            <span className="absolute right-3 top-3 z-10 px-2 py-1 rounded-full text-[10px] font-bold"
+                style={{ background: 'rgba(15,23,42,0.72)', color: 'white' }}>
+                Coming soon
+            </span>
+        )}
         <div className="h-24 rounded-xl overflow-hidden relative mb-3" style={{ background: theme.palette.pageBackground || theme.palette.heroGradient }}>
             <div className="absolute inset-x-3 top-3 h-8 rounded-xl backdrop-blur-md" style={{ background: 'rgba(255,255,255,0.52)', border: '1px solid rgba(255,255,255,0.4)' }} />
             <div className="absolute left-5 top-5 h-4 w-16 rounded-full" style={{ background: theme.palette.heroGradient }} />
@@ -86,6 +94,7 @@ const StoreThemeSettings = ({ storeData, setStoreData, hasStore, blockedInfo }) 
 
     const selectedThemeId = storeData.storeTheme?.themeId || DEFAULT_STORE_THEME_ID;
     const canUseCustomTheme = isEliteThemeEligible(subscription);
+    const themeActionsDisabled = THEMES_COMING_SOON;
     const customPreview = useMemo(() => getStoreTheme({
         themeId: CUSTOM_STORE_THEME_ID,
         customTheme: customDraft,
@@ -117,6 +126,10 @@ const StoreThemeSettings = ({ storeData, setStoreData, hasStore, blockedInfo }) 
     }, [selectedThemeId]);
 
     const saveTheme = async (payload, savingId) => {
+        if (themeActionsDisabled) {
+            toast.info('Store themes are coming soon. You can preview them here for now.');
+            return;
+        }
         if (!hasStore) {
             toast.error('Create your store before selecting a theme.');
             return;
@@ -170,16 +183,24 @@ const StoreThemeSettings = ({ storeData, setStoreData, hasStore, blockedInfo }) 
                             Professional Store Themes
                         </h2>
                         <p className="text-sm mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                            Choose one of 10 polished glass storefronts. Your products and store data stay the same.
+                            Preview 10 polished glass storefronts. Theme switching is coming soon.
                         </p>
                     </div>
                     {hasStore && storeData.storeSlug && (
-                        <a href={`https://${storeData.storeSlug}.rozare.com`} target="_blank" rel="noreferrer"
-                            className="px-4 py-2.5 rounded-xl text-white text-sm font-semibold inline-flex items-center justify-center gap-2"
-                            style={{ background: 'linear-gradient(135deg, hsl(220, 70%, 55%), hsl(260, 60%, 60%))' }}>
-                            <Eye size={16} /> Preview Store
-                        </a>
+                        <span
+                            className="px-4 py-2.5 rounded-xl text-sm font-semibold inline-flex items-center justify-center gap-2 cursor-not-allowed"
+                            style={{ background: 'rgba(255,255,255,0.08)', color: 'hsl(var(--muted-foreground))', border: '1px solid var(--glass-border)' }}>
+                            <Lock size={16} /> Coming Soon
+                        </span>
                     )}
+                </div>
+
+                <div className="rounded-2xl p-4 mb-5 flex items-start gap-3"
+                    style={{ background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.20)' }}>
+                    <Lock size={18} className="mt-0.5 shrink-0" style={{ color: 'hsl(220, 70%, 55%)' }} />
+                    <p className="text-sm" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                        Theme selection and custom theme editing are preview-only for now. Sellers cannot change or save themes until this feature is released.
+                    </p>
                 </div>
 
                 <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -190,6 +211,7 @@ const StoreThemeSettings = ({ storeData, setStoreData, hasStore, blockedInfo }) 
                             selected={selectedThemeId === theme.id}
                             saving={savingThemeId === theme.id}
                             onSelect={() => selectPreset(theme.id)}
+                            disabled={themeActionsDisabled}
                         />
                     ))}
                 </div>
@@ -214,11 +236,22 @@ const StoreThemeSettings = ({ storeData, setStoreData, hasStore, blockedInfo }) 
                             selected={selectedThemeId === CUSTOM_STORE_THEME_ID}
                             saving={savingThemeId === CUSTOM_STORE_THEME_ID}
                             onSelect={() => {}}
+                            disabled={themeActionsDisabled}
                         />
                     </div>
 
                     <div className="flex-1 min-w-0">
-                        {!canUseCustomTheme ? (
+                        {themeActionsDisabled ? (
+                            <div className="rounded-2xl p-5 h-full flex flex-col justify-center" style={{ background: 'rgba(139,92,246,0.07)', border: '1px solid rgba(139,92,246,0.2)' }}>
+                                <div className="w-11 h-11 rounded-2xl flex items-center justify-center mb-3" style={{ background: 'rgba(139,92,246,0.14)', color: 'hsl(270, 60%, 55%)' }}>
+                                    <Lock size={20} />
+                                </div>
+                                <h3 className="text-base font-bold" style={{ color: 'hsl(var(--foreground))' }}>Custom themes are coming soon</h3>
+                                <p className="text-sm mt-2" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                                    Elite sellers will be able to customize colors and layouts when the theme builder is released.
+                                </p>
+                            </div>
+                        ) : !canUseCustomTheme ? (
                             <div className="rounded-2xl p-5 h-full flex flex-col justify-center" style={{ background: 'rgba(139,92,246,0.07)', border: '1px solid rgba(139,92,246,0.2)' }}>
                                 <div className="w-11 h-11 rounded-2xl flex items-center justify-center mb-3" style={{ background: 'rgba(139,92,246,0.14)', color: 'hsl(270, 60%, 55%)' }}>
                                     <Lock size={20} />
