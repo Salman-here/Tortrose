@@ -13,6 +13,7 @@ import { useCurrency } from '../contexts/CurrencyContext';
 import { useBuyerLocation } from '../contexts/BuyerLocationContext';
 import { getAuthToken } from "../utils/cookieHelper";
 import { trackProductView } from '../utils/tiktokPixel';
+import { addRecentlyViewedProduct } from '../utils/recentlyViewedProducts';
 
 function ProductDetailPage() {
     const { id } = useParams();
@@ -220,13 +221,7 @@ function ProductDetailPage() {
 
     // Track product view for personalized recommendations
     useEffect(() => {
-        if (id) {
-            const viewed = JSON.parse(localStorage.getItem('viewedProducts') || '[]');
-            if (!viewed.includes(id)) {
-                viewed.unshift(id);
-                localStorage.setItem('viewedProducts', JSON.stringify(viewed.slice(0, 20)));
-            }
-        }
+        addRecentlyViewedProduct(id);
     }, [id]);
 
     const fadeIn = {

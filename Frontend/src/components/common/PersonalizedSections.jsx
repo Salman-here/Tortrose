@@ -7,6 +7,11 @@ import { useAuth } from '../../contexts/AuthContext'
 import { useCurrency } from '../../contexts/CurrencyContext'
 import { useBuyerLocation } from '../../contexts/BuyerLocationContext'
 import { getStoreSubdomainUrl } from '../../utils/subdomainHelper'
+import {
+  addRecentlyViewedProduct,
+  clearRecentlyViewedProducts,
+  readRecentlyViewedProductIds,
+} from '../../utils/recentlyViewedProducts'
 
 const SliderProductCard = ({ product, formatPrice }) => {
   const productPrice = Number(product.price || 0)
@@ -238,29 +243,37 @@ const ProductSlider = ({ products, formatPrice }) => {
   )
 }
 
-const CollapsibleSection = ({ icon: Icon, title, subtitle, color, bgStyle, children }) => {
+const CollapsibleSection = ({ icon: Icon, title, subtitle, color, bgStyle, action, children }) => {
   const [open, setOpen] = useState(false)
   return (
     <section className="glass-panel overflow-hidden rounded-2xl" style={bgStyle}>
-      <button
-        onClick={() => setOpen(prev => !prev)}
-        className="w-full flex items-center justify-between p-4 sm:p-6 pb-3 cursor-pointer select-none"
-      >
-        <div className="flex items-center gap-3">
-          <div className="glass-inner p-2 rounded-xl" style={{ background: `${color}15` }}>
-            <Icon size={20} style={{ color }} />
+      <div className="w-full flex items-center gap-2 p-4 sm:p-6 pb-3">
+        <button
+          type="button"
+          onClick={() => setOpen(prev => !prev)}
+          className="min-w-0 flex flex-1 items-center justify-between cursor-pointer select-none text-left"
+        >
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="glass-inner p-2 rounded-xl" style={{ background: `${color}15` }}>
+              <Icon size={20} style={{ color }} />
+            </div>
+            <div className="min-w-0">
+              <h2 className="text-lg sm:text-xl font-bold">{title}</h2>
+              {subtitle && (
+                <p className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>{subtitle}</p>
+              )}
+            </div>
           </div>
-          <div className="text-left">
-            <h2 className="text-lg sm:text-xl font-bold">{title}</h2>
-            {subtitle && (
-              <p className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>{subtitle}</p>
-            )}
+          <motion.div animate={{ rotate: open ? 180 : 0 }} transition={{ duration: 0.25 }}>
+            <ChevronDown size={18} style={{ color: 'hsl(var(--muted-foreground))' }} />
+          </motion.div>
+        </button>
+        {action && (
+          <div className="shrink-0 pl-1">
+            {action}
           </div>
-        </div>
-        <motion.div animate={{ rotate: open ? 180 : 0 }} transition={{ duration: 0.25 }}>
-          <ChevronDown size={18} style={{ color: 'hsl(var(--muted-foreground))' }} />
-        </motion.div>
-      </button>
+        )}
+      </div>
       <AnimatePresence initial={false}>
         {open && (
           <motion.div
@@ -283,7 +296,7 @@ const CollapsibleSection = ({ icon: Icon, title, subtitle, color, bgStyle, child
 const PersonalizedSections = () => {
   const { currentUser } = useAuth()
   const { formatPrice } = useCurrency()
-  const { appendLocationParams, locationQueryString } = useBuyerLocation()
+  const { appendLocationParams } = useBuyerLocation()
 
   const [pickedForYou, setPickedForYou] = useState([])
   const [trending, setTrending] = useState([])
@@ -291,11 +304,7 @@ const PersonalizedSections = () => {
   const [recentlyViewed, setRecentlyViewed] = useState([])
   const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
-    fetchPersonalizedData()
-  }, [currentUser, locationQueryString])
-
-  const fetchPersonalizedData = async () => {
+  const fetchPersonalizedData = useCallback(async () => {
     setLoading(true)
     try {
       const params = new URLSearchParams({ limit: '50', sortBy: 'relevance', sortOrder: 'desc' })
@@ -303,9 +312,41 @@ const PersonalizedSections = () => {
       const res = await axios.get(`${import.meta.env.VITE_API_URL}api/products/get-products?${params.toString()}`)
       const allProducts = res.data.products || []
 
-      const viewedIds = JSON.parse(localStorage.getItem('viewedProducts') || '[]')
+      const viewedIds = readRecentlyViewedProductIds()
+      const productById = new Map(allProducts.map(product => [product._id, product]))
 
-      const viewed = allProducts.filter(p => viewedIds.includes(p._id)).slice(0, 10)
+      let viewed = viewedIds
+        .map(productId => productById.get(productId))
+        .filter(Boolean)
+
+      const missingViewedIds = viewedIds
+        .filter(productId => !productById.has(productId))
+        .slice(0, Math.max(0, 10 - viewed.length))
+
+      if (missingViewedIds.length > 0) {
+        const missingProducts = await Promise.allSettled(
+          missingViewedIds.map((productId) => {
+            const detailParams = new URLSearchParams()
+            appendLocationParams(detailParams)
+            const detailSuffix = detailParams.toString()
+            return axios.get(
+              `${import.meta.env.VITE_API_URL}api/products/get-single-product/${productId}${detailSuffix ? `?${detailSuffix}` : ''}`
+            )
+          })
+        )
+
+        missingProducts.forEach((result) => {
+          const product = result.status === 'fulfilled' ? result.value.data?.product : null
+          if (product?._id) viewed.push(product)
+        })
+      }
+
+      const uniqueViewedIds = new Set()
+      viewed = viewed.filter((product) => {
+        if (!product?._id || uniqueViewedIds.has(product._id)) return false
+        uniqueViewedIds.add(product._id)
+        return true
+      }).slice(0, 10)
       setRecentlyViewed(viewed)
 
       const preferredCategories = [...new Set(viewed.map(p => p.category))]
@@ -346,18 +387,36 @@ const PersonalizedSections = () => {
     } finally {
       setLoading(false)
     }
-  }
+  }, [appendLocationParams])
+
+  useEffect(() => {
+    fetchPersonalizedData()
+  }, [currentUser, fetchPersonalizedData])
 
   useEffect(() => {
     const trackView = (productId) => {
-      const viewed = JSON.parse(localStorage.getItem('viewedProducts') || '[]')
-      if (!viewed.includes(productId)) {
-        viewed.unshift(productId)
-        localStorage.setItem('viewedProducts', JSON.stringify(viewed.slice(0, 20)))
-      }
+      addRecentlyViewedProduct(productId)
     }
     window.trackProductView = trackView
   }, [])
+
+  useEffect(() => {
+    const refreshRecentlyViewed = (event) => {
+      if (event?.type === 'storage' && event.key && event.key !== 'viewedProducts') return
+      fetchPersonalizedData()
+    }
+    window.addEventListener('rozare:recentlyViewedChanged', refreshRecentlyViewed)
+    window.addEventListener('storage', refreshRecentlyViewed)
+    return () => {
+      window.removeEventListener('rozare:recentlyViewedChanged', refreshRecentlyViewed)
+      window.removeEventListener('storage', refreshRecentlyViewed)
+    }
+  }, [fetchPersonalizedData])
+
+  const handleClearRecentlyViewed = () => {
+    clearRecentlyViewedProducts()
+    setRecentlyViewed([])
+  }
 
   const hasSections = pickedForYou.length > 0 || priceDrops.length > 0 || trending.length > 0 || recentlyViewed.length > 0;
 
@@ -395,7 +454,27 @@ const PersonalizedSections = () => {
             </CollapsibleSection>
           )}
           {recentlyViewed.length > 0 && (
-            <CollapsibleSection icon={Clock} title="Recently Viewed" subtitle="Continue where you left off" color="hsl(200, 80%, 55%)">
+            <CollapsibleSection
+              icon={Clock}
+              title="Recently Viewed"
+              subtitle="Continue where you left off"
+              color="hsl(200, 80%, 55%)"
+              action={(
+                <button
+                  type="button"
+                  onClick={handleClearRecentlyViewed}
+                  className="rounded-full px-3 py-1.5 text-xs font-semibold transition hover:scale-[1.03]"
+                  style={{
+                    background: 'hsl(var(--background) / 0.72)',
+                    border: '1px solid hsl(var(--border) / 0.75)',
+                    color: 'hsl(var(--muted-foreground))',
+                    backdropFilter: 'blur(12px)',
+                  }}
+                >
+                  Clear
+                </button>
+              )}
+            >
               <ProductSlider products={recentlyViewed} formatPrice={formatPrice} />
             </CollapsibleSection>
           )}
