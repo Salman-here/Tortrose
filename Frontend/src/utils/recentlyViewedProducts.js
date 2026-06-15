@@ -68,13 +68,15 @@ export const readRecentlyViewedProductIds = () => {
   return ids;
 };
 
-export const writeRecentlyViewedProductIds = (ids) => {
+export const writeRecentlyViewedProductIds = (ids, options = {}) => {
   const normalized = normalizeIds(ids);
   if (!isBrowser()) return normalized;
 
   persistLocalIds(normalized);
   setCrossDomainCookie(RECENTLY_VIEWED_COOKIE, JSON.stringify(normalized), 120);
-  notifyRecentlyViewedChanged(normalized);
+  if (options.notify !== false) {
+    notifyRecentlyViewedChanged(normalized);
+  }
 
   return normalized;
 };

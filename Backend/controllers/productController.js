@@ -32,6 +32,22 @@ const cleanList = (items) => [...new Set(
 
 const toArray = (value) => Array.isArray(value) ? value : [value];
 
+const parseProductIdsFilter = (...values) => {
+    const ids = values
+        .flatMap(value => toArray(value))
+        .flatMap(value => String(value || '').split(','))
+        .map(value => value.trim())
+        .filter(Boolean);
+
+    const uniqueIds = [...new Set(ids)]
+        .filter(id => mongoose.Types.ObjectId.isValid(id));
+
+    return {
+        requested: ids.length > 0,
+        ids: uniqueIds,
+    };
+};
+
 async function applyProductCurrencyMetadata(product, fallbackCurrency = 'USD') {
     if (!product || typeof product !== 'object') return product;
     const productCurrency = normalizeCurrency(product.currency || fallbackCurrency);
@@ -367,7 +383,9 @@ exports.getProducts = async (req, res) => {
         limit = 24,
         sortBy = 'relevance',
         sortOrder = 'desc',
-        currency
+        currency,
+        ids,
+        productIds,
     } = { ...req.query }
 
     const pageNum = Math.max(1, parseInt(page, 10) || 1);
@@ -377,6 +395,10 @@ exports.getProducts = async (req, res) => {
     try {
         let query = publicProductFilter()
         if (categories) query.category = Array.isArray(categories) ? { $in: categories } : categories
+        const productIdFilter = parseProductIdsFilter(ids, productIds);
+        if (productIdFilter.requested) {
+            query._id = { $in: productIdFilter.ids };
+        }
         const requestedCurrency = normalizeCurrency(currency || req.user?.currency || 'USD');
         const parsedPriceRange = parsePriceRange(priceRange);
         const buyerLocation = buyerLocationFromRequest(req);

@@ -11,6 +11,7 @@ import {
   addRecentlyViewedProduct,
   clearRecentlyViewedProducts,
   readRecentlyViewedProductIds,
+  writeRecentlyViewedProductIds,
 } from '../../utils/recentlyViewedProducts'
 
 const SliderProductCard = ({ product, formatPrice }) => {
@@ -315,38 +316,31 @@ const PersonalizedSections = () => {
       const viewedIds = readRecentlyViewedProductIds()
       const productById = new Map(allProducts.map(product => [product._id, product]))
 
-      let viewed = viewedIds
-        .map(productId => productById.get(productId))
-        .filter(Boolean)
-
-      const missingViewedIds = viewedIds
-        .filter(productId => !productById.has(productId))
-        .slice(0, Math.max(0, 10 - viewed.length))
-
+      const missingViewedIds = viewedIds.filter(productId => !productById.has(productId))
       if (missingViewedIds.length > 0) {
-        const missingProducts = await Promise.allSettled(
-          missingViewedIds.map((productId) => {
-            const detailParams = new URLSearchParams()
-            appendLocationParams(detailParams)
-            const detailSuffix = detailParams.toString()
-            return axios.get(
-              `${import.meta.env.VITE_API_URL}api/products/get-single-product/${productId}${detailSuffix ? `?${detailSuffix}` : ''}`
-            )
-          })
+        const recentlyViewedParams = new URLSearchParams({
+          ids: missingViewedIds.join(','),
+          limit: String(Math.max(missingViewedIds.length, 1)),
+        })
+        appendLocationParams(recentlyViewedParams)
+        const recentlyViewedRes = await axios.get(
+          `${import.meta.env.VITE_API_URL}api/products/get-products?${recentlyViewedParams.toString()}`
         )
-
-        missingProducts.forEach((result) => {
-          const product = result.status === 'fulfilled' ? result.value.data?.product : null
-          if (product?._id) viewed.push(product)
+        const recentlyViewedProducts = recentlyViewedRes.data.products || []
+        recentlyViewedProducts.forEach((product) => {
+          if (product?._id) productById.set(product._id, product)
         })
       }
 
-      const uniqueViewedIds = new Set()
-      viewed = viewed.filter((product) => {
-        if (!product?._id || uniqueViewedIds.has(product._id)) return false
-        uniqueViewedIds.add(product._id)
-        return true
-      }).slice(0, 10)
+      const availableViewedIds = viewedIds.filter(productId => productById.has(productId))
+      if (availableViewedIds.length !== viewedIds.length) {
+        writeRecentlyViewedProductIds(availableViewedIds, { notify: false })
+      }
+
+      const viewed = availableViewedIds
+        .map(productId => productById.get(productId))
+        .filter(Boolean)
+        .slice(0, 10)
       setRecentlyViewed(viewed)
 
       const preferredCategories = [...new Set(viewed.map(p => p.category))]
