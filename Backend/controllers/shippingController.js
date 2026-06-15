@@ -221,7 +221,7 @@ const getShippingMethodsForCart = async (req, res) => {
         sellerShippingMap[sellerId] = {
           seller: { _id: sellerId, currency: sellerCurrency },
           methods: [
-            { type: 'standard', cost: 5.99, currency: sellerCurrency, costCurrency: sellerCurrency, costInputAmount: 5.99, deliveryDays: 5, isActive: true }
+            { type: 'free', cost: 0, currency: sellerCurrency, costCurrency: sellerCurrency, costInputAmount: 0, deliveryDays: 5, isActive: true }
           ]
         };
       }

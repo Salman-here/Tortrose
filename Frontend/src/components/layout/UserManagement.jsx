@@ -118,6 +118,38 @@ const UserManagement = () => {
     return <span className="px-2 py-0.5 text-xs font-semibold rounded-full" style={{ background: isActive ? 'rgba(16, 185, 129, 0.12)' : 'rgba(239, 68, 68, 0.12)', color: isActive ? 'hsl(150, 60%, 40%)' : 'hsl(0, 72%, 55%)' }}>{status}</span>;
   };
 
+  const renderUserActions = (user) => {
+    if (currentUser?.email === user.email) {
+      return <span className="text-xs font-medium px-2 py-1" style={{ color: 'hsl(var(--muted-foreground))' }}>You</span>;
+    }
+
+    return (
+      <>
+        {isSellerSubscriptionBlocked(user) && (
+          <button onClick={() => handleUnblockSeller(user)} disabled={unblockingUserId === user._id} className="p-2 rounded-xl transition-colors disabled:opacity-50"
+            style={{ color: 'hsl(150, 60%, 45%)', background: 'rgba(16, 185, 129, 0.08)' }}
+            title="Unblock seller store and extend trial">
+            {unblockingUserId === user._id ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserCheck className="w-4 h-4" />}
+          </button>
+        )}
+        <button onClick={() => handleBlockUser(user)} className="p-2 rounded-xl transition-colors"
+          style={user.status === 'active' ? { color: 'hsl(0, 72%, 55%)', background: 'rgba(239, 68, 68, 0.08)' } : { color: 'hsl(150, 60%, 45%)', background: 'rgba(16, 185, 129, 0.08)' }}
+          title={user.status === 'active' ? 'Block User' : 'Unblock User'}>
+          {user.status === 'active' ? <UserX className="w-4 h-4" /> : <UserCheck className="w-4 h-4" />}
+        </button>
+        <button onClick={() => handleChangeRole(user)} className="p-2 rounded-xl transition-colors"
+          style={{ color: 'hsl(220, 70%, 55%)', background: 'rgba(99, 102, 241, 0.08)' }}
+          title="Change Role">
+          {user.role === 'admin' ? <ShieldOff className="w-4 h-4" /> : <Shield className="w-4 h-4" />}
+        </button>
+        <button onClick={() => handleDeleteUser(user)} className="p-2 rounded-xl transition-colors"
+          style={{ color: 'hsl(0, 72%, 55%)', background: 'rgba(239, 68, 68, 0.08)' }} title="Delete User">
+          <Trash2 className="w-4 h-4" />
+        </button>
+      </>
+    );
+  };
+
   return (
     <div className="min-h-screen p-4 md:p-6 mt-4 md:mt-8">
       <div className="max-w-[1600px] mx-auto">
@@ -163,123 +195,94 @@ const UserManagement = () => {
           </div>
         </motion.div>
 
-        {/* Users Table */}
-        <motion.div className="glass-panel overflow-hidden" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.5 }}>
-          {users.length === 0 ? (
+        {/* Users List */}
+        <motion.div className="space-y-3" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.5 }}>
+          {loading ? (
+            <div className='glass-panel flex justify-center items-center min-h-[250px]'><Loader /></div>
+          ) : users.length === 0 ? (
             <div className="w-full py-12 flex flex-col justify-center items-center">
               <div className="glass-inner p-4 rounded-2xl mb-3"><AlertCircle size={32} style={{ color: 'hsl(var(--muted-foreground))' }} /></div>
               <p className="text-sm" style={{ color: 'hsl(var(--muted-foreground))' }}>No users found matching your criteria</p>
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              {loading ? <div className='flex justify-center items-center min-h-[250px]'><Loader /></div> : (
-                <table className="w-full min-w-[1180px] table-fixed">
-                  <colgroup>
-                    <col className="w-[22%]" />
-                    <col className="w-[24%]" />
-                    <col className="w-[8%]" />
-                    <col className="w-[8%]" />
-                    <col className="w-[17%]" />
-                    <col className="w-[13%]" />
-                    <col className="w-[8%]" />
-                  </colgroup>
-                  <thead>
-                    <tr style={{ borderBottom: '1px solid var(--glass-border)' }}>
-                      {['User', 'Contact', 'Role', 'Status', 'Seller Plan', 'Store', 'Actions'].map(h => (
-                        <th key={h} className="py-3 px-4 text-left text-xs font-semibold uppercase tracking-wider" style={{ color: 'hsl(var(--muted-foreground))' }}>{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <AnimatePresence>
-                      {users.map((user, index) => (
-                        <motion.tr key={user._id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.3, delay: index * 0.05 }}
-                          className="transition-colors hover:bg-white/5" style={{ borderBottom: '1px solid var(--glass-border-subtle)' }}>
-                          <td className="py-4 px-4">
-                            <div className="flex items-center">
-                              <div className="flex-shrink-0 h-10 w-10 rounded-full glass-inner flex items-center justify-center">
-                                <User className="h-5 w-5" style={{ color: 'hsl(var(--primary))' }} />
-                              </div>
-                              <div className="ml-4 min-w-0">
-                                <div className="text-sm font-medium truncate" style={{ color: 'hsl(var(--foreground))' }}>{user.username}</div>
-                                <div className="text-xs flex items-center gap-1 mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                                  <CalendarDays size={12} /> Joined {formatDate(user.createdAt)}
-                                </div>
-                              </div>
+            <AnimatePresence>
+              {users.map((user, index) => (
+                <motion.article
+                  key={user._id}
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                  transition={{ duration: 0.25, delay: index * 0.03 }}
+                  className="glass-panel p-4 sm:p-5 overflow-hidden"
+                >
+                  <div className="flex flex-col xl:flex-row xl:items-start gap-4">
+                    <div className="flex items-start gap-3 min-w-0 xl:w-[260px]">
+                      <div className="shrink-0 h-11 w-11 rounded-2xl glass-inner flex items-center justify-center">
+                        <User className="h-5 w-5" style={{ color: 'hsl(var(--primary))' }} />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-sm font-semibold truncate" style={{ color: 'hsl(var(--foreground))' }}>{user.username}</div>
+                        <div className="text-xs flex items-center gap-1 mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                          <CalendarDays size={12} /> Joined {formatDate(user.createdAt)}
+                        </div>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {getRoleBadge(user.role)}
+                          {getStatusBadge(user.status)}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-[minmax(220px,1.1fr)_minmax(210px,1fr)_minmax(220px,1fr)] gap-4 flex-1 min-w-0">
+                      <div className="min-w-0">
+                        <p className="text-[11px] uppercase tracking-wider font-semibold mb-1" style={{ color: 'hsl(var(--muted-foreground))' }}>Contact</p>
+                        <div className="text-sm flex items-center gap-1.5 min-w-0" style={{ color: 'hsl(var(--foreground))' }}>
+                          <Mail size={13} className="shrink-0" /> <span className="truncate">{user.email}</span>
+                        </div>
+                        {user.role === 'seller' && (
+                          <div className="text-xs flex items-center gap-1.5 mt-1 min-w-0" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                            <MessageCircle size={13} className="shrink-0" /> <span className="truncate">{sellerWhatsApp(user) || 'No WhatsApp linked'}</span>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="min-w-0">
+                        <p className="text-[11px] uppercase tracking-wider font-semibold mb-1" style={{ color: 'hsl(var(--muted-foreground))' }}>Seller Plan</p>
+                        {user.role === 'seller' ? (
+                          <>
+                            <div className="text-sm font-semibold flex items-center gap-1.5 capitalize min-w-0" style={{ color: 'hsl(var(--foreground))' }}>
+                              <CreditCard size={13} className="shrink-0" /> <span className="truncate">{sellerPlan(user)}</span>
                             </div>
-                          </td>
-                          <td className="py-4 px-4">
-                            <div className="text-sm flex items-center gap-1.5 min-w-0" style={{ color: 'hsl(var(--foreground))' }}><Mail size={13} className="shrink-0" /> <span className="truncate">{user.email}</span></div>
-                            {user.role === 'seller' && (
-                              <div className="text-xs flex items-center gap-1.5 mt-1 min-w-0" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                                <MessageCircle size={13} className="shrink-0" /> <span className="truncate">{sellerWhatsApp(user) || 'No WhatsApp linked'}</span>
-                              </div>
-                            )}
-                          </td>
-                          <td className="py-4 px-4 whitespace-nowrap">{getRoleBadge(user.role)}</td>
-                          <td className="py-4 px-4 whitespace-nowrap">{getStatusBadge(user.status)}</td>
-                          <td className="py-4 px-4">
-                            {user.role === 'seller' ? (
-                              <div>
-                                <div className="text-sm font-semibold flex items-center gap-1.5 capitalize" style={{ color: 'hsl(var(--foreground))' }}>
-                                  <CreditCard size={13} /> {sellerPlan(user)}
-                                </div>
-                                <div className="text-xs flex items-center gap-1.5 mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                                  <Clock size={12} /> Expires {formatDate(sellerPlanExpiry(user))}
-                                </div>
-                                {user.sellerSubscription?.status && <div className="text-[11px] mt-1 capitalize" style={{ color: isSellerSubscriptionBlocked(user) ? 'hsl(0, 72%, 55%)' : 'hsl(150, 60%, 40%)' }}>{user.sellerSubscription.status.replace(/_/g, ' ')}</div>}
-                              </div>
-                            ) : <span className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>Not a seller</span>}
-                          </td>
-                          <td className="py-4 px-4">
-                            {user.role === 'seller' ? (
-                              <div>
-                                <div className="text-sm font-semibold flex items-center gap-1.5 min-w-0" style={{ color: 'hsl(var(--foreground))' }}>
-                                  <Store size={13} className="shrink-0" /> <span className="truncate">{user.store?.storeName || 'No store'}</span>
-                                </div>
-                                <div className="text-xs mt-1 font-mono truncate" style={{ color: 'hsl(var(--muted-foreground))' }}>{user.store?.storeSlug ? `${user.store.storeSlug}.rozare.com` : 'No subdomain'}</div>
-                                <div className="text-[11px] mt-1" style={{ color: user.store?.isActive === false ? 'hsl(0, 72%, 55%)' : 'hsl(150, 60%, 40%)' }}>
-                                  {user.store?.isActive === false ? `Blocked ${formatDate(user.store?.blockedAt)}` : 'Store active'}
-                                </div>
-                              </div>
-                            ) : <span className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>-</span>}
-                          </td>
-                          <td className="py-4 px-4 whitespace-nowrap text-sm font-medium">
-                            <div className="flex flex-col gap-2 items-end">
-                              {currentUser.email === user.email ? <span className="text-xs font-medium px-2 py-1" style={{ color: 'hsl(var(--muted-foreground))' }}>You</span> : (
-                                <>
-                                  {isSellerSubscriptionBlocked(user) && (
-                                    <button onClick={() => handleUnblockSeller(user)} disabled={unblockingUserId === user._id} className="p-2 rounded-xl transition-colors disabled:opacity-50"
-                                      style={{ color: 'hsl(150, 60%, 45%)', background: 'rgba(16, 185, 129, 0.08)' }}
-                                      title="Unblock seller store and extend trial">
-                                      {unblockingUserId === user._id ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserCheck className="w-4 h-4" />}
-                                    </button>
-                                  )}
-                                  <button onClick={() => handleBlockUser(user)} className="p-2 rounded-xl transition-colors"
-                                    style={user.status === 'active' ? { color: 'hsl(0, 72%, 55%)', background: 'rgba(239, 68, 68, 0.08)' } : { color: 'hsl(150, 60%, 45%)', background: 'rgba(16, 185, 129, 0.08)' }}
-                                    title={user.status === 'active' ? 'Block User' : 'Unblock User'}>
-                                    {user.status === 'active' ? <UserX className="w-4 h-4" /> : <UserCheck className="w-4 h-4" />}
-                                  </button>
-                                  <button onClick={() => handleChangeRole(user)} className="p-2 rounded-xl transition-colors"
-                                    style={{ color: 'hsl(220, 70%, 55%)', background: 'rgba(99, 102, 241, 0.08)' }}
-                                    title="Change Role">
-                                    {user.role === 'admin' ? <ShieldOff className="w-4 h-4" /> : <Shield className="w-4 h-4" />}
-                                  </button>
-                                  <button onClick={() => handleDeleteUser(user)} className="p-2 rounded-xl transition-colors"
-                                    style={{ color: 'hsl(0, 72%, 55%)', background: 'rgba(239, 68, 68, 0.08)' }} title="Delete User">
-                                    <Trash2 className="w-4 h-4" />
-                                  </button>
-                                </>
-                              )}
+                            <div className="text-xs flex items-center gap-1.5 mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                              <Clock size={12} /> Expires {formatDate(sellerPlanExpiry(user))}
                             </div>
-                          </td>
-                        </motion.tr>
-                      ))}
-                    </AnimatePresence>
-                  </tbody>
-                </table>
-              )}
-            </div>
+                            {user.sellerSubscription?.status && <div className="text-[11px] mt-1 capitalize" style={{ color: isSellerSubscriptionBlocked(user) ? 'hsl(0, 72%, 55%)' : 'hsl(150, 60%, 40%)' }}>{user.sellerSubscription.status.replace(/_/g, ' ')}</div>}
+                          </>
+                        ) : <span className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>Not a seller</span>}
+                      </div>
+
+                      <div className="min-w-0">
+                        <p className="text-[11px] uppercase tracking-wider font-semibold mb-1" style={{ color: 'hsl(var(--muted-foreground))' }}>Store</p>
+                        {user.role === 'seller' ? (
+                          <>
+                            <div className="text-sm font-semibold flex items-center gap-1.5 min-w-0" style={{ color: 'hsl(var(--foreground))' }}>
+                              <Store size={13} className="shrink-0" /> <span className="truncate">{user.store?.storeName || 'No store'}</span>
+                            </div>
+                            <div className="text-xs mt-1 font-mono break-all" style={{ color: 'hsl(var(--muted-foreground))' }}>{user.store?.storeSlug ? `${user.store.storeSlug}.rozare.com` : 'No subdomain'}</div>
+                            <div className="text-[11px] mt-1" style={{ color: user.store?.isActive === false ? 'hsl(0, 72%, 55%)' : 'hsl(150, 60%, 40%)' }}>
+                              {user.store?.isActive === false ? `Blocked ${formatDate(user.store?.blockedAt)}` : 'Store active'}
+                            </div>
+                          </>
+                        ) : <span className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>-</span>}
+                      </div>
+                    </div>
+
+                    <div className="flex xl:flex-col flex-wrap gap-2 xl:items-end xl:min-w-[48px]">
+                      {renderUserActions(user)}
+                    </div>
+                  </div>
+                </motion.article>
+              ))}
+            </AnimatePresence>
           )}
         </motion.div>
       </div>

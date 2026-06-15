@@ -117,4 +117,36 @@ describe('shipping currency', () => {
       costCurrency: 'PKR',
     });
   });
+
+  test('returns free shipping by default when seller has no saved methods', async () => {
+    const seller = await createSeller();
+    const product = await Product.create({
+      name: 'Default Free Shipping Product',
+      description: 'Product for checkout default shipping',
+      price: 1000,
+      currency: 'PKR',
+      priceCurrency: 'PKR',
+      category: 'Test',
+      brand: 'Test Brand',
+      stock: 5,
+      image: 'https://example.com/product.jpg',
+      images: [{ url: 'https://example.com/product.jpg' }],
+      seller: seller._id,
+    });
+
+    const res = await request(app)
+      .post('/api/shipping/cart')
+      .send({ cartItems: [{ productId: product._id.toString() }] });
+
+    expect(res.status).toBe(200);
+    expect(res.body.shippingMethods[seller._id.toString()].methods[0]).toMatchObject({
+      type: 'free',
+      cost: 0,
+      currency: 'PKR',
+      costCurrency: 'PKR',
+      costInputAmount: 0,
+      deliveryDays: 5,
+      isActive: true,
+    });
+  });
 });

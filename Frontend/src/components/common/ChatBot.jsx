@@ -326,8 +326,10 @@ const DataListCard = ({ title, items, renderItem, icon: Icon = Package, color = 
 // ─── Product Card (compact, for chat context) ───
 const ProductCardInChat = ({ product, onView, onAddToCart }) => {
   const { formatPrice } = useCurrency();
-  const hasDiscount = product.discountedPrice && product.discountedPrice > 0 && product.discountedPrice < product.price;
-  const displayPrice = hasDiscount ? product.discountedPrice : product.price;
+  const productPrice = Number(product.price || 0);
+  const discountedPrice = Number(product.discountedPrice || 0);
+  const hasDiscount = discountedPrice > 0 && discountedPrice < productPrice;
+  const displayPrice = hasDiscount ? discountedPrice : productPrice;
   const productCurrency = product.currency || product.priceCurrency || 'USD';
   const stars = product.rating ? Math.round(product.rating) : 0;
 

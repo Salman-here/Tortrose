@@ -171,7 +171,9 @@ const BulkDiscountModal = ({ isOpen, onClose, selectedProducts, onSuccess }) => 
                                             <p className="text-xs sm:text-sm font-medium truncate" style={{ color: 'hsl(var(--foreground))' }}>{product.name}</p>
                                             <p className="text-[10px] sm:text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>
                                                 {formatPrice(product.price || 0, { sourceCurrency: product.currency || product.priceCurrency || 'USD' })}
-                                                {product.discountedPrice && <span className="ml-2" style={{ color: 'hsl(150, 60%, 45%)' }}>{formatPrice(product.discountedPrice, { sourceCurrency: product.currency || product.priceCurrency || 'USD' })}</span>}
+                                                {Number(product.discountedPrice || 0) > 0 && Number(product.discountedPrice) < Number(product.price || 0) && (
+                                                    <span className="ml-2" style={{ color: 'hsl(150, 60%, 45%)' }}>{formatPrice(product.discountedPrice, { sourceCurrency: product.currency || product.priceCurrency || 'USD' })}</span>
+                                                )}
                                             </p>
                                         </div>
                                     </div>

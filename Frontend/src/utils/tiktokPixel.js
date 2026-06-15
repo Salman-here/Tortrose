@@ -70,7 +70,7 @@ export const captureTikTokClickId = () => {
 };
 
 const buildProductContent = (product, quantity = 1) => {
-  const price = Number(product?.discountedPrice || product?.price || 0);
+  const price = getProductEventPrice(product);
 
   return cleanPayload({
     content_id: product?._id || product?.id,
@@ -81,6 +81,12 @@ const buildProductContent = (product, quantity = 1) => {
     price: price > 0 ? price : undefined,
     quantity,
   });
+};
+
+const getProductEventPrice = (product) => {
+  const productPrice = Number(product?.price || 0);
+  const discountedPrice = Number(product?.discountedPrice || 0);
+  return discountedPrice > 0 && discountedPrice < productPrice ? discountedPrice : productPrice;
 };
 
 const buildSellerSignupPayload = ({
@@ -184,7 +190,7 @@ export const trackSellerRegistrationCompleted = async ({ user, storeName, email,
 };
 
 export const trackProductView = (product) => {
-  const price = Number(product?.discountedPrice || product?.price || 0);
+  const price = getProductEventPrice(product);
   const content = buildProductContent(product);
 
   trackTikTokEvent('ViewContent', {
@@ -213,7 +219,7 @@ export const trackSearch = ({ searchString, products = [] } = {}) => {
 };
 
 export const trackAddToCart = (product, quantity = 1) => {
-  const price = Number(product?.discountedPrice || product?.price || 0);
+  const price = getProductEventPrice(product);
   const content = buildProductContent(product, quantity);
 
   trackTikTokEvent('AddToCart', {
@@ -226,7 +232,7 @@ export const trackAddToCart = (product, quantity = 1) => {
 };
 
 export const trackAddToWishlist = (product) => {
-  const price = Number(product?.discountedPrice || product?.price || 0);
+  const price = getProductEventPrice(product);
   const content = buildProductContent(product);
 
   trackTikTokEvent('AddToWishlist', {

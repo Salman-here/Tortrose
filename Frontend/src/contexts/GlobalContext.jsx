@@ -59,7 +59,13 @@ const clearGuestCart = () => {
     localStorage.removeItem(GUEST_CART_KEY);
 };
 
-const calcGuestTotal = (cart) => cart.reduce((s, i) => s + ((i.product.discountedPrice || i.product.price) * i.qty), 0);
+const effectiveProductPrice = (product) => {
+    const price = Number(product?.price || 0);
+    const discountedPrice = Number(product?.discountedPrice || 0);
+    return discountedPrice > 0 && discountedPrice < price ? discountedPrice : price;
+};
+
+const calcGuestTotal = (cart) => cart.reduce((s, i) => s + (effectiveProductPrice(i.product) * i.qty), 0);
 
 
 

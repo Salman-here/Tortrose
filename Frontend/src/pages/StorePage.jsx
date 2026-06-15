@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Store, Package, Eye, Share2, ChevronRight, Home, Globe, MapPin, Users, Ticket, Copy, Check, Calendar, Percent, DollarSign, Search, Tag } from 'lucide-react';
+import { Store, Package, Eye, Share2, ChevronRight, ChevronLeft, Home, Globe, MapPin, Users, Ticket, Copy, Check, Calendar, Percent, DollarSign, Search, Tag } from 'lucide-react';
 import axios from 'axios';
 import { toast } from 'react-toastify';
 import ProductCard from '../components/common/ProductCard';
@@ -32,6 +32,7 @@ const getStoreVisitorId = () => {
 };
 
 const StorePage = ({ slugOverride = null }) => {
+    const STORE_PRODUCTS_PER_PAGE = 12;
     const { slug: slugFromParams } = useParams();
     const slug = slugOverride || slugFromParams;
     const navigate = useNavigate();
@@ -47,24 +48,18 @@ const StorePage = ({ slugOverride = null }) => {
     const [copiedCoupon, setCopiedCoupon] = useState(null);
     const [productSearch, setProductSearch] = useState('');
     const [selectedCategory, setSelectedCategory] = useState('all');
+    const [productPage, setProductPage] = useState(1);
+    const [productPagination, setProductPagination] = useState({ total: 0, page: 1, pages: 1, limit: STORE_PRODUCTS_PER_PAGE });
+    const [storeCategories, setStoreCategories] = useState([]);
 
     const categories = useMemo(() => {
-        const set = new Set();
-        products.forEach(p => { if (p.category) set.add(p.category); });
-        return Array.from(set);
-    }, [products]);
+        if (storeCategories.length > 0) return storeCategories;
+        return [...new Set(products.map(p => p.category).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+    }, [products, storeCategories]);
 
-    const filteredProducts = useMemo(() => {
-        const q = productSearch.trim().toLowerCase();
-        return products.filter(p => {
-            const matchCat = selectedCategory === 'all' || p.category === selectedCategory;
-            const matchSearch = !q
-                || p.name?.toLowerCase().includes(q)
-                || p.brand?.toLowerCase().includes(q)
-                || p.description?.toLowerCase().includes(q);
-            return matchCat && matchSearch;
-        });
-    }, [products, productSearch, selectedCategory]);
+    const filteredProducts = products;
+    const totalStoreProducts = productPagination.total ?? filteredProducts.length;
+    const totalProductPages = Math.max(1, productPagination.pages || 1);
 
     useEffect(() => {
         // When slugOverride is provided we are already on the store's subdomain —
@@ -84,9 +79,16 @@ const StorePage = ({ slugOverride = null }) => {
             }
         }
         fetchStore();
-        fetchProducts();
         incrementViewCount();
     }, [slug, locationQueryString]);
+
+    useEffect(() => {
+        setProductPage(1);
+    }, [slug, locationQueryString, selectedCategory, productSearch]);
+
+    useEffect(() => {
+        fetchProducts();
+    }, [slug, locationQueryString, productPage, selectedCategory, productSearch]);
 
     useEffect(() => {
         if (store?._id) {
@@ -177,9 +179,15 @@ const StorePage = ({ slugOverride = null }) => {
             setProductsLoading(true);
             const params = new URLSearchParams();
             appendLocationParams(params);
+            params.set('page', String(productPage));
+            params.set('limit', String(STORE_PRODUCTS_PER_PAGE));
+            if (selectedCategory !== 'all') params.set('categories', selectedCategory);
+            if (productSearch.trim()) params.set('search', productSearch.trim());
             const suffix = params.toString();
             const res = await axios.get(`${import.meta.env.VITE_API_URL}api/stores/${slug}/products${suffix ? `?${suffix}` : ''}`);
-            setProducts(res.data.products);
+            setProducts(res.data.products || []);
+            setProductPagination(res.data.pagination || { total: res.data.products?.length || 0, page: productPage, pages: 1, limit: STORE_PRODUCTS_PER_PAGE });
+            setStoreCategories(res.data.categories || []);
         } catch (error) {
             console.error('Error fetching products:', error);
         } finally {
@@ -652,7 +660,7 @@ const StorePage = ({ slugOverride = null }) => {
                             Products
                         </h2>
                         <span className="tag-pill text-sm font-medium" style={chipStyle}>
-                            {filteredProducts.length} {filteredProducts.length === 1 ? 'item' : 'items'}
+                            {totalStoreProducts} {totalStoreProducts === 1 ? 'item' : 'items'}
                         </span>
                     </div>
 
@@ -715,18 +723,71 @@ const StorePage = ({ slugOverride = null }) => {
                             </p>
                         </motion.div>
                     ) : (
-                        <div className={`grid ${activeTheme.gridClass} gap-3 sm:gap-4 md:gap-5`}>
-                            {filteredProducts.map((product, idx) => (
-                                <motion.div
-                                    key={product._id}
-                                    initial={{ opacity: 0, y: 20 }}
-                                    animate={{ opacity: 1, y: 0 }}
-                                    transition={{ duration: 0.4, delay: idx * 0.05 }}
-                                >
-                                    <ProductCard idx={idx} {...product} />
-                                </motion.div>
-                            ))}
-                        </div>
+                        <>
+                            <div className={`grid ${activeTheme.gridClass} gap-3 sm:gap-4 md:gap-5`}>
+                                {filteredProducts.map((product, idx) => (
+                                    <motion.div
+                                        key={product._id}
+                                        initial={{ opacity: 0, y: 20 }}
+                                        animate={{ opacity: 1, y: 0 }}
+                                        transition={{ duration: 0.4, delay: idx * 0.05 }}
+                                    >
+                                        <ProductCard idx={idx} {...product} />
+                                    </motion.div>
+                                ))}
+                            </div>
+                            {totalProductPages > 1 && (
+                                <div className="mt-6 flex flex-col sm:flex-row items-center justify-between gap-3">
+                                    <p className="text-xs sm:text-sm" style={{ color: themeMuted }}>
+                                        Page {productPagination.page || productPage} of {totalProductPages}
+                                    </p>
+                                    <div className="flex items-center gap-2">
+                                        <motion.button
+                                            type="button"
+                                            whileTap={{ scale: 0.96 }}
+                                            onClick={() => setProductPage(page => Math.max(1, page - 1))}
+                                            disabled={productPage <= 1 || productsLoading}
+                                            className="glass-button px-3 py-2 rounded-xl text-sm font-semibold disabled:opacity-45 disabled:cursor-not-allowed flex items-center gap-1.5"
+                                            style={{ color: themeForeground }}
+                                        >
+                                            <ChevronLeft size={15} /> Previous
+                                        </motion.button>
+                                        <div className="flex items-center gap-1">
+                                            {Array.from({ length: totalProductPages }, (_, i) => i + 1)
+                                                .filter(page => page === 1 || page === totalProductPages || Math.abs(page - productPage) <= 1)
+                                                .map((page, index, visiblePages) => (
+                                                    <div key={page} className="flex items-center gap-1">
+                                                        {index > 0 && page - visiblePages[index - 1] > 1 && (
+                                                            <span className="px-1 text-xs" style={{ color: themeMuted }}>...</span>
+                                                        )}
+                                                        <motion.button
+                                                            type="button"
+                                                            whileTap={{ scale: 0.94 }}
+                                                            onClick={() => setProductPage(page)}
+                                                            className="w-9 h-9 rounded-xl text-sm font-bold"
+                                                            style={page === productPage
+                                                                ? { background: themePrimaryGradient, color: 'white' }
+                                                                : { background: 'rgba(255,255,255,0.08)', color: themeForeground, border: '1px solid var(--glass-border)' }}
+                                                        >
+                                                            {page}
+                                                        </motion.button>
+                                                    </div>
+                                                ))}
+                                        </div>
+                                        <motion.button
+                                            type="button"
+                                            whileTap={{ scale: 0.96 }}
+                                            onClick={() => setProductPage(page => Math.min(totalProductPages, page + 1))}
+                                            disabled={productPage >= totalProductPages || productsLoading}
+                                            className="glass-button px-3 py-2 rounded-xl text-sm font-semibold disabled:opacity-45 disabled:cursor-not-allowed flex items-center gap-1.5"
+                                            style={{ color: themeForeground }}
+                                        >
+                                            Next <ChevronRight size={15} />
+                                        </motion.button>
+                                    </div>
+                                </div>
+                            )}
+                        </>
                     )}
                 </motion.div>
             </div>

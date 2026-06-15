@@ -70,7 +70,7 @@ export default function WishlistDropdown() {
                                 <div className="flex-1">
                                     <p className="text-xs sm:text-sm font-medium mr-3">{item.name}</p>
                                     <p className="font-semibold text-base" style={{ color: 'hsl(var(--primary))' }}>
-                                        {formatProductPrice(item, { field: item.discountedPrice ? 'discountedPrice' : 'price' })}
+                                        {formatProductPrice(item, { field: Number(item.discountedPrice || 0) > 0 && Number(item.discountedPrice) < Number(item.price || 0) ? 'discountedPrice' : 'price' })}
                                     </p>
                                     <motion.button whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}
                                         className='absolute cursor-pointer top-2 right-2 p-1 rounded-lg glass-button'

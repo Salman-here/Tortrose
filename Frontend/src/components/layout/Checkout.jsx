@@ -79,12 +79,21 @@ export default function Checkout() {
   const couponCurrency = (coupon) => coupon?.currency || 'USD';
   const currentMoney = (amount, options = {}) => formatPrice(amount, { ...options, sourceCurrency: currency });
   const productPriceInCheckoutCurrency = (product, amount = undefined) => {
-    const value = amount === undefined ? (product?.discountedPrice || product?.price || 0) : amount;
+    const productPrice = Number(product?.price || 0);
+    const discountedPrice = Number(product?.discountedPrice || 0);
+    const value = amount === undefined
+      ? (discountedPrice > 0 && discountedPrice < productPrice ? discountedPrice : productPrice)
+      : amount;
     return convertAmount(value, productCurrency(product), currency);
   };
   const shippingMethodCurrency = (method, sellerInfo = null) => method?.currency || method?.costCurrency || sellerInfo?.seller?.currency || currency;
   const shippingCostInCheckoutCurrency = (method, sellerInfo = null) =>
     convertAmount(method?.cost || 0, shippingMethodCurrency(method, sellerInfo), currency);
+  const getShippingMethodTitle = (method) => ({
+    free: 'Free Shipping',
+    standard: 'Standard Shipping',
+    fast: 'Fast Shipping',
+  }[method?.type] || `${method?.type || 'Shipping'} Shipping`);
   const couponAmountInCheckoutCurrency = (amount, coupon = null) => convertAmount(amount || 0, couponCurrency(coupon), currency);
   const formatCouponAmount = (amount, coupon = null) => currentMoney(couponAmountInCheckoutCurrency(amount, coupon));
 
@@ -546,7 +555,9 @@ export default function Checkout() {
 
     const order = {
       orderItems: cartItems.cart.map((item) => {
-        const sourcePrice = item.product.discountedPrice || item.product.price;
+        const productPrice = Number(item.product.price || 0);
+        const discountedPrice = Number(item.product.discountedPrice || 0);
+        const sourcePrice = discountedPrice > 0 && discountedPrice < productPrice ? discountedPrice : productPrice;
         const itemPrice = productPriceInCheckoutCurrency(item.product, sourcePrice);
 
         return {
@@ -774,33 +785,36 @@ export default function Checkout() {
 
             {/* Progress Steps */}
             <div className="mb-8 sm:mb-12">
-              <div className="flex items-center justify-between relative">
-                <div className="absolute top-1/2 left-0 right-0 h-1 transform -translate-y-1/2 -z-10" style={{ background: 'hsl(var(--muted))' }}></div>
-                <div
-                  className="absolute top-1/2 left-0 h-1 transform -translate-y-1/2 -z-10 transition-all duration-500"
-                  style={{ width: `${(currentStep / (steps.length - 1)) * 100}%`, background: 'linear-gradient(90deg, hsl(220, 70%, 55%), hsl(260, 60%, 60%))' }}
-                ></div>
+              <div className="relative px-1 sm:px-4">
+                <div className="absolute left-[16.666%] right-[16.666%] top-4 sm:top-5 h-1 overflow-hidden rounded-full" style={{ background: 'hsl(var(--muted))' }}>
+                  <div
+                    className="h-full rounded-full transition-all duration-500"
+                    style={{ width: `${(currentStep / (steps.length - 1)) * 100}%`, background: 'linear-gradient(90deg, hsl(220, 70%, 55%), hsl(260, 60%, 60%))' }}
+                  />
+                </div>
 
-                {steps.map((step, index) => (
-                  <div key={step} className="flex flex-col items-center relative">
-                    <div className={`w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center border-2 text-sm sm:text-base transition-colors duration-300`}
-                      style={{
-                        background: index <= currentStep ? 'linear-gradient(135deg, hsl(220, 70%, 55%), hsl(260, 60%, 60%))' : 'hsl(var(--muted))',
-                        borderColor: index <= currentStep ? 'hsl(220, 70%, 55%)' : 'hsl(var(--border))',
-                        color: index <= currentStep ? 'white' : 'hsl(var(--muted-foreground))',
-                      }}>
-                      {index < currentStep ? (
-                        <CheckCircle className="w-4 h-4 sm:w-5 sm:h-5" />
-                      ) : (
-                        <span className="text-xs sm:text-sm font-semibold">{index + 1}</span>
-                      )}
+                <div className="relative z-10 grid grid-cols-3">
+                  {steps.map((step, index) => (
+                    <div key={step} className="flex flex-col items-center">
+                      <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center border-2 text-sm sm:text-base shadow-sm transition-colors duration-300"
+                        style={{
+                          background: index <= currentStep ? 'linear-gradient(135deg, hsl(220, 70%, 55%), hsl(260, 60%, 60%))' : 'hsl(var(--background))',
+                          borderColor: index <= currentStep ? 'hsl(220, 70%, 55%)' : 'hsl(var(--border))',
+                          color: index <= currentStep ? 'white' : 'hsl(var(--muted-foreground))',
+                        }}>
+                        {index < currentStep ? (
+                          <CheckCircle className="w-4 h-4 sm:w-5 sm:h-5" />
+                        ) : (
+                          <span className="text-xs sm:text-sm font-semibold">{index + 1}</span>
+                        )}
+                      </div>
+                      <span className="mt-1.5 text-xs sm:text-sm font-medium"
+                        style={{ color: index <= currentStep ? 'hsl(220, 70%, 55%)' : 'hsl(var(--muted-foreground))' }}>
+                        {step}
+                      </span>
                     </div>
-                    <span className={`mt-1.5 text-xs sm:text-sm font-medium`}
-                      style={{ color: index <= currentStep ? 'hsl(220, 70%, 55%)' : 'hsl(var(--muted-foreground))' }}>
-                      {step}
-                    </span>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
             </div>
 
@@ -848,7 +862,7 @@ export default function Checkout() {
                                 {/* Seller items */}
                                 {sellerItems.map((item) => {
                                   const { product, qty } = item;
-                                  const { _id, name, price, image, discountedPrice } = product;
+                                  const { _id, name, image } = product;
                                   const itemSourceCurrency = productCurrency(product);
                                   const itemPrice = productPriceInCheckoutCurrency(product);
                                   const productCouponDiscount = getProductCouponDiscount(_id, itemPrice, qty);
@@ -877,7 +891,7 @@ export default function Checkout() {
                                           <div>
                                             <h4 className="font-medium text-sm sm:text-base" style={{ color: 'hsl(var(--foreground))' }}>{name}</h4>
                                             <p>
-                                              <span className="font-bold text-sm" style={{ color: 'hsl(var(--muted-foreground))' }}>{formatPrice(discountedPrice || price, { sourceCurrency: itemSourceCurrency })}</span>
+                                              <span className="font-bold text-sm" style={{ color: 'hsl(var(--muted-foreground))' }}>{formatPrice(itemPrice, { sourceCurrency: currency })}</span>
                                               {productCouponDiscount > 0 && (
                                                 <span className="ml-2 text-xs font-semibold" style={{ color: 'hsl(150, 60%, 45%)' }}>
                                                   -{currentMoney(productCouponDiscount)} coupon
@@ -1281,7 +1295,7 @@ export default function Checkout() {
                                               <div>
                                                 <div className="flex items-center gap-2">
                                                   <h5 className="font-medium capitalize text-sm">
-                                                    {method.type} Shipping
+                                                    {getShippingMethodTitle(method)}
                                                   </h5>
                                                   {method.type === 'free' && (
                                                     <span className="px-2 py-0.5 text-xs font-semibold bg-green-100 text-green-700 rounded-full">
@@ -1607,7 +1621,7 @@ export default function Checkout() {
                       const sellerInfo = sellerShippingMethods[sellerId];
                       return (
                         <div key={sellerId} className="flex justify-between text-xs pl-4" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                          <span className="capitalize">{method.type} shipping</span>
+                          <span>{getShippingMethodTitle(method)}</span>
                           <span>{currentMoney(shippingCostInCheckoutCurrency(method, sellerInfo))}</span>
                         </div>
                       );

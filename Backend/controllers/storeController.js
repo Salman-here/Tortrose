@@ -37,6 +37,13 @@ const {
 const comparablePriceUSD = (product) =>
     convertAmountSync(getProductEffectivePrice(product), getProductCurrency(product), 'USD');
 
+const cleanList = (items) => [...new Set(
+    (items || [])
+        .filter(Boolean)
+        .map(item => String(item).trim())
+        .filter(Boolean)
+)].sort((a, b) => a.localeCompare(b));
+
 // Email template helper
 const storeEmailTemplate = (title, bodyHtml, ctaUrl, ctaText) => `
 <!DOCTYPE html>
@@ -775,6 +782,8 @@ exports.getStoreProducts = async (req, res) => {
         const { slug } = req.params;
         const { categories, brands, priceRange, search, page = 1, limit = 20 } = req.query;
         const buyerLocation = buyerLocationFromRequest(req);
+        const pageNum = Math.max(1, parseInt(page, 10) || 1);
+        const limitNum = Math.min(48, Math.max(1, parseInt(limit, 10) || 20));
 
         // Find store
         const store = await Store.findOne({ storeSlug: slug, isActive: true });
@@ -817,8 +826,10 @@ exports.getStoreProducts = async (req, res) => {
             ];
         }
 
+        const allCategories = await Product.distinct('category', publicProductFilter({ seller: store.seller }));
+
         // Pagination
-        const skip = (page - 1) * limit;
+        const skip = (pageNum - 1) * limitNum;
 
         let products = await Product.find(query)
             .sort({ createdAt: -1 });
@@ -833,15 +844,17 @@ exports.getStoreProducts = async (req, res) => {
         }
 
         const total = products.length;
-        products = products.slice(skip, skip + parseInt(limit));
+        products = products.slice(skip, skip + limitNum);
 
         res.status(200).json({
             msg: 'Products fetched successfully',
             products,
+            categories: cleanList(allCategories),
             pagination: {
                 total,
-                page: parseInt(page),
-                pages: Math.ceil(total / limit)
+                page: pageNum,
+                limit: limitNum,
+                pages: Math.ceil(total / limitNum)
             }
         });
     } catch (error) {

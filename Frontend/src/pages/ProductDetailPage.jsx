@@ -59,12 +59,15 @@ function ProductDetailPage() {
     // Has the buyer picked all required options?
     const allOptionsSelected = !product.optionGroups?.length || product.optionGroups.every(g => selectedOptions[g.name]);
 
-    const displayPrice = product.discountedPrice || product.price;
-    const originalPrice = product.price;
+    const productPrice = Number(product.price || 0);
+    const productDiscountedPrice = Number(product.discountedPrice || 0);
+    const hasProductDiscount = productDiscountedPrice > 0 && productDiscountedPrice < productPrice;
+    const displayPrice = hasProductDiscount ? productDiscountedPrice : productPrice;
+    const originalPrice = productPrice;
     const productCurrency = product.currency || product.priceCurrency || 'USD';
 
-    const discountPercentage = product.discountedPrice && product.discountedPrice < product.price
-        ? Math.round(((product.price - product.discountedPrice) / product.price) * 100)
+    const discountPercentage = hasProductDiscount
+        ? Math.round(((productPrice - productDiscountedPrice) / productPrice) * 100)
         : 0;
 
     const handleImgShow = (idx) => {
@@ -163,22 +166,37 @@ function ProductDetailPage() {
         let cancelled = false;
         (async () => {
             try {
-                const params = new URLSearchParams({ categories: product.category });
+                const params = new URLSearchParams({ categories: product.category, limit: '12' });
                 appendLocationParams(params);
-                const res = await axios.get(
+                const categoryRes = await axios.get(
                     `${import.meta.env.VITE_API_URL}api/products/get-products?${params.toString()}`
                 );
-                if (cancelled) return;
-                const list = (res.data.products || [])
+                let list = (categoryRes.data.products || [])
                     .filter(p => p._id !== product._id)
                     .slice(0, 8);
+
+                if (list.length < 4) {
+                    const fallbackParams = new URLSearchParams({ limit: '12', sortBy: 'relevance' });
+                    appendLocationParams(fallbackParams);
+                    const fallbackRes = await axios.get(
+                        `${import.meta.env.VITE_API_URL}api/products/get-products?${fallbackParams.toString()}`
+                    );
+                    const seen = new Set(list.map(p => p._id));
+                    const fallback = (fallbackRes.data.products || [])
+                        .filter(p => p._id !== product._id && !seen.has(p._id))
+                        .slice(0, 8 - list.length);
+                    list = [...list, ...fallback];
+                }
+
+                if (cancelled) return;
                 setRelatedProducts(list);
             } catch (err) {
                 console.log('Related products unavailable');
+                if (!cancelled) setRelatedProducts([]);
             }
         })();
         return () => { cancelled = true; };
-    }, [product?.category, product?._id]);
+    }, [product?.category, product?._id, locationQueryString]);
 
     const fetchProductCoupons = async () => {
         try {
@@ -253,7 +271,7 @@ function ProductDetailPage() {
                             brand: product.brand ? { '@type': 'Brand', name: product.brand } : undefined,
                             offers: {
                                 '@type': 'Offer',
-                                price: product.discountedPrice || product.price,
+                                price: displayPrice,
                                 priceCurrency: productCurrency,
                                 availability: product.stock > 0 ? 'https://schema.org/InStock' : 'https://schema.org/OutOfStock',
                                 url: `https://rozare.com/single-product/${id}`,

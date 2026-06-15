@@ -22,8 +22,11 @@ const ProductCard = memo(({
   const isInWishlist = wishlistItems?.some((item) => item?._id === _id);
   const cartItem = cartItems?.cart?.find((item) => item?.product?._id === _id);
   const isInCart = !!cartItem;
-  const displayPrice = discountedPrice || price;
-  const originalDisplayPrice = discountedPrice ? price : null;
+  const numericPrice = Number(price || 0);
+  const numericDiscountedPrice = Number(discountedPrice || 0);
+  const hasDiscount = numericDiscountedPrice > 0 && numericDiscountedPrice < numericPrice;
+  const displayPrice = hasDiscount ? numericDiscountedPrice : numericPrice;
+  const originalDisplayPrice = hasDiscount ? numericPrice : null;
   const productCurrency = currency || priceCurrency || 'USD';
   const discountPercentage = originalDisplayPrice && displayPrice < originalDisplayPrice
     ? Math.round(((originalDisplayPrice - displayPrice) / originalDisplayPrice) * 100) : 0;

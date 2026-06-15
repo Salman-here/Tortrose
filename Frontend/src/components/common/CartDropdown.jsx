@@ -20,7 +20,10 @@ const CartDropdown = () => {
   const subtotal = isEmpty ? 0 : cartItems.cart.reduce((total, item) => {
     if (!item.product) return total
     const productCurrency = item.product.currency || item.product.priceCurrency || 'USD'
-    return total + (convertAmount(item.product.discountedPrice || item.product.price, productCurrency, currency) * item.qty)
+    const price = Number(item.product.price || 0)
+    const discountedPrice = Number(item.product.discountedPrice || 0)
+    const hasDiscount = discountedPrice > 0 && discountedPrice < price
+    return total + (convertAmount(hasDiscount ? discountedPrice : price, productCurrency, currency) * item.qty)
   }, 0)
 
   const handleGoToCheckout = () => {
@@ -91,9 +94,11 @@ const CartDropdown = () => {
                   {cartItems.cart.map((item, index) => {
                     const { product, qty, _id: id } = item
                     if (!product) return null
-                    const { _id, name, price, discountedPrice, image } = product
-                    const displayPrice = discountedPrice || price
-                    const hasDiscount = discountedPrice && discountedPrice < price
+                    const { _id, name, image } = product
+                    const price = Number(product.price || 0)
+                    const discountedPrice = Number(product.discountedPrice || 0)
+                    const hasDiscount = discountedPrice > 0 && discountedPrice < price
+                    const displayPrice = hasDiscount ? discountedPrice : price
                     const productCurrency = product.currency || product.priceCurrency || 'USD'
                     const lineTotal = convertAmount(displayPrice, productCurrency, currency) * qty
 
