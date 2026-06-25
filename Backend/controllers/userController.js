@@ -3,6 +3,7 @@ const User = require('../models/User')
 const { sendEmail } = require('./mailController')
 const { sellerAccountCreatedEmail } = require('../utils/emailTemplates')
 const { trackCompleteRegistration } = require('../services/tiktokEventsApi')
+const { trackSellerLead } = require('../services/metaConversionsApi')
 const { normalizeSocialLinks } = require('../services/socialLinksService')
 const { notifySeller } = require('../services/whatsapp/sellerNotificationService')
 const sellerTemplates = require('../services/whatsapp/sellerMessageTemplates')
@@ -384,6 +385,14 @@ exports.becomeSeller = async (req, res) => {
             storeName: storeName?.trim(),
             phone: whatsappVerifiedServerSide ? whatsappNumber.trim() : phoneNumber.trim(),
             eventId: req.body?.tracking?.tiktokCompleteRegistrationEventId,
+            tracking: req.body?.tracking || {},
+        }).catch(() => {});
+        trackSellerLead({
+            req,
+            user,
+            storeName: storeName?.trim(),
+            phone: whatsappVerifiedServerSide ? whatsappNumber.trim() : phoneNumber.trim(),
+            eventId: req.body?.tracking?.metaLeadEventId,
             tracking: req.body?.tracking || {},
         }).catch(() => {});
 

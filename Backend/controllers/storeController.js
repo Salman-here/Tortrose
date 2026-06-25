@@ -14,6 +14,7 @@ const {
 } = require('../services/orderMoneyService');
 const StoreView = require('../models/StoreView');
 const { normalizeSocialLinks } = require('../services/socialLinksService');
+const { trackStoreVerificationLead } = require('../services/metaConversionsApi');
 const {
     ensureStoreProductCurrencyInitialized,
     requestProductCurrencyChange,
@@ -1105,6 +1106,18 @@ exports.applyForVerification = async (req, res) => {
         store.verification.rejectionReason = '';
 
         await store.save();
+
+        User.findById(sellerId)
+            .select('username email sellerInfo')
+            .then((seller) => trackStoreVerificationLead({
+                req,
+                store,
+                user: seller,
+                email: contactEmail.trim(),
+                phone: contactPhone.trim(),
+                tracking: req.body?.tracking || {},
+            }))
+            .catch((err) => console.error('[meta] Store verification CRM event failed:', err.message));
 
         res.status(200).json({
             msg: 'Verification application submitted successfully',

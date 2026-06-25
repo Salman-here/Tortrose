@@ -9,6 +9,7 @@ import { useCurrency } from '../../contexts/CurrencyContext';
 import Loader from '../common/Loader';
 import PhoneField, { isValidPhone } from '../common/PhoneField';
 import { getAuthToken } from "../../utils/cookieHelper";
+import { getTikTokTrackingContext } from '../../utils/tiktokPixel';
 import StoreThemeSettings from './StoreThemeSettings';
 import { DEFAULT_STORE_THEME_ID, normalizeThemeSelection } from '../../utils/storeThemes';
 import LocationAutocomplete from '../common/LocationAutocomplete';
@@ -406,7 +407,12 @@ const StoreSettings = () => {
         try {
             setApplyingVerification(true);
             const token = getAuthToken();
-            await axios.post(`${import.meta.env.VITE_API_URL}api/stores/verification/apply`, { applicationMessage, contactEmail: contactEmail.trim(), contactPhone: contactPhone.trim() }, { headers: { Authorization: `Bearer ${token}` } });
+            await axios.post(`${import.meta.env.VITE_API_URL}api/stores/verification/apply`, {
+                applicationMessage,
+                contactEmail: contactEmail.trim(),
+                contactPhone: contactPhone.trim(),
+                tracking: getTikTokTrackingContext(),
+            }, { headers: { Authorization: `Bearer ${token}` } });
             toast.success('Verification application submitted!');
             setShowVerificationModal(false); setApplicationMessage(''); setContactEmail(''); setContactPhone('');
             fetchVerificationStatus();

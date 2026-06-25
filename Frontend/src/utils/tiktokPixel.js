@@ -33,6 +33,30 @@ const cleanPayload = (payload) => {
   return cleaned;
 };
 
+const getCookie = (name) => {
+  if (typeof document === 'undefined') return undefined;
+  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = document.cookie.match(new RegExp(`(?:^|; )${escapedName}=([^;]*)`));
+  if (!match) return undefined;
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return match[1];
+  }
+};
+
+const setTrackingCookie = (name, value, maxAgeSeconds) => {
+  if (typeof window === 'undefined' || !value) return;
+  const secure = window.location.protocol === 'https:' ? '; Secure' : '';
+  document.cookie = `${name}=${encodeURIComponent(value)}; Max-Age=${maxAgeSeconds}; Path=/; SameSite=Lax${secure}`;
+};
+
+const createMetaFbc = (fbclid) => {
+  const cleanFbclid = String(fbclid || '').trim();
+  if (!cleanFbclid) return undefined;
+  return `fb.1.${Date.now()}.${cleanFbclid}`;
+};
+
 export const createTikTokEventId = (prefix = 'event') => {
   const random = Math.random().toString(36).slice(2, 10);
   return `${prefix}_${Date.now()}_${random}`;
@@ -41,32 +65,32 @@ export const createTikTokEventId = (prefix = 'event') => {
 export const getTikTokTrackingContext = () => {
   if (typeof window === 'undefined') return {};
 
-  const getCookie = (name) => {
-    const match = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
-    if (!match) return undefined;
-    try {
-      return decodeURIComponent(match[1]);
-    } catch {
-      return match[1];
-    }
-  };
-
+  const searchParams = new URLSearchParams(window.location.search);
+  const fbclid = searchParams.get('fbclid');
   return cleanPayload({
     pageUrl: window.location.href,
     referrer: document.referrer,
-    ttclid: new URLSearchParams(window.location.search).get('ttclid') || getCookie('ttclid'),
+    ttclid: searchParams.get('ttclid') || getCookie('ttclid'),
     ttp: getCookie('_ttp'),
+    fbclid,
+    fbc: getCookie('_fbc') || createMetaFbc(fbclid),
+    fbp: getCookie('_fbp'),
   });
 };
 
 export const captureTikTokClickId = () => {
   if (typeof window === 'undefined') return;
-  const ttclid = new URLSearchParams(window.location.search).get('ttclid');
-  if (!ttclid) return;
+  const searchParams = new URLSearchParams(window.location.search);
+  const ttclid = searchParams.get('ttclid');
+  const fbclid = searchParams.get('fbclid');
 
-  const maxAge = 60 * 60 * 24 * 30;
-  const secure = window.location.protocol === 'https:' ? '; Secure' : '';
-  document.cookie = `ttclid=${encodeURIComponent(ttclid)}; Max-Age=${maxAge}; Path=/; SameSite=Lax${secure}`;
+  if (ttclid) {
+    setTrackingCookie('ttclid', ttclid, 60 * 60 * 24 * 30);
+  }
+
+  if (fbclid && !getCookie('_fbc')) {
+    setTrackingCookie('_fbc', createMetaFbc(fbclid), 60 * 60 * 24 * 90);
+  }
 };
 
 const buildProductContent = (product, quantity = 1) => {

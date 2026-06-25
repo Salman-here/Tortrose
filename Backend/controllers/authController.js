@@ -5,6 +5,7 @@ const jwt = require('jsonwebtoken')
 const { sendEmail } = require('./mailController')
 const { welcomeEmail, sellerAccountCreatedEmail } = require('../utils/emailTemplates');
 const { trackCompleteRegistration } = require('../services/tiktokEventsApi');
+const { trackSellerLead } = require('../services/metaConversionsApi');
 const { normalizeSocialLinks } = require('../services/socialLinksService');
 const { notifySeller } = require('../services/whatsapp/sellerNotificationService');
 const sellerTemplates = require('../services/whatsapp/sellerMessageTemplates');
@@ -507,6 +508,14 @@ exports.verifySellerOTPAndRegister = async (req, res) => {
             storeName: storeName?.trim(),
             phone: whatsappNumber || phoneNumber,
             eventId: req.body?.tracking?.tiktokCompleteRegistrationEventId,
+            tracking: req.body?.tracking || {},
+        }).catch(() => {});
+        trackSellerLead({
+            req,
+            user: newUser,
+            storeName: storeName?.trim(),
+            phone: whatsappNumber || phoneNumber,
+            eventId: req.body?.tracking?.metaLeadEventId,
             tracking: req.body?.tracking || {},
         }).catch(() => {});
 
