@@ -100,6 +100,104 @@ const getGraphApiVersion = () =>
 
 const isEnabled = () => Boolean(process.env.META_CAPI_ACCESS_TOKEN && getDatasetId());
 
+const postMetaEvents = async ({ events = [], logLabel = 'event' } = {}) => {
+    const accessToken = process.env.META_CAPI_ACCESS_TOKEN;
+    const datasetId = getDatasetId();
+    const data = events.filter(Boolean);
+
+    if (!accessToken || !datasetId) {
+        return { skipped: true, reason: 'Meta Conversions API is not configured' };
+    }
+
+    if (data.length === 0) {
+        return { skipped: true, reason: 'No Meta events to send' };
+    }
+
+    const requestBody = cleanObject({
+        data,
+        test_event_code: process.env.META_CAPI_TEST_EVENT_CODE,
+    });
+
+    const params = new URLSearchParams({ access_token: accessToken });
+    const endpoint = `https://graph.facebook.com/${getGraphApiVersion()}/${datasetId}/events?${params.toString()}`;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+
+    try {
+        const response = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(requestBody),
+            signal: controller.signal,
+        });
+
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok || body?.error) {
+            console.warn(`[meta] Conversions API rejected ${logLabel}:`, {
+                status: response.status,
+                message: body?.error?.message,
+                code: body?.error?.code,
+            });
+            return { ok: false, status: response.status, body };
+        }
+
+        return { ok: true, body };
+    } catch (error) {
+        console.warn(`[meta] Conversions API failed for ${logLabel}:`, error.message);
+        return { ok: false, error: error.message };
+    } finally {
+        clearTimeout(timeout);
+    }
+};
+
+const sendMetaEvent = async ({
+    eventName,
+    eventId,
+    eventTime,
+    actionSource = 'website',
+    eventSourceUrl,
+    req,
+    user,
+    email,
+    phone,
+    externalId,
+    tracking = {},
+    customData = {},
+} = {}) => {
+    const resolvedEventName = eventName || '';
+    if (!resolvedEventName) {
+        return { skipped: true, reason: 'Meta event name is required' };
+    }
+
+    const userData = buildUserData({ req, user, email, phone, externalId, tracking });
+    if (Object.keys(userData).length === 0) {
+        return { skipped: true, reason: 'No Meta customer match data available' };
+    }
+
+    const resolvedSourceUrl =
+        eventSourceUrl ||
+        tracking.pageUrl ||
+        req?.headers?.referer ||
+        req?.headers?.referrer;
+
+    if (actionSource === 'website' && !resolvedSourceUrl) {
+        return { skipped: true, reason: 'Meta website events require an event source URL' };
+    }
+
+    const cleanedCustomData = cleanObject(customData);
+    const eventPayload = cleanObject({
+        event_name: resolvedEventName,
+        event_time: eventTime || Math.floor(Date.now() / 1000),
+        event_id: eventId || createEventId(resolvedEventName.toLowerCase(), externalId || user?._id || user?.id),
+        action_source: actionSource,
+        event_source_url: resolvedSourceUrl,
+        custom_data: Object.keys(cleanedCustomData).length > 0 ? cleanedCustomData : undefined,
+        user_data: userData,
+    });
+
+    return postMetaEvents({ events: [eventPayload], logLabel: resolvedEventName });
+};
+
 const sendMetaLeadEvent = async ({
     eventName,
     eventId,
@@ -112,12 +210,10 @@ const sendMetaLeadEvent = async ({
     externalId,
     tracking = {},
 } = {}) => {
-    const accessToken = process.env.META_CAPI_ACCESS_TOKEN;
-    const datasetId = getDatasetId();
     const resolvedEventName = eventName || DEFAULT_SELLER_LEAD_EVENT_NAME;
 
-    if (!accessToken || !datasetId || !resolvedEventName) {
-        return { skipped: true, reason: 'Meta Conversions API is not configured' };
+    if (!resolvedEventName) {
+        return { skipped: true, reason: 'Meta event name is required' };
     }
 
     const userData = buildUserData({ req, user, email, phone, externalId, tracking });
@@ -137,42 +233,21 @@ const sendMetaLeadEvent = async ({
         user_data: userData,
     });
 
-    const requestBody = cleanObject({
-        data: [eventPayload],
-        test_event_code: process.env.META_CAPI_TEST_EVENT_CODE,
+    return postMetaEvents({ events: [eventPayload], logLabel: 'CRM event' });
+};
+
+const trackPageView = ({ req, eventId, pageUrl, referrer, tracking = {} } = {}) => {
+    return sendMetaEvent({
+        eventName: 'PageView',
+        eventId: eventId || tracking.metaPageViewEventId,
+        req,
+        tracking,
+        actionSource: 'website',
+        eventSourceUrl: pageUrl || tracking.pageUrl,
+        customData: {
+            page_referrer: referrer || tracking.referrer,
+        },
     });
-
-    const params = new URLSearchParams({ access_token: accessToken });
-    const endpoint = `https://graph.facebook.com/${getGraphApiVersion()}/${datasetId}/events?${params.toString()}`;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
-
-    try {
-        const response = await fetch(endpoint, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(requestBody),
-            signal: controller.signal,
-        });
-
-        const body = await response.json().catch(() => ({}));
-        if (!response.ok || body?.error) {
-            console.warn('[meta] Conversions API rejected CRM event:', {
-                eventName: resolvedEventName,
-                status: response.status,
-                message: body?.error?.message,
-                code: body?.error?.code,
-            });
-            return { ok: false, status: response.status, body };
-        }
-
-        return { ok: true, body };
-    } catch (error) {
-        console.warn('[meta] Conversions API failed:', error.message);
-        return { ok: false, error: error.message };
-    } finally {
-        clearTimeout(timeout);
-    }
 };
 
 const trackSellerLead = ({ req, user, storeName, phone, eventId, tracking = {} } = {}) => {
@@ -214,8 +289,10 @@ module.exports = {
     createEventId,
     createFbcFromFbclid,
     isEnabled,
+    sendMetaEvent,
     sendMetaLeadEvent,
     sha256,
+    trackPageView,
     trackSellerLead,
     trackStoreVerificationLead,
 };

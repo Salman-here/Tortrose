@@ -1,6 +1,6 @@
-# Meta Conversions API for CRM Setup
+# Meta Conversions API Setup
 
-This project sends Meta CRM lead events from the backend, not the browser. The access token must stay in backend environment variables only.
+This project sends Meta CRM lead events and browser PageView coverage events from the backend. The access token must stay in backend environment variables only.
 
 ## Backend environment variables
 
@@ -27,14 +27,24 @@ Remove `META_CAPI_TEST_EVENT_CODE` after testing so production events are not ma
 
 - `Lead`: sent when a seller account is created through either seller signup flow.
 - `QualifiedLead`: sent when a seller submits a store verification application.
+- `PageView`: sent from the backend when the frontend Meta Pixel tracks a route-change page view.
 
-Each event uses Meta's CRM payload shape:
+CRM lead events use Meta's CRM payload shape:
 
 - `action_source: system_generated`
 - `custom_data.event_source: crm`
 - `custom_data.lead_event_source`
 - hashed email and phone values in `user_data`
 - `_fbc`, `_fbp`, and `fbclid` match data when available
+
+PageView events use Meta's website payload shape:
+
+- `action_source: website`
+- `event_source_url`
+- the same `event_id` as the browser pixel event for deduplication
+- `_fbc`, `_fbp`, IP address, and user agent match data when available
+
+Seller `CompleteRegistration` browser events intentionally do not send `value` or `currency`, because seller signup is not a priced purchase event.
 
 ## Testing
 

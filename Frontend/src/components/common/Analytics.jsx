@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
-import { trackTikTokPage } from '../../utils/tiktokPixel';
+import { trackMetaPageView, trackTikTokPage } from '../../utils/tiktokPixel';
 
 /**
  * GA4 + GTM analytics. Activates only when env vars are configured.
@@ -73,6 +73,7 @@ export default function Analytics() {
 
   useEffect(() => {
     trackTikTokPage();
+    trackMetaPageView();
   }, [location.pathname, location.search]);
 
   return null;
