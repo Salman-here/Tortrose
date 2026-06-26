@@ -1,10 +1,11 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Search, Store, Loader2, ExternalLink, Sparkles } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion as Motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import VerifiedBadge from './VerifiedBadge';
 import { navigateToStore } from '../../utils/subdomainHelper';
+import { useBuyerLocation } from '../../contexts/BuyerLocationContext';
 
 const TypeBadge = ({ type }) => {
     const isBrand = type === 'brand';
@@ -24,11 +25,14 @@ const StoreSearch = () => {
     const [query, setQuery] = useState('');
     const [suggestions, setSuggestions] = useState([]);
     const [loading, setLoading] = useState(false);
+    const [searchError, setSearchError] = useState(false);
     const [isOpen, setIsOpen] = useState(false);
     const [selectedIndex, setSelectedIndex] = useState(-1);
     const searchRef = useRef(null);
     const navigate = useNavigate();
+    const { appendLocationParams, locationQueryString, detecting } = useBuyerLocation();
     const debounceTimer = useRef(null);
+    const activeRequest = useRef(null);
 
     useEffect(() => {
         const handleClickOutside = (event) => {
@@ -38,22 +42,61 @@ const StoreSearch = () => {
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, []);
 
-    useEffect(() => {
-        if (query.trim().length === 0) { setSuggestions([]); setIsOpen(false); return; }
-        if (debounceTimer.current) clearTimeout(debounceTimer.current);
-        debounceTimer.current = setTimeout(() => fetchSuggestions(query), 300);
-        return () => { if (debounceTimer.current) clearTimeout(debounceTimer.current); };
-    }, [query]);
+    const fetchSuggestions = useCallback(async (searchQuery) => {
+        activeRequest.current?.abort();
+        const controller = new AbortController();
+        activeRequest.current = controller;
 
-    const fetchSuggestions = async (searchQuery) => {
         try {
             setLoading(true);
-            const res = await axios.get(`${import.meta.env.VITE_API_URL}api/stores/suggestions?q=${searchQuery}`);
+            setSearchError(false);
+            const params = new URLSearchParams({ q: searchQuery.trim() });
+            appendLocationParams(params);
+            const res = await axios.get(
+                `${import.meta.env.VITE_API_URL}api/stores/suggestions?${params.toString()}`,
+                { signal: controller.signal }
+            );
+            if (activeRequest.current !== controller) return;
             setSuggestions(res.data.suggestions || []);
+            setSelectedIndex(-1);
             setIsOpen(true);
-        } catch (error) { setSuggestions([]); }
-        finally { setLoading(false); }
-    };
+        } catch (error) {
+            if (error?.code === 'ERR_CANCELED' || controller.signal.aborted) return;
+            if (activeRequest.current !== controller) return;
+            setSuggestions([]);
+            setSearchError(true);
+            setIsOpen(true);
+        } finally {
+            if (activeRequest.current === controller) setLoading(false);
+        }
+    }, [appendLocationParams]);
+
+    useEffect(() => {
+        const normalizedQuery = query.trim();
+        if (normalizedQuery.length === 0) {
+            activeRequest.current?.abort();
+            setSuggestions([]);
+            setSearchError(false);
+            setLoading(false);
+            setIsOpen(false);
+            setSelectedIndex(-1);
+            return undefined;
+        }
+
+        if (detecting && !locationQueryString) {
+            activeRequest.current?.abort();
+            setLoading(true);
+            return undefined;
+        }
+
+        if (debounceTimer.current) clearTimeout(debounceTimer.current);
+        debounceTimer.current = setTimeout(() => fetchSuggestions(normalizedQuery), 300);
+        return () => {
+            if (debounceTimer.current) clearTimeout(debounceTimer.current);
+        };
+    }, [query, locationQueryString, detecting, fetchSuggestions]);
+
+    useEffect(() => () => activeRequest.current?.abort(), []);
 
     const handleStoreClick = (storeSlug) => { setQuery(''); setIsOpen(false); navigateToStore(storeSlug, navigate); };
 
@@ -81,13 +124,13 @@ const StoreSearch = () => {
 
             <AnimatePresence>
                 {isOpen && (suggestions.length > 0 || (query.trim().length > 0 && !loading)) && (
-                    <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}
+                    <Motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}
                         className="absolute top-full mt-2 w-full glass-panel-strong overflow-hidden z-50">
                         {suggestions.length > 0 ? (
                             <>
                                 <div className="max-h-80 overflow-y-auto">
                                     {suggestions.map((store, index) => (
-                                        <motion.div key={store._id} whileHover={{ backgroundColor: 'rgba(255,255,255,0.1)' }}
+                                        <Motion.div key={store._id} whileHover={{ backgroundColor: 'rgba(255,255,255,0.1)' }}
                                             onClick={() => handleStoreClick(store.storeSlug)}
                                             className={`flex items-center gap-3 p-3 cursor-pointer rounded-xl m-1 transition-colors ${index === selectedIndex ? 'bg-white/10' : ''}`}>
                                             {store.logo ? (
@@ -110,7 +153,7 @@ const StoreSearch = () => {
                                                 </div>
                                             </div>
                                             <ExternalLink size={16} style={{ color: 'hsl(var(--muted-foreground))' }} />
-                                        </motion.div>
+                                        </Motion.div>
                                     ))}
                                 </div>
                                 <div className="border-t border-white/15 p-2">
@@ -119,6 +162,12 @@ const StoreSearch = () => {
                                         style={{ color: 'hsl(var(--primary))' }}>View entire marketplace →</button>
                                 </div>
                             </>
+                        ) : searchError ? (
+                            <div className="p-4 text-center">
+                                <Store size={32} className="mx-auto mb-2" style={{ color: 'hsl(var(--muted-foreground))' }} />
+                                <p className="text-sm">Store search is temporarily unavailable</p>
+                                <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>Please try again in a moment</p>
+                            </div>
                         ) : (
                             <div className="p-4 text-center">
                                 <Store size={32} className="mx-auto mb-2" style={{ color: 'hsl(var(--muted-foreground))' }} />
@@ -126,7 +175,7 @@ const StoreSearch = () => {
                                 <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>Try a different search term</p>
                             </div>
                         )}
-                    </motion.div>
+                    </Motion.div>
                 )}
             </AnimatePresence>
         </div>

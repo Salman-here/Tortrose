@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const { sendEmail } = require('./mailController');
 const { initializeSubscription } = require('./subscriptionController');
 const { publicProductFilter } = require('../services/productModerationService');
+const { activeStoreQuery } = require('../services/publicCatalogService');
 const { convertAmountSync } = require('../services/currencyService');
 const { getProductCurrency, getProductEffectivePrice } = require('../services/productPricingService');
 const {
@@ -670,14 +671,13 @@ exports.searchStores = async (req, res) => {
         }
 
         const safeSearch = String(q).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const stores = await findVisibleStores(Store, {
-            isActive: true,
+        const stores = await findVisibleStores(Store, activeStoreQuery({
             $or: [
                 { storeName: { $regex: safeSearch, $options: 'i' } },
                 { storeSlug: { $regex: safeSearch, $options: 'i' } },
                 { description: { $regex: safeSearch, $options: 'i' } },
             ],
-        }, buyerLocation, {
+        }), buyerLocation, {
             populate: { path: 'seller', select: 'username email' },
         });
 
@@ -702,11 +702,14 @@ exports.getStoreSuggestions = async (req, res) => {
             return res.status(200).json({ suggestions: [] });
         }
 
-        // Use regex for partial matching
-        const stores = await findVisibleStores(Store, {
-            storeName: { $regex: q, $options: 'i' },
-            isActive: true
-        }, buyerLocation, {
+        const safeSearch = String(q).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const stores = await findVisibleStores(Store, activeStoreQuery({
+            $or: [
+                { storeName: { $regex: safeSearch, $options: 'i' } },
+                { storeSlug: { $regex: safeSearch, $options: 'i' } },
+                { description: { $regex: safeSearch, $options: 'i' } },
+            ],
+        }), buyerLocation, {
             select: 'storeName storeSlug logo trustCount verification sellerType visibility',
         });
 
@@ -725,7 +728,7 @@ exports.getStoreBySlug = async (req, res) => {
         const { slug } = req.params;
         const buyerLocation = buyerLocationFromRequest(req);
 
-        const store = await Store.findOne({ storeSlug: slug, isActive: true })
+        const store = await Store.findOne(activeStoreQuery({ storeSlug: slug }))
             .populate('seller', 'username email avatar');
 
         if (!store) {
@@ -753,7 +756,7 @@ exports.getStoreBySellerId = async (req, res) => {
         const { id } = req.params;
         const buyerLocation = buyerLocationFromRequest(req);
 
-        const store = await Store.findOne({ seller: id, isActive: true })
+        const store = await Store.findOne(activeStoreQuery({ seller: id }))
             .select('+verification')
             .populate('seller', 'username email avatar');
 
@@ -786,7 +789,7 @@ exports.getStoreProducts = async (req, res) => {
         const limitNum = Math.min(48, Math.max(1, parseInt(limit, 10) || 20));
 
         // Find store
-        const store = await Store.findOne({ storeSlug: slug, isActive: true });
+        const store = await Store.findOne(activeStoreQuery({ storeSlug: slug }));
 
         if (!store) {
             return res.status(404).json({ msg: 'Store not found' });
@@ -888,7 +891,7 @@ exports.getAllStores = async (req, res) => {
             return sorted;
         };
 
-        const filter = { isActive: true };
+        const filter = activeStoreQuery();
         const searchText = String(search || '').trim();
         if (searchText) {
             const safeSearch = searchText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -902,7 +905,7 @@ exports.getAllStores = async (req, res) => {
 
         const skip = (pageNum - 1) * limitNum;
 
-        const countBaseFilter = { isActive: true };
+        const countBaseFilter = activeStoreQuery();
         if (searchText && filter.$or) countBaseFilter.$or = filter.$or;
 
         const [allFilteredStores, visibleCountStores] = await Promise.all([
@@ -969,7 +972,7 @@ exports.incrementStoreView = async (req, res) => {
     try {
         const { slug } = req.params;
 
-        const store = await Store.findOne({ storeSlug: slug, isActive: true }).select('_id views');
+        const store = await Store.findOne(activeStoreQuery({ storeSlug: slug })).select('_id views');
 
         if (!store) {
             return res.status(404).json({ msg: 'Store not found' });
