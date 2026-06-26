@@ -145,6 +145,60 @@ export const trackTikTokPage = () => {
   return true;
 };
 
+const buildApiUrl = (path) => {
+  const baseUrl = import.meta.env.VITE_API_URL || '/';
+  const normalizedBase = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
+  return `${normalizedBase}${path.replace(/^\/+/, '')}`;
+};
+
+const postBrowserEvent = (path, payload = {}) => {
+  if (typeof window === 'undefined') return false;
+
+  const url = buildApiUrl(path);
+  const body = JSON.stringify(cleanPayload(payload));
+  let isSameOrigin = false;
+  try {
+    isSameOrigin = new URL(url, window.location.href).origin === window.location.origin;
+  } catch {
+    isSameOrigin = false;
+  }
+
+  if (isSameOrigin && typeof navigator !== 'undefined' && navigator.sendBeacon) {
+    const blob = new Blob([body], { type: 'application/json' });
+    if (navigator.sendBeacon(url, blob)) return true;
+  }
+
+  fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body,
+    credentials: 'include',
+    keepalive: true,
+  }).catch(() => {});
+
+  return true;
+};
+
+export const trackMetaPageView = () => {
+  if (typeof window === 'undefined') return false;
+
+  const eventId = createTikTokEventId('meta_page_view');
+  const tracking = getTikTokTrackingContext();
+
+  if (hasMetaPixel()) {
+    window.fbq('track', 'PageView', {}, { eventID: eventId });
+  }
+
+  postBrowserEvent('api/meta/page-view', {
+    eventId,
+    pageUrl: window.location.href,
+    referrer: document.referrer,
+    tracking,
+  });
+
+  return true;
+};
+
 export const trackTikTokEvent = (eventName, payload = {}, options = {}) => {
   if (!hasTikTokPixel()) return false;
   const eventOptions = cleanPayload(options);
@@ -205,10 +259,9 @@ export const trackSellerRegistrationCompleted = async ({ user, storeName, email,
   // Track Meta (Facebook) CompleteRegistration
   if (hasMetaPixel()) {
     window.fbq('track', 'CompleteRegistration', {
-      value: 1,
-      currency: DEFAULT_CURRENCY,
       content_name: storeName || 'New Seller Store',
       content_category: 'Seller Signup',
+      status: 'seller_account_created',
     });
   }
 };

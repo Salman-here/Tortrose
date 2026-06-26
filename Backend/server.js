@@ -403,6 +403,9 @@ const authLimiter = rateLimit({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Meta browser event relay does not require a database connection.
+app.use('/api/meta', require('./routes/metaRoutes'));
+
 // ── Database ──
 const ConnectDB = require('./config/db');
 ConnectDB().catch(err => console.error('DB init error:', err.message));

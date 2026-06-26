@@ -3,6 +3,7 @@ const {
   createFbcFromFbclid,
   sendMetaLeadEvent,
   sha256,
+  trackPageView,
 } = require('../../services/metaConversionsApi');
 
 describe('metaConversionsApi', () => {
@@ -114,6 +115,55 @@ describe('metaConversionsApi', () => {
         external_id: [sha256('seller-1')],
         fbc: 'fb.1.123.click',
         fbp: 'fb.1.123.browser',
+      },
+    });
+  });
+
+  test('sends website PageView events with browser and server match data', async () => {
+    process.env.META_CAPI_ACCESS_TOKEN = 'test_token';
+    process.env.META_CAPI_DATASET_ID = '1234567890';
+    process.env.META_CAPI_API_VERSION = 'v25.0';
+
+    global.fetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ events_received: 1 }),
+    });
+
+    const result = await trackPageView({
+      eventId: 'meta_page_view_1',
+      pageUrl: 'https://www.rozare.com/become-seller',
+      referrer: 'https://www.facebook.com/',
+      req: {
+        headers: {
+          cookie: '_fbp=fb.1.123.browser',
+          'user-agent': 'jest-agent',
+          'x-forwarded-for': '203.0.113.10, 10.0.0.1',
+        },
+      },
+      tracking: {
+        fbc: 'fb.1.123.click',
+      },
+    });
+
+    expect(result).toEqual({ ok: true, body: { events_received: 1 } });
+
+    const [, options] = global.fetch.mock.calls[0];
+    const body = JSON.parse(options.body);
+    expect(body.data[0]).toMatchObject({
+      event_name: 'PageView',
+      event_time: 1782388800,
+      event_id: 'meta_page_view_1',
+      action_source: 'website',
+      event_source_url: 'https://www.rozare.com/become-seller',
+      custom_data: {
+        page_referrer: 'https://www.facebook.com/',
+      },
+      user_data: {
+        fbc: 'fb.1.123.click',
+        fbp: 'fb.1.123.browser',
+        client_ip_address: '203.0.113.10',
+        client_user_agent: 'jest-agent',
       },
     });
   });
