@@ -113,8 +113,22 @@ const resolveInboundAddress = (msg) => {
     const participantAltPhone = phoneFromJid(participantAltJid);
     const phoneJidDigits = phoneFromJid(phoneJid);
 
-    const barePhone = deepHints.phoneNumbers.find(number => number !== remotePhone && number !== altPhone && number !== participantPhone && number !== participantAltPhone) || '';
-    const identityPhone = phoneJidDigits || barePhone || altPhone || remotePhone || participantAltPhone || participantPhone;
+    const explicitPhoneJidDigits = uniqueNonEmpty([
+        phoneJidDigits,
+        isPhoneJid(altJid) ? altPhone : '',
+        isPhoneJid(remoteJid) ? remotePhone : '',
+        isPhoneJid(participantAltJid) ? participantAltPhone : '',
+        isPhoneJid(participantJid) ? participantPhone : '',
+    ]);
+    const lidDigits = uniqueNonEmpty([
+        isLidJid(remoteJid) ? remotePhone : '',
+        isLidJid(altJid) ? altPhone : '',
+        isLidJid(participantJid) ? participantPhone : '',
+        isLidJid(participantAltJid) ? participantAltPhone : '',
+    ]);
+    const barePhones = uniqueNonEmpty(deepHints.phoneNumbers)
+        .filter(number => !explicitPhoneJidDigits.includes(number) && !lidDigits.includes(number));
+    const identityPhone = explicitPhoneJidDigits[0] || barePhones[0] || lidDigits[0] || '';
     rememberPhoneLid(identityPhone, lidJid);
 
     return {
@@ -125,8 +139,8 @@ const resolveInboundAddress = (msg) => {
         lidJid,
         phoneJid,
         identityPhone,
-        replyTo: lidJid || remoteJid || altJid || participantJid || participantAltJid || phoneJidDigits || altPhone || remotePhone,
-        candidatePhones: uniqueNonEmpty([phoneJidDigits, barePhone, altPhone, remotePhone, participantAltPhone, participantPhone, ...deepHints.phoneNumbers]),
+        replyTo: lidJid || phoneJid || remoteJid || altJid || participantJid || participantAltJid || identityPhone,
+        candidatePhones: uniqueNonEmpty([...explicitPhoneJidDigits, ...barePhones, ...lidDigits]),
     };
 };
 

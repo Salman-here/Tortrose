@@ -466,7 +466,10 @@ exports.handleEvolutionWebhook = async (req, res) => {
                     if ((!text || !text.trim()) && attachments.length === 0) continue;
 
                     // Route to AI chat (fire-and-forget — don't block webhook response)
-                    processIncomingWhatsAppMessage(phone, String(text || '').trim(), 'seller', attachments, { replyTo: outboundTo }).catch(err => {
+                    processIncomingWhatsAppMessage(phone, String(text || '').trim(), 'seller', attachments, {
+                        replyTo: outboundTo,
+                        candidatePhones: address.candidatePhones,
+                    }).catch(err => {
                         console.error('[whatsapp] seller AI chat error:', err.message);
                     });
                 }
@@ -548,7 +551,10 @@ exports.handleEvolutionWebhook = async (req, res) => {
                 if (!job) {
                     const rawText = replyTextForHint || (extracted?.source === 'text' ? extracted.text : '') || mediaText;
                     if (rawText || attachments.length) {
-                        processIncomingWhatsAppMessage(phone, rawText, 'main', attachments, { replyTo: outboundTo }).catch(err => {
+                        processIncomingWhatsAppMessage(phone, rawText, 'main', attachments, {
+                            replyTo: outboundTo,
+                            candidatePhones: address.candidatePhones,
+                        }).catch(err => {
                             console.error('[whatsapp] main AI chat error:', err.message);
                         });
                     }
@@ -559,7 +565,10 @@ exports.handleEvolutionWebhook = async (req, res) => {
                 // route to AI chat instead of just sending a YES/NO hint — the AI is
                 // smarter and can help with order questions or other requests.
                 if (!decision && (replyTextForHint || attachments.length)) {
-                    processIncomingWhatsAppMessage(phone, replyTextForHint || mediaText, 'main', attachments, { replyTo: outboundTo }).catch(err => {
+                    processIncomingWhatsAppMessage(phone, replyTextForHint || mediaText, 'main', attachments, {
+                        replyTo: outboundTo,
+                        candidatePhones: address.candidatePhones,
+                    }).catch(err => {
                         console.error('[whatsapp] main AI chat error (with pending order):', err.message);
                     });
                     continue;

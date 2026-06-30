@@ -533,7 +533,7 @@ app.get('/health', (req, res) => {
     timestamp: new Date().toISOString(),
     env: process.env.NODE_ENV,
     gitCommit: process.env.RAILWAY_GIT_COMMIT_SHA || process.env.VERCEL_GIT_COMMIT_SHA || process.env.GIT_COMMIT || '',
-    buildMarker: 'whatsapp-lid-client-v4-payments-currency-v1',
+    buildMarker: 'whatsapp-addressing-v5-min-withdrawal-v1',
     mongoConnected: mongoose.connection.readyState === 1
   });
 });

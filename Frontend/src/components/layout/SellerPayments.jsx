@@ -20,6 +20,7 @@ import { useCurrency } from '../../contexts/CurrencyContext';
 import { getAuthToken } from '../../utils/cookieHelper';
 
 const API = `${import.meta.env.VITE_API_URL}api/payments`;
+const MIN_WITHDRAWAL_USD = 5;
 
 const statusColors = {
     pending: 'hsl(30,90%,50%)',
@@ -135,6 +136,10 @@ const SellerPayments = () => {
         () => convertPrice(revenue.withdrawableBalance || 0),
         [revenue.withdrawableBalance, convertPrice]
     );
+    const minimumWithdrawalInCurrentCurrency = useMemo(
+        () => convertPrice(MIN_WITHDRAWAL_USD),
+        [convertPrice]
+    );
 
     const handleAccountChange = (field, value) => {
         setAccountForm((prev) => ({ ...prev, [field]: value }));
@@ -168,12 +173,20 @@ const SellerPayments = () => {
             toast.error('You have zero balance and cannot withdraw right now');
             return;
         }
+        if ((revenue.withdrawableBalance || 0) < MIN_WITHDRAWAL_USD) {
+            toast.error(`Minimum withdrawal amount is ${formatPrice(MIN_WITHDRAWAL_USD)}`);
+            return;
+        }
         const amount = Number(withdrawAmount);
         if (!Number.isFinite(amount) || amount <= 0) {
             toast.error('Enter a valid withdrawal amount');
             return;
         }
         const amountUSD = convertToUSD(amount);
+        if (amountUSD < MIN_WITHDRAWAL_USD) {
+            toast.error(`Minimum withdrawal amount is ${formatPrice(MIN_WITHDRAWAL_USD)}`);
+            return;
+        }
         if (amountUSD > (revenue.withdrawableBalance || 0) + 0.01) {
             toast.error(`You can withdraw up to ${formatPrice(revenue.withdrawableBalance || 0)}`);
             return;
@@ -365,7 +378,7 @@ const SellerPayments = () => {
                             <div className="min-w-0">
                                 <h2 className="text-lg font-bold" style={{ color: 'hsl(var(--foreground))' }}>Request Withdrawal</h2>
                                 <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                                    Available now: {formatPrice(revenue.withdrawableBalance || 0)}
+                                    Available now: {formatPrice(revenue.withdrawableBalance || 0)}. Minimum: {formatPrice(MIN_WITHDRAWAL_USD)}
                                 </p>
                             </div>
                             <div className="p-3 rounded-2xl" style={{ background: 'rgba(16,185,129,0.12)', color: 'hsl(150,60%,45%)' }}>
@@ -385,7 +398,7 @@ const SellerPayments = () => {
                         <div className="grid sm:grid-cols-[1fr_auto] gap-3">
                             <label className="space-y-1.5">
                                 <span className="text-xs font-semibold" style={{ color: 'hsl(var(--muted-foreground))' }}>Amount in {currency}</span>
-                                <input type="number" min="0" step="0.01" className="w-full min-w-0 glass-inner rounded-xl px-3 py-2.5 text-sm outline-none" value={withdrawAmount} onChange={(e) => setWithdrawAmount(e.target.value)} placeholder="0.00" />
+                                <input type="number" min={minimumWithdrawalInCurrentCurrency.toFixed(2)} step="0.01" className="w-full min-w-0 glass-inner rounded-xl px-3 py-2.5 text-sm outline-none" value={withdrawAmount} onChange={(e) => setWithdrawAmount(e.target.value)} placeholder="0.00" />
                             </label>
                             <button type="button" className="w-full sm:w-auto sm:self-end px-4 py-2.5 rounded-xl text-sm font-semibold glass-inner" style={{ color: 'hsl(var(--foreground))' }} onClick={() => setWithdrawAmount(availableInCurrentCurrency.toFixed(2))}>
                                 Full balance

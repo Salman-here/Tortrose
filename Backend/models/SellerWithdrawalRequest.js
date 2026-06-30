@@ -11,7 +11,7 @@ const sellerWithdrawalRequestSchema = new mongoose.Schema(
         amount: {
             type: Number,
             required: true,
-            min: 0.01,
+            min: 5,
         },
         currency: {
             type: String,

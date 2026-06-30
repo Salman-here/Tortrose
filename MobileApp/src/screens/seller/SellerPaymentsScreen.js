@@ -30,6 +30,7 @@ const defaultAccountForm = {
   currency: 'USD',
   payoutInstructions: '',
 };
+const MIN_WITHDRAWAL_USD = 5;
 
 const statusColor = (status, palette) => {
   switch (status) {
@@ -149,6 +150,10 @@ export default function SellerPaymentsScreen({ navigation }) {
       Alert.alert('No balance', 'You have zero withdrawable balance right now');
       return;
     }
+    if ((revenue.withdrawableBalance || 0) < MIN_WITHDRAWAL_USD) {
+      Alert.alert('Minimum withdrawal', `Minimum withdrawal amount is ${formatPrice(MIN_WITHDRAWAL_USD)}`);
+      return;
+    }
     const amount = Number(withdrawAmount);
     if (!Number.isFinite(amount) || amount <= 0) {
       Alert.alert('Invalid amount', 'Enter a withdrawal amount greater than zero');
@@ -156,6 +161,10 @@ export default function SellerPaymentsScreen({ navigation }) {
     }
 
     const amountUSD = convertToUSD(amount);
+    if (amountUSD < MIN_WITHDRAWAL_USD) {
+      Alert.alert('Minimum withdrawal', `Minimum withdrawal amount is ${formatPrice(MIN_WITHDRAWAL_USD)}`);
+      return;
+    }
     if (amountUSD > (revenue.withdrawableBalance || 0) + 0.01) {
       Alert.alert('Too high', `You can withdraw up to ${formatPrice(revenue.withdrawableBalance || 0)}`);
       return;
@@ -280,7 +289,7 @@ export default function SellerPaymentsScreen({ navigation }) {
           <View style={styles.sectionHeader}>
             <View>
               <Text style={styles.sectionTitle}>Request Withdrawal</Text>
-              <Text style={styles.sectionSubtitle}>Available: {formatPrice(revenue.withdrawableBalance || 0)}</Text>
+              <Text style={styles.sectionSubtitle}>Available: {formatPrice(revenue.withdrawableBalance || 0)} - Minimum: {formatPrice(MIN_WITHDRAWAL_USD)}</Text>
             </View>
             <View style={[styles.statIcon, { backgroundColor: `${palette.colors.success}18` }]}>
               <Ionicons name="card-outline" size={20} color={palette.colors.success} />

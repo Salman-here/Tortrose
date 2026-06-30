@@ -40,6 +40,25 @@ describe('WhatsApp inbound addressing', () => {
     expect(address.candidatePhones).toEqual(['923499166402', '39767790104698']);
   });
 
+  test('prefers explicit phone JID over unrelated bare numeric fields', () => {
+    const address = resolveInboundAddress({
+      key: {
+        remoteJid: '923499166402@s.whatsapp.net',
+      },
+      message: {
+        conversation: 'Hi',
+        contextInfo: {
+          owner: '39767790104698',
+        },
+      },
+    });
+
+    expect(address.identityPhone).toBe('923499166402');
+    expect(address.replyTo).toBe('923499166402@s.whatsapp.net');
+    expect(address.candidatePhones[0]).toBe('923499166402');
+    expect(address.candidatePhones).toContain('39767790104698');
+  });
+
   test('finds phone and LID hints nested inside unknown Evolution payload fields', () => {
     const address = resolveInboundAddress({
       key: {},

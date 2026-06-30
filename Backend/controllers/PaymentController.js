@@ -10,6 +10,7 @@ const { notifySeller } = require('../services/whatsapp/sellerNotificationService
 
 const ACTIVE_WITHDRAWAL_STATUSES = ['pending', 'approved', 'processing', 'paid'];
 const CURRENCY_CODES = ['USD', 'PKR', 'EUR', 'GBP'];
+const MIN_WITHDRAWAL_USD = 5;
 
 const toId = (value) => value?._id?.toString?.() || value?.toString?.() || '';
 const roundMoney = (value) => Math.round((Number(value) || 0) * 100) / 100;
@@ -390,6 +391,12 @@ exports.createWithdrawalRequest = async (req, res) => {
 
         if (!Number.isFinite(amount) || amount <= 0) {
             return res.status(400).json({ msg: 'Withdrawal amount must be greater than zero' });
+        }
+        if (amount < MIN_WITHDRAWAL_USD) {
+            return res.status(400).json({
+                msg: `Minimum withdrawal amount is ${formatMoneySync(MIN_WITHDRAWAL_USD, requestedCurrency)}.`,
+                minimumAmount: MIN_WITHDRAWAL_USD,
+            });
         }
 
         const account = await SellerPaymentAccount.findOne({ seller: sellerId, isActive: true }).lean();
