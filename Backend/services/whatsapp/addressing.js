@@ -1,6 +1,8 @@
 'use strict';
 
 const uniqueNonEmpty = (items = []) => [...new Set(items.filter(Boolean))];
+const recentLidByPhone = new Map();
+const LID_MAPPING_TTL_MS = 24 * 60 * 60 * 1000;
 
 const phoneFromJid = (jid) => {
     if (!jid || typeof jid !== 'string') return '';
@@ -17,6 +19,29 @@ const isGroupOrBroadcastJid = (jid = '') => (
 
 const isLidJid = (jid = '') => jid.endsWith('@lid');
 const isPhoneJid = (jid = '') => jid.endsWith('@s.whatsapp.net');
+
+const rememberPhoneLid = (phone, lidJid) => {
+    const digits = phoneFromJid(phone);
+    if (!digits || !isLidJid(lidJid)) return;
+    recentLidByPhone.set(digits, { lidJid, seenAt: Date.now() });
+};
+
+const getRememberedLid = (phone) => {
+    const digits = phoneFromJid(phone);
+    if (!digits) return '';
+    const mapped = recentLidByPhone.get(digits);
+    if (!mapped) return '';
+    if (Date.now() - mapped.seenAt > LID_MAPPING_TTL_MS) {
+        recentLidByPhone.delete(digits);
+        return '';
+    }
+    return mapped.lidJid;
+};
+
+const resolveReplyTo = (phone, requestedRecipient) => {
+    if (isLidJid(requestedRecipient)) return requestedRecipient;
+    return getRememberedLid(phone) || requestedRecipient || phone;
+};
 
 // WhatsApp LID mode can send inbound messages with key.remoteJid as the
 // replyable @lid chat and key.remoteJidAlt as the user's real phone JID.
@@ -41,12 +66,17 @@ const resolveInboundAddress = (msg) => {
     const participantAltPhone = phoneFromJid(participantAltJid);
     const phoneJidDigits = phoneFromJid(phoneJid);
 
+    const identityPhone = phoneJidDigits || altPhone || remotePhone || participantAltPhone || participantPhone;
+    rememberPhoneLid(identityPhone, lidJid);
+
     return {
         remoteJid,
         altJid,
         participantJid,
         participantAltJid,
-        identityPhone: phoneJidDigits || altPhone || remotePhone || participantAltPhone || participantPhone,
+        lidJid,
+        phoneJid,
+        identityPhone,
         replyTo: lidJid || remoteJid || altJid || participantJid || participantAltJid || phoneJidDigits || altPhone || remotePhone,
         candidatePhones: uniqueNonEmpty([phoneJidDigits, altPhone, remotePhone, participantAltPhone, participantPhone]),
     };
@@ -57,6 +87,9 @@ module.exports = {
     isGroupOrBroadcastJid,
     isLidJid,
     isPhoneJid,
+    rememberPhoneLid,
+    getRememberedLid,
+    resolveReplyTo,
     resolveInboundAddress,
     uniqueNonEmpty,
 };

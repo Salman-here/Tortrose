@@ -1,6 +1,8 @@
 const {
   phoneFromJid,
   isGroupOrBroadcastJid,
+  rememberPhoneLid,
+  resolveReplyTo,
   resolveInboundAddress,
 } = require('../../services/whatsapp/addressing');
 
@@ -35,6 +37,13 @@ describe('WhatsApp inbound addressing', () => {
     expect(address.identityPhone).toBe('923499166402');
     expect(address.replyTo).toBe('39767790104698@lid');
     expect(address.candidatePhones).toEqual(['923499166402', '39767790104698']);
+  });
+
+  test('remembers a phone to LID mapping for later sends', () => {
+    rememberPhoneLid('923499166402', '39767790104698@lid');
+
+    expect(resolveReplyTo('923499166402', '923499166402@s.whatsapp.net')).toBe('39767790104698@lid');
+    expect(resolveReplyTo('923499166402', '39767790104698@lid')).toBe('39767790104698@lid');
   });
 
   test('falls back cleanly for legacy phone-JID messages', () => {

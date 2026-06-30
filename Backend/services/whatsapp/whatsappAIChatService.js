@@ -18,6 +18,7 @@ const { processAIChatMessage } = require('../../controllers/aiChatController');
 const { processChatAttachments } = require('../aiAttachmentService');
 const evolution = require('./evolutionClient');           // buyer instance (rozare-main)
 const sellerEvolution = require('./sellerEvolutionClient'); // seller instance (rozare-seller)
+const { resolveReplyTo } = require('./addressing');
 
 const SITE_URL = process.env.FRONTEND_URL || 'https://www.rozare.com';
 const RATE_LIMIT_PER_HOUR = Number(process.env.WHATSAPP_AI_RATE_LIMIT_PER_HOUR || 30);
@@ -420,7 +421,7 @@ async function processIncomingWhatsAppMessage(phone, messageText, instanceType, 
     const attachments = Array.isArray(rawAttachments) ? rawAttachments : [];
     if ((!messageText || !messageText.trim()) && attachments.length === 0) return;
 
-    const replyTo = options.replyTo || phone;
+    const replyTo = resolveReplyTo(phone, options.replyTo || phone);
     const trimmedText = String(messageText || '').trim();
     console.log(`[wa-ai-chat] Processing ${instanceType} message from ${phone} (replyTo=${replyTo}): "${trimmedText.slice(0, 100)}..." attachments=${attachments.length}`);
 
