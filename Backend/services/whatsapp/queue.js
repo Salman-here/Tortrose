@@ -4,6 +4,7 @@
 const WhatsAppPendingMessage = require('../../models/WhatsAppPendingMessage');
 const WhatsAppConfig = require('../../models/WhatsAppConfig');
 const evolution = require('./evolutionClient');
+const { resolveOutboundRecipient } = require('./jidRoutingStore');
 const {
     buildOrderButtonsPayload,
     buildOrderListPayload,
@@ -213,6 +214,7 @@ const processOne = async () => {
         // all handled by webhookHandler.extractDecision, keyed on the
         // confirm_ORD-xxx / cancel_ORD-xxx id scheme.
 
+        const recipient = await resolveOutboundRecipient(job.phone, job.phone, { instanceType: 'main' });
         let sendRes;
         let strategy;
 
@@ -220,13 +222,13 @@ const processOne = async () => {
             // Online-paid orders: just an info text. Buyer already committed by
             // paying — no confirm/cancel buttons.
             strategy = 'info-text';
-            sendRes = await evolution.sendText(job.phone, buildOrderPlacedInfoMessage(order));
+            sendRes = await evolution.sendText(recipient, buildOrderPlacedInfoMessage(order));
         } else {
             // COD: tiered confirm/cancel send (buttons → list → text fallback).
             const buttonsPayload = buildOrderButtonsPayload(order);
             strategy = 'buttons';
             try {
-                sendRes = await evolution.sendButtons(job.phone, buttonsPayload);
+                sendRes = await evolution.sendButtons(recipient, buttonsPayload);
             } catch (btnErr) {
                 console.warn(
                     `[whatsapp] sendButtons failed for order ${order.orderId}, trying list:`,
@@ -234,14 +236,14 @@ const processOne = async () => {
                 );
                 strategy = 'list';
                 try {
-                    sendRes = await evolution.sendList(job.phone, buildOrderListPayload(order));
+                    sendRes = await evolution.sendList(recipient, buildOrderListPayload(order));
                 } catch (listErr) {
                     console.warn(
                         `[whatsapp] sendList also failed for order ${order.orderId}, falling back to text:`,
                         listErr.response?.data || listErr.message
                     );
                     strategy = 'text';
-                    sendRes = await evolution.sendText(job.phone, buildOrderConfirmationMessage(order));
+                    sendRes = await evolution.sendText(recipient, buildOrderConfirmationMessage(order));
                 }
             }
         }

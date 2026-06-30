@@ -32,9 +32,12 @@ const { processIncomingWhatsAppMessage } = require('./whatsappAIChatService');
 const {
     isGroupOrBroadcastJid,
     resolveInboundAddress,
-    resolveReplyTo,
     uniqueNonEmpty,
 } = require('./addressing');
+const {
+    rememberInboundRoute,
+    resolveOutboundRecipient,
+} = require('./jidRoutingStore');
 
 // ──────────────────────────────────────────────────────────────────────────
 // Outgoing friendly replies
@@ -446,7 +449,12 @@ exports.handleEvolutionWebhook = async (req, res) => {
                     // Skip group messages — only process 1:1 private chats
                     if (isGroupOrBroadcastJid(remoteJid)) continue;
                     if (!phone) continue;
-                    const outboundTo = resolveReplyTo(phone, replyTo);
+                    await rememberInboundRoute(address, {
+                        instanceType: 'seller',
+                        instanceName: incomingInstance || sellerInstanceName,
+                    });
+                    const outboundTo = await resolveOutboundRecipient(phone, replyTo, { instanceType: 'seller' });
+                    console.log(`[whatsapp] route seller phone=${phone} lid=${address.lidJid || ''} requested=${replyTo || ''} outbound=${outboundTo || ''}`);
                     markInboundConversationWindowOpen(phone);
 
                     // Extract text from the message
@@ -479,7 +487,12 @@ exports.handleEvolutionWebhook = async (req, res) => {
                 const { remoteJid, identityPhone: phone, replyTo } = address;
                 if (isGroupOrBroadcastJid(remoteJid)) continue;
                 if (!phone) continue;
-                const outboundTo = resolveReplyTo(phone, replyTo);
+                await rememberInboundRoute(address, {
+                    instanceType: 'main',
+                    instanceName: incomingInstance || mainInstanceName,
+                });
+                const outboundTo = await resolveOutboundRecipient(phone, replyTo, { instanceType: 'main' });
+                console.log(`[whatsapp] route main phone=${phone} lid=${address.lidJid || ''} requested=${replyTo || ''} outbound=${outboundTo || ''}`);
                 markInboundConversationWindowOpen(phone);
                 const mediaText = extractMessageText(msg);
                 const attachments = extractMediaAttachments(msg, {

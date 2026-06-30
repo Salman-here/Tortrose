@@ -2,6 +2,7 @@ const WhatsAppConfig = require('../../models/WhatsAppConfig');
 const User = require('../../models/User');
 const SellerNotificationLog = require('../../models/SellerNotificationLog');
 const sellerEvolution = require('./sellerEvolutionClient');
+const { resolveOutboundRecipient } = require('./jidRoutingStore');
 
 /**
  * Notification categories and whether they can be disabled by the seller.
@@ -136,7 +137,8 @@ async function sendNow(sellerId, category, message) {
 
     // 6. Send
     try {
-        await sellerEvolution.sendText(digits, message);
+        const recipient = await resolveOutboundRecipient(digits, digits, { instanceType: 'seller' });
+        await sellerEvolution.sendText(recipient, message);
         await logNotification(sellerId, category, message, 'sent', '', '', seller.sellerInfo, digits);
         return { sent: true };
     } catch (err) {

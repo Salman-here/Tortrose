@@ -19,6 +19,8 @@ const isGroupOrBroadcastJid = (jid = '') => (
 
 const isLidJid = (jid = '') => jid.endsWith('@lid');
 const isPhoneJid = (jid = '') => jid.endsWith('@s.whatsapp.net');
+const JID_PATTERN = /\b\d{5,}@(lid|s\.whatsapp\.net)\b/g;
+const ADDRESS_PATH_PATTERN = /(jid|phone|number|sender|remote|participant|author|from|user|owner)/i;
 
 const rememberPhoneLid = (phone, lidJid) => {
     const digits = phoneFromJid(phone);
@@ -43,6 +45,38 @@ const resolveReplyTo = (phone, requestedRecipient) => {
     return getRememberedLid(phone) || requestedRecipient || phone;
 };
 
+const collectAddressHints = (value, path = '', out = { lidJids: [], phoneJids: [], phoneNumbers: [] }, seen = new WeakSet(), depth = 0) => {
+    if (value == null || depth > 8) return out;
+
+    if (typeof value === 'string') {
+        const matches = value.match(JID_PATTERN) || [];
+        for (const jid of matches) {
+            if (isLidJid(jid)) out.lidJids.push(jid);
+            if (isPhoneJid(jid)) out.phoneJids.push(jid);
+        }
+
+        if (ADDRESS_PATH_PATTERN.test(path) && !value.includes('@lid')) {
+            const digits = value.replace(/\D/g, '');
+            if (digits.length >= 8 && digits.length <= 15) out.phoneNumbers.push(digits);
+        }
+        return out;
+    }
+
+    if (typeof value !== 'object') return out;
+    if (seen.has(value)) return out;
+    seen.add(value);
+
+    if (Array.isArray(value)) {
+        value.forEach((item, index) => collectAddressHints(item, `${path}[${index}]`, out, seen, depth + 1));
+        return out;
+    }
+
+    for (const [key, child] of Object.entries(value)) {
+        collectAddressHints(child, path ? `${path}.${key}` : key, out, seen, depth + 1);
+    }
+    return out;
+};
+
 // WhatsApp LID mode can send inbound messages with key.remoteJid as the
 // replyable @lid chat and key.remoteJidAlt as the user's real phone JID.
 // Some Evolution webhook payloads reverse those two fields. When both are
@@ -57,7 +91,15 @@ const resolveInboundAddress = (msg) => {
         '';
     const participantJid = msg?.key?.participant || msg?.participant || '';
     const participantAltJid = msg?.key?.participantAlt || msg?.participantAlt || '';
-    const jidCandidates = [remoteJid, altJid, participantJid, participantAltJid].filter(Boolean);
+    const deepHints = collectAddressHints(msg);
+    const jidCandidates = uniqueNonEmpty([
+        remoteJid,
+        altJid,
+        participantJid,
+        participantAltJid,
+        ...deepHints.lidJids,
+        ...deepHints.phoneJids,
+    ]);
     const lidJid = jidCandidates.find(isLidJid) || '';
     const phoneJid = jidCandidates.find(isPhoneJid) || '';
     const remotePhone = phoneFromJid(remoteJid);
@@ -66,7 +108,8 @@ const resolveInboundAddress = (msg) => {
     const participantAltPhone = phoneFromJid(participantAltJid);
     const phoneJidDigits = phoneFromJid(phoneJid);
 
-    const identityPhone = phoneJidDigits || altPhone || remotePhone || participantAltPhone || participantPhone;
+    const barePhone = deepHints.phoneNumbers.find(number => number !== remotePhone && number !== altPhone && number !== participantPhone && number !== participantAltPhone) || '';
+    const identityPhone = phoneJidDigits || barePhone || altPhone || remotePhone || participantAltPhone || participantPhone;
     rememberPhoneLid(identityPhone, lidJid);
 
     return {
@@ -78,7 +121,7 @@ const resolveInboundAddress = (msg) => {
         phoneJid,
         identityPhone,
         replyTo: lidJid || remoteJid || altJid || participantJid || participantAltJid || phoneJidDigits || altPhone || remotePhone,
-        candidatePhones: uniqueNonEmpty([phoneJidDigits, altPhone, remotePhone, participantAltPhone, participantPhone]),
+        candidatePhones: uniqueNonEmpty([phoneJidDigits, barePhone, altPhone, remotePhone, participantAltPhone, participantPhone, ...deepHints.phoneNumbers]),
     };
 };
 
@@ -90,6 +133,7 @@ module.exports = {
     rememberPhoneLid,
     getRememberedLid,
     resolveReplyTo,
+    collectAddressHints,
     resolveInboundAddress,
     uniqueNonEmpty,
 };
