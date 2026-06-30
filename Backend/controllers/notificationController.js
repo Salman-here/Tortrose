@@ -127,7 +127,6 @@ const dispatchBroadcast = async (job) => {
                         try {
                             await sellerEvolution.sendText(digits, waMessage);
                             waSent++;
-                            await new Promise((r) => setTimeout(r, 1000 + Math.random() * 2000));
                         } catch (err) {
                             console.warn('[broadcast] whatsapp failed for user', String(u._id), err.message);
                         }

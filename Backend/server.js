@@ -533,7 +533,7 @@ app.get('/health', (req, res) => {
     timestamp: new Date().toISOString(),
     env: process.env.NODE_ENV,
     gitCommit: process.env.RAILWAY_GIT_COMMIT_SHA || process.env.VERCEL_GIT_COMMIT_SHA || process.env.GIT_COMMIT || '',
-    buildMarker: 'whatsapp-lid-persist-v3',
+    buildMarker: 'whatsapp-lid-client-v4',
     mongoConnected: mongoose.connection.readyState === 1
   });
 });

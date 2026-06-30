@@ -4,6 +4,7 @@ jest.mock('../../models/WhatsAppJidMapping', () => ({
 }));
 
 const WhatsAppJidMapping = require('../../models/WhatsAppJidMapping');
+const mongoose = require('mongoose');
 const {
   rememberInboundRoute,
   resolveOutboundRecipient,
@@ -12,6 +13,10 @@ const {
 describe('WhatsApp JID routing store', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    Object.defineProperty(mongoose.connection, 'readyState', {
+      configurable: true,
+      get: () => 1,
+    });
   });
 
   test('persists a phone to LID route per instance', async () => {

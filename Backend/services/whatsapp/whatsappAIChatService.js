@@ -109,8 +109,6 @@ async function sendResponse(recipient, text, instanceType) {
 
     for (const part of parts) {
         await client.sendText(recipient, part);
-        // Small delay between messages to avoid spam detection
-        await new Promise(r => setTimeout(r, 500));
     }
 }
 
@@ -501,7 +499,6 @@ async function processIncomingWhatsAppMessage(phone, messageText, instanceType, 
             for (const img of aiOptions._pendingImages) {
                 try {
                     await client.sendMedia(replyTo, img.imageUrl, img.caption, 'image');
-                    await new Promise(r => setTimeout(r, 800)); // delay between images
                 } catch (imgErr) {
                     console.error(`[wa-ai-chat] Failed to send product image to ${phone}:`, imgErr.message);
                     // Fallback: send image URL as text

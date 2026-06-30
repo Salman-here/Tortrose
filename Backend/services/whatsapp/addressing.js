@@ -22,27 +22,32 @@ const isPhoneJid = (jid = '') => jid.endsWith('@s.whatsapp.net');
 const JID_PATTERN = /\b\d{5,}@(lid|s\.whatsapp\.net)\b/g;
 const ADDRESS_PATH_PATTERN = /(jid|phone|number|sender|remote|participant|author|from|user|owner)/i;
 
-const rememberPhoneLid = (phone, lidJid) => {
+const memoryKey = (phone, scope = 'global') => {
     const digits = phoneFromJid(phone);
-    if (!digits || !isLidJid(lidJid)) return;
-    recentLidByPhone.set(digits, { lidJid, seenAt: Date.now() });
+    return digits ? `${scope || 'global'}:${digits}` : '';
 };
 
-const getRememberedLid = (phone) => {
-    const digits = phoneFromJid(phone);
-    if (!digits) return '';
-    const mapped = recentLidByPhone.get(digits);
+const rememberPhoneLid = (phone, lidJid, scope = 'global') => {
+    const key = memoryKey(phone, scope);
+    if (!key || !isLidJid(lidJid)) return;
+    recentLidByPhone.set(key, { lidJid, seenAt: Date.now() });
+};
+
+const getRememberedLid = (phone, scope = 'global') => {
+    const key = memoryKey(phone, scope);
+    if (!key) return '';
+    const mapped = recentLidByPhone.get(key);
     if (!mapped) return '';
     if (Date.now() - mapped.seenAt > LID_MAPPING_TTL_MS) {
-        recentLidByPhone.delete(digits);
+        recentLidByPhone.delete(key);
         return '';
     }
     return mapped.lidJid;
 };
 
-const resolveReplyTo = (phone, requestedRecipient) => {
+const resolveReplyTo = (phone, requestedRecipient, scope = 'global') => {
     if (isLidJid(requestedRecipient)) return requestedRecipient;
-    return getRememberedLid(phone) || requestedRecipient || phone;
+    return getRememberedLid(phone, scope) || getRememberedLid(phone) || requestedRecipient || phone;
 };
 
 const collectAddressHints = (value, path = '', out = { lidJids: [], phoneJids: [], phoneNumbers: [] }, seen = new WeakSet(), depth = 0) => {

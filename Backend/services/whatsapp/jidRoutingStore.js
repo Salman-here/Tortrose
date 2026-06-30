@@ -1,5 +1,6 @@
 'use strict';
 
+const mongoose = require('mongoose');
 const WhatsAppJidMapping = require('../../models/WhatsAppJidMapping');
 const {
     phoneFromJid,
@@ -9,13 +10,15 @@ const {
 } = require('./addressing');
 
 const normalizePhone = (phone) => phoneFromJid(phone);
+const isMongoReady = () => mongoose.connection.readyState === 1;
 
 const rememberInboundRoute = async (address, { instanceType, instanceName = '', source = 'webhook' } = {}) => {
     const phone = normalizePhone(address?.identityPhone);
     const lidJid = address?.lidJid || (isLidJid(address?.replyTo) ? address.replyTo : '');
     if (!phone || !isLidJid(lidJid) || !instanceType) return null;
 
-    rememberPhoneLid(phone, lidJid);
+    rememberPhoneLid(phone, lidJid, instanceType);
+    if (!isMongoReady()) return null;
 
     try {
         return await WhatsAppJidMapping.findOneAndUpdate(
@@ -42,10 +45,10 @@ const resolveOutboundRecipient = async (phone, requestedRecipient, { instanceTyp
     const digits = normalizePhone(phone);
     if (!digits) return requestedRecipient || phone;
 
-    const remembered = getRememberedLid(digits);
+    const remembered = getRememberedLid(digits, instanceType) || getRememberedLid(digits);
     if (remembered) return remembered;
 
-    if (!instanceType) return requestedRecipient || phone;
+    if (!instanceType || !isMongoReady()) return requestedRecipient || phone;
 
     try {
         const route = await WhatsAppJidMapping.findOne({ phone: digits, instanceType })

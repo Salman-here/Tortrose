@@ -7,6 +7,15 @@
 
 const axios = require('axios');
 const QRCode = require('qrcode');
+const {
+    collectAddressHints,
+    phoneFromJid,
+    isLidJid,
+} = require('./addressing');
+const {
+    rememberInboundRoute,
+    resolveOutboundRecipient,
+} = require('./jidRoutingStore');
 
 // Shared helpers (not instance-specific)
 
@@ -18,6 +27,8 @@ const makeClient = () => axios.create({
     timeout: 25000,
     headers: { apikey: apiKey(), 'Content-Type': 'application/json' },
 });
+const recentRouteCache = new Map();
+const RECENT_ROUTE_CACHE_TTL_MS = 10 * 60 * 1000;
 
 // Turn a raw QR "code" string into a base64 PNG data URL.
 const qrTextToDataUrl = async (raw) => {
@@ -72,6 +83,97 @@ function createEvolutionClient(instanceEnvVar, defaultName) {
     const instanceName = () => process.env[instanceEnvVar] || defaultName;
     const isConfigured = () => Boolean(baseUrl() && apiKey());
     const client = () => makeClient();
+    const instanceType = () => (
+        instanceEnvVar === 'EVOLUTION_SELLER_INSTANCE_NAME' ||
+        instanceName() === (process.env.EVOLUTION_SELLER_INSTANCE_NAME || 'rozare-seller')
+            ? 'seller'
+            : 'main'
+    );
+
+    const routeCacheKey = (phone) => `${instanceName()}:${phoneFromJid(phone)}`;
+
+    const getCachedRecentRoute = (phone) => {
+        const key = routeCacheKey(phone);
+        const route = recentRouteCache.get(key);
+        if (!route) return '';
+        if (Date.now() - route.seenAt > RECENT_ROUTE_CACHE_TTL_MS) {
+            recentRouteCache.delete(key);
+            return '';
+        }
+        return route.lidJid;
+    };
+
+    const cacheRecentRoute = (phone, lidJid) => {
+        if (!phone || !isLidJid(lidJid)) return;
+        recentRouteCache.set(routeCacheKey(phone), { lidJid, seenAt: Date.now() });
+    };
+
+    const findRecentLidForPhone = async (phone) => {
+        const digits = phoneFromJid(phone);
+        if (!digits) return '';
+
+        const cached = getCachedRecentRoute(digits);
+        if (cached) return cached;
+
+        try {
+            const { data } = await client().post(`/chat/findMessages/${instanceName()}`, {});
+            const records = data?.messages?.records || data?.records || [];
+            for (const msg of records.slice(0, 100)) {
+                const key = msg?.key || {};
+                const hints = collectAddressHints(msg);
+                const phoneCandidates = [
+                    key.remoteJid,
+                    key.remoteJidAlt,
+                    key.participant,
+                    key.participantAlt,
+                    ...hints.phoneJids,
+                    ...hints.phoneNumbers,
+                ];
+                const lidCandidates = [
+                    key.remoteJid,
+                    key.remoteJidAlt,
+                    key.participant,
+                    key.participantAlt,
+                    ...hints.lidJids,
+                ];
+                const phoneMatches = phoneCandidates.some(candidate => phoneFromJid(candidate) === digits);
+                const lidJid = lidCandidates.find(isLidJid) || '';
+                if (phoneMatches && lidJid) {
+                    cacheRecentRoute(digits, lidJid);
+                    await rememberInboundRoute(
+                        { identityPhone: digits, lidJid },
+                        {
+                            instanceType: instanceType(),
+                            instanceName: instanceName(),
+                            source: 'evolution-message-store',
+                        }
+                    ).catch(() => null);
+                    return lidJid;
+                }
+            }
+        } catch (err) {
+            console.warn(`[evolution:${instanceName()}] recent LID lookup failed:`, err.response?.data || err.message);
+        }
+
+        return '';
+    };
+
+    const normalizeSendRecipient = async (number) => {
+        if (isLidJid(number)) return number;
+        const digits = phoneFromJid(number);
+        if (!digits) return number;
+
+        const stored = await resolveOutboundRecipient(digits, number, { instanceType: instanceType() });
+        if (isLidJid(stored)) return stored;
+
+        const recent = await findRecentLidForPhone(digits);
+        if (recent) {
+            console.log(`[evolution:${instanceName()}] routed recipient ${digits} to ${recent}`);
+            return recent;
+        }
+
+        return number;
+    };
 
     const createInstance = async () => {
         if (!isConfigured()) throw new Error('Evolution API not configured');
@@ -220,8 +322,9 @@ function createEvolutionClient(instanceEnvVar, defaultName) {
 
     const sendText = async (number, text) => {
         if (!isConfigured()) throw new Error('Evolution API not configured');
+        const recipient = await normalizeSendRecipient(number);
         const { data } = await client().post(`/message/sendText/${instanceName()}`, {
-            number,
+            number: recipient,
             text,
             delay: 0,
         });
@@ -238,8 +341,9 @@ function createEvolutionClient(instanceEnvVar, defaultName) {
      */
     const sendMedia = async (number, mediaUrl, caption = '', mediaType = 'image') => {
         if (!isConfigured()) throw new Error('Evolution API not configured');
+        const recipient = await normalizeSendRecipient(number);
         const { data } = await client().post(`/message/sendMedia/${instanceName()}`, {
-            number,
+            number: recipient,
             mediatype: mediaType,
             media: mediaUrl,
             caption,
@@ -251,8 +355,9 @@ function createEvolutionClient(instanceEnvVar, defaultName) {
 
     const sendPoll = async (number, { name, values, selectableCount = 1 }) => {
         if (!isConfigured()) throw new Error('Evolution API not configured');
+        const recipient = await normalizeSendRecipient(number);
         const { data } = await client().post(`/message/sendPoll/${instanceName()}`, {
-            number,
+            number: recipient,
             name,
             selectableCount,
             values,
@@ -267,8 +372,9 @@ function createEvolutionClient(instanceEnvVar, defaultName) {
         if (!Array.isArray(sections) || sections.length === 0) {
             throw new Error('sendList: sections array is required');
         }
+        const recipient = await normalizeSendRecipient(number);
         const { data } = await client().post(`/message/sendList/${instanceName()}`, {
-            number,
+            number: recipient,
             title,
             description,
             buttonText,
@@ -286,7 +392,7 @@ function createEvolutionClient(instanceEnvVar, defaultName) {
             throw new Error('sendButtons: buttons array is required');
         }
         const payload = {
-            number,
+            number: await normalizeSendRecipient(number),
             title,
             description,
             footer,

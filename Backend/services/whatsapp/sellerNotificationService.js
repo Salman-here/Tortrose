@@ -40,12 +40,8 @@ const NOTIFICATION_CATEGORIES = {
 // already handled the failure via .catch() and the notification is just dropped.
 
 const HOURLY_CAP = Number(process.env.SELLER_WA_HOURLY_CAP || 60);
-const MIN_DELAY_MS = 1000;
-const MAX_DELAY_MS = 3000;
 
 let chain = Promise.resolve(); // serial queue
-const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-const randomDelay = () => MIN_DELAY_MS + Math.floor(Math.random() * (MAX_DELAY_MS - MIN_DELAY_MS));
 
 /**
  * Atomically increment sentInLastHour on the seller singleton and return
@@ -189,11 +185,6 @@ function notifySeller(sellerId, category, message) {
     const task = chain.then(async () => {
         try {
             const result = await sendNow(sellerIdStr, category, message);
-            // Only add jitter delay after a real network send to avoid slowing
-            // down rapid-fire skips (unverified/disabled/etc.)
-            if (result.sent) {
-                await sleep(randomDelay());
-            }
             return result;
         } catch (err) {
             console.error(`[sellerNotification] Unexpected error in queue for ${category}:`, err.message);

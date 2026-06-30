@@ -1,4 +1,4 @@
-// FIFO queue processor with random delay (8–25s) and retry/backoff.
+// FIFO queue processor with immediate first send and retry/backoff.
 // Persists state in MongoDB so Heroku dyno restarts don't drop pending jobs.
 
 const WhatsAppPendingMessage = require('../../models/WhatsAppPendingMessage');
@@ -14,8 +14,6 @@ const {
 } = require('./messageBuilder');
 const Order = require('../../models/Order');
 
-const MIN_DELAY_MS = 8 * 1000;
-const MAX_DELAY_MS = 25 * 1000;
 const MAX_ATTEMPTS = 3;
 const HOURLY_CAP = 60;
 const OPEN_CONVERSATION_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -23,9 +21,6 @@ const openConversationWindows = new Map();
 
 let timer = null;
 let isProcessing = false;
-
-const randomDelay = () =>
-    Math.floor(MIN_DELAY_MS + Math.random() * (MAX_DELAY_MS - MIN_DELAY_MS));
 
 exports.markInboundConversationWindowOpen = (phone) => {
     if (!phone) return;
@@ -86,10 +81,9 @@ exports.enqueueOrderConfirmation = async (order) => {
             phone,
             buyerName: order.shippingInfo?.fullName || '',
             status: 'queued',
-            nextAttemptAt: hasOpenConversationWindow(phone)
-                ? new Date()
-                : new Date(Date.now() + randomDelay()),
+            nextAttemptAt: new Date(),
         });
+        setImmediate(() => tick().catch(err => console.error('[whatsapp] immediate queue tick failed:', err.message)));
         return pending;
     } catch (err) {
         console.error('[whatsapp] enqueue failed:', err.message);
@@ -121,10 +115,9 @@ exports.enqueueOrderPlacedInfo = async (order) => {
             phone,
             buyerName: order.shippingInfo?.fullName || '',
             status: 'queued',
-            nextAttemptAt: hasOpenConversationWindow(phone)
-                ? new Date()
-                : new Date(Date.now() + randomDelay()),
+            nextAttemptAt: new Date(),
         });
+        setImmediate(() => tick().catch(err => console.error('[whatsapp] immediate info queue tick failed:', err.message)));
         return pending;
     } catch (err) {
         console.error('[whatsapp] info enqueue failed:', err.message);
@@ -321,8 +314,7 @@ const tick = async () => {
 
 exports.startQueueProcessor = () => {
     if (timer) return;
-    // Poll every 5s; random delay enforced via job.nextAttemptAt
-    timer = setInterval(tick, 5000);
+    timer = setInterval(tick, 1000);
     timer.unref?.();
     console.log('[whatsapp] queue processor started');
 };
