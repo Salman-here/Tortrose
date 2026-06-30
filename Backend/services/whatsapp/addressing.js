@@ -15,8 +15,13 @@ const isGroupOrBroadcastJid = (jid = '') => (
     jid === 'status@broadcast'
 );
 
+const isLidJid = (jid = '') => jid.endsWith('@lid');
+const isPhoneJid = (jid = '') => jid.endsWith('@s.whatsapp.net');
+
 // WhatsApp LID mode can send inbound messages with key.remoteJid as the
 // replyable @lid chat and key.remoteJidAlt as the user's real phone JID.
+// Some Evolution webhook payloads reverse those two fields. When both are
+// present, always identify the user by the phone JID and reply to the LID JID.
 const resolveInboundAddress = (msg) => {
     const remoteJid = msg?.key?.remoteJid || msg?.remoteJid || '';
     const altJid =
@@ -25,21 +30,33 @@ const resolveInboundAddress = (msg) => {
         msg?.key?.participantAlt ||
         msg?.participantAlt ||
         '';
+    const participantJid = msg?.key?.participant || msg?.participant || '';
+    const participantAltJid = msg?.key?.participantAlt || msg?.participantAlt || '';
+    const jidCandidates = [remoteJid, altJid, participantJid, participantAltJid].filter(Boolean);
+    const lidJid = jidCandidates.find(isLidJid) || '';
+    const phoneJid = jidCandidates.find(isPhoneJid) || '';
     const remotePhone = phoneFromJid(remoteJid);
     const altPhone = phoneFromJid(altJid);
+    const participantPhone = phoneFromJid(participantJid);
+    const participantAltPhone = phoneFromJid(participantAltJid);
+    const phoneJidDigits = phoneFromJid(phoneJid);
 
     return {
         remoteJid,
         altJid,
-        identityPhone: altPhone || remotePhone,
-        replyTo: remoteJid || altJid || altPhone || remotePhone,
-        candidatePhones: uniqueNonEmpty([altPhone, remotePhone]),
+        participantJid,
+        participantAltJid,
+        identityPhone: phoneJidDigits || altPhone || remotePhone || participantAltPhone || participantPhone,
+        replyTo: lidJid || remoteJid || altJid || participantJid || participantAltJid || phoneJidDigits || altPhone || remotePhone,
+        candidatePhones: uniqueNonEmpty([phoneJidDigits, altPhone, remotePhone, participantAltPhone, participantPhone]),
     };
 };
 
 module.exports = {
     phoneFromJid,
     isGroupOrBroadcastJid,
+    isLidJid,
+    isPhoneJid,
     resolveInboundAddress,
     uniqueNonEmpty,
 };

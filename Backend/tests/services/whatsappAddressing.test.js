@@ -24,6 +24,19 @@ describe('WhatsApp inbound addressing', () => {
     expect(address.candidatePhones).toEqual(['923028588506', '78220481290301']);
   });
 
+  test('handles Evolution webhook payloads where phone and LID fields are reversed', () => {
+    const address = resolveInboundAddress({
+      key: {
+        remoteJid: '923499166402@s.whatsapp.net',
+        remoteJidAlt: '39767790104698@lid',
+      },
+    });
+
+    expect(address.identityPhone).toBe('923499166402');
+    expect(address.replyTo).toBe('39767790104698@lid');
+    expect(address.candidatePhones).toEqual(['923499166402', '39767790104698']);
+  });
+
   test('falls back cleanly for legacy phone-JID messages', () => {
     const address = resolveInboundAddress({
       key: { remoteJid: '923028588506@s.whatsapp.net' },
