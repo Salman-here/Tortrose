@@ -80,7 +80,7 @@ function getClient(instanceType) {
  * Send a text message via the correct WhatsApp instance, splitting long messages.
  * WhatsApp has a ~4096 char limit per message.
  */
-async function sendResponse(phone, text, instanceType) {
+async function sendResponse(recipient, text, instanceType) {
     const client = getClient(instanceType);
     if (!client.isConfigured()) {
         console.warn(`[wa-ai-chat] ${instanceType} instance not configured, cannot send response`);
@@ -89,7 +89,7 @@ async function sendResponse(phone, text, instanceType) {
 
     const MAX_LEN = 4000; // leave room for overhead
     if (text.length <= MAX_LEN) {
-        await client.sendText(phone, text);
+        await client.sendText(recipient, text);
         return;
     }
 
@@ -107,7 +107,7 @@ async function sendResponse(phone, text, instanceType) {
     if (remaining) parts.push(remaining);
 
     for (const part of parts) {
-        await client.sendText(phone, part);
+        await client.sendText(recipient, part);
         // Small delay between messages to avoid spam detection
         await new Promise(r => setTimeout(r, 500));
     }
@@ -323,7 +323,7 @@ async function loadWhatsAppConversation(userId) {
 
 // ─── Graceful Rejection Messages ──────────────────────────────────────
 
-async function handleUnlinkedUserOnMainInstance(phone) {
+async function handleUnlinkedUserOnMainInstance(recipient) {
     const msg = [
         `Hey there! 👋`,
         ``,
@@ -343,13 +343,13 @@ async function handleUnlinkedUserOnMainInstance(phone) {
     ].join('\n');
 
     try {
-        await evolution.sendText(phone, msg);
+        await evolution.sendText(recipient, msg);
     } catch (err) {
         console.error('[wa-ai-chat] Failed to send unlinked user message:', err.message);
     }
 }
 
-async function handleNonSellerOnSellerInstance(phone) {
+async function handleNonSellerOnSellerInstance(phone, recipient = phone) {
     // Check if it's a user (not a seller) who sent to seller instance
     const digits = normalizePhoneDigits(phone);
     const phoneVariants = [digits, `+${digits}`];
@@ -392,7 +392,7 @@ async function handleNonSellerOnSellerInstance(phone) {
     }
 
     try {
-        await sellerEvolution.sendText(phone, msg);
+        await sellerEvolution.sendText(recipient, msg);
     } catch (err) {
         console.error('[wa-ai-chat] Failed to send non-seller message:', err.message);
     }
@@ -404,11 +404,14 @@ async function handleNonSellerOnSellerInstance(phone) {
  * Process an incoming WhatsApp text message through the AI pipeline.
  * Called by webhookHandler for non-order-confirmation messages.
  *
- * @param {string} phone - Sender's phone number (digits only)
+ * @param {string} phone - Sender's real phone number for identity lookup/rate limiting
  * @param {string} messageText - The text content of the message
  * @param {string} instanceType - 'main' | 'seller'
+ * @param {Array} rawAttachments - Media attachments extracted from Evolution
+ * @param {object} options - Optional routing hints
+ * @param {string} options.replyTo - Exact WhatsApp chat JID/number to reply to
  */
-async function processIncomingWhatsAppMessage(phone, messageText, instanceType, rawAttachments = []) {
+async function processIncomingWhatsAppMessage(phone, messageText, instanceType, rawAttachments = [], options = {}) {
     if (!AI_CHAT_ENABLED) {
         console.log(`[wa-ai-chat] AI chat disabled, ignoring message from ${phone}`);
         return;
@@ -417,8 +420,9 @@ async function processIncomingWhatsAppMessage(phone, messageText, instanceType, 
     const attachments = Array.isArray(rawAttachments) ? rawAttachments : [];
     if ((!messageText || !messageText.trim()) && attachments.length === 0) return;
 
+    const replyTo = options.replyTo || phone;
     const trimmedText = String(messageText || '').trim();
-    console.log(`[wa-ai-chat] Processing ${instanceType} message from ${phone}: "${trimmedText.slice(0, 100)}..." attachments=${attachments.length}`);
+    console.log(`[wa-ai-chat] Processing ${instanceType} message from ${phone} (replyTo=${replyTo}): "${trimmedText.slice(0, 100)}..." attachments=${attachments.length}`);
 
     try {
         // 1. Identify the user
@@ -427,9 +431,9 @@ async function processIncomingWhatsAppMessage(phone, messageText, instanceType, 
             // Graceful rejection — with cooldown to prevent spamming
             if (canSendRejection(phone)) {
                 if (instanceType === 'main') {
-                    await handleUnlinkedUserOnMainInstance(phone);
+                    await handleUnlinkedUserOnMainInstance(replyTo);
                 } else {
-                    await handleNonSellerOnSellerInstance(phone);
+                    await handleNonSellerOnSellerInstance(phone, replyTo);
                 }
             } else {
                 console.log(`[wa-ai-chat] Skipping rejection message for ${phone} (cooldown)`);
@@ -451,7 +455,7 @@ async function processIncomingWhatsAppMessage(phone, messageText, instanceType, 
                 `In the meantime, you can use the web chat at:`,
                 `${SITE_URL}/ai-chat`,
             ].join('\n');
-            await sendResponse(phone, msg, instanceType);
+            await sendResponse(replyTo, msg, instanceType);
             return;
         }
 
@@ -484,10 +488,10 @@ async function processIncomingWhatsAppMessage(phone, messageText, instanceType, 
         // 7. Send AI response
         if (result.responseText) {
             const responseText = sanitizeVisibleAIResponse(result.responseText);
-            await sendResponse(phone, responseText, instanceType);
+            await sendResponse(replyTo, responseText, instanceType);
         } else {
             // AI returned empty response — send a fallback
-            await sendResponse(phone, "I'm sorry, I couldn't process that. Could you try rephrasing? 🤔", instanceType);
+            await sendResponse(replyTo, "I'm sorry, I couldn't process that. Could you try rephrasing? 🤔", instanceType);
         }
 
         // 8. Send pending product images (if AI used send_product_image tool)
@@ -495,12 +499,12 @@ async function processIncomingWhatsAppMessage(phone, messageText, instanceType, 
             const client = getClient(instanceType);
             for (const img of aiOptions._pendingImages) {
                 try {
-                    await client.sendMedia(phone, img.imageUrl, img.caption, 'image');
+                    await client.sendMedia(replyTo, img.imageUrl, img.caption, 'image');
                     await new Promise(r => setTimeout(r, 800)); // delay between images
                 } catch (imgErr) {
                     console.error(`[wa-ai-chat] Failed to send product image to ${phone}:`, imgErr.message);
                     // Fallback: send image URL as text
-                    await client.sendText(phone, `📸 Image: ${img.imageUrl}\n${img.caption}`).catch(() => {});
+                    await client.sendText(replyTo, `📸 Image: ${img.imageUrl}\n${img.caption}`).catch(() => {});
                 }
             }
         }
@@ -517,7 +521,7 @@ async function processIncomingWhatsAppMessage(phone, messageText, instanceType, 
                 : err.message?.includes('credits')
                     ? "I'm temporarily unavailable. Please try again later or use the web chat at " + SITE_URL + "/ai-chat"
                     : "Oops! Something went wrong on my end. Please try again or visit " + SITE_URL + "/ai-chat 💙";
-            await sendResponse(phone, errorMsg, instanceType);
+            await sendResponse(replyTo, errorMsg, instanceType);
         } catch (sendErr) {
             console.error('[wa-ai-chat] Failed to send error message:', sendErr.message);
         }

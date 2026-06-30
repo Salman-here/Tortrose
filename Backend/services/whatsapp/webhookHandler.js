@@ -29,6 +29,12 @@ const evolution = require('./evolutionClient');
 const { notifySeller } = require('./sellerNotificationService');
 const sellerTemplates = require('./sellerMessageTemplates');
 const { processIncomingWhatsAppMessage } = require('./whatsappAIChatService');
+const {
+    phoneFromJid,
+    isGroupOrBroadcastJid,
+    resolveInboundAddress,
+    uniqueNonEmpty,
+} = require('./addressing');
 
 // ──────────────────────────────────────────────────────────────────────────
 // Outgoing friendly replies
@@ -307,13 +313,12 @@ const extractPollVote = (msg) => {
     return optionIndex === 0 ? 'yes' : 'no';
 };
 
-// Extract the buyer phone digits from a Baileys key.remoteJid like
-// "923028588506@s.whatsapp.net" → "923028588506"
-const phoneFromJid = (jid) => {
-    if (!jid || typeof jid !== 'string') return '';
-    const at = jid.indexOf('@');
-    const raw = at > 0 ? jid.slice(0, at) : jid;
-    return raw.replace(/[^\d]/g, '');
+const findPendingJobByCandidatePhones = async (phones = []) => {
+    for (const phone of uniqueNonEmpty(phones)) {
+        const job = await findPendingJobByPhone(phone);
+        if (job) return job;
+    }
+    return null;
 };
 
 const extractMessageText = (msg) => {
@@ -436,10 +441,10 @@ exports.handleEvolutionWebhook = async (req, res) => {
                 const messages = Array.isArray(body.data) ? body.data : [body.data].filter(Boolean);
                 for (const msg of messages) {
                     if (msg?.key?.fromMe) continue;
-                    const remoteJid = msg?.key?.remoteJid || msg?.remoteJid || '';
+                    const address = resolveInboundAddress(msg);
+                    const { remoteJid, identityPhone: phone, replyTo } = address;
                     // Skip group messages — only process 1:1 private chats
-                    if (remoteJid.endsWith('@g.us') || remoteJid.includes('@broadcast')) continue;
-                    const phone = phoneFromJid(remoteJid);
+                    if (isGroupOrBroadcastJid(remoteJid)) continue;
                     if (!phone) continue;
                     markInboundConversationWindowOpen(phone);
 
@@ -452,7 +457,7 @@ exports.handleEvolutionWebhook = async (req, res) => {
                     if ((!text || !text.trim()) && attachments.length === 0) continue;
 
                     // Route to AI chat (fire-and-forget — don't block webhook response)
-                    processIncomingWhatsAppMessage(phone, String(text || '').trim(), 'seller', attachments).catch(err => {
+                    processIncomingWhatsAppMessage(phone, String(text || '').trim(), 'seller', attachments, { replyTo }).catch(err => {
                         console.error('[whatsapp] seller AI chat error:', err.message);
                     });
                 }
@@ -469,8 +474,9 @@ exports.handleEvolutionWebhook = async (req, res) => {
                 // Never process messages we sent
                 if (msg?.key?.fromMe) continue;
 
-                const remoteJid = msg?.key?.remoteJid || msg?.remoteJid || '';
-                const phone = phoneFromJid(remoteJid);
+                const address = resolveInboundAddress(msg);
+                const { remoteJid, identityPhone: phone, replyTo } = address;
+                if (isGroupOrBroadcastJid(remoteJid)) continue;
                 if (!phone) continue;
                 markInboundConversationWindowOpen(phone);
                 const mediaText = extractMessageText(msg);
@@ -520,14 +526,14 @@ exports.handleEvolutionWebhook = async (req, res) => {
                     }
                 }
                 if (!job) {
-                    job = await findPendingJobByPhone(phone);
+                    job = await findPendingJobByCandidatePhones(address.candidatePhones);
                 }
 
                 // ── No pending order confirmation → route to AI chat ──
                 if (!job) {
                     const rawText = replyTextForHint || (extracted?.source === 'text' ? extracted.text : '') || mediaText;
                     if (rawText || attachments.length) {
-                        processIncomingWhatsAppMessage(phone, rawText, 'main', attachments).catch(err => {
+                        processIncomingWhatsAppMessage(phone, rawText, 'main', attachments, { replyTo }).catch(err => {
                             console.error('[whatsapp] main AI chat error:', err.message);
                         });
                     }
@@ -538,7 +544,7 @@ exports.handleEvolutionWebhook = async (req, res) => {
                 // route to AI chat instead of just sending a YES/NO hint — the AI is
                 // smarter and can help with order questions or other requests.
                 if (!decision && (replyTextForHint || attachments.length)) {
-                    processIncomingWhatsAppMessage(phone, replyTextForHint || mediaText, 'main', attachments).catch(err => {
+                    processIncomingWhatsAppMessage(phone, replyTextForHint || mediaText, 'main', attachments, { replyTo }).catch(err => {
                         console.error('[whatsapp] main AI chat error (with pending order):', err.message);
                     });
                     continue;
@@ -563,7 +569,7 @@ exports.handleEvolutionWebhook = async (req, res) => {
                             ``,
                             `Status: *${order.orderStatus}* — we'll keep you updated. 💙`,
                         ].join('\n');
-                        await evolution.sendText(phone, msg);
+                        await evolution.sendText(replyTo, msg);
                         continue;
                     }
                     const updated = await Order.findOneAndUpdate(
@@ -584,11 +590,11 @@ exports.handleEvolutionWebhook = async (req, res) => {
                     );
                     if (updated) {
                         await applyVote(job, 'yes');
-                        await sendResponseMessage(phone, true, order.orderId, firstName);
+                        await sendResponseMessage(replyTo, true, order.orderId, firstName);
                         notifySellers(updated, true);
                     } else {
                         const msg = `Hey ${firstName}! Something changed. Please visit rozare.com 💙`;
-                        await evolution.sendText(phone, msg);
+                        await evolution.sendText(replyTo, msg);
                     }
                     continue;
                 }
@@ -617,11 +623,11 @@ exports.handleEvolutionWebhook = async (req, res) => {
                         );
                         if (updated) {
                             await applyVote(job, 'no');
-                            await sendResponseMessage(phone, false, order.orderId, firstName);
+                            await sendResponseMessage(replyTo, false, order.orderId, firstName);
                             notifySellers(updated, false);
                         } else {
                             const msg = `Hey ${firstName}! Something changed. Please visit rozare.com 💙`;
-                            await evolution.sendText(phone, msg);
+                            await evolution.sendText(replyTo, msg);
                         }
                     } else {
                         // Order is already cancelled, just acknowledge
@@ -632,7 +638,7 @@ exports.handleEvolutionWebhook = async (req, res) => {
                             ``,
                             `If you change your mind, you can always place a new order at rozare.com`,
                         ].join('\n');
-                        await evolution.sendText(phone, msg);
+                        await evolution.sendText(replyTo, msg);
                     }
                     continue;
                 }
@@ -685,7 +691,7 @@ exports.handleEvolutionWebhook = async (req, res) => {
                                 ``,
                                 `No action needed — we'll keep you updated. 💙`,
                             ].join('\n');
-                            await evolution.sendText(phone, msg);
+                            await evolution.sendText(replyTo, msg);
                         } else {
                             // Tap cancel — already confirmed via email, tell them to visit account
                             const msg = [
@@ -695,7 +701,7 @@ exports.handleEvolutionWebhook = async (req, res) => {
                                 ``,
                                 `Want to cancel? Visit your Rozare account to cancel this order. 💙`,
                             ].join('\n');
-                            await evolution.sendText(phone, msg);
+                            await evolution.sendText(replyTo, msg);
                         }
                         continue;
                     }
@@ -711,7 +717,7 @@ exports.handleEvolutionWebhook = async (req, res) => {
                                 ``,
                                 `No action needed. 💙`,
                             ].join('\n');
-                            await evolution.sendText(phone, msg);
+                            await evolution.sendText(replyTo, msg);
                         } else {
                             // Tap confirm — wants to re-order! Send "Are you sure?" prompt
                             console.log(`[whatsapp] Order ${order.orderId} was cancelled via email; buyer tapped YES on WA — sending reconfirm prompt`);
@@ -720,7 +726,7 @@ exports.handleEvolutionWebhook = async (req, res) => {
                                 ``,
                                 `You cancelled this order via your email (${maskedEmail}).`,
                             ].join('\n');
-                            await sendReconfirmPrompt(phone, order, contextMsg);
+                            await sendReconfirmPrompt(replyTo, order, contextMsg);
                         }
                         continue;
                     }
@@ -736,7 +742,7 @@ exports.handleEvolutionWebhook = async (req, res) => {
                                 ``,
                                 `No action needed. 💙`,
                             ].join('\n');
-                            await evolution.sendText(phone, msg);
+                            await evolution.sendText(replyTo, msg);
                         } else {
                             // Tap confirm — wants to re-order from account cancel! Send prompt
                             console.log(`[whatsapp] Order ${order.orderId} was cancelled from account; buyer tapped YES on WA — sending reconfirm prompt`);
@@ -745,7 +751,7 @@ exports.handleEvolutionWebhook = async (req, res) => {
                                 ``,
                                 `You cancelled this order from your Rozare account.`,
                             ].join('\n');
-                            await sendReconfirmPrompt(phone, order, contextMsg);
+                            await sendReconfirmPrompt(replyTo, order, contextMsg);
                         }
                         continue;
                     }
@@ -767,7 +773,7 @@ exports.handleEvolutionWebhook = async (req, res) => {
                                 ``,
                                 `No action needed. 💙`,
                             ].join('\n');
-                            await evolution.sendText(phone, msg);
+                            await evolution.sendText(replyTo, msg);
                         } else {
                             // Tap confirm — wants to re-order! Send prompt
                             console.log(`[whatsapp] Order ${order.orderId} cancelled after WA confirm; buyer tapped YES — sending reconfirm prompt`);
@@ -776,7 +782,7 @@ exports.handleEvolutionWebhook = async (req, res) => {
                                 ``,
                                 `You cancelled this order from ${cancelledFrom} after confirming on WhatsApp.`,
                             ].join('\n');
-                            await sendReconfirmPrompt(phone, order, contextMsg);
+                            await sendReconfirmPrompt(replyTo, order, contextMsg);
                         }
                         continue;
                     }
@@ -791,7 +797,7 @@ exports.handleEvolutionWebhook = async (req, res) => {
                                 ``,
                                 `No action needed — we'll keep you updated. 💙`,
                             ].join('\n');
-                            await evolution.sendText(phone, msg);
+                            await evolution.sendText(replyTo, msg);
                         } else {
                             const msg = [
                                 `Hey ${firstName}! 👋`,
@@ -800,7 +806,7 @@ exports.handleEvolutionWebhook = async (req, res) => {
                                 ``,
                                 `Want to cancel? Visit your Rozare account. 💙`,
                             ].join('\n');
-                            await evolution.sendText(phone, msg);
+                            await evolution.sendText(replyTo, msg);
                         }
                         continue;
                     }
@@ -823,7 +829,7 @@ exports.handleEvolutionWebhook = async (req, res) => {
                             ``,
                             `Want to cancel? Visit your Rozare account. 💙`,
                         ].join('\n');
-                        await evolution.sendText(phone, msg);
+                        await evolution.sendText(replyTo, msg);
                         continue;
                     }
 
@@ -835,7 +841,7 @@ exports.handleEvolutionWebhook = async (req, res) => {
                             ``,
                             `You previously cancelled this order on WhatsApp.`,
                         ].join('\n');
-                        await sendReconfirmPrompt(phone, order, contextMsg);
+                        await sendReconfirmPrompt(replyTo, order, contextMsg);
                         continue;
                     }
 
@@ -890,7 +896,7 @@ exports.handleEvolutionWebhook = async (req, res) => {
 
                 // NOW persist the vote on the job (dashboard reads this)
                 await applyVote(job, isYes ? 'yes' : 'no');
-                await sendResponseMessage(phone, isYes, updatedOrder.orderId, updatedOrder.shippingInfo?.fullName);
+                await sendResponseMessage(replyTo, isYes, updatedOrder.orderId, updatedOrder.shippingInfo?.fullName);
                 notifySellers(updatedOrder, isYes);
             }
             return res.status(200).json({ ok: true });
