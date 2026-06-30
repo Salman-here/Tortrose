@@ -150,7 +150,7 @@ export default function OrderConfirmationScreen({ navigation, route }) {
                 const selectedOptions = getSelectedOptions(item);
                 return (
                   <View key={`${item.name}-${index}`} style={styles.itemRow}>
-                    <Image source={{ uri: item.image || 'https://via.placeholder.com/80' }} style={styles.itemImage} />
+                    <Image source={{ uri: item.image || 'https://rozare.com/favicon-512.png' }} style={styles.itemImage} />
                     <View style={{ flex: 1 }}>
                       <Text style={styles.itemName} numberOfLines={2}>{item.name}</Text>
                       <Text style={styles.itemMeta}>Qty {item.quantity || 1} • {money(item.price || 0)}</Text>

@@ -15,6 +15,23 @@ const toId = (value) => value?._id?.toString?.() || value?.toString?.() || '';
 const roundMoney = (value) => Math.round((Number(value) || 0) * 100) / 100;
 const isDelivered = (order) => order?.orderStatus === 'delivered' || order?.isDelivered === true;
 const isLiveOrder = (order) => order?.awaitingPayment !== true && order?.orderStatus !== 'cancelled';
+const isSupportedCurrency = (currency) => CURRENCY_CODES.includes(String(currency || '').trim().toUpperCase());
+
+const getOrderCurrency = (order) => {
+    const explicitCurrency = String(order?.currency || '').trim().toUpperCase();
+    if (isSupportedCurrency(explicitCurrency)) return explicitCurrency;
+
+    const itemCurrencies = new Set(
+        (order?.orderItems || [])
+            .map((item) => item?.currency || item?.orderCurrency || item?.priceCurrency || item?.sourceCurrency)
+            .map((currency) => String(currency || '').trim().toUpperCase())
+            .filter(isSupportedCurrency)
+    );
+    return itemCurrencies.size === 1 ? [...itemCurrencies][0] : 'USD';
+};
+
+const convertOrderRevenueToUSD = async (amount, order) =>
+    roundMoney(await convertToUSD(roundMoney(amount), getOrderCurrency(order)));
 
 const last4 = (value) => {
     const raw = String(value || '').trim();
@@ -133,15 +150,19 @@ const buildSellerPaymentSummary = async (sellerId) => {
             const sellerRevenue = sellerRevenueForOrder(order, sellerIdStr, productIdSet);
             if (sellerRevenue.total <= 0) continue;
 
+            const sourceCurrency = getOrderCurrency(order);
+            const sellerRevenueUSD = await convertOrderRevenueToUSD(sellerRevenue.total, order);
+            if (sellerRevenueUSD <= 0) continue;
+
             const delivered = isDelivered(order);
             const paymentMethod = order.paymentMethod || 'cash_on_delivery';
 
             if (paymentMethod === 'stripe' && order.isPaid) {
                 if (delivered) {
-                    revenue.stripeDeliveredRevenue += sellerRevenue.total;
+                    revenue.stripeDeliveredRevenue += sellerRevenueUSD;
                     revenue.deliveredStripeOrders += 1;
                 } else {
-                    revenue.stripePendingRevenue += sellerRevenue.total;
+                    revenue.stripePendingRevenue += sellerRevenueUSD;
                     revenue.pendingStripeOrders += 1;
                 }
                 if (recentStripeOrders.length < 5) {
@@ -149,7 +170,10 @@ const buildSellerPaymentSummary = async (sellerId) => {
                         _id: order._id,
                         orderId: order.orderId,
                         status: order.orderStatus,
-                        amount: sellerRevenue.total,
+                        amount: sellerRevenueUSD,
+                        amountCurrency: 'USD',
+                        sourceAmount: sellerRevenue.total,
+                        sourceCurrency,
                         delivered,
                         createdAt: order.createdAt,
                     });
@@ -159,10 +183,10 @@ const buildSellerPaymentSummary = async (sellerId) => {
 
             if (paymentMethod === 'cash_on_delivery') {
                 if (delivered) {
-                    revenue.codDeliveredRevenue += sellerRevenue.total;
+                    revenue.codDeliveredRevenue += sellerRevenueUSD;
                     revenue.deliveredCodOrders += 1;
                 } else {
-                    revenue.codPendingRevenue += sellerRevenue.total;
+                    revenue.codPendingRevenue += sellerRevenueUSD;
                     revenue.pendingCodOrders += 1;
                 }
                 if (recentCodOrders.length < 5) {
@@ -170,7 +194,10 @@ const buildSellerPaymentSummary = async (sellerId) => {
                         _id: order._id,
                         orderId: order.orderId,
                         status: order.orderStatus,
-                        amount: sellerRevenue.total,
+                        amount: sellerRevenueUSD,
+                        amountCurrency: 'USD',
+                        sourceAmount: sellerRevenue.total,
+                        sourceCurrency,
                         delivered,
                         createdAt: order.createdAt,
                     });
@@ -453,27 +480,49 @@ exports.getAdminPaymentsOverview = async (req, res) => {
         const storeBySeller = new Map(stores.map((store) => [toId(store.seller), store]));
 
         const sellerRows = [];
+        const rowErrors = [];
         const totals = emptyRevenueSummary();
 
         for (const seller of sellers) {
-            const summary = await buildSellerPaymentSummary(seller._id);
-            Object.keys(totals).forEach((key) => {
-                if (typeof totals[key] === 'number') totals[key] += Number(summary.revenue[key]) || 0;
-            });
-            const accountWithSensitive = await SellerPaymentAccount.findOne({ seller: seller._id })
-                .select('+accountNumber +iban')
-                .lean();
-            sellerRows.push({
-                seller: {
-                    _id: seller._id,
-                    username: seller.username,
-                    email: seller.email,
-                    currency: normalizeCurrency(seller.currency || 'USD'),
-                },
-                store: storeBySeller.get(toId(seller._id)) || null,
-                revenue: summary.revenue,
-                paymentAccount: serializePaymentAccount(accountWithSensitive, { includeSensitive: true }),
-            });
+            try {
+                const summary = await buildSellerPaymentSummary(seller._id);
+                Object.keys(totals).forEach((key) => {
+                    if (typeof totals[key] === 'number') totals[key] += Number(summary.revenue[key]) || 0;
+                });
+                const accountWithSensitive = await SellerPaymentAccount.findOne({ seller: seller._id })
+                    .select('+accountNumber +iban')
+                    .lean();
+                sellerRows.push({
+                    seller: {
+                        _id: seller._id,
+                        username: seller.username,
+                        email: seller.email,
+                        currency: normalizeCurrency(seller.currency || 'USD'),
+                    },
+                    store: storeBySeller.get(toId(seller._id)) || null,
+                    revenue: summary.revenue,
+                    paymentAccount: serializePaymentAccount(accountWithSensitive, { includeSensitive: true }),
+                });
+            } catch (sellerError) {
+                console.error(`[payments] admin overview seller ${seller._id} failed:`, sellerError);
+                rowErrors.push({
+                    sellerId: seller._id,
+                    username: seller.username || '',
+                    msg: sellerError.message || 'Failed to load seller payment row',
+                });
+                sellerRows.push({
+                    seller: {
+                        _id: seller._id,
+                        username: seller.username,
+                        email: seller.email,
+                        currency: normalizeCurrency(seller.currency || 'USD'),
+                    },
+                    store: storeBySeller.get(toId(seller._id)) || null,
+                    revenue: emptyRevenueSummary(),
+                    paymentAccount: null,
+                    loadError: true,
+                });
+            }
         }
 
         Object.keys(totals).forEach((key) => {
@@ -492,6 +541,7 @@ exports.getAdminPaymentsOverview = async (req, res) => {
             summary: totals,
             sellers: sellerRows,
             withdrawals,
+            errors: rowErrors,
         });
     } catch (error) {
         console.error('[payments] admin overview error:', error);

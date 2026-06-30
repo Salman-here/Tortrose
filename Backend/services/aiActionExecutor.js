@@ -69,6 +69,7 @@ const CLIENT_SIDE_TOOLS = new Set([
   'show_style_advice',
   'suggest_outfit',
 ]);
+const DEFAULT_PRODUCT_IMAGE_URL = 'https://rozare.com/favicon-512.png';
 
 function isClientSideTool(name) {
   return CLIENT_SIDE_TOOLS.has(name);
@@ -439,7 +440,7 @@ function buildProductImageFields(productInput) {
     ...normalizedImages,
   ]);
   return {
-    image: primaryImage || allImages[0]?.url || 'https://via.placeholder.com/400',
+    image: primaryImage || allImages[0]?.url || DEFAULT_PRODUCT_IMAGE_URL,
     images: allImages,
   };
 }

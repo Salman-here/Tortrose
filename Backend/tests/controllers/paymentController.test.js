@@ -6,6 +6,7 @@ const Product = require('../../models/Product');
 const Order = require('../../models/Order');
 const SellerPaymentAccount = require('../../models/SellerPaymentAccount');
 const SellerWithdrawalRequest = require('../../models/SellerWithdrawalRequest');
+const { convertToUSD } = require('../../services/currencyService');
 
 let mongoServer;
 
@@ -50,12 +51,14 @@ const createOrder = ({
     isPaid = false,
     tax = 0,
     couponDiscount = 0,
+    currency = 'USD',
 }) => {
     const subtotal = items.reduce((sum, item) => sum + item.product.price * item.quantity, 0);
     const shippingCost = sellerShipping.reduce((sum, entry) => sum + entry.shippingMethod.price, 0);
 
     return Order.create({
         user: buyer._id,
+        currency,
         orderId: `ORD-${Date.now()}-${Math.random().toString(36).slice(2)}`,
         orderItems: items.map((item) => ({
             productId: item.product._id,
@@ -182,5 +185,33 @@ describe('PaymentController buildSellerPaymentSummary', () => {
         expect(summary.revenue.withdrawableBalance).toBe(130);
         expect(summary.revenue.totalDeliveredRevenue).toBe(527);
         expect(summary.revenue.estimatedRevenue).toBe(733);
+    });
+
+    test('converts non-USD order revenue to USD before exposing seller balances', async () => {
+        const seller = await createUser('sellerpkr', 'seller');
+        const buyer = await createUser('buyerpkr', 'user');
+        const sellerProduct = await createProduct(seller, 'pkr', 200);
+
+        await createOrder({
+            buyer,
+            currency: 'PKR',
+            items: [{ product: sellerProduct, quantity: 1 }],
+            sellerShipping: [{ seller: seller._id, shippingMethod: { name: 'standard', price: 0, estimatedDays: 5 } }],
+            paymentMethod: 'stripe',
+            isPaid: true,
+            orderStatus: 'delivered',
+        });
+
+        const expectedUSD = await convertToUSD(200, 'PKR');
+        const summary = await buildSellerPaymentSummary(seller._id);
+
+        expect(summary.revenue.stripeDeliveredRevenue).toBe(expectedUSD);
+        expect(summary.revenue.withdrawableBalance).toBe(expectedUSD);
+        expect(summary.recentStripeOrders[0]).toMatchObject({
+            amount: expectedUSD,
+            amountCurrency: 'USD',
+            sourceAmount: 200,
+            sourceCurrency: 'PKR',
+        });
     });
 });

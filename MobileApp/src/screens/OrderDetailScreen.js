@@ -214,7 +214,7 @@ export default function OrderDetailScreen({ route, navigation }) {
               : [];
             return (
               <View key={index} style={[styles.orderItem, index === order.orderItems.length - 1 && { borderBottomWidth: 0 }]}>
-                <Image source={{ uri: item.image || 'https://via.placeholder.com/80' }} style={styles.itemImage} contentFit="cover" cachePolicy="memory-disk" transition={150} />
+                <Image source={{ uri: item.image || 'https://rozare.com/favicon-512.png' }} style={styles.itemImage} contentFit="cover" cachePolicy="memory-disk" transition={150} />
                 <View style={styles.itemInfo}>
                   <Text style={styles.itemName} numberOfLines={2}>{item.name}</Text>
                   {item.selectedColor && (

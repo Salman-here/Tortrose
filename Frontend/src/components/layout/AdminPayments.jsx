@@ -140,6 +140,7 @@ const AdminPayments = () => {
     const summary = data?.summary || {};
     const sellers = data?.sellers || [];
     const withdrawals = data?.withdrawals || [];
+    const loadErrors = data?.errors || [];
 
     return (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="px-3 py-4 sm:p-6 max-w-7xl mx-auto space-y-6 overflow-hidden">
@@ -166,6 +167,20 @@ const AdminPayments = () => {
                 <StatCard label="Open Requests" value={pendingRequests} icon={<AlertTriangle size={22} />} color="hsl(0,72%,55%)" bg="rgba(239,68,68,0.12)" />
             </div>
 
+            {loadErrors.length > 0 && (
+                <div className="glass-inner rounded-2xl p-4 flex items-start gap-3" style={{ border: '1px solid rgba(249,115,22,0.35)' }}>
+                    <AlertTriangle size={18} className="shrink-0 mt-0.5" style={{ color: 'hsl(30,90%,50%)' }} />
+                    <div className="min-w-0">
+                        <p className="text-sm font-semibold" style={{ color: 'hsl(var(--foreground))' }}>
+                            Some seller payment rows could not be loaded.
+                        </p>
+                        <p className="text-xs mt-1 break-words" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                            Refresh after a moment. Loaded rows and withdrawal requests below are still usable.
+                        </p>
+                    </div>
+                </div>
+            )}
+
             <section className="glass-panel water-shimmer p-4 sm:p-6 min-w-0">
                 <div className="flex items-start justify-between gap-3 mb-4">
                     <div className="min-w-0">
@@ -190,10 +205,19 @@ const AdminPayments = () => {
                             </tr>
                         </thead>
                         <tbody>
-                            {sellers.map((row) => (
+                            {sellers.length === 0 ? (
+                                <tr style={{ borderTop: '1px solid var(--glass-border)' }}>
+                                    <td className="py-8 text-center text-sm" colSpan={6} style={{ color: 'hsl(var(--muted-foreground))' }}>
+                                        No seller payment data found.
+                                    </td>
+                                </tr>
+                            ) : sellers.map((row) => (
                                 <tr key={row.seller._id} style={{ borderTop: '1px solid var(--glass-border)' }}>
                                     <td className="py-3 pr-4">
-                                        <p className="font-semibold" style={{ color: 'hsl(var(--foreground))' }}>{row.seller.username}</p>
+                                        <div className="flex items-center gap-2">
+                                            <p className="font-semibold" style={{ color: 'hsl(var(--foreground))' }}>{row.seller.username}</p>
+                                            {row.loadError && <AlertTriangle size={14} style={{ color: 'hsl(30,90%,50%)' }} />}
+                                        </div>
                                         <p className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>{row.seller.email}</p>
                                     </td>
                                     <td className="py-3 pr-4" style={{ color: 'hsl(var(--muted-foreground))' }}>
