@@ -5,7 +5,7 @@ import path from 'path'
 
 const normalizeApiUrl = (value, fallback) => {
   const raw = String(value || fallback).trim()
-  return raw.endsWith('/') ? raw : `${raw}/`
+  return raw.endsWith('/') ? raw : `${raw}/` 
 }
 
 export default defineConfig(({ mode }) => {
