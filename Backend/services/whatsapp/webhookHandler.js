@@ -20,6 +20,7 @@ const Product = require('../../models/Product');
 const User = require('../../models/User');
 const Notification = require('../../models/Notification');
 const WhatsAppConfig = require('../../models/WhatsAppConfig');
+const WhatsAppPendingMessage = require('../../models/WhatsAppPendingMessage');
 const { sendEmail } = require('../../controllers/mailController');
 const { sellerOrderConfirmedByBuyerEmail } = require('../../utils/emailTemplates');
 const { sendPushToUser } = require('../../utils/expoPush');
@@ -43,6 +44,69 @@ const {
     routingScopeFor,
     useUnifiedWhatsAppInstance,
 } = require('./gatewayMode');
+
+const asArray = (value) => Array.isArray(value) ? value : [value].filter(Boolean);
+
+const latestMessageUpdateStatus = (msg = {}) => {
+    const updates = msg.MessageUpdate || msg.messageUpdate || msg.updates || [];
+    const latest = Array.isArray(updates) ? updates[updates.length - 1] : updates;
+    return String(
+        msg.status ||
+        msg.update?.status ||
+        msg.message?.status ||
+        latest?.status ||
+        ''
+    ).toUpperCase();
+};
+
+const messageKeyFromUpdate = (msg = {}) => (
+    msg.key ||
+    msg.message?.key ||
+    msg.update?.key ||
+    msg.data?.key ||
+    {}
+);
+
+const markOutboundDeliveryFailure = async (msg = {}, singletonKey = 'seller') => {
+    const key = messageKeyFromUpdate(msg);
+    const messageId = key.id || msg.id || msg.messageId || '';
+    const remoteJid = key.remoteJid || msg.remoteJid || '';
+    if (!messageId) return;
+
+    const reason = `Evolution marked outbound WhatsApp message ${messageId} to ${remoteJid || 'unknown recipient'} as ERROR`;
+    console.error(`[whatsapp] ${reason}`);
+
+    await WhatsAppConfig.updateOne(
+        { singletonKey },
+        {
+            $set: {
+                status: 'connected',
+                lastError: reason.slice(0, 500),
+                lastSeen: new Date(),
+            },
+        },
+        { upsert: true }
+    ).catch(() => null);
+
+    await WhatsAppPendingMessage.updateMany(
+        {
+            $or: [
+                { summaryMessageId: messageId },
+                { pollMessageId: messageId },
+            ],
+            status: { $in: ['sending', 'sent', 'queued'] },
+        },
+        {
+            $set: {
+                status: 'failed',
+                lastError: reason.slice(0, 500),
+                nextAttemptAt: new Date(Date.now() + 5 * 60 * 1000),
+            },
+        }
+    ).catch((err) => {
+        console.warn('[whatsapp] failed to mark pending message delivery error:', err.message);
+    });
+};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Outgoing friendly replies
@@ -447,6 +511,21 @@ exports.handleEvolutionWebhook = async (req, res) => {
                 { upsert: true, new: true }
             );
             return res.status(200).json({ ok: true, status: cfg.status, instance: singletonKey });
+        }
+
+        // Evolution accepts outbound sends as PENDING and later reports final
+        // delivery state through MESSAGES_UPDATE. Capture ERROR updates so the
+        // app does not silently report failed gateway sends as successful.
+        if (event === 'messages.update' || event === 'MESSAGES_UPDATE') {
+            const updates = asArray(body.data);
+            for (const update of updates) {
+                const status = latestMessageUpdateStatus(update);
+                const key = messageKeyFromUpdate(update);
+                if (status === 'ERROR' && key.fromMe !== false) {
+                    await markOutboundDeliveryFailure(update, singletonKey);
+                }
+            }
+            return res.status(200).json({ ok: true, instance: singletonKey });
         }
 
         // ── Seller instance: route inbound messages to AI chat ──
