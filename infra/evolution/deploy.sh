@@ -21,11 +21,13 @@ set -euo pipefail
 : "${SSH_HOST:=80.225.254.66}"
 : "${REMOTE_DIR:=/home/ubuntu/evolution-api}"
 : "${API_KEY:=rozareplatform}"
-: "${INSTANCE_NAME:=rozare-main}"
+: "${INSTANCE_NAME:=rozare-seller}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COMPOSE_SRC="${SCRIPT_DIR}/docker-compose.yml"
 ENV_SRC="${SCRIPT_DIR}/.env"
+DOCKERFILE_SRC="${SCRIPT_DIR}/Dockerfile"
+PATCHES_SRC="${SCRIPT_DIR}/patches"
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 c_red()   { printf '\033[31m%s\033[0m\n' "$*"; }
@@ -41,6 +43,8 @@ SCP="scp -i ${SSH_KEY} -o StrictHostKeyChecking=no -o ConnectTimeout=30"
 step "Verifying local files…"
 [ -f "$COMPOSE_SRC" ] || { c_red "Missing $COMPOSE_SRC"; exit 1; }
 [ -f "$ENV_SRC" ]     || { c_red "Missing $ENV_SRC";     exit 1; }
+[ -f "$DOCKERFILE_SRC" ] || { c_red "Missing $DOCKERFILE_SRC"; exit 1; }
+[ -d "$PATCHES_SRC" ] || { c_red "Missing $PATCHES_SRC"; exit 1; }
 [ -f "$SSH_KEY" ]     || { c_red "SSH key not found at $SSH_KEY"; exit 1; }
 chmod 600 "$SSH_KEY" || true
 
@@ -72,8 +76,11 @@ c_green "✓ SSH reachable"
 step "Ensuring remote directory ${REMOTE_DIR}…"
 $SSH "mkdir -p ${REMOTE_DIR}"
 
-step "Uploading docker-compose.yml and .env…"
+step "Uploading docker-compose.yml, Dockerfile, patches, and .env…"
 $SCP "$COMPOSE_SRC" "${SSH_USER}@${SSH_HOST}:${REMOTE_DIR}/docker-compose.yml"
+$SCP "$DOCKERFILE_SRC" "${SSH_USER}@${SSH_HOST}:${REMOTE_DIR}/Dockerfile"
+$SSH "mkdir -p ${REMOTE_DIR}/patches"
+$SCP "$PATCHES_SRC"/* "${SSH_USER}@${SSH_HOST}:${REMOTE_DIR}/patches/"
 $SCP "$ENV_SRC"     "${SSH_USER}@${SSH_HOST}:${REMOTE_DIR}/.env"
 c_green "✓ Files uploaded"
 
@@ -99,8 +106,9 @@ $SSH "cd ${REMOTE_DIR} && docker compose down --remove-orphans 2>/dev/null || tr
 $SSH "docker rm -f evolution_api evolution_mongo evolution_postgres evolution_redis 2>/dev/null || true"
 
 # ── Pull + start ─────────────────────────────────────────────────────────────
-step "Pulling images (evolution-api, postgres, redis)…"
-$SSH "cd ${REMOTE_DIR} && docker compose pull"
+step "Pulling base images and building patched Evolution API image…"
+$SSH "cd ${REMOTE_DIR} && docker compose pull postgres redis"
+$SSH "cd ${REMOTE_DIR} && docker compose build evolution-api"
 
 step "Starting stack…"
 $SSH "cd ${REMOTE_DIR} && docker compose up -d"
@@ -156,7 +164,7 @@ Next steps:
      Scan it with WhatsApp on your business phone.
 
   3. After linking, the backend auto-registers its webhook at:
-       https://tortrose-backend-496a749db93a.herokuapp.com/api/whatsapp/webhook
+       https://rozare.up.railway.app/api/whatsapp/webhook
 
   4. View live logs any time:
        ssh -i ${SSH_KEY} ${SSH_USER}@${SSH_HOST} 'docker logs -f evolution_api'

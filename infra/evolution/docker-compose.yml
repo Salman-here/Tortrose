@@ -4,20 +4,19 @@
 # All secrets / tunables live in the sibling .env file.
 #
 # Services:
-#   - evolution_api   (evoapicloud/evolution-api:v2.3.7)       :8080
+#   - evolution_api   (rozare/evolution-api:v2.3.7-baileys-rc13-lidfix) :8080
 #   - evolution_pg    (postgres:16-alpine)                     :5432 (internal)
 #   - evolution_redis (redis:7-alpine)                         :6379 (internal)
 
 services:
   evolution-api:
     container_name: evolution_api
-    # Use 'homolog' (Evolution's pre-release branch) — it contains the fixed
-    # listMessage with legacy SINGLE_SELECT format that actually renders
-    # tappable list buttons on regular WhatsApp (Web/iOS/Android). The
-    # tagged v2.3.7 release has a broken sendList (isZero error) and
-    # sendButtons goes through the native-flow path which Meta gates for
-    # non-Cloud-API accounts (messages stay PENDING forever).
-    image: evoapicloud/evolution-api:homolog
+    # Build a patched v2.3.7 image. The patch upgrades Baileys to rc13 for
+    # WhatsApp 463/tctoken recovery and preserves explicit LID reply targets.
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: rozare/evolution-api:v2.3.7-baileys-rc13-lidfix
     restart: always
     depends_on:
       postgres:
