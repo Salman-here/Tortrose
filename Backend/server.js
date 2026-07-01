@@ -28,6 +28,7 @@ const mongoose = require('mongoose')
 const Order = require('./models/Order')
 const Product = require('./models/Product')
 const { trackOrderEvent } = require('./services/tiktokEventsApi')
+const { configKeyFor } = require('./services/whatsapp/gatewayMode')
 
 
 // ── Stripe Webhook (raw body required — must come before express.json) ──
@@ -152,7 +153,7 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
           const { nVerify } = require('./controllers/subscriptionController');
           const { enqueueOrderPlacedInfo } = require('./services/whatsapp/queue');
 
-          const cfg = await WhatsAppConfig.findOne({ singletonKey: 'main' });
+          const cfg = await WhatsAppConfig.findOne({ singletonKey: configKeyFor('main') });
           if (!cfg || cfg.status !== 'connected') {
             if (order.confirmation) {
               order.confirmation.whatsappSentAt = new Date();
@@ -533,7 +534,7 @@ app.get('/health', (req, res) => {
     timestamp: new Date().toISOString(),
     env: process.env.NODE_ENV,
     gitCommit: process.env.RAILWAY_GIT_COMMIT_SHA || process.env.VERCEL_GIT_COMMIT_SHA || process.env.GIT_COMMIT || '',
-    buildMarker: 'whatsapp-addressing-v5-min-withdrawal-v1',
+    buildMarker: 'whatsapp-unified-gateway-v1',
     mongoConnected: mongoose.connection.readyState === 1
   });
 });

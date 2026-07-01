@@ -97,7 +97,7 @@ const userSchema = mongoose.Schema({
     // Expo push notification tokens (one user may have multiple devices)
     expoPushTokens: { type: [String], default: [] },
 
-    // User WhatsApp linking (for AI chat via WhatsApp on buyer instance)
+    // User WhatsApp linking (for buyer AI chat via the WhatsApp gateway)
     // Distinct from sellerInfo.whatsappNumber which is for seller notifications
     whatsappInfo: {
         number: { type: String, default: '' },          // E.164 format e.g. "+923028588506"

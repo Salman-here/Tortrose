@@ -29,6 +29,7 @@ const makeClient = () => axios.create({
 });
 const recentRouteCache = new Map();
 const RECENT_ROUTE_CACHE_TTL_MS = 10 * 60 * 1000;
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 // Turn a raw QR "code" string into a base64 PNG data URL.
 const qrTextToDataUrl = async (raw) => {
@@ -254,6 +255,9 @@ function createEvolutionClient(instanceEnvVar, defaultName) {
             const { data } = await client().get(`/instance/connectionState/${instanceName()}`);
             return data?.instance || data || {};
         } catch (err) {
+            if (err.response?.status === 404) {
+                return { state: 'not_found', error: err.response?.data || err.message };
+            }
             return { state: 'error', error: err.response?.data || err.message };
         }
     };
@@ -264,6 +268,9 @@ function createEvolutionClient(instanceEnvVar, defaultName) {
             const { data } = await client().delete(`/instance/logout/${instanceName()}`);
             return data;
         } catch (err) {
+            if (err.response?.status === 404) {
+                return { status: 'SUCCESS', error: false, response: { message: 'Instance already absent' }, notFound: true };
+            }
             return { error: err.response?.data || err.message };
         }
     };
@@ -274,6 +281,9 @@ function createEvolutionClient(instanceEnvVar, defaultName) {
             const { data } = await client().delete(`/instance/delete/${instanceName()}`);
             return data;
         } catch (err) {
+            if (err.response?.status === 404) {
+                return { status: 'SUCCESS', error: false, response: { message: 'Instance already absent' }, notFound: true };
+            }
             return { error: err.response?.data || err.message };
         }
     };
@@ -411,22 +421,30 @@ function createEvolutionClient(instanceEnvVar, defaultName) {
     const setWebhook = async (url, secret = '') => {
         if (!isConfigured()) throw new Error('Evolution API not configured');
         const payload = {
-            webhook: {
-                enabled: true,
-                url,
-                webhookByEvents: false,
-                webhookBase64: String(process.env.EVOLUTION_WEBHOOK_BASE64 || '').toLowerCase() === 'true',
-                events: [
-                    'MESSAGES_UPSERT',
-                    'MESSAGES_UPDATE',
-                    'CONNECTION_UPDATE',
-                    'QRCODE_UPDATED',
-                ],
-                ...(secret ? { headers: { 'x-rozare-webhook-secret': secret } } : {}),
-            },
+            enabled: true,
+            url,
+            webhookByEvents: false,
+            webhookBase64: String(process.env.EVOLUTION_WEBHOOK_BASE64 || '').toLowerCase() === 'true',
+            events: [
+                'MESSAGES_UPSERT',
+                'MESSAGES_UPDATE',
+                'CONNECTION_UPDATE',
+                'QRCODE_UPDATED',
+            ],
+            ...(secret ? { headers: { 'x-rozare-webhook-secret': secret } } : {}),
         };
-        const { data } = await client().post(`/webhook/set/${instanceName()}`, payload);
-        return data;
+        let lastError = null;
+        for (let attempt = 0; attempt < 4; attempt++) {
+            try {
+                const { data } = await client().post(`/webhook/set/${instanceName()}`, payload);
+                return data;
+            } catch (err) {
+                lastError = err;
+                if (err.response?.status !== 404 || attempt === 3) throw err;
+                await sleep(750 * (attempt + 1));
+            }
+        }
+        throw lastError;
     };
 
     const checkWhatsAppNumber = async (number) => {

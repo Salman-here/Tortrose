@@ -16,10 +16,11 @@ const WhatsAppAIChatRateLimit = require('../../models/WhatsAppAIChatRateLimit');
 const ChatHistory = require('../../models/ChatHistory');
 const { processAIChatMessage } = require('../../controllers/aiChatController');
 const { processChatAttachments } = require('../aiAttachmentService');
-const evolution = require('./evolutionClient');           // buyer instance (rozare-main)
+const evolution = require('./evolutionClient');           // unified/buyer outbound client
 const sellerEvolution = require('./sellerEvolutionClient'); // seller instance (rozare-seller)
 const { resolveOutboundRecipient } = require('./jidRoutingStore');
 const { phoneFromJid, uniqueNonEmpty } = require('./addressing');
+const { routingScopeFor } = require('./gatewayMode');
 
 const SITE_URL = process.env.FRONTEND_URL || 'https://www.rozare.com';
 const RATE_LIMIT_PER_HOUR = Number(process.env.WHATSAPP_AI_RATE_LIMIT_PER_HOUR || 30);
@@ -223,18 +224,16 @@ async function identifyUserByPhone(phone, instanceType) {
         return null;
     }
 
-    // Main (buyer) instance
-    // Everyone on the buyer instance is treated as a USER (buyer), regardless of
-    // their actual role. This means sellers who linked their number on their user
-    // dashboard get buyer tools, not seller tools — as intended. The seller instance
-    // is where they get seller/admin AI capabilities.
+    // Main logical buyer route. Everyone here is treated as a USER (buyer),
+    // regardless of their actual account role. In unified mode this route still
+    // runs after the seller/admin lookup so seller/admin AI keeps priority.
     const user = await User.findOne({
         'whatsappInfo.number': { $in: phoneVariants },
         'whatsappInfo.verified': true,
     }).select('_id role username whatsappInfo.number');
 
     if (user) {
-        // Force role to 'user' on buyer instance — sellers are treated as ordinary buyers here
+        // Force role to 'user' on the buyer route.
         return { user, role: 'user' };
     }
 
@@ -252,9 +251,19 @@ function buildIdentityCandidates(phone, options = {}) {
 }
 
 async function identifyUserByPhoneCandidates(phoneCandidates, instanceType) {
+    if (instanceType === 'unified') {
+        for (const logicalType of ['seller', 'main']) {
+            for (const candidate of phoneCandidates) {
+                const identified = await identifyUserByPhone(candidate, logicalType);
+                if (identified) return { ...identified, matchedPhone: candidate, instanceType: logicalType };
+            }
+        }
+        return null;
+    }
+
     for (const candidate of phoneCandidates) {
         const identified = await identifyUserByPhone(candidate, instanceType);
-        if (identified) return { ...identified, matchedPhone: candidate };
+        if (identified) return { ...identified, matchedPhone: candidate, instanceType };
     }
     return null;
 }
@@ -425,7 +434,7 @@ async function handleNonSellerOnSellerInstance(phone, recipient = phone) {
  *
  * @param {string} phone - Sender's real phone number for identity lookup/rate limiting
  * @param {string} messageText - The text content of the message
- * @param {string} instanceType - 'main' | 'seller'
+ * @param {string} instanceType - 'main' | 'seller' | 'unified'
  * @param {Array} rawAttachments - Media attachments extracted from Evolution
  * @param {object} options - Optional routing hints
  * @param {string} options.replyTo - Exact WhatsApp chat JID/number to reply to
@@ -441,7 +450,8 @@ async function processIncomingWhatsAppMessage(phone, messageText, instanceType, 
 
     const identityCandidates = buildIdentityCandidates(phone, options);
     const primaryPhone = identityCandidates[0] || normalizePhoneDigits(phone);
-    const replyTo = await resolveOutboundRecipient(primaryPhone, options.replyTo || phone, { instanceType });
+    const initialRouteScope = routingScopeFor(instanceType === 'unified' ? 'seller' : instanceType);
+    const replyTo = await resolveOutboundRecipient(primaryPhone, options.replyTo || phone, { instanceType: initialRouteScope });
     const trimmedText = String(messageText || '').trim();
     console.log(`[wa-ai-chat] Processing ${instanceType} message from ${primaryPhone || phone} (replyTo=${replyTo}, candidates=${identityCandidates.join(',')}): "${trimmedText.slice(0, 100)}..." attachments=${attachments.length}`);
 
@@ -453,7 +463,7 @@ async function processIncomingWhatsAppMessage(phone, messageText, instanceType, 
             console.log(`[wa-ai-chat] No linked ${instanceType} user found for candidates=${identityCandidates.join(',') || phone}`);
             // Graceful rejection — with cooldown to prevent spamming
             if (canSendRejection(rejectionKey)) {
-                if (instanceType === 'main') {
+                if (instanceType === 'main' || instanceType === 'unified') {
                     await handleUnlinkedUserOnMainInstance(replyTo);
                 } else {
                     await handleNonSellerOnSellerInstance(primaryPhone || phone, replyTo);
@@ -465,11 +475,15 @@ async function processIncomingWhatsAppMessage(phone, messageText, instanceType, 
         }
 
         const { user, role, matchedPhone } = identified;
-        const finalReplyTo = await resolveOutboundRecipient(matchedPhone || primaryPhone, replyTo, { instanceType });
-        console.log(`[wa-ai-chat] Identified: ${user.username} (${role}) from ${instanceType} instance using ${matchedPhone}`);
+        const incomingInstanceType = instanceType;
+        const effectiveInstanceType = identified.instanceType || incomingInstanceType;
+        instanceType = effectiveInstanceType;
+        const finalRouteScope = routingScopeFor(effectiveInstanceType);
+        const finalReplyTo = await resolveOutboundRecipient(matchedPhone || primaryPhone, replyTo, { instanceType: finalRouteScope });
+        console.log(`[wa-ai-chat] Identified: ${user.username} (${role}) from ${incomingInstanceType} route as ${effectiveInstanceType} using ${matchedPhone}`);
 
         // 2. Rate limiting
-        const rateCheck = await checkRateLimit(user._id, matchedPhone || primaryPhone, instanceType);
+        const rateCheck = await checkRateLimit(user._id, matchedPhone || primaryPhone, effectiveInstanceType);
         if (!rateCheck.allowed) {
             const msg = [
                 `Hey ${user.username || 'there'}! 😅`,
@@ -479,7 +493,7 @@ async function processIncomingWhatsAppMessage(phone, messageText, instanceType, 
                 `In the meantime, you can use the web chat at:`,
                 `${SITE_URL}/ai-chat`,
             ].join('\n');
-            await sendResponse(finalReplyTo, msg, instanceType);
+            await sendResponse(finalReplyTo, msg, effectiveInstanceType);
             return;
         }
 
@@ -513,15 +527,15 @@ async function processIncomingWhatsAppMessage(phone, messageText, instanceType, 
         if (result.responseText) {
             const responseText = sanitizeVisibleAIResponse(result.responseText) ||
                 "Done. I processed that, but I do not have a written update to send.";
-            await sendResponse(finalReplyTo, responseText, instanceType);
+            await sendResponse(finalReplyTo, responseText, effectiveInstanceType);
         } else {
             // AI returned empty response — send a fallback
-            await sendResponse(finalReplyTo, "I'm sorry, I couldn't process that. Could you try rephrasing? 🤔", instanceType);
+            await sendResponse(finalReplyTo, "I'm sorry, I couldn't process that. Could you try rephrasing? 🤔", effectiveInstanceType);
         }
 
         // 8. Send pending product images (if AI used send_product_image tool)
         if (aiOptions._pendingImages?.length) {
-            const client = getClient(instanceType);
+            const client = getClient(effectiveInstanceType);
             for (const img of aiOptions._pendingImages) {
                 try {
                     await client.sendMedia(finalReplyTo, img.imageUrl, img.caption, 'image');
@@ -533,7 +547,7 @@ async function processIncomingWhatsAppMessage(phone, messageText, instanceType, 
             }
         }
 
-        console.log(`[wa-ai-chat] Response sent to ${matchedPhone || primaryPhone} (${role}) via ${instanceType}`);
+        console.log(`[wa-ai-chat] Response sent to ${matchedPhone || primaryPhone} (${role}) via ${effectiveInstanceType}`);
 
     } catch (err) {
         console.error(`[wa-ai-chat] Error processing message from ${primaryPhone || phone}:`, err.message);

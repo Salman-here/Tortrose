@@ -100,7 +100,7 @@ const SellerTimeline = ({ data }) => {
 };
 
 const WhatsAppVerificationPanel = () => {
-    const [activeTab, setActiveTab] = useState('orders');
+    const [activeTab, setActiveTab] = useState('seller');
     const [status, setStatus] = useState(null);
     const [queue, setQueue] = useState([]);
     const [queueMeta, setQueueMeta] = useState({ total: 0, page: 1, totalPages: 1 });
@@ -351,12 +351,12 @@ const WhatsAppVerificationPanel = () => {
                         </div>
                         <div className="flex-1">
                             <h1 className="text-2xl font-extrabold tracking-tight" style={{ color: 'hsl(var(--foreground))' }}>
-                                {activeTab === 'orders' ? 'WhatsApp Order Verification' : 'WhatsApp Seller Notifications'}
+                                {activeTab === 'orders' ? 'Buyer Order WhatsApp Activity' : 'Unified WhatsApp Gateway'}
                             </h1>
                             <p className="text-sm mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
                                 {activeTab === 'orders'
-                                    ? 'Link your WhatsApp once. Buyers automatically receive a poll to confirm their order — one tap, no typing.'
-                                    : 'Link a second WhatsApp number to send notifications to sellers — new orders, subscription alerts, and critical warnings.'}
+                                    ? 'Buyer confirmations, payment notices, and buyer AI messages use the unified gateway.'
+                                    : 'One connected WhatsApp number handles buyers, sellers, admins, order confirmations, OTPs, and AI chat.'}
                             </p>
                         </div>
                     </div>
@@ -365,8 +365,8 @@ const WhatsAppVerificationPanel = () => {
                 {/* Tab Switcher */}
                 <div className="glass-panel-strong rounded-2xl p-1.5 mb-6 flex gap-1">
                     {[
-                        { key: 'orders', label: 'Order Verification', Icon: MessageCircle, color: 'hsl(150,70%,40%)' },
-                        { key: 'seller', label: 'Seller Notifications', Icon: Bell, color: 'hsl(220,70%,55%)' },
+                        { key: 'seller', label: 'Unified Gateway', Icon: Bell, color: 'hsl(220,70%,55%)' },
+                        { key: 'orders', label: 'Buyer Orders', Icon: MessageCircle, color: 'hsl(150,70%,40%)' },
                     ].map(tab => (
                         <button key={tab.key} onClick={() => setActiveTab(tab.key)}
                             className={`flex-1 py-2.5 px-4 rounded-xl text-sm font-bold inline-flex items-center justify-center gap-2 transition-all ${activeTab === tab.key ? 'text-white' : ''}`}
@@ -376,7 +376,7 @@ const WhatsAppVerificationPanel = () => {
                     ))}
                 </div>
 
-                {/* Order Verification Tab */}
+                {/* Buyer order activity tab */}
                 {activeTab === 'orders' && (
                 <>
                 {/* Status card */}
@@ -405,27 +405,10 @@ const WhatsAppVerificationPanel = () => {
                                 style={{ color: 'hsl(var(--foreground))' }}>
                                 <RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> Refresh
                             </button>
-                            {isStuckLinking && (
-                                <button onClick={() => { setResetMsg(''); setConfirmReset(true); }}
-                                    className="px-3 py-2 rounded-xl text-sm font-bold inline-flex items-center gap-1.5"
-                                    style={{ background: 'rgba(245,158,11,0.14)', color: 'hsl(38,92%,45%)' }}
-                                    title="Reset the WhatsApp instance — only when stuck waiting for QR">
-                                    <RotateCcw size={14} /> Reset instance
-                                </button>
-                            )}
-                            {status?.status === 'connected' ? (
-                                <button onClick={() => setConfirmDisconnect(true)}
-                                    className="px-3 py-2 rounded-xl text-sm font-bold inline-flex items-center gap-1.5"
-                                    style={{ background: 'rgba(239,68,68,0.12)', color: 'hsl(0,72%,55%)' }}>
-                                    <Power size={14} /> Disconnect
-                                </button>
-                            ) : (
-                                <button onClick={openQrModal}
-                                    className="px-4 py-2 rounded-xl text-sm font-bold text-white inline-flex items-center gap-1.5"
-                                    style={{ background: 'linear-gradient(135deg, hsl(150, 70%, 40%), hsl(170, 70%, 38%))' }}>
-                                    <QrCode size={14} /> Link WhatsApp
-                                </button>
-                            )}
+                            <span className="px-3 py-2 rounded-xl text-xs font-bold inline-flex items-center gap-1.5"
+                                style={{ background: 'rgba(59,130,246,0.10)', color: 'hsl(220,70%,55%)' }}>
+                                <Bell size={14} /> Managed in Unified Gateway
+                            </span>
                         </div>
                     </div>
 
@@ -434,7 +417,7 @@ const WhatsAppVerificationPanel = () => {
                             style={{ background: 'rgba(245,158,11,0.10)', border: '1px solid rgba(245,158,11,0.25)' }}>
                             <AlertTriangle size={18} style={{ color: 'hsl(38, 92%, 50%)' }} className="shrink-0 mt-0.5" />
                             <div className="text-xs" style={{ color: 'hsl(var(--foreground))' }}>
-                                <strong>Gateway not configured.</strong> Add <code>EVOLUTION_API_URL</code>, <code>EVOLUTION_API_KEY</code>, and <code>EVOLUTION_INSTANCE_NAME</code> in the backend secrets, then redeploy. See the deployment guide.
+                                <strong>Gateway not configured.</strong> Add the Evolution API URL/key and unified instance name in the backend secrets, then redeploy.
                             </div>
                         </div>
                     )}
@@ -458,7 +441,7 @@ const WhatsAppVerificationPanel = () => {
                 <div className="glass-panel rounded-3xl p-5 mb-6 flex items-start gap-3">
                     <ShieldAlert size={20} style={{ color: 'hsl(38, 92%, 50%)' }} className="shrink-0 mt-0.5" />
                     <div className="text-xs leading-relaxed" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                        <strong style={{ color: 'hsl(var(--foreground))' }}>Heads up:</strong> This automates a personal WhatsApp account. Use a <strong>dedicated business number</strong> to avoid risking your personal account. Messages are sent with a random 8–25s delay and capped at 60/hour to mitigate ban risk.
+                        <strong style={{ color: 'hsl(var(--foreground))' }}>Unified gateway:</strong> Buyer order messages use the same connected WhatsApp number managed in the Unified Gateway tab. Sends are immediate and still capped server-side for safety.
                     </div>
                 </div>
 
@@ -606,7 +589,7 @@ const WhatsAppVerificationPanel = () => {
                 </>
                 )}
 
-                {/* Seller Notifications Tab */}
+                {/* Unified gateway tab */}
                 {activeTab === 'seller' && (
                     <SellerNotificationTab />
                 )}
@@ -857,7 +840,7 @@ const WhatsAppVerificationPanel = () => {
 };
 
 /* ─────────────────────────────────────────────────────────────────────────────
-   Seller Notifications Tab
+   Unified Gateway Tab
    ───────────────────────────────────────────────────────────────────────────── */
 
 const SellerNotificationTab = () => {
@@ -1105,7 +1088,7 @@ const SellerNotificationTab = () => {
             setSellerQrBase64('');
             setSellerPairingCode('');
             setSellerQrError('');
-            setSellerQrHint('Instance reset. Click "Link WhatsApp" to scan a new QR.');
+            setSellerQrHint('Instance reset. Click "Link Unified WhatsApp" to scan a new QR.');
             setSellerResetMsg(data?.msg || 'Instance reset.');
             setConfirmSellerReset(false);
             setShowSellerQrModal(false);
@@ -1179,7 +1162,7 @@ const SellerNotificationTab = () => {
                             <button onClick={openSellerQrModal}
                                 className="px-4 py-2 rounded-xl text-sm font-bold text-white inline-flex items-center gap-1.5"
                                 style={{ background: 'linear-gradient(135deg, hsl(220, 70%, 55%), hsl(240, 60%, 50%))' }}>
-                                <QrCode size={14} /> Link WhatsApp
+                                <QrCode size={14} /> Link Unified WhatsApp
                             </button>
                         )}
                     </div>
@@ -1204,7 +1187,7 @@ const SellerNotificationTab = () => {
             <div className="glass-panel rounded-3xl p-5 mb-6 flex items-start gap-3">
                 <ShieldAlert size={20} style={{ color: 'hsl(220, 70%, 55%)' }} className="shrink-0 mt-0.5" />
                 <div className="text-xs leading-relaxed" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                    <strong style={{ color: 'hsl(var(--foreground))' }}>Seller notification number:</strong> This WhatsApp number is used to send notifications to verified sellers (new orders, subscription alerts, and critical warnings). Use a <strong>dedicated number</strong> separate from your buyer verification number.
+                    <strong style={{ color: 'hsl(var(--foreground))' }}>Unified WhatsApp number:</strong> This one connected instance sends buyer order confirmations, buyer OTPs, seller notifications, and admin/seller/buyer AI replies.
                 </div>
             </div>
 
@@ -1456,14 +1439,14 @@ const SellerNotificationTab = () => {
                             className="glass-panel-strong rounded-3xl p-6 max-w-md w-full">
                             <div className="flex items-center justify-between mb-4">
                                 <h3 className="text-lg font-extrabold" style={{ color: 'hsl(var(--foreground))' }}>
-                                    Link Seller WhatsApp
+                                    Link Unified WhatsApp
                                 </h3>
                                 <button onClick={closeSellerQrModal}
                                     className="p-1.5 rounded-lg glass-inner"><X size={16} /></button>
                             </div>
 
                             <ol className="text-xs mb-4 space-y-1.5" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                                <li>1. Open <strong>WhatsApp</strong> on your seller notification phone</li>
+                                <li>1. Open <strong>WhatsApp</strong> on the unified gateway phone</li>
                                 <li>2. Tap <strong>Settings</strong> → <strong>Linked Devices</strong></li>
                                 <li>3. Tap <strong>Link a Device</strong></li>
                                 <li>4. {sellerPairingCode ? 'Enter the pairing code below' : 'Scan the QR code below'}</li>
@@ -1596,10 +1579,10 @@ const SellerNotificationTab = () => {
                         onClick={(e) => e.stopPropagation()}
                         className="glass-panel-strong rounded-3xl p-6 max-w-sm w-full">
                         <h3 className="text-lg font-extrabold mb-2" style={{ color: 'hsl(var(--foreground))' }}>
-                            Disconnect Seller WhatsApp?
+                            Disconnect Unified WhatsApp?
                         </h3>
                         <p className="text-xs mb-4" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                            Seller notifications will stop sending until you re-link this number.
+                            Buyer messages, seller notifications, and WhatsApp AI replies will stop until you re-link this number.
                         </p>
                         <div className="flex gap-2">
                             <button onClick={() => setConfirmSellerDisconnect(false)}
@@ -1629,7 +1612,7 @@ const SellerNotificationTab = () => {
                             </div>
                             <div>
                                 <h3 className="text-lg font-extrabold" style={{ color: 'hsl(var(--foreground))' }}>
-                                    Reset Seller WhatsApp instance?
+                                    Reset Unified WhatsApp instance?
                                 </h3>
                                 <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
                                     Use this only when the link flow is stuck without a QR.

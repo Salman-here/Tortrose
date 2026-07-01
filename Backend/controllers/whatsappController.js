@@ -1,10 +1,15 @@
 const WhatsAppConfig = require('../models/WhatsAppConfig');
 const WhatsAppPendingMessage = require('../models/WhatsAppPendingMessage');
 const evolution = require('../services/whatsapp/evolutionClient');
+const {
+    configKeyFor,
+    useUnifiedWhatsAppInstance,
+} = require('../services/whatsapp/gatewayMode');
 
 const ensureSingleton = async () => {
-    let cfg = await WhatsAppConfig.findOne({ singletonKey: 'main' });
-    if (!cfg) cfg = await WhatsAppConfig.create({ singletonKey: 'main' });
+    const singletonKey = configKeyFor('main');
+    let cfg = await WhatsAppConfig.findOne({ singletonKey });
+    if (!cfg) cfg = await WhatsAppConfig.create({ singletonKey });
     return cfg;
 };
 
@@ -14,8 +19,85 @@ const normalizeGatewayState = (payload) => {
 
     if (['open', 'connected', 'online'].includes(normalized)) return 'open';
     if (['connecting', 'pairing', 'qr', 'pending_qr', 'pending'].includes(normalized)) return 'connecting';
-    if (['close', 'closed', 'disconnected', 'logout', 'offline'].includes(normalized)) return 'close';
+    if (['close', 'closed', 'disconnected', 'logout', 'offline', 'not_found', 'missing', 'deleted'].includes(normalized)) return 'close';
     return normalized;
+};
+
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+const getLiveGatewayState = async (client) => {
+    try {
+        return normalizeGatewayState(await client.getStatus());
+    } catch {
+        return '';
+    }
+};
+
+const clearConfigAfterDisconnect = async (singletonKey, instanceName = '') => {
+    await WhatsAppConfig.updateOne(
+        { singletonKey },
+        {
+            $set: {
+                status: 'disconnected',
+                instanceName,
+                linkedNumber: '',
+                linkedAt: null,
+                lastQrBase64: '',
+                lastQrFetchedAt: null,
+                lastError: '',
+                lastSeen: new Date(),
+            },
+        },
+        { upsert: true }
+    );
+};
+
+const mirrorUnifiedDisconnectState = async (primaryKey, instanceName = '') => {
+    if (!useUnifiedWhatsAppInstance()) return;
+    const mirrorKey = primaryKey === 'seller' ? 'main' : 'seller';
+    await clearConfigAfterDisconnect(mirrorKey, instanceName).catch(() => null);
+};
+
+const forceDisconnectGateway = async (client, singletonKey) => {
+    if (!client.isConfigured()) {
+        await clearConfigAfterDisconnect(singletonKey, client.instanceName?.() || '');
+        await mirrorUnifiedDisconnectState(singletonKey, client.instanceName?.() || '');
+        return { disconnected: true, liveState: 'not_configured' };
+    }
+
+    const instanceName = client.instanceName?.() || '';
+    const logoutResult = await client.logout().catch((err) => ({ error: err.response?.data || err.message }));
+    await sleep(1200);
+
+    let liveState = await getLiveGatewayState(client);
+    let deleteResult = null;
+
+    if (['open', 'connecting'].includes(liveState)) {
+        deleteResult = await client.deleteInstance().catch((err) => ({ error: err.response?.data || err.message }));
+        await sleep(1500);
+        liveState = await getLiveGatewayState(client);
+    }
+
+    const disconnected = ['close', 'not_configured', ''].includes(liveState);
+    if (!disconnected) {
+        await WhatsAppConfig.updateOne(
+            { singletonKey },
+            {
+                $set: {
+                    status: liveState === 'open' ? 'connected' : 'error',
+                    instanceName,
+                    lastError: `Disconnect did not complete. Evolution still reports state: ${liveState}`,
+                    lastSeen: new Date(),
+                },
+            },
+            { upsert: true }
+        );
+        return { disconnected: false, liveState, logoutResult, deleteResult };
+    }
+
+    await clearConfigAfterDisconnect(singletonKey, instanceName);
+    await mirrorUnifiedDisconnectState(singletonKey, instanceName);
+    return { disconnected: true, liveState: liveState || 'close', logoutResult, deleteResult };
 };
 
 const toDataUrl = (value = '') => {
@@ -147,10 +229,8 @@ const requestGatewayQr = async (startingState = '', req = null) => {
 
     // Register webhook immediately after instance exists (idempotent — safe to call repeatedly)
     // This ensures poll votes flow back to the backend the moment WhatsApp is linked.
+    await sleep(1500);
     await registerWebhookIfPossible(req);
-
-    // Wait a moment for instance to initialize
-    await new Promise(r => setTimeout(r, 2000));
 
     const createdQr = extractInlineQr(created);
     let dataUrl = createdQr.dataUrl;
@@ -196,16 +276,18 @@ exports.getStatus = async (req, res) => {
         // BUT skip reconciliation if status was explicitly changed in the last 5s
         // (prevents getStatus from immediately overriding a fresh disconnect/connect)
         const recentlyUpdated = cfg.updatedAt && (Date.now() - new Date(cfg.updatedAt).getTime() < 5000);
+        const normalizedLiveState = normalizeGatewayState(liveState);
         if (!recentlyUpdated) {
-            if (liveState?.state === 'open' && cfg.status !== 'connected') {
+            if (normalizedLiveState === 'open' && cfg.status !== 'connected') {
                 cfg.status = 'connected';
                 cfg.linkedAt = cfg.linkedAt || new Date();
                 cfg.lastSeen = new Date();
                 cfg.lastError = '';
                 await cfg.save();
-            } else if (liveState?.state === 'close' && ['connected', 'connecting', 'pending_qr'].includes(cfg.status)) {
+            } else if (normalizedLiveState === 'close' && ['connected', 'connecting', 'pending_qr', 'error'].includes(cfg.status)) {
                 cfg.status = 'disconnected';
                 cfg.lastQrBase64 = '';
+                cfg.lastError = '';
                 await cfg.save();
             }
         }
@@ -220,7 +302,7 @@ exports.getStatus = async (req, res) => {
             sentInLastHour: cfg.sentInLastHour,
             lastError: cfg.lastError,
             qrBase64: cfg.lastQrBase64 || '',
-            liveState: liveState?.state || null,
+            liveState: normalizedLiveState || liveState?.state || null,
         });
     } catch (err) {
         console.error('whatsapp.getStatus:', err.message);
@@ -338,7 +420,7 @@ exports.connect = async (req, res) => {
             await cfg.save().catch(() => null);
         } else {
             await WhatsAppConfig.updateOne(
-                { singletonKey: 'main' },
+                { singletonKey: configKeyFor('main') },
                 { $set: { status: fallback ? 'pending_qr' : 'error', lastError: fallback ? '' : String(msg).slice(0, 500) } }
             ).catch(() => null);
         }
@@ -363,19 +445,14 @@ exports.connect = async (req, res) => {
 // POST /api/whatsapp/disconnect — admin
 exports.disconnect = async (req, res) => {
     try {
-        await evolution.logout().catch(() => null);
-        await WhatsAppConfig.updateOne(
-            { singletonKey: 'main' },
-            {
-                $set: {
-                    status: 'disconnected',
-                    linkedNumber: '',
-                    linkedAt: null,
-                    lastQrBase64: '',
-                },
-            }
-        );
-        res.json({ msg: 'Disconnected' });
+        const result = await forceDisconnectGateway(evolution, configKeyFor('main'));
+        if (!result.disconnected) {
+            return res.status(502).json({
+                msg: `Evolution still reports WhatsApp as ${result.liveState}. Try again in a few seconds or delete the instance from Evolution Manager.`,
+                liveState: result.liveState,
+            });
+        }
+        res.json({ msg: 'Disconnected', ...result });
     } catch (err) {
         console.error('whatsapp.disconnect:', err.message);
         res.status(500).json({ msg: 'Failed to disconnect' });
@@ -460,7 +537,9 @@ exports.reset = async (req, res) => {
 
         // Best-effort: log out any half-open session, then delete the instance.
         await evolution.logout().catch(() => null);
+        await sleep(1200);
         const deleted = await evolution.deleteInstance().catch((e) => ({ error: e.message }));
+        await sleep(1500);
 
         // Reset the singleton so the next connect starts from a clean slate.
         cfg.status = 'disconnected';
@@ -471,11 +550,13 @@ exports.reset = async (req, res) => {
         cfg.lastError = '';
         cfg.lastSeen = new Date();
         await cfg.save();
+        await mirrorUnifiedDisconnectState(configKeyFor('main'), evolution.instanceName?.() || '');
 
         // Recreate immediately so the next "Link WhatsApp" can return a fresh QR.
         const created = await evolution.createInstance().catch((e) => ({ error: e.message }));
 
         // Re-register webhook so poll votes flow back once the user scans the fresh QR.
+        await sleep(1500);
         await registerWebhookIfPossible(req);
 
         return res.json({
@@ -686,8 +767,9 @@ exports.webhook = require('../services/whatsapp/webhookHandler').handleEvolution
 const sellerEvolution = require('../services/whatsapp/sellerEvolutionClient');
 
 const ensureSellerSingleton = async () => {
-    let cfg = await WhatsAppConfig.findOne({ singletonKey: 'seller' });
-    if (!cfg) cfg = await WhatsAppConfig.create({ singletonKey: 'seller' });
+    const singletonKey = configKeyFor('seller');
+    let cfg = await WhatsAppConfig.findOne({ singletonKey });
+    if (!cfg) cfg = await WhatsAppConfig.create({ singletonKey });
     return cfg;
 };
 
@@ -721,16 +803,18 @@ exports.getSellerStatus = async (req, res) => {
         // Reconcile DB with live Evolution status
         // Skip reconciliation if status was explicitly changed in the last 5s
         const recentlyUpdated = cfg.updatedAt && (Date.now() - new Date(cfg.updatedAt).getTime() < 5000);
+        const normalizedLiveState = normalizeGatewayState(liveState);
         if (!recentlyUpdated) {
-            if (liveState?.state === 'open' && cfg.status !== 'connected') {
+            if (normalizedLiveState === 'open' && cfg.status !== 'connected') {
                 cfg.status = 'connected';
                 cfg.linkedAt = cfg.linkedAt || new Date();
                 cfg.lastSeen = new Date();
                 cfg.lastError = '';
                 await cfg.save();
-            } else if (liveState?.state === 'close' && ['connected', 'connecting', 'pending_qr'].includes(cfg.status)) {
+            } else if (normalizedLiveState === 'close' && ['connected', 'connecting', 'pending_qr', 'error'].includes(cfg.status)) {
                 cfg.status = 'disconnected';
                 cfg.lastQrBase64 = '';
+                cfg.lastError = '';
                 await cfg.save();
             }
         }
@@ -745,7 +829,7 @@ exports.getSellerStatus = async (req, res) => {
             sentInLastHour: cfg.sentInLastHour,
             lastError: cfg.lastError,
             qrBase64: cfg.lastQrBase64 || '',
-            liveState: liveState?.state || null,
+            liveState: normalizedLiveState || liveState?.state || null,
         });
     } catch (err) {
         console.error('whatsapp.getSellerStatus:', err.message);
@@ -793,8 +877,8 @@ exports.sellerConnect = async (req, res) => {
             return { __error: getGatewayErrorMessage(e), __status: e.response?.status || 0 };
         });
 
+        await sleep(1500);
         await registerSellerWebhookIfPossible(req);
-        await new Promise(r => setTimeout(r, 2000));
 
         const createdQr = extractInlineQr(created);
         let dataUrl = createdQr.dataUrl;
@@ -876,7 +960,7 @@ exports.sellerConnect = async (req, res) => {
             await cfg.save().catch(() => null);
         } else {
             await WhatsAppConfig.updateOne(
-                { singletonKey: 'seller' },
+                { singletonKey: configKeyFor('seller') },
                 { $set: { status: fallback ? 'pending_qr' : 'error', lastError: fallback ? '' : String(msg).slice(0, 500) } }
             ).catch(() => null);
         }
@@ -901,19 +985,14 @@ exports.sellerConnect = async (req, res) => {
 // POST /api/whatsapp/seller/disconnect — admin
 exports.sellerDisconnect = async (req, res) => {
     try {
-        await sellerEvolution.logout().catch(() => null);
-        await WhatsAppConfig.updateOne(
-            { singletonKey: 'seller' },
-            {
-                $set: {
-                    status: 'disconnected',
-                    linkedNumber: '',
-                    linkedAt: null,
-                    lastQrBase64: '',
-                },
-            }
-        );
-        res.json({ msg: 'Seller WhatsApp disconnected' });
+        const result = await forceDisconnectGateway(sellerEvolution, configKeyFor('seller'));
+        if (!result.disconnected) {
+            return res.status(502).json({
+                msg: `Evolution still reports WhatsApp as ${result.liveState}. Try again in a few seconds or delete the instance from Evolution Manager.`,
+                liveState: result.liveState,
+            });
+        }
+        res.json({ msg: 'Seller WhatsApp disconnected', ...result });
     } catch (err) {
         console.error('whatsapp.sellerDisconnect:', err.message);
         res.status(500).json({ msg: 'Failed to disconnect seller WhatsApp' });
@@ -940,7 +1019,9 @@ exports.sellerReset = async (req, res) => {
 
         // Log out + delete
         await sellerEvolution.logout().catch(() => null);
+        await sleep(1200);
         const deleted = await sellerEvolution.deleteInstance().catch((e) => ({ error: e.message }));
+        await sleep(1500);
 
         // Reset DB config
         cfg.status = 'disconnected';
@@ -951,9 +1032,11 @@ exports.sellerReset = async (req, res) => {
         cfg.lastError = '';
         cfg.lastSeen = new Date();
         await cfg.save();
+        await mirrorUnifiedDisconnectState(configKeyFor('seller'), sellerEvolution.instanceName?.() || '');
 
         // Recreate immediately
         const created = await sellerEvolution.createInstance().catch((e) => ({ error: e.message }));
+        await sleep(1500);
         await registerSellerWebhookIfPossible(req);
 
         return res.json({

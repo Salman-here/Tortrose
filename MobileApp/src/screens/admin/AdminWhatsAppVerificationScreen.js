@@ -1,8 +1,6 @@
 /**
  * AdminWhatsAppVerificationScreen — Liquid Glass
- * Manage two WhatsApp instances:
- *  - Order Verification (buyer-side polls)
- *  - Seller Notifications (push to sellers)
+ * Manage the unified WhatsApp gateway plus buyer/seller activity.
  * Mirrors web WhatsAppVerificationPanel.jsx (status, link/unlink, queue, stats).
  */
 
@@ -48,7 +46,7 @@ export default function AdminWhatsAppVerificationScreen({ navigation }) {
     error: palette.colors.error,
   };
 
-  const [tab, setTab] = useState('orders'); // 'orders' | 'seller'
+  const [tab, setTab] = useState('seller'); // 'orders' | 'seller'
   const [status, setStatus] = useState(null);
   const [stats, setStats] = useState(null);
   const [queue, setQueue] = useState([]);
@@ -149,7 +147,7 @@ export default function AdminWhatsAppVerificationScreen({ navigation }) {
           </TouchableOpacity>
           <View>
             <Text style={styles.title}>WhatsApp Manager</Text>
-            <Text style={styles.subtitle}>{tab === 'orders' ? 'Order verification gateway' : 'Seller notifications gateway'}</Text>
+            <Text style={styles.subtitle}>{tab === 'orders' ? 'Buyer order WhatsApp activity' : 'Unified WhatsApp gateway'}</Text>
           </View>
         </View>
 
@@ -160,7 +158,7 @@ export default function AdminWhatsAppVerificationScreen({ navigation }) {
         >
           {/* Tabs */}
           <View style={styles.tabRow}>
-            {[{ key: 'orders', label: 'Orders', icon: 'chatbubble-ellipses' }, { key: 'seller', label: 'Sellers', icon: 'notifications' }].map(t => (
+            {[{ key: 'seller', label: 'Gateway', icon: 'notifications' }, { key: 'orders', label: 'Buyer Orders', icon: 'chatbubble-ellipses' }].map(t => (
               <TouchableOpacity key={t.key} onPress={() => setTab(t.key)}
                 style={[styles.tab, tab === t.key && styles.tabActive]}>
                 <Ionicons name={t.icon} size={14} color={tab === t.key ? palette.colors.white : palette.colors.text} />
@@ -185,7 +183,12 @@ export default function AdminWhatsAppVerificationScreen({ navigation }) {
                 </View>
 
                 <View style={styles.actionRow}>
-                  {status?.status === 'connected' ? (
+                  {tab !== 'seller' ? (
+                    <View style={[styles.actionBtn, { backgroundColor: `${palette.colors.info}15` }]}>
+                      <Ionicons name="information-circle" size={14} color={palette.colors.info} />
+                      <Text style={[styles.actionBtnText, { color: palette.colors.info }]}>Managed in Gateway</Text>
+                    </View>
+                  ) : status?.status === 'connected' ? (
                     <TouchableOpacity onPress={disconnect} style={[styles.actionBtn, { backgroundColor: `${palette.colors.error}15` }]}>
                       <Ionicons name="power" size={14} color={palette.colors.error} />
                       <Text style={[styles.actionBtnText, { color: palette.colors.error }]}>Disconnect</Text>
@@ -193,13 +196,15 @@ export default function AdminWhatsAppVerificationScreen({ navigation }) {
                   ) : (
                     <TouchableOpacity onPress={openLink} style={[styles.actionBtn, { backgroundColor: palette.colors.primary }]}>
                       <Ionicons name="qr-code" size={14} color={palette.colors.white} />
-                      <Text style={[styles.actionBtnText, { color: palette.colors.white }]}>Link WhatsApp</Text>
+                      <Text style={[styles.actionBtnText, { color: palette.colors.white }]}>Link Gateway</Text>
                     </TouchableOpacity>
                   )}
-                  <TouchableOpacity onPress={reset} style={[styles.actionBtn, { backgroundColor: `${palette.colors.warning}15` }]}>
-                    <Ionicons name="refresh" size={14} color={palette.colors.warning} />
-                    <Text style={[styles.actionBtnText, { color: palette.colors.warning }]}>Reset</Text>
-                  </TouchableOpacity>
+                  {tab === 'seller' && (
+                    <TouchableOpacity onPress={reset} style={[styles.actionBtn, { backgroundColor: `${palette.colors.warning}15` }]}>
+                      <Ionicons name="refresh" size={14} color={palette.colors.warning} />
+                      <Text style={[styles.actionBtnText, { color: palette.colors.warning }]}>Reset</Text>
+                    </TouchableOpacity>
+                  )}
                 </View>
               </GlassPanel>
 
@@ -269,7 +274,7 @@ export default function AdminWhatsAppVerificationScreen({ navigation }) {
           <View style={styles.modalOverlay}>
             <View style={styles.modalCard}>
               <View style={styles.modalHeader}>
-                <Text style={styles.modalTitle}>Link WhatsApp</Text>
+                <Text style={styles.modalTitle}>Link Gateway</Text>
                 <TouchableOpacity onPress={closeLink}><Ionicons name="close" size={20} color={palette.colors.text} /></TouchableOpacity>
               </View>
 

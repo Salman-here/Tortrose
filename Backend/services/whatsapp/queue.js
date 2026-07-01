@@ -5,6 +5,7 @@ const WhatsAppPendingMessage = require('../../models/WhatsAppPendingMessage');
 const WhatsAppConfig = require('../../models/WhatsAppConfig');
 const evolution = require('./evolutionClient');
 const { resolveOutboundRecipient } = require('./jidRoutingStore');
+const { configKeyFor, routingScopeFor } = require('./gatewayMode');
 const {
     buildOrderButtonsPayload,
     buildOrderListPayload,
@@ -42,7 +43,7 @@ cleanupTimer.unref?.();
 
 // Soft hourly cap tracking
 const checkHourlyCap = async () => {
-    const cfg = await WhatsAppConfig.findOne({ singletonKey: 'main' });
+    const cfg = await WhatsAppConfig.findOne({ singletonKey: configKeyFor('main') });
     if (!cfg) return true;
     const now = new Date();
     if (!cfg.sentWindowStartedAt || now - cfg.sentWindowStartedAt > 60 * 60 * 1000) {
@@ -55,7 +56,7 @@ const checkHourlyCap = async () => {
 
 const incrementSentCounter = async () => {
     await WhatsAppConfig.updateOne(
-        { singletonKey: 'main' },
+        { singletonKey: configKeyFor('main') },
         { $inc: { sentInLastHour: 1 }, $set: { lastSeen: new Date() } }
     );
 };
@@ -128,7 +129,7 @@ exports.enqueueOrderPlacedInfo = async (order) => {
 const processOne = async () => {
     if (!evolution.isConfigured()) return;
 
-    const cfg = await WhatsAppConfig.findOne({ singletonKey: 'main' });
+    const cfg = await WhatsAppConfig.findOne({ singletonKey: configKeyFor('main') });
     if (!cfg || cfg.status !== 'connected') return;
 
     const allowed = await checkHourlyCap();
@@ -207,7 +208,7 @@ const processOne = async () => {
         // all handled by webhookHandler.extractDecision, keyed on the
         // confirm_ORD-xxx / cancel_ORD-xxx id scheme.
 
-        const recipient = await resolveOutboundRecipient(job.phone, job.phone, { instanceType: 'main' });
+        const recipient = await resolveOutboundRecipient(job.phone, job.phone, { instanceType: routingScopeFor('main') });
         let sendRes;
         let strategy;
 

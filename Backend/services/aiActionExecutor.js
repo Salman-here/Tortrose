@@ -37,6 +37,7 @@ const { generateConfirmationToken } = require('../controllers/orderConfirmationC
 const { sellerHasWhatsAppVerify } = require('../controllers/subscriptionController');
 const { enqueueOrderConfirmation } = require('./whatsapp/queue');
 const { notifySeller } = require('./whatsapp/sellerNotificationService');
+const { configKeyFor } = require('./whatsapp/gatewayMode');
 const sellerTemplates = require('./whatsapp/sellerMessageTemplates');
 const {
   buildModerationFields,
@@ -1016,7 +1017,7 @@ async function notifyCodOrder(newOrder, productItems = []) {
   }
 
   try {
-    const cfg = await WhatsAppConfig.findOne({ singletonKey: 'main' }).lean();
+    const cfg = await WhatsAppConfig.findOne({ singletonKey: configKeyFor('main') }).lean();
     let entitled = false;
     for (const sellerId of sellerIds) {
       if (await sellerHasWhatsAppVerify(sellerId)) {

@@ -38,6 +38,11 @@ const {
     rememberInboundRoute,
     resolveOutboundRecipient,
 } = require('./jidRoutingStore');
+const {
+    configKeyFor,
+    routingScopeFor,
+    useUnifiedWhatsAppInstance,
+} = require('./gatewayMode');
 
 // ──────────────────────────────────────────────────────────────────────────
 // Outgoing friendly replies
@@ -411,8 +416,16 @@ exports.handleEvolutionWebhook = async (req, res) => {
         const incomingInstance = body.instance || body.instanceName || body.data?.instance || '';
         const mainInstanceName = process.env.EVOLUTION_INSTANCE_NAME || 'rozare-main';
         const sellerInstanceName = process.env.EVOLUTION_SELLER_INSTANCE_NAME || 'rozare-seller';
+        const singleInstanceMode = useUnifiedWhatsAppInstance();
         const isSellerInstance = incomingInstance && incomingInstance === sellerInstanceName;
-        const singletonKey = isSellerInstance ? 'seller' : 'main';
+        const isLegacyMainInstanceInSingleMode = singleInstanceMode && incomingInstance && incomingInstance === mainInstanceName;
+        const isUnifiedGatewayEvent = singleInstanceMode && !isLegacyMainInstanceInSingleMode;
+        const effectiveInstanceName = incomingInstance || (isUnifiedGatewayEvent ? sellerInstanceName : mainInstanceName);
+        const singletonKey = configKeyFor(isSellerInstance ? 'seller' : 'main');
+
+        if (isLegacyMainInstanceInSingleMode) {
+            return res.status(200).json({ ok: true, ignored: 'legacy_main_instance_in_single_mode' });
+        }
 
         // ── CONNECTION_UPDATE — keep WhatsAppConfig in sync for the CORRECT instance ──
         if (event === 'connection.update' || event === 'CONNECTION_UPDATE') {
@@ -439,7 +452,7 @@ exports.handleEvolutionWebhook = async (req, res) => {
         // ── Seller instance: route inbound messages to AI chat ──
         // The seller instance now supports bidirectional AI chat for sellers and admins.
         // Messages are routed to the WhatsApp AI Chat Service (NOT order confirmation).
-        if (isSellerInstance) {
+        if (isSellerInstance && !singleInstanceMode) {
             if (event === 'messages.upsert' || event === 'MESSAGES_UPSERT') {
                 const messages = Array.isArray(body.data) ? body.data : [body.data].filter(Boolean);
                 for (const msg of messages) {
@@ -490,17 +503,21 @@ exports.handleEvolutionWebhook = async (req, res) => {
                 const { remoteJid, identityPhone: phone, replyTo } = address;
                 if (isGroupOrBroadcastJid(remoteJid)) continue;
                 if (!phone) continue;
+                const routeScope = routingScopeFor(isUnifiedGatewayEvent ? 'seller' : 'main');
+                const aiInstanceType = isUnifiedGatewayEvent ? 'unified' : 'main';
+                const routeLabel = isUnifiedGatewayEvent ? 'unified' : 'main';
+
                 await rememberInboundRoute(address, {
-                    instanceType: 'main',
-                    instanceName: incomingInstance || mainInstanceName,
+                    instanceType: routeScope,
+                    instanceName: effectiveInstanceName,
                 });
-                const outboundTo = await resolveOutboundRecipient(phone, replyTo, { instanceType: 'main' });
-                console.log(`[whatsapp] route main phone=${phone} lid=${address.lidJid || ''} requested=${replyTo || ''} outbound=${outboundTo || ''}`);
+                const outboundTo = await resolveOutboundRecipient(phone, replyTo, { instanceType: routeScope });
+                console.log(`[whatsapp] route ${routeLabel} phone=${phone} lid=${address.lidJid || ''} requested=${replyTo || ''} outbound=${outboundTo || ''}`);
                 markInboundConversationWindowOpen(phone);
                 const mediaText = extractMessageText(msg);
                 const attachments = extractMediaAttachments(msg, {
-                    instanceName: incomingInstance || mainInstanceName,
-                    instanceType: 'main',
+                    instanceName: effectiveInstanceName,
+                    instanceType: aiInstanceType,
                 });
 
                 // 1) Try the rich extractor — recognises button clicks and text
@@ -551,11 +568,11 @@ exports.handleEvolutionWebhook = async (req, res) => {
                 if (!job) {
                     const rawText = replyTextForHint || (extracted?.source === 'text' ? extracted.text : '') || mediaText;
                     if (rawText || attachments.length) {
-                        processIncomingWhatsAppMessage(phone, rawText, 'main', attachments, {
+                        processIncomingWhatsAppMessage(phone, rawText, aiInstanceType, attachments, {
                             replyTo: outboundTo,
                             candidatePhones: address.candidatePhones,
                         }).catch(err => {
-                            console.error('[whatsapp] main AI chat error:', err.message);
+                            console.error(`[whatsapp] ${routeLabel} AI chat error:`, err.message);
                         });
                     }
                     continue;
@@ -565,11 +582,11 @@ exports.handleEvolutionWebhook = async (req, res) => {
                 // route to AI chat instead of just sending a YES/NO hint — the AI is
                 // smarter and can help with order questions or other requests.
                 if (!decision && (replyTextForHint || attachments.length)) {
-                    processIncomingWhatsAppMessage(phone, replyTextForHint || mediaText, 'main', attachments, {
+                    processIncomingWhatsAppMessage(phone, replyTextForHint || mediaText, aiInstanceType, attachments, {
                         replyTo: outboundTo,
                         candidatePhones: address.candidatePhones,
                     }).catch(err => {
-                        console.error('[whatsapp] main AI chat error (with pending order):', err.message);
+                        console.error(`[whatsapp] ${routeLabel} AI chat error (with pending order):`, err.message);
                     });
                     continue;
                 }

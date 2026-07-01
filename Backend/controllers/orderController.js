@@ -12,6 +12,7 @@ const { generateConfirmationToken } = require('./orderConfirmationController');
 const { sellerHasWhatsAppVerify } = require('./subscriptionController');
 const { enqueueOrderConfirmation } = require('../services/whatsapp/queue');
 const WhatsAppConfig = require('../models/WhatsAppConfig');
+const { configKeyFor } = require('../services/whatsapp/gatewayMode');
 const User = require('../models/User');
 const { notifySeller } = require('../services/whatsapp/sellerNotificationService');
 const sellerTemplates = require('../services/whatsapp/sellerMessageTemplates');
@@ -160,7 +161,7 @@ const maybeEnqueueWhatsAppConfirmation = async (order, productItems) => {
             console.warn(`[order] WhatsApp skip for ${order?.orderId}: no confirmation token`);
             return;
         }
-        const cfg = await WhatsAppConfig.findOne({ singletonKey: 'main' });
+        const cfg = await WhatsAppConfig.findOne({ singletonKey: configKeyFor('main') });
         if (!cfg || cfg.status !== 'connected') {
             // WhatsApp not connected — track it on the order
             await Order.updateOne({ _id: order._id }, {

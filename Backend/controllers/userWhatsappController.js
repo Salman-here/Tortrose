@@ -2,16 +2,17 @@
  * User WhatsApp Controller
  * ─────────────────────────
  * Handles WhatsApp number linking for USERS (buyers) so they can
- * chat with the Rozare AI via the buyer WhatsApp instance (rozare-main).
+ * chat with the Rozare AI via the unified WhatsApp gateway.
  *
- * Uses the BUYER instance (rozare-main) for OTP delivery — distinct
- * from sellerWhatsappController which uses the seller instance.
+ * Uses the configured buyer logical route for OTP delivery. In unified mode,
+ * that logical route is backed by the seller/admin Evolution instance.
  */
 
 const WhatsAppOTP = require('../models/WhatsAppOTP');
 const WhatsAppConfig = require('../models/WhatsAppConfig');
 const User = require('../models/User');
-const evolution = require('../services/whatsapp/evolutionClient'); // buyer instance
+const evolution = require('../services/whatsapp/evolutionClient');
+const { configKeyFor } = require('../services/whatsapp/gatewayMode');
 
 // ─── Config ───
 const OTP_EXPIRY_MINUTES = 2;
@@ -57,8 +58,8 @@ exports.sendUserWhatsAppOTP = async (req, res) => {
             return res.status(400).json({ success: false, msg: 'Invalid WhatsApp number format. Use country code + number (e.g. +923001234567)' });
         }
 
-        // Check that the buyer WhatsApp instance is connected
-        const cfg = await WhatsAppConfig.findOne({ singletonKey: 'main' });
+        // Check that the unified WhatsApp gateway is connected
+        const cfg = await WhatsAppConfig.findOne({ singletonKey: configKeyFor('main') });
         if (!cfg || cfg.status !== 'connected') {
             return res.status(503).json({
                 success: false,
@@ -97,11 +98,9 @@ exports.sendUserWhatsAppOTP = async (req, res) => {
         const currentUser = await User.findById(userId).select('whatsappInfo');
         const hasExistingNumber = currentUser?.whatsappInfo?.number && currentUser?.whatsappInfo?.verified;
 
-        // Also check if this number is a seller's verified WhatsApp number
-        // (sellers use their number on the seller instance; same number can be used
-        // on the buyer instance for user AI chat — they are separate concerns)
-        // NOTE: We allow the same number for both seller and user linking since
-        // they operate on different instances. But we block if another USER has it.
+        // A seller/admin number may also be linked for buyer AI mode. Unified
+        // routing gives seller/admin identity priority, while this user link is
+        // still allowed for buyer tools. We only block if another USER has it.
 
         // Per-number rate limit
         const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
@@ -340,8 +339,8 @@ exports.getUserWhatsAppStatus = async (req, res) => {
 
         const user = await User.findById(userId).select('whatsappInfo');
 
-        // Also check if the buyer instance is connected
-        const cfg = await WhatsAppConfig.findOne({ singletonKey: 'main' });
+        // Also check if the unified WhatsApp gateway is connected
+        const cfg = await WhatsAppConfig.findOne({ singletonKey: configKeyFor('main') });
         const instanceConnected = cfg?.status === 'connected';
 
         return res.status(200).json({

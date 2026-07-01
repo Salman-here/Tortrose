@@ -31,8 +31,8 @@ const NOTIFICATION_CATEGORIES = {
 // WhatsApp aggressively bans numbers that spam. We protect the seller instance
 // by enforcing:
 //   1. An hourly cap (default 60 msgs/hr, tracked on WhatsAppConfig singleton).
-//   2. A sequential in-process queue with a 1-3s random jitter per send so
-//      parallel order/webhook storms don't hit WhatsApp all at once.
+//   2. A sequential in-process queue so parallel order/webhook storms don't hit
+//      WhatsApp all at once. There is no artificial send delay.
 //
 // This is a simpler cousin of services/whatsapp/queue.js (which uses DB-backed
 // messages for buyer verification). Seller notifications are fire-and-forget
@@ -168,9 +168,8 @@ async function logNotification(sellerId, category, message, status, reason, erro
 }
 
 /**
- * Send a WhatsApp notification to a seller. Queued serially with jitter so
- * parallel callers (e.g. multi-seller order, webhook storm) don't hammer
- * WhatsApp and trigger anti-spam bans.
+ * Send a WhatsApp notification to a seller. Queued serially so parallel callers
+ * (e.g. multi-seller order, webhook storm) don't hammer WhatsApp all at once.
  *
  * @param {string|ObjectId} sellerId - The User._id of the seller
  * @param {string} category - One of NOTIFICATION_CATEGORIES keys
@@ -181,7 +180,7 @@ function notifySeller(sellerId, category, message) {
     const sellerIdStr = sellerId?.toString?.() || String(sellerId || '');
     if (!sellerIdStr) return Promise.resolve({ sent: false, reason: 'missing_seller_id' });
 
-    // Chain on the serial queue so we send one-at-a-time with jitter
+    // Chain on the serial queue so we send one-at-a-time without artificial delay.
     const task = chain.then(async () => {
         try {
             const result = await sendNow(sellerIdStr, category, message);

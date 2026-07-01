@@ -11,5 +11,8 @@
 //   - /webhook/set uses { enabled, url, webhookByEvents, webhookBase64, events } (camelCase)
 
 const createEvolutionClient = require('./createEvolutionClient');
+const { useUnifiedWhatsAppInstance } = require('./gatewayMode');
 
-module.exports = createEvolutionClient('EVOLUTION_INSTANCE_NAME', 'rozare-main');
+module.exports = useUnifiedWhatsAppInstance()
+    ? createEvolutionClient('EVOLUTION_SELLER_INSTANCE_NAME', 'rozare-seller')
+    : createEvolutionClient('EVOLUTION_INSTANCE_NAME', 'rozare-main');
