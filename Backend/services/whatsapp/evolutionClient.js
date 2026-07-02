@@ -8,7 +8,7 @@
 //     (we convert it to a PNG data URL with the `qrcode` npm package so the admin UI can render it)
 //   - /instance/fetchInstances returns [{ instance: { status: 'open'|'close'|'connecting', ... }}]
 //     (no qrcode field here — only connection state)
-//   - /webhook/set uses { enabled, url, webhookByEvents, webhookBase64, events } (camelCase)
+//   - /webhook/set on v2.3.x uses { webhook: { enabled, url, webhookByEvents, webhookBase64, events } }
 
 const createEvolutionClient = require('./createEvolutionClient');
 const { useUnifiedWhatsAppInstance } = require('./gatewayMode');

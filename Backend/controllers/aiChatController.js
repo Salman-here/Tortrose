@@ -34,6 +34,8 @@ const AI_FALLBACK_MODEL = process.env.AI_FALLBACK_MODEL || 'google/gemini-flash-
 const SITE_URL = process.env.FRONTEND_URL || 'https://www.rozare.com';
 const SITE_NAME = 'Rozare';
 const PRODUCT_IMAGE_ATTACHMENT_RE = /\n?\[Attached product image: (https?:\/\/[^\]\s]+)\]/gi;
+const AI_REQUEST_TIMEOUT_MS = Number(process.env.AI_REQUEST_TIMEOUT_MS || 60000);
+const WHATSAPP_AI_REQUEST_TIMEOUT_MS = Number(process.env.WHATSAPP_AI_REQUEST_TIMEOUT_MS || 35000);
 
 function extractImageAttachments(content = '', explicit = []) {
   const seen = new Set();
@@ -1980,23 +1982,42 @@ async function processAIChatMessage(userObj, incomingMessages, options = {}) {
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
     const isLast = i === MAX_ITERATIONS - 1;
+    if (!OPENROUTER_API_KEY) {
+      throw new Error('AI service temporarily unavailable.');
+    }
 
-    const upstream = await fetch(OPENROUTER_URL, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${OPENROUTER_API_KEY}`,
-        'Content-Type': 'application/json',
-        'HTTP-Referer': SITE_URL,
-        'X-Title': SITE_NAME,
-      },
-      body: JSON.stringify({
-        model: AI_MODEL,
-        messages: conversationMessages,
-        tools: isLast ? undefined : tools,
-        stream: false,
-        temperature: 0.7,
-      }),
-    });
+    const timeoutMs = isWhatsApp ? WHATSAPP_AI_REQUEST_TIMEOUT_MS : AI_REQUEST_TIMEOUT_MS;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    timeout.unref?.();
+
+    let upstream;
+    try {
+      upstream = await fetch(OPENROUTER_URL, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': SITE_URL,
+          'X-Title': SITE_NAME,
+        },
+        body: JSON.stringify({
+          model: AI_MODEL,
+          messages: conversationMessages,
+          tools: isLast ? undefined : tools,
+          stream: false,
+          temperature: 0.7,
+        }),
+        signal: controller.signal,
+      });
+    } catch (err) {
+      if (err.name === 'AbortError') {
+        throw new Error('AI service timed out.');
+      }
+      throw err;
+    } finally {
+      clearTimeout(timeout);
+    }
 
     if (!upstream.ok) {
       const t = await upstream.text().catch(() => '');

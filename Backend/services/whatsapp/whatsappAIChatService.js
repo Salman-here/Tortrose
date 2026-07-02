@@ -26,21 +26,32 @@ const SITE_URL = process.env.FRONTEND_URL || 'https://www.rozare.com';
 const RATE_LIMIT_PER_HOUR = Number(process.env.WHATSAPP_AI_RATE_LIMIT_PER_HOUR || 30);
 const AI_CHAT_ENABLED = process.env.WHATSAPP_AI_CHAT_ENABLED !== 'false'; // default true
 
-// ─── Per-user sequential processing queue ─────────────────────────────
-// Prevents race conditions when a user sends multiple messages rapidly.
-// Each user gets their own promise chain so messages are processed one at a time.
-const userQueues = new Map(); // userId → Promise
-const QUEUE_CLEANUP_INTERVAL = 10 * 60 * 1000; // Clean up resolved queues every 10 min
+// ─── Per-chat sequential processing queue ─────────────────────────────
+// Prevents overlapping OpenRouter/tool/send cycles when Evolution emits
+// repeated events for the same chat or the user sends messages quickly.
+const chatQueues = new Map(); // queueKey -> Promise
 
-// Clean up old queue entries periodically to avoid memory leaks
-setInterval(() => {
-    for (const [key, promise] of userQueues.entries()) {
-        // If the promise is resolved (settled), remove it
-        Promise.race([promise, Promise.resolve('done')]).then(v => {
-            if (v === 'done') userQueues.delete(key); // queue was already resolved
-        }).catch(() => userQueues.delete(key));
-    }
-}, QUEUE_CLEANUP_INTERVAL);
+function buildQueueKey(phone, options = {}) {
+    const candidates = buildIdentityCandidates(phone, options);
+    return candidates[0] || normalizePhoneDigits(phone) || phoneFromJid(options.replyTo) || 'unknown';
+}
+
+function enqueueChatWork(queueKey, work) {
+    const key = queueKey || 'unknown';
+    const previous = chatQueues.get(key) || Promise.resolve();
+    const next = previous
+        .catch(() => null)
+        .then(work);
+
+    chatQueues.set(key, next);
+    next.finally(() => {
+        if (chatQueues.get(key) === next) {
+            chatQueues.delete(key);
+        }
+    }).catch(() => null);
+
+    return next;
+}
 
 // ─── Rejection message cooldown ───────────────────────────────────────
 // Prevents spamming unlinked/non-seller users with rejection messages on every message.
@@ -439,7 +450,7 @@ async function handleNonSellerOnSellerInstance(phone, recipient = phone) {
  * @param {object} options - Optional routing hints
  * @param {string} options.replyTo - Exact WhatsApp chat JID/number to reply to
  */
-async function processIncomingWhatsAppMessage(phone, messageText, instanceType, rawAttachments = [], options = {}) {
+async function processIncomingWhatsAppMessageNow(phone, messageText, instanceType, rawAttachments = [], options = {}) {
     if (!AI_CHAT_ENABLED) {
         console.log(`[wa-ai-chat] AI chat disabled, ignoring message from ${phone}`);
         return;
@@ -566,8 +577,17 @@ async function processIncomingWhatsAppMessage(phone, messageText, instanceType, 
     }
 }
 
+async function processIncomingWhatsAppMessage(phone, messageText, instanceType, rawAttachments = [], options = {}) {
+    const queueKey = buildQueueKey(phone, options);
+    return enqueueChatWork(queueKey, () =>
+        processIncomingWhatsAppMessageNow(phone, messageText, instanceType, rawAttachments, options)
+    );
+}
+
 module.exports = {
     processIncomingWhatsAppMessage,
+    _processIncomingWhatsAppMessageNow: processIncomingWhatsAppMessageNow,
+    _buildQueueKey: buildQueueKey,
     identifyUserByPhone,
     normalizePhoneDigits,
 };

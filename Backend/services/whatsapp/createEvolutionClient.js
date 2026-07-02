@@ -420,7 +420,7 @@ function createEvolutionClient(instanceEnvVar, defaultName) {
 
     const setWebhook = async (url, secret = '') => {
         if (!isConfigured()) throw new Error('Evolution API not configured');
-        const payload = {
+        const webhook = {
             enabled: true,
             url,
             webhookByEvents: false,
@@ -430,17 +430,32 @@ function createEvolutionClient(instanceEnvVar, defaultName) {
                 'MESSAGES_UPDATE',
                 'CONNECTION_UPDATE',
                 'QRCODE_UPDATED',
+                'SEND_MESSAGE',
+                'LOGOUT_INSTANCE',
+                'REMOVE_INSTANCE',
             ],
             ...(secret ? { headers: { 'x-rozare-webhook-secret': secret } } : {}),
         };
+        // Evolution v2.3.x validates /webhook/set with a top-level `webhook`
+        // object. Keep the flat fallback for older/self-hosted builds that
+        // accepted the legacy shape.
+        const payloads = [{ webhook }, webhook];
         let lastError = null;
         for (let attempt = 0; attempt < 4; attempt++) {
-            try {
-                const { data } = await client().post(`/webhook/set/${instanceName()}`, payload);
-                return data;
-            } catch (err) {
-                lastError = err;
-                if (err.response?.status !== 404 || attempt === 3) throw err;
+            for (const payload of payloads) {
+                try {
+                    const { data } = await client().post(`/webhook/set/${instanceName()}`, payload);
+                    return data;
+                } catch (err) {
+                    lastError = err;
+                    const msg = JSON.stringify(err.response?.data || err.message || '');
+                    const wrongShape = err.response?.status === 400 && /webhook/i.test(msg);
+                    if (wrongShape && payload.webhook) continue;
+                    if (err.response?.status !== 404 || attempt === 3) throw err;
+                    break;
+                }
+            }
+            if (lastError?.response?.status === 404) {
                 await sleep(750 * (attempt + 1));
             }
         }
