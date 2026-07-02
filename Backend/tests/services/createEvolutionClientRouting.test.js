@@ -75,5 +75,28 @@ describe('Evolution client recipient routing', () => {
       'CONNECTION_UPDATE',
       'QRCODE_UPDATED',
     ]));
+    expect(webhookPayload.webhook.events).not.toContain('SEND_MESSAGE');
+  });
+
+  test('applies low-latency Evolution settings by default', async () => {
+    let settingsPayload;
+    axios.create.mockReturnValue({
+      post: jest.fn(async (url, payload) => {
+        expect(url).toBe('/settings/set/rozare-seller');
+        settingsPayload = payload;
+        return { data: { settings: payload } };
+      }),
+    });
+
+    const client = createEvolutionClient('EVOLUTION_SELLER_INSTANCE_NAME', 'rozare-seller');
+    await client.setSettings();
+
+    expect(settingsPayload).toEqual(expect.objectContaining({
+      groupsIgnore: true,
+      alwaysOnline: true,
+      readMessages: true,
+      readStatus: false,
+      syncFullHistory: false,
+    }));
   });
 });

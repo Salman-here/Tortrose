@@ -212,6 +212,9 @@ const registerWebhookIfPossible = async (req = null) => {
             return;
         }
         const secret = process.env.EVOLUTION_WEBHOOK_SECRET || '';
+        await evolution.setSettings().catch((settingsErr) => {
+            console.warn('[whatsapp] setSettings failed (non-fatal):', settingsErr.response?.data || settingsErr.message);
+        });
         await evolution.setWebhook(url, secret);
         console.log('[whatsapp] webhook registered with Evolution:', url);
     } catch (err) {
@@ -783,6 +786,9 @@ const registerSellerWebhookIfPossible = async (req = null) => {
             return;
         }
         const secret = process.env.EVOLUTION_WEBHOOK_SECRET || '';
+        await sellerEvolution.setSettings().catch((settingsErr) => {
+            console.warn('[whatsapp:seller] setSettings failed (non-fatal):', settingsErr.response?.data || settingsErr.message);
+        });
         await sellerEvolution.setWebhook(url, secret);
         console.log('[whatsapp:seller] webhook registered with Evolution:', url);
     } catch (err) {

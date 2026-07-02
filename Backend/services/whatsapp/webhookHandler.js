@@ -67,6 +67,30 @@ const messageKeyFromUpdate = (msg = {}) => (
     {}
 );
 
+const toTimestampMs = (value) => {
+    if (!value) return 0;
+    if (typeof value === 'number') return value > 1e12 ? value : value * 1000;
+    if (typeof value === 'string' && /^\d+$/.test(value)) {
+        const numeric = Number(value);
+        return numeric > 1e12 ? numeric : numeric * 1000;
+    }
+    if (typeof value === 'object') {
+        if (typeof value.toNumber === 'function') return toTimestampMs(value.toNumber());
+        if (typeof value.low === 'number') return toTimestampMs(value.low);
+    }
+    return 0;
+};
+
+const inboundMessageAgeMs = (msg = {}) => {
+    const ts = toTimestampMs(
+        msg.messageTimestamp ||
+        msg.timestamp ||
+        msg.message?.messageTimestamp ||
+        msg.message?.timestamp
+    );
+    return ts ? Math.max(0, Date.now() - ts) : 0;
+};
+
 const markOutboundDeliveryFailure = async (msg = {}, singletonKey = 'seller') => {
     const key = messageKeyFromUpdate(msg);
     const messageId = key.id || msg.id || msg.messageId || '';
@@ -546,7 +570,8 @@ exports.handleEvolutionWebhook = async (req, res) => {
                         instanceName: incomingInstance || sellerInstanceName,
                     });
                     const outboundTo = await resolveOutboundRecipient(phone, replyTo, { instanceType: 'seller' });
-                    console.log(`[whatsapp] route seller phone=${phone} lid=${address.lidJid || ''} requested=${replyTo || ''} outbound=${outboundTo || ''}`);
+                    const ageMs = inboundMessageAgeMs(msg);
+                    console.log(`[whatsapp] route seller phone=${phone} lid=${address.lidJid || ''} requested=${replyTo || ''} outbound=${outboundTo || ''} messageId=${msg?.key?.id || ''} ageMs=${ageMs || 'unknown'}`);
                     markInboundConversationWindowOpen(phone);
 
                     // Extract text from the message
@@ -591,7 +616,8 @@ exports.handleEvolutionWebhook = async (req, res) => {
                     instanceName: effectiveInstanceName,
                 });
                 const outboundTo = await resolveOutboundRecipient(phone, replyTo, { instanceType: routeScope });
-                console.log(`[whatsapp] route ${routeLabel} phone=${phone} lid=${address.lidJid || ''} requested=${replyTo || ''} outbound=${outboundTo || ''}`);
+                const ageMs = inboundMessageAgeMs(msg);
+                console.log(`[whatsapp] route ${routeLabel} phone=${phone} lid=${address.lidJid || ''} requested=${replyTo || ''} outbound=${outboundTo || ''} messageId=${msg?.key?.id || ''} ageMs=${ageMs || 'unknown'}`);
                 markInboundConversationWindowOpen(phone);
                 const mediaText = extractMessageText(msg);
                 const attachments = extractMediaAttachments(msg, {

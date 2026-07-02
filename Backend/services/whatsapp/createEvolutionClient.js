@@ -21,6 +21,21 @@ const {
 
 const baseUrl = () => (process.env.EVOLUTION_API_URL || '').replace(/\/+$/, '');
 const apiKey = () => process.env.EVOLUTION_API_KEY || '';
+const envBool = (name, fallback) => {
+    const raw = process.env[name];
+    if (raw === undefined || raw === '') return fallback;
+    return !['false', '0', 'no', 'off'].includes(String(raw).toLowerCase());
+};
+
+const lowLatencySettings = () => ({
+    rejectCall: envBool('EVOLUTION_REJECT_CALLS', false),
+    msgCall: process.env.EVOLUTION_CALL_MESSAGE || '',
+    groupsIgnore: envBool('EVOLUTION_IGNORE_GROUPS', true),
+    alwaysOnline: envBool('EVOLUTION_ALWAYS_ONLINE', true),
+    readMessages: envBool('EVOLUTION_READ_MESSAGES', true),
+    readStatus: envBool('EVOLUTION_READ_STATUS', false),
+    syncFullHistory: envBool('EVOLUTION_SYNC_FULL_HISTORY', false),
+});
 
 const makeClient = () => axios.create({
     baseURL: baseUrl(),
@@ -183,12 +198,7 @@ function createEvolutionClient(instanceEnvVar, defaultName) {
                 instanceName: instanceName(),
                 qrcode: true,
                 integration: 'WHATSAPP-BAILEYS',
-                rejectCall: false,
-                groupsIgnore: true,
-                alwaysOnline: false,
-                readMessages: false,
-                readStatus: false,
-                syncFullHistory: false,
+                ...lowLatencySettings(),
             });
             console.log(`[evolution:${instanceName()}] instance created:`, JSON.stringify(data).slice(0, 300));
             return data;
@@ -430,7 +440,6 @@ function createEvolutionClient(instanceEnvVar, defaultName) {
                 'MESSAGES_UPDATE',
                 'CONNECTION_UPDATE',
                 'QRCODE_UPDATED',
-                'SEND_MESSAGE',
                 'LOGOUT_INSTANCE',
                 'REMOVE_INSTANCE',
             ],
@@ -460,6 +469,13 @@ function createEvolutionClient(instanceEnvVar, defaultName) {
             }
         }
         throw lastError;
+    };
+
+    const setSettings = async (settings = {}) => {
+        if (!isConfigured()) throw new Error('Evolution API not configured');
+        const payload = { ...lowLatencySettings(), ...settings };
+        const { data } = await client().post(`/settings/set/${instanceName()}`, payload);
+        return data;
     };
 
     const checkWhatsAppNumber = async (number) => {
@@ -495,6 +511,7 @@ function createEvolutionClient(instanceEnvVar, defaultName) {
         sendList,
         sendButtons,
         setWebhook,
+        setSettings,
         checkWhatsAppNumber,
         isConfigured,
         instanceName,

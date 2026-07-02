@@ -451,6 +451,7 @@ async function handleNonSellerOnSellerInstance(phone, recipient = phone) {
  * @param {string} options.replyTo - Exact WhatsApp chat JID/number to reply to
  */
 async function processIncomingWhatsAppMessageNow(phone, messageText, instanceType, rawAttachments = [], options = {}) {
+    const startedAt = Date.now();
     if (!AI_CHAT_ENABLED) {
         console.log(`[wa-ai-chat] AI chat disabled, ignoring message from ${phone}`);
         return;
@@ -469,6 +470,7 @@ async function processIncomingWhatsAppMessageNow(phone, messageText, instanceTyp
     try {
         // 1. Identify the user
         const identified = await identifyUserByPhoneCandidates(identityCandidates, instanceType);
+        const identifiedAt = Date.now();
         if (!identified) {
             const rejectionKey = phoneFromJid(replyTo) || primaryPhone || phone;
             console.log(`[wa-ai-chat] No linked ${instanceType} user found for candidates=${identityCandidates.join(',') || phone}`);
@@ -512,11 +514,13 @@ async function processIncomingWhatsAppMessageNow(phone, messageText, instanceTyp
         const attachmentResult = attachments.length
             ? await processChatAttachments(attachments)
             : { context: '', attachments: [] };
+        const attachmentsAt = Date.now();
         const userContent = [trimmedText, attachmentResult.context].filter(Boolean).join('\n\n') ||
             (attachments.length ? 'Attachment uploaded' : trimmedText);
 
         // 4. Load conversation history
         const conversationHistory = await loadWhatsAppConversation(user._id);
+        const historyAt = Date.now();
 
         // 5. Build messages array (history + new message)
         const messages = [
@@ -532,9 +536,12 @@ async function processIncomingWhatsAppMessageNow(phone, messageText, instanceTyp
         const userObj = { _id: user._id, id: user._id.toString(), role };
 
         const aiOptions = { mode: 'whatsapp' };
+        const aiStartedAt = Date.now();
         const result = await processAIChatMessage(userObj, messages, aiOptions);
+        const aiFinishedAt = Date.now();
 
         // 7. Send AI response
+        const sendStartedAt = Date.now();
         if (result.responseText) {
             const responseText = sanitizeVisibleAIResponse(result.responseText) ||
                 "Done. I processed that, but I do not have a written update to send.";
@@ -543,6 +550,8 @@ async function processIncomingWhatsAppMessageNow(phone, messageText, instanceTyp
             // AI returned empty response — send a fallback
             await sendResponse(finalReplyTo, "I'm sorry, I couldn't process that. Could you try rephrasing? 🤔", effectiveInstanceType);
         }
+
+        const textSentAt = Date.now();
 
         // 8. Send pending product images (if AI used send_product_image tool)
         if (aiOptions._pendingImages?.length) {
@@ -559,6 +568,7 @@ async function processIncomingWhatsAppMessageNow(phone, messageText, instanceTyp
         }
 
         console.log(`[wa-ai-chat] Response sent to ${matchedPhone || primaryPhone} (${role}) via ${effectiveInstanceType}`);
+        console.log(`[wa-ai-chat] Timing ${matchedPhone || primaryPhone} route=${effectiveInstanceType} identify=${identifiedAt - startedAt}ms attachments=${attachmentsAt - identifiedAt}ms history=${historyAt - attachmentsAt}ms ai=${aiFinishedAt - aiStartedAt}ms send=${textSentAt - sendStartedAt}ms total=${Date.now() - startedAt}ms`);
 
     } catch (err) {
         console.error(`[wa-ai-chat] Error processing message from ${primaryPhone || phone}:`, err.message);
