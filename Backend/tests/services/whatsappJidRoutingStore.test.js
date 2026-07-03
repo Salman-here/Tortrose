@@ -44,7 +44,7 @@ describe('WhatsApp JID routing store', () => {
     );
   });
 
-  test('uses a persisted route when the requested recipient is a phone JID', async () => {
+  test('keeps an explicit phone JID unchanged', async () => {
     WhatsAppJidMapping.findOne.mockReturnValue({
       sort: jest.fn().mockReturnValue({
         lean: jest.fn().mockResolvedValue({
@@ -58,6 +58,27 @@ describe('WhatsApp JID routing store', () => {
     const recipient = await resolveOutboundRecipient(
       '923000000001',
       '923000000001@s.whatsapp.net',
+      { instanceType: 'main' }
+    );
+
+    expect(recipient).toBe('923000000001@s.whatsapp.net');
+    expect(WhatsAppJidMapping.findOne).not.toHaveBeenCalled();
+  });
+
+  test('uses a persisted route when the requested recipient is a bare phone', async () => {
+    WhatsAppJidMapping.findOne.mockReturnValue({
+      sort: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue({
+          phone: '923000000001',
+          instanceType: 'main',
+          lidJid: '11111111111111@lid',
+        }),
+      }),
+    });
+
+    const recipient = await resolveOutboundRecipient(
+      '923000000001',
+      '923000000001',
       { instanceType: 'main' }
     );
 

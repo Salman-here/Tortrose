@@ -249,6 +249,12 @@ const NO_WORDS = [
     '2',
 ];
 
+const CONFIRM_REPLY_FILLER_WORDS = [
+    'please', 'pls', 'plz',
+    'order', 'my', 'this', 'it',
+    'thanks', 'thank', 'you',
+];
+
 const normaliseReply = (text) =>
     String(text || '')
         .toLowerCase()
@@ -262,6 +268,16 @@ exports.parseConfirmReply = (text) => {
     if (!clean) return null;
 
     const tokens = clean.split(' ');
+    const decisionTokens = tokens.filter((t) => YES_WORDS.includes(t) || NO_WORDS.includes(t));
+    if (!decisionTokens.length) return null;
+
+    const isShortExplicitReply = tokens.length <= 4 && tokens.every((t) =>
+        YES_WORDS.includes(t) ||
+        NO_WORDS.includes(t) ||
+        CONFIRM_REPLY_FILLER_WORDS.includes(t)
+    );
+    if (!isShortExplicitReply) return null;
+
     const hasYes = tokens.some((t) => YES_WORDS.includes(t));
     const hasNo = tokens.some((t) => NO_WORDS.includes(t));
 
@@ -273,9 +289,6 @@ exports.parseConfirmReply = (text) => {
     }
     if (hasYes) return 'yes';
     if (hasNo) return 'no';
-
-    if (/\bconfirm(ing|ed)?\b/.test(clean)) return 'yes';
-    if (/\bcancel(ling|led)?\b/.test(clean)) return 'no';
 
     return null;
 };

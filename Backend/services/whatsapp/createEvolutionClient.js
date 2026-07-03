@@ -11,6 +11,7 @@ const {
     collectAddressHints,
     phoneFromJid,
     isLidJid,
+    isPhoneJid,
 } = require('./addressing');
 const {
     rememberInboundRoute,
@@ -180,6 +181,7 @@ function createEvolutionClient(instanceEnvVar, defaultName) {
 
     const normalizeSendRecipient = async (number) => {
         if (isLidJid(number)) return number;
+        if (isPhoneJid(number)) return number;
         const digits = phoneFromJid(number);
         if (!digits) return number;
 

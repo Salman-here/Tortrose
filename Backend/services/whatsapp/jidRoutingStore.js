@@ -5,6 +5,7 @@ const WhatsAppJidMapping = require('../../models/WhatsAppJidMapping');
 const {
     phoneFromJid,
     isLidJid,
+    isPhoneJid,
     rememberPhoneLid,
     getRememberedLid,
 } = require('./addressing');
@@ -41,6 +42,7 @@ const rememberInboundRoute = async (address, { instanceType, instanceName = '', 
 
 const resolveOutboundRecipient = async (phone, requestedRecipient, { instanceType } = {}) => {
     if (isLidJid(requestedRecipient)) return requestedRecipient;
+    if (isPhoneJid(requestedRecipient)) return requestedRecipient;
 
     const digits = normalizePhone(phone);
     if (!digits) return requestedRecipient || phone;

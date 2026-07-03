@@ -18,7 +18,7 @@ describe('Evolution client recipient routing', () => {
     delete process.env.EVOLUTION_SELLER_INSTANCE_NAME;
   });
 
-  test('routes a phone JID to the recent LID chat before sending text', async () => {
+  test('keeps an explicit phone JID unchanged before sending text', async () => {
     let sentPayload;
     axios.create.mockReturnValue({
       post: jest.fn(async (url, payload) => {
@@ -48,6 +48,41 @@ describe('Evolution client recipient routing', () => {
 
     const client = createEvolutionClient('EVOLUTION_SELLER_INSTANCE_NAME', 'rozare-seller');
     await client.sendText('923499166402@s.whatsapp.net', 'hello');
+
+    expect(sentPayload.number).toBe('923499166402@s.whatsapp.net');
+    expect(sentPayload.delay).toBe(0);
+  });
+
+  test('routes a bare phone to the recent LID chat before sending text', async () => {
+    let sentPayload;
+    axios.create.mockReturnValue({
+      post: jest.fn(async (url, payload) => {
+        if (url.includes('/chat/findMessages/')) {
+          return {
+            data: {
+              messages: {
+                records: [
+                  {
+                    key: {
+                      fromMe: false,
+                      remoteJid: '39767790104698@lid',
+                      remoteJidAlt: '923499166402@s.whatsapp.net',
+                    },
+                    message: { conversation: 'Hi' },
+                  },
+                ],
+              },
+            },
+          };
+        }
+
+        sentPayload = payload;
+        return { data: { key: { id: 'test-message' } } };
+      }),
+    });
+
+    const client = createEvolutionClient('EVOLUTION_SELLER_INSTANCE_NAME', 'rozare-seller');
+    await client.sendText('923499166402', 'hello');
 
     expect(sentPayload.number).toBe('39767790104698@lid');
     expect(sentPayload.delay).toBe(0);
