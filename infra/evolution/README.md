@@ -11,6 +11,9 @@ the upstream image directly:
 - Patch: release Baileys' inbound event queue immediately after the
   `MESSAGES_UPSERT` webhook so contact/profile sync cannot delay the next
   inbound message
+- Patch: bypass normal `MESSAGES_UPDATE` work in Rozare transport mode so
+  delivery/read receipts cannot block subsequent inbound messages in the same
+  serial Baileys event queue
 
 Why: WhatsApp started returning outbound ack error `463` for some linked-device
 sends when the sender was missing or not reusing the right LID/tctoken state.
@@ -20,8 +23,9 @@ message as `PENDING`, then emits `MESSAGES_UPDATE` with `ERROR`.
 Rozare uses Evolution as a transport gateway. The backend owns chat history,
 AI state, orders, and contact identity. For that reason the compose file keeps
 message/update/contact/chat/history persistence disabled and enables
-`ROZARE_FAST_INBOUND_WEBHOOK=true` to avoid serial queue stalls after an inbound
-webhook has already been emitted.
+`ROZARE_FAST_INBOUND_WEBHOOK=true` plus
+`ROZARE_SKIP_MESSAGE_UPDATE_WORK=true` to avoid serial queue stalls after an
+inbound webhook has already been emitted.
 
 Verification:
 

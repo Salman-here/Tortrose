@@ -70,6 +70,7 @@ services:
       # backend. Keep Evolution as a low-latency transport gateway: emit the
       # inbound webhook, then immediately release Baileys' serial event queue.
       ROZARE_FAST_INBOUND_WEBHOOK: "true"
+      ROZARE_SKIP_MESSAGE_UPDATE_WORK: "true"
 
       # ── Redis cache ───────────────────────────────────────────────────────
       CACHE_REDIS_ENABLED: "true"
