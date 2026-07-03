@@ -67,12 +67,13 @@ function canSendRejection(phone) {
 }
 
 // Clean up old cooldown entries periodically
-setInterval(() => {
+const rejectionCleanupTimer = setInterval(() => {
     const cutoff = Date.now() - REJECTION_COOLDOWN_MS;
     for (const [phone, ts] of rejectionCooldowns.entries()) {
         if (ts < cutoff) rejectionCooldowns.delete(phone);
     }
 }, REJECTION_COOLDOWN_MS);
+rejectionCleanupTimer.unref?.();
 
 // ─── Helpers ──────────────────────────────────────────────────────────
 
@@ -408,10 +409,10 @@ async function handleNonSellerOnSellerInstance(phone, recipient = phone) {
             ``,
             `I'm the *Rozare Seller Assistant* — I help Rozare sellers manage their stores. 🏪`,
             ``,
-            `It looks like you're a Rozare shopper, not a seller. This WhatsApp number is for sellers only.`,
+            `It looks like you're a Rozare shopper, not a seller.`,
             ``,
-            `To chat with Rozare AI as a shopper, please use the buyer WhatsApp line or visit:`,
-            `${SITE_URL}/ai-chat`,
+            `To chat with Rozare AI on WhatsApp as a shopper, link and verify your WhatsApp number from your User Dashboard.`,
+            `You can also use the web chat here: ${SITE_URL}/ai-chat`,
             ``,
             `Want to become a seller? Visit: ${SITE_URL}/become-seller 🚀`,
         ].join('\n');
@@ -598,6 +599,7 @@ module.exports = {
     processIncomingWhatsAppMessage,
     _processIncomingWhatsAppMessageNow: processIncomingWhatsAppMessageNow,
     _buildQueueKey: buildQueueKey,
+    _identifyUserByPhoneCandidates: identifyUserByPhoneCandidates,
     identifyUserByPhone,
     normalizePhoneDigits,
 };

@@ -496,8 +496,10 @@ exports.handleEvolutionWebhook = async (req, res) => {
         const event = body.event || body.eventName || '';
 
         // ── Identify which Evolution instance this event belongs to ──
-        // Both the buyer-order-verification (main) and seller-notification (seller)
-        // instances POST to the same webhook URL. We MUST disambiguate, otherwise:
+        // Historically the buyer-order-verification (main) and seller-notification
+        // instances both posted here. In unified mode the seller instance handles
+        // buyer, seller, admin, and order-confirmation events. We still
+        // disambiguate so old main-instance events cannot corrupt routing.
         //   - CONNECTION_UPDATE for seller instance would corrupt main's WhatsAppConfig
         //   - MESSAGES_UPSERT from seller's own WhatsApp (for normal admin/seller AI chat)
         //     would incorrectly auto-confirm unrelated buyer orders.
@@ -595,7 +597,8 @@ exports.handleEvolutionWebhook = async (req, res) => {
         }
 
         // ── MESSAGES_UPSERT — button/list click (+ legacy poll) or AI chat ──
-        // From here on, we ONLY process events from the main (buyer-verification) instance.
+        // In unified mode this branch processes the single seller-backed gateway.
+        // In legacy two-instance mode it processes the main buyer-verification instance.
         if (event === 'messages.upsert' || event === 'MESSAGES_UPSERT') {
             const messages = Array.isArray(body.data) ? body.data : [body.data].filter(Boolean);
 
