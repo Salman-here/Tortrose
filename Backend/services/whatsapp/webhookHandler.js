@@ -2,8 +2,8 @@
 //
 // What this handles:
 //   - CONNECTION_UPDATE  → keeps WhatsAppConfig in sync so the admin status badge is accurate.
-//   - MESSAGES_UPSERT    → looks at inbound buyer messages and interprets YES/NO replies
-//                         (no more polls — we send a single plain text and parse the reply).
+//   - MESSAGES_UPSERT    → looks at inbound buyer messages and accepts only
+//                         WhatsApp button/list payloads for order decisions.
 //
 // Side-effects on CONFIRM:
 //   1. order.orderStatus = 'confirmed', confirmation.* timestamps updated
@@ -25,7 +25,7 @@ const { sendEmail } = require('../../controllers/mailController');
 const { sellerOrderConfirmedByBuyerEmail } = require('../../utils/emailTemplates');
 const { sendPushToUser } = require('../../utils/expoPush');
 const { findPendingJobByPhone, findPendingJobByOrderId, applyVote, markInboundConversationWindowOpen } = require('./queue');
-const { parseConfirmReply, buildReconfirmButtonsPayload } = require('./messageBuilder');
+const { buildReconfirmButtonsPayload } = require('./messageBuilder');
 const evolution = require('./evolutionClient');
 const { notifySeller } = require('./sellerNotificationService');
 const sellerTemplates = require('./sellerMessageTemplates');
@@ -199,9 +199,8 @@ const sendUnclearReplyHint = async (phone, orderId, buyerName) => {
             ``,
             `I didn't quite catch that for order *#${orderId}*.`,
             ``,
-            `Please reply with just:`,
-            `   *✅ YES* — to confirm`,
-            `   *❌ NO*  — to cancel`,
+            `Please use the Confirm order or Cancel order buttons from the latest order message.`,
+            `Typed replies are not accepted for order confirmation.`,
         ].join('\n');
         await evolution.sendText(phone, msg);
     } catch (err) {
@@ -214,12 +213,13 @@ const sendReconfirmPrompt = async (phone, order, contextMessage) => {
         const payload = buildReconfirmButtonsPayload(order, contextMessage);
         await evolution.sendButtons(phone, payload);
     } catch (btnErr) {
-        // Fallback to text if buttons fail
+        // No text decision fallback: order decisions must come from buttons.
         const firstName = order.shippingInfo?.fullName?.split(' ')[0] || 'there';
         const msg = [
             contextMessage || `Hey ${firstName}! This order was cancelled.`,
             ``,
-            `Want to confirm it again? Reply *YES* to re-confirm or *NO* to keep it cancelled.`,
+            `I could not send the re-confirmation buttons right now.`,
+            `Please place a new order or contact Rozare support if you need help.`,
         ].join('\n');
         await evolution.sendText(phone, msg);
     }
@@ -314,8 +314,8 @@ const notifySellers = async (order, isConfirmed) => {
 //         msg.message.listResponseMessage.singleSelectReply.selectedRowId
 //   5. Plain text:
 //         msg.message.conversation  or  msg.message.extendedTextMessage.text
-//      Some WA clients reflect a tapped button as plain text = displayText,
-//      so text fallback catches that too via parseConfirmReply.
+//      Text is returned only so it can be routed to AI chat; it never decides
+//      an order confirmation.
 // ──────────────────────────────────────────────────────────────────────────
 
 const { parseButtonId } = require('./messageBuilder');
@@ -499,7 +499,7 @@ exports.handleEvolutionWebhook = async (req, res) => {
         // Both the buyer-order-verification (main) and seller-notification (seller)
         // instances POST to the same webhook URL. We MUST disambiguate, otherwise:
         //   - CONNECTION_UPDATE for seller instance would corrupt main's WhatsAppConfig
-        //   - MESSAGES_UPSERT from seller's own WhatsApp (e.g. admin replying YES in chat)
+        //   - MESSAGES_UPSERT from seller's own WhatsApp (for normal admin/seller AI chat)
         //     would incorrectly auto-confirm unrelated buyer orders.
         const incomingInstance = body.instance || body.instanceName || body.data?.instance || '';
         const mainInstanceName = process.env.EVOLUTION_INSTANCE_NAME || 'rozare-main';
@@ -594,7 +594,7 @@ exports.handleEvolutionWebhook = async (req, res) => {
             return res.status(200).json({ ok: true, instance: 'seller' });
         }
 
-        // ── MESSAGES_UPSERT — button click OR text YES/NO reply (+ legacy poll) ──
+        // ── MESSAGES_UPSERT — button/list click (+ legacy poll) or AI chat ──
         // From here on, we ONLY process events from the main (buyer-verification) instance.
         if (event === 'messages.upsert' || event === 'MESSAGES_UPSERT') {
             const messages = Array.isArray(body.data) ? body.data : [body.data].filter(Boolean);
@@ -628,7 +628,7 @@ exports.handleEvolutionWebhook = async (req, res) => {
                 // 1) Try the rich extractor — recognises button clicks and text
                 //    replies in any of the 5 WhatsApp payload shapes.
                 let decision = null;   // 'yes' | 'no' | null
-                let decisionSource = ''; // 'button' | 'text' | 'poll'
+                let decisionSource = ''; // 'button' | 'poll'
                 let replyTextForHint = '';
 
                 const extracted = extractDecision(msg);
@@ -639,11 +639,6 @@ exports.handleEvolutionWebhook = async (req, res) => {
                         console.log(`[whatsapp] Button click from ${phone}: ${extracted.rawId} → ${decision}`);
                     } else if (extracted.source === 'text') {
                         replyTextForHint = extracted.text;
-                        decision = parseConfirmReply(extracted.text);
-                        if (decision) {
-                            decisionSource = 'text';
-                            console.log(`[whatsapp] Text reply from ${phone}: "${extracted.text}" → ${decision}`);
-                        }
                     }
                 }
 
@@ -655,7 +650,8 @@ exports.handleEvolutionWebhook = async (req, res) => {
 
                 // Find the pending job for this buyer.
                 // For button clicks, match by orderId extracted from the button id
-                // for precise matching. Fall back to phone-based matching for text replies.
+                // for precise matching. Fall back to phone matching only for
+                // legacy poll votes and non-decision chat routing.
                 let job;
                 if (decisionSource === 'button' && extracted?.rawId) {
                     // Extract orderId from button id like "confirm_ORD-1777617105232"
@@ -683,8 +679,8 @@ exports.handleEvolutionWebhook = async (req, res) => {
                     continue;
                 }
 
-                // If the buyer has a pending order but sent something that's not YES/NO,
-                // route to AI chat instead of just sending a YES/NO hint — the AI is
+                // If the buyer has a pending order but sent a normal text/media message,
+                // route to AI chat instead of treating text as a confirmation decision. The AI is
                 // smarter and can help with order questions or other requests.
                 if (!decision && (replyTextForHint || attachments.length)) {
                     processIncomingWhatsAppMessage(phone, replyTextForHint || mediaText, aiInstanceType, attachments, {
@@ -792,7 +788,7 @@ exports.handleEvolutionWebhook = async (req, res) => {
                 // ── Guard: is the order already in a terminal state? ──
                 //
                 // Multiple paths can finalise an order:
-                //   A. Buyer tapped YES/NO on WhatsApp earlier (first tap)
+                //   A. Buyer tapped confirm/cancel on WhatsApp earlier (first tap)
                 //   B. Buyer cancelled from their website/app dashboard
                 //   C. Admin changed the status
                 //   D. Order moved to processing/shipped/delivered
@@ -866,7 +862,7 @@ exports.handleEvolutionWebhook = async (req, res) => {
                             await evolution.sendText(outboundTo, msg);
                         } else {
                             // Tap confirm — wants to re-order! Send "Are you sure?" prompt
-                            console.log(`[whatsapp] Order ${order.orderId} was cancelled via email; buyer tapped YES on WA — sending reconfirm prompt`);
+                            console.log(`[whatsapp] Order ${order.orderId} was cancelled via email; buyer tapped confirm on WA — sending reconfirm prompt`);
                             const contextMsg = [
                                 `Hey ${firstName}! 👋`,
                                 ``,
@@ -891,7 +887,7 @@ exports.handleEvolutionWebhook = async (req, res) => {
                             await evolution.sendText(outboundTo, msg);
                         } else {
                             // Tap confirm — wants to re-order from account cancel! Send prompt
-                            console.log(`[whatsapp] Order ${order.orderId} was cancelled from account; buyer tapped YES on WA — sending reconfirm prompt`);
+                            console.log(`[whatsapp] Order ${order.orderId} was cancelled from account; buyer tapped confirm on WA — sending reconfirm prompt`);
                             const contextMsg = [
                                 `Hey ${firstName}! 👋`,
                                 ``,
@@ -922,7 +918,7 @@ exports.handleEvolutionWebhook = async (req, res) => {
                             await evolution.sendText(outboundTo, msg);
                         } else {
                             // Tap confirm — wants to re-order! Send prompt
-                            console.log(`[whatsapp] Order ${order.orderId} cancelled after WA confirm; buyer tapped YES — sending reconfirm prompt`);
+                            console.log(`[whatsapp] Order ${order.orderId} cancelled after WA confirm; buyer tapped confirm — sending reconfirm prompt`);
                             const contextMsg = [
                                 `Hey ${firstName}! 👋`,
                                 ``,
@@ -981,7 +977,7 @@ exports.handleEvolutionWebhook = async (req, res) => {
 
                     // Cancelled via WA, now taps confirm → send "Are you sure?" prompt
                     if (declinedViaWA && isYes) {
-                        console.log(`[whatsapp] Order ${order.orderId} was cancelled via WA; buyer tapped YES — sending reconfirm prompt`);
+                        console.log(`[whatsapp] Order ${order.orderId} was cancelled via WA; buyer tapped confirm — sending reconfirm prompt`);
                         const contextMsg = [
                             `Hey ${firstName}! 👋`,
                             ``,

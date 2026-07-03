@@ -1,26 +1,22 @@
 // Builds the WhatsApp message we send to the buyer to confirm an order.
 //
-// Flow (button-first, text-safe fallback):
+// Flow (button/list only):
 //   1. Send an interactive "native flow" message with 2 reply buttons:
 //        [✅ Confirm order]   [❌ Cancel order]
 //      Each button carries a stable id of the form
 //        confirm_ORD-xxxxxxxxx     or     cancel_ORD-xxxxxxxxx
-//      so the webhook can detect the buyer's choice unambiguously — even
-//      if the button chips fail to render and the buyer types "yes" / "no"
-//      or anything else in their own words.
+//      so the webhook can detect the buyer's choice unambiguously.
 //
 //   2. When the tap comes back, WhatsApp may deliver it as any of:
 //        - buttonsResponseMessage.selectedButtonId  (older clients)
 //        - interactiveResponseMessage               (v2 native flow)
 //        - templateButtonReplyMessage               (template flow)
-//        - plain conversation text  (modern WA reflects the displayText
-//                                    as a regular message from the buyer)
-//      All four paths are handled in webhookHandler.extractReplyText.
+//        - listResponseMessage.singleSelectReply     (list fallback)
+//      Interactive paths are handled in webhookHandler.extractDecision.
 //
-//   3. If Evolution can't render buttons for a specific phone (very rare in
-//      practice, but possible on outdated clients), the underlying text is
-//      still human-readable — "Please tap a button OR reply YES / NO" — so
-//      no buyer is ever stuck.
+//   3. Text replies are intentionally not accepted as order decisions. If
+//      interactive messages fail, the queue records a send failure instead of
+//      falling back to a typed-reply flow.
 
 const { normalizeCurrency } = require('../currencyService');
 const {
@@ -108,7 +104,7 @@ exports.buildOrderButtonsPayload = (order) => {
             ``,
             `Please tap a button below to confirm or cancel.`,
         ].join('\n'),
-        footer: `Rozare order confirmation · You can also reply YES or NO`,
+        footer: `Rozare order confirmation · Tap a button to decide`,
         buttons: [
             {
                 type: 'reply',
@@ -156,7 +152,7 @@ exports.buildOrderListPayload = (order) => {
             `Tap the button below to confirm or cancel your order.`,
         ].join('\n'),
         buttonText: 'Confirm or Cancel',
-        footerText: 'Rozare order confirmation · or reply YES / NO',
+        footerText: 'Rozare order confirmation · choose an option to decide',
         sections: [{
             title: 'Your decision',
             rows: [
@@ -175,8 +171,8 @@ exports.buildOrderListPayload = (order) => {
     };
 };
 
-// A plain-text fallback used only if sendButtons fails entirely (network
-// error etc.) — we still want the buyer to be able to decide.
+// Plain text summary retained for legacy display/tests. The live queue does
+// not use this as a decision fallback.
 exports.buildOrderConfirmationMessage = (order) => {
     const buyerName = order.shippingInfo?.fullName?.split(' ')[0] || 'there';
     const itemCount = order.orderItems?.length || 0;
@@ -201,10 +197,9 @@ exports.buildOrderConfirmationMessage = (order) => {
         `💰 Total: *${total}*`,
         `📍 Shipping to ${city}`,
         ``,
-        `Please confirm your order by replying:`,
+        `Please confirm your order from the WhatsApp buttons message.`,
         ``,
-        `   *✅ YES*  — to confirm & start processing`,
-        `   *❌ NO*   — to cancel this order`,
+        `Typed replies are not accepted for order confirmation.`,
     ].join('\n');
 };
 
@@ -216,82 +211,10 @@ exports.buildOrderConfirmationMessage = (order) => {
 //                      webhook handler with the raw Baileys message.
 //                      Returns { decision: 'yes'|'no', orderId: 'ORD-xxx' }
 //                      or null.
-//   2. Text reply    → parseConfirmReply() uses a multilingual YES/NO
-//                      dictionary and tolerates emoji/punctuation.
+// Text replies are deliberately ignored for order decisions.
 // ──────────────────────────────────────────────────────────────────────────
 
-const YES_WORDS = [
-    'yes', 'y', 'yeah', 'yep', 'yup', 'yess', 'yesss',
-    'ok', 'okay', 'kk',
-    'confirm', 'confirmed', 'confirming',
-    'done', 'accept', 'accepted', 'approve', 'approved',
-    'proceed', 'go', 'alright',
-    // Urdu / Roman-Urdu
-    'han', 'haan', 'ji', 'jee', 'theek', 'theeq',
-    // Arabic (romanised)
-    'naam', 'aiwa',
-    // Hindi
-    'haa', 'haaji',
-    // Single-digit shortcut
-    '1',
-];
-
-const NO_WORDS = [
-    'no', 'nope', 'nah', 'nay',
-    'cancel', 'cancelled', 'cancelling', 'canceled',
-    'reject', 'rejected', 'decline', 'declined',
-    'stop', 'abort', 'dont', "don't",
-    // Urdu / Roman-Urdu
-    'nahi', 'nahin', 'nhi', 'mana',
-    // Arabic (romanised)
-    'la',
-    // Single-digit shortcut
-    '2',
-];
-
-const CONFIRM_REPLY_FILLER_WORDS = [
-    'please', 'pls', 'plz',
-    'order', 'my', 'this', 'it',
-    'thanks', 'thank', 'you',
-];
-
-const normaliseReply = (text) =>
-    String(text || '')
-        .toLowerCase()
-        .replace(/\p{Extended_Pictographic}/gu, ' ')
-        .replace(/[^\p{L}\p{N}\s]/gu, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-
-exports.parseConfirmReply = (text) => {
-    const clean = normaliseReply(text);
-    if (!clean) return null;
-
-    const tokens = clean.split(' ');
-    const decisionTokens = tokens.filter((t) => YES_WORDS.includes(t) || NO_WORDS.includes(t));
-    if (!decisionTokens.length) return null;
-
-    const isShortExplicitReply = tokens.length <= 4 && tokens.every((t) =>
-        YES_WORDS.includes(t) ||
-        NO_WORDS.includes(t) ||
-        CONFIRM_REPLY_FILLER_WORDS.includes(t)
-    );
-    if (!isShortExplicitReply) return null;
-
-    const hasYes = tokens.some((t) => YES_WORDS.includes(t));
-    const hasNo = tokens.some((t) => NO_WORDS.includes(t));
-
-    if (hasYes && hasNo) {
-        for (const t of tokens) {
-            if (YES_WORDS.includes(t)) return 'yes';
-            if (NO_WORDS.includes(t)) return 'no';
-        }
-    }
-    if (hasYes) return 'yes';
-    if (hasNo) return 'no';
-
-    return null;
-};
+exports.parseConfirmReply = () => null;
 
 // Decide action from a button id string (e.g. "confirm_ORD-123", "reconfirm_ORD-123").
 // Returns 'yes' | 'no' | 'reconfirm' | 'keepcancel' | null.

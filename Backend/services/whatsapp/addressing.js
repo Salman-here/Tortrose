@@ -19,6 +19,10 @@ const isGroupOrBroadcastJid = (jid = '') => (
 
 const isLidJid = (jid = '') => jid.endsWith('@lid');
 const isPhoneJid = (jid = '') => jid.endsWith('@s.whatsapp.net');
+const toPhoneJid = (phone) => {
+    const digits = phoneFromJid(phone);
+    return digits ? `${digits}@s.whatsapp.net` : '';
+};
 const JID_PATTERN = /\b\d{5,}@(lid|s\.whatsapp\.net)\b/g;
 const ADDRESS_PATH_PATTERN = /(jid|phone|number|sender|remote|participant|author|from|user|owner)/i;
 
@@ -149,6 +153,7 @@ module.exports = {
     isGroupOrBroadcastJid,
     isLidJid,
     isPhoneJid,
+    toPhoneJid,
     rememberPhoneLid,
     getRememberedLid,
     resolveReplyTo,

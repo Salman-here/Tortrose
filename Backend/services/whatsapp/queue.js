@@ -4,12 +4,11 @@
 const WhatsAppPendingMessage = require('../../models/WhatsAppPendingMessage');
 const WhatsAppConfig = require('../../models/WhatsAppConfig');
 const evolution = require('./evolutionClient');
-const { resolveOutboundRecipient } = require('./jidRoutingStore');
-const { configKeyFor, routingScopeFor } = require('./gatewayMode');
+const { configKeyFor } = require('./gatewayMode');
+const { toPhoneJid } = require('./addressing');
 const {
     buildOrderButtonsPayload,
     buildOrderListPayload,
-    buildOrderConfirmationMessage,
     buildOrderPlacedInfoMessage,
     normalizePhone,
 } = require('./messageBuilder');
@@ -201,14 +200,14 @@ const processOne = async () => {
         //   list menu (one tap-to-open button → 2-row SINGLE_SELECT menu)
         //   is the next-most-friendly form and still delivers reliably.
         //
-        // Priority 3 — PLAIN TEXT YES/NO.
-        //   Last-resort so the buyer is never stuck.
+        // If both interactive formats fail, mark the job failed. Buyer order
+        // confirmation decisions must come from WhatsApp UI payloads only.
         //
-        // Rich reply envelopes (button click / list reply / plain text) are
+        // Rich reply envelopes (button click / list reply) are
         // all handled by webhookHandler.extractDecision, keyed on the
         // confirm_ORD-xxx / cancel_ORD-xxx id scheme.
 
-        const recipient = await resolveOutboundRecipient(job.phone, job.phone, { instanceType: routingScopeFor('main') });
+        const recipient = toPhoneJid(job.phone) || job.phone;
         let sendRes;
         let strategy;
 
@@ -218,7 +217,8 @@ const processOne = async () => {
             strategy = 'info-text';
             sendRes = await evolution.sendText(recipient, buildOrderPlacedInfoMessage(order));
         } else {
-            // COD: tiered confirm/cancel send (buttons → list → text fallback).
+            // COD: tiered confirm/cancel send (buttons → list). No text
+            // fallback is allowed for buyer decisions.
             const buttonsPayload = buildOrderButtonsPayload(order);
             strategy = 'buttons';
             try {
@@ -233,11 +233,10 @@ const processOne = async () => {
                     sendRes = await evolution.sendList(recipient, buildOrderListPayload(order));
                 } catch (listErr) {
                     console.warn(
-                        `[whatsapp] sendList also failed for order ${order.orderId}, falling back to text:`,
+                        `[whatsapp] sendList also failed for order ${order.orderId}; no text fallback will be sent:`,
                         listErr.response?.data || listErr.message
                     );
-                    strategy = 'text';
-                    sendRes = await evolution.sendText(recipient, buildOrderConfirmationMessage(order));
+                    throw listErr;
                 }
             }
         }
@@ -255,7 +254,7 @@ const processOne = async () => {
         order.confirmation.whatsappSentSuccess = true;
         await order.save();
 
-        console.log(`[whatsapp] sent order ${order.orderId} → ${job.phone} (${strategy})`);
+        console.log(`[whatsapp] sent order ${order.orderId} → ${recipient} (${strategy}) id=${job.summaryMessageId || 'unknown'}`);
     } catch (err) {
         const attempts = (job.attempts || 0) + 1;
         const status = err.response?.status;
@@ -330,7 +329,7 @@ exports.stopQueueProcessor = () => {
 //
 // Split into two operations so the handler can CHECK the order-level guard
 // BEFORE persisting the vote. This prevents the admin dashboard from
-// showing "declined" when the buyer tapped NO *after* already confirming.
+// showing "declined" when the buyer tapped cancel *after* already confirming.
 //
 // Step 1: findPendingJobByPhone — returns the most recent matching job
 //         without modifying it.

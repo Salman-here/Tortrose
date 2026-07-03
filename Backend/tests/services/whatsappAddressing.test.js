@@ -3,6 +3,7 @@ const {
   isGroupOrBroadcastJid,
   rememberPhoneLid,
   resolveReplyTo,
+  toPhoneJid,
   collectAddressHints,
   resolveInboundAddress,
 } = require('../../services/whatsapp/addressing');
@@ -98,6 +99,12 @@ describe('WhatsApp inbound addressing', () => {
     expect(hints.lidJids).toEqual(['39767790104698@lid']);
     expect(hints.phoneNumbers).toContain('923499166402');
     expect(hints.phoneNumbers).not.toContain('123456789');
+  });
+
+  test('builds explicit phone JID for proactive outbound sends', () => {
+    expect(toPhoneJid('+92 349 9166402')).toBe('923499166402@s.whatsapp.net');
+    expect(toPhoneJid('923499166402@s.whatsapp.net')).toBe('923499166402@s.whatsapp.net');
+    expect(toPhoneJid('')).toBe('');
   });
 
   test('remembers a phone to LID mapping for later sends', () => {
