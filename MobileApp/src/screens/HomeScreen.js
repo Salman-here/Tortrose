@@ -22,6 +22,7 @@ import {
   SafeAreaView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import ChatBot from '../components/ChatBot';
 import api from '../config/api';
 import ProductCard from '../components/ProductCard';
@@ -637,13 +638,25 @@ export default function HomeScreen({ navigation }) {
   }
 
   const renderFooter = () => {
-    if (!loadingMore) return null;
-    return (
-      <View style={styles.footerLoader}>
-        <ActivityIndicator size="small" color={palette.colors.primary} />
-        <Text style={styles.footerLoaderText}>Loading more products...</Text>
-      </View>
-    );
+    if (loadingMore) {
+      return (
+        <View style={styles.footerLoader}>
+          <ActivityIndicator size="small" color={palette.colors.primary} />
+          <Text style={styles.footerLoaderText}>Loading more products...</Text>
+        </View>
+      );
+    }
+    // Explicit pagination affordance alongside infinite scroll
+    if (hasMore && products.length > 0) {
+      return (
+        <TouchableOpacity style={styles.loadMoreBtn} onPress={() => fetchProducts(page + 1, true)} activeOpacity={0.85}>
+          <LinearGradient colors={palette.gradients.cta} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
+          <Text style={styles.loadMoreText}>Load More Products</Text>
+          <Ionicons name="chevron-down" size={16} color="#fff" />
+        </TouchableOpacity>
+      );
+    }
+    return null;
   };
 
   return (
@@ -795,4 +808,6 @@ const buildStyles = (p) => StyleSheet.create({
   // Pagination footer loader
   footerLoader: { paddingVertical: spacing.xl, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: spacing.sm },
   footerLoaderText: { fontSize: fontSize.sm, color: p.colors.textSecondary, fontWeight: fontWeight.medium },
+  loadMoreBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.xs, marginHorizontal: spacing.lg, marginTop: spacing.md, paddingVertical: spacing.md, borderRadius: borderRadius.xl, overflow: 'hidden', shadowColor: '#0EA5E9', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.35, shadowRadius: 16, elevation: 6 },
+  loadMoreText: { color: '#fff', fontSize: fontSize.md, fontWeight: fontWeight.bold },
 });
