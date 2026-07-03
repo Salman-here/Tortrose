@@ -5,7 +5,7 @@ const User = require('../models/User');
 const Notification = require('../models/Notification');
 const SellerPaymentAccount = require('../models/SellerPaymentAccount');
 const SellerWithdrawalRequest = require('../models/SellerWithdrawalRequest');
-const { normalizeCurrency, convertToUSD, formatMoneySync } = require('../services/currencyService');
+const { normalizeCurrency, convertToUSD, formatMoneySync, getExchangeRates } = require('../services/currencyService');
 const { notifySeller } = require('../services/whatsapp/sellerNotificationService');
 
 const ACTIVE_WITHDRAWAL_STATUSES = ['pending', 'approved', 'processing', 'paid'];
@@ -18,21 +18,56 @@ const isDelivered = (order) => order?.orderStatus === 'delivered' || order?.isDe
 const isLiveOrder = (order) => order?.awaitingPayment !== true && order?.orderStatus !== 'cancelled';
 const isSupportedCurrency = (currency) => CURRENCY_CODES.includes(String(currency || '').trim().toUpperCase());
 
+const getCurrencySet = (values) => new Set(
+    values
+        .map((currency) => String(currency || '').trim().toUpperCase())
+        .filter(isSupportedCurrency)
+);
+
+const priceMatchesNativeSnapshot = (item) => {
+    const price = Number(item?.price);
+    const sourcePrice = Number(item?.sourcePrice ?? item?.priceOriginal);
+    return Number.isFinite(price) && Number.isFinite(sourcePrice) && Math.abs(price - sourcePrice) < 0.01;
+};
+
 const getOrderCurrency = (order) => {
     const explicitCurrency = String(order?.currency || '').trim().toUpperCase();
+    const itemPriceCurrencies = getCurrencySet(
+        (order?.orderItems || []).map((item) => item?.currency || item?.orderCurrency)
+    );
+    if (itemPriceCurrencies.size === 1) return [...itemPriceCurrencies][0];
+
+    const nativeCurrencies = getCurrencySet(
+        (order?.orderItems || []).map((item) => item?.priceCurrency || item?.sourceCurrency)
+    );
+    if (
+        explicitCurrency === 'USD' &&
+        nativeCurrencies.size === 1 &&
+        [...nativeCurrencies][0] !== 'USD' &&
+        (order?.orderItems || []).length > 0 &&
+        (order?.orderItems || []).every(priceMatchesNativeSnapshot)
+    ) {
+        return [...nativeCurrencies][0];
+    }
+
     if (isSupportedCurrency(explicitCurrency)) return explicitCurrency;
 
-    const itemCurrencies = new Set(
-        (order?.orderItems || [])
-            .map((item) => item?.currency || item?.orderCurrency || item?.priceCurrency || item?.sourceCurrency)
-            .map((currency) => String(currency || '').trim().toUpperCase())
-            .filter(isSupportedCurrency)
-    );
-    return itemCurrencies.size === 1 ? [...itemCurrencies][0] : 'USD';
+    return nativeCurrencies.size === 1 ? [...nativeCurrencies][0] : 'USD';
 };
 
 const convertOrderRevenueToUSD = async (amount, order) =>
     roundMoney(await convertToUSD(roundMoney(amount), getOrderCurrency(order)));
+
+const convertAmountWithRates = (amount, fromCurrency = 'USD', toCurrency = 'USD', rates = {}) => {
+    const value = Number(amount || 0);
+    const from = normalizeCurrency(fromCurrency);
+    const to = normalizeCurrency(toCurrency);
+    if (!Number.isFinite(value)) return 0;
+    if (from === to) return roundMoney(value);
+    const fromRate = Number(rates[from]) || 1;
+    const toRate = Number(rates[to]) || 1;
+    return roundMoney((value / fromRate) * toRate);
+};
 
 const last4 = (value) => {
     const raw = String(value || '').trim();
@@ -70,10 +105,7 @@ const serializePaymentAccount = (account, { includeSensitive = false } = {}) => 
     return base;
 };
 
-const sellerRevenueForOrder = (order, sellerId, sellerProductIdSet) => {
-    const sellerItems = (order.orderItems || []).filter((item) =>
-        sellerProductIdSet.has(toId(item.productId))
-    );
+const sellerRevenueForItems = (order, sellerId, sellerItems = []) => {
     if (!sellerItems.length) {
         return { itemCount: 0, units: 0, subtotal: 0, shipping: 0, tax: 0, discount: 0, total: 0 };
     }
@@ -99,6 +131,14 @@ const sellerRevenueForOrder = (order, sellerId, sellerProductIdSet) => {
     };
 };
 
+const sellerRevenueForOrder = (order, sellerId, sellerProductIdSet) => {
+    const sellerIdStr = toId(sellerId);
+    const sellerItems = (order.orderItems || []).filter((item) =>
+        toId(item.seller) === sellerIdStr || sellerProductIdSet.has(toId(item.productId))
+    );
+    return sellerRevenueForItems(order, sellerIdStr, sellerItems);
+};
+
 const emptyRevenueSummary = () => ({
     stripeDeliveredRevenue: 0,
     stripePendingRevenue: 0,
@@ -119,6 +159,95 @@ const emptyRevenueSummary = () => ({
     totalRelevantOrders: 0,
 });
 
+const addOrderRevenueToSummary = (revenue, order, sellerRevenueUSD) => {
+    if (sellerRevenueUSD <= 0) return false;
+
+    const delivered = isDelivered(order);
+    const paymentMethod = order.paymentMethod || 'cash_on_delivery';
+
+    if (paymentMethod === 'stripe' && order.isPaid) {
+        if (delivered) {
+            revenue.stripeDeliveredRevenue += sellerRevenueUSD;
+            revenue.deliveredStripeOrders += 1;
+        } else {
+            revenue.stripePendingRevenue += sellerRevenueUSD;
+            revenue.pendingStripeOrders += 1;
+        }
+        return true;
+    }
+
+    if (paymentMethod === 'cash_on_delivery') {
+        if (delivered) {
+            revenue.codDeliveredRevenue += sellerRevenueUSD;
+            revenue.deliveredCodOrders += 1;
+        } else {
+            revenue.codPendingRevenue += sellerRevenueUSD;
+            revenue.pendingCodOrders += 1;
+        }
+        return true;
+    }
+
+    return false;
+};
+
+const addWithdrawalTotalsToSummary = (revenue, withdrawals = []) => {
+    const withdrawalTotals = {
+        pending: 0,
+        approved: 0,
+        processing: 0,
+        paid: 0,
+        rejected: 0,
+        cancelled: 0,
+    };
+
+    for (const request of withdrawals) {
+        const status = request.status || 'pending';
+        if (withdrawalTotals[status] === undefined) withdrawalTotals[status] = 0;
+        withdrawalTotals[status] += Number(request.amount) || 0;
+    }
+
+    revenue.pendingWithdrawalAmount = roundMoney(withdrawalTotals.pending);
+    revenue.approvedWithdrawalAmount = roundMoney(withdrawalTotals.approved);
+    revenue.processingWithdrawalAmount = roundMoney(withdrawalTotals.processing);
+    revenue.totalWithdrawn = roundMoney(withdrawalTotals.paid);
+    revenue.totalReservedOrWithdrawn = roundMoney(ACTIVE_WITHDRAWAL_STATUSES.reduce((sum, status) => sum + (withdrawalTotals[status] || 0), 0));
+};
+
+const finalizeRevenueSummary = (revenue) => {
+    revenue.stripeDeliveredRevenue = roundMoney(revenue.stripeDeliveredRevenue);
+    revenue.stripePendingRevenue = roundMoney(revenue.stripePendingRevenue);
+    revenue.codDeliveredRevenue = roundMoney(revenue.codDeliveredRevenue);
+    revenue.codPendingRevenue = roundMoney(revenue.codPendingRevenue);
+    revenue.pendingWithdrawalAmount = roundMoney(revenue.pendingWithdrawalAmount);
+    revenue.approvedWithdrawalAmount = roundMoney(revenue.approvedWithdrawalAmount);
+    revenue.processingWithdrawalAmount = roundMoney(revenue.processingWithdrawalAmount);
+    revenue.totalWithdrawn = roundMoney(revenue.totalWithdrawn);
+    revenue.totalReservedOrWithdrawn = roundMoney(revenue.totalReservedOrWithdrawn);
+    revenue.totalDeliveredRevenue = roundMoney(revenue.stripeDeliveredRevenue + revenue.codDeliveredRevenue);
+    revenue.estimatedRevenue = roundMoney(revenue.totalDeliveredRevenue + revenue.stripePendingRevenue + revenue.codPendingRevenue);
+    revenue.withdrawableBalance = roundMoney(Math.max(0, revenue.stripeDeliveredRevenue - revenue.totalReservedOrWithdrawn));
+    return revenue;
+};
+
+const addSummaryToTotals = (totals, revenue) => {
+    Object.keys(totals).forEach((key) => {
+        if (typeof totals[key] === 'number') totals[key] += Number(revenue[key]) || 0;
+    });
+};
+
+const buildSellerOrderGroups = (order, sellerIdSet, productSellerById) => {
+    const grouped = new Map();
+    for (const item of order.orderItems || []) {
+        const snapshotSellerId = toId(item.seller);
+        const productSellerId = productSellerById.get(toId(item.productId));
+        const sellerId = sellerIdSet.has(snapshotSellerId) ? snapshotSellerId : productSellerId;
+        if (!sellerId || !sellerIdSet.has(sellerId)) continue;
+        if (!grouped.has(sellerId)) grouped.set(sellerId, []);
+        grouped.get(sellerId).push(item);
+    }
+    return grouped;
+};
+
 const buildSellerPaymentSummary = async (sellerId) => {
     const sellerIdStr = toId(sellerId);
     const [products, paymentAccount, withdrawals] = await Promise.all([
@@ -134,11 +263,14 @@ const buildSellerPaymentSummary = async (sellerId) => {
     let recentStripeOrders = [];
     let recentCodOrders = [];
 
-    if (productIds.length) {
+    const orderScopes = [{ 'orderItems.seller': sellerIdStr }];
+    if (productIds.length) orderScopes.push({ 'orderItems.productId': { $in: productIds } });
+
+    if (orderScopes.length) {
         const orders = await Order.find({
             awaitingPayment: { $ne: true },
             orderStatus: { $ne: 'cancelled' },
-            'orderItems.productId': { $in: productIds },
+            $or: orderScopes,
         })
             .select('orderId orderItems sellerShipping shippingMethod orderSummary paymentMethod isPaid paidAt orderStatus isDelivered deliveredAt createdAt currency')
             .sort({ createdAt: -1 })
@@ -159,13 +291,7 @@ const buildSellerPaymentSummary = async (sellerId) => {
             const paymentMethod = order.paymentMethod || 'cash_on_delivery';
 
             if (paymentMethod === 'stripe' && order.isPaid) {
-                if (delivered) {
-                    revenue.stripeDeliveredRevenue += sellerRevenueUSD;
-                    revenue.deliveredStripeOrders += 1;
-                } else {
-                    revenue.stripePendingRevenue += sellerRevenueUSD;
-                    revenue.pendingStripeOrders += 1;
-                }
+                addOrderRevenueToSummary(revenue, order, sellerRevenueUSD);
                 if (recentStripeOrders.length < 5) {
                     recentStripeOrders.push({
                         _id: order._id,
@@ -183,13 +309,7 @@ const buildSellerPaymentSummary = async (sellerId) => {
             }
 
             if (paymentMethod === 'cash_on_delivery') {
-                if (delivered) {
-                    revenue.codDeliveredRevenue += sellerRevenueUSD;
-                    revenue.deliveredCodOrders += 1;
-                } else {
-                    revenue.codPendingRevenue += sellerRevenueUSD;
-                    revenue.pendingCodOrders += 1;
-                }
+                addOrderRevenueToSummary(revenue, order, sellerRevenueUSD);
                 if (recentCodOrders.length < 5) {
                     recentCodOrders.push({
                         _id: order._id,
@@ -207,33 +327,8 @@ const buildSellerPaymentSummary = async (sellerId) => {
         }
     }
 
-    const withdrawalTotals = {
-        pending: 0,
-        approved: 0,
-        processing: 0,
-        paid: 0,
-        rejected: 0,
-        cancelled: 0,
-    };
-
-    for (const request of withdrawals) {
-        const status = request.status || 'pending';
-        if (withdrawalTotals[status] === undefined) withdrawalTotals[status] = 0;
-        withdrawalTotals[status] += Number(request.amount) || 0;
-    }
-
-    revenue.stripeDeliveredRevenue = roundMoney(revenue.stripeDeliveredRevenue);
-    revenue.stripePendingRevenue = roundMoney(revenue.stripePendingRevenue);
-    revenue.codDeliveredRevenue = roundMoney(revenue.codDeliveredRevenue);
-    revenue.codPendingRevenue = roundMoney(revenue.codPendingRevenue);
-    revenue.pendingWithdrawalAmount = roundMoney(withdrawalTotals.pending);
-    revenue.approvedWithdrawalAmount = roundMoney(withdrawalTotals.approved);
-    revenue.processingWithdrawalAmount = roundMoney(withdrawalTotals.processing);
-    revenue.totalWithdrawn = roundMoney(withdrawalTotals.paid);
-    revenue.totalReservedOrWithdrawn = roundMoney(ACTIVE_WITHDRAWAL_STATUSES.reduce((sum, status) => sum + (withdrawalTotals[status] || 0), 0));
-    revenue.totalDeliveredRevenue = roundMoney(revenue.stripeDeliveredRevenue + revenue.codDeliveredRevenue);
-    revenue.estimatedRevenue = roundMoney(revenue.totalDeliveredRevenue + revenue.stripePendingRevenue + revenue.codPendingRevenue);
-    revenue.withdrawableBalance = roundMoney(Math.max(0, revenue.stripeDeliveredRevenue - revenue.totalReservedOrWithdrawn));
+    addWithdrawalTotalsToSummary(revenue, withdrawals);
+    finalizeRevenueSummary(revenue);
 
     return {
         revenue,
@@ -474,81 +569,132 @@ exports.getSellerWithdrawals = async (req, res) => {
     }
 };
 
+const buildAdminPaymentsOverviewData = async () => {
+    const sellers = await User.find({ role: 'seller' }).select('_id username email currency sellerInfo createdAt').lean();
+    const sellerIds = sellers.map((seller) => seller._id);
+    const sellerIdSet = new Set(sellerIds.map(toId));
+
+    const [
+        stores,
+        products,
+        paymentAccounts,
+        allWithdrawals,
+        withdrawalList,
+    ] = await Promise.all([
+        Store.find({ seller: { $in: sellerIds } })
+            .select('seller storeName storeSlug verification')
+            .lean(),
+        Product.find({ seller: { $in: sellerIds } })
+            .select('_id seller')
+            .lean(),
+        SellerPaymentAccount.find({ seller: { $in: sellerIds } })
+            .select('+accountNumber +iban')
+            .lean(),
+        SellerWithdrawalRequest.find({ seller: { $in: sellerIds } })
+            .sort({ createdAt: -1 })
+            .lean(),
+        SellerWithdrawalRequest.find()
+            .populate('seller', 'username email currency')
+            .populate('processedBy', 'username email')
+            .sort({ createdAt: -1 })
+            .limit(100)
+            .lean(),
+    ]);
+
+    const storeBySeller = new Map(stores.map((store) => [toId(store.seller), store]));
+    const accountBySeller = new Map(paymentAccounts.map((account) => [toId(account.seller), account]));
+    const productSellerById = new Map(products.map((product) => [toId(product._id), toId(product.seller)]));
+    const withdrawalsBySeller = new Map();
+    for (const request of allWithdrawals) {
+        const sellerId = toId(request.seller);
+        if (!withdrawalsBySeller.has(sellerId)) withdrawalsBySeller.set(sellerId, []);
+        withdrawalsBySeller.get(sellerId).push(request);
+    }
+
+    const revenueBySeller = new Map(sellers.map((seller) => [toId(seller._id), emptyRevenueSummary()]));
+    const productIds = products.map((product) => product._id);
+
+    if (sellerIds.length > 0) {
+        const orderScopes = [{ 'orderItems.seller': { $in: sellerIds } }];
+        if (productIds.length > 0) orderScopes.push({ 'orderItems.productId': { $in: productIds } });
+
+        const ratesPromise = getExchangeRates();
+        const orders = await Order.find({
+            awaitingPayment: { $ne: true },
+            orderStatus: { $ne: 'cancelled' },
+            $or: orderScopes,
+        })
+            .select('orderId orderItems sellerShipping shippingMethod orderSummary paymentMethod isPaid paidAt orderStatus isDelivered deliveredAt createdAt currency')
+            .sort({ createdAt: -1 })
+            .lean();
+
+        const rates = orders.some((order) => getOrderCurrency(order) !== 'USD')
+            ? await ratesPromise
+            : { USD: 1 };
+
+        for (const order of orders) {
+            if (!isLiveOrder(order)) continue;
+            const groups = buildSellerOrderGroups(order, sellerIdSet, productSellerById);
+            for (const [sellerId, sellerItems] of groups.entries()) {
+                const sellerRevenue = sellerRevenueForItems(order, sellerId, sellerItems);
+                if (sellerRevenue.total <= 0) continue;
+
+                const revenue = revenueBySeller.get(sellerId);
+                if (!revenue) continue;
+                revenue.totalRelevantOrders += 1;
+
+                const sellerRevenueUSD = convertAmountWithRates(sellerRevenue.total, getOrderCurrency(order), 'USD', rates);
+                addOrderRevenueToSummary(revenue, order, sellerRevenueUSD);
+            }
+        }
+    }
+
+    const sellerRows = sellers.map((seller) => {
+        const sellerId = toId(seller._id);
+        const revenue = revenueBySeller.get(sellerId) || emptyRevenueSummary();
+        addWithdrawalTotalsToSummary(revenue, withdrawalsBySeller.get(sellerId) || []);
+        finalizeRevenueSummary(revenue);
+
+        return {
+            seller: {
+                _id: seller._id,
+                username: seller.username,
+                email: seller.email,
+                currency: normalizeCurrency(seller.currency || 'USD'),
+            },
+            store: storeBySeller.get(sellerId) || null,
+            revenue,
+            paymentAccount: serializePaymentAccount(accountBySeller.get(sellerId), { includeSensitive: true }),
+        };
+    });
+
+    const totals = emptyRevenueSummary();
+    sellerRows.forEach((row) => addSummaryToTotals(totals, row.revenue));
+    Object.keys(totals).forEach((key) => {
+        if (typeof totals[key] === 'number') totals[key] = roundMoney(totals[key]);
+    });
+
+    return {
+        summary: totals,
+        sellers: sellerRows,
+        withdrawals: withdrawalList,
+        errors: [],
+    };
+};
+
+exports.buildAdminPaymentsOverviewData = buildAdminPaymentsOverviewData;
+
 exports.getAdminPaymentsOverview = async (req, res) => {
     try {
         if (req.user?.role !== 'admin') {
             return res.status(403).json({ msg: 'Admin access only' });
         }
 
-        const sellers = await User.find({ role: 'seller' }).select('_id username email currency sellerInfo createdAt').lean();
-        const stores = await Store.find({ seller: { $in: sellers.map((seller) => seller._id) } })
-            .select('seller storeName storeSlug verification')
-            .lean();
-        const storeBySeller = new Map(stores.map((store) => [toId(store.seller), store]));
-
-        const sellerRows = [];
-        const rowErrors = [];
-        const totals = emptyRevenueSummary();
-
-        for (const seller of sellers) {
-            try {
-                const summary = await buildSellerPaymentSummary(seller._id);
-                Object.keys(totals).forEach((key) => {
-                    if (typeof totals[key] === 'number') totals[key] += Number(summary.revenue[key]) || 0;
-                });
-                const accountWithSensitive = await SellerPaymentAccount.findOne({ seller: seller._id })
-                    .select('+accountNumber +iban')
-                    .lean();
-                sellerRows.push({
-                    seller: {
-                        _id: seller._id,
-                        username: seller.username,
-                        email: seller.email,
-                        currency: normalizeCurrency(seller.currency || 'USD'),
-                    },
-                    store: storeBySeller.get(toId(seller._id)) || null,
-                    revenue: summary.revenue,
-                    paymentAccount: serializePaymentAccount(accountWithSensitive, { includeSensitive: true }),
-                });
-            } catch (sellerError) {
-                console.error(`[payments] admin overview seller ${seller._id} failed:`, sellerError);
-                rowErrors.push({
-                    sellerId: seller._id,
-                    username: seller.username || '',
-                    msg: sellerError.message || 'Failed to load seller payment row',
-                });
-                sellerRows.push({
-                    seller: {
-                        _id: seller._id,
-                        username: seller.username,
-                        email: seller.email,
-                        currency: normalizeCurrency(seller.currency || 'USD'),
-                    },
-                    store: storeBySeller.get(toId(seller._id)) || null,
-                    revenue: emptyRevenueSummary(),
-                    paymentAccount: null,
-                    loadError: true,
-                });
-            }
-        }
-
-        Object.keys(totals).forEach((key) => {
-            if (typeof totals[key] === 'number') totals[key] = roundMoney(totals[key]);
-        });
-
-        const withdrawals = await SellerWithdrawalRequest.find()
-            .populate('seller', 'username email currency')
-            .populate('processedBy', 'username email')
-            .sort({ createdAt: -1 })
-            .limit(100)
-            .lean();
+        const overview = await buildAdminPaymentsOverviewData();
 
         return res.status(200).json({
             success: true,
-            summary: totals,
-            sellers: sellerRows,
-            withdrawals,
-            errors: rowErrors,
+            ...overview,
         });
     } catch (error) {
         console.error('[payments] admin overview error:', error);

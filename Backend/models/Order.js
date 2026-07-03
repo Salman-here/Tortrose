@@ -198,8 +198,7 @@ orderSchema.virtual('confirmationSourceLabel').get(function () {
     return `${action} by buyer`;
 });
 
-
-
-
+orderSchema.index({ awaitingPayment: 1, orderStatus: 1, 'orderItems.seller': 1, createdAt: -1 });
+orderSchema.index({ awaitingPayment: 1, orderStatus: 1, 'orderItems.productId': 1, createdAt: -1 });
 
 module.exports = mongoose.model("Order", orderSchema);

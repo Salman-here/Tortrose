@@ -156,7 +156,9 @@ const ProductCard = memo(({
           style={{ color: 'hsl(var(--muted-foreground))' }}>{category}</span>
 
         <Link to={`/single-product/${_id}`} onClick={handleProductClick}>
-          <h3 className="font-semibold text-xs sm:text-sm md:text-base mb-1 sm:mb-1.5 min-h-[3rem] sm:min-h-[3.75rem] leading-snug break-words transition-colors"
+          <h3
+            className="line-clamp-2 font-semibold text-xs sm:text-sm md:text-base mb-1 sm:mb-1.5 min-h-[2rem] sm:min-h-[2.5rem] md:min-h-[2.75rem] leading-snug break-words transition-colors"
+            title={name}
             style={{ color: 'hsl(var(--foreground))' }}>
             {name}
           </h3>
@@ -173,14 +175,14 @@ const ProductCard = memo(({
         </div>
 
         {/* Price */}
-        <div className="mt-auto flex items-center gap-1 sm:gap-1.5 mb-2 sm:mb-3">
+        <div className="mt-auto flex min-w-0 items-center gap-1 sm:gap-1.5 mb-2 sm:mb-3">
           {originalDisplayPrice ? (
             <>
-              <span className="text-base sm:text-lg md:text-xl font-bold" style={{ color: 'hsl(var(--foreground))' }}>{formatPrice(displayPrice, { sourceCurrency: productCurrency })}</span>
-              <span className="text-xs sm:text-sm line-through" style={{ color: 'hsl(var(--muted-foreground))' }}>{formatPrice(originalDisplayPrice, { sourceCurrency: productCurrency })}</span>
+              <span className="min-w-0 text-base sm:text-lg md:text-xl font-bold" style={{ color: 'hsl(var(--foreground))' }}>{formatPrice(displayPrice, { sourceCurrency: productCurrency })}</span>
+              <span className="min-w-0 truncate text-xs sm:text-sm line-through" style={{ color: 'hsl(var(--muted-foreground))' }}>{formatPrice(originalDisplayPrice, { sourceCurrency: productCurrency })}</span>
             </>
           ) : (
-            <span className="text-base sm:text-lg md:text-xl font-bold" style={{ color: 'hsl(var(--foreground))' }}>{formatPrice(displayPrice, { sourceCurrency: productCurrency })}</span>
+            <span className="min-w-0 text-base sm:text-lg md:text-xl font-bold" style={{ color: 'hsl(var(--foreground))' }}>{formatPrice(displayPrice, { sourceCurrency: productCurrency })}</span>
           )}
         </div>
 

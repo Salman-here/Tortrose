@@ -1,6 +1,6 @@
 const mongoose = require('mongoose');
 const { MongoMemoryServer } = require('mongodb-memory-server');
-const { buildSellerPaymentSummary } = require('../../controllers/PaymentController');
+const { buildSellerPaymentSummary, buildAdminPaymentsOverviewData } = require('../../controllers/PaymentController');
 const User = require('../../models/User');
 const Product = require('../../models/Product');
 const Order = require('../../models/Order');
@@ -62,6 +62,7 @@ const createOrder = ({
         orderId: `ORD-${Date.now()}-${Math.random().toString(36).slice(2)}`,
         orderItems: items.map((item) => ({
             productId: item.product._id,
+            seller: item.product.seller || null,
             name: item.product.name,
             image: item.product.image,
             price: item.product.price,
@@ -213,5 +214,42 @@ describe('PaymentController buildSellerPaymentSummary', () => {
             sourceAmount: 200,
             sourceCurrency: 'PKR',
         });
+    });
+
+    test('builds admin overview in bulk and uses order item seller snapshots', async () => {
+        const seller = await createUser('snapshot', 'seller');
+        const buyer = await createUser('snapshotbuyer', 'user');
+        const sellerProduct = await createProduct(seller, 'snapshot', 50);
+
+        await createOrder({
+            buyer,
+            items: [{ product: sellerProduct, quantity: 1 }],
+            sellerShipping: [{ seller: seller._id, shippingMethod: { name: 'standard', price: 0, estimatedDays: 5 } }],
+            paymentMethod: 'stripe',
+            isPaid: true,
+            orderStatus: 'delivered',
+        });
+        await Product.deleteOne({ _id: sellerProduct._id });
+
+        await SellerPaymentAccount.create({
+            seller: seller._id,
+            accountHolderName: 'Snapshot Seller',
+            bankName: 'Test Bank',
+            accountNumber: '1234567890',
+            accountNumberLast4: '7890',
+        });
+        await SellerWithdrawalRequest.create({ seller: seller._id, amount: 5, status: 'pending' });
+
+        const overview = await buildAdminPaymentsOverviewData();
+        const row = overview.sellers.find((sellerRow) => sellerRow.seller.email === seller.email);
+
+        expect(row).toBeTruthy();
+        expect(row.revenue.stripeDeliveredRevenue).toBe(50);
+        expect(row.revenue.pendingWithdrawalAmount).toBe(5);
+        expect(row.revenue.withdrawableBalance).toBe(45);
+        expect(row.paymentAccount.accountNumber).toBe('1234567890');
+        expect(overview.summary.stripeDeliveredRevenue).toBe(50);
+        expect(overview.summary.withdrawableBalance).toBe(45);
+        expect(overview.withdrawals).toHaveLength(1);
     });
 });
