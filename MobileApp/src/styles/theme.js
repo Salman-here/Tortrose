@@ -1,5 +1,3 @@
-import { Platform } from 'react-native';
-
 // Comprehensive Theme System matching the website's design
 // Design tokens for consistent styling across the app
 
@@ -892,9 +890,10 @@ export const loaderColors = {
 // GLASS TOKENS (Liquid Glass Design System)
 // =============================================================================
 export const glass = {
-  background: Platform.OS === 'ios' ? 'rgba(255,255,255,0.45)' : 'rgba(255,255,255,0.72)',
-  backgroundStrong: Platform.OS === 'ios' ? 'rgba(255,255,255,0.6)' : 'rgba(255,255,255,0.85)',
-  backgroundInner: Platform.OS === 'ios' ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.6)',
+  // Real blur renders on every platform now — one translucent set everywhere.
+  background: 'rgba(255,255,255,0.45)',
+  backgroundStrong: 'rgba(255,255,255,0.6)',
+  backgroundInner: 'rgba(255,255,255,0.3)',
   border: 'rgba(255,255,255,0.5)',
   borderStrong: 'rgba(255,255,255,0.65)',
   borderSubtle: 'rgba(255,255,255,0.25)',
@@ -903,9 +902,9 @@ export const glass = {
   blurStrong: 60,
   gradientBackground: ['#eef2ff', '#e0e7ff', '#dbeafe', '#ede9fe', '#e0e7ff'],
   // Convenience aliases used widely across screens
-  bg: Platform.OS === 'ios' ? 'rgba(255,255,255,0.45)' : 'rgba(255,255,255,0.72)',
-  bgSubtle: Platform.OS === 'ios' ? 'rgba(255,255,255,0.18)' : 'rgba(255,255,255,0.5)',
-  bgStrong: Platform.OS === 'ios' ? 'rgba(255,255,255,0.6)' : 'rgba(255,255,255,0.85)',
+  bg: 'rgba(255,255,255,0.45)',
+  bgSubtle: 'rgba(255,255,255,0.18)',
+  bgStrong: 'rgba(255,255,255,0.6)',
 };
 
 // =============================================================================

@@ -9,6 +9,7 @@ import api from '../../config/api';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import VerifiedBadge from '../VerifiedBadge';
+import GlassBlurFill from './GlassBlurFill';
 import { spacing, fontSize, fontWeight } from '../../styles/theme';
 
 export default function TrustedStoresSection({ navigation }) {
@@ -51,6 +52,7 @@ export default function TrustedStoresSection({ navigation }) {
           const isVerified = s.verification?.isVerified;
           return (
             <TouchableOpacity key={s._id} style={styles.card} activeOpacity={0.85} onPress={() => navigation.navigate('Store', { storeSlug: s.storeSlug || s._id })} accessibilityLabel={`Visit ${s.storeName}`}>
+              <GlassBlurFill />
               <View style={styles.logoWrap}>
                 {s.logo ? (
                   <Image source={{ uri: s.logo }} style={styles.logo} contentFit="cover" cachePolicy="memory-disk" transition={150} />
@@ -86,7 +88,7 @@ const makeStyles = (palette) => { const colors = palette.colors; const glass = p
   subtitle: { fontSize: fontSize.xs, color: colors.textSecondary, marginTop: 1 },
   seeAll: { fontSize: fontSize.sm, color: colors.primary, fontWeight: fontWeight.semibold },
   row: { paddingHorizontal: spacing.lg, gap: spacing.md, paddingBottom: spacing.xs },
-  card: { width: 96, alignItems: 'center', backgroundColor: glass.bg, borderRadius: 18, borderWidth: 1, borderColor: glass.border, paddingVertical: spacing.md, paddingHorizontal: spacing.sm, marginRight: spacing.xs },
+  card: { width: 96, alignItems: 'center', backgroundColor: glass.bg, borderRadius: 18, borderWidth: 1, borderColor: glass.border, paddingVertical: spacing.md, paddingHorizontal: spacing.sm, marginRight: spacing.xs, overflow: 'hidden' },
   logoWrap: { position: 'relative', marginBottom: 6 },
   logo: { width: 56, height: 56, borderRadius: 28, backgroundColor: glass.bgSubtle, borderWidth: 2, borderColor: glass.borderSubtle },
   logoPlaceholder: { backgroundColor: colors.primary, justifyContent: 'center', alignItems: 'center' },

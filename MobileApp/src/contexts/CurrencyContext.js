@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as SecureStore from 'expo-secure-store';
+import { secureGet } from '../utils/secureStorage';
 import api from '../config/api';
 
 const CurrencyContext = createContext();
@@ -47,7 +47,7 @@ export const CurrencyProvider = ({ children }) => {
   const loadSavedCurrency = async () => {
     try {
       const savedCurrency = await AsyncStorage.getItem('userCurrency');
-      const token = await SecureStore.getItemAsync('jwtToken');
+      const token = await secureGet('jwtToken');
 
       if (token) {
         try {
@@ -86,7 +86,7 @@ export const CurrencyProvider = ({ children }) => {
     await AsyncStorage.setItem('userCurrency', targetCurrency);
 
     try {
-      const token = await SecureStore.getItemAsync('jwtToken');
+      const token = await secureGet('jwtToken');
       if (token) {
         await api.patch('/api/currency/update', { currency: targetCurrency });
       }

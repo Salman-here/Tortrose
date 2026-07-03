@@ -6,8 +6,6 @@
  * to the light palette — those screens are themable but not yet rethemed.
  */
 
-import { Platform } from 'react-native';
-
 // =============================================================================
 // LIGHT PALETTE (matches existing theme.js defaults)
 // =============================================================================
@@ -113,6 +111,8 @@ export const lightPalette = {
   },
   gradients: {
     primary: ['#6366f1', '#8b5cf6'],
+    // Website --logo-gradient — THE primary CTA gradient (teal → sky → indigo)
+    cta: ['#14B8A6', '#0EA5E9', '#6366F1'],
     primaryDark: ['#4f46e5', '#7c3aed'],
     success: ['#10b981', '#34d399'],
     warning: ['#f59e0b', '#fbbf24'],
@@ -122,18 +122,19 @@ export const lightPalette = {
     background: ['#eef2ff', '#e0e7ff', '#dbeafe', '#ede9fe', '#e0e7ff'],
   },
   glass: {
-    background: Platform.OS === 'ios' ? 'rgba(255,255,255,0.45)' : 'rgba(255,255,255,0.72)',
-    backgroundStrong: Platform.OS === 'ios' ? 'rgba(255,255,255,0.6)' : 'rgba(255,255,255,0.85)',
-    backgroundInner: Platform.OS === 'ios' ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.6)',
+    // Real blur renders on every platform now — one translucent set everywhere.
+    background: 'rgba(255,255,255,0.45)',
+    backgroundStrong: 'rgba(255,255,255,0.6)',
+    backgroundInner: 'rgba(255,255,255,0.3)',
     border: 'rgba(255,255,255,0.5)',
     borderStrong: 'rgba(255,255,255,0.65)',
     borderSubtle: 'rgba(255,255,255,0.25)',
     innerGlow: 'rgba(255,255,255,0.2)',
     blur: 40,
     blurStrong: 60,
-    bg: Platform.OS === 'ios' ? 'rgba(255,255,255,0.45)' : 'rgba(255,255,255,0.72)',
-    bgSubtle: Platform.OS === 'ios' ? 'rgba(255,255,255,0.18)' : 'rgba(255,255,255,0.5)',
-    bgStrong: Platform.OS === 'ios' ? 'rgba(255,255,255,0.6)' : 'rgba(255,255,255,0.85)',
+    bg: 'rgba(255,255,255,0.45)',
+    bgSubtle: 'rgba(255,255,255,0.18)',
+    bgStrong: 'rgba(255,255,255,0.6)',
   },
 };
 
@@ -244,6 +245,8 @@ export const darkPalette = {
   },
   gradients: {
     primary: ['#6366f1', '#8b5cf6'],
+    // Website --logo-gradient — THE primary CTA gradient (teal → sky → indigo)
+    cta: ['#14B8A6', '#0EA5E9', '#6366F1'],
     primaryDark: ['#4f46e5', '#7c3aed'],
     success: ['#10b981', '#34d399'],
     warning: ['#f59e0b', '#fbbf24'],
@@ -254,18 +257,19 @@ export const darkPalette = {
     background: ['#0b1020', '#141a2e', '#1a1f3a', '#241a3a', '#141a2e'],
   },
   glass: {
-    background: Platform.OS === 'ios' ? 'rgba(20,26,46,0.55)' : 'rgba(20,26,46,0.82)',
-    backgroundStrong: Platform.OS === 'ios' ? 'rgba(30,37,64,0.7)' : 'rgba(30,37,64,0.9)',
-    backgroundInner: Platform.OS === 'ios' ? 'rgba(20,26,46,0.4)' : 'rgba(20,26,46,0.7)',
+    // Real blur renders on every platform now — one translucent set everywhere.
+    background: 'rgba(20,26,46,0.55)',
+    backgroundStrong: 'rgba(30,37,64,0.7)',
+    backgroundInner: 'rgba(20,26,46,0.4)',
     border: 'rgba(255,255,255,0.12)',
     borderStrong: 'rgba(255,255,255,0.22)',
     borderSubtle: 'rgba(255,255,255,0.08)',
     innerGlow: 'rgba(129,140,248,0.12)',
     blur: 40,
     blurStrong: 60,
-    bg: Platform.OS === 'ios' ? 'rgba(20,26,46,0.55)' : 'rgba(20,26,46,0.82)',
-    bgSubtle: Platform.OS === 'ios' ? 'rgba(20,26,46,0.25)' : 'rgba(20,26,46,0.55)',
-    bgStrong: Platform.OS === 'ios' ? 'rgba(30,37,64,0.7)' : 'rgba(30,37,64,0.9)',
+    bg: 'rgba(20,26,46,0.55)',
+    bgSubtle: 'rgba(20,26,46,0.25)',
+    bgStrong: 'rgba(30,37,64,0.7)',
   },
 };
 

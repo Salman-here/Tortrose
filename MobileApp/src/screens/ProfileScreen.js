@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import Toast from 'react-native-toast-message';
 import api from '../config/api';
 import { useAuth } from '../contexts/AuthContext';
@@ -30,8 +31,6 @@ export const getMenuItemsForRole = (role, palette) => {
     { id: 'settings', title: 'Settings', icon: 'settings-outline', screen: 'Settings', color: palette.colors.textSecondary },
   ];
   switch (role) {
-    case 'admin':
-      return [...baseItems, { id: 'admin', title: 'Admin Dashboard', icon: 'shield-outline', screen: 'AdminDashboard', highlight: true, color: palette.colors.error }];
     case 'seller':
       return [...baseItems, { id: 'seller', title: 'Seller Dashboard', icon: 'storefront-outline', screen: 'SellerDashboard', highlight: true, color: palette.colors.success }];
     case 'user':
@@ -97,6 +96,7 @@ export default function ProfileScreen({ navigation }) {
             <Text style={styles.guestTitle}>Welcome to Rozare</Text>
             <Text style={styles.guestSubtitle}>Sign in to access your account</Text>
             <TouchableOpacity style={styles.loginButton} onPress={() => navigation.navigate('Login')} activeOpacity={0.85}>
+              <LinearGradient colors={palette.gradients.cta} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
               <Text style={styles.loginButtonText}>Login / Sign Up</Text>
             </TouchableOpacity>
           </GlassPanel>
@@ -226,8 +226,9 @@ export default function ProfileScreen({ navigation }) {
                   </View>
                 ))}
               </ScrollView>
-              <TouchableOpacity style={{ backgroundColor: palette.colors.primary, borderRadius: 16, paddingVertical: 14, alignItems: 'center', marginTop: spacing.md, opacity: savingShipping ? 0.6 : 1 }}
-                onPress={saveShippingInfo} disabled={savingShipping}>
+              <TouchableOpacity style={{ borderRadius: 16, paddingVertical: 14, alignItems: 'center', justifyContent: 'center', marginTop: spacing.md, opacity: savingShipping ? 0.6 : 1, overflow: 'hidden' }}
+                onPress={saveShippingInfo} disabled={savingShipping} activeOpacity={0.85}>
+                <LinearGradient colors={palette.gradients.cta} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
                 <Text style={{ fontSize: fontSize.md, fontWeight: fontWeight.bold, color: '#fff' }}>{savingShipping ? 'Saving...' : 'Save Address'}</Text>
               </TouchableOpacity>
             </GlassPanel>
@@ -252,7 +253,7 @@ export default function ProfileScreen({ navigation }) {
 }
 
 const buildStyles = (p) => StyleSheet.create({
-  scroll: { paddingBottom: spacing.xxl },
+  scroll: { paddingBottom: 110 },
   // Guest
   guestContainer: { flex: 1, justifyContent: 'center', padding: spacing.lg },
   guestCard: { padding: spacing.xxl, alignItems: 'center', marginBottom: spacing.lg },
@@ -263,9 +264,10 @@ const buildStyles = (p) => StyleSheet.create({
   guestTitle: { fontSize: fontSize.xxl, fontWeight: fontWeight.bold, color: p.colors.text, marginBottom: spacing.xs },
   guestSubtitle: { fontSize: fontSize.md, color: p.colors.textSecondary, marginBottom: spacing.xl },
   loginButton: {
-    backgroundColor: p.colors.primary, paddingVertical: spacing.md, paddingHorizontal: spacing.xxxl, borderRadius: borderRadius.lg,
+    paddingVertical: spacing.md, paddingHorizontal: spacing.xxxl, borderRadius: borderRadius.lg, overflow: 'hidden',
+    shadowColor: p.colors.primary, shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.35, shadowRadius: 16, elevation: 6,
   },
-  loginButtonText: { color: p.colors.white, fontSize: fontSize.md, fontWeight: fontWeight.bold },
+  loginButtonText: { color: '#fff', fontSize: fontSize.md, fontWeight: fontWeight.bold },
   featuresCard: { padding: spacing.lg },
   featureRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: spacing.md, gap: spacing.md },
   featureIcon: {

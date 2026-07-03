@@ -8,15 +8,27 @@ import {
 } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../contexts/AuthContext';
 import { useGlobal } from '../contexts/GlobalContext';
 import { useCurrency } from '../contexts/CurrencyContext';
 import { useNavigation } from '@react-navigation/native';
 import { colors, spacing, fontSize, borderRadius, shadows, fontWeight, glass } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
+import GlassBlurFill from './common/GlassBlurFill';
 
 const { width } = Dimensions.get('window');
 const CARD_WIDTH = (width - spacing.lg * 2 - spacing.sm) / 2;
+
+// Website's --logo-gradient and --logo-glow (index.css)
+const LOGO_GRADIENT = ['#14B8A6', '#0EA5E9', '#6366F1'];
+const LOGO_GLOW = {
+  shadowColor: '#0EA5E9',
+  shadowOffset: { width: 0, height: 8 },
+  shadowOpacity: 0.4,
+  shadowRadius: 16,
+  elevation: 6,
+};
 
 const ShimmerPlaceholder = ({ style }) => {
   const shimmerAnim = useRef(new Animated.Value(0)).current;
@@ -33,7 +45,7 @@ const ShimmerPlaceholder = ({ style }) => {
 function ProductCard({ product, index = 0, onPress, compact = false }) {
   const navigation = useNavigation();
   const { currentUser } = useAuth();
-  const { wishlistItems, handleAddToWishlist, handleDeleteFromWishlist, cartItems, handleAddToCart, isCartLoading, loadingProductId } = useGlobal();
+  const { wishlistItems, handleAddToWishlist, handleDeleteFromWishlist, cartItems, handleAddToCart, handleQtyInc, handleQtyDec, qtyUpdateId, isCartLoading, loadingProductId } = useGlobal();
   const { formatProductPrice } = useCurrency();
   const { palette } = useTheme();
   const c = palette.colors;
@@ -59,7 +71,8 @@ function ProductCard({ product, index = 0, onPress, compact = false }) {
 
   const { _id, name, image, images, category, price, discountedPrice, stock, rating, numReviews, isFeatured } = product;
   const isInWishlist = wishlistItems?.some((item) => item?._id === _id);
-  const isInCart = cartItems?.cart?.some((item) => item?.product?._id === _id);
+  const cartItem = cartItems?.cart?.find((item) => item?.product?._id === _id);
+  const isInCart = !!cartItem;
   const isOutOfStock = stock === 0;
   const displayPrice = discountedPrice || price;
   const originalDisplayPrice = discountedPrice ? price : null;
@@ -72,7 +85,9 @@ function ProductCard({ product, index = 0, onPress, compact = false }) {
   };
 
   const handleAddToCartClick = () => { if (!currentUser) { navigation.navigate('Login'); return; } handleAddToCart(_id, null, product); };
-  const imageSource = (typeof images?.[0] === 'string' ? images[0] : images?.[0]?.url) || image;
+  // Some legacy products store a text label instead of a URL — treat those as missing
+  const rawImageSource = (typeof images?.[0] === 'string' ? images[0] : images?.[0]?.url) || image;
+  const imageSource = typeof rawImageSource === 'string' && /^(https?:|data:|file:)/.test(rawImageSource) ? rawImageSource : null;
   const isLoading = isCartLoading && loadingProductId === _id;
 
   const renderStars = () => {
@@ -101,9 +116,15 @@ function ProductCard({ product, index = 0, onPress, compact = false }) {
         activeOpacity={0.9}
         disabled={isOutOfStock}
       >
+        <GlassBlurFill />
         {/* Badges */}
         <View style={styles.badgesContainer}>
-          {isFeatured && <View style={styles.featuredBadge}><Ionicons name="flash" size={10} color="#fff" /><Text style={styles.badgeText}>Featured</Text></View>}
+          {isFeatured && (
+            <View style={styles.featuredBadge}>
+              <Ionicons name="flash" size={10} color="#2563eb" />
+              <Text style={styles.featuredBadgeText}>Featured</Text>
+            </View>
+          )}
           {discountPercentage > 0 && <View style={styles.discountBadge}><Text style={styles.badgeText}>-{discountPercentage}%</Text></View>}
           {isOutOfStock && <View style={styles.outOfStockBadge}><Text style={styles.badgeText}>Sold Out</Text></View>}
         </View>
@@ -125,8 +146,8 @@ function ProductCard({ product, index = 0, onPress, compact = false }) {
 
         {/* Image */}
         <View style={styles.imageContainer}>
-          {imageLoading && !imageError && <ShimmerPlaceholder style={StyleSheet.absoluteFill} />}
-          {imageError ? <View style={styles.imagePlaceholder}><Ionicons name="image-outline" size={36} color="rgba(255,255,255,0.3)" /></View> :
+          {imageSource && imageLoading && !imageError && <ShimmerPlaceholder style={StyleSheet.absoluteFill} />}
+          {imageError || !imageSource ? <View style={styles.imagePlaceholder}><Ionicons name="image-outline" size={36} color={c.textLight} /></View> :
             <Image source={{ uri: imageSource }} style={[styles.image, imageLoading && { opacity: 0 }]} contentFit="contain" cachePolicy="memory-disk" transition={200} onLoad={() => setImageLoading(false)} onError={() => { setImageLoading(false); setImageError(true); }} />}
           {isOutOfStock && <View style={styles.outOfStockOverlay}><Text style={styles.outOfStockText}>Out of Stock</Text></View>}
         </View>
@@ -140,11 +161,52 @@ function ProductCard({ product, index = 0, onPress, compact = false }) {
             <Text style={[styles.price, { color: c.text }]}>{formatProductPrice(product, { field: discountedPrice ? 'discountedPrice' : 'price' })}</Text>
             {originalDisplayPrice && <Text style={[styles.originalPrice, { color: c.textSecondary }]}>{formatProductPrice(product, { field: 'price' })}</Text>}
           </View>
-          <TouchableOpacity style={[styles.addToCartButton, isOutOfStock && styles.addToCartDisabled, isInCart && styles.inCartButton]} onPress={handleAddToCartClick} disabled={isOutOfStock || isLoading} activeOpacity={0.8}>
-            {isLoading ? <ActivityIndicator size="small" color={isInCart ? colors.success : '#fff'} /> :
-              isOutOfStock ? <Text style={styles.addToCartTextDisabled}>Out of Stock</Text> :
-              isInCart ? <View style={styles.btnContent}><Ionicons name="checkmark-circle" size={14} color={colors.success} /><Text style={styles.inCartText}>In Cart</Text></View> :
-              <View style={styles.btnContent}><Ionicons name="cart-outline" size={14} color="#fff" /><Text style={styles.addToCartText}>Add to Cart</Text></View>}
+          {isInCart && cartItem ? (
+            /* In-cart quantity stepper — matches website card */
+            <View style={[styles.qtyRow, { backgroundColor: g.bgSubtle, borderColor: g.borderSubtle }]}>
+              <TouchableOpacity
+                style={[styles.qtyBtn, { backgroundColor: g.bgStrong, borderColor: g.border }]}
+                onPress={() => handleQtyDec(cartItem._id)}
+                disabled={qtyUpdateId === cartItem._id}
+                accessibilityLabel="Decrease quantity"
+              >
+                <Ionicons name={cartItem.qty <= 1 ? 'close' : 'remove'} size={14} color={c.text} />
+              </TouchableOpacity>
+              {qtyUpdateId === cartItem._id
+                ? <ActivityIndicator size="small" color={c.primary} />
+                : <Text style={[styles.qtyValue, { color: c.text }]}>{cartItem.qty}</Text>}
+              <TouchableOpacity
+                onPress={() => handleQtyInc(cartItem._id)}
+                disabled={qtyUpdateId === cartItem._id || cartItem.qty >= stock}
+                accessibilityLabel="Increase quantity"
+              >
+                <LinearGradient colors={LOGO_GRADIENT} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.qtyBtnGradient}>
+                  <Ionicons name="add" size={14} color="#fff" />
+                </LinearGradient>
+              </TouchableOpacity>
+            </View>
+          ) : isOutOfStock ? (
+            <View style={[styles.addToCartButton, styles.addToCartDisabled, { backgroundColor: g.bgSubtle }]}>
+              <Text style={[styles.addToCartTextDisabled, { color: c.textSecondary }]}>Out of Stock</Text>
+            </View>
+          ) : (
+            /* Gradient Add to Cart — website --logo-gradient + glow */
+            <TouchableOpacity onPress={handleAddToCartClick} disabled={isLoading} activeOpacity={0.85} style={LOGO_GLOW}>
+              <LinearGradient colors={LOGO_GRADIENT} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.addToCartButton}>
+                {isLoading ? <ActivityIndicator size="small" color="#fff" /> : (
+                  <View style={styles.btnContent}>
+                    <Ionicons name="cart-outline" size={14} color="#fff" />
+                    <Text style={styles.addToCartText}>Add to Cart</Text>
+                  </View>
+                )}
+              </LinearGradient>
+            </TouchableOpacity>
+          )}
+
+          {/* View details link — matches website */}
+          <TouchableOpacity style={styles.viewDetailsRow} onPress={onPress} accessibilityLabel={`View details of ${name}`}>
+            <Text style={[styles.viewDetailsText, { color: c.primary }]}>View details</Text>
+            <Ionicons name="chevron-forward" size={12} color={c.primary} />
           </TouchableOpacity>
         </View>
       </TouchableOpacity>
@@ -160,6 +222,7 @@ export function CompactProductCard({ product, onPress }) {
   const imageSource = (typeof images?.[0] === 'string' ? images[0] : images?.[0]?.url) || image;
   return (
     <TouchableOpacity style={styles.compactContainer} onPress={onPress} activeOpacity={0.9}>
+      <GlassBlurFill />
       <View style={styles.compactImageContainer}>
         {imageLoading && <ShimmerPlaceholder style={StyleSheet.absoluteFill} />}
         <Image source={{ uri: imageSource }} style={[styles.compactImage, imageLoading && { opacity: 0 }]} contentFit="cover" cachePolicy="memory-disk" transition={200} onLoad={() => setImageLoading(false)} />
@@ -177,14 +240,17 @@ const styles = StyleSheet.create({
   animatedContainer: { width: CARD_WIDTH },
   container: { width: '100%', backgroundColor: glass.bg, borderRadius: 20, marginBottom: spacing.sm, borderWidth: 1, borderColor: glass.border, overflow: 'hidden' },
   badgesContainer: { position: 'absolute', top: spacing.sm, left: spacing.sm, zIndex: 10, gap: 4 },
-  featuredBadge: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.featured, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 20, gap: 3 },
+  // Website .tag-pill: translucent indigo bg, blue text, subtle indigo border
+  featuredBadge: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(99,102,241,0.12)', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 20, gap: 3, borderWidth: 1, borderColor: 'rgba(99,102,241,0.18)' },
+  featuredBadgeText: { color: '#2563eb', fontSize: fontSize.xs, fontWeight: fontWeight.semibold },
   discountBadge: { backgroundColor: colors.discount, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 20 },
   outOfStockBadge: { backgroundColor: colors.gray, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 20 },
   badgeText: { color: '#fff', fontSize: fontSize.xs, fontWeight: fontWeight.semibold },
   actionsContainer: { position: 'absolute', top: spacing.sm, right: spacing.sm, zIndex: 10 },
   actionButton: { backgroundColor: 'rgba(255,255,255,0.85)', width: 32, height: 32, borderRadius: 16, justifyContent: 'center', alignItems: 'center', ...shadows.sm },
   actionButtonActive: { backgroundColor: 'rgba(239,68,68,0.15)' },
-  imageContainer: { width: '100%', aspectRatio: 1, backgroundColor: 'rgba(255,255,255,0.04)', justifyContent: 'center', alignItems: 'center' },
+  // Inset rounded image area like the website's glass-inner block
+  imageContainer: { marginHorizontal: spacing.sm, marginTop: spacing.sm, aspectRatio: 1, backgroundColor: 'rgba(255,255,255,0.08)', justifyContent: 'center', alignItems: 'center', borderRadius: 16, overflow: 'hidden' },
   image: { width: '100%', height: '100%' },
   imagePlaceholder: { ...StyleSheet.absoluteFillObject, justifyContent: 'center', alignItems: 'center' },
   shimmer: { backgroundColor: glass.bgSubtle },
@@ -198,13 +264,19 @@ const styles = StyleSheet.create({
   priceContainer: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: spacing.md },
   price: { fontSize: fontSize.lg, fontWeight: fontWeight.bold, color: colors.text },
   originalPrice: { fontSize: fontSize.sm, color: colors.textSecondary, textDecorationLine: 'line-through' },
-  addToCartButton: { backgroundColor: colors.primary, paddingVertical: 10, borderRadius: 14, alignItems: 'center', justifyContent: 'center', minHeight: 38 },
-  addToCartDisabled: { backgroundColor: glass.bgSubtle },
-  inCartButton: { backgroundColor: 'rgba(34,197,94,0.12)' },
+  addToCartButton: { paddingVertical: 10, borderRadius: 12, alignItems: 'center', justifyContent: 'center', minHeight: 38 },
+  addToCartDisabled: { opacity: 0.6 },
   btnContent: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   addToCartText: { color: '#fff', fontWeight: fontWeight.semibold, fontSize: fontSize.sm },
-  addToCartTextDisabled: { color: colors.textSecondary, fontSize: fontSize.sm },
-  inCartText: { color: colors.success, fontWeight: fontWeight.semibold, fontSize: fontSize.sm },
+  addToCartTextDisabled: { fontSize: fontSize.sm },
+  // In-cart qty stepper (website parity)
+  qtyRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderRadius: 12, borderWidth: 1, paddingHorizontal: 8, paddingVertical: 6, minHeight: 38 },
+  qtyBtn: { width: 26, height: 26, borderRadius: 8, borderWidth: 1, justifyContent: 'center', alignItems: 'center' },
+  qtyBtnGradient: { width: 26, height: 26, borderRadius: 8, justifyContent: 'center', alignItems: 'center' },
+  qtyValue: { fontSize: fontSize.sm, fontWeight: fontWeight.bold },
+  // View details link
+  viewDetailsRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 2, marginTop: spacing.sm },
+  viewDetailsText: { fontSize: fontSize.sm, fontWeight: fontWeight.medium },
   compactContainer: { width: 140, backgroundColor: glass.bg, borderRadius: 16, marginRight: spacing.md, borderWidth: 1, borderColor: glass.border, overflow: 'hidden' },
   compactImageContainer: { width: '100%', height: 100, backgroundColor: 'rgba(255,255,255,0.04)' },
   compactImage: { width: '100%', height: '100%' },

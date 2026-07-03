@@ -8,6 +8,7 @@ import {
   KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator, StatusBar,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../../contexts/AuthContext';
 import api from '../../config/api';
 import GlassBackground from '../../components/common/GlassBackground';
@@ -108,7 +109,8 @@ export default function OTPVerificationScreen({ route, navigation }) {
             </View>
             {error ? <Text style={styles.errorText}>{error}</Text> : null}
             <TouchableOpacity style={[styles.verifyBtn, (isVerifying || otp.join('').length < OTP_LENGTH) && { opacity: 0.6 }]}
-              onPress={() => handleVerify()} disabled={isVerifying || otp.join('').length < OTP_LENGTH}>
+              onPress={() => handleVerify()} disabled={isVerifying || otp.join('').length < OTP_LENGTH} activeOpacity={0.85}>
+              <LinearGradient colors={palette.gradients.cta} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
               {isVerifying ? <ActivityIndicator color="#fff" size="small" /> : <><Text style={styles.verifyText}>Verify & Create Account</Text><Ionicons name="checkmark-circle" size={18} color="#fff" /></>}
             </TouchableOpacity>
             <View style={styles.resendRow}>
@@ -146,7 +148,7 @@ const buildStyles = (p) => StyleSheet.create({
   otpBoxFilled: { borderColor: p.colors.primary, backgroundColor: 'rgba(99,102,241,0.08)' },
   otpBoxError: { borderColor: p.colors.error, backgroundColor: 'rgba(239,68,68,0.08)' },
   errorText: { fontSize: fontSize.sm, color: p.colors.error, textAlign: 'center', marginBottom: spacing.md },
-  verifyBtn: { flexDirection: 'row', backgroundColor: p.colors.primary, paddingVertical: 16, borderRadius: 16, alignItems: 'center', justifyContent: 'center', gap: spacing.sm, ...shadows.md, marginBottom: spacing.xl, marginTop: spacing.md },
+  verifyBtn: { flexDirection: 'row', paddingVertical: 16, borderRadius: 16, alignItems: 'center', justifyContent: 'center', gap: spacing.sm, overflow: 'hidden', marginBottom: spacing.xl, marginTop: spacing.md, shadowColor: p.colors.primary, shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.35, shadowRadius: 16, elevation: 6 },
   verifyText: { color: '#fff', fontSize: fontSize.lg, fontWeight: fontWeight.bold },
   resendRow: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center' },
 });

@@ -17,7 +17,7 @@ export default function AIChatScreen({ navigation, route }) {
     <GlassBackground>
       <SafeAreaView style={styles.container}>
         <ChatBot
-          embedded={false}
+          embedded={true}
           visible={true}
           dashboardRole={role}
           onClose={() => navigation.goBack()}

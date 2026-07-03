@@ -141,6 +141,7 @@ export default function NotificationsScreen({ navigation }) {
             data={CATEGORIES}
             keyExtractor={c => c.key}
             showsHorizontalScrollIndicator={false}
+            style={styles.chipListBar}
             contentContainerStyle={styles.chipList}
             renderItem={({ item: cat }) => {
               const isActive = activeCategory === cat.key;
@@ -210,15 +211,16 @@ const buildStyles = (p) => StyleSheet.create({
   heroActionBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.12)', justifyContent: 'center', alignItems: 'center' },
   markAllPill: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: spacing.md, height: 32, borderRadius: 16, backgroundColor: p.colors.primary },
   markAllPillText: { color: p.colors.white, fontSize: fontSize.xs, fontWeight: fontWeight.semibold },
-  chipList: { paddingHorizontal: spacing.md, paddingVertical: spacing.sm, gap: spacing.sm },
-  chip: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: borderRadius.full, backgroundColor: 'rgba(255,255,255,0.08)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
+  chipListBar: { flexGrow: 0, flexShrink: 0 },
+  chipList: { paddingHorizontal: spacing.md, paddingVertical: spacing.sm, gap: spacing.sm, alignItems: 'center' },
+  chip: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: borderRadius.full, backgroundColor: p.glass.bgSubtle, borderWidth: 1, borderColor: p.glass.borderSubtle },
   chipActive: { backgroundColor: p.colors.primary, borderColor: p.colors.primary },
   chipText: { fontSize: fontSize.sm, color: p.colors.textSecondary, fontWeight: fontWeight.medium },
   chipTextActive: { color: p.colors.white },
   chipBadge: { minWidth: 18, height: 18, borderRadius: 9, backgroundColor: 'rgba(239,68,68,0.2)', justifyContent: 'center', alignItems: 'center', paddingHorizontal: 4 },
   chipBadgeActive: { backgroundColor: 'rgba(255,255,255,0.3)' },
   chipBadgeText: { fontSize: 10, fontWeight: fontWeight.bold, color: p.colors.error },
-  listContent: { padding: spacing.md },
+  listContent: { padding: spacing.md, paddingBottom: 110 },
   listContentEmpty: { flex: 1 },
   emptyContainer: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: spacing.xxl },
   emptyIconWrap: { width: 96, height: 96, borderRadius: 48, backgroundColor: 'rgba(99,102,241,0.1)', justifyContent: 'center', alignItems: 'center', marginBottom: spacing.lg },

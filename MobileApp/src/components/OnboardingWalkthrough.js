@@ -64,8 +64,14 @@ const slides = [
   },
 ];
 
+// SecureStore is unavailable on web — fall back to AsyncStorage there so the
+// walkthrough doesn't reappear on every visit.
 export async function shouldShowOnboarding() {
   try {
+    if (Platform.OS === 'web') {
+      const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+      return (await AsyncStorage.getItem(ONBOARDING_KEY)) !== 'true';
+    }
     const val = await SecureStore.getItemAsync(ONBOARDING_KEY);
     return val !== 'true';
   } catch {
@@ -75,6 +81,11 @@ export async function shouldShowOnboarding() {
 
 export async function markOnboardingComplete() {
   try {
+    if (Platform.OS === 'web') {
+      const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+      await AsyncStorage.setItem(ONBOARDING_KEY, 'true');
+      return;
+    }
     await SecureStore.setItemAsync(ONBOARDING_KEY, 'true');
   } catch {}
 }

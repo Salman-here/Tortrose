@@ -1,21 +1,25 @@
 /**
- * LoginScreen — Liquid Glass Design
+ * LoginScreen — Liquid Glass Design, matched to the website's auth layout:
+ * centered glass card with the Rozare logo, a "Welcome Back" tag pill,
+ * gradient Sign In button, and a glass Google button.
  */
 
-import React, { useState, useRef } from 'react';
+import React, { useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator, StatusBar,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../../contexts/AuthContext';
 import GlassBackground from '../../components/common/GlassBackground';
 import GlassPanel from '../../components/common/GlassPanel';
+import RozareLogo from '../../components/common/RozareLogo';
 import { spacing, fontSize, borderRadius, shadows, fontWeight } from '../../styles/theme';
 import { useTheme } from '../../contexts/ThemeContext';
 
 export default function LoginScreen({ navigation }) {
-  const { palette } = useTheme();
+  const { palette, isDark } = useTheme();
   const styles = buildStyles(palette);
 
   const { login, googleSignIn } = useAuth();
@@ -49,29 +53,28 @@ export default function LoginScreen({ navigation }) {
 
   return (
     <GlassBackground>
-      <StatusBar barStyle="dark-content" />
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.keyboardView}>
-        <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-          {/* Header */}
-          <View style={styles.topHeader}>
-            <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
-              <Ionicons name="arrow-back" size={22} color={palette.colors.text} />
-            </TouchableOpacity>
-            <View style={styles.logoRow}>
-              <View style={styles.logoIcon}><Ionicons name="storefront" size={20} color={palette.colors.white} /></View>
-              <Text style={styles.logoText}>Rozare</Text>
-            </View>
-            <View style={{ width: 40 }} />
-          </View>
-
-          {/* Hero Section */}
-          <View style={styles.heroSection}>
-            <Text style={styles.heroTitle}>Welcome Back! 👋</Text>
-            <Text style={styles.heroSubtitle}>Sign in to your account to continue shopping</Text>
-          </View>
+        <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+          {/* Home / back */}
+          <TouchableOpacity style={styles.homeButton} onPress={() => navigation.goBack()}>
+            <Ionicons name="arrow-back" size={18} color={palette.colors.primary} />
+            <Text style={styles.homeButtonText}>Home</Text>
+          </TouchableOpacity>
 
           {/* Form Card */}
           <GlassPanel variant="strong" style={styles.card}>
+            {/* Logo + heading */}
+            <View style={styles.logoWrap}>
+              <RozareLogo width={158} height={42} />
+            </View>
+            <View style={styles.tagPill}>
+              <Ionicons name="sparkles" size={12} color={palette.colors.primary} />
+              <Text style={styles.tagPillText}>Welcome Back</Text>
+            </View>
+            <Text style={styles.title}>Sign In</Text>
+            <Text style={styles.subtitle}>Continue to your account</Text>
+
             {/* Email */}
             <View style={styles.inputGroup}>
               <Text style={styles.label}>Email Address</Text>
@@ -79,7 +82,7 @@ export default function LoginScreen({ navigation }) {
                 <Ionicons name="mail-outline" size={20} color={emailFocused ? palette.colors.primary : palette.colors.grayLight} style={styles.inputIcon} />
                 <TextInput
                   style={styles.input} placeholder="john@example.com" placeholderTextColor={palette.colors.grayLight}
-                  value={email} onChangeText={(t) => { setEmail(t); setErrors(e => ({...e, email: null})); }}
+                  value={email} onChangeText={(t) => { setEmail(t); setErrors(e => ({ ...e, email: null })); }}
                   keyboardType="email-address" autoCapitalize="none" autoCorrect={false}
                   onFocus={() => setEmailFocused(true)} onBlur={() => setEmailFocused(false)}
                 />
@@ -94,7 +97,7 @@ export default function LoginScreen({ navigation }) {
                 <Ionicons name="lock-closed-outline" size={20} color={passwordFocused ? palette.colors.primary : palette.colors.grayLight} style={styles.inputIcon} />
                 <TextInput
                   style={styles.input} placeholder="Enter your password" placeholderTextColor={palette.colors.grayLight}
-                  value={password} onChangeText={(t) => { setPassword(t); setErrors(e => ({...e, password: null})); }}
+                  value={password} onChangeText={(t) => { setPassword(t); setErrors(e => ({ ...e, password: null })); }}
                   secureTextEntry={!showPassword}
                   onFocus={() => setPasswordFocused(true)} onBlur={() => setPasswordFocused(false)}
                 />
@@ -109,25 +112,27 @@ export default function LoginScreen({ navigation }) {
               <Text style={styles.forgotText}>Forgot your password?</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity style={[styles.loginButton, isLoading && styles.loginButtonDisabled]} onPress={handleLogin} disabled={isLoading} activeOpacity={0.85}>
-              {isLoading ? <ActivityIndicator color={palette.colors.white} size="small" /> : (
-                <><Text style={styles.loginButtonText}>Sign In</Text><Ionicons name="arrow-forward" size={20} color={palette.colors.white} /></>
+            {/* Gradient Sign In */}
+            <TouchableOpacity style={styles.loginButton} onPress={handleLogin} disabled={isLoading} activeOpacity={0.85}>
+              <LinearGradient colors={palette.gradients.cta} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
+              {isLoading ? <ActivityIndicator color="#fff" size="small" /> : (
+                <><Text style={styles.loginButtonText}>Sign In</Text><Ionicons name="arrow-forward" size={20} color="#fff" /></>
               )}
             </TouchableOpacity>
 
             <View style={styles.divider}>
-              <View style={styles.dividerLine} /><Text style={styles.dividerText}>or continue with</Text><View style={styles.dividerLine} />
+              <View style={styles.dividerLine} /><Text style={styles.dividerText}>Or continue with</Text><View style={styles.dividerLine} />
             </View>
 
             <TouchableOpacity style={[styles.googleButton, googleLoading && styles.googleButtonDisabled]} onPress={handleGoogleSignIn} disabled={googleLoading} activeOpacity={0.85}>
               {googleLoading ? <ActivityIndicator color="#4285F4" size="small" /> : (
-                <><View style={styles.googleIcon}><Text style={styles.googleIconText}>G</Text></View><Text style={styles.googleButtonText}>Continue with Google</Text></>
+                <><View style={styles.googleIcon}><Text style={styles.googleIconText}>G</Text></View><Text style={styles.googleButtonText}>Sign in with Google</Text></>
               )}
             </TouchableOpacity>
 
             <View style={styles.signUpRow}>
               <Text style={styles.signUpText}>Don't have an account?</Text>
-              <TouchableOpacity onPress={() => navigation.navigate('SignUp')}><Text style={styles.signUpLink}> Create Account</Text></TouchableOpacity>
+              <TouchableOpacity onPress={() => navigation.navigate('SignUp')}><Text style={styles.signUpLink}> Sign up</Text></TouchableOpacity>
             </View>
           </GlassPanel>
 
@@ -140,20 +145,19 @@ export default function LoginScreen({ navigation }) {
 
 const buildStyles = (p) => StyleSheet.create({
   keyboardView: { flex: 1 },
-  scrollContent: { flexGrow: 1, paddingBottom: spacing.xxxl },
-  topHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: spacing.lg, paddingTop: spacing.xxxl, paddingBottom: spacing.sm },
-  backButton: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.5)', justifyContent: 'center', alignItems: 'center' },
-  logoRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  logoIcon: { width: 36, height: 36, borderRadius: 10, backgroundColor: p.colors.primary, justifyContent: 'center', alignItems: 'center' },
-  logoText: { fontSize: fontSize.xl, fontWeight: fontWeight.bold, color: p.colors.text },
-  heroSection: { paddingHorizontal: spacing.xl, paddingVertical: spacing.xxl, paddingBottom: spacing.xl },
-  heroTitle: { fontSize: fontSize.title, fontWeight: fontWeight.extrabold, color: p.colors.text, marginBottom: spacing.sm },
-  heroSubtitle: { fontSize: fontSize.md, color: p.colors.textSecondary, lineHeight: 22 },
-  card: { marginHorizontal: spacing.lg, padding: spacing.xxl, marginBottom: spacing.lg },
+  scrollContent: { flexGrow: 1, justifyContent: 'center', paddingVertical: spacing.xxxl, paddingHorizontal: spacing.lg },
+  homeButton: { position: 'absolute', top: spacing.lg, left: spacing.lg, flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: p.glass.bgStrong, borderWidth: 1, borderColor: p.glass.border, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: borderRadius.lg, zIndex: 10 },
+  homeButtonText: { color: p.colors.primary, fontWeight: fontWeight.semibold, fontSize: fontSize.sm },
+  card: { padding: spacing.xxl, alignItems: 'stretch' },
+  logoWrap: { alignItems: 'center', marginBottom: spacing.md },
+  tagPill: { alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(99,102,241,0.12)', borderWidth: 1, borderColor: 'rgba(99,102,241,0.18)', paddingHorizontal: spacing.md, paddingVertical: 6, borderRadius: borderRadius.full, marginBottom: spacing.md },
+  tagPillText: { color: p.colors.primary, fontSize: fontSize.xs, fontWeight: fontWeight.semibold },
+  title: { fontSize: fontSize.title, fontWeight: fontWeight.extrabold, color: p.colors.text, textAlign: 'center', marginBottom: spacing.xs },
+  subtitle: { fontSize: fontSize.md, color: p.colors.textSecondary, textAlign: 'center', marginBottom: spacing.xl },
   inputGroup: { marginBottom: spacing.lg },
   label: { fontSize: fontSize.sm, fontWeight: fontWeight.semibold, color: p.colors.text, marginBottom: spacing.sm, letterSpacing: 0.3 },
-  inputContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.6)', borderRadius: borderRadius.xl, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.4)', paddingHorizontal: spacing.md, height: 56 },
-  inputFocused: { borderColor: p.colors.primary, backgroundColor: 'rgba(255,255,255,0.8)' },
+  inputContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: p.glass.bgSubtle, borderRadius: borderRadius.xl, borderWidth: 1.5, borderColor: p.glass.border, paddingHorizontal: spacing.md, height: 56 },
+  inputFocused: { borderColor: p.colors.primary, backgroundColor: p.glass.bgStrong },
   inputError: { borderColor: p.colors.error, backgroundColor: p.colors.errorSubtle },
   inputIcon: { marginRight: spacing.sm },
   input: { flex: 1, fontSize: fontSize.md, color: p.colors.text, paddingVertical: 0 },
@@ -161,19 +165,18 @@ const buildStyles = (p) => StyleSheet.create({
   errorText: { fontSize: fontSize.sm, color: p.colors.error, marginTop: spacing.xs, marginLeft: spacing.xs },
   forgotContainer: { alignSelf: 'flex-end', marginBottom: spacing.lg, marginTop: -spacing.sm },
   forgotText: { fontSize: fontSize.sm, color: p.colors.primary, fontWeight: fontWeight.semibold },
-  loginButton: { flexDirection: 'row', backgroundColor: p.colors.primary, paddingVertical: spacing.lg, borderRadius: borderRadius.xl, alignItems: 'center', justifyContent: 'center', gap: spacing.sm, ...shadows.primaryMd, marginBottom: spacing.xl },
-  loginButtonDisabled: { opacity: 0.7 },
-  loginButtonText: { color: p.colors.white, fontSize: fontSize.lg, fontWeight: fontWeight.bold },
+  loginButton: { flexDirection: 'row', paddingVertical: spacing.lg, borderRadius: borderRadius.xl, alignItems: 'center', justifyContent: 'center', gap: spacing.sm, overflow: 'hidden', marginBottom: spacing.xl, shadowColor: p.colors.primary, shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.35, shadowRadius: 16, elevation: 6 },
+  loginButtonText: { color: '#fff', fontSize: fontSize.lg, fontWeight: fontWeight.bold },
   divider: { flexDirection: 'row', alignItems: 'center', marginBottom: spacing.xl },
-  dividerLine: { flex: 1, height: 1, backgroundColor: 'rgba(255,255,255,0.3)' },
+  dividerLine: { flex: 1, height: 1, backgroundColor: p.glass.border },
   dividerText: { marginHorizontal: spacing.md, fontSize: fontSize.sm, color: p.colors.textSecondary, fontWeight: fontWeight.medium },
-  googleButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.7)', borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.4)', borderRadius: borderRadius.xl, paddingVertical: spacing.md, paddingHorizontal: spacing.lg, marginBottom: spacing.xl, gap: spacing.sm },
+  googleButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: p.glass.bgStrong, borderWidth: 1.5, borderColor: p.glass.border, borderRadius: borderRadius.xl, paddingVertical: spacing.md, paddingHorizontal: spacing.lg, marginBottom: spacing.xl, gap: spacing.sm },
   googleButtonDisabled: { opacity: 0.7 },
   googleIcon: { width: 28, height: 28, borderRadius: 14, backgroundColor: '#4285F4', alignItems: 'center', justifyContent: 'center' },
-  googleIconText: { color: p.colors.white, fontSize: fontSize.md, fontWeight: fontWeight.bold, lineHeight: 20 },
+  googleIconText: { color: '#fff', fontSize: fontSize.md, fontWeight: fontWeight.bold, lineHeight: 20 },
   googleButtonText: { fontSize: fontSize.md, color: p.colors.text, fontWeight: fontWeight.semibold },
   signUpRow: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center' },
   signUpText: { fontSize: fontSize.md, color: p.colors.textSecondary },
   signUpLink: { fontSize: fontSize.md, color: p.colors.primary, fontWeight: fontWeight.bold },
-  footerText: { fontSize: fontSize.xs, color: p.colors.textSecondary, textAlign: 'center', paddingHorizontal: spacing.xxl, marginTop: spacing.md },
+  footerText: { fontSize: fontSize.xs, color: p.colors.textSecondary, textAlign: 'center', paddingHorizontal: spacing.xxl, marginTop: spacing.lg },
 });

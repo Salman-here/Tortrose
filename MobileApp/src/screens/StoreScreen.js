@@ -213,7 +213,7 @@ export default function StoreScreen({ route, navigation }) {
       <FlatList
         data={visibleProducts} keyExtractor={(item) => item._id} numColumns={2}
         columnWrapperStyle={styles.row} contentContainerStyle={styles.listContent}
-        ListHeaderComponent={renderHeader} renderItem={renderProduct}
+        ListHeaderComponent={renderHeader()} renderItem={renderProduct}
         ListFooterComponent={filteredProducts.length > pageSize ? (
           <GlassPanel variant="card" style={styles.paginationCard}>
             <Text style={styles.paginationText}>

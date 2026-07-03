@@ -24,11 +24,6 @@ const getMenuItemsForRole = (role) => {
   ];
 
   switch (role) {
-    case 'admin':
-      return [
-        ...baseItems,
-        { id: 'admin', title: 'Admin Dashboard', icon: 'settings-outline', screen: 'AdminDashboard', highlight: true },
-      ];
     case 'seller':
       return [
         ...baseItems,
@@ -61,16 +56,16 @@ describe('ProfileScreen Property Tests', () => {
    * Validates: Requirements 13.3, 13.4, 13.5
    */
   describe('Property 4: Role-Based Menu Visibility', () => {
-    it('should show "Become a Seller" only for regular users', () => {
+    it('should show "Become a Seller" for non-seller users', () => {
       fc.assert(
         fc.property(userArbitrary, (user) => {
           const menuItems = getMenuItemsForRole(user.role);
           const hasBecomeSeller = menuItems.some(item => item.id === 'become-seller');
 
-          if (user.role === 'user') {
-            expect(hasBecomeSeller).toBe(true);
-          } else {
+          if (user.role === 'seller') {
             expect(hasBecomeSeller).toBe(false);
+          } else {
+            expect(hasBecomeSeller).toBe(true);
           }
           return true;
         }),
@@ -95,17 +90,12 @@ describe('ProfileScreen Property Tests', () => {
       );
     });
 
-    it('should show "Admin Dashboard" only for admins', () => {
+    it('should never show an admin dashboard item (admin removed from mobile)', () => {
       fc.assert(
         fc.property(userArbitrary, (user) => {
           const menuItems = getMenuItemsForRole(user.role);
           const hasAdminDashboard = menuItems.some(item => item.id === 'admin');
-
-          if (user.role === 'admin') {
-            expect(hasAdminDashboard).toBe(true);
-          } else {
-            expect(hasAdminDashboard).toBe(false);
-          }
+          expect(hasAdminDashboard).toBe(false);
           return true;
         }),
         { numRuns: 100 }
@@ -139,21 +129,16 @@ describe('ProfileScreen Property Tests', () => {
       );
     });
 
-    it('should highlight dashboard items for sellers and admins', () => {
+    it('should highlight dashboard items for sellers', () => {
       fc.assert(
         fc.property(
-          userArbitrary.filter(u => u.role === 'seller' || u.role === 'admin'),
+          userArbitrary.filter(u => u.role === 'seller'),
           (user) => {
             const menuItems = getMenuItemsForRole(user.role);
             const highlightedItems = menuItems.filter(item => item.highlight === true);
-            
+
             expect(highlightedItems.length).toBe(1);
-            
-            if (user.role === 'seller') {
-              expect(highlightedItems[0].id).toBe('seller');
-            } else if (user.role === 'admin') {
-              expect(highlightedItems[0].id).toBe('admin');
-            }
+            expect(highlightedItems[0].id).toBe('seller');
             return true;
           }
         ),
@@ -161,14 +146,14 @@ describe('ProfileScreen Property Tests', () => {
       );
     });
 
-    it('should not highlight any items for regular users', () => {
+    it('should not highlight any items for non-seller users', () => {
       fc.assert(
         fc.property(
-          userArbitrary.filter(u => u.role === 'user'),
+          userArbitrary.filter(u => u.role !== 'seller'),
           (user) => {
             const menuItems = getMenuItemsForRole(user.role);
             const highlightedItems = menuItems.filter(item => item.highlight === true);
-            
+
             expect(highlightedItems.length).toBe(0);
             return true;
           }

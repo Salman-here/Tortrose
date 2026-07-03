@@ -118,7 +118,7 @@ export default function TrackOrderScreen({ navigation }) {
               <TextInput
                 style={styles.input}
                 placeholder="your@email.com"
-                placeholderTextColor="rgba(255,255,255,0.35)"
+                placeholderTextColor={palette.colors.grayLight}
                 value={email}
                 onChangeText={setEmail}
                 keyboardType="email-address"
@@ -133,7 +133,7 @@ export default function TrackOrderScreen({ navigation }) {
               <TextInput
                 style={styles.input}
                 placeholder="ORD-1234567890"
-                placeholderTextColor="rgba(255,255,255,0.35)"
+                placeholderTextColor={palette.colors.grayLight}
                 value={orderId}
                 onChangeText={setOrderId}
                 autoCapitalize="characters"

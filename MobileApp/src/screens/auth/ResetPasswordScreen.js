@@ -11,6 +11,7 @@ import {
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import Toast from 'react-native-toast-message';
 import api from '../../config/api';
 import GlassBackground from '../../components/common/GlassBackground';
@@ -114,7 +115,8 @@ export default function ResetPasswordScreen({ navigation, route }) {
               <>
                 {renderField('New Password', password, setPassword, showPassword, setShowPassword, 'password', 'At least 8 characters')}
                 {renderField('Confirm Password', confirmPassword, setConfirmPassword, showConfirm, setShowConfirm, 'confirmPassword', 'Repeat new password')}
-                <TouchableOpacity style={[styles.submitBtn, loading && styles.disabledBtn]} onPress={submit} disabled={loading}>
+                <TouchableOpacity style={[styles.submitBtn, loading && styles.disabledBtn]} onPress={submit} disabled={loading} activeOpacity={0.85}>
+                  <LinearGradient colors={palette.gradients.cta} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
                   {loading ? <ActivityIndicator color="#fff" /> : (
                     <>
                       <Ionicons name="checkmark-circle-outline" size={18} color="#fff" />
@@ -124,7 +126,8 @@ export default function ResetPasswordScreen({ navigation, route }) {
                 </TouchableOpacity>
               </>
             ) : (
-              <TouchableOpacity style={styles.submitBtn} onPress={() => navigation.navigate('Login')}>
+              <TouchableOpacity style={styles.submitBtn} onPress={() => navigation.navigate('Login')} activeOpacity={0.85}>
+                <LinearGradient colors={palette.gradients.cta} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
                 <Text style={styles.submitText}>Go to Sign In</Text>
                 <Ionicons name="arrow-forward" size={18} color="#fff" />
               </TouchableOpacity>
@@ -154,7 +157,7 @@ const buildStyles = (p) => StyleSheet.create({
   eyeButton: { padding: spacing.xs },
   errorText: { marginTop: 4, color: p.colors.error, fontSize: fontSize.xs },
   formError: { padding: spacing.sm, borderRadius: borderRadius.md, backgroundColor: p.colors.errorSubtle, color: p.colors.error, marginBottom: spacing.md, fontSize: fontSize.sm },
-  submitBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.sm, minHeight: 52, borderRadius: borderRadius.lg, backgroundColor: p.colors.primary, ...shadows.md },
+  submitBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.sm, minHeight: 52, borderRadius: borderRadius.lg, overflow: 'hidden', shadowColor: p.colors.primary, shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.35, shadowRadius: 16, elevation: 6 },
   submitText: { color: '#fff', fontSize: fontSize.md, fontWeight: fontWeight.bold },
   disabledBtn: { opacity: 0.65 },
 });

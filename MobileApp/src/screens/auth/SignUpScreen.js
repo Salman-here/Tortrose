@@ -8,14 +8,16 @@ import {
   KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator, StatusBar,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../../contexts/AuthContext';
 import GlassBackground from '../../components/common/GlassBackground';
 import GlassPanel from '../../components/common/GlassPanel';
+import RozareLogo from '../../components/common/RozareLogo';
 import { spacing, fontSize, borderRadius, shadows, fontWeight } from '../../styles/theme';
 import { useTheme } from '../../contexts/ThemeContext';
 
 export default function SignUpScreen({ navigation }) {
-  const { palette } = useTheme();
+  const { palette, isDark } = useTheme();
   const styles = buildStyles(palette);
 
   const { signup, googleSignIn } = useAuth();
@@ -75,29 +77,28 @@ export default function SignUpScreen({ navigation }) {
 
   return (
     <GlassBackground>
-      <StatusBar barStyle="dark-content" />
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.keyboardView}>
-        <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-          {/* Header */}
-          <View style={styles.topHeader}>
-            <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
-              <Ionicons name="arrow-back" size={22} color={palette.colors.text} />
-            </TouchableOpacity>
-            <View style={styles.logoRow}>
-              <View style={styles.logoIcon}><Ionicons name="storefront" size={20} color={palette.colors.white} /></View>
-              <Text style={styles.logoText}>Rozare</Text>
-            </View>
-            <View style={{ width: 40 }} />
-          </View>
-
-          {/* Hero */}
-          <View style={styles.heroSection}>
-            <Text style={styles.heroTitle}>Create Account ✨</Text>
-            <Text style={styles.heroSubtitle}>Create your Rozare account to shop, save products, and track orders</Text>
-          </View>
+        <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+          {/* Home / back */}
+          <TouchableOpacity style={styles.homeButton} onPress={() => navigation.goBack()}>
+            <Ionicons name="arrow-back" size={18} color={palette.colors.primary} />
+            <Text style={styles.homeButtonText}>Home</Text>
+          </TouchableOpacity>
 
           {/* Form Card */}
           <GlassPanel variant="strong" style={styles.card}>
+            {/* Logo + heading */}
+            <View style={styles.logoWrap}>
+              <RozareLogo width={158} height={42} />
+            </View>
+            <View style={styles.tagPill}>
+              <Ionicons name="sparkles" size={12} color={palette.colors.primary} />
+              <Text style={styles.tagPillText}>Create Account</Text>
+            </View>
+            <Text style={styles.title}>Sign Up</Text>
+            <Text style={styles.subtitle}>Shop, save products, and track orders</Text>
+
             {fields.map(({ field, label, placeholder, icon, ...rest }) => (
               <View key={field} style={styles.inputGroup}>
                 <Text style={styles.label}>{label}</Text>
@@ -146,9 +147,10 @@ export default function SignUpScreen({ navigation }) {
               {errors.confirmPassword && <Text style={styles.errorText}>{errors.confirmPassword}</Text>}
             </View>
 
-            <TouchableOpacity style={[styles.signUpButton, isLoading && styles.signUpButtonDisabled]} onPress={handleSignUp} disabled={isLoading} activeOpacity={0.85}>
-              {isLoading ? <ActivityIndicator color={palette.colors.white} size="small" /> : (
-                <><Text style={styles.signUpButtonText}>Create Account</Text><Ionicons name="arrow-forward" size={20} color={palette.colors.white} /></>
+            <TouchableOpacity style={styles.signUpButton} onPress={handleSignUp} disabled={isLoading} activeOpacity={0.85}>
+              <LinearGradient colors={palette.gradients.cta} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
+              {isLoading ? <ActivityIndicator color="#fff" size="small" /> : (
+                <><Text style={styles.signUpButtonText}>Create Account</Text><Ionicons name="arrow-forward" size={20} color="#fff" /></>
               )}
             </TouchableOpacity>
 
@@ -182,35 +184,33 @@ export default function SignUpScreen({ navigation }) {
 
 const buildStyles = (p) => StyleSheet.create({
   keyboardView: { flex: 1 },
-  scrollContent: { flexGrow: 1, paddingBottom: spacing.xxxl },
-  topHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: spacing.lg, paddingTop: spacing.xxxl, paddingBottom: spacing.sm },
-  backButton: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.5)', justifyContent: 'center', alignItems: 'center' },
-  logoRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  logoIcon: { width: 36, height: 36, borderRadius: 10, backgroundColor: p.colors.primary, justifyContent: 'center', alignItems: 'center' },
-  logoText: { fontSize: fontSize.xl, fontWeight: fontWeight.bold, color: p.colors.text },
-  heroSection: { paddingHorizontal: spacing.xl, paddingVertical: spacing.xl, paddingBottom: spacing.xl },
-  heroTitle: { fontSize: fontSize.title, fontWeight: fontWeight.extrabold, color: p.colors.text, marginBottom: spacing.sm },
-  heroSubtitle: { fontSize: fontSize.md, color: p.colors.textSecondary, lineHeight: 22 },
-  card: { marginHorizontal: spacing.lg, padding: spacing.xxl, marginBottom: spacing.lg },
+  scrollContent: { flexGrow: 1, justifyContent: 'center', paddingVertical: spacing.xxxl, paddingHorizontal: spacing.lg },
+  homeButton: { position: 'absolute', top: spacing.lg, left: spacing.lg, flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: p.glass.bgStrong, borderWidth: 1, borderColor: p.glass.border, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: borderRadius.lg, zIndex: 10 },
+  homeButtonText: { color: p.colors.primary, fontWeight: fontWeight.semibold, fontSize: fontSize.sm },
+  card: { padding: spacing.xxl, marginTop: spacing.xl, marginBottom: spacing.lg },
+  logoWrap: { alignItems: 'center', marginBottom: spacing.md },
+  tagPill: { alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(99,102,241,0.12)', borderWidth: 1, borderColor: 'rgba(99,102,241,0.18)', paddingHorizontal: spacing.md, paddingVertical: 6, borderRadius: borderRadius.full, marginBottom: spacing.md },
+  tagPillText: { color: p.colors.primary, fontSize: fontSize.xs, fontWeight: fontWeight.semibold },
+  title: { fontSize: fontSize.title, fontWeight: fontWeight.extrabold, color: p.colors.text, textAlign: 'center', marginBottom: spacing.xs },
+  subtitle: { fontSize: fontSize.md, color: p.colors.textSecondary, textAlign: 'center', marginBottom: spacing.xl },
   inputGroup: { marginBottom: spacing.md },
   label: { fontSize: fontSize.sm, fontWeight: fontWeight.semibold, color: p.colors.text, marginBottom: spacing.sm, letterSpacing: 0.3 },
-  inputContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.6)', borderRadius: borderRadius.xl, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.4)', paddingHorizontal: spacing.md, height: 56 },
-  inputFocused: { borderColor: p.colors.primary, backgroundColor: 'rgba(255,255,255,0.8)' },
+  inputContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: p.glass.bgSubtle, borderRadius: borderRadius.xl, borderWidth: 1.5, borderColor: p.glass.border, paddingHorizontal: spacing.md, height: 56 },
+  inputFocused: { borderColor: p.colors.primary, backgroundColor: p.glass.bgStrong },
   inputError: { borderColor: p.colors.error, backgroundColor: p.colors.errorSubtle },
   inputIcon: { marginRight: spacing.sm },
   input: { flex: 1, fontSize: fontSize.md, color: p.colors.text, paddingVertical: 0 },
   eyeButton: { padding: spacing.sm },
   errorText: { fontSize: fontSize.sm, color: p.colors.error, marginTop: spacing.xs, marginLeft: spacing.xs },
-  signUpButton: { flexDirection: 'row', backgroundColor: p.colors.primary, paddingVertical: spacing.lg, borderRadius: borderRadius.xl, alignItems: 'center', justifyContent: 'center', gap: spacing.sm, ...shadows.primaryMd, marginBottom: spacing.xl, marginTop: spacing.sm },
-  signUpButtonDisabled: { opacity: 0.7 },
-  signUpButtonText: { color: p.colors.white, fontSize: fontSize.lg, fontWeight: fontWeight.bold },
+  signUpButton: { flexDirection: 'row', paddingVertical: spacing.lg, borderRadius: borderRadius.xl, alignItems: 'center', justifyContent: 'center', gap: spacing.sm, overflow: 'hidden', marginBottom: spacing.xl, marginTop: spacing.sm, shadowColor: p.colors.primary, shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.35, shadowRadius: 16, elevation: 6 },
+  signUpButtonText: { color: '#fff', fontSize: fontSize.lg, fontWeight: fontWeight.bold },
   divider: { flexDirection: 'row', alignItems: 'center', marginBottom: spacing.xl },
-  dividerLine: { flex: 1, height: 1, backgroundColor: 'rgba(255,255,255,0.3)' },
+  dividerLine: { flex: 1, height: 1, backgroundColor: p.glass.border },
   dividerText: { marginHorizontal: spacing.md, fontSize: fontSize.sm, color: p.colors.textSecondary, fontWeight: fontWeight.medium },
-  googleButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.7)', borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.4)', borderRadius: borderRadius.xl, paddingVertical: spacing.md, paddingHorizontal: spacing.lg, marginBottom: spacing.xl, gap: spacing.sm },
+  googleButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: p.glass.bgStrong, borderWidth: 1.5, borderColor: p.glass.border, borderRadius: borderRadius.xl, paddingVertical: spacing.md, paddingHorizontal: spacing.lg, marginBottom: spacing.xl, gap: spacing.sm },
   googleButtonDisabled: { opacity: 0.7 },
   googleIcon: { width: 28, height: 28, borderRadius: 14, backgroundColor: '#4285F4', alignItems: 'center', justifyContent: 'center' },
-  googleIconText: { color: p.colors.white, fontSize: fontSize.md, fontWeight: fontWeight.bold, lineHeight: 20 },
+  googleIconText: { color: '#fff', fontSize: fontSize.md, fontWeight: fontWeight.bold, lineHeight: 20 },
   googleButtonText: { fontSize: fontSize.md, color: p.colors.text, fontWeight: fontWeight.semibold },
   loginRow: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center' },
   loginText: { fontSize: fontSize.md, color: p.colors.textSecondary },

@@ -8,6 +8,7 @@ import {
   KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator, StatusBar,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import Toast from 'react-native-toast-message';
 import api from '../../config/api';
 import GlassBackground from '../../components/common/GlassBackground';
@@ -75,12 +76,13 @@ export default function ForgotPasswordScreen({ navigation }) {
                   <Text style={styles.label}>Email Address</Text>
                   <View style={[styles.inputContainer, error && styles.inputError]}>
                     <Ionicons name="mail-outline" size={18} color={error ? palette.colors.error : 'rgba(255,255,255,0.4)'} style={{ marginRight: spacing.sm }} />
-                    <TextInput style={styles.input} placeholder="john@example.com" placeholderTextColor="rgba(255,255,255,0.3)"
+                    <TextInput style={styles.input} placeholder="john@example.com" placeholderTextColor={palette.colors.grayLight}
                       value={email} onChangeText={(t) => { setEmail(t); if (error) setError(''); }} keyboardType="email-address" autoCapitalize="none" />
                   </View>
                   {error ? <Text style={styles.errorText}>{error}</Text> : null}
                 </View>
-                <TouchableOpacity style={[styles.submitBtn, isLoading && { opacity: 0.6 }]} onPress={handleForgotPassword} disabled={isLoading}>
+                <TouchableOpacity style={[styles.submitBtn, isLoading && { opacity: 0.6 }]} onPress={handleForgotPassword} disabled={isLoading} activeOpacity={0.85}>
+                  <LinearGradient colors={palette.gradients.cta} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
                   {isLoading ? <ActivityIndicator color="#fff" /> : <><Ionicons name="send" size={16} color="#fff" /><Text style={styles.submitText}>Send Reset Link</Text></>}
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.backToLogin} onPress={() => navigation.navigate('Login')}>
@@ -130,7 +132,7 @@ const buildStyles = (p) => StyleSheet.create({
   inputError: { borderColor: p.colors.error, backgroundColor: 'rgba(239,68,68,0.08)' },
   input: { flex: 1, fontSize: fontSize.md, color: p.colors.text },
   errorText: { fontSize: fontSize.sm, color: p.colors.error, marginTop: 4 },
-  submitBtn: { flexDirection: 'row', backgroundColor: p.colors.primary, paddingVertical: 16, borderRadius: 16, alignItems: 'center', justifyContent: 'center', gap: spacing.sm, ...shadows.md, marginBottom: spacing.md },
+  submitBtn: { flexDirection: 'row', paddingVertical: 16, borderRadius: 16, alignItems: 'center', justifyContent: 'center', gap: spacing.sm, overflow: 'hidden', marginBottom: spacing.md, shadowColor: p.colors.primary, shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.35, shadowRadius: 16, elevation: 6 },
   submitText: { color: '#fff', fontSize: fontSize.lg, fontWeight: fontWeight.bold },
   backToLogin: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: spacing.md, gap: 4 },
   successIcon: { width: 88, height: 88, borderRadius: 44, backgroundColor: 'rgba(34,197,94,0.12)', justifyContent: 'center', alignItems: 'center', marginBottom: spacing.xl },

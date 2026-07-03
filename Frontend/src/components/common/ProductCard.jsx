@@ -157,7 +157,7 @@ const ProductCard = memo(({
 
         <Link to={`/single-product/${_id}`} onClick={handleProductClick}>
           <h3
-            className="line-clamp-2 font-semibold text-xs sm:text-sm md:text-base mb-1 sm:mb-1.5 min-h-[2rem] sm:min-h-[2.5rem] md:min-h-[2.75rem] leading-snug break-words transition-colors"
+            className="line-clamp-2 h-[2.625rem] sm:h-[2.875rem] md:h-[3.25rem] overflow-hidden font-semibold text-xs sm:text-sm md:text-base mb-1 sm:mb-1.5 leading-[1.25] break-words transition-colors"
             title={name}
             style={{ color: 'hsl(var(--foreground))' }}>
             {name}

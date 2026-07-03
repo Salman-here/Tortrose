@@ -59,13 +59,6 @@ const ROLE_CHIPS = {
     { label: 'Orders', msg: 'Show me my recent orders and their statuses' },
     { label: 'Growth tips', msg: 'Give me strategies to grow my store and increase sales' },
   ],
-  admin: [
-    { label: 'Users', msg: 'Show me a summary of all users on the platform' },
-    { label: 'Stats', msg: 'Give me platform-wide analytics - users, revenue, orders' },
-    { label: 'Complaints', msg: 'Show me all pending complaints' },
-    { label: 'Verifications', msg: 'Show me pending store verifications' },
-    { label: 'Tax config', msg: 'Show me the current tax configuration' },
-  ],
 };
 
 const ROLE_GREETINGS = {
@@ -73,13 +66,11 @@ const ROLE_GREETINGS = {
     ? `${g}, ${name}! I'm your personal shopping stylist. I can help you find outfits, give style advice, track orders, and more!`
     : `${g}! I'm your personal shopping stylist. How can I help you today?`,
   seller: (name, g) => `${g}, ${name || 'Seller'}! I'm your business assistant. I can manage products, analyze performance, handle orders, and suggest growth strategies.`,
-  admin: (name, g) => `${g}, ${name || 'Admin'}! I'm your platform command center. I can manage users, analytics, complaints, verifications, and more.`,
 };
 
 const ROLE_TITLES = {
   user: { title: 'AI Stylist', subtitle: 'Personal Shopping Assistant' },
   seller: { title: 'Business Assistant', subtitle: 'Store Management & Growth' },
-  admin: { title: 'Platform Commander', subtitle: 'Full Admin Control' },
 };
 
 const MAX_ATTACHMENTS = 10;
@@ -868,7 +859,7 @@ export default function ChatBot({ embedded = false, dashboardRole = null, visibl
         <TouchableOpacity onPress={clearChat} style={styles.headerBtn} accessibilityLabel="Clear chat">
           <Ionicons name="trash-outline" size={16} color={c.textLight} />
         </TouchableOpacity>
-        {!embedded && onClose && (
+        {onClose && (
           <TouchableOpacity onPress={onClose} style={styles.headerBtn} accessibilityLabel="Close">
             <Ionicons name="close" size={18} color={c.textLight} />
           </TouchableOpacity>
@@ -897,7 +888,7 @@ export default function ChatBot({ embedded = false, dashboardRole = null, visibl
 
       {/* Contextual Chips */}
       {contextualChips.length > 0 && !loading && (
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipsContainer}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipsBar} contentContainerStyle={styles.chipsContainer}>
           {contextualChips.map((chip, i) => (
             <TouchableOpacity key={i} onPress={() => sendMessage(chip.msg)} style={styles.chip}>
               <Text style={styles.chipText}>{chip.label}</Text>
@@ -971,7 +962,7 @@ export default function ChatBot({ embedded = false, dashboardRole = null, visibl
           style={styles.input}
           value={input}
           onChangeText={setInput}
-          placeholder={recorderState.isRecording ? 'Recording voice note...' : effectiveRole === 'seller' ? 'Ask your business assistant...' : effectiveRole === 'admin' ? 'Command the platform...' : 'Ask your stylist...'}
+          placeholder={recorderState.isRecording ? 'Recording voice note...' : effectiveRole === 'seller' ? 'Ask your business assistant...' : 'Ask your stylist...'}
           placeholderTextColor={c.textLight}
           returnKeyType="send"
           onSubmitEditing={() => sendMessage()}
@@ -1009,8 +1000,8 @@ const makeStyles = (palette) => {
   const c = palette.colors;
   const g = palette.glass;
   return StyleSheet.create({
-    // Embedded
-    embeddedContainer: { flex: 1, borderRadius: borderRadius.xl, overflow: 'hidden', backgroundColor: c.surface },
+    // Embedded — transparent so the screen's GlassBackground shows through
+    embeddedContainer: { flex: 1, backgroundColor: 'transparent' },
 
     // Modal
     modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
@@ -1069,7 +1060,8 @@ const makeStyles = (palette) => {
     typingText: { fontSize: 11, color: c.textSecondary },
 
     // Chips
-    chipsContainer: { paddingHorizontal: spacing.md, paddingVertical: spacing.xs, gap: spacing.xs },
+    chipsBar: { flexGrow: 0, flexShrink: 0 },
+    chipsContainer: { paddingHorizontal: spacing.md, paddingVertical: spacing.xs, gap: spacing.xs, alignItems: 'center' },
     chip: { backgroundColor: c.primarySubtle, borderWidth: 1, borderColor: c.primaryLighter, paddingHorizontal: spacing.md, paddingVertical: spacing.xs + 2, borderRadius: borderRadius.full },
     chipText: { fontSize: 11, fontWeight: fontWeight.medium, color: c.primary },
     pendingTray: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: c.border, backgroundColor: c.surface },

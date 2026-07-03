@@ -1,5 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
+import { Platform } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as WebBrowser from 'expo-web-browser';
 import axios from 'axios';
 import Toast from 'react-native-toast-message';
@@ -8,14 +10,18 @@ import { trackAuthEvent, trackError, setUserContext } from '../utils/breadcrumbs
 
 const AuthContext = createContext();
 
-// Secure storage helpers
+// Secure storage helpers — SecureStore on native, AsyncStorage fallback on web
+const isWeb = Platform.OS === 'web';
 const secureSet = async (key, value) => {
+  if (isWeb) return AsyncStorage.setItem(key, value);
   await SecureStore.setItemAsync(key, value);
 };
 const secureGet = async (key) => {
+  if (isWeb) return AsyncStorage.getItem(key);
   return await SecureStore.getItemAsync(key);
 };
 const secureDel = async (key) => {
+  if (isWeb) return AsyncStorage.removeItem(key);
   await SecureStore.deleteItemAsync(key);
 };
 

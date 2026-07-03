@@ -58,7 +58,7 @@ export default function ChangePasswordScreen({ navigation }) {
       <View style={[styles.inputWrap, errors[fieldKey] && styles.inputWrapError]}>
         <Ionicons name="lock-closed-outline" size={18} color={errors[fieldKey] ? palette.colors.error : 'rgba(255,255,255,0.4)'} style={{ marginRight: spacing.sm }} />
         <TextInput style={styles.input} value={value} onChangeText={(t) => { setter(t); setErrors(prev => ({ ...prev, [fieldKey]: null })); }}
-          placeholder={placeholder} placeholderTextColor="rgba(255,255,255,0.3)" secureTextEntry={!show} autoCapitalize="none" />
+          placeholder={placeholder} placeholderTextColor={palette.colors.grayLight} secureTextEntry={!show} autoCapitalize="none" />
         <TouchableOpacity onPress={() => setShow(!show)} style={{ padding: spacing.sm }}>
           <Ionicons name={show ? 'eye-off-outline' : 'eye-outline'} size={18} color="rgba(255,255,255,0.4)" />
         </TouchableOpacity>

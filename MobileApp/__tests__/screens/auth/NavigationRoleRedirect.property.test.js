@@ -72,9 +72,8 @@ describe('Navigation Role Redirect', () => {
     const getDashboardAccess = (role) => {
       switch (role) {
         case 'seller':
+        case 'admin': // Admin dashboard removed from mobile; admins retain seller access
           return ['SellerDashboard'];
-        case 'admin':
-          return ['AdminDashboard', 'SellerDashboard']; // Admin can access both
         case 'user':
         default:
           return [];
@@ -94,10 +93,10 @@ describe('Navigation Role Redirect', () => {
       expect(dashboards).not.toContain('AdminDashboard');
     });
 
-    // Property: Admins should have both dashboard access
-    it('admins should have access to both dashboards', () => {
+    // Property: Admins retain seller dashboard access only (admin dashboard removed)
+    it('admins should have seller dashboard access only', () => {
       const dashboards = getDashboardAccess('admin');
-      expect(dashboards).toContain('AdminDashboard');
+      expect(dashboards).not.toContain('AdminDashboard');
       expect(dashboards).toContain('SellerDashboard');
     });
 
@@ -139,12 +138,11 @@ describe('Navigation Role Redirect', () => {
             { id: 'seller-dashboard', label: 'Seller Dashboard', icon: 'analytics-outline' },
           ];
         case 'admin':
+        default:
           return [
             ...baseOptions,
-            { id: 'admin-dashboard', label: 'Admin Dashboard', icon: 'shield-outline' },
+            { id: 'become-seller', label: 'Become a Seller', icon: 'storefront-outline' },
           ];
-        default:
-          return baseOptions;
       }
     };
 
@@ -164,11 +162,11 @@ describe('Navigation Role Redirect', () => {
       expect(hasBecomeSeller).toBe(false);
     });
 
-    // Property: Admins should see "Admin Dashboard" option
-    it('admins should see Admin Dashboard option', () => {
+    // Property: Admins should not see any admin dashboard option (removed from mobile)
+    it('admins should not see an Admin Dashboard option', () => {
       const options = getProfileMenuOptions('admin');
       const hasAdminDashboard = options.some(opt => opt.id === 'admin-dashboard');
-      expect(hasAdminDashboard).toBe(true);
+      expect(hasAdminDashboard).toBe(false);
     });
 
     // Property: All roles should have base options

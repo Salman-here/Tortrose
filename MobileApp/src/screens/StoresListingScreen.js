@@ -6,6 +6,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { View, Text, FlatList, StyleSheet, TouchableOpacity, TextInput, SafeAreaView, RefreshControl, Modal, ScrollView } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import api from '../config/api';
 import { useAuth } from '../contexts/AuthContext';
 import StoreCard from '../components/common/StoreCard';
@@ -44,33 +45,66 @@ export default function StoresListingScreen({ navigation }) {
   const [stores, setStores] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalStores, setTotalStores] = useState(0);
+  const [storeCounts, setStoreCounts] = useState({ all: 0, brand: 0, store: 0 });
   const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [sortBy, setSortBy] = useState('newest');
   const [showFilters, setShowFilters] = useState(false);
   const [verifiedOnly, setVerifiedOnly] = useState(false);
   const [minTrust, setMinTrust] = useState(0);
   const [typeFilter, setTypeFilter] = useState('all'); // all | brand | store
 
-  useEffect(() => { fetchStores(); }, [sortBy]);
+  const STORES_PER_PAGE = 12; // matches website
 
-  const fetchStores = async () => {
-    try { const res = await api.get(`/api/stores/all?sort=${sortBy}`); setStores(res.data.stores || []); }
-    catch (e) { console.error('Error fetching stores:', e); }
-    finally { setIsLoading(false); setRefreshing(false); }
-  };
+  // Debounce search so we query the server like the website does
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(searchQuery.trim()), 400);
+    return () => clearTimeout(t);
+  }, [searchQuery]);
 
-  const onRefresh = useCallback(() => { setRefreshing(true); fetchStores(); }, [sortBy]);
+  const fetchStores = useCallback(async (pageNum = 1, append = false) => {
+    if (append) setLoadingMore(true);
+    try {
+      const params = new URLSearchParams({ sort: sortBy, page: String(pageNum), limit: String(STORES_PER_PAGE) });
+      if (typeFilter !== 'all') params.set('type', typeFilter);
+      if (debouncedSearch) params.set('search', debouncedSearch);
+      const res = await api.get(`/api/stores/all?${params.toString()}`);
+      const newStores = res.data.stores || [];
+      if (append) {
+        setStores(prev => {
+          const seen = new Set(prev.map(s => s._id));
+          return [...prev, ...newStores.filter(s => s?._id && !seen.has(s._id))];
+        });
+      } else {
+        setStores(newStores);
+      }
+      setStoreCounts(res.data.counts || { all: 0, brand: 0, store: 0 });
+      setTotalStores(res.data.pagination?.total || newStores.length);
+      setTotalPages(Math.max(1, res.data.pagination?.pages || 1));
+      setPage(pageNum);
+    } catch (e) { console.error('Error fetching stores:', e); }
+    finally { setIsLoading(false); setRefreshing(false); setLoadingMore(false); }
+  }, [sortBy, typeFilter, debouncedSearch]);
+
+  // Refetch from page 1 whenever server-side filters change
+  useEffect(() => { fetchStores(1, false); }, [fetchStores]);
+
+  const hasMore = page < totalPages;
+  const loadMore = useCallback(() => {
+    if (!loadingMore && !isLoading && hasMore) fetchStores(page + 1, true);
+  }, [loadingMore, isLoading, hasMore, page, fetchStores]);
+
+  const onRefresh = useCallback(() => { setRefreshing(true); fetchStores(1, false); }, [fetchStores]);
   const filteredStores = useMemo(() => {
-    const base = filterStores(stores, { query: searchQuery, verifiedOnly, minTrust });
-    if (typeFilter === 'all') return base;
-    return base.filter(s => (s.sellerType || 'store') === typeFilter);
-  }, [stores, searchQuery, verifiedOnly, minTrust, typeFilter]);
+    // Search + type are server-side now; keep the extra client-side filters
+    return filterStores(stores, { query: '', verifiedOnly, minTrust });
+  }, [stores, verifiedOnly, minTrust]);
 
-  const counts = useMemo(() => ({
-    all: stores.length,
-    brand: stores.filter(s => s.sellerType === 'brand').length,
-    store: stores.filter(s => (s.sellerType || 'store') === 'store').length,
-  }), [stores]);
+  const counts = storeCounts;
 
   const activeFilterCount = (verifiedOnly ? 1 : 0) + (minTrust > 0 ? 1 : 0) + (sortBy !== 'newest' ? 1 : 0);
 
@@ -186,7 +220,7 @@ export default function StoresListingScreen({ navigation }) {
               )}
 
               <View style={styles.resultsRow}>
-                <Text style={styles.resultsText}>{searchQuery ? 'Found ' : ''}<Text style={styles.resultsCount}>{filteredStores.length}</Text> {filteredStores.length === 1 ? 'store' : 'stores'}{searchQuery ? '' : ' available'}</Text>
+                <Text style={styles.resultsText}>{searchQuery ? 'Found ' : ''}<Text style={styles.resultsCount}>{totalStores}</Text> {totalStores === 1 ? 'store' : 'stores'}{searchQuery ? '' : ' available'}</Text>
               </View>
             </View>
           }
@@ -197,6 +231,21 @@ export default function StoresListingScreen({ navigation }) {
           )}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[palette.colors.primary]} tintColor={palette.colors.primary} />}
           ListEmptyComponent={searchQuery ? <EmptySearch query={searchQuery} onClear={() => setSearchQuery('')} /> : <EmptyStores onRefresh={onRefresh} />}
+          onEndReached={loadMore}
+          onEndReachedThreshold={0.4}
+          ListFooterComponent={
+            loadingMore ? (
+              <View style={styles.footerLoading}>
+                <Text style={styles.footerLoadingText}>Loading more stores...</Text>
+              </View>
+            ) : hasMore ? (
+              <TouchableOpacity style={styles.loadMoreBtn} onPress={loadMore} activeOpacity={0.85}>
+                <LinearGradient colors={palette.gradients.cta} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
+                <Text style={styles.loadMoreText}>Load More Stores</Text>
+                <Ionicons name="chevron-down" size={16} color="#fff" />
+              </TouchableOpacity>
+            ) : null
+          }
           showsVerticalScrollIndicator={false}
         />
 
@@ -296,7 +345,11 @@ const buildStyles = (p) => StyleSheet.create({
   resultsRow: { paddingHorizontal: spacing.lg, paddingVertical: spacing.sm },
   resultsText: { fontSize: fontSize.sm, color: p.colors.textSecondary },
   resultsCount: { fontWeight: fontWeight.bold, color: p.colors.text },
-  listContent: { paddingBottom: spacing.xxl, flexGrow: 1 },
+  listContent: { paddingBottom: 110, flexGrow: 1 },
+  footerLoading: { paddingVertical: spacing.xl, alignItems: 'center' },
+  footerLoadingText: { fontSize: fontSize.sm, color: p.colors.textSecondary, fontWeight: fontWeight.medium },
+  loadMoreBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.xs, marginHorizontal: spacing.lg, marginTop: spacing.md, paddingVertical: spacing.md, borderRadius: borderRadius.xl, overflow: 'hidden', shadowColor: '#0EA5E9', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.35, shadowRadius: 16, elevation: 6 },
+  loadMoreText: { color: '#fff', fontSize: fontSize.md, fontWeight: fontWeight.bold },
   row: { paddingHorizontal: spacing.sm, gap: spacing.sm },
   cardWrapper: { flex: 1, marginBottom: spacing.sm },
   typeTabsRow: { flexDirection: 'row', gap: spacing.xs, marginBottom: spacing.sm },

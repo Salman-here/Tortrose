@@ -5,7 +5,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, ScrollView, StyleSheet, TouchableOpacity, TextInput, ActivityIndicator, KeyboardAvoidingView, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import * as SecureStore from 'expo-secure-store';
+import { secureSet } from '../utils/secureStorage';
 import Toast from 'react-native-toast-message';
 import api from '../config/api';
 import { useAuth } from '../contexts/AuthContext';
@@ -74,7 +74,7 @@ export default function BecomeSellerScreen({ navigation }) {
         socialLinks: Object.keys(socialLinks).length > 0 ? socialLinks : undefined,
       };
       const res = await api.post('/api/user/become-seller', payload);
-      if (res.data.token) await SecureStore.setItemAsync('jwtToken', res.data.token);
+      if (res.data.token) await secureSet('jwtToken', res.data.token);
       Toast.show({ type: 'success', text1: '🎉 Congratulations!', text2: 'You are now a seller!' });
       if (fetchAndUpdateCurrentUser) await fetchAndUpdateCurrentUser();
       setTimeout(() => navigation.replace('SellerDashboard'), 1500);
@@ -180,7 +180,7 @@ export default function BecomeSellerScreen({ navigation }) {
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 4 }}>
                         <Ionicons name={icon} size={16} color={palette.colors.primary} /><Text style={styles.label}>{label}</Text>
                       </View>
-                      <TextInput style={styles.glassInput} placeholder={placeholder} placeholderTextColor="rgba(255,255,255,0.3)" value={formData[key]} onChangeText={v => handleInputChange(key, v)} keyboardType={keyboard || 'default'} />
+                      <TextInput style={styles.glassInput} placeholder={placeholder} placeholderTextColor={palette.colors.grayLight} value={formData[key]} onChangeText={v => handleInputChange(key, v)} keyboardType={keyboard || 'default'} />
                     </View>
                   ))}
 
@@ -263,7 +263,7 @@ export default function BecomeSellerScreen({ navigation }) {
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 4 }}>
                         <Ionicons name={icon} size={16} color={palette.colors.primary} /><Text style={styles.label}>{label}</Text>
                       </View>
-                      <TextInput style={styles.glassInput} placeholder={placeholder} placeholderTextColor="rgba(255,255,255,0.3)" value={storeData[key]} onChangeText={v => setStoreData(prev => ({ ...prev, [key]: v }))} autoCapitalize="none" />
+                      <TextInput style={styles.glassInput} placeholder={placeholder} placeholderTextColor={palette.colors.grayLight} value={storeData[key]} onChangeText={v => setStoreData(prev => ({ ...prev, [key]: v }))} autoCapitalize="none" />
                     </View>
                   ))}
 

@@ -11,6 +11,7 @@ import VerifiedBadge from '../VerifiedBadge';
 import TrustButton from '../TrustButton';
 import { colors, spacing, fontSize, fontWeight, borderRadius, shadows, glass, typography } from '../../styles/theme';
 import { useTheme } from '../../contexts/ThemeContext';
+import GlassBlurFill from './GlassBlurFill';
 
 const StoreCard = ({ store, index = 0, onPress, showTrustButton = true, showDescription = true, showStats = true, compact = false, style }) => {
   const navigation = useNavigation();
@@ -42,6 +43,7 @@ const StoreCard = ({ store, index = 0, onPress, showTrustButton = true, showDesc
   return (
     <Animated.View style={[styles.animatedContainer, { transform: [{ scale: scaleAnim }], opacity: opacityAnim }, style]}>
       <TouchableOpacity style={[styles.container, { backgroundColor: g.bg, borderColor: g.border }, compact && styles.containerCompact]} onPress={handlePress} activeOpacity={0.9}>
+        <GlassBlurFill />
         <View style={[styles.bannerContainer, compact && { height: 55 }]}>
           {banner && !bannerError ? <Image source={{ uri: banner }} style={styles.banner} contentFit="cover" cachePolicy="memory-disk" transition={200} onError={() => setBannerError(true)} /> :
             <View style={[styles.banner, { backgroundColor: c.primary }]} />}
@@ -98,6 +100,7 @@ export const StoreListItem = ({ store, onPress, showTrustButton = true }) => {
 
   return (
     <TouchableOpacity style={styles.listItemContainer} onPress={handlePress} activeOpacity={0.7}>
+      <GlassBlurFill />
       {logo ? <Image source={{ uri: logo }} style={styles.listItemLogo} contentFit="cover" cachePolicy="memory-disk" transition={150} /> :
         <View style={[styles.listItemLogo, styles.listItemLogoPlaceholder]}><Ionicons name="storefront" size={22} color="#fff" /></View>}
       <View style={{ flex: 1 }}>
@@ -141,7 +144,7 @@ const styles = StyleSheet.create({
   statsRow: { flexDirection: 'row', alignItems: 'center', paddingTop: spacing.md, borderTopWidth: 1, borderTopColor: glass.borderSubtle, gap: spacing.lg },
   stat: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   statText: { fontSize: fontSize.sm, color: colors.textSecondary, fontWeight: fontWeight.medium },
-  listItemContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: glass.bg, padding: spacing.md, borderRadius: 16, marginBottom: spacing.sm, borderWidth: 1, borderColor: glass.border },
+  listItemContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: glass.bg, padding: spacing.md, borderRadius: 16, marginBottom: spacing.sm, borderWidth: 1, borderColor: glass.border, overflow: 'hidden' },
   listItemLogo: { width: 46, height: 46, borderRadius: 14, marginRight: spacing.md },
   listItemLogoPlaceholder: { backgroundColor: colors.primary, justifyContent: 'center', alignItems: 'center' },
   listItemName: { fontSize: fontSize.md, fontWeight: fontWeight.semibold, color: colors.text, marginRight: 4, flex: 1 },

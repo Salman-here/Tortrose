@@ -26,7 +26,7 @@ const ThemeContext = createContext({
 
 export function ThemeProvider({ children }) {
   const systemScheme = useColorScheme(); // 'light' | 'dark' | null
-  const [mode, setModeState] = useState('system'); // saved preference
+  const [mode, setModeState] = useState('light'); // saved preference — default light to match the website
   const [hydrated, setHydrated] = useState(false);
 
   // Hydrate saved preference once

@@ -10,6 +10,7 @@ import {
 import { Image } from 'expo-image';
 import Toast from 'react-native-toast-message';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import * as WebBrowser from 'expo-web-browser';
 import api, { API_ENDPOINTS } from '../config/api';
 import { useAuth } from '../contexts/AuthContext';
@@ -359,7 +360,7 @@ export default function CheckoutScreen({ navigation }) {
         <View style={[styles.inputContainer, hasError && styles.inputContainerError]}>
           {options.icon && <Ionicons name={options.icon} size={18} color={hasError ? palette.colors.error : 'rgba(255,255,255,0.5)'} style={styles.inputIcon} />}
           <TextInput
-            style={styles.input} placeholder={placeholder} placeholderTextColor="rgba(255,255,255,0.35)"
+            style={styles.input} placeholder={placeholder} placeholderTextColor={palette.colors.grayLight}
             value={formData[field]} onChangeText={(value) => handleInputChange(field, value)}
             keyboardType={options.keyboardType || 'default'} autoCapitalize={options.autoCapitalize || 'sentences'}
             multiline={options.multiline} numberOfLines={options.numberOfLines}
@@ -552,7 +553,7 @@ export default function CheckoutScreen({ navigation }) {
               <View style={{ flexDirection: 'row', gap: spacing.sm }}>
                 <View style={[styles.inputContainer, { flex: 1 }]}>
                   <Ionicons name="pricetag-outline" size={16} color="rgba(255,255,255,0.5)" style={styles.inputIcon} />
-                  <TextInput style={styles.input} placeholder="Enter coupon code" placeholderTextColor="rgba(255,255,255,0.35)" value={couponCode} onChangeText={setCouponCode} autoCapitalize="characters" />
+                  <TextInput style={styles.input} placeholder="Enter coupon code" placeholderTextColor={palette.colors.grayLight} value={couponCode} onChangeText={setCouponCode} autoCapitalize="characters" />
                 </View>
                 <TouchableOpacity style={{ backgroundColor: palette.colors.primary, paddingHorizontal: spacing.lg, borderRadius: 14, justifyContent: 'center', alignItems: 'center' }} onPress={handleApplyCoupon} disabled={couponLoading}>
                   {couponLoading ? <ActivityIndicator color="#fff" size="small" /> : <Text style={{ color: '#fff', fontWeight: fontWeight.bold, fontSize: fontSize.sm }}>Apply</Text>}
@@ -614,6 +615,7 @@ export default function CheckoutScreen({ navigation }) {
             <Text style={styles.footerValue}>{formatAmount(totalAmount)}</Text>
           </View>
           <TouchableOpacity style={[styles.placeOrderBtn, isProcessing && { opacity: 0.6 }]} onPress={handlePlaceOrder} disabled={isProcessing}>
+            <LinearGradient colors={['#14B8A6', '#0EA5E9', '#6366F1']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
             {isProcessing ? <InlineLoader size="small" color="#fff" /> : (
               <>
                 <Ionicons name={paymentMethod === 'card' ? 'card-outline' : 'bag-check-outline'} size={20} color="#fff" />
@@ -693,7 +695,7 @@ const buildStyles = (p) => StyleSheet.create({
   footer: { position: 'absolute', bottom: 0, left: spacing.md, right: spacing.md, flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing.lg, paddingVertical: spacing.md, gap: spacing.lg, marginBottom: spacing.sm },
   footerLabel: { fontSize: fontSize.sm, color: p.colors.textSecondary },
   footerValue: { fontSize: fontSize.xl, fontWeight: fontWeight.bold, color: p.colors.text },
-  placeOrderBtn: { flexDirection: 'row', backgroundColor: p.colors.primary, paddingVertical: 14, paddingHorizontal: spacing.xl, borderRadius: 16, alignItems: 'center', gap: spacing.sm, ...shadows.md },
+  placeOrderBtn: { flexDirection: 'row', paddingVertical: 14, paddingHorizontal: spacing.xl, borderRadius: 16, alignItems: 'center', gap: spacing.sm, overflow: 'hidden', shadowColor: '#0EA5E9', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.4, shadowRadius: 16, elevation: 6 },
   placeOrderText: { color: '#fff', fontSize: fontSize.md, fontWeight: fontWeight.bold },
   emptyContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: spacing.xl },
   emptyCard: { alignItems: 'center', padding: spacing.xxl },

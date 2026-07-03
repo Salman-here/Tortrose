@@ -32,19 +32,14 @@ export {
   PendingOrdersStatCard,
 } from './StatCard';
 
-export { 
+export {
   default as ActionCard,
   StoreOverviewAction,
   ProductManagementAction,
   OrderManagementAction,
   StoreSettingsAction,
   ShippingConfigAction,
-  UserManagementAction,
-  TaxConfigAction,
-  StoreVerificationAction,
-  AdminProductsAction,
-  AdminOrdersAction,
-  AdminStoresAction,
+  StoreAnalyticsAction,
 } from './ActionCard';
 
 export { 

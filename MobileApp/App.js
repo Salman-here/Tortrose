@@ -14,14 +14,17 @@ import AppNavigator from './src/navigation/AppNavigator';
 import OnboardingWalkthrough, { shouldShowOnboarding } from './src/components/OnboardingWalkthrough';
 import { isBiometricEnabled, isBiometricAvailable, authenticateBiometric } from './src/utils/biometricLock';
 
-// ─── Sentry Crash Reporting ──────────────────────────────────────────────────
-Sentry.init({
-  dsn: process.env.EXPO_PUBLIC_SENTRY_DSN || 'https://examplePublicKey@o0.ingest.sentry.io/0',
-  environment: __DEV__ ? 'development' : 'production',
-  enableInExpoDevelopment: false,
-  debug: false,
-  tracesSampleRate: __DEV__ ? 0 : 0.2,
-});
+// ─── Sentry Crash Reporting (only when a real DSN is configured) ─────────────
+const SENTRY_DSN = process.env.EXPO_PUBLIC_SENTRY_DSN;
+if (SENTRY_DSN) {
+  Sentry.init({
+    dsn: SENTRY_DSN,
+    environment: __DEV__ ? 'development' : 'production',
+    enableInExpoDevelopment: false,
+    debug: false,
+    tracesSampleRate: __DEV__ ? 0 : 0.2,
+  });
+}
 
 // ─── ErrorBoundary ───────────────────────────────────────────────────────────
 class ErrorBoundary extends React.Component {
@@ -170,6 +173,13 @@ const linking = {
       UserDashboard: 'user-dashboard',
       PaymentSuccess: 'payment-success',
       PaymentCancel: 'payment-cancel',
+      FAQ: 'faq',
+      Contact: 'contact',
+      About: 'about',
+      TermsOfService: 'terms',
+      PrivacyPolicy: 'privacy',
+      Docs: 'docs',
+      SellerDashboard: 'seller-dashboard',
     },
   },
 };
@@ -262,4 +272,4 @@ function App() {
   );
 }
 
-export default Sentry.wrap(App);
+export default SENTRY_DSN ? Sentry.wrap(App) : App;

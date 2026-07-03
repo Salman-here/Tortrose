@@ -45,12 +45,6 @@ export const OrderManagementAction = ({ onPress, badge }) => <ActionCard title="
 export const StoreSettingsAction = ({ onPress }) => <ActionCard title="Store Settings" subtitle="Update store information" icon="settings-outline" color={staticColors.gray} onPress={onPress} />;
 export const ShippingConfigAction = ({ onPress }) => <ActionCard title="Shipping Configuration" subtitle="Manage shipping methods" icon="car-outline" color={staticColors.warning} onPress={onPress} />;
 export const StoreAnalyticsAction = ({ onPress }) => <ActionCard title="Store Analytics" subtitle="Views, sales & performance" icon="bar-chart-outline" color={staticColors.info} onPress={onPress} />;
-export const UserManagementAction = ({ onPress, badge }) => <ActionCard title="User Management" subtitle="Manage platform users" icon="people-outline" color={staticColors.primary} onPress={onPress} badge={badge} />;
-export const TaxConfigAction = ({ onPress }) => <ActionCard title="Tax Configuration" subtitle="Manage tax settings" icon="calculator-outline" color={staticColors.success} onPress={onPress} />;
-export const StoreVerificationAction = ({ onPress, badge }) => <ActionCard title="Store Verification" subtitle="Verify seller stores" icon="shield-checkmark-outline" color={staticColors.info} onPress={onPress} badge={badge} />;
-export const AdminProductsAction = ({ onPress }) => <ActionCard title="All Products" subtitle="View all platform products" icon="grid-outline" color={staticColors.secondary} onPress={onPress} />;
-export const AdminOrdersAction = ({ onPress, badge }) => <ActionCard title="All Orders" subtitle="View all platform orders" icon="list-outline" color={staticColors.warning} onPress={onPress} badge={badge} />;
-export const AdminStoresAction = ({ onPress }) => <ActionCard title="All Stores" subtitle="View all seller stores" icon="business-outline" color={staticColors.error} onPress={onPress} />;
 
 const makeStyles = (palette) => { const colors = palette.colors; return StyleSheet.create({
   container: { flexDirection: 'row', alignItems: 'center', padding: spacing.md, marginBottom: spacing.sm, overflow: 'hidden' },

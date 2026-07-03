@@ -140,8 +140,7 @@ export default function SellerNotificationsScreen({ navigation }) {
   };
 
   return (
-    <View style={styles.container}>
-      <GlassBackground />
+    <GlassBackground>
       <SafeAreaView style={styles.safeArea}>
         <GlassPanel style={styles.header}>
           <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
@@ -168,6 +167,7 @@ export default function SellerNotificationsScreen({ navigation }) {
           keyExtractor={item => item.key}
           horizontal
           showsHorizontalScrollIndicator={false}
+          style={styles.categoryListBar}
           contentContainerStyle={styles.categoryList}
         />
 
@@ -185,12 +185,11 @@ export default function SellerNotificationsScreen({ navigation }) {
           }
         />
       </SafeAreaView>
-    </View>
+    </GlassBackground>
   );
 }
 
 const buildStyles = (p) => StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F0F4FF' },
   safeArea: { flex: 1 },
   header: {
     flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing.md, paddingVertical: spacing.md,
@@ -203,10 +202,11 @@ const buildStyles = (p) => StyleSheet.create({
   headerBadgeText: { color: '#fff', fontSize: 11, fontWeight: fontWeight.bold },
   markAllBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(99,102,241,0.1)', justifyContent: 'center', alignItems: 'center' },
 
-  categoryList: { paddingHorizontal: spacing.md, paddingVertical: spacing.sm, gap: spacing.sm },
+  categoryListBar: { flexGrow: 0, flexShrink: 0 },
+  categoryList: { paddingHorizontal: spacing.md, paddingVertical: spacing.sm, gap: spacing.sm, alignItems: 'center' },
   categoryChip: {
     flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 8,
-    borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.5)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)', gap: 6,
+    borderRadius: 20, backgroundColor: p.glass.bgSubtle, borderWidth: 1, borderColor: p.glass.borderSubtle, gap: 6,
   },
   categoryChipActive: { backgroundColor: p.colors.primary, borderColor: p.colors.primary },
   categoryLabel: { fontSize: fontSize.sm, color: p.colors.grayLight, fontWeight: fontWeight.medium },

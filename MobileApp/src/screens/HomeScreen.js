@@ -29,6 +29,8 @@ import CurrencySelector from '../components/CurrencySelector';
 import { Loader, EmptySearch, ProductGridSkeleton, PersonalizedSliders, SearchAutocomplete, PriceRangeFilter, TrustedStoresSection } from '../components/common';
 import GlassBackground from '../components/common/GlassBackground';
 import GlassPanel from '../components/common/GlassPanel';
+import GlassBlurFill from '../components/common/GlassBlurFill';
+import AIChatFab from '../components/common/AIChatFab';
 import { addSearchHistory } from '../utils/searchHistory';
 import RozareLogo from '../components/common/RozareLogo';
 import { useAuth } from '../contexts/AuthContext';
@@ -52,6 +54,7 @@ export default function HomeScreen({ navigation }) {
   const [loadingMore, setLoadingMore] = useState(false);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [totalProducts, setTotalProducts] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [showFilters, setShowFilters] = useState(false);
@@ -120,8 +123,13 @@ export default function HomeScreen({ navigation }) {
         setHasMore(newProducts.length === LIMIT);
         setPage(pageNum);
       }
+      setLoadError(false);
     } catch (error) {
       console.error('Error fetching products:', error);
+      // Stop infinite-scroll retries until the user explicitly refreshes,
+      // otherwise a failing request re-triggers onEndReached forever.
+      setHasMore(false);
+      setLoadError(true);
     } finally {
       setIsLoading(false);
       setRefreshing(false);
@@ -142,14 +150,15 @@ export default function HomeScreen({ navigation }) {
   const onRefresh = useCallback(() => {
     setRefreshing(true);
     setPage(1);
+    setHasMore(true);
     fetchProducts(1, false);
   }, [fetchProducts]);
 
   const onEndReached = useCallback(() => {
-    if (!loadingMore && !isLoading && hasMore) {
+    if (!loadingMore && !isLoading && hasMore && products.length > 0) {
       fetchProducts(page + 1, true);
     }
-  }, [loadingMore, isLoading, hasMore, page, fetchProducts]);
+  }, [loadingMore, isLoading, hasMore, page, products.length, fetchProducts]);
 
   // Initial load and when currentUser changes
   useEffect(() => {
@@ -229,7 +238,7 @@ export default function HomeScreen({ navigation }) {
       {/* Hero Header — Glass style matching website nav */}
       <GlassPanel variant="floating" style={styles.heroHeader}>
         <View style={styles.heroTopBar}>
-          <RozareLogo width={140} height={32} />
+          <RozareLogo width={104} height={24} />
           <View style={styles.heroTopRight}>
             <CurrencySelector />
             <TouchableOpacity
@@ -328,6 +337,7 @@ export default function HomeScreen({ navigation }) {
 
       {/* Quick Stats Banner */}
       <View style={styles.statsBanner}>
+        <GlassBlurFill />
         <View style={styles.statItem}>
           <Ionicons name="shield-checkmark" size={18} color={palette.colors.primary} />
           <Text style={styles.statText}>Verified</Text>
@@ -572,17 +582,31 @@ export default function HomeScreen({ navigation }) {
   const renderEmptyState = () => (
     <View style={styles.emptyContainer}>
       <View style={styles.emptyIconContainer}>
-        <Ionicons name="cube-outline" size={64} color={palette.colors.grayLight} />
+        <Ionicons name={loadError ? 'cloud-offline-outline' : 'cube-outline'} size={64} color={palette.colors.grayLight} />
       </View>
-      <Text style={styles.emptyTitle}>No products found</Text>
+      <Text style={styles.emptyTitle}>{loadError ? "Couldn't load products" : 'No products found'}</Text>
       <Text style={styles.emptySubtitle}>
-        {hasActiveFilters || searchQuery 
-          ? 'Try adjusting your filters or search query'
-          : 'Check back later for new products'
+        {loadError
+          ? 'Check your connection and try again'
+          : hasActiveFilters || searchQuery
+            ? 'Try adjusting your filters or search query'
+            : 'Check back later for new products'
         }
       </Text>
-      {(hasActiveFilters || searchQuery) && (
-        <TouchableOpacity 
+      {loadError ? (
+        <TouchableOpacity
+          style={styles.emptyActionButton}
+          onPress={() => {
+            setIsLoading(true);
+            setHasMore(true);
+            fetchProducts(1, false);
+          }}
+        >
+          <Ionicons name="refresh" size={18} color={palette.colors.white} />
+          <Text style={styles.emptyActionText}>Retry</Text>
+        </TouchableOpacity>
+      ) : (hasActiveFilters || searchQuery) && (
+        <TouchableOpacity
           style={styles.emptyActionButton}
           onPress={() => {
             resetFilters();
@@ -632,9 +656,9 @@ export default function HomeScreen({ navigation }) {
         numColumns={2}
         columnWrapperStyle={styles.row}
         contentContainerStyle={styles.listContent}
-        ListHeaderComponent={renderHeader}
+        ListHeaderComponent={renderHeader()}
         renderItem={renderItem}
-        ListFooterComponent={renderFooter}
+        ListFooterComponent={renderFooter()}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -643,7 +667,7 @@ export default function HomeScreen({ navigation }) {
             tintColor={palette.colors.primary}
           />
         }
-        ListEmptyComponent={renderEmptyState}
+        ListEmptyComponent={renderEmptyState()}
         onEndReached={onEndReached}
         onEndReachedThreshold={0.5}
         showsVerticalScrollIndicator={false}
@@ -658,11 +682,8 @@ export default function HomeScreen({ navigation }) {
       />
       {renderFilterModal()}
 
-      {/* AI FAB */}
-      <TouchableOpacity onPress={() => setShowAI(true)} activeOpacity={0.85}
-        style={{ position: 'absolute', bottom: 80, right: 16, width: 52, height: 52, borderRadius: 16, backgroundColor: palette.colors.primary, justifyContent: 'center', alignItems: 'center', elevation: 6, shadowColor: palette.colors.primary, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.35, shadowRadius: 8, zIndex: 50 }}>
-        <Ionicons name="chatbubble-ellipses" size={22} color={palette.colors.white} />
-      </TouchableOpacity>
+      {/* AI FAB — matches website chat launcher */}
+      <AIChatFab onPress={() => setShowAI(true)} />
 
       <ChatBot visible={showAI} onClose={() => setShowAI(false)} navigation={navigation} />
       </SafeAreaView>
@@ -686,7 +707,7 @@ const buildStyles = (p) => StyleSheet.create({
   logoRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   logoIconWrap: { width: 32, height: 32, borderRadius: 8, backgroundColor: 'rgba(99,102,241,0.12)', justifyContent: 'center', alignItems: 'center' },
   logoText: { fontSize: fontSize.xl, fontWeight: fontWeight.bold, color: p.colors.text },
-  heroTopRight: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  heroTopRight: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, flexShrink: 0 },
   loginButton: { flexDirection: 'row', alignItems: 'center', backgroundColor: p.glass.bgStrong, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: borderRadius.full, gap: spacing.xs, borderWidth: 1, borderColor: p.glass.borderStrong },
   loginButtonText: { color: p.colors.primary, fontWeight: fontWeight.semibold, fontSize: fontSize.sm },
   cartIconBtn: { width: 38, height: 38, borderRadius: 19, backgroundColor: p.glass.bgStrong, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: p.glass.borderStrong },
@@ -705,7 +726,7 @@ const buildStyles = (p) => StyleSheet.create({
   filterBadge: { position: 'absolute', top: -4, right: -4, backgroundColor: p.colors.error, width: 18, height: 18, borderRadius: 9, justifyContent: 'center', alignItems: 'center' },
   filterBadgeText: { color: p.colors.white, fontSize: fontSize.xs, fontWeight: fontWeight.bold },
   // Stats banner — glass
-  statsBanner: { flexDirection: 'row', backgroundColor: p.glass.bg, marginHorizontal: spacing.md, marginTop: spacing.sm, borderRadius: borderRadius.xl, padding: spacing.md, borderWidth: 1, borderColor: p.glass.border, ...shadows.sm, justifyContent: 'space-around' },
+  statsBanner: { flexDirection: 'row', backgroundColor: p.glass.bg, marginHorizontal: spacing.md, marginTop: spacing.sm, borderRadius: borderRadius.xl, padding: spacing.md, borderWidth: 1, borderColor: p.glass.border, ...shadows.sm, justifyContent: 'space-around', overflow: 'hidden' },
   statItem: { alignItems: 'center', flex: 1, gap: 2 },
   statText: { fontSize: fontSize.sm, fontWeight: fontWeight.bold, color: p.colors.dark },
   statLabel: { fontSize: fontSize.xs, color: p.colors.textSecondary },
@@ -739,8 +760,10 @@ const buildStyles = (p) => StyleSheet.create({
   clearFiltersButton: { paddingHorizontal: spacing.md, paddingVertical: spacing.sm, justifyContent: 'center' },
   clearFiltersText: { fontSize: fontSize.sm, color: p.colors.error, fontWeight: fontWeight.semibold },
   // List
-  listContent: { paddingBottom: spacing.xxl },
-  row: { paddingHorizontal: spacing.sm, gap: spacing.sm },
+  // Bottom padding clears the absolute-positioned glass tab bar
+  listContent: { paddingBottom: 110 },
+  // Symmetric gutters: 2 × CARD_WIDTH + spacing.sm gap + 2 × spacing.lg = screen width
+  row: { paddingHorizontal: spacing.lg, justifyContent: 'space-between' },
   // Empty state
   emptyContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingTop: 60, paddingHorizontal: spacing.xl },
   emptyIconContainer: { width: 100, height: 100, borderRadius: 50, backgroundColor: p.colors.light, justifyContent: 'center', alignItems: 'center', marginBottom: spacing.lg },

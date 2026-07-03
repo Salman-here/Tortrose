@@ -8,6 +8,7 @@ import {
 } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../contexts/AuthContext';
 import { useGlobal } from '../contexts/GlobalContext';
 import { useCurrency } from '../contexts/CurrencyContext';
@@ -188,6 +189,7 @@ export default function CartScreen({ navigation }) {
             <Text style={styles.footerTotalValue}>{formatAmount(subtotal)}</Text>
           </View>
           <TouchableOpacity style={[styles.checkoutButton, isCartLoading && { opacity: 0.6 }]} onPress={handleCheckout} disabled={isCartLoading} activeOpacity={0.85}>
+            <LinearGradient colors={['#14B8A6', '#0EA5E9', '#6366F1']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
             <Ionicons name="lock-closed-outline" size={18} color={palette.colors.white} />
             <Text style={styles.checkoutButtonText}>Secure Checkout</Text>
             <Ionicons name="arrow-forward" size={18} color={palette.colors.white} />
@@ -233,6 +235,6 @@ const buildStyles = (p) => StyleSheet.create({
   footerTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.md },
   footerTotalLabel: { fontSize: fontSize.sm, color: p.colors.textSecondary, fontWeight: fontWeight.medium },
   footerTotalValue: { fontSize: fontSize.xxl, fontWeight: fontWeight.bold, color: p.colors.text },
-  checkoutButton: { flexDirection: 'row', backgroundColor: p.colors.primary, paddingVertical: spacing.md, borderRadius: borderRadius.xl, justifyContent: 'center', alignItems: 'center', gap: spacing.sm },
+  checkoutButton: { flexDirection: 'row', paddingVertical: spacing.md, borderRadius: borderRadius.xl, justifyContent: 'center', alignItems: 'center', gap: spacing.sm, overflow: 'hidden', shadowColor: '#0EA5E9', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.4, shadowRadius: 16, elevation: 6 },
   checkoutButtonText: { color: p.colors.white, fontSize: fontSize.lg, fontWeight: fontWeight.semibold },
 });

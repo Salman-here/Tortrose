@@ -15,6 +15,7 @@ import Loader from '../../components/common/Loader';
 import { EmptyOrders } from '../../components/common/EmptyState';
 import GlassBackground from '../../components/common/GlassBackground';
 import GlassPanel from '../../components/common/GlassPanel';
+import AIChatFab from '../../components/common/AIChatFab';
 import ChatBot from '../../components/ChatBot';
 import { spacing, fontSize, borderRadius, fontWeight, typography } from '../../styles/theme';
 import { useTheme } from '../../contexts/ThemeContext';
@@ -247,11 +248,8 @@ export default function SellerDashboardScreen({ navigation }) {
         <View style={{ height: 100 }} />
       </ScrollView>
 
-      {/* AI FAB */}
-      <TouchableOpacity onPress={() => setShowAI(true)} activeOpacity={0.85}
-        style={{ position: 'absolute', bottom: 24, right: 20, width: 52, height: 52, borderRadius: 16, backgroundColor: palette.colors.primary, justifyContent: 'center', alignItems: 'center', elevation: 6, shadowColor: palette.colors.primary, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.35, shadowRadius: 8 }}>
-        <Ionicons name="sparkles" size={22} color={palette.colors.white} />
-      </TouchableOpacity>
+      {/* AI FAB — matches website chat launcher */}
+      <AIChatFab onPress={() => setShowAI(true)} style={{ bottom: 24, right: 20 }} />
 
       {/* AI ChatBot */}
       <ChatBot embedded={false} dashboardRole="seller" visible={showAI} onClose={() => setShowAI(false)} navigation={navigation} />

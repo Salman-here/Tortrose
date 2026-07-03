@@ -441,8 +441,8 @@ export default function ProductManagementScreen({ navigation, route }) {
         renderItem={renderProduct}
         keyExtractor={i => i._id}
         contentContainerStyle={styles.list}
-        ListHeaderComponent={renderHeader}
-        ListFooterComponent={renderFooter}
+        ListHeaderComponent={renderHeader()}
+        ListFooterComponent={renderFooter()}
         ListEmptyComponent={searchQuery
           ? <EmptySearch query={searchQuery} onClear={() => setSearchQuery('')} />
           : <EmptyProducts onAdd={hasStore || isAdmin ? () => navigation.navigate('ProductForm', { isAdmin }) : undefined} />}

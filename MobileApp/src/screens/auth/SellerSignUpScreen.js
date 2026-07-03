@@ -10,7 +10,8 @@ import {
   KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import * as SecureStore from 'expo-secure-store';
+import { LinearGradient } from 'expo-linear-gradient';
+import { secureSet } from '../../utils/secureStorage';
 import Toast from 'react-native-toast-message';
 import api from '../../config/api';
 import { useAuth } from '../../contexts/AuthContext';
@@ -80,7 +81,7 @@ export default function SellerSignUpScreen({ navigation }) {
         sellerType: storeForm.sellerType || 'store',
         socialLinks: Object.keys(socialLinks).length > 0 ? socialLinks : undefined,
       });
-      await SecureStore.setItemAsync('jwtToken', res.data.token);
+      await secureSet('jwtToken', res.data.token);
       setCurrentUser(res.data.user);
       Toast.show({ type: 'success', text1: '🎉 Welcome!', text2: 'Seller account created successfully!' });
       setTimeout(() => navigation.reset({ index: 0, routes: [{ name: 'MainTabs' }, { name: 'SellerDashboard' }] }), 1200);
@@ -115,7 +116,7 @@ export default function SellerSignUpScreen({ navigation }) {
         <TextInput
           style={styles.input}
           placeholder={placeholder}
-          placeholderTextColor="rgba(255,255,255,0.3)"
+          placeholderTextColor={palette.colors.grayLight}
           value={value}
           onChangeText={(v) => { onChange(v); if (error) setError(''); }}
           keyboardType={opts.keyboardType || 'default'}
@@ -163,7 +164,8 @@ export default function SellerSignUpScreen({ navigation }) {
                 label: 'Password *', icon: 'lock-closed-outline', secureTextEntry: !showPassword,
                 rightIcon: <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={{ padding: 8 }}><Ionicons name={showPassword ? 'eye-off' : 'eye'} size={20} color="rgba(255,255,255,0.5)" /></TouchableOpacity>
               })}
-              <TouchableOpacity style={styles.nextBtn} onPress={handleAccountNext}>
+              <TouchableOpacity style={styles.nextBtn} onPress={handleAccountNext} activeOpacity={0.85}>
+                <LinearGradient colors={palette.gradients.cta} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
                 <Text style={styles.nextBtnText}>Continue</Text>
                 <Ionicons name="arrow-forward" size={18} color="#fff" />
               </TouchableOpacity>
@@ -186,7 +188,8 @@ export default function SellerSignUpScreen({ navigation }) {
                   {renderInput(businessForm.country, v => setBusinessForm(p => ({ ...p, country: v })), 'Country', { label: 'Country *' })}
                 </View>
               </View>
-              <TouchableOpacity style={styles.nextBtn} onPress={handleBusinessNext}>
+              <TouchableOpacity style={styles.nextBtn} onPress={handleBusinessNext} activeOpacity={0.85}>
+                <LinearGradient colors={palette.gradients.cta} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
                 <Text style={styles.nextBtnText}>Continue</Text>
                 <Ionicons name="arrow-forward" size={18} color="#fff" />
               </TouchableOpacity>
@@ -244,7 +247,8 @@ export default function SellerSignUpScreen({ navigation }) {
                     <><Ionicons name="play-skip-forward" size={16} color={palette.colors.text} /><Text style={styles.skipBtnText}>Skip</Text></>
                   )}
                 </TouchableOpacity>
-                <TouchableOpacity style={[styles.nextBtn, { flex: 2 }]} onPress={() => handleStoreNext(false)} disabled={loading}>
+                <TouchableOpacity style={[styles.nextBtn, { flex: 2 }]} onPress={() => handleStoreNext(false)} disabled={loading} activeOpacity={0.85}>
+                  <LinearGradient colors={palette.gradients.cta} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
                   {loading ? <ActivityIndicator color="#fff" size="small" /> : (
                     <><Text style={styles.nextBtnText}>Continue</Text><Ionicons name="arrow-forward" size={18} color="#fff" /></>
                   )}
@@ -264,7 +268,8 @@ export default function SellerSignUpScreen({ navigation }) {
                 <Text style={styles.formSubtitle}>We sent a code to {accountForm.email}</Text>
               </View>
               {renderInput(otp, setOtp, 'Enter 6-digit OTP', { label: 'OTP Code *', icon: 'keypad-outline', keyboardType: 'number-pad' })}
-              <TouchableOpacity style={[styles.nextBtn, loading && { opacity: 0.6 }]} onPress={handleVerifyOTP} disabled={loading}>
+              <TouchableOpacity style={[styles.nextBtn, loading && { opacity: 0.6 }]} onPress={handleVerifyOTP} disabled={loading} activeOpacity={0.85}>
+                <LinearGradient colors={palette.gradients.cta} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
                 {loading ? <ActivityIndicator color="#fff" size="small" /> : (
                   <><Ionicons name="checkmark-circle" size={18} color="#fff" /><Text style={styles.nextBtnText}>Verify & Create Account</Text></>
                 )}
@@ -312,7 +317,7 @@ const buildStyles = (p) => StyleSheet.create({
   label: { fontSize: fontSize.sm, fontWeight: fontWeight.semibold, color: p.colors.text },
   inputWrap: { flexDirection: 'row', alignItems: 'center', backgroundColor: p.glass.bgSubtle, borderRadius: 14, borderWidth: 1, borderColor: p.glass.borderSubtle },
   input: { flex: 1, padding: spacing.md, fontSize: fontSize.md, color: p.colors.text },
-  nextBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.sm, backgroundColor: p.colors.primary, paddingVertical: 14, borderRadius: 16, marginTop: spacing.md, ...shadows.md },
+  nextBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.sm, paddingVertical: 14, borderRadius: 16, marginTop: spacing.md, overflow: 'hidden', shadowColor: p.colors.primary, shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.35, shadowRadius: 16, elevation: 6 },
   nextBtnText: { color: '#fff', fontSize: fontSize.md, fontWeight: fontWeight.bold },
   skipBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.xs, backgroundColor: p.glass.bgSubtle, paddingVertical: 14, borderRadius: 16, borderWidth: 1, borderColor: p.glass.borderSubtle },
   skipBtnText: { fontSize: fontSize.md, fontWeight: fontWeight.semibold, color: p.colors.text },

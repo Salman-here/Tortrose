@@ -13,31 +13,36 @@ import { useAuth } from '../contexts/AuthContext';
 import { useGlobal } from '../contexts/GlobalContext';
 import { View, Text, StyleSheet, Animated, Platform, Alert } from 'react-native';
 import { BlurView } from 'expo-blur';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { selection as hapticSelection } from '../utils/haptics';
 
-// Glass tab-bar background — BlurView on iOS, opaque-glass fallback on Android.
+// Website --logo-gradient — same as the Add to Cart / CTA buttons
+const CTA_GRADIENT = ['#14B8A6', '#0EA5E9', '#6366F1'];
+
+// Glass tab-bar background — floating rounded pill with real blur on every
+// platform (Dimezis BlurView on Android). Clipped to the pill's rounded shape.
 function GlassTabBarBackground({ isDark, palette }) {
-  if (Platform.OS === 'ios') {
-    return (
-      <BlurView
-        tint={isDark ? 'dark' : 'light'}
-        intensity={60}
-        style={[StyleSheet.absoluteFill, { borderTopWidth: 1, borderTopColor: palette.glass.borderSubtle }]}
-      />
-    );
-  }
   return (
     <View
       style={[
         StyleSheet.absoluteFill,
         {
-          backgroundColor: isDark ? 'rgba(20,26,46,0.96)' : 'rgba(255,255,255,0.96)',
-          borderTopWidth: 1,
-          borderTopColor: palette.glass.borderSubtle,
+          backgroundColor: palette.glass.bgStrong,
+          borderWidth: 1,
+          borderColor: palette.glass.border,
+          borderRadius: 28,
+          overflow: 'hidden',
         },
       ]}
-    />
+    >
+      <BlurView
+        tint={isDark ? 'dark' : 'light'}
+        intensity={60}
+        experimentalBlurMethod="dimezisBlurView"
+        style={StyleSheet.absoluteFill}
+      />
+    </View>
   );
 }
 import { 
@@ -72,17 +77,6 @@ import OrderDetailScreen from '../screens/OrderDetailScreen';
 import OrderConfirmationScreen from '../screens/OrderConfirmationScreen';
 import WishlistScreen from '../screens/WishlistScreen';
 
-// Admin Screens
-import AdminDashboardScreen from '../screens/admin/AdminDashboardScreen';
-import AdminUserManagementScreen from '../screens/admin/AdminUserManagementScreen';
-import AdminTaxConfigurationScreen from '../screens/admin/AdminTaxConfigurationScreen';
-import AdminSubdomainManagementScreen from '../screens/admin/AdminSubdomainManagementScreen';
-import AdminComplaintsScreen from '../screens/admin/AdminComplaintsScreen';
-import AdminSubscriptionsScreen from '../screens/admin/AdminSubscriptionsScreen';
-import AdminBroadcastScreen from '../screens/admin/AdminBroadcastScreen';
-import AdminWhatsAppVerificationScreen from '../screens/admin/AdminWhatsAppVerificationScreen';
-import AdminPaymentsScreen from '../screens/admin/AdminPaymentsScreen';
-
 // Seller Screens
 import SellerDashboardScreen from '../screens/seller/SellerDashboardScreen';
 import SellerStoreSettingsScreen from '../screens/seller/SellerStoreSettingsScreen';
@@ -109,13 +103,10 @@ import PaymentCancelScreen from '../screens/PaymentCancelScreen';
 // New Feature Screens
 import TrustedStoresScreen from '../screens/TrustedStoresScreen';
 import BecomeSellerScreen from '../screens/BecomeSellerScreen';
-import StoreVerificationScreen from '../screens/admin/StoreVerificationScreen';
 import NotificationsScreen from '../screens/NotificationsScreen';
 import SettingsScreen from '../screens/SettingsScreen';
 import EditProfileScreen from '../screens/EditProfileScreen';
-import AdminNotificationsScreen from '../screens/admin/AdminNotificationsScreen';
 import SellerNotificationsScreen from '../screens/seller/SellerNotificationsScreen';
-import AdminAnalyticsScreen from '../screens/admin/AdminAnalyticsScreen';
 import NotificationSettingsScreen from '../screens/shared/NotificationSettingsScreen';
 import SellerHomeScreen from '../screens/seller/SellerHomeScreen';
 import UserDashboardScreen from '../screens/UserDashboardScreen';
@@ -166,23 +157,6 @@ function createRoleGuard(Component, allowedRoles) {
     return <Component {...props} />;
   };
 }
-
-// Guarded admin screens (admin only)
-const GuardedAdminDashboard = createRoleGuard(AdminDashboardScreen, ['admin']);
-const GuardedAdminUserManagement = createRoleGuard(AdminUserManagementScreen, ['admin']);
-const GuardedAdminTaxConfiguration = createRoleGuard(AdminTaxConfigurationScreen, ['admin']);
-const GuardedStoreVerification = createRoleGuard(StoreVerificationScreen, ['admin']);
-const GuardedAdminStoreOverview = createRoleGuard(StoreOverviewScreen, ['admin']);
-const GuardedAdminProductManagement = createRoleGuard(ProductManagementScreen, ['admin']);
-const GuardedAdminOrderManagement = createRoleGuard(OrderManagementScreen, ['admin']);
-const GuardedAdminNotifications = createRoleGuard(AdminNotificationsScreen, ['admin']);
-const GuardedAdminAnalytics = createRoleGuard(AdminAnalyticsScreen, ['admin']);
-const GuardedAdminSubdomainManagement = createRoleGuard(AdminSubdomainManagementScreen, ['admin']);
-const GuardedAdminComplaints = createRoleGuard(AdminComplaintsScreen, ['admin']);
-const GuardedAdminSubscriptions = createRoleGuard(AdminSubscriptionsScreen, ['admin']);
-const GuardedAdminBroadcast = createRoleGuard(AdminBroadcastScreen, ['admin']);
-const GuardedAdminWhatsApp = createRoleGuard(AdminWhatsAppVerificationScreen, ['admin']);
-const GuardedAdminPayments = createRoleGuard(AdminPaymentsScreen, ['admin']);
 
 // Guarded seller screens (seller or admin)
 const GuardedSellerDashboard = createRoleGuard(SellerDashboardScreen, ['seller', 'admin']);
@@ -265,23 +239,41 @@ function CartBadge({ count }) {
   );
 }
 
-// Tab Bar Icon Component with animation
+// Tab Bar Icon — selected tab gets a CTA-gradient pill behind a white icon,
+// springing in with a subtle bounce (matches the website's gradient buttons).
 function TabBarIcon({ route, focused, color, size }) {
   const iconName = getTabIconName(route.name, focused);
-  const scaleAnim = useRef(new Animated.Value(1)).current;
+  const anim = useRef(new Animated.Value(focused ? 1 : 0)).current;
 
   useEffect(() => {
-    Animated.spring(scaleAnim, {
-      toValue: focused ? 1.1 : 1,
-      friction: 5,
+    Animated.spring(anim, {
+      toValue: focused ? 1 : 0,
+      friction: 6,
+      tension: 90,
       useNativeDriver: true,
     }).start();
-  }, [focused, scaleAnim]);
+  }, [focused, anim]);
+
+  const pillScale = anim.interpolate({ inputRange: [0, 1], outputRange: [0.5, 1] });
+  const iconScale = anim.interpolate({ inputRange: [0, 1], outputRange: [1, 1.08] });
 
   return (
-    <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
-      <Ionicons name={iconName} size={size} color={color} />
-    </Animated.View>
+    <View style={styles.tabIconWrap}>
+      <Animated.View
+        pointerEvents="none"
+        style={[StyleSheet.absoluteFill, styles.tabActivePill, { opacity: anim, transform: [{ scale: pillScale }] }]}
+      >
+        <LinearGradient
+          colors={CTA_GRADIENT}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.tabActivePillGradient}
+        />
+      </Animated.View>
+      <Animated.View style={{ transform: [{ scale: iconScale }] }}>
+        <Ionicons name={iconName} size={22} color={focused ? '#fff' : color} />
+      </Animated.View>
+    </View>
   );
 }
 
@@ -315,14 +307,20 @@ function MainTabs() {
             </View>
           );
         },
-        tabBarActiveTintColor: palette.colors.primary,
+        tabBarActiveTintColor: '#0EA5E9',
         tabBarInactiveTintColor: palette.colors.textLight,
         tabBarStyle: [
           styles.tabBar,
           themedTabBar,
           {
-            paddingBottom: Math.max(insets.bottom, Platform.OS === 'ios' ? spacing.xl : spacing.sm),
-            height: (Platform.OS === 'ios' ? 85 : 65) + Math.max(insets.bottom - (Platform.OS === 'ios' ? spacing.xl : spacing.sm), 0),
+            // Floating pill: inset from edges, lifted above the bottom safe area
+            left: spacing.md,
+            right: spacing.md,
+            bottom: Math.max(insets.bottom, spacing.md),
+            height: 66,
+            borderRadius: 28,
+            paddingTop: spacing.sm,
+            paddingBottom: spacing.sm,
           },
         ],
         tabBarLabelStyle: styles.tabBarLabel,
@@ -470,23 +468,6 @@ export default function AppNavigator() {
         options={{ headerShown: false }}
       />
 
-      {/* Admin Dashboard (role-guarded: admin only) */}
-      <Stack.Screen name="AdminDashboard" component={GuardedAdminDashboard} options={{ headerShown: false }} />
-      <Stack.Screen name="AdminStoreOverview" component={GuardedAdminStoreOverview} initialParams={{ isAdmin: true }} options={{ headerShown: false }} />
-      <Stack.Screen name="AdminProductManagement" component={GuardedAdminProductManagement} initialParams={{ isAdmin: true }} options={{ headerShown: false }} />
-      <Stack.Screen name="AdminOrderManagement" component={GuardedAdminOrderManagement} initialParams={{ isAdmin: true }} options={{ headerShown: false }} />
-      <Stack.Screen name="AdminUserManagement" component={GuardedAdminUserManagement} options={{ headerShown: false }} />
-      <Stack.Screen name="AdminTaxConfiguration" component={GuardedAdminTaxConfiguration} options={{ headerShown: false }} />
-      <Stack.Screen name="StoreVerification" component={GuardedStoreVerification} options={{ headerShown: false }} />
-      <Stack.Screen name="AdminNotifications" component={GuardedAdminNotifications} options={{ headerShown: false }} />
-      <Stack.Screen name="AdminAnalytics" component={GuardedAdminAnalytics} options={{ headerShown: false }} />
-      <Stack.Screen name="AdminSubdomainManagement" component={GuardedAdminSubdomainManagement} options={{ headerShown: false }} />
-      <Stack.Screen name="AdminComplaints" component={GuardedAdminComplaints} options={{ headerShown: false }} />
-      <Stack.Screen name="AdminSubscriptions" component={GuardedAdminSubscriptions} options={{ headerShown: false }} />
-      <Stack.Screen name="AdminBroadcast" component={GuardedAdminBroadcast} options={{ headerShown: false }} />
-      <Stack.Screen name="AdminWhatsAppVerification" component={GuardedAdminWhatsApp} options={{ headerShown: false }} />
-      <Stack.Screen name="AdminPayments" component={GuardedAdminPayments} options={{ headerShown: false }} />
-
       {/* Seller Dashboard (role-guarded: seller or admin) */}
       <Stack.Screen name="SellerDashboard" component={GuardedSellerDashboard} options={{ headerShown: false }} />
       <Stack.Screen name="SellerAnalytics" component={GuardedSellerAnalytics} options={{ headerShown: false }} />
@@ -560,20 +541,18 @@ export default function AppNavigator() {
 }
 
 const styles = StyleSheet.create({
-  // Tab Bar Styles
+  // Tab Bar Styles — floating rounded pill
   tabBar: {
     backgroundColor: 'transparent',
     borderTopWidth: 0,
-    paddingTop: spacing.sm,
     position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    elevation: 0,
+    borderRadius: 28,
+    // Soft shadow around the whole floating pill
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.08,
-    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.12,
+    shadowRadius: 20,
+    elevation: 12,
   },
   tabBarLabel: {
     fontSize: fontSize.xs,
@@ -587,6 +566,24 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     position: 'relative',
+  },
+  tabIconWrap: {
+    width: 52,
+    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tabActivePill: {
+    borderRadius: 16,
+    shadowColor: '#0EA5E9',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  tabActivePillGradient: {
+    flex: 1,
+    borderRadius: 16,
   },
 
   // Badge Styles

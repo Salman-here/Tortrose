@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import Toast from 'react-native-toast-message';
 import api from '../config/api';
 import { useAuth } from '../contexts/AuthContext';
@@ -123,11 +124,18 @@ export default function ProductDetailScreen({ route, navigation }) {
   if (isLoading) return <GlassBackground><View style={styles.center}><Loader fullScreen size="large" /></View></GlassBackground>;
   if (!product) return null;
 
-  const images = product.images?.length > 0 ? product.images : [{ url: product.image }];
+  // Normalize images: accept string or {url} entries, drop values that aren't real URLs
+  // (some legacy products store a text label in the image field)
+  const isValidImageUri = (u) => typeof u === 'string' && /^(https?:|data:|file:)/.test(u);
+  const rawImages = product.images?.length > 0 ? product.images : [product.image];
+  const validImages = rawImages
+    .map((img) => ({ url: typeof img === 'string' ? img : img?.url }))
+    .filter((img) => isValidImageUri(img.url));
+  const images = validImages.length > 0 ? validImages : [{ url: null }];
 
   return (
     <GlassBackground>
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 100 }}
+      <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 100 }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={palette.colors.primary} />}>
         {/* Image Gallery */}
         <View style={styles.imageSection}>
@@ -135,13 +143,19 @@ export default function ProductDetailScreen({ route, navigation }) {
             onMomentumScrollEnd={(e) => setSelectedImageIndex(Math.round(e.nativeEvent.contentOffset.x / width))}
             renderItem={({ item }) => (
               <View style={styles.imageContainer}>
-                <Image source={{ uri: item.url }} style={styles.mainImage} contentFit="contain" cachePolicy="memory-disk" transition={200} />
+                {item.url ? (
+                  <Image source={{ uri: item.url }} style={styles.mainImage} contentFit="contain" cachePolicy="memory-disk" transition={200} />
+                ) : (
+                  <View style={[styles.mainImage, { justifyContent: 'center', alignItems: 'center' }]}>
+                    <Ionicons name="image-outline" size={64} color={palette.colors.textLight} />
+                  </View>
+                )}
               </View>
             )}
             keyExtractor={(_, index) => index.toString()}
           />
           <View style={styles.badgesContainer}>
-            {product.isFeatured && <View style={styles.featuredBadge}><Ionicons name="flash" size={12} color="#fff" /><Text style={styles.badgeText}>Featured</Text></View>}
+            {product.isFeatured && <View style={styles.featuredBadge}><Ionicons name="flash" size={12} color="#2563eb" /><Text style={styles.featuredBadgeText}>Featured</Text></View>}
             {discountPercentage > 0 && <View style={styles.discountBadge}><Text style={styles.badgeText}>-{discountPercentage}% OFF</Text></View>}
           </View>
           {images.length > 1 && (
@@ -290,7 +304,7 @@ export default function ProductDetailScreen({ route, navigation }) {
             <View style={{ flexDirection: 'row', justifyContent: 'center', gap: spacing.sm, marginBottom: spacing.md }}>
               {[1,2,3,4,5].map(s => <TouchableOpacity key={s} onPress={() => setReviewRating(s)}><Ionicons name={s <= reviewRating ? 'star' : 'star-outline'} size={34} color={palette.colors.star} /></TouchableOpacity>)}
             </View>
-            <TextInput style={styles.reviewInput} value={reviewComment} onChangeText={setReviewComment} placeholder="Share your experience..." placeholderTextColor="rgba(255,255,255,0.3)" multiline numberOfLines={4} textAlignVertical="top" maxLength={500} />
+            <TextInput style={styles.reviewInput} value={reviewComment} onChangeText={setReviewComment} placeholder="Share your experience..." placeholderTextColor={palette.colors.grayLight} multiline numberOfLines={4} textAlignVertical="top" maxLength={500} />
             <Text style={{ fontSize: fontSize.xs, color: palette.colors.textSecondary, textAlign: 'right', marginBottom: spacing.md }}>{reviewComment.length}/500</Text>
             <TouchableOpacity style={[styles.submitReviewBtn, submittingReview && { opacity: 0.6 }]} onPress={handleSubmitReview} disabled={submittingReview}>
               {submittingReview ? <ActivityIndicator size="small" color="#fff" /> : <><Ionicons name="send" size={16} color="#fff" /><Text style={{ fontSize: fontSize.md, fontWeight: fontWeight.bold, color: '#fff' }}>Submit Review</Text></>}
@@ -310,6 +324,9 @@ export default function ProductDetailScreen({ route, navigation }) {
           </TouchableOpacity>
           <TouchableOpacity style={[styles.addToCartBtn, product.stock === 0 && { backgroundColor: palette.glass.bg }, isInCart && { backgroundColor: palette.colors.successLight }]}
             onPress={handleAddToCartClick} disabled={product.stock === 0 || (isCartLoading && loadingProductId === productId)}>
+            {product.stock > 0 && !isInCart && (
+              <LinearGradient colors={['#14B8A6', '#0EA5E9', '#6366F1']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
+            )}
             {isCartLoading && loadingProductId === productId ? <InlineLoader size="small" color="#fff" /> :
               product.stock === 0 ? <Text style={{ color: palette.colors.textSecondary, fontSize: fontSize.md }}>Out of Stock</Text> :
               isInCart ? <><Ionicons name="checkmark-circle" size={18} color={palette.colors.success} /><Text style={{ color: palette.colors.success, fontSize: fontSize.md, fontWeight: fontWeight.semibold }}>Added to Cart</Text></> :
@@ -326,9 +343,11 @@ const buildStyles = (p) => StyleSheet.create({
   imageSection: { position: 'relative' },
   imageContainer: { width, height: 340, backgroundColor: 'rgba(255,255,255,0.05)' },
   mainImage: { width: '100%', height: '100%' },
-  badgesContainer: { position: 'absolute', top: spacing.md, left: spacing.md, gap: 6 },
-  featuredBadge: { flexDirection: 'row', alignItems: 'center', backgroundColor: p.colors.secondary, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20, gap: 4 },
+  // Below the floating back/share buttons so they never overlap
+  badgesContainer: { position: 'absolute', top: spacing.xl + 48, left: spacing.md, gap: 6 },
+  featuredBadge: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(99,102,241,0.12)', borderWidth: 1, borderColor: 'rgba(99,102,241,0.18)', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20, gap: 4 },
   discountBadge: { backgroundColor: p.colors.error, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20 },
+  featuredBadgeText: { color: '#2563eb', fontSize: fontSize.xs, fontWeight: fontWeight.semibold },
   badgeText: { color: '#fff', fontSize: fontSize.xs, fontWeight: fontWeight.semibold },
   indicatorContainer: { flexDirection: 'row', justifyContent: 'center', position: 'absolute', bottom: spacing.md, left: 0, right: 0, gap: 6 },
   indicator: { width: 8, height: 8, borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.4)' },
@@ -381,5 +400,5 @@ const buildStyles = (p) => StyleSheet.create({
   bottomBar: { position: 'absolute', bottom: 0, left: 0, right: 0, padding: spacing.md },
   bottomBarInner: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing.md, paddingVertical: spacing.sm, gap: spacing.sm },
   iconBtn: { width: 48, height: 48, borderRadius: 16, backgroundColor: p.glass.bgSubtle, justifyContent: 'center', alignItems: 'center' },
-  addToCartBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: p.colors.primary, borderRadius: 16, paddingVertical: 14, gap: spacing.sm },
+  addToCartBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', borderRadius: 16, paddingVertical: 14, gap: spacing.sm, overflow: 'hidden', shadowColor: '#0EA5E9', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.4, shadowRadius: 16, elevation: 6 },
 });

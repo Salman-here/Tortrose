@@ -9,6 +9,7 @@ import api from '../../config/api';
 import { useCurrency } from '../../contexts/CurrencyContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import { clearRecentlyViewed, getRecentlyViewed, subscribeRecentlyViewed } from '../../utils/recentlyViewed';
+import GlassBlurFill from './GlassBlurFill';
 import { SliderSkeleton } from './Skeleton';
 import { spacing, fontSize, fontWeight, borderRadius } from '../../styles/theme';
 
@@ -36,6 +37,7 @@ const SliderCard = ({ product, onPress, formatPrice, palette }) => {
 
   return (
     <TouchableOpacity style={styles.card} activeOpacity={0.85} onPress={onPress} accessibilityLabel={`View ${product.name}`}>
+      <GlassBlurFill />
       <View style={styles.cardImageWrap}>
         <Image source={{ uri: imageSource }} style={styles.cardImage} contentFit="cover" cachePolicy="memory-disk" transition={150} />
         {discountPct > 0 && (

@@ -7,6 +7,7 @@ import { View, Text, StyleSheet, SafeAreaView, ScrollView, TouchableOpacity, Tex
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import Toast from 'react-native-toast-message';
 import api from '../config/api';
 import { useAuth } from '../contexts/AuthContext';
@@ -99,7 +100,8 @@ export default function EditProfileScreen({ navigation }) {
             </GlassPanel>
 
             <TouchableOpacity style={[styles.saveButton, isSaving && { opacity: 0.7 }]} onPress={handleSave} disabled={isSaving} activeOpacity={0.85}>
-              {isSaving ? <ActivityIndicator color={palette.colors.white} size="small" /> : <Text style={styles.saveButtonText}>Save Changes</Text>}
+              <LinearGradient colors={palette.gradients.cta} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
+              {isSaving ? <ActivityIndicator color="#fff" size="small" /> : <Text style={styles.saveButtonText}>Save Changes</Text>}
             </TouchableOpacity>
           </ScrollView>
         </KeyboardAvoidingView>
@@ -131,6 +133,6 @@ const buildStyles = (p) => StyleSheet.create({
   readOnlyField: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)', borderRadius: borderRadius.lg, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, backgroundColor: 'rgba(255,255,255,0.05)' },
   readOnlyText: { flex: 1, fontSize: fontSize.md, color: p.colors.textSecondary },
   readOnlyHint: { fontSize: fontSize.xs, color: p.colors.textLight, marginTop: 6, fontStyle: 'italic' },
-  saveButton: { backgroundColor: p.colors.primary, borderRadius: borderRadius.xl, paddingVertical: spacing.md + 2, alignItems: 'center' },
+  saveButton: { borderRadius: borderRadius.xl, paddingVertical: spacing.md + 2, alignItems: 'center', justifyContent: 'center', overflow: 'hidden', shadowColor: p.colors.primary, shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.35, shadowRadius: 16, elevation: 6 },
   saveButtonText: { fontSize: fontSize.md, fontWeight: fontWeight.bold, color: p.colors.white },
 });

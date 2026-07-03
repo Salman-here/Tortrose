@@ -1,17 +1,20 @@
 /**
  * GlassBackground Component — Liquid Glass Design
- * Full-screen gradient background with animated floating orbs
- * Matches the web platform's multi-step HSL gradient aesthetic
+ * Full-screen gradient background with animated floating aurora orbs.
+ * Orbs are SVG radial gradients (soft glow fading to transparent) so they render
+ * softly on every platform — matching the web's blurred gradient blobs.
  */
 
 import React, { useEffect, useRef } from 'react';
 import { View, StyleSheet, Animated, Dimensions, Platform, StatusBar } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import Svg, { Defs, RadialGradient, Stop, Circle } from 'react-native-svg';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../../contexts/ThemeContext';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
-const Orb = ({ size, color, initialX, initialY, duration }) => {
+const Orb = ({ id, size, color, opacity, initialX, initialY, duration }) => {
   const translateX = useRef(new Animated.Value(0)).current;
   const translateY = useRef(new Animated.Value(0)).current;
 
@@ -33,58 +36,60 @@ const Orb = ({ size, color, initialX, initialY, duration }) => {
     return () => { animateX.stop(); animateY.stop(); };
   }, []);
 
+  const gradientId = `orb-gradient-${id}`;
   return (
     <Animated.View
-      style={[
-        styles.orb,
-        {
-          width: size,
-          height: size,
-          borderRadius: size / 2,
-          backgroundColor: color,
-          left: initialX,
-          top: initialY,
-          transform: [{ translateX }, { translateY }],
-        },
-      ]}
-    />
+      style={{
+        position: 'absolute',
+        left: initialX,
+        top: initialY,
+        width: size,
+        height: size,
+        transform: [{ translateX }, { translateY }],
+      }}
+    >
+      <Svg width={size} height={size}>
+        <Defs>
+          <RadialGradient id={gradientId} cx="50%" cy="50%" r="50%">
+            <Stop offset="0%" stopColor={color} stopOpacity={opacity} />
+            <Stop offset="55%" stopColor={color} stopOpacity={opacity * 0.45} />
+            <Stop offset="100%" stopColor={color} stopOpacity={0} />
+          </RadialGradient>
+        </Defs>
+        <Circle cx={size / 2} cy={size / 2} r={size / 2} fill={`url(#${gradientId})`} />
+      </Svg>
+    </Animated.View>
   );
 };
 
 export default function GlassBackground({ children, style, variant = 'default' }) {
   const { palette, isDark } = useTheme();
-  // Caller-forced 'dark' variant always uses an inky aurora; otherwise follow active palette
-  const gradientColors =
-    variant === 'dark' || isDark
-      ? palette.gradients.background
-      : palette.gradients.background;
+  const gradientColors = palette.gradients.background;
 
-  // Orb tint adapts to mode for proper depth without washing out the dark UI
-  const orbTints = isDark
-    ? {
-        a: Platform.OS === 'ios' ? 'rgba(129,140,248,0.10)' : 'rgba(129,140,248,0.16)',
-        b: Platform.OS === 'ios' ? 'rgba(167,139,250,0.08)' : 'rgba(167,139,250,0.13)',
-        c: Platform.OS === 'ios' ? 'rgba(96,165,250,0.09)' : 'rgba(96,165,250,0.14)',
-        d: Platform.OS === 'ios' ? 'rgba(192,132,252,0.07)' : 'rgba(192,132,252,0.12)',
-      }
-    : {
-        a: Platform.OS === 'ios' ? 'rgba(99, 102, 241, 0.08)' : 'rgba(99, 102, 241, 0.12)',
-        b: Platform.OS === 'ios' ? 'rgba(139, 92, 246, 0.06)' : 'rgba(139, 92, 246, 0.1)',
-        c: Platform.OS === 'ios' ? 'rgba(59, 130, 246, 0.07)' : 'rgba(59, 130, 246, 0.11)',
-        d: Platform.OS === 'ios' ? 'rgba(168, 85, 247, 0.05)' : 'rgba(168, 85, 247, 0.09)',
-      };
+  // Aurora orbs — brand hues, soft glow; slightly brighter in dark mode for depth
+  const orbOpacity = isDark
+    ? { a: 0.22, b: 0.18, c: 0.2, d: 0.16 }
+    : { a: 0.2, b: 0.16, c: 0.18, d: 0.14 };
+  const orbColors = isDark
+    ? { a: '#818cf8', b: '#a78bfa', c: '#60a5fa', d: '#c084fc' }
+    : { a: '#6366f1', b: '#8b5cf6', c: '#3b82f6', d: '#a855f7' };
 
   return (
     <View style={[styles.container, Platform.OS === 'android' && styles.androidSafeTop, style]}>
       <LinearGradient colors={gradientColors} style={styles.gradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
-        {/* Floating orbs for depth */}
+        {/* Floating aurora orbs for depth */}
         <View style={styles.orbContainer} pointerEvents="none">
-          <Orb size={200} color={orbTints.a} initialX={-50} initialY={100} duration={8000} />
-          <Orb size={160} color={orbTints.b} initialX={SCREEN_WIDTH - 100} initialY={300} duration={10000} />
-          <Orb size={120} color={orbTints.c} initialX={50} initialY={SCREEN_HEIGHT - 300} duration={9000} />
-          <Orb size={180} color={orbTints.d} initialX={SCREEN_WIDTH - 150} initialY={50} duration={11000} />
+          <Orb id="a" size={320} color={orbColors.a} opacity={orbOpacity.a} initialX={-90} initialY={40} duration={8000} />
+          <Orb id="b" size={280} color={orbColors.b} opacity={orbOpacity.b} initialX={SCREEN_WIDTH - 160} initialY={260} duration={10000} />
+          <Orb id="c" size={240} color={orbColors.c} opacity={orbOpacity.c} initialX={10} initialY={SCREEN_HEIGHT - 340} duration={9000} />
+          <Orb id="d" size={300} color={orbColors.d} opacity={orbOpacity.d} initialX={SCREEN_WIDTH - 200} initialY={-60} duration={11000} />
         </View>
-        {children}
+        {/* Bounded flex:1 content area so a screen's ScrollView/FlatList has a
+            definite height to scroll within (fixes no-scroll when a scroll view
+            is the direct child of GlassBackground). SafeAreaView also keeps
+            content clear of notches/home indicators. `edges` omits top so
+            screens' own glass headers control the top spacing. */}
+        <SafeAreaView style={styles.content} edges={['bottom', 'left', 'right']}>{children}</SafeAreaView>
       </LinearGradient>
     </View>
   );
@@ -99,17 +104,15 @@ const styles = StyleSheet.create({
   gradient: {
     flex: 1,
   },
+  content: {
+    // Absolutely fill the gradient so the content area has a DEFINITE height
+    // (equal to the screen) regardless of the flex chain. Without this, a screen
+    // whose only child is a ScrollView can't establish a scrollable height on web
+    // because expo-linear-gradient's wrapper doesn't reliably propagate flex:1.
+    ...StyleSheet.absoluteFillObject,
+  },
   orbContainer: {
     ...StyleSheet.absoluteFillObject,
     overflow: 'hidden',
-  },
-  orb: {
-    position: 'absolute',
-    ...(Platform.OS === 'ios' ? {
-      shadowColor: 'rgba(99, 102, 241, 0.3)',
-      shadowOffset: { width: 0, height: 0 },
-      shadowOpacity: 1,
-      shadowRadius: 40,
-    } : {}),
   },
 });

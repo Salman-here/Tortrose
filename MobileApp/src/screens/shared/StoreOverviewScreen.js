@@ -5,7 +5,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, TouchableOpacity, RefreshControl,
-  FlatList, Alert, ActivityIndicator,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
@@ -26,30 +25,16 @@ export const formatCurrency = (amount, currency = 'USD') => {
   return `$${amount.toFixed(2)}`;
 };
 
-export const getOrderStatusInfo = (status) => {
-  const map = {
-    pending: { color: palette.colors.warning, label: 'Pending' },
-    processing: { color: palette.colors.info, label: 'Processing' },
-    shipped: { color: palette.colors.primary, label: 'Shipped' },
-    delivered: { color: palette.colors.success, label: 'Delivered' },
-    cancelled: { color: palette.colors.error, label: 'Cancelled' },
-  };
-  return map[status?.toLowerCase()] || map.pending;
-};
-
 export default function StoreOverviewScreen({ route, navigation }) {
   const { palette } = useTheme();
   const styles = buildStyles(palette);
 
-  const { storeId, isAdmin } = route.params || {};
+  const { storeId } = route.params || {};
   const { currentUser } = useAuth();
   const [store, setStore] = useState(null);
   const [products, setProducts] = useState([]);
-  const [orders, setOrders] = useState([]);
-  const [stats, setStats] = useState({ totalProducts: 0, totalOrders: 0, totalRevenue: 0, pendingOrders: 0 });
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [verifying, setVerifying] = useState(false);
 
   const fetchStoreData = useCallback(async () => {
     if (!storeId) { setIsLoading(false); return; }
@@ -59,44 +44,13 @@ export default function StoreOverviewScreen({ route, navigation }) {
       setStore(storeData);
 
       try { const prodRes = await api.get(`/api/products/get-products?store=${storeId}`); setProducts(prodRes.data.products || prodRes.data || []); } catch { setProducts([]); }
-
-      if (isAdmin && currentUser?.role === 'admin') {
-        try {
-          const orderRes = await api.get(`/api/order/store/${storeId}`);
-          const ordersData = orderRes.data.orders || orderRes.data || [];
-          setOrders(ordersData);
-          const totalRevenue = ordersData.reduce((sum, o) => o.status !== 'cancelled' ? sum + (o.totalPrice || o.orderSummary?.totalAmount || 0) : sum, 0);
-          setStats(p => ({ ...p, totalOrders: ordersData.length, totalRevenue, pendingOrders: ordersData.filter(o => o.status === 'pending').length }));
-        } catch { setOrders([]); }
-      }
     } catch (e) { Toast.show({ type: 'error', text1: 'Error', text2: 'Failed to load store' }); }
     finally { setIsLoading(false); }
-  }, [storeId, isAdmin, currentUser]);
+  }, [storeId]);
 
   useEffect(() => { fetchStoreData(); }, [fetchStoreData]);
-  useEffect(() => { setStats(p => ({ ...p, totalProducts: products.length })); }, [products]);
 
   const onRefresh = useCallback(async () => { setRefreshing(true); await fetchStoreData(); setRefreshing(false); }, [fetchStoreData]);
-
-  const handleVerifyStore = async () => {
-    if (!store) return;
-    const isVerified = store.verification?.isVerified;
-    const action = isVerified ? 'unverify' : 'verify';
-    Alert.alert(`${action.charAt(0).toUpperCase() + action.slice(1)} Store`, `${action} "${store.storeName || store.name}"?`, [
-      { text: 'Cancel', style: 'cancel' },
-      { text: action.charAt(0).toUpperCase() + action.slice(1), style: isVerified ? 'destructive' : 'default',
-        onPress: async () => {
-          setVerifying(true);
-          try {
-            await api.patch(`/api/stores/${storeId}/${action}`, {});
-            setStore(p => ({ ...p, verification: { ...p.verification, isVerified: !isVerified } }));
-            Toast.show({ type: 'success', text1: 'Success', text2: `Store ${action}ed` });
-          } catch (e) { Toast.show({ type: 'error', text1: 'Error', text2: `Failed to ${action}` }); }
-          finally { setVerifying(false); }
-        }
-      },
-    ]);
-  };
 
   if (isLoading) return <GlassBackground><Loader fullScreen /></GlassBackground>;
   if (!store) return <GlassBackground><EmptyState icon="storefront-outline" title="Store Not Found" actionLabel="Go Back" onAction={() => navigation.goBack()} /></GlassBackground>;
@@ -132,35 +86,22 @@ export default function StoreOverviewScreen({ route, navigation }) {
         </GlassPanel>
 
         {/* Stats */}
-        {isAdmin && (
-          <View style={styles.statsGrid}>
-            <StatCard title="Products" value={stats.totalProducts} icon="cube-outline" iconColor={palette.colors.primary} iconBgColor="rgba(99,102,241,0.12)" />
-            <StatCard title="Orders" value={stats.totalOrders} icon="receipt-outline" iconColor={palette.colors.info} iconBgColor="rgba(14,165,233,0.12)" />
-            <StatCard title="Revenue" value={formatCurrency(stats.totalRevenue)} icon="cash-outline" iconColor={palette.colors.success} iconBgColor="rgba(16,185,129,0.12)" />
-            <StatCard title="Pending" value={stats.pendingOrders} icon="time-outline" iconColor={palette.colors.warning} iconBgColor="rgba(245,158,11,0.12)" />
-          </View>
-        )}
+        <View style={styles.statsGrid}>
+          <StatCard title="Products" value={products.length} icon="cube-outline" iconColor={palette.colors.primary} iconBgColor="rgba(99,102,241,0.12)" />
+          <StatCard title="Trusters" value={store.trustCount || 0} icon="people-outline" iconColor={palette.colors.info} iconBgColor="rgba(14,165,233,0.12)" />
+        </View>
 
         {/* Quick Actions */}
-        {isAdmin && (
-          <View style={styles.actionsSection}>
-            <TouchableOpacity style={[styles.actionButton, isVerified ? styles.unverifyAction : styles.verifyAction, verifying && { opacity: 0.5 }]}
-              onPress={handleVerifyStore} disabled={verifying}>
-              {verifying ? <ActivityIndicator size="small" color="white" /> : (
-                <><Ionicons name={isVerified ? 'close-circle' : 'checkmark-circle'} size={20} color="white" />
-                <Text style={styles.actionButtonText}>{isVerified ? 'Unverify' : 'Verify'}</Text></>
-              )}
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.actionButton, { backgroundColor: palette.colors.primary }]}
-              onPress={() => navigation.navigate('AdminProductManagement', { storeId, isAdmin: true })}>
-              <Ionicons name="cube" size={20} color="white" /><Text style={styles.actionButtonText}>Products</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.actionButton, { backgroundColor: palette.colors.info }]}
-              onPress={() => navigation.navigate('AdminOrderManagement', { storeId, isAdmin: true })}>
-              <Ionicons name="receipt" size={20} color="white" /><Text style={styles.actionButtonText}>Orders</Text>
-            </TouchableOpacity>
-          </View>
-        )}
+        <View style={styles.actionsSection}>
+          <TouchableOpacity style={[styles.actionButton, { backgroundColor: palette.colors.primary }]}
+            onPress={() => navigation.navigate('SellerProductManagement', { storeId, isAdmin: false })}>
+            <Ionicons name="cube" size={20} color="white" /><Text style={styles.actionButtonText}>Products</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.actionButton, { backgroundColor: palette.colors.info }]}
+            onPress={() => navigation.navigate('SellerOrderManagement', { storeId, isAdmin: false })}>
+            <Ionicons name="receipt" size={20} color="white" /><Text style={styles.actionButtonText}>Orders</Text>
+          </TouchableOpacity>
+        </View>
 
         {/* Products List */}
         <GlassPanel variant="card" style={styles.section}>
@@ -206,8 +147,6 @@ const buildStyles = (p) => StyleSheet.create({
   statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md, paddingHorizontal: spacing.lg },
   actionsSection: { flexDirection: 'row', gap: spacing.sm, paddingHorizontal: spacing.lg, marginTop: spacing.md },
   actionButton: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.xs, paddingVertical: spacing.md, borderRadius: borderRadius.xl },
-  verifyAction: { backgroundColor: p.colors.success },
-  unverifyAction: { backgroundColor: p.colors.error },
   actionButtonText: { ...typography.bodySmall, color: 'white', fontWeight: fontWeight.bold },
   section: { marginHorizontal: spacing.lg, marginTop: spacing.md, padding: spacing.lg },
   sectionTitle: { ...typography.h4, color: p.colors.text, marginBottom: spacing.md },

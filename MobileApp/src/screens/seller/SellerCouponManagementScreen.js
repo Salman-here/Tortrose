@@ -327,7 +327,7 @@ export default function SellerCouponManagementScreen({ navigation }) {
             </View>
             <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: spacing.xl }}>
               <Text style={styles.fieldLabel}>Coupon Code *</Text>
-              <TextInput style={styles.modalInput} value={form.code} onChangeText={v => setForm(p => ({ ...p, code: v.toUpperCase() }))} placeholder="SAVE20" placeholderTextColor="rgba(255,255,255,0.3)" autoCapitalize="characters" />
+              <TextInput style={styles.modalInput} value={form.code} onChangeText={v => setForm(p => ({ ...p, code: v.toUpperCase() }))} placeholder="SAVE20" placeholderTextColor={palette.colors.grayLight} autoCapitalize="characters" />
 
               <Text style={styles.fieldLabel}>Discount Type</Text>
               <View style={{ flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.md }}>
@@ -339,7 +339,7 @@ export default function SellerCouponManagementScreen({ navigation }) {
               </View>
 
               <Text style={styles.fieldLabel}>Discount Value *</Text>
-              <TextInput style={styles.modalInput} value={form.discountValue} onChangeText={v => setForm(p => ({ ...p, discountValue: v }))} placeholder="20" placeholderTextColor="rgba(255,255,255,0.3)" keyboardType="numeric" />
+              <TextInput style={styles.modalInput} value={form.discountValue} onChangeText={v => setForm(p => ({ ...p, discountValue: v }))} placeholder="20" placeholderTextColor={palette.colors.grayLight} keyboardType="numeric" />
 
               <Text style={styles.fieldLabel}>Applies To</Text>
               <View style={{ flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.md }}>
@@ -370,30 +370,30 @@ export default function SellerCouponManagementScreen({ navigation }) {
               <View style={{ flexDirection: 'row', gap: spacing.sm }}>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.fieldLabel}>Max Uses</Text>
-                  <TextInput style={styles.modalInput} value={form.maxUses} onChangeText={v => setForm(p => ({ ...p, maxUses: v }))} placeholder="Unlimited" placeholderTextColor="rgba(255,255,255,0.3)" keyboardType="numeric" />
+                  <TextInput style={styles.modalInput} value={form.maxUses} onChangeText={v => setForm(p => ({ ...p, maxUses: v }))} placeholder="Unlimited" placeholderTextColor={palette.colors.grayLight} keyboardType="numeric" />
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.fieldLabel}>Per User</Text>
-                  <TextInput style={styles.modalInput} value={form.maxUsesPerUser} onChangeText={v => setForm(p => ({ ...p, maxUsesPerUser: v }))} placeholder="1" placeholderTextColor="rgba(255,255,255,0.3)" keyboardType="numeric" />
+                  <TextInput style={styles.modalInput} value={form.maxUsesPerUser} onChangeText={v => setForm(p => ({ ...p, maxUsesPerUser: v }))} placeholder="1" placeholderTextColor={palette.colors.grayLight} keyboardType="numeric" />
                 </View>
               </View>
 
               <View style={{ flexDirection: 'row', gap: spacing.sm }}>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.fieldLabel}>Min Order</Text>
-                  <TextInput style={styles.modalInput} value={form.minOrderAmount} onChangeText={v => setForm(p => ({ ...p, minOrderAmount: v }))} placeholder={`${getCurrencySymbol()}0`} placeholderTextColor="rgba(255,255,255,0.3)" keyboardType="numeric" />
+                  <TextInput style={styles.modalInput} value={form.minOrderAmount} onChangeText={v => setForm(p => ({ ...p, minOrderAmount: v }))} placeholder={`${getCurrencySymbol()}0`} placeholderTextColor={palette.colors.grayLight} keyboardType="numeric" />
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.fieldLabel}>Max Discount</Text>
-                  <TextInput style={styles.modalInput} value={form.maxDiscountAmount} onChangeText={v => setForm(p => ({ ...p, maxDiscountAmount: v }))} placeholder="No limit" placeholderTextColor="rgba(255,255,255,0.3)" keyboardType="numeric" />
+                  <TextInput style={styles.modalInput} value={form.maxDiscountAmount} onChangeText={v => setForm(p => ({ ...p, maxDiscountAmount: v }))} placeholder="No limit" placeholderTextColor={palette.colors.grayLight} keyboardType="numeric" />
                 </View>
               </View>
 
               <Text style={styles.fieldLabel}>Expiry Date (YYYY-MM-DD)</Text>
-              <TextInput style={styles.modalInput} value={form.expiryDate} onChangeText={v => setForm(p => ({ ...p, expiryDate: v }))} placeholder="2025-12-31" placeholderTextColor="rgba(255,255,255,0.3)" />
+              <TextInput style={styles.modalInput} value={form.expiryDate} onChangeText={v => setForm(p => ({ ...p, expiryDate: v }))} placeholder="2025-12-31" placeholderTextColor={palette.colors.grayLight} />
 
               <Text style={styles.fieldLabel}>Description</Text>
-              <TextInput style={[styles.modalInput, { height: 80, textAlignVertical: 'top' }]} value={form.description} onChangeText={v => setForm(p => ({ ...p, description: v }))} placeholder="Optional description" placeholderTextColor="rgba(255,255,255,0.3)" multiline />
+              <TextInput style={[styles.modalInput, { height: 80, textAlignVertical: 'top' }]} value={form.description} onChangeText={v => setForm(p => ({ ...p, description: v }))} placeholder="Optional description" placeholderTextColor={palette.colors.grayLight} multiline />
 
               <TouchableOpacity style={[styles.saveBtn, saving && { opacity: 0.6 }]} onPress={handleSave} disabled={saving}>
                 {saving ? <ActivityIndicator color="#fff" size="small" /> : (

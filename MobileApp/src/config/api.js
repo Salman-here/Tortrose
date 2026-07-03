@@ -1,5 +1,13 @@
 import axios from 'axios';
+import { Platform } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+// SecureStore is unavailable on web — fall back to AsyncStorage there
+const tokenGet = (key) =>
+  Platform.OS === 'web' ? AsyncStorage.getItem(key) : SecureStore.getItemAsync(key);
+const tokenDel = (key) =>
+  Platform.OS === 'web' ? AsyncStorage.removeItem(key) : SecureStore.deleteItemAsync(key);
 
 export const API_BASE_URL = (process.env.EXPO_PUBLIC_API_URL || 'https://rozare.up.railway.app').replace(/\/$/, '');
 
@@ -131,12 +139,12 @@ const api = axios.create({
 api.interceptors.request.use(
   async (config) => {
     try {
-      const token = await SecureStore.getItemAsync('jwtToken');
+      const token = await tokenGet('jwtToken');
       if (token) {
         config.headers.Authorization = `Bearer ${token}`;
       }
     } catch (error) {
-      console.log('Error getting token from SecureStore:', error);
+      console.log('Error getting token from storage:', error);
     }
     return config;
   },
@@ -148,8 +156,8 @@ api.interceptors.response.use(
   async (error) => {
     if (error.response?.status === 401) {
       try {
-        await SecureStore.deleteItemAsync('jwtToken');
-        await SecureStore.deleteItemAsync('currentUser');
+        await tokenDel('jwtToken');
+        await tokenDel('currentUser');
       } catch (_) {}
     }
     return Promise.reject(error);
