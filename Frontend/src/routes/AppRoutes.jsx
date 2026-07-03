@@ -60,6 +60,7 @@ const AdminSubdomainManagement = lazy(() => import('../components/layout/AdminSu
 const ComplaintsManagement = lazy(() => import('../components/layout/ComplaintsManagement'))
 const WhatsAppVerificationPanel = lazy(() => import('../components/layout/admin/WhatsAppVerificationPanel'))
 const AdminBroadcastPanel = lazy(() => import('../components/layout/admin/AdminBroadcastPanel'))
+const AdminAdsPanel = lazy(() => import('../components/layout/admin/AdminAdsPanel'))
 
 // ── Seller dashboard
 const SellerDashboard = lazy(() => import('../components/layout/SellerDashboard'))
@@ -73,6 +74,7 @@ const SellerSubdomainManagement = lazy(() => import('../components/layout/Seller
 const SellerSubscription = lazy(() => import('../components/layout/SellerSubscription'))
 const SellerWhatsAppSettings = lazy(() => import('../components/layout/SellerWhatsAppSettings'))
 const CouponManagement = lazy(() => import('../components/layout/CouponManagement'))
+const SellerAds = lazy(() => import('../components/layout/SellerAds'))
 
 // On the main domain in production, /docs must redirect to https://docs.rozare.com.
 // In local/preview environments we render the DocsPage in-place.
@@ -191,6 +193,7 @@ function AppRoutes({ subdomainSlug = null }) {
                     <Route path='/admin-dashboard/complaints' element={<ProtectedRoute role={'admin'}><ComplaintsManagement /></ProtectedRoute>} />
                     <Route path='/admin-dashboard/whatsapp-verification' element={<ProtectedRoute role={'admin'}><WhatsAppVerificationPanel /></ProtectedRoute>} />
                     <Route path='/admin-dashboard/broadcast' element={<ProtectedRoute role={'admin'}><AdminBroadcastPanel /></ProtectedRoute>} />
+                    <Route path='/admin-dashboard/ads' element={<ProtectedRoute role={'admin'}><AdminAdsPanel /></ProtectedRoute>} />
                 </Route>
 
                 {/* SELLER DASHBOARD */}
@@ -212,6 +215,7 @@ function AppRoutes({ subdomainSlug = null }) {
                     <Route path='/seller-dashboard/notification-settings' element={<ProtectedRoute role={'seller'}><NotificationSettings /></ProtectedRoute>} />
                     <Route path='/seller-dashboard/subdomain' element={<ProtectedRoute role={'seller'}><SellerSubdomainManagement /></ProtectedRoute>} />
                     <Route path='/seller-dashboard/subscription' element={<ProtectedRoute role={'seller'}><SellerSubscription /></ProtectedRoute>} />
+                    <Route path='/seller-dashboard/ads' element={<ProtectedRoute role={'seller'}><SellerAds /></ProtectedRoute>} />
                     <Route path='/seller-dashboard/coupons' element={<ProtectedRoute role={'seller'}><CouponManagement /></ProtectedRoute>} />
                     <Route path='/seller-dashboard/whatsapp-settings' element={<ProtectedRoute role={'seller'}><SellerWhatsAppSettings /></ProtectedRoute>} />
                     <Route path='/seller-dashboard/profile' element={<ProtectedRoute role={'seller'}><SellerProfile /></ProtectedRoute>} />

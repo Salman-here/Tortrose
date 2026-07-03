@@ -416,6 +416,7 @@ function DocsPage() {
                 <p>The seller dashboard is your command center. Open it at <code>/seller-dashboard/store-overview</code> after logging in as a seller. You can manage the store manually from the dashboard or ask the AI to handle supported tasks for you.</p>
 
                 <h3>Dashboard tabs</h3>
+                <p><strong>Ads</strong> - Elite sellers can request Rozare-run TikTok ads for their store and featured products, with admin approval for every start, stop, or product change.</p>
                 <ul>
                   <li><strong>Overview</strong> — Live revenue, orders, products, store views, trust count, low-stock alerts and pending order badges.</li>
                   <li><strong>Products</strong> — Add, edit, delete, and bulk-update products. Includes bulk discount and bulk price tools.</li>
@@ -586,8 +587,14 @@ function DocsPage() {
                     'Customizable store themes',
                     'Priority support',
                     'Featured products (12)',
+                    'Rozare-run TikTok ads for your store and featured products',
+                    'Optional Meta ads add-on when configured',
                   ]} />
                 </div>
+
+                <InfoBox type="info" title="Elite ads">
+                  Rozare Elite includes TikTok ads run by Rozare for your store and featured products. Sellers can request featured products in Seller Dashboard - Ads, and every start, stop, or product change goes to admin approval. Meta ads can be added as a paid Elite add-on when the platform price is configured.
+                </InfoBox>
 
                 <InfoBox type="tip" title="Bonus features for Starter">
                   Rozare Starter includes bonus Elite features (advanced analytics, smart tags, coupons, bulk tools, priority support) <strong>for the first 6 months</strong>. Customizable themes stay Elite-only. Upgrade to Elite at any time to keep bonus features permanently.

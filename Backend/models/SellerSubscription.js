@@ -59,6 +59,9 @@ const sellerSubscriptionSchema = new mongoose.Schema({
     // AI limits boost
     aiMessageLimit: { type: Number, default: 25 }, // 25 for free, 100 for subscribed
 
+    // Paid marketing add-ons attached to the seller subscription.
+    metaAdsIncluded: { type: Boolean, default: false },
+
     cancelledAt: { type: Date },
 
     // Track if seller ever used a free period (to prevent giving free period again on re-subscribe)

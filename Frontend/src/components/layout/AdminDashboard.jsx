@@ -36,6 +36,7 @@ const getAdminMenuItems = ({ pendingOrders = 0, lowStockProducts = 0 } = {}) => 
     { id: 'notifications', label: 'Notifications', icon: <Bell size={18} />, link: '/admin-dashboard/notifications' },
     { id: 'whatsapp', label: 'WhatsApp Verify', icon: <MessageCircle size={18} />, link: '/admin-dashboard/whatsapp-verification' },
     { id: 'broadcast', label: 'Broadcast', icon: <Megaphone size={18} />, link: '/admin-dashboard/broadcast' },
+    { id: 'ads', label: 'Seller Ads', icon: <Megaphone size={18} />, link: '/admin-dashboard/ads' },
     { id: 'settings', label: 'Settings', icon: <Settings size={18} />, link: '/admin-dashboard/notification-settings' },
     { id: 'ai-assistant', label: 'AI Assistant', icon: <Bot size={18} />, action: 'ai-chat' },
 ]);
@@ -263,6 +264,7 @@ const AdminDashboard = () => {
         if (path.includes('tax-configuration')) return 'Tax Configuration';
         if (path.includes('notifications')) return 'Notifications';
         if (path.includes('notification-settings')) return 'Settings';
+        if (path.includes('ads')) return 'Seller Ads';
         return 'Admin Dashboard';
     };
 
@@ -594,6 +596,7 @@ const AdminSidebar = ({ activeTab, setActiveTab, isSidebarOpen, setIsSidebarOpen
         { id: 'notifications', label: 'Notifications', icon: <Bell size={18} />, link: '/admin-dashboard/notifications' },
         { id: 'whatsapp', label: 'WhatsApp Verify', icon: <MessageCircle size={18} />, link: '/admin-dashboard/whatsapp-verification' },
         { id: 'broadcast', label: 'Broadcast', icon: <Megaphone size={18} />, link: '/admin-dashboard/broadcast' },
+        { id: 'ads', label: 'Seller Ads', icon: <Megaphone size={18} />, link: '/admin-dashboard/ads' },
         { id: 'settings', label: 'Settings', icon: <Settings size={18} />, link: '/admin-dashboard/notification-settings' },
         { id: 'ai-assistant', label: 'AI Assistant', icon: <Bot size={18} />, action: 'ai-chat' },
     ];

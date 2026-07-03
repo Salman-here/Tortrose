@@ -6,6 +6,23 @@ const { stripe, STRIPE_MODE } = require('../config/stripe');
 const { notifySeller } = require('../services/whatsapp/sellerNotificationService');
 const sellerTemplates = require('../services/whatsapp/sellerMessageTemplates');
 
+const META_ADS_ADDON_CENTS = Math.max(0, Number(process.env.META_ADS_ADDON_CENTS || 0));
+
+function buildPlanPricing(plan, includeMetaAds = false) {
+    const isElite = plan === 'elite';
+    const baseAmount = isElite ? 1299 : 599;
+    const metaAddOn = isElite && includeMetaAds ? META_ADS_ADDON_CENTS : 0;
+    return {
+        isElite,
+        includeMetaAds: Boolean(isElite && includeMetaAds && metaAddOn > 0),
+        unitAmount: baseAmount + metaAddOn,
+        metaAddOn,
+        planName: isElite
+            ? (includeMetaAds && metaAddOn > 0 ? 'Rozare Elite + Meta Ads' : 'Rozare Elite')
+            : 'Rozare Starter',
+    };
+}
+
 // Email template
 const subscriptionEmailTemplate = (title, bodyHtml) => `
 <!DOCTYPE html>
@@ -106,6 +123,8 @@ exports.getSubscriptionStatus = async (req, res) => {
                 freePeriodEndDate: sub.freePeriodEndDate,
                 currentPeriodEnd: sub.currentPeriodEnd,
                 aiMessageLimit: sub.aiMessageLimit,
+                metaAdsIncluded: sub.metaAdsIncluded || false,
+                metaAdsAddonCents: META_ADS_ADDON_CENTS,
                 cancelledAt: sub.cancelledAt,
                 blockedReason: sub.blockedReason,
                 bonusFeaturesActive: sub.bonusFeaturesActive,
@@ -221,6 +240,16 @@ exports.createCheckout = async (req, res) => {
 
         const sellerId = req.user.id;
         const { plan } = req.body; // 'starter' or 'elite'
+        const includeMetaAdsRequested = Boolean(req.body?.includeMetaAds);
+        if (!['starter', 'elite'].includes(plan)) {
+            return res.status(400).json({ msg: 'Choose a valid subscription plan.' });
+        }
+        if (includeMetaAdsRequested && plan !== 'elite') {
+            return res.status(400).json({ msg: 'Meta ads can only be added to the Rozare Elite plan.' });
+        }
+        if (includeMetaAdsRequested && META_ADS_ADDON_CENTS <= 0) {
+            return res.status(400).json({ msg: 'Meta ads add-on price is not configured yet. Set META_ADS_ADDON_CENTS before enabling this add-on.' });
+        }
         const user = await User.findById(sellerId);
         if (!user) {
             return res.status(404).json({ msg: 'Seller account not found.' });
@@ -293,15 +322,19 @@ exports.createCheckout = async (req, res) => {
         }
 
         // Determine plan details
-        const isElite = plan === 'elite';
-        const planName = isElite ? 'Rozare Elite' : 'Rozare Starter';
-        const priceAmount = isElite ? 1299 : 599; // $12.99 or $5.99
+        const {
+            isElite,
+            includeMetaAds,
+            planName,
+            unitAmount: priceAmount,
+            metaAddOn,
+        } = buildPlanPricing(plan, includeMetaAdsRequested);
         const getsFreePeriod = !sub.hasUsedFreePeriod;
         const trialDays = getsFreePeriod ? (isElite ? 45 : 30) : 0;
         const description = isElite
             ? getsFreePeriod
-                ? 'Rozare Elite - First 45 days free, then $12.99/month. Includes all Starter + Bonus features. Cancel anytime.'
-                : 'Rozare Elite - $12.99/month. Includes all Starter + Bonus features. Cancel anytime.'
+                ? `Rozare Elite - First 45 days free, then $${(priceAmount / 100).toFixed(2)}/month. Includes all Starter + Bonus features${includeMetaAds ? ' plus Meta ads add-on' : ''}. Cancel anytime.`
+                : `Rozare Elite - $${(priceAmount / 100).toFixed(2)}/month. Includes all Starter + Bonus features${includeMetaAds ? ' plus Meta ads add-on' : ''}. Cancel anytime.`
             : getsFreePeriod
                 ? 'Rozare Starter - First 30 days free, then $5.99/month. Cancel anytime.'
                 : 'Rozare Starter - $5.99/month. Cancel anytime.';
@@ -324,11 +357,21 @@ exports.createCheckout = async (req, res) => {
                 quantity: 1,
             }],
             subscription_data: {
-                metadata: { sellerId: sellerId.toString(), plan: isElite ? 'elite' : 'starter' },
+                metadata: {
+                    sellerId: sellerId.toString(),
+                    plan: isElite ? 'elite' : 'starter',
+                    includeMetaAds: includeMetaAds ? 'true' : 'false',
+                    metaAdsAddonCents: String(metaAddOn || 0),
+                },
             },
             success_url: `${process.env.FRONTEND_URL}/seller-dashboard/subscription?success=true`,
             cancel_url: `${process.env.FRONTEND_URL}/seller-dashboard/subscription?cancelled=true`,
-            metadata: { sellerId: sellerId.toString(), plan: isElite ? 'elite' : 'starter' },
+            metadata: {
+                sellerId: sellerId.toString(),
+                plan: isElite ? 'elite' : 'starter',
+                includeMetaAds: includeMetaAds ? 'true' : 'false',
+                metaAdsAddonCents: String(metaAddOn || 0),
+            },
         };
 
         // Only add trial days if seller hasn't used free period before
@@ -381,6 +424,7 @@ exports.handleWebhook = async (event) => {
 
                 const selectedPlan = session.metadata?.plan || 'starter';
                 const isElite = selectedPlan === 'elite';
+                const includeMetaAds = isElite && session.metadata?.includeMetaAds === 'true';
                 const now = new Date();
 
                 // Atomic race guard: try to "claim" this subscription slot. If another parallel
@@ -438,7 +482,10 @@ exports.handleWebhook = async (event) => {
                 const freePeriodDays = getsFreePeriod ? (isElite ? 45 : 30) : 0;
 
                 sub.plan = isElite ? 'elite' : 'starter';
-                sub.planName = isElite ? 'Rozare Elite' : 'Rozare Starter';
+                sub.planName = isElite
+                    ? (includeMetaAds ? 'Rozare Elite + Meta Ads' : 'Rozare Elite')
+                    : 'Rozare Starter';
+                sub.metaAdsIncluded = includeMetaAds;
                 sub.subscribedAt = now;
                 sub.stripeSubscriptionId = session.subscription;
                 sub.aiMessageLimit = 100;
@@ -509,7 +556,9 @@ exports.handleWebhook = async (event) => {
                 // Send confirmation email
                 const user = await User.findById(sellerId);
                 if (user?.email) {
-                    const priceStr = isElite ? '$12.99/month' : '$5.99/month';
+                    const priceStr = isElite
+                        ? `$${((1299 + (includeMetaAds ? META_ADS_ADDON_CENTS : 0)) / 100).toFixed(2)}/month`
+                        : '$5.99/month';
                     const bonusStr = isElite
                         ? '<strong>Bonus Features:</strong> Permanently included with your Elite plan'
                         : sub.bonusFeaturesActive && sub.bonusExpiryDate
@@ -528,6 +577,7 @@ exports.handleWebhook = async (event) => {
                             <strong>Plan:</strong> ${sub.planName} (${priceStr})<br/>
                             ${freePeriodStr}
                             <strong>AI Messages:</strong> 100/day (upgraded from 25)<br/>
+                            ${includeMetaAds ? '<strong>Meta ads add-on:</strong> Included<br/>' : ''}
                             ${bonusStr}
                         </div>
                         <p>Your store has been reactivated and is now visible to customers.</p>
@@ -602,6 +652,7 @@ exports.handleWebhook = async (event) => {
                         sub.status = 'active';
                         sub.plan = 'starter';
                         sub.planName = 'Rozare Starter';
+                        sub.metaAdsIncluded = false;
                         sub.stripeSubscriptionId = newSubscription.id;
                         sub.currentPeriodStart = now;
                         sub.currentPeriodEnd = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
@@ -677,6 +728,7 @@ exports.handleWebhook = async (event) => {
                 sub.blockedAt = now;
                 sub.blockedReason = 'Subscription cancelled. Subscribe again to reactivate your store.';
                 sub.aiMessageLimit = 25;
+                sub.metaAdsIncluded = false;
                 sub.pendingDowngrade = { toPlan: null, scheduledAt: null };
 
                 // Set 3-day bonus grace period if bonus is still active and not permanently expired
@@ -894,6 +946,10 @@ exports.cancelSubscription = async (req, res) => {
 exports.upgradeToElite = async (req, res) => {
     try {
         const sellerId = req.user.id;
+        const includeMetaAdsRequested = Boolean(req.body?.includeMetaAds);
+        if (includeMetaAdsRequested && META_ADS_ADDON_CENTS <= 0) {
+            return res.status(400).json({ msg: 'Meta ads add-on price is not configured yet. Set META_ADS_ADDON_CENTS before enabling this add-on.' });
+        }
         const sub = await SellerSubscription.findOne({ seller: sellerId });
 
         if (!sub) {
@@ -921,7 +977,13 @@ exports.upgradeToElite = async (req, res) => {
             return res.status(500).json({ msg: 'Could not find subscription item to upgrade.' });
         }
 
-        // Create a new price for Elite ($12.99/month)
+        const {
+            includeMetaAds,
+            planName,
+            unitAmount,
+        } = buildPlanPricing('elite', includeMetaAdsRequested);
+
+        // Create a new price for Elite, with the optional Meta ads add-on.
         // Update the subscription item to the new price (immediate proration)
         const updatedSubscription = await stripe.subscriptions.update(sub.stripeSubscriptionId, {
             items: [{
@@ -929,22 +991,28 @@ exports.upgradeToElite = async (req, res) => {
                 price_data: {
                     currency: 'usd',
                     product_data: {
-                        name: 'Rozare Elite',
-                        description: 'Rozare Elite - $12.99/month. All Starter + Bonus features permanently. Cancel anytime.',
+                        name: planName,
+                        description: `${planName} - $${(unitAmount / 100).toFixed(2)}/month. All Starter + Bonus features permanently${includeMetaAds ? ' plus Meta ads add-on' : ''}. Cancel anytime.`,
                     },
-                    unit_amount: 1299, // $12.99
+                    unit_amount: unitAmount,
                     recurring: { interval: 'month' },
                 },
             }],
             proration_behavior: 'create_prorations', // Charge difference immediately
-            metadata: { sellerId: sellerId.toString(), plan: 'elite' },
+            metadata: {
+                sellerId: sellerId.toString(),
+                plan: 'elite',
+                includeMetaAds: includeMetaAds ? 'true' : 'false',
+                metaAdsAddonCents: String(includeMetaAds ? META_ADS_ADDON_CENTS : 0),
+            },
             cancel_at_period_end: false, // Remove any pending cancellation
         });
 
         // Update local subscription record
         const now = new Date();
         sub.plan = 'elite';
-        sub.planName = 'Rozare Elite';
+        sub.planName = planName;
+        sub.metaAdsIncluded = includeMetaAds;
         sub.bonusFeaturesActive = true;
         sub.bonusExpiryDate = null; // No expiry for Elite
         sub.bonusFeaturesExpiredPermanently = false;
@@ -957,18 +1025,19 @@ exports.upgradeToElite = async (req, res) => {
         const user = await User.findById(sellerId);
         if (user?.email) {
             const html = subscriptionEmailTemplate(
-                'Upgraded to Rozare Elite!',
+                `Upgraded to ${planName}!`,
                 `<p>Hello ${user.username || 'Seller'},</p>
-                <p>You have successfully upgraded to <strong>Rozare Elite</strong>!</p>
+                <p>You have successfully upgraded to <strong>${planName}</strong>!</p>
                 <div class="highlight">
-                    <strong>Plan:</strong> Rozare Elite ($12.99/month)<br/>
+                    <strong>Plan:</strong> ${planName} ($${(unitAmount / 100).toFixed(2)}/month)<br/>
                     <strong>Bonus Features:</strong> Now permanently included — they will never expire!<br/>
-                    <strong>AI Messages:</strong> 100/day
+                    <strong>AI Messages:</strong> 100/day<br/>
+                    ${includeMetaAds ? '<strong>Meta ads add-on:</strong> Included' : ''}
                 </div>
                 <p>All your bonus features are now permanently active. No more expiry timers!</p>
                 <p style="text-align:center"><a href="${process.env.FRONTEND_URL}/seller-dashboard" class="button">Go to Dashboard</a></p>`
             );
-            await sendEmail({ to: user.email, subject: 'Upgraded to Rozare Elite!', html });
+            await sendEmail({ to: user.email, subject: `Upgraded to ${planName}!`, html });
         }
 
         // WhatsApp notification to seller (fire-and-forget)
@@ -992,6 +1061,7 @@ exports.upgradeToElite = async (req, res) => {
             subscription: {
                 plan: sub.plan,
                 planName: sub.planName,
+                metaAdsIncluded: sub.metaAdsIncluded,
                 bonusFeaturesActive: sub.bonusFeaturesActive,
                 bonusExpiryDate: sub.bonusExpiryDate,
             },

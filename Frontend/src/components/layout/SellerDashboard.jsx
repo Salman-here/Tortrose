@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom';
 import {
     BarChart3, Package, X, Menu, LayoutPanelLeft, ShoppingBag,
     Star, Store, Truck, Bell, Settings, ChevronLeft, Search, Loader2,
-    TrendingUp, AlertTriangle, CheckCircle, Clock, DollarSign, Info, Bot, Crown, Lock, MessageCircle, User, Sparkles, Wand2, RotateCcw, Tag,
+    TrendingUp, AlertTriangle, CheckCircle, Clock, DollarSign, Info, Bot, Crown, Lock, MessageCircle, User, Sparkles, Wand2, RotateCcw, Tag, Megaphone,
 } from 'lucide-react';
 import axios from 'axios';
 import GlassBackground from '../common/GlassBackground';
@@ -30,6 +30,7 @@ const getSellerMenuItems = ({ pendingOrders = 0, lowStockProducts = 0 } = {}) =>
     { id: 'coupons', label: 'Coupons', icon: <Star size={18} />, link: '/seller-dashboard/coupons' },
     { id: 'subdomain', label: 'Subdomain', icon: <LayoutPanelLeft size={18} />, link: '/seller-dashboard/subdomain' },
     { id: 'subscription', label: 'Subscription', icon: <Crown size={18} />, link: '/seller-dashboard/subscription' },
+    { id: 'ads', label: 'Ads', icon: <Megaphone size={18} />, link: '/seller-dashboard/ads' },
     { id: 'notifications', label: 'Notifications', icon: <Bell size={18} />, link: '/seller-dashboard/notifications' },
     { id: 'profile', label: 'Seller Profile', icon: <User size={18} />, link: '/seller-dashboard/profile' },
     { id: 'store', label: 'Store Settings', icon: <Settings size={18} />, link: '/seller-dashboard/store-settings' },
@@ -405,6 +406,7 @@ const SellerDashboard = () => {
         if (path.includes('notifications')) return 'Notifications';
         if (path.includes('analytics')) return 'Analytics';
         if (path.includes('subdomain')) return 'Subdomain';
+        if (path.includes('ads')) return 'Ads';
         if (path.includes('coupons')) return 'Coupons';
         if (path.includes('seller-home')) return 'Dashboard';
         if (path.includes('profile')) return 'Seller Profile';
@@ -836,6 +838,7 @@ const SellerSidebar = ({ activeTab, setActiveTab, isSidebarOpen, setIsSidebarOpe
         { id: 'coupons', label: 'Coupons', icon: <Star size={18} />, link: '/seller-dashboard/coupons' },
         { id: 'subdomain', label: 'Subdomain', icon: <LayoutPanelLeft size={18} />, link: '/seller-dashboard/subdomain' },
         { id: 'subscription', label: 'Subscription', icon: <Crown size={18} />, link: '/seller-dashboard/subscription' },
+        { id: 'ads', label: 'Ads', icon: <Megaphone size={18} />, link: '/seller-dashboard/ads' },
         { id: 'notifications', label: 'Notifications', icon: <Bell size={18} />, link: '/seller-dashboard/notifications' },
         { id: 'profile', label: 'Seller Profile', icon: <User size={18} />, link: '/seller-dashboard/profile' },
         { id: 'store', label: 'Store Settings', icon: <Settings size={18} />, link: '/seller-dashboard/store-settings' },

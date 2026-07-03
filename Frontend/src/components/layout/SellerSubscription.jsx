@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
     Crown, Check, Zap, Shield, Bot, Clock, AlertTriangle,
     CreditCard, ArrowRight, Sparkles, X, Lock, Store, Package,
-    Users, Award, Star, MessageCircle, Gem, Bell, Palette
+    Users, Award, Star, MessageCircle, Gem, Bell, Palette, Megaphone
 } from 'lucide-react';
 import axios from 'axios';
 import { toast } from 'react-toastify';
@@ -21,6 +21,7 @@ const SellerSubscription = () => {
     const [showCancelConfirm, setShowCancelConfirm] = useState(false);
     const [showUpgradeConfirm, setShowUpgradeConfirm] = useState(false);
     const [showDowngradeConfirm, setShowDowngradeConfirm] = useState(false);
+    const [eliteMetaAds, setEliteMetaAds] = useState(false);
     const [searchParams] = useSearchParams();
 
     useEffect(() => {
@@ -40,6 +41,7 @@ const SellerSubscription = () => {
                 headers: { Authorization: `Bearer ${token}` }
             });
             setSubscription(res.data.subscription);
+            setEliteMetaAds(Boolean(res.data.subscription?.metaAdsIncluded));
         } catch (err) {
             console.error(err);
         } finally {
@@ -51,7 +53,9 @@ const SellerSubscription = () => {
         setCheckoutLoading(plan);
         try {
             const token = getAuthToken();
-            const res = await axios.post(`${import.meta.env.VITE_API_URL}api/subscription/create-checkout`, { plan }, {
+            const payload = { plan };
+            if (plan === 'elite') payload.includeMetaAds = eliteMetaAds;
+            const res = await axios.post(`${import.meta.env.VITE_API_URL}api/subscription/create-checkout`, payload, {
                 headers: { Authorization: `Bearer ${token}` }
             });
             window.location.href = res.data.url;
@@ -82,7 +86,7 @@ const SellerSubscription = () => {
         setUpgradeLoading(true);
         try {
             const token = getAuthToken();
-            const res = await axios.post(`${import.meta.env.VITE_API_URL}api/subscription/upgrade-to-elite`, {}, {
+            const res = await axios.post(`${import.meta.env.VITE_API_URL}api/subscription/upgrade-to-elite`, { includeMetaAds: eliteMetaAds }, {
                 headers: { Authorization: `Bearer ${token}` }
             });
             toast.success(res.data.msg || 'Upgraded to Rozare Elite!');
@@ -183,6 +187,18 @@ const SellerSubscription = () => {
     const bonusDaysUntilExpiry = subscription?.bonusExpiryDate ? Math.max(0, Math.ceil((new Date(subscription.bonusExpiryDate) - new Date()) / (1000 * 60 * 60 * 24))) : 0;
     const bonusMonthsRemaining = subscription?.bonusExpiryDate ? Math.max(0, Math.ceil(bonusDaysUntilExpiry / 30)) : 6;
     const isStarterSubscribed = isSubscribed && !isElite;
+    const metaAdsAddonCents = Number(subscription?.metaAdsAddonCents || 0);
+    const metaAdsAddonPrice = `$${(metaAdsAddonCents / 100).toFixed(2)}`;
+    const eliteMonthlyPrice = 1299 + (eliteMetaAds && metaAdsAddonCents > 0 ? metaAdsAddonCents : 0);
+    const eliteMonthlyPriceLabel = `$${(eliteMonthlyPrice / 100).toFixed(2)}`;
+    const canChooseMetaAds = metaAdsAddonCents > 0;
+    const toggleMetaAds = () => {
+        if (!canChooseMetaAds) {
+            toast.info('Meta ads add-on price is not configured yet.');
+            return;
+        }
+        setEliteMetaAds((value) => !value);
+    };
 
     const starterFeatures = [
         'Store & products visible to all customers',
@@ -208,6 +224,7 @@ const SellerSubscription = () => {
     ];
 
     const eliteOnlyFeatures = [
+        'Rozare will run TikTok ads for your store and featured products',
         'Customizable store themes with your own colors and layouts',
     ];
 
@@ -645,6 +662,7 @@ const SellerSubscription = () => {
                                 'Get WhatsApp notifications when you receive a new order',
                                 'Rozare WhatsApp order confirmation automation',
                                 '10 professional store themes',
+                                'Rozare-run TikTok ads for your store and featured products',
                             ].map((f, i) => (
                                 <div key={i} className="flex items-center gap-2">
                                     <Check size={12} style={{ color: 'hsl(150, 60%, 45%)' }} />
@@ -834,6 +852,7 @@ const SellerSubscription = () => {
                                 { icon: <MessageCircle size={13} />, text: 'WhatsApp order confirmation' },
                                 { icon: <Palette size={13} />, text: '10 professional store themes' },
                                 { icon: <Sparkles size={13} />, text: 'Featured product highlighting (12 products)' },
+                                { icon: <Megaphone size={13} />, text: 'Rozare runs TikTok ads for your store & featured products' },
                             ].map((f, i) => (
                                 <div key={i} className="flex items-center gap-2.5">
                                     <div className="w-5 h-5 rounded-md flex items-center justify-center shrink-0" style={{ background: 'rgba(16, 185, 129, 0.12)', color: 'hsl(150, 60%, 45%)' }}>
@@ -855,12 +874,39 @@ const SellerSubscription = () => {
                             {eliteOnlyFeatures.map((f, i) => (
                                 <div key={`elite-only-card-${i}`} className="flex items-center gap-2.5">
                                     <div className="w-5 h-5 rounded-md flex items-center justify-center shrink-0" style={{ background: 'rgba(139, 92, 246, 0.12)', color: 'hsl(270, 60%, 55%)' }}>
-                                        <Palette size={11} />
+                                        {f.toLowerCase().includes('tiktok') ? <Megaphone size={11} /> : <Palette size={11} />}
                                     </div>
                                     <span className="text-[11px]" style={{ color: 'hsl(var(--foreground))' }}>{f}</span>
                                 </div>
                             ))}
                         </div>
+
+                        <button
+                            type="button"
+                            onClick={toggleMetaAds}
+                            className="w-full mb-4 p-3 rounded-xl text-left glass-inner"
+                            style={{ border: eliteMetaAds ? '1px solid rgba(59,130,246,0.35)' : '1px solid var(--glass-border)' }}
+                        >
+                            <div className="flex items-start justify-between gap-3">
+                                <div>
+                                    <p className="text-xs font-bold flex items-center gap-1.5" style={{ color: 'hsl(var(--foreground))' }}>
+                                        <Megaphone size={13} /> Include Meta ads
+                                    </p>
+                                    <p className="text-[11px] mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                                        {canChooseMetaAds
+                                            ? `Adds ${metaAdsAddonPrice}/month to the Elite plan.`
+                                            : 'Meta add-on price is pending in server config.'}
+                                    </p>
+                                </div>
+                                <span className="px-2 py-1 rounded-full text-[10px] font-bold"
+                                    style={{
+                                        color: eliteMetaAds ? 'hsl(220,70%,55%)' : 'hsl(var(--muted-foreground))',
+                                        background: eliteMetaAds ? 'rgba(99,102,241,0.12)' : 'rgba(255,255,255,0.08)',
+                                    }}>
+                                    {eliteMetaAds ? 'Selected' : 'Optional'}
+                                </span>
+                            </div>
+                        </button>
 
                         {isElite && isSubscribed ? (
                             <div className="space-y-2">
