@@ -8,3 +8,6 @@ RUN npm install baileys@7.0.0-rc13 --omit=dev --no-audit --no-fund
 
 COPY patches/patch-baileys-lid-send.js /tmp/patch-baileys-lid-send.js
 RUN node /tmp/patch-baileys-lid-send.js && rm /tmp/patch-baileys-lid-send.js
+
+COPY patches/patch-rozare-fast-inbound-webhook.js /tmp/patch-rozare-fast-inbound-webhook.js
+RUN node /tmp/patch-rozare-fast-inbound-webhook.js && rm /tmp/patch-rozare-fast-inbound-webhook.js

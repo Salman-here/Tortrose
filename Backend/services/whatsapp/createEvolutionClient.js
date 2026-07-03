@@ -32,7 +32,11 @@ const lowLatencySettings = () => ({
     msgCall: process.env.EVOLUTION_CALL_MESSAGE || '',
     groupsIgnore: envBool('EVOLUTION_IGNORE_GROUPS', true),
     alwaysOnline: envBool('EVOLUTION_ALWAYS_ONLINE', true),
-    readMessages: envBool('EVOLUTION_READ_MESSAGES', true),
+    // Do not let Evolution await read-receipt calls before emitting inbound
+    // webhooks. The backend can reply without needing Evolution to pre-mark the
+    // chat as read, and this avoids one slow WhatsApp read call blocking the
+    // serial Baileys event queue.
+    readMessages: envBool('EVOLUTION_READ_MESSAGES', false),
     readStatus: envBool('EVOLUTION_READ_STATUS', false),
     syncFullHistory: envBool('EVOLUTION_SYNC_FULL_HISTORY', false),
 });

@@ -94,7 +94,7 @@ describe('Evolution client recipient routing', () => {
     expect(settingsPayload).toEqual(expect.objectContaining({
       groupsIgnore: true,
       alwaysOnline: true,
-      readMessages: true,
+      readMessages: false,
       readStatus: false,
       syncFullHistory: false,
     }));

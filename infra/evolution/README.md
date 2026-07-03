@@ -8,11 +8,20 @@ the upstream image directly:
 - Base: `evoapicloud/evolution-api:v2.3.7`
 - Baileys: upgraded to `7.0.0-rc13`
 - Patch: preserve explicit `@lid` reply targets in the Baileys send path
+- Patch: release Baileys' inbound event queue immediately after the
+  `MESSAGES_UPSERT` webhook so contact/profile sync cannot delay the next
+  inbound message
 
 Why: WhatsApp started returning outbound ack error `463` for some linked-device
 sends when the sender was missing or not reusing the right LID/tctoken state.
 The broken symptom is that Evolution accepts `/message/sendText`, stores the
 message as `PENDING`, then emits `MESSAGES_UPDATE` with `ERROR`.
+
+Rozare uses Evolution as a transport gateway. The backend owns chat history,
+AI state, orders, and contact identity. For that reason the compose file keeps
+message/update/contact/chat/history persistence disabled and enables
+`ROZARE_FAST_INBOUND_WEBHOOK=true` to avoid serial queue stalls after an inbound
+webhook has already been emitted.
 
 Verification:
 
