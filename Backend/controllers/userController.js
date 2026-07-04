@@ -104,7 +104,7 @@ exports.unblockSellerSubscription = async (req, res) => {
                 status: 'trial',
                 plan: 'free_trial',
                 planName: 'Rozare Free Trial',
-                aiMessageLimit: 25,
+                aiMessageLimit: -1,
             })
         } else {
             subscription.status = 'trial'

@@ -81,24 +81,18 @@ const summarizeOrderForRole = (order, role, sellerProductIds = [], sellerId = nu
     };
 };
 
-// Rate limits per role (base limits - subscribed sellers get more)
+// Rate limits per role. Seller AI chat is unlimited; guest/user caps remain
+// as abuse protection for public shopping chat.
 const RATE_LIMITS = {
     guest: 5,
     user: 20,
-    seller: 25,       // Free/trial sellers
-    seller_sub: 100,   // Subscribed sellers
+    seller: Infinity,
+    seller_sub: Infinity,
     admin: Infinity,
 };
 
 // Helper to get effective rate limit for seller
 const getSellerRateLimit = async (userId) => {
-    try {
-        const SellerSubscription = require('../models/SellerSubscription');
-        const sub = await SellerSubscription.findOne({ seller: userId });
-        if (sub && ['active', 'free_period'].includes(sub.status)) {
-            return sub.aiMessageLimit || RATE_LIMITS.seller_sub;
-        }
-    } catch (e) { /* fallback */ }
     return RATE_LIMITS.seller;
 };
 
@@ -1370,7 +1364,8 @@ exports.getSubscriptionStatus = async (req, res) => {
             trialEndsAt: sub.trialEndsAt,
             currentPeriodEnd: sub.currentPeriodEnd,
             features: sub.features || [],
-            aiMessageLimit: sub.aiMessageLimit,
+            aiMessageLimit: -1,
+            aiMessagesUnlimited: true,
             bonusExpiresAt: sub.bonusExpiresAt
         });
     } catch (error) {

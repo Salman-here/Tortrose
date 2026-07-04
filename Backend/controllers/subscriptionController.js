@@ -6,7 +6,7 @@ const { stripe, STRIPE_MODE } = require('../config/stripe');
 const { notifySeller } = require('../services/whatsapp/sellerNotificationService');
 const sellerTemplates = require('../services/whatsapp/sellerMessageTemplates');
 
-const META_ADS_ADDON_CENTS = Math.max(0, Number(process.env.META_ADS_ADDON_CENTS || 0));
+const META_ADS_ADDON_CENTS = 400;
 
 function buildPlanPricing(plan, includeMetaAds = false) {
     const isElite = plan === 'elite';
@@ -74,7 +74,7 @@ exports.initializeSubscription = async (sellerId) => {
             trialEndDate: trialEnd,
             status: 'trial',
             plan: 'free_trial',
-            aiMessageLimit: 25,
+            aiMessageLimit: -1,
         });
         await sub.save();
         return sub;
@@ -122,7 +122,8 @@ exports.getSubscriptionStatus = async (req, res) => {
                 subscribedAt: sub.subscribedAt,
                 freePeriodEndDate: sub.freePeriodEndDate,
                 currentPeriodEnd: sub.currentPeriodEnd,
-                aiMessageLimit: sub.aiMessageLimit,
+                aiMessageLimit: -1,
+                aiMessagesUnlimited: true,
                 metaAdsIncluded: sub.metaAdsIncluded || false,
                 metaAdsAddonCents: META_ADS_ADDON_CENTS,
                 cancelledAt: sub.cancelledAt,
@@ -246,9 +247,6 @@ exports.createCheckout = async (req, res) => {
         }
         if (includeMetaAdsRequested && plan !== 'elite') {
             return res.status(400).json({ msg: 'Meta ads can only be added to the Rozare Elite plan.' });
-        }
-        if (includeMetaAdsRequested && META_ADS_ADDON_CENTS <= 0) {
-            return res.status(400).json({ msg: 'Meta ads add-on price is not configured yet. Set META_ADS_ADDON_CENTS before enabling this add-on.' });
         }
         const user = await User.findById(sellerId);
         if (!user) {
@@ -488,7 +486,7 @@ exports.handleWebhook = async (event) => {
                 sub.metaAdsIncluded = includeMetaAds;
                 sub.subscribedAt = now;
                 sub.stripeSubscriptionId = session.subscription;
-                sub.aiMessageLimit = 100;
+                sub.aiMessageLimit = -1;
                 sub.blockedAt = null;
                 sub.blockedReason = '';
                 sub.pendingDowngrade = { toPlan: null, scheduledAt: null };
@@ -576,7 +574,7 @@ exports.handleWebhook = async (event) => {
                         <div class="highlight">
                             <strong>Plan:</strong> ${sub.planName} (${priceStr})<br/>
                             ${freePeriodStr}
-                            <strong>AI Messages:</strong> 100/day (upgraded from 25)<br/>
+                            <strong>AI Chat:</strong> Unlimited seller AI chat<br/>
                             ${includeMetaAds ? '<strong>Meta ads add-on:</strong> Included<br/>' : ''}
                             ${bonusStr}
                         </div>
@@ -701,7 +699,7 @@ exports.handleWebhook = async (event) => {
                                 <p>Your plan has been switched from <strong>Rozare Elite</strong> to <strong>Rozare Starter</strong>.</p>
                                 <div class="highlight">
                                     <strong>Plan:</strong> Rozare Starter ($5.99/month)<br/>
-                                    <strong>AI Messages:</strong> 100/day<br/>
+                                    <strong>AI Chat:</strong> Unlimited seller AI chat<br/>
                                     ${bonusInfo}
                                 </div>
                                 <p>Your store remains active. You can upgrade back to Elite anytime.</p>
@@ -727,7 +725,7 @@ exports.handleWebhook = async (event) => {
                 sub.cancelledAt = now;
                 sub.blockedAt = now;
                 sub.blockedReason = 'Subscription cancelled. Subscribe again to reactivate your store.';
-                sub.aiMessageLimit = 25;
+                sub.aiMessageLimit = -1;
                 sub.metaAdsIncluded = false;
                 sub.pendingDowngrade = { toPlan: null, scheduledAt: null };
 
@@ -947,18 +945,26 @@ exports.upgradeToElite = async (req, res) => {
     try {
         const sellerId = req.user.id;
         const includeMetaAdsRequested = Boolean(req.body?.includeMetaAds);
-        if (includeMetaAdsRequested && META_ADS_ADDON_CENTS <= 0) {
-            return res.status(400).json({ msg: 'Meta ads add-on price is not configured yet. Set META_ADS_ADDON_CENTS before enabling this add-on.' });
-        }
         const sub = await SellerSubscription.findOne({ seller: sellerId });
 
         if (!sub) {
             return res.status(400).json({ msg: 'No subscription found' });
         }
 
-        // Must be on an active Starter plan
-        if (!['active', 'free_period'].includes(sub.status) || sub.plan !== 'starter') {
-            return res.status(400).json({ msg: 'You can only upgrade from an active Starter plan.' });
+        const isStarterUpgrade = sub.plan === 'starter';
+        const isElitePlanUpdate = sub.plan === 'elite';
+
+        // Must be on an active Starter or Elite plan. Elite sellers use this
+        // endpoint to add/remove the Meta ads add-on on the existing Stripe sub.
+        if (!['active', 'free_period'].includes(sub.status) || (!isStarterUpgrade && !isElitePlanUpdate)) {
+            return res.status(400).json({ msg: 'You can only update an active Starter or Elite plan.' });
+        }
+        if (isElitePlanUpdate && Boolean(sub.metaAdsIncluded) === includeMetaAdsRequested) {
+            return res.status(400).json({
+                msg: includeMetaAdsRequested
+                    ? 'Meta ads are already included in your Elite plan.'
+                    : 'Meta ads are already removed from your Elite plan.',
+            });
         }
 
         if (!sub.stripeSubscriptionId) {
@@ -983,7 +989,7 @@ exports.upgradeToElite = async (req, res) => {
             unitAmount,
         } = buildPlanPricing('elite', includeMetaAdsRequested);
 
-        // Create a new price for Elite, with the optional Meta ads add-on.
+        // Create a new price for Elite, with or without the optional Meta ads add-on.
         // Update the subscription item to the new price (immediate proration)
         const updatedSubscription = await stripe.subscriptions.update(sub.stripeSubscriptionId, {
             items: [{
@@ -1024,40 +1030,47 @@ exports.upgradeToElite = async (req, res) => {
         // Send confirmation email
         const user = await User.findById(sellerId);
         if (user?.email) {
+            const emailTitle = isElitePlanUpdate ? 'Rozare Elite plan updated' : `Upgraded to ${planName}!`;
             const html = subscriptionEmailTemplate(
-                `Upgraded to ${planName}!`,
+                emailTitle,
                 `<p>Hello ${user.username || 'Seller'},</p>
-                <p>You have successfully upgraded to <strong>${planName}</strong>!</p>
+                <p>Your <strong>${planName}</strong> subscription is now active.</p>
                 <div class="highlight">
                     <strong>Plan:</strong> ${planName} ($${(unitAmount / 100).toFixed(2)}/month)<br/>
                     <strong>Bonus Features:</strong> Now permanently included — they will never expire!<br/>
-                    <strong>AI Messages:</strong> 100/day<br/>
-                    ${includeMetaAds ? '<strong>Meta ads add-on:</strong> Included' : ''}
+                    <strong>AI Chat:</strong> Unlimited seller AI chat<br/>
+                    <strong>Meta ads add-on:</strong> ${includeMetaAds ? 'Included' : 'Not included'}
                 </div>
                 <p>All your bonus features are now permanently active. No more expiry timers!</p>
                 <p style="text-align:center"><a href="${process.env.FRONTEND_URL}/seller-dashboard" class="button">Go to Dashboard</a></p>`
             );
-            await sendEmail({ to: user.email, subject: `Upgraded to ${planName}!`, html });
+            await sendEmail({ to: user.email, subject: emailTitle, html });
         }
 
         // WhatsApp notification to seller (fire-and-forget)
-        notifySeller(sellerId, 'upgrade_completed', sellerTemplates.upgrade_completed()).catch(e =>
-            console.error('[whatsapp] seller upgrade completed notification failed:', e.message)
-        );
+        if (!isElitePlanUpdate) {
+            notifySeller(sellerId, 'upgrade_completed', sellerTemplates.upgrade_completed()).catch(e =>
+                console.error('[whatsapp] seller upgrade completed notification failed:', e.message)
+            );
+        }
 
         // In-app notification
         const Notification = require('../models/Notification');
         await Notification.create({
             user: sellerId,
-            title: 'Upgraded to Rozare Elite!',
-            body: 'Your plan has been upgraded to Rozare Elite. Bonus features are now permanently included.',
+            title: isElitePlanUpdate ? 'Rozare Elite plan updated' : 'Upgraded to Rozare Elite!',
+            body: isElitePlanUpdate
+                ? `Your Rozare Elite billing is now ${planName}.`
+                : 'Your plan has been upgraded to Rozare Elite. Bonus features are now permanently included.',
             category: 'subscription',
             linkTo: '/seller-dashboard/subscription',
             source: 'system',
         }).catch(e => console.error('Upgrade notification failed:', e.message));
 
         res.json({
-            msg: 'Successfully upgraded to Rozare Elite! Bonus features are now permanently included.',
+            msg: isElitePlanUpdate
+                ? 'Rozare Elite plan updated successfully.'
+                : 'Successfully upgraded to Rozare Elite! Bonus features are now permanently included.',
             subscription: {
                 plan: sub.plan,
                 planName: sub.planName,
@@ -1229,7 +1242,7 @@ exports.processTrialExpirations = async () => {
                     <ul>
                         <li>✅ First 30 days completely FREE</li>
                         <li>✅ Then only $5.99/month — cancel anytime</li>
-                        <li>✅ 100 AI messages/day (4x more!)</li>
+                        <li>✅ Unlimited AI chat for sellers</li>
                         <li>✅ Bonus premium features for 6 months</li>
                         <li>✅ Uninterrupted store visibility</li>
                     </ul>

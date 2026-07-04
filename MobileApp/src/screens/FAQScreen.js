@@ -56,7 +56,7 @@ const faqCategories = [
     icon: 'storefront-outline',
     questions: [
       { q: 'How do I become a seller?', a: 'Tap "Become a Seller" from your profile, add your store details, verify WhatsApp, and activate your seller account. Your 15-day free trial starts when the store is created.' },
-      { q: 'What are the seller fees?', a: 'New sellers start with a 15-day free trial. After that, choose Rozare Starter ($5.99/month, with a 30-day free intro) or Rozare Elite ($12.99/month, with a 45-day free intro).' },
+      { q: 'What are the seller fees?', a: 'New sellers start with a 15-day free trial. After that, choose Rozare Starter ($5.99/month, with a 30-day free intro) or Rozare Elite ($12.99/month, with a 45-day free intro). Elite includes Rozare-run TikTok ads; Meta ads can be added for $4/month, making Elite + Meta $16.99/month.' },
       { q: 'How do I manage my store?', a: 'The Seller Dashboard gives you full manual control: manage products, track orders, view analytics, configure shipping, and customize settings. You can also use Rozare AI for supported tasks.' },
     ],
   },

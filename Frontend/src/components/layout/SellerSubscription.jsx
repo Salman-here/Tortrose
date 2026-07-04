@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-    Crown, Check, Zap, Shield, Bot, Clock, AlertTriangle,
+    Crown, Check, Zap, Shield, Clock, AlertTriangle,
     CreditCard, ArrowRight, Sparkles, X, Lock, Store, Package,
     Users, Award, Star, MessageCircle, Gem, Bell, Palette, Megaphone
 } from 'lucide-react';
@@ -93,7 +93,7 @@ const SellerSubscription = () => {
             setShowUpgradeConfirm(false);
             fetchSubscription();
         } catch (err) {
-            toast.error(err.response?.data?.msg || 'Failed to upgrade');
+            toast.error(err.response?.data?.msg || 'Failed to update subscription');
         } finally {
             setUpgradeLoading(false);
         }
@@ -187,16 +187,14 @@ const SellerSubscription = () => {
     const bonusDaysUntilExpiry = subscription?.bonusExpiryDate ? Math.max(0, Math.ceil((new Date(subscription.bonusExpiryDate) - new Date()) / (1000 * 60 * 60 * 24))) : 0;
     const bonusMonthsRemaining = subscription?.bonusExpiryDate ? Math.max(0, Math.ceil(bonusDaysUntilExpiry / 30)) : 6;
     const isStarterSubscribed = isSubscribed && !isElite;
-    const metaAdsAddonCents = Number(subscription?.metaAdsAddonCents || 0);
+    const metaAdsAddonCents = Number(subscription?.metaAdsAddonCents || 400);
     const metaAdsAddonPrice = `$${(metaAdsAddonCents / 100).toFixed(2)}`;
     const eliteMonthlyPrice = 1299 + (eliteMetaAds && metaAdsAddonCents > 0 ? metaAdsAddonCents : 0);
     const eliteMonthlyPriceLabel = `$${(eliteMonthlyPrice / 100).toFixed(2)}`;
-    const canChooseMetaAds = metaAdsAddonCents > 0;
+    const activeEliteMonthlyPrice = 1299 + (subscription?.metaAdsIncluded && metaAdsAddonCents > 0 ? metaAdsAddonCents : 0);
+    const activeEliteMonthlyPriceLabel = `$${(activeEliteMonthlyPrice / 100).toFixed(2)}`;
+    const eliteMetaSelectionChanged = isElite && isSubscribed && Boolean(subscription?.metaAdsIncluded) !== eliteMetaAds;
     const toggleMetaAds = () => {
-        if (!canChooseMetaAds) {
-            toast.info('Meta ads add-on price is not configured yet.');
-            return;
-        }
         setEliteMetaAds((value) => !value);
     };
 
@@ -205,7 +203,6 @@ const SellerSubscription = () => {
         'Unlimited product listings',
         'Secure payment processing',
         'Custom subdomain for your store',
-        '100 AI messages/day',
         'Order management & customer insights',
         'Manage your store, orders & products from WhatsApp by chatting with AI',
         'Get WhatsApp notifications when you receive a new order',
@@ -226,6 +223,16 @@ const SellerSubscription = () => {
     const eliteOnlyFeatures = [
         'Rozare will run TikTok ads for your store and featured products',
         'Customizable store themes with your own colors and layouts',
+    ];
+
+    const eliteCardFeatures = [
+        { icon: <Store size={13} />, text: 'Everything in Starter' },
+        { icon: <Sparkles size={13} />, text: 'Featured product highlighting (12 products)' },
+        ...bonusFeatures.map((text) => ({ icon: <Check size={11} />, text })),
+        ...eliteOnlyFeatures.map((text) => ({
+            icon: text.toLowerCase().includes('tiktok') ? <Megaphone size={11} /> : <Palette size={11} />,
+            text,
+        })),
     ];
 
     return (
@@ -449,8 +456,8 @@ const SellerSubscription = () => {
                             <p className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>
                                 {isSubscribed
                                     ? subscription?.status === 'free_period'
-                                        ? `Free until ${new Date(subscription.freePeriodEndDate).toLocaleDateString()}, then ${isElite ? '$12.99' : '$5.99'}/mo`
-                                        : `${isElite ? '$12.99' : '$5.99'}/month • Cancel anytime`
+                                        ? `Free until ${new Date(subscription.freePeriodEndDate).toLocaleDateString()}, then ${isElite ? activeEliteMonthlyPriceLabel : '$5.99'}/mo`
+                                        : `${isElite ? activeEliteMonthlyPriceLabel : '$5.99'}/month • Cancel anytime`
                                     : isTrial
                                         ? `${subscription?.trialDaysRemaining} day${subscription?.trialDaysRemaining !== 1 ? 's' : ''} remaining`
                                         : 'Subscribe to activate your store'
@@ -513,18 +520,6 @@ const SellerSubscription = () => {
                             </button>
                         </div>
                     )}
-                </div>
-
-                {/* AI Limit Info */}
-                <div className="flex items-center gap-3 p-3 rounded-xl" style={{ background: 'rgba(99,102,241,0.06)' }}>
-                    <Bot size={16} style={{ color: 'hsl(220, 70%, 55%)' }} />
-                    <div className="flex-1">
-                        <p className="text-xs font-semibold" style={{ color: 'hsl(var(--foreground))' }}>AI Messages</p>
-                        <p className="text-[11px]" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                            {subscription?.aiMessageLimit || 25} messages/day
-                            {isSubscribed && <span style={{ color: 'hsl(150, 60%, 45%)' }}> (4x boost!)</span>}
-                        </p>
-                    </div>
                 </div>
 
                 {/* Trial Feature List */}
@@ -602,7 +597,6 @@ const SellerSubscription = () => {
                                 'Unlimited product listings',
                                 'Secure payment processing',
                                 'Custom subdomain for your store',
-                                '100 AI messages/day',
                                 'Order management & customer insights',
                                 'Manage your store, orders & products from WhatsApp by chatting with AI',
                                 'Get WhatsApp notifications when you receive a new order',
@@ -656,7 +650,6 @@ const SellerSubscription = () => {
                                 'Unlimited product listings',
                                 'Secure payment processing',
                                 'Custom subdomain for your store',
-                                '250 AI messages/day',
                                 'Order management & customer insights',
                                 'Manage your store, orders & products from WhatsApp by chatting with AI',
                                 'Get WhatsApp notifications when you receive a new order',
@@ -730,7 +723,6 @@ const SellerSubscription = () => {
                                 { icon: <Package size={13} />, text: 'Unlimited product listings' },
                                 { icon: <CreditCard size={13} />, text: 'Secure payment processing' },
                                 { icon: <Shield size={13} />, text: 'Custom subdomain for your store' },
-                                { icon: <Bot size={13} />, text: '100 AI messages/day' },
                                 { icon: <Users size={13} />, text: 'Order management & insights' },
                                 { icon: <MessageCircle size={13} />, text: 'Manage store, orders & products from WhatsApp via AI' },
                                 { icon: <Bell size={13} />, text: 'WhatsApp notifications for new orders' },
@@ -834,40 +826,18 @@ const SellerSubscription = () => {
                                 {' '}$0<span className="text-sm font-normal" style={{ color: 'hsl(var(--muted-foreground))' }}>/first 45 days</span>
                             </p>
                             <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                                Then $12.99/month • Cancel anytime
+                                Then {eliteMonthlyPriceLabel}/month • Cancel anytime
                             </p>
                         </div>
 
                         <div className="space-y-2 mb-5">
                             <p className="text-xs font-bold mb-2" style={{ color: 'hsl(var(--foreground))' }}>Elite Upgrades</p>
-                            {[
-                                { icon: <Store size={13} />, text: 'Everything in Starter' },
-                                { icon: <Bot size={13} />, text: '250 AI messages/day' },
-                                { icon: <Sparkles size={13} />, text: 'Featured product highlighting (12 products)' },
-                            ].map((f, i) => (
-                                <div key={i} className="flex items-center gap-2.5">
+                            {eliteCardFeatures.map((f, i) => (
+                                <div key={`elite-card-${i}`} className="flex items-center gap-2.5">
                                     <div className="w-5 h-5 rounded-md flex items-center justify-center shrink-0" style={{ background: 'rgba(16, 185, 129, 0.12)', color: 'hsl(150, 60%, 45%)' }}>
                                         {f.icon}
                                     </div>
                                     <span className="text-[11px]" style={{ color: 'hsl(var(--foreground))' }}>{f.text}</span>
-                                </div>
-                            ))}
-
-                            <div className="border-t my-2" style={{ borderColor: 'rgba(0,0,0,0.06)' }} />
-                            {bonusFeatures.map((f, i) => (
-                                <div key={`elite-bonus-${i}`} className="flex items-center gap-2.5">
-                                    <div className="w-5 h-5 rounded-md flex items-center justify-center shrink-0" style={{ background: 'rgba(139, 92, 246, 0.12)', color: 'hsl(270, 60%, 55%)' }}>
-                                        <Check size={11} />
-                                    </div>
-                                    <span className="text-[11px]" style={{ color: 'hsl(var(--foreground))' }}>{f}</span>
-                                </div>
-                            ))}
-                            {eliteOnlyFeatures.map((f, i) => (
-                                <div key={`elite-only-card-${i}`} className="flex items-center gap-2.5">
-                                    <div className="w-5 h-5 rounded-md flex items-center justify-center shrink-0" style={{ background: 'rgba(139, 92, 246, 0.12)', color: 'hsl(270, 60%, 55%)' }}>
-                                        {f.toLowerCase().includes('tiktok') ? <Megaphone size={11} /> : <Palette size={11} />}
-                                    </div>
-                                    <span className="text-[11px]" style={{ color: 'hsl(var(--foreground))' }}>{f}</span>
                                 </div>
                             ))}
                         </div>
@@ -884,9 +854,7 @@ const SellerSubscription = () => {
                                         <Megaphone size={13} /> Include Meta ads
                                     </p>
                                     <p className="text-[11px] mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                                        {canChooseMetaAds
-                                            ? `Adds ${metaAdsAddonPrice}/month to the Elite plan.`
-                                            : 'Meta add-on price is pending in server config.'}
+                                        Adds {metaAdsAddonPrice}/month to the Elite plan.
                                     </p>
                                 </div>
                                 <span className="px-2 py-1 rounded-full text-[10px] font-bold"
@@ -905,6 +873,22 @@ const SellerSubscription = () => {
                                     style={{ background: 'rgba(139,92,246,0.12)', color: 'hsl(270, 60%, 55%)' }}>
                                     <Check size={15} /> Current Plan
                                 </div>
+                                {eliteMetaSelectionChanged && (
+                                    <motion.button
+                                        whileHover={{ scale: 1.02 }}
+                                        whileTap={{ scale: 0.98 }}
+                                        onClick={handleUpgrade}
+                                        disabled={upgradeLoading}
+                                        className="w-full py-2.5 rounded-xl font-bold text-xs text-white flex items-center justify-center gap-2 transition-all disabled:opacity-60"
+                                        style={{ background: 'linear-gradient(135deg, hsl(220, 70%, 55%), hsl(250, 60%, 55%))' }}
+                                    >
+                                        {upgradeLoading ? (
+                                            <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                                        ) : (
+                                            <><Megaphone size={14} /> Apply Meta Ads Change</>
+                                        )}
+                                    </motion.button>
+                                )}
                                 {!subscription?.cancelledAt && (
                                     <motion.button
                                         whileHover={{ scale: 1.02 }}
@@ -948,9 +932,9 @@ const SellerSubscription = () => {
                 <div className="space-y-4">
                     {[
                         { step: '1', title: 'Free Trial', desc: '15 days to set up your store, add products, and start selling', active: isTrial, done: !isTrial && (isSubscribed || isBlocked || isPastDue) },
-                        { step: '2', title: 'Subscribe', desc: 'Choose Rozare Starter ($5.99/mo) or Rozare Elite ($12.99/mo)', active: false, done: isSubscribed || isPastDue },
+                        { step: '2', title: 'Subscribe', desc: 'Choose Rozare Starter ($5.99/mo) or Rozare Elite ($12.99/mo, Meta +$4/mo)', active: false, done: isSubscribed || isPastDue },
                         { step: '3', title: 'Free Period', desc: isElite ? '45 days of full access at no cost' : '30 days of full access at no cost to grow your business', active: subscription?.status === 'free_period', done: subscription?.status === 'active' || (isSubscribed && subscription?.hasUsedFreePeriod && subscription?.status !== 'free_period') },
-                        { step: '4', title: 'Monthly Billing', desc: isElite ? '$12.99/month. Cancel anytime.' : '$5.99/month after free period. Cancel anytime.', active: subscription?.status === 'active', done: false },
+                        { step: '4', title: 'Monthly Billing', desc: isElite ? `${activeEliteMonthlyPriceLabel}/month. Cancel anytime.` : '$5.99/month after free period. Cancel anytime.', active: subscription?.status === 'active', done: false },
                         { step: '5', title: 'Bonus Features', desc: isElite ? 'Permanently included with your Elite plan.' : 'After 6 months, bonus features expire. Upgrade to Elite to keep them.', active: false, done: isElite && isSubscribed },
                     ].map((s, i) => {
                         const isDone = s.done;
@@ -1064,7 +1048,7 @@ const SellerSubscription = () => {
                                 </div>
                                 <h3 className="text-base font-bold" style={{ color: 'hsl(var(--foreground))' }}>Upgrade to Rozare Elite?</h3>
                                 <p className="text-xs mt-2" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                                    Your billing will change from $5.99/month to $12.99/month. The price difference will be prorated for the current period.
+                                    Your billing will change from $5.99/month to {eliteMonthlyPriceLabel}/month. The price difference will be prorated for the current period.
                                 </p>
                             </div>
 
@@ -1079,6 +1063,8 @@ const SellerSubscription = () => {
                                         'Featured product highlighting',
                                         'Customizable store themes',
                                         'Coupon & discount management',
+                                        'Rozare-run TikTok ads for featured products',
+                                        eliteMetaAds ? 'Meta ads add-on selected' : 'Optional Meta ads add-on (+$4/month)',
                                     ].map((f, i) => (
                                         <div key={i} className="flex items-center gap-2">
                                             <Check size={11} style={{ color: 'hsl(270, 60%, 55%)' }} />

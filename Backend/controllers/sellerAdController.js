@@ -4,7 +4,7 @@ const SellerSubscription = require('../models/SellerSubscription');
 const Product = require('../models/Product');
 const Store = require('../models/Store');
 
-const META_ADS_ADDON_CENTS = Math.max(0, Number(process.env.META_ADS_ADDON_CENTS || 0));
+const META_ADS_ADDON_CENTS = 400;
 
 const featuredProductSelect = 'name image images category price discountedPrice currency priceCurrency isFeatured seller';
 
@@ -117,6 +117,12 @@ exports.submitSellerAdRequest = async (req, res) => {
             ? req.body.requestType
             : 'start';
         const includeMeta = Boolean(req.body?.includeMeta);
+        if (includeMeta && !subscription?.metaAdsIncluded) {
+            return res.status(400).json({
+                msg: 'Add Meta ads to your Elite subscription before requesting Meta campaigns.',
+                requiresMetaAddon: true,
+            });
+        }
         const sellerNote = String(req.body?.sellerNote || '').trim().slice(0, 500);
         const productIds = cleanProductIds(req.body?.productIds);
 

@@ -99,14 +99,24 @@ const SellerAds = () => {
 
     const hasPending = (data?.pendingRequests || []).length > 0;
     const hasActive = Boolean(data?.activeRequest?.active);
-    const metaAddonCents = Number(data?.metaAdsAddonCents || 0);
-    const canUseMetaBilling = metaAddonCents > 0;
+    const metaAddonCents = Number(data?.metaAdsAddonCents || 400);
+    const metaAddonIncluded = Boolean(data?.subscription?.metaAdsIncluded);
+    const canRequestMeta = metaAddonIncluded;
     const requestType = hasActive ? 'update' : 'start';
 
     const toggleProduct = (id) => {
         setSelectedIds((prev) => (
             prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
         ));
+    };
+
+    const toggleMeta = () => {
+        if (!metaAddonIncluded) {
+            toast.info('Add Meta ads in the Subscription tab first.');
+            navigate('/seller-dashboard/subscription');
+            return;
+        }
+        setIncludeMeta((value) => !value);
     };
 
     const submitRequest = async (type = requestType) => {
@@ -116,6 +126,10 @@ const SellerAds = () => {
         }
         if (type !== 'stop' && selectedIds.length === 0) {
             toast.error('Select at least one featured product.');
+            return;
+        }
+        if (includeMeta && !canRequestMeta) {
+            toast.error('Add Meta ads to your Elite subscription before requesting Meta campaigns.');
             return;
         }
 
@@ -166,7 +180,7 @@ const SellerAds = () => {
                         <div>
                             <h1 className="text-xl font-bold" style={{ color: 'hsl(var(--foreground))' }}>Ads</h1>
                             <p className="text-sm mt-1 max-w-2xl" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                                Select featured products for Rozare-run TikTok ads. Meta ads can be requested when the add-on is configured on your Elite plan.
+                                Select featured products for Rozare-run TikTok ads. Meta ads require the Meta add-on on your Elite plan.
                             </p>
                         </div>
                     </div>
@@ -278,7 +292,7 @@ const SellerAds = () => {
                                 </div>
                             </div>
                             <button
-                                onClick={() => setIncludeMeta((value) => !value)}
+                                onClick={toggleMeta}
                                 className="w-full rounded-xl p-3 glass-inner text-left"
                                 style={{ border: includeMeta ? '1px solid rgba(59,130,246,0.35)' : '1px solid var(--glass-border)' }}
                             >
@@ -286,10 +300,12 @@ const SellerAds = () => {
                                     <div>
                                         <p className="text-sm font-bold" style={{ color: 'hsl(var(--foreground))' }}>Include Meta ads</p>
                                         <p className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                                            {canUseMetaBilling ? `Adds ${centsToUsd(metaAddonCents)}/month to Elite` : 'Price pending in server config'}
+                                            {metaAddonIncluded
+                                                ? `Included in your Elite plan (+${centsToUsd(metaAddonCents)}/month)`
+                                                : `Add in Subscription first (+${centsToUsd(metaAddonCents)}/month)`}
                                         </p>
                                     </div>
-                                    {includeMeta ? <SquareCheck size={19} style={{ color: 'hsl(220,70%,55%)' }} /> : <Square size={19} style={{ color: 'hsl(var(--muted-foreground))' }} />}
+                                    {includeMeta && canRequestMeta ? <SquareCheck size={19} style={{ color: 'hsl(220,70%,55%)' }} /> : <Square size={19} style={{ color: 'hsl(var(--muted-foreground))' }} />}
                                 </div>
                             </button>
                         </div>

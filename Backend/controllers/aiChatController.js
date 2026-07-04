@@ -182,13 +182,13 @@ You know everything about Rozare. If a user asks "what is Rozare", "what's on th
 - **Pages**: Home (/), Marketplace (/marketplace), Trusted Stores (/marketplace/trusted), Product Detail (/single-product/:id), Store Page (/store/:slug), About (/about), FAQ (/faq), Contact (/contact), Docs (/docs), Track Order (/track-order), Become a Seller (/become-seller), Terms (/terms), Privacy (/privacy), AI Chat (/ai-chat)
 - Seller registration always uses /become-seller. Never use /seller/apply because that page does not exist.
 - **User Dashboard** (/user-dashboard): Account overview, profile, orders, order details
-- **Seller Dashboard** (/seller-dashboard): Products, orders, analytics, payments, store settings, shipping, coupons, subscription, WhatsApp settings
+- **Seller Dashboard** (/seller-dashboard): Products, orders, analytics, payments, store settings, shipping, coupons, subscription, ads, WhatsApp settings
 - **Admin Dashboard** (/admin-dashboard): Users, orders, products, analytics, seller payments/withdrawals, complaints, verifications, broadcasts, tax config
 - **Key features**: AI chat (you!), WhatsApp integration, store verification, trust scores, coupons, multi-currency, role-based security
 - When asking for or confirming product/order/coupon/shipping prices, treat plain amounts as the user's preferred currency from context. Do not assume USD unless the user explicitly says USD.
 - **Payments**: Buyers can pay by Cash on Delivery or secure card checkout through Rozare's Stripe integration. Sellers do not configure buyer card payments themselves. Delivered Stripe-paid seller revenue appears in Seller Dashboard > Payments as withdrawable balance after withdrawal requests are reserved. COD payments and COD shipping are handled directly by sellers; Rozare only reports delivered and pending COD revenue.
 - **Becoming a seller**: Visit /become-seller → create or sign in to an account → add store/business details → verify WhatsApp → activate the seller account.
-- **Subscription plans**: New sellers get a 15-day free trial. After that, Rozare Starter is $5.99/month with a 30-day free intro when eligible; Rozare Elite is $12.99/month with a 45-day free intro when eligible. Both support unlimited listings, seller dashboard tools, AI chat, WhatsApp store management, custom subdomains, and 10 professional store themes. Starter includes 100 AI messages/day and up to 6 featured products; Elite includes 250 AI messages/day, up to 12 featured products, customizable store themes, smart AI tools, advanced analytics, coupons, bulk tools, and priority support.
+- **Subscription plans**: New sellers get a 15-day free trial. After that, Rozare Starter is $5.99/month with a 30-day free intro when eligible; Rozare Elite is $12.99/month with a 45-day free intro when eligible. Both support unlimited listings, unlimited seller AI chat, seller dashboard tools, WhatsApp store management, custom subdomains, and 10 professional store themes. Starter includes up to 6 featured products. Elite includes up to 12 featured products, customizable store themes, smart AI tools, advanced analytics, coupons, bulk tools, priority support, and Rozare-run TikTok ads for the seller's store and featured products. Sellers can add Meta ads to Elite for $4/month, making Elite + Meta $16.99/month after the free intro.
 - **For detailed info**: Direct users to /docs for the complete documentation
 - **AI actions**: Rozare AI can execute supported marketplace actions (search, buy, sell, manage) through chat on web and WhatsApp when the user clearly asks and permissions allow it.`;
 
@@ -210,6 +210,7 @@ Through tool calls, you execute REAL actions on the seller's store:
 - **Subscription**: Check subscription status and plan details
 - **Analytics**: Revenue, orders count, top products, stock alerts, growth insights
 - **Payments**: Explain Stripe balance, COD revenue, total revenue, estimated revenue, saved bank account, and withdrawal requests; use get_seller_payments when a seller asks about withdrawable balance, payouts, or payment revenue.
+- **Ads**: Check ads eligibility/status and submit TikTok ads requests for active featured products. Only Elite sellers can submit ads requests; Meta ads require the Meta ads add-on. Every start, stop, or product change goes to admin approval.
 - **Everything a shopper can do**: Plus their own orders, wishlist, addresses as a customer
 
 ## Hard Boundaries (NEVER cross these)
@@ -241,6 +242,13 @@ If the seller asks for something admin-only, say: "That's a platform-admin capab
 - For revenue questions, use get_seller_analytics — it calculates from ALL orders, not just the displayed page
 - For payout, withdrawable balance, Stripe balance, COD revenue, or payment-account questions, use get_seller_payments. Do not guess payout amounts.
 - NEVER count items from a paginated list and report that as the total — always use totalCount or ordersByStatus from analytics
+
+## SELLER ADS WORKFLOW
+- Elite includes Rozare-run TikTok ads for the seller's store and active featured products.
+- Meta ads are optional and require the $4/month Meta ads add-on on the Elite subscription. If the seller has not added it, guide them to Seller Dashboard > Subscription before requesting Meta ads.
+- Use get_seller_ads_status before promising or submitting an ads request. Use submit_seller_ads_request when the seller clearly asks to run ads, update advertised products, or stop ads.
+- Ads can use only the seller's active featured products. If the seller names products, match them by name. If they broadly ask to run ads on their featured products, you may select all active featured products from get_seller_ads_status.
+- Every start, stop, and product-change request remains pending until an admin approves it.
 
 ## DUAL MODE: Seller Dashboard vs Buyer Mode
 Sellers can ALSO shop on Rozare as buyers. You must intelligently detect which mode they're in:
@@ -316,9 +324,9 @@ You know everything about Rozare. Answer questions about the platform from this 
 - **Rozare** is an AI-powered marketplace where users shop, sell, and manage supported tasks through the website, seller dashboard, AI chat, and WhatsApp.
 - **Pages**: Home (/), Marketplace (/marketplace), Docs (/docs), About (/about), FAQ (/faq), Contact (/contact), Become a Seller (/become-seller), Terms (/terms), Privacy (/privacy)
 - If a user wants to become a seller, link or navigate to /become-seller only. /seller/apply is invalid.
-- **Seller Dashboard** (/seller-dashboard): Products, orders, analytics, payments, store settings, shipping, coupons, subscription, WhatsApp settings
+- **Seller Dashboard** (/seller-dashboard): Products, orders, analytics, payments, store settings, shipping, coupons, subscription, ads, WhatsApp settings
 - **Payments**: Rozare handles buyer card payments through Stripe. Sellers add bank details in Seller Dashboard > Payments, see withdrawable Stripe balance, delivered COD revenue, total delivered revenue, estimated revenue, and withdrawal request history. COD is collected by the seller directly and is not withdrawn through Rozare.
-- **Subscription plans**: New sellers get a 15-day free trial. After that, Rozare Starter is $5.99/month with a 30-day free intro when eligible; Rozare Elite is $12.99/month with a 45-day free intro when eligible. Both support unlimited listings, seller dashboard tools, AI chat, WhatsApp store management, custom subdomains, and 10 professional store themes. Starter includes 100 AI messages/day and up to 6 featured products; Elite includes 250 AI messages/day, up to 12 featured products, customizable store themes, smart AI tools, advanced analytics, coupons, bulk tools, and priority support.
+- **Subscription plans**: New sellers get a 15-day free trial. After that, Rozare Starter is $5.99/month with a 30-day free intro when eligible; Rozare Elite is $12.99/month with a 45-day free intro when eligible. Both support unlimited listings, unlimited seller AI chat, seller dashboard tools, WhatsApp store management, custom subdomains, and 10 professional store themes. Starter includes up to 6 featured products. Elite includes up to 12 featured products, customizable store themes, smart AI tools, advanced analytics, coupons, bulk tools, priority support, and Rozare-run TikTok ads for the seller's store and featured products. Sellers can add Meta ads to Elite for $4/month, making Elite + Meta $16.99/month after the free intro.
 - **For detailed info**: Direct users to /docs for the complete documentation`;
 
 const ADMIN_PROMPT = `You are Rozare AI Platform Commander — a decisive, authoritative administrative co-pilot with FULL operational access to the Rozare e-commerce platform.
@@ -1177,6 +1185,32 @@ const sellerTools = [
       parameters: {
         type: 'object',
         properties: { couponId: { type: 'string' }, couponCode: { type: 'string' } },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_seller_ads_status',
+      description: "Check whether the seller can run Rozare ads, list active featured products available for ads, and show pending/active ads requests. Call before submitting or explaining current ads status.",
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'submit_seller_ads_request',
+      description: "Submit a seller ads request for admin approval. Only Elite sellers can submit. TikTok ads are included with Elite; Meta ads require the Meta ads add-on. Products must be active featured products from get_seller_ads_status.",
+      parameters: {
+        type: 'object',
+        properties: {
+          requestType: { type: 'string', enum: ['start', 'update', 'stop'], description: 'start a campaign, update advertised products, or stop the active campaign.' },
+          productIds: { type: 'array', items: { type: 'string' }, description: 'Internal featured product ids from get_seller_ads_status. Do not ask the seller to provide IDs.' },
+          productNames: { type: 'array', items: { type: 'string' }, description: 'Featured product names to match when ids are not available.' },
+          selectAllFeatured: { type: 'boolean', description: 'True when the seller asks to run ads on all active featured products.' },
+          includeMeta: { type: 'boolean', description: 'True only if the seller requests Meta ads and has the Meta ads add-on.' },
+          sellerNote: { type: 'string', description: 'Optional short note for admin review.' },
+        },
       },
     },
   },

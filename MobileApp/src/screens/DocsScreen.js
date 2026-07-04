@@ -68,7 +68,7 @@ const SECTIONS = [
     id: 'subscription',
     title: 'Subscription Plans',
     icon: 'diamond-outline',
-    body: 'New sellers get a 15-day free trial. Rozare Starter ($5.99/mo) includes 100 AI messages/day and a 30-day free intro when eligible. Rozare Elite ($12.99/mo) includes 250 AI messages/day, advanced AI tools, and a 45-day free intro when eligible.',
+    body: 'New sellers get a 15-day free trial. Rozare Starter ($5.99/mo) includes unlimited seller AI chat and a 30-day free intro when eligible. Rozare Elite ($12.99/mo) adds advanced tools, 12 featured products, Rozare-run TikTok ads, and a 45-day free intro when eligible. Meta ads can be added to Elite for $4/mo.',
   },
   {
     id: 'payments',

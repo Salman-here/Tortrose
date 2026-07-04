@@ -26,7 +26,7 @@ const sellerSubscriptionSchema = new mongoose.Schema({
         enum: ['free_trial', 'starter', 'elite'],
         default: 'free_trial',
     },
-    // After subscription: 30 days free, then $5/month
+    // After subscription: 30 days free, then $5.99/month for Starter
     subscribedAt: { type: Date },
     freePeriodEndDate: { type: Date }, // subscribedAt + 30 days
     currentPeriodStart: { type: Date },
@@ -56,8 +56,8 @@ const sellerSubscriptionSchema = new mongoose.Schema({
     blockedAt: { type: Date },
     blockedReason: { type: String, default: '' },
 
-    // AI limits boost
-    aiMessageLimit: { type: Number, default: 25 }, // 25 for free, 100 for subscribed
+    // Deprecated compatibility field. -1 means seller AI chat is unlimited.
+    aiMessageLimit: { type: Number, default: -1 },
 
     // Paid marketing add-ons attached to the seller subscription.
     metaAdsIncluded: { type: Boolean, default: false },

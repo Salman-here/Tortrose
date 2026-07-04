@@ -17,7 +17,7 @@ import { useTheme } from '../../contexts/ThemeContext';
 
 const getStatusMap = (palette) => ({
   trial: { label: 'Free Trial', color: palette.colors.primary, icon: 'time-outline' },
-  free_period: { label: '90-Day Free', color: palette.colors.success, icon: 'sparkles-outline' },
+  free_period: { label: '30-Day Free', color: palette.colors.success, icon: 'sparkles-outline' },
   active: { label: 'Active', color: palette.colors.success, icon: 'checkmark-circle-outline' },
   past_due: { label: 'Past Due', color: palette.colors.warning, icon: 'alert-circle-outline' },
   blocked: { label: 'Blocked', color: palette.colors.error, icon: 'lock-closed-outline' },
@@ -26,7 +26,7 @@ const getStatusMap = (palette) => ({
 
 const FEATURES = [
   { icon: 'storefront-outline', text: 'Keep your store & products visible to all customers' },
-  { icon: 'chatbubbles-outline', text: '100 AI messages/day (4x more than free)' },
+  { icon: 'chatbubbles-outline', text: 'Unlimited seller AI chat' },
   { icon: 'globe-outline', text: 'Custom subdomain stays active' },
   { icon: 'headset-outline', text: 'Priority support & new features early access' },
   { icon: 'analytics-outline', text: 'Advanced analytics & growth insights' },
@@ -36,9 +36,9 @@ const FEATURES = [
 
 const STEPS = [
   { step: '1', title: 'Free Trial', desc: '15 days to set up your store, add products, and start selling' },
-  { step: '2', title: 'Subscribe', desc: 'Choose the Starter plan — $0 for the first 90 days' },
-  { step: '3', title: 'Free Period', desc: '90 days of full access at no cost to grow your business' },
-  { step: '4', title: 'Monthly Billing', desc: 'Only $5/month after free period. Cancel anytime.' },
+  { step: '2', title: 'Subscribe', desc: 'Choose the Starter plan — $0 for the first 30 days' },
+  { step: '3', title: 'Free Period', desc: '30 days of full access at no cost to grow your business' },
+  { step: '4', title: 'Monthly Billing', desc: 'Only $5.99/month after free period. Cancel anytime.' },
 ];
 
 export default function SellerSubscriptionScreen({ navigation }) {
@@ -68,7 +68,7 @@ export default function SellerSubscriptionScreen({ navigation }) {
   const handleSubscribe = async () => {
     setCheckoutLoading(true);
     try {
-      const res = await api.post('/api/subscription/create-checkout');
+      const res = await api.post('/api/subscription/create-checkout', { plan: 'starter' });
       if (res.data.url) {
         await Linking.openURL(res.data.url);
       }
@@ -183,13 +183,13 @@ export default function SellerSubscriptionScreen({ navigation }) {
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={styles.planTitle}>
-                  {isSubscribed ? 'Starter Plan' : isTrial ? 'Free Trial' : 'No Active Plan'}
+                  {isSubscribed ? (subscription?.planName || 'Starter Plan') : isTrial ? 'Free Trial' : 'No Active Plan'}
                 </Text>
                 <Text style={styles.planDesc}>
                   {isSubscribed
                     ? subscription?.status === 'free_period'
-                      ? `Free until ${new Date(subscription.freePeriodEndDate).toLocaleDateString()}, then $5/mo`
-                      : '$5/month • Cancel anytime'
+                      ? `Free until ${new Date(subscription.freePeriodEndDate).toLocaleDateString()}, then $5.99/mo`
+                      : '$5.99/month • Cancel anytime'
                     : isTrial
                       ? `${subscription?.trialDaysRemaining} day${subscription?.trialDaysRemaining !== 1 ? 's' : ''} remaining`
                       : 'Subscribe to activate your store'
@@ -203,15 +203,12 @@ export default function SellerSubscriptionScreen({ navigation }) {
               )}
             </View>
 
-            {/* AI Limit Info */}
+            {/* AI Chat Info */}
             <View style={styles.aiLimitRow}>
               <Ionicons name="chatbubbles-outline" size={16} color={palette.colors.primary} />
               <View style={{ flex: 1, marginLeft: spacing.sm }}>
-                <Text style={styles.aiLimitTitle}>AI Messages</Text>
-                <Text style={styles.aiLimitDesc}>
-                  {subscription?.aiMessageLimit || 25} messages/day
-                  {isSubscribed ? ' (4x boost!)' : ''}
-                </Text>
+                <Text style={styles.aiLimitTitle}>AI Chat</Text>
+                <Text style={styles.aiLimitDesc}>Unlimited seller AI chat on web, mobile, and WhatsApp</Text>
               </View>
             </View>
           </GlassPanel>
@@ -221,15 +218,15 @@ export default function SellerSubscriptionScreen({ navigation }) {
             <GlassPanel variant="strong" style={[styles.pricingCard, { borderColor: `${palette.colors.primary}40`, borderWidth: 2 }]}>
               <View style={styles.pricingBadge}>
                 <Ionicons name="sparkles" size={12} color={palette.colors.success} />
-                <Text style={styles.pricingBadgeText}>90 DAYS FREE</Text>
+                <Text style={styles.pricingBadgeText}>30 DAYS FREE</Text>
               </View>
 
               <View style={styles.pricingPriceRow}>
-                <Text style={styles.pricingOld}>$5/mo</Text>
+                <Text style={styles.pricingOld}>$5.99/mo</Text>
                 <Text style={styles.pricingNew}>$0</Text>
-                <Text style={styles.pricingPeriod}>/first 90 days</Text>
+                <Text style={styles.pricingPeriod}>/first 30 days</Text>
               </View>
-              <Text style={styles.pricingAfter}>Then $5/month • Cancel anytime</Text>
+              <Text style={styles.pricingAfter}>Then $5.99/month • Cancel anytime</Text>
 
               {FEATURES.map((f, i) => (
                 <View key={i} style={styles.featureRow}>
@@ -251,7 +248,7 @@ export default function SellerSubscriptionScreen({ navigation }) {
                 ) : (
                   <>
                     <Ionicons name="card-outline" size={16} color={palette.colors.white} />
-                    <Text style={styles.subscribeBtnText}>Subscribe Now — 90 Days Free</Text>
+                    <Text style={styles.subscribeBtnText}>Subscribe Now — 30 Days Free</Text>
                     <Ionicons name="arrow-forward" size={16} color={palette.colors.white} />
                   </>
                 )}

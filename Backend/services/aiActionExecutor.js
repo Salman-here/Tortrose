@@ -26,6 +26,7 @@ const Notification = require('../models/Notification');
 const TaxConfig = require('../models/TaxConfig');
 const BroadcastJob = require('../models/BroadcastJob');
 const SellerSubscription = require('../models/SellerSubscription');
+const SellerAdRequest = require('../models/SellerAdRequest');
 const StoreTrust = require('../models/StoreTrust');
 const Cart = require('../models/Cart');
 const StoreReview = require('../models/StoreReview');
@@ -71,6 +72,8 @@ const CLIENT_SIDE_TOOLS = new Set([
   'suggest_outfit',
 ]);
 const DEFAULT_PRODUCT_IMAGE_URL = 'https://rozare.com/favicon-512.png';
+const META_ADS_ADDON_CENTS = 400;
+const AD_PRODUCT_SELECT = 'name image images category price discountedPrice currency priceCurrency isFeatured seller';
 
 function isClientSideTool(name) {
   return CLIENT_SIDE_TOOLS.has(name);
@@ -509,6 +512,128 @@ async function sellerCanFeatureProduct(userId, excludeProductId = null) {
     console.error('sellerCanFeatureProduct error:', e);
     return { allowed: false, current: 0, max: 0, plan: 'free_trial', reason: 'error' };
   }
+}
+
+function isEliteSubscription(sub) {
+  return sub?.plan === 'elite' && ['active', 'free_period'].includes(sub?.status);
+}
+
+function cleanAdProductIds(productIds = []) {
+  const source = Array.isArray(productIds) ? productIds : [productIds];
+  return [...new Set(source
+    .map(normalizeObjectIdString)
+    .filter(id => mongoose.Types.ObjectId.isValid(id)))];
+}
+
+function normalizeLookupText(value) {
+  return cleanAIField(value, { maxLength: 180 }).toLowerCase();
+}
+
+function serializeAdRequest(request) {
+  if (!request) return null;
+  const doc = request.toObject ? request.toObject() : request;
+  return {
+    _id: normalizeObjectIdString(doc._id),
+    requestType: doc.requestType,
+    status: doc.status,
+    active: Boolean(doc.active),
+    channels: doc.channels || { tiktok: true, meta: false },
+    sellerNote: doc.sellerNote || '',
+    adminNote: doc.adminNote || '',
+    createdAt: doc.createdAt,
+    reviewedAt: doc.reviewedAt,
+    products: (doc.products || []).map(product => ({
+      _id: normalizeObjectIdString(product?._id || product),
+      name: product?.name || '',
+      category: product?.category || '',
+      image: product?.image || product?.images?.[0]?.url || '',
+    })).filter(product => product._id),
+  };
+}
+
+async function getSellerAdsState(userId) {
+  const [subscription, store, featuredProducts, activeRequest, pendingRequests, recentRequests] = await Promise.all([
+    SellerSubscription.findOne({ seller: userId }).lean(),
+    Store.findOne({ seller: userId }).select('_id storeName storeSlug logo').lean(),
+    Product.find({
+      seller: userId,
+      isFeatured: true,
+      isBlocked: { $ne: true },
+      moderationStatus: { $ne: 'blocked' },
+    })
+      .select(AD_PRODUCT_SELECT)
+      .sort({ updatedAt: -1, createdAt: -1 })
+      .lean(),
+    SellerAdRequest.findOne({ seller: userId, status: 'approved', active: true })
+      .populate('products', AD_PRODUCT_SELECT)
+      .sort({ updatedAt: -1 })
+      .lean(),
+    SellerAdRequest.find({ seller: userId, status: 'pending' })
+      .populate('products', AD_PRODUCT_SELECT)
+      .sort({ createdAt: -1 })
+      .limit(5)
+      .lean(),
+    SellerAdRequest.find({ seller: userId })
+      .populate('products', AD_PRODUCT_SELECT)
+      .sort({ createdAt: -1 })
+      .limit(8)
+      .lean(),
+  ]);
+
+  return {
+    subscription: {
+      plan: subscription?.plan || 'free_trial',
+      status: subscription?.status || 'trial',
+      planName: subscription?.planName || 'Free Trial',
+      metaAdsIncluded: Boolean(subscription?.metaAdsIncluded),
+    },
+    isElite: isEliteSubscription(subscription),
+    metaAdsAddonCents: META_ADS_ADDON_CENTS,
+    store,
+    featuredProducts: featuredProducts.map(product => ({
+      _id: normalizeObjectIdString(product._id),
+      name: product.name,
+      category: product.category,
+      image: product.image || product.images?.[0]?.url || '',
+      price: product.price,
+      discountedPrice: product.discountedPrice,
+      currency: getProductCurrency(product),
+    })),
+    activeRequest: serializeAdRequest(activeRequest),
+    pendingRequests: pendingRequests.map(serializeAdRequest),
+    recentRequests: recentRequests.map(serializeAdRequest),
+  };
+}
+
+function resolveAdProductIdsFromState(args, state) {
+  let productIds = cleanAdProductIds([
+    ...(Array.isArray(args.productIds) ? args.productIds : []),
+    ...(args.productId ? [args.productId] : []),
+  ]);
+  const featuredById = new Map(state.featuredProducts.map(product => [product._id, product]));
+  productIds = productIds.filter(id => featuredById.has(id));
+
+  const names = [
+    ...(Array.isArray(args.productNames) ? args.productNames : []),
+    ...(args.productName ? [args.productName] : []),
+  ].map(normalizeLookupText).filter(Boolean);
+
+  if (names.length) {
+    for (const name of names) {
+      const exact = state.featuredProducts.find(product => normalizeLookupText(product.name) === name);
+      const loose = exact || state.featuredProducts.find(product => {
+        const productName = normalizeLookupText(product.name);
+        return productName.includes(name) || name.includes(productName);
+      });
+      if (loose) productIds.push(loose._id);
+    }
+  }
+
+  if (!productIds.length && (args.selectAllFeatured === true || names.length === 0)) {
+    productIds = state.featuredProducts.map(product => product._id);
+  }
+
+  return [...new Set(productIds)].filter(id => featuredById.has(id));
 }
 
 function productLookupBaseFilter(role, userId, args = {}) {
@@ -3554,6 +3679,8 @@ async function executeToolCall(toolName, args = {}, user) {
             trialDaysRemaining: sub.trialDaysRemaining,
             bonusFeaturesActive: sub.bonusFeaturesActive,
             currentPeriodEnd: sub.currentPeriodEnd,
+            aiMessagesUnlimited: true,
+            metaAdsIncluded: Boolean(sub.metaAdsIncluded),
           },
           message: `Your subscription: ${sub.planName} (${sub.status}). ${sub.status === 'trial' ? `Trial ends in ${sub.trialDaysRemaining} days.` : ''}`,
         };
@@ -3562,6 +3689,114 @@ async function executeToolCall(toolName, args = {}, user) {
       // ─────────────────────────────────────────────
       //  ADMIN TOOLS
       // ─────────────────────────────────────────────
+
+      case 'get_seller_ads_status': {
+        if (!userId) return { success: false, error: 'Authentication required.' };
+        const state = await getSellerAdsState(userId);
+        return {
+          success: true,
+          data: state,
+          requiresElite: !state.isElite,
+          message: state.isElite
+            ? `Ads are available. You have ${state.featuredProducts.length} active featured product${state.featuredProducts.length !== 1 ? 's' : ''} available for TikTok ads.`
+            : 'Subscribe to Rozare Elite to request Rozare-run TikTok ads for your store and featured products.',
+        };
+      }
+
+      case 'submit_seller_ads_request': {
+        if (!userId) return { success: false, error: 'Authentication required.' };
+        const state = await getSellerAdsState(userId);
+        if (!state.isElite) {
+          return {
+            success: false,
+            requiresElite: true,
+            error: 'Subscribe to Rozare Elite to run ads for your store and featured products.',
+          };
+        }
+
+        if (state.pendingRequests.length) {
+          return {
+            success: false,
+            error: 'You already have an ads request waiting for admin approval.',
+            data: { pendingRequests: state.pendingRequests },
+          };
+        }
+
+        const requestType = ['start', 'update', 'stop'].includes(args.requestType)
+          ? args.requestType
+          : (state.activeRequest?.active ? 'update' : 'start');
+        const includeMeta = isTruthy(args.includeMeta);
+        if (includeMeta && !state.subscription.metaAdsIncluded) {
+          return {
+            success: false,
+            requiresMetaAddon: true,
+            error: 'Meta ads require the Meta ads add-on on your Elite subscription. Open Seller Dashboard > Subscription and select Include Meta ads first.',
+          };
+        }
+
+        if (requestType === 'stop' && !state.activeRequest?.active) {
+          return { success: false, error: 'There is no active ads campaign to stop.' };
+        }
+
+        const productIds = requestType === 'stop' ? [] : resolveAdProductIdsFromState(args, state);
+        if (requestType !== 'stop' && productIds.length === 0) {
+          return {
+            success: false,
+            needsProductSelection: true,
+            error: 'Select at least one active featured product for ads.',
+            data: { featuredProducts: state.featuredProducts },
+          };
+        }
+
+        const store = state.store?._id
+          ? state.store
+          : await Store.findOne({ seller: userId }).select('_id').lean();
+        const products = requestType === 'stop'
+          ? []
+          : await Product.find({
+            seller: userId,
+            isFeatured: true,
+            isBlocked: { $ne: true },
+            moderationStatus: { $ne: 'blocked' },
+            _id: { $in: productIds },
+          }).select('_id name category image images').lean();
+
+        if (requestType !== 'stop' && products.length !== productIds.length) {
+          return {
+            success: false,
+            error: 'Only your active featured products can be selected for ads.',
+            data: { featuredProducts: state.featuredProducts },
+          };
+        }
+
+        const sellerNote = cleanAIParagraph(args.sellerNote || args.note || '', { maxLength: 500 });
+        const request = await SellerAdRequest.create({
+          seller: userId,
+          store: store?._id || null,
+          products: products.map(product => product._id),
+          requestType,
+          status: 'pending',
+          active: false,
+          channels: {
+            tiktok: true,
+            meta: includeMeta,
+          },
+          sellerNote,
+        });
+
+        const populated = await SellerAdRequest.findById(request._id)
+          .populate('products', AD_PRODUCT_SELECT)
+          .populate('store', 'storeName storeSlug logo')
+          .lean();
+
+        return {
+          success: true,
+          data: { request: serializeAdRequest(populated) },
+          message: requestType === 'stop'
+            ? 'Ads stop request sent for admin approval.'
+            : `Ads request sent for admin approval with ${products.length} featured product${products.length !== 1 ? 's' : ''}${includeMeta ? ' for TikTok and Meta' : ' for TikTok'}.`,
+        };
+      }
 
       case 'get_all_users': {
         const { search, role: filterRole, status, page, limit } = args;
