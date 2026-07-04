@@ -839,20 +839,11 @@ const SellerSubscription = () => {
                         </div>
 
                         <div className="space-y-2 mb-5">
-                            <p className="text-xs font-bold mb-2" style={{ color: 'hsl(var(--foreground))' }}>Core Features</p>
+                            <p className="text-xs font-bold mb-2" style={{ color: 'hsl(var(--foreground))' }}>Elite Upgrades</p>
                             {[
-                                { icon: <Store size={13} />, text: 'Store & products visible to all customers' },
-                                { icon: <Package size={13} />, text: 'Unlimited product listings' },
-                                { icon: <CreditCard size={13} />, text: 'Secure payment processing' },
-                                { icon: <Shield size={13} />, text: 'Custom subdomain for your store' },
+                                { icon: <Store size={13} />, text: 'Everything in Starter' },
                                 { icon: <Bot size={13} />, text: '250 AI messages/day' },
-                                { icon: <Users size={13} />, text: 'Order management & insights' },
-                                { icon: <MessageCircle size={13} />, text: 'Manage store, orders & products from WhatsApp via AI' },
-                                { icon: <Bell size={13} />, text: 'WhatsApp notifications for new orders' },
-                                { icon: <MessageCircle size={13} />, text: 'WhatsApp order confirmation' },
-                                { icon: <Palette size={13} />, text: '10 professional store themes' },
                                 { icon: <Sparkles size={13} />, text: 'Featured product highlighting (12 products)' },
-                                { icon: <Megaphone size={13} />, text: 'Rozare runs TikTok ads for your store & featured products' },
                             ].map((f, i) => (
                                 <div key={i} className="flex items-center gap-2.5">
                                     <div className="w-5 h-5 rounded-md flex items-center justify-center shrink-0" style={{ background: 'rgba(16, 185, 129, 0.12)', color: 'hsl(150, 60%, 45%)' }}>
