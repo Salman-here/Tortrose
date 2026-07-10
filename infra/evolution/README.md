@@ -27,6 +27,27 @@ message/update/contact/chat/history persistence disabled and enables
 `ROZARE_SKIP_MESSAGE_UPDATE_WORK=true` to avoid serial queue stalls after an
 inbound webhook has already been emitted.
 
+## Zombie-session watchdog
+
+The Baileys WebSocket can die silently while the instance keeps reporting
+connectionState `open`: every send fails with Boom 428 `Connection Closed`,
+no inbound webhooks arrive, and dashboards still show "connected". Recovery
+is layered:
+
+1. Backend `services/whatsapp/gatewayHealthMonitor.js` probes real socket
+   liveness (an `onWhatsApp` lookup) every 60s and restarts the instance via
+   the Evolution API on a confirmed zombie (restart re-establishes the socket
+   from saved creds — no QR re-scan needed).
+2. `watchdog.sh` (this folder) runs every minute from the `ubuntu` user's
+   crontab on the VM and restarts the `evolution_api` container if the
+   socket stays dead for 3+ checks — this covers failure modes an API-level
+   restart cannot (wedged node process, Prisma/Postgres connectivity loss,
+   hung API). State and logs live in `~/evolution-api/.watchdog/`.
+
+The VM also has a 2 GB swapfile (`/swapfile`, persisted in `/etc/fstab`,
+`vm.swappiness=10`) because memory pressure on the 1 GB instance caused
+Postgres blackouts and socket stalls.
+
 Verification:
 
 1. Check the running image:
