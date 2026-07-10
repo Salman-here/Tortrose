@@ -514,6 +514,10 @@ setTimeout(processSubdomainRemovals, 60000); // 60s after boot
 const { startQueueProcessor } = require('./services/whatsapp/queue');
 startQueueProcessor();
 
+// ── WhatsApp gateway health monitor (detects zombie Baileys sockets) ──
+const { startGatewayHealthMonitor } = require('./services/whatsapp/gatewayHealthMonitor');
+startGatewayHealthMonitor();
+
 // ── Admin broadcast dispatcher (runs every minute on the persistent dyno) ──
 const { processDueBroadcasts } = require('./controllers/notificationController');
 setInterval(() => {

@@ -17,6 +17,11 @@ const {
     rememberInboundRoute,
     resolveOutboundRecipient,
 } = require('./jidRoutingStore');
+const {
+    isZombieGatewayError,
+    isZombieGatewayBody,
+    reportZombieSignal,
+} = require('./gatewayHealth');
 
 // Shared helpers (not instance-specific)
 
@@ -42,11 +47,23 @@ const lowLatencySettings = () => ({
     syncFullHistory: envBool('EVOLUTION_SYNC_FULL_HISTORY', false),
 });
 
-const makeClient = () => axios.create({
-    baseURL: baseUrl(),
-    timeout: 25000,
-    headers: { apikey: apiKey(), 'Content-Type': 'application/json' },
-});
+const makeClient = () => {
+    const instance = axios.create({
+        baseURL: baseUrl(),
+        timeout: 25000,
+        headers: { apikey: apiKey(), 'Content-Type': 'application/json' },
+    });
+    // Surface dead-socket ("Connection Closed") failures to the health monitor
+    // so real traffic errors trigger recovery faster than the periodic probe.
+    instance.interceptors?.response?.use(
+        (response) => response,
+        (err) => {
+            if (isZombieGatewayError(err)) reportZombieSignal('evolution-request');
+            return Promise.reject(err);
+        }
+    );
+    return instance;
+};
 const recentRouteCache = new Map();
 const RECENT_ROUTE_CACHE_TTL_MS = 10 * 60 * 1000;
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -306,11 +323,22 @@ function createEvolutionClient(instanceEnvVar, defaultName) {
 
     const restartInstance = async () => {
         if (!isConfigured()) return { msg: 'not_configured' };
+        // Evolution builds disagree on the verb: v2 docs say PUT, but some
+        // 2.3.x builds only register POST ("Cannot PUT /instance/restart/…").
+        // Try PUT first and fall back to POST on 404.
         try {
             const { data } = await client().put(`/instance/restart/${instanceName()}`);
             return data;
-        } catch (err) {
-            return { error: err.response?.data || err.message };
+        } catch (putErr) {
+            if (putErr.response?.status !== 404) {
+                return { error: putErr.response?.data || putErr.message };
+            }
+            try {
+                const { data } = await client().post(`/instance/restart/${instanceName()}`);
+                return data;
+            } catch (postErr) {
+                return { error: postErr.response?.data || postErr.message };
+            }
         }
     };
 
@@ -484,6 +512,33 @@ function createEvolutionClient(instanceEnvVar, defaultName) {
         return data;
     };
 
+    // Active liveness probe for the Baileys socket. connectionState can report
+    // "open" while the underlying WebSocket is dead (zombie session), so we
+    // issue a real socket operation (an onWhatsApp lookup) and classify the
+    // failure shape. Returns { ok, zombie, error }.
+    const probeSocketHealth = async (number) => {
+        if (!isConfigured()) return { ok: false, zombie: false, error: 'not_configured' };
+        const clean = String(number || '').replace(/\D/g, '');
+        if (!clean) return { ok: false, zombie: false, error: 'no_probe_number' };
+        try {
+            const { data } = await client().post(`/chat/whatsappNumbers/${instanceName()}`, {
+                numbers: [clean],
+            });
+            if (Array.isArray(data)) return { ok: true, zombie: false };
+            // Some builds return the Boom error body with HTTP 200.
+            if (isZombieGatewayBody(data)) {
+                reportZombieSignal('health-probe');
+                return { ok: false, zombie: true, error: 'connection_closed' };
+            }
+            return { ok: false, zombie: false, error: `unexpected_response:${JSON.stringify(data).slice(0, 120)}` };
+        } catch (err) {
+            if (isZombieGatewayError(err)) {
+                return { ok: false, zombie: true, error: 'connection_closed' };
+            }
+            return { ok: false, zombie: false, error: err.response?.status ? `http_${err.response.status}` : err.message };
+        }
+    };
+
     const checkWhatsAppNumber = async (number) => {
         if (!isConfigured()) return null;
         const clean = String(number || '').replace(/\D/g, '');
@@ -519,6 +574,7 @@ function createEvolutionClient(instanceEnvVar, defaultName) {
         setWebhook,
         setSettings,
         checkWhatsAppNumber,
+        probeSocketHealth,
         isConfigured,
         instanceName,
     };
