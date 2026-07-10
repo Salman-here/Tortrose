@@ -424,7 +424,7 @@ function DocsPage() {
                   <li><strong>Payments</strong> — Link your bank account, track Stripe withdrawable balance, COD delivered revenue, total revenue, estimated revenue, and withdrawal requests.</li>
                   <li><strong>Coupons</strong> — Create, toggle, edit, and delete discount coupons.</li>
                   <li><strong>Analytics</strong> — Revenue charts, order trends, top products, status pie chart, growth metrics with period comparison.</li>
-                  <li><strong>Store Settings</strong> — Update store name, description, logo, banner, return &amp; warranty policy, social links.</li>
+                  <li><strong>Store Settings</strong> — Update store name, description, logo, banner, payment options, return &amp; warranty policy, social links.</li>
                   <li><strong>Shipping</strong> — Configure shipping methods and per-method costs &amp; delivery times.</li>
                   <li><strong>Tax</strong> — View applied platform tax (set platform-wide, applied at checkout).</li>
                   <li><strong>WhatsApp</strong> — Connect and verify your WhatsApp number, choose which notifications to receive.</li>
@@ -611,9 +611,13 @@ function DocsPage() {
               <DocSection id="payments" title="Payments & Checkout" icon={CreditCard}>
                 <h3>Payment methods</h3>
                 <ul>
-                  <li><strong>Cash on Delivery (COD)</strong> — Pay when your order arrives. Available in supported regions.</li>
                   <li><strong>Stripe</strong> — Secure card payments via Stripe (Visa, Mastercard, Amex, and more).</li>
+                  <li><strong>Cash on Delivery (COD)</strong> — Pay when your order arrives, only when every seller in your cart allows COD.</li>
                 </ul>
+                <p>Sellers control COD from Seller Dashboard → Store Settings → Payment Options. Stores default to both Stripe/card and COD. A seller can switch to advance payment only, which means buyers must pay online for that seller's products.</p>
+                <InfoBox type="info" title="Mixed-seller carts">
+                  A checkout has one payment method for the full order. If your cart contains even one seller that requires advance online payment, Cash on Delivery is disabled for the whole checkout and you must pay by card. Remove advance-only seller items if you want to use COD for the remaining sellers.
+                </InfoBox>
 
                 <h3>Two checkout experiences</h3>
                 <ul>
@@ -625,7 +629,7 @@ function DocsPage() {
                 <p>Tax is calculated at checkout based on platform settings. Shipping costs come from the seller's chosen shipping method. Both are clearly displayed before you confirm.</p>
 
                 <h3>For sellers: receiving payments</h3>
-                <p>Sellers do not need to configure card payments for their stores. Rozare already provides buyer card checkout through Stripe. When a buyer pays by card, the payment is processed by Rozare and the seller can track the earned Stripe revenue in Seller Dashboard - Payments.</p>
+                <p>Sellers do not need to configure card payments for their stores. Rozare already provides buyer card checkout through Stripe. Sellers only choose whether COD is also allowed. When a buyer pays by card, the payment is processed by Rozare and the seller can track the earned Stripe revenue in Seller Dashboard - Payments.</p>
                 <ul>
                   <li><strong>Stripe balance</strong> - Delivered, Stripe-paid order revenue becomes withdrawable after existing withdrawal requests are reserved.</li>
                   <li><strong>COD revenue</strong> - Cash on Delivery payments and shipping are handled by the seller directly. Rozare shows delivered COD revenue for reporting, but it is not withdrawn through Rozare.</li>
@@ -809,7 +813,7 @@ function DocsPage() {
                 <FAQItem q="Does Rozare have a mobile app?" a="Rozare includes a React Native / Expo mobile app experience for iOS and Android with shopping, selling, AI chat, push notifications, voice search, and the same core marketplace workflows." />
                 <FAQItem q="How does the AI know about my store?" a="The AI calls secure server-side tools that read and write only your store's data. Other sellers cannot see your data, and you cannot see theirs." />
                 <FAQItem q="Is my data safe?" a="Yes. All traffic is encrypted (HTTPS). Authentication uses JWT tokens. Personal data is never sold or shared with third parties outside what's required to fulfil your order." />
-                <FAQItem q="What payment methods are available?" a="Currently Cash on Delivery and Stripe (Visa, Mastercard, Amex and more). Additional methods are added over time." />
+                <FAQItem q="What payment methods are available?" a="Stripe card checkout is always the online payment option. Cash on Delivery is available only when every seller in the cart allows COD. If any seller requires advance online payment, the full checkout becomes card-only." />
                 <FAQItem q="How do sellers receive Stripe payments?" a="Sellers add their bank details in Seller Dashboard - Payments. Delivered Stripe-paid order revenue becomes withdrawable, then the seller sends a withdrawal request for admin review. COD payments are handled by the seller directly." />
                 <FAQItem q="What's the difference between Starter and Elite?" a="Both plans include unlimited listings, unlimited seller AI chat, a custom subdomain, WhatsApp store management, new-order WhatsApp notifications, 10 professional store themes, and the core marketplace features. Elite adds customizable store themes, the smart description generator with AI, advanced analytics, smart tag AI, coupon and bulk tools permanently, priority support, 12 featured products (vs 6), and Rozare-run TikTok ads. Meta ads can be added to Elite for $4/month." />
                 <FAQItem q="What happens after my 15-day free trial ends?" a="If you don't subscribe, your store and products are temporarily hidden until you subscribe — your data is preserved. Subscribe to Starter or Elite to instantly reactivate everything, with the plan's free intro period applied when eligible." />

@@ -7,6 +7,7 @@ const jwt = require('jsonwebtoken');
 const shippingRoutes = require('../../routes/shippingRoutes');
 const Product = require('../../models/Product');
 const ShippingMethod = require('../../models/ShippingMethod');
+const Store = require('../../models/Store');
 const User = require('../../models/User');
 
 let mongoServer;
@@ -38,6 +39,7 @@ afterEach(async () => {
   await Promise.all([
     Product.deleteMany({}),
     ShippingMethod.deleteMany({}),
+    Store.deleteMany({}),
     User.deleteMany({}),
   ]);
 });
@@ -85,6 +87,13 @@ describe('shipping currency', () => {
 
   test('returns native shipping currency for checkout', async () => {
     const seller = await createSeller();
+    await Store.create({
+      seller: seller._id,
+      storeName: 'Advance Bags',
+      storeSlug: `advance-bags-${Date.now()}`,
+      paymentPolicy: 'advance_only',
+      visibility: { mode: 'global' },
+    });
     const product = await Product.create({
       name: 'Native Shipping Product',
       description: 'Product for checkout shipping currency',
@@ -115,6 +124,11 @@ describe('shipping currency', () => {
       cost: 500,
       currency: 'PKR',
       costCurrency: 'PKR',
+    });
+    expect(res.body.shippingMethods[seller._id.toString()]).toMatchObject({
+      paymentPolicy: 'advance_only',
+      allowsCashOnDelivery: false,
+      store: expect.objectContaining({ storeName: 'Advance Bags' }),
     });
   });
 
@@ -147,6 +161,10 @@ describe('shipping currency', () => {
       costInputAmount: 0,
       deliveryDays: 5,
       isActive: true,
+    });
+    expect(res.body.shippingMethods[seller._id.toString()]).toMatchObject({
+      paymentPolicy: 'online_and_cod',
+      allowsCashOnDelivery: true,
     });
   });
 });

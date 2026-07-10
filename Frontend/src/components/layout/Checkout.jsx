@@ -462,6 +462,22 @@ export default function Checkout() {
     return grouped;
   }, [cartItems]);
 
+  const codRestrictedSellers = useMemo(() => (
+    Object.entries(sellerShippingMethods)
+      .filter(([, sellerData]) => sellerData?.allowsCashOnDelivery === false)
+      .map(([, sellerData]) => sellerData?.store?.storeName || sellerData?.seller?.username || 'A seller')
+  ), [sellerShippingMethods]);
+  const isCashOnDeliveryAvailable = codRestrictedSellers.length === 0;
+  const codRestrictionText = codRestrictedSellers.length > 0
+    ? `Cash on Delivery is unavailable because ${codRestrictedSellers.join(', ')} ${codRestrictedSellers.length === 1 ? 'requires' : 'require'} advance online payment.`
+    : '';
+
+  useEffect(() => {
+    if (!isCashOnDeliveryAvailable && paymentMethod === 'cash_on_delivery') {
+      setValue('paymentMethod', 'stripe', { shouldDirty: true, shouldValidate: true });
+    }
+  }, [isCashOnDeliveryAvailable, paymentMethod, setValue]);
+
   // Prevent Enter key from submitting the form
   const handleKeyDown = (e) => {
     if (e.key === "Enter") {
@@ -521,6 +537,10 @@ export default function Checkout() {
 
   // Final form submit
   const onPlaceOrder = async (data) => {
+    if (data.paymentMethod === 'cash_on_delivery' && !isCashOnDeliveryAvailable) {
+      toast.error(`${codRestrictionText} Please pay by card or remove those items.`);
+      return;
+    }
     // Validate shipping method is selected for all sellers
     const sellerIds = Object.keys(sellerShippingMethods);
     const hasAllShippingSelected = sellerIds.every(sellerId => selectedShippingPerSeller[sellerId]);
@@ -1351,6 +1371,15 @@ export default function Checkout() {
                       Payment Method
                     </h2>
 
+                    {!isCashOnDeliveryAvailable && (
+                      <div className="rounded-xl p-4 mb-5" style={{ background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.22)' }}>
+                        <p className="text-sm font-semibold" style={{ color: 'hsl(220, 70%, 45%)' }}>Advance payment required</p>
+                        <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                          {codRestrictionText} This checkout must be paid online through Stripe.
+                        </p>
+                      </div>
+                    )}
+
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
                       <PaymentOption
                         value="stripe"
@@ -1366,6 +1395,8 @@ export default function Checkout() {
                         description="Pay when you receive your order"
                         icon={<DollarSign className="w-6 h-6" />}
                         selected={paymentMethod === "cash_on_delivery"}
+                        disabled={!isCashOnDeliveryAvailable}
+                        disabledReason={codRestrictionText}
                         {...register("paymentMethod")}
                       />
                     </div>
@@ -1793,14 +1824,15 @@ const ShippingOption = React.forwardRef(({ value, title, price, days, selected, 
   </label>
 ));
 
-const PaymentOption = React.forwardRef(({ value, title, description, icon, selected, ...props }, ref) => (
-  <label className={`glass-inner rounded-xl p-4 cursor-pointer transition-all ${selected ? "ring-2" : "hover:bg-white/10"}`}
+const PaymentOption = React.forwardRef(({ value, title, description, icon, selected, disabled, disabledReason, ...props }, ref) => (
+  <label className={`glass-inner rounded-xl p-4 transition-all ${disabled ? "opacity-60 cursor-not-allowed" : "cursor-pointer"} ${selected ? "ring-2" : disabled ? "" : "hover:bg-white/10"}`}
     style={{ ringColor: selected ? 'hsl(220, 70%, 55%)' : undefined }}>
     <input
       type="radio"
       value={value}
       ref={ref}
       className="sr-only"
+      disabled={disabled}
       {...props}
     />
     <div className="flex items-start gap-3">
@@ -1810,6 +1842,9 @@ const PaymentOption = React.forwardRef(({ value, title, description, icon, selec
       <div>
         <h4 className="font-medium text-sm sm:text-base" style={{ color: 'hsl(var(--foreground))' }}>{title}</h4>
         <p className="text-xs sm:text-sm mt-0.5" style={{ color: 'hsl(var(--muted-foreground))' }}>{description}</p>
+        {disabled && disabledReason && (
+          <p className="text-[11px] mt-1" style={{ color: 'hsl(30, 90%, 45%)' }}>{disabledReason}</p>
+        )}
       </div>
     </div>
   </label>

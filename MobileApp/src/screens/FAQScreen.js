@@ -29,7 +29,7 @@ const faqCategories = [
     category: 'Payments',
     icon: 'card-outline',
     questions: [
-      { q: 'What payment methods are accepted?', a: 'We accept all major credit/debit cards through Stripe. Apple Pay and Google Pay are also supported.' },
+      { q: 'What payment methods are accepted?', a: 'Stripe card checkout is available for online payment. Cash on Delivery is available only when every seller in the cart allows COD. If any seller requires advance online payment, checkout becomes card-only.' },
       { q: 'Is my payment information secure?', a: 'Payments are processed through Stripe where available, and Rozare does not store your card details.' },
       { q: 'Are there any hidden fees?', a: 'No hidden fees. The price you see includes all applicable taxes (calculated at checkout). Shipping costs are shown before you confirm.' },
     ],

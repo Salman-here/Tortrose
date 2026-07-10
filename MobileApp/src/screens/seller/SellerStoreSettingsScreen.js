@@ -50,7 +50,7 @@ export default function SellerStoreSettingsScreen({ navigation }) {
   const [saving, setSaving] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [store, setStore] = useState(null);
-  const [formData, setFormData] = useState({ storeName: '', description: '', sellerType: 'store' });
+  const [formData, setFormData] = useState({ storeName: '', description: '', sellerType: 'store', paymentPolicy: 'online_and_cod' });
   const [logo, setLogo] = useState(null);
   const [banner, setBanner] = useState(null);
   const [errors, setErrors] = useState({});
@@ -71,7 +71,12 @@ export default function SellerStoreSettingsScreen({ navigation }) {
       const response = await api.get('/api/stores/my-store');
       const storeData = response.data?.store || response.data;
       setStore(storeData);
-      setFormData({ storeName: storeData?.name || storeData?.storeName || '', description: storeData?.description || '', sellerType: storeData?.sellerType || 'store' });
+      setFormData({
+        storeName: storeData?.name || storeData?.storeName || '',
+        description: storeData?.description || '',
+        sellerType: storeData?.sellerType || 'store',
+        paymentPolicy: storeData?.paymentPolicy || 'online_and_cod',
+      });
       setLogo(storeData?.logo || null);
       setBanner(storeData?.banner || null);
       setVisibility(storeData?.visibility || { mode: 'country', country: storeData?.address?.country || '', countryCode: storeData?.address?.countryCode || '', region: storeData?.address?.state || '', regionCode: storeData?.address?.stateCode || '', city: storeData?.address?.city || '', town: '' });
@@ -139,7 +144,14 @@ export default function SellerStoreSettingsScreen({ navigation }) {
     if (!formData.storeName.trim()) { setErrors({ storeName: 'Store name is required' }); return; }
     setSaving(true);
     try {
-      await api.put('/api/stores/update', { storeName: formData.storeName.trim(), description: formData.description.trim(), sellerType: formData.sellerType || 'store', logo, banner });
+      await api.put('/api/stores/update', {
+        storeName: formData.storeName.trim(),
+        description: formData.description.trim(),
+        sellerType: formData.sellerType || 'store',
+        paymentPolicy: formData.paymentPolicy || 'online_and_cod',
+        logo,
+        banner,
+      });
       Alert.alert('Success', 'Store settings saved successfully');
     } catch (error) { Alert.alert('Error', error.response?.data?.message || 'Failed to save settings'); }
     finally { setSaving(false); }
@@ -331,6 +343,31 @@ export default function SellerStoreSettingsScreen({ navigation }) {
                   <Text style={{ color: active ? palette.colors.primary : palette.colors.textSecondary, fontWeight: '600' }}>
                     {t === 'brand' ? 'Brand' : 'Store'}
                   </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          <Text style={[styles.label, { marginTop: spacing.lg }]}>Payment Options</Text>
+          <Text style={styles.helperText}>Choose whether buyers can pay on delivery for your products.</Text>
+          <View style={styles.paymentPolicyGrid}>
+            {[
+              { value: 'online_and_cod', title: 'Online + COD', desc: 'Buyers can choose card or Cash on Delivery.', icon: 'cash-outline' },
+              { value: 'advance_only', title: 'Advance only', desc: 'Buyers must pay online before the order is sent to you.', icon: 'card-outline' },
+            ].map((option) => {
+              const active = (formData.paymentPolicy || 'online_and_cod') === option.value;
+              return (
+                <TouchableOpacity
+                  key={option.value}
+                  style={[styles.paymentPolicyCard, active && styles.paymentPolicyCardActive]}
+                  onPress={() => updateField('paymentPolicy', option.value)}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name={option.icon} size={18} color={active ? palette.colors.primary : palette.colors.textSecondary} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.paymentPolicyTitle, active && { color: palette.colors.primary }]}>{option.title}</Text>
+                    <Text style={styles.paymentPolicyDesc}>{option.desc}</Text>
+                  </View>
                 </TouchableOpacity>
               );
             })}
@@ -589,6 +626,11 @@ const buildStyles = (p) => StyleSheet.create({
   visibilityModeLabel: { ...typography.bodySemibold, color: p.colors.text },
   visibilityModeDesc: { ...typography.caption, color: p.colors.textSecondary, marginTop: 2 },
   visibilityFields: { marginTop: spacing.md, paddingTop: spacing.md, borderTopWidth: 1, borderTopColor: p.glass.borderSubtle },
+  paymentPolicyGrid: { gap: spacing.sm },
+  paymentPolicyCard: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, padding: spacing.md, borderRadius: borderRadius.lg, backgroundColor: p.glass.bgSubtle, borderWidth: 1, borderColor: p.glass.borderSubtle },
+  paymentPolicyCardActive: { borderColor: p.colors.primary, backgroundColor: `${p.colors.primary}12` },
+  paymentPolicyTitle: { ...typography.bodySemibold, color: p.colors.text },
+  paymentPolicyDesc: { ...typography.caption, color: p.colors.textSecondary, marginTop: 2 },
   comingSoonPill: { paddingHorizontal: spacing.sm, paddingVertical: spacing.xs, borderRadius: borderRadius.full, backgroundColor: `${p.colors.warning}14`, borderWidth: 1, borderColor: `${p.colors.warning}28` },
   comingSoonText: { ...typography.caption, color: p.colors.warning, fontWeight: fontWeight.bold },
   themeGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },

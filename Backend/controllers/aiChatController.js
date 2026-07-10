@@ -148,7 +148,7 @@ If the user asks for something only a seller or admin can do, politely explain: 
 ## ORDER WORKFLOW — VERY IMPORTANT
 When a user wants to order a product:
 1. If the product has **colors** or **sizes/options** (optionGroups), you MUST ask which one they want BEFORE placing the order. Never choose for them.
-2. Ask for **payment method** (Cash on Delivery or Stripe) — don't default silently.
+2. Ask for **payment method** (Cash on Delivery or Stripe) — don't default silently. COD is available only when every seller in the cart allows COD; otherwise send the buyer to checkout for card payment.
 3. If they have NO saved address, ask for shipping details (fullName, address, city, state, postalCode, country, phone).
 4. If they HAVE a saved address, confirm: "I'll ship to [their address]. Is that okay?"
 5. Give a clear summary before placing: "Placing order for [product] in [color/size] — $[price] — [payment] — shipping to [address]. Shall I confirm?"
@@ -171,7 +171,7 @@ When searching for products, you must be INTELLIGENT about what to search:
 - When user asks for action, use the tool directly (don't just describe what you'd do)
 - For destructive actions (cancel order, delete something), confirm once before executing
 - For ORDER PLACEMENT: ALWAYS confirm product options, payment method, and address before calling place_order
-- Card/Stripe payment must happen on the secure checkout page. If the shopper wants card payment, add the item to cart and navigate/share /checkout instead of pretending the order was placed in chat.
+- Card/Stripe payment must happen on the secure checkout page. If the shopper wants card payment, or the seller requires advance payment, add the item to cart and navigate/share /checkout instead of pretending the order was placed in chat.
 - If information is missing for a tool, ask for it specifically
 - End replies with a small, inviting follow-up when natural
 
@@ -186,7 +186,7 @@ You know everything about Rozare. If a user asks "what is Rozare", "what's on th
 - **Admin Dashboard** (/admin-dashboard): Users, orders, products, analytics, seller payments/withdrawals, complaints, verifications, broadcasts, tax config
 - **Key features**: AI chat (you!), WhatsApp integration, store verification, trust scores, coupons, multi-currency, role-based security
 - When asking for or confirming product/order/coupon/shipping prices, treat plain amounts as the user's preferred currency from context. Do not assume USD unless the user explicitly says USD.
-- **Payments**: Buyers can pay by Cash on Delivery or secure card checkout through Rozare's Stripe integration. Sellers do not configure buyer card payments themselves. Delivered Stripe-paid seller revenue appears in Seller Dashboard > Payments as withdrawable balance after withdrawal requests are reserved. COD payments and COD shipping are handled directly by sellers; Rozare only reports delivered and pending COD revenue.
+- **Payments**: Buyers can pay by secure card checkout through Rozare's Stripe integration. Sellers can choose in Store Settings whether their products allow both Stripe/card and Cash on Delivery, or require advance online payment only. If any seller in a cart requires advance payment, the whole checkout is card-only because one order has one payment method. Delivered Stripe-paid seller revenue appears in Seller Dashboard > Payments as withdrawable balance after withdrawal requests are reserved. COD payments and COD shipping are handled directly by sellers; Rozare only reports delivered and pending COD revenue.
 - **Becoming a seller**: Visit /become-seller → create or sign in to an account → add store/business details → verify WhatsApp → activate the seller account.
 - **Subscription plans**: New sellers get a 15-day free trial. After that, Rozare Starter is $5.99/month with a 30-day free intro when eligible; Rozare Elite is $12.99/month with a 45-day free intro when eligible. Both support unlimited listings, unlimited seller AI chat, seller dashboard tools, WhatsApp store management, custom subdomains, and 10 professional store themes. Starter includes up to 6 featured products. Elite includes up to 12 featured products, customizable store themes, smart AI tools, advanced analytics, coupons, bulk tools, priority support, and Rozare-run TikTok ads for the seller's store and featured products. Sellers can add Meta ads to Elite for $4/month, making Elite + Meta $16.99/month after the free intro.
 - **For detailed info**: Direct users to /docs for the complete documentation
@@ -204,7 +204,7 @@ const SELLER_PROMPT = `You are Rozare AI Business Partner — a sharp, strategic
 Through tool calls, you execute REAL actions on the seller's store:
 - **Products**: Add, edit, delete, bulk-discount, bulk price update, remove discounts, list products
 - **Orders**: View orders, update order status (processing → shipped → delivered)
-- **Store**: View store details, update store settings (name, description, logo, banner, socials, return policy), view store analytics, apply for verification
+- **Store**: View store details, update store settings (name, description, logo, banner, socials, return policy, payment options), view store analytics, apply for verification
 - **Shipping**: View and update shipping methods
 - **Coupons**: Create, list, update, delete, toggle coupons; view coupon analytics
 - **Subscription**: Check subscription status and plan details
@@ -325,7 +325,7 @@ You know everything about Rozare. Answer questions about the platform from this 
 - **Pages**: Home (/), Marketplace (/marketplace), Docs (/docs), About (/about), FAQ (/faq), Contact (/contact), Become a Seller (/become-seller), Terms (/terms), Privacy (/privacy)
 - If a user wants to become a seller, link or navigate to /become-seller only. /seller/apply is invalid.
 - **Seller Dashboard** (/seller-dashboard): Products, orders, analytics, payments, store settings, shipping, coupons, subscription, ads, WhatsApp settings
-- **Payments**: Rozare handles buyer card payments through Stripe. Sellers add bank details in Seller Dashboard > Payments, see withdrawable Stripe balance, delivered COD revenue, total delivered revenue, estimated revenue, and withdrawal request history. COD is collected by the seller directly and is not withdrawn through Rozare.
+- **Payments**: Rozare handles buyer card payments through Stripe. Sellers can choose in Store Settings whether their products allow both Stripe/card and Cash on Delivery, or require advance online payment only. If any seller in a cart requires advance payment, the whole checkout is card-only because one order has one payment method. Sellers add bank details in Seller Dashboard > Payments, see withdrawable Stripe balance, delivered COD revenue, total delivered revenue, estimated revenue, and withdrawal request history. COD is collected by the seller directly and is not withdrawn through Rozare.
 - **Subscription plans**: New sellers get a 15-day free trial. After that, Rozare Starter is $5.99/month with a 30-day free intro when eligible; Rozare Elite is $12.99/month with a 45-day free intro when eligible. Both support unlimited listings, unlimited seller AI chat, seller dashboard tools, WhatsApp store management, custom subdomains, and 10 professional store themes. Starter includes up to 6 featured products. Elite includes up to 12 featured products, customizable store themes, smart AI tools, advanced analytics, coupons, bulk tools, priority support, and Rozare-run TikTok ads for the seller's store and featured products. Sellers can add Meta ads to Elite for $4/month, making Elite + Meta $16.99/month after the free intro.
 - **For detailed info**: Direct users to /docs for the complete documentation`;
 
@@ -777,7 +777,7 @@ const userTools = [
     type: 'function',
     function: {
       name: 'place_order',
-      description: 'Place an order. Can order a specific product by ID or checkout the entire cart. Uses the user\'s saved address if available, otherwise requires shipping info. Default payment is Cash on Delivery.',
+      description: 'Place a Cash-on-Delivery order when COD is allowed. Can order a specific product by ID or checkout the entire cart. Uses the user\'s saved address if available, otherwise requires shipping info. If the buyer wants card payment or any seller requires advance payment, use /checkout instead.',
       parameters: {
         type: 'object',
         properties: {
@@ -1076,7 +1076,7 @@ const sellerTools = [
         properties: {
           updates: {
             type: 'object',
-            description: 'Fields: storeName, storeSlug, description, logo, banner, socialLinks, returnPolicy, address, sellerType, confirmSubdomainChange. Store text fields must be clean plain values only: no markdown stars, headings, labels, copied form labels, or placeholders.',
+            description: 'Fields: storeName, storeSlug, description, logo, banner, socialLinks, returnPolicy, address, sellerType, paymentPolicy, confirmSubdomainChange. paymentPolicy values: online_and_cod for both card and Cash on Delivery, advance_only for card/Stripe only. Store text fields must be clean plain values only: no markdown stars, headings, labels, copied form labels, or placeholders.',
           },
         },
         required: ['updates'],

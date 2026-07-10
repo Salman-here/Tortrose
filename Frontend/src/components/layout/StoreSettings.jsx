@@ -305,6 +305,7 @@ const StoreSettings = () => {
 
     const [storeData, setStoreData] = useState({
         storeName: '', description: '', logo: '', banner: '', storeSlug: '', sellerType: 'store',
+        paymentPolicy: 'online_and_cod',
         storeTheme: { themeId: DEFAULT_STORE_THEME_ID, customTheme: null },
         visibility: DEFAULT_VISIBILITY,
         address: { street: '', city: '', state: '', stateCode: '', country: '', countryCode: '', postalCode: '' },
@@ -352,6 +353,7 @@ const StoreSettings = () => {
                 storeName: sName, description: res.data.store.description || '',
                 logo: res.data.store.logo || '', banner: res.data.store.banner || '', storeSlug: slug,
                 sellerType: sType,
+                paymentPolicy: res.data.store.paymentPolicy || 'online_and_cod',
                 storeTheme: normalizeThemeSelection(res.data.store.storeTheme),
                 visibility: normalizeVisibilityForm(res.data.store.visibility, address),
                 address,
@@ -674,6 +676,7 @@ const StoreSettings = () => {
             toast.success('Store deleted'); setHasStore(false);
             setStoreData({
                 storeName: '', description: '', logo: '', banner: '', storeSlug: '', sellerType: 'store',
+                paymentPolicy: 'online_and_cod',
                 storeTheme: { themeId: DEFAULT_STORE_THEME_ID, customTheme: null },
                 visibility: DEFAULT_VISIBILITY,
                 address: { street: '', city: '', state: '', stateCode: '', country: '', countryCode: '', postalCode: '' },
@@ -935,6 +938,54 @@ const StoreSettings = () => {
                                 </div>
                             </div>
                         )}
+                    </div>
+
+                    {/* Payment Options */}
+                    <div style={{ borderTop: '1px solid var(--glass-border)', paddingTop: '1.5rem' }}>
+                        <div className="flex items-center gap-2 mb-2">
+                            <CreditCard size={18} style={{ color: 'hsl(220, 70%, 55%)' }} />
+                            <h3 className="text-lg font-bold" style={{ color: 'hsl(var(--foreground))' }}>Payment Options</h3>
+                        </div>
+                        <p className="text-sm mb-4" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                            Choose whether buyers can use Cash on Delivery for your products. If you require advance payment, checkout will force card payment for any cart containing your products.
+                        </p>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            {[
+                                {
+                                    value: 'online_and_cod',
+                                    title: 'Online payment + COD',
+                                    desc: 'Buyers can choose card payment or Cash on Delivery.',
+                                    Icon: DollarSign,
+                                },
+                                {
+                                    value: 'advance_only',
+                                    title: 'Advance payment only',
+                                    desc: 'Buyers must pay online before the order is sent to you.',
+                                    Icon: CreditCard,
+                                },
+                            ].map(option => {
+                                const active = (storeData.paymentPolicy || 'online_and_cod') === option.value;
+                                const Icon = option.Icon;
+                                return (
+                                    <button
+                                        key={option.value}
+                                        type="button"
+                                        disabled={blockedInfo.blocked}
+                                        onClick={() => setStoreData(prev => ({ ...prev, paymentPolicy: option.value }))}
+                                        className="p-4 rounded-xl text-left transition-all border disabled:opacity-60"
+                                        style={{
+                                            background: active ? 'linear-gradient(135deg, hsla(220,70%,55%,0.15), hsla(180,70%,45%,0.12))' : 'var(--glass-inner)',
+                                            borderColor: active ? 'hsl(220, 70%, 55%)' : 'var(--glass-border)',
+                                        }}
+                                    >
+                                        <div className="flex items-center gap-2 font-bold text-sm" style={{ color: active ? 'hsl(220, 70%, 55%)' : 'hsl(var(--foreground))' }}>
+                                            <Icon size={15} /> {option.title}
+                                        </div>
+                                        <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>{option.desc}</p>
+                                    </button>
+                                );
+                            })}
+                        </div>
                     </div>
 
                     {/* Store Name */}

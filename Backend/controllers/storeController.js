@@ -35,6 +35,10 @@ const {
     isStoreVisibleToBuyer,
     normalizeStoreVisibility,
 } = require('../services/storeVisibilityService');
+const {
+    normalizeStorePaymentPolicy,
+    PAYMENT_POLICY_LABELS,
+} = require('../services/storePaymentPolicyService');
 
 const comparablePriceUSD = (product) =>
     convertAmountSync(getProductEffectivePrice(product), getProductCurrency(product), 'USD');
@@ -202,7 +206,7 @@ exports.checkSubdomainAvailability = async (req, res) => {
 // Create a new store
 exports.createStore = async (req, res) => {
     try {
-        const { storeName, storeSlug, description, logo, banner, socialLinks, address, returnPolicy, sellerType, storeTheme, visibility } = req.body;
+        const { storeName, storeSlug, description, logo, banner, socialLinks, address, returnPolicy, sellerType, storeTheme, visibility, paymentPolicy } = req.body;
         const sellerId = req.user.id;
 
         // Check if seller already has a store
@@ -273,6 +277,8 @@ exports.createStore = async (req, res) => {
             productCurrency: normalizeProductCurrency(req.body.productCurrency || sellerDefaultProductCurrency({ address: initialAddress }, seller)),
             productCurrencyStatus: 'active',
             storeTheme: normalizedStoreTheme,
+            paymentPolicy: normalizeStorePaymentPolicy(paymentPolicy),
+            paymentPolicyUpdatedAt: paymentPolicy !== undefined ? new Date() : null,
             visibility: normalizeStoreVisibility(visibility, {
                 store: { address: initialAddress },
                 seller,
@@ -444,7 +450,7 @@ exports.cancelProductCurrencyChange = async (req, res) => {
 // Update store
 exports.updateStore = async (req, res) => {
     try {
-        const { storeName, storeSlug, description, logo, banner, socialLinks, address, returnPolicy, sellerType, storeTheme, visibility } = req.body;
+        const { storeName, storeSlug, description, logo, banner, socialLinks, address, returnPolicy, sellerType, storeTheme, visibility, paymentPolicy } = req.body;
         const sellerId = req.user.id;
 
         // Find seller's store
@@ -462,9 +468,11 @@ exports.updateStore = async (req, res) => {
             sellerType !== (store.sellerType || 'store');
         const wantsThemeChange = storeTheme !== undefined;
         const wantsVisibilityChange = visibility !== undefined;
+        const wantsPaymentPolicyChange = paymentPolicy !== undefined &&
+            normalizeStorePaymentPolicy(paymentPolicy) !== normalizeStorePaymentPolicy(store.paymentPolicy);
 
         // Block changes while the store is blocked (subscription ended)
-        if ((wantsNameChange || wantsSlugChange || wantsTypeChange || wantsThemeChange || wantsVisibilityChange) && store.isActive === false) {
+        if ((wantsNameChange || wantsSlugChange || wantsTypeChange || wantsThemeChange || wantsVisibilityChange || wantsPaymentPolicyChange) && store.isActive === false) {
             return res.status(423).json({
                 msg: 'Your store is blocked. Reactivate your subscription before changing this.',
                 blocked: true,
@@ -574,6 +582,10 @@ exports.updateStore = async (req, res) => {
             if (wantsTypeChange) store.lastTypeChangeAt = new Date();
             store.sellerType = sellerType;
         }
+        if (paymentPolicy !== undefined) {
+            store.paymentPolicy = normalizeStorePaymentPolicy(paymentPolicy);
+            store.paymentPolicyUpdatedAt = new Date();
+        }
         if (socialLinks !== undefined) {
             console.log('Updating socialLinks:', socialLinks);
             store.socialLinks = normalizeSocialLinks(socialLinks);
@@ -633,7 +645,8 @@ exports.updateStore = async (req, res) => {
 
         res.status(200).json({
             msg: 'Store updated successfully',
-            store
+            store,
+            paymentPolicyLabel: PAYMENT_POLICY_LABELS[normalizeStorePaymentPolicy(store.paymentPolicy)],
         });
     } catch (error) {
         console.error('Update store error:', error);

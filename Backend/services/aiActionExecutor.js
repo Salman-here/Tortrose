@@ -64,6 +64,7 @@ const {
   getActiveSellerIds,
   isProductSellerPubliclyActive,
 } = require('./publicCatalogService');
+const { storeAllowsCashOnDelivery } = require('./storePaymentPolicyService');
 
 // ─── Client-side tools: rendered by frontend, not executed here ───
 const CLIENT_SIDE_TOOLS = new Set([
@@ -2110,6 +2111,24 @@ async function executeToolCall(toolName, args = {}, user) {
         }
 
         if (orderItems.length === 0) return { success: false, error: 'No items to order.' };
+        const sellerIds = [...new Set(productItems.map(p => normalizeObjectIdString(p.seller)).filter(Boolean))];
+        const sellerStores = await Store.find({ seller: { $in: sellerIds }, isActive: true })
+          .select('seller storeName paymentPolicy')
+          .lean();
+        const sellerStoreById = new Map(sellerStores.map(store => [normalizeObjectIdString(store.seller), store]));
+        const codRestrictedStores = sellerIds
+          .map(sellerId => sellerStoreById.get(sellerId))
+          .filter(store => store && !storeAllowsCashOnDelivery(store));
+        if (normalizedPaymentMethod === 'cash_on_delivery' && codRestrictedStores.length > 0) {
+          const names = codRestrictedStores.map(store => store.storeName || 'a seller');
+          return {
+            success: false,
+            needsPaymentCheckout: true,
+            requiresAdvancePayment: true,
+            error: `Cash on Delivery is not available because ${names.join(', ')} ${names.length === 1 ? 'requires' : 'require'} advance online payment. Please use secure card checkout.`,
+            data: { checkoutRoute: '/checkout', advanceOnlySellers: names },
+          };
+        }
 
         for (const item of orderItems) {
           const product = productItems.find(p => normalizeObjectIdString(p._id) === normalizeObjectIdString(item.productId));
@@ -2152,7 +2171,6 @@ async function executeToolCall(toolName, args = {}, user) {
         }
 
         // Get shipping method per seller. Cart checkout can contain multiple stores.
-        const sellerIds = [...new Set(productItems.map(p => normalizeObjectIdString(p.seller)).filter(Boolean))];
         const sellerShipping = [];
         let shippingCost = 0;
         for (const sellerId of sellerIds) {
@@ -3254,6 +3272,7 @@ async function executeToolCall(toolName, args = {}, user) {
             verification: store.verification,
             socialLinks: store.socialLinks,
             returnPolicy: store.returnPolicy,
+            paymentPolicy: store.paymentPolicy || 'online_and_cod',
             productCount,
             changeLimits: storeChangeLimits(store),
             createdAt: store.createdAt,
@@ -3265,7 +3284,7 @@ async function executeToolCall(toolName, args = {}, user) {
       case 'update_store': {
         if (!userId) return { success: false, error: 'Authentication required.' };
         const normalizedRaw = Object.keys(pickObject(args.updates)).length ? { ...args.updates } : { ...args };
-        const allowedStoreFields = ['storeName', 'storeSlug', 'description', 'logo', 'banner', 'socialLinks', 'address', 'returnPolicy', 'sellerType'];
+        const allowedStoreFields = ['storeName', 'storeSlug', 'description', 'logo', 'banner', 'socialLinks', 'address', 'returnPolicy', 'sellerType', 'paymentPolicy'];
         const normalizedUpdates = {};
         for (const field of allowedStoreFields) {
           if (normalizedRaw[field] !== undefined) normalizedUpdates[field] = normalizedRaw[field];
@@ -3383,6 +3402,23 @@ async function executeToolCall(toolName, args = {}, user) {
           }
         }
 
+        if (normalizedUpdates.paymentPolicy !== undefined) {
+          const rawPaymentPolicy = String(normalizedUpdates.paymentPolicy || '').toLowerCase();
+          if (['advance_only', 'online_only', 'stripe_only', 'card_only', 'advance', 'prepaid'].includes(rawPaymentPolicy)) {
+            normalizedUpdates.paymentPolicy = 'advance_only';
+            normalizedUpdates.paymentPolicyUpdatedAt = new Date();
+          } else if (['online_and_cod', 'both', 'cod', 'cash_on_delivery', 'cod_and_online'].includes(rawPaymentPolicy)) {
+            normalizedUpdates.paymentPolicy = 'online_and_cod';
+            normalizedUpdates.paymentPolicyUpdatedAt = new Date();
+          } else {
+            delete normalizedUpdates.paymentPolicy;
+          }
+          if (normalizedUpdates.paymentPolicy === (existingStore.paymentPolicy || 'online_and_cod')) {
+            delete normalizedUpdates.paymentPolicy;
+            delete normalizedUpdates.paymentPolicyUpdatedAt;
+          }
+        }
+
         if (normalizedUpdates.socialLinks !== undefined) {
           normalizedUpdates.socialLinks = normalizeSocialLinks(normalizedUpdates.socialLinks);
         }
@@ -3395,7 +3431,7 @@ async function executeToolCall(toolName, args = {}, user) {
           { seller: userId },
           { $set: normalizedUpdates },
           { new: true, runValidators: true }
-        ).select('storeName storeSlug description lastNameChangeAt lastSlugChangeAt lastTypeChangeAt').lean();
+        ).select('storeName storeSlug description paymentPolicy lastNameChangeAt lastSlugChangeAt lastTypeChangeAt').lean();
 
         return {
           success: true,
@@ -3403,6 +3439,7 @@ async function executeToolCall(toolName, args = {}, user) {
           data: {
             storeName: updatedStore.storeName,
             slug: updatedStore.storeSlug,
+            paymentPolicy: updatedStore.paymentPolicy || 'online_and_cod',
             updatedFields: Object.keys(normalizedUpdates).filter(k => !k.startsWith('last')),
             changeLimits: storeChangeLimits(updatedStore),
           },

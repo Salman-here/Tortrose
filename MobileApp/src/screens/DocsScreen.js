@@ -32,7 +32,7 @@ const SECTIONS = [
     id: 'getting-started',
     title: 'Getting Started',
     icon: 'flash-outline',
-    body: 'Sign up with email or Google, browse categories on Home, add items to Cart or Wishlist, and check out securely with Stripe. Track everything from your Dashboard.',
+    body: 'Sign up with email or Google, browse categories on Home, add items to Cart or Wishlist, and check out securely. Track everything from your Dashboard.',
   },
   {
     id: 'shopping-guide',
@@ -74,7 +74,7 @@ const SECTIONS = [
     id: 'payments',
     title: 'Payments & Checkout',
     icon: 'card-outline',
-    body: 'Secure card payments via Stripe. Tax and shipping are calculated automatically based on the seller\'s configuration and your shipping address.',
+    body: 'Secure card payments run through Stripe. Cash on Delivery is available only when every seller in the cart allows COD. Sellers can require advance online payment from Store Settings, which makes mixed carts card-only if any seller requires advance payment.',
   },
   {
     id: 'shipping',

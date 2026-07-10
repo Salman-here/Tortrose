@@ -53,6 +53,7 @@ export default function CheckoutScreen({ navigation }) {
   const [shippingCost, setShippingCost] = useState(0);
   const [shippingLabel, setShippingLabel] = useState('Loading...');
   const [sellerShipping, setSellerShipping] = useState([]);
+  const [codRestrictedSellers, setCodRestrictedSellers] = useState([]);
   const [tax, setTax] = useState(0);
   const [taxLabel, setTaxLabel] = useState('Tax');
   const [summaryLoading, setSummaryLoading] = useState(true);
@@ -138,7 +139,11 @@ export default function CheckoutScreen({ navigation }) {
       let totalShipping = 0;
       const methodNames = [];
       const nextSellerShipping = [];
+      const nextCodRestrictedSellers = [];
       Object.entries(sellerMap).forEach(([sellerId, sellerData]) => {
+        if (sellerData?.allowsCashOnDelivery === false) {
+          nextCodRestrictedSellers.push(sellerData?.store?.storeName || sellerData?.seller?.username || 'A seller');
+        }
         const methods = sellerData.methods || [];
         if (methods.length > 0) {
           const sorted = [...methods].sort((a, b) => shippingCostInCheckoutCurrency(a, sellerData) - shippingCostInCheckoutCurrency(b, sellerData));
@@ -158,10 +163,15 @@ export default function CheckoutScreen({ navigation }) {
       });
       setShippingCost(totalShipping);
       setSellerShipping(nextSellerShipping);
+      setCodRestrictedSellers(nextCodRestrictedSellers);
+      if (nextCodRestrictedSellers.length > 0) {
+        setPaymentMethod('card');
+      }
       setShippingLabel(methodNames.length > 0 ? `Shipping (${methodNames.length === 1 ? methodNames[0] : `${methodNames.length} sellers`})` : 'Shipping (Free)');
     } catch {
       setShippingCost(0);
       setSellerShipping([]);
+      setCodRestrictedSellers([]);
       setShippingLabel('Shipping (Free)');
     }
     setSummaryLoading(false);
@@ -318,6 +328,15 @@ export default function CheckoutScreen({ navigation }) {
 
   const handlePlaceOrder = async () => {
     trackCheckoutStep('place_order_clicked', { paymentMethod, items: cartItems?.cart?.length, total: totalAmount });
+    if (paymentMethod === 'cash_on_delivery' && codRestrictedSellers.length > 0) {
+      Toast.show({
+        type: 'error',
+        text1: 'Advance payment required',
+        text2: 'One or more sellers require online payment.',
+      });
+      setPaymentMethod('card');
+      return;
+    }
     if (!validateForm()) {
       trackCheckoutStep('validation_failed');
       return;
@@ -568,7 +587,28 @@ export default function CheckoutScreen({ navigation }) {
               <Ionicons name="card-outline" size={18} color={palette.colors.info} />
               <Text style={styles.sectionTitle}>Payment Method</Text>
             </View>
-            <TouchableOpacity style={[styles.paymentOption, paymentMethod === 'cash_on_delivery' && styles.paymentSelected]} onPress={() => setPaymentMethod('cash_on_delivery')}>
+            {codRestrictedSellers.length > 0 && (
+              <View style={styles.advanceOnlyNotice}>
+                <Ionicons name="information-circle-outline" size={18} color={palette.colors.info} />
+                <Text style={styles.advanceOnlyNoticeText}>
+                  Cash on Delivery is unavailable because {codRestrictedSellers.join(', ')} {codRestrictedSellers.length === 1 ? 'requires' : 'require'} advance online payment.
+                </Text>
+              </View>
+            )}
+            <TouchableOpacity
+              style={[
+                styles.paymentOption,
+                paymentMethod === 'cash_on_delivery' && styles.paymentSelected,
+                codRestrictedSellers.length > 0 && styles.paymentDisabled,
+              ]}
+              onPress={() => {
+                if (codRestrictedSellers.length > 0) {
+                  Toast.show({ type: 'info', text1: 'Advance payment required', text2: 'Please pay with card for this cart.' });
+                  return;
+                }
+                setPaymentMethod('cash_on_delivery');
+              }}
+            >
               <View style={[styles.radio, paymentMethod === 'cash_on_delivery' && styles.radioSelected]}>
                 {paymentMethod === 'cash_on_delivery' && <View style={styles.radioInner} />}
               </View>
@@ -681,6 +721,9 @@ const buildStyles = (p) => StyleSheet.create({
   halfInput: { flex: 1 },
   paymentOption: { flexDirection: 'row', alignItems: 'center', backgroundColor: p.glass.bgSubtle, padding: spacing.md, borderRadius: 16, borderWidth: 1.5, borderColor: p.glass.borderSubtle, gap: spacing.md },
   paymentSelected: { borderColor: p.colors.primary, backgroundColor: 'rgba(99,102,241,0.08)' },
+  paymentDisabled: { opacity: 0.55 },
+  advanceOnlyNotice: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm, padding: spacing.md, borderRadius: 14, backgroundColor: `${p.colors.info}12`, borderWidth: 1, borderColor: `${p.colors.info}28`, marginBottom: spacing.md },
+  advanceOnlyNoticeText: { flex: 1, fontSize: fontSize.sm, color: p.colors.textSecondary, lineHeight: 18 },
   radio: { width: 20, height: 20, borderRadius: 10, borderWidth: 2, borderColor: 'rgba(255,255,255,0.3)', justifyContent: 'center', alignItems: 'center' },
   radioSelected: { borderColor: p.colors.primary },
   radioInner: { width: 10, height: 10, borderRadius: 5, backgroundColor: p.colors.primary },

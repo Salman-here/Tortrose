@@ -1,8 +1,14 @@
 const ShippingMethod = require('../models/ShippingMethod');
 const Product = require('../models/Product');
 const User = require('../models/User');
+const Store = require('../models/Store');
 const { normalizeCurrency, convertAmount } = require('../services/currencyService');
 const { publicProductFilter } = require('../services/productModerationService');
+const {
+  normalizeStorePaymentPolicy,
+  storeAllowsCashOnDelivery,
+  PAYMENT_POLICY_LABELS,
+} = require('../services/storePaymentPolicyService');
 
 const roundMoney = (value) => {
   const amount = Number(value || 0);
@@ -194,10 +200,14 @@ const getShippingMethodsForCart = async (req, res) => {
     
     const sellerIds = [...new Set(products.map(p => p.seller.toString()))];
     
-    // Fetch shipping methods for all sellers
-    const shippingMethods = await ShippingMethod.find({
-      seller: { $in: sellerIds }
-    }).populate('seller', 'username currency');
+    // Fetch shipping methods and store payment policies for all sellers.
+    const [shippingMethods, stores] = await Promise.all([
+      ShippingMethod.find({
+        seller: { $in: sellerIds }
+      }).populate('seller', 'username currency'),
+      Store.find({ seller: { $in: sellerIds } }).select('seller storeName storeSlug paymentPolicy').lean(),
+    ]);
+    const storeBySeller = new Map(stores.map(store => [store.seller.toString(), store]));
     
     // Create a map of seller to their shipping methods
     const sellerShippingMap = {};
@@ -206,11 +216,20 @@ const getShippingMethodsForCart = async (req, res) => {
       const sellerShipping = shippingMethods.find(
         sm => sm.seller._id.toString() === sellerId
       );
+      const store = storeBySeller.get(sellerId) || null;
+      const paymentPolicy = normalizeStorePaymentPolicy(store?.paymentPolicy);
+      const paymentInfo = {
+        store: store ? { _id: store._id, storeName: store.storeName, storeSlug: store.storeSlug } : null,
+        paymentPolicy,
+        paymentPolicyLabel: PAYMENT_POLICY_LABELS[paymentPolicy],
+        allowsCashOnDelivery: storeAllowsCashOnDelivery(store),
+      };
       
       if (sellerShipping) {
         const sellerCurrency = normalizeCurrency(sellerShipping.seller?.currency || 'USD');
         sellerShippingMap[sellerId] = {
           seller: sellerShipping.seller,
+          ...paymentInfo,
           methods: sellerShipping.methods
             .filter(m => m.isActive)
             .map(method => serializeShippingMethod(method, sellerCurrency))
@@ -220,6 +239,7 @@ const getShippingMethodsForCart = async (req, res) => {
         // Default shipping methods if seller hasn't configured any
         sellerShippingMap[sellerId] = {
           seller: { _id: sellerId, currency: sellerCurrency },
+          ...paymentInfo,
           methods: [
             { type: 'free', cost: 0, currency: sellerCurrency, costCurrency: sellerCurrency, costInputAmount: 0, deliveryDays: 5, isActive: true }
           ]

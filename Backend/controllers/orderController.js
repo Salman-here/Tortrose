@@ -4,6 +4,7 @@ const Order = require('../models/Order');
 const Product = require('../models/Product')
 const { stripe } = require('../config/stripe');
 const TaxConfig = require('../models/TaxConfig');
+const Store = require('../models/Store');
 const { calculateTax } = require('./taxController');
 const { recordCouponUsage } = require('./couponController');
 const { sendEmail } = require('./mailController');
@@ -21,6 +22,7 @@ const { publicProductFilter } = require('../services/productModerationService');
 const { CURRENCIES, normalizeCurrency, convertAmount } = require('../services/currencyService');
 const { getProductCurrency, getProductEffectivePrice } = require('../services/productPricingService');
 const { isStoreVisibleToBuyer, normalizeBuyerLocation } = require('../services/storeVisibilityService');
+const { storeAllowsCashOnDelivery } = require('../services/storePaymentPolicyService');
 const { formatItemOptionsText, orderItemName, toPlainOptions } = require('../utils/orderPresentation');
 
 const toId = (value) => value?.toString?.() || String(value || '');
@@ -248,6 +250,12 @@ exports.placeOrder = async (req, res) => {
         ) {
             return res.status(400).json({ msg: "Missing required order details" });
         }
+        const normalizedPaymentMethod = ['stripe', 'cash_on_delivery'].includes(order.paymentMethod)
+            ? order.paymentMethod
+            : null;
+        if (!normalizedPaymentMethod) {
+            return res.status(400).json({ msg: 'Choose a valid payment method.' });
+        }
 
         // console.log(order.orderItems);
 
@@ -264,9 +272,9 @@ exports.placeOrder = async (req, res) => {
         }
         const productById = new Map(orderItems.map(product => [toId(product._id), product]));
         const sellerIdsInOrder = [...new Set(orderItems.map(product => toId(product.seller)).filter(Boolean))];
+        let codRestrictedSellerNames = [];
         if (sellerIdsInOrder.length > 0) {
-            const Store = require('../models/Store');
-            const stores = await Store.find({ seller: { $in: sellerIdsInOrder }, isActive: true }).select('seller storeName visibility');
+            const stores = await Store.find({ seller: { $in: sellerIdsInOrder }, isActive: true }).select('seller storeName visibility paymentPolicy');
             const storeBySeller = new Map(stores.map(store => [toId(store.seller), store]));
             const buyerLocation = normalizeBuyerLocation({
                 ...(order.buyerLocation || {}),
@@ -284,6 +292,17 @@ exports.placeOrder = async (req, res) => {
                         msg: 'One or more products in this order are not available in your selected delivery area.',
                     });
                 }
+            }
+            codRestrictedSellerNames = sellerIdsInOrder
+                .map(sellerId => storeBySeller.get(sellerId))
+                .filter(store => store && !storeAllowsCashOnDelivery(store))
+                .map(store => store.storeName || 'A seller');
+            if (normalizedPaymentMethod === 'cash_on_delivery' && codRestrictedSellerNames.length > 0) {
+                return res.status(400).json({
+                    msg: `Cash on Delivery is not available for this cart because ${codRestrictedSellerNames.join(', ')} ${codRestrictedSellerNames.length === 1 ? 'requires' : 'require'} advance online payment. Please pay by card or remove those items.`,
+                    code: 'COD_NOT_AVAILABLE_FOR_CART',
+                    advanceOnlySellers: codRestrictedSellerNames,
+                });
             }
         }
 
@@ -397,7 +416,7 @@ exports.placeOrder = async (req, res) => {
             },
 
             // ✅ Schema expects just string ("stripe" | "cash_on_delivery")
-            paymentMethod: order.paymentMethod,
+            paymentMethod: normalizedPaymentMethod,
         });
 
 
@@ -516,7 +535,9 @@ exports.placeOrder = async (req, res) => {
         if (!STRIPE_SUPPORTED_CURRENCIES.has(newOrder.currency)) {
             await Order.deleteOne({ _id: newOrder._id });
             return res.status(400).json({
-                msg: `Card payments are not available in ${newOrder.currency} yet. Please choose cash on delivery or switch checkout currency.`,
+                msg: codRestrictedSellerNames.length > 0
+                    ? `Card payments are not available in ${newOrder.currency} yet, and this cart contains sellers who require advance online payment. Please switch checkout currency or remove those items.`
+                    : `Card payments are not available in ${newOrder.currency} yet. Please choose cash on delivery or switch checkout currency.`,
             });
         }
         const stripeCurrency = newOrder.currency.toLowerCase();

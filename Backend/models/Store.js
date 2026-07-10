@@ -151,6 +151,16 @@ const storeSchema = new mongoose.Schema({
     type: storeVisibilitySchema,
     default: undefined
   },
+  paymentPolicy: {
+    type: String,
+    enum: ['online_and_cod', 'advance_only'],
+    default: 'online_and_cod',
+    index: true
+  },
+  paymentPolicyUpdatedAt: {
+    type: Date,
+    default: null
+  },
   address: {
     street: {
       type: String,
