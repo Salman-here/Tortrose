@@ -10,7 +10,6 @@ const { recordCouponUsage } = require('./couponController');
 const { sendEmail } = require('./mailController');
 const { orderConfirmationEmail, orderStatusUpdateEmail, newOrderSellerEmail, buyerOrderConfirmationRequestEmail } = require('../utils/emailTemplates');
 const { generateConfirmationToken } = require('./orderConfirmationController');
-const { sellerHasWhatsAppVerify } = require('./subscriptionController');
 const { enqueueOrderConfirmation } = require('../services/whatsapp/queue');
 const WhatsAppConfig = require('../models/WhatsAppConfig');
 const { configKeyFor } = require('../services/whatsapp/gatewayMode');
@@ -156,8 +155,13 @@ const getSellerScopedOrders = async (query, sellerId, sort = null) => {
     return orders.map(order => buildSellerOrderView(order, sellerProductIds, sellerId));
 };
 
-// Enqueue WhatsApp confirmation if admin connected AND any seller in the order has the bonus
-const maybeEnqueueWhatsAppConfirmation = async (order, productItems) => {
+// Enqueue the buyer's WhatsApp order confirmation.
+//
+// The buyer order-confirmation message is a core checkout feature — every buyer
+// who places a COD order should receive it. It is NOT gated by any seller
+// subscription/plan. The only preconditions are that the WhatsApp gateway is
+// connected and the buyer has a valid phone number (validated in the queue).
+const maybeEnqueueWhatsAppConfirmation = async (order, _productItems) => {
     try {
         if (!order?.confirmation?.token) {
             console.warn(`[order] WhatsApp skip for ${order?.orderId}: no confirmation token`);
@@ -174,24 +178,6 @@ const maybeEnqueueWhatsAppConfirmation = async (order, productItems) => {
                 }
             });
             console.warn(`[order] WhatsApp skip for ${order.orderId}: not connected (status: ${cfg?.status || 'no config'})`);
-            return;
-        }
-
-        const sellerIds = [...new Set((productItems || []).map(p => p.seller?.toString()).filter(Boolean))];
-        let entitled = false;
-        for (const sid of sellerIds) {
-            if (await sellerHasWhatsAppVerify(sid)) { entitled = true; break; }
-        }
-        if (!entitled) {
-            // No seller has the WhatsApp bonus — track it
-            await Order.updateOne({ _id: order._id }, {
-                $set: {
-                    'confirmation.whatsappSentAt': new Date(),
-                    'confirmation.whatsappSentSuccess': false,
-                    'confirmation.whatsappError': 'No seller in this order has the WhatsApp verification bonus enabled',
-                }
-            });
-            console.warn(`[order] WhatsApp skip for ${order.orderId}: no seller has WhatsApp bonus`);
             return;
         }
 

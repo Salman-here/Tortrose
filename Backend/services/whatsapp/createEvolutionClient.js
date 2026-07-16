@@ -464,11 +464,19 @@ function createEvolutionClient(instanceEnvVar, defaultName) {
 
     const setWebhook = async (url, secret = '') => {
         if (!isConfigured()) throw new Error('Evolution API not configured');
+        // Field names differ across Evolution builds: v2.3.x reads `base64` /
+        // `byEvents`, older builds read `webhookBase64` / `webhookByEvents`.
+        // Send BOTH so inbound media base64 inlining survives a re-register on
+        // any build (it drives whether voice notes / images / documents can be
+        // ingested — inbound messages are not persisted, so re-download fails).
+        const base64Enabled = String(process.env.EVOLUTION_WEBHOOK_BASE64 || '').toLowerCase() === 'true';
         const webhook = {
             enabled: true,
             url,
+            byEvents: false,
             webhookByEvents: false,
-            webhookBase64: String(process.env.EVOLUTION_WEBHOOK_BASE64 || '').toLowerCase() === 'true',
+            base64: base64Enabled,
+            webhookBase64: base64Enabled,
             events: [
                 'MESSAGES_UPSERT',
                 'MESSAGES_UPDATE',

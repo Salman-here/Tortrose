@@ -72,6 +72,50 @@ describe('aiAttachmentService WhatsApp media handling', () => {
     expect(result.context).toContain('https://res.cloudinary.com/demo/uploaded-product.jpg');
   });
 
+  test('prefers inline webhook base64 for WhatsApp images without re-downloading', async () => {
+    // webhookBase64 delivers the media bytes inline; the re-download path must
+    // NOT be used when they are already present (messages are not persisted).
+    const jpegBytes = Buffer.from([0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46]);
+
+    const result = await processChatAttachments([{
+      kind: 'image',
+      source: 'whatsapp',
+      evolutionInstance: 'seller-instance',
+      messageKey: { id: 'MSG_IMAGE_INLINE' },
+      base64: jpegBytes.toString('base64'),
+      mimetype: 'image/jpeg',
+      filename: 'inline.jpg',
+    }]);
+
+    expect(getMediaFromMessage).not.toHaveBeenCalled();
+    expect(cloudinary.uploader.upload_stream).toHaveBeenCalledTimes(1);
+    expect(result.attachments[0]).toEqual(expect.objectContaining({ type: 'image' }));
+  });
+
+  test('transcribes a WhatsApp voice note from inline webhook base64 without re-download', async () => {
+    const audio = Buffer.from('inline ogg voice bytes');
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ text: 'Set the price to 999' }),
+      text: async () => '',
+    });
+
+    const result = await processChatAttachments([{
+      kind: 'audio',
+      source: 'whatsapp',
+      evolutionInstance: 'seller-instance',
+      messageKey: { id: 'MSG_AUDIO_INLINE' },
+      base64: audio.toString('base64'),
+      mimetype: 'audio/ogg; codecs=opus',
+      filename: 'voice.ogg',
+    }]);
+
+    expect(getMediaFromMessage).not.toHaveBeenCalled();
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(result.context).toContain('Set the price to 999');
+    expect(result.processed[0]).toMatchObject({ type: 'audio', success: true });
+  });
+
   test('transcribes WhatsApp voice notes with OpenRouter audio transcription payload', async () => {
     const audio = Buffer.from('fake ogg voice bytes');
     getMediaFromMessage.mockResolvedValueOnce({

@@ -321,14 +321,20 @@ async function getAttachmentBuffer(att) {
   if (Buffer.isBuffer(att.buffer)) return att.buffer;
 
   if (isWhatsAppAttachment(att)) {
+    // Prefer the media bytes Evolution already inlined in the webhook payload
+    // (webhookBase64). Evolution downloads inbound media at webhook time from
+    // the live message, so this is present and reliable. The re-download-by-key
+    // path below is only a fallback: inbound messages are not persisted in
+    // Evolution (fast-inbound transport mode), so getBase64FromMediaMessage
+    // usually cannot find them.
+    const fromWebhookBase64 = bufferFromBase64(att.base64 || att.mediaBase64);
+    if (fromWebhookBase64) return fromWebhookBase64;
     try {
       const fromEvolution = await getEvolutionAttachmentBuffer(att);
       if (fromEvolution) return fromEvolution;
     } catch (error) {
       att._evolutionMediaError = error.message;
     }
-    const fromWebhookBase64 = bufferFromBase64(att.base64 || att.mediaBase64);
-    if (fromWebhookBase64) return fromWebhookBase64;
   }
 
   const url = att.url || att.mediaUrl || att.downloadUrl;

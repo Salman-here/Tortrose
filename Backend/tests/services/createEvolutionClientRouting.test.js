@@ -104,6 +104,9 @@ describe('Evolution client recipient routing', () => {
     expect(webhookPayload).toHaveProperty('webhook');
     expect(webhookPayload.webhook.url).toBe('https://rozare.up.railway.app/api/whatsapp/webhook');
     expect(webhookPayload.webhook.headers).toEqual({ 'x-rozare-webhook-secret': 'test-secret' });
+    // Media base64 inlining uses the v2.3.x `base64` field (plus legacy alias).
+    expect(webhookPayload.webhook).toHaveProperty('base64');
+    expect(webhookPayload.webhook).toHaveProperty('webhookBase64');
     expect(webhookPayload.webhook.events).toEqual(expect.arrayContaining([
       'MESSAGES_UPSERT',
       'MESSAGES_UPDATE',

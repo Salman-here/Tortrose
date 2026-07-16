@@ -146,11 +146,11 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
         // ── Buyer WhatsApp info notification (post-payment only) ──
         // Online-paid orders auto-confirm at payment time, so we send the
         // buyer an INFO message (no Yes/No poll) listing items + stores +
-        // total. Same entitlement gate as COD: WhatsApp must be connected
-        // AND at least one seller in the order must have the WhatsApp bonus.
+        // total. This is a core checkout notification for the buyer — it is
+        // NOT gated by any seller subscription/plan. Only precondition: the
+        // WhatsApp gateway is connected (valid phone is checked in the queue).
         try {
           const WhatsAppConfig = require('./models/WhatsAppConfig');
-          const { nVerify } = require('./controllers/subscriptionController');
           const { enqueueOrderPlacedInfo } = require('./services/whatsapp/queue');
 
           const cfg = await WhatsAppConfig.findOne({ singletonKey: configKeyFor('main') });
@@ -164,22 +164,8 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
               await order.save();
             }
           } else {
-            let entitled = false;
-            for (const sid of resolvedSellerIds) {
-              if (await nVerify(sid)) { entitled = true; break; }
-            }
-            if (!entitled) {
-              if (order.confirmation) {
-                order.confirmation.whatsappSentAt = new Date();
-                order.confirmation.whatsappSentSuccess = false;
-                order.confirmation.whatsappError =
-                  'No seller in this order has the WhatsApp verification bonus enabled';
-                await order.save();
-              }
-            } else {
-              await enqueueOrderPlacedInfo(order);
-              console.log(`[whatsapp] info enqueued for paid order ${order.orderId}`);
-            }
+            await enqueueOrderPlacedInfo(order);
+            console.log(`[whatsapp] info enqueued for paid order ${order.orderId}`);
           }
         } catch (waErr) {
           console.error('Failed to enqueue buyer WhatsApp info:', waErr.message);
@@ -401,6 +387,12 @@ const authLimiter = rateLimit({
 });
 
 // ── Body Parsing ──
+// The Evolution WhatsApp webhook carries inbound media inline as base64 (voice
+// notes, product images, documents) when webhookBase64 is enabled, so its
+// payloads can be several MB. Parse that route with a larger limit BEFORE the
+// global 100kb json parser — body-parser skips re-parsing once req._body is set,
+// so the global parser below is a no-op for this route and unchanged elsewhere.
+app.use('/api/whatsapp/webhook', express.json({ limit: process.env.WHATSAPP_WEBHOOK_BODY_LIMIT || '30mb' }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 

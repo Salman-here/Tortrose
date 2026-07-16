@@ -35,7 +35,6 @@ const { buildSellerPaymentSummary } = require('../controllers/PaymentController'
 const { sendEmail } = require('../controllers/mailController');
 const { buyerOrderConfirmationRequestEmail, newOrderSellerEmail } = require('../utils/emailTemplates');
 const { generateConfirmationToken } = require('../controllers/orderConfirmationController');
-const { sellerHasWhatsAppVerify } = require('../controllers/subscriptionController');
 const { enqueueOrderConfirmation } = require('./whatsapp/queue');
 const { notifySeller } = require('./whatsapp/sellerNotificationService');
 const { configKeyFor } = require('./whatsapp/gatewayMode');
@@ -1143,15 +1142,10 @@ async function notifyCodOrder(newOrder, productItems = []) {
   }
 
   try {
+    // Buyer order confirmation is a core checkout feature — always send it when
+    // the WhatsApp gateway is connected, regardless of any seller subscription.
     const cfg = await WhatsAppConfig.findOne({ singletonKey: configKeyFor('main') }).lean();
-    let entitled = false;
-    for (const sellerId of sellerIds) {
-      if (await sellerHasWhatsAppVerify(sellerId)) {
-        entitled = true;
-        break;
-      }
-    }
-    if (cfg?.status === 'connected' && entitled) {
+    if (cfg?.status === 'connected') {
       enqueueOrderConfirmation(newOrder).catch(err =>
         console.error('[aiActionExecutor] WhatsApp order confirmation enqueue failed:', err.message)
       );
@@ -1160,9 +1154,7 @@ async function notifyCodOrder(newOrder, productItems = []) {
         $set: {
           'confirmation.whatsappSentAt': new Date(),
           'confirmation.whatsappSentSuccess': false,
-          'confirmation.whatsappError': cfg?.status === 'connected'
-            ? 'No seller in this order has the WhatsApp verification bonus enabled'
-            : (cfg ? `WhatsApp status: ${cfg.status} (not connected)` : 'WhatsApp not configured'),
+          'confirmation.whatsappError': cfg ? `WhatsApp status: ${cfg.status} (not connected)` : 'WhatsApp not configured',
         },
       });
     }
