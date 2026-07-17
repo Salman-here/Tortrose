@@ -46,7 +46,7 @@ const StarPicker = ({ value, onChange, size = 32, color }) => (
   </View>
 );
 
-export default function StoreReviews({ storeId, storeOwnerId }) {
+export default function StoreReviews({ storeId, storeOwnerId, onSummaryChange }) {
   const { palette } = useTheme();
   const { currentUser } = useAuth();
   const styles = buildStyles(palette);
@@ -58,9 +58,12 @@ export default function StoreReviews({ storeId, storeOwnerId }) {
   const [submitting, setSubmitting] = useState(false);
   const [form, setForm] = useState({ rating: 5, title: '', comment: '' });
   const [showAll, setShowAll] = useState(false);
+  const [eligibility, setEligibility] = useState(null);
+  const [eligibilityLoading, setEligibilityLoading] = useState(false);
 
-  const isOwnStore = currentUser && storeOwnerId && (currentUser._id === storeOwnerId || currentUser.id === storeOwnerId);
-  const myReview = currentUser ? reviews.find((r) => (r.user?._id || r.user) === (currentUser._id || currentUser.id)) : null;
+  const currentUserId = String(currentUser?._id || currentUser?.id || '');
+  const isOwnStore = Boolean(currentUserId && currentUserId === String(storeOwnerId || ''));
+  const myReview = eligibility?.review || (currentUser ? reviews.find((r) => String(r.user?._id || r.user) === currentUserId) : null);
 
   const fetchReviews = useCallback(async () => {
     if (!storeId) return;
@@ -77,13 +80,40 @@ export default function StoreReviews({ storeId, storeOwnerId }) {
 
   useEffect(() => { fetchReviews(); }, [fetchReviews]);
 
-  const openForm = () => {
-    if (!currentUser) {
-      Alert.alert('Sign in required', 'Please sign in to leave a review.');
+  const fetchEligibility = useCallback(async () => {
+    if (!storeId || !currentUser || isOwnStore) {
+      setEligibility(isOwnStore ? { eligible: false, reason: 'own_store' } : null);
       return;
     }
-    if (myReview) {
-      setForm({ rating: myReview.rating, title: myReview.title || '', comment: myReview.comment || '' });
+    setEligibilityLoading(true);
+    try {
+      const res = await api.get(`/api/store-reviews/${storeId}/eligibility`);
+      setEligibility({ ...(res.data?.eligibility || {}), review: res.data?.review || null });
+    } catch {
+      setEligibility({ eligible: false, reason: 'unavailable' });
+    } finally {
+      setEligibilityLoading(false);
+    }
+  }, [storeId, currentUser, isOwnStore]);
+
+  useEffect(() => { fetchEligibility(); }, [fetchEligibility]);
+  useEffect(() => { onSummaryChange?.(summary); }, [summary, onSummaryChange]);
+
+  const openForm = () => {
+    if (!currentUser) {
+      Alert.alert('Sign in required', 'Log in after receiving an order from this store to leave a verified rating.');
+      return;
+    }
+    if (!eligibility?.eligible) {
+      const message = eligibility?.reason === 'order_not_delivered'
+        ? 'You can rate this store after its part of your order is delivered.'
+        : 'Buy from this store and receive the order before leaving a rating.';
+      Alert.alert('Verified buyers only', message);
+      return;
+    }
+    const editableReview = eligibility.review || myReview;
+    if (editableReview) {
+      setForm({ rating: editableReview.rating, title: editableReview.title || '', comment: editableReview.comment || '' });
     } else {
       setForm({ rating: 5, title: '', comment: '' });
     }
@@ -102,6 +132,7 @@ export default function StoreReviews({ storeId, storeOwnerId }) {
       });
       setSummary(res.data.summary);
       setShowForm(false);
+      await fetchEligibility();
     } catch (e) {
       Alert.alert('Error', e.response?.data?.msg || 'Failed to submit review');
     } finally {
@@ -125,6 +156,7 @@ export default function StoreReviews({ storeId, storeOwnerId }) {
           const res = await api.delete(`/api/store-reviews/${reviewId}`);
           setReviews((prev) => prev.filter((r) => r._id !== reviewId));
           setSummary(res.data.summary);
+          await fetchEligibility();
         } catch (_) { Alert.alert('Error', 'Failed to delete'); }
       } },
     ]);
@@ -140,8 +172,8 @@ export default function StoreReviews({ storeId, storeOwnerId }) {
         <Text style={styles.title}>Reviews</Text>
         {!isOwnStore && (
           <TouchableOpacity style={styles.writeBtn} onPress={openForm} activeOpacity={0.85}>
-            <Ionicons name={myReview ? 'create-outline' : 'star'} size={14} color="#fff" />
-            <Text style={styles.writeBtnText}>{myReview ? 'Edit' : 'Write'}</Text>
+            {eligibilityLoading ? <ActivityIndicator size="small" color="#fff" /> : <Ionicons name={myReview ? 'create-outline' : 'star'} size={14} color="#fff" />}
+            <Text style={styles.writeBtnText}>{myReview ? 'Edit' : 'Rate'}</Text>
           </TouchableOpacity>
         )}
       </View>
@@ -169,6 +201,14 @@ export default function StoreReviews({ storeId, storeOwnerId }) {
           })}
         </View>
       </GlassPanel>
+
+      {currentUser && !isOwnStore && eligibility && !eligibility.eligible ? (
+        <Text style={{ color: palette.colors.textSecondary, fontSize: fontSize.xs, marginTop: spacing.sm }}>
+          {eligibility.reason === 'order_not_delivered'
+            ? 'Rating unlocks after this store delivers its part of your order.'
+            : 'Only buyers with a delivered order from this store can rate it.'}
+        </Text>
+      ) : null}
 
       {/* List */}
       {loading ? (

@@ -1,7 +1,6 @@
 // const { default: Fuse } = require("fuse.js")
 const mongoose = require('mongoose')
 const Product = require("../models/Product")
-const Order = require("../models/Order")
 const Fuse = require('fuse.js')
 const {
     buildModerationFields,
@@ -31,6 +30,7 @@ const {
     normalizeReturnPolicy,
     normalizeProductReturnPolicy,
 } = require('../services/returnPolicyService')
+const { findProductReviewEligibility } = require('../services/reviewEligibilityService')
 
 const OTHER_BRANDS_FILTER = '__other_brands__';
 const POPULAR_BRAND_MIN_PRODUCTS = Math.max(2, parseInt(process.env.POPULAR_BRAND_MIN_PRODUCTS || '3', 10) || 3);
@@ -603,11 +603,14 @@ exports.addReview = async (req, res) => {
     try {
         const numericRating = Number(rating);
         const cleanComment = String(comment || '').trim();
-        if (!Number.isFinite(numericRating) || numericRating < 1 || numericRating > 5) {
-            return res.status(400).json({ msg: 'Rating must be between 1 and 5.' });
+        if (!Number.isInteger(numericRating) || numericRating < 1 || numericRating > 5) {
+            return res.status(400).json({ msg: 'Rating must be a whole number between 1 and 5.' });
         }
         if (!cleanComment) {
             return res.status(400).json({ msg: 'Please write a review comment.' });
+        }
+        if (cleanComment.length > 1000) {
+            return res.status(400).json({ msg: 'Review comments cannot exceed 1000 characters.' });
         }
 
         const product = await Product.findById(prodId)
@@ -615,20 +618,9 @@ exports.addReview = async (req, res) => {
             return res.status(404).json({ msg: 'Product not available' })
         }
 
-        const baseOrderQuery = {
-            user: userId,
-            awaitingPayment: { $ne: true },
-            'orderItems.productId': prodId,
-            orderStatus: { $ne: 'cancelled' },
-        };
-        const deliveredOrder = await Order.exists({
-            ...baseOrderQuery,
-            orderStatus: 'delivered',
-        });
-
-        if (!deliveredOrder) {
-            const anyOrder = await Order.exists(baseOrderQuery);
-            if (anyOrder) {
+        const eligibility = await findProductReviewEligibility({ userId, product });
+        if (!eligibility.eligible) {
+            if (eligibility.reason === 'order_not_delivered') {
                 return res.status(403).json({
                     msg: 'You will be able to add a review for this product once the order is delivered and you have checked it.',
                     reason: 'order_not_delivered',
@@ -645,11 +637,15 @@ exports.addReview = async (req, res) => {
         if (existingReview) {
             existingReview.rating = numericRating;
             existingReview.comment = cleanComment;
+            existingReview.order = eligibility.order._id;
+            existingReview.isVerifiedPurchase = true;
         } else {
             product.reviews.push({
                 user: userId,
                 rating: numericRating,
-                comment: cleanComment
+                comment: cleanComment,
+                order: eligibility.order._id,
+                isVerifiedPurchase: true,
             })
         }
 

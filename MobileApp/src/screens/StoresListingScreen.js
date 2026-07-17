@@ -19,6 +19,7 @@ import { useTheme } from '../contexts/ThemeContext';
 
 const SORT_OPTIONS = [
   { key: 'newest', label: 'Newest', icon: 'time-outline' },
+  { key: 'rating', label: 'Highest Rated', icon: 'star-outline' },
   { key: 'trusted', label: 'Most Trusted', icon: 'heart-outline' },
   { key: 'popular', label: 'Most Popular', icon: 'flame-outline' },
   { key: 'name', label: 'A → Z', icon: 'text-outline' },
@@ -226,7 +227,7 @@ export default function StoresListingScreen({ navigation }) {
           }
           renderItem={({ item, index }) => (
             <View style={styles.cardWrapper}>
-              <StoreCard store={{ _id: item._id, storeName: item.storeName, storeSlug: item.storeSlug, sellerType: item.sellerType || 'store', description: item.storeDescription || item.description, logo: item.storeLogo || item.logo, banner: item.storeBanner || item.banner, trustCount: item.trustCount || 0, verification: { isVerified: item.isVerified || item.verification?.isVerified }, productCount: item.productCount || 0, views: item.views || 0 }} index={index} showTrustButton={!!currentUser} showDescription={true} showStats={true} />
+              <StoreCard store={{ _id: item._id, storeName: item.storeName, storeSlug: item.storeSlug, sellerType: item.sellerType || 'store', description: item.storeDescription || item.description, logo: item.storeLogo || item.logo, banner: item.storeBanner || item.banner, trustCount: item.trustCount || 0, verification: { isVerified: item.isVerified || item.verification?.isVerified }, productCount: item.productCount || 0, views: item.views || 0, ratingAverage: item.ratingAverage || 0, ratingCount: item.ratingCount || 0 }} index={index} showTrustButton={!!currentUser} showDescription={true} showStats={true} />
             </View>
           )}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[palette.colors.primary]} tintColor={palette.colors.primary} />}

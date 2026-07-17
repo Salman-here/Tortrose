@@ -80,6 +80,7 @@ const StoresListing = () => {
 
     const sortOptions = [
         { value: 'newest', label: 'Newest First' },
+        { value: 'rating', label: 'Highest Rated' },
         { value: 'views', label: 'Most Viewed' },
         { value: 'name', label: 'Name (A-Z)' },
     ];

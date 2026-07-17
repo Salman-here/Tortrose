@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { Store, Package, Eye, Sparkles } from 'lucide-react';
+import { Store, Package, Eye, Sparkles, Star } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import TrustButton from './TrustButton';
 import VerifiedBadge from './VerifiedBadge';
@@ -24,6 +24,8 @@ const StoreCard = ({ store, idx }) => {
     const navigate = useNavigate();
     const [trustCount, setTrustCount] = useState(store.trustCount || 0);
     const [isTrusted, setIsTrusted] = useState(false);
+    const ratingAverage = Number(store.ratingAverage) || 0;
+    const ratingCount = Number(store.ratingCount) || 0;
 
     return (
         <motion.div
@@ -105,9 +107,10 @@ const StoreCard = ({ store, idx }) => {
                 </div>
 
                 {/* Trusters Count */}
-                <p className="text-[9px] sm:text-[10px] md:text-xs mb-1.5 sm:mb-2" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                    {trustCount} {trustCount === 1 ? 'truster' : 'trusters'}
-                </p>
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[9px] sm:text-[10px] md:text-xs mb-1.5 sm:mb-2" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                    <span>{trustCount} {trustCount === 1 ? 'truster' : 'trusters'}</span>
+                    <span className="inline-flex items-center gap-1"><Star size={11} style={{ color: 'hsl(45,93%,47%)', fill: ratingCount > 0 ? 'hsl(45,93%,47%)' : 'none' }} />{ratingCount > 0 ? `${ratingAverage.toFixed(1)} (${ratingCount})` : 'New'}</span>
+                </div>
 
                 {/* Description */}
                 {store.description && (

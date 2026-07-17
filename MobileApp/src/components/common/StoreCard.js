@@ -94,7 +94,7 @@ export const CompactStoreCard = ({ store, onPress }) => <StoreCard store={store}
 export const StoreListItem = ({ store, onPress, showTrustButton = true }) => {
   const navigation = useNavigation();
   if (!store) return null;
-  const { _id, storeName, storeSlug, description, logo, trustCount = 0, verification, productCount = 0 } = store;
+  const { _id, storeName, storeSlug, description, logo, trustCount = 0, verification, productCount = 0, ratingAverage = 0, ratingCount = 0 } = store;
   const isVerified = verification?.isVerified;
   const handlePress = () => onPress ? onPress(store) : navigation.navigate('Store', { storeSlug: storeSlug || _id });
 
@@ -113,6 +113,13 @@ export const StoreListItem = ({ store, onPress, showTrustButton = true }) => {
           <Text style={styles.listItemStatText}>{productCount} products</Text>
           <Text style={styles.listItemDot}>•</Text>
           <Text style={styles.listItemStatText}>{trustCount} trusters</Text>
+          {ratingCount > 0 && (
+            <>
+              <Text style={styles.listItemDot}>•</Text>
+              <Ionicons name="star" size={10} color="#fbbf24" style={{ marginRight: 2 }} />
+              <Text style={styles.listItemStatText}>{Number(ratingAverage).toFixed(1)} ({ratingCount})</Text>
+            </>
+          )}
         </View>
       </View>
       {showTrustButton ? <View style={{ marginLeft: spacing.sm }}><TrustButton storeId={_id} storeName={storeName} initialTrustCount={trustCount} compact iconOnly /></View> :

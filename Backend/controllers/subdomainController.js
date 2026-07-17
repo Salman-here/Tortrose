@@ -15,6 +15,7 @@ const {
     buyerLocationFromRequest,
     isStoreVisibleToBuyer,
 } = require('../services/storeVisibilityService');
+const { attachStoreReviewSummaries } = require('../services/storeReviewService');
 
 const comparablePriceUSD = (product) =>
     convertAmountSync(getProductEffectivePrice(product), getProductCurrency(product), 'USD');
@@ -38,9 +39,10 @@ exports.getSubdomainStore = async (req, res) => {
         if (!isStoreVisibleToBuyer(store, buyerLocationFromRequest(req))) {
             return res.status(404).json({ msg: 'Store is not available in your selected area.' });
         }
+        const [storeWithRating] = await attachStoreReviewSummaries([store]);
         res.status(200).json({
             msg: 'Store fetched successfully',
-            store,
+            store: storeWithRating,
             isSubdomain: true
         });
     } catch (error) {

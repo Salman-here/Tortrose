@@ -2,6 +2,7 @@ const asyncHandler = require('express-async-handler');
 const mongoose = require('mongoose');
 const StoreTrust = require('../models/StoreTrust');
 const Store = require('../models/Store');
+const { attachStoreReviewSummaries } = require('../services/storeReviewService');
 
 // @desc    Trust a store
 // @route   POST /api/stores/:storeId/trust
@@ -164,11 +165,12 @@ const getTrustedStores = asyncHandler(async (req, res) => {
       trustedAt: trust.createdAt
     }));
 
+  const trustedStoresWithRatings = await attachStoreReviewSummaries(trustedStores);
   res.status(200).json({
     success: true,
     data: {
-      trustedStores,
-      count: trustedStores.length
+      trustedStores: trustedStoresWithRatings,
+      count: trustedStoresWithRatings.length
     }
   });
 });

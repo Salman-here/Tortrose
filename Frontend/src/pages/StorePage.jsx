@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Store, Package, Eye, Share2, ChevronRight, ChevronLeft, Home, Globe, MapPin, Users, Ticket, Copy, Check, Calendar, Percent, DollarSign, Search, Tag } from 'lucide-react';
+import { Store, Package, Eye, Share2, ChevronRight, ChevronLeft, Home, Globe, MapPin, Users, Ticket, Copy, Check, Calendar, Percent, DollarSign, Search, Tag, Star } from 'lucide-react';
 import axios from 'axios';
 import { toast } from 'react-toastify';
 import ProductCard from '../components/common/ProductCard';
@@ -14,6 +14,7 @@ import { getAuthToken } from "../utils/cookieHelper";
 import { useCurrency } from '../contexts/CurrencyContext';
 import { useBuyerLocation } from '../contexts/BuyerLocationContext';
 import { buildStoreThemeStyle, getStoreTheme, isDefaultStoreTheme } from '../utils/storeThemes';
+import StoreReviews from '../components/common/StoreReviews';
 
 const getEntityId = (value) => {
     if (!value) return '';
@@ -51,6 +52,7 @@ const StorePage = ({ slugOverride = null }) => {
     const [productPage, setProductPage] = useState(1);
     const [productPagination, setProductPagination] = useState({ total: 0, page: 1, pages: 1, limit: STORE_PRODUCTS_PER_PAGE });
     const [storeCategories, setStoreCategories] = useState([]);
+    const [storeRating, setStoreRating] = useState({ average: 0, count: 0 });
 
     const categories = useMemo(() => {
         if (storeCategories.length > 0) return storeCategories;
@@ -161,6 +163,10 @@ const StorePage = ({ slugOverride = null }) => {
             const suffix = params.toString();
             const res = await axios.get(`${import.meta.env.VITE_API_URL}api/stores/${slug}${suffix ? `?${suffix}` : ''}`);
             setStore(res.data.store);
+            setStoreRating({
+                average: Number(res.data.store?.ratingAverage) || 0,
+                count: Number(res.data.store?.ratingCount) || 0,
+            });
             setNotFound(false);
         } catch (error) {
             console.error('Error fetching store:', error);
@@ -344,6 +350,15 @@ const StorePage = ({ slugOverride = null }) => {
                             },
                         }),
                         ...(store?.socialLinks?.website && { sameAs: [store.socialLinks.website] }),
+                        ...(storeRating.count > 0 && {
+                            aggregateRating: {
+                                '@type': 'AggregateRating',
+                                ratingValue: storeRating.average,
+                                ratingCount: storeRating.count,
+                                bestRating: 5,
+                                worstRating: 1,
+                            },
+                        }),
                     }}
                 />
                 {/* Breadcrumb */}
@@ -454,9 +469,12 @@ const StorePage = ({ slugOverride = null }) => {
                                     )}
                                 </div>
 
-                                <div className="flex items-center gap-1.5 text-xs mb-3" style={{ color: themeMuted }}>
-                                    <Users size={13} />
-                                    <span>{trustCount} {trustCount === 1 ? 'truster' : 'trusters'}</span>
+                                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs mb-3" style={{ color: themeMuted }}>
+                                    <span className="inline-flex items-center gap-1.5"><Users size={13} />{trustCount} {trustCount === 1 ? 'truster' : 'trusters'}</span>
+                                    <a href="#store-reviews" className="inline-flex items-center gap-1.5 hover:underline">
+                                        <Star size={13} style={{ color: 'hsl(45,93%,47%)', fill: storeRating.count > 0 ? 'hsl(45,93%,47%)' : 'none' }} />
+                                        {storeRating.count > 0 ? `${storeRating.average.toFixed(1)} (${storeRating.count})` : 'No ratings yet'}
+                                    </a>
                                 </div>
 
                                 {store?.description && (
@@ -648,6 +666,12 @@ const StorePage = ({ slugOverride = null }) => {
                         </div>
                     </motion.div>
                 )}
+
+                <StoreReviews
+                    storeId={store._id}
+                    storeOwnerId={getEntityId(store.seller)}
+                    onSummaryChange={setStoreRating}
+                />
 
                 {/* Products Section */}
                 <motion.div

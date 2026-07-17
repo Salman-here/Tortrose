@@ -1,11 +1,11 @@
 import { useState, useEffect } from 'react';
-import { Store, ExternalLink, Users } from 'lucide-react';
+import { Store, ExternalLink, Users, Star } from 'lucide-react';
 import { motion } from 'framer-motion';
 import TrustButton from './TrustButton';
 import VerifiedBadge from './VerifiedBadge';
 import { getStoreSubdomainUrl } from '../../utils/subdomainHelper';
 
-const StoreInfo = ({ storeName, storeSlug, storeLogo, sellerUsername, storeId, trustCount: initialTrustCount = 0, verification }) => {
+const StoreInfo = ({ storeName, storeSlug, storeLogo, sellerUsername, storeId, trustCount: initialTrustCount = 0, verification, ratingAverage = 0, ratingCount = 0 }) => {
     const [trustCount, setTrustCount] = useState(initialTrustCount);
     const [isTrusted, setIsTrusted] = useState(false);
 
@@ -73,6 +73,10 @@ const StoreInfo = ({ storeName, storeSlug, storeLogo, sellerUsername, storeId, t
                             <span>/{storeSlug}</span>
                             <span className="opacity-40">·</span>
                             <span className="flex items-center gap-1"><Users size={11} /> {trustCount} {trustCount === 1 ? 'truster' : 'trusters'}</span>
+                        </div>
+                        <div className="flex items-center gap-1 text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                            <Star size={11} style={{ color: 'hsl(45,93%,47%)', fill: ratingCount > 0 ? 'hsl(45,93%,47%)' : 'none' }} />
+                            {ratingCount > 0 ? `${Number(ratingAverage).toFixed(1)} store rating (${ratingCount})` : 'No store ratings yet'}
                         </div>
                     </div>
                 </div>

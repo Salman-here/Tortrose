@@ -798,6 +798,8 @@ function ProductDetailPage() {
                                     storeId={storeData?._id}
                                     trustCount={storeData?.trustCount}
                                     verification={storeData?.verification}
+                                    ratingAverage={storeData?.ratingAverage}
+                                    ratingCount={storeData?.ratingCount}
                                 />
                             </motion.div>
 

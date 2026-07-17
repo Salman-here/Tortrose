@@ -82,6 +82,7 @@ export default function StoreScreen({ route, navigation }) {
   const [productPage, setProductPage] = useState(1);
   const [storeCoupons, setStoreCoupons] = useState([]);
   const [copiedCoupon, setCopiedCoupon] = useState(null);
+  const [storeRating, setStoreRating] = useState({ average: 0, count: 0 });
 
   // Debounced product search (server-side, like website)
   useEffect(() => {
@@ -96,6 +97,10 @@ export default function StoreScreen({ route, navigation }) {
     try {
       const res = await api.get(`/api/stores/${slug}`);
       setStore(res.data.store);
+      setStoreRating({
+        average: Number(res.data.store?.ratingAverage) || 0,
+        count: Number(res.data.store?.ratingCount) || 0,
+      });
     } catch (error) { console.error('Error fetching store:', error); }
     finally { setIsLoading(false); setRefreshing(false); }
   }, [slug]);
@@ -229,6 +234,12 @@ export default function StoreScreen({ route, navigation }) {
             <Text style={styles.trustersText}>{store.trustCount || 0} {store.trustCount === 1 ? 'truster' : 'trusters'}</Text>
             <Ionicons name="information-circle-outline" size={13} color={palette.colors.primary} />
           </TouchableOpacity>
+          <View style={styles.ratingRow}>
+            <Ionicons name={storeRating.count > 0 ? 'star' : 'star-outline'} size={13} color="#fbbf24" />
+            <Text style={styles.trustersText}>
+              {storeRating.count > 0 ? `${Number(storeRating.average).toFixed(1)} store rating (${storeRating.count})` : 'No store ratings yet'}
+            </Text>
+          </View>
 
           {store.description && <Text style={styles.storeDescription}>{store.description}</Text>}
 
@@ -333,7 +344,7 @@ export default function StoreScreen({ route, navigation }) {
       )}
 
       {/* Reviews thread */}
-      <StoreReviews storeId={store._id} storeOwnerId={getEntityId(store.seller)} />
+      <StoreReviews storeId={store._id} storeOwnerId={getEntityId(store.seller)} onSummaryChange={setStoreRating} />
 
       {/* Products heading */}
       <View style={styles.productsHeader}>
@@ -456,6 +467,7 @@ const buildStyles = (p) => StyleSheet.create({
   typePill: { paddingHorizontal: 9, paddingVertical: 3, borderRadius: 999, borderWidth: 1 },
   typePillText: { fontSize: 10, fontWeight: fontWeight.bold, letterSpacing: 0.8 },
   trustersRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: spacing.sm },
+  ratingRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: -spacing.xs, marginBottom: spacing.sm },
   trustersText: { fontSize: fontSize.xs, color: p.colors.textSecondary },
   storeDescription: { fontSize: fontSize.sm, color: p.colors.textSecondary, lineHeight: 20, marginBottom: spacing.md },
   addressBox: { flexDirection: 'row', gap: spacing.sm, backgroundColor: p.glass.bgSubtle, borderWidth: 1, borderColor: p.glass.borderSubtle, borderRadius: 14, padding: spacing.md, marginBottom: spacing.md },

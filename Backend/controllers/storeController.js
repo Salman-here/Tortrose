@@ -40,6 +40,7 @@ const {
     PAYMENT_POLICY_LABELS,
 } = require('../services/storePaymentPolicyService');
 const { normalizeReturnPolicy } = require('../services/returnPolicyService');
+const { attachStoreReviewSummaries } = require('../services/storeReviewService');
 
 const comparablePriceUSD = (product) =>
     convertAmountSync(getProductEffectivePrice(product), getProductCurrency(product), 'USD');
@@ -681,10 +682,11 @@ exports.searchStores = async (req, res) => {
             populate: { path: 'seller', select: 'username email' },
         });
 
+        const storesWithRatings = await attachStoreReviewSummaries(stores.slice(0, 20));
         res.status(200).json({
             msg: 'Stores fetched successfully',
-            stores: stores.slice(0, 20),
-            count: Math.min(stores.length, 20)
+            stores: storesWithRatings,
+            count: storesWithRatings.length,
         });
     } catch (error) {
         console.error('Search stores error:', error);
@@ -713,9 +715,8 @@ exports.getStoreSuggestions = async (req, res) => {
             select: 'storeName storeSlug logo trustCount verification sellerType visibility',
         });
 
-        res.status(200).json({
-            suggestions: stores.slice(0, 5)
-        });
+        const suggestions = await attachStoreReviewSummaries(stores.slice(0, 5));
+        res.status(200).json({ suggestions });
     } catch (error) {
         console.error('Get store suggestions error:', error);
         res.status(500).json({ msg: 'Server error while fetching suggestions' });
@@ -740,9 +741,10 @@ exports.getStoreBySlug = async (req, res) => {
 
         await ensureStoreThemeEntitlement(store.seller?._id || store.seller, store);
 
+        const [storeWithRating] = await attachStoreReviewSummaries([store]);
         res.status(200).json({
             msg: 'Store fetched successfully',
-            store
+            store: storeWithRating,
         });
     } catch (error) {
         console.error('Get store by slug error:', error);
@@ -769,9 +771,10 @@ exports.getStoreBySellerId = async (req, res) => {
 
         await ensureStoreThemeEntitlement(store.seller?._id || id, store);
 
+        const [storeWithRating] = await attachStoreReviewSummaries([store]);
         res.status(200).json({
             msg: 'Store fetched successfully',
-            store
+            store: storeWithRating,
         });
     } catch (error) {
         console.error('Get store by seller ID error:', error);
@@ -878,7 +881,17 @@ exports.getAllStores = async (req, res) => {
             const sorted = [...items];
             switch (sort) {
                 case 'views':
+                case 'popular':
                     sorted.sort((a, b) => (Number(b.views) || 0) - (Number(a.views) || 0));
+                    break;
+                case 'trusted':
+                    sorted.sort((a, b) => (Number(b.trustCount) || 0) - (Number(a.trustCount) || 0));
+                    break;
+                case 'rating':
+                    sorted.sort((a, b) => (
+                        (Number(b.ratingAverage) || 0) - (Number(a.ratingAverage) || 0)
+                        || (Number(b.ratingCount) || 0) - (Number(a.ratingCount) || 0)
+                    ));
                     break;
                 case 'name':
                     sorted.sort((a, b) => String(a.storeName || '').localeCompare(String(b.storeName || '')));
@@ -918,8 +931,14 @@ exports.getAllStores = async (req, res) => {
             }),
         ]);
 
-        const sortedStores = sortStores(allFilteredStores);
-        const stores = sortedStores.slice(skip, skip + limitNum);
+        const storesForSorting = sort === 'rating'
+            ? await attachStoreReviewSummaries(allFilteredStores)
+            : allFilteredStores;
+        const sortedStores = sortStores(storesForSorting);
+        let stores = sortedStores.slice(skip, skip + limitNum);
+        if (sort !== 'rating') {
+            stores = await attachStoreReviewSummaries(stores);
+        }
         const total = sortedStores.length;
         const allCount = visibleCountStores.length;
         const brandCount = visibleCountStores.filter(store => store.sellerType === 'brand').length;
@@ -935,15 +954,13 @@ exports.getAllStores = async (req, res) => {
             ])
             : [];
         const productCountBySeller = new Map(productCounts.map(row => [String(row._id), row.count]));
-        const storesWithProductCount = await Promise.all(
-            stores.map(async (store) => {
+        const storesWithProductCount = stores.map((store) => {
                 const sellerId = store.seller?._id || store.seller;
                 return {
                     ...store,
                     productCount: sellerId ? productCountBySeller.get(String(sellerId)) || 0 : 0
                 };
-            })
-        );
+            });
 
         res.status(200).json({
             msg: 'Stores fetched successfully',
@@ -1310,9 +1327,10 @@ exports.getVerifiedStores = async (req, res) => {
             })
         );
 
+        const storesWithRatings = await attachStoreReviewSummaries(storesWithProductCount);
         res.status(200).json({
             msg: 'Verified stores fetched successfully',
-            stores: storesWithProductCount
+            stores: storesWithRatings,
         });
     } catch (error) {
         console.error('Get verified stores error:', error);

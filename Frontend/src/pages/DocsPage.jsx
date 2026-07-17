@@ -737,7 +737,7 @@ function DocsPage() {
                 <ul>
                   <li><strong>Store verification</strong> — Stores can apply for verification. Verified stores get a trusted badge.</li>
                   <li><strong>Trust counts</strong> — Customers can endorse stores, and the count is shown publicly.</li>
-                  <li><strong>Store reviews</strong> — Buyers can rate and review stores after purchase.</li>
+                  <li><strong>Store reviews</strong> — Buyers can rate and review a store only after that store's portion of their order is delivered. In multi-seller orders, each store unlocks separately.</li>
                   <li><strong>Complaint system</strong> — File a complaint and the Rozare team will help resolve it.</li>
                   <li><strong>Role-based security</strong> — Server-side checks make sure buyers cannot access seller tools and sellers cannot see other sellers' data.</li>
                   <li><strong>Data isolation</strong> — In multi-seller orders, each seller sees only their own portion.</li>
