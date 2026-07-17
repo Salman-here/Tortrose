@@ -435,6 +435,108 @@ function ProductDetailPage() {
                                     ))}
                                 </div>
                             )}
+
+                            <div className="mt-5">
+                                {product.tags && product.tags.length > 0 && (
+                                    <motion.div className="flex flex-wrap gap-2 mb-6" variants={fadeIn}>
+                                        {product.tags.map((tag) => (
+                                            <span key={tag} className="tag-pill text-xs font-medium"
+                                                style={{ background: 'rgba(56, 189, 248, 0.1)', color: 'hsl(200, 80%, 50%)', borderColor: 'rgba(56, 189, 248, 0.18)' }}>
+                                                <Tag size={11} /> {tag}
+                                            </span>
+                                        ))}
+                                    </motion.div>
+                                )}
+
+                                {/* Return Policy */}
+                                {(() => {
+                                    const rp = product.returnPolicy?.useStorePolicy === false
+                                        ? product.returnPolicy
+                                        : (storePolicy?.returnPolicy || storeData?.returnPolicy);
+                                    if (!rp) return (
+                                        <motion.div className="flex items-center gap-3 mb-6" variants={fadeIn}>
+                                            <div className="glass-inner flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm" style={{ color: 'hsl(var(--foreground))' }}>
+                                                <RotateCcw size={16} style={{ color: 'hsl(var(--primary))' }} />
+                                                <span>Contact seller for return policy</span>
+                                            </div>
+                                        </motion.div>
+                                    );
+                                    return (
+                                        <motion.div className="glass-inner rounded-xl p-4 mb-6 space-y-2" variants={fadeIn}>
+                                            <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'hsl(var(--muted-foreground))' }}>Return & Warranty</p>
+                                            <div className="flex flex-wrap gap-2">
+                                                {rp.returnsEnabled ? (
+                                                    <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium"
+                                                        style={{ background: 'rgba(16,185,129,0.12)', color: 'hsl(150,60%,45%)' }}>
+                                                        <RotateCcw size={12} />
+                                                        {rp.returnDuration}-Day Returns
+                                                    </span>
+                                                ) : (
+                                                    <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium"
+                                                        style={{ background: 'rgba(239,68,68,0.1)', color: 'hsl(0,72%,55%)' }}>
+                                                        No Returns
+                                                    </span>
+                                                )}
+                                                {rp.refundType && rp.refundType !== 'none' && (
+                                                    <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium"
+                                                        style={{ background: 'rgba(99,102,241,0.1)', color: 'hsl(220,70%,55%)' }}>
+                                                        {rp.refundType === 'full_refund' ? 'Full Refund to Rozare Wallet' : rp.refundType === 'replacement_only' ? 'Replacement Only' : 'Rozare Wallet Credit'}
+                                                    </span>
+                                                )}
+                                                {rp.warrantyEnabled && (
+                                                    <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium"
+                                                        style={{ background: 'rgba(245,158,11,0.1)', color: 'hsl(45,80%,40%)' }}>
+                                                        🛡️ {rp.warrantyDuration}-Month Warranty
+                                                    </span>
+                                                )}
+                                                {!rp.returnsEnabled && (!rp.refundType || rp.refundType === 'none') && !rp.warrantyEnabled && (
+                                                    <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium"
+                                                        style={{ background: 'rgba(107,114,128,0.1)', color: 'hsl(var(--muted-foreground))' }}>
+                                                        No returns, refunds, or warranty
+                                                    </span>
+                                                )}
+                                            </div>
+                                            {rp.policyDescription && (
+                                                <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>{rp.policyDescription}</p>
+                                            )}
+                                            {rp.warrantyDescription && (
+                                                <p className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>Warranty: {rp.warrantyDescription}</p>
+                                            )}
+                                        </motion.div>
+                                    );
+                                })()}
+
+                                <motion.div
+                                    className="glass-inner rounded-xl p-4 mb-6"
+                                    variants={fadeIn}
+                                    style={{ border: '1px solid var(--glass-border)' }}
+                                >
+                                    <p className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                                        Payment availability
+                                    </p>
+                                    {(storePolicy?.paymentPolicy || storeData?.paymentPolicy) === 'advance_only' ? (
+                                        <div className="flex items-start gap-3">
+                                            <CreditCard size={18} className="mt-0.5 shrink-0" style={{ color: 'hsl(220, 70%, 55%)' }} />
+                                            <div>
+                                                <p className="text-sm font-semibold" style={{ color: 'hsl(var(--foreground))' }}>Online payment only</p>
+                                                <p className="text-xs mt-0.5" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                                                    Pay online by card or Rozare Wallet. Cash on Delivery is not available.
+                                                </p>
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <div className="flex items-start gap-3">
+                                            <Banknote size={18} className="mt-0.5 shrink-0" style={{ color: 'hsl(150, 60%, 40%)' }} />
+                                            <div>
+                                                <p className="text-sm font-semibold" style={{ color: 'hsl(var(--foreground))' }}>Online payment and Cash on Delivery</p>
+                                                <p className="text-xs mt-0.5" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                                                    Pay by card or Rozare Wallet, or pay when this product is delivered.
+                                                </p>
+                                            </div>
+                                        </div>
+                                    )}
+                                </motion.div>
+                            </div>
                         </div>
 
                         {/* Product Info */}
@@ -492,37 +594,6 @@ function ProductDetailPage() {
                                 )}
                             </motion.div>
 
-                            <motion.div
-                                className="glass-inner rounded-xl p-4 mb-6"
-                                variants={fadeIn}
-                                style={{ border: '1px solid var(--glass-border)' }}
-                            >
-                                <p className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                                    Payment availability
-                                </p>
-                                {(storePolicy?.paymentPolicy || storeData?.paymentPolicy) === 'advance_only' ? (
-                                    <div className="flex items-start gap-3">
-                                        <CreditCard size={18} className="mt-0.5 shrink-0" style={{ color: 'hsl(220, 70%, 55%)' }} />
-                                        <div>
-                                            <p className="text-sm font-semibold" style={{ color: 'hsl(var(--foreground))' }}>Online payment only</p>
-                                            <p className="text-xs mt-0.5" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                                                Pay online by card or Rozare Wallet. Cash on Delivery is not available.
-                                            </p>
-                                        </div>
-                                    </div>
-                                ) : (
-                                    <div className="flex items-start gap-3">
-                                        <Banknote size={18} className="mt-0.5 shrink-0" style={{ color: 'hsl(150, 60%, 40%)' }} />
-                                        <div>
-                                            <p className="text-sm font-semibold" style={{ color: 'hsl(var(--foreground))' }}>Online payment and Cash on Delivery</p>
-                                            <p className="text-xs mt-0.5" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                                                Pay by card or Rozare Wallet, or pay when this product is delivered.
-                                            </p>
-                                        </div>
-                                    </div>
-                                )}
-                            </motion.div>
-
                             <motion.p
                                 className="text-sm mb-6 leading-relaxed"
                                 style={{ color: 'hsl(var(--muted-foreground))' }}
@@ -530,75 +601,6 @@ function ProductDetailPage() {
                             >
                                 {product.description}
                             </motion.p>
-
-                            {/* Return Policy */}
-                            {(() => {
-                                const rp = product.returnPolicy?.useStorePolicy === false
-                                    ? product.returnPolicy
-                                    : (storePolicy?.returnPolicy || storeData?.returnPolicy);
-                                if (!rp) return (
-                                    <motion.div className="flex items-center gap-3 mb-6" variants={fadeIn}>
-                                        <div className="glass-inner flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm" style={{ color: 'hsl(var(--foreground))' }}>
-                                            <RotateCcw size={16} style={{ color: 'hsl(var(--primary))' }} />
-                                            <span>Contact seller for return policy</span>
-                                        </div>
-                                    </motion.div>
-                                );
-                                return (
-                                    <motion.div className="glass-inner rounded-xl p-4 mb-6 space-y-2" variants={fadeIn}>
-                                        <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'hsl(var(--muted-foreground))' }}>Return & Warranty</p>
-                                        <div className="flex flex-wrap gap-2">
-                                            {rp.returnsEnabled ? (
-                                                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium"
-                                                    style={{ background: 'rgba(16,185,129,0.12)', color: 'hsl(150,60%,45%)' }}>
-                                                    <RotateCcw size={12} />
-                                                    {rp.returnDuration}-Day Returns
-                                                </span>
-                                            ) : (
-                                                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium"
-                                                    style={{ background: 'rgba(239,68,68,0.1)', color: 'hsl(0,72%,55%)' }}>
-                                                    No Returns
-                                                </span>
-                                            )}
-                                            {rp.refundType && rp.refundType !== 'none' && (
-                                                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium"
-                                                    style={{ background: 'rgba(99,102,241,0.1)', color: 'hsl(220,70%,55%)' }}>
-                                                    {rp.refundType === 'full_refund' ? 'Full Refund to Rozare Wallet' : rp.refundType === 'replacement_only' ? 'Replacement Only' : 'Rozare Wallet Credit'}
-                                                </span>
-                                            )}
-                                            {rp.warrantyEnabled && (
-                                                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium"
-                                                    style={{ background: 'rgba(245,158,11,0.1)', color: 'hsl(45,80%,40%)' }}>
-                                                    🛡️ {rp.warrantyDuration}-Month Warranty
-                                                </span>
-                                            )}
-                                            {!rp.returnsEnabled && (!rp.refundType || rp.refundType === 'none') && !rp.warrantyEnabled && (
-                                                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium"
-                                                    style={{ background: 'rgba(107,114,128,0.1)', color: 'hsl(var(--muted-foreground))' }}>
-                                                    No returns, refunds, or warranty
-                                                </span>
-                                            )}
-                                        </div>
-                                        {rp.policyDescription && (
-                                            <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>{rp.policyDescription}</p>
-                                        )}
-                                        {rp.warrantyDescription && (
-                                            <p className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>Warranty: {rp.warrantyDescription}</p>
-                                        )}
-                                    </motion.div>
-                                );
-                            })()}
-
-                            {product.tags && product.tags.length > 0 && (
-                                <motion.div className="flex flex-wrap gap-2 mb-6" variants={fadeIn}>
-                                    {product.tags.map((tag) => (
-                                        <span key={tag} className="tag-pill text-xs font-medium"
-                                            style={{ background: 'rgba(56, 189, 248, 0.1)', color: 'hsl(200, 80%, 50%)', borderColor: 'rgba(56, 189, 248, 0.18)' }}>
-                                            <Tag size={11} /> {tag}
-                                        </span>
-                                    ))}
-                                </motion.div>
-                            )}
 
                             {/* Dynamic Option Selectors (Size, Color, Material, etc.) */}
                             {product.optionGroups && product.optionGroups.length > 0 && (
