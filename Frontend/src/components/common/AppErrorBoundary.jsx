@@ -1,4 +1,5 @@
 import React from 'react';
+import { isStaleChunkError, reloadOnceForStaleChunk } from '../../utils/chunkReload';
 
 class AppErrorBoundary extends React.Component {
   constructor(props) {
@@ -12,6 +13,12 @@ class AppErrorBoundary extends React.Component {
 
   componentDidCatch(error, errorInfo) {
     console.error('Application render error:', error, errorInfo);
+    // Stale-deploy chunk failure (old hashed asset gone after a new release):
+    // a reload always fixes it, so do it automatically — once. If it happens
+    // again right away the guard refuses and the fallback UI below shows.
+    if (isStaleChunkError(error)) {
+      reloadOnceForStaleChunk();
+    }
   }
 
   handleRetry = () => {

@@ -11,9 +11,19 @@ import { ThemeProvider } from './contexts/ThemeContext.jsx'
 import { installHttpResilience } from './utils/httpResilience.js'
 import { captureTikTokClickId } from './utils/tiktokPixel.js'
 import AppErrorBoundary from './components/common/AppErrorBoundary.jsx'
+import { reloadOnceForStaleChunk } from './utils/chunkReload.js'
 
 installHttpResilience()
-captureTikTokClickId() 
+captureTikTokClickId()
+
+// After a deploy, tabs opened on the previous version fail to lazy-load route
+// chunks (old hashed filenames are gone). Vite fires this event on any dynamic
+// import/preload failure — refresh once to pick up the new version instead of
+// crashing to the error screen. Guarded so a truly broken build cannot cause
+// a reload loop (the error boundary takes over on repeat failures).
+window.addEventListener('vite:preloadError', (event) => {
+  if (reloadOnceForStaleChunk()) event.preventDefault()
+})
 
 createRoot(document.getElementById('root')).render(
   <BrowserRouter>
