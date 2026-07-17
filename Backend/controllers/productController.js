@@ -22,6 +22,15 @@ const {
     findVisibleStores,
     isStoreVisibleToBuyer,
 } = require('../services/storeVisibilityService')
+const {
+    normalizeStorePaymentPolicy,
+    PAYMENT_POLICY_LABELS,
+    storeAllowsCashOnDelivery,
+} = require('../services/storePaymentPolicyService')
+const {
+    normalizeReturnPolicy,
+    normalizeProductReturnPolicy,
+} = require('../services/returnPolicyService')
 
 const OTHER_BRANDS_FILTER = '__other_brands__';
 const POPULAR_BRAND_MIN_PRODUCTS = Math.max(2, parseInt(process.env.POPULAR_BRAND_MIN_PRODUCTS || '3', 10) || 3);
@@ -506,6 +515,7 @@ exports.getSingleProduct = async (req, res) => {
         }
 
         // Check if seller's store is active (hide products from blocked sellers)
+        let storePolicy = null;
         if (singleProduct.seller) {
             const Store = require('../models/Store');
             const store = await Store.findOne({ seller: singleProduct.seller, isActive: true });
@@ -515,13 +525,22 @@ exports.getSingleProduct = async (req, res) => {
             if (!isStoreVisibleToBuyer(store, buyerLocationFromRequest(req))) {
                 return res.status(404).json({ msg: 'Product is not available in your selected area.' });
             }
+            const paymentPolicy = normalizeStorePaymentPolicy(store.paymentPolicy);
+            storePolicy = {
+                storeId: store._id,
+                storeName: store.storeName,
+                paymentPolicy,
+                paymentPolicyLabel: PAYMENT_POLICY_LABELS[paymentPolicy],
+                allowsCashOnDelivery: storeAllowsCashOnDelivery(store),
+                returnPolicy: normalizeReturnPolicy(store.returnPolicy || {}),
+            };
         }
 
         await singleProduct.populate({
             path: 'reviews.user',
             select: 'avatar username email'
         })
-        res.status(200).json({ msg: 'fetched single product', product: singleProduct })
+        res.status(200).json({ msg: 'fetched single product', product: singleProduct, storePolicy })
     } catch (err) {
         console.error(err)
         res.status(500).json({ msg: 'Server error' })
@@ -836,6 +855,9 @@ exports.editProduct = async (req, res) => {
         if (Object.prototype.hasOwnProperty.call(sanitizedProduct, 'description') && !sanitizedProduct.description) {
             return res.status(400).json({ msg: 'Product description is required.' });
         }
+        if (Object.prototype.hasOwnProperty.call(sanitizedProduct, 'returnPolicy')) {
+            sanitizedProduct.returnPolicy = normalizeProductReturnPolicy(sanitizedProduct.returnPolicy, { strict: true });
+        }
 
         let safeProduct = await applyProductCurrencyMetadata(sanitizedProduct, req.user?.currency || 'USD');
         if (
@@ -893,7 +915,8 @@ exports.editProduct = async (req, res) => {
 
     } catch (error) {
         console.error(error.message);
-        res.status(500).json({ msg: 'Server error while editing product.' })
+        const status = error.status || error.statusCode || 500;
+        res.status(status).json({ msg: status < 500 ? error.message : 'Server error while editing product.' })
     }
 }
 
@@ -927,6 +950,9 @@ exports.addProduct = async (req, res) => {
         }
         if (!sanitizedProduct.description) {
             return res.status(400).json({ msg: 'Product description is required.' });
+        }
+        if (Object.prototype.hasOwnProperty.call(sanitizedProduct, 'returnPolicy')) {
+            sanitizedProduct.returnPolicy = normalizeProductReturnPolicy(sanitizedProduct.returnPolicy, { strict: true });
         }
 
         // Gate: enforce featured product limits based on subscription tier.
@@ -972,8 +998,9 @@ exports.addProduct = async (req, res) => {
 
     } catch (error) {
         console.error(error.message);
-        res.status(error.status || 500).json({
-            msg: error.status ? error.message : 'Server error while adding new product.',
+        const status = error.status || error.statusCode || 500;
+        res.status(status).json({
+            msg: status < 500 ? error.message : 'Server error while adding new product.',
             productCurrency: error.productCurrencyState,
         })
     }

@@ -70,6 +70,7 @@ const orderItemOptionsHtml = (item = {}) => {
 const paymentMethodLabel = (method) => {
   if (method === 'cash_on_delivery') return 'Cash on Delivery';
   if (method === 'stripe') return 'Card (Stripe)';
+  if (method === 'wallet') return 'Rozare Wallet';
   return method || 'Unknown';
 };
 

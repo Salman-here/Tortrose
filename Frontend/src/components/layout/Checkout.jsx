@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { CheckCircle, Minus, Plus, CreditCard, DollarSign, Truck, MapPin, User, Mail, Phone, Home, Navigation, CreditCardIcon, X, Loader2, ChevronDown, ChevronUp, Zap, Ticket, Tag, Check } from "lucide-react";
+import { CheckCircle, Minus, Plus, CreditCard, DollarSign, Truck, MapPin, User, Mail, Phone, Home, Navigation, CreditCardIcon, X, Loader2, ChevronDown, ChevronUp, Zap, Ticket, Tag, Check, WalletCards } from "lucide-react";
 import { useForm, Controller } from "react-hook-form";
 import { useGlobal } from "../../contexts/GlobalContext";
 import { useCurrency } from "../../contexts/CurrencyContext";
@@ -67,6 +67,8 @@ export default function Checkout() {
   const [couponInputs, setCouponInputs] = useState({}); // { key: 'CODE' }
   const [appliedCoupons, setAppliedCoupons] = useState({}); // { key: { coupon, applicableProductIds } }
   const [couponLoading, setCouponLoading] = useState({});
+  const [wallet, setWallet] = useState(null);
+  const [walletLoading, setWalletLoading] = useState(false);
 
 
   const { currency, formatPrice, convertAmount } = useCurrency();
@@ -102,6 +104,21 @@ export default function Checkout() {
     fetchTaxConfig();
     fetchSavedShippingInfo();
   }, []);
+
+  useEffect(() => {
+    const token = getAuthToken();
+    if (!token || !currentUser) {
+      setWallet(null);
+      return;
+    }
+    setWalletLoading(true);
+    axios.get(`${import.meta.env.VITE_API_URL}api/wallet/me`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then(response => setWallet(response.data?.wallet || null))
+      .catch(error => console.error('Failed to load wallet:', error))
+      .finally(() => setWalletLoading(false));
+  }, [currentUser?._id]);
 
   // Fetch coupons when cart items change
   useEffect(() => {
@@ -446,6 +463,13 @@ export default function Checkout() {
   }, [selectedShippingPerSeller, currency, convertAmount]);
 
   const totalAmount = subtotal + tax + shippingCost - totalCouponDiscount;
+  const walletBalance = Number(wallet?.balances?.[currency] || 0);
+  const canPayWithWallet = Boolean(currentUser && wallet?.status === 'active' && walletBalance + 0.0001 >= totalAmount);
+  const walletDisabledReason = !currentUser
+    ? 'Log in to use Rozare Wallet.'
+    : wallet?.status && wallet.status !== 'active'
+      ? 'Your Rozare Wallet is locked.'
+      : `Balance: ${currentMoney(walletBalance)}. Add funds from your Wallet page.`;
 
   // Group cart items by seller
   const cartItemsBySeller = useMemo(() => {
@@ -469,7 +493,7 @@ export default function Checkout() {
   ), [sellerShippingMethods]);
   const isCashOnDeliveryAvailable = codRestrictedSellers.length === 0;
   const codRestrictionText = codRestrictedSellers.length > 0
-    ? `Cash on Delivery is unavailable because ${codRestrictedSellers.join(', ')} ${codRestrictedSellers.length === 1 ? 'requires' : 'require'} advance online payment.`
+    ? `Cash on Delivery is unavailable because ${codRestrictedSellers.join(', ')} ${codRestrictedSellers.length === 1 ? 'accepts' : 'accept'} online payment only.`
     : '';
 
   useEffect(() => {
@@ -477,6 +501,12 @@ export default function Checkout() {
       setValue('paymentMethod', 'stripe', { shouldDirty: true, shouldValidate: true });
     }
   }, [isCashOnDeliveryAvailable, paymentMethod, setValue]);
+
+  useEffect(() => {
+    if (paymentMethod === 'wallet' && !canPayWithWallet) {
+      setValue('paymentMethod', 'stripe', { shouldDirty: true, shouldValidate: true });
+    }
+  }, [canPayWithWallet, paymentMethod, setValue]);
 
   // Prevent Enter key from submitting the form
   const handleKeyDown = (e) => {
@@ -538,7 +568,11 @@ export default function Checkout() {
   // Final form submit
   const onPlaceOrder = async (data) => {
     if (data.paymentMethod === 'cash_on_delivery' && !isCashOnDeliveryAvailable) {
-      toast.error(`${codRestrictionText} Please pay by card or remove those items.`);
+      toast.error(`${codRestrictionText} Please pay by card or Rozare Wallet, or remove those items.`);
+      return;
+    }
+    if (data.paymentMethod === 'wallet' && !canPayWithWallet) {
+      toast.error(walletDisabledReason);
       return;
     }
     // Validate shipping method is selected for all sellers
@@ -650,9 +684,11 @@ export default function Checkout() {
       })),
 
       paymentMethod:
-        data.paymentMethod === "stripe"
-          ? "stripe"
-          : "cash_on_delivery",
+        data.paymentMethod === 'wallet'
+          ? 'wallet'
+          : data.paymentMethod === "stripe"
+            ? "stripe"
+            : "cash_on_delivery",
 
       tracking: {
         ...getTikTokTrackingContext(),
@@ -698,7 +734,7 @@ export default function Checkout() {
         setShowUpdatePrompt(true);
       }
 
-      if (order.paymentMethod == 'cash_on_delivery') {
+      if (['cash_on_delivery', 'wallet'].includes(order.paymentMethod)) {
         setIsProcessing(false);
         trackPlaceAnOrder({
           orderId: res.data.order?.orderId || res.data.order?._id,
@@ -721,7 +757,7 @@ export default function Checkout() {
             fetchCart();
           }
           try { sessionStorage.removeItem(CHECKOUT_STORAGE_KEY); } catch (_) {}
-          navigate('/success');
+          navigate(`/success?payment=${order.paymentMethod}&orderId=${encodeURIComponent(res.data.orderId || res.data.order?.orderId || '')}`);
         }, 1500);
         return;
       }
@@ -1375,18 +1411,28 @@ export default function Checkout() {
                       <div className="rounded-xl p-4 mb-5" style={{ background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.22)' }}>
                         <p className="text-sm font-semibold" style={{ color: 'hsl(220, 70%, 45%)' }}>Advance payment required</p>
                         <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                          {codRestrictionText} This checkout must be paid online through Stripe.
+                          {codRestrictionText} This checkout must be paid by card or Rozare Wallet.
                         </p>
                       </div>
                     )}
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
                       <PaymentOption
                         value="stripe"
                         title="Credit/Debit Card"
                         description="Pay securely with Stripe"
                         icon={<CreditCardIcon className="w-6 h-6" />}
                         selected={paymentMethod === "stripe"}
+                        {...register("paymentMethod")}
+                      />
+                      <PaymentOption
+                        value="wallet"
+                        title="Rozare Wallet"
+                        description={walletLoading ? 'Checking balance...' : `Balance ${currentMoney(walletBalance)}`}
+                        icon={<WalletCards className="w-6 h-6" />}
+                        selected={paymentMethod === "wallet"}
+                        disabled={!canPayWithWallet}
+                        disabledReason={walletDisabledReason}
                         {...register("paymentMethod")}
                       />
                       <PaymentOption
@@ -1412,6 +1458,13 @@ export default function Checkout() {
                         <p className="text-sm" style={{ color: 'hsl(220, 70%, 55%)' }}>
                           You will be redirected to Stripe's secure payment page to complete your transaction.
                         </p>
+                      </motion.div>
+                    )}
+
+                    {paymentMethod === 'wallet' && (
+                      <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} className="glass-inner p-4 rounded-xl mb-6">
+                        <p className="text-sm font-semibold" style={{ color: 'hsl(150, 60%, 38%)' }}>Your wallet will be debited immediately after stock is verified.</p>
+                        <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>This order uses {currentMoney(totalAmount)} from your {currency} wallet balance.</p>
                       </motion.div>
                     )}
 
@@ -1569,6 +1622,11 @@ export default function Checkout() {
                         <CheckCircle className="w-4 h-4 sm:w-5 sm:h-5" />
                         Place Order
                       </>
+                    ) : paymentMethod === 'wallet' ? (
+                      <>
+                        <WalletCards className="w-4 h-4 sm:w-5 sm:h-5" />
+                        Pay with Wallet
+                      </>
                     ) : (
                       <>
                         <CreditCard className="w-4 h-4 sm:w-5 sm:h-5" />
@@ -1701,11 +1759,11 @@ export default function Checkout() {
                     // Continue with order flow
                     if (pendingOrderData?.data) {
                       const token = getAuthToken();
-                      if (pendingOrderData.order?.paymentMethod === 'cash_on_delivery') {
+                      if (['cash_on_delivery', 'wallet'].includes(pendingOrderData.order?.paymentMethod)) {
                         axios.delete(`${import.meta.env.VITE_API_URL}api/cart/clear`, { headers: { Authorization: `Bearer ${token}` } })
                           .then(() => fetchCart()).catch(() => {});
                         try { sessionStorage.removeItem(CHECKOUT_STORAGE_KEY); } catch (_) {}
-                        navigate('/success');
+                        navigate(`/success?payment=${pendingOrderData.order.paymentMethod}&orderId=${encodeURIComponent(pendingOrderData.data?.orderId || '')}`);
                       }
                     }
                   }}
@@ -1724,12 +1782,12 @@ export default function Checkout() {
                       setSavedShippingInfo(pendingOrderData?.currentShipping);
                     } catch (e) { console.error(e); }
                     setShowUpdatePrompt(false);
-                    if (pendingOrderData?.order?.paymentMethod === 'cash_on_delivery') {
+                    if (['cash_on_delivery', 'wallet'].includes(pendingOrderData?.order?.paymentMethod)) {
                       const token = getAuthToken();
                       axios.delete(`${import.meta.env.VITE_API_URL}api/cart/clear`, { headers: { Authorization: `Bearer ${token}` } })
                         .then(() => fetchCart()).catch(() => {});
                       try { sessionStorage.removeItem(CHECKOUT_STORAGE_KEY); } catch (_) {}
-                      navigate('/success');
+                      navigate(`/success?payment=${pendingOrderData.order.paymentMethod}&orderId=${encodeURIComponent(pendingOrderData.data?.orderId || '')}`);
                     }
                   }}
                   className="px-4 py-2 rounded-xl text-white font-semibold text-sm"

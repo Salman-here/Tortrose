@@ -1,14 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Search, Truck, CheckCircle, XCircle, Clock, Package, RefreshCw, ShoppingBag, Filter, Sparkles, ArrowRight, MessageCircle, Download, Calendar, FileText, FileSpreadsheet } from 'lucide-react';
+import { Search, Truck, CheckCircle, XCircle, Clock, Package, RefreshCw, ShoppingBag, Filter, Sparkles, ArrowRight, MessageCircle, Download, Calendar, FileText, FileSpreadsheet, RotateCcw } from 'lucide-react';
 import { openWhatsAppVerify, hasWhatsAppPhone, isOrderConfirmedByBuyer, isOrderDecidedByBuyer, getConfirmationSourceLabel } from '../../utils/whatsapp';
 import axios from 'axios';
 import { toast } from 'react-toastify';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import Loader from '../common/Loader';
 import { useAuth } from '../../contexts/AuthContext';
 import { useCurrency } from '../../contexts/CurrencyContext';
 import { getAuthToken } from "../../utils/cookieHelper";
+import ReturnOrdersPanel from './ReturnOrdersPanel';
 
 const OrderManagement = () => {
     const { currentUser } = useAuth();
@@ -21,6 +22,15 @@ const OrderManagement = () => {
     const [loading, setLoading] = useState(true);
     const [exporting, setExporting] = useState(false);
     const [exportFormat, setExportFormat] = useState('pdf');
+    const [searchParams, setSearchParams] = useSearchParams();
+    const activeView = currentUser?.role === 'seller' && searchParams.get('tab') === 'returns' ? 'returns' : 'orders';
+
+    const setActiveView = (view) => {
+        const next = new URLSearchParams(searchParams);
+        if (view === 'returns') next.set('tab', 'returns');
+        else next.delete('tab');
+        setSearchParams(next, { replace: true });
+    };
 
     const fetchOrders = async () => {
         const token = getAuthToken();
@@ -110,6 +120,26 @@ const OrderManagement = () => {
                     View and manage all customer orders
                 </p>
             </div>
+
+            {currentUser?.role === 'seller' && (
+                <div className="glass-panel p-1.5 mb-6 grid grid-cols-2 gap-1.5" role="tablist" aria-label="Order views">
+                    <button type="button" onClick={() => setActiveView('orders')} role="tab" aria-selected={activeView === 'orders'}
+                        className="px-4 py-2.5 rounded-xl text-sm font-semibold inline-flex items-center justify-center gap-2 transition-all"
+                        style={activeView === 'orders' ? { background: 'hsl(var(--primary))', color: 'white' } : { color: 'hsl(var(--muted-foreground))' }}>
+                        <ShoppingBag size={15} /> Orders
+                    </button>
+                    <button type="button" onClick={() => setActiveView('returns')} role="tab" aria-selected={activeView === 'returns'}
+                        className="px-4 py-2.5 rounded-xl text-sm font-semibold inline-flex items-center justify-center gap-2 transition-all"
+                        style={activeView === 'returns' ? { background: 'hsl(150, 60%, 40%)', color: 'white' } : { color: 'hsl(var(--muted-foreground))' }}>
+                        <RotateCcw size={15} /> Return Orders
+                    </button>
+                </div>
+            )}
+
+            {activeView === 'returns' ? (
+                <ReturnOrdersPanel formatPrice={formatPrice} />
+            ) : (
+                <>
 
             {/* Quick Stats */}
             <div className="grid grid-cols-3 sm:grid-cols-6 gap-3 mb-6">
@@ -450,6 +480,8 @@ const OrderManagement = () => {
                     </>
                 )}
             </motion.div>
+                </>
+            )}
         </div>
     );
 };

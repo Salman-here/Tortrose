@@ -99,6 +99,7 @@ const productSchema = mongoose.Schema(
             warrantyEnabled: { type: Boolean, default: false },
             warrantyDuration: { type: Number, default: 0 },
             warrantyDescription: { type: String, default: '' },
+            policyDescription: { type: String, default: '' },
         },
     },
     {

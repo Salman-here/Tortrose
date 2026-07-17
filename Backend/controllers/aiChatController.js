@@ -104,6 +104,7 @@ const {
   ADMIN_PROMPT,
   LANGUAGE_STYLE_ADDENDUM,
   TOOL_MEMORY_ADDENDUM,
+  COMMERCE_POLICY_ADDENDUM,
   WHATSAPP_SYSTEM_PROMPT_ADDENDUM,
 } = require('../services/aiPrompts/defaultPrompts');
 const aiPromptService = require('../services/aiPromptService');
@@ -513,7 +514,7 @@ const userTools = [
     type: 'function',
     function: {
       name: 'place_order',
-      description: 'Place a Cash-on-Delivery order when COD is allowed. Can order a specific product by ID or checkout the entire cart. Uses the user\'s saved address if available, otherwise requires shipping info. If the buyer wants card payment or any seller requires advance payment, use /checkout instead.',
+      description: 'Place a Cash-on-Delivery order when COD is allowed. Can order a specific product by ID or checkout the entire cart. Uses the user\'s saved address if available, otherwise requires shipping info. Stripe card and Rozare Wallet are completed securely at /checkout. If any seller accepts online payment only, use /checkout instead.',
       parameters: {
         type: 'object',
         properties: {
@@ -528,7 +529,7 @@ const userTools = [
             type: 'object',
             description: 'Shipping address. If not provided, uses saved address. Required fields: fullName, email, phone, address, city, state, postalCode, country.',
           },
-          paymentMethod: { type: 'string', enum: ['cash_on_delivery', 'stripe'], description: 'Payment method. Use cash_on_delivery for chat orders; Stripe requires secure checkout.' },
+          paymentMethod: { type: 'string', enum: ['cash_on_delivery', 'stripe'], description: 'Use cash_on_delivery for chat orders. Stripe card and Rozare Wallet require secure /checkout instead of a chat order.' },
         },
       },
     },
@@ -812,7 +813,7 @@ const sellerTools = [
         properties: {
           updates: {
             type: 'object',
-            description: 'Fields: storeName, storeSlug, description, logo, banner, socialLinks, returnPolicy, address, sellerType, paymentPolicy, confirmSubdomainChange. paymentPolicy values: online_and_cod for both card and Cash on Delivery, advance_only for card/Stripe only. Store text fields must be clean plain values only: no markdown stars, headings, labels, copied form labels, or placeholders.',
+            description: 'Fields: storeName, storeSlug, description, logo, banner, socialLinks, returnPolicy, address, sellerType, paymentPolicy, confirmSubdomainChange. paymentPolicy values: online_and_cod for online payment plus Cash on Delivery, advance_only for Stripe card or Rozare Wallet only. returnPolicy is an object with returnsEnabled, returnDuration (1-365 days when enabled), refundType (full_refund, store_credit, or replacement_only), policyDescription, warrantyEnabled, warrantyDuration, and warrantyDescription. full_refund and store_credit both credit the approved refund to Rozare Wallet after seller funding. Store text fields must be clean plain values only: no markdown stars, headings, labels, copied form labels, or placeholders.',
           },
         },
         required: ['updates'],
@@ -1306,7 +1307,7 @@ async function getSystemPrompt(role, channel = 'web') {
         base = USER_PROMPT;
     }
     const whatsapp = channel === 'whatsapp' ? WHATSAPP_SYSTEM_PROMPT_ADDENDUM : '';
-    return base + LANGUAGE_STYLE_ADDENDUM + TOOL_MEMORY_ADDENDUM + whatsapp;
+    return base + LANGUAGE_STYLE_ADDENDUM + TOOL_MEMORY_ADDENDUM + COMMERCE_POLICY_ADDENDUM + whatsapp;
   }
 }
 

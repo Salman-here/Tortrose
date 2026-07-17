@@ -29,6 +29,10 @@ const { buildReconfirmButtonsPayload } = require('./messageBuilder');
 const evolution = require('./evolutionClient');
 const { notifySeller } = require('./sellerNotificationService');
 const sellerTemplates = require('./sellerMessageTemplates');
+const {
+    getBuyerCancellationBlock,
+    syncAllSellerFulfillmentStatus,
+} = require('../orderFulfillmentService');
 const { processIncomingWhatsAppMessage } = require('./whatsappAIChatService');
 const {
     isGroupOrBroadcastJid,
@@ -734,6 +738,7 @@ exports.handleEvolutionWebhook = async (req, res) => {
                         { new: true }
                     );
                     if (updated) {
+                        await syncAllSellerFulfillmentStatus(updated, 'confirmed');
                         await applyVote(job, 'yes');
                         await sendResponseMessage(outboundTo, true, order.orderId, firstName);
                         notifySellers(updated, true);
@@ -767,6 +772,7 @@ exports.handleEvolutionWebhook = async (req, res) => {
                             { new: true }
                         );
                         if (updated) {
+                            await syncAllSellerFulfillmentStatus(updated, 'cancelled');
                             await applyVote(job, 'no');
                             await sendResponseMessage(outboundTo, false, order.orderId, firstName);
                             notifySellers(updated, false);
@@ -1001,6 +1007,18 @@ exports.handleEvolutionWebhook = async (req, res) => {
                     console.log(`[whatsapp] Buyer ${isYes ? 'confirmed' : 'cancelled'} order ${order.orderId} — overriding seller's early ${order.orderStatus} status`);
                 }
 
+                if (!isYes) {
+                    const cancellationBlock = getBuyerCancellationBlock(order);
+                    if (cancellationBlock) {
+                        await evolution.sendText(outboundTo, [
+                            `Order #${order.orderId} cannot be cancelled here.`,
+                            '',
+                            cancellationBlock.message,
+                        ].join('\n'));
+                        continue;
+                    }
+                }
+
                 // Use atomic update to prevent race with email confirmation
                 const updateFields = isYes
                     ? {
@@ -1038,6 +1056,8 @@ exports.handleEvolutionWebhook = async (req, res) => {
                     console.log(`[whatsapp] Race condition: order ${order.orderId} was decided by another path between read and atomic write`);
                     continue;
                 }
+
+                await syncAllSellerFulfillmentStatus(updatedOrder, isYes ? 'confirmed' : 'cancelled');
 
                 // NOW persist the vote on the job (dashboard reads this)
                 await applyVote(job, isYes ? 'yes' : 'no');

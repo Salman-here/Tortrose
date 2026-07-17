@@ -27,6 +27,20 @@ const orderSchema = mongoose.Schema(
                 quantity: { type: Number, required: true },
                 selectedColor: { type: String, default: null },
                 selectedOptions: { type: Map, of: String, default: undefined },
+                returnPolicySnapshotVersion: { type: Number, default: 0 },
+                returnPolicy: {
+                    returnsEnabled: { type: Boolean, default: false },
+                    returnDuration: { type: Number, default: 0 },
+                    refundType: {
+                        type: String,
+                        enum: ['none', 'full_refund', 'replacement_only', 'store_credit'],
+                        default: 'none'
+                    },
+                    warrantyEnabled: { type: Boolean, default: false },
+                    warrantyDuration: { type: Number, default: 0 },
+                    warrantyDescription: { type: String, default: '' },
+                    policyDescription: { type: String, default: '' }
+                },
             }
         ],
 
@@ -59,6 +73,50 @@ const orderSchema = mongoose.Schema(
             }
         ],
 
+        // Each seller owns fulfillment for only their portion of a multi-seller
+        // order. Seller dashboards use this status instead of mutating another
+        // seller's delivery state.
+        sellerFulfillment: [
+            {
+                seller: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+                status: {
+                    type: String,
+                    enum: ["pending", "confirmed", "processing", "shipped", "delivered", "cancelled"],
+                    default: "pending"
+                },
+                deliveredAt: { type: Date, default: null },
+                updatedAt: { type: Date, default: Date.now }
+            }
+        ],
+
+        // Commerce policies are snapshotted at checkout so a seller cannot
+        // shorten a buyer's return window after the purchase.
+        sellerPolicies: [
+            {
+                seller: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+                store: { type: mongoose.Schema.Types.ObjectId, ref: "Store", default: null },
+                storeName: { type: String, default: '' },
+                paymentPolicy: {
+                    type: String,
+                    enum: ['online_and_cod', 'advance_only'],
+                    default: 'online_and_cod'
+                },
+                returnPolicy: {
+                    returnsEnabled: { type: Boolean, default: false },
+                    returnDuration: { type: Number, default: 0 },
+                    refundType: {
+                        type: String,
+                        enum: ['none', 'full_refund', 'replacement_only', 'store_credit'],
+                        default: 'none'
+                    },
+                    warrantyEnabled: { type: Boolean, default: false },
+                    warrantyDuration: { type: Number, default: 0 },
+                    warrantyDescription: { type: String, default: '' },
+                    policyDescription: { type: String, default: '' }
+                }
+            }
+        ],
+
         orderSummary: {
             subtotal: { type: Number, required: true },
             shippingCost: { type: Number, required: true },
@@ -73,6 +131,7 @@ const orderSchema = mongoose.Schema(
                 code: { type: String },
                 discountType: { type: String, enum: ["percentage", "fixed"] },
                 discountValue: { type: Number },
+                appliedDiscountAmount: { type: Number, default: null },
                 currency: { type: String, uppercase: true, trim: true },
                 sourceDiscountValue: { type: Number },
                 sourceCurrency: { type: String, uppercase: true, trim: true },
@@ -98,13 +157,14 @@ const orderSchema = mongoose.Schema(
         paymentMethod: {
             type: String,
             required: true,
-            enum: ["cash_on_delivery", "stripe"],
+            enum: ["cash_on_delivery", "stripe", "wallet"],
             default: 'stripe'
         },
 
         paymentResult: {
             paymentIntentId: String,
-            emailAddress: String
+            emailAddress: String,
+            walletTransactionId: { type: mongoose.Schema.Types.ObjectId, ref: 'WalletTransaction' }
         },
 
         // Stripe checkout session id — used by webhook handlers (expired/failed) to
@@ -116,6 +176,10 @@ const orderSchema = mongoose.Schema(
         // dashboards and listings until payment succeeds via webhook, and are
         // marked `cancelled` if the Stripe session expires or the buyer abandons.
         awaitingPayment: { type: Boolean, default: false, index: true },
+
+        inventoryCommitted: { type: Boolean, default: false, index: true },
+        paymentFulfilledAt: { type: Date, default: null, index: true },
+        returnVersion: { type: Number, default: 0 },
 
         isPaid: {
             type: Boolean,
@@ -145,7 +209,7 @@ const orderSchema = mongoose.Schema(
             // (e.g., 'whatsapp' for a WhatsApp decline, 'email' for an email decline). The actual
             // action (confirm vs decline) is determined by checking confirmedAt vs declinedAt.
             // The `decidedVia` field below is more semantically clear for new code.
-            confirmedVia: { type: String, enum: ['email', 'whatsapp', 'manual', 'dashboard', 'admin', 'stripe_payment', null], default: null },
+            confirmedVia: { type: String, enum: ['email', 'whatsapp', 'manual', 'dashboard', 'admin', 'stripe_payment', 'wallet_payment', null], default: null },
             declinedAt: { type: Date, default: null },
             voteChangeCount: { type: Number, default: 0 },
             lockMessageSent: { type: Boolean, default: false },
@@ -200,5 +264,6 @@ orderSchema.virtual('confirmationSourceLabel').get(function () {
 
 orderSchema.index({ awaitingPayment: 1, orderStatus: 1, 'orderItems.seller': 1, createdAt: -1 });
 orderSchema.index({ awaitingPayment: 1, orderStatus: 1, 'orderItems.productId': 1, createdAt: -1 });
+orderSchema.index({ 'sellerFulfillment.seller': 1, 'sellerFulfillment.status': 1, createdAt: -1 });
 
 module.exports = mongoose.model("Order", orderSchema);

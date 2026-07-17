@@ -29,7 +29,8 @@ const faqCategories = [
     category: 'Payments',
     icon: 'card-outline',
     questions: [
-      { q: 'What payment methods are accepted?', a: 'Stripe card checkout is available for online payment. Cash on Delivery is available only when every seller in the cart allows COD. If any seller requires advance online payment, checkout becomes card-only.' },
+      { q: 'What payment methods are accepted?', a: 'Checkout supports Stripe card, Rozare Wallet, and Cash on Delivery. One order uses one payment method. COD is available only when every seller allows it; otherwise use card or a sufficient Wallet balance in the checkout currency.' },
+      { q: 'How does Rozare Wallet work?', a: 'Open Wallet from your Dashboard or Profile to add balance securely by card and view transactions. USD, PKR, EUR, and GBP balances stay separate and are not converted automatically.' },
       { q: 'Is my payment information secure?', a: 'Payments are processed through Stripe where available, and Rozare does not store your card details.' },
       { q: 'Are there any hidden fees?', a: 'No hidden fees. The price you see includes all applicable taxes (calculated at checkout). Shipping costs are shown before you confirm.' },
     ],
@@ -47,8 +48,9 @@ const faqCategories = [
     category: 'Returns',
     icon: 'refresh-outline',
     questions: [
-      { q: 'What is the return policy?', a: 'Return policies vary by seller. Check the product listing for specific return terms. Generally, items can be returned within 14–30 days of delivery.' },
-      { q: 'How do I initiate a return?', a: 'Go to your Orders, find the order, and tap "Request Return". The seller will review and approve your request.' },
+      { q: 'What is the return policy?', a: 'Return eligibility is seller- and item-specific. The policy saved when you order controls the deadline after that seller portion is delivered. In a mixed order, one seller can allow returns even when another does not.' },
+      { q: 'How do I initiate a return?', a: 'Open the delivered order, select Request Return for an eligible seller, choose item quantities, and provide the reason. You can then track approval, pickup, transit, receipt, and review.' },
+      { q: 'When is a refund issued?', a: 'The seller must accept and fund the exact approved amount from seller balance or by Stripe card. Only verified funding credits your Rozare Wallet in the order currency and completes the return.' },
     ],
   },
   {

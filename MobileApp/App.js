@@ -171,6 +171,7 @@ const linking = {
       TrackOrder: 'track-order',
       AIChat: 'ai-chat',
       UserDashboard: 'user-dashboard',
+      Wallet: 'wallet',
       PaymentSuccess: 'payment-success',
       PaymentCancel: 'payment-cancel',
       FAQ: 'faq',
@@ -180,6 +181,7 @@ const linking = {
       PrivacyPolicy: 'privacy',
       Docs: 'docs',
       SellerDashboard: 'seller-dashboard',
+      SellerOrderManagement: 'seller-returns',
     },
   },
 };

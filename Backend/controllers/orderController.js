@@ -10,7 +10,7 @@ const { recordCouponUsage } = require('./couponController');
 const { sendEmail } = require('./mailController');
 const { orderConfirmationEmail, orderStatusUpdateEmail, newOrderSellerEmail, buyerOrderConfirmationRequestEmail } = require('../utils/emailTemplates');
 const { generateConfirmationToken } = require('./orderConfirmationController');
-const { enqueueOrderConfirmation } = require('../services/whatsapp/queue');
+const { enqueueOrderConfirmation, enqueueOrderPlacedInfo } = require('../services/whatsapp/queue');
 const WhatsAppConfig = require('../models/WhatsAppConfig');
 const { configKeyFor } = require('../services/whatsapp/gatewayMode');
 const User = require('../models/User');
@@ -22,7 +22,27 @@ const { CURRENCIES, normalizeCurrency, convertAmount } = require('../services/cu
 const { getProductCurrency, getProductEffectivePrice } = require('../services/productPricingService');
 const { isStoreVisibleToBuyer, normalizeBuyerLocation } = require('../services/storeVisibilityService');
 const { storeAllowsCashOnDelivery } = require('../services/storePaymentPolicyService');
-const { formatItemOptionsText, orderItemName, toPlainOptions } = require('../utils/orderPresentation');
+const { normalizeReturnPolicy } = require('../services/returnPolicyService');
+const { payOrderWithWallet } = require('../services/walletService');
+const {
+    validateAndPriceCoupons,
+    validateAndPriceShipping,
+} = require('../services/checkoutPricingService');
+const { discountForOrderItems } = require('../services/orderDiscountService');
+const {
+    ensureOrderSellerFulfillment,
+    getBuyerCancellationBlock,
+    sellerFulfillmentFor,
+    setAllSellerFulfillmentStatus,
+    setSellerFulfillmentStatus,
+    syncAggregateDeliveryState,
+} = require('../services/orderFulfillmentService');
+const {
+    formatItemOptionsText,
+    orderItemName,
+    paymentMethodLabel,
+    toPlainOptions,
+} = require('../utils/orderPresentation');
 
 const toId = (value) => value?.toString?.() || String(value || '');
 const optionsKey = (opts) => {
@@ -56,6 +76,13 @@ const toStripeMinorUnits = (amount, currency) => {
 const getSellerProductIds = async (sellerId) => {
     const ids = await Product.find({ seller: sellerId }).distinct('_id');
     return ids.map(toId);
+};
+
+const recordOrderCoupons = async (savedOrder, userId) => {
+    if (!userId || !Array.isArray(savedOrder?.appliedCoupons)) return;
+    for (const couponData of savedOrder.appliedCoupons) {
+        if (couponData?.couponId) await recordCouponUsage(couponData.couponId, userId);
+    }
 };
 
 // True if any orderItem belongs to this seller (snapshot first, fallback to live product list).
@@ -92,43 +119,27 @@ const buildSellerOrderView = (order, sellerProductIds, sellerId) => {
     const sellerTax = (Number(summary.tax) || 0) * sellerProportion;
 
     // Coupon discount allocated to ONLY this seller's items (by product id).
-    const sellerItemIds = new Set(sellerOrderItems.map(it => toId(it.productId)));
-    let sellerCouponDiscount = 0;
-    (order.appliedCoupons || []).forEach(c => {
-        const couponItemIds = (c.applicableProductIds || []).map(toId).filter(pid => sellerItemIds.has(pid));
-        if (couponItemIds.length === 0) return;
-        // Subtotal of seller items that this coupon applies to
-        const applicableSubtotal = sellerOrderItems
-            .filter(it => couponItemIds.includes(toId(it.productId)))
-            .reduce((s, it) => s + (Number(it.price) || 0) * (Number(it.quantity) || 0), 0);
-        if (applicableSubtotal <= 0) return;
-        if (c.discountType === 'percentage') {
-            sellerCouponDiscount += (applicableSubtotal * (Number(c.discountValue) || 0)) / 100;
-        } else {
-            // Fixed amount — pro-rate across all items the coupon covers globally.
-            const allCouponItems = (order.orderItems || []).filter(it =>
-                (c.applicableProductIds || []).map(toId).includes(toId(it.productId))
-            );
-            const allCouponSubtotal = allCouponItems.reduce(
-                (s, it) => s + (Number(it.price) || 0) * (Number(it.quantity) || 0), 0
-            );
-            if (allCouponSubtotal > 0) {
-                sellerCouponDiscount += (Number(c.discountValue) || 0) * (applicableSubtotal / allCouponSubtotal);
-            }
-        }
-    });
-
+    const sellerCouponDiscount = discountForOrderItems(order, sellerOrderItems);
     const sellerTotal = sellerSubtotal + sellerShipping + sellerTax - sellerCouponDiscount;
 
     const obj = order.toObject();
+    const sellerFulfillment = sellerFulfillmentFor(order, sellerId);
+    const sellerPolicy = (order.sellerPolicies || []).find(
+        entry => toId(entry.seller) === toId(sellerId)
+    );
     return {
         ...obj,
+        orderStatus: sellerFulfillment?.status || obj.orderStatus,
+        isDelivered: sellerFulfillment ? sellerFulfillment.status === 'delivered' : obj.isDelivered,
+        deliveredAt: sellerFulfillment?.deliveredAt || obj.deliveredAt,
         orderItems: sellerOrderItems,
         // Strip other sellers' shipping selections from the seller's view
         sellerShipping: sellerShippingInfo ? [sellerShippingInfo] : [],
         shippingMethod: sellerShippingInfo
             ? { ...sellerShippingInfo.shippingMethod, seller: sellerId }
             : obj.shippingMethod,
+        sellerFulfillment: sellerFulfillment ? [sellerFulfillment] : [],
+        sellerPolicies: sellerPolicy ? [sellerPolicy] : [],
         orderSummary: {
             subtotal: Math.round(sellerSubtotal * 100) / 100,
             shippingCost: Math.round(sellerShipping * 100) / 100,
@@ -148,7 +159,19 @@ const getSellerScopedOrders = async (query, sellerId, sort = null) => {
         ? { $or: [{ 'orderItems.seller': sellerId }, { 'orderItems.productId': { $in: sellerProductIds } }] }
         : { 'orderItems.seller': sellerId };
 
-    const dbQuery = { ...query, ...sellerScope };
+    const baseQuery = { ...query };
+    const requestedStatus = baseQuery.orderStatus;
+    delete baseQuery.orderStatus;
+    const conditions = [baseQuery, sellerScope];
+    if (requestedStatus) {
+        conditions.push({
+            $or: [
+                { sellerFulfillment: { $elemMatch: { seller: sellerId, status: requestedStatus } } },
+                { 'sellerFulfillment.0': { $exists: false }, orderStatus: requestedStatus },
+            ],
+        });
+    }
+    const dbQuery = { $and: conditions };
     const finder = Order.find(dbQuery);
     if (sort) finder.sort(sort);
     const orders = await finder;
@@ -211,6 +234,26 @@ const maybeEnqueueWhatsAppConfirmation = async (order, _productItems) => {
     }
 };
 
+const notifyNewOrderSellers = async (order, productItems) => {
+    const sellerIds = [...new Set((productItems || []).map(product => toId(product.seller)).filter(Boolean))];
+    for (const sellerId of sellerIds) {
+        const seller = await User.findById(sellerId);
+        const sellerProductIds = (productItems || [])
+            .filter(product => toId(product.seller) === toId(sellerId))
+            .map(product => toId(product._id));
+        const scopedOrder = buildSellerOrderView(order, sellerProductIds, sellerId);
+        if (seller?.email) {
+            const sellerEmailData = newOrderSellerEmail(scopedOrder, seller.username);
+            await sendEmail({ to: seller.email, ...sellerEmailData }).catch(error =>
+                console.error('Seller new-order email failed:', error.message)
+            );
+        }
+        notifySeller(sellerId, 'new_order', sellerTemplates.new_order(scopedOrder)).catch(error =>
+            console.error('[whatsapp] seller new order notification failed:', error.message)
+        );
+    }
+};
+
 
 exports.placeOrder = async (req, res) => {
     const { order } = req.body;
@@ -236,11 +279,17 @@ exports.placeOrder = async (req, res) => {
         ) {
             return res.status(400).json({ msg: "Missing required order details" });
         }
-        const normalizedPaymentMethod = ['stripe', 'cash_on_delivery'].includes(order.paymentMethod)
+        const normalizedPaymentMethod = ['stripe', 'cash_on_delivery', 'wallet'].includes(order.paymentMethod)
             ? order.paymentMethod
             : null;
         if (!normalizedPaymentMethod) {
             return res.status(400).json({ msg: 'Choose a valid payment method.' });
+        }
+        if (normalizedPaymentMethod === 'wallet' && !userId) {
+            return res.status(401).json({
+                msg: 'Log in to pay with Rozare Wallet.',
+                code: 'WALLET_LOGIN_REQUIRED',
+            });
         }
 
         // console.log(order.orderItems);
@@ -259,9 +308,11 @@ exports.placeOrder = async (req, res) => {
         const productById = new Map(orderItems.map(product => [toId(product._id), product]));
         const sellerIdsInOrder = [...new Set(orderItems.map(product => toId(product.seller)).filter(Boolean))];
         let codRestrictedSellerNames = [];
+        let storeBySeller = new Map();
         if (sellerIdsInOrder.length > 0) {
-            const stores = await Store.find({ seller: { $in: sellerIdsInOrder }, isActive: true }).select('seller storeName visibility paymentPolicy');
-            const storeBySeller = new Map(stores.map(store => [toId(store.seller), store]));
+            const stores = await Store.find({ seller: { $in: sellerIdsInOrder }, isActive: true })
+                .select('seller storeName visibility paymentPolicy returnPolicy');
+            storeBySeller = new Map(stores.map(store => [toId(store.seller), store]));
             const buyerLocation = normalizeBuyerLocation({
                 ...(order.buyerLocation || {}),
                 country: order.buyerLocation?.country || order.shippingInfo?.country,
@@ -285,7 +336,7 @@ exports.placeOrder = async (req, res) => {
                 .map(store => store.storeName || 'A seller');
             if (normalizedPaymentMethod === 'cash_on_delivery' && codRestrictedSellerNames.length > 0) {
                 return res.status(400).json({
-                    msg: `Cash on Delivery is not available for this cart because ${codRestrictedSellerNames.join(', ')} ${codRestrictedSellerNames.length === 1 ? 'requires' : 'require'} advance online payment. Please pay by card or remove those items.`,
+                    msg: `Cash on Delivery is not available for this cart because ${codRestrictedSellerNames.join(', ')} ${codRestrictedSellerNames.length === 1 ? 'accepts' : 'accept'} online payment only. Please pay by card or Rozare Wallet, or remove those items.`,
                     code: 'COD_NOT_AVAILABLE_FOR_CART',
                     advanceOnlySellers: codRestrictedSellerNames,
                 });
@@ -304,6 +355,10 @@ exports.placeOrder = async (req, res) => {
             const sourceCurrency = getProductCurrency(product, orderCurrency);
             const sourcePrice = getProductEffectivePrice(product);
             const orderPrice = await convertAmount(sourcePrice, sourceCurrency, orderCurrency);
+            const store = storeBySeller.get(toId(product.seller));
+            const effectiveReturnPolicy = product.returnPolicy?.useStorePolicy === false
+                ? normalizeReturnPolicy(product.returnPolicy)
+                : normalizeReturnPolicy(store?.returnPolicy || {});
             return {
                 productId: product._id,
                 seller: product.seller || null,
@@ -317,6 +372,8 @@ exports.placeOrder = async (req, res) => {
                 quantity,
                 selectedColor: item.selectedColor || null,
                 selectedOptions: item.selectedOptions || undefined,
+                returnPolicySnapshotVersion: 1,
+                returnPolicy: effectiveReturnPolicy,
             };
         }));
 
@@ -325,17 +382,23 @@ exports.placeOrder = async (req, res) => {
             return acc + item.price * item.quantity
         }, 0)
 
-        // Calculate total shipping cost from all sellers
-        let shippingCost = 0;
-        if (order.sellerShipping && Array.isArray(order.sellerShipping) && order.sellerShipping.length > 0) {
-            // Sum up shipping costs from all sellers
-            shippingCost = order.sellerShipping.reduce((sum, sellerShip) => {
-                return sum + (sellerShip.shippingMethod.price || 0);
-            }, 0);
-        } else {
-            // Fallback to single shipping method (backward compatibility)
-            shippingCost = order.shippingMethod.price || 0;
-        }
+        // Reload shipping methods and coupons from MongoDB. Browser/mobile
+        // amounts are display hints only and never determine the charged total.
+        const [shippingPricing, couponPricing] = await Promise.all([
+            validateAndPriceShipping({
+                requestedSellerShipping: order.sellerShipping,
+                fallbackShippingMethod: order.shippingMethod,
+                sellerIds: sellerIdsInOrder,
+                orderCurrency,
+            }),
+            validateAndPriceCoupons({
+                requestedCoupons: order.appliedCoupons,
+                orderItems: normalizedOrderItems,
+                userId,
+                orderCurrency,
+            }),
+        ]);
+        const shippingCost = shippingPricing.shippingCost;
 
         // Fetch tax configuration and calculate tax
         let tax = 0;
@@ -344,8 +407,7 @@ exports.placeOrder = async (req, res) => {
             tax = calculateTax(subtotal, taxConfig);
         }
 
-        // Calculate coupon discount from frontend
-        const couponDiscount = order.orderSummary?.couponDiscount || 0;
+        const couponDiscount = couponPricing.couponDiscount;
 
         // Final total
         const subtotalRounded = Math.round(subtotal * 100) / 100;
@@ -376,11 +438,13 @@ exports.placeOrder = async (req, res) => {
             },
 
             shippingMethod: {
-                name: order.shippingMethod.name,
-                price: order.shippingMethod.price,
-                estimatedDays: order.shippingMethod.estimatedDays,
-                seller: order.shippingMethod.seller || null
+                name: shippingPricing.primaryShipping.shippingMethod.name,
+                price: shippingPricing.primaryShipping.shippingMethod.price,
+                estimatedDays: shippingPricing.primaryShipping.shippingMethod.estimatedDays,
+                seller: shippingPricing.primaryShipping.seller,
             },
+
+            sellerShipping: shippingPricing.sellerShipping,
 
             orderSummary: {
                 subtotal: subtotalRounded,
@@ -390,7 +454,25 @@ exports.placeOrder = async (req, res) => {
                 totalAmount: totalAmount,
             },
 
-            appliedCoupons: order.appliedCoupons || [],
+            sellerFulfillment: sellerIdsInOrder.map(sellerId => ({
+                seller: sellerId,
+                status: 'pending',
+                deliveredAt: null,
+                updatedAt: new Date(),
+            })),
+
+            sellerPolicies: sellerIdsInOrder.map(sellerId => {
+                const store = storeBySeller.get(sellerId);
+                return {
+                    seller: sellerId,
+                    store: store?._id || null,
+                    storeName: store?.storeName || '',
+                    paymentPolicy: store?.paymentPolicy || 'online_and_cod',
+                    returnPolicy: normalizeReturnPolicy(store?.returnPolicy || {}),
+                };
+            }),
+
+            appliedCoupons: couponPricing.appliedCoupons,
 
             tracking: {
                 tiktokPlaceOrderEventId: order.tracking?.tiktokPlaceOrderEventId || null,
@@ -404,14 +486,6 @@ exports.placeOrder = async (req, res) => {
             // ✅ Schema expects just string ("stripe" | "cash_on_delivery")
             paymentMethod: normalizedPaymentMethod,
         });
-
-
-
-        // Add seller shipping info if provided (for multi-seller orders)
-        if (order.sellerShipping && Array.isArray(order.sellerShipping)) {
-            newOrder.sellerShipping = order.sellerShipping;
-        }
-
         if (order.instructions && order.instructions !== '') newOrder.instructions = order.instructions
 
         // Always attach a confirmation token so WhatsApp/email auto-verify can use it.
@@ -423,7 +497,7 @@ exports.placeOrder = async (req, res) => {
             newOrder.confirmation = { token, tokenExpiresAt, confirmedAt: null, confirmedVia: null, declinedAt: null };
         }
 
-        // CRITICAL: Stripe orders start as "awaiting payment" and are HIDDEN from
+        // CRITICAL: online-payment orders start as "awaiting payment" and are HIDDEN from
         // every dashboard until the Stripe webhook confirms payment. This prevents
         // abandoned-checkout orders from appearing as real orders to sellers.
         if (!isCOD) {
@@ -453,22 +527,7 @@ exports.placeOrder = async (req, res) => {
 
             // Send new order notification to each seller (COD only — for Stripe this happens in webhook)
             try {
-                const sellerIds = [...new Set(orderItems.map(p => p.seller?.toString()).filter(Boolean))];
-                for (const sellerId of sellerIds) {
-                    const seller = await User.findById(sellerId);
-                    // Send each seller a view scoped to ONLY their items + their totals
-                    const sellerProductIds = orderItems
-                        .filter(p => toId(p.seller) === toId(sellerId))
-                        .map(p => toId(p._id));
-                    const scopedOrder = buildSellerOrderView(newOrder, sellerProductIds, sellerId);
-                    if (seller?.email) {
-                        const sellerEmailData = newOrderSellerEmail(scopedOrder, seller.username);
-                        await sendEmail({ to: seller.email, ...sellerEmailData });
-                    }
-                    notifySeller(sellerId, 'new_order', sellerTemplates.new_order(scopedOrder)).catch(e =>
-                        console.error('[whatsapp] seller new order notification failed:', e.message)
-                    );
-                }
+                await notifyNewOrderSellers(newOrder, orderItems);
             } catch (emailErr) {
                 console.error('Failed to send seller notification email:', emailErr.message);
             }
@@ -477,17 +536,60 @@ exports.placeOrder = async (req, res) => {
             await maybeEnqueueWhatsAppConfirmation(newOrder, orderItems);
         }
 
-        // Record coupon usage
-        if (userId && order.appliedCoupons && order.appliedCoupons.length > 0) {
-            for (const couponData of order.appliedCoupons) {
-                if (couponData.couponId) {
-                    await recordCouponUsage(couponData.couponId, userId);
-                }
-            }
-        }
-
-
         // const domainURL = process.env.FRONTEND_URL || 'http://localhost:5173'
+
+        if (newOrder.paymentMethod === 'wallet') {
+            let paidOrder;
+            try {
+                paidOrder = await payOrderWithWallet({ orderId: newOrder._id, userId });
+            } catch (walletError) {
+                await Order.deleteOne({ _id: newOrder._id, awaitingPayment: true }).catch(() => {});
+                return res.status(walletError.statusCode || 500).json({
+                    msg: walletError.message || 'Rozare Wallet payment failed.',
+                    code: walletError.code,
+                    availableBalance: walletError.availableBalance,
+                    currency: walletError.currency,
+                });
+            }
+
+            try {
+                const buyerEmailData = orderConfirmationEmail(paidOrder);
+                await sendEmail({ to: paidOrder.shippingInfo.email, ...buyerEmailData });
+                await notifyNewOrderSellers(paidOrder, orderItems);
+                await enqueueOrderPlacedInfo(paidOrder);
+            } catch (notificationError) {
+                console.error('Wallet order notification failed:', notificationError.message);
+            }
+
+            await Cart.updateOne({ user: userId }, { $set: { cartItems: [] } }).catch(() => {});
+            await recordOrderCoupons(paidOrder, userId);
+            trackOrderEvent({
+                event: 'PlaceAnOrder',
+                req,
+                order: paidOrder,
+                eventId: paidOrder.tracking?.tiktokPlaceOrderEventId,
+                tracking: paidOrder.tracking || {},
+            }).catch(() => {});
+            trackOrderEvent({
+                event: 'Purchase',
+                req,
+                order: paidOrder,
+                eventId: paidOrder.tracking?.tiktokPurchaseEventId,
+                tracking: paidOrder.tracking || {},
+            }).catch(() => {});
+
+            return res.status(200).json({
+                msg: 'Order paid successfully with Rozare Wallet.',
+                paymentMethod: 'wallet',
+                orderId: paidOrder.orderId,
+                order: {
+                    _id: paidOrder._id,
+                    orderId: paidOrder.orderId,
+                    totalAmount: paidOrder.orderSummary.totalAmount,
+                    currency: paidOrder.currency,
+                },
+            });
+        }
 
         if (newOrder.paymentMethod === 'cash_on_delivery') {
             // Reduce stock for cash on delivery orders
@@ -497,6 +599,9 @@ exports.placeOrder = async (req, res) => {
                     { $inc: { stock: -item.quantity } }
                 );
             }
+            newOrder.inventoryCommitted = true;
+            await newOrder.save();
+            await recordOrderCoupons(newOrder, userId);
 
             trackOrderEvent({
                 event: 'PlaceAnOrder',
@@ -522,7 +627,7 @@ exports.placeOrder = async (req, res) => {
             await Order.deleteOne({ _id: newOrder._id });
             return res.status(400).json({
                 msg: codRestrictedSellerNames.length > 0
-                    ? `Card payments are not available in ${newOrder.currency} yet, and this cart contains sellers who require advance online payment. Please switch checkout currency or remove those items.`
+                    ? `Card payments are not available in ${newOrder.currency} yet, and this cart contains sellers who accept online payment only. Please switch checkout currency or remove those items.`
                     : `Card payments are not available in ${newOrder.currency} yet. Please choose cash on delivery or switch checkout currency.`,
             });
         }
@@ -547,9 +652,11 @@ exports.placeOrder = async (req, res) => {
                 price_data: {
                     currency: stripeCurrency,
                     product_data: {
-                        name: `${newOrder.shippingMethod.name} Shipping`,
+                        name: newOrder.sellerShipping.length > 1
+                            ? `Shipping (${newOrder.sellerShipping.length} sellers)`
+                            : `${newOrder.shippingMethod.name} Shipping`,
                     },
-                    unit_amount: toStripeMinorUnits(newOrder.shippingMethod.price, newOrder.currency)
+                    unit_amount: toStripeMinorUnits(newOrder.orderSummary.shippingCost, newOrder.currency)
                 },
                 quantity: 1
             },
@@ -603,24 +710,34 @@ exports.placeOrder = async (req, res) => {
                 }
             } catch (couponErr) {
                 console.error('Failed to create Stripe coupon:', couponErr.message);
+                await Order.deleteOne({ _id: newOrder._id, awaitingPayment: true });
+                couponErr.statusCode = 502;
+                couponErr.message = 'The secure checkout discount could not be created. Please try again.';
+                throw couponErr;
             }
         }
 
-        const session = await stripe.checkout.sessions.create({
-            payment_method_types: ['card'],
-            mode: 'payment',
-            line_items,
-            ...(stripeDiscounts ? { discounts: stripeDiscounts } : {}),
-            success_url: successUrl,
-            cancel_url: cancelUrl,
-            // Auto-expire abandoned checkouts after 30 minutes (Stripe min) so the
-            // `checkout.session.expired` webhook can mark the order as cancelled.
-            expires_at: Math.floor(Date.now() / 1000) + 30 * 60,
-            metadata: {
-                orderId: newOrder.orderId,
-                tiktokPurchaseEventId: newOrder.tracking?.tiktokPurchaseEventId || '',
-            }
-        })
+        let session;
+        try {
+            session = await stripe.checkout.sessions.create({
+                payment_method_types: ['card'],
+                mode: 'payment',
+                line_items,
+                ...(stripeDiscounts ? { discounts: stripeDiscounts } : {}),
+                success_url: successUrl,
+                cancel_url: cancelUrl,
+                // Auto-expire abandoned checkouts after 30 minutes (Stripe min) so the
+                // `checkout.session.expired` webhook can mark the order as cancelled.
+                expires_at: Math.floor(Date.now() / 1000) + 30 * 60,
+                metadata: {
+                    orderId: newOrder.orderId,
+                    tiktokPurchaseEventId: newOrder.tracking?.tiktokPurchaseEventId || '',
+                }
+            });
+        } catch (stripeError) {
+            await Order.deleteOne({ _id: newOrder._id, awaitingPayment: true });
+            throw stripeError;
+        }
 
         // Persist the Stripe session id so webhook handlers can locate this order
         // when the buyer abandons / the session expires.
@@ -773,7 +890,7 @@ exports.exportOrders = async (req, res) => {
                 country: o.shippingInfo?.country || '',
                 status: (o.orderStatus || '').charAt(0).toUpperCase() + (o.orderStatus || '').slice(1),
                 payment: o.isPaid ? 'Paid' : 'Unpaid',
-                paymentMethod: o.paymentMethod === 'cash_on_delivery' ? 'COD' : 'Stripe',
+                paymentMethod: paymentMethodLabel(o.paymentMethod),
                 items: (o.orderItems || []).map(i => {
                     const options = formatItemOptionsText(i);
                     return `${orderItemName(i)}${options ? ` (${options})` : ''} x${i.quantity}`;
@@ -1105,6 +1222,10 @@ exports.updateStatus = async (req, res) => {
     const { role, id: userId } = req.user
 
     try {
+        const validStatuses = ['pending', 'confirmed', 'processing', 'shipped', 'delivered', 'cancelled'];
+        if (!validStatuses.includes(newStatus)) {
+            return res.status(400).json({ msg: 'Choose a valid order status.' });
+        }
         if (role !== 'seller' && role !== 'admin') {
             return res.status(403).json({ msg: 'Only sellers and admins can update order status' })
         }
@@ -1113,6 +1234,17 @@ exports.updateStatus = async (req, res) => {
 
         if (!existingOrder) {
             return res.status(404).json({ msg: 'Order not found' })
+        }
+
+        const orderSellerIds = await ensureOrderSellerFulfillment(existingOrder);
+
+        if (newStatus === 'cancelled' && existingOrder.isPaid) {
+            return res.status(409).json({
+                msg: role === 'seller'
+                    ? 'Paid seller portions require a verified refund before cancellation.'
+                    : 'Paid orders require a verified refund before cancellation.',
+                code: 'PAID_ORDER_REQUIRES_REFUND',
+            });
         }
 
         // If seller, check if order contains their products (snapshot or live).
@@ -1129,23 +1261,33 @@ exports.updateStatus = async (req, res) => {
                 return res.status(403).json({ msg: 'You can only update orders containing your products' })
             }
 
-            // Sellers can set confirmed and cancelled, but not if order is already shipped or delivered
-            if (newStatus === 'cancelled' && ['shipped', 'delivered'].includes(existingOrder.orderStatus)) {
+            const sellerFulfillment = sellerFulfillmentFor(existingOrder, userId);
+            if (!sellerFulfillment) {
+                return res.status(403).json({ msg: 'Seller fulfillment record was not found for this order.' });
+            }
+
+            // A seller can only change their own portion of a multi-seller order.
+            if (newStatus === 'cancelled' && ['shipped', 'delivered'].includes(sellerFulfillment.status)) {
                 return res.status(403).json({ msg: 'Cannot cancel an order that is already shipped or delivered.' })
             }
+
+            setSellerFulfillmentStatus(existingOrder, userId, newStatus);
+        } else if (existingOrder.sellerFulfillment.length) {
+            setAllSellerFulfillmentStatus(existingOrder, newStatus);
         }
 
         // Track confirmation fields when seller/admin explicitly sets confirmed/cancelled
         // Only if the BUYER hasn't already made a decision
         const buyerAlreadyDecided = !!(existingOrder.confirmation?.confirmedAt || existingOrder.confirmation?.declinedAt);
 
-        if (newStatus === 'confirmed' && !buyerAlreadyDecided) {
+        const updatesWholeOrderDecision = role === 'admin' || orderSellerIds.length <= 1;
+        if (updatesWholeOrderDecision && newStatus === 'confirmed' && !buyerAlreadyDecided) {
             existingOrder.confirmation = existingOrder.confirmation || {};
             existingOrder.confirmation.confirmedAt = new Date();
             existingOrder.confirmation.confirmedVia = role === 'admin' ? 'admin' : 'manual';
             existingOrder.confirmation.decidedAt = new Date();
             existingOrder.confirmation.decidedVia = role === 'admin' ? 'admin' : 'manual';
-        } else if (newStatus === 'cancelled' && !buyerAlreadyDecided) {
+        } else if (updatesWholeOrderDecision && newStatus === 'cancelled' && !buyerAlreadyDecided) {
             existingOrder.confirmation = existingOrder.confirmation || {};
             existingOrder.confirmation.declinedAt = new Date();
             existingOrder.confirmation.confirmedVia = role === 'admin' ? 'admin' : 'manual'; // tracks who initiated the decision
@@ -1153,8 +1295,14 @@ exports.updateStatus = async (req, res) => {
             existingOrder.confirmation.decidedVia = role === 'admin' ? 'admin' : 'manual';
         }
 
-        existingOrder.orderStatus = newStatus;
-        if (newStatus === 'delivered') {
+        if (role === 'admin' && !existingOrder.sellerFulfillment.length) {
+            existingOrder.orderStatus = newStatus;
+            existingOrder.isDelivered = newStatus === 'delivered';
+            if (newStatus === 'delivered' && !existingOrder.deliveredAt) existingOrder.deliveredAt = new Date();
+        } else {
+            syncAggregateDeliveryState(existingOrder);
+        }
+        if (existingOrder.orderStatus === 'delivered') {
             existingOrder.isPaid = true;
         }
         await existingOrder.save();
@@ -1167,7 +1315,13 @@ exports.updateStatus = async (req, res) => {
             console.error('Failed to send status update email:', emailErr.message);
         }
 
-        res.status(200).json({ msg: 'Updated status successfully' })
+        res.status(200).json({
+            msg: 'Updated status successfully',
+            orderStatus: role === 'seller'
+                ? sellerFulfillmentFor(existingOrder, userId)?.status
+                : existingOrder.orderStatus,
+            aggregateOrderStatus: existingOrder.orderStatus,
+        })
     } catch (error) {
         console.error(error.message);
         res.status(500).json({ msg: 'Server error while updating status' })
@@ -1251,6 +1405,21 @@ exports.cancelOrder = async (req, res) => {
             return res.status(403).json({ msg: 'You can only cancel your own orders' })
         }
 
+        if (role !== 'admin') {
+            const cancellationBlock = getBuyerCancellationBlock(order);
+            if (cancellationBlock) {
+                return res.status(409).json({
+                    msg: cancellationBlock.message,
+                    code: cancellationBlock.code,
+                });
+            }
+        } else if (order.isPaid) {
+            return res.status(409).json({
+                msg: 'Paid orders require a verified refund before cancellation.',
+                code: 'PAID_ORDER_REQUIRES_REFUND',
+            });
+        }
+
         // Track whether the buyer is overriding a prior WhatsApp confirmation.
         // This helps the seller see a clear note:
         //   "Order was confirmed via WhatsApp but buyer changed their mind
@@ -1261,6 +1430,10 @@ exports.cancelOrder = async (req, res) => {
         );
 
         order.orderStatus = 'cancelled';
+        for (const fulfillment of order.sellerFulfillment || []) {
+            fulfillment.status = 'cancelled';
+            fulfillment.updatedAt = new Date();
+        }
 
         if (wasConfirmedViaWhatsApp) {
             // Mark that the buyer retracted their WhatsApp confirmation
@@ -1433,7 +1606,7 @@ exports.getInvoice = async (req, res) => {
     </div>
     <div>
       <div class="label">Payment</div>
-      <div style="font-weight:600;">${order.paymentMethod === 'cash_on_delivery' ? 'Cash on Delivery' : 'Card Payment'}</div>
+      <div style="font-weight:600;">${paymentMethodLabel(order.paymentMethod)}</div>
       <div class="muted">Status: ${order.isPaid ? 'Paid' : 'Unpaid'}</div>
     </div>
   </div>

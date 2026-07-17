@@ -125,6 +125,39 @@ exports.enqueueOrderPlacedInfo = async (order) => {
     }
 };
 
+exports.enqueueTextNotification = async ({ order, phone, message, dedupeKey }) => {
+    try {
+        if (!order?._id || !dedupeKey || !String(message || '').trim()) return null;
+        const normalizedPhone = normalizePhone(phone);
+        if (!normalizedPhone || normalizedPhone.length < 8) return null;
+
+        const normalizedDedupeKey = String(dedupeKey).trim().slice(0, 200);
+        const existing = await WhatsAppPendingMessage.findOne({ dedupeKey: normalizedDedupeKey });
+        if (existing) return existing;
+
+        const pending = await WhatsAppPendingMessage.create({
+            order: order._id,
+            orderId: order.orderId,
+            confirmationToken: order.confirmation?.token || 'n/a',
+            dedupeKey: normalizedDedupeKey,
+            messageType: 'custom_info',
+            messageBody: String(message).trim().slice(0, 4000),
+            phone: normalizedPhone,
+            buyerName: order.shippingInfo?.fullName || '',
+            status: 'queued',
+            nextAttemptAt: new Date(),
+        });
+        setImmediate(() => tick().catch(err => console.error('[whatsapp] immediate text queue tick failed:', err.message)));
+        return pending;
+    } catch (err) {
+        if (err?.code === 11000) {
+            return WhatsAppPendingMessage.findOne({ dedupeKey: String(dedupeKey).trim().slice(0, 200) });
+        }
+        console.error('[whatsapp] text notification enqueue failed:', err.message);
+        return null;
+    }
+};
+
 const processOne = async () => {
     if (!evolution.isConfigured()) return;
 
@@ -163,7 +196,7 @@ const processOne = async () => {
         // Info-type messages (post-payment notifications) are an exception —
         // those are SENT precisely because the order was just auto-confirmed
         // by the Stripe webhook, so we never skip them on this guard.
-        if (job.messageType !== 'info' &&
+        if (job.messageType === 'confirmation' &&
             (order.confirmation?.confirmedAt || order.confirmation?.declinedAt)) {
             job.status = 'expired';
             await job.save();
@@ -178,10 +211,12 @@ const processOne = async () => {
             job.attempts = (job.attempts || 0) + 1;
             await job.save();
             // Track WhatsApp failure on the Order
-            order.confirmation.whatsappSentAt = new Date();
-            order.confirmation.whatsappSentSuccess = false;
-            order.confirmation.whatsappError = job.lastError;
-            await order.save();
+            if (job.messageType !== 'custom_info') {
+                order.confirmation.whatsappSentAt = new Date();
+                order.confirmation.whatsappSentSuccess = false;
+                order.confirmation.whatsappError = job.lastError;
+                await order.save();
+            }
             console.warn(`[whatsapp] skip order ${order.orderId} — ${job.phone} is not on WhatsApp`);
             return;
         }
@@ -211,7 +246,10 @@ const processOne = async () => {
         let sendRes;
         let strategy;
 
-        if (job.messageType === 'info') {
+        if (job.messageType === 'custom_info') {
+            strategy = 'custom-info-text';
+            sendRes = await evolution.sendText(recipient, job.messageBody);
+        } else if (job.messageType === 'info') {
             // Online-paid orders: just an info text. Buyer already committed by
             // paying — no confirm/cancel buttons.
             strategy = 'info-text';
@@ -250,9 +288,11 @@ const processOne = async () => {
         await job.save();
 
         // Track WhatsApp send success on the Order
-        order.confirmation.whatsappSentAt = new Date();
-        order.confirmation.whatsappSentSuccess = true;
-        await order.save();
+        if (job.messageType !== 'custom_info') {
+            order.confirmation.whatsappSentAt = new Date();
+            order.confirmation.whatsappSentSuccess = true;
+            await order.save();
+        }
 
         console.log(`[whatsapp] sent order ${order.orderId} → ${recipient} (${strategy}) id=${job.summaryMessageId || 'unknown'}`);
     } catch (err) {
@@ -282,7 +322,7 @@ const processOne = async () => {
         await job.save();
 
         // Track WhatsApp send failure on the Order (only on final failure)
-        if (failedFinal) {
+        if (failedFinal && job.messageType !== 'custom_info') {
             try {
                 const order = await Order.findById(job.order);
                 if (order) {
@@ -341,7 +381,7 @@ exports.stopQueueProcessor = () => {
 exports.findPendingJobByPhone = async (phone) => {
     return WhatsAppPendingMessage.findOne({
         phone,
-        messageType: { $ne: 'info' }, // info messages have no Yes/No vote
+        messageType: 'confirmation',
         status: { $in: ['sent', 'sending', 'voted_yes', 'voted_no'] },
     }).sort({ createdAt: -1 });
 };
@@ -350,7 +390,7 @@ exports.findPendingJobByPhone = async (phone) => {
 exports.findPendingJobByOrderId = async (orderId) => {
     return WhatsAppPendingMessage.findOne({
         orderId,
-        messageType: { $ne: 'info' },
+        messageType: 'confirmation',
         status: { $in: ['sent', 'sending', 'voted_yes', 'voted_no'] },
     });
 };

@@ -2,6 +2,7 @@ const {
   formatItemOptionsText,
   formatOrderMoney,
   orderItemLineText,
+  paymentMethodLabel,
 } = require('../../utils/orderPresentation');
 const {
   buildOrderConfirmationMessage,
@@ -51,6 +52,12 @@ describe('order presentation helpers', () => {
 
   test('formats order amounts in the saved order currency', () => {
     expect(formatOrderMoney(4343.79, sampleOrder)).toBe('Rs4,343.79 PKR');
+  });
+
+  test('labels every supported checkout payment method accurately', () => {
+    expect(paymentMethodLabel('cash_on_delivery')).toBe('Cash on Delivery');
+    expect(paymentMethodLabel('stripe')).toBe('Card (Stripe)');
+    expect(paymentMethodLabel('wallet')).toBe('Rozare Wallet');
   });
 
   test('WhatsApp buyer message includes variants and PKR total', () => {

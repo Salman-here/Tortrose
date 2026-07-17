@@ -64,6 +64,15 @@ const {
   isProductSellerPubliclyActive,
 } = require('./publicCatalogService');
 const { storeAllowsCashOnDelivery } = require('./storePaymentPolicyService');
+const { normalizeReturnPolicy, normalizeProductReturnPolicy } = require('./returnPolicyService');
+const {
+  ensureOrderSellerFulfillment,
+  getBuyerCancellationBlock,
+  getSellerFulfillment,
+  setAllSellerFulfillmentStatus,
+  setSellerFulfillmentStatus,
+  syncAggregateDeliveryState,
+} = require('./orderFulfillmentService');
 
 // ─── Client-side tools: rendered by frontend, not executed here ───
 const CLIENT_SIDE_TOOLS = new Set([
@@ -1480,7 +1489,15 @@ async function executeToolCall(toolName, args = {}, user) {
           return { success: false, error: `Cannot cancel — order is already ${order.orderStatus}.` };
         }
 
+        const cancellationBlock = getBuyerCancellationBlock(order);
+        if (cancellationBlock) {
+          return { success: false, error: cancellationBlock.message, code: cancellationBlock.code };
+        }
+
         order.orderStatus = 'cancelled';
+        await ensureOrderSellerFulfillment(order);
+        setAllSellerFulfillmentStatus(order, 'cancelled');
+        syncAggregateDeliveryState(order);
         if (reason) order.instructions = (order.instructions || '') + ` [Cancelled: ${reason}]`;
         await order.save();
 
@@ -1974,13 +1991,13 @@ async function executeToolCall(toolName, args = {}, user) {
         const { productId, shippingInfo, paymentMethod, selectedColor, selectedOptions } = args;
         const normalizedPaymentMethod = paymentMethod || 'cash_on_delivery';
         if (!['cash_on_delivery', 'stripe'].includes(normalizedPaymentMethod)) {
-          return { success: false, error: 'Please choose either Cash on Delivery or card checkout.' };
+          return { success: false, error: 'Choose Cash on Delivery here, or use secure checkout for Stripe card or Rozare Wallet.' };
         }
         if (normalizedPaymentMethod === 'stripe') {
           return {
             success: false,
             needsPaymentCheckout: true,
-            error: 'Card payment needs the secure checkout page. I can add the product to your cart and take you to checkout, or place the order here with Cash on Delivery.',
+            error: 'Stripe card and Rozare Wallet payment use the secure checkout page. I can add the product to your cart and take you there, or place the order here with Cash on Delivery when every seller allows it.',
             data: { checkoutRoute: '/checkout' },
           };
         }
@@ -2105,7 +2122,7 @@ async function executeToolCall(toolName, args = {}, user) {
         if (orderItems.length === 0) return { success: false, error: 'No items to order.' };
         const sellerIds = [...new Set(productItems.map(p => normalizeObjectIdString(p.seller)).filter(Boolean))];
         const sellerStores = await Store.find({ seller: { $in: sellerIds }, isActive: true })
-          .select('seller storeName paymentPolicy')
+          .select('seller storeName paymentPolicy returnPolicy')
           .lean();
         const sellerStoreById = new Map(sellerStores.map(store => [normalizeObjectIdString(store.seller), store]));
         const codRestrictedStores = sellerIds
@@ -2117,7 +2134,7 @@ async function executeToolCall(toolName, args = {}, user) {
             success: false,
             needsPaymentCheckout: true,
             requiresAdvancePayment: true,
-            error: `Cash on Delivery is not available because ${names.join(', ')} ${names.length === 1 ? 'requires' : 'require'} advance online payment. Please use secure card checkout.`,
+            error: `Cash on Delivery is not available because ${names.join(', ')} ${names.length === 1 ? 'accepts' : 'accept'} online payment only. Please use secure checkout with Stripe card or a sufficient same-currency Rozare Wallet balance.`,
             data: { checkoutRoute: '/checkout', advanceOnlySellers: names },
           };
         }
@@ -2190,22 +2207,37 @@ async function executeToolCall(toolName, args = {}, user) {
         const shippingCostRounded = Math.round(shippingCost * 100) / 100;
         const taxRounded = Math.round(tax * 100) / 100;
         const totalAmount = Math.round((subtotalRounded + shippingCostRounded + taxRounded) * 100) / 100;
+        const persistedOrderItems = orderItems.map(item => {
+          const product = productItems.find(
+            candidate => normalizeObjectIdString(candidate._id) === normalizeObjectIdString(item.productId || item.id)
+          );
+          const sellerId = normalizeObjectIdString(product?.seller);
+          const store = sellerStoreById.get(sellerId);
+          const returnPolicy = product?.returnPolicy?.useStorePolicy === false
+            ? normalizeReturnPolicy(product.returnPolicy)
+            : normalizeReturnPolicy(store?.returnPolicy || {});
+
+          return {
+            seller: product?.seller || null,
+            productId: item.productId || item.id,
+            name: item.name,
+            image: item.image,
+            price: item.price,
+            sourcePrice: item.sourcePrice,
+            sourceCurrency: item.sourceCurrency,
+            quantity: item.quantity,
+            selectedColor: item.selectedColor || null,
+            selectedOptions: item.selectedOptions || undefined,
+            returnPolicySnapshotVersion: 1,
+            returnPolicy,
+          };
+        });
 
         const newOrder = new Order({
           user: userId,
           currency: preferredCurrency,
           orderId: `ORD-${Date.now()}`,
-          orderItems: orderItems.map(i => ({
-            productId: i.productId || i.id,
-            name: i.name,
-            image: i.image,
-            price: i.price,
-            sourcePrice: i.sourcePrice,
-            sourceCurrency: i.sourceCurrency,
-            quantity: i.quantity,
-            selectedColor: i.selectedColor || null,
-            selectedOptions: i.selectedOptions || undefined,
-          })),
+          orderItems: persistedOrderItems,
           shippingInfo: {
             fullName: shipping.fullName,
             email: shipping.email,
@@ -2225,6 +2257,22 @@ async function executeToolCall(toolName, args = {}, user) {
             couponDiscount: 0,
             totalAmount,
           },
+          sellerFulfillment: sellerIds.map(sellerId => ({
+            seller: sellerId,
+            status: 'pending',
+            deliveredAt: null,
+            updatedAt: new Date(),
+          })),
+          sellerPolicies: sellerIds.map(sellerId => {
+            const store = sellerStoreById.get(sellerId);
+            return {
+              seller: sellerId,
+              store: store?._id || null,
+              storeName: store?.storeName || '',
+              paymentPolicy: store?.paymentPolicy || 'online_and_cod',
+              returnPolicy: normalizeReturnPolicy(store?.returnPolicy || {}),
+            };
+          }),
           paymentMethod: normalizedPaymentMethod,
         });
 
@@ -2255,6 +2303,8 @@ async function executeToolCall(toolName, args = {}, user) {
           }
           decremented.push({ productId: productIdToUpdate, quantity: item.quantity });
         }
+        newOrder.inventoryCommitted = true;
+        await newOrder.save();
         await notifyCodOrder(newOrder, productItems);
 
         // Clear cart if ordering from cart
@@ -2464,6 +2514,15 @@ async function executeToolCall(toolName, args = {}, user) {
           }
         }
 
+        let productReturnPolicy;
+        if (Object.keys(pickObject(p.returnPolicy)).length) {
+          try {
+            productReturnPolicy = normalizeProductReturnPolicy(p.returnPolicy, { strict: true });
+          } catch (error) {
+            return { success: false, error: error.message || 'The product return policy is invalid.' };
+          }
+        }
+
         const productData = {
           name,
           description,
@@ -2485,7 +2544,7 @@ async function executeToolCall(toolName, args = {}, user) {
           optionGroups,
           isFeatured,
           createdVia: p.createdVia === 'import' || args.createdVia === 'import' ? 'import' : 'ai',
-          ...(Object.keys(pickObject(p.returnPolicy)).length ? { returnPolicy: p.returnPolicy } : {}),
+          ...(productReturnPolicy ? { returnPolicy: productReturnPolicy } : {}),
           seller: targetSellerId,
         };
         const { fields: moderationFields } = buildModerationFields(productData);
@@ -2694,6 +2753,13 @@ async function executeToolCall(toolName, args = {}, user) {
         if (updates.tags !== undefined) updates.tags = normalizeTags(updates.tags);
         if (updates.colors !== undefined) updates.colors = normalizeStringArray(updates.colors, { splitSpacesForColors: true });
         if (updates.optionGroups !== undefined) updates.optionGroups = normalizeOptionGroups(updates.optionGroups);
+        if (updates.returnPolicy !== undefined) {
+          try {
+            updates.returnPolicy = normalizeProductReturnPolicy(updates.returnPolicy, { strict: true });
+          } catch (error) {
+            return { success: false, error: error.message || 'The product return policy is invalid.' };
+          }
+        }
 
         let safeProductId = toId(productId);
         if (!safeProductId && productName) {
@@ -2812,7 +2878,7 @@ async function executeToolCall(toolName, args = {}, user) {
           filter,
           { $set: updates },
           { new: true, runValidators: true, sort: { updatedAt: -1, createdAt: -1 } }
-        ).select('name price discountedPrice currency priceCurrency priceInputAmount discountedPriceCurrency discountedPriceInputAmount stock category brand image images tags colors optionGroups isFeatured seller isBlocked blockedReason moderationStatus moderationReason').lean();
+        ).select('name price discountedPrice currency priceCurrency priceInputAmount discountedPriceCurrency discountedPriceInputAmount stock category brand image images tags colors optionGroups returnPolicy isFeatured seller isBlocked blockedReason moderationStatus moderationReason').lean();
 
         if (!product) return { success: false, error: 'Product not found or you don\'t own it.' };
         if (isProductBlocked(product) && !wasBlocked) {
@@ -3170,8 +3236,22 @@ async function executeToolCall(toolName, args = {}, user) {
         const myProducts = await Product.find({ seller: userId }).select('_id').lean();
         const productIds = myProducts.map(p => p._id);
 
-        const filter = { 'orderItems.productId': { $in: productIds } };
-        if (status && status !== 'all') filter.orderStatus = status;
+        const sellerScope = {
+          $or: [
+            { 'orderItems.seller': userId },
+            { 'orderItems.productId': { $in: productIds } },
+          ],
+        };
+        const conditions = [sellerScope, { awaitingPayment: { $ne: true } }];
+        if (status && status !== 'all') {
+          conditions.push({
+            $or: [
+              { sellerFulfillment: { $elemMatch: { seller: userId, status } } },
+              { 'sellerFulfillment.0': { $exists: false }, orderStatus: status },
+            ],
+          });
+        }
+        const filter = { $and: conditions };
 
         // Get TRUE total count (no limit) for accurate reporting
         const totalCount = await Order.countDocuments(filter);
@@ -3185,12 +3265,14 @@ async function executeToolCall(toolName, args = {}, user) {
         // Filter items & compute seller-specific totals per order
         const sellerOrders = orders.map(o => {
           const sellerItems = (o.orderItems || []).filter(i =>
+            toId(i.seller) === toId(userId) ||
             productIds.some(pid => pid.toString() === (i.productId?._id || i.productId)?.toString())
           );
           const sellerTotal = sellerItems.reduce((sum, i) => sum + (i.price || 0) * (i.quantity || 1), 0);
+          const fulfillment = getSellerFulfillment(o, userId);
           return {
             orderId: o.orderId,
-            status: o.orderStatus,
+            status: fulfillment?.status || o.orderStatus,
             buyer: o.user?.username || o.guestEmail || 'Guest',
             total: sellerTotal,
             itemCount: sellerItems.length,
@@ -3228,17 +3310,29 @@ async function executeToolCall(toolName, args = {}, user) {
         });
         if (!order) return { success: false, error: 'Order not found.' };
 
-        const ownsItems = role === 'admin' || order.orderItems.some(i => productIds.includes(i.productId?.toString()));
+        const ownsItems = role === 'admin' || order.orderItems.some(i => (
+          toId(i.seller) === toId(userId) || productIds.includes(i.productId?.toString())
+        ));
         if (!ownsItems) return { success: false, error: 'This order doesn\'t contain your products.' };
 
-        order.orderStatus = newStatus;
-        if (newStatus === 'delivered') {
-          order.isDelivered = true;
-          order.deliveredAt = new Date();
+        await ensureOrderSellerFulfillment(order);
+        if (role === 'admin') {
+          setAllSellerFulfillmentStatus(order, newStatus);
+        } else if (!setSellerFulfillmentStatus(order, userId, newStatus)) {
+          return { success: false, error: 'Seller fulfillment record was not found for this order.' };
         }
+        syncAggregateDeliveryState(order);
+        if (order.orderStatus === 'delivered') order.isPaid = true;
         await order.save();
 
-        return { success: true, message: `Order #${order.orderId} status updated to "${newStatus}" ✅` };
+        return {
+          success: true,
+          data: {
+            status: role === 'seller' ? getSellerFulfillment(order, userId)?.status : order.orderStatus,
+            aggregateOrderStatus: order.orderStatus,
+          },
+          message: `Order #${order.orderId} status updated to "${newStatus}"`,
+        };
       }
 
       case 'get_my_store': {
@@ -3319,8 +3413,15 @@ async function executeToolCall(toolName, args = {}, user) {
           normalizedUpdates.description = cleanAIParagraph(normalizedUpdates.description, { maxLength: 3000 });
         }
 
-        if (normalizedUpdates.returnPolicy !== undefined && typeof normalizedUpdates.returnPolicy === 'string') {
-          normalizedUpdates.returnPolicy = cleanAIParagraph(normalizedUpdates.returnPolicy, { maxLength: 3000 });
+        if (normalizedUpdates.returnPolicy !== undefined) {
+          if (!normalizedUpdates.returnPolicy || typeof normalizedUpdates.returnPolicy !== 'object' || Array.isArray(normalizedUpdates.returnPolicy)) {
+            return { success: false, error: 'Return policy must include structured settings such as returnsEnabled, returnDuration, and refundType.' };
+          }
+          try {
+            normalizedUpdates.returnPolicy = normalizeReturnPolicy(normalizedUpdates.returnPolicy, { strict: true });
+          } catch (error) {
+            return { success: false, error: error.message || 'The return policy is invalid.' };
+          }
         }
 
         if (normalizedUpdates.address !== undefined && typeof normalizedUpdates.address === 'string') {

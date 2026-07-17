@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { motion } from 'framer-motion';
-import { Store, Upload, X, Eye, Trash2, Loader2, ExternalLink, BarChart3, ShoppingBag, Heart, DollarSign, CreditCard, CheckCircle, Clock, AlertTriangle, Info, Mail, Phone, Globe, Lock, AlertCircle, Sparkles, Palette, MapPin, Crosshair, Save } from 'lucide-react';
+import { Store, Upload, X, Eye, Trash2, Loader2, ExternalLink, BarChart3, ShoppingBag, Heart, DollarSign, CreditCard, CheckCircle, Clock, AlertTriangle, Info, Mail, Phone, Globe, Lock, AlertCircle, Sparkles, Palette, MapPin, Crosshair, Save, RotateCcw } from 'lucide-react';
 import axios from 'axios';
 import { toast } from 'react-toastify';
 import { uploadImageToCloudinary } from '../../utils/uploadToCloudinary';
@@ -947,7 +947,7 @@ const StoreSettings = () => {
                             <h3 className="text-lg font-bold" style={{ color: 'hsl(var(--foreground))' }}>Payment Options</h3>
                         </div>
                         <p className="text-sm mb-4" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                            Choose whether buyers can use Cash on Delivery for your products. If you require advance payment, checkout will force card payment for any cart containing your products.
+                            Choose whether buyers can use Cash on Delivery for your products. Online payment only disables COD for any cart containing your products.
                         </p>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                             {[
@@ -959,7 +959,7 @@ const StoreSettings = () => {
                                 },
                                 {
                                     value: 'advance_only',
-                                    title: 'Advance payment only',
+                                    title: 'Online payment only',
                                     desc: 'Buyers must pay online before the order is sent to you.',
                                     Icon: CreditCard,
                                 },
@@ -1295,12 +1295,20 @@ const StoreSettings = () => {
                     {/* Return & Warranty Policy */}
                     <div style={{ borderTop: '1px solid var(--glass-border)', paddingTop: '1.5rem' }}>
                         <h3 className="text-lg font-semibold mb-4 flex items-center gap-2" style={{ color: 'hsl(var(--foreground))' }}>
-                            🔄 Return & Warranty Policy
+                            <RotateCcw size={20} /> Return & Warranty Policy
                         </h3>
                         <p className="text-sm mb-4" style={{ color: 'hsl(var(--muted-foreground))' }}>Set your store's default return and warranty policy. Products can override this individually.</p>
                         <div className="space-y-4">
                             <div className="flex items-center gap-3 glass-inner rounded-xl p-4">
-                                <input type="checkbox" checked={storeData.returnPolicy.returnsEnabled} onChange={e => setStoreData(prev => ({ ...prev, returnPolicy: { ...prev.returnPolicy, returnsEnabled: e.target.checked } }))} className="h-4 w-4 rounded" style={{ accentColor: 'hsl(150, 60%, 45%)' }} />
+                                <input type="checkbox" checked={storeData.returnPolicy.returnsEnabled} onChange={e => setStoreData(prev => ({
+                                    ...prev,
+                                    returnPolicy: {
+                                        ...prev.returnPolicy,
+                                        returnsEnabled: e.target.checked,
+                                        returnDuration: e.target.checked && Number(prev.returnPolicy.returnDuration) < 1 ? 14 : prev.returnPolicy.returnDuration,
+                                        refundType: e.target.checked && (!prev.returnPolicy.refundType || prev.returnPolicy.refundType === 'none') ? 'full_refund' : prev.returnPolicy.refundType,
+                                    }
+                                }))} className="h-4 w-4 rounded" style={{ accentColor: 'hsl(150, 60%, 45%)' }} />
                                 <div><p className="text-sm font-medium" style={{ color: 'hsl(var(--foreground))' }}>Enable Returns</p><p className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>Allow customers to return products</p></div>
                             </div>
                             {storeData.returnPolicy.returnsEnabled && (
@@ -1312,12 +1320,13 @@ const StoreSettings = () => {
                                     <div>
                                         <label className="block text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: 'hsl(var(--muted-foreground))' }}>Refund Type</label>
                                         <select value={storeData.returnPolicy.refundType} onChange={e => setStoreData(prev => ({ ...prev, returnPolicy: { ...prev.returnPolicy, refundType: e.target.value } }))} className="glass-input cursor-pointer">
-                                            <option value="none">No Refund</option>
-                                            <option value="full_refund">Full Money Back</option>
+                                            <option value="none" disabled>Choose a resolution</option>
+                                            <option value="full_refund">Full Refund to Rozare Wallet</option>
                                             <option value="replacement_only">Replacement Only</option>
-                                            <option value="store_credit">Store Credit</option>
+                                            <option value="store_credit">Rozare Wallet Credit</option>
                                         </select>
                                     </div>
+                                    <p className="md:col-span-2 text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>After you receive and review a return, fund the approved amount from your available seller balance or by card. The return completes only after the buyer's wallet is credited.</p>
                                 </div>
                             )}
                             <div className="flex items-center gap-3 glass-inner rounded-xl p-4">

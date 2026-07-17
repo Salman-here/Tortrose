@@ -57,6 +57,8 @@ export default function CheckoutScreen({ navigation }) {
   const [tax, setTax] = useState(0);
   const [taxLabel, setTaxLabel] = useState('Tax');
   const [summaryLoading, setSummaryLoading] = useState(true);
+  const [wallet, setWallet] = useState(null);
+  const [walletLoading, setWalletLoading] = useState(false);
 
   // Coupon state
   const [couponCode, setCouponCode] = useState('');
@@ -101,6 +103,8 @@ export default function CheckoutScreen({ navigation }) {
   }, 0) || 0;
 
   const totalAmount = subtotal + shippingCost + tax - couponDiscount;
+  const walletBalance = Number(wallet?.balances?.[currency] || 0);
+  const walletAvailable = !!currentUser && wallet?.status === 'active' && walletBalance + 0.001 >= totalAmount;
 
   // Fetch saved shipping info
   useEffect(() => {
@@ -119,6 +123,27 @@ export default function CheckoutScreen({ navigation }) {
     if (!cartItems?.cart?.length) return;
     fetchSummary();
   }, [cartItems?.cart, subtotal, currency]);
+
+  useEffect(() => {
+    const fetchWallet = async () => {
+      if (!currentUser) {
+        setWallet(null);
+        return;
+      }
+      setWalletLoading(true);
+      try {
+        const response = await api.get('/api/wallet/me?limit=1');
+        setWallet(response.data?.wallet || null);
+      } catch {
+        setWallet(null);
+      } finally {
+        setWalletLoading(false);
+      }
+    };
+    fetchWallet();
+    const unsubscribe = navigation.addListener('focus', fetchWallet);
+    return unsubscribe;
+  }, [currentUser, currency, navigation]);
 
   const fetchSummary = async () => {
     setSummaryLoading(true);
@@ -164,7 +189,7 @@ export default function CheckoutScreen({ navigation }) {
       setShippingCost(totalShipping);
       setSellerShipping(nextSellerShipping);
       setCodRestrictedSellers(nextCodRestrictedSellers);
-      if (nextCodRestrictedSellers.length > 0) {
+      if (nextCodRestrictedSellers.length > 0 && paymentMethod === 'cash_on_delivery') {
         setPaymentMethod('card');
       }
       setShippingLabel(methodNames.length > 0 ? `Shipping (${methodNames.length === 1 ? methodNames[0] : `${methodNames.length} sellers`})` : 'Shipping (Free)');
@@ -309,7 +334,11 @@ export default function CheckoutScreen({ navigation }) {
         sourceCurrency: couponCurrency(appliedCoupon),
         applicableProductIds: appliedCoupon.applicableProductIds,
       }] : [],
-      paymentMethod: paymentMethod === 'card' ? 'stripe' : 'cash_on_delivery',
+      paymentMethod: paymentMethod === 'card'
+        ? 'stripe'
+        : paymentMethod === 'wallet'
+          ? 'wallet'
+          : 'cash_on_delivery',
       platform: paymentMethod === 'card' ? 'mobile' : undefined,
     };
   };
@@ -319,7 +348,13 @@ export default function CheckoutScreen({ navigation }) {
       try { await api.patch('/api/user/shipping-info', { shippingInfo: formData }); setSavedShippingInfo(formData); } catch {}
     }
     if (paymentMethod !== 'card') {
-      Toast.show({ type: 'success', text1: 'Order Placed!', text2: 'Your order has been placed successfully' });
+      Toast.show({
+        type: 'success',
+        text1: paymentMethod === 'wallet' ? 'Payment Successful!' : 'Order Placed!',
+        text2: paymentMethod === 'wallet'
+          ? 'Your Rozare Wallet payment is complete.'
+          : 'Your order has been placed successfully',
+      });
       await api.delete(API_ENDPOINTS.CART.CLEAR);
       fetchCart();
       setTimeout(() => { navigation.reset({ index: 0, routes: [{ name: 'MainTabs' }, { name: 'Orders' }] }); }, 1200);
@@ -335,6 +370,20 @@ export default function CheckoutScreen({ navigation }) {
         text2: 'One or more sellers require online payment.',
       });
       setPaymentMethod('card');
+      return;
+    }
+    if (paymentMethod === 'wallet' && !currentUser) {
+      Toast.show({ type: 'error', text1: 'Login required', text2: 'Log in to pay with Rozare Wallet.' });
+      return;
+    }
+    if (paymentMethod === 'wallet' && !walletAvailable) {
+      Toast.show({
+        type: 'error',
+        text1: wallet?.status === 'locked' ? 'Wallet locked' : 'Insufficient wallet balance',
+        text2: wallet?.status === 'locked'
+          ? (wallet.lockedReason || 'Contact support to unlock your wallet.')
+          : `Available: ${formatAmount(walletBalance)}. Add balance before paying.`,
+      });
       return;
     }
     if (!validateForm()) {
@@ -591,7 +640,7 @@ export default function CheckoutScreen({ navigation }) {
               <View style={styles.advanceOnlyNotice}>
                 <Ionicons name="information-circle-outline" size={18} color={palette.colors.info} />
                 <Text style={styles.advanceOnlyNoticeText}>
-                  Cash on Delivery is unavailable because {codRestrictedSellers.join(', ')} {codRestrictedSellers.length === 1 ? 'requires' : 'require'} advance online payment.
+                  Cash on Delivery is unavailable because {codRestrictedSellers.join(', ')} {codRestrictedSellers.length === 1 ? 'accepts' : 'accept'} online payment only.
                 </Text>
               </View>
             )}
@@ -603,7 +652,7 @@ export default function CheckoutScreen({ navigation }) {
               ]}
               onPress={() => {
                 if (codRestrictedSellers.length > 0) {
-                  Toast.show({ type: 'info', text1: 'Advance payment required', text2: 'Please pay with card for this cart.' });
+                  Toast.show({ type: 'info', text1: 'Advance payment required', text2: 'Please pay with card or Rozare Wallet for this cart.' });
                   return;
                 }
                 setPaymentMethod('cash_on_delivery');
@@ -629,6 +678,45 @@ export default function CheckoutScreen({ navigation }) {
                 <Text style={styles.paymentSub}>Secure payment via Stripe</Text>
               </View>
               <Ionicons name="shield-checkmark-outline" size={16} color={palette.colors.success} />
+            </TouchableOpacity>
+            <View style={{ height: 10 }} />
+            <TouchableOpacity
+              style={[
+                styles.paymentOption,
+                paymentMethod === 'wallet' && styles.paymentSelected,
+                wallet?.status === 'locked' && styles.paymentDisabled,
+              ]}
+              onPress={() => {
+                if (!currentUser) {
+                  navigation.navigate('Login');
+                  return;
+                }
+                if (wallet?.status === 'locked') {
+                  Toast.show({ type: 'error', text1: 'Wallet locked', text2: wallet.lockedReason || 'Contact support for help.' });
+                  return;
+                }
+                setPaymentMethod('wallet');
+              }}
+            >
+              <View style={[styles.radio, paymentMethod === 'wallet' && styles.radioSelected]}>
+                {paymentMethod === 'wallet' && <View style={styles.radioInner} />}
+              </View>
+              <Ionicons name="wallet-outline" size={22} color={palette.colors.info} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.paymentTitle}>Rozare Wallet</Text>
+                <Text style={styles.paymentSub}>
+                  {walletLoading ? 'Checking balance...' : `Available: ${formatAmount(walletBalance)}`}
+                </Text>
+              </View>
+              {walletLoading ? (
+                <ActivityIndicator size="small" color={palette.colors.primary} />
+              ) : walletAvailable ? (
+                <Ionicons name="checkmark-circle-outline" size={18} color={palette.colors.success} />
+              ) : (
+                <TouchableOpacity onPress={() => navigation.navigate('Wallet')} hitSlop={8}>
+                  <Text style={{ color: palette.colors.primary, fontSize: fontSize.xs, fontWeight: fontWeight.bold }}>Add balance</Text>
+                </TouchableOpacity>
+              )}
             </TouchableOpacity>
           </GlassPanel>
 
@@ -658,8 +746,8 @@ export default function CheckoutScreen({ navigation }) {
             <LinearGradient colors={['#14B8A6', '#0EA5E9', '#6366F1']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
             {isProcessing ? <InlineLoader size="small" color="#fff" /> : (
               <>
-                <Ionicons name={paymentMethod === 'card' ? 'card-outline' : 'bag-check-outline'} size={20} color="#fff" />
-                <Text style={styles.placeOrderText}>{paymentMethod === 'card' ? 'Pay with Card' : 'Place Order'}</Text>
+                <Ionicons name={paymentMethod === 'card' ? 'card-outline' : paymentMethod === 'wallet' ? 'wallet-outline' : 'bag-check-outline'} size={20} color="#fff" />
+                <Text style={styles.placeOrderText}>{paymentMethod === 'card' ? 'Pay with Card' : paymentMethod === 'wallet' ? 'Pay with Wallet' : 'Place Order'}</Text>
               </>
             )}
           </TouchableOpacity>

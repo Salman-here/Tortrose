@@ -11,6 +11,8 @@ const { resolveOutboundRecipient } = require('./jidRoutingStore');
 const NOTIFICATION_CATEGORIES = {
     new_order:              { prefKey: 'newOrders',           critical: false },
     order_update:           { prefKey: 'orderUpdates',        critical: false },
+    return_request:         { prefKey: 'orderUpdates',        critical: false },
+    return_update:          { prefKey: 'orderUpdates',        critical: false },
     subscription_activated: { prefKey: 'subscriptionAlerts',  critical: false },
     subscription_ending:    { prefKey: 'subscriptionAlerts',  critical: false },
     payment_failed:         { prefKey: null,                  critical: true  }, // CRITICAL

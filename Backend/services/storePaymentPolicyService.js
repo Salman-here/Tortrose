@@ -7,7 +7,7 @@ const STORE_PAYMENT_POLICIES = Object.freeze({
 
 const PAYMENT_POLICY_LABELS = Object.freeze({
   [STORE_PAYMENT_POLICIES.ONLINE_AND_COD]: 'Online payment and Cash on Delivery',
-  [STORE_PAYMENT_POLICIES.ADVANCE_ONLY]: 'Advance online payment only',
+  [STORE_PAYMENT_POLICIES.ADVANCE_ONLY]: 'Online payment only',
 });
 
 function normalizeStorePaymentPolicy(value) {

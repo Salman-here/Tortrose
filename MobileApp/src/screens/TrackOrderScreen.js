@@ -230,7 +230,11 @@ export default function TrackOrderScreen({ navigation }) {
               <View style={styles.paymentInfo}>
                 <Text style={styles.paymentLabel}>Payment</Text>
                 <Text style={styles.paymentValue}>
-                  {order.paymentMethod === 'cash_on_delivery' ? 'Cash on Delivery' : 'Stripe'} -{' '}
+                  {order.paymentMethod === 'cash_on_delivery'
+                    ? 'Cash on Delivery'
+                    : order.paymentMethod === 'wallet'
+                      ? 'Rozare Wallet'
+                      : 'Card (Stripe)'} -{' '}
                   <Text style={{ color: order.isPaid ? '#22c55e' : '#f59e0b' }}>
                     {order.isPaid ? 'Paid' : 'Unpaid'}
                   </Text>

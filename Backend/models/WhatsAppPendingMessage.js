@@ -4,10 +4,13 @@ const whatsAppPendingMessageSchema = new mongoose.Schema({
     order: { type: mongoose.Schema.Types.ObjectId, ref: 'Order', required: true, index: true },
     orderId: { type: String, required: true, index: true }, // human-readable ORD-xxxx
     confirmationToken: { type: String, required: true }, // mirror of order.confirmation.token
+    dedupeKey: { type: String, default: null, unique: true, sparse: true, index: true },
 
     // 'confirmation' = COD confirm/cancel poll (Yes/No buttons)
     // 'info'         = post-payment buyer notification (text only, no buttons)
-    messageType: { type: String, enum: ['confirmation', 'info'], default: 'confirmation', index: true },
+    // 'custom_info'  = durable transactional text, such as return status updates
+    messageType: { type: String, enum: ['confirmation', 'info', 'custom_info'], default: 'confirmation', index: true },
+    messageBody: { type: String, default: '', maxlength: 4000 },
 
     phone: { type: String, required: true, index: true }, // normalized E.164 digits, e.g. 9230012345678
     buyerName: { type: String, default: '' },

@@ -8,6 +8,10 @@ const { sendPushToUser } = require('../utils/expoPush');
 const { notifySeller } = require('../services/whatsapp/sellerNotificationService');
 const sellerTemplates = require('../services/whatsapp/sellerMessageTemplates');
 const { toPlainOptions } = require('../utils/orderPresentation');
+const {
+    getBuyerCancellationBlock,
+    syncAllSellerFulfillmentStatus,
+} = require('../services/orderFulfillmentService');
 
 const TOKEN_TTL_MS = 48 * 60 * 60 * 1000; // 48 hours
 
@@ -122,6 +126,8 @@ exports.confirmOrder = async (req, res) => {
             return res.status(404).json({ msg: 'Order not found' });
         }
 
+        await syncAllSellerFulfillmentStatus(updated, 'confirmed');
+
         // Notify sellers of the products in this order via email + mobile push
         try {
             const productIds = updated.orderItems.map(i => i.productId);
@@ -175,6 +181,15 @@ exports.declineOrder = async (req, res) => {
             return res.status(200).json({ msg: 'Already declined', order: sanitizeOrderForPublic(order) });
         }
 
+        const cancellationBlock = getBuyerCancellationBlock(order);
+        if (cancellationBlock) {
+            return res.status(409).json({
+                msg: cancellationBlock.message,
+                code: cancellationBlock.code,
+                order: sanitizeOrderForPublic(order),
+            });
+        }
+
         // If order was confirmed via WhatsApp and buyer now wants to cancel via email,
         // allow it — track it as a cross-channel cancellation
         if (order.confirmation?.confirmedAt && order.confirmation?.confirmedVia === 'whatsapp') {
@@ -199,6 +214,7 @@ exports.declineOrder = async (req, res) => {
                 const freshOrder = await Order.findOne({ 'confirmation.token': token });
                 return res.status(200).json({ msg: 'Order already processed', order: sanitizeOrderForPublic(freshOrder || order) });
             }
+            await syncAllSellerFulfillmentStatus(updated, 'cancelled');
             // WhatsApp notification to sellers about cancellation (fire-and-forget)
             try {
                 const productIds = updated.orderItems.map(i => i.productId);
@@ -248,6 +264,8 @@ exports.declineOrder = async (req, res) => {
             }
             return res.status(404).json({ msg: 'Order not found' });
         }
+
+        await syncAllSellerFulfillmentStatus(updated, 'cancelled');
 
         // Notify sellers of cancellation via WhatsApp (fire-and-forget)
         try {
@@ -305,6 +323,8 @@ exports.reconfirmOrder = async (req, res) => {
             const freshOrder = await Order.findOne({ 'confirmation.token': token });
             return res.status(200).json({ msg: 'Order already processed', order: sanitizeOrderForPublic(freshOrder || order) });
         }
+
+        await syncAllSellerFulfillmentStatus(updated, 'confirmed');
 
         // Notify sellers
         try {

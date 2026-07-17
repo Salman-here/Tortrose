@@ -250,7 +250,11 @@ function TrackOrderContent() {
                 <div className="flex items-center justify-between text-sm glass-inner rounded-xl p-3">
                   <span style={{ color: "hsl(var(--muted-foreground))" }}>Payment</span>
                   <span className="font-medium" style={{ color: "hsl(var(--foreground))" }}>
-                    {order.paymentMethod === "cash_on_delivery" ? "Cash on Delivery" : "Stripe"} •{" "}
+                    {order.paymentMethod === "cash_on_delivery"
+                      ? "Cash on Delivery"
+                      : order.paymentMethod === "wallet"
+                        ? "Rozare Wallet"
+                        : "Card (Stripe)"} •{" "}
                     <span style={{ color: order.isPaid ? "#22c55e" : "#f59e0b" }}>
                       {order.isPaid ? "Paid" : "Unpaid"}
                     </span>

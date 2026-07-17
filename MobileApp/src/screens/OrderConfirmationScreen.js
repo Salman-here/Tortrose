@@ -178,7 +178,13 @@ export default function OrderConfirmationScreen({ navigation, route }) {
               <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Tax</Text><Text style={styles.summaryValue}>{money(summary.taxAmount || 0)}</Text></View>
               {!!summary.discountAmount && <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Discount</Text><Text style={styles.summaryValue}>-{money(summary.discountAmount)}</Text></View>}
               <View style={styles.totalRow}><Text style={styles.totalLabel}>Total</Text><Text style={styles.totalValue}>{money(summary.totalAmount || summary.total || 0)}</Text></View>
-              <Text style={styles.paymentText}>{order.paymentMethod || 'Cash on Delivery'}</Text>
+              <Text style={styles.paymentText}>
+                {order.paymentMethod === 'wallet'
+                  ? 'Rozare Wallet'
+                  : order.paymentMethod === 'stripe'
+                    ? 'Card (Stripe)'
+                    : 'Cash on Delivery'}
+              </Text>
             </GlassPanel>
 
             {!order.confirmation?.expired && !order.confirmation?.confirmedAt && !order.confirmation?.declinedAt && order.orderStatus !== 'cancelled' && (

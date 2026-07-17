@@ -24,6 +24,7 @@ const APP_VERSION = '1.0.0';
 export const getMenuItemsForRole = (role, palette) => {
   const baseItems = [
     { id: 'orders', title: 'My Orders', icon: 'receipt-outline', screen: 'Orders', color: palette.colors.primary },
+    { id: 'wallet', title: 'Rozare Wallet', icon: 'wallet-outline', screen: 'Wallet', color: palette.colors.success },
     { id: 'addresses', title: 'Saved Addresses', icon: 'location-outline', screen: 'SavedAddresses', color: palette.colors.info },
     { id: 'notifications', title: 'Notifications', icon: 'notifications-outline', screen: 'Notifications', color: palette.colors.secondary },
     { id: 'trusted', title: 'Trusted Stores', icon: 'shield-checkmark-outline', screen: 'TrustedStores', color: palette.colors.info },

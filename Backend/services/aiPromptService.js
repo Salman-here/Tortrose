@@ -74,6 +74,14 @@ const PROMPT_REGISTRY = [
         getDefault: () => defaults.TOOL_MEMORY_ADDENDUM,
     },
     {
+        key: 'chat.addendum.commerce-policy',
+        category: 'chat-addendums',
+        title: 'Checkout, Wallet & return rules',
+        description: 'Authoritative payment, mixed-cart, Wallet, and seller-specific return rules appended to every chat persona.',
+        usedIn: 'All chat roles, website + WhatsApp',
+        getDefault: () => defaults.COMMERCE_POLICY_ADDENDUM,
+    },
+    {
         key: 'chat.addendum.whatsapp',
         category: 'chat-addendums',
         title: 'WhatsApp formatting rules',
@@ -208,17 +216,18 @@ async function getSystemPromptForRole(role, { channel = 'web' } = {}) {
     const effectiveRole = normalizeRole(role);
     const effectiveChannel = CHANNELS.includes(channel) ? channel : 'web';
 
-    const [base, language, toolMemory, whatsapp] = await Promise.all([
+    const [base, language, toolMemory, commercePolicy, whatsapp] = await Promise.all([
         getPromptContent(`chat.base.${effectiveRole}`),
         getPromptContent('chat.addendum.language'),
         getPromptContent('chat.addendum.tool-memory'),
+        getPromptContent('chat.addendum.commerce-policy'),
         effectiveChannel === 'whatsapp' ? getPromptContent('chat.addendum.whatsapp') : Promise.resolve(''),
     ]);
 
     const { customs } = await loadAll();
     const knowledge = buildKnowledgeBlock(customs, effectiveRole, effectiveChannel);
 
-    return base + language + toolMemory + whatsapp + knowledge;
+    return base + language + toolMemory + commercePolicy + whatsapp + knowledge;
 }
 
 async function getAssistPrompts() {

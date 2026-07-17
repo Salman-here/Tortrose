@@ -5,7 +5,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView,
-  Alert, RefreshControl, Modal, KeyboardAvoidingView, Platform, ActivityIndicator,
+  Alert, RefreshControl, Modal, KeyboardAvoidingView, Platform, ActivityIndicator, Switch,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
@@ -50,7 +50,21 @@ export default function SellerStoreSettingsScreen({ navigation }) {
   const [saving, setSaving] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [store, setStore] = useState(null);
-  const [formData, setFormData] = useState({ storeName: '', description: '', sellerType: 'store', paymentPolicy: 'online_and_cod' });
+  const [formData, setFormData] = useState({
+    storeName: '',
+    description: '',
+    sellerType: 'store',
+    paymentPolicy: 'online_and_cod',
+    returnPolicy: {
+      returnsEnabled: false,
+      returnDuration: 0,
+      refundType: 'none',
+      warrantyEnabled: false,
+      warrantyDuration: 0,
+      warrantyDescription: '',
+      policyDescription: '',
+    },
+  });
   const [logo, setLogo] = useState(null);
   const [banner, setBanner] = useState(null);
   const [errors, setErrors] = useState({});
@@ -76,6 +90,15 @@ export default function SellerStoreSettingsScreen({ navigation }) {
         description: storeData?.description || '',
         sellerType: storeData?.sellerType || 'store',
         paymentPolicy: storeData?.paymentPolicy || 'online_and_cod',
+        returnPolicy: {
+          returnsEnabled: storeData?.returnPolicy?.returnsEnabled === true,
+          returnDuration: Number(storeData?.returnPolicy?.returnDuration || 0),
+          refundType: storeData?.returnPolicy?.refundType || 'none',
+          warrantyEnabled: storeData?.returnPolicy?.warrantyEnabled === true,
+          warrantyDuration: Number(storeData?.returnPolicy?.warrantyDuration || 0),
+          warrantyDescription: storeData?.returnPolicy?.warrantyDescription || '',
+          policyDescription: storeData?.returnPolicy?.policyDescription || '',
+        },
       });
       setLogo(storeData?.logo || null);
       setBanner(storeData?.banner || null);
@@ -127,6 +150,29 @@ export default function SellerStoreSettingsScreen({ navigation }) {
     if (errors[field]) setErrors(prev => ({ ...prev, [field]: null }));
   }, [errors]);
 
+  const updateReturnPolicy = useCallback((field, value) => {
+    setFormData(previous => ({
+      ...previous,
+      returnPolicy: { ...previous.returnPolicy, [field]: value },
+    }));
+  }, []);
+
+  const toggleReturns = useCallback((enabled) => {
+    setFormData(previous => ({
+      ...previous,
+      returnPolicy: {
+        ...previous.returnPolicy,
+        returnsEnabled: enabled,
+        returnDuration: enabled
+          ? Math.max(1, Number(previous.returnPolicy?.returnDuration) || 14)
+          : 0,
+        refundType: enabled && previous.returnPolicy?.refundType !== 'none'
+          ? previous.returnPolicy.refundType
+          : enabled ? 'full_refund' : 'none',
+      },
+    }));
+  }, []);
+
   const pickImage = useCallback(async (type) => {
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
@@ -149,6 +195,7 @@ export default function SellerStoreSettingsScreen({ navigation }) {
         description: formData.description.trim(),
         sellerType: formData.sellerType || 'store',
         paymentPolicy: formData.paymentPolicy || 'online_and_cod',
+        returnPolicy: formData.returnPolicy,
         logo,
         banner,
       });
@@ -353,7 +400,7 @@ export default function SellerStoreSettingsScreen({ navigation }) {
           <View style={styles.paymentPolicyGrid}>
             {[
               { value: 'online_and_cod', title: 'Online + COD', desc: 'Buyers can choose card or Cash on Delivery.', icon: 'cash-outline' },
-              { value: 'advance_only', title: 'Advance only', desc: 'Buyers must pay online before the order is sent to you.', icon: 'card-outline' },
+              { value: 'advance_only', title: 'Online payment only', desc: 'Buyers must pay online before the order is sent to you.', icon: 'card-outline' },
             ].map((option) => {
               const active = (formData.paymentPolicy || 'online_and_cod') === option.value;
               return (
@@ -372,6 +419,70 @@ export default function SellerStoreSettingsScreen({ navigation }) {
               );
             })}
           </View>
+        </GlassPanel>
+
+        <GlassPanel variant="card" style={styles.section}>
+          <View style={styles.returnHeader}>
+            <View style={styles.returnHeaderText}>
+              <Text style={styles.sectionTitle}>Returns</Text>
+              <Text style={styles.helperText}>Let buyers request seller-specific returns after delivery.</Text>
+            </View>
+            <Switch
+              value={formData.returnPolicy?.returnsEnabled === true}
+              onValueChange={toggleReturns}
+              trackColor={{ false: palette.glass.border, true: `${palette.colors.primary}80` }}
+              thumbColor={formData.returnPolicy?.returnsEnabled ? palette.colors.primary : palette.colors.textSecondary}
+            />
+          </View>
+
+          {formData.returnPolicy?.returnsEnabled && (
+            <>
+              <Text style={[styles.label, { marginTop: spacing.md }]}>Return window (days)</Text>
+              <TextInput
+                style={styles.input}
+                value={String(formData.returnPolicy.returnDuration || '')}
+                onChangeText={value => updateReturnPolicy('returnDuration', Math.min(365, Math.max(0, Number(value.replace(/\D/g, '')) || 0)))}
+                keyboardType="number-pad"
+                placeholder="14"
+                placeholderTextColor={palette.colors.textSecondary}
+              />
+              <Text style={[styles.label, { marginTop: spacing.lg }]}>Resolution</Text>
+              <View style={styles.paymentPolicyGrid}>
+                {[
+                  { value: 'full_refund', title: 'Full refund', desc: 'Refund the approved amount to the buyer Rozare Wallet.', icon: 'wallet-outline' },
+                  { value: 'store_credit', title: 'Rozare Wallet credit', desc: 'Credit the approved amount to the buyer Rozare Wallet.', icon: 'card-outline' },
+                  { value: 'replacement_only', title: 'Replacement only', desc: 'Approve a replacement instead of a wallet refund.', icon: 'swap-horizontal-outline' },
+                ].map(option => {
+                  const active = formData.returnPolicy.refundType === option.value;
+                  return (
+                    <TouchableOpacity key={option.value} style={[styles.paymentPolicyCard, active && styles.paymentPolicyCardActive]} onPress={() => updateReturnPolicy('refundType', option.value)} activeOpacity={0.8}>
+                      <Ionicons name={option.icon} size={18} color={active ? palette.colors.primary : palette.colors.textSecondary} />
+                      <View style={{ flex: 1 }}>
+                        <Text style={[styles.paymentPolicyTitle, active && { color: palette.colors.primary }]}>{option.title}</Text>
+                        <Text style={styles.paymentPolicyDesc}>{option.desc}</Text>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+              <Text style={[styles.label, { marginTop: spacing.lg }]}>Policy details (optional)</Text>
+              <TextInput
+                style={[styles.input, styles.textArea]}
+                value={formData.returnPolicy.policyDescription}
+                onChangeText={value => updateReturnPolicy('policyDescription', value)}
+                maxLength={500}
+                multiline
+                numberOfLines={3}
+                textAlignVertical="top"
+                placeholder="Add condition, packaging, or pickup details."
+                placeholderTextColor={palette.colors.textSecondary}
+              />
+              <View style={styles.refundNotice}>
+                <Ionicons name="shield-checkmark-outline" size={18} color={palette.colors.info} />
+                <Text style={styles.refundNoticeText}>A wallet refund is issued only after you fund the exact approved amount from seller balance or by card through Stripe.</Text>
+              </View>
+            </>
+          )}
         </GlassPanel>
 
         {/* Product Currency */}
@@ -631,6 +742,10 @@ const buildStyles = (p) => StyleSheet.create({
   paymentPolicyCardActive: { borderColor: p.colors.primary, backgroundColor: `${p.colors.primary}12` },
   paymentPolicyTitle: { ...typography.bodySemibold, color: p.colors.text },
   paymentPolicyDesc: { ...typography.caption, color: p.colors.textSecondary, marginTop: 2 },
+  returnHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: spacing.md },
+  returnHeaderText: { flex: 1 },
+  refundNotice: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm, marginTop: spacing.md, padding: spacing.md, borderRadius: borderRadius.lg, backgroundColor: `${p.colors.info}10`, borderWidth: 1, borderColor: `${p.colors.info}26` },
+  refundNoticeText: { flex: 1, ...typography.caption, color: p.colors.textSecondary, lineHeight: 17 },
   comingSoonPill: { paddingHorizontal: spacing.sm, paddingVertical: spacing.xs, borderRadius: borderRadius.full, backgroundColor: `${p.colors.warning}14`, borderWidth: 1, borderColor: `${p.colors.warning}28` },
   comingSoonText: { ...typography.caption, color: p.colors.warning, fontWeight: fontWeight.bold },
   themeGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },

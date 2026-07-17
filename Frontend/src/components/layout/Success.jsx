@@ -1,7 +1,7 @@
 import axios from "axios";
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { CheckCircle, Mail, CreditCard, DollarSign } from "lucide-react";
+import { CheckCircle, Mail, CreditCard, DollarSign, WalletCards } from "lucide-react";
 import { Link } from "react-router-dom";
 import { toast } from "react-toastify";
 import { getAuthToken } from "../../utils/cookieHelper";
@@ -9,6 +9,14 @@ import { trackPurchase } from "../../utils/tiktokPixel";
 
 export default function Success() {
   const [session, setSession] = useState(null);
+  const query = new URLSearchParams(window.location.search);
+  const paymentMethod = query.get('payment') || (query.get('session_id') ? 'stripe' : 'cash_on_delivery');
+  const orderId = query.get('orderId') || '';
+  const confirmationCopy = paymentMethod === 'wallet'
+    ? 'Your Rozare Wallet payment was completed and your order is confirmed.'
+    : paymentMethod === 'cash_on_delivery'
+      ? 'Your order was placed. Confirm it using the button sent by WhatsApp or email.'
+      : 'Your card payment was processed successfully. A confirmation has been sent to your email.';
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -77,7 +85,14 @@ export default function Success() {
         </motion.div>
 
         <h1 className="text-2xl font-extrabold tracking-tight mb-3" style={{ color: 'hsl(var(--foreground))' }}>Thank you for your order!</h1>
-        <p className="text-sm mb-8" style={{ color: 'hsl(var(--muted-foreground))' }}>Your payment was processed successfully. A confirmation has been sent to your email.</p>
+        <p className="text-sm mb-8" style={{ color: 'hsl(var(--muted-foreground))' }}>{confirmationCopy}</p>
+
+        {!session && orderId && (
+          <div className="glass-inner p-3 rounded-xl text-left flex items-center gap-3">
+            {paymentMethod === 'wallet' ? <WalletCards className="w-5 h-5" /> : <CheckCircle className="w-5 h-5" />}
+            <p className="text-sm" style={{ color: 'hsl(var(--foreground))' }}><span className="font-semibold">Order:</span> {orderId}</p>
+          </div>
+        )}
 
         {session && (
           <motion.div className="space-y-3 text-left" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.5 }}>
@@ -117,6 +132,13 @@ export default function Success() {
               Track Order
             </motion.button>
           </Link>
+          {getAuthToken() && (
+            <Link to="/user-dashboard/orders">
+              <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.95 }} className="px-6 py-3 rounded-xl font-semibold glass-button" style={{ color: 'hsl(var(--foreground))' }}>
+                Your Orders
+              </motion.button>
+            </Link>
+          )}
         </div>
       </motion.div>
     </div>

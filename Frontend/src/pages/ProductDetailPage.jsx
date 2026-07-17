@@ -2,7 +2,7 @@ import axios from 'axios';
 import React, { useRef, useState, useEffect } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Heart, ShoppingCart, Star, ChevronRight, ChevronLeft, Zap, Sparkles, Share2, RotateCcw, Loader2, Home, Tag, Package, Ticket, Copy, Check, Calendar, Plus, Minus, X } from 'lucide-react';
+import { Heart, ShoppingCart, Star, ChevronRight, ChevronLeft, Zap, Sparkles, Share2, RotateCcw, Loader2, Home, Tag, Package, Ticket, Copy, Check, Calendar, Plus, Minus, X, CreditCard, Banknote } from 'lucide-react';
 import Loader from '../components/common/Loader';
 import StoreInfo from '../components/common/StoreInfo';
 import SEOHead from '../components/common/SEOHead';
@@ -42,6 +42,7 @@ function ProductDetailPage() {
     const [selectedOptions, setSelectedOptions] = useState({}); // { Size: 'L', Color: 'Red' }
     const [imageLoading, setImageLoading] = useState(true);
     const [storeData, setStoreData] = useState(null);
+    const [storePolicy, setStorePolicy] = useState(null);
     const [availableCoupons, setAvailableCoupons] = useState([]);
     const [copiedCoupon, setCopiedCoupon] = useState(null);
     const [relatedProducts, setRelatedProducts] = useState([]);
@@ -121,6 +122,7 @@ function ProductDetailPage() {
                 `${import.meta.env.VITE_API_URL}api/products/get-single-product/${id}${suffix ? `?${suffix}` : ''}`
             );
             setProduct(res.data.product);
+            setStorePolicy(res.data.storePolicy || null);
             setMainImg(res.data.product.image);
             setImageLoading(true);
             // Pre-select default options from optionGroups
@@ -490,6 +492,37 @@ function ProductDetailPage() {
                                 )}
                             </motion.div>
 
+                            <motion.div
+                                className="glass-inner rounded-xl p-4 mb-6"
+                                variants={fadeIn}
+                                style={{ border: '1px solid var(--glass-border)' }}
+                            >
+                                <p className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                                    Payment availability
+                                </p>
+                                {(storePolicy?.paymentPolicy || storeData?.paymentPolicy) === 'advance_only' ? (
+                                    <div className="flex items-start gap-3">
+                                        <CreditCard size={18} className="mt-0.5 shrink-0" style={{ color: 'hsl(220, 70%, 55%)' }} />
+                                        <div>
+                                            <p className="text-sm font-semibold" style={{ color: 'hsl(var(--foreground))' }}>Online payment only</p>
+                                            <p className="text-xs mt-0.5" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                                                Pay online by card or Rozare Wallet. Cash on Delivery is not available.
+                                            </p>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div className="flex items-start gap-3">
+                                        <Banknote size={18} className="mt-0.5 shrink-0" style={{ color: 'hsl(150, 60%, 40%)' }} />
+                                        <div>
+                                            <p className="text-sm font-semibold" style={{ color: 'hsl(var(--foreground))' }}>Online payment and Cash on Delivery</p>
+                                            <p className="text-xs mt-0.5" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                                                Pay by card or Rozare Wallet, or pay when this product is delivered.
+                                            </p>
+                                        </div>
+                                    </div>
+                                )}
+                            </motion.div>
+
                             <motion.p
                                 className="text-sm mb-6 leading-relaxed"
                                 style={{ color: 'hsl(var(--muted-foreground))' }}
@@ -502,7 +535,7 @@ function ProductDetailPage() {
                             {(() => {
                                 const rp = product.returnPolicy?.useStorePolicy === false
                                     ? product.returnPolicy
-                                    : storeData?.returnPolicy;
+                                    : (storePolicy?.returnPolicy || storeData?.returnPolicy);
                                 if (!rp) return (
                                     <motion.div className="flex items-center gap-3 mb-6" variants={fadeIn}>
                                         <div className="glass-inner flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm" style={{ color: 'hsl(var(--foreground))' }}>
@@ -530,7 +563,7 @@ function ProductDetailPage() {
                                             {rp.refundType && rp.refundType !== 'none' && (
                                                 <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium"
                                                     style={{ background: 'rgba(99,102,241,0.1)', color: 'hsl(220,70%,55%)' }}>
-                                                    {rp.refundType === 'full_refund' ? '💰 Full Refund' : rp.refundType === 'replacement_only' ? '🔄 Replacement Only' : '🎁 Store Credit'}
+                                                    {rp.refundType === 'full_refund' ? 'Full Refund to Rozare Wallet' : rp.refundType === 'replacement_only' ? 'Replacement Only' : 'Rozare Wallet Credit'}
                                                 </span>
                                             )}
                                             {rp.warrantyEnabled && (

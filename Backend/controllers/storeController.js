@@ -39,6 +39,7 @@ const {
     normalizeStorePaymentPolicy,
     PAYMENT_POLICY_LABELS,
 } = require('../services/storePaymentPolicyService');
+const { normalizeReturnPolicy } = require('../services/returnPolicyService');
 
 const comparablePriceUSD = (product) =>
     convertAmountSync(getProductEffectivePrice(product), getProductCurrency(product), 'USD');
@@ -287,15 +288,7 @@ exports.createStore = async (req, res) => {
             banner: banner || '',
             socialLinks: normalizeSocialLinks(socialLinks),
             address: initialAddress,
-            returnPolicy: returnPolicy || {
-                returnsEnabled: false,
-                returnDuration: 0,
-                refundType: 'none',
-                warrantyEnabled: false,
-                warrantyDuration: 0,
-                warrantyDescription: '',
-                policyDescription: ''
-            }
+            returnPolicy: normalizeReturnPolicy(returnPolicy || {}, { strict: returnPolicy !== undefined })
         });
 
         await newStore.save();
@@ -470,9 +463,10 @@ exports.updateStore = async (req, res) => {
         const wantsVisibilityChange = visibility !== undefined;
         const wantsPaymentPolicyChange = paymentPolicy !== undefined &&
             normalizeStorePaymentPolicy(paymentPolicy) !== normalizeStorePaymentPolicy(store.paymentPolicy);
+        const wantsReturnPolicyChange = returnPolicy !== undefined;
 
         // Block changes while the store is blocked (subscription ended)
-        if ((wantsNameChange || wantsSlugChange || wantsTypeChange || wantsThemeChange || wantsVisibilityChange || wantsPaymentPolicyChange) && store.isActive === false) {
+        if ((wantsNameChange || wantsSlugChange || wantsTypeChange || wantsThemeChange || wantsVisibilityChange || wantsPaymentPolicyChange || wantsReturnPolicyChange) && store.isActive === false) {
             return res.status(423).json({
                 msg: 'Your store is blocked. Reactivate your subscription before changing this.',
                 blocked: true,
@@ -607,15 +601,7 @@ exports.updateStore = async (req, res) => {
         }
 
         if (returnPolicy !== undefined) {
-            store.returnPolicy = {
-                returnsEnabled: returnPolicy.returnsEnabled || false,
-                returnDuration: returnPolicy.returnDuration || 0,
-                refundType: returnPolicy.refundType || 'none',
-                warrantyEnabled: returnPolicy.warrantyEnabled || false,
-                warrantyDuration: returnPolicy.warrantyDuration || 0,
-                warrantyDescription: returnPolicy.warrantyDescription || '',
-                policyDescription: returnPolicy.policyDescription || '',
-            };
+            store.returnPolicy = normalizeReturnPolicy(returnPolicy, { strict: true });
             store.markModified('returnPolicy');
         }
 

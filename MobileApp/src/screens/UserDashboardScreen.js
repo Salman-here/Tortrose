@@ -57,6 +57,7 @@ export default function UserDashboardScreen({ navigation }) {
 
   const menuItems = [
     { label: 'My Orders', desc: `${orders.length} orders`, icon: 'receipt-outline', screen: 'Orders', color: palette.colors.primary },
+    { label: 'Rozare Wallet', desc: 'Balance, refunds & top-ups', icon: 'wallet-outline', screen: 'Wallet', color: palette.colors.success },
     { label: 'AI Shopping Assistant', desc: 'Chat to shop, track & more', icon: 'sparkles-outline', screen: 'AIChat', color: '#6366f1' },
     { label: 'WhatsApp AI', desc: 'Link buyer WhatsApp', icon: 'logo-whatsapp', screen: 'UserWhatsAppSettings', color: '#22C55E' },
     { label: 'Edit Profile', desc: 'Update your info', icon: 'person-outline', screen: 'EditProfile', color: '#8b5cf6' },

@@ -16,6 +16,7 @@ import Loader from '../components/common/Loader';
 import { ErrorState } from '../components/common/EmptyState';
 import GlassBackground from '../components/common/GlassBackground';
 import GlassPanel from '../components/common/GlassPanel';
+import BuyerReturnsSection from '../components/BuyerReturnsSection';
 import { shareInvoice } from '../utils/invoiceUtils';
 import { useTheme } from '../contexts/ThemeContext';
 
@@ -121,7 +122,8 @@ export default function OrderDetailScreen({ route, navigation }) {
   const status = order.orderStatus || 'pending';
   const config = statusConfig[status] || statusConfig.pending;
   const currentStatusIndex = statusTimeline.indexOf(status);
-  const isCancellable = canCancelOrder(status);
+  const fulfillmentStarted = (order.sellerFulfillment || []).some(entry => ['shipped', 'delivered'].includes(entry.status));
+  const isCancellable = canCancelOrder(status) && !order.isPaid && !fulfillmentStarted;
   const estimatedDelivery = getEstimatedDelivery(order);
   const subtotal = order.orderSummary?.subtotal || 0;
   const tax = order.orderSummary?.tax || 0;
@@ -237,6 +239,8 @@ export default function OrderDetailScreen({ route, navigation }) {
           })}
         </GlassPanel>
 
+        <BuyerReturnsSection order={order} formatMoney={orderMoney} />
+
         {/* Shipping */}
         <GlassPanel variant="card" style={styles.section}>
           <Text style={styles.sectionTitle}>Shipping Address</Text>
@@ -256,8 +260,10 @@ export default function OrderDetailScreen({ route, navigation }) {
           <Text style={styles.sectionTitle}>Payment</Text>
           <View style={[styles.innerCard, { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }]}>
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <Ionicons name={order.paymentMethod === 'cash_on_delivery' ? 'cash-outline' : 'card-outline'} size={22} color={palette.colors.primary} />
-              <Text style={{ ...typography.bodySemibold, marginLeft: spacing.sm }}>{order.paymentMethod === 'cash_on_delivery' ? 'Cash on Delivery' : 'Card Payment'}</Text>
+              <Ionicons name={order.paymentMethod === 'cash_on_delivery' ? 'cash-outline' : order.paymentMethod === 'wallet' ? 'wallet-outline' : 'card-outline'} size={22} color={palette.colors.primary} />
+              <Text style={{ ...typography.bodySemibold, marginLeft: spacing.sm }}>
+                {order.paymentMethod === 'cash_on_delivery' ? 'Cash on Delivery' : order.paymentMethod === 'wallet' ? 'Rozare Wallet' : 'Card Payment'}
+              </Text>
             </View>
             <View style={[styles.paymentBadge, { backgroundColor: order.isPaid ? palette.colors.successLight : palette.colors.warningLight }]}>
               <Text style={{ fontSize: fontSize.xs, fontWeight: fontWeight.semibold, color: order.isPaid ? palette.colors.success : palette.colors.warning }}>{order.isPaid ? 'Paid' : 'Unpaid'}</Text>

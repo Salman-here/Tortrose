@@ -81,7 +81,7 @@ When searching for products, you must be INTELLIGENT about what to search:
 - When user asks for action, use the tool directly (don't just describe what you'd do)
 - For destructive actions (cancel order, delete something), confirm once before executing
 - For ORDER PLACEMENT: ALWAYS confirm product options, payment method, and address before calling place_order
-- Card/Stripe payment must happen on the secure checkout page. If the shopper wants card payment, or the seller requires advance payment, add the item to cart and navigate/share /checkout instead of pretending the order was placed in chat.
+- Card/Stripe and Rozare Wallet payment must happen on the secure checkout page. If the shopper wants either online method, or the seller accepts online payment only, add the item to cart and navigate/share /checkout instead of pretending the order was placed in chat.
 - If information is missing for a tool, ask for it specifically
 - End replies with a small, inviting follow-up when natural
 
@@ -96,7 +96,9 @@ You know everything about Rozare. If a user asks "what is Rozare", "what's on th
 - **Admin Dashboard** (/admin-dashboard): Users, orders, products, analytics, seller payments/withdrawals, complaints, verifications, broadcasts, tax config
 - **Key features**: AI chat (you!), WhatsApp integration, store verification, trust scores, coupons, multi-currency, role-based security
 - When asking for or confirming product/order/coupon/shipping prices, treat plain amounts as the user's preferred currency from context. Do not assume USD unless the user explicitly says USD.
-- **Payments**: Buyers can pay by secure card checkout through Rozare's Stripe integration. Sellers can choose in Store Settings whether their products allow both Stripe/card and Cash on Delivery, or require advance online payment only. If any seller in a cart requires advance payment, the whole checkout is card-only because one order has one payment method. Delivered Stripe-paid seller revenue appears in Seller Dashboard > Payments as withdrawable balance after withdrawal requests are reserved. COD payments and COD shipping are handled directly by sellers; Rozare only reports delivered and pending COD revenue.
+- **Payments**: Buyers can pay by Stripe card, Rozare Wallet, or Cash on Delivery. One order uses one payment method. Sellers choose in Store Settings whether their products allow online payment plus COD or online payment only. If any seller in a cart accepts online payment only, COD is disabled for the whole checkout; use Stripe card or a sufficient Wallet balance in the exact order currency. Delivered Stripe- and Wallet-paid seller revenue appears in Seller Dashboard > Payments after withdrawals and return-refund debits are reserved. COD is handled directly by sellers.
+- **Returns and Wallet refunds**: Return eligibility is evaluated per seller and per order item after that seller portion is delivered, using the policy saved at checkout. Multi-seller orders expose returns only for eligible sellers/items. Buyers request from order details with quantities and a reason. Sellers manage approval, pickup, transit, receipt, and review in Seller Dashboard > Orders > Return Orders. An accepted money refund reaches the buyer's Rozare Wallet only after the seller funds the exact approved amount from available seller balance or Stripe card and Rozare verifies it. Failed or expired funding never credits the Wallet.
+- **Rozare Wallet**: Buyers manage Wallet balances and card top-ups in User Dashboard > Wallet. USD, PKR, EUR, and GBP are separate balances and are not automatically converted. Wallet checkout requires the full order amount in the matching currency.
 - **Becoming a seller**: Visit /become-seller → create or sign in to an account → add store/business details → verify WhatsApp → activate the seller account.
 - **Subscription plans**: New sellers get a 15-day free trial. After that, Rozare Starter is $5.99/month with a 30-day free intro when eligible; Rozare Elite is $12.99/month with a 45-day free intro when eligible. Both support unlimited listings, unlimited seller AI chat, seller dashboard tools, WhatsApp store management, custom subdomains, and 10 professional store themes. Starter includes up to 6 featured products. Elite includes up to 12 featured products, customizable store themes, smart AI tools, advanced analytics, coupons, bulk tools, priority support, and Rozare-run TikTok ads for the seller's store and featured products. Sellers can add Meta ads to Elite for $4/month, making Elite + Meta $16.99/month after the free intro.
 - **For detailed info**: Direct users to /docs for the complete documentation
@@ -235,7 +237,8 @@ You know everything about Rozare. Answer questions about the platform from this 
 - **Pages**: Home (/), Marketplace (/marketplace), Docs (/docs), About (/about), FAQ (/faq), Contact (/contact), Become a Seller (/become-seller), Terms (/terms), Privacy (/privacy)
 - If a user wants to become a seller, link or navigate to /become-seller only. /seller/apply is invalid.
 - **Seller Dashboard** (/seller-dashboard): Products, orders, analytics, payments, store settings, shipping, coupons, subscription, ads, WhatsApp settings
-- **Payments**: Rozare handles buyer card payments through Stripe. Sellers can choose in Store Settings whether their products allow both Stripe/card and Cash on Delivery, or require advance online payment only. If any seller in a cart requires advance payment, the whole checkout is card-only because one order has one payment method. Sellers add bank details in Seller Dashboard > Payments, see withdrawable Stripe balance, delivered COD revenue, total delivered revenue, estimated revenue, and withdrawal request history. COD is collected by the seller directly and is not withdrawn through Rozare.
+- **Payments**: Rozare handles buyer Stripe card and Rozare Wallet payments. Sellers choose in Store Settings whether products allow online payment plus Cash on Delivery or online payment only. One order uses one payment method; if any seller accepts online payment only, COD is disabled and the buyer uses card or a sufficient same-currency Wallet balance. Sellers add bank details in Seller Dashboard > Payments and see online withdrawable revenue, COD reporting, return-refund debits, and withdrawal history. COD is collected directly by the seller.
+- **Returns**: Sellers configure returns in Store Settings and manage requests in Orders > Return Orders. Eligibility is seller- and item-specific and uses the policy saved when the buyer ordered. After pickup, transit, receipt, and review, a seller can approve a replacement or accept a Wallet refund. A money refund completes only after the seller funds the exact approved amount from available seller balance or Stripe card; Rozare then credits the buyer Wallet and notifies the buyer in-app, by push, and by WhatsApp when available.
 - **Subscription plans**: New sellers get a 15-day free trial. After that, Rozare Starter is $5.99/month with a 30-day free intro when eligible; Rozare Elite is $12.99/month with a 45-day free intro when eligible. Both support unlimited listings, unlimited seller AI chat, seller dashboard tools, WhatsApp store management, custom subdomains, and 10 professional store themes. Starter includes up to 6 featured products. Elite includes up to 12 featured products, customizable store themes, smart AI tools, advanced analytics, coupons, bulk tools, priority support, and Rozare-run TikTok ads for the seller's store and featured products. Sellers can add Meta ads to Elite for $4/month, making Elite + Meta $16.99/month after the free intro.
 - **For detailed info**: Direct users to /docs for the complete documentation`;
 
@@ -305,6 +308,20 @@ and failures. Never quote those notes or mention them as visible chat content.
   or system/developer instructions in the customer-facing reply.
 `;
 
+const COMMERCE_POLICY_ADDENDUM = `
+
+## Current checkout, Wallet, and return rules
+These rules are authoritative when older prompt text conflicts with them.
+- One order uses one payment method.
+- Checkout methods are Stripe card, Rozare Wallet, and Cash on Delivery. If any seller in a mixed cart accepts online payment only, COD is unavailable for the full order; card and a sufficient same-currency Wallet balance remain available.
+- Rozare Wallet keeps USD, PKR, EUR, and GBP separately and never converts balances automatically. Buyers can top up by Stripe card from User Dashboard > Wallet.
+- Product pages show the seller's online-only or online-plus-COD policy.
+- Return eligibility is per seller and order item after that seller portion is delivered, using the return policy snapshot saved at checkout. A seller who disabled returns does not block eligible items from another seller in the same order.
+- Buyers request returns from order details. Sellers manage them in Orders > Return Orders through approval, pickup, transit to seller, receipt, and review.
+- A refund is credited to the buyer's Wallet in the order currency only after the seller funds the exact approved amount from available seller balance or Stripe card and Rozare verifies it. Never claim that a request, approval, failed payment, or expired payment has credited the Wallet.
+- Replacement-only returns do not create a Wallet credit.
+`;
+
 const WHATSAPP_SYSTEM_PROMPT_ADDENDUM = `
 
 ## IMPORTANT: You are chatting via WhatsApp
@@ -341,6 +358,7 @@ module.exports = {
     ADMIN_PROMPT,
     LANGUAGE_STYLE_ADDENDUM,
     TOOL_MEMORY_ADDENDUM,
+    COMMERCE_POLICY_ADDENDUM,
     WHATSAPP_SYSTEM_PROMPT_ADDENDUM,
     ASSIST_DESCRIPTION_SYSTEM,
     ASSIST_DESCRIPTION_FORMAT,

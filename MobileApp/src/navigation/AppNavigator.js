@@ -76,6 +76,7 @@ import OrdersScreen from '../screens/OrdersScreen';
 import OrderDetailScreen from '../screens/OrderDetailScreen';
 import OrderConfirmationScreen from '../screens/OrderConfirmationScreen';
 import WishlistScreen from '../screens/WishlistScreen';
+import WalletScreen from '../screens/WalletScreen';
 
 // Seller Screens
 import SellerDashboardScreen from '../screens/seller/SellerDashboardScreen';
@@ -179,6 +180,7 @@ const GuardedSellerComplaints = createRoleGuard(SellerComplaintsScreen, ['seller
 const GuardedSellerProfile = createRoleGuard(SellerProfileScreen, ['seller', 'admin']);
 const GuardedSellerPayments = createRoleGuard(SellerPaymentsScreen, ['seller', 'admin']);
 const GuardedUserWhatsAppSettings = createRoleGuard(UserWhatsAppSettingsScreen, ['user', 'admin']);
+const GuardedWallet = createRoleGuard(WalletScreen, ['user', 'seller', 'admin']);
 
 // Helper function to calculate cart item count - exported for testing
 export const calculateCartItemCount = (cartItems) => {
@@ -489,6 +491,7 @@ export default function AppNavigator() {
       <Stack.Screen name="AIChat" component={AIChatScreen} options={{ headerShown: false }} />
       <Stack.Screen name="UserDashboard" component={UserDashboardScreen} options={{ headerShown: false }} />
       <Stack.Screen name="UserWhatsAppSettings" component={GuardedUserWhatsAppSettings} options={{ headerShown: false }} />
+      <Stack.Screen name="Wallet" component={GuardedWallet} options={{ headerShown: false }} />
 
       {/* Shared Screens (role-guarded: seller or admin) */}
       <Stack.Screen name="ProductForm" component={GuardedProductForm} options={{ headerShown: false }} />

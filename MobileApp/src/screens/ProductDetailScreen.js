@@ -44,6 +44,7 @@ export default function ProductDetailScreen({ route, navigation }) {
   const [selectedColor, setSelectedColor] = useState(null);
   const [selectedOptions, setSelectedOptions] = useState({});
   const [storeData, setStoreData] = useState(null);
+  const [storePolicy, setStorePolicy] = useState(null);
   const [availableCoupons, setAvailableCoupons] = useState([]);
   const [copiedCoupon, setCopiedCoupon] = useState(null);
   const [relatedProducts, setRelatedProducts] = useState([]);
@@ -82,6 +83,7 @@ export default function ProductDetailScreen({ route, navigation }) {
       const res = await api.get(`/api/products/get-single-product/${productId}`);
       const prod = res.data.product;
       setProduct(prod);
+      setStorePolicy(res.data.storePolicy || null);
       const sellerId = typeof prod.seller === 'string' ? prod.seller : prod.seller?._id;
       if (sellerId) {
         try { const storeRes = await api.get(`/api/stores/seller/${sellerId}`); setStoreData(storeRes.data.store); } catch {}
@@ -227,6 +229,29 @@ export default function ProductDetailScreen({ route, navigation }) {
               )}
             </View>
 
+            <View style={styles.returnPanel}>
+              <Text style={styles.sectionLabelSmall}>PAYMENT AVAILABILITY</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm }}>
+                <Ionicons
+                  name={(storePolicy?.paymentPolicy || storeData?.paymentPolicy) === 'advance_only' ? 'card-outline' : 'cash-outline'}
+                  size={18}
+                  color={(storePolicy?.paymentPolicy || storeData?.paymentPolicy) === 'advance_only' ? palette.colors.primary : palette.colors.success}
+                />
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: fontSize.sm, fontWeight: fontWeight.semibold, color: palette.colors.text }}>
+                    {(storePolicy?.paymentPolicy || storeData?.paymentPolicy) === 'advance_only'
+                      ? 'Online payment only'
+                      : 'Online payment and Cash on Delivery'}
+                  </Text>
+                  <Text style={[styles.returnDesc, { marginTop: 3 }]}>
+                    {(storePolicy?.paymentPolicy || storeData?.paymentPolicy) === 'advance_only'
+                      ? 'Pay online by card or Rozare Wallet. Cash on Delivery is unavailable.'
+                      : 'Pay by card or Rozare Wallet, or pay when this product is delivered.'}
+                  </Text>
+                </View>
+              </View>
+            </View>
+
             <Text style={styles.description}>{product.description}</Text>
 
             {/* Dynamic Product Options (Size, Color, Material...) */}
@@ -273,7 +298,9 @@ export default function ProductDetailScreen({ route, navigation }) {
 
             {/* Return & Warranty — matches website panel */}
             {(() => {
-              const rp = product.returnPolicy?.useStorePolicy === false ? product.returnPolicy : storeData?.returnPolicy;
+              const rp = product.returnPolicy?.useStorePolicy === false
+                ? product.returnPolicy
+                : (storePolicy?.returnPolicy || storeData?.returnPolicy);
               if (!rp) {
                 return (
                   <View style={styles.returnRow}>
@@ -300,7 +327,7 @@ export default function ProductDetailScreen({ route, navigation }) {
                     {rp.refundType && rp.refundType !== 'none' && (
                       <View style={[styles.returnPill, { backgroundColor: 'rgba(99,102,241,0.1)' }]}>
                         <Text style={[styles.returnPillText, { color: palette.colors.primary }]}>
-                          {rp.refundType === 'full_refund' ? '💰 Full Refund' : rp.refundType === 'replacement_only' ? '🔄 Replacement Only' : '🎁 Store Credit'}
+                          {rp.refundType === 'full_refund' ? 'Full Refund to Rozare Wallet' : rp.refundType === 'replacement_only' ? 'Replacement Only' : 'Rozare Wallet Credit'}
                         </Text>
                       </View>
                     )}

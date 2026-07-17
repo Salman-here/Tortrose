@@ -74,7 +74,7 @@ const SECTIONS = [
     id: 'payments',
     title: 'Payments & Checkout',
     icon: 'card-outline',
-    body: 'Secure card payments run through Stripe. Cash on Delivery is available only when every seller in the cart allows COD. Sellers can require advance online payment from Store Settings, which makes mixed carts card-only if any seller requires advance payment.',
+    body: 'Checkout supports Stripe card, Rozare Wallet, and Cash on Delivery. One order uses one payment method. COD is available only when every seller allows it. If any seller accepts online payment only, pay by card or with enough Wallet balance in the exact checkout currency. Wallet balances can be topped up securely by card and are never converted automatically.',
   },
   {
     id: 'shipping',
@@ -86,7 +86,7 @@ const SECTIONS = [
     id: 'orders-returns',
     title: 'Orders, Returns & Refunds',
     icon: 'refresh-outline',
-    body: 'View all orders in your Dashboard. Open any order to download an invoice, request a return within the policy window, or contact the seller via the AI assistant.',
+    body: 'Open a delivered order to request a return for eligible items within that seller\'s saved policy window. Multi-seller orders are handled per seller. Track approval, pickup, transit, receipt, and review from the order. An accepted refund reaches your Rozare Wallet only after the seller funds the exact amount from seller balance or Stripe card; every status change sends app and WhatsApp updates when available.',
   },
   {
     id: 'coupons',

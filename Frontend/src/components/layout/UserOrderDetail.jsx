@@ -8,6 +8,7 @@ import { useCurrency } from "../../contexts/CurrencyContext";
 import Loader from "../common/Loader";
 import { getAuthToken } from "../../utils/cookieHelper";
 import { getOrderItemOptionPairs } from "../../utils/orderItems";
+import BuyerReturnsPanel from "./BuyerReturnsPanel";
 
 const OrderDetail = () => {
     const { formatPrice } = useCurrency();
@@ -263,7 +264,7 @@ const OrderDetail = () => {
                             </div>
                         </div>
 
-                        {order?.orderStatus !== 'cancelled' && order?.orderStatus !== 'delivered' && (
+                        {order?.orderStatus !== 'cancelled' && order?.orderStatus !== 'delivered' && !order?.isPaid && !['shipped'].includes(order?.orderStatus) && (
                             <div className="mt-4 pt-4" style={{ borderTop: '1px solid var(--glass-border)' }}>
                                 <motion.button whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.97 }}
                                     onClick={() => setShowCancelConfirm(true)}
@@ -281,7 +282,7 @@ const OrderDetail = () => {
                             <CreditCard className="w-4 h-4" style={{ color: 'hsl(var(--primary))' }} /> Payment Details
                         </h2>
                         <div className="space-y-3 text-sm">
-                            <div className="flex justify-between"><span style={{ color: 'hsl(var(--muted-foreground))' }}>Method:</span><span className="capitalize font-medium" style={{ color: 'hsl(var(--foreground))' }}>{order.paymentMethod}</span></div>
+                            <div className="flex justify-between"><span style={{ color: 'hsl(var(--muted-foreground))' }}>Method:</span><span className="font-medium" style={{ color: 'hsl(var(--foreground))' }}>{order.paymentMethod === 'cash_on_delivery' ? 'Cash on Delivery' : order.paymentMethod === 'wallet' ? 'Rozare Wallet' : 'Card (Stripe)'}</span></div>
                             <div className="flex justify-between items-center">
                                 <span style={{ color: 'hsl(var(--muted-foreground))' }}>Status:</span>
                                 {order.isPaid
@@ -343,6 +344,8 @@ const OrderDetail = () => {
                     </div>
                 </div>
             </div>
+
+            <BuyerReturnsPanel order={order} formatMoney={orderMoney} />
 
             {/* Cancel Confirmation Modal */}
             <AnimatePresence>

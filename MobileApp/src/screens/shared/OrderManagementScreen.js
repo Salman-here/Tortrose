@@ -16,6 +16,7 @@ import GlassPanel from '../../components/common/GlassPanel';
 import { spacing, fontSize, borderRadius, fontWeight, typography } from '../../styles/theme';
 import { useTheme } from '../../contexts/ThemeContext';
 import { openWhatsAppVerify } from '../../utils/whatsapp';
+import SellerReturnsPanel from '../../components/SellerReturnsPanel';
 
 const STATUS_TABS = [
   { id: 'all', label: 'All' }, { id: 'pending', label: 'Pending' },
@@ -33,12 +34,16 @@ export default function OrderManagementScreen({ navigation, route }) {
   const styles = buildStyles(palette);
 
   const { isAdmin } = route.params || {};
+  const [primaryView, setPrimaryView] = useState(!isAdmin && route.params?.tab === 'returns' ? 'returns' : 'orders');
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [activeTab, setActiveTab] = useState('all');
 
   useEffect(() => { fetchOrders(); }, []);
+  useEffect(() => {
+    if (!isAdmin && route.params?.tab === 'returns') setPrimaryView('returns');
+  }, [isAdmin, route.params?.tab]);
 
   const fetchOrders = async () => {
     try {
@@ -63,12 +68,25 @@ export default function OrderManagementScreen({ navigation, route }) {
       <GlassPanel variant="floating" style={styles.titleRow}>
         <View style={styles.titleIcon}><Ionicons name="receipt-outline" size={24} color="white" /></View>
         <View>
-          <Text style={styles.title}>Order Management</Text>
-          <Text style={styles.subtitle}>{orders.length} total orders</Text>
+          <Text style={styles.title}>{primaryView === 'returns' ? 'Return Orders' : 'Order Management'}</Text>
+          <Text style={styles.subtitle}>{primaryView === 'returns' ? 'Review returns and fund approved refunds' : `${orders.length} total orders`}</Text>
         </View>
       </GlassPanel>
 
-      <FlatList horizontal data={STATUS_TABS} keyExtractor={i => i.id} showsHorizontalScrollIndicator={false}
+      {!isAdmin && (
+        <View style={styles.primaryTabs}>
+          <TouchableOpacity style={[styles.primaryTab, primaryView === 'orders' && styles.primaryTabActive]} onPress={() => setPrimaryView('orders')}>
+            <Ionicons name="receipt-outline" size={17} color={primaryView === 'orders' ? '#fff' : palette.colors.textSecondary} />
+            <Text style={[styles.primaryTabText, primaryView === 'orders' && styles.primaryTabTextActive]}>Orders</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.primaryTab, primaryView === 'returns' && styles.primaryTabActive]} onPress={() => setPrimaryView('returns')}>
+            <Ionicons name="return-down-back-outline" size={17} color={primaryView === 'returns' ? '#fff' : palette.colors.textSecondary} />
+            <Text style={[styles.primaryTabText, primaryView === 'returns' && styles.primaryTabTextActive]}>Return Orders</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {primaryView === 'orders' && <FlatList horizontal data={STATUS_TABS} keyExtractor={i => i.id} showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.tabsContainer}
         renderItem={({ item }) => {
           const isActive = activeTab === item.id;
@@ -84,12 +102,20 @@ export default function OrderManagementScreen({ navigation, route }) {
             </TouchableOpacity>
           );
         }}
-      />
-      <Text style={styles.resultsText}>Showing <Text style={styles.resultsCount}>{filteredOrders.length}</Text> orders</Text>
+      />}
+      {primaryView === 'orders' && <Text style={styles.resultsText}>Showing <Text style={styles.resultsCount}>{filteredOrders.length}</Text> orders</Text>}
     </View>
-  ), [orders.length, activeTab, statusCounts, filteredOrders.length]);
+  ), [orders.length, activeTab, statusCounts, filteredOrders.length, primaryView, isAdmin, palette.colors.textSecondary]);
 
   if (loading) return <GlassBackground><Loader fullScreen message="Loading orders..." /></GlassBackground>;
+
+  if (primaryView === 'returns' && !isAdmin) {
+    return (
+      <GlassBackground>
+        <SellerReturnsPanel header={renderHeader()} route={route} navigation={navigation} />
+      </GlassBackground>
+    );
+  }
 
   return (
     <GlassBackground>
@@ -108,6 +134,11 @@ const buildStyles = (p) => StyleSheet.create({
   titleIcon: { width: 44, height: 44, borderRadius: borderRadius.lg, backgroundColor: p.colors.primary, justifyContent: 'center', alignItems: 'center', marginRight: spacing.md },
   title: { ...typography.h3, color: p.colors.text },
   subtitle: { ...typography.bodySmall, color: p.colors.textSecondary },
+  primaryTabs: { flexDirection: 'row', marginHorizontal: spacing.lg, marginBottom: spacing.md, padding: 4, borderRadius: 14, backgroundColor: p.glass.bgSubtle, borderWidth: 1, borderColor: p.glass.borderSubtle },
+  primaryTab: { flex: 1, minHeight: 42, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.sm, borderRadius: 11 },
+  primaryTabActive: { backgroundColor: p.colors.primary },
+  primaryTabText: { fontSize: fontSize.sm, fontWeight: fontWeight.semibold, color: p.colors.textSecondary },
+  primaryTabTextActive: { color: '#fff' },
   tabsContainer: { paddingHorizontal: spacing.lg, gap: spacing.sm, marginBottom: spacing.md },
   tab: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: borderRadius.full, backgroundColor: 'rgba(255,255,255,0.08)', gap: spacing.xs },
   tabActive: { backgroundColor: p.colors.primary },

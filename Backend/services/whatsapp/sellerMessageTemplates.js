@@ -82,6 +82,26 @@ const templates = {
         orderLinesBlock(order),
     ].join('\n'),
 
+    return_requested: (returnRequest) => [
+        'New Return Request',
+        '',
+        `Return: #${returnRequest?.returnNumber || 'Unknown'}`,
+        `Order: #${returnRequest?.orderId || 'Unknown'}`,
+        `Buyer reason: ${returnRequest?.reasonDetails || 'No reason provided'}`,
+        '',
+        'Open Seller Dashboard > Orders > Return Orders to review it.',
+    ].join('\n'),
+
+    return_settled: (returnRequest, amountText) => [
+        'Return Refund Completed',
+        '',
+        `Return: #${returnRequest?.returnNumber || 'Unknown'}`,
+        `Order: #${returnRequest?.orderId || 'Unknown'}`,
+        `Refund: ${amountText}`,
+        '',
+        'The buyer wallet was credited and the return is now complete.',
+    ].join('\n'),
+
     subscription_activated: (planName, freePeriodDays) => {
         const freeStr = freePeriodDays > 0 ? `\nFree period: ${freePeriodDays} days` : '';
         return `${planName} Activated\n\nYour seller subscription is now active.${freeStr}\n\nYour store is live and visible to customers.`;

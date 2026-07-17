@@ -70,6 +70,37 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
       return res.sendStatus(200);
     }
 
+    if (session.metadata?.type === 'wallet_top_up') {
+      try {
+        const { completeWalletTopUp } = require('./services/walletService');
+        const { notifyTopUpCompleted } = require('./controllers/walletController');
+        const transaction = await completeWalletTopUp(session);
+        await notifyTopUpCompleted(transaction);
+        console.log(`[wallet] completed top-up ${transaction?._id || session.id}`);
+        return res.sendStatus(200);
+      } catch (walletError) {
+        console.error('[wallet] top-up webhook failed:', walletError.message);
+        return res.sendStatus(500);
+      }
+    }
+
+    if (session.metadata?.type === 'return_settlement') {
+      try {
+        const { completeReturnCardSettlement } = require('./services/returnService');
+        const { notifyReturnSettlementCompleted } = require('./services/returnNotificationService');
+        const returnRequest = await completeReturnCardSettlement(session);
+        const returnOrder = returnRequest ? await Order.findById(returnRequest.order).lean() : null;
+        if (returnRequest) {
+          await notifyReturnSettlementCompleted(returnRequest, returnOrder);
+        }
+        console.log(`[returns] completed card settlement ${returnRequest?._id || session.id}`);
+        return res.sendStatus(200);
+      } catch (returnError) {
+        console.error('[returns] settlement webhook failed:', returnError.message);
+        return res.sendStatus(500);
+      }
+    }
+
     console.log("✅ Payment succeeded!");
     console.log("Session ID:", session.id);
     console.log("Order ID (metadata):", session.metadata?.orderId);
@@ -80,8 +111,10 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
     const orderId = session.metadata?.orderId;
     let order = await Order.findOne({ orderId });
     if (order) {
+      const shouldCommitInventory = order.inventoryCommitted !== true;
       order.isPaid = true;
       order.paidAt = Date.now();
+      order.paymentFulfilledAt = order.paymentFulfilledAt || new Date();
       order.paymentResult.paymentIntentId = paymentIntentId;
       order.paymentResult.emailAddress = email;
 
@@ -91,6 +124,12 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
       const wasAwaiting = order.awaitingPayment === true;
       order.awaitingPayment = false;
       order.orderStatus = 'confirmed';
+      for (const fulfillment of order.sellerFulfillment || []) {
+        if (fulfillment.status === 'pending') {
+          fulfillment.status = 'confirmed';
+          fulfillment.updatedAt = new Date();
+        }
+      }
       if (order.confirmation) {
         order.confirmation.confirmedAt = new Date();
         order.confirmation.confirmedVia = 'stripe_payment';
@@ -172,11 +211,12 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
         }
       }
 
-      try {
-        const user = await User.findById(order.user);
-        const { formatOrderMoney } = require('./utils/orderPresentation');
-        const paidAmount = formatOrderMoney(order.orderSummary?.totalAmount || 0, order.currency || 'USD');
-        const html = `
+      if (wasAwaiting) {
+        try {
+          const user = await User.findById(order.user);
+          const { formatOrderMoney } = require('./utils/orderPresentation');
+          const paidAmount = formatOrderMoney(order.orderSummary?.totalAmount || 0, order.currency || 'USD');
+          const html = `
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -212,18 +252,34 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
 </body>
 </html>`;
 
-        await sendEmail({
-          to: email,
-          subject: `Your Order #${order.orderId} is Confirmed 🎉`,
-          text: `We've received your payment of ${paidAmount}. Your order will be delivered soon.`,
-          html: html,
-        });
-      } catch (emailErr) {
-        console.error('Failed to send payment confirmation email:', emailErr.message);
+          await sendEmail({
+            to: email,
+            subject: `Your Order #${order.orderId} is Confirmed 🎉`,
+            text: `We've received your payment of ${paidAmount}. Your order will be delivered soon.`,
+            html: html,
+          });
+        } catch (emailErr) {
+          console.error('Failed to send payment confirmation email:', emailErr.message);
+        }
       }
 
-      for (const item of order.orderItems) {
-        await Product.findByIdAndUpdate(item.productId, { $inc: { stock: -item.quantity } });
+      if (shouldCommitInventory) {
+        for (const item of order.orderItems) {
+          await Product.findByIdAndUpdate(item.productId, {
+            $inc: { stock: -item.quantity, totalSales: item.quantity },
+          });
+        }
+        order.inventoryCommitted = true;
+        await order.save();
+      }
+
+      if (wasAwaiting && order.user && Array.isArray(order.appliedCoupons)) {
+        const { recordCouponUsage } = require('./controllers/couponController');
+        for (const couponData of order.appliedCoupons) {
+          if (couponData?.couponId) {
+            await recordCouponUsage(couponData.couponId, order.user.toString());
+          }
+        }
       }
 
       const cart = await Cart.findOne({ user: order.user });
@@ -243,6 +299,34 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
     event.type === 'checkout.session.async_payment_failed'
   ) {
     const session = event.data.object;
+    if (session.metadata?.type === 'wallet_top_up') {
+      const { failWalletTopUp } = require('./services/walletService');
+      await failWalletTopUp(session).catch(error =>
+        console.error('[wallet] failed to mark top-up failed:', error.message)
+      );
+      return res.sendStatus(200);
+    }
+    if (session.metadata?.type === 'return_settlement') {
+      const { failReturnCardSettlement } = require('./services/returnService');
+      try {
+        const returnRequest = await failReturnCardSettlement(
+          session,
+          'The seller card payment expired or failed. The return is back under review.'
+        );
+        if (returnRequest) {
+          const { notifyBuyerReturnStatus } = require('./services/returnNotificationService');
+          const returnOrder = await Order.findById(returnRequest.order).lean();
+          await notifyBuyerReturnStatus(
+            returnRequest,
+            returnOrder,
+            'Seller refund funding was not completed. The seller can try again.'
+          );
+        }
+      } catch (error) {
+        console.error('[returns] failed to reset settlement:', error.message);
+      }
+      return res.sendStatus(200);
+    }
     if (session.mode === 'payment' && session.metadata?.orderId) {
       try {
         const order = await Order.findOne({ orderId: session.metadata.orderId });
@@ -443,6 +527,8 @@ const aiChatRoutes = require('./routes/aiChatRoutes');
 const subscriptionRoutes = require('./routes/subscriptionRoutes');
 const couponRoutes = require('./routes/couponRoutes');
 const paymentRoutes = require('./routes/paymentRoutes');
+const walletRoutes = require('./routes/walletRoutes');
+const returnRoutes = require('./routes/returnRoutes');
 const storeReviewRoutes = require('./routes/storeReviewRoutes');
 const whatsappRoutes = require('./routes/whatsappRoutes');
 const sellerWhatsappRoutes = require('./routes/sellerWhatsappRoutes');
@@ -480,6 +566,8 @@ app.use('/api/ai-prompts', require('./routes/aiPromptRoutes'));
 app.use('/api/subscription', subscriptionRoutes);
 app.use('/api/coupons', couponRoutes);
 app.use('/api/payments', paymentRoutes);
+app.use('/api/wallet', walletRoutes);
+app.use('/api/returns', returnRoutes);
 app.use('/api/ads', sellerAdRoutes);
 app.use('/api/store-reviews', storeReviewRoutes);
 app.use('/api/whatsapp', whatsappRoutes);
