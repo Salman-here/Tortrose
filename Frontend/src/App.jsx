@@ -14,7 +14,7 @@ function App() {
   const subdomainSlug = !onDocs && isSubdomain() ? getSubdomain() : null;
 
   return (
-    <HelmetProvider>
+    <HelmetProvider> 
       <Analytics />
       <ToastContainer
         position='bottom-right'
