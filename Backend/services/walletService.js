@@ -5,6 +5,7 @@ const Wallet = require('../models/Wallet');
 const WalletTransaction = require('../models/WalletTransaction');
 const Order = require('../models/Order');
 const Product = require('../models/Product');
+const { formatMoneySync } = require('./currencyService');
 
 const WALLET_CURRENCIES = Object.freeze(['USD', 'PKR', 'EUR', 'GBP']);
 const ZERO_DECIMAL_CURRENCIES = new Set([
@@ -24,6 +25,23 @@ const normalizeWalletCurrency = (value) => {
     throw error;
   }
   return currency;
+};
+
+const formatWalletMoney = (amount, currency) => {
+  const normalizedCurrency = normalizeWalletCurrency(currency);
+  return formatMoneySync(roundMoney(amount), normalizedCurrency, {
+    sourceCurrency: normalizedCurrency,
+  });
+};
+
+const walletTopUpDescription = (amount, currency) =>
+  `Rozare Wallet top-up of ${formatWalletMoney(amount, currency)}`;
+
+const getWalletTransactionDescription = (transaction) => {
+  if (transaction?.type === 'top_up') {
+    return walletTopUpDescription(transaction.amount, transaction.currency);
+  }
+  return String(transaction?.description || '').trim();
 };
 
 const toStripeMinorUnits = (amount, currency) => {
@@ -357,7 +375,10 @@ const getWalletSummary = async (userId, { limit = 50 } = {}) => {
       lockedReason: wallet.lockedReason || '',
       updatedAt: wallet.updatedAt,
     },
-    transactions,
+    transactions: transactions.map((transaction) => ({
+      ...transaction,
+      description: getWalletTransactionDescription(transaction),
+    })),
   };
 };
 
@@ -365,6 +386,9 @@ module.exports = {
   WALLET_CURRENCIES,
   roundMoney,
   normalizeWalletCurrency,
+  formatWalletMoney,
+  walletTopUpDescription,
+  getWalletTransactionDescription,
   toStripeMinorUnits,
   runInTransaction,
   ensureWallet,

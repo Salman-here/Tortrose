@@ -214,13 +214,16 @@ export default function WalletScreen({ navigation, route }) {
             </GlassPanel>
           ) : transactions.map(transaction => {
             const isCredit = transaction.direction === 'credit';
+            const transactionDescription = transaction.type === 'top_up'
+              ? `Rozare Wallet top-up of ${formatAmount(transaction.amount || 0, { targetCurrency: transaction.currency })}`
+              : transaction.description || transaction.type?.replace(/_/g, ' ');
             return (
               <GlassPanel key={transaction._id} variant="card" style={styles.transactionCard}>
                 <View style={[styles.transactionIcon, { backgroundColor: isCredit ? 'rgba(16,185,129,0.12)' : 'rgba(99,102,241,0.12)' }]}>
                   <Ionicons name={isCredit ? 'arrow-down-outline' : 'arrow-up-outline'} size={19} color={isCredit ? palette.colors.success : palette.colors.primary} />
                 </View>
                 <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text style={styles.transactionTitle} numberOfLines={1}>{transaction.description || transaction.type?.replace(/_/g, ' ')}</Text>
+                  <Text style={styles.transactionTitle} numberOfLines={1}>{transactionDescription}</Text>
                   <Text style={styles.transactionDate}>{new Date(transaction.createdAt).toLocaleString()} - {transaction.status}</Text>
                 </View>
                 <Text style={[styles.transactionAmount, { color: isCredit ? palette.colors.success : palette.colors.text }]}>

@@ -15,6 +15,13 @@ const formatAmount = (amount, currency) => new Intl.NumberFormat(undefined, {
   maximumFractionDigits: currency === 'PKR' ? 2 : 2,
 }).format(Number(amount) || 0);
 
+const getTransactionDescription = (transaction) => {
+  if (transaction.type === 'top_up') {
+    return `Rozare Wallet top-up of ${formatAmount(transaction.amount, transaction.currency)}`;
+  }
+  return transaction.description || transaction.type.replaceAll('_', ' ');
+};
+
 export default function Wallet() {
   const [wallet, setWallet] = useState(null);
   const [transactions, setTransactions] = useState([]);
@@ -153,7 +160,7 @@ export default function Wallet() {
                       {credit ? <ArrowDownLeft size={16} /> : <ArrowUpRight size={16} />}
                     </div>
                     <div className="min-w-0 flex-1">
-                      <p className="text-sm font-semibold truncate" style={{ color: 'hsl(var(--foreground))' }}>{transaction.description || transaction.type.replaceAll('_', ' ')}</p>
+                      <p className="text-sm font-semibold truncate" style={{ color: 'hsl(var(--foreground))' }}>{getTransactionDescription(transaction)}</p>
                       <p className="text-xs mt-0.5" style={{ color: 'hsl(var(--muted-foreground))' }}>{new Date(transaction.createdAt).toLocaleString()} - {transaction.status}</p>
                     </div>
                     <div className="text-right shrink-0">

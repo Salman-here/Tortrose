@@ -2,12 +2,14 @@ const crypto = require('crypto');
 const WalletTransaction = require('../models/WalletTransaction');
 const Notification = require('../models/Notification');
 const { stripe } = require('../config/stripe');
-const { convertToUSD, formatMoneySync } = require('../services/currencyService');
+const { convertToUSD } = require('../services/currencyService');
 const {
     getWalletSummary,
     normalizeWalletCurrency,
     toStripeMinorUnits,
     roundMoney,
+    formatWalletMoney,
+    walletTopUpDescription,
 } = require('../services/walletService');
 
 const MIN_TOP_UP_USD = Number(process.env.WALLET_MIN_TOP_UP_USD || 1);
@@ -75,7 +77,7 @@ exports.createTopUpCheckout = async (req, res) => {
             status: 'pending',
             amount,
             currency,
-            description: `Rozare Wallet top-up of ${formatMoneySync(amount, currency)}`,
+            description: walletTopUpDescription(amount, currency),
             referenceType: 'stripe_checkout',
             referenceId: requestKey,
             idempotencyKey,
@@ -147,7 +149,7 @@ exports.notifyTopUpCompleted = async (transaction) => {
     await Notification.create({
         user: claimed.user,
         title: 'Wallet top-up completed',
-        body: `${formatMoneySync(claimed.amount, claimed.currency)} was added to your Rozare Wallet.`,
+        body: `${formatWalletMoney(claimed.amount, claimed.currency)} was added to your Rozare Wallet.`,
         category: 'system',
         linkTo: '/user-dashboard/wallet',
         source: 'system',
