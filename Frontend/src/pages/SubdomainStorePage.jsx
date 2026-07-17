@@ -299,12 +299,6 @@ const SubdomainStorePage = () => {
                     </div>
                 </motion.div>
 
-                <StoreReviews
-                    storeId={store._id}
-                    storeOwnerId={store.seller?._id || store.seller}
-                    onSummaryChange={setStoreRating}
-                />
-
                 {/* Products Section */}
                 <motion.div
                     initial={{ opacity: 0, y: 20 }}
@@ -347,6 +341,12 @@ const SubdomainStorePage = () => {
                         </div>
                     )}
                 </motion.div>
+
+                <StoreReviews
+                    storeId={store._id}
+                    storeOwnerId={store.seller?._id || store.seller}
+                    onSummaryChange={setStoreRating}
+                />
             </div>
         </motion.div>
     );

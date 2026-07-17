@@ -667,12 +667,6 @@ const StorePage = ({ slugOverride = null }) => {
                     </motion.div>
                 )}
 
-                <StoreReviews
-                    storeId={store._id}
-                    storeOwnerId={getEntityId(store.seller)}
-                    onSummaryChange={setStoreRating}
-                />
-
                 {/* Products Section */}
                 <motion.div
                     initial={{ opacity: 0, y: 20 }}
@@ -814,6 +808,12 @@ const StorePage = ({ slugOverride = null }) => {
                         </>
                     )}
                 </motion.div>
+
+                <StoreReviews
+                    storeId={store._id}
+                    storeOwnerId={getEntityId(store.seller)}
+                    onSummaryChange={setStoreRating}
+                />
             </div>
         </motion.div>
     );
