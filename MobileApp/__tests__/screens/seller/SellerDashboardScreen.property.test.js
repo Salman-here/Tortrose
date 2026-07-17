@@ -10,30 +10,29 @@
 import * as fc from 'fast-check';
 
 /**
- * Calculate seller dashboard statistics
+ * Calculate seller dashboard statistics — mirrors the screen's implementation,
+ * which matches the WEBSITE SellerHome math:
+ *  - revenue counts PAID orders only (order.isPaid)
+ *  - pending/processing/delivered are exact orderStatus matches
+ *  - conversion = delivered / total (rounded %)
+ *  - outOfStock (stock === 0) and lowStock (0 < stock <= 10) product counts
  * Property 16: Seller Dashboard Statistics
  * Validates: Requirements 17.1, 17.2
  */
 const calculateSellerStats = (products, orders) => {
   const totalProducts = products?.length || 0;
   const totalOrders = orders?.length || 0;
-  const pendingOrders = orders?.filter(o => 
-    o.status === 'pending' || o.status === 'processing'
-  ).length || 0;
-  
-  const revenue = orders?.reduce((sum, order) => {
-    if (order.status !== 'cancelled') {
-      return sum + (order.total || 0);
-    }
-    return sum;
-  }, 0) || 0;
-
-  return {
-    totalProducts,
-    totalOrders,
-    pendingOrders,
-    revenue,
-  };
+  const statusOf = (o) => o.orderStatus || o.status;
+  const pendingOrders = orders?.filter(o => statusOf(o) === 'pending').length || 0;
+  const processingOrders = orders?.filter(o => statusOf(o) === 'processing').length || 0;
+  const deliveredOrders = orders?.filter(o => statusOf(o) === 'delivered').length || 0;
+  const outOfStock = products?.filter(p => p.stock === 0).length || 0;
+  const lowStock = products?.filter(p => p.stock <= 10 && p.stock > 0).length || 0;
+  const revenue = orders?.reduce((sum, order) => (
+    order.isPaid ? sum + (order.orderSummary?.totalAmount || 0) : sum
+  ), 0) || 0;
+  const conversion = totalOrders > 0 ? Math.round((deliveredOrders / totalOrders) * 100) : 0;
+  return { totalProducts, totalOrders, pendingOrders, processingOrders, deliveredOrders, outOfStock, lowStock, revenue, conversion };
 };
 
 // Product generator
@@ -47,8 +46,9 @@ const productArbitrary = fc.record({
 // Order generator
 const orderArbitrary = fc.record({
   _id: fc.uuid(),
-  status: fc.constantFrom('pending', 'processing', 'shipped', 'delivered', 'cancelled'),
-  total: fc.integer({ min: 100, max: 1000000 }).map(n => n / 100),
+  orderStatus: fc.constantFrom('pending', 'processing', 'shipped', 'delivered', 'cancelled'),
+  isPaid: fc.boolean(),
+  orderSummary: fc.record({ totalAmount: fc.integer({ min: 100, max: 1000000 }).map(n => n / 100) }),
   createdAt: fc.date({ min: new Date('2020-01-01'), max: new Date('2025-12-31') }).map(d => d.toISOString()),
 });
 
@@ -92,17 +92,16 @@ describe('SellerDashboardScreen Property Tests', () => {
       );
     });
 
-    it('should correctly count pending orders (pending + processing)', () => {
+    it('should count order statuses exactly (pending / processing / delivered)', () => {
       fc.assert(
         fc.property(
           fc.array(productArbitrary, { minLength: 0, maxLength: 20 }),
           fc.array(orderArbitrary, { minLength: 0, maxLength: 50 }),
           (products, orders) => {
             const stats = calculateSellerStats(products, orders);
-            const expectedPending = orders.filter(
-              o => o.status === 'pending' || o.status === 'processing'
-            ).length;
-            expect(stats.pendingOrders).toBe(expectedPending);
+            expect(stats.pendingOrders).toBe(orders.filter(o => o.orderStatus === 'pending').length);
+            expect(stats.processingOrders).toBe(orders.filter(o => o.orderStatus === 'processing').length);
+            expect(stats.deliveredOrders).toBe(orders.filter(o => o.orderStatus === 'delivered').length);
             return true;
           }
         ),
@@ -110,7 +109,7 @@ describe('SellerDashboardScreen Property Tests', () => {
       );
     });
 
-    it('should calculate revenue excluding cancelled orders', () => {
+    it('should calculate revenue from PAID orders only (website parity)', () => {
       fc.assert(
         fc.property(
           fc.array(productArbitrary, { minLength: 0, maxLength: 20 }),
@@ -118,11 +117,30 @@ describe('SellerDashboardScreen Property Tests', () => {
           (products, orders) => {
             const stats = calculateSellerStats(products, orders);
             const expectedRevenue = orders
-              .filter(o => o.status !== 'cancelled')
-              .reduce((sum, o) => sum + (o.total || 0), 0);
-            
+              .filter(o => o.isPaid)
+              .reduce((sum, o) => sum + (o.orderSummary?.totalAmount || 0), 0);
+
             // Use approximate comparison for floating point
             expect(Math.abs(stats.revenue - expectedRevenue)).toBeLessThan(0.01);
+            return true;
+          }
+        ),
+        { numRuns: 100 }
+      );
+    });
+
+    it('should compute stock alerts and conversion consistently', () => {
+      fc.assert(
+        fc.property(
+          fc.array(productArbitrary, { minLength: 0, maxLength: 50 }),
+          fc.array(orderArbitrary, { minLength: 0, maxLength: 50 }),
+          (products, orders) => {
+            const stats = calculateSellerStats(products, orders);
+            expect(stats.outOfStock).toBe(products.filter(p => p.stock === 0).length);
+            expect(stats.lowStock).toBe(products.filter(p => p.stock > 0 && p.stock <= 10).length);
+            expect(stats.conversion).toBeGreaterThanOrEqual(0);
+            expect(stats.conversion).toBeLessThanOrEqual(100);
+            if (orders.length === 0) expect(stats.conversion).toBe(0);
             return true;
           }
         ),

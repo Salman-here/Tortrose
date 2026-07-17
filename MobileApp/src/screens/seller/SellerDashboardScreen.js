@@ -1,6 +1,8 @@
 /**
  * SellerDashboardScreen — Professional Liquid Glass Design
- * Clean grid layout with compact navigation tiles and recent orders
+ * Matched to the website's SellerHome: welcome hub, accurate stats
+ * (paid-only revenue, conversion), stock alerts, order summary bar,
+ * quick-action tiles, and recent orders.
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
@@ -8,6 +10,7 @@ import {
   View, Text, ScrollView, StyleSheet, RefreshControl, TouchableOpacity, Dimensions, SafeAreaView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import api from '../../config/api';
 import { useAuth } from '../../contexts/AuthContext';
 import OrderCard from '../../components/common/OrderCard';
@@ -17,29 +20,38 @@ import GlassBackground from '../../components/common/GlassBackground';
 import GlassPanel from '../../components/common/GlassPanel';
 import AIChatFab from '../../components/common/AIChatFab';
 import ChatBot from '../../components/ChatBot';
-import { spacing, fontSize, borderRadius, fontWeight, typography } from '../../styles/theme';
+import { spacing, fontSize, borderRadius, fontWeight } from '../../styles/theme';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useCurrency } from '../../contexts/CurrencyContext';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const TILE_GAP = spacing.sm;
 
+// Mirrors the website's SellerHome math exactly:
+// revenue counts PAID orders only (converted per-order currency),
+// pending/processing/delivered match orderStatus, conversion = delivered/total.
 export const calculateSellerStats = (products, orders, convertAmount = (amount) => Number(amount || 0), targetCurrency = 'USD') => {
   const totalProducts = products?.length || 0;
   const totalOrders = orders?.length || 0;
-  const pendingOrders = orders?.filter(o => {
-    const status = o.orderStatus || o.status;
-    return status === 'pending' || status === 'confirmed' || status === 'processing';
-  }).length || 0;
-  const revenue = orders?.reduce((sum, order) => {
-    const status = order.orderStatus || order.status;
-    if (status !== 'cancelled') {
-      const total = order.orderSummary?.totalAmount ?? order.totalAmount ?? order.total ?? 0;
-      return sum + convertAmount(total, order.currency || targetCurrency, targetCurrency);
-    }
-    return sum;
-  }, 0) || 0;
-  return { totalProducts, totalOrders, pendingOrders, revenue };
+  const statusOf = (o) => o.orderStatus || o.status;
+  const pendingOrders = orders?.filter(o => statusOf(o) === 'pending').length || 0;
+  const processingOrders = orders?.filter(o => statusOf(o) === 'processing').length || 0;
+  const deliveredOrders = orders?.filter(o => statusOf(o) === 'delivered').length || 0;
+  const outOfStock = products?.filter(p => p.stock === 0).length || 0;
+  const lowStock = products?.filter(p => p.stock <= 10 && p.stock > 0).length || 0;
+  const revenue = orders?.reduce((sum, order) => (
+    order.isPaid
+      ? sum + convertAmount(order.orderSummary?.totalAmount || 0, order.currency || 'USD', targetCurrency)
+      : sum
+  ), 0) || 0;
+  const conversion = totalOrders > 0 ? Math.round((deliveredOrders / totalOrders) * 100) : 0;
+  return { totalProducts, totalOrders, pendingOrders, processingOrders, deliveredOrders, outOfStock, lowStock, revenue, conversion };
+};
+
+export const getGreeting = (hour = new Date().getHours()) => {
+  if (hour < 12) return 'Good morning';
+  if (hour < 18) return 'Good afternoon';
+  return 'Good evening';
 };
 
 export default function SellerDashboardScreen({ navigation }) {
@@ -47,57 +59,13 @@ export default function SellerDashboardScreen({ navigation }) {
   const { currency, convertAmount, formatAmount } = useCurrency();
   const styles = buildStyles(palette);
 
-  /* ── Mini Stat Card ── */
-  const MiniStat = ({ icon, iconColor, label, value, onPress }) => {
-    const Wrapper = onPress ? TouchableOpacity : View;
-    const wrapperProps = onPress ? { onPress, activeOpacity: 0.7 } : {};
-    const formatValue = (v) => {
-      if (typeof v === 'number') {
-        if (v >= 1000000) return `${(v / 1000000).toFixed(1)}M`;
-        if (v >= 1000) return `${(v / 1000).toFixed(1)}K`;
-        return v.toLocaleString();
-      }
-      return v;
-    };
-    return (
-      <Wrapper {...wrapperProps} style={styles.miniStat}>
-        <GlassPanel variant="card" style={styles.miniStatInner}>
-          <View style={[styles.miniStatIcon, { backgroundColor: `${iconColor}15` }]}>
-            <Ionicons name={icon} size={18} color={iconColor} />
-          </View>
-          <View style={styles.miniStatContent}>
-            <Text style={styles.miniStatValue}>{formatValue(value)}</Text>
-            <Text style={styles.miniStatLabel} numberOfLines={1}>{label}</Text>
-          </View>
-        </GlassPanel>
-      </Wrapper>
-    );
-  };
-
-  /* ── Quick Action Tile ── */
-  const QuickTile = ({ icon, color, label, onPress, badge }) => (
-    <TouchableOpacity onPress={onPress} activeOpacity={0.7} style={styles.quickTile}>
-      <GlassPanel variant="inner" style={styles.quickTileInner}>
-        <View style={[styles.quickTileIcon, { backgroundColor: `${color}15` }]}>
-          <Ionicons name={icon} size={22} color={color} />
-          {badge > 0 && (
-            <View style={[styles.tileBadge, { backgroundColor: color }]}>
-              <Text style={styles.tileBadgeText}>{badge > 99 ? '99+' : badge}</Text>
-            </View>
-          )}
-        </View>
-        <Text style={styles.quickTileLabel} numberOfLines={1}>{label}</Text>
-      </GlassPanel>
-    </TouchableOpacity>
-  );
-
   const { currentUser } = useAuth();
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [store, setStore] = useState(null);
   const [products, setProducts] = useState([]);
   const [orders, setOrders] = useState([]);
-  const [stats, setStats] = useState({ totalProducts: 0, totalOrders: 0, pendingOrders: 0, revenue: 0 });
+  const [stats, setStats] = useState(calculateSellerStats([], []));
   const [showAI, setShowAI] = useState(false);
   const [subscription, setSubscription] = useState(null);
 
@@ -123,93 +91,176 @@ export default function SellerDashboardScreen({ navigation }) {
   };
 
   const onRefresh = useCallback(() => { setRefreshing(true); fetchDashboardData(); }, []);
-  const recentOrders = orders.slice(0, 5);
+  // Newest first — sort explicitly so we don't depend on API ordering
+  const recentOrders = [...orders]
+    .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
+    .slice(0, 5);
 
-  if (isLoading) return <GlassBackground><SafeAreaView style={{flex:1}}><Loader fullScreen message="Loading dashboard..." /></SafeAreaView></GlassBackground>;
+  const formatCompactPrice = (amount) => {
+    const value = Number(amount) || 0;
+    const symbol = String(formatAmount(0)).replace(/[0-9.,\s]/g, '');
+    if (value >= 1000000) return `${symbol}${(value / 1000000).toFixed(1)}M`;
+    if (value >= 10000) return `${symbol}${(value / 1000).toFixed(1)}K`;
+    return formatAmount(value);
+  };
+
+  if (isLoading) return <GlassBackground><SafeAreaView style={{ flex: 1 }}><Loader fullScreen message="Loading dashboard..." /></SafeAreaView></GlassBackground>;
 
   const isTrialExpiring = subscription?.isTrialExpiringSoon;
   const isBlocked = subscription?.status === 'blocked';
+  const storeName = store?.storeName || store?.name;
+
+  const heroStats = [
+    { label: 'Total Revenue', value: formatCompactPrice(stats.revenue), icon: 'cash-outline', color: '#10b981', bg: 'rgba(16,185,129,0.12)' },
+    { label: 'Total Orders', value: stats.totalOrders, icon: 'bag-handle-outline', color: '#6366f1', bg: 'rgba(99,102,241,0.12)', onPress: () => navigation.navigate('SellerOrderManagement') },
+    { label: 'Total Products', value: stats.totalProducts, icon: 'cube-outline', color: '#0ea5e9', bg: 'rgba(14,165,233,0.12)', onPress: () => navigation.navigate('SellerProductManagement') },
+    { label: 'Conversion', value: `${stats.conversion}%`, icon: 'trending-up-outline', color: '#8b5cf6', bg: 'rgba(139,92,246,0.12)' },
+  ];
+
+  const orderSummary = [
+    { label: 'Pending', count: stats.pendingOrders, color: '#f97316', bg: 'rgba(249,115,22,0.12)' },
+    { label: 'Processing', count: stats.processingOrders, color: '#6366f1', bg: 'rgba(99,102,241,0.12)' },
+    { label: 'Delivered', count: stats.deliveredOrders, color: '#10b981', bg: 'rgba(16,185,129,0.12)' },
+    { label: 'Low Stock', count: stats.lowStock + stats.outOfStock, color: '#ef4444', bg: 'rgba(239,68,68,0.12)' },
+  ];
 
   const quickActions = [
-    { icon: 'cube-outline', color: palette.colors.secondary, label: 'Products', onPress: () => navigation.navigate('SellerProductManagement'), badge: stats.totalProducts },
-    { icon: 'receipt-outline', color: palette.colors.info, label: 'Orders', onPress: () => navigation.navigate('SellerOrderManagement'), badge: stats.pendingOrders },
+    { icon: 'cube-outline', color: '#0ea5e9', label: 'Products', onPress: () => navigation.navigate('SellerProductManagement'), badge: stats.totalProducts },
+    { icon: 'receipt-outline', color: '#6366f1', label: 'Orders', onPress: () => navigation.navigate('SellerOrderManagement'), badge: stats.pendingOrders },
     { icon: 'wallet-outline', color: '#10b981', label: 'Payments', onPress: () => navigation.navigate('SellerPayments') },
-    { icon: 'storefront-outline', color: palette.colors.primary, label: 'Store', onPress: () => navigation.navigate('SellerStoreSettings') },
-    { icon: 'car-outline', color: palette.colors.warning, label: 'Shipping', onPress: () => navigation.navigate('SellerShippingConfiguration') },
+    { icon: 'storefront-outline', color: '#8b5cf6', label: 'Store', onPress: () => navigation.navigate('SellerStoreSettings') },
+    { icon: 'car-outline', color: '#f59e0b', label: 'Shipping', onPress: () => navigation.navigate('SellerShippingConfiguration') },
     { icon: 'pricetag-outline', color: '#f97316', label: 'Coupons', onPress: () => navigation.navigate('SellerCouponManagement') },
-    { icon: 'bar-chart-outline', color: palette.colors.success, label: 'Analytics', onPress: () => navigation.navigate('SellerAnalytics') },
-    { icon: 'globe-outline', color: '#0ea5e9', label: 'Subdomain', onPress: () => navigation.navigate('SellerSubdomainManagement') },
-    { icon: 'diamond-outline', color: '#8b5cf6', label: 'Plan', onPress: () => navigation.navigate('SellerSubscription') },
-    { icon: 'logo-whatsapp', color: '#22C55E', label: 'WhatsApp', onPress: () => navigation.navigate('SellerWhatsAppSettings') },
-    { icon: 'chatbubbles-outline', color: '#f97316', label: 'Complaints', onPress: () => navigation.navigate('SellerComplaints') },
+    { icon: 'bar-chart-outline', color: '#14b8a6', label: 'Analytics', onPress: () => navigation.navigate('SellerAnalytics') },
+    { icon: 'globe-outline', color: '#0284c7', label: 'Subdomain', onPress: () => navigation.navigate('SellerSubdomainManagement') },
+    { icon: 'diamond-outline', color: '#a855f7', label: 'Plan', onPress: () => navigation.navigate('SellerSubscription') },
+    { icon: 'logo-whatsapp', color: '#22c55e', label: 'WhatsApp', onPress: () => navigation.navigate('SellerWhatsAppSettings') },
+    { icon: 'chatbubbles-outline', color: '#ec4899', label: 'Complaints', onPress: () => navigation.navigate('SellerComplaints') },
     { icon: 'person-circle-outline', color: '#06b6d4', label: 'Profile', onPress: () => navigation.navigate('SellerProfile') },
   ];
 
   return (
     <GlassBackground>
-      <SafeAreaView style={{flex:1}}>
+      <SafeAreaView style={{ flex: 1 }}>
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scroll}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={palette.colors.primary} />}
       >
+        {/* ── Top Bar: back + title ── */}
+        <View style={styles.topBar}>
+          <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()} accessibilityLabel="Go back">
+            <Ionicons name="arrow-back" size={20} color={palette.colors.text} />
+          </TouchableOpacity>
+          <Text style={styles.topBarTitle}>Seller Dashboard</Text>
+          <TouchableOpacity style={styles.backBtn} onPress={() => navigation.navigate('SellerNotifications')} accessibilityLabel="Seller notifications">
+            <Ionicons name="notifications-outline" size={19} color={palette.colors.text} />
+          </TouchableOpacity>
+        </View>
+
         {/* Subscription Warnings */}
         {isBlocked && (
-          <TouchableOpacity onPress={() => navigation.navigate('SellerSubscription')} activeOpacity={0.8}
-            style={{ marginHorizontal: spacing.lg, marginTop: spacing.md, padding: spacing.md, borderRadius: borderRadius.lg, backgroundColor: `${palette.colors.error}10`, borderWidth: 1, borderColor: `${palette.colors.error}25` }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm }}>
-              <Ionicons name="lock-closed" size={16} color={palette.colors.error} />
-              <Text style={{ fontSize: fontSize.xs, fontWeight: fontWeight.bold, color: palette.colors.error, flex: 1 }}>Store Blocked — Subscribe to reactivate</Text>
-              <Ionicons name="chevron-forward" size={14} color={palette.colors.error} />
-            </View>
+          <TouchableOpacity onPress={() => navigation.navigate('SellerSubscription')} activeOpacity={0.8} style={[styles.alertBanner, { backgroundColor: 'rgba(239,68,68,0.08)', borderColor: 'rgba(239,68,68,0.25)' }]}>
+            <Ionicons name="lock-closed" size={16} color={palette.colors.error} />
+            <Text style={[styles.alertBannerText, { color: palette.colors.error }]}>Store Blocked — Subscribe to reactivate</Text>
+            <Ionicons name="chevron-forward" size={14} color={palette.colors.error} />
           </TouchableOpacity>
         )}
         {isTrialExpiring && !isBlocked && (
-          <TouchableOpacity onPress={() => navigation.navigate('SellerSubscription')} activeOpacity={0.8}
-            style={{ marginHorizontal: spacing.lg, marginTop: spacing.md, padding: spacing.md, borderRadius: borderRadius.lg, backgroundColor: `${palette.colors.warning}10`, borderWidth: 1, borderColor: `${palette.colors.warning}25` }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm }}>
-              <Ionicons name="alert-circle" size={16} color={palette.colors.warning} />
-              <Text style={{ fontSize: fontSize.xs, fontWeight: fontWeight.semibold, color: palette.colors.warning, flex: 1 }}>Trial expiring in {subscription?.trialDaysRemaining} days — Subscribe now</Text>
-              <Ionicons name="chevron-forward" size={14} color={palette.colors.warning} />
-            </View>
+          <TouchableOpacity onPress={() => navigation.navigate('SellerSubscription')} activeOpacity={0.8} style={[styles.alertBanner, { backgroundColor: 'rgba(245,158,11,0.08)', borderColor: 'rgba(245,158,11,0.25)' }]}>
+            <Ionicons name="alert-circle" size={16} color={palette.colors.warning} />
+            <Text style={[styles.alertBannerText, { color: palette.colors.warning }]}>Trial expiring in {subscription?.trialDaysRemaining} days — Subscribe now</Text>
+            <Ionicons name="chevron-forward" size={14} color={palette.colors.warning} />
           </TouchableOpacity>
         )}
 
-        {/* ── Header ── */}
+        {/* ── Welcome Hub (matches website) ── */}
         <GlassPanel variant="strong" style={styles.header}>
-          <View style={styles.headerRow}>
-            <View style={styles.headerAvatar}>
-              <Ionicons name="storefront" size={22} color={palette.colors.white} />
+          <View style={styles.tagPill}>
+            <Ionicons name="sparkles" size={11} color={palette.colors.primary} />
+            <Text style={styles.tagPillText}>Seller Hub</Text>
+          </View>
+          <Text style={styles.headerName}>{getGreeting()}, {currentUser?.name?.split(' ')[0] || currentUser?.username || 'Seller'}</Text>
+          <Text style={styles.headerSub}>Here's what's happening with your store today</Text>
+          {storeName && (
+            <View style={styles.storeNameRow}>
+              <Ionicons name="business-outline" size={14} color={palette.colors.textSecondary} />
+              <Text style={styles.storeName}>{storeName}</Text>
+              {store?.storeSlug && (
+                <TouchableOpacity style={styles.viewStoreBtn} onPress={() => navigation.navigate('Store', { storeSlug: store.storeSlug })} activeOpacity={0.8}>
+                  <Text style={styles.viewStoreBtnText}>View Store</Text>
+                  <Ionicons name="open-outline" size={12} color={palette.colors.primary} />
+                </TouchableOpacity>
+              )}
             </View>
-            <View style={styles.headerInfo}>
-              <Text style={styles.headerGreeting}>Welcome back</Text>
-              <Text style={styles.headerName}>{currentUser?.name?.split(' ')[0] || 'Seller'}</Text>
-            </View>
-            {store && (
-              <TouchableOpacity
-                style={styles.viewStoreBtn}
-                onPress={() => navigation.navigate('Store', { storeSlug: store.storeSlug || store.slug })}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.viewStoreBtnText}>View Store</Text>
-                <Ionicons name="open-outline" size={14} color={palette.colors.primary} />
+          )}
+          <TouchableOpacity style={styles.addProductBtn} onPress={() => navigation.navigate('ProductForm', { isAdmin: false })} activeOpacity={0.85}>
+            <LinearGradient colors={palette.gradients.cta} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
+            <Ionicons name="flash" size={15} color="#fff" />
+            <Text style={styles.addProductBtnText}>Add Product</Text>
+          </TouchableOpacity>
+        </GlassPanel>
+
+        {/* ── Stats Grid (matches website: revenue/orders/products/conversion) ── */}
+        <View style={styles.statsGrid}>
+          {heroStats.map((stat) => {
+            const Wrapper = stat.onPress ? TouchableOpacity : View;
+            return (
+              <Wrapper key={stat.label} onPress={stat.onPress} activeOpacity={0.75} style={styles.statCardWrap}>
+                <GlassPanel variant="card" style={styles.statCard}>
+                  <View style={[styles.statIcon, { backgroundColor: stat.bg }]}>
+                    <Ionicons name={stat.icon} size={20} color={stat.color} />
+                  </View>
+                  <Text style={styles.statLabel}>{stat.label}</Text>
+                  <Text style={styles.statValue} numberOfLines={1} adjustsFontSizeToFit>{stat.value}</Text>
+                </GlassPanel>
+              </Wrapper>
+            );
+          })}
+        </View>
+
+        {/* ── Stock Alerts (matches website) ── */}
+        {(stats.outOfStock > 0 || stats.lowStock > 0) && (
+          <View style={styles.alertsSection}>
+            {stats.outOfStock > 0 && (
+              <TouchableOpacity onPress={() => navigation.navigate('SellerProductManagement')} activeOpacity={0.8}>
+                <GlassPanel variant="card" style={[styles.stockAlert, { borderLeftColor: '#ef4444' }]}>
+                  <View style={[styles.stockAlertIcon, { backgroundColor: 'rgba(239,68,68,0.12)' }]}>
+                    <Ionicons name="warning-outline" size={18} color="#ef4444" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.stockAlertTitle}>{stats.outOfStock} product{stats.outOfStock > 1 ? 's' : ''} out of stock</Text>
+                    <Text style={styles.stockAlertSub}>Update inventory to avoid lost sales</Text>
+                  </View>
+                  <Ionicons name="arrow-forward" size={16} color={palette.colors.textSecondary} />
+                </GlassPanel>
+              </TouchableOpacity>
+            )}
+            {stats.lowStock > 0 && (
+              <TouchableOpacity onPress={() => navigation.navigate('SellerProductManagement')} activeOpacity={0.8}>
+                <GlassPanel variant="card" style={[styles.stockAlert, { borderLeftColor: '#f59e0b' }]}>
+                  <View style={[styles.stockAlertIcon, { backgroundColor: 'rgba(245,158,11,0.12)' }]}>
+                    <Ionicons name="alert-circle-outline" size={18} color="#b45309" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.stockAlertTitle}>{stats.lowStock} product{stats.lowStock > 1 ? 's' : ''} running low</Text>
+                    <Text style={styles.stockAlertSub}>Stock below 10 units</Text>
+                  </View>
+                  <Ionicons name="arrow-forward" size={16} color={palette.colors.textSecondary} />
+                </GlassPanel>
               </TouchableOpacity>
             )}
           </View>
-          {store?.name && (
-            <View style={styles.storeNameRow}>
-              <Ionicons name="business-outline" size={14} color={palette.colors.textSecondary} />
-              <Text style={styles.storeName}>{store.name}</Text>
-            </View>
-          )}
-        </GlassPanel>
+        )}
 
-        {/* ── Stats Grid ── */}
-        <View style={styles.statsGrid}>
-          <MiniStat icon="cube-outline" iconColor={palette.colors.secondary} label="Products" value={stats.totalProducts} onPress={() => navigation.navigate('SellerProductManagement')} />
-          <MiniStat icon="receipt-outline" iconColor={palette.colors.info} label="Orders" value={stats.totalOrders} onPress={() => navigation.navigate('SellerOrderManagement')} />
-          <MiniStat icon="cash-outline" iconColor={palette.colors.success} label="Revenue" value={formatAmount(stats.revenue)} />
-          <MiniStat icon="time-outline" iconColor={palette.colors.warning} label="Pending" value={stats.pendingOrders} onPress={() => navigation.navigate('SellerOrderManagement')} />
+        {/* ── Order Summary Bar (matches website) ── */}
+        <View style={styles.summaryBar}>
+          {orderSummary.map((item) => (
+            <View key={item.label} style={[styles.summaryTile, { backgroundColor: item.bg }]}>
+              <Text style={[styles.summaryCount, { color: item.color }]}>{item.count}</Text>
+              <Text style={styles.summaryLabel}>{item.label}</Text>
+            </View>
+          ))}
         </View>
 
         {/* ── Quick Actions ── */}
@@ -217,7 +268,19 @@ export default function SellerDashboardScreen({ navigation }) {
           <Text style={styles.sectionTitle}>Quick Actions</Text>
           <View style={styles.actionsGrid}>
             {quickActions.map((action, i) => (
-              <QuickTile key={i} {...action} />
+              <TouchableOpacity key={i} onPress={action.onPress} activeOpacity={0.7} style={styles.quickTile}>
+                <GlassPanel variant="inner" style={styles.quickTileInner}>
+                  <View style={[styles.quickTileIcon, { backgroundColor: `${action.color}15` }]}>
+                    <Ionicons name={action.icon} size={22} color={action.color} />
+                    {action.badge > 0 && (
+                      <View style={[styles.tileBadge, { backgroundColor: action.color }]}>
+                        <Text style={styles.tileBadgeText}>{action.badge > 99 ? '99+' : action.badge}</Text>
+                      </View>
+                    )}
+                  </View>
+                  <Text style={styles.quickTileLabel} numberOfLines={1}>{action.label}</Text>
+                </GlassPanel>
+              </TouchableOpacity>
             ))}
           </View>
         </View>
@@ -227,8 +290,9 @@ export default function SellerDashboardScreen({ navigation }) {
           <View style={styles.ordersHeader}>
             <Text style={styles.sectionTitle}>Recent Orders</Text>
             {orders.length > 0 && (
-              <TouchableOpacity onPress={() => navigation.navigate('SellerOrderManagement')} activeOpacity={0.7}>
-                <Text style={styles.viewAllText}>View All</Text>
+              <TouchableOpacity onPress={() => navigation.navigate('SellerOrderManagement')} activeOpacity={0.7} style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
+                <Text style={styles.viewAllText}>View all</Text>
+                <Ionicons name="arrow-forward" size={12} color={palette.colors.primary} />
               </TouchableOpacity>
             )}
           </View>
@@ -261,33 +325,48 @@ export default function SellerDashboardScreen({ navigation }) {
 const buildStyles = (p) => StyleSheet.create({
   scroll: { paddingBottom: spacing.xxl },
 
-  /* Header */
-  header: { marginHorizontal: spacing.lg, marginTop: spacing.lg, padding: spacing.lg },
-  headerRow: { flexDirection: 'row', alignItems: 'center' },
-  headerAvatar: {
-    width: 44, height: 44, borderRadius: 22,
-    backgroundColor: p.colors.primary, justifyContent: 'center', alignItems: 'center',
-  },
-  headerInfo: { flex: 1, marginLeft: spacing.md },
-  headerGreeting: { fontSize: fontSize.sm, color: p.colors.textSecondary },
-  headerName: { fontSize: fontSize.xl, fontWeight: fontWeight.bold, color: p.colors.text },
-  viewStoreBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 4,
-    backgroundColor: `${p.colors.primary}12`, paddingHorizontal: spacing.md, paddingVertical: spacing.xs,
-    borderRadius: borderRadius.full,
-  },
+  /* Top bar */
+  topBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: spacing.lg, paddingTop: spacing.md },
+  backBtn: { width: 38, height: 38, borderRadius: 19, backgroundColor: p.glass.bgStrong, borderWidth: 1, borderColor: p.glass.border, justifyContent: 'center', alignItems: 'center' },
+  topBarTitle: { fontSize: fontSize.lg, fontWeight: fontWeight.bold, color: p.colors.text },
+
+  /* Banners */
+  alertBanner: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginHorizontal: spacing.lg, marginTop: spacing.md, padding: spacing.md, borderRadius: borderRadius.lg, borderWidth: 1 },
+  alertBannerText: { fontSize: fontSize.xs, fontWeight: fontWeight.bold, flex: 1 },
+
+  /* Welcome hub */
+  header: { marginHorizontal: spacing.lg, marginTop: spacing.md, padding: spacing.xl },
+  tagPill: { alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: 'rgba(99,102,241,0.12)', borderWidth: 1, borderColor: 'rgba(99,102,241,0.18)', paddingHorizontal: spacing.md, paddingVertical: 5, borderRadius: borderRadius.full, marginBottom: spacing.md },
+  tagPillText: { color: p.colors.primary, fontSize: fontSize.xs, fontWeight: fontWeight.semibold },
+  headerName: { fontSize: fontSize.xxxl, fontWeight: fontWeight.extrabold, color: p.colors.text, letterSpacing: -0.5 },
+  headerSub: { fontSize: fontSize.sm, color: p.colors.textSecondary, marginTop: 4 },
+  storeNameRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: spacing.md, paddingTop: spacing.md, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: p.glass.borderSubtle },
+  storeName: { flex: 1, fontSize: fontSize.sm, color: p.colors.textSecondary },
+  viewStoreBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(99,102,241,0.1)', borderWidth: 1, borderColor: 'rgba(99,102,241,0.18)', paddingHorizontal: spacing.md, paddingVertical: 5, borderRadius: borderRadius.full },
   viewStoreBtnText: { fontSize: fontSize.xs, fontWeight: fontWeight.semibold, color: p.colors.primary },
-  storeNameRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: spacing.sm, paddingTop: spacing.sm, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: p.glass.borderSubtle },
-  storeName: { fontSize: fontSize.sm, color: p.colors.textSecondary },
+  addProductBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: spacing.lg, paddingVertical: spacing.md, borderRadius: borderRadius.xl, overflow: 'hidden', shadowColor: '#0EA5E9', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.35, shadowRadius: 16, elevation: 6 },
+  addProductBtnText: { color: '#fff', fontSize: fontSize.md, fontWeight: fontWeight.bold },
 
   /* Stats */
   statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, paddingHorizontal: spacing.lg, marginTop: spacing.md },
-  miniStat: { width: (SCREEN_WIDTH - spacing.lg * 2 - TILE_GAP) / 2 },
-  miniStatInner: { flexDirection: 'row', alignItems: 'center', padding: spacing.md },
-  miniStatIcon: { width: 36, height: 36, borderRadius: 18, justifyContent: 'center', alignItems: 'center', marginRight: spacing.sm },
-  miniStatContent: { flex: 1 },
-  miniStatValue: { fontSize: fontSize.lg, fontWeight: fontWeight.bold, color: p.colors.text },
-  miniStatLabel: { fontSize: fontSize.xs, color: p.colors.textSecondary, marginTop: 1 },
+  statCardWrap: { width: (SCREEN_WIDTH - spacing.lg * 2 - TILE_GAP) / 2 },
+  statCard: { padding: spacing.lg },
+  statIcon: { width: 42, height: 42, borderRadius: 14, justifyContent: 'center', alignItems: 'center', marginBottom: spacing.md },
+  statLabel: { fontSize: fontSize.xs, fontWeight: fontWeight.medium, color: p.colors.textSecondary, marginBottom: 2 },
+  statValue: { fontSize: fontSize.xxl, fontWeight: fontWeight.extrabold, color: p.colors.text, letterSpacing: -0.6 },
+
+  /* Stock alerts */
+  alertsSection: { paddingHorizontal: spacing.lg, marginTop: spacing.md, gap: spacing.sm },
+  stockAlert: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, padding: spacing.md, borderLeftWidth: 3 },
+  stockAlertIcon: { width: 36, height: 36, borderRadius: 12, justifyContent: 'center', alignItems: 'center' },
+  stockAlertTitle: { fontSize: fontSize.sm, fontWeight: fontWeight.semibold, color: p.colors.text },
+  stockAlertSub: { fontSize: fontSize.xs, color: p.colors.textSecondary, marginTop: 1 },
+
+  /* Order summary bar */
+  summaryBar: { flexDirection: 'row', gap: spacing.sm, paddingHorizontal: spacing.lg, marginTop: spacing.md },
+  summaryTile: { flex: 1, alignItems: 'center', paddingVertical: spacing.md, borderRadius: borderRadius.xl },
+  summaryCount: { fontSize: fontSize.xxl, fontWeight: fontWeight.extrabold, letterSpacing: -0.6 },
+  summaryLabel: { fontSize: 10, fontWeight: fontWeight.medium, color: p.colors.textSecondary, marginTop: 2 },
 
   /* Quick Actions */
   sectionContainer: { paddingHorizontal: spacing.lg, marginTop: spacing.lg },
@@ -295,15 +374,10 @@ const buildStyles = (p) => StyleSheet.create({
   actionsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
   quickTile: { width: (SCREEN_WIDTH - spacing.lg * 2 - TILE_GAP * 2) / 3 },
   quickTileInner: { padding: spacing.md, alignItems: 'center', minHeight: 90 },
-  quickTileIcon: {
-    width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center', marginBottom: spacing.xs,
-  },
+  quickTileIcon: { width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center', marginBottom: spacing.xs },
   quickTileLabel: { fontSize: fontSize.xs, fontWeight: fontWeight.medium, color: p.colors.text, textAlign: 'center', marginBottom: 2 },
-  tileBadge: {
-    position: 'absolute', top: -4, right: -6,
-    minWidth: 18, height: 18, borderRadius: 9, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 4,
-  },
-  tileBadgeText: { fontSize: 9, fontWeight: fontWeight.bold, color: p.colors.white },
+  tileBadge: { position: 'absolute', top: -4, right: -6, minWidth: 18, height: 18, borderRadius: 9, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 4 },
+  tileBadgeText: { fontSize: 9, fontWeight: fontWeight.bold, color: '#fff' },
 
   /* Orders */
   ordersPanel: { marginHorizontal: spacing.lg, marginTop: spacing.lg, padding: spacing.lg },
