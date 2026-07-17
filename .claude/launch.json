@@ -7,6 +7,12 @@
       "runtimeArgs": ["expo", "start", "--web", "--port", "3000"],
       "cwd": "MobileApp",
       "port": 3000
+    },
+    {
+      "name": "frontend",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["vite", "--port", "5173", "--strictPort"],
+      "port": 5173
     }
   ]
 }

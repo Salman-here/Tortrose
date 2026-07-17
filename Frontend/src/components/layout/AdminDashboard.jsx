@@ -8,7 +8,7 @@ import {
     CheckSquare, AlertCircle, Menu, TriangleAlert, TrafficCone,
     LayoutPanelLeft, ShoppingBag, Users, CheckCircle, Bell,
     Settings, TrendingUp, Info, AlertTriangle, Loader2,
-    Shield, Store, Bot, MessageCircle, Megaphone,
+    Shield, Store, Bot, MessageCircle, Megaphone, BrainCircuit,
 } from 'lucide-react';
 import { uploadImageToCloudinary } from '../../utils/uploadToCloudinary';
 import axios from 'axios';
@@ -37,6 +37,7 @@ const getAdminMenuItems = ({ pendingOrders = 0, lowStockProducts = 0 } = {}) => 
     { id: 'whatsapp', label: 'WhatsApp Verify', icon: <MessageCircle size={18} />, link: '/admin-dashboard/whatsapp-verification' },
     { id: 'broadcast', label: 'Broadcast', icon: <Megaphone size={18} />, link: '/admin-dashboard/broadcast' },
     { id: 'ads', label: 'Seller Ads', icon: <Megaphone size={18} />, link: '/admin-dashboard/ads' },
+    { id: 'ai-prompts', label: 'AI Prompts', icon: <BrainCircuit size={18} />, link: '/admin-dashboard/ai-prompts' },
     { id: 'settings', label: 'Settings', icon: <Settings size={18} />, link: '/admin-dashboard/notification-settings' },
     { id: 'ai-assistant', label: 'AI Assistant', icon: <Bot size={18} />, action: 'ai-chat' },
 ]);
@@ -264,6 +265,7 @@ const AdminDashboard = () => {
         if (path.includes('tax-configuration')) return 'Tax Configuration';
         if (path.includes('notifications')) return 'Notifications';
         if (path.includes('notification-settings')) return 'Settings';
+        if (path.includes('ai-prompts')) return 'AI Prompts';
         if (path.includes('ads')) return 'Seller Ads';
         return 'Admin Dashboard';
     };
@@ -597,6 +599,7 @@ const AdminSidebar = ({ activeTab, setActiveTab, isSidebarOpen, setIsSidebarOpen
         { id: 'whatsapp', label: 'WhatsApp Verify', icon: <MessageCircle size={18} />, link: '/admin-dashboard/whatsapp-verification' },
         { id: 'broadcast', label: 'Broadcast', icon: <Megaphone size={18} />, link: '/admin-dashboard/broadcast' },
         { id: 'ads', label: 'Seller Ads', icon: <Megaphone size={18} />, link: '/admin-dashboard/ads' },
+        { id: 'ai-prompts', label: 'AI Prompts', icon: <BrainCircuit size={18} />, link: '/admin-dashboard/ai-prompts' },
         { id: 'settings', label: 'Settings', icon: <Settings size={18} />, link: '/admin-dashboard/notification-settings' },
         { id: 'ai-assistant', label: 'AI Assistant', icon: <Bot size={18} />, action: 'ai-chat' },
     ];

@@ -14,6 +14,7 @@ const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const AI_MODEL = process.env.AI_MODEL || 'google/gemini-2.5-flash';
 const SITE_URL = process.env.FRONTEND_URL || 'https://www.rozare.com';
 const { sanitizeProductDescription } = require('../services/productTextService');
+const { getAssistPrompts } = require('../services/aiPromptService');
 
 async function callAI(messages, { json = false } = {}) {
   if (!OPENROUTER_API_KEY) {
@@ -53,17 +54,11 @@ exports.improveDescription = async (req, res) => {
       return res.status(400).json({ msg: 'Description is required' });
     }
 
+    // Prompts are admin-editable from the dashboard (AI Prompts tab).
+    const { describeSystem, describeFormat } = await getAssistPrompts();
     const messages = [
-      {
-        role: 'system',
-        content:
-          'You are an expert e-commerce copywriter. Rewrite product descriptions so they are clear, compelling, scannable and conversion-focused. Keep them honest and concise (90-160 words). Use short paragraphs or 3-5 bullet points where helpful. Do NOT invent specs that were not provided. Return ONLY the improved description text — no headings, no preface, no quotes.',
-      },
-      {
-        role: 'system',
-        content:
-          'Important formatting rule: output plain text only. Do not use markdown, asterisks, stars, bold text, bullet markers, numbered lists, headings, prefaces, or quotes.',
-      },
+      { role: 'system', content: describeSystem },
+      { role: 'system', content: describeFormat },
       {
         role: 'user',
         content: `Improve this product description.\n\nProduct name: ${name}\nBrand: ${brand}\nCategory: ${category}\n\nOriginal description:\n"""${description}"""`,
@@ -85,12 +80,10 @@ exports.generateTags = async (req, res) => {
       return res.status(400).json({ msg: 'Name or description required' });
     }
 
+    // Prompt is admin-editable from the dashboard (AI Prompts tab).
+    const { tagsSystem } = await getAssistPrompts();
     const messages = [
-      {
-        role: 'system',
-        content:
-          'You generate concise product tags for an e-commerce listing. Return ONLY a JSON object of the form {"tags": ["tag1", "tag2", ...]} with 6-10 lowercase tags (1-3 words each). Tags should cover style, occasion, season, target audience, key features and use case as relevant. No hashtags, no punctuation, no duplicates.',
-      },
+      { role: 'system', content: tagsSystem },
       {
         role: 'user',
         content: `Product name: ${name}\nBrand: ${brand}\nCategory: ${category}\nDescription: ${description}`,

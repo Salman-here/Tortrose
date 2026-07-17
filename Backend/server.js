@@ -476,6 +476,7 @@ app.use('/api/smart-tags', smartTagRoutes);
 app.use('/api/ai-actions', aiActionRoutes);
 app.use('/api/ai-chat', aiChatRoutes);
 app.use('/api/ai-assist', require('./routes/aiAssistRoutes'));
+app.use('/api/ai-prompts', require('./routes/aiPromptRoutes'));
 app.use('/api/subscription', subscriptionRoutes);
 app.use('/api/coupons', couponRoutes);
 app.use('/api/payments', paymentRoutes);

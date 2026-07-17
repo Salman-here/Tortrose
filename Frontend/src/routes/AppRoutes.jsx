@@ -61,6 +61,7 @@ const ComplaintsManagement = lazy(() => import('../components/layout/ComplaintsM
 const WhatsAppVerificationPanel = lazy(() => import('../components/layout/admin/WhatsAppVerificationPanel'))
 const AdminBroadcastPanel = lazy(() => import('../components/layout/admin/AdminBroadcastPanel'))
 const AdminAdsPanel = lazy(() => import('../components/layout/admin/AdminAdsPanel'))
+const AdminAIPromptsPanel = lazy(() => import('../components/layout/admin/AdminAIPromptsPanel'))
 
 // ── Seller dashboard
 const SellerDashboard = lazy(() => import('../components/layout/SellerDashboard'))
@@ -194,6 +195,7 @@ function AppRoutes({ subdomainSlug = null }) {
                     <Route path='/admin-dashboard/whatsapp-verification' element={<ProtectedRoute role={'admin'}><WhatsAppVerificationPanel /></ProtectedRoute>} />
                     <Route path='/admin-dashboard/broadcast' element={<ProtectedRoute role={'admin'}><AdminBroadcastPanel /></ProtectedRoute>} />
                     <Route path='/admin-dashboard/ads' element={<ProtectedRoute role={'admin'}><AdminAdsPanel /></ProtectedRoute>} />
+                    <Route path='/admin-dashboard/ai-prompts' element={<ProtectedRoute role={'admin'}><AdminAIPromptsPanel /></ProtectedRoute>} />
                 </Route>
 
                 {/* SELLER DASHBOARD */}
