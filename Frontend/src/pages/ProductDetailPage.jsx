@@ -330,11 +330,11 @@ function ProductDetailPage() {
                     <div className="absolute -bottom-16 -left-16 w-40 h-40 rounded-full opacity-15 blur-3xl pointer-events-none"
                         style={{ background: 'linear-gradient(135deg, hsl(200, 80%, 55%), hsl(170, 70%, 45%))' }} />
 
-                    <div className="relative grid grid-cols-1 lg:grid-cols-2 gap-8 p-6 md:p-8">
+                    <div className="relative flex flex-col lg:grid lg:grid-cols-2 lg:gap-8 p-6 md:p-8">
                         {/* Images Section */}
-                        <div className="flex flex-col">
+                        <div className="contents lg:flex lg:flex-col">
                             {/* Main Image */}
-                            <div className="relative h-80 md:h-96 glass-inner rounded-2xl overflow-hidden flex items-center justify-center">
+                            <div className="relative order-[10] lg:order-none h-80 md:h-96 glass-inner rounded-2xl overflow-hidden flex items-center justify-center">
                                 <AnimatePresence mode="wait">
                                     <motion.img
                                         key={mainImg}
@@ -413,7 +413,7 @@ function ProductDetailPage() {
 
                             {/* Thumbnails */}
                             {product.images && product.images.length > 1 && (
-                                <div className="flex gap-3 mt-4 overflow-x-auto py-2">
+                                <div className="order-[20] lg:order-none flex gap-3 mt-4 overflow-x-auto py-2">
                                     {product.images.map((img, idx) => (
                                         <motion.button
                                             key={idx}
@@ -436,9 +436,9 @@ function ProductDetailPage() {
                                 </div>
                             )}
 
-                            <div className="mt-5">
+                            <div className="contents lg:block lg:mt-5">
                                 {product.tags && product.tags.length > 0 && (
-                                    <motion.div className="flex flex-wrap gap-2 mb-6" variants={fadeIn}>
+                                    <motion.div className="order-[50] lg:order-none flex flex-wrap gap-2 mt-5 lg:mt-0 mb-6" variants={fadeIn}>
                                         {product.tags.map((tag) => (
                                             <span key={tag} className="tag-pill text-xs font-medium"
                                                 style={{ background: 'rgba(56, 189, 248, 0.1)', color: 'hsl(200, 80%, 50%)', borderColor: 'rgba(56, 189, 248, 0.18)' }}>
@@ -454,7 +454,7 @@ function ProductDetailPage() {
                                         ? product.returnPolicy
                                         : (storePolicy?.returnPolicy || storeData?.returnPolicy);
                                     if (!rp) return (
-                                        <motion.div className="flex items-center gap-3 mb-6" variants={fadeIn}>
+                                        <motion.div className="order-[80] lg:order-none flex items-center gap-3 mb-6" variants={fadeIn}>
                                             <div className="glass-inner flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm" style={{ color: 'hsl(var(--foreground))' }}>
                                                 <RotateCcw size={16} style={{ color: 'hsl(var(--primary))' }} />
                                                 <span>Contact seller for return policy</span>
@@ -462,7 +462,7 @@ function ProductDetailPage() {
                                         </motion.div>
                                     );
                                     return (
-                                        <motion.div className="glass-inner rounded-xl p-4 mb-6 space-y-2" variants={fadeIn}>
+                                        <motion.div className="order-[80] lg:order-none glass-inner rounded-xl p-4 mb-6 space-y-2" variants={fadeIn}>
                                             <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'hsl(var(--muted-foreground))' }}>Return & Warranty</p>
                                             <div className="flex flex-wrap gap-2">
                                                 {rp.returnsEnabled ? (
@@ -507,7 +507,7 @@ function ProductDetailPage() {
                                 })()}
 
                                 <motion.div
-                                    className="glass-inner rounded-xl p-4 mb-6"
+                                    className="order-[70] lg:order-none glass-inner rounded-xl p-4 mb-6"
                                     variants={fadeIn}
                                     style={{ border: '1px solid var(--glass-border)' }}
                                 >
@@ -541,18 +541,19 @@ function ProductDetailPage() {
 
                         {/* Product Info */}
                         <motion.div
-                            className="flex flex-col"
+                            className="contents lg:flex lg:flex-col"
                             variants={staggerChildren}
                             initial="hidden"
                             animate="visible"
                         >
-                            <motion.h1
-                                className="text-3xl md:text-4xl font-extrabold tracking-tight mb-2"
-                                style={{ color: 'hsl(var(--foreground))' }}
-                                variants={fadeIn}
-                            >
-                                {product.name}
-                            </motion.h1>
+                            <div className="order-[30] lg:order-none mt-5 lg:mt-0">
+                                <motion.h1
+                                    className="text-3xl md:text-4xl font-extrabold tracking-tight mb-2"
+                                    style={{ color: 'hsl(var(--foreground))' }}
+                                    variants={fadeIn}
+                                >
+                                    {product.name}
+                                </motion.h1>
 
                             <motion.div className="flex items-center gap-3 mb-4 flex-wrap" variants={fadeIn}>
                                 <div className="flex items-center">
@@ -786,10 +787,11 @@ function ProductDetailPage() {
                                 >
                                     <Heart size={20} fill={isInWishlist ? "currentColor" : "none"} />
                                 </motion.button>
-                            </motion.div>
+                                </motion.div>
+                            </div>
 
                             {/* Store Info */}
-                            <motion.div className="my-6" variants={fadeIn}>
+                            <motion.div className="order-[60] lg:order-none my-6" variants={fadeIn}>
                                 <StoreInfo
                                     storeName={storeData?.storeName}
                                     storeSlug={storeData?.storeSlug}
@@ -804,7 +806,7 @@ function ProductDetailPage() {
                             </motion.div>
 
                             <motion.div
-                                className="glass-inner rounded-xl p-4"
+                                className="order-[40] lg:order-none glass-inner rounded-xl p-4"
                                 variants={fadeIn}
                             >
                                 <div className="flex items-center gap-2 text-sm mb-1.5">
