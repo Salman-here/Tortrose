@@ -5,22 +5,29 @@ const { sendEmail } = require('./mailController');
 const { stripe, STRIPE_MODE } = require('../config/stripe');
 const { notifySeller } = require('../services/whatsapp/sellerNotificationService');
 const sellerTemplates = require('../services/whatsapp/sellerMessageTemplates');
+const {
+    META_ADS_ADDON_CENTS,
+    buildPlanPricing,
+    getPricingCatalog,
+} = require('../services/subscriptionPricingService');
+const {
+    FOUNDER_PROMOTION,
+    normalizePromotionCode,
+    getFounderPromotionStatus,
+    reserveFounderSlot,
+    attachCheckoutSessionToReservation,
+    releaseFounderReservation,
+    claimFounderReservation,
+    migrateLegacyFounderSubscribers,
+} = require('../services/founderPromotionService');
 
-const META_ADS_ADDON_CENTS = 400;
-
-function buildPlanPricing(plan, includeMetaAds = false) {
-    const isElite = plan === 'elite';
-    const baseAmount = isElite ? 1299 : 599;
-    const metaAddOn = isElite && includeMetaAds ? META_ADS_ADDON_CENTS : 0;
-    return {
-        isElite,
-        includeMetaAds: Boolean(isElite && includeMetaAds && metaAddOn > 0),
-        unitAmount: baseAmount + metaAddOn,
-        metaAddOn,
-        planName: isElite
-            ? (includeMetaAds && metaAddOn > 0 ? 'Rozare Elite + Meta Ads' : 'Rozare Elite')
-            : 'Rozare Starter',
-    };
+function formatSubscriptionPriceForSeller(plan, subscription, includeMetaAds = false) {
+    const pricing = buildPlanPricing(
+        plan,
+        includeMetaAds,
+        Boolean(subscription?.founderOffer?.active)
+    );
+    return `$${(pricing.unitAmount / 100).toFixed(2)}/month`;
 }
 
 // Email template
@@ -109,6 +116,8 @@ exports.getSubscriptionStatus = async (req, res) => {
         const hasGracePeriod = sub.status === 'blocked' && sub.bonusGraceDeadline && now < sub.bonusGraceDeadline && !sub.bonusFeaturesExpiredPermanently;
         const graceDaysRemaining = hasGracePeriod ? Math.ceil((sub.bonusGraceDeadline - now) / (1000 * 60 * 60 * 24)) : 0;
 
+        const founderPromotion = await getFounderPromotionStatus(sub);
+
         res.json({
             subscription: {
                 status: sub.status,
@@ -135,6 +144,16 @@ exports.getSubscriptionStatus = async (req, res) => {
                 bonusGraceDaysRemaining: graceDaysRemaining,
                 pendingDowngrade: sub.pendingDowngrade?.toPlan || null,
                 hasUsedFreePeriod: sub.hasUsedFreePeriod || false,
+                pricing: getPricingCatalog(),
+                founderOffer: {
+                    active: Boolean(sub.founderOffer?.active),
+                    code: sub.founderOffer?.code || null,
+                    discountPercent: Number(sub.founderOffer?.discountPercent || 0),
+                    claimedAt: sub.founderOffer?.claimedAt || null,
+                    forfeitedAt: sub.founderOffer?.forfeitedAt || null,
+                    source: sub.founderOffer?.source || null,
+                },
+                founderPromotion,
             },
         });
     } catch (error) {
@@ -228,6 +247,8 @@ async function getUsableStripeCustomerId(sub, user, sellerId) {
 
 // Create Stripe checkout for subscription
 exports.createCheckout = async (req, res) => {
+    let founderReservation = null;
+    let sellerId = null;
     try {
         // Guard: Stripe must be configured. In live mode this is the most common
         // cause of a 500 here (e.g. STRIPE_LIVE_SECRET_KEY missing in env).
@@ -239,14 +260,21 @@ exports.createCheckout = async (req, res) => {
             });
         }
 
-        const sellerId = req.user.id;
+        sellerId = req.user.id;
         const { plan } = req.body; // 'starter' or 'elite'
         const includeMetaAdsRequested = Boolean(req.body?.includeMetaAds);
+        const requestedCouponCode = normalizePromotionCode(req.body?.couponCode);
         if (!['starter', 'elite'].includes(plan)) {
             return res.status(400).json({ msg: 'Choose a valid subscription plan.' });
         }
         if (includeMetaAdsRequested && plan !== 'elite') {
             return res.status(400).json({ msg: 'Meta ads can only be added to the Rozare Elite plan.' });
+        }
+        if (requestedCouponCode && requestedCouponCode !== FOUNDER_PROMOTION.code) {
+            return res.status(400).json({
+                msg: 'This subscription coupon is not valid.',
+                code: 'INVALID_SUBSCRIPTION_COUPON',
+            });
         }
         const user = await User.findById(sellerId);
         if (!user) {
@@ -282,9 +310,24 @@ exports.createCheckout = async (req, res) => {
             });
             for (const s of openSessions.data) {
                 if (s.status === 'open' && s.mode === 'subscription') {
-                    await stripe.checkout.sessions.expire(s.id).catch(e =>
-                        console.error(`Failed to expire open checkout session ${s.id}:`, e.message)
-                    );
+                    try {
+                        await stripe.checkout.sessions.expire(s.id);
+                        if (s.metadata?.founderReservationToken) {
+                            await releaseFounderReservation({
+                                sellerId,
+                                token: s.metadata.founderReservationToken,
+                                checkoutSessionId: s.id,
+                            });
+                        }
+                    } catch (expireError) {
+                        console.error(`Failed to expire open checkout session ${s.id}:`, expireError.message);
+                    }
+                } else if (s.status === 'expired' && s.metadata?.founderReservationToken) {
+                    await releaseFounderReservation({
+                        sellerId,
+                        token: s.metadata.founderReservationToken,
+                        checkoutSessionId: s.id,
+                    });
                 }
             }
 
@@ -319,6 +362,18 @@ exports.createCheckout = async (req, res) => {
             // Continue anyway — worst case user has a duplicate; webhook will handle the latest
         }
 
+        if (requestedCouponCode === FOUNDER_PROMOTION.code) {
+            if (sub.founderOffer?.claimedAt || sub.founderOffer?.forfeitedAt) {
+                return res.status(400).json({
+                    msg: sub.founderOffer?.active
+                        ? 'Your founder price is already locked to this subscription.'
+                        : 'This seller account has already used the founder coupon. The founder rate ends when the subscription ends.',
+                    code: 'FOUNDER_COUPON_ALREADY_USED',
+                });
+            }
+            founderReservation = await reserveFounderSlot(sellerId);
+        }
+
         // Determine plan details
         const {
             isElite,
@@ -326,16 +381,16 @@ exports.createCheckout = async (req, res) => {
             planName,
             unitAmount: priceAmount,
             metaAddOn,
-        } = buildPlanPricing(plan, includeMetaAdsRequested);
+        } = buildPlanPricing(plan, includeMetaAdsRequested, Boolean(founderReservation));
         const getsFreePeriod = !sub.hasUsedFreePeriod;
         const trialDays = getsFreePeriod ? (isElite ? 45 : 30) : 0;
         const description = isElite
             ? getsFreePeriod
-                ? `Rozare Elite - First 45 days free, then $${(priceAmount / 100).toFixed(2)}/month. Includes all Starter + Bonus features${includeMetaAds ? ' plus Meta ads add-on' : ''}. Cancel anytime.`
-                : `Rozare Elite - $${(priceAmount / 100).toFixed(2)}/month. Includes all Starter + Bonus features${includeMetaAds ? ' plus Meta ads add-on' : ''}. Cancel anytime.`
+                ? `Rozare Elite - First 45 days free, then $${(priceAmount / 100).toFixed(2)}/month. Includes all Starter + Bonus features${includeMetaAds ? ' plus Meta ads add-on' : ''}${founderReservation ? ' at the FIRST100 founder rate' : ''}. Cancel anytime.`
+                : `Rozare Elite - $${(priceAmount / 100).toFixed(2)}/month. Includes all Starter + Bonus features${includeMetaAds ? ' plus Meta ads add-on' : ''}${founderReservation ? ' at the FIRST100 founder rate' : ''}. Cancel anytime.`
             : getsFreePeriod
-                ? 'Rozare Starter - First 30 days free, then $5.99/month. Cancel anytime.'
-                : 'Rozare Starter - $5.99/month. Cancel anytime.';
+                ? `Rozare Starter - First 30 days free, then $${(priceAmount / 100).toFixed(2)}/month${founderReservation ? ' at the FIRST100 founder rate' : ''}. Cancel anytime.`
+                : `Rozare Starter - $${(priceAmount / 100).toFixed(2)}/month${founderReservation ? ' at the FIRST100 founder rate' : ''}. Cancel anytime.`;
 
         // Create a subscription (with or without free trial period)
         const sessionConfig = {
@@ -360,17 +415,26 @@ exports.createCheckout = async (req, res) => {
                     plan: isElite ? 'elite' : 'starter',
                     includeMetaAds: includeMetaAds ? 'true' : 'false',
                     metaAdsAddonCents: String(metaAddOn || 0),
+                    founderCouponCode: founderReservation ? FOUNDER_PROMOTION.code : '',
+                    founderReservationToken: founderReservation?.token || '',
                 },
             },
             success_url: `${process.env.FRONTEND_URL}/seller-dashboard/subscription?success=true`,
-            cancel_url: `${process.env.FRONTEND_URL}/seller-dashboard/subscription?cancelled=true`,
+            cancel_url: `${process.env.FRONTEND_URL}/seller-dashboard/subscription?cancelled=true${founderReservation ? `&coupon=${FOUNDER_PROMOTION.code}` : ''}`,
             metadata: {
                 sellerId: sellerId.toString(),
                 plan: isElite ? 'elite' : 'starter',
                 includeMetaAds: includeMetaAds ? 'true' : 'false',
                 metaAdsAddonCents: String(metaAddOn || 0),
+                founderCouponCode: founderReservation ? FOUNDER_PROMOTION.code : '',
+                founderReservationToken: founderReservation?.token || '',
             },
         };
+
+        if (founderReservation) {
+            sessionConfig.expires_at = Math.floor(Date.now() / 1000)
+                + FOUNDER_PROMOTION.checkoutReservationMinutes * 60;
+        }
 
         // Only add trial days if seller hasn't used free period before
         if (trialDays > 0) {
@@ -379,8 +443,28 @@ exports.createCheckout = async (req, res) => {
 
         const session = await stripe.checkout.sessions.create(sessionConfig);
 
-        res.json({ url: session.url, sessionId: session.id });
+        if (founderReservation) {
+            try {
+                await attachCheckoutSessionToReservation(sellerId, founderReservation.token, session.id);
+            } catch (reservationError) {
+                await stripe.checkout.sessions.expire(session.id).catch(expireError => {
+                    console.error('[subscription] Failed to expire Checkout after reservation attach failure:', expireError.message);
+                });
+                throw reservationError;
+            }
+        }
+
+        res.json({
+            url: session.url,
+            sessionId: session.id,
+            founderOfferReserved: Boolean(founderReservation),
+        });
     } catch (error) {
+        if (founderReservation) {
+            await releaseFounderReservation({ sellerId, token: founderReservation.token }).catch(releaseError => {
+                console.error('[subscription] Failed to release founder reservation after Checkout error:', releaseError.message);
+            });
+        }
         // Surface a useful diagnostic so the seller (and our logs) can tell
         // *why* checkout failed instead of a generic 500. Stripe SDK errors
         // expose `type`, `code`, and `message`.
@@ -391,7 +475,12 @@ exports.createCheckout = async (req, res) => {
             statusCode: error?.statusCode,
             raw: error?.raw?.message,
         });
-        res.status(500).json({
+        const status = [
+            'FOUNDER_COUPON_FULL',
+            'FOUNDER_COUPON_ALREADY_USED',
+            'FOUNDER_CHECKOUT_PENDING',
+        ].includes(error?.code) ? 409 : 500;
+        res.status(status).json({
             msg: error?.raw?.message || error?.message || 'Failed to create checkout session',
             code: error?.code || error?.type || 'CHECKOUT_ERROR',
         });
@@ -402,6 +491,17 @@ exports.createCheckout = async (req, res) => {
 exports.handleWebhook = async (event) => {
     try {
         switch (event.type) {
+            case 'checkout.session.expired': {
+                const session = event.data.object;
+                if (session.mode !== 'subscription' || !session.metadata?.founderReservationToken) break;
+                await releaseFounderReservation({
+                    sellerId: session.metadata?.sellerId,
+                    token: session.metadata.founderReservationToken,
+                    checkoutSessionId: session.id,
+                });
+                break;
+            }
+
             case 'checkout.session.completed': {
                 const session = event.data.object;
 
@@ -423,6 +523,9 @@ exports.handleWebhook = async (event) => {
                 const selectedPlan = session.metadata?.plan || 'starter';
                 const isElite = selectedPlan === 'elite';
                 const includeMetaAds = isElite && session.metadata?.includeMetaAds === 'true';
+                const founderReservationToken = session.metadata?.founderReservationToken || '';
+                const usesFounderCoupon = session.metadata?.founderCouponCode === FOUNDER_PROMOTION.code
+                    && Boolean(founderReservationToken);
                 const now = new Date();
 
                 // Atomic race guard: try to "claim" this subscription slot. If another parallel
@@ -454,12 +557,82 @@ exports.handleWebhook = async (event) => {
                     } catch (cancelErr) {
                         console.error('Failed to cancel duplicate incoming subscription:', cancelErr.message);
                     }
+                    if (usesFounderCoupon) {
+                        await releaseFounderReservation({
+                            sellerId,
+                            token: founderReservationToken,
+                            checkoutSessionId: session.id,
+                        });
+                    }
                     break;
                 }
 
                 // Reload the freshly-claimed document so `sub.save()` works on the latest state
                 sub = await SellerSubscription.findOne({ seller: sellerId });
                 if (!sub) break;
+
+                if (usesFounderCoupon) {
+                    try {
+                        const founderClaim = await claimFounderReservation({
+                            sellerId,
+                            token: founderReservationToken,
+                            checkoutSessionId: session.id,
+                        });
+                        sub.founderOffer = {
+                            active: true,
+                            code: FOUNDER_PROMOTION.code,
+                            discountPercent: FOUNDER_PROMOTION.discountPercent,
+                            claimedAt: founderClaim.claimedAt || sub.founderOffer?.claimedAt || now,
+                            forfeitedAt: null,
+                            source: 'coupon',
+                        };
+                    } catch (founderError) {
+                        const isDeterministicFounderFailure = [
+                            'FOUNDER_RESERVATION_INVALID',
+                            'FOUNDER_COUPON_ALREADY_USED',
+                        ].includes(founderError?.code);
+                        if (!isDeterministicFounderFailure) {
+                            // A transient database failure must make Stripe retry the webhook.
+                            // Cancelling here would incorrectly destroy a valid founder checkout.
+                            if (previousStripeSubId) {
+                                await SellerSubscription.updateOne(
+                                    { seller: sellerId, stripeSubscriptionId: session.subscription },
+                                    { $set: { stripeSubscriptionId: previousStripeSubId } }
+                                );
+                            } else {
+                                await SellerSubscription.updateOne(
+                                    { seller: sellerId, stripeSubscriptionId: session.subscription },
+                                    { $unset: { stripeSubscriptionId: 1 } }
+                                );
+                            }
+                            throw founderError;
+                        }
+
+                        console.error('[subscription] Founder reservation claim failed; cancelling discounted subscription.', {
+                            sellerId,
+                            sessionId: session.id,
+                            subscriptionId: session.subscription,
+                            code: founderError?.code,
+                            message: founderError?.message,
+                        });
+                        await stripe.subscriptions.cancel(session.subscription).catch(cancelError => {
+                            console.error('[subscription] Failed to cancel invalid founder subscription:', cancelError.message);
+                        });
+
+                        if (previousStripeSubId) {
+                            await SellerSubscription.updateOne(
+                                { seller: sellerId, stripeSubscriptionId: session.subscription },
+                                { $set: { stripeSubscriptionId: previousStripeSubId } }
+                            );
+                        } else {
+                            await SellerSubscription.updateOne(
+                                { seller: sellerId, stripeSubscriptionId: session.subscription },
+                                { $unset: { stripeSubscriptionId: 1 } }
+                            );
+                        }
+                        break;
+                    }
+                }
 
                 // If we claimed over a stale stripeSubscriptionId (different from incoming),
                 // cancel the stale one on Stripe's side.
@@ -554,9 +727,12 @@ exports.handleWebhook = async (event) => {
                 // Send confirmation email
                 const user = await User.findById(sellerId);
                 if (user?.email) {
-                    const priceStr = isElite
-                        ? `$${((1299 + (includeMetaAds ? META_ADS_ADDON_CENTS : 0)) / 100).toFixed(2)}/month`
-                        : '$5.99/month';
+                    const activatedPricing = buildPlanPricing(
+                        selectedPlan,
+                        includeMetaAds,
+                        Boolean(sub.founderOffer?.active)
+                    );
+                    const priceStr = `$${(activatedPricing.unitAmount / 100).toFixed(2)}/month`;
                     const bonusStr = isElite
                         ? '<strong>Bonus Features:</strong> Permanently included with your Elite plan'
                         : sub.bonusFeaturesActive && sub.bonusExpiryDate
@@ -575,6 +751,7 @@ exports.handleWebhook = async (event) => {
                             <strong>Plan:</strong> ${sub.planName} (${priceStr})<br/>
                             ${freePeriodStr}
                             <strong>AI Chat:</strong> Unlimited seller AI chat<br/>
+                            ${sub.founderOffer?.active ? '<strong>Founder rate:</strong> Locked while this subscription remains uninterrupted<br/>' : ''}
                             ${includeMetaAds ? '<strong>Meta ads add-on:</strong> Included<br/>' : ''}
                             ${bonusStr}
                         </div>
@@ -623,6 +800,11 @@ exports.handleWebhook = async (event) => {
                             console.error('Error retrieving payment method for downgrade:', pmErr.message);
                         }
 
+                        const starterPricing = buildPlanPricing(
+                            'starter',
+                            false,
+                            Boolean(sub.founderOffer?.active)
+                        );
                         const subCreateParams = {
                             customer: sub.stripeCustomerId,
                             items: [{
@@ -630,13 +812,17 @@ exports.handleWebhook = async (event) => {
                                     currency: 'usd',
                                     product_data: {
                                         name: 'Rozare Starter',
-                                        description: 'Rozare Starter - $5.99/month. Cancel anytime.',
+                                        description: `Rozare Starter - $${(starterPricing.unitAmount / 100).toFixed(2)}/month${sub.founderOffer?.active ? ' at the locked FIRST100 founder rate' : ''}. Cancel anytime.`,
                                     },
-                                    unit_amount: 599,
+                                    unit_amount: starterPricing.unitAmount,
                                     recurring: { interval: 'month' },
                                 },
                             }],
-                            metadata: { sellerId: sub.seller.toString(), plan: 'starter' },
+                            metadata: {
+                                sellerId: sub.seller.toString(),
+                                plan: 'starter',
+                                founderCouponCode: sub.founderOffer?.active ? FOUNDER_PROMOTION.code : '',
+                            },
                             payment_behavior: 'default_incomplete', // Don't block if charge fails
                         };
 
@@ -681,7 +867,7 @@ exports.handleWebhook = async (event) => {
                         await Notification.create({
                             user: sub.seller,
                             title: 'Switched to Rozare Starter',
-                            body: 'Your plan has been switched from Elite to Starter ($5.99/month). Your store remains active.',
+                            body: `Your plan has been switched from Elite to Starter ($${(starterPricing.unitAmount / 100).toFixed(2)}/month). Your store remains active.`,
                             category: 'subscription',
                             linkTo: '/seller-dashboard/subscription',
                             source: 'system',
@@ -698,7 +884,8 @@ exports.handleWebhook = async (event) => {
                                 `<p>Hello ${user.username || 'Seller'},</p>
                                 <p>Your plan has been switched from <strong>Rozare Elite</strong> to <strong>Rozare Starter</strong>.</p>
                                 <div class="highlight">
-                                    <strong>Plan:</strong> Rozare Starter ($5.99/month)<br/>
+                                    <strong>Plan:</strong> Rozare Starter ($${(starterPricing.unitAmount / 100).toFixed(2)}/month)<br/>
+                                    ${sub.founderOffer?.active ? '<strong>Founder rate:</strong> Preserved across your plan change<br/>' : ''}
                                     <strong>AI Chat:</strong> Unlimited seller AI chat<br/>
                                     ${bonusInfo}
                                 </div>
@@ -728,6 +915,10 @@ exports.handleWebhook = async (event) => {
                 sub.aiMessageLimit = -1;
                 sub.metaAdsIncluded = false;
                 sub.pendingDowngrade = { toPlan: null, scheduledAt: null };
+                if (sub.founderOffer?.active) {
+                    sub.founderOffer.active = false;
+                    sub.founderOffer.forfeitedAt = now;
+                }
 
                 // Set 3-day bonus grace period if bonus is still active and not permanently expired
                 if (sub.plan === 'starter' && sub.bonusFeaturesActive && !sub.bonusFeaturesExpiredPermanently && sub.bonusExpiryDate && now < sub.bonusExpiryDate) {
@@ -798,7 +989,7 @@ exports.handleWebhook = async (event) => {
                         <div class="highlight danger">
                             <strong>Important:</strong> You have <strong>3 days</strong> to re-subscribe and keep your bonus features for the remaining <strong>${bonusDaysRemaining} days</strong>.
                         </div>
-                        <p>After 3 days, your bonus features will be <strong>permanently removed</strong> from the Starter plan. You would need to upgrade to Rozare Elite ($12.99/month) to get them back.</p>
+                        <p>After 3 days, your bonus features will be <strong>permanently removed</strong> from the Starter plan. You would need to upgrade to Rozare Elite ($21.65/month) to get them back.</p>
                         <p><strong>Bonus features at risk:</strong></p>
                         <ul>
                             <li>Advanced analytics & growth insights</li>
@@ -901,6 +1092,7 @@ exports.handleWebhook = async (event) => {
         }
     } catch (error) {
         console.error('Subscription webhook error:', error);
+        throw error;
     }
 };
 
@@ -929,6 +1121,9 @@ exports.cancelSubscription = async (req, res) => {
 
         res.json({
             msg: 'Subscription will be cancelled at the end of the current period.',
+            founderWarning: sub.founderOffer?.active
+                ? 'Your locked FIRST100 founder rate will be permanently forfeited when this subscription ends.'
+                : null,
             bonusWarning: hasBonusAtRisk ? {
                 message: 'Once your subscription period ends, you will have 3 days to re-subscribe and keep your bonus features. After 3 days, bonus features will be permanently removed from the Starter plan.',
                 bonusDaysRemaining,
@@ -987,7 +1182,11 @@ exports.upgradeToElite = async (req, res) => {
             includeMetaAds,
             planName,
             unitAmount,
-        } = buildPlanPricing('elite', includeMetaAdsRequested);
+        } = buildPlanPricing(
+            'elite',
+            includeMetaAdsRequested,
+            Boolean(sub.founderOffer?.active)
+        );
 
         // Create a new price for Elite, with or without the optional Meta ads add-on.
         // Update the subscription item to the new price (immediate proration)
@@ -1010,6 +1209,7 @@ exports.upgradeToElite = async (req, res) => {
                 plan: 'elite',
                 includeMetaAds: includeMetaAds ? 'true' : 'false',
                 metaAdsAddonCents: String(includeMetaAds ? META_ADS_ADDON_CENTS : 0),
+                founderCouponCode: sub.founderOffer?.active ? FOUNDER_PROMOTION.code : '',
             },
             cancel_at_period_end: false, // Remove any pending cancellation
         });
@@ -1037,6 +1237,7 @@ exports.upgradeToElite = async (req, res) => {
                 <p>Your <strong>${planName}</strong> subscription is now active.</p>
                 <div class="highlight">
                     <strong>Plan:</strong> ${planName} ($${(unitAmount / 100).toFixed(2)}/month)<br/>
+                    ${sub.founderOffer?.active ? '<strong>Founder rate:</strong> Preserved across your plan change<br/>' : ''}
                     <strong>Bonus Features:</strong> Now permanently included — they will never expire!<br/>
                     <strong>AI Chat:</strong> Unlimited seller AI chat<br/>
                     <strong>Meta ads add-on:</strong> ${includeMetaAds ? 'Included' : 'Not included'}
@@ -1077,6 +1278,10 @@ exports.upgradeToElite = async (req, res) => {
                 metaAdsIncluded: sub.metaAdsIncluded,
                 bonusFeaturesActive: sub.bonusFeaturesActive,
                 bonusExpiryDate: sub.bonusExpiryDate,
+                founderOffer: {
+                    active: Boolean(sub.founderOffer?.active),
+                    code: sub.founderOffer?.code || null,
+                },
             },
         });
     } catch (error) {
@@ -1131,6 +1336,12 @@ exports.downgradeToStarter = async (req, res) => {
         const bonusMsg = willGetBonusOnDowngrade
             ? 'You will get bonus features for 6 months with the Starter plan.'
             : 'Bonus features are no longer available with the Starter plan for your account (you already used your 6-month Starter bonus period).';
+        const starterPricing = buildPlanPricing(
+            'starter',
+            false,
+            Boolean(sub.founderOffer?.active)
+        );
+        const starterPriceLabel = `$${(starterPricing.unitAmount / 100).toFixed(2)}/month`;
 
         // Send email
         const user = await User.findById(sellerId);
@@ -1142,7 +1353,8 @@ exports.downgradeToStarter = async (req, res) => {
                 <div class="highlight">
                     <strong>What happens:</strong><br/>
                     - You keep Elite features until the current period ends<br/>
-                    - After that, your plan will automatically switch to Starter ($5.99/month)<br/>
+                    - After that, your plan will automatically switch to Starter (${starterPriceLabel})<br/>
+                    ${sub.founderOffer?.active ? '- Your FIRST100 founder rate stays locked during this plan change<br/>' : ''}
                     - No free period (you already used yours)<br/>
                     - ${bonusMsg}
                 </div>
@@ -1241,7 +1453,8 @@ exports.processTrialExpirations = async () => {
                     <p><strong>Subscribe now</strong> and get:</p>
                     <ul>
                         <li>✅ First 30 days completely FREE</li>
-                        <li>✅ Then only $5.99/month — cancel anytime</li>
+                        <li>✅ Then $9.99/month — cancel anytime</li>
+                        <li>✅ FIRST100 can reduce Starter to $5.99/month while founder spots remain</li>
                         <li>✅ Unlimited AI chat for sellers</li>
                         <li>✅ Bonus premium features for 6 months</li>
                         <li>✅ Uninterrupted store visibility</li>
@@ -1366,6 +1579,7 @@ exports.processTrialExpirations = async () => {
                     <div class="highlight">
                         <strong>After expiry:</strong> Your store and products will be hidden from the marketplace.
                     </div>
+                    ${sub.founderOffer?.active ? '<div class="highlight danger"><strong>Founder rate:</strong> Your FIRST100 price will be permanently forfeited when this subscription ends.</div>' : ''}
                     <p>Changed your mind? You can re-subscribe anytime from your dashboard.</p>
                     <p style="text-align:center"><a href="${process.env.FRONTEND_URL}/seller-dashboard/subscription" class="button">Re-subscribe Now</a></p>`
                 );
@@ -1421,7 +1635,7 @@ exports.processTrialExpirations = async () => {
                         - Coupon & discount management system<br/>
                         - Bulk discount & promotional tools
                     </div>
-                    <p><strong>Want to keep these features?</strong> Upgrade to the <strong>Rozare Elite</strong> plan ($12.99/month) and get all bonus features permanently!</p>
+                    <p><strong>Want to keep these features?</strong> Upgrade to the <strong>Rozare Elite</strong> plan (${formatSubscriptionPriceForSeller('elite', sub)}) and get all bonus features permanently!</p>
                     <p style="text-align:center"><a href="${process.env.FRONTEND_URL}/seller-dashboard/subscription" class="button">Upgrade to Elite</a></p>`
                 );
                 await sendEmail({ to: user.email, subject: `Bonus Features Expiring in ${daysLeft} Day${daysLeft > 1 ? 's' : ''}`, html });
@@ -1479,7 +1693,7 @@ exports.processTrialExpirations = async () => {
                     <div class="highlight">
                         <strong>Your Starter plan is still active.</strong> You still have all core features like store visibility, payment processing, subdomain, and order management.
                     </div>
-                    <p>To get bonus features back permanently, upgrade to <strong>Rozare Elite</strong> ($12.99/month with 45 days free):</p>
+                    <p>To get bonus features back permanently, upgrade to <strong>Rozare Elite</strong> (${formatSubscriptionPriceForSeller('elite', sub)} with 45 days free when eligible):</p>
                     <ul>
                         <li>All Starter features included</li>
                         <li>Advanced analytics & growth insights</li>
@@ -1539,7 +1753,7 @@ exports.processTrialExpirations = async () => {
                     <div class="highlight danger">
                         <strong>Bonus features are now permanently removed</strong> from the Starter plan for your account.
                     </div>
-                    <p>If you re-subscribe to the Starter plan, you will only get the core Starter features. To get bonus features back, upgrade to <strong>Rozare Elite</strong> ($12.99/month with 45 days free).</p>
+                    <p>If you re-subscribe to the Starter plan, you will only get the core Starter features. To get bonus features back, upgrade to <strong>Rozare Elite</strong> ($21.65/month with 45 days free when eligible).</p>
                     <p style="text-align:center"><a href="${process.env.FRONTEND_URL}/seller-dashboard/subscription" class="button">Upgrade to Elite — 45 Days Free</a></p>`
                 );
                 await sendEmail({ to: user.email, subject: 'Bonus Features Permanently Removed — Upgrade to Elite', html });
@@ -1667,6 +1881,65 @@ exports.migrateHasUsedFreePeriod = async () => {
         }
     } catch (error) {
         console.error('Migration hasUsedFreePeriod error:', error);
+    }
+};
+
+// Undo a scheduled cancellation before Stripe ends the subscription.
+exports.resumeSubscription = async (req, res) => {
+    try {
+        const sellerId = req.user.id;
+        const sub = await SellerSubscription.findOne({ seller: sellerId });
+
+        if (!sub || !sub.stripeSubscriptionId || !['active', 'free_period'].includes(sub.status)) {
+            return res.status(400).json({ msg: 'No active subscription is available to resume.' });
+        }
+        if (sub.pendingDowngrade?.toPlan) {
+            return res.status(400).json({
+                msg: 'This is a scheduled plan change. Use Keep Elite to cancel the downgrade.',
+            });
+        }
+        if (!sub.cancelledAt) {
+            return res.status(400).json({ msg: 'This subscription is not scheduled for cancellation.' });
+        }
+        if (!stripe) {
+            return res.status(503).json({ msg: 'Payment system not configured.' });
+        }
+
+        const stripeSubscription = await stripe.subscriptions.retrieve(sub.stripeSubscriptionId);
+        if (stripeSubscription.status === 'canceled') {
+            return res.status(409).json({
+                msg: 'This subscription has already ended and cannot be resumed.',
+            });
+        }
+
+        await stripe.subscriptions.update(sub.stripeSubscriptionId, {
+            cancel_at_period_end: false,
+        });
+        sub.cancelledAt = null;
+        await sub.save();
+
+        return res.json({
+            msg: sub.founderOffer?.active
+                ? 'Subscription resumed. Your FIRST100 founder rate remains locked.'
+                : 'Subscription resumed successfully.',
+            founderOfferActive: Boolean(sub.founderOffer?.active),
+        });
+    } catch (error) {
+        console.error('Resume subscription error:', error);
+        return res.status(500).json({ msg: 'Failed to resume subscription. Please try again.' });
+    }
+};
+
+// One-time launch migration: sellers already paying the previous $5.99/$12.99
+// rates keep those prices as a FIRST100 founder entitlement.
+exports.migrateFounderPromotion = async () => {
+    try {
+        const result = await migrateLegacyFounderSubscribers();
+        if (result.migrated > 0) {
+            console.log(`[migration] Granted FIRST100 founder pricing to ${result.migrated} existing seller subscription(s)`);
+        }
+    } catch (error) {
+        console.error('Founder promotion migration error:', error);
     }
 };
 

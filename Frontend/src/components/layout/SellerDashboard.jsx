@@ -17,6 +17,7 @@ import ChatBotComponent from '../common/ChatBot';
 import CurrencySelector from '../common/CurrencySelector';
 import { PRESET_CATEGORIES } from '../../utils/categories';
 import { getAuthToken } from "../../utils/cookieHelper";
+import FounderPromotionModal from '../subscription/FounderPromotionModal';
 
 // Shared menu items (used by desktop sidebar + mobile inline menu)
 const getSellerMenuItems = ({ pendingOrders = 0, lowStockProducts = 0 } = {}) => ([
@@ -756,7 +757,9 @@ const SellerDashboard = () => {
                                         <p className="text-xs font-bold" style={{ color: 'hsl(45, 80%, 40%)' }}>
                                             Trial expires in {subscriptionData?.trialDaysRemaining} day{subscriptionData?.trialDaysRemaining !== 1 ? 's' : ''}
                                         </p>
-                                        <p className="text-[11px]" style={{ color: 'hsl(var(--muted-foreground))' }}>Subscribe to keep your store active. First 30 days free, then $5.99/mo.</p>
+                                        <p className="text-[11px]" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                                            Subscribe to keep your store active. Starter includes 30 days free, then $9.99/month.
+                                        </p>
                                     </div>
                                     <Crown size={16} style={{ color: 'hsl(45, 80%, 40%)' }} />
                                 </div>
@@ -812,6 +815,10 @@ const SellerDashboard = () => {
 
 
             {createPortal(notificationsDropdown, document.body)}
+            <FounderPromotionModal
+                subscription={subscriptionData}
+                sellerKey={currentUser?._id || currentUser?.id || currentUser?.email}
+            />
         </div>
     );
 };

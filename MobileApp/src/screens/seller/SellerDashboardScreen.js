@@ -7,8 +7,9 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  View, Text, ScrollView, StyleSheet, RefreshControl, TouchableOpacity, Dimensions, SafeAreaView,
+  View, Text, ScrollView, StyleSheet, RefreshControl, TouchableOpacity, Dimensions, SafeAreaView, Modal,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import api from '../../config/api';
@@ -68,6 +69,7 @@ export default function SellerDashboardScreen({ navigation }) {
   const [stats, setStats] = useState(calculateSellerStats([], []));
   const [showAI, setShowAI] = useState(false);
   const [subscription, setSubscription] = useState(null);
+  const [showFounderOffer, setShowFounderOffer] = useState(false);
 
   useEffect(() => { fetchDashboardData(); }, []);
 
@@ -85,7 +87,24 @@ export default function SellerDashboardScreen({ navigation }) {
       const fetchedOrders = ordersRes.data?.orders || [];
       setOrders(fetchedOrders);
       setStats(calculateSellerStats(fetchedProducts, fetchedOrders, convertAmount, currency));
-      setSubscription(subRes.data?.subscription);
+      const nextSubscription = subRes.data?.subscription;
+      setSubscription(nextSubscription);
+
+      const promotion = nextSubscription?.founderPromotion;
+      if (promotion?.available && promotion?.sellerEligible && !promotion?.entitlementActive) {
+        try {
+          const sellerKey = currentUser?._id || currentUser?.id || currentUser?.email || 'seller';
+          const storageKey = `rozare-founder-promotion-last-shown:${sellerKey}`;
+          const lastShown = Number(await AsyncStorage.getItem(storageKey) || 0);
+          if (!lastShown || Date.now() - lastShown >= 4 * 60 * 60 * 1000) {
+            await AsyncStorage.setItem(storageKey, String(Date.now()));
+            setShowFounderOffer(true);
+          }
+        } catch (storageError) {
+          console.warn('Founder promotion display storage unavailable:', storageError?.message);
+          setShowFounderOffer(true);
+        }
+      }
     } catch (error) { console.error('Error fetching dashboard data:', error); }
     finally { setIsLoading(false); setRefreshing(false); }
   };
@@ -312,6 +331,49 @@ export default function SellerDashboardScreen({ navigation }) {
         <View style={{ height: 100 }} />
       </ScrollView>
 
+      <Modal
+        visible={showFounderOffer}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowFounderOffer(false)}
+      >
+        <View style={styles.founderBackdrop}>
+          <GlassPanel variant="strong" style={styles.founderModal}>
+            <TouchableOpacity
+              onPress={() => setShowFounderOffer(false)}
+              style={styles.founderClose}
+              accessibilityLabel="Close founder offer"
+            >
+              <Ionicons name="close" size={20} color={palette.colors.textSecondary} />
+            </TouchableOpacity>
+            <View style={styles.founderIcon}>
+              <Ionicons name="pricetag" size={23} color={palette.colors.primary} />
+            </View>
+            <Text style={styles.founderEyebrow}>FIRST 100 SELLERS</Text>
+            <Text style={styles.founderModalTitle}>Lock in an extra 40% off</Text>
+            <Text style={styles.founderModalText}>Use FIRST100 for Starter at $5.99/month or Elite at $12.99/month.</Text>
+            <View style={styles.founderRemaining}>
+              <Text style={styles.founderRemainingText}>
+                {subscription?.founderPromotion?.sellerHasReservation
+                  ? 'A founder spot is currently reserved for your account'
+                  : `${subscription?.founderPromotion?.remaining} of ${subscription?.founderPromotion?.maxRedemptions} founder spots remaining`}
+              </Text>
+            </View>
+            <Text style={styles.founderFinePrint}>The rate stays through plan changes while your subscription remains uninterrupted. It ends permanently if you unsubscribe.</Text>
+            <TouchableOpacity
+              style={styles.founderCta}
+              onPress={() => {
+                setShowFounderOffer(false);
+                navigation.navigate('SellerSubscription', { couponCode: subscription?.founderPromotion?.code || 'FIRST100' });
+              }}
+            >
+              <Text style={styles.founderCtaText}>View Plans</Text>
+              <Ionicons name="arrow-forward" size={17} color="#fff" />
+            </TouchableOpacity>
+          </GlassPanel>
+        </View>
+      </Modal>
+
       {/* AI FAB — matches website chat launcher */}
       <AIChatFab onPress={() => setShowAI(true)} style={{ bottom: 24, right: 20 }} />
 
@@ -324,6 +386,19 @@ export default function SellerDashboardScreen({ navigation }) {
 
 const buildStyles = (p) => StyleSheet.create({
   scroll: { paddingBottom: spacing.xxl },
+
+  founderBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center', padding: spacing.lg },
+  founderModal: { width: '100%', maxWidth: 440, padding: spacing.xl, position: 'relative' },
+  founderClose: { position: 'absolute', top: spacing.md, right: spacing.md, width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.1)', alignItems: 'center', justifyContent: 'center', zIndex: 1 },
+  founderIcon: { width: 48, height: 48, borderRadius: 14, backgroundColor: `${p.colors.primary}15`, alignItems: 'center', justifyContent: 'center', marginBottom: spacing.md },
+  founderEyebrow: { fontSize: 10, fontWeight: fontWeight.bold, color: p.colors.primary },
+  founderModalTitle: { fontSize: fontSize.xl, fontWeight: fontWeight.bold, color: p.colors.text, marginTop: 3, paddingRight: spacing.xl },
+  founderModalText: { fontSize: fontSize.sm, color: p.colors.textSecondary, marginTop: spacing.sm, lineHeight: 20 },
+  founderRemaining: { alignSelf: 'flex-start', backgroundColor: `${p.colors.success}12`, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: borderRadius.full, marginTop: spacing.lg },
+  founderRemainingText: { fontSize: fontSize.xs, fontWeight: fontWeight.bold, color: p.colors.success },
+  founderFinePrint: { fontSize: 10, color: p.colors.textSecondary, marginTop: spacing.md, lineHeight: 15 },
+  founderCta: { minHeight: 46, borderRadius: borderRadius.lg, backgroundColor: p.colors.primary, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.sm, marginTop: spacing.lg },
+  founderCtaText: { color: '#fff', fontSize: fontSize.sm, fontWeight: fontWeight.bold },
 
   /* Top bar */
   topBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: spacing.lg, paddingTop: spacing.md },

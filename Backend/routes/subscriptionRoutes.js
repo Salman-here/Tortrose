@@ -5,6 +5,7 @@ const {
     getSubscriptionStatus,
     createCheckout,
     cancelSubscription,
+    resumeSubscription,
     upgradeToElite,
     downgradeToStarter,
     cancelDowngrade,
@@ -18,6 +19,7 @@ const {
 router.get('/status', verifyToken, getSubscriptionStatus);
 router.post('/create-checkout', verifyToken, createCheckout);
 router.post('/cancel', verifyToken, cancelSubscription);
+router.post('/resume', verifyToken, resumeSubscription);
 router.post('/upgrade-to-elite', verifyToken, upgradeToElite);
 router.post('/downgrade-to-starter', verifyToken, downgradeToStarter);
 router.post('/cancel-downgrade', verifyToken, cancelDowngrade);

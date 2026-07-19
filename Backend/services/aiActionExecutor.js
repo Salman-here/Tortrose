@@ -39,6 +39,8 @@ const { enqueueOrderConfirmation } = require('./whatsapp/queue');
 const { notifySeller } = require('./whatsapp/sellerNotificationService');
 const { configKeyFor } = require('./whatsapp/gatewayMode');
 const sellerTemplates = require('./whatsapp/sellerMessageTemplates');
+const { getFounderPromotionStatus } = require('./founderPromotionService');
+const { buildPlanPricing, getPricingCatalog } = require('./subscriptionPricingService');
 const {
   buildModerationFields,
   isProductBlocked,
@@ -3800,19 +3802,35 @@ async function executeToolCall(toolName, args = {}, user) {
         const sub = await SellerSubscription.findOne({ seller: userId }).lean();
         if (!sub) return { success: true, data: null, message: 'No subscription found.' };
 
+        const founderPromotion = await getFounderPromotionStatus(sub);
+        const trialDaysRemaining = sub.status === 'trial' && sub.trialEndDate
+          ? Math.max(0, Math.ceil((new Date(sub.trialEndDate) - new Date()) / 86400000))
+          : 0;
+        const currentPricing = ['starter', 'elite'].includes(sub.plan)
+          ? buildPlanPricing(sub.plan, Boolean(sub.metaAdsIncluded), Boolean(sub.founderOffer?.active))
+          : null;
+
         return {
           success: true,
           data: {
             status: sub.status,
             plan: sub.plan,
             planName: sub.planName,
-            trialDaysRemaining: sub.trialDaysRemaining,
+            trialDaysRemaining,
             bonusFeaturesActive: sub.bonusFeaturesActive,
             currentPeriodEnd: sub.currentPeriodEnd,
             aiMessagesUnlimited: true,
             metaAdsIncluded: Boolean(sub.metaAdsIncluded),
+            currentMonthlyAmountCents: currentPricing?.unitAmount || null,
+            pricing: getPricingCatalog(),
+            founderOffer: {
+              active: Boolean(sub.founderOffer?.active),
+              code: sub.founderOffer?.code || null,
+              forfeited: Boolean(sub.founderOffer?.forfeitedAt),
+            },
+            founderPromotion,
           },
-          message: `Your subscription: ${sub.planName} (${sub.status}). ${sub.status === 'trial' ? `Trial ends in ${sub.trialDaysRemaining} days.` : ''}`,
+          message: `Your subscription: ${sub.planName} (${sub.status}). ${sub.status === 'trial' ? `Trial ends in ${trialDaysRemaining} days.` : ''}`,
         };
       }
 

@@ -103,16 +103,14 @@ const STRIPE_SECRET_KEY = STRIPE_MODE === 'live'
 
 ### Step 2: Set Up Live Webhook (3 minutes)
 1. Go to **Developers → Webhooks**
-2. Add endpoint: `https://tortrose-backend-496a749db93a.herokuapp.com/webhook`
-3. Select events: `checkout.session.completed`, `customer.subscription.deleted`, `invoice.payment_failed`, `invoice.payment_succeeded`
+2. Add endpoint: `https://rozare.up.railway.app/webhook`
+3. Select events: `checkout.session.completed`, `checkout.session.expired`, `customer.subscription.deleted`, `invoice.payment_failed`, `invoice.payment_succeeded`
 4. Copy signing secret: `whsec_...`
 
 ### Step 3: Update Backend (2 minutes)
-```bash
-heroku config:set STRIPE_MODE=live -a tortrose-backend
-heroku config:set STRIPE_LIVE_SECRET_KEY=sk_live_YOUR_KEY -a tortrose-backend
-heroku config:set STRIPE_LIVE_WEBHOOK_SECRET=whsec_YOUR_SECRET -a tortrose-backend
-```
+Set `STRIPE_MODE=live`, `STRIPE_LIVE_SECRET_KEY=sk_live_YOUR_KEY`, and
+`STRIPE_LIVE_WEBHOOK_SECRET=whsec_YOUR_SECRET` in the Railway
+`independent-vision` project.
 
 ### Step 4: Update Frontend (2 minutes)
 In Vercel/Netlify Dashboard:
@@ -141,8 +139,9 @@ In Vercel/Netlify Dashboard:
 - **Stock management**: Yes
 
 ### 2. Subscriptions
-- **Starter Plan**: $5.99/month (30-day free trial)
-- **Elite Plan**: $12.99/month (45-day free trial)
+- **Starter Plan**: $9.99/month after the 15% launch discount (30-day free intro when eligible)
+- **Elite Plan**: $21.65/month after the 30% launch discount (45-day free intro when eligible)
+- **FIRST100 founder coupon**: Extra 40% for the first 100 completed subscriptions ($5.99 Starter or $12.99 Elite), retained until the subscription ends
 - **Type**: Recurring billing
 - **Features**: Free trial, auto-renewal, cancellation
 - **Duplicate prevention**: Yes
@@ -282,7 +281,7 @@ Your implementation is successful when:
 - **Status**: https://status.stripe.com/
 
 ### Your Project
-- **Backend**: https://tortrose-backend-496a749db93a.herokuapp.com
+- **Backend**: https://rozare.up.railway.app
 - **Frontend**: https://rozare.com
 - **Documentation**: See files listed above
 

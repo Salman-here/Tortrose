@@ -1,4 +1,5 @@
 const SellerSubscription = require('../models/SellerSubscription');
+const { buildPlanPricing } = require('../services/subscriptionPricingService');
 
 // Middleware to restrict access to bonus features after 6-month expiry
 const bonusFeatureCheck = (featureName) => async (req, res, next) => {
@@ -17,10 +18,13 @@ const bonusFeatureCheck = (featureName) => async (req, res, next) => {
         // Elite plan subscribers always have bonus features
         if (sub.plan === 'elite' && ['active', 'free_period'].includes(sub.status)) return next();
 
+        const elitePrice = buildPlanPricing('elite', false, Boolean(sub.founderOffer?.active));
+        const elitePriceLabel = `$${(elitePrice.unitAmount / 100).toFixed(2)}/month`;
+
         // Check if bonus features have expired permanently
         if (sub.bonusFeaturesExpiredPermanently) {
             return res.status(403).json({
-                msg: `${featureName} is a premium feature. Your bonus period has expired permanently. Subscribe to the Rozare Elite plan ($12.99/month) to access this feature.`,
+                msg: `${featureName} is a premium feature. Your bonus period has expired permanently. Subscribe to the Rozare Elite plan (${elitePriceLabel}) to access this feature.`,
                 bonusExpired: true,
                 bonusExpiredPermanently: true,
                 featureName,
@@ -38,7 +42,7 @@ const bonusFeatureCheck = (featureName) => async (req, res, next) => {
             }
 
             return res.status(403).json({
-                msg: `${featureName} is a premium feature. Your bonus period has expired. Subscribe to the Rozare Elite plan ($12.99/month) to access this feature.`,
+                msg: `${featureName} is a premium feature. Your bonus period has expired. Subscribe to the Rozare Elite plan (${elitePriceLabel}) to access this feature.`,
                 bonusExpired: true,
                 bonusExpiredPermanently: true,
                 featureName,

@@ -26,7 +26,7 @@ const sellerSubscriptionSchema = new mongoose.Schema({
         enum: ['free_trial', 'starter', 'elite'],
         default: 'free_trial',
     },
-    // After subscription: 30 days free, then $5.99/month for Starter
+    // After subscription: introductory free period, then the plan's locked monthly rate.
     subscribedAt: { type: Date },
     freePeriodEndDate: { type: Date }, // subscribedAt + 30 days
     currentPeriodStart: { type: Date },
@@ -61,6 +61,24 @@ const sellerSubscriptionSchema = new mongoose.Schema({
 
     // Paid marketing add-ons attached to the seller subscription.
     metaAdsIncluded: { type: Boolean, default: false },
+
+    // FIRST100 entitlement remains active across plan changes and is forfeited only
+    // when the paid subscription actually ends.
+    founderOffer: {
+        active: { type: Boolean, default: false },
+        code: { type: String, default: null },
+        discountPercent: { type: Number, default: 0 },
+        claimedAt: { type: Date, default: null },
+        forfeitedAt: { type: Date, default: null },
+        source: {
+            type: String,
+            enum: {
+                values: ['coupon', 'legacy', null],
+                message: 'founderOffer.source must be coupon, legacy, or null',
+            },
+            default: null,
+        },
+    },
 
     cancelledAt: { type: Date },
 

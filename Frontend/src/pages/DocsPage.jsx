@@ -111,7 +111,7 @@ function DocsPage() {
         { '@type': 'Question', name: 'What is Rozare?', acceptedAnswer: { '@type': 'Answer', text: 'Rozare is an AI-powered marketplace where shoppers discover products and sellers manage stores through dashboard tools, AI chat, and WhatsApp.' } },
         { '@type': 'Question', name: 'How do I become a seller on Rozare?', acceptedAnswer: { '@type': 'Answer', text: 'Go to /become-seller, create or sign in to your account, add your store details, verify your WhatsApp number, and activate your seller account to start the 15-day free trial.' } },
         { '@type': 'Question', name: 'Can I manage my Rozare store from WhatsApp?', acceptedAnswer: { '@type': 'Answer', text: 'Yes. Connect your WhatsApp number in seller settings and chat with the Rozare AI to add products, update stock, manage orders, run analytics, and get instant new-order notifications.' } },
-        { '@type': 'Question', name: 'How much does Rozare cost?', acceptedAnswer: { '@type': 'Answer', text: 'Shopping on Rozare is free. Sellers start with a 15-day free trial for core selling features and eligible Elite tools, then choose Rozare Starter ($5.99/month, with a 30-day free intro) or Rozare Elite ($12.99/month, with a 45-day free intro). Elite includes Rozare-run TikTok ads; Meta ads can be added for $4/month, making Elite + Meta $16.99/month.' } },
+        { '@type': 'Question', name: 'How much does Rozare cost?', acceptedAnswer: { '@type': 'Answer', text: 'Shopping on Rozare is free. Sellers start with a 15-day free trial, then choose Starter at $9.99/month after a 15% launch discount or Elite at $21.65/month after a 30% launch discount. Eligible sellers also receive a 30-day Starter or 45-day Elite free intro. The first 100 sellers who complete Checkout with FIRST100 receive an additional locked 40% founder discount while their subscription remains uninterrupted.' } },
         { '@type': 'Question', name: 'Does Rozare have a mobile app?', acceptedAnswer: { '@type': 'Answer', text: 'Rozare includes a React Native / Expo mobile app experience for iOS and Android with shopping, selling, AI chat, and push notification support.' } },
       ],
     },
@@ -557,11 +557,11 @@ function DocsPage() {
                     'Unlimited seller AI chat',
                     'Manage store via WhatsApp by chatting with AI',
                     'WhatsApp notifications for new orders',
-                    '10 professional store themes',
                     'Analytics, smart tags, coupons, bulk tools',
                     'No credit card required',
                   ]} />
-                  <PlanCard name="Rozare Starter" price="$5.99/mo" features={[
+                  <PlanCard name="Rozare Starter" price="$9.99/mo" features={[
+                    '15% off the $11.75 list price',
                     '30-day free intro period',
                     'Store visible to all customers',
                     'Unlimited product listings',
@@ -570,11 +570,11 @@ function DocsPage() {
                     'Manage store via WhatsApp by chatting with AI',
                     'WhatsApp notifications for new orders',
                     'WhatsApp order confirmation automation',
-                    '10 professional store themes',
                     'Featured products (6)',
                     'Bonus Elite features for 6 months',
                   ]} />
-                  <PlanCard name="Rozare Elite" price="$12.99/mo" featured features={[
+                  <PlanCard name="Rozare Elite" price="$21.65/mo" featured features={[
+                    '30% off the $30.93 list price',
                     '45-day free intro period',
                     'Everything in Starter',
                     'Smart description generator with AI',
@@ -591,7 +591,11 @@ function DocsPage() {
                 </div>
 
                 <InfoBox type="info" title="Elite ads">
-                  Rozare Elite includes TikTok ads run by Rozare for your store and featured products. Sellers can request ads from Seller Dashboard - Ads, or ask the Rozare AI to select active featured products and submit the request. Every start, stop, or product change goes to admin approval. Meta ads can be added to Elite for $4/month, so Elite + Meta is $16.99/month after the free intro.
+                  Rozare Elite includes TikTok ads run by Rozare for your store and featured products. Sellers can request ads from Seller Dashboard - Ads, or ask the Rozare AI to select active featured products and submit the request. Every start, stop, or product change goes to admin approval. Meta ads can be added for $4/month, making standard Elite + Meta $25.65/month.
+                </InfoBox>
+
+                <InfoBox type="tip" title="FIRST100 founder coupon">
+                  The first 100 sellers who complete subscription Checkout using <strong>FIRST100</strong> receive an extra 40% off: Starter becomes $5.99/month and Elite becomes $12.99/month. Meta ads remain $4/month, making founder Elite + Meta $16.99/month. The founder rate survives renewals and Starter/Elite plan changes while the subscription stays uninterrupted. It is permanently lost when the seller unsubscribes and the subscription ends.
                 </InfoBox>
 
                 <InfoBox type="tip" title="Bonus features for Starter">
@@ -604,6 +608,8 @@ function DocsPage() {
                   <li>Upgrade Starter → Elite anytime — instant access.</li>
                   <li>Downgrade Elite → Starter — takes effect at the end of your billing cycle.</li>
                   <li>Cancel anytime — your store stays active until the end of your paid period.</li>
+                  <li>A scheduled cancellation can be undone before the subscription ends.</li>
+                  <li>A locked FIRST100 rate remains during plan changes but is permanently forfeited when the subscription ends.</li>
                 </ul>
               </DocSection>
 
@@ -831,7 +837,7 @@ function DocsPage() {
               {/* FAQ */}
               <DocSection id="faq" title="Frequently Asked Questions" icon={HelpCircle}>
                 <FAQItem q="Is Rozare free for shoppers?" a="Yes. Shopping is completely free. You only pay for the products you buy. There are no membership fees." />
-                <FAQItem q="How much does it cost to sell on Rozare?" a="Every new seller gets a 15-day free trial for core selling features and eligible Elite tools. After that, choose Rozare Starter ($5.99/month, with a 30-day free intro) or Rozare Elite ($12.99/month, with a 45-day free intro). Elite includes Rozare-run TikTok ads; Meta ads can be added for $4/month, making Elite + Meta $16.99/month." />
+                <FAQItem q="How much does it cost to sell on Rozare?" a="Every new seller gets a 15-day free trial. Starter is $9.99/month after a 15% launch discount and includes a 30-day free intro when eligible. Elite is $21.65/month after a 30% launch discount and includes a 45-day free intro when eligible. The first 100 sellers who complete Checkout with FIRST100 get an extra locked 40% founder discount: $5.99 Starter or $12.99 Elite while the subscription remains uninterrupted. Meta ads add $4/month." />
                 <FAQItem q="Can I manage my store from WhatsApp?" a="Yes. Once you connect your WhatsApp number in seller settings, you can chat with the Rozare AI to handle supported tasks such as adding products, updating stock, managing orders, running discounts, and checking analytics. You can also get instant notifications for new orders." />
                 <FAQItem q="Does Rozare have a mobile app?" a="Rozare includes a React Native / Expo mobile app experience for iOS and Android with shopping, selling, AI chat, push notifications, voice search, and the same core marketplace workflows." />
                 <FAQItem q="How does the AI know about my store?" a="The AI calls secure server-side tools that read and write only your store's data. Other sellers cannot see your data, and you cannot see theirs." />
@@ -839,7 +845,7 @@ function DocsPage() {
                 <FAQItem q="What payment methods are available?" a="Checkout supports Stripe card, Rozare Wallet, and Cash on Delivery. One order uses one payment method. COD is available only when every seller allows it; otherwise use card or a sufficient same-currency Wallet balance." />
                 <FAQItem q="How do returns and refunds work?" a="Return eligibility is seller- and item-specific and opens after that seller portion is delivered. Request it from order details within the saved policy window. The seller tracks pickup and review, then funds an approved refund from seller balance or card. Only verified funding credits your Rozare Wallet and completes the return." />
                 <FAQItem q="How do sellers receive Stripe payments?" a="Sellers add their bank details in Seller Dashboard - Payments. Delivered Stripe-paid order revenue becomes withdrawable, then the seller sends a withdrawal request for admin review. COD payments are handled by the seller directly." />
-                <FAQItem q="What's the difference between Starter and Elite?" a="Both plans include unlimited listings, unlimited seller AI chat, a custom subdomain, WhatsApp store management, new-order WhatsApp notifications, 10 professional store themes, and the core marketplace features. Elite adds customizable store themes, the smart description generator with AI, advanced analytics, smart tag AI, coupon and bulk tools permanently, priority support, 12 featured products (vs 6), and Rozare-run TikTok ads. Meta ads can be added to Elite for $4/month." />
+                <FAQItem q="What's the difference between Starter and Elite?" a="Both plans include unlimited listings, unlimited seller AI chat, a custom subdomain, WhatsApp store management, new-order WhatsApp notifications, and the core marketplace features. Elite adds customizable store themes, the smart description generator with AI, advanced analytics, smart tag AI, coupon and bulk tools permanently, priority support, 12 featured products (vs 6), and Rozare-run TikTok ads. Meta ads can be added to Elite for $4/month." />
                 <FAQItem q="What happens after my 15-day free trial ends?" a="If you don't subscribe, your store and products are temporarily hidden until you subscribe — your data is preserved. Subscribe to Starter or Elite to instantly reactivate everything, with the plan's free intro period applied when eligible." />
                 <FAQItem q="Can I cancel anytime?" a="Yes. Cancel from Seller Dashboard → Subscription. Your store stays active until the end of your current billing period." />
                 <FAQItem q="What's the maximum number of tags per product?" a="15 tags per product. Both manual entry and AI generation respect this limit." />

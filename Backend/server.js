@@ -53,8 +53,13 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
 
   // Handle subscription webhook events
   const { handleWebhook: handleSubscriptionWebhook } = require('./controllers/subscriptionController');
-  if (['checkout.session.completed', 'customer.subscription.deleted', 'invoice.payment_failed', 'invoice.payment_succeeded'].includes(event.type)) {
-    await handleSubscriptionWebhook(event);
+  if (['checkout.session.completed', 'checkout.session.expired', 'customer.subscription.deleted', 'invoice.payment_failed', 'invoice.payment_succeeded'].includes(event.type)) {
+    try {
+      await handleSubscriptionWebhook(event);
+    } catch (subscriptionWebhookError) {
+      console.error('❌ Subscription webhook processing failed:', subscriptionWebhookError.message);
+      return res.sendStatus(500);
+    }
   }
 
   if (event.type === "checkout.session.completed") {
@@ -579,12 +584,17 @@ app.use('/api/notifications', notificationRoutes);
 app.use('/', require('./routes/sitemapRoutes'));
 
 // ── Trial expiration (runs on persistent Heroku dyno) ──
-const { processTrialExpirations, migrateHasUsedFreePeriod } = require('./controllers/subscriptionController');
+const {
+  processTrialExpirations,
+  migrateHasUsedFreePeriod,
+  migrateFounderPromotion,
+} = require('./controllers/subscriptionController');
 setInterval(processTrialExpirations, 60 * 60 * 1000); // every hour
 setTimeout(processTrialExpirations, 30000); // 30s after boot
 
 // ── One-time migration (runs on boot): mark existing paid sellers as hasUsedFreePeriod ──
 setTimeout(migrateHasUsedFreePeriod, 15000); // 15s after boot
+setTimeout(migrateFounderPromotion, 17000); // preserve existing subscriber pricing before new billing cycles
 
 // ── Subdomain removal processor (runs every 6 hours) ──
 const { processSubdomainRemovals } = require('./controllers/subdomainPurchaseController');

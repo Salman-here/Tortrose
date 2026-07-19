@@ -165,8 +165,9 @@ VITE_STRIPE_LIVE_PUBLISHABLE_KEY=pk_live_xxx
 - Auto-confirmation on payment
 
 ### 2. Subscriptions
-- **Starter**: $5.99/month (30-day trial)
-- **Elite**: $12.99/month (45-day trial)
+- **Starter**: $9.99/month after the 15% launch discount (30-day free intro when eligible)
+- **Elite**: $21.65/month after the 30% launch discount (45-day free intro when eligible)
+- **FIRST100**: Extra 40% for the first 100 completed subscriptions ($5.99 Starter or $12.99 Elite), retained until the subscription ends
 - Recurring billing
 - Duplicate prevention
 
@@ -191,7 +192,7 @@ or
 ### Verify Configuration
 ```bash
 # Backend (Heroku)
-heroku config -a tortrose-backend | grep STRIPE
+railway variables
 
 # Frontend (Vercel)
 vercel env ls

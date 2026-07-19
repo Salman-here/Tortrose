@@ -111,7 +111,7 @@
 ║                        PAYMENT FLOWS SUPPORTED                               ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
 ║  💳 Product Orders:      One-time payments (variable price)                  ║
-║  🔄 Subscriptions:       Recurring billing ($5.99 or $12.99/month)           ║
+║  🔄 Subscriptions:       $9.99 Starter / $21.65 Elite + FIRST100 offer       ║
 ║  🌐 Subdomain Purchase:  One-time payment ($15 for 3 years)                  ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 

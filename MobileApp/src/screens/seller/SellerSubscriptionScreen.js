@@ -5,7 +5,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, TouchableOpacity, SafeAreaView,
-  RefreshControl, Alert, Linking, ActivityIndicator,
+  RefreshControl, Alert, Linking, ActivityIndicator, TextInput,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import api from '../../config/api';
@@ -34,27 +34,42 @@ const FEATURES = [
   { icon: 'logo-whatsapp', text: 'Automated WhatsApp order verification — poll-based, no typing (Bonus)' },
 ];
 
-const STEPS = [
-  { step: '1', title: 'Free Trial', desc: '15 days to set up your store, add products, and start selling' },
-  { step: '2', title: 'Subscribe', desc: 'Choose the Starter plan — $0 for the first 30 days' },
-  { step: '3', title: 'Free Period', desc: '30 days of full access at no cost to grow your business' },
-  { step: '4', title: 'Monthly Billing', desc: 'Only $5.99/month after free period. Cancel anytime.' },
+const ELITE_FEATURES = [
+  { icon: 'layers-outline', text: 'Everything in Starter' },
+  { icon: 'star-outline', text: 'Featured product highlighting (12 products)' },
+  { icon: 'analytics-outline', text: 'Advanced analytics, coupons, and smart AI tools permanently' },
+  { icon: 'color-palette-outline', text: 'Customizable store themes' },
+  { icon: 'megaphone-outline', text: 'Rozare-run TikTok ads for your store and featured products' },
 ];
 
-export default function SellerSubscriptionScreen({ navigation }) {
+export default function SellerSubscriptionScreen({ navigation, route }) {
   const { palette } = useTheme();
   const styles = buildStyles(palette);
 
   const [subscription, setSubscription] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [checkoutLoading, setCheckoutLoading] = useState(false);
+  const [checkoutLoading, setCheckoutLoading] = useState(null);
   const [cancelLoading, setCancelLoading] = useState(false);
+  const [resumeLoading, setResumeLoading] = useState(false);
+  const requestedCoupon = String(route?.params?.couponCode || '').trim().toUpperCase();
+  const [couponCode, setCouponCode] = useState(requestedCoupon);
+  const [founderCouponApplied, setFounderCouponApplied] = useState(false);
+  const [includeMetaAds, setIncludeMetaAds] = useState(false);
 
   const fetchSubscription = useCallback(async () => {
     try {
       const res = await api.get('/api/subscription/status');
-      setSubscription(res.data.subscription);
+      const nextSubscription = res.data.subscription;
+      setSubscription(nextSubscription);
+      if (requestedCoupon) {
+        const promotion = nextSubscription?.founderPromotion;
+        const canApplyRequestedCoupon = requestedCoupon === promotion?.code
+          && promotion?.available
+          && promotion?.sellerEligible;
+        setCouponCode(canApplyRequestedCoupon ? requestedCoupon : '');
+        setFounderCouponApplied(Boolean(canApplyRequestedCoupon));
+      }
     } catch (err) {
       console.error('Subscription fetch error:', err);
     } finally {
@@ -65,24 +80,45 @@ export default function SellerSubscriptionScreen({ navigation }) {
 
   useEffect(() => { fetchSubscription(); }, []);
 
-  const handleSubscribe = async () => {
-    setCheckoutLoading(true);
+  const handleSubscribe = async (plan) => {
+    setCheckoutLoading(plan);
     try {
-      const res = await api.post('/api/subscription/create-checkout', { plan: 'starter' });
+      const payload = { plan };
+      if (plan === 'elite') payload.includeMetaAds = includeMetaAds;
+      if (founderCouponApplied) payload.couponCode = subscription?.founderPromotion?.code;
+      const res = await api.post('/api/subscription/create-checkout', payload);
       if (res.data.url) {
         await Linking.openURL(res.data.url);
       }
     } catch (err) {
       Alert.alert('Error', err.response?.data?.msg || 'Failed to create checkout');
     } finally {
-      setCheckoutLoading(false);
+      setCheckoutLoading(null);
     }
+  };
+
+  const applyFounderCoupon = () => {
+    const promotion = subscription?.founderPromotion;
+    const normalized = String(couponCode || '').trim().toUpperCase();
+    if (!promotion || normalized !== promotion.code) {
+      Alert.alert('Invalid coupon', 'Enter a valid subscription coupon code.');
+      return;
+    }
+    if (!promotion.available || !promotion.sellerEligible) {
+      Alert.alert('Coupon unavailable', promotion.forfeited
+        ? 'This account already used and forfeited its founder rate.'
+        : 'The founder offer is no longer available for this account.');
+      return;
+    }
+    setCouponCode(normalized);
+    setFounderCouponApplied(true);
+    Alert.alert('FIRST100 applied', 'Your founder price will lock when Stripe Checkout completes.');
   };
 
   const handleCancel = () => {
     Alert.alert(
       'Cancel Subscription?',
-      'Your store and products will be hidden from customers after the current period ends. You can re-subscribe anytime.',
+      `Your store and products will be hidden from customers after the current period ends.${subscription?.founderOffer?.active ? ' Your FIRST100 founder rate will be permanently lost when the subscription ends.' : ''}`,
       [
         { text: 'Keep Plan', style: 'cancel' },
         {
@@ -103,14 +139,71 @@ export default function SellerSubscriptionScreen({ navigation }) {
     );
   };
 
+  const handleResume = async () => {
+    setResumeLoading(true);
+    try {
+      const res = await api.post('/api/subscription/resume');
+      Alert.alert('Subscription resumed', res.data?.msg || 'Your subscription will continue.');
+      await fetchSubscription();
+    } catch (err) {
+      Alert.alert('Error', err.response?.data?.msg || 'Failed to resume subscription');
+    } finally {
+      setResumeLoading(false);
+    }
+  };
+
   if (loading) return <GlassBackground><SafeAreaView style={{ flex: 1 }}><Loader fullScreen message="Loading subscription..." /></SafeAreaView></GlassBackground>;
 
   const STATUS_MAP = getStatusMap(palette);
-  const status = STATUS_MAP[subscription?.status] || STATUS_MAP.trial;
+  const isEnding = Boolean(
+    subscription?.cancelledAt
+    && !subscription?.pendingDowngrade
+    && ['active', 'free_period'].includes(subscription?.status)
+  );
+  const status = isEnding
+    ? { label: 'Ending', color: palette.colors.error, icon: 'close-circle-outline' }
+    : subscription?.status === 'free_period'
+    ? { ...STATUS_MAP.free_period, label: subscription?.plan === 'elite' ? '45-Day Free' : '30-Day Free' }
+    : (STATUS_MAP[subscription?.status] || STATUS_MAP.trial);
   const isBlocked = subscription?.status === 'blocked';
   const isTrial = subscription?.status === 'trial';
+  const isPastDue = subscription?.status === 'past_due';
   const isSubscribed = ['active', 'free_period'].includes(subscription?.status);
-  const showSubscribeButton = !isSubscribed;
+  const showSubscribeButton = !isSubscribed && !isPastDue;
+  const founderRateActive = Boolean(subscription?.founderOffer?.active);
+  const useFounderRate = founderRateActive || founderCouponApplied;
+  const pricing = {
+    starter: {
+      listAmountCents: 1175,
+      standardAmountCents: 999,
+      founderAmountCents: 599,
+      advertisedDiscountPercent: 15,
+      ...(subscription?.pricing?.starter || {}),
+    },
+    elite: {
+      listAmountCents: 3093,
+      standardAmountCents: 2165,
+      founderAmountCents: 1299,
+      advertisedDiscountPercent: 30,
+      ...(subscription?.pricing?.elite || {}),
+    },
+    metaAdsAddonCents: Number(subscription?.pricing?.metaAdsAddonCents || 400),
+  };
+  const formatUsd = (cents) => `$${(Number(cents || 0) / 100).toFixed(2)}`;
+  const starterPrice = useFounderRate ? pricing.starter.founderAmountCents : pricing.starter.standardAmountCents;
+  const eliteBasePrice = useFounderRate ? pricing.elite.founderAmountCents : pricing.elite.standardAmountCents;
+  const elitePrice = eliteBasePrice + (includeMetaAds ? pricing.metaAdsAddonCents : 0);
+  const currentPlanPrice = subscription?.plan === 'elite'
+    ? (founderRateActive ? pricing.elite.founderAmountCents : pricing.elite.standardAmountCents)
+      + (subscription?.metaAdsIncluded ? pricing.metaAdsAddonCents : 0)
+    : (founderRateActive ? pricing.starter.founderAmountCents : pricing.starter.standardAmountCents);
+  const getsIntroductoryFreePeriod = !subscription?.hasUsedFreePeriod;
+  const STEPS = [
+    { step: '1', title: 'Free Trial', desc: '15 days to set up your store, add products, and start selling' },
+    { step: '2', title: 'Subscribe', desc: `Choose Starter (${formatUsd(starterPrice)}/mo) or Elite (${formatUsd(elitePrice)}/mo)` },
+    { step: '3', title: 'Free Period', desc: '30 days on Starter or 45 days on Elite when eligible' },
+    { step: '4', title: 'Monthly Billing', desc: 'Your selected price renews monthly until cancelled.' },
+  ];
 
   const getActiveStep = () => {
     if (isTrial) return '1';
@@ -188,8 +281,8 @@ export default function SellerSubscriptionScreen({ navigation }) {
                 <Text style={styles.planDesc}>
                   {isSubscribed
                     ? subscription?.status === 'free_period'
-                      ? `Free until ${new Date(subscription.freePeriodEndDate).toLocaleDateString()}, then $5.99/mo`
-                      : '$5.99/month • Cancel anytime'
+                      ? `Free until ${new Date(subscription.freePeriodEndDate).toLocaleDateString()}, then ${formatUsd(currentPlanPrice)}/mo`
+                      : `${formatUsd(currentPlanPrice)}/month - Cancel anytime`
                     : isTrial
                       ? `${subscription?.trialDaysRemaining} day${subscription?.trialDaysRemaining !== 1 ? 's' : ''} remaining`
                       : 'Subscribe to activate your store'
@@ -199,6 +292,13 @@ export default function SellerSubscriptionScreen({ navigation }) {
               {isSubscribed && !subscription?.cancelledAt && (
                 <TouchableOpacity onPress={handleCancel} style={styles.cancelBtn}>
                   <Text style={styles.cancelBtnText}>Cancel</Text>
+                </TouchableOpacity>
+              )}
+              {isEnding && (
+                <TouchableOpacity onPress={handleResume} disabled={resumeLoading} style={styles.keepBtn}>
+                  {resumeLoading
+                    ? <ActivityIndicator size="small" color={palette.colors.white} />
+                    : <Text style={styles.keepBtnText}>Keep Plan</Text>}
                 </TouchableOpacity>
               )}
             </View>
@@ -213,42 +313,124 @@ export default function SellerSubscriptionScreen({ navigation }) {
             </View>
           </GlassPanel>
 
-          {/* Pricing Card */}
-          {showSubscribeButton && (
-            <GlassPanel variant="strong" style={[styles.pricingCard, { borderColor: `${palette.colors.primary}40`, borderWidth: 2 }]}>
-              <View style={styles.pricingBadge}>
-                <Ionicons name="sparkles" size={12} color={palette.colors.success} />
-                <Text style={styles.pricingBadgeText}>30 DAYS FREE</Text>
+          {founderRateActive && (
+            <GlassPanel variant="card" style={styles.founderPanel}>
+              <Ionicons name="pricetag-outline" size={20} color={palette.colors.success} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.founderTitle}>FIRST100 founder rate locked</Text>
+                <Text style={styles.founderText}>Your extra 40% discount stays through plan changes while the subscription remains uninterrupted.</Text>
               </View>
+            </GlassPanel>
+          )}
 
-              <View style={styles.pricingPriceRow}>
-                <Text style={styles.pricingOld}>$5.99/mo</Text>
-                <Text style={styles.pricingNew}>$0</Text>
-                <Text style={styles.pricingPeriod}>/first 30 days</Text>
+          {showSubscribeButton && subscription?.founderPromotion?.sellerEligible && subscription?.founderPromotion?.available && (
+            <GlassPanel variant="card" style={styles.couponPanel}>
+              <Text style={styles.couponTitle}>First 100 Sellers</Text>
+              <Text style={styles.couponText}>
+                {subscription.founderPromotion.sellerHasReservation
+                  ? 'A founder spot is reserved for your account. Apply FIRST100 to continue.'
+                  : `Use FIRST100 for an extra 40% off. ${subscription.founderPromotion.remaining} founder spots remain.`}
+              </Text>
+              <View style={styles.couponRow}>
+                <TextInput
+                  value={couponCode}
+                  onChangeText={(value) => {
+                    setCouponCode(value.toUpperCase());
+                    setFounderCouponApplied(false);
+                  }}
+                  placeholder="Coupon code"
+                  placeholderTextColor={palette.colors.textSecondary}
+                  autoCapitalize="characters"
+                  style={styles.couponInput}
+                />
+                <TouchableOpacity
+                  onPress={founderCouponApplied ? () => { setFounderCouponApplied(false); setCouponCode(''); } : applyFounderCoupon}
+                  style={[styles.couponButton, founderCouponApplied && { backgroundColor: palette.colors.success }]}
+                >
+                  <Text style={styles.couponButtonText}>{founderCouponApplied ? 'Applied' : 'Apply'}</Text>
+                </TouchableOpacity>
               </View>
-              <Text style={styles.pricingAfter}>Then $5.99/month • Cancel anytime</Text>
+              <Text style={styles.couponFootnote}>Checkout reserves your spot for 35 minutes. The locked price ends permanently if you unsubscribe.</Text>
+            </GlassPanel>
+          )}
 
-              {FEATURES.map((f, i) => (
-                <View key={i} style={styles.featureRow}>
-                  <View style={styles.featureIcon}>
-                    <Ionicons name={f.icon} size={14} color={palette.colors.success} />
+          {/* Pricing Cards */}
+          {showSubscribeButton && ([
+            {
+              id: 'starter',
+              name: 'Rozare Starter',
+              price: starterPrice,
+              definition: pricing.starter,
+              freeDays: 30,
+              features: FEATURES,
+            },
+            {
+              id: 'elite',
+              name: 'Rozare Elite',
+              price: elitePrice,
+              definition: pricing.elite,
+              freeDays: 45,
+              features: ELITE_FEATURES,
+            },
+          ]).map((plan) => (
+            <GlassPanel key={plan.id} variant="strong" style={[styles.pricingCard, { borderColor: `${palette.colors.primary}40`, borderWidth: 2 }]}>
+              <View style={styles.badgeRow}>
+                {getsIntroductoryFreePeriod && (
+                  <View style={styles.pricingBadge}>
+                    <Ionicons name="sparkles" size={12} color={palette.colors.success} />
+                    <Text style={styles.pricingBadgeText}>{plan.freeDays} DAYS FREE</Text>
                   </View>
-                  <Text style={styles.featureText}>{f.text}</Text>
+                )}
+                <View style={[styles.pricingBadge, { backgroundColor: `${palette.colors.primary}12` }]}>
+                  <Text style={[styles.pricingBadgeText, { color: palette.colors.primary }]}>{plan.definition.advertisedDiscountPercent}% OFF</Text>
+                </View>
+              </View>
+
+              <Text style={styles.pricingName}>{plan.name}</Text>
+              <View style={styles.pricingPriceRow}>
+                <Text style={styles.pricingOld}>{formatUsd(plan.definition.listAmountCents)}</Text>
+                {useFounderRate && <Text style={styles.pricingOld}>{formatUsd(plan.definition.standardAmountCents)}</Text>}
+                <Text style={styles.pricingNew}>{formatUsd(plan.price)}</Text>
+                <Text style={styles.pricingPeriod}>/mo</Text>
+              </View>
+              <Text style={styles.pricingAfter}>
+                {getsIntroductoryFreePeriod ? `First ${plan.freeDays} days free, then ` : ''}{formatUsd(plan.price)}/month
+              </Text>
+              {useFounderRate && <Text style={styles.founderAppliedText}>Extra 40% FIRST100 founder discount included</Text>}
+
+              {plan.features.map((feature, index) => (
+                <View key={`${plan.id}-${index}`} style={styles.featureRow}>
+                  <View style={styles.featureIcon}>
+                    <Ionicons name={feature.icon} size={14} color={palette.colors.success} />
+                  </View>
+                  <Text style={styles.featureText}>{feature.text}</Text>
                 </View>
               ))}
 
+              {plan.id === 'elite' && (
+                <TouchableOpacity onPress={() => setIncludeMetaAds(value => !value)} style={styles.metaToggle}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.metaTitle}>Include Meta ads</Text>
+                    <Text style={styles.metaText}>Adds {formatUsd(pricing.metaAdsAddonCents)}/month at full price.</Text>
+                  </View>
+                  <Ionicons name={includeMetaAds ? 'checkbox' : 'square-outline'} size={22} color={palette.colors.primary} />
+                </TouchableOpacity>
+              )}
+
               <TouchableOpacity
-                onPress={handleSubscribe}
-                disabled={checkoutLoading}
+                onPress={() => handleSubscribe(plan.id)}
+                disabled={Boolean(checkoutLoading)}
                 style={styles.subscribeBtn}
                 activeOpacity={0.8}
               >
-                {checkoutLoading ? (
+                {checkoutLoading === plan.id ? (
                   <ActivityIndicator color={palette.colors.white} size="small" />
                 ) : (
                   <>
                     <Ionicons name="card-outline" size={16} color={palette.colors.white} />
-                    <Text style={styles.subscribeBtnText}>Subscribe Now — 30 Days Free</Text>
+                    <Text style={styles.subscribeBtnText}>
+                      {getsIntroductoryFreePeriod ? `Subscribe - ${plan.freeDays} Days Free` : `Subscribe - ${formatUsd(plan.price)}/month`}
+                    </Text>
                     <Ionicons name="arrow-forward" size={16} color={palette.colors.white} />
                   </>
                 )}
@@ -256,7 +438,7 @@ export default function SellerSubscriptionScreen({ navigation }) {
 
               <Text style={styles.stripeNote}>Secure checkout powered by Stripe. Cancel anytime.</Text>
             </GlassPanel>
-          )}
+          ))}
 
           {/* Timeline */}
           <GlassPanel variant="card" style={styles.timelineCard}>
@@ -312,23 +494,44 @@ const buildStyles = (p) => StyleSheet.create({
   planDesc: { fontSize: fontSize.xs, color: p.colors.textSecondary, marginTop: 2 },
   cancelBtn: { paddingHorizontal: spacing.md, paddingVertical: spacing.xs, borderRadius: borderRadius.md, backgroundColor: `${p.colors.error}10` },
   cancelBtnText: { fontSize: fontSize.xs, color: p.colors.error, fontWeight: fontWeight.semibold },
+  keepBtn: { minWidth: 76, minHeight: 32, paddingHorizontal: spacing.md, paddingVertical: spacing.xs, borderRadius: borderRadius.md, backgroundColor: p.colors.primary, alignItems: 'center', justifyContent: 'center' },
+  keepBtnText: { fontSize: fontSize.xs, color: p.colors.white, fontWeight: fontWeight.semibold },
 
   aiLimitRow: { flexDirection: 'row', alignItems: 'center', padding: spacing.md, borderRadius: borderRadius.lg, backgroundColor: `${p.colors.primary}08` },
   aiLimitTitle: { fontSize: fontSize.xs, fontWeight: fontWeight.semibold, color: p.colors.text },
   aiLimitDesc: { fontSize: 10, color: p.colors.textSecondary },
 
+  founderPanel: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.md, padding: spacing.lg, marginBottom: spacing.lg, borderColor: `${p.colors.success}35`, borderWidth: 1 },
+  founderTitle: { fontSize: fontSize.sm, fontWeight: fontWeight.bold, color: p.colors.text },
+  founderText: { fontSize: fontSize.xs, color: p.colors.textSecondary, marginTop: 3 },
+  couponPanel: { padding: spacing.lg, marginBottom: spacing.lg },
+  couponTitle: { fontSize: fontSize.sm, fontWeight: fontWeight.bold, color: p.colors.text },
+  couponText: { fontSize: fontSize.xs, color: p.colors.textSecondary, marginTop: 4 },
+  couponRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.md },
+  couponInput: { flex: 1, minHeight: 42, borderRadius: borderRadius.lg, backgroundColor: 'rgba(255,255,255,0.12)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)', color: p.colors.text, paddingHorizontal: spacing.md, fontSize: fontSize.sm, fontWeight: fontWeight.semibold },
+  couponButton: { minWidth: 84, minHeight: 42, borderRadius: borderRadius.lg, backgroundColor: p.colors.primary, alignItems: 'center', justifyContent: 'center', paddingHorizontal: spacing.md },
+  couponButtonText: { color: p.colors.white, fontSize: fontSize.xs, fontWeight: fontWeight.bold },
+  couponFootnote: { fontSize: 10, color: p.colors.textSecondary, marginTop: spacing.sm },
+
   pricingCard: { padding: spacing.lg, marginBottom: spacing.lg, alignItems: 'center' },
-  pricingBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: `${p.colors.success}12`, paddingHorizontal: spacing.md, paddingVertical: spacing.xs, borderRadius: borderRadius.full, marginBottom: spacing.md },
+  badgeRow: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: spacing.sm, marginBottom: spacing.md },
+  pricingBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: `${p.colors.success}12`, paddingHorizontal: spacing.md, paddingVertical: spacing.xs, borderRadius: borderRadius.full },
   pricingBadgeText: { fontSize: fontSize.xs, fontWeight: fontWeight.bold, color: p.colors.success },
+  pricingName: { fontSize: fontSize.lg, fontWeight: fontWeight.bold, color: p.colors.text, marginBottom: spacing.xs },
   pricingPriceRow: { flexDirection: 'row', alignItems: 'baseline', gap: spacing.xs, marginBottom: spacing.xs },
   pricingOld: { fontSize: fontSize.md, color: p.colors.textSecondary, textDecorationLine: 'line-through' },
   pricingNew: { fontSize: fontSize.title, fontWeight: fontWeight.bold, color: p.colors.text },
   pricingPeriod: { fontSize: fontSize.sm, color: p.colors.textSecondary },
   pricingAfter: { fontSize: fontSize.xs, color: p.colors.textSecondary, marginBottom: spacing.lg },
+  founderAppliedText: { fontSize: 10, fontWeight: fontWeight.semibold, color: p.colors.success, marginTop: -spacing.md, marginBottom: spacing.md },
 
   featureRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingVertical: spacing.xs, alignSelf: 'stretch' },
   featureIcon: { width: 24, height: 24, borderRadius: 8, backgroundColor: `${p.colors.success}12`, justifyContent: 'center', alignItems: 'center' },
   featureText: { fontSize: fontSize.xs, color: p.colors.text, flex: 1 },
+
+  metaToggle: { flexDirection: 'row', alignItems: 'center', alignSelf: 'stretch', padding: spacing.md, borderRadius: borderRadius.lg, backgroundColor: `${p.colors.primary}08`, marginTop: spacing.md },
+  metaTitle: { fontSize: fontSize.xs, fontWeight: fontWeight.bold, color: p.colors.text },
+  metaText: { fontSize: 10, color: p.colors.textSecondary, marginTop: 2 },
 
   subscribeBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.sm, backgroundColor: p.colors.primary, paddingVertical: spacing.md + 2, borderRadius: borderRadius.lg, marginTop: spacing.lg, alignSelf: 'stretch' },
   subscribeBtnText: { fontSize: fontSize.sm, fontWeight: fontWeight.bold, color: p.colors.white },

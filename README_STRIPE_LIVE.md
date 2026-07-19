@@ -46,12 +46,10 @@ I've created comprehensive documentation to guide you through the entire process
 ### To Enable Live Mode
 
 1. **Get your Stripe live keys** from [Stripe Dashboard](https://dashboard.stripe.com/)
-2. **Update backend environment variables** (Heroku):
-   ```bash
-   heroku config:set STRIPE_MODE=live -a tortrose-backend
-   heroku config:set STRIPE_LIVE_SECRET_KEY=sk_live_xxx -a tortrose-backend
-   heroku config:set STRIPE_LIVE_WEBHOOK_SECRET=whsec_xxx -a tortrose-backend
-   ```
+2. **Update backend environment variables** in the Railway `independent-vision` project:
+   - `STRIPE_MODE=live`
+   - `STRIPE_LIVE_SECRET_KEY=sk_live_xxx`
+   - `STRIPE_LIVE_WEBHOOK_SECRET=whsec_xxx`
 3. **Update frontend environment variables** (Vercel):
    - `VITE_STRIPE_MODE=live`
    - `VITE_STRIPE_LIVE_PUBLISHABLE_KEY=pk_live_xxx`
@@ -91,8 +89,9 @@ I've created comprehensive documentation to guide you through the entire process
 - Email notifications
 
 ### 2. Subscriptions
-- **Starter Plan**: $5.99/month (30-day free trial)
-- **Elite Plan**: $12.99/month (45-day free trial)
+- **Starter Plan**: $9.99/month after the 15% launch discount (30-day free intro when eligible)
+- **Elite Plan**: $21.65/month after the 30% launch discount (45-day free intro when eligible)
+- **FIRST100 founder coupon**: Extra 40% for the first 100 completed subscriptions ($5.99 Starter or $12.99 Elite), locked until the subscription ends
 - Recurring billing with automatic renewal
 - Duplicate subscription prevention
 - Trial expiration handling
@@ -176,7 +175,8 @@ Before going live, test these scenarios in **test mode**:
 3. **Get Live Keys**
    - Switch to Live mode in Stripe Dashboard
    - Copy your live API keys
-   - Set up live webhook endpoint
+   - Set up `https://rozare.up.railway.app/webhook`
+   - Subscribe it to `checkout.session.completed`, `checkout.session.expired`, `customer.subscription.deleted`, `invoice.payment_failed`, and `invoice.payment_succeeded`
 
 4. **Test Thoroughly**
    - Complete all tests in test mode
@@ -200,8 +200,8 @@ Before going live, test these scenarios in **test mode**:
 
 ### Check Current Mode
 ```bash
-# Backend logs
-heroku logs --tail -a tortrose-backend | grep "Stripe initialized"
+# From the linked Railway project
+railway logs
 ```
 
 Should show:

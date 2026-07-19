@@ -3,18 +3,20 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
     Crown, Check, Zap, Shield, Clock, AlertTriangle,
     CreditCard, ArrowRight, Sparkles, X, Lock, Store, Package,
-    Users, Award, Star, MessageCircle, Gem, Bell, Palette, Megaphone
+    Users, Award, Star, MessageCircle, Gem, Bell, Palette, Megaphone, Tag
 } from 'lucide-react';
 import axios from 'axios';
 import { toast } from 'react-toastify';
 import { useSearchParams } from 'react-router-dom';
 import { getAuthToken } from "../../utils/cookieHelper";
+import { formatUsdCents, getSubscriptionPricing } from '../../utils/subscriptionPricing';
 
 const SellerSubscription = () => {
     const [subscription, setSubscription] = useState(null);
     const [loading, setLoading] = useState(true);
     const [checkoutLoading, setCheckoutLoading] = useState(null); // 'starter' | 'elite' | null
     const [cancelLoading, setCancelLoading] = useState(false);
+    const [resumeLoading, setResumeLoading] = useState(false);
     const [upgradeLoading, setUpgradeLoading] = useState(false);
     const [downgradeLoading, setDowngradeLoading] = useState(false);
     const [cancelDowngradeLoading, setCancelDowngradeLoading] = useState(false);
@@ -22,6 +24,8 @@ const SellerSubscription = () => {
     const [showUpgradeConfirm, setShowUpgradeConfirm] = useState(false);
     const [showDowngradeConfirm, setShowDowngradeConfirm] = useState(false);
     const [eliteMetaAds, setEliteMetaAds] = useState(false);
+    const [couponCode, setCouponCode] = useState('');
+    const [founderCouponApplied, setFounderCouponApplied] = useState(false);
     const [searchParams] = useSearchParams();
 
     useEffect(() => {
@@ -40,8 +44,20 @@ const SellerSubscription = () => {
             const res = await axios.get(`${import.meta.env.VITE_API_URL}api/subscription/status`, {
                 headers: { Authorization: `Bearer ${token}` }
             });
-            setSubscription(res.data.subscription);
-            setEliteMetaAds(Boolean(res.data.subscription?.metaAdsIncluded));
+            const nextSubscription = res.data.subscription;
+            setSubscription(nextSubscription);
+            setEliteMetaAds(Boolean(nextSubscription?.metaAdsIncluded));
+
+            const requestedCoupon = String(searchParams.get('coupon') || '').trim().toUpperCase();
+            if (
+                requestedCoupon
+                && requestedCoupon === nextSubscription?.founderPromotion?.code
+                && nextSubscription?.founderPromotion?.available
+                && nextSubscription?.founderPromotion?.sellerEligible
+            ) {
+                setCouponCode(requestedCoupon);
+                setFounderCouponApplied(true);
+            }
         } catch (err) {
             console.error(err);
         } finally {
@@ -55,6 +71,7 @@ const SellerSubscription = () => {
             const token = getAuthToken();
             const payload = { plan };
             if (plan === 'elite') payload.includeMetaAds = eliteMetaAds;
+            if (founderCouponApplied) payload.couponCode = subscription?.founderPromotion?.code;
             const res = await axios.post(`${import.meta.env.VITE_API_URL}api/subscription/create-checkout`, payload, {
                 headers: { Authorization: `Bearer ${token}` }
             });
@@ -132,17 +149,57 @@ const SellerSubscription = () => {
         }
     };
 
+    const handleResume = async () => {
+        setResumeLoading(true);
+        try {
+            const token = getAuthToken();
+            const res = await axios.post(`${import.meta.env.VITE_API_URL}api/subscription/resume`, {}, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+            toast.success(res.data.msg || 'Subscription resumed successfully.');
+            await fetchSubscription();
+        } catch (err) {
+            toast.error(err.response?.data?.msg || 'Failed to resume subscription');
+        } finally {
+            setResumeLoading(false);
+        }
+    };
+
+    const handleApplyFounderCoupon = () => {
+        const promotion = subscription?.founderPromotion;
+        const normalizedCode = String(couponCode || '').trim().toUpperCase();
+
+        if (!promotion || normalizedCode !== promotion.code) {
+            toast.error('Enter a valid subscription coupon.');
+            return;
+        }
+        if (!promotion.sellerEligible) {
+            toast.error(promotion.forfeited
+                ? 'This account already used and forfeited its founder rate.'
+                : 'This coupon can only be applied when starting a new subscription.');
+            return;
+        }
+        if (!promotion.available) {
+            toast.error('The FIRST100 founder offer has reached its limit.');
+            return;
+        }
+
+        setCouponCode(normalizedCode);
+        setFounderCouponApplied(true);
+        toast.success('FIRST100 applied. Your founder price will lock after Checkout is completed.');
+    };
+
     const getStatusBadge = () => {
         if (!subscription) return null;
         // Stripe "cancel at period end" — status is still active but cancelledAt is set.
         // Surface that explicitly so the seller knows the plan is winding down.
-        if (subscription.cancelledAt && ['active', 'free_period'].includes(subscription.status)) {
+        if (subscription.cancelledAt && !subscription.pendingDowngrade && ['active', 'free_period'].includes(subscription.status)) {
             const endDate = subscription.currentPeriodEnd ? new Date(subscription.currentPeriodEnd) : null;
             const daysLeft = endDate ? Math.max(0, Math.ceil((endDate - new Date()) / 86400000)) : null;
             return (
                 <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold"
                     style={{ background: 'rgba(239,68,68,0.12)', color: 'hsl(0, 72%, 55%)' }}>
-                    <X size={12} /> Cancelled
+                    <X size={12} /> Ending
                     {daysLeft !== null && <span className="opacity-80">· {daysLeft} day{daysLeft !== 1 ? 's' : ''} remaining</span>}
                 </span>
             );
@@ -187,11 +244,26 @@ const SellerSubscription = () => {
     const bonusDaysUntilExpiry = subscription?.bonusExpiryDate ? Math.max(0, Math.ceil((new Date(subscription.bonusExpiryDate) - new Date()) / (1000 * 60 * 60 * 24))) : 0;
     const bonusMonthsRemaining = subscription?.bonusExpiryDate ? Math.max(0, Math.ceil(bonusDaysUntilExpiry / 30)) : 6;
     const isStarterSubscribed = isSubscribed && !isElite;
-    const metaAdsAddonCents = Number(subscription?.metaAdsAddonCents || 400);
+    const pricing = getSubscriptionPricing(subscription);
+    const founderPromotion = subscription?.founderPromotion;
+    const founderRateActive = Boolean(subscription?.founderOffer?.active);
+    const useFounderRate = founderRateActive || founderCouponApplied;
+    const getsIntroductoryFreePeriod = !subscription?.hasUsedFreePeriod;
+    const metaAdsAddonCents = pricing.metaAdsAddonCents;
     const metaAdsAddonPrice = `$${(metaAdsAddonCents / 100).toFixed(2)}`;
-    const eliteMonthlyPrice = 1299 + (eliteMetaAds && metaAdsAddonCents > 0 ? metaAdsAddonCents : 0);
+    const starterMonthlyPrice = useFounderRate
+        ? pricing.starter.founderAmountCents
+        : pricing.starter.standardAmountCents;
+    const starterMonthlyPriceLabel = formatUsdCents(starterMonthlyPrice);
+    const eliteBaseMonthlyPrice = useFounderRate
+        ? pricing.elite.founderAmountCents
+        : pricing.elite.standardAmountCents;
+    const eliteMonthlyPrice = eliteBaseMonthlyPrice + (eliteMetaAds && metaAdsAddonCents > 0 ? metaAdsAddonCents : 0);
     const eliteMonthlyPriceLabel = `$${(eliteMonthlyPrice / 100).toFixed(2)}`;
-    const activeEliteMonthlyPrice = 1299 + (subscription?.metaAdsIncluded && metaAdsAddonCents > 0 ? metaAdsAddonCents : 0);
+    const activeEliteBasePrice = founderRateActive
+        ? pricing.elite.founderAmountCents
+        : pricing.elite.standardAmountCents;
+    const activeEliteMonthlyPrice = activeEliteBasePrice + (subscription?.metaAdsIncluded && metaAdsAddonCents > 0 ? metaAdsAddonCents : 0);
     const activeEliteMonthlyPriceLabel = `$${(activeEliteMonthlyPrice / 100).toFixed(2)}`;
     const eliteMetaSelectionChanged = isElite && isSubscribed && Boolean(subscription?.metaAdsIncluded) !== eliteMetaAds;
     const toggleMetaAds = () => {
@@ -207,7 +279,6 @@ const SellerSubscription = () => {
         'Manage your store, orders & products from WhatsApp by chatting with AI',
         'Get WhatsApp notifications when you receive a new order',
         'Rozare WhatsApp order confirmation automation',
-        '10 professional store themes',
         'Featured product highlighting (6 products)',
     ];
 
@@ -400,7 +471,7 @@ const SellerSubscription = () => {
             )}
 
             {/* Cancellation banner — subscription scheduled to end at period end */}
-            {subscription?.cancelledAt && ['active', 'free_period'].includes(subscription?.status) && (() => {
+            {subscription?.cancelledAt && !subscription?.pendingDowngrade && ['active', 'free_period'].includes(subscription?.status) && (() => {
                 const endDate = subscription.currentPeriodEnd ? new Date(subscription.currentPeriodEnd) : null;
                 const daysLeft = endDate ? Math.max(0, Math.ceil((endDate - new Date()) / 86400000)) : null;
                 return (
@@ -415,7 +486,7 @@ const SellerSubscription = () => {
                                 <X size={20} style={{ color: 'hsl(0, 72%, 55%)' }} />
                             </div>
                             <div className="flex-1">
-                                <h3 className="text-sm font-bold" style={{ color: 'hsl(0, 72%, 55%)' }}>Subscription Cancelled</h3>
+                                <h3 className="text-sm font-bold" style={{ color: 'hsl(0, 72%, 55%)' }}>Cancellation Scheduled</h3>
                                 <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
                                     Your plan will remain active for{' '}
                                     <strong style={{ color: 'hsl(var(--foreground))' }}>
@@ -424,6 +495,20 @@ const SellerSubscription = () => {
                                     {endDate && <> and end on <strong style={{ color: 'hsl(var(--foreground))' }}>{endDate.toLocaleDateString()}</strong></>}.
                                     After that your store will be blocked until you re-subscribe.
                                 </p>
+                                {founderRateActive && (
+                                    <p className="text-xs font-semibold mt-2" style={{ color: 'hsl(0, 72%, 55%)' }}>
+                                        Your FIRST100 rate will be permanently lost only if this subscription reaches its end date.
+                                    </p>
+                                )}
+                                <button
+                                    type="button"
+                                    onClick={handleResume}
+                                    disabled={resumeLoading}
+                                    className="mt-3 px-4 py-2 rounded-lg text-xs font-bold text-white disabled:opacity-60"
+                                    style={{ background: 'hsl(220, 70%, 55%)' }}
+                                >
+                                    {resumeLoading ? 'Resuming...' : 'Keep Subscription'}
+                                </button>
                             </div>
                         </div>
                     </motion.div>
@@ -456,8 +541,8 @@ const SellerSubscription = () => {
                             <p className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>
                                 {isSubscribed
                                     ? subscription?.status === 'free_period'
-                                        ? `Free until ${new Date(subscription.freePeriodEndDate).toLocaleDateString()}, then ${isElite ? activeEliteMonthlyPriceLabel : '$5.99'}/mo`
-                                        : `${isElite ? activeEliteMonthlyPriceLabel : '$5.99'}/month • Cancel anytime`
+                                        ? `Free until ${new Date(subscription.freePeriodEndDate).toLocaleDateString()}, then ${isElite ? activeEliteMonthlyPriceLabel : starterMonthlyPriceLabel}/mo`
+                                        : `${isElite ? activeEliteMonthlyPriceLabel : starterMonthlyPriceLabel}/month - Cancel anytime`
                                     : isTrial
                                         ? `${subscription?.trialDaysRemaining} day${subscription?.trialDaysRemaining !== 1 ? 's' : ''} remaining`
                                         : 'Subscribe to activate your store'
@@ -601,7 +686,6 @@ const SellerSubscription = () => {
                                 'Manage your store, orders & products from WhatsApp by chatting with AI',
                                 'Get WhatsApp notifications when you receive a new order',
                                 'Rozare WhatsApp order confirmation automation',
-                                '10 professional store themes',
                             ].map((f, i) => (
                                 <div key={i} className="flex items-center gap-2">
                                     <Check size={12} style={{ color: 'hsl(150, 60%, 45%)' }} />
@@ -654,7 +738,6 @@ const SellerSubscription = () => {
                                 'Manage your store, orders & products from WhatsApp by chatting with AI',
                                 'Get WhatsApp notifications when you receive a new order',
                                 'Rozare WhatsApp order confirmation automation',
-                                '10 professional store themes',
                                 'Rozare-run TikTok ads for your store and featured products',
                             ].map((f, i) => (
                                 <div key={i} className="flex items-center gap-2">
@@ -689,6 +772,88 @@ const SellerSubscription = () => {
             </div>
             )}
 
+            {founderPromotion && (founderRateActive || founderPromotion.sellerEligible || founderPromotion.forfeited) && (
+                <div
+                    className="glass-panel-strong p-5 mb-6 border"
+                    style={{
+                        borderColor: founderRateActive || founderCouponApplied
+                            ? 'rgba(16, 185, 129, 0.35)'
+                            : 'rgba(59, 130, 246, 0.25)',
+                    }}
+                >
+                    <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
+                        <div className="flex items-start gap-3">
+                            <div
+                                className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
+                                style={{ background: 'rgba(59, 130, 246, 0.12)', color: 'hsl(220, 70%, 55%)' }}
+                            >
+                                <Tag size={18} />
+                            </div>
+                            <div>
+                                <h3 className="text-sm font-bold" style={{ color: 'hsl(var(--foreground))' }}>
+                                    {founderRateActive ? 'FIRST100 founder rate locked' : 'First 100 Sellers offer'}
+                                </h3>
+                                <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                                    {founderRateActive
+                                        ? 'Your extra 40% discount stays active across Starter and Elite plan changes while this subscription remains uninterrupted.'
+                                        : 'Use FIRST100 for an extra 40% off: Starter becomes $5.99/month and Elite becomes $12.99/month.'}
+                                </p>
+                                {!founderRateActive && founderPromotion.available && (
+                                    <p className="text-[11px] font-semibold mt-2" style={{ color: 'hsl(220, 70%, 55%)' }}>
+                                        {founderPromotion.sellerHasReservation
+                                            ? 'A founder spot is currently reserved for your account'
+                                            : `${founderPromotion.remaining} of ${founderPromotion.maxRedemptions} founder spots remaining`}
+                                    </p>
+                                )}
+                                {founderPromotion.forfeited && (
+                                    <p className="text-[11px] font-semibold mt-2" style={{ color: 'hsl(0, 72%, 55%)' }}>
+                                        This account previously used the offer. Founder pricing cannot be reclaimed after the subscription ends.
+                                    </p>
+                                )}
+                            </div>
+                        </div>
+
+                        {!founderRateActive && founderPromotion.sellerEligible && founderPromotion.available && (
+                            <div className="flex gap-2 w-full sm:w-auto">
+                                <input
+                                    value={couponCode}
+                                    onChange={(event) => {
+                                        setCouponCode(event.target.value.toUpperCase());
+                                        setFounderCouponApplied(false);
+                                    }}
+                                    placeholder="Coupon code"
+                                    aria-label="Subscription coupon code"
+                                    className="min-w-0 sm:w-40 px-3 py-2.5 rounded-xl text-xs font-semibold outline-none glass-inner"
+                                    style={{ color: 'hsl(var(--foreground))' }}
+                                />
+                                <button
+                                    type="button"
+                                    onClick={founderCouponApplied
+                                        ? () => {
+                                            setFounderCouponApplied(false);
+                                            setCouponCode('');
+                                        }
+                                        : handleApplyFounderCoupon}
+                                    className="px-4 py-2.5 rounded-xl text-xs font-bold text-white shrink-0"
+                                    style={{
+                                        background: founderCouponApplied
+                                            ? 'hsl(150, 60%, 42%)'
+                                            : 'hsl(220, 70%, 55%)',
+                                    }}
+                                >
+                                    {founderCouponApplied ? 'Applied' : 'Apply'}
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                    {founderCouponApplied && !founderRateActive && (
+                        <p className="text-[10px] mt-3" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                            Your slot is reserved for 35 minutes after you continue to Stripe and is permanently claimed when Checkout completes.
+                        </p>
+                    )}
+                </div>
+            )}
+
             {/* Pricing Cards — always visible */}
             <div className="grid md:grid-cols-2 gap-4 mb-6">
                     {/* Rozare Starter Card */}
@@ -700,20 +865,40 @@ const SellerSubscription = () => {
                         style={{ borderColor: 'rgba(99, 102, 241, 0.3)' }}
                     >
                         <div className="text-center mb-5">
-                            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold mb-3"
-                                style={{ background: 'rgba(16, 185, 129, 0.12)', color: 'hsl(150, 60%, 45%)' }}>
-                                <Sparkles size={12} /> 30 DAYS FREE
+                            <div className="flex flex-wrap items-center justify-center gap-2 mb-3">
+                                {getsIntroductoryFreePeriod && (
+                                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold"
+                                        style={{ background: 'rgba(16, 185, 129, 0.12)', color: 'hsl(150, 60%, 45%)' }}>
+                                        <Sparkles size={12} /> 30 DAYS FREE
+                                    </span>
+                                )}
+                                <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold"
+                                    style={{ background: 'rgba(59, 130, 246, 0.12)', color: 'hsl(220, 70%, 55%)' }}>
+                                    {pricing.starter.advertisedDiscountPercent}% OFF
+                                </span>
                             </div>
                             <h3 className="text-xl font-bold" style={{ color: 'hsl(var(--foreground))' }}>
                                 Rozare Starter
                             </h3>
                             <p className="text-lg font-bold mt-1" style={{ color: 'hsl(var(--foreground))' }}>
-                                <span style={{ color: 'hsl(var(--muted-foreground))', textDecoration: 'line-through', fontSize: '0.9rem' }}>$5.99/mo</span>
-                                {' '}$0<span className="text-sm font-normal" style={{ color: 'hsl(var(--muted-foreground))' }}>/first 30 days</span>
+                                <span style={{ color: 'hsl(var(--muted-foreground))', textDecoration: 'line-through', fontSize: '0.9rem' }}>
+                                    {formatUsdCents(pricing.starter.listAmountCents)}
+                                </span>{' '}
+                                {useFounderRate && (
+                                    <span style={{ color: 'hsl(var(--muted-foreground))', textDecoration: 'line-through', fontSize: '0.9rem' }}>
+                                        {formatUsdCents(pricing.starter.standardAmountCents)}{' '}
+                                    </span>
+                                )}
+                                {starterMonthlyPriceLabel}<span className="text-sm font-normal" style={{ color: 'hsl(var(--muted-foreground))' }}>/mo</span>
                             </p>
                             <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                                Then $5.99/month • Cancel anytime
+                                {getsIntroductoryFreePeriod ? 'First 30 days free, then ' : ''}{starterMonthlyPriceLabel}/month - Cancel anytime
                             </p>
+                            {useFounderRate && (
+                                <p className="text-[11px] font-semibold mt-1" style={{ color: 'hsl(150, 60%, 42%)' }}>
+                                    Includes the extra 40% FIRST100 founder discount
+                                </p>
+                            )}
                         </div>
 
                         <div className="space-y-2 mb-5">
@@ -727,7 +912,6 @@ const SellerSubscription = () => {
                                 { icon: <MessageCircle size={13} />, text: 'Manage store, orders & products from WhatsApp via AI' },
                                 { icon: <Bell size={13} />, text: 'WhatsApp notifications for new orders' },
                                 { icon: <MessageCircle size={13} />, text: 'WhatsApp order confirmation' },
-                                { icon: <Palette size={13} />, text: '10 professional store themes' },
                                 { icon: <Sparkles size={13} />, text: 'Featured product highlighting (6 products)' },
                             ].map((f, i) => (
                                 <div key={i} className="flex items-center gap-2.5">
@@ -791,7 +975,9 @@ const SellerSubscription = () => {
                             ) : (
                                 <>
                                     <CreditCard size={15} />
-                                    Subscribe — 30 Days Free
+                                    {getsIntroductoryFreePeriod
+                                        ? 'Subscribe - 30 Days Free'
+                                        : `Subscribe - ${starterMonthlyPriceLabel}/month`}
                                     <ArrowRight size={15} />
                                 </>
                             )}
@@ -814,20 +1000,40 @@ const SellerSubscription = () => {
                         </div>
 
                         <div className="text-center mb-5">
-                            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold mb-3"
-                                style={{ background: 'rgba(139, 92, 246, 0.12)', color: 'hsl(270, 60%, 55%)' }}>
-                                <Gem size={12} /> 45 DAYS FREE
+                            <div className="flex flex-wrap items-center justify-center gap-2 mb-3">
+                                {getsIntroductoryFreePeriod && (
+                                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold"
+                                        style={{ background: 'rgba(139, 92, 246, 0.12)', color: 'hsl(270, 60%, 55%)' }}>
+                                        <Gem size={12} /> 45 DAYS FREE
+                                    </span>
+                                )}
+                                <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold"
+                                    style={{ background: 'rgba(59, 130, 246, 0.12)', color: 'hsl(220, 70%, 55%)' }}>
+                                    {pricing.elite.advertisedDiscountPercent}% OFF
+                                </span>
                             </div>
                             <h3 className="text-xl font-bold" style={{ color: 'hsl(var(--foreground))' }}>
                                 Rozare Elite
                             </h3>
                             <p className="text-lg font-bold mt-1" style={{ color: 'hsl(var(--foreground))' }}>
-                                <span style={{ color: 'hsl(var(--muted-foreground))', textDecoration: 'line-through', fontSize: '0.9rem' }}>$12.99/mo</span>
-                                {' '}$0<span className="text-sm font-normal" style={{ color: 'hsl(var(--muted-foreground))' }}>/first 45 days</span>
+                                <span style={{ color: 'hsl(var(--muted-foreground))', textDecoration: 'line-through', fontSize: '0.9rem' }}>
+                                    {formatUsdCents(pricing.elite.listAmountCents)}
+                                </span>{' '}
+                                {useFounderRate && (
+                                    <span style={{ color: 'hsl(var(--muted-foreground))', textDecoration: 'line-through', fontSize: '0.9rem' }}>
+                                        {formatUsdCents(pricing.elite.standardAmountCents)}{' '}
+                                    </span>
+                                )}
+                                {eliteMonthlyPriceLabel}<span className="text-sm font-normal" style={{ color: 'hsl(var(--muted-foreground))' }}>/mo</span>
                             </p>
                             <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                                Then {eliteMonthlyPriceLabel}/month • Cancel anytime
+                                {getsIntroductoryFreePeriod ? 'First 45 days free, then ' : ''}{eliteMonthlyPriceLabel}/month - Cancel anytime
                             </p>
+                            {useFounderRate && (
+                                <p className="text-[11px] font-semibold mt-1" style={{ color: 'hsl(150, 60%, 42%)' }}>
+                                    Includes the extra 40% FIRST100 founder discount; Meta ads remain {metaAdsAddonPrice}/month
+                                </p>
+                            )}
                         </div>
 
                         <div className="space-y-2 mb-5">
@@ -917,7 +1123,9 @@ const SellerSubscription = () => {
                             ) : (
                                 <>
                                     <Gem size={15} />
-                                    Subscribe Elite — 45 Days Free
+                                    {getsIntroductoryFreePeriod
+                                        ? 'Subscribe Elite - 45 Days Free'
+                                        : `Subscribe Elite - ${eliteMonthlyPriceLabel}/month`}
                                     <ArrowRight size={15} />
                                 </>
                             )}
@@ -932,9 +1140,9 @@ const SellerSubscription = () => {
                 <div className="space-y-4">
                     {[
                         { step: '1', title: 'Free Trial', desc: '15 days to set up your store, add products, and start selling', active: isTrial, done: !isTrial && (isSubscribed || isBlocked || isPastDue) },
-                        { step: '2', title: 'Subscribe', desc: 'Choose Rozare Starter ($5.99/mo) or Rozare Elite ($12.99/mo, Meta +$4/mo)', active: false, done: isSubscribed || isPastDue },
+                        { step: '2', title: 'Subscribe', desc: `Choose Rozare Starter (${starterMonthlyPriceLabel}/mo) or Rozare Elite (${eliteMonthlyPriceLabel}/mo with your current options)`, active: false, done: isSubscribed || isPastDue },
                         { step: '3', title: 'Free Period', desc: isElite ? '45 days of full access at no cost' : '30 days of full access at no cost to grow your business', active: subscription?.status === 'free_period', done: subscription?.status === 'active' || (isSubscribed && subscription?.hasUsedFreePeriod && subscription?.status !== 'free_period') },
-                        { step: '4', title: 'Monthly Billing', desc: isElite ? `${activeEliteMonthlyPriceLabel}/month. Cancel anytime.` : '$5.99/month after free period. Cancel anytime.', active: subscription?.status === 'active', done: false },
+                        { step: '4', title: 'Monthly Billing', desc: isElite ? `${activeEliteMonthlyPriceLabel}/month. Cancel anytime.` : `${starterMonthlyPriceLabel}/month after the free period. Cancel anytime.`, active: subscription?.status === 'active', done: false },
                         { step: '5', title: 'Bonus Features', desc: isElite ? 'Permanently included with your Elite plan.' : 'After 6 months, bonus features expire. Upgrade to Elite to keep them.', active: false, done: isElite && isSubscribed },
                     ].map((s, i) => {
                         const isDone = s.done;
@@ -993,6 +1201,20 @@ const SellerSubscription = () => {
                                 </p>
                             </div>
 
+                            {founderRateActive && (
+                                <div className="mb-4 p-3.5 rounded-xl" style={{ background: 'rgba(239, 68, 68, 0.08)', border: '1px solid rgba(239, 68, 68, 0.2)' }}>
+                                    <div className="flex items-start gap-2">
+                                        <Tag size={14} className="shrink-0 mt-0.5" style={{ color: 'hsl(0, 72%, 55%)' }} />
+                                        <div>
+                                            <p className="text-xs font-bold" style={{ color: 'hsl(0, 72%, 55%)' }}>Founder Price Will Be Lost</p>
+                                            <p className="text-[11px] mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                                                When this subscription ends, your FIRST100 rate is permanently forfeited and cannot be applied again. Switching between Starter and Elite without ending the subscription keeps it.
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
                             {/* Bonus features grace period warning */}
                             {subscription?.plan === 'starter' && subscription?.bonusFeaturesActive && !subscription?.bonusFeaturesExpiredPermanently && subscription?.bonusExpiryDate && new Date(subscription.bonusExpiryDate) > new Date() && (
                                 <div className="mb-4 p-3.5 rounded-xl" style={{ background: 'rgba(249, 115, 22, 0.08)', border: '1px solid rgba(249, 115, 22, 0.2)' }}>
@@ -1048,7 +1270,7 @@ const SellerSubscription = () => {
                                 </div>
                                 <h3 className="text-base font-bold" style={{ color: 'hsl(var(--foreground))' }}>Upgrade to Rozare Elite?</h3>
                                 <p className="text-xs mt-2" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                                    Your billing will change from $5.99/month to {eliteMonthlyPriceLabel}/month. The price difference will be prorated for the current period.
+                                    Your billing will change from {starterMonthlyPriceLabel}/month to {eliteMonthlyPriceLabel}/month. The price difference will be prorated for the current period.
                                 </p>
                             </div>
 
@@ -1114,7 +1336,7 @@ const SellerSubscription = () => {
                                 </div>
                                 <h3 className="text-base font-bold" style={{ color: 'hsl(var(--foreground))' }}>Downgrade to Starter?</h3>
                                 <p className="text-xs mt-2" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                                    Your Elite plan will remain active until the current period ends. After that, you'll be switched to Starter ($5.99/month).
+                                    Your Elite plan will remain active until the current period ends. After that, you'll be switched to Starter ({starterMonthlyPriceLabel}/month).
                                 </p>
                             </div>
 
@@ -1122,7 +1344,7 @@ const SellerSubscription = () => {
                                 <p className="text-xs font-bold mb-2" style={{ color: 'hsl(30, 85%, 45%)' }}>What changes with Starter:</p>
                                 <div className="space-y-1.5">
                                     {[
-                                        { text: 'Billing drops to $5.99/month', good: true },
+                                        { text: `Billing changes to ${starterMonthlyPriceLabel}/month`, good: true },
                                         { text: 'No free period (already used)', good: false },
                                         { text: 'Bonus features available for 6 months only (then expire)', good: false },
                                         { text: 'All core features remain (store, products, payments, AI)', good: true },
