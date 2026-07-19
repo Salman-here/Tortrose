@@ -297,6 +297,55 @@ exports.buildOrderPlacedInfoMessage = (order) => {
 };
 
 // ──────────────────────────────────────────────────────────────────────────
+// Buyer order-status update — sent when a seller/admin moves the order to a
+// new status (confirmed / processing / shipped / delivered / cancelled).
+// Returns '' for statuses that should not message the buyer (e.g. pending).
+// ──────────────────────────────────────────────────────────────────────────
+const STATUS_UPDATE_LINES = {
+    confirmed: {
+        headline: `Your order has been confirmed! ✅`,
+        detail: `The seller has accepted your order and will start preparing it soon.`,
+    },
+    processing: {
+        headline: `Your order is being prepared! 📦`,
+        detail: `The seller is packing your items now — shipping is next.`,
+    },
+    shipped: {
+        headline: `Your order is on the way! 🚚`,
+        detail: `It has been handed to the courier and is heading to you.`,
+    },
+    delivered: {
+        headline: `Your order has been delivered! 🎉`,
+        detail: `We hope you love it. Need to return something? You can request a return from your Rozare account.`,
+    },
+    cancelled: {
+        headline: `Your order has been cancelled. ❌`,
+        detail: `Nothing more is needed from you. If this is unexpected, please contact Rozare support or the store.`,
+    },
+};
+
+exports.buildOrderStatusUpdateMessage = (order, status) => {
+    const lines = STATUS_UPDATE_LINES[String(status || '').toLowerCase()];
+    if (!lines) return '';
+
+    const buyerName = order.shippingInfo?.fullName?.split(' ')[0] || 'there';
+    const storesLine = buildStoresLine(order);
+
+    return [
+        `Hey ${buyerName}! 👋`,
+        ``,
+        lines.headline,
+        ``,
+        `📦 Order: *#${order.orderId}*`,
+        ...(storesLine ? [storesLine] : []),
+        ``,
+        lines.detail,
+        ``,
+        `Track it anytime in your Rozare account. 💜`,
+    ].join('\n');
+};
+
+// ──────────────────────────────────────────────────────────────────────────
 // Re-confirm buttons payload — sent when buyer taps confirm on a cancelled order
 // ──────────────────────────────────────────────────────────────────────────
 exports.buildReconfirmButtonsPayload = (order, contextMessage) => {

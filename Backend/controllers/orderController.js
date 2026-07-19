@@ -10,7 +10,8 @@ const { recordCouponUsage } = require('./couponController');
 const { sendEmail } = require('./mailController');
 const { orderConfirmationEmail, orderStatusUpdateEmail, newOrderSellerEmail, buyerOrderConfirmationRequestEmail } = require('../utils/emailTemplates');
 const { generateConfirmationToken } = require('./orderConfirmationController');
-const { enqueueOrderConfirmation, enqueueOrderPlacedInfo } = require('../services/whatsapp/queue');
+const { enqueueOrderConfirmation, enqueueOrderPlacedInfo, enqueueTextNotification } = require('../services/whatsapp/queue');
+const { buildOrderStatusUpdateMessage } = require('../services/whatsapp/messageBuilder');
 const WhatsAppConfig = require('../models/WhatsAppConfig');
 const { configKeyFor } = require('../services/whatsapp/gatewayMode');
 const User = require('../models/User');
@@ -184,6 +185,28 @@ const getSellerScopedOrders = async (query, sellerId, sort = null) => {
 // who places a COD order should receive it. It is NOT gated by any seller
 // subscription/plan. The only preconditions are that the WhatsApp gateway is
 // connected and the buyer has a valid phone number (validated in the queue).
+// WhatsApp status update to the buyer when the order moves to a new status
+// (confirmed / processing / shipped / delivered / cancelled). Deduped per
+// order+status so repeated saves or parallel paths can never double-send.
+// Fire-and-forget: the durable queue handles retries and the
+// gateway-connected check, and failures never block the API response.
+const notifyBuyerStatusOnWhatsApp = (order, status) => {
+    try {
+        const message = buildOrderStatusUpdateMessage(order, status);
+        if (!message) return;
+        enqueueTextNotification({
+            order,
+            phone: order.shippingInfo?.phone,
+            message,
+            dedupeKey: `order-status:${order._id}:${status}`,
+        }).catch(err => {
+            console.error(`[order] WhatsApp status update enqueue failed for ${order?.orderId}:`, err.message);
+        });
+    } catch (err) {
+        console.error(`[order] WhatsApp status update build failed for ${order?.orderId}:`, err.message);
+    }
+};
+
 const maybeEnqueueWhatsAppConfirmation = async (order, _productItems) => {
     try {
         if (!order?.confirmation?.token) {
@@ -1237,6 +1260,10 @@ exports.updateStatus = async (req, res) => {
         }
 
         const orderSellerIds = await ensureOrderSellerFulfillment(existingOrder);
+        // Snapshot the aggregate status so we notify the buyer only when the
+        // OVERALL order state changes (a seller updating just their portion of
+        // a multi-seller order may not move the aggregate).
+        const prevAggregateStatus = existingOrder.orderStatus;
 
         if (newStatus === 'cancelled' && existingOrder.isPaid) {
             return res.status(409).json({
@@ -1313,6 +1340,12 @@ exports.updateStatus = async (req, res) => {
             await sendEmail({ to: existingOrder.shippingInfo.email, ...emailData });
         } catch (emailErr) {
             console.error('Failed to send status update email:', emailErr.message);
+        }
+
+        // WhatsApp status update to the buyer — only when the overall order
+        // status actually moved (deduped per order+status in the queue).
+        if (existingOrder.orderStatus !== prevAggregateStatus) {
+            notifyBuyerStatusOnWhatsApp(existingOrder, existingOrder.orderStatus);
         }
 
         res.status(200).json({
@@ -1471,6 +1504,10 @@ exports.cancelOrder = async (req, res) => {
         } catch (emailErr) {
             console.error('Failed to send cancellation email:', emailErr.message);
         }
+
+        // WhatsApp cancellation notice to the buyer (deduped per order+status,
+        // so this cannot double-send if another path also cancelled).
+        notifyBuyerStatusOnWhatsApp(order, 'cancelled');
 
         res.status(200).json({ msg: 'Order cancelled successfully.', order })
     } catch (error) {
