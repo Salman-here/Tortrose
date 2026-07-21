@@ -9,6 +9,10 @@ const { notifySeller } = require('../services/whatsapp/sellerNotificationService
 const sellerTemplates = require('../services/whatsapp/sellerMessageTemplates')
 const SellerSubscription = require('../models/SellerSubscription')
 const Store = require('../models/Store')
+const {
+    presentSellerSubscription,
+    resolveUserJoinedAt,
+} = require('../services/adminUserPresentationService')
 
 exports.getUsers = async (req, res) => {
     const { role: userRole, id: _id } = req.user
@@ -28,7 +32,7 @@ exports.getUsers = async (req, res) => {
         }
         const users = await User.find(query)
             .select('username email avatar profilePicture role status isVerified sellerInfo whatsappInfo currency savedShippingInfo createdAt updatedAt')
-            .sort({ createdAt: -1 })
+            .sort({ _id: -1 })
             .lean()
 
         const sellerIds = users.filter(user => user.role === 'seller').map(user => user._id)
@@ -48,11 +52,20 @@ exports.getUsers = async (req, res) => {
         const subscriptionBySeller = new Map(subscriptions.map(sub => [String(sub.seller), sub]))
         const storeBySeller = new Map(stores.map(store => [String(store.seller), store]))
 
-        const enrichedUsers = users.map(user => ({
-            ...user,
-            sellerSubscription: user.role === 'seller' ? subscriptionBySeller.get(String(user._id)) || null : null,
-            store: user.role === 'seller' ? storeBySeller.get(String(user._id)) || null : null,
-        }))
+        const enrichedUsers = users.map(user => {
+            const joinedAt = resolveUserJoinedAt(user)
+            const subscription = user.role === 'seller'
+                ? subscriptionBySeller.get(String(user._id)) || null
+                : null
+
+            return {
+                ...user,
+                createdAt: user.createdAt || joinedAt,
+                joinedAt,
+                sellerSubscription: presentSellerSubscription(subscription),
+                store: user.role === 'seller' ? storeBySeller.get(String(user._id)) || null : null,
+            }
+        })
 
         res.status(200).json({ msg: 'Users fetched succcessfully.', users: enrichedUsers })
     } catch (error) {

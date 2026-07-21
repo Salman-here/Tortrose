@@ -105,7 +105,7 @@ const userSchema = mongoose.Schema({
         verifiedAt: { type: Date, default: null },
         lastChange: { type: Date, default: null },       // cooldown tracking
     },
-})
+}, { timestamps: true })
 
 
 

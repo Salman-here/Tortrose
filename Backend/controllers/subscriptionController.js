@@ -81,6 +81,7 @@ exports.initializeSubscription = async (sellerId) => {
             trialEndDate: trialEnd,
             status: 'trial',
             plan: 'free_trial',
+            planName: 'Rozare Free Trial',
             aiMessageLimit: -1,
         });
         await sub.save();
@@ -122,7 +123,9 @@ exports.getSubscriptionStatus = async (req, res) => {
             subscription: {
                 status: sub.status,
                 plan: sub.plan,
-                planName: sub.planName || 'Rozare Starter',
+                planName: sub.status === 'trial' || sub.plan === 'free_trial'
+                    ? 'Rozare Free Trial'
+                    : sub.planName || (sub.plan === 'elite' ? 'Rozare Elite' : 'Rozare Starter'),
                 trialStartDate: sub.trialStartDate,
                 trialEndDate: sub.trialEndDate,
                 trialDaysRemaining: sub.trialDaysRemaining,

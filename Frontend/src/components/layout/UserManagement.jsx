@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import React, { useState, useEffect, useCallback } from 'react';
+import { motion as Motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'react-toastify';
 import { Search, Filter, User, UserX, UserCheck, Shield, ShieldOff, Trash2, Users, UserCog, AlertCircle, Store, CalendarDays, CreditCard, MessageCircle, Mail, Clock, Loader2 } from 'lucide-react';
 import axios from 'axios';
@@ -21,26 +21,26 @@ const UserManagement = () => {
   const [selectedUser, setSelectedUser] = useState(null);
   const [unblockingUserId, setUnblockingUserId] = useState('');
 
-  const serializeFilters = () => {
+  const serializeFilters = useCallback(() => {
     let params = new URLSearchParams();
     if (searchTerm !== '') params.append('search', searchTerm);
     if (roleFilter !== 'all') params.append('role', roleFilter);
     if (statusFilter !== 'all') params.append('status', statusFilter);
     return params.toString();
-  };
+  }, [roleFilter, searchTerm, statusFilter]);
 
-  const fetchUsers = async () => {
+  const fetchUsers = useCallback(async () => {
     try { setLoading(true); const token = getAuthToken(); const query = serializeFilters(); const res = await axios.get(`${import.meta.env.VITE_API_URL}api/user/get?${query}`, { headers: { Authorization: `Bearer ${token}` } }); setUsers(res.data.users); }
     catch (error) { toast.error(error.response?.data.msg || 'Server error'); } finally { setLoading(false); }
-  };
+  }, [serializeFilters]);
 
-  const fetchAllUsers = async () => {
+  const fetchAllUsers = useCallback(async () => {
     try { const token = getAuthToken(); const res = await axios.get(`${import.meta.env.VITE_API_URL}api/user/get`, { headers: { Authorization: `Bearer ${token}` } }); setAllUsers(res.data.users); }
     catch (error) { toast.error(error.response?.data.msg || 'Server error'); }
-  };
+  }, []);
 
-  useEffect(() => { fetchAllUsers(); }, []);
-  useEffect(() => { fetchUsers(); }, [searchTerm, roleFilter, statusFilter]);
+  useEffect(() => { fetchAllUsers(); }, [fetchAllUsers]);
+  useEffect(() => { fetchUsers(); }, [fetchUsers]);
 
   const handleBlockUser = (user) => { setSelectedUser(user); setShowBlockModal(true); };
   const handleDeleteUser = (user) => { setSelectedUser(user); setShowDeleteModal(true); };
@@ -48,17 +48,17 @@ const UserManagement = () => {
 
   const confirmBlockUser = async () => {
     try { const token = getAuthToken(); const res = await axios.patch(`${import.meta.env.VITE_API_URL}api/user/block-toggle/${selectedUser._id}`, {}, { headers: { Authorization: `Bearer ${token}` } }); toast.success(res.data?.msg || 'Updated'); fetchUsers(); fetchAllUsers(); }
-    catch (error) { toast.error('Server error'); } setShowBlockModal(false); setSelectedUser(null);
+    catch { toast.error('Server error'); } setShowBlockModal(false); setSelectedUser(null);
   };
 
   const confirmDeleteUser = async () => {
     try { const token = getAuthToken(); const res = await axios.delete(`${import.meta.env.VITE_API_URL}api/user/delete/${selectedUser._id}`, { headers: { Authorization: `Bearer ${token}` } }); toast.success(res.data?.msg || 'Deleted'); fetchUsers(); fetchAllUsers(); }
-    catch (error) { toast.error('Server error'); } setShowDeleteModal(false); setSelectedUser(null);
+    catch { toast.error('Server error'); } setShowDeleteModal(false); setSelectedUser(null);
   };
 
   const confirmChangeRole = async () => {
     try { const token = getAuthToken(); const res = await axios.patch(`${import.meta.env.VITE_API_URL}api/user/admin-toggle/${selectedUser._id}`, { newRole: selectedUser.targetRole }, { headers: { Authorization: `Bearer ${token}` } }); toast.success(res.data?.msg || 'Updated'); fetchUsers(); fetchAllUsers(); }
-    catch (error) { toast.error('Server error'); } setShowRoleModal(false); setSelectedUser(null);
+    catch { toast.error('Server error'); } setShowRoleModal(false); setSelectedUser(null);
   };
 
   const handleUnblockSeller = async (user) => {
@@ -89,8 +89,37 @@ const UserManagement = () => {
   };
 
   const sellerWhatsApp = (user) => user.sellerInfo?.whatsappNumber || user.sellerInfo?.phoneNumber || user.whatsappInfo?.number || '';
-  const sellerPlan = (user) => user.sellerSubscription?.planName || (user.sellerSubscription?.plan ? user.sellerSubscription.plan.replace(/_/g, ' ') : 'No plan');
-  const sellerPlanExpiry = (user) => user.sellerSubscription?.currentPeriodEnd || user.sellerSubscription?.freePeriodEndDate || user.sellerSubscription?.trialEndDate || null;
+  const sellerPlan = (user) => {
+    const subscription = user.sellerSubscription;
+    if (!subscription) return 'No subscription';
+    if (subscription.displayPlanName) return subscription.displayPlanName;
+    if (subscription.status === 'trial' || subscription.plan === 'free_trial') return 'Rozare Free Trial';
+    if (subscription.plan === 'elite') return subscription.planName || 'Rozare Elite';
+    if (subscription.plan === 'starter') return 'Rozare Starter';
+    return subscription.planName || 'No plan selected';
+  };
+  const sellerPlanPeriod = (user) => {
+    const subscription = user.sellerSubscription;
+    if (!subscription) return { label: '', date: null };
+    if (subscription.periodLabel || subscription.periodEndDate) {
+      return { label: subscription.periodLabel || 'Period ends', date: subscription.periodEndDate || null };
+    }
+    if (subscription.status === 'trial' || subscription.plan === 'free_trial') {
+      return { label: 'Trial ends', date: subscription.trialEndDate || null };
+    }
+    if (subscription.status === 'free_period') {
+      return { label: 'Free period ends', date: subscription.freePeriodEndDate || subscription.currentPeriodEnd || null };
+    }
+    return { label: subscription.status === 'active' ? 'Renews' : 'Period ends', date: subscription.currentPeriodEnd || null };
+  };
+  const sellerPlanStatus = (user) => {
+    const subscription = user.sellerSubscription;
+    if (!subscription) return '';
+    if (subscription.displayStatus) return subscription.displayStatus;
+    if (subscription.status === 'trial') return '15-Day Free Trial';
+    if (subscription.status === 'free_period') return `${subscription.plan === 'elite' ? 45 : 30}-Day Free Period`;
+    return subscription.status?.replace(/_/g, ' ') || '';
+  };
   const isSellerSubscriptionBlocked = (user) => user.role === 'seller' && (user.sellerSubscription?.status === 'blocked' || user.store?.isActive === false);
 
   const totalUsers = allUsers.length;
@@ -154,15 +183,15 @@ const UserManagement = () => {
     <div className="min-h-screen p-4 md:p-6 mt-4 md:mt-8">
       <div className="max-w-[1600px] mx-auto">
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
-          <motion.h1 className="text-2xl md:text-3xl font-extrabold tracking-tight flex items-center gap-2" initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} style={{ color: 'hsl(var(--foreground))' }}>
+          <Motion.h1 className="text-2xl md:text-3xl font-extrabold tracking-tight flex items-center gap-2" initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} style={{ color: 'hsl(var(--foreground))' }}>
             <UserCog className="w-7 h-7 md:w-8 md:h-8" /> User Management
-          </motion.h1>
+          </Motion.h1>
         </div>
 
         {/* Stats */}
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4 mb-8">
           {statsCards.map((card, i) => (
-            <motion.div key={i} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.1 }} whileHover={{ y: -3 }} className="glass-card p-5">
+            <Motion.div key={i} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.1 }} whileHover={{ y: -3 }} className="glass-card p-5">
               <div className="flex justify-between items-center">
                 <div>
                   <p className="text-xs font-medium mb-1" style={{ color: 'hsl(var(--muted-foreground))' }}>{card.label}</p>
@@ -170,12 +199,12 @@ const UserManagement = () => {
                 </div>
                 <div className="glass-inner p-2.5 rounded-xl" style={{ color: card.color }}>{card.icon}</div>
               </div>
-            </motion.div>
+            </Motion.div>
           ))}
         </div>
 
         {/* Filters */}
-        <motion.div className="glass-panel p-4 sm:p-6 mb-6" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4 }}>
+        <Motion.div className="glass-panel p-4 sm:p-6 mb-6" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4 }}>
           <div className="flex flex-col xl:flex-row gap-4 justify-between">
             <div className="search-input-wrapper flex-1 min-w-0 xl:max-w-xl">
               <div className="search-input-icon"><Search size={16} /></div>
@@ -193,10 +222,10 @@ const UserManagement = () => {
               </select>
             </div>
           </div>
-        </motion.div>
+        </Motion.div>
 
         {/* Users List */}
-        <motion.div className="space-y-3" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.5 }}>
+        <Motion.div className="space-y-3" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.5 }}>
           {loading ? (
             <div className='glass-panel flex justify-center items-center min-h-[250px]'><Loader /></div>
           ) : users.length === 0 ? (
@@ -207,7 +236,7 @@ const UserManagement = () => {
           ) : (
             <AnimatePresence>
               {users.map((user, index) => (
-                <motion.article
+                <Motion.article
                   key={user._id}
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
@@ -223,7 +252,7 @@ const UserManagement = () => {
                       <div className="min-w-0">
                         <div className="text-sm font-semibold truncate" style={{ color: 'hsl(var(--foreground))' }}>{user.username}</div>
                         <div className="text-xs flex items-center gap-1 mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                          <CalendarDays size={12} /> Joined {formatDate(user.createdAt)}
+                          <CalendarDays size={12} /> Joined {formatDate(user.joinedAt || user.createdAt)}
                         </div>
                         <div className="mt-2 flex flex-wrap gap-2">
                           {getRoleBadge(user.role)}
@@ -252,10 +281,12 @@ const UserManagement = () => {
                             <div className="text-sm font-semibold flex items-center gap-1.5 capitalize min-w-0" style={{ color: 'hsl(var(--foreground))' }}>
                               <CreditCard size={13} className="shrink-0" /> <span className="truncate">{sellerPlan(user)}</span>
                             </div>
-                            <div className="text-xs flex items-center gap-1.5 mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                              <Clock size={12} /> Expires {formatDate(sellerPlanExpiry(user))}
-                            </div>
-                            {user.sellerSubscription?.status && <div className="text-[11px] mt-1 capitalize" style={{ color: isSellerSubscriptionBlocked(user) ? 'hsl(0, 72%, 55%)' : 'hsl(150, 60%, 40%)' }}>{user.sellerSubscription.status.replace(/_/g, ' ')}</div>}
+                            {sellerPlanPeriod(user).date && (
+                              <div className="text-xs flex items-center gap-1.5 mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                                <Clock size={12} /> {sellerPlanPeriod(user).label} {formatDate(sellerPlanPeriod(user).date)}
+                              </div>
+                            )}
+                            {sellerPlanStatus(user) && <div className="text-[11px] mt-1" style={{ color: isSellerSubscriptionBlocked(user) ? 'hsl(0, 72%, 55%)' : 'hsl(150, 60%, 40%)' }}>{sellerPlanStatus(user)}</div>}
                           </>
                         ) : <span className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>Not a seller</span>}
                       </div>
@@ -280,11 +311,11 @@ const UserManagement = () => {
                       {renderUserActions(user)}
                     </div>
                   </div>
-                </motion.article>
+                </Motion.article>
               ))}
             </AnimatePresence>
           )}
-        </motion.div>
+        </Motion.div>
       </div>
 
       {/* Modals */}
@@ -294,16 +325,16 @@ const UserManagement = () => {
       ].map((modal, i) => (
         <AnimatePresence key={i}>
           {modal.show && modal.user && (
-            <motion.div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-50" onClick={modal.onClose} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-              <motion.div className="glass-panel max-w-md w-full p-6" onClick={e => e.stopPropagation()} initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}>
+            <Motion.div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-50" onClick={modal.onClose} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+              <Motion.div className="glass-panel max-w-md w-full p-6" onClick={e => e.stopPropagation()} initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}>
                 <h3 className="text-lg font-semibold mb-4" style={{ color: 'hsl(var(--foreground))' }}>{modal.title}</h3>
                 <p className="text-sm mb-6" style={{ color: 'hsl(var(--muted-foreground))' }}>{modal.message}</p>
                 <div className="flex justify-end space-x-3">
                   <button onClick={modal.onClose} className="px-4 py-2 rounded-xl glass-inner font-medium" style={{ color: 'hsl(var(--foreground))' }}>Cancel</button>
                   <button onClick={modal.onConfirm} className="px-4 py-2 rounded-xl text-white font-medium" style={modal.confirmStyle}>Confirm</button>
                 </div>
-              </motion.div>
-            </motion.div>
+              </Motion.div>
+            </Motion.div>
           )}
         </AnimatePresence>
       ))}
@@ -311,8 +342,8 @@ const UserManagement = () => {
       {/* Role Modal */}
       <AnimatePresence>
         {showRoleModal && selectedUser && (
-          <motion.div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-50" onClick={() => setShowRoleModal(false)} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-            <motion.div className="glass-panel max-w-md w-full p-6" onClick={e => e.stopPropagation()} initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}>
+          <Motion.div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-50" onClick={() => setShowRoleModal(false)} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+            <Motion.div className="glass-panel max-w-md w-full p-6" onClick={e => e.stopPropagation()} initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}>
               <h3 className="text-lg font-semibold mb-4" style={{ color: 'hsl(var(--foreground))' }}>Change User Role</h3>
               <p className="text-sm mb-2" style={{ color: 'hsl(var(--muted-foreground))' }}>Current role: <span className="font-semibold">{selectedUser.role}</span></p>
               <p className="text-sm mb-6" style={{ color: 'hsl(var(--muted-foreground))' }}>Change {selectedUser.username}'s role to:</p>
@@ -332,8 +363,8 @@ const UserManagement = () => {
               <div className="flex justify-end">
                 <button onClick={() => setShowRoleModal(false)} className="px-6 py-2 rounded-xl glass-inner font-medium" style={{ color: 'hsl(var(--foreground))' }}>Cancel</button>
               </div>
-            </motion.div>
-          </motion.div>
+            </Motion.div>
+          </Motion.div>
         )}
       </AnimatePresence>
     </div>

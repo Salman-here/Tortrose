@@ -19,7 +19,7 @@ const sellerSubscriptionSchema = new mongoose.Schema({
     },
     planName: {
         type: String,
-        default: 'Rozare Starter',
+        default: 'Rozare Free Trial',
     },
     plan: {
         type: String,
