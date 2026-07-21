@@ -291,6 +291,24 @@ export const GlobalProvider = ({ children }) => {
     const handleQtyInc = async (id) => {
         try {
             setQtyUpdateId(id)
+
+            if (!currentUser) {
+                const gc = getGuestCart();
+                const item = gc.find(cartItem => cartItem._id === id);
+                if (!item) return;
+
+                const stock = Number(item.product?.stock || 0);
+                if (stock > 0 && item.qty >= stock) {
+                    toast.error('You have reached stock limit');
+                    return;
+                }
+
+                item.qty = (Number(item.qty) || 1) + 1;
+                saveGuestCart(gc);
+                setCartItems({ cart: gc, totalCartPrice: calcGuestTotal(gc) });
+                return;
+            }
+
             const token = getAuthToken()
             const res = await axios.patch(`${import.meta.env.VITE_API_URL}api/cart/qty-inc/${id}`,
                 {},
@@ -314,6 +332,25 @@ export const GlobalProvider = ({ children }) => {
     const handleQtyDec = async (id) => {
         try {
             setQtyUpdateId(id)
+
+            const cartItem = cartItems?.cart?.find(item => item._id === id);
+            if (!cartItem) return;
+
+            if (Number(cartItem.qty) <= 1) {
+                await handleRemoveCartItem(id);
+                return;
+            }
+
+            if (!currentUser) {
+                const gc = getGuestCart();
+                const item = gc.find(guestItem => guestItem._id === id);
+                if (!item) return;
+
+                item.qty = Math.max(1, (Number(item.qty) || 1) - 1);
+                saveGuestCart(gc);
+                setCartItems({ cart: gc, totalCartPrice: calcGuestTotal(gc) });
+                return;
+            }
 
             const token = getAuthToken()
             const res = await axios.patch(`${import.meta.env.VITE_API_URL}api/cart/qty-dec/${id}`,
@@ -339,7 +376,10 @@ export const GlobalProvider = ({ children }) => {
             setQtyUpdateId(id)
 
             if (!currentUser) {
-                const gc = getGuestCart().filter(i => !(i.product._id === id && i.selectedColor === selectedColor));
+                const gc = getGuestCart().filter(item => {
+                    if (item._id === id) return false;
+                    return !(item.product?._id === id && item.selectedColor === selectedColor);
+                });
                 saveGuestCart(gc);
                 setCartItems({ cart: gc, totalCartPrice: calcGuestTotal(gc) });
                 toast.info('Item removed from your cart');
