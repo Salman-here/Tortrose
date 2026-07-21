@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import axios from 'axios';
 import { ChevronDown, Loader2, MapPin, X } from 'lucide-react';
 
@@ -52,7 +52,6 @@ const LocationAutocomplete = ({
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const ignoreBlurRef = useRef(false);
 
   useEffect(() => {
     if (!open) setQuery(selectedLabel(value, code));
@@ -131,10 +130,7 @@ const LocationAutocomplete = ({
             setOpen(true);
           }}
           onBlur={() => {
-            window.setTimeout(() => {
-              if (!ignoreBlurRef.current) resetQuery();
-              ignoreBlurRef.current = false;
-            }, 140);
+            window.setTimeout(resetQuery, 140);
           }}
         />
         <div className="absolute inset-y-0 right-2 flex items-center gap-1">
@@ -168,8 +164,6 @@ const LocationAutocomplete = ({
             boxShadow: '0 18px 45px rgba(15,23,42,0.18)',
             backdropFilter: 'blur(18px)',
           }}
-          onMouseDown={() => { ignoreBlurRef.current = true; }}
-          onMouseUp={() => { ignoreBlurRef.current = false; }}
         >
           {error ? (
             <div className="px-3 py-3 text-xs" style={{ color: 'hsl(0, 72%, 55%)' }}>{error}</div>
@@ -184,6 +178,7 @@ const LocationAutocomplete = ({
                   type="button"
                   className="w-full px-3 py-2.5 rounded-lg text-left text-sm flex items-center gap-2 hover:bg-white/10"
                   style={{ color: 'hsl(var(--foreground))' }}
+                  onPointerDown={(event) => event.preventDefault()}
                   onClick={() => commitOption(option)}
                 >
                   <MapPin size={14} className="shrink-0" style={{ color: 'hsl(var(--primary))' }} />

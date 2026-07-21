@@ -13,6 +13,7 @@ import {
     hasAuthLogoutMarker,
 } from "../utils/cookieHelper";
 import { isSubdomain, navigateToMainDomainPath } from "../utils/subdomainHelper";
+import { clearPostAuthRedirect, consumePostAuthRedirect, sanitizePostAuthRedirect } from "../utils/postAuthRedirect";
 
 const AuthContext = createContext();
 
@@ -200,8 +201,10 @@ export const AuthProvider = ({ children }) => {
             reset();
             // Check for redirect param in URL (e.g., /login?redirect=/become-seller)
             const urlParams = new URLSearchParams(window.location.search);
-            const redirectTo = urlParams.get('redirect');
-            if (redirectTo && redirectTo.startsWith('/') && !redirectTo.startsWith('//')) {
+            const redirectParam = sanitizePostAuthRedirect(urlParams.get('redirect'));
+            const redirectTo = redirectParam || consumePostAuthRedirect('');
+            if (redirectParam) clearPostAuthRedirect();
+            if (redirectTo) {
                 window.location.href = redirectTo;
             } else {
                 navigate('/');

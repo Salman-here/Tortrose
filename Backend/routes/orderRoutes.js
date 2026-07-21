@@ -2,10 +2,9 @@
 const express = require('express')
 const { placeOrder, getOrders, updateStatus, getOrderDetail, cancelOrder, getUserOrders, trackGuestOrder, exportOrders } = require('../controllers/orderController')
 const verifyToken = require('../middleware/authMiddleware')
-const { optionalAuth } = require('../middleware/authMiddleware')
 const router = express.Router()
 
-router.post('/place', optionalAuth, placeOrder)
+router.post('/place', verifyToken, placeOrder)
 router.get('/track', trackGuestOrder)
 router.get('/get', verifyToken, getOrders)
 router.get('/export', verifyToken, exportOrders)

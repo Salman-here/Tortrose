@@ -22,6 +22,7 @@ import {
   trackPlaceAnOrder
 } from "../../utils/tiktokPixel";
 import { formatOrderItemOptions } from "../../utils/orderItems";
+import { rememberPostAuthRedirect } from "../../utils/postAuthRedirect";
 
 export default function Checkout() {
 
@@ -567,6 +568,25 @@ export default function Checkout() {
 
   // Final form submit
   const onPlaceOrder = async (data) => {
+    const token = getAuthToken();
+    if (!currentUser || !token) {
+      try {
+        sessionStorage.setItem(
+          CHECKOUT_STORAGE_KEY,
+          JSON.stringify({
+            currentStep,
+            formValues: data,
+            selectedShippingPerSeller,
+            appliedCoupons,
+          })
+        );
+      } catch (_) {}
+      rememberPostAuthRedirect('/checkout');
+      toast.info('Sign in to place your order. Your checkout details have been saved.');
+      navigate('/login?redirect=%2Fcheckout');
+      return;
+    }
+
     if (data.paymentMethod === 'cash_on_delivery' && !isCashOnDeliveryAvailable) {
       toast.error(`${codRestrictionText} Please pay by card or Rozare Wallet, or remove those items.`);
       return;
@@ -701,8 +721,7 @@ export default function Checkout() {
     if (data.instructions !== '') order.instructions = data.instructions
 
     try {
-      const token = getAuthToken();
-      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      const headers = { Authorization: `Bearer ${token}` };
       const res = await axios.post(
         `${import.meta.env.VITE_API_URL}api/order/place`,
         { order },
@@ -751,10 +770,6 @@ export default function Checkout() {
             axios.delete(`${import.meta.env.VITE_API_URL}api/cart/clear`, {
               headers: { Authorization: `Bearer ${token}` }
             }).then(() => fetchCart()).catch(error => console.error('Error clearing cart:', error));
-          } else {
-            // Guest: clear local cart
-            localStorage.removeItem('guestCart');
-            fetchCart();
           }
           try { sessionStorage.removeItem(CHECKOUT_STORAGE_KEY); } catch (_) {}
           navigate(`/success?payment=${order.paymentMethod}&orderId=${encodeURIComponent(res.data.orderId || res.data.order?.orderId || '')}`);
@@ -778,6 +793,23 @@ export default function Checkout() {
 
 
     } catch (error) {
+      if (error.response?.status === 401 || error.response?.status === 403) {
+        try {
+          sessionStorage.setItem(
+            CHECKOUT_STORAGE_KEY,
+            JSON.stringify({
+              currentStep,
+              formValues: data,
+              selectedShippingPerSeller,
+              appliedCoupons,
+            })
+          );
+        } catch (_) {}
+        rememberPostAuthRedirect('/checkout');
+        toast.info('Please sign in again to finish your order. Your checkout details are saved.');
+        navigate('/login?redirect=%2Fcheckout');
+        return;
+      }
       if (order.paymentMethod === 'stripe') {
         console.error("Checkout session creation error:", error);
         toast.error(error.response?.data?.msg || "Server error while creating checkout session. Try again!");
@@ -1616,6 +1648,11 @@ export default function Checkout() {
                       <>
                         <div className="w-4 h-4 sm:w-5 sm:h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
                         Processing...
+                      </>
+                    ) : !currentUser ? (
+                      <>
+                        <User className="w-4 h-4 sm:w-5 sm:h-5" />
+                        Sign In to Place Order
                       </>
                     ) : paymentMethod === "cash_on_delivery" ? (
                       <>

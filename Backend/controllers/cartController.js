@@ -2,6 +2,7 @@
 const users = require('../models/User')
 const Cart = require('../models/Cart');
 const Product = require('../models/Product');
+const mongoose = require('mongoose');
 const { isProductBlocked, publicProductFilter } = require('../services/productModerationService');
 const { normalizeCurrency, convertAmount } = require('../services/currencyService');
 const { getProductCurrency, getProductEffectivePrice } = require('../services/productPricingService');
@@ -97,6 +98,83 @@ exports.addToCart = async (req, res) => {
         res.status(500).json({ msg: 'Server error while adding to cart' });
     }
 }
+
+exports.mergeGuestCart = async (req, res) => {
+    const { id: userId } = req.user;
+    const incomingItems = Array.isArray(req.body?.items) ? req.body.items.slice(0, 100) : [];
+
+    try {
+        if (incomingItems.length === 0) {
+            const existingCart = await Cart.findOne({ user: userId });
+            if (!existingCart) {
+                return res.status(200).json({
+                    msg: 'No guest cart items to merge',
+                    cart: [],
+                    totalCartPrice: 0,
+                    totalCartCurrency: await getUserCurrency(userId),
+                });
+            }
+            await existingCart.populate('cartItems.product');
+            return res.status(200).json(await buildCartPayload(existingCart, userId, 'Cart is up to date'));
+        }
+
+        const normalized = incomingItems
+            .map((item) => ({
+                productId: String(item?.productId || item?.product?._id || '').trim(),
+                qty: Math.max(1, Math.min(99, Math.floor(Number(item?.qty) || 1))),
+                selectedColor: item?.selectedColor ? String(item.selectedColor).slice(0, 100) : null,
+                selectedOptions: item?.selectedOptions && typeof item.selectedOptions === 'object'
+                    ? Object.fromEntries(
+                        Object.entries(item.selectedOptions)
+                            .filter(([key, value]) => key && value !== undefined && value !== null)
+                            .slice(0, 25)
+                            .map(([key, value]) => [String(key).slice(0, 100), String(value).slice(0, 200)])
+                    )
+                    : undefined,
+            }))
+            .filter((item) => mongoose.Types.ObjectId.isValid(item.productId));
+
+        const productIds = [...new Set(normalized.map((item) => item.productId))];
+        const products = await Product.find(publicProductFilter({ _id: { $in: productIds } }))
+            .select('_id stock')
+            .lean();
+        const productsById = new Map(products.map((product) => [String(product._id), product]));
+
+        let cart = await Cart.findOne({ user: userId });
+        if (!cart) cart = new Cart({ user: userId, cartItems: [] });
+
+        for (const item of normalized) {
+            const product = productsById.get(item.productId);
+            if (!product || Number(product.stock) < 1) continue;
+
+            const itemKey = optionsKey(item.selectedOptions);
+            const existingItem = cart.cartItems.find((cartItem) =>
+                String(cartItem.product?._id || cartItem.product) === item.productId &&
+                (cartItem.selectedColor || null) === item.selectedColor &&
+                optionsKey(cartItem.selectedOptions) === itemKey
+            );
+            const stock = Math.max(1, Number(product.stock) || 1);
+
+            if (existingItem) {
+                existingItem.qty = Math.min(stock, (Number(existingItem.qty) || 1) + item.qty);
+            } else {
+                cart.cartItems.push({
+                    product: product._id,
+                    qty: Math.min(stock, item.qty),
+                    selectedColor: item.selectedColor,
+                    selectedOptions: item.selectedOptions,
+                });
+            }
+        }
+
+        await cart.save();
+        await cart.populate('cartItems.product');
+        return res.status(200).json(await buildCartPayload(cart, userId, 'Guest cart merged'));
+    } catch (error) {
+        console.error('Error merging guest cart:', error.message);
+        return res.status(500).json({ msg: 'Failed to merge guest cart' });
+    }
+};
 
 exports.getCart = async (req, res) => {
     try {

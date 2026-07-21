@@ -101,12 +101,23 @@ export const GlobalProvider = ({ children }) => {
                 if (gc.length > 0) {
                     try {
                         const token = getAuthToken();
-                        for (const item of gc) {
-                            await axios.post(`${import.meta.env.VITE_API_URL}api/cart/add/${item.product._id}`,
-                                { selectedColor: item.selectedColor || null },
-                                { headers: { Authorization: `Bearer ${token}` } });
-                        }
+                        const res = await axios.post(
+                            `${import.meta.env.VITE_API_URL}api/cart/merge`,
+                            {
+                                items: gc.map((item) => ({
+                                    productId: item.product?._id,
+                                    qty: item.qty,
+                                    selectedColor: item.selectedColor || null,
+                                    selectedOptions: item.selectedOptions || undefined,
+                                })),
+                            },
+                            { headers: { Authorization: `Bearer ${token}` } }
+                        );
                         clearGuestCart();
+                        setCartItems({
+                            cart: res.data.cart || [],
+                            totalCartPrice: res.data.totalCartPrice || 0,
+                        });
                     } catch (e) { console.error('Guest cart sync failed:', e); }
                 }
                 fetchCart();

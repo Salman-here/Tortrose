@@ -2,6 +2,7 @@ const request = require('supertest');
 const express = require('express');
 const mongoose = require('mongoose');
 const { MongoMemoryServer } = require('mongodb-memory-server');
+const jwt = require('jsonwebtoken');
 
 const orderRoutes = require('../../routes/orderRoutes');
 const Order = require('../../models/Order');
@@ -21,6 +22,9 @@ const createSeller = (suffix) =>
     role: 'seller',
     currency: 'PKR',
   });
+
+const tokenFor = (user) =>
+  `Bearer ${jwt.sign({ id: user._id.toString(), role: user.role }, process.env.JWT_SECRET)}`;
 
 const shippingInfo = {
   fullName: 'Buyer One',
@@ -91,6 +95,13 @@ afterAll(async () => {
 describe('order payment policy', () => {
   test('rejects cash on delivery when the seller requires advance payment', async () => {
     const seller = await createSeller('advance');
+    const buyer = await User.create({
+      username: 'buyer-advance',
+      email: 'buyer-advance@test.com',
+      password: 'password123',
+      role: 'user',
+      currency: 'PKR',
+    });
     await Store.create({
       seller: seller._id,
       storeName: 'Advance Store',
@@ -114,6 +125,7 @@ describe('order payment policy', () => {
 
     const res = await request(app)
       .post('/api/orders/place')
+      .set('Authorization', tokenFor(buyer))
       .send(orderPayloadFor(product, 'cash_on_delivery'));
 
     expect(res.status).toBe(400);

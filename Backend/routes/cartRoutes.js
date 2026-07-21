@@ -1,10 +1,11 @@
 const express = require('express')
 const verifyToken = require('../middleware/authMiddleware')
-const { addToCart, getCart, qtyIncrement, qtyDecrement, clearCart, removeCartItem } = require('../controllers/cartController')
+const { addToCart, mergeGuestCart, getCart, qtyIncrement, qtyDecrement, clearCart, removeCartItem } = require('../controllers/cartController')
 const router = express.Router()
 
 
 router.post('/add/:id', verifyToken, addToCart)
+router.post('/merge', verifyToken, mergeGuestCart)
 router.get('/get', verifyToken, getCart)
 router.patch('/qty-inc/:id', verifyToken, qtyIncrement)
 

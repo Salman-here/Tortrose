@@ -7,6 +7,7 @@ import { Sparkles, Eye, EyeOff, AlertCircle, CheckCircle2 } from 'lucide-react';
 import GlassBackground from '../common/GlassBackground';
 import { motion, AnimatePresence } from 'framer-motion';
 import { setCrossDomainCookie } from '../../utils/cookieHelper';
+import { clearPostAuthRedirect, rememberPostAuthRedirect, sanitizePostAuthRedirect } from '../../utils/postAuthRedirect';
 
 const GlassSignUpPage = () => {
   const [step, setStep] = useState(1);
@@ -18,6 +19,8 @@ const GlassSignUpPage = () => {
   const [success, setSuccess] = useState('');
   const navigate = useNavigate();
   const { setCurrentUser } = useAuth();
+  const redirectTo = sanitizePostAuthRedirect(new URLSearchParams(window.location.search).get('redirect'));
+  const redirectQuery = redirectTo ? `?redirect=${encodeURIComponent(redirectTo)}` : '';
 
   const handleChange = (e) => {
     const { id, value } = e.target;
@@ -51,8 +54,8 @@ const GlassSignUpPage = () => {
       localStorage.setItem("currentUser", JSON.stringify(res.data.user));
       setCurrentUser(res.data.user);
       toast.success(res.data.msg);
-      navigate('/');
-      location.reload();
+      clearPostAuthRedirect();
+      window.location.href = redirectTo || '/';
     } catch (error) {
       setError(error.response?.data?.msg || 'Invalid OTP. Please check and try again.');
     } finally { setLoading(false); }
@@ -185,7 +188,10 @@ const GlassSignUpPage = () => {
                   <div className="relative flex justify-center text-sm"><span className="px-2" style={{ color: 'hsl(var(--muted-foreground))' }}>Or continue with</span></div>
                 </div>
                 <div className="mt-6">
-                  <button onClick={() => window.location.href = `${import.meta.env.VITE_API_URL}api/auth/google`}
+                  <button onClick={() => {
+                    if (redirectTo) rememberPostAuthRedirect(redirectTo);
+                    window.location.href = `${import.meta.env.VITE_API_URL}api/auth/google`;
+                  }}
                     type="button" className="w-full flex items-center justify-center gap-3 py-3 px-4 glass-button rounded-xl font-medium text-sm">
                     <svg className="w-5 h-5" viewBox="0 0 24 24">
                       <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
@@ -199,7 +205,7 @@ const GlassSignUpPage = () => {
               </div>
               <div className="mt-8 text-center text-sm" style={{ color: 'hsl(var(--muted-foreground))' }}>
                 Already have an account?{' '}
-                <button onClick={() => navigate("/login")} className="font-medium underline" style={{ color: 'hsl(var(--primary))' }}>Log in</button>
+                <button onClick={() => navigate(`/login${redirectQuery}`)} className="font-medium underline" style={{ color: 'hsl(var(--primary))' }}>Log in</button>
               </div>
               <div className="mt-3 text-center text-sm" style={{ color: 'hsl(var(--muted-foreground))' }}>
                 Want to sell on Rozare?{' '}

@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import Loader from '../common/Loader';
 import { setCrossDomainCookie } from '../../utils/cookieHelper';
+import { consumePostAuthRedirect, sanitizePostAuthRedirect } from '../../utils/postAuthRedirect';
 
 const GoogleAuthSuccess = () => {
     const [searchParams] = useSearchParams();
@@ -10,7 +11,7 @@ const GoogleAuthSuccess = () => {
 
     useEffect(() => {
         const token = searchParams.get('token');
-        const redirect = searchParams.get('redirect');
+        const redirect = sanitizePostAuthRedirect(searchParams.get('redirect'));
         
         if (token) {
             // Store token
@@ -32,7 +33,7 @@ const GoogleAuthSuccess = () => {
             toast.success('Signed in successfully with Google!');
             
             // If there's a redirect param (e.g., from seller signup flow), go there
-            if (redirect && redirect.startsWith('/') && !redirect.startsWith('//')) {
+            if (redirect) {
                 window.location.href = redirect;
                 return;
             }
@@ -47,9 +48,15 @@ const GoogleAuthSuccess = () => {
                         window.location.href = '/become-seller?from=google';
                         return;
                     }
-                } catch (e) {
+                } catch {
                     // Invalid JSON, ignore stale flag
                 }
+            }
+
+            const rememberedRedirect = consumePostAuthRedirect('');
+            if (rememberedRedirect) {
+                window.location.href = rememberedRedirect;
+                return;
             }
             
             // Redirect based on role

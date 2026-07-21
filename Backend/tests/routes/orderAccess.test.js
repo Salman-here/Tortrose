@@ -111,6 +111,15 @@ beforeEach(async () => {
 });
 
 describe('Order access isolation', () => {
+  test('rejects anonymous order placement before processing checkout data', async () => {
+    const res = await request(app)
+      .post('/api/order/place')
+      .send({ order: {} });
+
+    expect(res.status).toBe(401);
+    expect(res.body).toMatchObject({ msg: 'No token provided!' });
+  });
+
   test('does not treat a buyer token as admin for order lists', async () => {
     const buyer = await createUser('buyer-list', 'user');
 

@@ -4,6 +4,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { Sparkles, Eye, EyeOff, AlertCircle } from 'lucide-react';
 import GlassBackground from '../common/GlassBackground';
 import { motion, AnimatePresence } from 'framer-motion';
+import { rememberPostAuthRedirect, sanitizePostAuthRedirect } from '../../utils/postAuthRedirect';
 
 const GlassLoginPage = () => {
   const [form, setForm] = useState({ email: '', password: '', rememberMe: false });
@@ -11,6 +12,8 @@ const GlassLoginPage = () => {
   const [error, setError] = useState('');
   const navigate = useNavigate();
   const { login } = useAuth();
+  const redirectTo = sanitizePostAuthRedirect(new URLSearchParams(window.location.search).get('redirect'));
+  const redirectQuery = redirectTo ? `?redirect=${encodeURIComponent(redirectTo)}` : '';
 
   const handleChange = (e) => {
     const { id, value, type, checked } = e.target;
@@ -125,7 +128,10 @@ const GlassLoginPage = () => {
               <div className="relative flex justify-center text-sm"><span className="px-2" style={{ color: 'hsl(var(--muted-foreground))' }}>Or continue with</span></div>
             </div>
             <div className="mt-6">
-              <button onClick={() => window.location.href = `${import.meta.env.VITE_API_URL}api/auth/google`}
+              <button onClick={() => {
+                if (redirectTo) rememberPostAuthRedirect(redirectTo);
+                window.location.href = `${import.meta.env.VITE_API_URL}api/auth/google`;
+              }}
                 type="button" className="w-full flex items-center justify-center gap-3 py-3 px-4 glass-button rounded-xl font-medium text-sm">
                 <svg className="w-5 h-5" viewBox="0 0 24 24">
                   <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
@@ -140,7 +146,7 @@ const GlassLoginPage = () => {
 
           <div className="mt-8 text-center text-sm" style={{ color: 'hsl(var(--muted-foreground))' }}>
             Don't have an account?{' '}
-            <button onClick={() => navigate("/signup")} className="font-medium underline" style={{ color: 'hsl(var(--primary))' }}>Sign up</button>
+            <button onClick={() => navigate(`/signup${redirectQuery}`)} className="font-medium underline" style={{ color: 'hsl(var(--primary))' }}>Sign up</button>
           </div>
         </div>
         <div className="py-4 px-8 border-t border-white/15 text-center">
