@@ -77,7 +77,6 @@ const ROLE_TITLES = {
 };
 
 const STATIC_CLIENT_ROUTES = {
-  wishlist: { name: 'Wishlist' },
   orders: { name: 'Orders' },
   checkout: { name: 'Checkout' },
   settings: { name: 'Settings' },
@@ -106,6 +105,8 @@ const TAB_CLIENT_ROUTES = {
   account: 'Account',
   stores: 'Marketplace',
   marketplace: 'Marketplace',
+  favorites: 'Wishlist',
+  wishlist: 'Wishlist',
 };
 
 const resolveClientRoute = (rawRoute) => {
@@ -128,7 +129,7 @@ const resolveClientRoute = (rawRoute) => {
     return { type: 'stack', ...STATIC_CLIENT_ROUTES[routeKey] };
   }
   if (routeKey === 'marketplace/trusted') {
-    return { type: 'stack', name: 'TrustedStores' };
+    return { type: 'tab', screen: 'Wishlist', params: { tab: 'stores' } };
   }
 
   const segments = path.split('/').filter(Boolean);
@@ -767,8 +768,14 @@ export default function ChatBot({
             try {
               if (target.type === 'tab') {
                 const localRoutes = navigation.getState?.()?.routeNames || [];
-                if (localRoutes.includes(target.screen)) navigation.navigate(target.screen);
-                else navigation.navigate('MainTabs', { screen: target.screen });
+                if (localRoutes.includes(target.screen)) {
+                  navigation.navigate(target.screen, target.params);
+                } else {
+                  navigation.navigate('MainTabs', {
+                    screen: target.screen,
+                    params: target.params,
+                  });
+                }
               } else {
                 navigation.navigate(target.name, target.params);
               }

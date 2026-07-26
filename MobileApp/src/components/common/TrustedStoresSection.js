@@ -43,7 +43,11 @@ export default function TrustedStoresSection({ navigation }) {
           <Text style={styles.title}>Stores You Trust</Text>
           <Text style={styles.subtitle}>Quick access to your favourites</Text>
         </View>
-        <TouchableOpacity onPress={() => navigation.navigate('TrustedStores')}>
+        <TouchableOpacity
+          onPress={() => navigation.navigate('Wishlist', { tab: 'stores' })}
+          accessibilityRole="button"
+          accessibilityLabel="See all trusted stores"
+        >
           <Text style={styles.seeAll}>See all</Text>
         </TouchableOpacity>
       </View>

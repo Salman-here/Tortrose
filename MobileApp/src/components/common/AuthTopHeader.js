@@ -19,6 +19,7 @@ export default function AuthTopHeader({
   onBack,
   rightIcon = 'shield-checkmark-outline',
   rightLabel = 'Secure',
+  rightElement,
   style,
 }) {
   const { palette } = useTheme();
@@ -58,10 +59,12 @@ export default function AuthTopHeader({
         {!!subtitle && <Text style={styles.subtitle} numberOfLines={1}>{subtitle}</Text>}
       </View>
 
-      <View style={styles.securePill}>
-        <Ionicons name={rightIcon} size={14} color={palette.colors.success} />
-        <Text style={styles.secureText} numberOfLines={1}>{rightLabel}</Text>
-      </View>
+      {rightElement || (
+        <View style={styles.securePill}>
+          <Ionicons name={rightIcon} size={14} color={palette.colors.success} />
+          <Text style={styles.secureText} numberOfLines={1}>{rightLabel}</Text>
+        </View>
+      )}
     </GlassPanel>
   );
 }

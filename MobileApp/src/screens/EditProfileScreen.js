@@ -3,7 +3,8 @@
  */
 
 import React, { useState, useCallback } from 'react';
-import { View, Text, StyleSheet, SafeAreaView, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, KeyboardAvoidingView, Platform } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { Ionicons } from '@expo/vector-icons';
@@ -13,6 +14,7 @@ import api from '../config/api';
 import { useAuth } from '../contexts/AuthContext';
 import GlassBackground from '../components/common/GlassBackground';
 import GlassPanel from '../components/common/GlassPanel';
+import PremiumBackHeader from '../components/common/PremiumBackHeader';
 import { spacing, fontSize, fontWeight, borderRadius } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 
@@ -60,17 +62,17 @@ export default function EditProfileScreen({ navigation }) {
 
   return (
     <GlassBackground>
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={styles.container} edges={Platform.OS === 'android' ? [] : ['top']}>
         <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-          <GlassPanel variant="floating" style={styles.heroHeader}>
-            <TouchableOpacity style={styles.heroBackBtn} onPress={() => navigation.goBack()} activeOpacity={0.7}>
-              <Ionicons name="arrow-back" size={22} color={palette.colors.text} />
-            </TouchableOpacity>
-            <View style={styles.heroCenter}>
-              <Text style={styles.heroTitle}>Edit Profile</Text>
-              <Text style={styles.heroSubtitle}>Update your account details</Text>
-            </View>
-          </GlassPanel>
+          <PremiumBackHeader
+            title="Edit Profile"
+            subtitle="Update your account details"
+            icon="person-outline"
+            onBack={() => navigation.goBack()}
+            rightIcon="sparkles-outline"
+            rightLabel="Profile"
+            style={styles.premiumHeader}
+          />
 
           <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
             <View style={styles.avatarSection}>
@@ -112,11 +114,7 @@ export default function EditProfileScreen({ navigation }) {
 
 const buildStyles = (p) => StyleSheet.create({
   container: { flex: 1 },
-  heroHeader: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing.lg, paddingVertical: spacing.lg, marginHorizontal: spacing.md, marginTop: spacing.sm },
-  heroBackBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.15)', justifyContent: 'center', alignItems: 'center' },
-  heroCenter: { flex: 1, marginLeft: spacing.md },
-  heroTitle: { fontSize: fontSize.xxl, fontWeight: fontWeight.bold, color: p.colors.text },
-  heroSubtitle: { fontSize: fontSize.sm, color: p.colors.textSecondary, marginTop: 2 },
+  premiumHeader: { marginTop: spacing.sm },
   content: { padding: spacing.lg, paddingBottom: spacing.xxl * 2 },
   avatarSection: { alignItems: 'center', marginBottom: spacing.xl },
   avatarWrapper: { position: 'relative', width: 90, height: 90, marginBottom: spacing.sm },

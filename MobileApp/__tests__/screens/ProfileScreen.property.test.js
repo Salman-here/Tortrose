@@ -16,9 +16,9 @@ import * as fc from 'fast-check';
 const getMenuItemsForRole = (role) => {
   const baseItems = [
     { id: 'orders', title: 'My Orders', icon: 'receipt-outline', screen: 'Orders' },
+    { id: 'track-order', title: 'Track My Order', icon: 'navigate-outline', screen: 'TrackOrder' },
+    { id: 'wallet', title: 'Rozare Wallet', icon: 'wallet-outline', screen: 'Wallet' },
     { id: 'addresses', title: 'Saved Addresses', icon: 'location-outline', screen: 'SavedAddresses' },
-    { id: 'notifications', title: 'Notifications', icon: 'notifications-outline', screen: 'Notifications' },
-    { id: 'trusted', title: 'Trusted Stores', icon: 'shield-checkmark-outline', screen: 'TrustedStores' },
     { id: 'change-password', title: 'Change Password', icon: 'lock-closed-outline', screen: 'ChangePassword' },
     { id: 'settings', title: 'Settings', icon: 'settings-outline', screen: 'Settings' },
   ];
@@ -110,8 +110,9 @@ describe('ProfileScreen Property Tests', () => {
 
           // Base items should always be present
           expect(menuIds).toContain('orders');
-          expect(menuIds).toContain('trusted');
-          return true;
+          expect(menuIds).toContain('track-order');
+          expect(menuIds).not.toContain('trusted');
+          expect(menuIds).not.toContain('notifications');
           return true;
         }),
         { numRuns: 100 }

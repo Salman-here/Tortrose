@@ -3,18 +3,17 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, FlatList, StyleSheet, RefreshControl, SafeAreaView, TouchableOpacity } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { View, Text, FlatList, StyleSheet, RefreshControl, Platform } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import api from '../config/api';
 import { useCurrency } from '../contexts/CurrencyContext';
 import { useAuth } from '../contexts/AuthContext';
-import { spacing, fontSize, fontWeight, borderRadius } from '../styles/theme';
-import Loader from '../components/common/Loader';
+import { spacing, fontSize, fontWeight } from '../styles/theme';
 import { CartItemSkeleton } from '../components/common/Skeleton';
 import { EmptyOrders, LoginRequired, ErrorState } from '../components/common/EmptyState';
 import OrderCard from '../components/common/OrderCard';
 import GlassBackground from '../components/common/GlassBackground';
-import GlassPanel from '../components/common/GlassPanel';
+import PremiumBackHeader from '../components/common/PremiumBackHeader';
 import { useTheme } from '../contexts/ThemeContext';
 
 export const sortOrdersByDate = (orders) => {
@@ -48,17 +47,20 @@ export default function OrdersScreen({ navigation }) {
   const onRefresh = useCallback(() => { setRefreshing(true); fetchOrders(); }, [fetchOrders]);
 
   const heroHeader = (
-    <GlassPanel variant="floating" style={styles.heroHeader}>
-      <TouchableOpacity style={styles.heroBackBtn} onPress={() => navigation.goBack()} activeOpacity={0.7}>
-        <Ionicons name="arrow-back" size={22} color={palette.colors.text} />
-      </TouchableOpacity>
-      <Text style={styles.heroTitle}>My Orders</Text>
-      {orders.length > 0 && (
+    <PremiumBackHeader
+      title="My Orders"
+      subtitle="Purchases, delivery and order history"
+      icon="receipt-outline"
+      onBack={() => navigation.goBack()}
+      rightIcon="bag-check-outline"
+      rightLabel="Orders"
+      style={styles.premiumHeader}
+      rightElement={orders.length > 0 ? (
         <View style={styles.heroBadge}>
-          <Text style={styles.heroBadgeText}>{orders.length} {orders.length === 1 ? 'order' : 'orders'}</Text>
+          <Text style={styles.heroBadgeText}>{orders.length}</Text>
         </View>
-      )}
-    </GlassPanel>
+      ) : undefined}
+    />
   );
 
   const content = !currentUser ? <LoginRequired onLogin={() => navigation.navigate('Login')} onBrowse={() => navigation.navigate('MainTabs', { screen: 'Home' })} />
@@ -68,12 +70,12 @@ export default function OrdersScreen({ navigation }) {
     : null;
 
   if (content) {
-    return <GlassBackground><SafeAreaView style={styles.container}>{heroHeader}{content}</SafeAreaView></GlassBackground>;
+    return <GlassBackground><SafeAreaView style={styles.container} edges={Platform.OS === 'android' ? [] : ['top']}>{heroHeader}{content}</SafeAreaView></GlassBackground>;
   }
 
   return (
     <GlassBackground>
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={styles.container} edges={Platform.OS === 'android' ? [] : ['top']}>
         <FlatList
           data={orders}
           keyExtractor={(item) => item._id}
@@ -99,11 +101,9 @@ export default function OrdersScreen({ navigation }) {
 const buildStyles = (p) => StyleSheet.create({
   container: { flex: 1 },
   loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  heroHeader: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing.lg, paddingVertical: spacing.lg, marginHorizontal: spacing.md, marginTop: spacing.sm, marginBottom: spacing.sm, gap: spacing.md },
-  heroBackBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.15)', justifyContent: 'center', alignItems: 'center' },
-  heroTitle: { flex: 1, fontSize: fontSize.xxl, fontWeight: fontWeight.bold, color: p.colors.text },
-  heroBadge: { backgroundColor: 'rgba(99,102,241,0.15)', borderRadius: borderRadius.full, paddingHorizontal: spacing.md, paddingVertical: spacing.xs },
-  heroBadgeText: { color: p.colors.primary, fontSize: fontSize.sm, fontWeight: fontWeight.medium },
+  premiumHeader: { marginTop: spacing.sm, marginBottom: spacing.sm },
+  heroBadge: { minWidth: 36, height: 34, backgroundColor: 'rgba(99,102,241,0.15)', borderRadius: 12, paddingHorizontal: spacing.sm, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(99,102,241,0.2)' },
+  heroBadgeText: { color: p.colors.primary, fontSize: fontSize.sm, fontWeight: fontWeight.bold },
   listContent: { padding: spacing.sm, flexGrow: 1 },
   firstCard: { marginTop: 0 },
   listFooter: { height: spacing.xxl },

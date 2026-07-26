@@ -7,11 +7,13 @@ import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   ScrollView, KeyboardAvoidingView, Platform, ActivityIndicator,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import Toast from 'react-native-toast-message';
 import api from '../config/api';
 import GlassBackground from '../components/common/GlassBackground';
 import GlassPanel from '../components/common/GlassPanel';
+import PremiumBackHeader from '../components/common/PremiumBackHeader';
 import { spacing, fontSize, borderRadius, shadows, fontWeight } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 
@@ -69,16 +71,19 @@ export default function ChangePasswordScreen({ navigation }) {
 
   return (
     <GlassBackground>
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <ScrollView contentContainerStyle={{ padding: spacing.md, paddingBottom: spacing.xxl }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-          {/* Header */}
-          <GlassPanel variant="floating" style={styles.header}>
-            <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
-              <Ionicons name="arrow-back" size={20} color={palette.colors.text} />
-            </TouchableOpacity>
-            <Text style={styles.headerTitle}>Change Password</Text>
-            <View style={{ width: 36 }} />
-          </GlassPanel>
+      <SafeAreaView style={{ flex: 1 }} edges={Platform.OS === 'android' ? [] : ['top']}>
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <ScrollView contentContainerStyle={{ padding: spacing.md, paddingBottom: spacing.xxl }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+          <PremiumBackHeader
+            inset={false}
+            title="Change Password"
+            subtitle="Secure your Rozare account"
+            icon="lock-closed-outline"
+            onBack={() => navigation.goBack()}
+            rightIcon="shield-checkmark-outline"
+            rightLabel="Secure"
+            style={styles.premiumHeader}
+          />
 
           {/* Hero */}
           <GlassPanel variant="strong" style={styles.hero}>
@@ -108,16 +113,15 @@ export default function ChangePasswordScreen({ navigation }) {
               <><Ionicons name="checkmark-circle-outline" size={20} color="#fff" /><Text style={styles.submitText}>Update Password</Text></>
             )}
           </TouchableOpacity>
-        </ScrollView>
-      </KeyboardAvoidingView>
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
     </GlassBackground>
   );
 }
 
 const buildStyles = (p) => StyleSheet.create({
-  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing.md, paddingVertical: spacing.md, marginBottom: spacing.md },
-  backBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: p.glass.bgSubtle, justifyContent: 'center', alignItems: 'center' },
-  headerTitle: { flex: 1, textAlign: 'center', fontSize: fontSize.lg, fontWeight: fontWeight.bold, color: p.colors.text },
+  premiumHeader: { marginBottom: spacing.md },
   hero: { alignItems: 'center', padding: spacing.xl, marginBottom: spacing.md },
   heroIcon: { width: 64, height: 64, borderRadius: 32, backgroundColor: 'rgba(99,102,241,0.12)', justifyContent: 'center', alignItems: 'center', marginBottom: spacing.md },
   heroTitle: { fontSize: fontSize.xxl, fontWeight: fontWeight.bold, color: p.colors.text, marginBottom: 4 },

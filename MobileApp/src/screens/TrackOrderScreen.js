@@ -16,6 +16,7 @@ import {
   ActivityIndicator,
   RefreshControl,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import Toast from 'react-native-toast-message';
@@ -23,6 +24,7 @@ import api from '../config/api';
 import { useCurrency } from '../contexts/CurrencyContext';
 import GlassBackground from '../components/common/GlassBackground';
 import GlassPanel from '../components/common/GlassPanel';
+import PremiumBackHeader from '../components/common/PremiumBackHeader';
 import { spacing, fontSize, borderRadius, fontWeight, shadows } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 
@@ -92,23 +94,23 @@ export default function TrackOrderScreen({ navigation }) {
 
   return (
     <GlassBackground>
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-        <GlassPanel variant="floating" style={styles.header}>
-          <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
-            <Ionicons name="arrow-back" size={20} color={palette.colors.text} />
-          </TouchableOpacity>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.headerTitle}>Track Order</Text>
-            <Text style={styles.headerSubtitle}>Enter your details to find your order</Text>
-          </View>
-          <Ionicons name="search-outline" size={22} color={palette.colors.primary} />
-        </GlassPanel>
+      <SafeAreaView style={styles.container} edges={Platform.OS === 'android' ? [] : ['top']}>
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+          <PremiumBackHeader
+            title="Track Order"
+            subtitle="Enter your details to find your order"
+            icon="navigate-outline"
+            onBack={() => navigation.goBack()}
+            rightIcon="search-outline"
+            rightLabel="Track"
+            style={styles.premiumHeader}
+          />
 
-        <ScrollView
-          showsVerticalScrollIndicator={false}
-          contentContainerStyle={{ padding: spacing.md, paddingBottom: spacing.xxxl }}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={palette.colors.primary} />}
-        >
+          <ScrollView
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={{ padding: spacing.md, paddingBottom: spacing.xxxl }}
+            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={palette.colors.primary} />}
+          >
           <GlassPanel variant="card" style={styles.formCard}>
             <View style={styles.inputGroup}>
               <View style={styles.inputLabel}>
@@ -254,17 +256,16 @@ export default function TrackOrderScreen({ navigation }) {
               <Text style={styles.emptySubtitle}>Double-check your email and order ID</Text>
             </GlassPanel>
           )}
-        </ScrollView>
-      </KeyboardAvoidingView>
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
     </GlassBackground>
   );
 }
 
 const buildStyles = (p) => StyleSheet.create({
-  header: { flexDirection: 'row', alignItems: 'center', marginHorizontal: spacing.md, marginTop: spacing.sm, paddingHorizontal: spacing.md, paddingVertical: spacing.md, gap: spacing.sm },
-  backBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: p.glass.bgSubtle, justifyContent: 'center', alignItems: 'center' },
-  headerTitle: { fontSize: fontSize.xl, fontWeight: fontWeight.bold, color: p.colors.text },
-  headerSubtitle: { fontSize: fontSize.xs, color: p.colors.textSecondary, marginTop: 2 },
+  container: { flex: 1 },
+  premiumHeader: { marginTop: spacing.sm },
   formCard: { padding: spacing.lg, marginBottom: spacing.md },
   inputGroup: { marginBottom: spacing.md },
   inputLabel: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 },

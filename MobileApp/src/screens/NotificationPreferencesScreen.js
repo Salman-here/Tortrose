@@ -7,8 +7,9 @@
 import React, { useState, useEffect } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, TouchableOpacity, Switch,
-  Alert, ActivityIndicator, SafeAreaView,
+  Alert, ActivityIndicator, Platform,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import api from '../config/api';
@@ -16,6 +17,7 @@ import { useAuth } from '../contexts/AuthContext';
 import GlassBackground from '../components/common/GlassBackground';
 import GlassPanel from '../components/common/GlassPanel';
 import Loader from '../components/common/Loader';
+import PremiumBackHeader from '../components/common/PremiumBackHeader';
 import { spacing, fontSize, fontWeight, borderRadius, typography } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 
@@ -170,17 +172,16 @@ export default function NotificationPreferencesScreen({ navigation }) {
 
   return (
     <GlassBackground>
-      <SafeAreaView style={styles.safeArea}>
-        {/* Header */}
-        <GlassPanel variant="floating" style={styles.header}>
-          <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()} activeOpacity={0.7}>
-            <Ionicons name="arrow-back" size={22} color={palette.colors.text} />
-          </TouchableOpacity>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.headerTitle}>Notification Preferences</Text>
-            <Text style={styles.headerSubtitle}>Choose what you want to be notified about</Text>
-          </View>
-        </GlassPanel>
+      <SafeAreaView style={styles.safeArea} edges={Platform.OS === 'android' ? [] : ['top']}>
+        <PremiumBackHeader
+          title="Notification Preferences"
+          subtitle="Choose what you want to be notified about"
+          icon="notifications-outline"
+          onBack={() => navigation.goBack()}
+          rightIcon="options-outline"
+          rightLabel="Alerts"
+          style={styles.premiumHeader}
+        />
 
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
           {sections.map((section) => {
@@ -264,10 +265,7 @@ export default function NotificationPreferencesScreen({ navigation }) {
 
 const buildStyles = (p) => StyleSheet.create({
   safeArea: { flex: 1 },
-  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing.lg, paddingVertical: spacing.md, marginHorizontal: spacing.md, marginTop: spacing.sm, gap: spacing.md },
-  backBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.15)', justifyContent: 'center', alignItems: 'center' },
-  headerTitle: { fontSize: fontSize.xl, fontWeight: fontWeight.bold, color: p.colors.text },
-  headerSubtitle: { fontSize: fontSize.sm, color: p.colors.textSecondary, marginTop: 2 },
+  premiumHeader: { marginTop: spacing.sm },
   scroll: { paddingTop: spacing.md },
   section: { marginHorizontal: spacing.md, marginBottom: spacing.md, overflow: 'hidden' },
   sectionHeader: { flexDirection: 'row', alignItems: 'center', padding: spacing.lg, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.08)', gap: spacing.md },

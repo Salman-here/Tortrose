@@ -4,10 +4,12 @@
  */
 
 import React, { useState, useRef } from 'react';
-import { View, Text, StyleSheet, SafeAreaView, ScrollView, TouchableOpacity, Animated, LayoutAnimation, Platform, UIManager } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Animated, LayoutAnimation, Platform, UIManager } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import GlassBackground from '../components/common/GlassBackground';
 import GlassPanel from '../components/common/GlassPanel';
+import PremiumBackHeader from '../components/common/PremiumBackHeader';
 import { spacing, fontSize, fontWeight, borderRadius } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 
@@ -101,19 +103,16 @@ export default function FAQScreen({ navigation }) {
 
   return (
     <GlassBackground>
-      <SafeAreaView style={styles.container}>
-        <GlassPanel variant="floating" style={styles.header}>
-          <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()} activeOpacity={0.7}>
-            <Ionicons name="arrow-back" size={22} color={palette.colors.text} />
-          </TouchableOpacity>
-          <View style={styles.headerCenter}>
-            <Text style={styles.headerTitle}>FAQ</Text>
-            <Text style={styles.headerSubtitle}>Help Center</Text>
-          </View>
-          <View style={styles.headerIcon}>
-            <Ionicons name="help-circle-outline" size={22} color={palette.colors.primary} />
-          </View>
-        </GlassPanel>
+      <SafeAreaView style={styles.container} edges={Platform.OS === 'android' ? [] : ['top']}>
+        <PremiumBackHeader
+          title="FAQ"
+          subtitle="Help Center"
+          icon="help-circle-outline"
+          onBack={() => navigation.goBack()}
+          rightIcon="chatbubble-ellipses-outline"
+          rightLabel="Help"
+          style={styles.premiumHeader}
+        />
 
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
           <Text style={styles.heroText}>Find answers to the most common questions about Rozare.</Text>
@@ -151,12 +150,7 @@ export default function FAQScreen({ navigation }) {
 
 const buildStyles = (p) => StyleSheet.create({
   container: { flex: 1 },
-  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing.lg, paddingVertical: spacing.lg, marginHorizontal: spacing.md, marginTop: spacing.sm },
-  backBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.15)', justifyContent: 'center', alignItems: 'center' },
-  headerCenter: { flex: 1, marginLeft: spacing.md },
-  headerTitle: { fontSize: fontSize.xxl, fontWeight: fontWeight.bold, color: p.colors.text },
-  headerSubtitle: { fontSize: fontSize.sm, color: p.colors.textSecondary, marginTop: 2 },
-  headerIcon: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.15)', justifyContent: 'center', alignItems: 'center' },
+  premiumHeader: { marginTop: spacing.sm },
   scrollContent: { paddingHorizontal: spacing.md, paddingTop: spacing.md },
   heroText: { fontSize: fontSize.md, color: p.colors.textSecondary, textAlign: 'center', marginBottom: spacing.lg, paddingHorizontal: spacing.lg },
   categoryBlock: { marginBottom: spacing.md },

@@ -38,6 +38,7 @@ import { spacing, fontSize, borderRadius, shadows, fontWeight } from '../styles/
 import { useTheme } from '../contexts/ThemeContext';
 import { PRESET_CATEGORIES, isPresetCategory } from '../utils/categories';
 import HomeCatalogSkeleton from '../components/common/HomeCatalogSkeleton';
+import { ProductCardSkeleton } from '../components/common/Skeleton';
 
 // Subtle brand aurora (teal → sky → indigo) laid over glass surfaces for depth.
 const HERO_SHEEN = ['rgba(20,184,166,0.13)', 'rgba(14,165,233,0.06)', 'rgba(99,102,241,0.15)'];
@@ -66,13 +67,15 @@ export default function HomeScreen({ navigation }) {
 
   const [products, setProducts] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
   const [hasMore, setHasMore] = useState(true);
   const [loadError, setLoadError] = useState(false);
+  const [loadMoreError, setLoadMoreError] = useState(false);
   const [totalProducts, setTotalProducts] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
+  const [appliedSearchQuery, setAppliedSearchQuery] = useState('');
   const [showFilters, setShowFilters] = useState(false);
 
   const [categories, setCategories] = useState([]);
@@ -93,27 +96,46 @@ export default function HomeScreen({ navigation }) {
     sortOrder: 'desc',
   });
   const [showAutocomplete, setShowAutocomplete] = useState(false);
-  const listRef = useRef(null);
   const productRequestRef = useRef(0);
+  const baseLoadingRef = useRef(false);
+  const loadingMoreRef = useRef(false);
   const previousCurrencyRef = useRef(currency);
   const searchBlurTimerRef = useRef(null);
-  const productsSectionOffsetRef = useRef(0);
 
   // Animation for header — use ref to avoid re-creating on every render
   const LIMIT = 12;
 
-  const fetchProducts = useCallback(async (pageNum = 1, overrides = {}) => {
+  const fetchProducts = useCallback(async (pageNum = 1, overrides = {}, options = {}) => {
+    const append = options.append === true && pageNum > 1;
+
+    if (append) {
+      if (baseLoadingRef.current || loadingMoreRef.current) return;
+      loadingMoreRef.current = true;
+      setIsLoadingMore(true);
+    } else {
+      // A fresh query supersedes any append request that may still be running.
+      baseLoadingRef.current = true;
+      loadingMoreRef.current = false;
+      setIsLoadingMore(false);
+      if (!options.silent) {
+        setIsLoading(true);
+        setLoadError(false);
+        setProducts([]);
+        setTotalProducts(0);
+      }
+    }
+
+    setLoadMoreError(false);
     const requestId = ++productRequestRef.current;
     const requestFilters = {
       categories: overrides.categories ?? selectedCategories,
       brands: overrides.brands ?? selectedBrands,
-      search: overrides.search ?? searchQuery,
+      search: overrides.search ?? appliedSearchQuery,
       priceRange: overrides.priceRange ?? priceRange,
       sortBy: overrides.sortBy ?? sortBy,
       sortOrder: overrides.sortOrder ?? sortOrder,
     };
 
-    setIsLoading(true);
     try {
       const params = new URLSearchParams();
       if (requestFilters.categories.length > 0) {
@@ -141,41 +163,65 @@ export default function HomeScreen({ navigation }) {
 
       const newProducts = res.data.products || [];
       const paginationInfo = res.data.pagination;
-
-      const seen = new Set();
-      const unique = newProducts.filter(product => {
-        if (!product?._id || seen.has(product._id)) return false;
-        seen.add(product._id);
+      const pageIds = new Set();
+      const uniquePage = newProducts.filter(product => {
+        if (!product?._id || pageIds.has(product._id)) return false;
+        pageIds.add(product._id);
         return true;
       });
-      setProducts(unique);
+
+      setProducts(previousProducts => {
+        if (!append) return uniquePage;
+
+        const seenIds = new Set(previousProducts.map(product => product?._id).filter(Boolean));
+        const nextProducts = uniquePage.filter(product => !seenIds.has(product._id));
+        return nextProducts.length > 0
+          ? [...previousProducts, ...nextProducts]
+          : previousProducts;
+      });
 
       if (paginationInfo) {
-        const nextTotalPages = Math.max(1, Number(paginationInfo.totalPages) || 1);
-        setTotalPages(nextTotalPages);
+        const nextTotalPages = Math.max(
+          1,
+          Number(paginationInfo.totalPages ?? paginationInfo.pages) || 1
+        );
         setHasMore(pageNum < nextTotalPages);
-        setTotalProducts(Number(paginationInfo.totalProducts) || 0);
+        setTotalProducts(
+          Number(paginationInfo.totalProducts ?? paginationInfo.total) || 0
+        );
         setPage(pageNum);
       } else {
         const fallbackHasMore = newProducts.length === LIMIT;
-        setTotalPages(fallbackHasMore ? pageNum + 1 : pageNum);
         setHasMore(fallbackHasMore);
-        setTotalProducts(newProducts.length);
+        setTotalProducts(previousTotal => (
+          append ? previousTotal + uniquePage.length : uniquePage.length
+        ));
         setPage(pageNum);
       }
       setLoadError(false);
     } catch (error) {
       if (requestId !== productRequestRef.current) return;
       console.error('Error fetching products:', error);
-      setHasMore(false);
-      setLoadError(true);
+      if (append) {
+        // Preserve rendered products and expose a small retry footer.
+        setLoadMoreError(true);
+      } else if (!options.silent) {
+        setHasMore(false);
+        setLoadError(true);
+      }
     } finally {
       if (requestId === productRequestRef.current) {
-        setIsLoading(false);
-        setRefreshing(false);
+        if (append) {
+          loadingMoreRef.current = false;
+          setIsLoadingMore(false);
+        } else {
+          baseLoadingRef.current = false;
+          setIsLoading(false);
+          setRefreshing(false);
+        }
       }
     }
-  }, [selectedCategories, selectedBrands, searchQuery, priceRange, sortBy, sortOrder, currency]);
+  }, [selectedCategories, selectedBrands, appliedSearchQuery, priceRange, sortBy, sortOrder, currency]);
 
   const fetchFilters = async () => {
     try {
@@ -191,8 +237,8 @@ export default function HomeScreen({ navigation }) {
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
-    fetchProducts(page);
-  }, [fetchProducts, page]);
+    fetchProducts(1, {}, { silent: true });
+  }, [fetchProducts]);
 
   // Initial load and when currentUser changes
   useEffect(() => {
@@ -241,6 +287,7 @@ export default function HomeScreen({ navigation }) {
     cancelAutocompleteBlur();
     const nextQuery = String(explicitQuery || '').trim();
     setSearchQuery(nextQuery);
+    setAppliedSearchQuery(nextQuery);
     setPage(1);
     setHasMore(true);
     setShowAutocomplete(false);
@@ -304,6 +351,7 @@ export default function HomeScreen({ navigation }) {
     setSelectedCategories([]);
     setSelectedBrands([]);
     setSearchQuery('');
+    setAppliedSearchQuery('');
     setPriceRange(DEFAULT_PRICE_RANGE);
     setSortBy('relevance');
     setSortOrder('desc');
@@ -324,12 +372,12 @@ export default function HomeScreen({ navigation }) {
       categories: [...selectedCategories],
       brands: [...selectedBrands],
       priceRange: { ...priceRange },
-      search: searchQuery,
+      search: appliedSearchQuery,
       sortBy,
       sortOrder,
     });
     setShowFilters(true);
-  }, [selectedCategories, selectedBrands, priceRange, searchQuery, sortBy, sortOrder]);
+  }, [selectedCategories, selectedBrands, priceRange, appliedSearchQuery, sortBy, sortOrder]);
 
   const applyFilters = useCallback(() => {
     const canonicalCategories = canonicalizeCategories(filterDraft.categories);
@@ -338,6 +386,7 @@ export default function HomeScreen({ navigation }) {
     setSelectedBrands(filterDraft.brands);
     setPriceRange(filterDraft.priceRange);
     setSearchQuery(appliedDraft.search);
+    setAppliedSearchQuery(appliedDraft.search);
     setSortBy(filterDraft.sortBy);
     setSortOrder(filterDraft.sortOrder);
     setShowFilters(false);
@@ -363,20 +412,50 @@ export default function HomeScreen({ navigation }) {
     [categories]
   );
 
-  const visiblePageNumbers = useMemo(() => {
-    const maxVisible = 3;
-    let start = Math.max(1, page - Math.floor(maxVisible / 2));
-    const end = Math.min(totalPages, start + maxVisible - 1);
-    start = Math.max(1, end - maxVisible + 1);
-    return Array.from({ length: Math.max(0, end - start + 1) }, (_, index) => start + index);
-  }, [page, totalPages]);
+  const loadNextPage = useCallback(() => {
+    if (
+      products.length === 0
+      || !hasMore
+      || loadMoreError
+      || isLoading
+      || baseLoadingRef.current
+      || loadingMoreRef.current
+    ) {
+      return;
+    }
 
-  const goToPage = useCallback((nextPage) => {
-    if (isLoading || nextPage < 1 || nextPage > totalPages || nextPage === page) return;
-    const targetOffset = Math.max(0, productsSectionOffsetRef.current - spacing.sm);
-    listRef.current?.scrollToOffset({ offset: targetOffset, animated: true });
-    fetchProducts(nextPage);
-  }, [fetchProducts, isLoading, page, totalPages]);
+    fetchProducts(page + 1, {}, { append: true });
+  }, [fetchProducts, hasMore, isLoading, loadMoreError, page, products.length]);
+
+  const retryNextPage = useCallback(() => {
+    if (
+      products.length === 0
+      || !hasMore
+      || isLoading
+      || baseLoadingRef.current
+      || loadingMoreRef.current
+    ) {
+      return;
+    }
+
+    fetchProducts(page + 1, {}, { append: true });
+  }, [fetchProducts, hasMore, isLoading, page, products.length]);
+
+  // React Native's onEndReached can be skipped on some web/Android momentum
+  // combinations. This distance check is a guarded fallback; the request refs
+  // above ensure both callbacks can never append the same page concurrently.
+  const handleCatalogScroll = useCallback(({ nativeEvent }) => {
+    const viewportHeight = nativeEvent?.layoutMeasurement?.height || 0;
+    const scrollY = nativeEvent?.contentOffset?.y || 0;
+    const contentHeight = nativeEvent?.contentSize?.height || 0;
+    if (
+      viewportHeight > 0
+      && contentHeight > viewportHeight
+      && viewportHeight + scrollY >= contentHeight - (viewportHeight * 0.4)
+    ) {
+      loadNextPage();
+    }
+  }, [loadNextPage]);
 
   // Memoized render item to prevent unnecessary re-renders
   const renderItem = useCallback(({ item, index }) => (
@@ -618,7 +697,7 @@ export default function HomeScreen({ navigation }) {
       <TrustedStoresSection navigation={navigation} />
 
       {/* Personalized Sliders (collapsible — matches website) */}
-      {!hasActiveFilters && !searchQuery && (
+      {!hasActiveFilters && !appliedSearchQuery && (
         <PersonalizedSliders navigation={navigation} />
       )}
 
@@ -649,14 +728,9 @@ export default function HomeScreen({ navigation }) {
       </TouchableOpacity>
 
       {/* Products Section Header */}
-      <View
-        style={styles.productsHeader}
-        onLayout={(event) => {
-          productsSectionOffsetRef.current = event.nativeEvent.layout.y;
-        }}
-      >
+      <View style={styles.productsHeader}>
         <Text style={styles.productsTitle}>
-          {hasActiveFilters || searchQuery ? 'Search Results' : 'All Products'}
+          {hasActiveFilters || appliedSearchQuery ? 'Search Results' : 'All Products'}
         </Text>
         <View style={styles.productCountContainer}>
           <Text style={styles.productCount}>
@@ -1026,7 +1100,7 @@ export default function HomeScreen({ navigation }) {
       <Text style={styles.emptySubtitle}>
         {loadError
           ? 'Check your connection and try again'
-          : hasActiveFilters || searchQuery
+          : hasActiveFilters || appliedSearchQuery
             ? 'Try adjusting your filters or search query'
             : 'Check back later for new products'
         }
@@ -1042,7 +1116,7 @@ export default function HomeScreen({ navigation }) {
           <Ionicons name="refresh" size={18} color={palette.colors.white} />
           <Text style={styles.emptyActionText}>Retry</Text>
         </TouchableOpacity>
-      ) : (hasActiveFilters || searchQuery) && (
+      ) : (hasActiveFilters || appliedSearchQuery) && (
         <TouchableOpacity
           style={styles.emptyActionButton}
           onPress={() => {
@@ -1057,90 +1131,55 @@ export default function HomeScreen({ navigation }) {
   );
 
   const renderFooter = () => {
-    if (isLoading || products.length === 0 || totalPages <= 1) return null;
+    if (isLoading || products.length === 0) return null;
 
-    return (
-      <View style={styles.paginationWrap}>
-        <GlassBlurFill intensity={36} />
-        <LinearGradient
-          colors={['rgba(20,184,166,0.08)', 'rgba(14,165,233,0.035)', 'rgba(99,102,241,0.10)']}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={StyleSheet.absoluteFill}
-          pointerEvents="none"
-        />
-        <View style={styles.paginationMetaRow}>
-          <View style={styles.paginationMetaIcon}>
-            <Ionicons name="layers-outline" size={16} color={palette.colors.primary} />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.paginationTitle}>More discoveries await</Text>
-            <Text style={styles.paginationSubtitle}>Page {page} of {totalPages} · {totalProducts} products</Text>
-          </View>
+    if (isLoadingMore) {
+      return (
+        <View style={styles.loadMoreSkeleton} accessibilityLabel="Loading more products">
+          <View style={styles.loadMoreSkeletonCell}><ProductCardSkeleton /></View>
+          <View style={styles.loadMoreSkeletonCell}><ProductCardSkeleton /></View>
         </View>
+      );
+    }
 
-        <View style={styles.paginationControls}>
-          <TouchableOpacity
-            style={[styles.paginationArrow, page === 1 && styles.paginationDisabled]}
-            onPress={() => goToPage(page - 1)}
-            disabled={page === 1}
-            accessibilityLabel="Previous product page"
-          >
-            <Ionicons name="chevron-back" size={18} color={page === 1 ? palette.colors.textLight : palette.colors.primary} />
-          </TouchableOpacity>
-
-          <View style={styles.paginationPages}>
-            {visiblePageNumbers[0] > 1 && (
-              <>
-                <TouchableOpacity style={styles.pageButton} onPress={() => goToPage(1)} accessibilityLabel="Go to product page 1">
-                  <Text style={styles.pageButtonText}>1</Text>
-                </TouchableOpacity>
-                {visiblePageNumbers[0] > 2 && <Text style={styles.paginationEllipsis}>•••</Text>}
-              </>
-            )}
-            {visiblePageNumbers.map(pageNumber => {
-              const active = pageNumber === page;
-              return (
-                <TouchableOpacity
-                  key={pageNumber}
-                  style={[styles.pageButton, active && styles.pageButtonActive]}
-                  onPress={() => goToPage(pageNumber)}
-                  accessibilityLabel={`Go to product page ${pageNumber}`}
-                  accessibilityState={{ selected: active }}
-                >
-                  {active && <LinearGradient colors={palette.gradients.cta} style={StyleSheet.absoluteFill} pointerEvents="none" />}
-                  <Text style={[styles.pageButtonText, active && styles.pageButtonTextActive]}>{pageNumber}</Text>
-                </TouchableOpacity>
-              );
-            })}
-            {visiblePageNumbers[visiblePageNumbers.length - 1] < totalPages && (
-              <>
-                {visiblePageNumbers[visiblePageNumbers.length - 1] < totalPages - 1 && <Text style={styles.paginationEllipsis}>•••</Text>}
-                <TouchableOpacity style={styles.pageButton} onPress={() => goToPage(totalPages)} accessibilityLabel={`Go to product page ${totalPages}`}>
-                  <Text style={styles.pageButtonText}>{totalPages}</Text>
-                </TouchableOpacity>
-              </>
-            )}
+    if (loadMoreError) {
+      return (
+        <TouchableOpacity
+          style={styles.loadMoreRetry}
+          onPress={retryNextPage}
+          accessibilityRole="button"
+          accessibilityLabel="Retry loading more products"
+          activeOpacity={0.82}
+        >
+          <GlassBlurFill intensity={34} />
+          <View style={styles.loadMoreRetryIcon}>
+            <Ionicons name="refresh" size={17} color={palette.colors.primary} />
           </View>
+          <View style={styles.loadMoreRetryCopy}>
+            <Text style={styles.loadMoreRetryTitle}>Keep exploring</Text>
+            <Text style={styles.loadMoreRetryText}>Tap to retry loading more products</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={18} color={palette.colors.primary} />
+        </TouchableOpacity>
+      );
+    }
 
-          <TouchableOpacity
-            style={[styles.paginationArrow, !hasMore && styles.paginationDisabled]}
-            onPress={() => goToPage(page + 1)}
-            disabled={!hasMore}
-            accessibilityLabel="Next product page"
-          >
-            <Ionicons name="chevron-forward" size={18} color={!hasMore ? palette.colors.textLight : palette.colors.primary} />
-          </TouchableOpacity>
+    if (!hasMore && products.length > LIMIT) {
+      return (
+        <View style={styles.catalogEnd}>
+          <Ionicons name="checkmark-circle-outline" size={16} color={palette.colors.success} />
+          <Text style={styles.catalogEndText}>You’ve seen all {totalProducts || products.length} products</Text>
         </View>
-      </View>
-    );
+      );
+    }
+
+    return null;
   };
 
   return (
     <GlassBackground>
       <SafeAreaView style={{ flex: 1 }} edges={Platform.OS === 'android' ? [] : ['top']}>
       <FlatList
-        ref={listRef}
         data={isLoading ? [] : products}
         keyExtractor={(item) => item._id}
         numColumns={2}
@@ -1158,6 +1197,10 @@ export default function HomeScreen({ navigation }) {
           />
         }
         ListEmptyComponent={isLoading ? <HomeCatalogSkeleton count={6} /> : renderEmptyState()}
+        onEndReached={loadNextPage}
+        onEndReachedThreshold={0.45}
+        onScroll={handleCatalogScroll}
+        scrollEventThrottle={200}
         showsVerticalScrollIndicator={false}
         initialNumToRender={8}
         maxToRenderPerBatch={8}
@@ -1311,19 +1354,14 @@ const buildStyles = (p) => StyleSheet.create({
   resetButtonText: { fontSize: fontSize.md, fontWeight: fontWeight.semibold, color: p.colors.text },
   applyButton: { flex: 1, minHeight: 50, overflow: 'hidden', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: spacing.md, borderRadius: borderRadius.xl, gap: spacing.sm, ...shadows.md },
   applyButtonText: { fontSize: fontSize.md, fontWeight: fontWeight.bold, color: '#fff' },
-  // Explicit catalog pagination
-  paginationWrap: { marginHorizontal: spacing.lg, marginTop: spacing.xl, padding: spacing.md, borderRadius: 24, overflow: 'hidden', backgroundColor: p.glass.bg, borderWidth: 1, borderColor: p.glass.border, ...shadows.md },
-  paginationMetaRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginBottom: spacing.md },
-  paginationMetaIcon: { width: 36, height: 36, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: p.colors.primarySubtle, borderWidth: 1, borderColor: p.colors.primaryLighter },
-  paginationTitle: { fontSize: fontSize.sm, fontWeight: fontWeight.bold, color: p.colors.text },
-  paginationSubtitle: { fontSize: fontSize.xs, color: p.colors.textSecondary, marginTop: 2 },
-  paginationControls: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.xs },
-  paginationPages: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5 },
-  paginationArrow: { width: 40, height: 40, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: p.glass.bgStrong, borderWidth: 1, borderColor: p.glass.border },
-  paginationDisabled: { opacity: 0.5 },
-  pageButton: { minWidth: 36, height: 36, paddingHorizontal: 7, borderRadius: 12, overflow: 'hidden', alignItems: 'center', justifyContent: 'center', backgroundColor: p.glass.bgSubtle, borderWidth: 1, borderColor: p.glass.borderSubtle },
-  pageButtonActive: { borderColor: 'rgba(255,255,255,0.38)', shadowColor: '#0EA5E9', shadowOpacity: 0.24, shadowRadius: 8, elevation: 3 },
-  pageButtonText: { fontSize: fontSize.sm, color: p.colors.text, fontWeight: fontWeight.semibold },
-  pageButtonTextActive: { color: '#fff', fontWeight: fontWeight.bold },
-  paginationEllipsis: { fontSize: 10, color: p.colors.textSecondary, letterSpacing: -1 },
+  // Continuous catalog loading keeps each network/render batch bounded.
+  loadMoreSkeleton: { flexDirection: 'row', paddingHorizontal: spacing.md, paddingTop: spacing.sm },
+  loadMoreSkeletonCell: { flex: 1, minWidth: 0 },
+  loadMoreRetry: { marginHorizontal: spacing.lg, marginTop: spacing.md, minHeight: 64, overflow: 'hidden', flexDirection: 'row', alignItems: 'center', gap: spacing.sm, padding: spacing.sm, borderRadius: borderRadius.xl, backgroundColor: p.glass.bg, borderWidth: 1, borderColor: p.glass.border },
+  loadMoreRetryIcon: { width: 38, height: 38, borderRadius: 13, alignItems: 'center', justifyContent: 'center', backgroundColor: p.colors.primarySubtle, borderWidth: 1, borderColor: p.colors.primaryLighter },
+  loadMoreRetryCopy: { flex: 1, minWidth: 0 },
+  loadMoreRetryTitle: { fontSize: fontSize.sm, fontWeight: fontWeight.bold, color: p.colors.text },
+  loadMoreRetryText: { marginTop: 2, fontSize: fontSize.xs, color: p.colors.textSecondary },
+  catalogEnd: { alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: spacing.xs, marginTop: spacing.lg, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: borderRadius.full, backgroundColor: p.glass.bgSubtle, borderWidth: 1, borderColor: p.glass.borderSubtle },
+  catalogEndText: { fontSize: fontSize.xs, color: p.colors.textSecondary, fontWeight: fontWeight.medium },
 });

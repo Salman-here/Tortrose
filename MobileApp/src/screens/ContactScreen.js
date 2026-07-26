@@ -4,10 +4,12 @@
  */
 
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, SafeAreaView, ScrollView, TouchableOpacity, TextInput, Alert, Linking, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Alert, Linking, KeyboardAvoidingView, Platform } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import GlassBackground from '../components/common/GlassBackground';
 import GlassPanel from '../components/common/GlassPanel';
+import PremiumBackHeader from '../components/common/PremiumBackHeader';
 import { spacing, fontSize, fontWeight, borderRadius } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 
@@ -40,19 +42,16 @@ export default function ContactScreen({ navigation }) {
 
   return (
     <GlassBackground>
-      <SafeAreaView style={styles.container}>
-        <GlassPanel variant="floating" style={styles.header}>
-          <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()} activeOpacity={0.7}>
-            <Ionicons name="arrow-back" size={22} color={palette.colors.text} />
-          </TouchableOpacity>
-          <View style={styles.headerCenter}>
-            <Text style={styles.headerTitle}>Contact Us</Text>
-            <Text style={styles.headerSubtitle}>We'd love to hear from you</Text>
-          </View>
-          <View style={styles.headerIcon}>
-            <Ionicons name="mail-outline" size={22} color={palette.colors.primary} />
-          </View>
-        </GlassPanel>
+      <SafeAreaView style={styles.container} edges={Platform.OS === 'android' ? [] : ['top']}>
+        <PremiumBackHeader
+          title="Contact Us"
+          subtitle="We'd love to hear from you"
+          icon="mail-outline"
+          onBack={() => navigation.goBack()}
+          rightIcon="headset-outline"
+          rightLabel="Support"
+          style={styles.premiumHeader}
+        />
 
         <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
@@ -111,12 +110,7 @@ export default function ContactScreen({ navigation }) {
 
 const buildStyles = (p) => StyleSheet.create({
   container: { flex: 1 },
-  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing.lg, paddingVertical: spacing.lg, marginHorizontal: spacing.md, marginTop: spacing.sm },
-  backBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.15)', justifyContent: 'center', alignItems: 'center' },
-  headerCenter: { flex: 1, marginLeft: spacing.md },
-  headerTitle: { fontSize: fontSize.xxl, fontWeight: fontWeight.bold, color: p.colors.text },
-  headerSubtitle: { fontSize: fontSize.sm, color: p.colors.textSecondary, marginTop: 2 },
-  headerIcon: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.15)', justifyContent: 'center', alignItems: 'center' },
+  premiumHeader: { marginTop: spacing.sm },
   scrollContent: { paddingHorizontal: spacing.md, paddingTop: spacing.md },
   methodCard: { flexDirection: 'row', alignItems: 'center', marginBottom: spacing.md },
   methodIcon: { width: 48, height: 48, borderRadius: borderRadius.xl, justifyContent: 'center', alignItems: 'center', marginRight: spacing.md },

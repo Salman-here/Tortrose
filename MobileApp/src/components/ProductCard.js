@@ -15,6 +15,7 @@ import { useCurrency } from '../contexts/CurrencyContext';
 import { useNavigation } from '@react-navigation/native';
 import { colors, spacing, fontSize, borderRadius, shadows, fontWeight, glass } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
+import { tap as hapticTap } from '../utils/haptics';
 import GlassBlurFill from './common/GlassBlurFill';
 
 const { width } = Dimensions.get('window');
@@ -108,7 +109,7 @@ function ProductCard({ product, index = 0, onPress, compact = false }) {
         onLongPress={() => {
           if (isOutOfStock) return;
           if (!currentUser) { navigation.navigate('Login'); return; }
-          import('expo-haptics').then((H) => H.impactAsync?.(H.ImpactFeedbackStyle.Heavy)).catch(() => {});
+          hapticTap();
           handleAddToCart(_id, null, product);
         }}
         delayLongPress={350}

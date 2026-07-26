@@ -3,6 +3,7 @@
  */
 
 import React, { useCallback, useEffect, useState } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import {
   Alert,
   FlatList,
@@ -36,7 +37,7 @@ const FAVORITES_SHEEN = [
   'rgba(14,165,233,0.10)',
 ];
 
-export default function WishlistScreen({ navigation }) {
+export default function WishlistScreen({ navigation, route }) {
   const { palette } = useTheme();
   const styles = buildStyles(palette);
   const { currentUser } = useAuth();
@@ -47,6 +48,16 @@ export default function WishlistScreen({ navigation }) {
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [errors, setErrors] = useState({ products: false, stores: false });
+
+  useFocusEffect(
+    useCallback(() => {
+      const requestedTab = route?.params?.tab;
+      if (requestedTab === 'products' || requestedTab === 'stores') {
+        setActiveTab(requestedTab);
+        navigation.setParams({ tab: undefined });
+      }
+    }, [navigation, route?.params?.tab]),
+  );
 
   const loadFavorites = useCallback(async ({ silent = false } = {}) => {
     if (!currentUser) {

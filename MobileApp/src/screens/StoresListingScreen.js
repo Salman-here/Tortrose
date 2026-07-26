@@ -157,7 +157,12 @@ export default function StoresListingScreen({ navigation }) {
                     </View>
                   </View>
                   {currentUser && (
-                    <TouchableOpacity style={styles.trustedButton} onPress={() => navigation.navigate('TrustedStores')} activeOpacity={0.8} accessibilityLabel="View trusted stores">
+                    <TouchableOpacity
+                      style={styles.trustedButton}
+                      onPress={() => navigation.navigate('Wishlist', { tab: 'stores' })}
+                      activeOpacity={0.8}
+                      accessibilityLabel="View trusted stores"
+                    >
                       <Ionicons name="heart" size={15} color={palette.colors.heart} />
                       <Text style={styles.trustedButtonText}>Trusted</Text>
                     </TouchableOpacity>

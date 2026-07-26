@@ -12,6 +12,7 @@ import api from '../config/api';
 import { HAPTICS_KEY, setHapticsEnabled, isHapticsEnabled, impact as hapticImpact, Haptics } from '../utils/haptics';
 import GlassBackground from '../components/common/GlassBackground';
 import GlassPanel from '../components/common/GlassPanel';
+import PremiumBackHeader from '../components/common/PremiumBackHeader';
 import { spacing, fontSize, fontWeight, borderRadius } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 import { isBiometricEnabled, setBiometricEnabled, isBiometricAvailable, authenticateBiometric } from '../utils/biometricLock';
@@ -119,16 +120,15 @@ export default function SettingsScreen({ navigation }) {
   return (
     <GlassBackground>
       <SafeAreaView style={styles.container} edges={Platform.OS === 'android' ? [] : ['top']}>
-        <GlassPanel variant="floating" style={styles.heroHeader}>
-          <TouchableOpacity style={styles.heroBackBtn} onPress={() => navigation.goBack()} activeOpacity={0.7}>
-            <Ionicons name="arrow-back" size={22} color={palette.colors.text} />
-          </TouchableOpacity>
-          <View style={styles.heroCenter}>
-            <Text style={styles.heroTitle}>Settings</Text>
-            <Text style={styles.heroSubtitle}>App preferences & support</Text>
-          </View>
-          <View style={styles.heroIconWrap}><Ionicons name="settings-outline" size={22} color={palette.colors.primary} /></View>
-        </GlassPanel>
+        <PremiumBackHeader
+          title="Settings"
+          subtitle="App preferences & support"
+          icon="settings-outline"
+          onBack={() => navigation.goBack()}
+          rightIcon="options-outline"
+          rightLabel="App"
+          style={styles.premiumHeader}
+        />
 
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
           <Text style={styles.sectionLabel}>APPEARANCE</Text>
@@ -201,7 +201,7 @@ export default function SettingsScreen({ navigation }) {
 
           <Text style={styles.sectionLabel}>PREFERENCES</Text>
           <GlassPanel variant="card" style={styles.settingCard}>
-            <SettingRow icon="phone-portrait-outline" iconColor="#EC4899" iconBg="rgba(236,72,153,0.15)" title="Haptic Feedback" subtitle="Vibration on taps and gestures" showBorder={false} rightElement={<Switch value={hapticsEnabled} onValueChange={handleHapticsChange} trackColor={{ false: palette.colors.grayLighter, true: palette.colors.primaryLight }} thumbColor={hapticsEnabled ? palette.colors.primary : palette.colors.grayLight} />} />
+            <SettingRow icon="phone-portrait-outline" iconColor="#EC4899" iconBg="rgba(236,72,153,0.15)" title="Haptic Feedback" subtitle="Light tactile tap on actions" showBorder={false} rightElement={<Switch value={hapticsEnabled} onValueChange={handleHapticsChange} trackColor={{ false: palette.colors.grayLighter, true: palette.colors.primaryLight }} thumbColor={hapticsEnabled ? palette.colors.primary : palette.colors.grayLight} />} />
           </GlassPanel>
 
           <Text style={styles.sectionLabel}>NOTIFICATIONS</Text>
@@ -244,12 +244,7 @@ export default function SettingsScreen({ navigation }) {
 
 const buildStyles = (p) => StyleSheet.create({
   container: { flex: 1 },
-  heroHeader: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing.lg, paddingVertical: spacing.lg, marginHorizontal: spacing.md, marginTop: spacing.sm },
-  heroBackBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.15)', justifyContent: 'center', alignItems: 'center' },
-  heroCenter: { flex: 1, marginLeft: spacing.md },
-  heroTitle: { fontSize: fontSize.xxl, fontWeight: fontWeight.bold, color: p.colors.text },
-  heroSubtitle: { fontSize: fontSize.sm, color: p.colors.textSecondary, marginTop: 2 },
-  heroIconWrap: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.15)', justifyContent: 'center', alignItems: 'center' },
+  premiumHeader: { marginTop: spacing.sm },
   scrollContent: { paddingBottom: spacing.xxl },
   sectionLabel: { fontSize: fontSize.xs, fontWeight: fontWeight.bold, color: p.colors.textSecondary, letterSpacing: 0.8, paddingHorizontal: spacing.lg, paddingTop: spacing.lg, paddingBottom: spacing.sm },
   settingCard: { marginHorizontal: spacing.md, overflow: 'hidden' },

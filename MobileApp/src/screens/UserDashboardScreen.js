@@ -57,13 +57,12 @@ export default function UserDashboardScreen({ navigation }) {
 
   const menuItems = [
     { label: 'My Orders', desc: `${orders.length} orders`, icon: 'receipt-outline', screen: 'Orders', color: palette.colors.primary },
+    { label: 'Track My Order', desc: 'Check delivery status', icon: 'navigate-outline', screen: 'TrackOrder', color: palette.colors.warning },
     { label: 'Rozare Wallet', desc: 'Balance, refunds & top-ups', icon: 'wallet-outline', screen: 'Wallet', color: palette.colors.success },
     { label: 'AI Shopping Assistant', desc: 'Chat to shop, track & more', icon: 'sparkles-outline', screen: 'AIChat', color: '#6366f1' },
     { label: 'WhatsApp AI', desc: 'Link buyer WhatsApp', icon: 'logo-whatsapp', screen: 'UserWhatsAppSettings', color: '#22C55E' },
     { label: 'Edit Profile', desc: 'Update your info', icon: 'person-outline', screen: 'EditProfile', color: '#8b5cf6' },
-    { label: 'Wishlist', desc: 'Saved items', icon: 'heart-outline', screen: 'MainTabs', params: { screen: 'Wishlist' }, color: palette.colors.error },
-    { label: 'Trusted Stores', desc: 'Stores you follow', icon: 'shield-checkmark-outline', screen: 'TrustedStores', color: palette.colors.success },
-    { label: 'Notifications', desc: 'Inbox & alerts', icon: 'notifications-outline', screen: 'Notifications', color: palette.colors.warning },
+    { label: 'Wishlist', desc: 'Saved items and trusted stores', icon: 'heart-outline', screen: 'MainTabs', params: { screen: 'Wishlist' }, color: palette.colors.error },
     { label: 'Settings', desc: 'Preferences', icon: 'settings-outline', screen: 'Settings', color: palette.colors.textSecondary },
   ];
 

@@ -13,7 +13,6 @@ import { LinearGradient } from 'expo-linear-gradient';
 import Toast from 'react-native-toast-message';
 import api from '../config/api';
 import { useAuth } from '../contexts/AuthContext';
-import { useGlobal } from '../contexts/GlobalContext';
 import GlassBackground from '../components/common/GlassBackground';
 import GlassPanel from '../components/common/GlassPanel';
 import GlassBlurFill from '../components/common/GlassBlurFill';
@@ -26,10 +25,9 @@ const APP_VERSION = '1.0.0';
 export const getMenuItemsForRole = (role, palette) => {
   const baseItems = [
     { id: 'orders', title: 'My Orders', icon: 'receipt-outline', screen: 'Orders', color: palette.colors.primary },
+    { id: 'track-order', title: 'Track My Order', icon: 'navigate-outline', screen: 'TrackOrder', color: palette.colors.warning },
     { id: 'wallet', title: 'Rozare Wallet', icon: 'wallet-outline', screen: 'Wallet', color: palette.colors.success },
     { id: 'addresses', title: 'Saved Addresses', icon: 'location-outline', screen: 'SavedAddresses', color: palette.colors.info },
-    { id: 'notifications', title: 'Notifications', icon: 'notifications-outline', screen: 'Notifications', color: palette.colors.secondary },
-    { id: 'trusted', title: 'Trusted Stores', icon: 'shield-checkmark-outline', screen: 'TrustedStores', color: palette.colors.info },
     { id: 'change-password', title: 'Change Password', icon: 'lock-closed-outline', screen: 'ChangePassword', color: palette.colors.warning },
     { id: 'settings', title: 'Settings', icon: 'settings-outline', screen: 'Settings', color: palette.colors.textSecondary },
   ];
@@ -47,7 +45,6 @@ export default function ProfileScreen({ navigation }) {
   const styles = buildStyles(palette);
 
   const { currentUser, logout } = useAuth();
-  const { unreadNotifCount } = useGlobal();
   const [savedShipping, setSavedShipping] = useState(null);
   const [editingShipping, setEditingShipping] = useState(false);
   const [shippingForm, setShippingForm] = useState({
@@ -269,11 +266,6 @@ export default function ProfileScreen({ navigation }) {
                 <Ionicons name={item.icon} size={20} color={item.color || palette.colors.primary} />
               </View>
               <Text style={styles.menuRowText}>{item.title}</Text>
-              {item.id === 'notifications' && unreadNotifCount > 0 && (
-                <View style={{ backgroundColor: palette.colors.error, borderRadius: 10, minWidth: 20, height: 20, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 6, marginRight: spacing.sm }}>
-                  <Text style={{ color: 'white', fontSize: 11, fontWeight: fontWeight.bold }}>{unreadNotifCount > 99 ? '99+' : unreadNotifCount}</Text>
-                </View>
-              )}
               <Ionicons name="chevron-forward" size={18} color={palette.colors.textSecondary} />
             </TouchableOpacity>
           ))}

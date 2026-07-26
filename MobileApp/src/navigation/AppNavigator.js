@@ -11,11 +11,11 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../contexts/AuthContext';
 import { useGlobal } from '../contexts/GlobalContext';
-import { View, Text, StyleSheet, Animated, Platform, Alert } from 'react-native';
+import { View, Text, StyleSheet, Animated, Platform, Alert, Pressable } from 'react-native';
 import { BlurTargetView, BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { selection as hapticSelection } from '../utils/haptics';
+import { tap as hapticTap } from '../utils/haptics';
 
 // Website --logo-gradient — same as the Add to Cart / CTA buttons
 const CTA_GRADIENT = ['#14B8A6', '#0EA5E9', '#6366F1'];
@@ -145,7 +145,6 @@ import PaymentSuccessScreen from '../screens/PaymentSuccessScreen';
 import PaymentCancelScreen from '../screens/PaymentCancelScreen';
 
 // New Feature Screens
-import TrustedStoresScreen from '../screens/TrustedStoresScreen';
 import BecomeSellerScreen from '../screens/BecomeSellerScreen';
 import NotificationsScreen from '../screens/NotificationsScreen';
 import SettingsScreen from '../screens/SettingsScreen';
@@ -299,25 +298,143 @@ function TabBarIcon({ route, focused, color, size }) {
     }).start();
   }, [focused, anim]);
 
-  const pillScale = anim.interpolate({ inputRange: [0, 1], outputRange: [0.5, 1] });
   const iconScale = anim.interpolate({ inputRange: [0, 1], outputRange: [1, 1.08] });
+  const iconLift = anim.interpolate({ inputRange: [0, 1], outputRange: [0, -1] });
 
   return (
     <View style={styles.tabIconWrap}>
-      <Animated.View
-        pointerEvents="none"
-        style={[StyleSheet.absoluteFill, styles.tabActivePill, { opacity: anim, transform: [{ scale: pillScale }] }]}
-      >
-        <LinearGradient
-          colors={CTA_GRADIENT}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={styles.tabActivePillGradient}
-        />
+      <Animated.View style={{ transform: [{ translateY: iconLift }, { scale: iconScale }] }}>
+        <Ionicons name={iconName} size={size || 22} color={focused ? '#fff' : color} />
       </Animated.View>
-      <Animated.View style={{ transform: [{ scale: iconScale }] }}>
-        <Ionicons name={iconName} size={22} color={focused ? '#fff' : color} />
-      </Animated.View>
+    </View>
+  );
+}
+
+/**
+ * Custom tab bar with one persistent active pill. The pill's X position is
+ * spring-animated between equal tab slots, so the highlight visibly travels
+ * to the new destination instead of one tab fading out while another appears.
+ */
+function SlidingTabBar({
+  state,
+  descriptors,
+  navigation,
+  palette,
+  isDark,
+  bottomInset,
+}) {
+  const activeIndex = useRef(new Animated.Value(state.index)).current;
+  const [barWidth, setBarWidth] = useState(0);
+  const routeCount = Math.max(state.routes.length, 1);
+  const slotWidth = barWidth / routeCount;
+  const indicatorWidth = 52;
+  const indicatorOffset = Math.max((slotWidth - indicatorWidth) / 2, 0);
+  const indicatorTranslateX = Animated.add(
+    Animated.multiply(activeIndex, slotWidth),
+    indicatorOffset
+  );
+
+  useEffect(() => {
+    Animated.spring(activeIndex, {
+      toValue: state.index,
+      stiffness: 260,
+      damping: 24,
+      mass: 0.72,
+      overshootClamping: false,
+      restDisplacementThreshold: 0.15,
+      restSpeedThreshold: 0.15,
+      useNativeDriver: true,
+    }).start();
+  }, [activeIndex, state.index]);
+
+  return (
+    <View
+      onLayout={(event) => setBarWidth(event.nativeEvent.layout.width)}
+      style={[
+        styles.tabBar,
+        {
+          bottom: Math.max(bottomInset, spacing.md),
+          height: 66,
+        },
+      ]}
+    >
+      <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+        <GlassTabBarBackground isDark={isDark} palette={palette} />
+      </View>
+
+      {barWidth > 0 && (
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            styles.slidingTabIndicator,
+            { transform: [{ translateX: indicatorTranslateX }] },
+          ]}
+        >
+          <LinearGradient
+            colors={CTA_GRADIENT}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.tabActivePillGradient}
+          />
+        </Animated.View>
+      )}
+
+      <View style={styles.tabItemsRow}>
+        {state.routes.map((route, index) => {
+          const { options } = descriptors[route.key];
+          const isFocused = state.index === index;
+          const color = isFocused ? '#fff' : palette.colors.textLight;
+          const accessibilityLabel = options.tabBarAccessibilityLabel
+            || options.title
+            || options.tabBarLabel
+            || route.name;
+
+          const onPress = () => {
+            const event = navigation.emit({
+              type: 'tabPress',
+              target: route.key,
+              canPreventDefault: true,
+            });
+
+            if (!event.defaultPrevented) {
+              hapticTap();
+              if (!isFocused) {
+                navigation.navigate(route.name, route.params);
+              }
+            }
+          };
+
+          const onLongPress = () => {
+            navigation.emit({
+              type: 'tabLongPress',
+              target: route.key,
+            });
+          };
+
+          return (
+            <Pressable
+              key={route.key}
+              accessibilityRole="tab"
+              accessibilityState={isFocused ? { selected: true } : {}}
+              accessibilityLabel={accessibilityLabel}
+              testID={options.tabBarTestID}
+              onPress={onPress}
+              onLongPress={onLongPress}
+              hitSlop={4}
+              style={({ pressed }) => [
+                styles.tabBarItem,
+                pressed && styles.tabBarItemPressed,
+              ]}
+            >
+              {options.tabBarIcon?.({
+                focused: isFocused,
+                color,
+                size: 22,
+              })}
+            </Pressable>
+          );
+        })}
+      </View>
     </View>
   );
 }
@@ -328,25 +445,22 @@ function MainTabs() {
   const cartCount = calculateCartItemCount(cartItems);
   const insets = useSafeAreaInsets();
   const { palette, isDark } = useTheme();
-  const themedTabBar = {
-    backgroundColor: 'transparent',
-    borderTopWidth: 0,
-    borderTopColor: 'transparent',
-  };
 
   return (
     <Tab.Navigator
-      screenListeners={{
-        tabPress: () => {
-          hapticSelection();
-        },
-      }}
+      tabBar={(props) => (
+        <SlidingTabBar
+          {...props}
+          palette={palette}
+          isDark={isDark}
+          bottomInset={insets.bottom}
+        />
+      )}
       screenOptions={({ route }) => ({
-        tabBarBackground: () => <GlassTabBarBackground isDark={isDark} palette={palette} />,
         tabBarIcon: ({ focused, color, size }) => {
           return (
             <View style={styles.tabIconContainer}>
-              <TabBarIcon route={route} focused={focused} color={color} size={24} />
+              <TabBarIcon route={route} focused={focused} color={color} size={size} />
               {route.name === 'Cart' && <CartBadge count={cartCount} />}
             </View>
           );
@@ -355,20 +469,6 @@ function MainTabs() {
         tabBarInactiveTintColor: palette.colors.textLight,
         // Icon-only tab bar — the icons are self-explanatory, no labels needed.
         tabBarShowLabel: false,
-        tabBarStyle: [
-          styles.tabBar,
-          themedTabBar,
-          {
-            // Floating pill: inset from edges, lifted above the bottom safe area
-            left: spacing.md,
-            right: spacing.md,
-            bottom: Math.max(insets.bottom, spacing.md),
-            height: 66,
-            borderRadius: 28,
-            paddingTop: spacing.sm,
-            paddingBottom: spacing.sm,
-          },
-        ],
         tabBarLabelStyle: styles.tabBarLabel,
         tabBarItemStyle: styles.tabBarItem,
         headerShown: false,
@@ -508,12 +608,6 @@ export default function AppNavigator() {
         component={OrderConfirmationScreen}
         options={{ headerShown: false }}
       />
-      <Stack.Screen
-        name="Wishlist"
-        component={WishlistScreen}
-        options={{ headerShown: false }}
-      />
-
       {/* Seller Dashboard (role-guarded: seller or admin) */}
       <Stack.Screen name="SellerDashboard" component={GuardedSellerDashboard} options={{ headerShown: false }} />
       <Stack.Screen name="SellerAnalytics" component={GuardedSellerAnalytics} options={{ headerShown: false }} />
@@ -557,7 +651,6 @@ export default function AppNavigator() {
         component={EditProfileScreen}
         options={{ headerShown: false }}
       />
-      <Stack.Screen name="TrustedStores" component={TrustedStoresScreen} options={{ headerShown: false }} />
       <Stack.Screen name="BecomeSeller" component={BecomeSellerScreen} options={{ headerShown: false }} />
       <Stack.Screen name="SellerSignUp" component={BecomeSellerScreen} options={{ headerShown: false }} />
       <Stack.Screen name="TrackOrder" component={TrackOrderScreen} options={{ headerShown: false }} />
@@ -593,6 +686,8 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
     borderTopWidth: 0,
     position: 'absolute',
+    left: spacing.md,
+    right: spacing.md,
     borderRadius: 28,
     // Soft shadow around the whole floating pill
     shadowColor: '#000',
@@ -600,6 +695,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.12,
     shadowRadius: 20,
     elevation: 12,
+    zIndex: 50,
   },
   tabBarLabel: {
     fontSize: fontSize.xs,
@@ -607,7 +703,31 @@ const styles = StyleSheet.create({
     marginTop: spacing.xs,
   },
   tabBarItem: {
-    paddingVertical: spacing.xs,
+    flex: 1,
+    height: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tabBarItemPressed: {
+    opacity: 0.72,
+  },
+  tabItemsRow: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  slidingTabIndicator: {
+    position: 'absolute',
+    left: 0,
+    top: 17,
+    width: 52,
+    height: 32,
+    borderRadius: 16,
+    shadowColor: '#0EA5E9',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
+    elevation: 4,
   },
   tabPrism: {
     position: 'absolute',
@@ -637,14 +757,6 @@ const styles = StyleSheet.create({
     height: 32,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  tabActivePill: {
-    borderRadius: 16,
-    shadowColor: '#0EA5E9',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.4,
-    shadowRadius: 8,
-    elevation: 4,
   },
   tabActivePillGradient: {
     flex: 1,

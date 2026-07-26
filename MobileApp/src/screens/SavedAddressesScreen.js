@@ -4,14 +4,16 @@
  */
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  View, Text, StyleSheet, SafeAreaView, ScrollView, TouchableOpacity,
+  View, Text, StyleSheet, ScrollView, TouchableOpacity,
   TextInput, Modal, RefreshControl, ActivityIndicator, KeyboardAvoidingView, Platform, Alert,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import Toast from 'react-native-toast-message';
 import api from '../config/api';
 import GlassBackground from '../components/common/GlassBackground';
 import GlassPanel from '../components/common/GlassPanel';
+import PremiumBackHeader from '../components/common/PremiumBackHeader';
 import { EmptyState } from '../components/common';
 import { spacing, fontSize, fontWeight, borderRadius } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
@@ -135,20 +137,19 @@ export default function SavedAddressesScreen({ navigation }) {
 
   return (
     <GlassBackground>
-      <SafeAreaView style={{ flex: 1 }}>
-        {/* Header */}
-        <GlassPanel variant="floating" style={styles.header}>
-          <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()} activeOpacity={0.7}>
-            <Ionicons name="arrow-back" size={22} color={palette.colors.text} />
-          </TouchableOpacity>
-          <View style={{ flex: 1, marginLeft: spacing.md }}>
-            <Text style={styles.title}>Saved Addresses</Text>
-            <Text style={styles.subtitle}>{addresses.length} address{addresses.length === 1 ? '' : 'es'}</Text>
-          </View>
-          <TouchableOpacity style={styles.addBtn} onPress={openAdd} activeOpacity={0.85}>
-            <Ionicons name="add" size={20} color="#fff" />
-          </TouchableOpacity>
-        </GlassPanel>
+      <SafeAreaView style={{ flex: 1 }} edges={Platform.OS === 'android' ? [] : ['top']}>
+        <PremiumBackHeader
+          title="Saved Addresses"
+          subtitle={`${addresses.length} saved address${addresses.length === 1 ? '' : 'es'}`}
+          icon="location-outline"
+          onBack={() => navigation.goBack()}
+          style={styles.premiumHeader}
+          rightElement={(
+            <TouchableOpacity style={styles.addBtn} onPress={openAdd} activeOpacity={0.85} accessibilityLabel="Add address">
+              <Ionicons name="add" size={20} color="#fff" />
+            </TouchableOpacity>
+          )}
+        />
 
         {loading ? (
           <View style={styles.center}><ActivityIndicator color={palette.colors.primary} /></View>
@@ -284,11 +285,8 @@ export default function SavedAddressesScreen({ navigation }) {
 }
 
 const buildStyles = (p) => StyleSheet.create({
-  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing.md, paddingVertical: spacing.md, marginHorizontal: spacing.md, marginTop: spacing.sm },
-  backBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.15)', justifyContent: 'center', alignItems: 'center' },
-  title: { fontSize: fontSize.xl, fontWeight: fontWeight.bold, color: p.colors.text },
-  subtitle: { fontSize: fontSize.xs, color: p.colors.textSecondary, marginTop: 2 },
-  addBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: p.colors.primary, justifyContent: 'center', alignItems: 'center' },
+  premiumHeader: { marginTop: spacing.sm },
+  addBtn: { width: 36, height: 36, borderRadius: 12, backgroundColor: p.colors.primary, justifyContent: 'center', alignItems: 'center' },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   card: { padding: spacing.lg, marginBottom: spacing.md },
   cardHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: spacing.sm },
