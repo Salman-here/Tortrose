@@ -16,6 +16,7 @@ import GlassBackground from '../../components/common/GlassBackground';
 import GlassPanel from '../../components/common/GlassPanel';
 import RozareLogo from '../../components/common/RozareLogo';
 import GoogleSignInButton from '../../components/common/GoogleSignInButton';
+import AuthTopHeader from '../../components/common/AuthTopHeader';
 import { spacing, fontSize, borderRadius, shadows, fontWeight } from '../../styles/theme';
 import { useTheme } from '../../contexts/ThemeContext';
 
@@ -57,16 +58,13 @@ export default function LoginScreen({ navigation }) {
       <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.keyboardView}>
         <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-          <View style={styles.topBar}>
-            <TouchableOpacity style={styles.homeButton} onPress={() => navigation.goBack()} activeOpacity={0.75}>
-              <Ionicons name="arrow-back" size={18} color={palette.colors.primary} />
-              <Text style={styles.homeButtonText}>Back</Text>
-            </TouchableOpacity>
-            <View style={styles.securePill}>
-              <Ionicons name="shield-checkmark-outline" size={13} color={palette.colors.success} />
-              <Text style={styles.securePillText}>SECURE SIGN IN</Text>
-            </View>
-          </View>
+          <AuthTopHeader
+            title="Sign In"
+            subtitle="Continue to your Rozare account"
+            icon="person-outline"
+            onBack={() => navigation.goBack()}
+            rightLabel="Secure"
+          />
 
           {/* Form Card */}
           <GlassPanel variant="strong" style={styles.card}>
@@ -154,6 +152,7 @@ export default function LoginScreen({ navigation }) {
             <GoogleSignInButton
               onPress={handleGoogleSignIn}
               loading={googleLoading}
+              label="Sign in with Google"
               style={styles.googleButton}
             />
 
@@ -176,12 +175,7 @@ export default function LoginScreen({ navigation }) {
 const buildStyles = (p) => StyleSheet.create({
   keyboardView: { flex: 1 },
   scrollContent: { flexGrow: 1, paddingVertical: spacing.lg, paddingHorizontal: spacing.lg },
-  topBar: { width: '100%', maxWidth: 440, alignSelf: 'center', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: spacing.xl },
-  homeButton: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: p.glass.bgStrong, borderWidth: 1, borderColor: p.glass.border, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: borderRadius.full },
-  homeButtonText: { color: p.colors.primary, fontWeight: fontWeight.semibold, fontSize: fontSize.sm },
-  securePill: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: spacing.md, paddingVertical: 7, borderRadius: borderRadius.full, backgroundColor: p.glass.bgSubtle, borderWidth: 1, borderColor: p.glass.borderSubtle },
-  securePillText: { fontSize: 9, letterSpacing: 0.8, color: p.colors.textSecondary, fontWeight: fontWeight.bold },
-  card: { width: '100%', maxWidth: 440, alignSelf: 'center', paddingHorizontal: spacing.xl, paddingVertical: spacing.xxl, alignItems: 'stretch', borderRadius: 30 },
+  card: { width: '100%', maxWidth: 440, alignSelf: 'center', paddingHorizontal: spacing.xl, paddingVertical: spacing.xxl, alignItems: 'stretch', borderRadius: 30, marginTop: spacing.lg },
   loginGlowTop: { position: 'absolute', width: 190, height: 190, borderRadius: 95, top: -92, right: -56, opacity: 0.52 },
   loginGlowBottom: { position: 'absolute', width: 180, height: 180, borderRadius: 90, bottom: -96, left: -62, opacity: 0.38 },
   loginGlowFill: { flex: 1, borderRadius: 999 },

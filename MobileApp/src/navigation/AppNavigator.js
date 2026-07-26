@@ -105,7 +105,6 @@ import SignUpScreen from '../screens/auth/SignUpScreen';
 import ForgotPasswordScreen from '../screens/auth/ForgotPasswordScreen';
 import ResetPasswordScreen from '../screens/auth/ResetPasswordScreen';
 import OTPVerificationScreen from '../screens/auth/OTPVerificationScreen';
-import SellerSignUpScreen from '../screens/auth/SellerSignUpScreen';
 import ChangePasswordScreen from '../screens/ChangePasswordScreen';
 
 // Main Screens
@@ -560,7 +559,7 @@ export default function AppNavigator() {
       />
       <Stack.Screen name="TrustedStores" component={TrustedStoresScreen} options={{ headerShown: false }} />
       <Stack.Screen name="BecomeSeller" component={BecomeSellerScreen} options={{ headerShown: false }} />
-      <Stack.Screen name="SellerSignUp" component={SellerSignUpScreen} options={{ headerShown: false }} />
+      <Stack.Screen name="SellerSignUp" component={BecomeSellerScreen} options={{ headerShown: false }} />
       <Stack.Screen name="TrackOrder" component={TrackOrderScreen} options={{ headerShown: false }} />
       <Stack.Screen name="NotificationPreferences" component={NotificationPreferencesScreen} options={{ headerShown: false }} />
       <Stack.Screen name="SavedAddresses" component={SavedAddressesScreen} options={{ headerShown: false }} />

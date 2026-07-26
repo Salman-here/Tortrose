@@ -10,9 +10,9 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../../contexts/AuthContext';
-import api from '../../config/api';
 import GlassBackground from '../../components/common/GlassBackground';
 import GlassPanel from '../../components/common/GlassPanel';
+import AuthTopHeader from '../../components/common/AuthTopHeader';
 import { spacing, fontSize, borderRadius, shadows, fontWeight } from '../../styles/theme';
 import { useTheme } from '../../contexts/ThemeContext';
 
@@ -20,10 +20,10 @@ const OTP_LENGTH = 6;
 const RESEND_COOLDOWN = 60;
 
 export default function OTPVerificationScreen({ route, navigation }) {
-  const { palette } = useTheme();
+  const { palette, isDark } = useTheme();
   const styles = buildStyles(palette);
 
-  const { email, name } = route.params || {};
+  const { email, name, password } = route.params || {};
   const { verifyOTP, signup } = useAuth();
 
   const [otp, setOtp] = useState(Array(OTP_LENGTH).fill(''));
@@ -61,12 +61,8 @@ export default function OTPVerificationScreen({ route, navigation }) {
   const handleResend = async () => {
     if (countdown > 0) return;
     setIsResending(true); setOtp(Array(OTP_LENGTH).fill('')); setError('');
-    try {
-      await api.post('/api/auth/resend-otp', { email });
-    } catch {
-      // Fallback: re-trigger signup flow which sends a new OTP
-      await signup({ name, email, password: '' });
-    }
+    const result = await signup({ username: name, email, password });
+    if (!result?.success) setError(result?.error || 'Failed to resend the verification code.');
     setIsResending(false); setCountdown(RESEND_COOLDOWN); inputRefs.current[0]?.focus();
   };
 
@@ -74,20 +70,17 @@ export default function OTPVerificationScreen({ route, navigation }) {
 
   return (
     <GlassBackground>
-      <StatusBar barStyle="dark-content" />
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={{ flexGrow: 1, padding: spacing.md, paddingBottom: spacing.xxxl }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-          {/* Header */}
-          <GlassPanel variant="floating" style={styles.topHeader}>
-            <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
-              <Ionicons name="arrow-back" size={20} color={palette.colors.text} />
-            </TouchableOpacity>
-            <View style={styles.logoRow}>
-              <View style={styles.logoIcon}><Ionicons name="storefront" size={18} color={palette.colors.primary} /></View>
-              <Text style={styles.logoText}>Rozare</Text>
-            </View>
-            <View style={{ width: 36 }} />
-          </GlassPanel>
+          <AuthTopHeader
+            title="Verify Email"
+            subtitle="Complete your Rozare sign up"
+            icon="mail-unread-outline"
+            onBack={() => navigation.goBack()}
+            rightIcon="shield-checkmark-outline"
+            rightLabel="Secure"
+          />
 
           {/* Hero */}
           <GlassPanel variant="strong" style={styles.hero}>
@@ -132,12 +125,7 @@ export default function OTPVerificationScreen({ route, navigation }) {
 }
 
 const buildStyles = (p) => StyleSheet.create({
-  topHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: spacing.md, paddingVertical: spacing.md, marginBottom: spacing.md },
-  backBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: p.glass.bgSubtle, justifyContent: 'center', alignItems: 'center' },
-  logoRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  logoIcon: { width: 32, height: 32, borderRadius: 10, backgroundColor: p.glass.bgSubtle, justifyContent: 'center', alignItems: 'center' },
-  logoText: { fontSize: fontSize.lg, fontWeight: fontWeight.bold, color: p.colors.text },
-  hero: { alignItems: 'center', padding: spacing.xl, marginBottom: spacing.md },
+  hero: { alignItems: 'center', padding: spacing.xl, marginTop: spacing.md, marginBottom: spacing.md },
   otpIconCircle: { width: 72, height: 72, borderRadius: 36, backgroundColor: 'rgba(99,102,241,0.12)', justifyContent: 'center', alignItems: 'center', marginBottom: spacing.lg },
   heroTitle: { fontSize: 26, fontWeight: fontWeight.extrabold, color: p.colors.text, marginBottom: spacing.sm, textAlign: 'center' },
   heroSub: { fontSize: fontSize.md, color: p.colors.textSecondary, lineHeight: 24, textAlign: 'center' },

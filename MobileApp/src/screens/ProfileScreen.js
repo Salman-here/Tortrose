@@ -16,6 +16,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useGlobal } from '../contexts/GlobalContext';
 import GlassBackground from '../components/common/GlassBackground';
 import GlassPanel from '../components/common/GlassPanel';
+import GlassBlurFill from '../components/common/GlassBlurFill';
 import RozareLogo from '../components/common/RozareLogo';
 import { spacing, fontSize, borderRadius, fontWeight, typography } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
@@ -149,6 +150,24 @@ export default function ProfileScreen({ navigation }) {
                 <Text style={styles.createAccountLink}> Create an account</Text>
               </TouchableOpacity>
             </View>
+
+            <TouchableOpacity
+              style={styles.sellerButton}
+              onPress={() => navigation.navigate('BecomeSeller')}
+              activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel="Become a seller"
+            >
+              <GlassBlurFill intensity={42} />
+              <View style={styles.sellerButtonIcon}>
+                <Ionicons name="storefront-outline" size={18} color={palette.colors.secondary} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.sellerButtonTitle}>Become a seller</Text>
+                <Text style={styles.sellerButtonText}>Open your store and sell with AI</Text>
+              </View>
+              <Ionicons name="arrow-forward" size={17} color={palette.colors.primary} />
+            </TouchableOpacity>
 
             <View style={styles.guestTrustRow}>
               {[
@@ -381,6 +400,18 @@ const buildStyles = (p) => StyleSheet.create({
   createAccountRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: spacing.lg },
   createAccountText: { fontSize: fontSize.sm, color: p.colors.textSecondary },
   createAccountLink: { fontSize: fontSize.sm, color: p.colors.primary, fontWeight: fontWeight.bold },
+  sellerButton: {
+    width: '100%', minHeight: 62, flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
+    marginTop: spacing.lg, paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
+    borderRadius: 18, backgroundColor: p.glass.bgSubtle, borderWidth: 1, borderColor: p.glass.border,
+    overflow: 'hidden',
+  },
+  sellerButtonIcon: {
+    width: 40, height: 40, borderRadius: 13, alignItems: 'center', justifyContent: 'center',
+    backgroundColor: `${p.colors.secondary}12`, borderWidth: 1, borderColor: `${p.colors.secondary}22`,
+  },
+  sellerButtonTitle: { fontSize: fontSize.sm, color: p.colors.text, fontWeight: fontWeight.bold },
+  sellerButtonText: { marginTop: 2, fontSize: 10, color: p.colors.textSecondary },
   guestTrustRow: { flexDirection: 'row', justifyContent: 'center', gap: spacing.xs, marginTop: spacing.lg, flexWrap: 'wrap' },
   guestTrustChip: {
     flexDirection: 'row', alignItems: 'center', gap: 5,

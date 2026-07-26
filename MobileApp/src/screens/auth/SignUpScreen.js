@@ -14,6 +14,7 @@ import GlassBackground from '../../components/common/GlassBackground';
 import GlassPanel from '../../components/common/GlassPanel';
 import RozareLogo from '../../components/common/RozareLogo';
 import GoogleSignInButton from '../../components/common/GoogleSignInButton';
+import AuthTopHeader from '../../components/common/AuthTopHeader';
 import { spacing, fontSize, borderRadius, shadows, fontWeight } from '../../styles/theme';
 import { useTheme } from '../../contexts/ThemeContext';
 
@@ -52,9 +53,13 @@ export default function SignUpScreen({ navigation }) {
     if (Object.keys(newErrors).length > 0) { setErrors(newErrors); return; }
     setErrors({});
     setIsLoading(true);
-    const result = await signup({ name, email, password });
+    const result = await signup({ username: name.trim(), email: email.trim(), password });
     setIsLoading(false);
-    if (result.success) navigation.navigate('OTPVerification', { email, name });
+    if (result.success) navigation.navigate('OTPVerification', {
+      email: email.trim(),
+      name: name.trim(),
+      password,
+    });
   };
 
   const setField = (field, value) => {
@@ -81,24 +86,47 @@ export default function SignUpScreen({ navigation }) {
       <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.keyboardView}>
         <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-          {/* Home / back */}
-          <TouchableOpacity style={styles.homeButton} onPress={() => navigation.goBack()}>
-            <Ionicons name="arrow-back" size={18} color={palette.colors.primary} />
-            <Text style={styles.homeButtonText}>Home</Text>
-          </TouchableOpacity>
+          <AuthTopHeader
+            title="Create Account"
+            subtitle="Start your synced shopping journey"
+            icon="person-add-outline"
+            onBack={() => navigation.goBack()}
+            rightLabel="Protected"
+          />
 
           {/* Form Card */}
           <GlassPanel variant="strong" style={styles.card}>
+            <View style={styles.signupGlowTop} pointerEvents="none">
+              <LinearGradient colors={['rgba(20,184,166,0.40)', 'rgba(14,165,233,0.04)']} style={styles.signupGlowFill} />
+            </View>
+            <View style={styles.signupGlowBottom} pointerEvents="none">
+              <LinearGradient colors={['rgba(99,102,241,0.32)', 'rgba(168,85,247,0.03)']} style={styles.signupGlowFill} />
+            </View>
+
             {/* Logo + heading */}
             <View style={styles.logoWrap}>
-              <RozareLogo width={158} height={42} />
+              <View style={styles.logoPlate}>
+                <RozareLogo width={170} height={44} />
+              </View>
             </View>
             <View style={styles.tagPill}>
               <Ionicons name="sparkles" size={12} color={palette.colors.primary} />
-              <Text style={styles.tagPillText}>Create Account</Text>
+              <Text style={styles.tagPillText}>JOIN ROZARE</Text>
             </View>
-            <Text style={styles.title}>Sign Up</Text>
-            <Text style={styles.subtitle}>Shop, save products, and track orders</Text>
+            <Text style={styles.title}>Your shopping, remembered</Text>
+            <Text style={styles.subtitle}>Create one account for your cart, favourites, trusted stores, orders and AI shopping.</Text>
+
+            <View style={styles.benefitStrip}>
+              <View style={styles.benefitItem}>
+                <Ionicons name="sync-outline" size={14} color={palette.colors.info} />
+                <Text style={styles.benefitText}>Sync every device</Text>
+              </View>
+              <View style={styles.benefitDivider} />
+              <View style={styles.benefitItem}>
+                <Ionicons name="logo-whatsapp" size={14} color={palette.colors.success} />
+                <Text style={styles.benefitText}>WhatsApp updates</Text>
+              </View>
+            </View>
 
             {fields.map(({ field, label, placeholder, icon, ...rest }) => (
               <View key={field} style={styles.inputGroup}>
@@ -162,6 +190,7 @@ export default function SignUpScreen({ navigation }) {
             <GoogleSignInButton
               onPress={handleGoogleSignUp}
               loading={googleLoading}
+              label="Sign up with Google"
               style={styles.googleButton}
             />
 
@@ -172,7 +201,7 @@ export default function SignUpScreen({ navigation }) {
 
             <View style={[styles.loginRow, { marginTop: spacing.md }]}>
               <Text style={styles.loginText}>Want to sell?</Text>
-              <TouchableOpacity onPress={() => navigation.navigate('SellerSignUp')}><Text style={styles.loginLink}> Register as Seller</Text></TouchableOpacity>
+              <TouchableOpacity onPress={() => navigation.navigate('BecomeSeller')}><Text style={styles.loginLink}> Become a seller</Text></TouchableOpacity>
             </View>
           </GlassPanel>
 
@@ -185,15 +214,21 @@ export default function SignUpScreen({ navigation }) {
 
 const buildStyles = (p) => StyleSheet.create({
   keyboardView: { flex: 1 },
-  scrollContent: { flexGrow: 1, justifyContent: 'center', paddingVertical: spacing.xxxl, paddingHorizontal: spacing.lg },
-  homeButton: { position: 'absolute', top: spacing.lg, left: spacing.lg, flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: p.glass.bgStrong, borderWidth: 1, borderColor: p.glass.border, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: borderRadius.lg, zIndex: 10 },
-  homeButtonText: { color: p.colors.primary, fontWeight: fontWeight.semibold, fontSize: fontSize.sm },
-  card: { padding: spacing.xxl, marginTop: spacing.xl, marginBottom: spacing.lg },
-  logoWrap: { alignItems: 'center', marginBottom: spacing.md },
+  scrollContent: { flexGrow: 1, paddingVertical: spacing.lg, paddingHorizontal: spacing.lg },
+  card: { width: '100%', maxWidth: 440, alignSelf: 'center', paddingHorizontal: spacing.xl, paddingVertical: spacing.xxl, marginTop: spacing.lg, marginBottom: spacing.lg, borderRadius: 30 },
+  signupGlowTop: { position: 'absolute', width: 190, height: 190, borderRadius: 95, top: -92, right: -56, opacity: 0.52 },
+  signupGlowBottom: { position: 'absolute', width: 180, height: 180, borderRadius: 90, bottom: -96, left: -62, opacity: 0.38 },
+  signupGlowFill: { flex: 1, borderRadius: 999 },
+  logoWrap: { alignItems: 'center', marginBottom: spacing.lg },
+  logoPlate: { minWidth: 202, minHeight: 62, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.22)', borderWidth: 1, borderColor: p.glass.borderSubtle, alignItems: 'center', justifyContent: 'center' },
   tagPill: { alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(99,102,241,0.12)', borderWidth: 1, borderColor: 'rgba(99,102,241,0.18)', paddingHorizontal: spacing.md, paddingVertical: 6, borderRadius: borderRadius.full, marginBottom: spacing.md },
-  tagPillText: { color: p.colors.primary, fontSize: fontSize.xs, fontWeight: fontWeight.semibold },
-  title: { fontSize: fontSize.title, fontWeight: fontWeight.extrabold, color: p.colors.text, textAlign: 'center', marginBottom: spacing.xs },
-  subtitle: { fontSize: fontSize.md, color: p.colors.textSecondary, textAlign: 'center', marginBottom: spacing.xl },
+  tagPillText: { color: p.colors.primary, fontSize: 9, letterSpacing: 0.8, fontWeight: fontWeight.bold },
+  title: { fontSize: fontSize.title, fontWeight: fontWeight.extrabold, color: p.colors.text, textAlign: 'center', marginBottom: spacing.sm, letterSpacing: -0.5 },
+  subtitle: { fontSize: fontSize.md, lineHeight: 21, color: p.colors.textSecondary, textAlign: 'center', marginBottom: spacing.lg, paddingHorizontal: spacing.sm },
+  benefitStrip: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: spacing.sm, paddingHorizontal: spacing.sm, marginBottom: spacing.xl, borderRadius: borderRadius.lg, backgroundColor: p.glass.bgSubtle, borderWidth: 1, borderColor: p.glass.borderSubtle },
+  benefitItem: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5 },
+  benefitText: { fontSize: 9, color: p.colors.textSecondary, fontWeight: fontWeight.semibold },
+  benefitDivider: { width: 1, height: 18, backgroundColor: p.glass.borderSubtle },
   inputGroup: { marginBottom: spacing.md },
   label: { fontSize: fontSize.sm, fontWeight: fontWeight.semibold, color: p.colors.text, marginBottom: spacing.sm, letterSpacing: 0.3 },
   inputContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: p.glass.bgSubtle, borderRadius: borderRadius.xl, borderWidth: 1.5, borderColor: p.glass.border, paddingHorizontal: spacing.md, height: 56 },

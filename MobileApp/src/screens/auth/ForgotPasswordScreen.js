@@ -13,11 +13,12 @@ import Toast from 'react-native-toast-message';
 import api from '../../config/api';
 import GlassBackground from '../../components/common/GlassBackground';
 import GlassPanel from '../../components/common/GlassPanel';
+import AuthTopHeader from '../../components/common/AuthTopHeader';
 import { spacing, fontSize, borderRadius, shadows, fontWeight } from '../../styles/theme';
 import { useTheme } from '../../contexts/ThemeContext';
 
 export default function ForgotPasswordScreen({ navigation }) {
-  const { palette } = useTheme();
+  const { palette, isDark } = useTheme();
   const styles = buildStyles(palette);
 
   const [email, setEmail] = useState('');
@@ -44,20 +45,17 @@ export default function ForgotPasswordScreen({ navigation }) {
 
   return (
     <GlassBackground>
-      <StatusBar barStyle="dark-content" />
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={{ flexGrow: 1, padding: spacing.md, paddingBottom: spacing.xxxl }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-          {/* Header */}
-          <GlassPanel variant="floating" style={styles.topHeader}>
-            <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
-              <Ionicons name="arrow-back" size={20} color={palette.colors.text} />
-            </TouchableOpacity>
-            <View style={styles.logoRow}>
-              <View style={styles.logoIcon}><Ionicons name="storefront" size={18} color={palette.colors.primary} /></View>
-              <Text style={styles.logoText}>Rozare</Text>
-            </View>
-            <View style={{ width: 36 }} />
-          </GlassPanel>
+          <AuthTopHeader
+            title="Reset Password"
+            subtitle="Recover your Rozare account"
+            icon="key-outline"
+            onBack={() => navigation.goBack()}
+            rightIcon="lock-closed-outline"
+            rightLabel="Private"
+          />
 
           {/* Hero */}
           <GlassPanel variant="strong" style={styles.hero}>
@@ -116,12 +114,7 @@ export default function ForgotPasswordScreen({ navigation }) {
 }
 
 const buildStyles = (p) => StyleSheet.create({
-  topHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: spacing.md, paddingVertical: spacing.md, marginBottom: spacing.md },
-  backBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: p.glass.bgSubtle, justifyContent: 'center', alignItems: 'center' },
-  logoRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  logoIcon: { width: 32, height: 32, borderRadius: 10, backgroundColor: p.glass.bgSubtle, justifyContent: 'center', alignItems: 'center' },
-  logoText: { fontSize: fontSize.lg, fontWeight: fontWeight.bold, color: p.colors.text },
-  hero: { alignItems: 'center', padding: spacing.xl, marginBottom: spacing.md },
+  hero: { alignItems: 'center', padding: spacing.xl, marginTop: spacing.md, marginBottom: spacing.md },
   heroIconWrap: { width: 64, height: 64, borderRadius: 32, backgroundColor: 'rgba(99,102,241,0.12)', justifyContent: 'center', alignItems: 'center', marginBottom: spacing.lg },
   heroTitle: { fontSize: 26, fontWeight: fontWeight.extrabold, color: p.colors.text, marginBottom: spacing.sm, textAlign: 'center' },
   heroSub: { fontSize: fontSize.md, color: p.colors.textSecondary, textAlign: 'center', lineHeight: 22 },
