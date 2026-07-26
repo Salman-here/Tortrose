@@ -15,6 +15,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import GlassBackground from '../../components/common/GlassBackground';
 import GlassPanel from '../../components/common/GlassPanel';
 import RozareLogo from '../../components/common/RozareLogo';
+import GoogleSignInButton from '../../components/common/GoogleSignInButton';
 import { spacing, fontSize, borderRadius, shadows, fontWeight } from '../../styles/theme';
 import { useTheme } from '../../contexts/ThemeContext';
 
@@ -56,24 +57,50 @@ export default function LoginScreen({ navigation }) {
       <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.keyboardView}>
         <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-          {/* Home / back */}
-          <TouchableOpacity style={styles.homeButton} onPress={() => navigation.goBack()}>
-            <Ionicons name="arrow-back" size={18} color={palette.colors.primary} />
-            <Text style={styles.homeButtonText}>Home</Text>
-          </TouchableOpacity>
+          <View style={styles.topBar}>
+            <TouchableOpacity style={styles.homeButton} onPress={() => navigation.goBack()} activeOpacity={0.75}>
+              <Ionicons name="arrow-back" size={18} color={palette.colors.primary} />
+              <Text style={styles.homeButtonText}>Back</Text>
+            </TouchableOpacity>
+            <View style={styles.securePill}>
+              <Ionicons name="shield-checkmark-outline" size={13} color={palette.colors.success} />
+              <Text style={styles.securePillText}>SECURE SIGN IN</Text>
+            </View>
+          </View>
 
           {/* Form Card */}
           <GlassPanel variant="strong" style={styles.card}>
+            <View style={styles.loginGlowTop} pointerEvents="none">
+              <LinearGradient colors={['rgba(20,184,166,0.40)', 'rgba(14,165,233,0.04)']} style={styles.loginGlowFill} />
+            </View>
+            <View style={styles.loginGlowBottom} pointerEvents="none">
+              <LinearGradient colors={['rgba(99,102,241,0.34)', 'rgba(168,85,247,0.03)']} style={styles.loginGlowFill} />
+            </View>
+
             {/* Logo + heading */}
             <View style={styles.logoWrap}>
-              <RozareLogo width={158} height={42} />
+              <View style={styles.logoPlate}>
+                <RozareLogo width={174} height={44} />
+              </View>
             </View>
             <View style={styles.tagPill}>
               <Ionicons name="sparkles" size={12} color={palette.colors.primary} />
-              <Text style={styles.tagPillText}>Welcome Back</Text>
+              <Text style={styles.tagPillText}>YOUR ROZARE ACCOUNT</Text>
             </View>
-            <Text style={styles.title}>Sign In</Text>
-            <Text style={styles.subtitle}>Continue to your account</Text>
+            <Text style={styles.title}>Welcome back</Text>
+            <Text style={styles.subtitle}>Sync your cart, orders, favourites and AI shopping journey.</Text>
+
+            <View style={styles.benefitStrip}>
+              <View style={styles.benefitItem}>
+                <Ionicons name="sync-outline" size={14} color={palette.colors.info} />
+                <Text style={styles.benefitText}>Synced shopping</Text>
+              </View>
+              <View style={styles.benefitDivider} />
+              <View style={styles.benefitItem}>
+                <Ionicons name="lock-closed-outline" size={13} color={palette.colors.success} />
+                <Text style={styles.benefitText}>Protected checkout</Text>
+              </View>
+            </View>
 
             {/* Email */}
             <View style={styles.inputGroup}>
@@ -121,14 +148,14 @@ export default function LoginScreen({ navigation }) {
             </TouchableOpacity>
 
             <View style={styles.divider}>
-              <View style={styles.dividerLine} /><Text style={styles.dividerText}>Or continue with</Text><View style={styles.dividerLine} />
+              <View style={styles.dividerLine} /><Text style={styles.dividerText}>or continue with</Text><View style={styles.dividerLine} />
             </View>
 
-            <TouchableOpacity style={[styles.googleButton, googleLoading && styles.googleButtonDisabled]} onPress={handleGoogleSignIn} disabled={googleLoading} activeOpacity={0.85}>
-              {googleLoading ? <ActivityIndicator color="#4285F4" size="small" /> : (
-                <><View style={styles.googleIcon}><Text style={styles.googleIconText}>G</Text></View><Text style={styles.googleButtonText}>Sign in with Google</Text></>
-              )}
-            </TouchableOpacity>
+            <GoogleSignInButton
+              onPress={handleGoogleSignIn}
+              loading={googleLoading}
+              style={styles.googleButton}
+            />
 
             <View style={styles.signUpRow}>
               <Text style={styles.signUpText}>Don't have an account?</Text>
@@ -136,7 +163,10 @@ export default function LoginScreen({ navigation }) {
             </View>
           </GlassPanel>
 
-          <Text style={styles.footerText}>By signing in, you agree to our Terms of Service and Privacy Policy</Text>
+          <View style={styles.footer}>
+            <Ionicons name="lock-closed-outline" size={12} color={palette.colors.textLight} />
+            <Text style={styles.footerText}>By signing in, you agree to our Terms of Service and Privacy Policy</Text>
+          </View>
         </ScrollView>
       </KeyboardAvoidingView>
     </GlassBackground>
@@ -145,15 +175,26 @@ export default function LoginScreen({ navigation }) {
 
 const buildStyles = (p) => StyleSheet.create({
   keyboardView: { flex: 1 },
-  scrollContent: { flexGrow: 1, justifyContent: 'center', paddingVertical: spacing.xxxl, paddingHorizontal: spacing.lg },
-  homeButton: { position: 'absolute', top: spacing.lg, left: spacing.lg, flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: p.glass.bgStrong, borderWidth: 1, borderColor: p.glass.border, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: borderRadius.lg, zIndex: 10 },
+  scrollContent: { flexGrow: 1, paddingVertical: spacing.lg, paddingHorizontal: spacing.lg },
+  topBar: { width: '100%', maxWidth: 440, alignSelf: 'center', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: spacing.xl },
+  homeButton: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: p.glass.bgStrong, borderWidth: 1, borderColor: p.glass.border, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: borderRadius.full },
   homeButtonText: { color: p.colors.primary, fontWeight: fontWeight.semibold, fontSize: fontSize.sm },
-  card: { padding: spacing.xxl, alignItems: 'stretch' },
-  logoWrap: { alignItems: 'center', marginBottom: spacing.md },
-  tagPill: { alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(99,102,241,0.12)', borderWidth: 1, borderColor: 'rgba(99,102,241,0.18)', paddingHorizontal: spacing.md, paddingVertical: 6, borderRadius: borderRadius.full, marginBottom: spacing.md },
-  tagPillText: { color: p.colors.primary, fontSize: fontSize.xs, fontWeight: fontWeight.semibold },
-  title: { fontSize: fontSize.title, fontWeight: fontWeight.extrabold, color: p.colors.text, textAlign: 'center', marginBottom: spacing.xs },
-  subtitle: { fontSize: fontSize.md, color: p.colors.textSecondary, textAlign: 'center', marginBottom: spacing.xl },
+  securePill: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: spacing.md, paddingVertical: 7, borderRadius: borderRadius.full, backgroundColor: p.glass.bgSubtle, borderWidth: 1, borderColor: p.glass.borderSubtle },
+  securePillText: { fontSize: 9, letterSpacing: 0.8, color: p.colors.textSecondary, fontWeight: fontWeight.bold },
+  card: { width: '100%', maxWidth: 440, alignSelf: 'center', paddingHorizontal: spacing.xl, paddingVertical: spacing.xxl, alignItems: 'stretch', borderRadius: 30 },
+  loginGlowTop: { position: 'absolute', width: 190, height: 190, borderRadius: 95, top: -92, right: -56, opacity: 0.52 },
+  loginGlowBottom: { position: 'absolute', width: 180, height: 180, borderRadius: 90, bottom: -96, left: -62, opacity: 0.38 },
+  loginGlowFill: { flex: 1, borderRadius: 999 },
+  logoWrap: { alignItems: 'center', marginBottom: spacing.lg },
+  logoPlate: { minWidth: 204, minHeight: 62, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.22)', borderWidth: 1, borderColor: p.glass.borderSubtle, alignItems: 'center', justifyContent: 'center' },
+  tagPill: { alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(99,102,241,0.10)', borderWidth: 1, borderColor: 'rgba(99,102,241,0.18)', paddingHorizontal: spacing.md, paddingVertical: 6, borderRadius: borderRadius.full, marginBottom: spacing.md },
+  tagPillText: { color: p.colors.primary, fontSize: 9, letterSpacing: 0.8, fontWeight: fontWeight.bold },
+  title: { fontSize: fontSize.title, fontWeight: fontWeight.extrabold, color: p.colors.text, textAlign: 'center', marginBottom: spacing.sm, letterSpacing: -0.5 },
+  subtitle: { fontSize: fontSize.md, lineHeight: 21, color: p.colors.textSecondary, textAlign: 'center', marginBottom: spacing.lg, paddingHorizontal: spacing.md },
+  benefitStrip: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: spacing.sm, paddingHorizontal: spacing.md, marginBottom: spacing.xl, borderRadius: borderRadius.lg, backgroundColor: p.glass.bgSubtle, borderWidth: 1, borderColor: p.glass.borderSubtle },
+  benefitItem: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5 },
+  benefitText: { fontSize: 10, color: p.colors.textSecondary, fontWeight: fontWeight.semibold },
+  benefitDivider: { width: 1, height: 18, backgroundColor: p.glass.borderSubtle },
   inputGroup: { marginBottom: spacing.lg },
   label: { fontSize: fontSize.sm, fontWeight: fontWeight.semibold, color: p.colors.text, marginBottom: spacing.sm, letterSpacing: 0.3 },
   inputContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: p.glass.bgSubtle, borderRadius: borderRadius.xl, borderWidth: 1.5, borderColor: p.glass.border, paddingHorizontal: spacing.md, height: 56 },
@@ -165,18 +206,15 @@ const buildStyles = (p) => StyleSheet.create({
   errorText: { fontSize: fontSize.sm, color: p.colors.error, marginTop: spacing.xs, marginLeft: spacing.xs },
   forgotContainer: { alignSelf: 'flex-end', marginBottom: spacing.lg, marginTop: -spacing.sm },
   forgotText: { fontSize: fontSize.sm, color: p.colors.primary, fontWeight: fontWeight.semibold },
-  loginButton: { flexDirection: 'row', paddingVertical: spacing.lg, borderRadius: borderRadius.xl, alignItems: 'center', justifyContent: 'center', gap: spacing.sm, overflow: 'hidden', marginBottom: spacing.xl, shadowColor: p.colors.primary, shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.35, shadowRadius: 16, elevation: 6 },
+  loginButton: { flexDirection: 'row', minHeight: 56, paddingVertical: spacing.md, borderRadius: borderRadius.xl, alignItems: 'center', justifyContent: 'center', gap: spacing.sm, overflow: 'hidden', marginBottom: spacing.xl, shadowColor: p.colors.primary, shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.35, shadowRadius: 16, elevation: 6 },
   loginButtonText: { color: '#fff', fontSize: fontSize.lg, fontWeight: fontWeight.bold },
   divider: { flexDirection: 'row', alignItems: 'center', marginBottom: spacing.xl },
   dividerLine: { flex: 1, height: 1, backgroundColor: p.glass.border },
   dividerText: { marginHorizontal: spacing.md, fontSize: fontSize.sm, color: p.colors.textSecondary, fontWeight: fontWeight.medium },
-  googleButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: p.glass.bgStrong, borderWidth: 1.5, borderColor: p.glass.border, borderRadius: borderRadius.xl, paddingVertical: spacing.md, paddingHorizontal: spacing.lg, marginBottom: spacing.xl, gap: spacing.sm },
-  googleButtonDisabled: { opacity: 0.7 },
-  googleIcon: { width: 28, height: 28, borderRadius: 14, backgroundColor: '#4285F4', alignItems: 'center', justifyContent: 'center' },
-  googleIconText: { color: '#fff', fontSize: fontSize.md, fontWeight: fontWeight.bold, lineHeight: 20 },
-  googleButtonText: { fontSize: fontSize.md, color: p.colors.text, fontWeight: fontWeight.semibold },
+  googleButton: { marginBottom: spacing.xl },
   signUpRow: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center' },
   signUpText: { fontSize: fontSize.md, color: p.colors.textSecondary },
   signUpLink: { fontSize: fontSize.md, color: p.colors.primary, fontWeight: fontWeight.bold },
-  footerText: { fontSize: fontSize.xs, color: p.colors.textSecondary, textAlign: 'center', paddingHorizontal: spacing.xxl, marginTop: spacing.lg },
+  footer: { maxWidth: 400, alignSelf: 'center', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingHorizontal: spacing.xl, marginTop: spacing.lg },
+  footerText: { flexShrink: 1, fontSize: 10, lineHeight: 15, color: p.colors.textSecondary, textAlign: 'center' },
 });

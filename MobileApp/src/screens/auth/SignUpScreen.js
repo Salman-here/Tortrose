@@ -13,6 +13,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import GlassBackground from '../../components/common/GlassBackground';
 import GlassPanel from '../../components/common/GlassPanel';
 import RozareLogo from '../../components/common/RozareLogo';
+import GoogleSignInButton from '../../components/common/GoogleSignInButton';
 import { spacing, fontSize, borderRadius, shadows, fontWeight } from '../../styles/theme';
 import { useTheme } from '../../contexts/ThemeContext';
 
@@ -158,11 +159,11 @@ export default function SignUpScreen({ navigation }) {
               <View style={styles.dividerLine} /><Text style={styles.dividerText}>or continue with</Text><View style={styles.dividerLine} />
             </View>
 
-            <TouchableOpacity style={[styles.googleButton, googleLoading && styles.googleButtonDisabled]} onPress={handleGoogleSignUp} disabled={googleLoading} activeOpacity={0.85}>
-              {googleLoading ? <ActivityIndicator color="#4285F4" size="small" /> : (
-                <><View style={styles.googleIcon}><Text style={styles.googleIconText}>G</Text></View><Text style={styles.googleButtonText}>Continue with Google</Text></>
-              )}
-            </TouchableOpacity>
+            <GoogleSignInButton
+              onPress={handleGoogleSignUp}
+              loading={googleLoading}
+              style={styles.googleButton}
+            />
 
             <View style={styles.loginRow}>
               <Text style={styles.loginText}>Already have an account?</Text>
@@ -207,11 +208,7 @@ const buildStyles = (p) => StyleSheet.create({
   divider: { flexDirection: 'row', alignItems: 'center', marginBottom: spacing.xl },
   dividerLine: { flex: 1, height: 1, backgroundColor: p.glass.border },
   dividerText: { marginHorizontal: spacing.md, fontSize: fontSize.sm, color: p.colors.textSecondary, fontWeight: fontWeight.medium },
-  googleButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: p.glass.bgStrong, borderWidth: 1.5, borderColor: p.glass.border, borderRadius: borderRadius.xl, paddingVertical: spacing.md, paddingHorizontal: spacing.lg, marginBottom: spacing.xl, gap: spacing.sm },
-  googleButtonDisabled: { opacity: 0.7 },
-  googleIcon: { width: 28, height: 28, borderRadius: 14, backgroundColor: '#4285F4', alignItems: 'center', justifyContent: 'center' },
-  googleIconText: { color: '#fff', fontSize: fontSize.md, fontWeight: fontWeight.bold, lineHeight: 20 },
-  googleButtonText: { fontSize: fontSize.md, color: p.colors.text, fontWeight: fontWeight.semibold },
+  googleButton: { marginBottom: spacing.xl },
   loginRow: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center' },
   loginText: { fontSize: fontSize.md, color: p.colors.textSecondary },
   loginLink: { fontSize: fontSize.md, color: p.colors.primary, fontWeight: fontWeight.bold },

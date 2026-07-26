@@ -8,11 +8,14 @@
  * behaviour, which differs between native react-native-svg and react-native-web.
  */
 
-import React from 'react';
+import React, { useId } from 'react';
 import { View } from 'react-native';
 import Svg, { Defs, LinearGradient, Stop, Rect, Path, Circle, Text as SvgText } from 'react-native-svg';
 
 export default function RozareLogo({ width = 140, height = 36, showText = true }) {
+  const instanceId = useId().replace(/[^a-zA-Z0-9_-]/g, '');
+  const gradientId = `rzGrad-${instanceId}`;
+  const softGradientId = `rzGradSoft-${instanceId}`;
   const iconSize = height;
   // Icon-only mark lives in a 56×56 box; full lockup (mark + wordmark) is 220×56.
   const viewBoxW = showText ? 220 : 56;
@@ -25,12 +28,12 @@ export default function RozareLogo({ width = 140, height = 36, showText = true }
         height={iconSize}
       >
         <Defs>
-          <LinearGradient id="rzGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+          <LinearGradient id={gradientId} x1="0%" y1="0%" x2="100%" y2="100%">
             <Stop offset="0%" stopColor="#14B8A6" />
             <Stop offset="50%" stopColor="#0EA5E9" />
             <Stop offset="100%" stopColor="#6366F1" />
           </LinearGradient>
-          <LinearGradient id="rzGradSoft" x1="0%" y1="0%" x2="100%" y2="100%">
+          <LinearGradient id={softGradientId} x1="0%" y1="0%" x2="100%" y2="100%">
             <Stop offset="0%" stopColor="#14B8A6" stopOpacity="0.18" />
             <Stop offset="100%" stopColor="#6366F1" stopOpacity="0.18" />
           </LinearGradient>
@@ -38,9 +41,9 @@ export default function RozareLogo({ width = 140, height = 36, showText = true }
 
         {/* Mark: rotated square "gem" with negative-space R cut by an orbital arc */}
         {/* Soft glow tile */}
-        <Rect x="6" y="6" width="44" height="44" rx="12" fill="url(#rzGradSoft)" />
+        <Rect x="6" y="6" width="44" height="44" rx="12" fill={`url(#${softGradientId})`} />
         {/* Primary gem tile */}
-        <Rect x="8" y="8" width="40" height="40" rx="11" fill="url(#rzGrad)" />
+        <Rect x="8" y="8" width="40" height="40" rx="11" fill={`url(#${gradientId})`} />
         {/* Orbital arc accent */}
         <Path
           d="M41 18 a15 15 0 0 1 -25 21"
@@ -70,7 +73,7 @@ export default function RozareLogo({ width = 140, height = 36, showText = true }
             fontSize="26"
             fontWeight="700"
             letterSpacing="1.2"
-            fill="url(#rzGrad)"
+            fill={`url(#${gradientId})`}
           >
             Rozare
           </SvgText>

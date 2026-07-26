@@ -16,6 +16,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useGlobal } from '../contexts/GlobalContext';
 import GlassBackground from '../components/common/GlassBackground';
 import GlassPanel from '../components/common/GlassPanel';
+import RozareLogo from '../components/common/RozareLogo';
 import { spacing, fontSize, borderRadius, fontWeight, typography } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 
@@ -87,40 +88,122 @@ export default function ProfileScreen({ navigation }) {
 
   // Guest View
   if (!currentUser) {
+    const guestFeatures = [
+      { icon: 'sparkles-outline', title: 'Shop with your AI', desc: 'Discover and buy by chatting in the app or on WhatsApp', color: palette.colors.secondary },
+      { icon: 'receipt-outline', title: 'Track every order', desc: 'Keep confirmations and delivery updates in one place', color: palette.colors.info },
+      { icon: 'heart-outline', title: 'Save what you love', desc: 'Sync favourite products and trusted stores across devices', color: palette.colors.heart },
+      { icon: 'logo-whatsapp', title: 'Stay updated on WhatsApp', desc: 'Receive order progress when your WhatsApp is connected', color: palette.colors.success },
+    ];
+
     return (
       <GlassBackground>
-        <View style={styles.guestContainer}>
-          <GlassPanel variant="strong" style={styles.guestCard}>
-            <View style={styles.guestAvatarCircle}>
-              <Ionicons name="person-outline" size={48} color={palette.colors.primary} />
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.guestScroll}
+        >
+          <View style={styles.guestTopBar}>
+            <RozareLogo width={126} height={32} />
+            <View style={styles.accountPill}>
+              <View style={styles.accountPillDot} />
+              <Text style={styles.accountPillText}>YOUR ACCOUNT</Text>
             </View>
-            <Text style={styles.guestTitle}>Welcome to Rozare</Text>
-            <Text style={styles.guestSubtitle}>Sign in to access your account</Text>
+          </View>
+
+          <GlassPanel variant="strong" style={styles.guestCard}>
+            <View style={styles.guestGlowTop} pointerEvents="none">
+              <LinearGradient colors={['rgba(20,184,166,0.42)', 'rgba(14,165,233,0.06)']} style={styles.guestGlowFill} />
+            </View>
+            <View style={styles.guestGlowBottom} pointerEvents="none">
+              <LinearGradient colors={['rgba(99,102,241,0.30)', 'rgba(168,85,247,0.04)']} style={styles.guestGlowFill} />
+            </View>
+
+            <View style={styles.guestEyebrow}>
+              <Ionicons name="sparkles" size={12} color={palette.colors.primary} />
+              <Text style={styles.guestEyebrowText}>YOUR SHOPPING, BEAUTIFULLY SYNCED</Text>
+            </View>
+
+            <View style={styles.guestAvatarShell}>
+              <LinearGradient colors={palette.gradients.cta} style={styles.guestAvatarGradient}>
+                <Ionicons name="person-outline" size={42} color="#fff" />
+              </LinearGradient>
+              <View style={styles.guestAvatarBadge}>
+                <Ionicons name="checkmark" size={13} color="#fff" />
+              </View>
+            </View>
+
+            <Text style={styles.guestTitle}>Your Rozare, everywhere</Text>
+            <Text style={styles.guestSubtitle}>
+              Sign in once to keep your cart, favourites, trusted stores and order journey together.
+            </Text>
+
             <TouchableOpacity style={styles.loginButton} onPress={() => navigation.navigate('Login')} activeOpacity={0.85}>
               <LinearGradient colors={palette.gradients.cta} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
-              <Text style={styles.loginButtonText}>Login / Sign Up</Text>
+              <Ionicons name="person-outline" size={18} color="#fff" />
+              <Text style={styles.loginButtonText}>Sign in to Rozare</Text>
+              <Ionicons name="arrow-forward" size={18} color="#fff" />
             </TouchableOpacity>
+
+            <View style={styles.createAccountRow}>
+              <Text style={styles.createAccountText}>New to Rozare?</Text>
+              <TouchableOpacity onPress={() => navigation.navigate('SignUp')} activeOpacity={0.7}>
+                <Text style={styles.createAccountLink}> Create an account</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.guestTrustRow}>
+              {[
+                { icon: 'shield-checkmark-outline', label: 'Secure' },
+                { icon: 'sync-outline', label: 'Synced' },
+                { icon: 'sparkles-outline', label: 'AI powered' },
+              ].map((item) => (
+                <View key={item.label} style={styles.guestTrustChip}>
+                  <Ionicons name={item.icon} size={13} color={palette.colors.primary} />
+                  <Text style={styles.guestTrustText}>{item.label}</Text>
+                </View>
+              ))}
+            </View>
           </GlassPanel>
 
+          <View style={styles.guestSectionHeading}>
+            <View>
+              <Text style={styles.guestSectionKicker}>ONE ACCOUNT</Text>
+              <Text style={styles.guestSectionTitle}>Everything stays with you</Text>
+            </View>
+            <View style={styles.guestSectionIcon}>
+              <Ionicons name="infinite-outline" size={19} color={palette.colors.primary} />
+            </View>
+          </View>
+
           <GlassPanel variant="card" style={styles.featuresCard}>
-            {[
-              { icon: 'receipt-outline', title: 'Track Orders', desc: 'Follow purchase status updates' },
-              { icon: 'heart-outline', title: 'Save Favorites', desc: 'Build and manage your wishlist' },
-              { icon: 'shield-checkmark-outline', title: 'Trusted Stores', desc: 'Use reviews, badges, and trust signals' },
-            ].map((f) => (
-              <View key={f.icon} style={styles.featureRow}>
-                <View style={styles.featureIcon}>
-                  <Ionicons name={f.icon} size={22} color={palette.colors.primary} />
+            {guestFeatures.map((feature, index) => (
+              <View
+                key={feature.title}
+                style={[styles.featureRow, index < guestFeatures.length - 1 && styles.featureRowDivider]}
+              >
+                <View style={[styles.featureIcon, { backgroundColor: `${feature.color}14` }]}>
+                  <Ionicons name={feature.icon} size={21} color={feature.color} />
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.featureTitle}>{f.title}</Text>
-                  <Text style={styles.featureDesc}>{f.desc}</Text>
+                  <Text style={styles.featureTitle}>{feature.title}</Text>
+                  <Text style={styles.featureDesc}>{feature.desc}</Text>
                 </View>
+                <Ionicons name="chevron-forward" size={16} color={palette.colors.textLight} />
               </View>
             ))}
           </GlassPanel>
+
+          <GlassPanel variant="inner" androidBlur={false} style={styles.guestPrivacyStrip}>
+            <View style={styles.guestPrivacyIcon}>
+              <Ionicons name="lock-closed-outline" size={16} color={palette.colors.success} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.guestPrivacyTitle}>Private by design</Text>
+              <Text style={styles.guestPrivacyText}>Your account keeps checkout and shopping activity protected.</Text>
+            </View>
+          </GlassPanel>
+
           <Text style={styles.appVersion}>Rozare v{APP_VERSION}</Text>
-        </View>
+        </ScrollView>
       </GlassBackground>
     );
   }
@@ -256,27 +339,84 @@ export default function ProfileScreen({ navigation }) {
 const buildStyles = (p) => StyleSheet.create({
   scroll: { paddingBottom: 110 },
   // Guest
-  guestContainer: { flex: 1, justifyContent: 'center', padding: spacing.lg },
-  guestCard: { padding: spacing.xxl, alignItems: 'center', marginBottom: spacing.lg },
-  guestAvatarCircle: {
-    width: 88, height: 88, borderRadius: 44,
-    backgroundColor: 'rgba(99,102,241,0.12)', justifyContent: 'center', alignItems: 'center', marginBottom: spacing.lg,
+  guestScroll: { flexGrow: 1, paddingHorizontal: spacing.lg, paddingTop: spacing.md, paddingBottom: 124 },
+  guestTopBar: { minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: spacing.md },
+  accountPill: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingHorizontal: spacing.md, paddingVertical: 7, borderRadius: borderRadius.full,
+    backgroundColor: p.glass.bgSubtle, borderWidth: 1, borderColor: p.glass.borderSubtle,
   },
-  guestTitle: { fontSize: fontSize.xxl, fontWeight: fontWeight.bold, color: p.colors.text, marginBottom: spacing.xs },
-  guestSubtitle: { fontSize: fontSize.md, color: p.colors.textSecondary, marginBottom: spacing.xl },
+  accountPillDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: p.colors.success },
+  accountPillText: { fontSize: 9, letterSpacing: 0.9, color: p.colors.textSecondary, fontWeight: fontWeight.bold },
+  guestCard: { paddingHorizontal: spacing.xl, paddingTop: spacing.xl, paddingBottom: spacing.lg, alignItems: 'center', marginBottom: spacing.xl, borderRadius: 28 },
+  guestGlowTop: { position: 'absolute', top: -72, right: -58, width: 184, height: 184, borderRadius: 92, opacity: 0.56 },
+  guestGlowBottom: { position: 'absolute', bottom: -86, left: -60, width: 190, height: 190, borderRadius: 95, opacity: 0.42 },
+  guestGlowFill: { flex: 1, borderRadius: 999 },
+  guestEyebrow: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingHorizontal: spacing.md, paddingVertical: 6, borderRadius: borderRadius.full,
+    backgroundColor: p.glass.bgSubtle, borderWidth: 1, borderColor: p.glass.borderSubtle,
+    marginBottom: spacing.lg,
+  },
+  guestEyebrowText: { fontSize: 9, letterSpacing: 0.8, color: p.colors.primary, fontWeight: fontWeight.bold },
+  guestAvatarShell: {
+    width: 94, height: 94, borderRadius: 31, padding: 7, marginBottom: spacing.lg,
+    backgroundColor: 'rgba(255,255,255,0.34)', borderWidth: 1, borderColor: p.glass.borderStrong,
+    transform: [{ rotate: '-3deg' }],
+  },
+  guestAvatarGradient: { flex: 1, borderRadius: 25, alignItems: 'center', justifyContent: 'center' },
+  guestAvatarBadge: {
+    position: 'absolute', right: -5, bottom: -5, width: 27, height: 27, borderRadius: 14,
+    backgroundColor: p.colors.success, borderWidth: 3, borderColor: '#fff',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  guestTitle: { fontSize: fontSize.title, fontWeight: fontWeight.extrabold, color: p.colors.text, marginBottom: spacing.sm, textAlign: 'center', letterSpacing: -0.6 },
+  guestSubtitle: { fontSize: fontSize.md, lineHeight: 22, color: p.colors.textSecondary, marginBottom: spacing.xl, textAlign: 'center', maxWidth: 330 },
   loginButton: {
-    paddingVertical: spacing.md, paddingHorizontal: spacing.xxxl, borderRadius: borderRadius.lg, overflow: 'hidden',
+    width: '100%', minHeight: 54, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.sm,
+    paddingVertical: spacing.md, paddingHorizontal: spacing.lg, borderRadius: borderRadius.xl, overflow: 'hidden',
     shadowColor: p.colors.primary, shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.35, shadowRadius: 16, elevation: 6,
   },
-  loginButtonText: { color: '#fff', fontSize: fontSize.md, fontWeight: fontWeight.bold },
-  featuresCard: { padding: spacing.lg },
+  loginButtonText: { color: '#fff', fontSize: fontSize.md, fontWeight: fontWeight.bold, flexShrink: 1 },
+  createAccountRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: spacing.lg },
+  createAccountText: { fontSize: fontSize.sm, color: p.colors.textSecondary },
+  createAccountLink: { fontSize: fontSize.sm, color: p.colors.primary, fontWeight: fontWeight.bold },
+  guestTrustRow: { flexDirection: 'row', justifyContent: 'center', gap: spacing.xs, marginTop: spacing.lg, flexWrap: 'wrap' },
+  guestTrustChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    paddingHorizontal: spacing.sm + 2, paddingVertical: 6, borderRadius: borderRadius.full,
+    backgroundColor: p.glass.bgSubtle, borderWidth: 1, borderColor: p.glass.borderSubtle,
+  },
+  guestTrustText: { fontSize: fontSize.xs, color: p.colors.textSecondary, fontWeight: fontWeight.semibold },
+  guestSectionHeading: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    marginHorizontal: spacing.xs, marginBottom: spacing.md,
+  },
+  guestSectionKicker: { fontSize: 9, color: p.colors.primary, fontWeight: fontWeight.bold, letterSpacing: 1.1, marginBottom: 3 },
+  guestSectionTitle: { fontSize: fontSize.xl, color: p.colors.text, fontWeight: fontWeight.extrabold, letterSpacing: -0.3 },
+  guestSectionIcon: {
+    width: 40, height: 40, borderRadius: 14, alignItems: 'center', justifyContent: 'center',
+    backgroundColor: p.glass.bgSubtle, borderWidth: 1, borderColor: p.glass.borderSubtle,
+  },
+  featuresCard: { paddingHorizontal: spacing.lg, paddingVertical: spacing.sm, borderRadius: 24 },
   featureRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: spacing.md, gap: spacing.md },
+  featureRowDivider: { borderBottomWidth: 1, borderBottomColor: p.glass.borderSubtle },
   featureIcon: {
-    width: 44, height: 44, borderRadius: borderRadius.lg,
-    backgroundColor: 'rgba(99,102,241,0.08)', justifyContent: 'center', alignItems: 'center',
+    width: 44, height: 44, borderRadius: 15, justifyContent: 'center', alignItems: 'center',
+    borderWidth: 1, borderColor: p.glass.borderSubtle,
   },
   featureTitle: { fontSize: fontSize.md, fontWeight: fontWeight.semibold, color: p.colors.text },
-  featureDesc: { fontSize: fontSize.sm, color: p.colors.textSecondary, marginTop: 2 },
+  featureDesc: { fontSize: fontSize.xs, lineHeight: 17, color: p.colors.textSecondary, marginTop: 3 },
+  guestPrivacyStrip: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.md,
+    marginTop: spacing.md, padding: spacing.md, borderRadius: 18,
+  },
+  guestPrivacyIcon: {
+    width: 38, height: 38, borderRadius: 13, alignItems: 'center', justifyContent: 'center',
+    backgroundColor: 'rgba(16,185,129,0.10)', borderWidth: 1, borderColor: 'rgba(16,185,129,0.18)',
+  },
+  guestPrivacyTitle: { fontSize: fontSize.sm, color: p.colors.text, fontWeight: fontWeight.bold, marginBottom: 2 },
+  guestPrivacyText: { fontSize: fontSize.xs, lineHeight: 16, color: p.colors.textSecondary },
   // Profile
   profileHeader: { margin: spacing.lg, padding: spacing.xl, alignItems: 'center' },
   avatarWrapper: { marginBottom: spacing.md },
