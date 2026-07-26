@@ -323,7 +323,7 @@ const makeStyles = (palette) => {
   const colors = palette.colors;
   const glass = palette.glass;
   return StyleSheet.create({
-    container: { backgroundColor: Platform.OS === 'android' ? glass.bgStrong : glass.bg, marginHorizontal: spacing.md, marginTop: spacing.xs, borderRadius: 26, borderWidth: 1, borderColor: glass.borderStrong, maxHeight: 430, shadowColor: '#1e293b', shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.17, shadowRadius: 22, elevation: 10, overflow: 'hidden' },
+    container: { backgroundColor: Platform.OS === 'android' ? glass.bgStrong : glass.bg, marginHorizontal: spacing.md, marginTop: spacing.xs, borderRadius: 26, borderWidth: 1, borderColor: glass.borderStrong, maxHeight: 430, shadowColor: '#1e293b', shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.17, shadowRadius: 22, elevation: Platform.OS === 'android' ? 0 : 10, overflow: 'hidden' },
     topAccent: { width: 52, height: 3, borderRadius: 2, alignSelf: 'center', marginTop: 7, backgroundColor: colors.primary, opacity: 0.72 },
     scrollContent: { paddingTop: spacing.xs, paddingBottom: spacing.sm },
     section: { paddingHorizontal: spacing.md, paddingVertical: spacing.sm },

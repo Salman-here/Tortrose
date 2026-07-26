@@ -53,7 +53,7 @@ const SliderProductCard = ({ product, onPress, palette }) => {
 
   return (
     <TouchableOpacity style={styles.card} activeOpacity={0.85} onPress={onPress} accessibilityLabel={`View ${product.name}`}>
-      <GlassBlurFill androidBlur={false} />
+      <GlassBlurFill intensity={36} />
       <View style={styles.cardImageWrap}>
         {validImage ? (
           <Image source={{ uri: imageSource }} style={styles.cardImage} contentFit="cover" cachePolicy="memory-disk" transition={150} />

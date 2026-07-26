@@ -1,18 +1,17 @@
 /**
  * GlassPanel Component — Liquid Glass Design (theme-aware)
  * Pulls glass surface colors from the active theme palette so dark mode swaps cleanly.
- * iOS/web use real blur. Expo SDK 54's Android blur is experimental, so only
- * larger floating/strong surfaces use it on Android. Smaller and repeated
- * cards use a gradient as the surface itself (not an absolute child), avoiding
- * Android's sharp content-box rectangle inside padded cards.
+ * SDK 55 uses a shared BlurTargetView for stable Android background blur.
+ * Android 12+ uses RenderNode; older Android versions keep native blur only on
+ * larger surfaces and use the translucent theme surface for repeated cards.
  */
 
 import React from 'react';
 import { View, StyleSheet, Platform } from 'react-native';
 import { BlurView } from 'expo-blur';
-import { LinearGradient } from 'expo-linear-gradient';
 import { borderRadius as br, shadows, spacing } from '../../styles/theme';
 import { useTheme } from '../../contexts/ThemeContext';
+import { useGlassBlurTarget } from '../../contexts/GlassBlurContext';
 
 const buildVariants = (palette) => {
   const g = palette.glass;
@@ -36,11 +35,16 @@ export default function GlassPanel({
   const VARIANTS = buildVariants(palette);
   const v = VARIANTS[variant] || VARIANTS.default;
   const tint = isDark ? 'dark' : 'light';
-  const useNativeAndroidBlur = androidBlur
-    && (variant === 'floating' || variant === 'strong');
-  const androidSheen = isDark
-    ? ['rgba(255,255,255,0.055)', 'rgba(99,102,241,0.05)', 'rgba(255,255,255,0.015)']
-    : ['rgba(255,255,255,0.18)', 'rgba(99,102,241,0.035)', 'rgba(255,255,255,0.05)'];
+  const blurTarget = useGlassBlurTarget();
+  const androidApiLevel = Platform.OS === 'android'
+    ? Number.parseInt(String(Platform.Version), 10)
+    : 0;
+  const isModernAndroid = androidApiLevel >= 31;
+  const isLargeSurface = variant === 'floating' || variant === 'strong';
+  const useNativeAndroidBlur = Platform.OS === 'android'
+    && androidBlur
+    && blurTarget
+    && (isModernAndroid || isLargeSurface);
   const surfaceStyle = [
     styles.panel,
     { backgroundColor: v.bg, borderColor: v.border },
@@ -50,15 +54,12 @@ export default function GlassPanel({
 
   if (Platform.OS === 'android' && !useNativeAndroidBlur) {
     return (
-      <LinearGradient
+      <View
         {...viewProps}
-        colors={androidSheen}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
         style={surfaceStyle}
       >
         {children}
-      </LinearGradient>
+      </View>
     );
   }
 
@@ -68,11 +69,15 @@ export default function GlassPanel({
       style={surfaceStyle}
     >
       <BlurView
-        intensity={Platform.OS === 'android' ? Math.min(v.blur, 52) : v.blur}
+        intensity={Platform.OS === 'android' ? Math.min(v.blur + 8, 68) : v.blur}
         tint={tint}
-        experimentalBlurMethod={Platform.OS === 'android' ? 'dimezisBlurView' : undefined}
-        blurReductionFactor={Platform.OS === 'android' ? 6 : undefined}
-        style={StyleSheet.absoluteFill}
+        blurTarget={Platform.OS === 'android' ? blurTarget : undefined}
+        blurMethod={Platform.OS === 'android'
+          ? (isModernAndroid ? 'dimezisBlurViewSdk31Plus' : 'dimezisBlurView')
+          : undefined}
+        blurReductionFactor={Platform.OS === 'android' ? 4 : undefined}
+        style={Platform.OS === 'android' ? styles.androidBlurLayer : StyleSheet.absoluteFill}
+        pointerEvents="none"
       />
       {children}
     </View>
@@ -89,5 +94,14 @@ const styles = StyleSheet.create({
   },
   androidPanel: {
     elevation: 0,
+  },
+  // React Native positions absolute children from a padded content box on some
+  // Android renderers. Overscanning and clipping removes the inset rectangle.
+  androidBlurLayer: {
+    position: 'absolute',
+    top: -48,
+    right: -48,
+    bottom: -48,
+    left: -48,
   },
 });

@@ -52,7 +52,7 @@ export default function TrustedStoresSection({ navigation }) {
           const isVerified = s.verification?.isVerified;
           return (
             <TouchableOpacity key={s._id} style={styles.card} activeOpacity={0.85} onPress={() => navigation.navigate('Store', { storeSlug: s.storeSlug || s._id })} accessibilityLabel={`Visit ${s.storeName}`}>
-              <GlassBlurFill androidBlur={false} />
+              <GlassBlurFill intensity={38} />
               <View style={styles.logoWrap}>
                 {s.logo ? (
                   <Image source={{ uri: s.logo }} style={styles.logo} contentFit="cover" cachePolicy="memory-disk" transition={150} />

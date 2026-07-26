@@ -8,9 +8,11 @@
 import React, { useEffect, useRef } from 'react';
 import { View, StyleSheet, Animated, Dimensions, Platform, StatusBar } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { BlurTargetView } from 'expo-blur';
 import Svg, { Defs, RadialGradient, Stop, Circle } from 'react-native-svg';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../../contexts/ThemeContext';
+import { GlassBlurTargetProvider } from '../../contexts/GlassBlurContext';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -64,6 +66,7 @@ const Orb = ({ id, size, color, opacity, initialX, initialY, duration }) => {
 
 export default function GlassBackground({ children, style, variant = 'default' }) {
   const { palette, isDark } = useTheme();
+  const blurTargetRef = useRef(null);
   const gradientColors = palette.gradients.background;
 
   // Aurora orbs — brand hues, soft glow; slightly brighter in dark mode for depth
@@ -76,29 +79,36 @@ export default function GlassBackground({ children, style, variant = 'default' }
 
   return (
     <View style={[styles.container, style]}>
-      <LinearGradient colors={gradientColors} style={styles.gradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
-        {/* Floating aurora orbs for depth */}
-        <View style={styles.orbContainer} pointerEvents="none">
-          <Orb id="a" size={320} color={orbColors.a} opacity={orbOpacity.a} initialX={-90} initialY={40} duration={8000} />
-          <Orb id="b" size={280} color={orbColors.b} opacity={orbOpacity.b} initialX={SCREEN_WIDTH - 160} initialY={260} duration={10000} />
-          <Orb id="c" size={240} color={orbColors.c} opacity={orbOpacity.c} initialX={10} initialY={SCREEN_HEIGHT - 340} duration={9000} />
-          <Orb id="d" size={300} color={orbColors.d} opacity={orbOpacity.d} initialX={SCREEN_WIDTH - 200} initialY={-60} duration={11000} />
-        </View>
-      </LinearGradient>
+      <BlurTargetView ref={blurTargetRef} style={styles.backdropTarget}>
+        <LinearGradient colors={gradientColors} style={styles.gradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
+          {/* Floating aurora orbs for depth */}
+          <View style={styles.orbContainer} pointerEvents="none">
+            <Orb id="a" size={320} color={orbColors.a} opacity={orbOpacity.a} initialX={-90} initialY={40} duration={8000} />
+            <Orb id="b" size={280} color={orbColors.b} opacity={orbOpacity.b} initialX={SCREEN_WIDTH - 160} initialY={260} duration={10000} />
+            <Orb id="c" size={240} color={orbColors.c} opacity={orbOpacity.c} initialX={10} initialY={SCREEN_HEIGHT - 340} duration={9000} />
+            <Orb id="d" size={300} color={orbColors.d} opacity={orbOpacity.d} initialX={SCREEN_WIDTH - 200} initialY={-60} duration={11000} />
+          </View>
+        </LinearGradient>
+      </BlurTargetView>
 
       {/* Keep controls below Android's status bar without pushing the gradient
           down. The aurora now paints edge-to-edge behind the time/battery row. */}
-      <View style={[styles.contentFrame, Platform.OS === 'android' && styles.androidSafeTop]}>
-        <SafeAreaView style={styles.content} edges={['bottom', 'left', 'right']}>
-          {children}
-        </SafeAreaView>
-      </View>
+      <GlassBlurTargetProvider targetRef={blurTargetRef}>
+        <View style={[styles.contentFrame, Platform.OS === 'android' && styles.androidSafeTop]}>
+          <SafeAreaView style={styles.content} edges={['bottom', 'left', 'right']}>
+            {children}
+          </SafeAreaView>
+        </View>
+      </GlassBlurTargetProvider>
     </View>
   );
 }
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+  },
+  backdropTarget: {
+    ...StyleSheet.absoluteFillObject,
   },
   androidSafeTop: {
     paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 0) : 0,

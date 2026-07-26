@@ -53,7 +53,7 @@ const StoreCard = ({ store, index = 0, onPress, showTrustButton = true, showDesc
   return (
     <Animated.View style={[styles.animatedContainer, { transform: [{ scale: scaleAnim }], opacity: opacityAnim }, style]}>
       <TouchableOpacity style={[styles.container, { backgroundColor: g.bg, borderColor: g.border }, compact && styles.containerCompact]} onPress={handlePress} activeOpacity={0.9}>
-        {!compact && Platform.OS !== 'android' && <GlassBlurFill intensity={36} />}
+        {!compact && <GlassBlurFill intensity={44} />}
         {Platform.OS !== 'android' && (
           <LinearGradient
             colors={CARD_SHEEN}
@@ -120,7 +120,7 @@ export const StoreListItem = ({ store, onPress, showTrustButton = true }) => {
 
   return (
     <TouchableOpacity style={styles.listItemContainer} onPress={handlePress} activeOpacity={0.7}>
-      {Platform.OS !== 'android' && <GlassBlurFill intensity={32} />}
+      <GlassBlurFill intensity={40} />
       {Platform.OS !== 'android' && <LinearGradient colors={CARD_SHEEN} style={StyleSheet.absoluteFill} pointerEvents="none" />}
       {logo ? <Image source={{ uri: logo }} style={styles.listItemLogo} contentFit="cover" cachePolicy="memory-disk" transition={150} /> :
         <View style={[styles.listItemLogo, styles.listItemLogoPlaceholder]}><Ionicons name="storefront" size={22} color="#fff" /></View>}

@@ -341,7 +341,7 @@ export default function StoresListingScreen({ navigation }) {
 
 const buildStyles = (p) => StyleSheet.create({
   container: { flex: 1 },
-  heroHeader: { paddingHorizontal: spacing.lg, paddingVertical: spacing.lg, marginHorizontal: spacing.md, marginTop: spacing.sm, marginBottom: spacing.sm, borderRadius: 26, overflow: 'hidden', backgroundColor: p.glass.bgStrong, borderWidth: 1, borderColor: p.glass.borderStrong, ...shadows.lg },
+  heroHeader: { paddingHorizontal: spacing.lg, paddingVertical: spacing.lg, marginHorizontal: spacing.md, marginTop: spacing.sm, marginBottom: spacing.sm, borderRadius: 26, overflow: 'hidden', backgroundColor: p.glass.bgStrong, borderWidth: 1, borderColor: p.glass.borderStrong, ...shadows.lg, elevation: Platform.OS === 'android' ? 0 : shadows.lg.elevation },
   orbTopRight: { position: 'absolute', top: -46, right: -40, width: 150, height: 150, borderRadius: 75, opacity: 0.5 },
   orbBottomLeft: { position: 'absolute', bottom: -50, left: -44, width: 128, height: 128, borderRadius: 64, opacity: 0.4 },
   orbFill: { flex: 1, borderRadius: 999 },

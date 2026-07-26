@@ -572,6 +572,7 @@ export default function HomeScreen({ navigation }) {
               onPress={() => applyCategorySelection([])}
               activeOpacity={0.84}
             >
+              {Platform.OS === 'android' && <GlassBlurFill intensity={42} />}
               {selectedCategories.length === 0 && (
                 <LinearGradient colors={palette.gradients.cta} style={StyleSheet.absoluteFill} pointerEvents="none" />
               )}
@@ -594,6 +595,7 @@ export default function HomeScreen({ navigation }) {
                   onPress={() => applyCategorySelection(nextCategories)}
                   activeOpacity={0.84}
                 >
+                  {Platform.OS === 'android' && <GlassBlurFill intensity={42} />}
                   {isActive && (
                     <LinearGradient colors={palette.gradients.cta} style={StyleSheet.absoluteFill} pointerEvents="none" />
                   )}
@@ -1207,7 +1209,7 @@ const buildStyles = (p) => StyleSheet.create({
   filterBadge: { position: 'absolute', top: -4, right: -4, backgroundColor: p.colors.error, width: 18, height: 18, borderRadius: 9, justifyContent: 'center', alignItems: 'center' },
   filterBadgeText: { color: p.colors.white, fontSize: fontSize.xs, fontWeight: fontWeight.bold },
   // Stats banner — glass
-  statsBanner: { flexDirection: 'row', backgroundColor: p.glass.bg, marginHorizontal: spacing.md, marginTop: spacing.sm, borderRadius: borderRadius.xl, padding: spacing.md, borderWidth: 1, borderColor: p.glass.border, ...shadows.sm, justifyContent: 'space-around', overflow: 'hidden' },
+  statsBanner: { flexDirection: 'row', backgroundColor: p.glass.bg, marginHorizontal: spacing.md, marginTop: spacing.sm, borderRadius: borderRadius.xl, padding: spacing.md, borderWidth: 1, borderColor: p.glass.border, ...shadows.sm, elevation: Platform.OS === 'android' ? 0 : shadows.sm.elevation, justifyContent: 'space-around', overflow: 'hidden' },
   statItem: { alignItems: 'center', flex: 1, gap: 2 },
   statText: { fontSize: fontSize.sm, fontWeight: fontWeight.bold, color: p.colors.dark },
   statLabel: { fontSize: fontSize.xs, color: p.colors.textSecondary },
@@ -1220,7 +1222,7 @@ const buildStyles = (p) => StyleSheet.create({
   sectionLink: { fontSize: fontSize.sm, color: p.colors.primary, fontWeight: fontWeight.semibold },
   viewAllCategories: { minHeight: 38, flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: spacing.sm },
   categoriesScroll: { paddingHorizontal: spacing.lg, gap: spacing.sm, paddingBottom: spacing.md },
-  categoryCard: { width: 124, minHeight: 112, padding: spacing.md, borderRadius: 22, overflow: 'hidden', backgroundColor: p.glass.bg, borderWidth: 1, borderColor: p.glass.border, ...shadows.sm },
+  categoryCard: { width: 124, minHeight: 112, padding: spacing.md, borderRadius: 22, overflow: 'hidden', backgroundColor: p.glass.bg, borderWidth: 1, borderColor: p.glass.border, ...shadows.sm, elevation: Platform.OS === 'android' ? 0 : shadows.sm.elevation },
   categoryCardActive: { borderColor: 'rgba(255,255,255,0.48)', shadowColor: '#0EA5E9', shadowOpacity: 0.24, shadowRadius: 12, elevation: 5 },
   categoryIconTile: { width: 38, height: 38, borderRadius: 13, backgroundColor: p.colors.primarySubtle, borderWidth: 1, borderColor: p.colors.primaryLighter, alignItems: 'center', justifyContent: 'center', marginBottom: spacing.sm },
   categoryIconTileActive: { backgroundColor: 'rgba(255,255,255,0.18)', borderColor: 'rgba(255,255,255,0.26)' },
@@ -1230,7 +1232,7 @@ const buildStyles = (p) => StyleSheet.create({
   categoryCardHint: { fontSize: 10, color: p.colors.textSecondary, fontWeight: fontWeight.medium },
   categoryCardHintActive: { color: 'rgba(255,255,255,0.78)' },
   // Stores Banner — glass surface, brand-gradient icon tile
-  storesBanner: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginHorizontal: spacing.lg, marginVertical: spacing.lg, borderRadius: borderRadius.xxl, paddingVertical: spacing.md, paddingHorizontal: spacing.md, overflow: 'hidden', backgroundColor: p.glass.bg, borderWidth: 1, borderColor: p.glass.border, ...shadows.md },
+  storesBanner: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginHorizontal: spacing.lg, marginVertical: spacing.lg, borderRadius: borderRadius.xxl, paddingVertical: spacing.md, paddingHorizontal: spacing.md, overflow: 'hidden', backgroundColor: p.glass.bg, borderWidth: 1, borderColor: p.glass.border, ...shadows.md, elevation: Platform.OS === 'android' ? 0 : shadows.md.elevation },
   storesBannerContent: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, flex: 1, minWidth: 0 },
   storesBannerIcon: { width: 48, height: 48, borderRadius: borderRadius.lg, justifyContent: 'center', alignItems: 'center', shadowColor: '#0EA5E9', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.35, shadowRadius: 10, elevation: 5 },
   storesBannerText: { flex: 1, minWidth: 0 },

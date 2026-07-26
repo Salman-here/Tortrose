@@ -99,7 +99,9 @@
       "@sentry/react-native",
       "expo-audio",
       "expo-font",
-      "expo-asset"
+      "expo-asset",
+      "expo-image",
+      "expo-sharing"
     ],
     "updates": {
       "fallbackToCacheTimeout": 0

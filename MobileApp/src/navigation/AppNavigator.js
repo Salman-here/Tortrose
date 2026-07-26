@@ -12,7 +12,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../contexts/AuthContext';
 import { useGlobal } from '../contexts/GlobalContext';
 import { View, Text, StyleSheet, Animated, Platform, Alert } from 'react-native';
-import { BlurView } from 'expo-blur';
+import { BlurTargetView, BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { selection as hapticSelection } from '../utils/haptics';
@@ -23,24 +23,57 @@ const CTA_GRADIENT = ['#14B8A6', '#0EA5E9', '#6366F1'];
 // The tab bar safely uses one native Android blur because it is persistent
 // rather than repeated for every scrolling card.
 function GlassTabBarBackground({ isDark, palette }) {
+  const tabBlurTarget = useRef(null);
+  const surfaceStyle = [
+    StyleSheet.absoluteFill,
+    {
+      backgroundColor: palette.glass.bgStrong,
+      borderWidth: 1,
+      borderColor: palette.glass.border,
+      borderRadius: 28,
+      overflow: 'hidden',
+    },
+  ];
+
+  if (Platform.OS === 'android') {
+    return (
+      <View style={surfaceStyle}>
+        <BlurTargetView ref={tabBlurTarget} style={StyleSheet.absoluteFill}>
+          <LinearGradient
+            colors={isDark
+              ? ['rgba(20,184,166,0.24)', 'rgba(14,165,233,0.18)', 'rgba(99,102,241,0.28)']
+              : ['rgba(207,250,254,0.72)', 'rgba(224,242,254,0.64)', 'rgba(238,242,255,0.76)']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={StyleSheet.absoluteFill}
+          />
+        </BlurTargetView>
+        <BlurView
+          blurTarget={tabBlurTarget}
+          tint={isDark ? 'dark' : 'light'}
+          intensity={58}
+          blurMethod={Number.parseInt(String(Platform.Version), 10) >= 31
+            ? 'dimezisBlurViewSdk31Plus'
+            : 'dimezisBlurView'}
+          blurReductionFactor={4}
+          style={StyleSheet.absoluteFill}
+        />
+        <LinearGradient
+          colors={isDark
+            ? ['rgba(255,255,255,0.07)', 'rgba(255,255,255,0.015)']
+            : ['rgba(255,255,255,0.24)', 'rgba(255,255,255,0.06)']}
+          style={StyleSheet.absoluteFill}
+          pointerEvents="none"
+        />
+      </View>
+    );
+  }
+
   return (
-    <View
-      style={[
-        StyleSheet.absoluteFill,
-        {
-          backgroundColor: palette.glass.bgStrong,
-          borderWidth: 1,
-          borderColor: palette.glass.border,
-          borderRadius: 28,
-          overflow: 'hidden',
-        },
-      ]}
-    >
+    <View style={surfaceStyle}>
       <BlurView
         tint={isDark ? 'dark' : 'light'}
-        intensity={Platform.OS === 'android' ? 48 : 60}
-        experimentalBlurMethod={Platform.OS === 'android' ? 'dimezisBlurView' : undefined}
-        blurReductionFactor={Platform.OS === 'android' ? 6 : undefined}
+        intensity={60}
         style={StyleSheet.absoluteFill}
       />
     </View>
