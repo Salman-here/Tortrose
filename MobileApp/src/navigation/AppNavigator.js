@@ -5,7 +5,7 @@
  * Requirements: 29.1, 29.2, 29.3, 29.4, 29.5, 29.6, 29.7
  */
 
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { createStackNavigator, CardStyleInterpolators } from '@react-navigation/stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
@@ -24,6 +24,7 @@ const CTA_GRADIENT = ['#14B8A6', '#0EA5E9', '#6366F1'];
 // rather than repeated for every scrolling card.
 function GlassTabBarBackground({ isDark, palette }) {
   const tabBlurTarget = useRef(null);
+  const [tabBlurReady, setTabBlurReady] = useState(false);
   const surfaceStyle = [
     StyleSheet.absoluteFill,
     {
@@ -38,30 +39,39 @@ function GlassTabBarBackground({ isDark, palette }) {
   if (Platform.OS === 'android') {
     return (
       <View style={surfaceStyle}>
-        <BlurTargetView ref={tabBlurTarget} style={StyleSheet.absoluteFill}>
+        <BlurTargetView
+          ref={tabBlurTarget}
+          style={StyleSheet.absoluteFill}
+          onLayout={() => setTabBlurReady(true)}
+        >
           <LinearGradient
             colors={isDark
-              ? ['rgba(20,184,166,0.24)', 'rgba(14,165,233,0.18)', 'rgba(99,102,241,0.28)']
-              : ['rgba(207,250,254,0.72)', 'rgba(224,242,254,0.64)', 'rgba(238,242,255,0.76)']}
+              ? ['rgba(20,184,166,0.32)', 'rgba(14,165,233,0.16)', 'rgba(99,102,241,0.34)']
+              : ['rgba(153,246,228,0.46)', 'rgba(186,230,253,0.30)', 'rgba(199,210,254,0.48)']}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 1 }}
             style={StyleSheet.absoluteFill}
           />
+          <View style={[styles.tabPrism, styles.tabPrismLeft, { backgroundColor: isDark ? 'rgba(45,212,191,0.44)' : 'rgba(45,212,191,0.52)' }]} />
+          <View style={[styles.tabPrism, styles.tabPrismCenter, { backgroundColor: isDark ? 'rgba(56,189,248,0.36)' : 'rgba(56,189,248,0.44)' }]} />
+          <View style={[styles.tabPrism, styles.tabPrismRight, { backgroundColor: isDark ? 'rgba(129,140,248,0.42)' : 'rgba(129,140,248,0.50)' }]} />
         </BlurTargetView>
-        <BlurView
-          blurTarget={tabBlurTarget}
-          tint={isDark ? 'dark' : 'light'}
-          intensity={58}
-          blurMethod={Number.parseInt(String(Platform.Version), 10) >= 31
-            ? 'dimezisBlurViewSdk31Plus'
-            : 'dimezisBlurView'}
-          blurReductionFactor={4}
-          style={StyleSheet.absoluteFill}
-        />
+        {tabBlurReady && (
+          <BlurView
+            blurTarget={tabBlurTarget}
+            tint={isDark ? 'dark' : 'default'}
+            intensity={36}
+            blurMethod={Number.parseInt(String(Platform.Version), 10) >= 31
+              ? 'dimezisBlurViewSdk31Plus'
+              : 'dimezisBlurView'}
+            blurReductionFactor={1}
+            style={StyleSheet.absoluteFill}
+          />
+        )}
         <LinearGradient
           colors={isDark
-            ? ['rgba(255,255,255,0.07)', 'rgba(255,255,255,0.015)']
-            : ['rgba(255,255,255,0.24)', 'rgba(255,255,255,0.06)']}
+            ? ['rgba(255,255,255,0.12)', 'rgba(255,255,255,0.018)']
+            : ['rgba(255,255,255,0.30)', 'rgba(255,255,255,0.035)']}
           style={StyleSheet.absoluteFill}
           pointerEvents="none"
         />
@@ -599,6 +609,24 @@ const styles = StyleSheet.create({
   },
   tabBarItem: {
     paddingVertical: spacing.xs,
+  },
+  tabPrism: {
+    position: 'absolute',
+    width: 88,
+    height: 88,
+    borderRadius: 44,
+  },
+  tabPrismLeft: {
+    left: -18,
+    top: -34,
+  },
+  tabPrismCenter: {
+    left: '42%',
+    bottom: -52,
+  },
+  tabPrismRight: {
+    right: -16,
+    top: -38,
   },
   tabIconContainer: {
     alignItems: 'center',

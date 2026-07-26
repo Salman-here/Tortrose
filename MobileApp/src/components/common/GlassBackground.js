@@ -5,7 +5,7 @@
  * softly on every platform — matching the web's blurred gradient blobs.
  */
 
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { View, StyleSheet, Animated, Dimensions, Platform, StatusBar } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurTargetView } from 'expo-blur';
@@ -16,11 +16,13 @@ import { GlassBlurTargetProvider } from '../../contexts/GlassBlurContext';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
-const Orb = ({ id, size, color, opacity, initialX, initialY, duration }) => {
+const Orb = ({ id, size, color, opacity, initialX, initialY, duration, animate = true }) => {
   const translateX = useRef(new Animated.Value(0)).current;
   const translateY = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
+    if (!animate) return undefined;
+
     const animateX = Animated.loop(
       Animated.sequence([
         Animated.timing(translateX, { toValue: 30, duration: duration, useNativeDriver: true }),
@@ -36,7 +38,7 @@ const Orb = ({ id, size, color, opacity, initialX, initialY, duration }) => {
     animateX.start();
     animateY.start();
     return () => { animateX.stop(); animateY.stop(); };
-  }, []);
+  }, [animate, duration, translateX, translateY]);
 
   const gradientId = `orb-gradient-${id}`;
   return (
@@ -67,7 +69,12 @@ const Orb = ({ id, size, color, opacity, initialX, initialY, duration }) => {
 export default function GlassBackground({ children, style, variant = 'default' }) {
   const { palette, isDark } = useTheme();
   const blurTargetRef = useRef(null);
+  const [blurTargetReady, setBlurTargetReady] = useState(false);
   const gradientColors = palette.gradients.background;
+  // Moving a full-screen blur target makes every Android BlurView recapture on
+  // every animation frame. Keep the aurora static on Android so scrolling has
+  // the GPU budget, while iOS/web retain the ambient movement.
+  const animateAurora = Platform.OS !== 'android';
 
   // Aurora orbs — brand hues, soft glow; slightly brighter in dark mode for depth
   const orbOpacity = isDark
@@ -79,21 +86,28 @@ export default function GlassBackground({ children, style, variant = 'default' }
 
   return (
     <View style={[styles.container, style]}>
-      <BlurTargetView ref={blurTargetRef} style={styles.backdropTarget}>
+      <BlurTargetView
+        ref={blurTargetRef}
+        style={styles.backdropTarget}
+        onLayout={() => setBlurTargetReady(true)}
+      >
         <LinearGradient colors={gradientColors} style={styles.gradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
           {/* Floating aurora orbs for depth */}
           <View style={styles.orbContainer} pointerEvents="none">
-            <Orb id="a" size={320} color={orbColors.a} opacity={orbOpacity.a} initialX={-90} initialY={40} duration={8000} />
-            <Orb id="b" size={280} color={orbColors.b} opacity={orbOpacity.b} initialX={SCREEN_WIDTH - 160} initialY={260} duration={10000} />
-            <Orb id="c" size={240} color={orbColors.c} opacity={orbOpacity.c} initialX={10} initialY={SCREEN_HEIGHT - 340} duration={9000} />
-            <Orb id="d" size={300} color={orbColors.d} opacity={orbOpacity.d} initialX={SCREEN_WIDTH - 200} initialY={-60} duration={11000} />
+            <Orb id="a" size={320} color={orbColors.a} opacity={orbOpacity.a} initialX={-90} initialY={40} duration={8000} animate={animateAurora} />
+            <Orb id="b" size={280} color={orbColors.b} opacity={orbOpacity.b} initialX={SCREEN_WIDTH - 160} initialY={260} duration={10000} animate={animateAurora} />
+            <Orb id="c" size={240} color={orbColors.c} opacity={orbOpacity.c} initialX={10} initialY={SCREEN_HEIGHT - 340} duration={9000} animate={animateAurora} />
+            <Orb id="d" size={300} color={orbColors.d} opacity={orbOpacity.d} initialX={SCREEN_WIDTH - 200} initialY={-60} duration={11000} animate={animateAurora} />
           </View>
         </LinearGradient>
       </BlurTargetView>
 
       {/* Keep controls below Android's status bar without pushing the gradient
           down. The aurora now paints edge-to-edge behind the time/battery row. */}
-      <GlassBlurTargetProvider targetRef={blurTargetRef}>
+      {/* Mount Android BlurViews only after the native target has completed its
+          first layout. This avoids Expo BlurView permanently falling back to
+          `none` when its ref is still null during the first native commit. */}
+      <GlassBlurTargetProvider targetRef={blurTargetReady ? blurTargetRef : null}>
         <View style={[styles.contentFrame, Platform.OS === 'android' && styles.androidSafeTop]}>
           <SafeAreaView style={styles.content} edges={['bottom', 'left', 'right']}>
             {children}
