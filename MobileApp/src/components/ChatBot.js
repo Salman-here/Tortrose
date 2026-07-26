@@ -1019,18 +1019,20 @@ export default function ChatBot({
 
   const assistantIntro = embedded ? (
     <View style={styles.assistantIntro}>
-      <GlassBlurFill intensity={52} />
-      <LinearGradient
-        colors={[
-          'rgba(20,184,166,0.13)',
-          'rgba(14,165,233,0.07)',
-          'rgba(99,102,241,0.14)',
-        ]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={StyleSheet.absoluteFill}
-        pointerEvents="none"
-      />
+      <GlassBlurFill intensity={48} nativeAndroidBlur />
+      {Platform.OS !== 'android' && (
+        <LinearGradient
+          colors={[
+            'rgba(20,184,166,0.13)',
+            'rgba(14,165,233,0.07)',
+            'rgba(99,102,241,0.14)',
+          ]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={StyleSheet.absoluteFill}
+          pointerEvents="none"
+        />
+      )}
       <View style={styles.assistantIntroTop}>
         <LinearGradient
           colors={palette.gradients.cta}
@@ -1245,18 +1247,20 @@ export default function ChatBot({
 
       {/* Input */}
       <View style={styles.inputContainer}>
-        <GlassBlurFill intensity={52} />
-        <LinearGradient
-          colors={[
-            'rgba(20,184,166,0.08)',
-            'rgba(14,165,233,0.03)',
-            'rgba(99,102,241,0.09)',
-          ]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={StyleSheet.absoluteFill}
-          pointerEvents="none"
-        />
+        <GlassBlurFill intensity={48} nativeAndroidBlur />
+        {Platform.OS !== 'android' && (
+          <LinearGradient
+            colors={[
+              'rgba(20,184,166,0.08)',
+              'rgba(14,165,233,0.03)',
+              'rgba(99,102,241,0.09)',
+            ]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={StyleSheet.absoluteFill}
+            pointerEvents="none"
+          />
+        )}
         <TouchableOpacity
           onPress={pickImages}
           disabled={loading || recorderState.isRecording}
@@ -1366,7 +1370,7 @@ const makeStyles = (palette) => {
       shadowOffset: { width: 0, height: 8 },
       shadowOpacity: 0.1,
       shadowRadius: 18,
-      elevation: 3,
+      elevation: Platform.OS === 'android' ? 0 : 3,
     },
     assistantIntroTop: {
       flexDirection: 'row',
@@ -1532,7 +1536,7 @@ const makeStyles = (palette) => {
     stopRecordingText: { fontSize: 10, fontWeight: fontWeight.bold, color: '#fff' },
 
     // Input — floating glass composer
-    inputContainer: { overflow: 'hidden', flexDirection: 'row', alignItems: 'center', minHeight: 58, marginHorizontal: spacing.md, marginBottom: spacing.sm, paddingHorizontal: spacing.sm, paddingVertical: spacing.sm, borderWidth: 1, borderColor: g.border, borderRadius: 20, gap: 6, backgroundColor: g.bgStrong, shadowColor: '#6366F1', shadowOffset: { width: 0, height: 7 }, shadowOpacity: 0.12, shadowRadius: 16, elevation: 4 },
+    inputContainer: { overflow: 'hidden', flexDirection: 'row', alignItems: 'center', minHeight: 58, marginHorizontal: spacing.md, marginBottom: spacing.sm, paddingHorizontal: spacing.sm, paddingVertical: spacing.sm, borderWidth: 1, borderColor: g.border, borderRadius: 20, gap: 6, backgroundColor: g.bgStrong, shadowColor: '#6366F1', shadowOffset: { width: 0, height: 7 }, shadowOpacity: 0.12, shadowRadius: 16, elevation: Platform.OS === 'android' ? 0 : 4 },
     composerBtn: { width: 38, height: 38, borderRadius: 12, backgroundColor: c.primarySubtle, borderWidth: 1, borderColor: c.primaryLighter, justifyContent: 'center', alignItems: 'center' },
     recordingComposerBtn: { backgroundColor: c.error, borderColor: c.error },
     input: { flex: 1, minWidth: 72, minHeight: 40, backgroundColor: g.bgSubtle, borderRadius: 13, paddingHorizontal: spacing.md, paddingVertical: Platform.OS === 'ios' ? spacing.sm + 2 : spacing.sm, fontSize: fontSize.sm, color: c.text, borderWidth: 1, borderColor: g.borderSubtle },

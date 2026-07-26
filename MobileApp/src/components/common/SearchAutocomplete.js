@@ -135,14 +135,16 @@ export default function SearchAutocomplete({
 
   return (
     <View style={styles.container} onTouchStart={onInteraction}>
-      {Platform.OS !== 'android' && <GlassBlurFill intensity={48} />}
-      <LinearGradient
-        colors={SEARCH_SHEEN}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={StyleSheet.absoluteFill}
-        pointerEvents="none"
-      />
+      <GlassBlurFill intensity={48} nativeAndroidBlur />
+      {Platform.OS !== 'android' && (
+        <LinearGradient
+          colors={SEARCH_SHEEN}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={StyleSheet.absoluteFill}
+          pointerEvents="none"
+        />
+      )}
       <View style={styles.topAccent} />
 
       <ScrollView

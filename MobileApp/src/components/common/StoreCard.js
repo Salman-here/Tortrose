@@ -54,13 +54,15 @@ const StoreCard = ({ store, index = 0, onPress, showTrustButton = true, showDesc
     <Animated.View style={[styles.animatedContainer, { transform: [{ scale: scaleAnim }], opacity: opacityAnim }, style]}>
       <TouchableOpacity style={[styles.container, { backgroundColor: g.bg, borderColor: g.border }, compact && styles.containerCompact]} onPress={handlePress} activeOpacity={0.9}>
         {!compact && Platform.OS !== 'android' && <GlassBlurFill intensity={36} />}
-        <LinearGradient
-          colors={CARD_SHEEN}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={StyleSheet.absoluteFill}
-          pointerEvents="none"
-        />
+        {Platform.OS !== 'android' && (
+          <LinearGradient
+            colors={CARD_SHEEN}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={StyleSheet.absoluteFill}
+            pointerEvents="none"
+          />
+        )}
         <View style={[styles.bannerContainer, compact && { height: 55 }]}>
           {banner && !bannerError ? (
             <Image source={{ uri: banner }} style={styles.banner} contentFit="cover" cachePolicy="memory-disk" transition={200} onError={() => setBannerError(true)} />
@@ -119,7 +121,7 @@ export const StoreListItem = ({ store, onPress, showTrustButton = true }) => {
   return (
     <TouchableOpacity style={styles.listItemContainer} onPress={handlePress} activeOpacity={0.7}>
       {Platform.OS !== 'android' && <GlassBlurFill intensity={32} />}
-      <LinearGradient colors={CARD_SHEEN} style={StyleSheet.absoluteFill} pointerEvents="none" />
+      {Platform.OS !== 'android' && <LinearGradient colors={CARD_SHEEN} style={StyleSheet.absoluteFill} pointerEvents="none" />}
       {logo ? <Image source={{ uri: logo }} style={styles.listItemLogo} contentFit="cover" cachePolicy="memory-disk" transition={150} /> :
         <View style={[styles.listItemLogo, styles.listItemLogoPlaceholder]}><Ionicons name="storefront" size={22} color="#fff" /></View>}
       <View style={{ flex: 1 }}>
@@ -149,7 +151,7 @@ export const StoreListItem = ({ store, onPress, showTrustButton = true }) => {
 
 const styles = StyleSheet.create({
   animatedContainer: { flex: 1 },
-  container: { backgroundColor: glass.bg, borderRadius: 22, borderWidth: 1, borderColor: glass.border, overflow: 'hidden', shadowColor: '#1e293b', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.1, shadowRadius: 14, elevation: 4 },
+  container: { backgroundColor: glass.bg, borderRadius: 22, borderWidth: 1, borderColor: glass.border, overflow: 'hidden', shadowColor: '#1e293b', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.1, shadowRadius: 14, elevation: Platform.OS === 'android' ? 0 : 4 },
   containerCompact: { width: 160, marginRight: spacing.md },
   bannerContainer: { height: 68, overflow: 'hidden', position: 'relative' },
   banner: { width: '100%', height: '100%', justifyContent: 'center', alignItems: 'center' },

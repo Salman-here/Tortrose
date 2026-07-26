@@ -20,9 +20,8 @@ import { selection as hapticSelection } from '../utils/haptics';
 // Website --logo-gradient — same as the Add to Cart / CTA buttons
 const CTA_GRADIENT = ['#14B8A6', '#0EA5E9', '#6366F1'];
 
-// Glass tab-bar background — real blur on iOS/web and a matching lightweight
-// sheen on Android for scroll stability.
-// Clipped to the pill's rounded shape.
+// The tab bar safely uses one native Android blur because it is persistent
+// rather than repeated for every scrolling card.
 function GlassTabBarBackground({ isDark, palette }) {
   return (
     <View
@@ -37,22 +36,13 @@ function GlassTabBarBackground({ isDark, palette }) {
         },
       ]}
     >
-      {Platform.OS === 'android' ? (
-        <LinearGradient
-          colors={isDark
-            ? ['rgba(255,255,255,0.055)', 'rgba(99,102,241,0.05)', 'rgba(255,255,255,0.015)']
-            : ['rgba(255,255,255,0.18)', 'rgba(99,102,241,0.035)', 'rgba(255,255,255,0.05)']}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={StyleSheet.absoluteFill}
-        />
-      ) : (
-        <BlurView
-          tint={isDark ? 'dark' : 'light'}
-          intensity={60}
-          style={StyleSheet.absoluteFill}
-        />
-      )}
+      <BlurView
+        tint={isDark ? 'dark' : 'light'}
+        intensity={Platform.OS === 'android' ? 48 : 60}
+        experimentalBlurMethod={Platform.OS === 'android' ? 'dimezisBlurView' : undefined}
+        blurReductionFactor={Platform.OS === 'android' ? 6 : undefined}
+        style={StyleSheet.absoluteFill}
+      />
     </View>
   );
 }

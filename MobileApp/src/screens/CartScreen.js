@@ -197,17 +197,19 @@ export default function CartScreen({ navigation }) {
 
   const guestSignInCard = (
     <GlassPanel variant="strong" style={styles.guestCard}>
-      <LinearGradient
-        colors={[
-          'rgba(20,184,166,0.12)',
-          'rgba(14,165,233,0.05)',
-          'rgba(99,102,241,0.13)',
-        ]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={StyleSheet.absoluteFill}
-        pointerEvents="none"
-      />
+      {Platform.OS !== 'android' && (
+        <LinearGradient
+          colors={[
+            'rgba(20,184,166,0.12)',
+            'rgba(14,165,233,0.05)',
+            'rgba(99,102,241,0.13)',
+          ]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={StyleSheet.absoluteFill}
+          pointerEvents="none"
+        />
+      )}
       <View style={styles.guestVisual}>
         <View style={styles.guestIconGlass}>
           <GlassBlurFill intensity={42} />
@@ -363,17 +365,19 @@ export default function CartScreen({ navigation }) {
         androidBlur={false}
         style={styles.cartItem}
       >
-        <LinearGradient
-          colors={[
-            'rgba(20,184,166,0.12)',
-            'rgba(14,165,233,0.03)',
-            'rgba(99,102,241,0.09)',
-          ]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={StyleSheet.absoluteFill}
-          pointerEvents="none"
-        />
+        {Platform.OS !== 'android' && (
+          <LinearGradient
+            colors={[
+              'rgba(20,184,166,0.12)',
+              'rgba(14,165,233,0.03)',
+              'rgba(99,102,241,0.09)',
+            ]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={StyleSheet.absoluteFill}
+            pointerEvents="none"
+          />
+        )}
 
         {isUpdating && (
           <View
@@ -529,17 +533,19 @@ export default function CartScreen({ navigation }) {
 
   const cartOverview = (
     <GlassPanel variant="strong" style={styles.cartOverview}>
-      <LinearGradient
-        colors={[
-          'rgba(20,184,166,0.18)',
-          'rgba(14,165,233,0.08)',
-          'rgba(99,102,241,0.16)',
-        ]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={StyleSheet.absoluteFill}
-        pointerEvents="none"
-      />
+      {Platform.OS !== 'android' && (
+        <LinearGradient
+          colors={[
+            'rgba(20,184,166,0.18)',
+            'rgba(14,165,233,0.08)',
+            'rgba(99,102,241,0.16)',
+          ]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={StyleSheet.absoluteFill}
+          pointerEvents="none"
+        />
+      )}
       <View style={styles.overviewGlow} pointerEvents="none" />
 
       <View style={styles.overviewTop}>
@@ -691,17 +697,19 @@ export default function CartScreen({ navigation }) {
             variant="floating"
             style={styles.checkoutDock}
           >
-            <LinearGradient
-              colors={[
-                'rgba(20,184,166,0.08)',
-                'rgba(14,165,233,0.04)',
-                'rgba(99,102,241,0.09)',
-              ]}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={StyleSheet.absoluteFill}
-              pointerEvents="none"
-            />
+            {Platform.OS !== 'android' && (
+              <LinearGradient
+                colors={[
+                  'rgba(20,184,166,0.08)',
+                  'rgba(14,165,233,0.04)',
+                  'rgba(99,102,241,0.09)',
+                ]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={StyleSheet.absoluteFill}
+                pointerEvents="none"
+              />
+            )}
             <View style={styles.dockTop}>
               <View style={styles.dockCopy}>
                 <Text style={styles.dockLabel}>Subtotal</Text>

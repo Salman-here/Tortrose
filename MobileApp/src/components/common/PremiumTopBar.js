@@ -13,6 +13,7 @@ import {
   Text,
   TouchableOpacity,
   StyleSheet,
+  Platform,
   useWindowDimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -139,13 +140,15 @@ export default function PremiumTopBar({
 
   return (
     <GlassPanel variant="floating" style={[styles.topBar, compact && styles.compactTopBar, style]}>
-      <LinearGradient
-        colors={sheenColors}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={StyleSheet.absoluteFill}
-        pointerEvents="none"
-      />
+      {Platform.OS !== 'android' && (
+        <LinearGradient
+          colors={sheenColors}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={StyleSheet.absoluteFill}
+          pointerEvents="none"
+        />
+      )}
 
       {!!onBack && (
         <TouchableOpacity

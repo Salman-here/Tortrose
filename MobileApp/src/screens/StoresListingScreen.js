@@ -144,7 +144,7 @@ export default function StoresListingScreen({ navigation }) {
                 <View style={styles.orbBottomLeft} pointerEvents="none">
                   <LinearGradient colors={['#14B8A6', '#0EA5E9']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.orbFill} />
                 </View>
-                <GlassBlurFill intensity={50} />
+                <GlassBlurFill intensity={48} nativeAndroidBlur />
 
                 <View style={styles.heroTitleRow}>
                   <View style={styles.heroTitleLeft}>

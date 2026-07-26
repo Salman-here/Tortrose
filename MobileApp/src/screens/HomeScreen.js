@@ -407,13 +407,15 @@ export default function HomeScreen({ navigation }) {
     <View>
       {/* Hero Header — Glass style matching website nav */}
       <GlassPanel variant="floating" style={styles.heroHeader}>
-        <LinearGradient
-          colors={HERO_SHEEN}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={StyleSheet.absoluteFill}
-          pointerEvents="none"
-        />
+        {Platform.OS !== 'android' && (
+          <LinearGradient
+            colors={HERO_SHEEN}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={StyleSheet.absoluteFill}
+            pointerEvents="none"
+          />
+        )}
         <View style={styles.heroTopBar}>
           <RozareLogo width={116} height={28} />
           <View style={styles.heroTopRight}>
@@ -621,13 +623,15 @@ export default function HomeScreen({ navigation }) {
       {/* Browse Stores Banner — glass surface with on-brand gradient accent */}
       <TouchableOpacity style={styles.storesBanner} onPress={() => navigation.navigate('Marketplace')} activeOpacity={0.9}>
         <GlassBlurFill />
-        <LinearGradient
-          colors={STORE_SHEEN}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={StyleSheet.absoluteFill}
-          pointerEvents="none"
-        />
+        {Platform.OS !== 'android' && (
+          <LinearGradient
+            colors={STORE_SHEEN}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={StyleSheet.absoluteFill}
+            pointerEvents="none"
+          />
+        )}
         <View style={styles.storesBannerContent}>
           <LinearGradient colors={palette.gradients.cta} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.storesBannerIcon}>
             <Ionicons name="storefront" size={24} color="#fff" />
