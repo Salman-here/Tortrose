@@ -75,7 +75,7 @@ export default function GlassBackground({ children, style, variant = 'default' }
     : { a: '#6366f1', b: '#8b5cf6', c: '#3b82f6', d: '#a855f7' };
 
   return (
-    <View style={[styles.container, Platform.OS === 'android' && styles.androidSafeTop, style]}>
+    <View style={[styles.container, style]}>
       <LinearGradient colors={gradientColors} style={styles.gradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
         {/* Floating aurora orbs for depth */}
         <View style={styles.orbContainer} pointerEvents="none">
@@ -84,13 +84,15 @@ export default function GlassBackground({ children, style, variant = 'default' }
           <Orb id="c" size={240} color={orbColors.c} opacity={orbOpacity.c} initialX={10} initialY={SCREEN_HEIGHT - 340} duration={9000} />
           <Orb id="d" size={300} color={orbColors.d} opacity={orbOpacity.d} initialX={SCREEN_WIDTH - 200} initialY={-60} duration={11000} />
         </View>
-        {/* Bounded flex:1 content area so a screen's ScrollView/FlatList has a
-            definite height to scroll within (fixes no-scroll when a scroll view
-            is the direct child of GlassBackground). SafeAreaView also keeps
-            content clear of notches/home indicators. `edges` omits top so
-            screens' own glass headers control the top spacing. */}
-        <SafeAreaView style={styles.content} edges={['bottom', 'left', 'right']}>{children}</SafeAreaView>
       </LinearGradient>
+
+      {/* Keep controls below Android's status bar without pushing the gradient
+          down. The aurora now paints edge-to-edge behind the time/battery row. */}
+      <View style={[styles.contentFrame, Platform.OS === 'android' && styles.androidSafeTop]}>
+        <SafeAreaView style={styles.content} edges={['bottom', 'left', 'right']}>
+          {children}
+        </SafeAreaView>
+      </View>
     </View>
   );
 }
@@ -102,14 +104,13 @@ const styles = StyleSheet.create({
     paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 0) : 0,
   },
   gradient: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  contentFrame: {
     flex: 1,
   },
   content: {
-    // Absolutely fill the gradient so the content area has a DEFINITE height
-    // (equal to the screen) regardless of the flex chain. Without this, a screen
-    // whose only child is a ScrollView can't establish a scrollable height on web
-    // because expo-linear-gradient's wrapper doesn't reliably propagate flex:1.
-    ...StyleSheet.absoluteFillObject,
+    flex: 1,
   },
   orbContainer: {
     ...StyleSheet.absoluteFillObject,

@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Animated } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { StatusBar as ExpoStatusBar } from 'expo-status-bar';
 import Toast from 'react-native-toast-message';
 import { Ionicons } from '@expo/vector-icons';
 import NetInfo from '@react-native-community/netinfo';
@@ -9,10 +10,11 @@ import * as Sentry from '@sentry/react-native';
 import { AuthProvider } from './src/contexts/AuthContext';
 import { GlobalProvider } from './src/contexts/GlobalContext';
 import { CurrencyProvider } from './src/contexts/CurrencyContext';
-import { ThemeProvider } from './src/contexts/ThemeContext';
+import { ThemeProvider, useTheme } from './src/contexts/ThemeContext';
 import AppNavigator from './src/navigation/AppNavigator';
 import OnboardingWalkthrough, { shouldShowOnboarding } from './src/components/OnboardingWalkthrough';
 import { isBiometricEnabled, isBiometricAvailable, authenticateBiometric } from './src/utils/biometricLock';
+import GlassPanel from './src/components/common/GlassPanel';
 
 // ─── Sentry Crash Reporting (only when a real DSN is configured) ─────────────
 const SENTRY_DSN = process.env.EXPO_PUBLIC_SENTRY_DSN;
@@ -72,29 +74,110 @@ class ErrorBoundary extends React.Component {
 
 // ─── Offline Banner ──────────────────────────────────────────────────────────
 function OfflineBanner() {
-  const [isConnected, setIsConnected] = useState(true);
-  const slideAnim = React.useRef(new Animated.Value(-60)).current;
+  const { palette } = useTheme();
+  const insets = useSafeAreaInsets();
+  const [visible, setVisible] = useState(false);
+  const slideAnim = React.useRef(new Animated.Value(-18)).current;
+  const opacityAnim = React.useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     const unsubscribe = NetInfo.addEventListener((state) => {
-      const connected = state.isConnected && state.isInternetReachable !== false;
-      setIsConnected(connected);
-      Animated.timing(slideAnim, {
-        toValue: connected ? -60 : 0,
-        duration: 350,
-        useNativeDriver: true,
-      }).start();
-    });
-    return () => unsubscribe();
-  }, [slideAnim]);
+      const connected = state.isConnected !== false && state.isInternetReachable !== false;
+      if (!connected) {
+        setVisible(true);
+        Animated.parallel([
+          Animated.spring(slideAnim, {
+            toValue: 0,
+            friction: 8,
+            tension: 70,
+            useNativeDriver: true,
+          }),
+          Animated.timing(opacityAnim, {
+            toValue: 1,
+            duration: 220,
+            useNativeDriver: true,
+          }),
+        ]).start();
+        return;
+      }
 
-  if (isConnected) return null;
+      Animated.parallel([
+        Animated.timing(slideAnim, {
+          toValue: -18,
+          duration: 180,
+          useNativeDriver: true,
+        }),
+        Animated.timing(opacityAnim, {
+          toValue: 0,
+          duration: 160,
+          useNativeDriver: true,
+        }),
+      ]).start(({ finished }) => {
+        if (finished) setVisible(false);
+      });
+    });
+    return () => {
+      unsubscribe();
+      slideAnim.stopAnimation();
+      opacityAnim.stopAnimation();
+    };
+  }, [opacityAnim, slideAnim]);
+
+  if (!visible) return null;
 
   return (
-    <Animated.View style={[offlineBannerStyles.banner, { transform: [{ translateY: slideAnim }] }]}>
-      <Ionicons name="wifi-outline" size={16} color="#fff" />
-      <Text style={offlineBannerStyles.text}>No internet connection</Text>
+    <Animated.View
+      pointerEvents="box-none"
+      style={[
+        offlineBannerStyles.anchor,
+        {
+          top: Math.max(insets.top + 8, 16),
+          opacity: opacityAnim,
+          transform: [{ translateY: slideAnim }],
+        },
+      ]}
+    >
+      <GlassPanel
+        variant="floating"
+        style={[
+          offlineBannerStyles.banner,
+          {
+            borderColor: palette.colors.warningLighter,
+            backgroundColor: palette.glass.bgStrong,
+          },
+        ]}
+      >
+        <View style={[offlineBannerStyles.iconTile, { backgroundColor: palette.colors.warningSubtle }]}>
+          <Ionicons name="cloud-offline-outline" size={20} color={palette.colors.warningDark} />
+        </View>
+        <View style={offlineBannerStyles.copy}>
+          <Text style={[offlineBannerStyles.title, { color: palette.colors.text }]}>You’re offline</Text>
+          <Text style={[offlineBannerStyles.text, { color: palette.colors.textSecondary }]} numberOfLines={1}>
+            Saved content is still available
+          </Text>
+        </View>
+        <TouchableOpacity
+          style={[offlineBannerStyles.retry, { backgroundColor: palette.colors.warningSubtle }]}
+          onPress={() => NetInfo.refresh()}
+          activeOpacity={0.75}
+          accessibilityRole="button"
+          accessibilityLabel="Retry internet connection"
+        >
+          <Ionicons name="refresh" size={16} color={palette.colors.warningDark} />
+        </TouchableOpacity>
+      </GlassPanel>
     </Animated.View>
+  );
+}
+
+function ThemedStatusBar() {
+  const { isDark } = useTheme();
+  return (
+    <ExpoStatusBar
+      style={isDark ? 'light' : 'dark'}
+      translucent
+      backgroundColor="transparent"
+    />
   );
 }
 
@@ -106,19 +189,39 @@ function NotificationInitializer() {
 }
 
 const offlineBannerStyles = StyleSheet.create({
-  banner: {
+  anchor: {
     position: 'absolute',
-    top: 0, left: 0, right: 0,
+    left: 14,
+    right: 14,
     zIndex: 9999,
-    backgroundColor: '#ef4444',
+    elevation: 30,
+  },
+  banner: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    paddingTop: 48,
-    paddingBottom: 10,
-    gap: 8,
+    gap: 10,
+    minHeight: 60,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderRadius: 20,
   },
-  text: { color: '#fff', fontSize: 13, fontWeight: '600' },
+  iconTile: {
+    width: 40,
+    height: 40,
+    borderRadius: 13,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  copy: { flex: 1, minWidth: 0 },
+  title: { fontSize: 14, lineHeight: 18, fontWeight: '800' },
+  text: { marginTop: 1, fontSize: 11, lineHeight: 15, fontWeight: '500' },
+  retry: {
+    width: 36,
+    height: 36,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
 });
 
 const errorStyles = StyleSheet.create({
@@ -149,13 +252,14 @@ const linking = {
           Home: '',
           Marketplace: 'marketplace',
           Cart: 'cart',
-          Notifications: 'notifications',
+          Wishlist: 'favorites',
           Account: 'profile',
         },
       },
       ProductDetail: 'single-product/:productId',
       Store: 'store/:storeSlug',
       TrustedStores: 'marketplace/trusted',
+      Notifications: 'notifications',
       Wishlist: 'wishlist',
       Orders: 'orders',
       OrderDetail: 'order/:orderId',
@@ -244,6 +348,7 @@ function App() {
     return (
       <SafeAreaProvider>
         <ThemeProvider>
+          <ThemedStatusBar />
           <OnboardingWalkthrough onComplete={() => setShowOnboarding(false)} />
         </ThemeProvider>
       </SafeAreaProvider>
@@ -254,6 +359,7 @@ function App() {
     <ErrorBoundary>
       <SafeAreaProvider>
         <ThemeProvider>
+          <ThemedStatusBar />
           <BiometricGate>
             <AuthProvider>
               <GlobalProvider>

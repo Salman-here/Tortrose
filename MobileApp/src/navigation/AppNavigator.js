@@ -20,8 +20,9 @@ import { selection as hapticSelection } from '../utils/haptics';
 // Website --logo-gradient — same as the Add to Cart / CTA buttons
 const CTA_GRADIENT = ['#14B8A6', '#0EA5E9', '#6366F1'];
 
-// Glass tab-bar background — floating rounded pill with real blur on every
-// platform (Dimezis BlurView on Android). Clipped to the pill's rounded shape.
+// Glass tab-bar background — real blur on iOS/web and a matching lightweight
+// sheen on Android for scroll stability.
+// Clipped to the pill's rounded shape.
 function GlassTabBarBackground({ isDark, palette }) {
   return (
     <View
@@ -36,12 +37,22 @@ function GlassTabBarBackground({ isDark, palette }) {
         },
       ]}
     >
-      <BlurView
-        tint={isDark ? 'dark' : 'light'}
-        intensity={60}
-        experimentalBlurMethod="dimezisBlurView"
-        style={StyleSheet.absoluteFill}
-      />
+      {Platform.OS === 'android' ? (
+        <LinearGradient
+          colors={isDark
+            ? ['rgba(255,255,255,0.055)', 'rgba(99,102,241,0.05)', 'rgba(255,255,255,0.015)']
+            : ['rgba(255,255,255,0.18)', 'rgba(99,102,241,0.035)', 'rgba(255,255,255,0.05)']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={StyleSheet.absoluteFill}
+        />
+      ) : (
+        <BlurView
+          tint={isDark ? 'dark' : 'light'}
+          intensity={60}
+          style={StyleSheet.absoluteFill}
+        />
+      )}
     </View>
   );
 }
@@ -281,7 +292,7 @@ function TabBarIcon({ route, focused, color, size }) {
 
 // Bottom Tab Navigator for main app - accessible to all users (guests included)
 function MainTabs() {
-  const { cartItems, unreadNotifCount } = useGlobal();
+  const { cartItems } = useGlobal();
   const cartCount = calculateCartItemCount(cartItems);
   const insets = useSafeAreaInsets();
   const { palette, isDark } = useTheme();
@@ -305,12 +316,13 @@ function MainTabs() {
             <View style={styles.tabIconContainer}>
               <TabBarIcon route={route} focused={focused} color={color} size={24} />
               {route.name === 'Cart' && <CartBadge count={cartCount} />}
-              {route.name === 'Notifications' && <CartBadge count={unreadNotifCount} />}
             </View>
           );
         },
         tabBarActiveTintColor: '#0EA5E9',
         tabBarInactiveTintColor: palette.colors.textLight,
+        // Icon-only tab bar — the icons are self-explanatory, no labels needed.
+        tabBarShowLabel: false,
         tabBarStyle: [
           styles.tabBar,
           themedTabBar,
@@ -345,10 +357,10 @@ function MainTabs() {
         component={CartScreen}
         options={{ tabBarLabel: 'Cart' }}
       />
-      <Tab.Screen 
-        name="Notifications" 
-        component={NotificationsScreen}
-        options={{ tabBarLabel: 'Alerts' }}
+      <Tab.Screen
+        name="Wishlist"
+        component={WishlistScreen}
+        options={{ tabBarLabel: 'Favorites' }}
       />
       <Tab.Screen 
         name="Account" 

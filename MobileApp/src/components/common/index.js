@@ -56,6 +56,7 @@ export {
 // Glass design system
 export { default as GlassBackground } from './GlassBackground';
 export { default as GlassPanel } from './GlassPanel';
+export { default as PremiumTopBar, PremiumTopBarAction } from './PremiumTopBar';
 
 // Skeletons & discovery
 export { default as Skeleton, ProductCardSkeleton, ProductGridSkeleton, CartItemSkeleton, SliderSkeleton } from './Skeleton';

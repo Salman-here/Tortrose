@@ -9,6 +9,7 @@ import {
   KeyboardAvoidingView, Platform, Alert, ActivityIndicator, ScrollView, Image,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import * as Speech from 'expo-speech';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
@@ -26,6 +27,8 @@ import {
   spacing, fontSize, borderRadius, fontWeight,
 } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
+import PremiumTopBar, { PremiumTopBarAction } from './common/PremiumTopBar';
+import GlassBlurFill from './common/GlassBlurFill';
 
 // Uses our own backend (no Supabase) - the /api/ai-chat/once endpoint handles
 // non-streaming tool execution loop server-side and returns the final response.
@@ -71,6 +74,76 @@ const ROLE_GREETINGS = {
 const ROLE_TITLES = {
   user: { title: 'AI Stylist', subtitle: 'Personal Shopping Assistant' },
   seller: { title: 'Business Assistant', subtitle: 'Store Management & Growth' },
+};
+
+const STATIC_CLIENT_ROUTES = {
+  wishlist: { name: 'Wishlist' },
+  orders: { name: 'Orders' },
+  checkout: { name: 'Checkout' },
+  settings: { name: 'Settings' },
+  'track-order': { name: 'TrackOrder' },
+  'become-seller': { name: 'BecomeSeller' },
+  about: { name: 'About' },
+  faq: { name: 'FAQ' },
+  contact: { name: 'Contact' },
+  docs: { name: 'Docs' },
+  terms: { name: 'TermsOfService' },
+  'terms-of-service': { name: 'TermsOfService' },
+  privacy: { name: 'PrivacyPolicy' },
+  'privacy-policy': { name: 'PrivacyPolicy' },
+  'ai-chat': { name: 'AIChat' },
+  notifications: { name: 'Notifications' },
+  'user-dashboard': { name: 'UserDashboard' },
+  'seller-dashboard': { name: 'SellerDashboard' },
+  wallet: { name: 'Wallet' },
+};
+
+const TAB_CLIENT_ROUTES = {
+  '': 'Home',
+  home: 'Home',
+  cart: 'Cart',
+  profile: 'Account',
+  account: 'Account',
+  stores: 'Marketplace',
+  marketplace: 'Marketplace',
+};
+
+const resolveClientRoute = (rawRoute) => {
+  const raw = String(rawRoute || '').trim();
+  if (!raw) return { type: 'tab', screen: 'Home' };
+
+  let path = raw
+    .replace(/^https?:\/\/[^/]+/i, '')
+    .split(/[?#]/)[0]
+    .replace(/^\/+|\/+$/g, '');
+  try {
+    path = decodeURIComponent(path);
+  } catch {}
+
+  const routeKey = path.toLowerCase();
+  if (TAB_CLIENT_ROUTES[routeKey]) {
+    return { type: 'tab', screen: TAB_CLIENT_ROUTES[routeKey] };
+  }
+  if (STATIC_CLIENT_ROUTES[routeKey]) {
+    return { type: 'stack', ...STATIC_CLIENT_ROUTES[routeKey] };
+  }
+  if (routeKey === 'marketplace/trusted') {
+    return { type: 'stack', name: 'TrustedStores' };
+  }
+
+  const segments = path.split('/').filter(Boolean);
+  const resource = segments[0]?.toLowerCase();
+  const identifier = segments.slice(1).join('/');
+  if (resource === 'single-product' && identifier && !identifier.startsWith(':')) {
+    return { type: 'stack', name: 'ProductDetail', params: { productId: identifier } };
+  }
+  if (resource === 'store' && identifier && !identifier.startsWith(':')) {
+    return { type: 'stack', name: 'Store', params: { storeSlug: identifier } };
+  }
+  if (resource === 'order' && identifier && !identifier.startsWith(':')) {
+    return { type: 'stack', name: 'OrderDetail', params: { orderId: identifier } };
+  }
+  return null;
 };
 
 const MAX_ATTACHMENTS = 10;
@@ -359,7 +432,14 @@ async function callAI(messages, attachments = []) {
 }
 
 // ─── Main Component ───
-export default function ChatBot({ embedded = false, dashboardRole = null, visible = true, onClose, navigation }) {
+export default function ChatBot({
+  embedded = false,
+  dashboardRole = null,
+  visible = true,
+  onClose,
+  navigation,
+  initialPrompt = '',
+}) {
   const { currentUser } = useAuth();
   const { palette } = useTheme();
   const { formatPrice } = useCurrency();
@@ -369,7 +449,7 @@ export default function ChatBot({ embedded = false, dashboardRole = null, visibl
   const roleInfo = ROLE_TITLES[effectiveRole] || ROLE_TITLES.user;
 
   const [messages, setMessages] = useState([]);
-  const [input, setInput] = useState('');
+  const [input, setInput] = useState(initialPrompt);
   const [loading, setLoading] = useState(false);
   const [ttsEnabled, setTtsEnabled] = useState(false);
   const [pendingAttachments, setPendingAttachments] = useState([]);
@@ -381,6 +461,25 @@ export default function ChatBot({ embedded = false, dashboardRole = null, visibl
   const audioRecorder = useAudioRecorder(RecordingPresets.LOW_QUALITY);
   const recorderState = useAudioRecorderState(audioRecorder, 250);
   const flatListRef = useRef(null);
+  const sendLockRef = useRef(false);
+  const recordingActiveRef = useRef(false);
+  const audioRecorderRef = useRef(audioRecorder);
+
+  useEffect(() => {
+    recordingActiveRef.current = recorderState.isRecording;
+  }, [recorderState.isRecording]);
+
+  useEffect(() => {
+    audioRecorderRef.current = audioRecorder;
+  }, [audioRecorder]);
+
+  useEffect(() => () => {
+    Speech.stop();
+    if (recordingActiveRef.current) {
+      audioRecorderRef.current?.stop().catch(() => {});
+      setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => {});
+    }
+  }, []);
 
   const addPendingAttachments = useCallback((items = []) => {
     const nextItems = (Array.isArray(items) ? items : [items]).filter(item => item?.uri || item?.file);
@@ -455,6 +554,7 @@ export default function ChatBot({ embedded = false, dashboardRole = null, visibl
     setRecordingBusy(true);
     try {
       await audioRecorder.stop();
+      recordingActiveRef.current = false;
       await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => {});
       const uri = audioRecorder.uri || audioRecorder.getStatus?.()?.url;
       if (!uri) {
@@ -476,6 +576,26 @@ export default function ChatBot({ embedded = false, dashboardRole = null, visibl
     }
   }, [addPendingAttachments, audioRecorder, recorderState.isRecording, recordingBusy]);
 
+  const cancelVoiceRecording = useCallback(async () => {
+    if (!recordingActiveRef.current) return;
+    setRecordingBusy(true);
+    try {
+      await audioRecorder.stop();
+      recordingActiveRef.current = false;
+      await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => {});
+    } catch {
+      await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => {});
+    } finally {
+      setRecordingBusy(false);
+    }
+  }, [audioRecorder]);
+
+  const handleCloseChat = useCallback(async () => {
+    Speech.stop();
+    await cancelVoiceRecording();
+    onClose?.();
+  }, [cancelVoiceRecording, onClose]);
+
   const startVoiceRecording = useCallback(async () => {
     if (loading || recordingBusy) return;
     if (recorderState.isRecording) {
@@ -492,6 +612,7 @@ export default function ChatBot({ embedded = false, dashboardRole = null, visibl
       await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
       await audioRecorder.prepareToRecordAsync();
       audioRecorder.record();
+      recordingActiveRef.current = true;
     } catch (error) {
       Alert.alert('Voice note', error.message || 'Could not start recording.');
       await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => {});
@@ -539,6 +660,12 @@ export default function ChatBot({ embedded = false, dashboardRole = null, visibl
     }
   }, [visible, currentUser, effectiveRole]);
 
+  useEffect(() => {
+    if (visible && initialPrompt) {
+      setInput((current) => current.trim() ? current : initialPrompt);
+    }
+  }, [visible, initialPrompt]);
+
   const fetchUserContext = async () => {
     try {
       const res = await api.get('/api/chatbot/user-context');
@@ -558,15 +685,29 @@ export default function ChatBot({ embedded = false, dashboardRole = null, visibl
   const sendMessage = async (text, attachments = pendingAttachments) => {
     const attachmentsToSend = Array.isArray(attachments) ? attachments : [];
     const msgText = (text || input).trim();
-    if ((!msgText && attachmentsToSend.length === 0) || loading || recorderState.isRecording) return;
+    if (
+      (!msgText && attachmentsToSend.length === 0)
+      || loading
+      || sendLockRef.current
+      || recorderState.isRecording
+    ) return;
+
+    sendLockRef.current = true;
+    setLoading(true);
 
     if (rateLimit.remaining === 0 && rateLimit.limit !== -1) {
       Alert.alert('Limit', !currentUser ? 'Please log in for more messages!' : 'Daily message limit reached.');
+      sendLockRef.current = false;
+      setLoading(false);
       return;
     }
 
     const rl = await incrementRateLimit();
-    if (!rl) return;
+    if (!rl) {
+      sendLockRef.current = false;
+      setLoading(false);
+      return;
+    }
 
     const visibleContent = msgText || (
       attachmentsToSend.length > 1
@@ -589,7 +730,6 @@ export default function ChatBot({ embedded = false, dashboardRole = null, visibl
     setMessages(prev => [...prev, userMsg]);
     setInput('');
     setPendingAttachments([]);
-    setLoading(true);
 
     const aiMessages = messages
       .filter(m => m.role === 'user' || m.role === 'assistant')
@@ -616,20 +756,32 @@ export default function ChatBot({ embedded = false, dashboardRole = null, visibl
       // Handle client-side actions (navigate, style advice, outfit suggestions)
       for (const ca of clientActions) {
         if (ca.action === 'navigate' && ca.args?.route) {
-          if (navigation) {
-            // Best-effort in-app navigation by route name match
+          const label = ca.args.label || ca.args.route;
+          const target = resolveClientRoute(ca.args.route);
+          let navigationResult = {
+            navigated: false,
+            label,
+            message: 'That page is not available in the mobile app yet.',
+          };
+          if (navigation && target) {
             try {
-              const route = String(ca.args.route).replace(/^\//, '');
-              const map = {
-                '': 'Home', 'home': 'Home', 'cart': 'Cart', 'wishlist': 'Wishlist',
-                'orders': 'Orders', 'profile': 'Profile', 'settings': 'Settings',
-                'notifications': 'Notifications', 'stores': 'Stores',
+              if (target.type === 'tab') {
+                const localRoutes = navigation.getState?.()?.routeNames || [];
+                if (localRoutes.includes(target.screen)) navigation.navigate(target.screen);
+                else navigation.navigate('MainTabs', { screen: target.screen });
+              } else {
+                navigation.navigate(target.name, target.params);
+              }
+              navigationResult = { navigated: true, label };
+            } catch {
+              navigationResult = {
+                navigated: false,
+                label,
+                message: 'I could not open that page. Please try again.',
               };
-              const target = map[route.toLowerCase()];
-              if (target) navigation.navigate(target);
-            } catch {}
+            }
           }
-          toolResults.push({ name: 'navigate', result: { navigated: true, label: ca.args.label || ca.args.route } });
+          toolResults.push({ name: 'navigate', result: navigationResult });
         } else if (ca.action === 'show_style_advice') {
           toolResults.push({ name: 'show_style_advice', result: { styleAdvice: ca.args } });
         } else if (ca.action === 'suggest_outfit') {
@@ -665,12 +817,23 @@ export default function ChatBot({ embedded = false, dashboardRole = null, visibl
         : 'Sorry, please try again!';
       setMessages(prev => [...prev, { id: (Date.now() + 1).toString(), role: 'assistant', content: errorMsg }]);
     } finally {
+      sendLockRef.current = false;
       setLoading(false);
     }
   };
 
-  const clearChat = () => {
-    setMessages([]);
+  const clearChat = async () => {
+    if (loading || sendLockRef.current) return;
+    Speech.stop();
+    await cancelVoiceRecording();
+    const hour = new Date().getHours();
+    const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+    const name = currentUser?.username || currentUser?.name?.split(' ')[0] || '';
+    const greetFn = ROLE_GREETINGS[effectiveRole] || ROLE_GREETINGS.user;
+    setInput('');
+    setPendingAttachments([]);
+    setMessages([{ id: `welcome-${Date.now()}`, role: 'assistant', content: greetFn(name, greeting) }]);
+    setContextualChips(ROLE_CHIPS[effectiveRole] || ROLE_CHIPS.user);
     api.delete('/api/chatbot/history').catch(() => {});
   };
 
@@ -710,9 +873,9 @@ export default function ChatBot({ embedded = false, dashboardRole = null, visibl
     return (
       <View style={[styles.msgRow, isUser && styles.msgRowUser]}>
         {!isUser && (
-          <View style={styles.botAvatar}>
+          <LinearGradient colors={palette.gradients.cta} style={styles.botAvatar}>
             <Ionicons name="sparkles" size={12} color="#fff" />
-          </View>
+          </LinearGradient>
         )}
         <View style={[styles.msgBubble, isUser ? styles.userBubble : styles.botBubble]}>
           <Text style={[styles.msgText, isUser && { color: '#fff' }]}>{isUser ? item.content : sanitizeAssistantText(item.content)}</Text>
@@ -747,7 +910,7 @@ export default function ChatBot({ embedded = false, dashboardRole = null, visibl
                 <View style={styles.productResults}>
                   <Image
                     source={{ uri: tr.result.data.imageUrl }}
-                    style={{ width: '100%', height: 180, borderRadius: 12, backgroundColor: c.surfaceVariant }}
+                    style={{ width: '100%', height: 180, borderRadius: 12, backgroundColor: palette.glass.bgSubtle }}
                     resizeMode="cover"
                   />
                   <Text style={[styles.productName, { marginTop: 8 }]} numberOfLines={1}>
@@ -759,6 +922,14 @@ export default function ChatBot({ embedded = false, dashboardRole = null, visibl
                 <View style={styles.actionResult}>
                   <Ionicons name="arrow-forward-circle" size={14} color={c.primary} />
                   <Text style={styles.actionResultText}>Navigated to {tr.result.label}</Text>
+                </View>
+              )}
+              {tr.name === 'navigate' && !tr.result.navigated && (
+                <View style={[styles.actionResult, { backgroundColor: c.errorSubtle, borderColor: c.errorLighter }]}>
+                  <Ionicons name="alert-circle-outline" size={14} color={c.error} />
+                  <Text style={[styles.actionResultText, { color: c.error }]}>
+                    {tr.result.message || 'Could not open that page.'}
+                  </Text>
                 </View>
               )}
               {tr.name === 'show_style_advice' && tr.result.styleAdvice && (
@@ -835,36 +1006,160 @@ export default function ChatBot({ embedded = false, dashboardRole = null, visibl
 
   if (!visible) return null;
 
+  const openWhatsAppSettings = () => {
+    if (!navigation) return;
+    if (!currentUser) {
+      navigation.navigate('Login');
+      return;
+    }
+    const usesSellerWhatsApp = currentUser?.role === 'seller'
+      || (currentUser?.role === 'admin' && effectiveRole === 'seller');
+    navigation.navigate(usesSellerWhatsApp ? 'SellerWhatsAppSettings' : 'UserWhatsAppSettings');
+  };
+
+  const assistantIntro = embedded ? (
+    <View style={styles.assistantIntro}>
+      <GlassBlurFill intensity={52} />
+      <LinearGradient
+        colors={[
+          'rgba(20,184,166,0.13)',
+          'rgba(14,165,233,0.07)',
+          'rgba(99,102,241,0.14)',
+        ]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={StyleSheet.absoluteFill}
+        pointerEvents="none"
+      />
+      <View style={styles.assistantIntroTop}>
+        <LinearGradient
+          colors={palette.gradients.cta}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.assistantIntroIcon}
+        >
+          <Ionicons name={effectiveRole === 'seller' ? 'storefront' : 'bag-handle'} size={20} color="#fff" />
+        </LinearGradient>
+        <View style={styles.assistantIntroCopy}>
+          <Text style={styles.assistantIntroEyebrow}>
+            {effectiveRole === 'seller' ? 'YOUR AI BUSINESS PARTNER' : 'YOUR AI SHOPPING CONCIERGE'}
+          </Text>
+          <Text style={styles.assistantIntroTitle}>
+            {effectiveRole === 'seller' ? 'Run your store by simply asking' : 'Tell me what you need. I’ll help you shop.'}
+          </Text>
+          <Text style={styles.assistantIntroText}>
+            {effectiveRole === 'seller'
+              ? 'Manage products, orders, insights, and growth from one conversation.'
+              : 'Discover products, compare choices, manage your cart, place orders, and track delivery.'}
+          </Text>
+        </View>
+      </View>
+      <View style={styles.capabilityRow}>
+        {(effectiveRole === 'seller'
+          ? [
+              ['cube-outline', 'Products'],
+              ['receipt-outline', 'Orders'],
+              ['analytics-outline', 'Insights'],
+            ]
+          : [
+              ['search-outline', 'Discover'],
+              ['git-compare-outline', 'Compare'],
+              ['cart-outline', 'Shop'],
+            ]
+        ).map(([capabilityIcon, label]) => (
+          <View key={label} style={styles.capabilityPill}>
+            <Ionicons name={capabilityIcon} size={12} color={c.primary} />
+            <Text style={styles.capabilityText}>{label}</Text>
+          </View>
+        ))}
+      </View>
+      <TouchableOpacity
+        style={styles.whatsAppRow}
+        onPress={openWhatsAppSettings}
+        activeOpacity={0.78}
+        accessibilityRole="button"
+        accessibilityLabel="Set up Rozare AI on WhatsApp"
+      >
+        <View style={styles.whatsAppIcon}>
+          <Ionicons name="logo-whatsapp" size={17} color="#fff" />
+        </View>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={styles.whatsAppTitle}>Prefer WhatsApp?</Text>
+          <Text style={styles.whatsAppText} numberOfLines={1}>
+            Continue the same AI-powered experience there.
+          </Text>
+        </View>
+        <Text style={styles.whatsAppAction}>{currentUser ? 'Connect' : 'Sign in'}</Text>
+        <Ionicons name="chevron-forward" size={14} color="#16A34A" />
+      </TouchableOpacity>
+    </View>
+  ) : null;
+
   const content = (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={embedded ? 0 : 90}>
       {/* Header */}
-      <View style={styles.header}>
-        <View style={styles.headerIcon}>
-          <Ionicons name="sparkles" size={18} color="#fff" />
-        </View>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.headerTitle}>{roleInfo.title}</Text>
-          <View style={styles.headerSubRow}>
-            <Text style={styles.headerSubtitle}>{roleInfo.subtitle}</Text>
-            {rateLimit.limit > 0 && (
-              <View style={[styles.rateBadge, rateLimit.remaining <= 3 && { backgroundColor: c.errorSubtle }]}>
-                <Text style={[styles.rateBadgeText, rateLimit.remaining <= 3 && { color: c.error }]}>{rateLimit.remaining} left</Text>
-              </View>
-            )}
+      {embedded ? (
+        <PremiumTopBar
+          title="Chat with AI"
+          subtitle={rateLimit.limit > 0
+            ? `${roleInfo.title} · ${rateLimit.remaining} messages left`
+            : `${roleInfo.title} · Ready to help`}
+          icon="sparkles"
+          onBack={handleCloseChat}
+          backLabel="Leave AI chat"
+          sheenColors={[
+            'rgba(20,184,166,0.12)',
+            'rgba(14,165,233,0.06)',
+            'rgba(99,102,241,0.14)',
+          ]}
+          right={(
+            <>
+              <PremiumTopBarAction
+                icon={ttsEnabled ? 'volume-high' : 'volume-mute-outline'}
+                onPress={() => setTtsEnabled(!ttsEnabled)}
+                color={ttsEnabled ? c.primary : c.textSecondary}
+                primary={ttsEnabled}
+                accessibilityLabel={ttsEnabled ? 'Turn voice responses off' : 'Turn voice responses on'}
+              />
+              <PremiumTopBarAction
+                icon="trash-outline"
+                onPress={clearChat}
+                color={c.textSecondary}
+                accessibilityLabel="Start a new chat"
+                disabled={loading || recordingBusy}
+              />
+            </>
+          )}
+        />
+      ) : (
+        <View style={styles.header}>
+          <View style={styles.headerIcon}>
+            <Ionicons name="sparkles" size={18} color="#fff" />
           </View>
-        </View>
-        <TouchableOpacity onPress={() => setTtsEnabled(!ttsEnabled)} style={styles.headerBtn} accessibilityLabel="Toggle voice">
-          <Ionicons name={ttsEnabled ? 'volume-high' : 'volume-mute'} size={16} color={ttsEnabled ? c.primary : c.textLight} />
-        </TouchableOpacity>
-        <TouchableOpacity onPress={clearChat} style={styles.headerBtn} accessibilityLabel="Clear chat">
-          <Ionicons name="trash-outline" size={16} color={c.textLight} />
-        </TouchableOpacity>
-        {onClose && (
-          <TouchableOpacity onPress={onClose} style={styles.headerBtn} accessibilityLabel="Close">
-            <Ionicons name="close" size={18} color={c.textLight} />
+          <View style={styles.headerCopy}>
+            <Text style={styles.headerTitle} numberOfLines={1}>{roleInfo.title}</Text>
+            <View style={styles.headerSubRow}>
+              <Text style={styles.headerSubtitle} numberOfLines={1}>{roleInfo.subtitle}</Text>
+              {rateLimit.limit > 0 && (
+                <View style={[styles.rateBadge, rateLimit.remaining <= 3 && { backgroundColor: c.errorSubtle }]}>
+                  <Text style={[styles.rateBadgeText, rateLimit.remaining <= 3 && { color: c.error }]}>{rateLimit.remaining} left</Text>
+                </View>
+              )}
+            </View>
+          </View>
+          <TouchableOpacity onPress={() => setTtsEnabled(!ttsEnabled)} style={styles.headerBtn} accessibilityLabel="Toggle voice" hitSlop={6}>
+            <Ionicons name={ttsEnabled ? 'volume-high' : 'volume-mute'} size={16} color={ttsEnabled ? c.primary : c.textLight} />
           </TouchableOpacity>
-        )}
-      </View>
+          <TouchableOpacity onPress={clearChat} style={[styles.headerBtn, loading && { opacity: 0.45 }]} accessibilityLabel="Clear chat" hitSlop={6} disabled={loading || recordingBusy}>
+            <Ionicons name="trash-outline" size={16} color={c.textLight} />
+          </TouchableOpacity>
+          {onClose && (
+            <TouchableOpacity onPress={handleCloseChat} style={styles.headerBtn} accessibilityLabel="Close" hitSlop={6}>
+              <Ionicons name="close" size={18} color={c.textLight} />
+            </TouchableOpacity>
+          )}
+        </View>
+      )}
 
       {/* Messages */}
       <FlatList
@@ -875,9 +1170,12 @@ export default function ChatBot({ embedded = false, dashboardRole = null, visibl
         contentContainerStyle={styles.messageList}
         onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
         showsVerticalScrollIndicator={false}
+        ListHeaderComponent={assistantIntro}
         ListFooterComponent={loading ? (
           <View style={styles.typingRow}>
-            <View style={styles.botAvatar}><Ionicons name="sparkles" size={12} color="#fff" /></View>
+            <LinearGradient colors={palette.gradients.cta} style={styles.botAvatar}>
+              <Ionicons name="sparkles" size={12} color="#fff" />
+            </LinearGradient>
             <View style={styles.typingBubble}>
               <ActivityIndicator size="small" color={c.primary} />
               <Text style={styles.typingText}>AI is thinking...</Text>
@@ -890,7 +1188,14 @@ export default function ChatBot({ embedded = false, dashboardRole = null, visibl
       {contextualChips.length > 0 && !loading && (
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipsBar} contentContainerStyle={styles.chipsContainer}>
           {contextualChips.map((chip, i) => (
-            <TouchableOpacity key={i} onPress={() => sendMessage(chip.msg)} style={styles.chip}>
+            <TouchableOpacity
+              key={i}
+              onPress={() => sendMessage(chip.msg)}
+              style={styles.chip}
+              accessibilityRole="button"
+              accessibilityLabel={chip.label}
+              hitSlop={{ top: 5, bottom: 5, left: 2, right: 2 }}
+            >
               <Text style={styles.chipText}>{chip.label}</Text>
             </TouchableOpacity>
           ))}
@@ -899,6 +1204,7 @@ export default function ChatBot({ embedded = false, dashboardRole = null, visibl
 
       {!!pendingAttachments.length && (
         <View style={styles.pendingTray}>
+          <GlassBlurFill intensity={40} />
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.pendingList}>
             {pendingAttachments.map((attachment) => (
               <View key={attachment.id} style={styles.pendingItem}>
@@ -906,7 +1212,9 @@ export default function ChatBot({ embedded = false, dashboardRole = null, visibl
                 <TouchableOpacity
                   onPress={() => removePendingAttachment(attachment.id)}
                   style={styles.pendingRemove}
+                  accessibilityRole="button"
                   accessibilityLabel={`Remove ${attachment.name || 'attachment'}`}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 >
                   <Ionicons name="close" size={12} color="#fff" />
                 </TouchableOpacity>
@@ -922,7 +1230,14 @@ export default function ChatBot({ embedded = false, dashboardRole = null, visibl
           <Text style={styles.recordingText}>
             Recording voice note {formatRecordingTime(Math.floor((recorderState.durationMillis || 0) / 1000))}
           </Text>
-          <TouchableOpacity onPress={stopVoiceRecording} disabled={recordingBusy} style={styles.stopRecordingBtn}>
+          <TouchableOpacity
+            onPress={stopVoiceRecording}
+            disabled={recordingBusy}
+            style={styles.stopRecordingBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Stop voice recording"
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
             <Text style={styles.stopRecordingText}>Stop</Text>
           </TouchableOpacity>
         </View>
@@ -930,11 +1245,25 @@ export default function ChatBot({ embedded = false, dashboardRole = null, visibl
 
       {/* Input */}
       <View style={styles.inputContainer}>
+        <GlassBlurFill intensity={52} />
+        <LinearGradient
+          colors={[
+            'rgba(20,184,166,0.08)',
+            'rgba(14,165,233,0.03)',
+            'rgba(99,102,241,0.09)',
+          ]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={StyleSheet.absoluteFill}
+          pointerEvents="none"
+        />
         <TouchableOpacity
           onPress={pickImages}
           disabled={loading || recorderState.isRecording}
           style={[styles.composerBtn, (loading || recorderState.isRecording) && { opacity: 0.45 }]}
+          accessibilityRole="button"
           accessibilityLabel="Attach product image"
+          hitSlop={4}
         >
           <Ionicons name="image-outline" size={18} color={c.primary} />
         </TouchableOpacity>
@@ -942,7 +1271,9 @@ export default function ChatBot({ embedded = false, dashboardRole = null, visibl
           onPress={pickFiles}
           disabled={loading || recorderState.isRecording}
           style={[styles.composerBtn, (loading || recorderState.isRecording) && { opacity: 0.45 }]}
+          accessibilityRole="button"
           accessibilityLabel="Attach product file"
+          hitSlop={4}
         >
           <Ionicons name="attach" size={19} color={c.primary} />
         </TouchableOpacity>
@@ -954,7 +1285,9 @@ export default function ChatBot({ embedded = false, dashboardRole = null, visibl
             recorderState.isRecording && styles.recordingComposerBtn,
             (loading || recordingBusy) && { opacity: 0.45 },
           ]}
+          accessibilityRole="button"
           accessibilityLabel={recorderState.isRecording ? 'Stop voice recording' : 'Record voice note'}
+          hitSlop={4}
         >
           <Ionicons name={recorderState.isRecording ? 'stop' : 'mic-outline'} size={18} color={recorderState.isRecording ? '#fff' : c.primary} />
         </TouchableOpacity>
@@ -973,7 +1306,9 @@ export default function ChatBot({ embedded = false, dashboardRole = null, visibl
           onPress={() => sendMessage()}
           disabled={(!input.trim() && pendingAttachments.length === 0) || loading || recorderState.isRecording}
           style={[styles.sendBtn, ((!input.trim() && pendingAttachments.length === 0) || loading || recorderState.isRecording) && { opacity: 0.4 }]}
+          accessibilityRole="button"
           accessibilityLabel="Send message"
+          hitSlop={4}
         >
           <Ionicons name="send" size={16} color="#fff" />
         </TouchableOpacity>
@@ -988,7 +1323,7 @@ export default function ChatBot({ embedded = false, dashboardRole = null, visibl
 
   // Floating modal mode
   return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+    <Modal visible={visible} animationType="slide" transparent onRequestClose={handleCloseChat}>
       <View style={styles.modalOverlay}>
         <View style={styles.modalContent}>{content}</View>
       </View>
@@ -1010,32 +1345,150 @@ const makeStyles = (palette) => {
     // Header
     header: { flexDirection: 'row', alignItems: 'center', padding: spacing.md, paddingHorizontal: spacing.lg, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: c.border, backgroundColor: c.primarySubtle },
     headerIcon: { width: 36, height: 36, borderRadius: 12, backgroundColor: c.primary, justifyContent: 'center', alignItems: 'center', marginRight: spacing.sm },
+    headerCopy: { flex: 1, minWidth: 0 },
     headerTitle: { fontSize: fontSize.sm, fontWeight: fontWeight.bold, color: c.text },
-    headerSubRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
-    headerSubtitle: { fontSize: 10, color: c.textSecondary },
-    rateBadge: { backgroundColor: c.primarySubtle, paddingHorizontal: 6, paddingVertical: 1, borderRadius: borderRadius.full },
+    headerSubRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, minWidth: 0 },
+    headerSubtitle: { flex: 1, minWidth: 0, fontSize: 10, color: c.textSecondary },
+    rateBadge: { flexShrink: 0, backgroundColor: c.primarySubtle, paddingHorizontal: 6, paddingVertical: 1, borderRadius: borderRadius.full },
     rateBadgeText: { fontSize: 9, fontWeight: fontWeight.semibold, color: c.primary },
-    headerBtn: { width: 32, height: 32, borderRadius: 10, backgroundColor: g.bgSubtle, justifyContent: 'center', alignItems: 'center', marginLeft: spacing.xs },
+    headerBtn: { width: 36, height: 36, borderRadius: 12, backgroundColor: g.bgSubtle, borderWidth: 1, borderColor: g.borderSubtle, justifyContent: 'center', alignItems: 'center', marginLeft: spacing.xs },
+
+    // Full-screen concierge introduction
+    assistantIntro: {
+      overflow: 'hidden',
+      padding: spacing.lg,
+      marginBottom: spacing.lg,
+      borderRadius: 22,
+      backgroundColor: g.bgStrong,
+      borderWidth: 1,
+      borderColor: g.border,
+      shadowColor: '#6366F1',
+      shadowOffset: { width: 0, height: 8 },
+      shadowOpacity: 0.1,
+      shadowRadius: 18,
+      elevation: 3,
+    },
+    assistantIntroTop: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: spacing.md,
+    },
+    assistantIntroIcon: {
+      width: 46,
+      height: 46,
+      borderRadius: 15,
+      justifyContent: 'center',
+      alignItems: 'center',
+      shadowColor: '#0EA5E9',
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.3,
+      shadowRadius: 9,
+      elevation: 4,
+    },
+    assistantIntroCopy: {
+      flex: 1,
+      minWidth: 0,
+    },
+    assistantIntroEyebrow: {
+      marginBottom: 3,
+      fontSize: 9,
+      fontWeight: fontWeight.bold,
+      letterSpacing: 1,
+      color: c.primary,
+    },
+    assistantIntroTitle: {
+      fontSize: fontSize.lg,
+      lineHeight: 21,
+      fontWeight: fontWeight.extrabold,
+      letterSpacing: -0.25,
+      color: c.text,
+    },
+    assistantIntroText: {
+      marginTop: spacing.xs,
+      fontSize: fontSize.sm,
+      lineHeight: 18,
+      color: c.textSecondary,
+    },
+    capabilityRow: {
+      flexDirection: 'row',
+      gap: spacing.xs,
+      marginTop: spacing.md,
+    },
+    capabilityPill: {
+      flex: 1,
+      minWidth: 0,
+      flexDirection: 'row',
+      justifyContent: 'center',
+      alignItems: 'center',
+      gap: 4,
+      paddingHorizontal: spacing.xs,
+      paddingVertical: 7,
+      borderRadius: borderRadius.full,
+      backgroundColor: g.bgSubtle,
+      borderWidth: 1,
+      borderColor: g.borderSubtle,
+    },
+    capabilityText: {
+      fontSize: 10,
+      fontWeight: fontWeight.semibold,
+      color: c.text,
+    },
+    whatsAppRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.sm,
+      minHeight: 48,
+      marginTop: spacing.md,
+      paddingVertical: spacing.sm,
+      paddingHorizontal: spacing.sm,
+      borderRadius: 15,
+      backgroundColor: 'rgba(34,197,94,0.10)',
+      borderWidth: 1,
+      borderColor: 'rgba(34,197,94,0.20)',
+    },
+    whatsAppIcon: {
+      width: 32,
+      height: 32,
+      borderRadius: 11,
+      justifyContent: 'center',
+      alignItems: 'center',
+      backgroundColor: '#22C55E',
+    },
+    whatsAppTitle: {
+      fontSize: fontSize.sm,
+      fontWeight: fontWeight.bold,
+      color: c.text,
+    },
+    whatsAppText: {
+      marginTop: 1,
+      fontSize: 10,
+      color: c.textSecondary,
+    },
+    whatsAppAction: {
+      fontSize: 10,
+      fontWeight: fontWeight.bold,
+      color: '#16A34A',
+    },
 
     // Messages
-    messageList: { padding: spacing.md, paddingBottom: spacing.lg },
-    msgRow: { flexDirection: 'row', alignItems: 'flex-end', marginBottom: spacing.sm, gap: spacing.xs },
+    messageList: { paddingHorizontal: spacing.md, paddingTop: spacing.sm, paddingBottom: spacing.lg },
+    msgRow: { flexDirection: 'row', alignItems: 'flex-end', marginBottom: spacing.md, gap: spacing.xs },
     msgRowUser: { justifyContent: 'flex-end' },
-    botAvatar: { width: 24, height: 24, borderRadius: 8, backgroundColor: c.primary, justifyContent: 'center', alignItems: 'center' },
-    userAvatar: { width: 24, height: 24, borderRadius: 8, backgroundColor: g.bgSubtle, justifyContent: 'center', alignItems: 'center' },
-    msgBubble: { maxWidth: '78%', borderRadius: borderRadius.xl, paddingHorizontal: spacing.md, paddingVertical: spacing.sm + 2 },
-    userBubble: { backgroundColor: c.primary, borderBottomRightRadius: borderRadius.xs },
-    botBubble: { backgroundColor: g.bgSubtle, borderBottomLeftRadius: borderRadius.xs, borderWidth: 1, borderColor: g.borderSubtle },
+    botAvatar: { width: 28, height: 28, borderRadius: 9, justifyContent: 'center', alignItems: 'center' },
+    userAvatar: { width: 28, height: 28, borderRadius: 9, backgroundColor: g.bgSubtle, borderWidth: 1, borderColor: g.borderSubtle, justifyContent: 'center', alignItems: 'center' },
+    msgBubble: { maxWidth: '82%', borderRadius: 18, paddingHorizontal: spacing.md, paddingVertical: spacing.sm + 2 },
+    userBubble: { backgroundColor: c.primary, borderBottomRightRadius: borderRadius.xs, shadowColor: '#6366F1', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.18, shadowRadius: 7, elevation: 2 },
+    botBubble: { backgroundColor: g.bgStrong, borderBottomLeftRadius: borderRadius.xs, borderWidth: 1, borderColor: g.border },
     msgText: { fontSize: fontSize.sm, lineHeight: 20, color: c.text },
     messageAttachments: { marginTop: spacing.sm, gap: spacing.xs },
-    messageImage: { width: 190, height: 150, borderRadius: borderRadius.lg, backgroundColor: c.surfaceVariant },
+    messageImage: { width: 190, height: 150, borderRadius: borderRadius.lg, backgroundColor: g.bgSubtle },
     messageFile: { minWidth: 170, maxWidth: 220, flexDirection: 'row', alignItems: 'center', gap: spacing.xs, padding: spacing.sm, borderRadius: borderRadius.md, backgroundColor: 'rgba(255,255,255,0.22)' },
     messageFileName: { fontSize: 11, fontWeight: fontWeight.semibold, color: c.text },
     messageFileMeta: { fontSize: 9, color: c.textLight, marginTop: 1 },
 
     // Tool results
     productResults: { marginTop: spacing.sm, gap: spacing.xs },
-    productItem: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, padding: spacing.sm, borderRadius: borderRadius.md, backgroundColor: g.bgSubtle },
+    productItem: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, padding: spacing.sm, borderRadius: borderRadius.lg, backgroundColor: g.bgSubtle, borderWidth: 1, borderColor: g.borderSubtle },
     productDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: c.primary },
     productName: { fontSize: 11, fontWeight: fontWeight.medium, color: c.text },
     productPrice: { fontSize: 10, fontWeight: fontWeight.semibold, color: c.primary },
@@ -1056,18 +1509,18 @@ const makeStyles = (palette) => {
 
     // Typing
     typingRow: { flexDirection: 'row', alignItems: 'flex-end', gap: spacing.xs, marginBottom: spacing.sm },
-    typingBubble: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, padding: spacing.sm, borderRadius: borderRadius.xl, backgroundColor: g.bgSubtle },
+    typingBubble: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, padding: spacing.sm, borderRadius: borderRadius.xl, backgroundColor: g.bgStrong, borderWidth: 1, borderColor: g.borderSubtle },
     typingText: { fontSize: 11, color: c.textSecondary },
 
     // Chips
     chipsBar: { flexGrow: 0, flexShrink: 0 },
-    chipsContainer: { paddingHorizontal: spacing.md, paddingVertical: spacing.xs, gap: spacing.xs, alignItems: 'center' },
-    chip: { backgroundColor: c.primarySubtle, borderWidth: 1, borderColor: c.primaryLighter, paddingHorizontal: spacing.md, paddingVertical: spacing.xs + 2, borderRadius: borderRadius.full },
-    chipText: { fontSize: 11, fontWeight: fontWeight.medium, color: c.primary },
-    pendingTray: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: c.border, backgroundColor: c.surface },
+    chipsContainer: { paddingHorizontal: spacing.md, paddingVertical: spacing.sm, gap: spacing.xs, alignItems: 'center' },
+    chip: { backgroundColor: c.primarySubtle, borderWidth: 1, borderColor: c.primaryLighter, paddingHorizontal: spacing.md, paddingVertical: 8, borderRadius: borderRadius.full },
+    chipText: { fontSize: 11, fontWeight: fontWeight.semibold, color: c.primary },
+    pendingTray: { overflow: 'hidden', borderTopWidth: 1, borderTopColor: g.borderSubtle, backgroundColor: g.bgStrong },
     pendingList: { paddingHorizontal: spacing.md, paddingVertical: spacing.xs, gap: spacing.sm },
     pendingItem: { position: 'relative' },
-    pendingImage: { width: 56, height: 56, borderRadius: borderRadius.md, backgroundColor: c.surfaceVariant },
+    pendingImage: { width: 56, height: 56, borderRadius: borderRadius.md, backgroundColor: g.bgSubtle },
     pendingFile: { width: 150, height: 56, flexDirection: 'row', alignItems: 'center', gap: spacing.xs, paddingHorizontal: spacing.sm, borderRadius: borderRadius.md, backgroundColor: c.primarySubtle, borderWidth: 1, borderColor: c.primaryLighter },
     pendingFileName: { fontSize: 10, fontWeight: fontWeight.semibold, color: c.text },
     pendingFileMeta: { fontSize: 8, color: c.textSecondary, marginTop: 1 },
@@ -1078,11 +1531,11 @@ const makeStyles = (palette) => {
     stopRecordingBtn: { paddingHorizontal: spacing.sm, paddingVertical: 4, borderRadius: borderRadius.full, backgroundColor: c.error },
     stopRecordingText: { fontSize: 10, fontWeight: fontWeight.bold, color: '#fff' },
 
-    // Input
-    inputContainer: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: c.border, gap: spacing.sm, backgroundColor: c.surface },
-    composerBtn: { width: 34, height: 34, borderRadius: 11, backgroundColor: c.primarySubtle, borderWidth: 1, borderColor: c.primaryLighter, justifyContent: 'center', alignItems: 'center' },
+    // Input — floating glass composer
+    inputContainer: { overflow: 'hidden', flexDirection: 'row', alignItems: 'center', minHeight: 58, marginHorizontal: spacing.md, marginBottom: spacing.sm, paddingHorizontal: spacing.sm, paddingVertical: spacing.sm, borderWidth: 1, borderColor: g.border, borderRadius: 20, gap: 6, backgroundColor: g.bgStrong, shadowColor: '#6366F1', shadowOffset: { width: 0, height: 7 }, shadowOpacity: 0.12, shadowRadius: 16, elevation: 4 },
+    composerBtn: { width: 38, height: 38, borderRadius: 12, backgroundColor: c.primarySubtle, borderWidth: 1, borderColor: c.primaryLighter, justifyContent: 'center', alignItems: 'center' },
     recordingComposerBtn: { backgroundColor: c.error, borderColor: c.error },
-    input: { flex: 1, backgroundColor: g.bgSubtle, borderRadius: borderRadius.lg, paddingHorizontal: spacing.md, paddingVertical: Platform.OS === 'ios' ? spacing.sm + 2 : spacing.sm, fontSize: fontSize.sm, color: c.text, borderWidth: 1, borderColor: g.borderSubtle },
-    sendBtn: { width: 36, height: 36, borderRadius: 12, backgroundColor: c.primary, justifyContent: 'center', alignItems: 'center' },
+    input: { flex: 1, minWidth: 72, minHeight: 40, backgroundColor: g.bgSubtle, borderRadius: 13, paddingHorizontal: spacing.md, paddingVertical: Platform.OS === 'ios' ? spacing.sm + 2 : spacing.sm, fontSize: fontSize.sm, color: c.text, borderWidth: 1, borderColor: g.borderSubtle },
+    sendBtn: { width: 40, height: 40, borderRadius: 13, backgroundColor: c.primary, justifyContent: 'center', alignItems: 'center', shadowColor: '#6366F1', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.28, shadowRadius: 7, elevation: 3 },
   });
 };

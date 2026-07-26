@@ -4,14 +4,16 @@
  */
 
 import { useEffect, useRef } from 'react';
-import * as Notifications from 'expo-notifications';
 import { useNavigation } from '@react-navigation/native';
 import { useAuth } from '../contexts/AuthContext';
+import { getNotificationsModule } from '../utils/notificationRuntime';
 import {
   registerForPushNotifications,
   savePushTokenToServer,
   NotificationTypes,
 } from '../services/notifications';
+
+const Notifications = getNotificationsModule();
 
 export default function useNotifications() {
   const { currentUser } = useAuth();
@@ -20,6 +22,8 @@ export default function useNotifications() {
   const responseListener = useRef();
 
   useEffect(() => {
+    if (!Notifications) return undefined;
+
     // Register for push notifications
     registerForPushNotifications().then((token) => {
       if (token && currentUser) {

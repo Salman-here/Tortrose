@@ -3,9 +3,11 @@
  */
 import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as Notifications from 'expo-notifications';
 import api from '../config/api';
 import { useAuth } from './AuthContext';
+import { getNotificationsModule } from '../utils/notificationRuntime';
+
+const Notifications = getNotificationsModule();
 
 const NOTIF_STORE_KEY = 'notification_inbox';
 const NOTIF_READ_KEY = 'notifications_read_ids';
@@ -47,6 +49,7 @@ export const NotificationCountProvider = ({ children }) => {
 
   useEffect(() => {
     refreshUnreadCount();
+    if (!Notifications) return undefined;
     notifListenerRef.current = Notifications.addNotificationReceivedListener(() => {
       setUnreadNotifCount(prev => prev + 1);
     });

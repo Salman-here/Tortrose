@@ -1,7 +1,16 @@
-import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import React, {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { secureGet } from '../utils/secureStorage';
-import api from '../config/api';
+import { NativeModules, Platform } from 'react-native';
+import axios from 'axios';
+import api, { API_BASE_URL } from '../config/api';
+import { useAuth } from './AuthContext';
 
 const CurrencyContext = createContext();
 
@@ -27,6 +36,55 @@ const DEFAULT_RATES = {
   GBP: 0.79,
 };
 
+const DEVICE_CURRENCY_KEY = 'userCurrency';
+const accountCurrencyKey = (accountId) => `accountCurrency:${accountId}`;
+
+const EURO_COUNTRY_CODES = new Set([
+  'AD', 'AT', 'BE', 'CY', 'DE', 'EE', 'ES', 'FI', 'FR', 'GR',
+  'HR', 'IE', 'IT', 'LT', 'LU', 'LV', 'MC', 'ME', 'MT', 'NL',
+  'PT', 'SI', 'SK', 'SM', 'VA', 'XK',
+]);
+
+const GBP_COUNTRY_CODES = new Set(['GB', 'GG', 'IM', 'JE']);
+
+const supportedCurrency = (code) => {
+  const normalized = String(code || '').trim().toUpperCase();
+  return CURRENCIES[normalized] ? normalized : null;
+};
+
+export const currencyForCountry = (countryCode) => {
+  const code = String(countryCode || '').trim().toUpperCase();
+  if (code === 'PK') return 'PKR';
+  if (GBP_COUNTRY_CODES.has(code)) return 'GBP';
+  if (EURO_COUNTRY_CODES.has(code)) return 'EUR';
+  return code ? 'USD' : null;
+};
+
+const countryCodeFromLocale = (locale) => {
+  const parts = String(locale || '').replace(/_/g, '-').split('-');
+  for (let index = parts.length - 1; index > 0; index -= 1) {
+    const part = parts[index].toUpperCase();
+    if (/^[A-Z]{2}$/.test(part)) return part;
+  }
+  return '';
+};
+
+const getDeviceCountryCode = () => {
+  try {
+    const settings = NativeModules.SettingsManager?.settings || {};
+    const appleLocale = settings.AppleLocale || settings.AppleLanguages?.[0];
+    const nativeLocale = Platform.OS === 'ios'
+      ? appleLocale
+      : NativeModules.I18nManager?.localeIdentifier;
+    const intlLocale = typeof Intl !== 'undefined'
+      ? Intl.DateTimeFormat().resolvedOptions().locale
+      : '';
+    return countryCodeFromLocale(nativeLocale || intlLocale);
+  } catch (_) {
+    return '';
+  }
+};
+
 const normalizeCurrency = (code) => {
   const normalized = String(code || 'USD').trim().toUpperCase();
   return CURRENCIES[normalized] ? normalized : 'USD';
@@ -35,37 +93,132 @@ const normalizeCurrency = (code) => {
 const roundMoney = (amount) => Math.round((Number(amount) || 0) * 100) / 100;
 
 export const CurrencyProvider = ({ children }) => {
+  const { currentUser, token, isLoading: isAuthLoading } = useAuth();
   const [currency, setCurrencyState] = useState('USD');
   const [exchangeRates, setExchangeRates] = useState(DEFAULT_RATES);
   const [isLoading, setIsLoading] = useState(true);
+  const loadSequenceRef = useRef(0);
+  const accountId = currentUser?._id || currentUser?.id || null;
 
   useEffect(() => {
-    loadSavedCurrency();
     fetchExchangeRates();
   }, []);
 
-  const loadSavedCurrency = async () => {
-    try {
-      const savedCurrency = await AsyncStorage.getItem('userCurrency');
-      const token = await secureGet('jwtToken');
+  useEffect(() => {
+    if (isAuthLoading) return undefined;
 
-      if (token) {
+    const sequence = ++loadSequenceRef.current;
+    setIsLoading(true);
+    loadSavedCurrency({
+      accountId,
+      accountCurrency: currentUser?.currency,
+      hasToken: Boolean(token),
+      sequence,
+    });
+
+    return () => {
+      if (loadSequenceRef.current === sequence) {
+        loadSequenceRef.current += 1;
+      }
+    };
+  }, [accountId, currentUser?.currency, isAuthLoading, token]);
+
+  const loadSavedCurrency = async ({
+    accountId: activeAccountId,
+    accountCurrency: currentAccountCurrency,
+    hasToken,
+    sequence,
+  }) => {
+    try {
+      const deviceCurrency = supportedCurrency(
+        await AsyncStorage.getItem(DEVICE_CURRENCY_KEY)
+      );
+      const cachedAccountCurrency = activeAccountId
+        ? supportedCurrency(
+          await AsyncStorage.getItem(accountCurrencyKey(activeAccountId))
+        )
+        : null;
+
+      if (hasToken && activeAccountId) {
+        let serverAccountCurrency = supportedCurrency(currentAccountCurrency);
         try {
           const res = await api.get('/api/user/single');
-          const accountCurrency = normalizeCurrency(res.data?.user?.currency || savedCurrency);
-          setCurrencyState(accountCurrency);
-          await AsyncStorage.setItem('userCurrency', accountCurrency);
-          return;
+          serverAccountCurrency = supportedCurrency(res.data?.user?.currency)
+            || serverAccountCurrency;
         } catch (_) {}
+
+        // A bare server-side USD value is the account schema default. Only a
+        // non-default value, or an account-specific cached USD selection, is
+        // proof of an intentional account preference.
+        const intentionalAccountCurrency = serverAccountCurrency
+          && serverAccountCurrency !== 'USD'
+          ? serverAccountCurrency
+          : cachedAccountCurrency;
+
+        if (intentionalAccountCurrency) {
+          if (loadSequenceRef.current !== sequence) return;
+          setCurrencyState(intentionalAccountCurrency);
+          await AsyncStorage.setItem(
+            accountCurrencyKey(activeAccountId),
+            intentionalAccountCurrency
+          );
+          return;
+        }
+
+        if (deviceCurrency) {
+          if (loadSequenceRef.current !== sequence) return;
+          setCurrencyState(deviceCurrency);
+          await AsyncStorage.setItem(
+            accountCurrencyKey(activeAccountId),
+            deviceCurrency
+          );
+          api.patch('/api/currency/update', { currency: deviceCurrency }).catch(() => {});
+          return;
+        }
       }
 
-      if (savedCurrency && CURRENCIES[savedCurrency]) {
-        setCurrencyState(savedCurrency);
+      // Device currency belongs to the guest/device session. Account choices
+      // are cached separately so signing out cannot leak another user's choice.
+      if (deviceCurrency) {
+        if (loadSequenceRef.current !== sequence) return;
+        setCurrencyState(deviceCurrency);
+        return;
+      }
+
+      let detectedCurrency = null;
+      try {
+        const detection = await axios.get(`${API_BASE_URL}/api/currency/detect`, {
+          timeout: 8000,
+        });
+        if (detection.data?.success && detection.data?.detected) {
+          detectedCurrency = supportedCurrency(detection.data.currency)
+            || currencyForCountry(detection.data.country);
+        }
+      } catch (_) {}
+
+      // IP detection can be unavailable in development or offline. Locale is
+      // only a fallback; it never replaces an account or saved preference.
+      detectedCurrency = detectedCurrency || currencyForCountry(getDeviceCountryCode());
+
+      if (detectedCurrency) {
+        if (loadSequenceRef.current !== sequence) return;
+        setCurrencyState(detectedCurrency);
+        await AsyncStorage.setItem(DEVICE_CURRENCY_KEY, detectedCurrency);
+
+        if (hasToken && activeAccountId) {
+          await AsyncStorage.setItem(
+            accountCurrencyKey(activeAccountId),
+            detectedCurrency
+          );
+          api.patch('/api/currency/update', { currency: detectedCurrency }).catch(() => {});
+        }
       }
     } catch (error) {
       console.error('Error loading saved currency:', error);
     } finally {
-      setIsLoading(false);
+      if (loadSequenceRef.current === sequence) {
+        setIsLoading(false);
+      }
     }
   };
 
@@ -82,15 +235,19 @@ export const CurrencyProvider = ({ children }) => {
 
   const setCurrency = async (newCurrency) => {
     const targetCurrency = normalizeCurrency(newCurrency);
+    loadSequenceRef.current += 1;
+    setIsLoading(false);
     setCurrencyState(targetCurrency);
-    await AsyncStorage.setItem('userCurrency', targetCurrency);
 
-    try {
-      const token = await secureGet('jwtToken');
-      if (token) {
+    if (token && accountId) {
+      await AsyncStorage.setItem(accountCurrencyKey(accountId), targetCurrency);
+      try {
         await api.patch('/api/currency/update', { currency: targetCurrency });
-      }
-    } catch (_) {}
+      } catch (_) {}
+      return;
+    }
+
+    await AsyncStorage.setItem(DEVICE_CURRENCY_KEY, targetCurrency);
   };
 
   const convertAmount = (amount, sourceCurrency = 'USD', targetCurrency = currency) => {

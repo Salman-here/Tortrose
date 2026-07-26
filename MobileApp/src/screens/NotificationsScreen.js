@@ -6,11 +6,13 @@
 
 import React, { useCallback, useState } from 'react';
 import {
-  View, Text, FlatList, StyleSheet, SafeAreaView, TouchableOpacity,
+  View, Text, FlatList, StyleSheet, TouchableOpacity,
   RefreshControl, Animated, Platform, UIManager,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Swipeable, GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../contexts/AuthContext';
 import { useGlobal } from '../contexts/GlobalContext';
 import GlassBackground from '../components/common/GlassBackground';
@@ -21,9 +23,19 @@ import useNotificationInbox, { groupNotifications } from '../hooks/useNotificati
 import { spacing, fontSize, fontWeight, borderRadius } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 
-if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+if (
+  Platform.OS === 'android'
+  && !globalThis.nativeFabricUIManager
+  && UIManager.setLayoutAnimationEnabledExperimental
+) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
+
+// Website --logo-gradient (teal → sky → indigo) — the app-wide CTA gradient.
+const CTA_GRADIENT = ['#14B8A6', '#0EA5E9', '#6366F1'];
+// Cool indigo-forward sheen so the inbox header reads distinct from the store
+// top bar (which carries a warmer violet wash).
+const NOTIF_SHEEN = ['rgba(99,102,241,0.13)', 'rgba(14,165,233,0.05)', 'rgba(139,92,246,0.11)'];
 
 const CATEGORIES = [
   { key: 'all', label: 'All', icon: 'apps-outline' },
@@ -107,28 +119,32 @@ export default function NotificationsScreen({ navigation }) {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <GlassBackground>
-        <SafeAreaView style={styles.container}>
+        <SafeAreaView style={styles.container} edges={Platform.OS === 'android' ? [] : ['top']}>
           {/* Header */}
           <GlassPanel variant="floating" style={styles.heroHeader}>
-            <TouchableOpacity style={styles.heroBackBtn} onPress={() => { refreshUnreadCount(); navigation.goBack(); }} activeOpacity={0.7}>
+            <LinearGradient colors={NOTIF_SHEEN} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} pointerEvents="none" />
+            <TouchableOpacity style={styles.heroBackBtn} onPress={() => { refreshUnreadCount(); navigation.goBack(); }} activeOpacity={0.75} accessibilityRole="button" accessibilityLabel="Go back" hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
               <Ionicons name="arrow-back" size={22} color={palette.colors.text} />
             </TouchableOpacity>
             <View style={styles.heroCenter}>
+              <LinearGradient colors={CTA_GRADIENT} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.heroTitleTile}>
+                <Ionicons name="notifications" size={17} color="#fff" />
+              </LinearGradient>
               <Text style={styles.heroTitle}>Inbox</Text>
               {unreadCount > 0 && <View style={styles.heroBadge}><Text style={styles.heroBadgeText}>{unreadCount}</Text></View>}
             </View>
             <View style={styles.heroActions}>
               {unreadCount > 0 && (
-                <TouchableOpacity style={styles.markAllPill} onPress={markAllRead} activeOpacity={0.8}>
-                  <Ionicons name="checkmark-done" size={14} color={palette.colors.white} />
-                  <Text style={styles.markAllPillText}>Mark all read</Text>
+                <TouchableOpacity style={styles.heroPrimaryBtn} onPress={markAllRead} activeOpacity={0.85} accessibilityLabel="Mark all as read" hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                  <LinearGradient colors={CTA_GRADIENT} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
+                  <Ionicons name="checkmark-done" size={18} color="#fff" />
                 </TouchableOpacity>
               )}
-              <TouchableOpacity style={styles.heroActionBtn} onPress={() => navigation.navigate('NotificationPreferences')}>
+              <TouchableOpacity style={styles.heroActionBtn} onPress={() => navigation.navigate('NotificationPreferences')} accessibilityLabel="Notification settings" hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                 <Ionicons name="settings-outline" size={18} color={palette.colors.text} />
               </TouchableOpacity>
               {notifications.length > 0 && (
-                <TouchableOpacity style={styles.heroActionBtn} onPress={clearAll}>
+                <TouchableOpacity style={styles.heroActionBtn} onPress={clearAll} accessibilityLabel="Clear all notifications" hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                   <Ionicons name="trash-outline" size={18} color={palette.colors.error} />
                 </TouchableOpacity>
               )}
@@ -201,16 +217,16 @@ const buildStyles = (p) => StyleSheet.create({
   container: { flex: 1 },
   loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', gap: spacing.md },
   loadingText: { fontSize: fontSize.md, color: p.colors.textSecondary },
-  heroHeader: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing.lg, paddingVertical: spacing.md, marginHorizontal: spacing.md, marginTop: spacing.sm },
-  heroBackBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.15)', justifyContent: 'center', alignItems: 'center' },
-  heroCenter: { flex: 1, flexDirection: 'row', alignItems: 'center', marginLeft: spacing.md, gap: spacing.sm },
-  heroTitle: { fontSize: fontSize.xxl, fontWeight: fontWeight.bold, color: p.colors.text },
+  heroHeader: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, marginHorizontal: spacing.md, marginTop: spacing.sm, borderRadius: 22 },
+  heroBackBtn: { width: 42, height: 42, borderRadius: 14, backgroundColor: p.glass.bgStrong, borderWidth: 1, borderColor: p.glass.border, justifyContent: 'center', alignItems: 'center' },
+  heroCenter: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: spacing.sm, minWidth: 0 },
+  heroTitleTile: { width: 34, height: 34, borderRadius: 11, justifyContent: 'center', alignItems: 'center', shadowColor: '#0EA5E9', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.35, shadowRadius: 8, elevation: 4 },
+  heroTitle: { fontSize: fontSize.xxl, fontWeight: fontWeight.extrabold, color: p.colors.text, letterSpacing: -0.4 },
   heroBadge: { backgroundColor: p.colors.error, borderRadius: borderRadius.full, minWidth: 24, height: 24, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 6 },
   heroBadgeText: { color: p.colors.white, fontSize: fontSize.xs, fontWeight: fontWeight.bold },
-  heroActions: { flexDirection: 'row', gap: spacing.xs },
-  heroActionBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.12)', justifyContent: 'center', alignItems: 'center' },
-  markAllPill: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: spacing.md, height: 32, borderRadius: 16, backgroundColor: p.colors.primary },
-  markAllPillText: { color: p.colors.white, fontSize: fontSize.xs, fontWeight: fontWeight.semibold },
+  heroActions: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
+  heroActionBtn: { width: 36, height: 36, borderRadius: 12, backgroundColor: p.glass.bgSubtle, borderWidth: 1, borderColor: p.glass.borderSubtle, justifyContent: 'center', alignItems: 'center' },
+  heroPrimaryBtn: { width: 36, height: 36, borderRadius: 12, overflow: 'hidden', justifyContent: 'center', alignItems: 'center', shadowColor: '#0EA5E9', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.35, shadowRadius: 8, elevation: 4 },
   chipListBar: { flexGrow: 0, flexShrink: 0 },
   chipList: { paddingHorizontal: spacing.md, paddingVertical: spacing.sm, gap: spacing.sm, alignItems: 'center' },
   chip: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: borderRadius.full, backgroundColor: p.glass.bgSubtle, borderWidth: 1, borderColor: p.glass.borderSubtle },

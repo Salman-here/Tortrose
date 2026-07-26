@@ -7,8 +7,27 @@ import axios from 'axios';
 import Toast from 'react-native-toast-message';
 import api, { API_BASE_URL } from '../config/api';
 import { trackAuthEvent, trackError, setUserContext } from '../utils/breadcrumbs';
+import { setBuyerLocation } from '../utils/buyerLocation';
 
 const AuthContext = createContext();
+
+// Seed the buyer location from the signed-in user's saved address so their
+// catalog matches their shipping country even when their device IP differs.
+// No-op when the user has no country on file (IP auto-detection then wins).
+const seedBuyerLocationFromUser = (user) => {
+  if (!user) return;
+  const defaultAddress = Array.isArray(user.savedAddresses)
+    ? user.savedAddresses.find((a) => a?.isDefault) || user.savedAddresses[0]
+    : null;
+  const country = defaultAddress?.country || user.savedShippingInfo?.country || user.sellerInfo?.country;
+  if (!country) return;
+  setBuyerLocation({
+    country,
+    countryCode: defaultAddress?.countryCode || user.savedShippingInfo?.countryCode || user.sellerInfo?.countryCode,
+    region: defaultAddress?.state || user.savedShippingInfo?.state,
+    city: defaultAddress?.city || user.savedShippingInfo?.city || user.sellerInfo?.city,
+  }).catch(() => {});
+};
 
 // Secure storage helpers — SecureStore on native, AsyncStorage fallback on web
 const isWeb = Platform.OS === 'web';
@@ -44,6 +63,7 @@ export const AuthProvider = ({ children }) => {
       if (userStr) {
         const user = JSON.parse(userStr);
         setCurrentUser(user);
+        seedBuyerLocationFromUser(user);
       }
       if (savedToken) {
         setToken(savedToken);
@@ -63,6 +83,7 @@ export const AuthProvider = ({ children }) => {
       const res = await api.get('/api/user/single');
       const user = res.data?.user;
       setCurrentUser(user);
+      seedBuyerLocationFromUser(user);
       await secureSet('currentUser', JSON.stringify(user));
     } catch (error) {
       if (error.response?.status !== 403) {
@@ -100,6 +121,7 @@ export const AuthProvider = ({ children }) => {
       await secureSet('currentUser', JSON.stringify(res.data.user));
       setCurrentUser(res.data.user);
       setToken(res.data.token);
+      seedBuyerLocationFromUser(res.data.user);
       Toast.show({
         type: 'success',
         text1: 'Account Created!',
@@ -128,6 +150,7 @@ export const AuthProvider = ({ children }) => {
       setCurrentUser(res.data.user);
       setToken(res.data.token);
       setUserContext(res.data.user);
+      seedBuyerLocationFromUser(res.data.user);
       trackAuthEvent('login_success', { userId: res.data.user?._id });
 
       Toast.show({
@@ -174,6 +197,7 @@ export const AuthProvider = ({ children }) => {
         const user = res.data?.user;
         await secureSet('currentUser', JSON.stringify(user));
         setCurrentUser(user);
+        seedBuyerLocationFromUser(user);
 
         Toast.show({
           type: 'success',

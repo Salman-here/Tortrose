@@ -5,7 +5,7 @@
  * Requirements: 6.1, 6.2, 6.3, 6.6, 6.7, 6.8
  */
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -14,20 +14,17 @@ import {
   RefreshControl,
   TextInput,
   TouchableOpacity,
-  StatusBar,
   Modal,
   ScrollView,
-  Animated,
-  ActivityIndicator,
-  SafeAreaView,
+  Platform,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import ChatBot from '../components/ChatBot';
 import api from '../config/api';
 import ProductCard from '../components/ProductCard';
 import CurrencySelector from '../components/CurrencySelector';
-import { Loader, EmptySearch, ProductGridSkeleton, PersonalizedSliders, SearchAutocomplete, PriceRangeFilter, TrustedStoresSection } from '../components/common';
+import { PersonalizedSliders, SearchAutocomplete, PriceRangeFilter, TrustedStoresSection } from '../components/common';
 import GlassBackground from '../components/common/GlassBackground';
 import GlassPanel from '../components/common/GlassPanel';
 import GlassBlurFill from '../components/common/GlassBlurFill';
@@ -37,8 +34,27 @@ import RozareLogo from '../components/common/RozareLogo';
 import { useAuth } from '../contexts/AuthContext';
 import { useGlobal } from '../contexts/GlobalContext';
 import { useCurrency } from '../contexts/CurrencyContext';
-import { spacing, fontSize, borderRadius, shadows, fontWeight, typography } from '../styles/theme';
+import { spacing, fontSize, borderRadius, shadows, fontWeight } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
+import { PRESET_CATEGORIES, isPresetCategory } from '../utils/categories';
+import HomeCatalogSkeleton from '../components/common/HomeCatalogSkeleton';
+
+// Subtle brand aurora (teal → sky → indigo) laid over glass surfaces for depth.
+const HERO_SHEEN = ['rgba(20,184,166,0.13)', 'rgba(14,165,233,0.06)', 'rgba(99,102,241,0.15)'];
+const STORE_SHEEN = ['rgba(20,184,166,0.10)', 'rgba(14,165,233,0.05)', 'rgba(99,102,241,0.13)'];
+const OTHER_BRANDS_FILTER = '__other_brands__';
+const DEFAULT_PRICE_RANGE = { min: 0, max: null };
+const PRODUCT_SORT_OPTIONS = [
+  { key: 'relevance-desc', field: 'relevance', order: 'desc', label: 'Recommended', helper: 'Balanced discovery', icon: 'sparkles-outline' },
+  { key: 'price-asc', field: 'price', order: 'asc', label: 'Lowest price', helper: 'Budget first', icon: 'arrow-up-outline' },
+  { key: 'price-desc', field: 'price', order: 'desc', label: 'Highest price', helper: 'Premium first', icon: 'arrow-down-outline' },
+  // The backend's non-price comparators are already descending, so `asc`
+  // preserves the user-facing "highest/newest/most" direction.
+  { key: 'rating-desc', field: 'rating', order: 'asc', label: 'Highest rated', helper: 'Buyer favourites', icon: 'star-outline' },
+  { key: 'newest-desc', field: 'newest', order: 'asc', label: 'Newest first', helper: 'Fresh arrivals', icon: 'time-outline' },
+  { key: 'popular-desc', field: 'popular', order: 'asc', label: 'Most popular', helper: 'Trending now', icon: 'flame-outline' },
+  { key: 'sales-desc', field: 'sales', order: 'asc', label: 'Best selling', helper: 'Most purchased', icon: 'trophy-outline' },
+];
 
 export default function HomeScreen({ navigation }) {
   const { palette } = useTheme();
@@ -47,13 +63,12 @@ export default function HomeScreen({ navigation }) {
   const { currentUser } = useAuth();
   const { fetchCart, unreadNotifCount } = useGlobal();
   const { currency } = useCurrency();
-  const [showAI, setShowAI] = useState(false);
-  
+
   const [products, setProducts] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [loadingMore, setLoadingMore] = useState(false);
   const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
   const [hasMore, setHasMore] = useState(true);
   const [loadError, setLoadError] = useState(false);
   const [totalProducts, setTotalProducts] = useState(0);
@@ -62,87 +77,113 @@ export default function HomeScreen({ navigation }) {
 
   const [categories, setCategories] = useState([]);
   const [brands, setBrands] = useState([]);
+  const [otherBrandsCount, setOtherBrandsCount] = useState(0);
+  const [otherBrandsValue, setOtherBrandsValue] = useState(OTHER_BRANDS_FILTER);
   const [selectedCategories, setSelectedCategories] = useState([]);
   const [selectedBrands, setSelectedBrands] = useState([]);
-  const [priceRange, setPriceRange] = useState({ min: 0, max: null });
+  const [priceRange, setPriceRange] = useState(DEFAULT_PRICE_RANGE);
+  const [sortBy, setSortBy] = useState('relevance');
+  const [sortOrder, setSortOrder] = useState('desc');
+  const [filterDraft, setFilterDraft] = useState({
+    categories: [],
+    brands: [],
+    priceRange: DEFAULT_PRICE_RANGE,
+    search: '',
+    sortBy: 'relevance',
+    sortOrder: 'desc',
+  });
   const [showAutocomplete, setShowAutocomplete] = useState(false);
+  const listRef = useRef(null);
+  const productRequestRef = useRef(0);
+  const previousCurrencyRef = useRef(currency);
+  const searchBlurTimerRef = useRef(null);
+  const productsSectionOffsetRef = useRef(0);
 
   // Animation for header — use ref to avoid re-creating on every render
-  const scrollY = useRef(new Animated.Value(0)).current;
-
   const LIMIT = 12;
 
-  const fetchProducts = useCallback(async (pageNum = 1, append = false) => {
-    if (append) setLoadingMore(true);
+  const fetchProducts = useCallback(async (pageNum = 1, overrides = {}) => {
+    const requestId = ++productRequestRef.current;
+    const requestFilters = {
+      categories: overrides.categories ?? selectedCategories,
+      brands: overrides.brands ?? selectedBrands,
+      search: overrides.search ?? searchQuery,
+      priceRange: overrides.priceRange ?? priceRange,
+      sortBy: overrides.sortBy ?? sortBy,
+      sortOrder: overrides.sortOrder ?? sortOrder,
+    };
+
+    setIsLoading(true);
     try {
       const params = new URLSearchParams();
-      if (selectedCategories.length > 0) {
-        selectedCategories.forEach(cat => params.append('categories', cat));
+      if (requestFilters.categories.length > 0) {
+        requestFilters.categories.forEach(cat => params.append('categories', cat));
       }
-      if (selectedBrands.length > 0) {
-        selectedBrands.forEach(brand => params.append('brands', brand));
+      if (requestFilters.brands.length > 0) {
+        requestFilters.brands.forEach(brand => params.append('brands', brand));
       }
-      if (searchQuery) {
-        params.append('search', searchQuery);
+      if (requestFilters.search?.trim()) {
+        params.append('search', requestFilters.search.trim());
       }
-      if (priceRange.min > 0 || (priceRange.max && priceRange.max > 0)) {
-        params.append('priceRange', `${priceRange.min || 0},${priceRange.max || ''}`);
+      if (requestFilters.priceRange.min > 0 || (requestFilters.priceRange.max && requestFilters.priceRange.max > 0)) {
+        // The API parses an empty max as zero; Infinity intentionally becomes
+        // an unbounded max so min-only price filters keep returning products.
+        params.append('priceRange', `${requestFilters.priceRange.min || 0},${requestFilters.priceRange.max || 'Infinity'}`);
       }
+      params.append('sortBy', requestFilters.sortBy);
+      params.append('sortOrder', requestFilters.sortOrder);
       params.append('currency', currency);
       params.append('page', pageNum);
       params.append('limit', LIMIT);
 
       const res = await api.get(`/api/products/get-products?${params.toString()}`);
+      if (requestId !== productRequestRef.current) return;
+
       const newProducts = res.data.products || [];
       const paginationInfo = res.data.pagination;
 
-      if (append) {
-        // Dedupe across pages to avoid React duplicate-key warnings when the
-        // backend pagination window overlaps (e.g. a product shifts between pages).
-        setProducts(prev => {
-          const seen = new Set(prev.map(p => p._id));
-          const additions = newProducts.filter(p => p?._id && !seen.has(p._id));
-          return [...prev, ...additions];
-        });
-      } else {
-        // Dedupe on initial fetch too (defensive).
-        const seen = new Set();
-        const unique = newProducts.filter(p => {
-          if (!p?._id || seen.has(p._id)) return false;
-          seen.add(p._id);
-          return true;
-        });
-        setProducts(unique);
-      }
+      const seen = new Set();
+      const unique = newProducts.filter(product => {
+        if (!product?._id || seen.has(product._id)) return false;
+        seen.add(product._id);
+        return true;
+      });
+      setProducts(unique);
 
       if (paginationInfo) {
-        setHasMore(paginationInfo.hasMore);
-        setTotalProducts(paginationInfo.totalProducts);
+        const nextTotalPages = Math.max(1, Number(paginationInfo.totalPages) || 1);
+        setTotalPages(nextTotalPages);
+        setHasMore(pageNum < nextTotalPages);
+        setTotalProducts(Number(paginationInfo.totalProducts) || 0);
         setPage(pageNum);
       } else {
-        // Legacy fallback: if backend doesn't return pagination info
-        setHasMore(newProducts.length === LIMIT);
+        const fallbackHasMore = newProducts.length === LIMIT;
+        setTotalPages(fallbackHasMore ? pageNum + 1 : pageNum);
+        setHasMore(fallbackHasMore);
+        setTotalProducts(newProducts.length);
         setPage(pageNum);
       }
       setLoadError(false);
     } catch (error) {
+      if (requestId !== productRequestRef.current) return;
       console.error('Error fetching products:', error);
-      // Stop infinite-scroll retries until the user explicitly refreshes,
-      // otherwise a failing request re-triggers onEndReached forever.
       setHasMore(false);
       setLoadError(true);
     } finally {
-      setIsLoading(false);
-      setRefreshing(false);
-      setLoadingMore(false);
+      if (requestId === productRequestRef.current) {
+        setIsLoading(false);
+        setRefreshing(false);
+      }
     }
-  }, [selectedCategories, selectedBrands, searchQuery, priceRange.min, priceRange.max, currency]);
+  }, [selectedCategories, selectedBrands, searchQuery, priceRange, sortBy, sortOrder, currency]);
 
   const fetchFilters = async () => {
     try {
       const res = await api.get('/api/products/get-filters');
       setCategories(res.data.categories || []);
       setBrands(res.data.brands || []);
+      setOtherBrandsCount(Number(res.data.otherBrandsCount) || 0);
+      setOtherBrandsValue(res.data.brandFilter?.otherValue || OTHER_BRANDS_FILTER);
     } catch (error) {
       console.error('Error fetching filters:', error);
     }
@@ -150,22 +191,14 @@ export default function HomeScreen({ navigation }) {
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
-    setPage(1);
-    setHasMore(true);
-    fetchProducts(1, false);
-  }, [fetchProducts]);
-
-  const onEndReached = useCallback(() => {
-    if (!loadingMore && !isLoading && hasMore && products.length > 0) {
-      fetchProducts(page + 1, true);
-    }
-  }, [loadingMore, isLoading, hasMore, page, products.length, fetchProducts]);
+    fetchProducts(page);
+  }, [fetchProducts, page]);
 
   // Initial load and when currentUser changes
   useEffect(() => {
     setPage(1);
     setHasMore(true);
-    fetchProducts(1, false);
+    fetchProducts(1);
     fetchFilters();
     if (currentUser) {
       fetchCart();
@@ -173,45 +206,177 @@ export default function HomeScreen({ navigation }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser]);
 
-  const handleSearch = useCallback(() => {
-    setIsLoading(true);
+  // Currency affects comparable prices, price filters and price sorting.
+  useEffect(() => {
+    if (previousCurrencyRef.current === currency) return;
+    previousCurrencyRef.current = currency;
+    setPage(1);
+    setHasMore(true);
+    fetchProducts(1);
+  }, [currency, fetchProducts]);
+
+  const cancelAutocompleteBlur = useCallback(() => {
+    if (searchBlurTimerRef.current) {
+      clearTimeout(searchBlurTimerRef.current);
+      searchBlurTimerRef.current = null;
+    }
+  }, []);
+
+  const handleSearchFocus = useCallback(() => {
+    cancelAutocompleteBlur();
+    setShowAutocomplete(true);
+  }, [cancelAutocompleteBlur]);
+
+  const handleSearchBlur = useCallback(() => {
+    cancelAutocompleteBlur();
+    searchBlurTimerRef.current = setTimeout(() => {
+      setShowAutocomplete(false);
+      searchBlurTimerRef.current = null;
+    }, 320);
+  }, [cancelAutocompleteBlur]);
+
+  useEffect(() => () => cancelAutocompleteBlur(), [cancelAutocompleteBlur]);
+
+  const handleSearch = useCallback((explicitQuery = searchQuery) => {
+    cancelAutocompleteBlur();
+    const nextQuery = String(explicitQuery || '').trim();
+    setSearchQuery(nextQuery);
     setPage(1);
     setHasMore(true);
     setShowAutocomplete(false);
-    if (searchQuery && searchQuery.trim().length >= 2) {
-      addSearchHistory(searchQuery.trim());
+    if (nextQuery.length >= 2) {
+      addSearchHistory(nextQuery);
     }
-    fetchProducts(1, false);
-  }, [fetchProducts, searchQuery]);
+    fetchProducts(1, { search: nextQuery });
+  }, [cancelAutocompleteBlur, fetchProducts, searchQuery]);
 
-  const toggleCategory = (category) => {
-    setSelectedCategories(prev =>
-      prev.includes(category) ? prev.filter(c => c !== category) : [...prev, category]
-    );
-  };
+  const canonicalizeCategories = useCallback((values) => {
+    const seen = new Set();
+    return (values || []).reduce((result, value) => {
+      const normalized = String(value || '').trim().toLowerCase();
+      if (!normalized || seen.has(normalized)) return result;
+      const canonical = categories.find(item => String(item).trim().toLowerCase() === normalized)
+        || PRESET_CATEGORIES.find(item => item.toLowerCase() === normalized)
+        || String(value).trim();
+      seen.add(normalized);
+      result.push(canonical);
+      return result;
+    }, []);
+  }, [categories]);
 
-  const toggleBrand = (brand) => {
-    setSelectedBrands(prev =>
-      prev.includes(brand) ? prev.filter(b => b !== brand) : [...prev, brand]
-    );
-  };
+  const applyCategorySelection = useCallback((nextCategories) => {
+    const canonicalCategories = canonicalizeCategories(nextCategories);
+    setSelectedCategories(canonicalCategories);
+    setPage(1);
+    setHasMore(true);
+    fetchProducts(1, { categories: canonicalCategories });
+  }, [canonicalizeCategories, fetchProducts]);
 
-  const resetFilters = () => {
+  const removeCategory = useCallback((category) => {
+    const normalized = String(category || '').trim().toLowerCase();
+    applyCategorySelection(selectedCategories.filter(item => String(item || '').trim().toLowerCase() !== normalized));
+  }, [applyCategorySelection, selectedCategories]);
+
+  const removeBrand = useCallback((brand) => {
+    const nextBrands = selectedBrands.filter(item => item !== brand);
+    setSelectedBrands(nextBrands);
+    setPage(1);
+    setHasMore(true);
+    fetchProducts(1, { brands: nextBrands });
+  }, [fetchProducts, selectedBrands]);
+
+  const clearPriceFilter = useCallback(() => {
+    setPriceRange(DEFAULT_PRICE_RANGE);
+    setPage(1);
+    setHasMore(true);
+    fetchProducts(1, { priceRange: DEFAULT_PRICE_RANGE });
+  }, [fetchProducts]);
+
+  const clearSort = useCallback(() => {
+    setSortBy('relevance');
+    setSortOrder('desc');
+    setPage(1);
+    setHasMore(true);
+    fetchProducts(1, { sortBy: 'relevance', sortOrder: 'desc' });
+  }, [fetchProducts]);
+
+  const resetFilters = useCallback(() => {
     setSelectedCategories([]);
     setSelectedBrands([]);
     setSearchQuery('');
-    setPriceRange({ min: 0, max: null });
-  };
-
-  const applyFilters = () => {
-    setShowFilters(false);
-    setIsLoading(true);
+    setPriceRange(DEFAULT_PRICE_RANGE);
+    setSortBy('relevance');
+    setSortOrder('desc');
     setPage(1);
     setHasMore(true);
-    fetchProducts(1, false);
-  };
+    fetchProducts(1, {
+      categories: [],
+      brands: [],
+      search: '',
+      priceRange: DEFAULT_PRICE_RANGE,
+      sortBy: 'relevance',
+      sortOrder: 'desc',
+    });
+  }, [fetchProducts]);
 
-  const hasActiveFilters = selectedCategories.length > 0 || selectedBrands.length > 0 || priceRange.min > 0 || (priceRange.max && priceRange.max > 0);
+  const openFilters = useCallback(() => {
+    setFilterDraft({
+      categories: [...selectedCategories],
+      brands: [...selectedBrands],
+      priceRange: { ...priceRange },
+      search: searchQuery,
+      sortBy,
+      sortOrder,
+    });
+    setShowFilters(true);
+  }, [selectedCategories, selectedBrands, priceRange, searchQuery, sortBy, sortOrder]);
+
+  const applyFilters = useCallback(() => {
+    const canonicalCategories = canonicalizeCategories(filterDraft.categories);
+    const appliedDraft = { ...filterDraft, categories: canonicalCategories, search: filterDraft.search.trim() };
+    setSelectedCategories(canonicalCategories);
+    setSelectedBrands(filterDraft.brands);
+    setPriceRange(filterDraft.priceRange);
+    setSearchQuery(appliedDraft.search);
+    setSortBy(filterDraft.sortBy);
+    setSortOrder(filterDraft.sortOrder);
+    setShowFilters(false);
+    setPage(1);
+    setHasMore(true);
+    fetchProducts(1, appliedDraft);
+  }, [canonicalizeCategories, fetchProducts, filterDraft]);
+
+  const hasActiveFilters = selectedCategories.length > 0
+    || selectedBrands.length > 0
+    || priceRange.min > 0
+    || (priceRange.max && priceRange.max > 0)
+    || sortBy !== 'relevance'
+    || sortOrder !== 'desc';
+
+  const activeFilterCount = selectedCategories.length
+    + selectedBrands.length
+    + ((priceRange.min > 0 || (priceRange.max && priceRange.max > 0)) ? 1 : 0)
+    + ((sortBy !== 'relevance' || sortOrder !== 'desc') ? 1 : 0);
+
+  const otherCategories = useMemo(
+    () => categories.filter(category => !isPresetCategory(category)),
+    [categories]
+  );
+
+  const visiblePageNumbers = useMemo(() => {
+    const maxVisible = 3;
+    let start = Math.max(1, page - Math.floor(maxVisible / 2));
+    const end = Math.min(totalPages, start + maxVisible - 1);
+    start = Math.max(1, end - maxVisible + 1);
+    return Array.from({ length: Math.max(0, end - start + 1) }, (_, index) => start + index);
+  }, [page, totalPages]);
+
+  const goToPage = useCallback((nextPage) => {
+    if (isLoading || nextPage < 1 || nextPage > totalPages || nextPage === page) return;
+    const targetOffset = Math.max(0, productsSectionOffsetRef.current - spacing.sm);
+    listRef.current?.scrollToOffset({ offset: targetOffset, animated: true });
+    fetchProducts(nextPage);
+  }, [fetchProducts, isLoading, page, totalPages]);
 
   // Memoized render item to prevent unnecessary re-renders
   const renderItem = useCallback(({ item, index }) => (
@@ -225,12 +390,16 @@ export default function HomeScreen({ navigation }) {
   const categoryIcons = {
     'Electronics': 'phone-portrait-outline',
     'Fashion': 'shirt-outline',
-    'Beauty': 'color-palette-outline',
-    'Home': 'home-outline',
-    'Sports': 'football-outline',
+    'Home & Kitchen': 'home-outline',
+    'Beauty & Personal Care': 'color-palette-outline',
+    'Health & Wellness': 'fitness-outline',
+    'Sports & Outdoors': 'football-outline',
     'Books': 'book-outline',
-    'Toys': 'game-controller-outline',
-    'Food': 'restaurant-outline',
+    'Toys & Games': 'game-controller-outline',
+    'Grocery': 'basket-outline',
+    'Automotive': 'car-sport-outline',
+    'Jewelry & Accessories': 'diamond-outline',
+    'Pet Supplies': 'paw-outline',
     'default': 'grid-outline',
   };
 
@@ -238,8 +407,15 @@ export default function HomeScreen({ navigation }) {
     <View>
       {/* Hero Header — Glass style matching website nav */}
       <GlassPanel variant="floating" style={styles.heroHeader}>
+        <LinearGradient
+          colors={HERO_SHEEN}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={StyleSheet.absoluteFill}
+          pointerEvents="none"
+        />
         <View style={styles.heroTopBar}>
-          <RozareLogo width={104} height={24} />
+          <RozareLogo width={116} height={28} />
           <View style={styles.heroTopRight}>
             <CurrencySelector />
             <TouchableOpacity
@@ -287,13 +463,13 @@ export default function HomeScreen({ navigation }) {
               placeholderTextColor={palette.colors.grayLight}
               value={searchQuery}
               onChangeText={setSearchQuery}
-              onFocus={() => setShowAutocomplete(true)}
-              onBlur={() => setTimeout(() => setShowAutocomplete(false), 180)}
-              onSubmitEditing={handleSearch}
+              onFocus={handleSearchFocus}
+              onBlur={handleSearchBlur}
+              onSubmitEditing={() => handleSearch(searchQuery)}
               returnKeyType="search"
             />
             {searchQuery.length > 0 ? (
-              <TouchableOpacity onPress={() => { setSearchQuery(''); handleSearch(); }} accessibilityLabel="Clear search">
+              <TouchableOpacity onPress={() => handleSearch('')} accessibilityLabel="Clear search">
                 <Ionicons name="close-circle" size={20} color={palette.colors.grayLight} />
               </TouchableOpacity>
             ) : (
@@ -302,8 +478,7 @@ export default function HomeScreen({ navigation }) {
                   const { startVoiceSearch } = await import('../utils/voiceSearch');
                   const transcript = await startVoiceSearch();
                   if (transcript) {
-                    setSearchQuery(transcript);
-                    setTimeout(() => handleSearch(), 50);
+                    handleSearch(transcript);
                   }
                 }}
                 accessibilityLabel="Voice search"
@@ -313,11 +488,15 @@ export default function HomeScreen({ navigation }) {
               </TouchableOpacity>
             )}
           </View>
-          <TouchableOpacity style={[styles.filterButton, hasActiveFilters && styles.filterButtonActive]} onPress={() => setShowFilters(true)}>
-            <Ionicons name="options-outline" size={22} color={palette.colors.primary} />
+          <TouchableOpacity
+            style={[styles.filterButton, hasActiveFilters && styles.filterButtonActive]}
+            onPress={openFilters}
+            accessibilityLabel="Open product filters"
+          >
+            <Ionicons name="options-outline" size={22} color={hasActiveFilters ? '#fff' : palette.colors.primary} />
             {hasActiveFilters && (
               <View style={styles.filterBadge}>
-                <Text style={styles.filterBadgeText}>{selectedCategories.length + selectedBrands.length}</Text>
+                <Text style={styles.filterBadgeText}>{activeFilterCount}</Text>
               </View>
             )}
           </TouchableOpacity>
@@ -329,9 +508,17 @@ export default function HomeScreen({ navigation }) {
         visible={showAutocomplete}
         query={searchQuery}
         navigation={navigation}
-        onSelectQuery={(q) => { setSearchQuery(q); setShowAutocomplete(false); setTimeout(() => handleSearch(), 50); }}
-        onSelectProduct={(p) => { setShowAutocomplete(false); navigation.navigate('ProductDetail', { productId: p._id }); }}
-        onClose={() => setShowAutocomplete(false)}
+        onSelectQuery={(query) => handleSearch(query)}
+        onSelectProduct={(p) => {
+          cancelAutocompleteBlur();
+          setShowAutocomplete(false);
+          navigation.navigate('ProductDetail', { productId: p._id });
+        }}
+        onClose={() => {
+          cancelAutocompleteBlur();
+          setShowAutocomplete(false);
+        }}
+        onInteraction={cancelAutocompleteBlur}
       />
 
       {/* Personalized Sliders rendered once below TrustedStores */}
@@ -368,25 +555,54 @@ export default function HomeScreen({ navigation }) {
       {categories.length > 0 && (
         <View style={styles.categoriesSection}>
           <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Categories</Text>
-            <TouchableOpacity onPress={() => setShowFilters(true)}>
-              <Text style={styles.sectionLink}>View All</Text>
+            <View>
+              <Text style={styles.sectionEyebrow}>SHOP YOUR WAY</Text>
+              <Text style={styles.sectionTitle}>Browse categories</Text>
+            </View>
+            <TouchableOpacity style={styles.viewAllCategories} onPress={openFilters} accessibilityLabel="View all categories">
+              <Text style={styles.sectionLink}>View all</Text>
+              <Ionicons name="arrow-forward" size={14} color={palette.colors.primary} />
             </TouchableOpacity>
           </View>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.categoriesScroll}>
             <TouchableOpacity
-              style={[styles.categoryChip, selectedCategories.length === 0 && styles.categoryChipActive]}
-              onPress={() => { setSelectedCategories([]); applyFilters(); }}
+              style={[styles.categoryCard, selectedCategories.length === 0 && styles.categoryCardActive]}
+              onPress={() => applyCategorySelection([])}
+              activeOpacity={0.84}
             >
-              <Ionicons name="apps-outline" size={16} color={selectedCategories.length === 0 ? palette.colors.white : palette.colors.primary} />
-              <Text style={[styles.categoryChipText, selectedCategories.length === 0 && styles.categoryChipTextActive]}>All</Text>
+              {selectedCategories.length === 0 && (
+                <LinearGradient colors={palette.gradients.cta} style={StyleSheet.absoluteFill} pointerEvents="none" />
+              )}
+              <View style={[styles.categoryIconTile, selectedCategories.length === 0 && styles.categoryIconTileActive]}>
+                <Ionicons name="apps-outline" size={21} color={selectedCategories.length === 0 ? '#fff' : palette.colors.primary} />
+              </View>
+              <Text style={[styles.categoryCardText, selectedCategories.length === 0 && styles.categoryCardTextActive]}>Everything</Text>
+              <Text style={[styles.categoryCardHint, selectedCategories.length === 0 && styles.categoryCardHintActive]}>Explore all</Text>
             </TouchableOpacity>
             {categories.map(cat => {
-              const isActive = selectedCategories.includes(cat);
+              const normalizedCategory = String(cat).trim().toLowerCase();
+              const isActive = selectedCategories.some(item => String(item).trim().toLowerCase() === normalizedCategory);
+              const nextCategories = isActive
+                ? selectedCategories.filter(item => String(item).trim().toLowerCase() !== normalizedCategory)
+                : [...selectedCategories, cat];
               return (
-                <TouchableOpacity key={cat} style={[styles.categoryChip, isActive && styles.categoryChipActive]} onPress={() => { toggleCategory(cat); applyFilters(); }}>
-                  <Ionicons name={categoryIcons[cat] || categoryIcons.default} size={16} color={isActive ? palette.colors.white : palette.colors.primary} />
-                  <Text style={[styles.categoryChipText, isActive && styles.categoryChipTextActive]}>{cat}</Text>
+                <TouchableOpacity
+                  key={cat}
+                  style={[styles.categoryCard, isActive && styles.categoryCardActive]}
+                  onPress={() => applyCategorySelection(nextCategories)}
+                  activeOpacity={0.84}
+                >
+                  {isActive && (
+                    <LinearGradient colors={palette.gradients.cta} style={StyleSheet.absoluteFill} pointerEvents="none" />
+                  )}
+                  <View style={[styles.categoryIconTile, isActive && styles.categoryIconTileActive]}>
+                    <Ionicons name={categoryIcons[cat] || categoryIcons.default} size={21} color={isActive ? '#fff' : palette.colors.primary} />
+                  </View>
+                  <Text style={[styles.categoryCardText, isActive && styles.categoryCardTextActive]} numberOfLines={2}>{cat}</Text>
+                  <View style={styles.categoryExploreRow}>
+                    <Text style={[styles.categoryCardHint, isActive && styles.categoryCardHintActive]}>{isActive ? 'Selected' : 'Browse'}</Text>
+                    <Ionicons name={isActive ? 'checkmark-circle' : 'arrow-forward-circle-outline'} size={13} color={isActive ? 'rgba(255,255,255,0.82)' : palette.colors.textSecondary} />
+                  </View>
                 </TouchableOpacity>
               );
             })}
@@ -402,20 +618,37 @@ export default function HomeScreen({ navigation }) {
         <PersonalizedSliders navigation={navigation} />
       )}
 
-      {/* Browse Stores Banner */}
+      {/* Browse Stores Banner — glass surface with on-brand gradient accent */}
       <TouchableOpacity style={styles.storesBanner} onPress={() => navigation.navigate('Marketplace')} activeOpacity={0.9}>
+        <GlassBlurFill />
+        <LinearGradient
+          colors={STORE_SHEEN}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={StyleSheet.absoluteFill}
+          pointerEvents="none"
+        />
         <View style={styles.storesBannerContent}>
-          <View style={styles.storesBannerIcon}><Ionicons name="storefront-outline" size={28} color={palette.colors.white} /></View>
+          <LinearGradient colors={palette.gradients.cta} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.storesBannerIcon}>
+            <Ionicons name="storefront" size={24} color="#fff" />
+          </LinearGradient>
           <View style={styles.storesBannerText}>
             <Text style={styles.storesBannerTitle}>Explore Our Stores</Text>
             <Text style={styles.storesBannerSub}>Shop from independent stores</Text>
           </View>
         </View>
-        <Ionicons name="chevron-forward" size={22} color={palette.colors.white} />
+        <View style={styles.storesBannerArrow}>
+          <Ionicons name="chevron-forward" size={20} color={palette.colors.primary} />
+        </View>
       </TouchableOpacity>
 
       {/* Products Section Header */}
-      <View style={styles.productsHeader}>
+      <View
+        style={styles.productsHeader}
+        onLayout={(event) => {
+          productsSectionOffsetRef.current = event.nativeEvent.layout.y;
+        }}
+      >
         <Text style={styles.productsTitle}>
           {hasActiveFilters || searchQuery ? 'Search Results' : 'All Products'}
         </Text>
@@ -431,17 +664,35 @@ export default function HomeScreen({ navigation }) {
         <View style={styles.activeFiltersContainer}>
           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
             {selectedCategories.map(cat => (
-              <TouchableOpacity key={cat} style={styles.activeFilterChip} onPress={() => toggleCategory(cat)}>
+              <TouchableOpacity key={cat} style={styles.activeFilterChip} onPress={() => removeCategory(cat)}>
                 <Text style={styles.activeFilterText}>{cat}</Text>
                 <Ionicons name="close" size={14} color={palette.colors.primary} />
               </TouchableOpacity>
             ))}
             {selectedBrands.map(brand => (
-              <TouchableOpacity key={brand} style={styles.activeFilterChip} onPress={() => toggleBrand(brand)}>
-                <Text style={styles.activeFilterText}>{brand}</Text>
+              <TouchableOpacity key={brand} style={styles.activeFilterChip} onPress={() => removeBrand(brand)}>
+                <Text style={styles.activeFilterText}>{brand === otherBrandsValue ? 'Other brands' : brand}</Text>
                 <Ionicons name="close" size={14} color={palette.colors.primary} />
               </TouchableOpacity>
             ))}
+            {(priceRange.min > 0 || (priceRange.max && priceRange.max > 0)) && (
+              <TouchableOpacity style={styles.activeFilterChip} onPress={clearPriceFilter}>
+                <Ionicons name="cash-outline" size={13} color={palette.colors.primary} />
+                <Text style={styles.activeFilterText}>
+                  {priceRange.min || 0}–{priceRange.max || 'Any'} {currency}
+                </Text>
+                <Ionicons name="close" size={14} color={palette.colors.primary} />
+              </TouchableOpacity>
+            )}
+            {(sortBy !== 'relevance' || sortOrder !== 'desc') && (
+              <TouchableOpacity style={styles.activeFilterChip} onPress={clearSort}>
+                <Ionicons name="swap-vertical-outline" size={13} color={palette.colors.primary} />
+                <Text style={styles.activeFilterText}>
+                  {PRODUCT_SORT_OPTIONS.find(option => option.field === sortBy && option.order === sortOrder)?.label || 'Sorted'}
+                </Text>
+                <Ionicons name="close" size={14} color={palette.colors.primary} />
+              </TouchableOpacity>
+            )}
             <TouchableOpacity style={styles.clearFiltersButton} onPress={resetFilters}>
               <Text style={styles.clearFiltersText}>Clear All</Text>
             </TouchableOpacity>
@@ -451,134 +702,314 @@ export default function HomeScreen({ navigation }) {
     </View>
   );
 
-  const renderFilterModal = () => (
-    <Modal 
-      visible={showFilters} 
-      animationType="slide" 
-      transparent={true} 
-      onRequestClose={() => setShowFilters(false)}
-    >
-      <View style={styles.modalOverlay}>
-        <View style={styles.modalContent}>
-          {/* Modal Header */}
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Filters</Text>
-            <TouchableOpacity 
-              onPress={() => setShowFilters(false)}
-              style={styles.modalCloseButton}
-              accessibilityLabel="Close filters"
-            >
-              <Ionicons name="close" size={24} color={palette.colors.dark} />
-            </TouchableOpacity>
-          </View>
+  const renderFilterModal = () => {
+    const draftOtherSelected = otherCategories.length > 0
+      && otherCategories.every(category => {
+        const normalized = String(category).trim().toLowerCase();
+        return filterDraft.categories.some(item => String(item).trim().toLowerCase() === normalized);
+      });
+    const draftFilterCount = filterDraft.categories.length
+      + filterDraft.brands.length
+      + ((filterDraft.priceRange.min > 0 || (filterDraft.priceRange.max && filterDraft.priceRange.max > 0)) ? 1 : 0)
+      + ((filterDraft.sortBy !== 'relevance' || filterDraft.sortOrder !== 'desc') ? 1 : 0);
 
-          {/* Modal Body */}
-          <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
-            {/* Price Range Section */}
-            <View style={styles.filterSection}>
-              <View style={styles.filterSectionHeader}>
-                <Ionicons name="cash-outline" size={18} color={palette.colors.success} />
-                <Text style={styles.filterSectionTitle}>PRICE RANGE</Text>
-              </View>
-              <PriceRangeFilter
-                min={priceRange.min}
-                max={priceRange.max}
-                onChange={(range) => setPriceRange(range)}
-              />
-            </View>
+    const toggleDraftCategory = (category) => {
+      const canonical = canonicalizeCategories([category])[0] || category;
+      const normalized = String(canonical).trim().toLowerCase();
+      setFilterDraft(previous => {
+        const exists = previous.categories.some(item => String(item).trim().toLowerCase() === normalized);
+        return {
+          ...previous,
+          categories: exists
+            ? previous.categories.filter(item => String(item).trim().toLowerCase() !== normalized)
+            : canonicalizeCategories([...previous.categories, canonical]),
+        };
+      });
+    };
 
-            {/* Categories Section */}
-            <View style={styles.filterSection}>
-              <View style={styles.filterSectionHeader}>
-                <Ionicons name="grid-outline" size={18} color={palette.colors.primary} />
-                <Text style={styles.filterSectionTitle}>CATEGORIES</Text>
-              </View>
-              {categories.length === 0 ? (
-                <Text style={styles.noFilterText}>No categories available</Text>
-              ) : (
-                <View style={styles.filterOptionsGrid}>
-                  {categories.map(category => (
-                    <TouchableOpacity 
-                      key={category} 
-                      style={[
-                        styles.filterChip,
-                        selectedCategories.includes(category) && styles.filterChipSelected
-                      ]} 
-                      onPress={() => toggleCategory(category)}
-                    >
-                      <Text style={[
-                        styles.filterChipText,
-                        selectedCategories.includes(category) && styles.filterChipTextSelected
-                      ]}>
-                        {category}
-                      </Text>
-                      {selectedCategories.includes(category) && (
-                        <Ionicons name="checkmark" size={14} color={palette.colors.white} />
-                      )}
-                    </TouchableOpacity>
-                  ))}
+    const toggleDraftBrand = (brand) => {
+      setFilterDraft(previous => ({
+        ...previous,
+        brands: previous.brands.includes(brand)
+          ? previous.brands.filter(item => item !== brand)
+          : [...previous.brands, brand],
+      }));
+    };
+
+    const toggleOtherCategories = () => {
+      setFilterDraft(previous => {
+        const presetOnly = previous.categories.filter(isPresetCategory);
+        return {
+          ...previous,
+          categories: canonicalizeCategories(draftOtherSelected ? presetOnly : [...presetOnly, ...otherCategories]),
+        };
+      });
+    };
+
+    return (
+      <Modal
+        visible={showFilters}
+        animationType="slide"
+        transparent
+        statusBarTranslucent
+        onRequestClose={() => setShowFilters(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <TouchableOpacity
+            style={styles.modalBackdropPress}
+            onPress={() => setShowFilters(false)}
+            activeOpacity={1}
+            accessibilityLabel="Close filters"
+          />
+          <GlassPanel variant="strong" style={styles.modalContent}>
+            <LinearGradient
+              colors={HERO_SHEEN}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={StyleSheet.absoluteFill}
+              pointerEvents="none"
+            />
+            <View style={styles.modalHandle} />
+
+            <View style={styles.modalHeader}>
+              <View style={styles.modalTitleGroup}>
+                <LinearGradient colors={palette.gradients.cta} style={styles.modalIconTile}>
+                  <Ionicons name="options" size={19} color="#fff" />
+                </LinearGradient>
+                <View>
+                  <View style={styles.modalTitleRow}>
+                    <Text style={styles.modalTitle}>Refine your discovery</Text>
+                    {draftFilterCount > 0 && (
+                      <View style={styles.modalCountBadge}>
+                        <Text style={styles.modalCountBadgeText}>{draftFilterCount}</Text>
+                      </View>
+                    )}
+                  </View>
+                  <Text style={styles.modalSubtitle}>Search, sort and narrow the catalog</Text>
                 </View>
-              )}
-            </View>
-
-            {/* Brands Section */}
-            <View style={styles.filterSection}>
-              <View style={styles.filterSectionHeader}>
-                <Ionicons name="pricetag-outline" size={18} color={palette.colors.secondary} />
-                <Text style={styles.filterSectionTitle}>BRANDS</Text>
               </View>
-              {brands.length === 0 ? (
-                <Text style={styles.noFilterText}>No brands available</Text>
-              ) : (
-                <View style={styles.filterOptionsGrid}>
-                  {brands.map(brand => (
-                    <TouchableOpacity 
-                      key={brand} 
-                      style={[
-                        styles.filterChip,
-                        selectedBrands.includes(brand) && styles.filterChipSelected
-                      ]} 
-                      onPress={() => toggleBrand(brand)}
-                    >
-                      <Text style={[
-                        styles.filterChipText,
-                        selectedBrands.includes(brand) && styles.filterChipTextSelected
-                      ]}>
-                        {brand}
-                      </Text>
-                      {selectedBrands.includes(brand) && (
-                        <Ionicons name="checkmark" size={14} color={palette.colors.white} />
-                      )}
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              )}
+              <TouchableOpacity
+                onPress={() => setShowFilters(false)}
+                style={styles.modalCloseButton}
+                accessibilityLabel="Close filters"
+                hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
+              >
+                <Ionicons name="close" size={20} color={palette.colors.text} />
+              </TouchableOpacity>
             </View>
-          </ScrollView>
 
-          {/* Modal Footer */}
-          <View style={styles.modalFooter}>
-            <TouchableOpacity 
-              style={styles.resetButton} 
-              onPress={resetFilters}
-              accessibilityLabel="Reset filters"
+            <ScrollView
+              style={styles.modalBody}
+              contentContainerStyle={styles.modalBodyContent}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
             >
-              <Ionicons name="refresh" size={18} color={palette.colors.text} />
-              <Text style={styles.resetButtonText}>Reset</Text>
-            </TouchableOpacity>
-            <TouchableOpacity 
-              style={styles.applyButton} 
-              onPress={applyFilters}
-              accessibilityLabel="Apply filters"
-            >
-              <Text style={styles.applyButtonText}>Apply Filters</Text>
-              <Ionicons name="checkmark" size={18} color={palette.colors.white} />
-            </TouchableOpacity>
-          </View>
+              <View style={styles.sheetSearchBox}>
+                <Ionicons name="search-outline" size={19} color={palette.colors.primary} />
+                <TextInput
+                  value={filterDraft.search}
+                  onChangeText={(search) => setFilterDraft(previous => ({ ...previous, search }))}
+                  placeholder="Search products, brands and categories"
+                  placeholderTextColor={palette.colors.textLight}
+                  style={styles.sheetSearchInput}
+                  returnKeyType="done"
+                />
+                {!!filterDraft.search && (
+                  <TouchableOpacity
+                    onPress={() => setFilterDraft(previous => ({ ...previous, search: '' }))}
+                    accessibilityLabel="Clear filter search"
+                  >
+                    <Ionicons name="close-circle" size={19} color={palette.colors.textSecondary} />
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              <View style={styles.filterSection}>
+                <View style={styles.filterSectionHeader}>
+                  <View style={styles.filterSectionIcon}>
+                    <Ionicons name="swap-vertical-outline" size={17} color={palette.colors.primary} />
+                  </View>
+                  <View>
+                    <Text style={styles.filterSectionTitle}>SORT BY</Text>
+                    <Text style={styles.filterSectionHint}>Choose how products are ordered</Text>
+                  </View>
+                </View>
+                <View style={styles.sortGrid}>
+                  {PRODUCT_SORT_OPTIONS.map(option => {
+                    const active = filterDraft.sortBy === option.field && filterDraft.sortOrder === option.order;
+                    return (
+                      <TouchableOpacity
+                        key={option.key}
+                        style={[styles.sortTile, active && styles.sortTileActive]}
+                        onPress={() => setFilterDraft(previous => ({
+                          ...previous,
+                          sortBy: option.field,
+                          sortOrder: option.order,
+                        }))}
+                        activeOpacity={0.84}
+                      >
+                        <View style={[styles.sortIconTile, active && styles.sortIconTileActive]}>
+                          <Ionicons name={option.icon} size={16} color={active ? '#fff' : palette.colors.primary} />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={[styles.sortTileTitle, active && styles.sortTileTitleActive]}>{option.label}</Text>
+                          <Text style={[styles.sortTileHelper, active && styles.sortTileHelperActive]}>{option.helper}</Text>
+                        </View>
+                        {active && <Ionicons name="checkmark-circle" size={17} color="#fff" />}
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+
+              <View style={styles.filterSection}>
+                <View style={styles.filterSectionHeader}>
+                  <View style={styles.filterSectionIcon}>
+                    <Ionicons name="grid-outline" size={17} color={palette.colors.primary} />
+                  </View>
+                  <View>
+                    <Text style={styles.filterSectionTitle}>CATEGORIES</Text>
+                    <Text style={styles.filterSectionHint}>Select one or more departments</Text>
+                  </View>
+                </View>
+                <View style={styles.filterOptionsGrid}>
+                  {PRESET_CATEGORIES.map(category => {
+                    const active = filterDraft.categories.some(item => item.toLowerCase() === category.toLowerCase());
+                    return (
+                      <TouchableOpacity
+                        key={category}
+                        style={[styles.filterChip, active && styles.filterChipSelected]}
+                        onPress={() => toggleDraftCategory(category)}
+                        activeOpacity={0.82}
+                      >
+                        <Ionicons
+                          name={categoryIcons[category] || categoryIcons.default}
+                          size={15}
+                          color={active ? '#fff' : palette.colors.primary}
+                        />
+                        <Text style={[styles.filterChipText, active && styles.filterChipTextSelected]} numberOfLines={1}>
+                          {category}
+                        </Text>
+                        {active && <Ionicons name="checkmark" size={13} color="#fff" />}
+                      </TouchableOpacity>
+                    );
+                  })}
+                  {otherCategories.length > 0 && (
+                    <TouchableOpacity
+                      style={[styles.filterChip, draftOtherSelected && styles.filterChipSelected]}
+                      onPress={toggleOtherCategories}
+                      activeOpacity={0.82}
+                    >
+                      <Ionicons name="ellipsis-horizontal" size={15} color={draftOtherSelected ? '#fff' : palette.colors.primary} />
+                      <Text style={[styles.filterChipText, draftOtherSelected && styles.filterChipTextSelected]}>Other</Text>
+                      <View style={[styles.optionCount, draftOtherSelected && styles.optionCountActive]}>
+                        <Text style={[styles.optionCountText, draftOtherSelected && styles.optionCountTextActive]}>{otherCategories.length}</Text>
+                      </View>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              </View>
+
+              <View style={styles.filterSection}>
+                <View style={styles.filterSectionHeader}>
+                  <View style={styles.filterSectionIcon}>
+                    <Ionicons name="pricetag-outline" size={17} color={palette.colors.info} />
+                  </View>
+                  <View>
+                    <Text style={styles.filterSectionTitle}>BRANDS</Text>
+                    <Text style={styles.filterSectionHint}>Shop names you already trust</Text>
+                  </View>
+                </View>
+                {brands.length === 0 && !otherBrandsCount ? (
+                  <View style={styles.noFilterBox}>
+                    <Ionicons name="information-circle-outline" size={18} color={palette.colors.textSecondary} />
+                    <Text style={styles.noFilterText}>No brand filters are available yet</Text>
+                  </View>
+                ) : (
+                  <View style={styles.filterOptionsGrid}>
+                    {brands.map(brand => {
+                      const active = filterDraft.brands.includes(brand);
+                      return (
+                        <TouchableOpacity
+                          key={brand}
+                          style={[styles.filterChip, active && styles.filterChipSelectedBlue]}
+                          onPress={() => toggleDraftBrand(brand)}
+                          activeOpacity={0.82}
+                        >
+                          <Ionicons name="ribbon-outline" size={15} color={active ? '#fff' : palette.colors.info} />
+                          <Text style={[styles.filterChipText, active && styles.filterChipTextSelected]} numberOfLines={1}>{brand}</Text>
+                          {active && <Ionicons name="checkmark" size={13} color="#fff" />}
+                        </TouchableOpacity>
+                      );
+                    })}
+                    {otherBrandsCount > 0 && (
+                      <TouchableOpacity
+                        style={[styles.filterChip, filterDraft.brands.includes(otherBrandsValue) && styles.filterChipSelectedBlue]}
+                        onPress={() => toggleDraftBrand(otherBrandsValue)}
+                        activeOpacity={0.82}
+                      >
+                        <Ionicons name="layers-outline" size={15} color={filterDraft.brands.includes(otherBrandsValue) ? '#fff' : palette.colors.info} />
+                        <Text style={[styles.filterChipText, filterDraft.brands.includes(otherBrandsValue) && styles.filterChipTextSelected]}>Other brands</Text>
+                        <View style={[styles.optionCount, filterDraft.brands.includes(otherBrandsValue) && styles.optionCountActive]}>
+                          <Text style={[styles.optionCountText, filterDraft.brands.includes(otherBrandsValue) && styles.optionCountTextActive]}>{otherBrandsCount}</Text>
+                        </View>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                )}
+              </View>
+
+              <View style={styles.filterSection}>
+                <View style={styles.filterSectionHeader}>
+                  <View style={styles.filterSectionIcon}>
+                    <Ionicons name="cash-outline" size={17} color={palette.colors.success} />
+                  </View>
+                  <View>
+                    <Text style={styles.filterSectionTitle}>PRICE RANGE</Text>
+                    <Text style={styles.filterSectionHint}>Prices are filtered in {currency}</Text>
+                  </View>
+                </View>
+                <PriceRangeFilter
+                  min={filterDraft.priceRange.min}
+                  max={filterDraft.priceRange.max}
+                  onChange={(range) => setFilterDraft(previous => ({ ...previous, priceRange: range }))}
+                />
+              </View>
+            </ScrollView>
+
+            <View style={styles.modalFooter}>
+              <TouchableOpacity
+                style={styles.resetButton}
+                onPress={() => setFilterDraft({
+                  categories: [],
+                  brands: [],
+                  priceRange: DEFAULT_PRICE_RANGE,
+                  search: '',
+                  sortBy: 'relevance',
+                  sortOrder: 'desc',
+                })}
+                accessibilityLabel="Reset filters"
+                activeOpacity={0.84}
+              >
+                <Ionicons name="refresh" size={17} color={palette.colors.text} />
+                <Text style={styles.resetButtonText}>Reset</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.applyButton}
+                onPress={applyFilters}
+                accessibilityLabel="Apply filters"
+                activeOpacity={0.86}
+              >
+                <LinearGradient colors={palette.gradients.cta} style={StyleSheet.absoluteFill} pointerEvents="none" />
+                <Text style={styles.applyButtonText}>Show products</Text>
+                <Ionicons name="arrow-forward" size={18} color="#fff" />
+              </TouchableOpacity>
+            </View>
+          </GlassPanel>
         </View>
-      </View>
-    </Modal>
-  );
+      </Modal>
+    );
+  };
 
   const renderEmptyState = () => (
     <View style={styles.emptyContainer}>
@@ -598,9 +1029,8 @@ export default function HomeScreen({ navigation }) {
         <TouchableOpacity
           style={styles.emptyActionButton}
           onPress={() => {
-            setIsLoading(true);
             setHasMore(true);
-            fetchProducts(1, false);
+            fetchProducts(1);
           }}
         >
           <Ionicons name="refresh" size={18} color={palette.colors.white} />
@@ -611,8 +1041,6 @@ export default function HomeScreen({ navigation }) {
           style={styles.emptyActionButton}
           onPress={() => {
             resetFilters();
-            setIsLoading(true);
-            fetchProducts();
           }}
         >
           <Ionicons name="refresh" size={18} color={palette.colors.white} />
@@ -622,49 +1050,92 @@ export default function HomeScreen({ navigation }) {
     </View>
   );
 
-  // Loading state with skeleton grid
-  if (isLoading && products.length === 0) {
-    return (
-      <GlassBackground>
-        <SafeAreaView style={{ flex: 1 }}>
-          <StatusBar barStyle="light-content" />
-          <ScrollView showsVerticalScrollIndicator={false}>
-            {renderHeader()}
-            <ProductGridSkeleton count={6} />
-          </ScrollView>
-        </SafeAreaView>
-      </GlassBackground>
-    );
-  }
-
   const renderFooter = () => {
-    if (loadingMore) {
-      return (
-        <View style={styles.footerLoader}>
-          <ActivityIndicator size="small" color={palette.colors.primary} />
-          <Text style={styles.footerLoaderText}>Loading more products...</Text>
+    if (isLoading || products.length === 0 || totalPages <= 1) return null;
+
+    return (
+      <View style={styles.paginationWrap}>
+        <GlassBlurFill intensity={36} />
+        <LinearGradient
+          colors={['rgba(20,184,166,0.08)', 'rgba(14,165,233,0.035)', 'rgba(99,102,241,0.10)']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={StyleSheet.absoluteFill}
+          pointerEvents="none"
+        />
+        <View style={styles.paginationMetaRow}>
+          <View style={styles.paginationMetaIcon}>
+            <Ionicons name="layers-outline" size={16} color={palette.colors.primary} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.paginationTitle}>More discoveries await</Text>
+            <Text style={styles.paginationSubtitle}>Page {page} of {totalPages} · {totalProducts} products</Text>
+          </View>
         </View>
-      );
-    }
-    // Explicit pagination affordance alongside infinite scroll
-    if (hasMore && products.length > 0) {
-      return (
-        <TouchableOpacity style={styles.loadMoreBtn} onPress={() => fetchProducts(page + 1, true)} activeOpacity={0.85}>
-          <LinearGradient colors={palette.gradients.cta} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
-          <Text style={styles.loadMoreText}>Load More Products</Text>
-          <Ionicons name="chevron-down" size={16} color="#fff" />
-        </TouchableOpacity>
-      );
-    }
-    return null;
+
+        <View style={styles.paginationControls}>
+          <TouchableOpacity
+            style={[styles.paginationArrow, page === 1 && styles.paginationDisabled]}
+            onPress={() => goToPage(page - 1)}
+            disabled={page === 1}
+            accessibilityLabel="Previous product page"
+          >
+            <Ionicons name="chevron-back" size={18} color={page === 1 ? palette.colors.textLight : palette.colors.primary} />
+          </TouchableOpacity>
+
+          <View style={styles.paginationPages}>
+            {visiblePageNumbers[0] > 1 && (
+              <>
+                <TouchableOpacity style={styles.pageButton} onPress={() => goToPage(1)} accessibilityLabel="Go to product page 1">
+                  <Text style={styles.pageButtonText}>1</Text>
+                </TouchableOpacity>
+                {visiblePageNumbers[0] > 2 && <Text style={styles.paginationEllipsis}>•••</Text>}
+              </>
+            )}
+            {visiblePageNumbers.map(pageNumber => {
+              const active = pageNumber === page;
+              return (
+                <TouchableOpacity
+                  key={pageNumber}
+                  style={[styles.pageButton, active && styles.pageButtonActive]}
+                  onPress={() => goToPage(pageNumber)}
+                  accessibilityLabel={`Go to product page ${pageNumber}`}
+                  accessibilityState={{ selected: active }}
+                >
+                  {active && <LinearGradient colors={palette.gradients.cta} style={StyleSheet.absoluteFill} pointerEvents="none" />}
+                  <Text style={[styles.pageButtonText, active && styles.pageButtonTextActive]}>{pageNumber}</Text>
+                </TouchableOpacity>
+              );
+            })}
+            {visiblePageNumbers[visiblePageNumbers.length - 1] < totalPages && (
+              <>
+                {visiblePageNumbers[visiblePageNumbers.length - 1] < totalPages - 1 && <Text style={styles.paginationEllipsis}>•••</Text>}
+                <TouchableOpacity style={styles.pageButton} onPress={() => goToPage(totalPages)} accessibilityLabel={`Go to product page ${totalPages}`}>
+                  <Text style={styles.pageButtonText}>{totalPages}</Text>
+                </TouchableOpacity>
+              </>
+            )}
+          </View>
+
+          <TouchableOpacity
+            style={[styles.paginationArrow, !hasMore && styles.paginationDisabled]}
+            onPress={() => goToPage(page + 1)}
+            disabled={!hasMore}
+            accessibilityLabel="Next product page"
+          >
+            <Ionicons name="chevron-forward" size={18} color={!hasMore ? palette.colors.textLight : palette.colors.primary} />
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
   };
 
   return (
     <GlassBackground>
-      <SafeAreaView style={{ flex: 1 }}>
-      <StatusBar barStyle="light-content" />
+      <SafeAreaView style={{ flex: 1 }} edges={Platform.OS === 'android' ? [] : ['top']}>
       <FlatList
-        data={products}
+        ref={listRef}
+        data={isLoading ? [] : products}
         keyExtractor={(item) => item._id}
         numColumns={2}
         columnWrapperStyle={styles.row}
@@ -680,25 +1151,17 @@ export default function HomeScreen({ navigation }) {
             tintColor={palette.colors.primary}
           />
         }
-        ListEmptyComponent={renderEmptyState()}
-        onEndReached={onEndReached}
-        onEndReachedThreshold={0.5}
+        ListEmptyComponent={isLoading ? <HomeCatalogSkeleton count={6} /> : renderEmptyState()}
         showsVerticalScrollIndicator={false}
         initialNumToRender={8}
         maxToRenderPerBatch={8}
         windowSize={5}
         removeClippedSubviews={true}
-        onScroll={Animated.event(
-          [{ nativeEvent: { contentOffset: { y: scrollY } } }],
-          { useNativeDriver: false }
-        )}
       />
       {renderFilterModal()}
 
       {/* AI FAB — matches website chat launcher */}
-      <AIChatFab onPress={() => setShowAI(true)} />
-
-      <ChatBot visible={showAI} onClose={() => setShowAI(false)} navigation={navigation} />
+      <AIChatFab onPress={() => navigation.navigate('AIChat', { role: 'user' })} />
       </SafeAreaView>
     </GlassBackground>
   );
@@ -714,7 +1177,8 @@ const buildStyles = (p) => StyleSheet.create({
     paddingTop: spacing.md,
     paddingBottom: spacing.md,
     paddingHorizontal: spacing.md,
-    borderRadius: 24,
+    borderRadius: 26,
+    ...shadows.lg,
   },
   heroTopBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingBottom: spacing.md },
   logoRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
@@ -747,20 +1211,28 @@ const buildStyles = (p) => StyleSheet.create({
   // Categories
   categoriesSection: { paddingTop: spacing.lg, paddingBottom: spacing.md, marginTop: spacing.sm },
   sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: spacing.lg, marginBottom: spacing.md },
-  sectionTitle: { fontSize: fontSize.lg, fontWeight: fontWeight.bold, color: p.colors.dark },
+  sectionEyebrow: { fontSize: 10, fontWeight: fontWeight.bold, color: p.colors.primary, letterSpacing: 1.2, marginBottom: 3 },
+  sectionTitle: { fontSize: fontSize.xl, fontWeight: fontWeight.extrabold, color: p.colors.dark, letterSpacing: -0.25 },
   sectionLink: { fontSize: fontSize.sm, color: p.colors.primary, fontWeight: fontWeight.semibold },
-  categoriesScroll: { paddingHorizontal: spacing.lg, gap: spacing.sm, paddingBottom: spacing.sm },
-  categoryChip: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, backgroundColor: p.colors.primarySubtle, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: borderRadius.full, borderWidth: 1, borderColor: p.colors.primaryLighter },
-  categoryChipActive: { backgroundColor: p.colors.primary, borderColor: p.colors.primary },
-  categoryChipText: { fontSize: fontSize.sm, color: p.colors.primary, fontWeight: fontWeight.semibold },
-  categoryChipTextActive: { color: p.colors.white },
-  // Stores Banner
-  storesBanner: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: p.colors.secondary, marginHorizontal: spacing.lg, marginVertical: spacing.lg, borderRadius: borderRadius.xl, padding: spacing.lg, ...shadows.md },
-  storesBannerContent: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
-  storesBannerIcon: { width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(255,255,255,0.2)', justifyContent: 'center', alignItems: 'center' },
-  storesBannerText: {},
-  storesBannerTitle: { fontSize: fontSize.lg, fontWeight: fontWeight.bold, color: p.colors.white },
-  storesBannerSub: { fontSize: fontSize.sm, color: 'rgba(255,255,255,0.8)' },
+  viewAllCategories: { minHeight: 38, flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: spacing.sm },
+  categoriesScroll: { paddingHorizontal: spacing.lg, gap: spacing.sm, paddingBottom: spacing.md },
+  categoryCard: { width: 124, minHeight: 112, padding: spacing.md, borderRadius: 22, overflow: 'hidden', backgroundColor: p.glass.bg, borderWidth: 1, borderColor: p.glass.border, ...shadows.sm },
+  categoryCardActive: { borderColor: 'rgba(255,255,255,0.48)', shadowColor: '#0EA5E9', shadowOpacity: 0.24, shadowRadius: 12, elevation: 5 },
+  categoryIconTile: { width: 38, height: 38, borderRadius: 13, backgroundColor: p.colors.primarySubtle, borderWidth: 1, borderColor: p.colors.primaryLighter, alignItems: 'center', justifyContent: 'center', marginBottom: spacing.sm },
+  categoryIconTileActive: { backgroundColor: 'rgba(255,255,255,0.18)', borderColor: 'rgba(255,255,255,0.26)' },
+  categoryCardText: { minHeight: 34, fontSize: fontSize.sm, lineHeight: 17, color: p.colors.text, fontWeight: fontWeight.bold },
+  categoryCardTextActive: { color: '#fff' },
+  categoryExploreRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 },
+  categoryCardHint: { fontSize: 10, color: p.colors.textSecondary, fontWeight: fontWeight.medium },
+  categoryCardHintActive: { color: 'rgba(255,255,255,0.78)' },
+  // Stores Banner — glass surface, brand-gradient icon tile
+  storesBanner: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginHorizontal: spacing.lg, marginVertical: spacing.lg, borderRadius: borderRadius.xxl, paddingVertical: spacing.md, paddingHorizontal: spacing.md, overflow: 'hidden', backgroundColor: p.glass.bg, borderWidth: 1, borderColor: p.glass.border, ...shadows.md },
+  storesBannerContent: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, flex: 1, minWidth: 0 },
+  storesBannerIcon: { width: 48, height: 48, borderRadius: borderRadius.lg, justifyContent: 'center', alignItems: 'center', shadowColor: '#0EA5E9', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.35, shadowRadius: 10, elevation: 5 },
+  storesBannerText: { flex: 1, minWidth: 0 },
+  storesBannerTitle: { fontSize: fontSize.lg, fontWeight: fontWeight.bold, color: p.colors.text },
+  storesBannerSub: { fontSize: fontSize.sm, color: p.colors.textSecondary },
+  storesBannerArrow: { width: 34, height: 34, borderRadius: 17, backgroundColor: p.glass.bgStrong, borderWidth: 1, borderColor: p.glass.border, justifyContent: 'center', alignItems: 'center', marginLeft: spacing.sm },
   // Products section
   productsHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: spacing.lg, paddingVertical: spacing.md },
   productsTitle: { fontSize: fontSize.xl, fontWeight: fontWeight.bold, color: p.colors.dark },
@@ -784,30 +1256,68 @@ const buildStyles = (p) => StyleSheet.create({
   emptySubtitle: { fontSize: fontSize.md, color: p.colors.textSecondary, textAlign: 'center', lineHeight: 22 },
   emptyActionButton: { flexDirection: 'row', alignItems: 'center', backgroundColor: p.colors.primary, paddingHorizontal: spacing.xl, paddingVertical: spacing.md, borderRadius: borderRadius.xl, marginTop: spacing.xl, gap: spacing.sm },
   emptyActionText: { color: p.colors.white, fontSize: fontSize.md, fontWeight: fontWeight.semibold },
-  // Modal
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-  modalContent: { backgroundColor: p.colors.white, borderTopLeftRadius: borderRadius.xxxl, borderTopRightRadius: borderRadius.xxxl, maxHeight: '85%' },
-  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: spacing.lg, borderBottomWidth: 1, borderBottomColor: p.colors.light },
-  modalTitle: { fontSize: fontSize.xl, fontWeight: fontWeight.bold, color: p.colors.dark },
-  modalCloseButton: { width: 40, height: 40, borderRadius: 20, backgroundColor: p.colors.light, justifyContent: 'center', alignItems: 'center' },
-  modalBody: { padding: spacing.lg },
+  // Premium product filter sheet
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(15,23,42,0.48)', justifyContent: 'flex-end' },
+  modalBackdropPress: { flex: 1 },
+  modalContent: { padding: 0, borderBottomLeftRadius: 0, borderBottomRightRadius: 0, borderTopLeftRadius: 30, borderTopRightRadius: 30, maxHeight: '92%', backgroundColor: p.glass.bgStrong, borderColor: p.glass.borderStrong },
+  modalHandle: { width: 42, height: 4, borderRadius: 2, alignSelf: 'center', marginTop: spacing.sm, backgroundColor: p.glass.borderStrong },
+  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: spacing.lg, paddingTop: spacing.md, paddingBottom: spacing.md, borderBottomWidth: 1, borderBottomColor: p.glass.borderSubtle },
+  modalTitleGroup: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, flex: 1, minWidth: 0 },
+  modalIconTile: { width: 42, height: 42, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  modalTitleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
+  modalTitle: { fontSize: fontSize.lg, fontWeight: fontWeight.extrabold, color: p.colors.text, letterSpacing: -0.2 },
+  modalSubtitle: { fontSize: fontSize.xs, color: p.colors.textSecondary, marginTop: 2 },
+  modalCountBadge: { minWidth: 21, height: 21, borderRadius: 11, paddingHorizontal: 6, alignItems: 'center', justifyContent: 'center', backgroundColor: p.colors.primarySubtle, borderWidth: 1, borderColor: p.colors.primaryLighter },
+  modalCountBadgeText: { fontSize: 10, color: p.colors.primary, fontWeight: fontWeight.bold },
+  modalCloseButton: { width: 38, height: 38, borderRadius: 19, backgroundColor: p.glass.bgSubtle, borderWidth: 1, borderColor: p.glass.borderSubtle, justifyContent: 'center', alignItems: 'center' },
+  modalBody: { flexGrow: 0 },
+  modalBodyContent: { padding: spacing.lg, paddingBottom: spacing.sm },
+  sheetSearchBox: { height: 50, flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingHorizontal: spacing.md, borderRadius: borderRadius.xl, backgroundColor: p.glass.bgSubtle, borderWidth: 1, borderColor: p.glass.border, marginBottom: spacing.lg },
+  sheetSearchInput: { flex: 1, fontSize: fontSize.md, color: p.colors.text },
   filterSection: { marginBottom: spacing.xl },
   filterSectionHeader: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginBottom: spacing.md },
-  filterSectionTitle: { fontSize: fontSize.sm, fontWeight: fontWeight.bold, color: p.colors.textSecondary, letterSpacing: 1 },
+  filterSectionIcon: { width: 34, height: 34, borderRadius: 11, alignItems: 'center', justifyContent: 'center', backgroundColor: p.colors.primarySubtle, borderWidth: 1, borderColor: p.colors.primaryLighter },
+  filterSectionTitle: { fontSize: 11, fontWeight: fontWeight.bold, color: p.colors.text, letterSpacing: 1 },
+  filterSectionHint: { fontSize: 11, color: p.colors.textSecondary, marginTop: 2 },
+  sortGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+  sortTile: { minWidth: '47%', flex: 1, minHeight: 64, flexDirection: 'row', alignItems: 'center', gap: spacing.sm, padding: spacing.sm, borderRadius: borderRadius.lg, backgroundColor: p.glass.bgSubtle, borderWidth: 1, borderColor: p.glass.borderSubtle },
+  sortTileActive: { backgroundColor: p.colors.primary, borderColor: p.colors.primary },
+  sortIconTile: { width: 30, height: 30, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: p.colors.primarySubtle },
+  sortIconTileActive: { backgroundColor: 'rgba(255,255,255,0.17)' },
+  sortTileTitle: { fontSize: fontSize.xs, color: p.colors.text, fontWeight: fontWeight.bold },
+  sortTileTitleActive: { color: '#fff' },
+  sortTileHelper: { fontSize: 9, color: p.colors.textSecondary, marginTop: 2 },
+  sortTileHelperActive: { color: 'rgba(255,255,255,0.72)' },
   filterOptionsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
-  filterChip: { flexDirection: 'row', alignItems: 'center', backgroundColor: p.colors.light, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: borderRadius.full, gap: spacing.xs },
-  filterChipSelected: { backgroundColor: p.colors.primary },
-  filterChipText: { fontSize: fontSize.sm, color: p.colors.text, fontWeight: fontWeight.medium },
-  filterChipTextSelected: { color: p.colors.white },
-  noFilterText: { fontSize: fontSize.md, color: p.colors.textSecondary, fontStyle: 'italic' },
-  modalFooter: { flexDirection: 'row', padding: spacing.lg, gap: spacing.md, borderTopWidth: 1, borderTopColor: p.colors.light },
-  resetButton: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: p.colors.light, paddingVertical: spacing.md, borderRadius: borderRadius.xl, gap: spacing.sm },
+  filterChip: { minHeight: 42, maxWidth: '100%', flexDirection: 'row', alignItems: 'center', backgroundColor: p.glass.bgSubtle, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: borderRadius.full, borderWidth: 1, borderColor: p.glass.borderSubtle, gap: spacing.xs },
+  filterChipSelected: { backgroundColor: p.colors.primary, borderColor: p.colors.primary },
+  filterChipSelectedBlue: { backgroundColor: p.colors.info, borderColor: p.colors.info },
+  filterChipText: { maxWidth: 220, fontSize: fontSize.sm, color: p.colors.text, fontWeight: fontWeight.medium },
+  filterChipTextSelected: { color: '#fff', fontWeight: fontWeight.semibold },
+  optionCount: { minWidth: 20, height: 20, borderRadius: 10, paddingHorizontal: 5, alignItems: 'center', justifyContent: 'center', backgroundColor: p.colors.primarySubtle },
+  optionCountActive: { backgroundColor: 'rgba(255,255,255,0.2)' },
+  optionCountText: { fontSize: 9, color: p.colors.primary, fontWeight: fontWeight.bold },
+  optionCountTextActive: { color: '#fff' },
+  noFilterBox: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, padding: spacing.md, borderRadius: borderRadius.lg, backgroundColor: p.glass.bgSubtle, borderWidth: 1, borderColor: p.glass.borderSubtle },
+  noFilterText: { flex: 1, fontSize: fontSize.sm, color: p.colors.textSecondary },
+  modalFooter: { flexDirection: 'row', paddingHorizontal: spacing.lg, paddingTop: spacing.md, paddingBottom: Platform.OS === 'ios' ? spacing.xl : spacing.lg, gap: spacing.md, borderTopWidth: 1, borderTopColor: p.glass.borderSubtle },
+  resetButton: { minWidth: 104, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: p.glass.bgSubtle, borderWidth: 1, borderColor: p.glass.borderSubtle, paddingVertical: spacing.md, borderRadius: borderRadius.xl, gap: spacing.sm },
   resetButtonText: { fontSize: fontSize.md, fontWeight: fontWeight.semibold, color: p.colors.text },
-  applyButton: { flex: 2, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: p.colors.primary, paddingVertical: spacing.md, borderRadius: borderRadius.xl, gap: spacing.sm, ...shadows.md },
-  applyButtonText: { fontSize: fontSize.md, fontWeight: fontWeight.semibold, color: p.colors.white },
-  // Pagination footer loader
-  footerLoader: { paddingVertical: spacing.xl, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: spacing.sm },
-  footerLoaderText: { fontSize: fontSize.sm, color: p.colors.textSecondary, fontWeight: fontWeight.medium },
-  loadMoreBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.xs, marginHorizontal: spacing.lg, marginTop: spacing.md, paddingVertical: spacing.md, borderRadius: borderRadius.xl, overflow: 'hidden', shadowColor: '#0EA5E9', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.35, shadowRadius: 16, elevation: 6 },
-  loadMoreText: { color: '#fff', fontSize: fontSize.md, fontWeight: fontWeight.bold },
+  applyButton: { flex: 1, minHeight: 50, overflow: 'hidden', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: spacing.md, borderRadius: borderRadius.xl, gap: spacing.sm, ...shadows.md },
+  applyButtonText: { fontSize: fontSize.md, fontWeight: fontWeight.bold, color: '#fff' },
+  // Explicit catalog pagination
+  paginationWrap: { marginHorizontal: spacing.lg, marginTop: spacing.xl, padding: spacing.md, borderRadius: 24, overflow: 'hidden', backgroundColor: p.glass.bg, borderWidth: 1, borderColor: p.glass.border, ...shadows.md },
+  paginationMetaRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginBottom: spacing.md },
+  paginationMetaIcon: { width: 36, height: 36, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: p.colors.primarySubtle, borderWidth: 1, borderColor: p.colors.primaryLighter },
+  paginationTitle: { fontSize: fontSize.sm, fontWeight: fontWeight.bold, color: p.colors.text },
+  paginationSubtitle: { fontSize: fontSize.xs, color: p.colors.textSecondary, marginTop: 2 },
+  paginationControls: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.xs },
+  paginationPages: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5 },
+  paginationArrow: { width: 40, height: 40, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: p.glass.bgStrong, borderWidth: 1, borderColor: p.glass.border },
+  paginationDisabled: { opacity: 0.5 },
+  pageButton: { minWidth: 36, height: 36, paddingHorizontal: 7, borderRadius: 12, overflow: 'hidden', alignItems: 'center', justifyContent: 'center', backgroundColor: p.glass.bgSubtle, borderWidth: 1, borderColor: p.glass.borderSubtle },
+  pageButtonActive: { borderColor: 'rgba(255,255,255,0.38)', shadowColor: '#0EA5E9', shadowOpacity: 0.24, shadowRadius: 8, elevation: 3 },
+  pageButtonText: { fontSize: fontSize.sm, color: p.colors.text, fontWeight: fontWeight.semibold },
+  pageButtonTextActive: { color: '#fff', fontWeight: fontWeight.bold },
+  paginationEllipsis: { fontSize: 10, color: p.colors.textSecondary, letterSpacing: -1 },
 });

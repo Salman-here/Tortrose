@@ -1,27 +1,34 @@
 /**
  * PriceRangeFilter — themed dual-input price range selector with quick presets.
  */
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useCurrency } from '../../contexts/CurrencyContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import { spacing, fontSize, fontWeight, borderRadius } from '../../styles/theme';
 
-const PRESETS = [
-  { label: 'Under', min: 0, max: 25 },
-  { label: 'Range', min: 25, max: 100 },
-  { label: 'Range', min: 100, max: 500 },
-  { label: 'Over', min: 500, max: 99999 },
+// Product filtering is performed in the buyer's selected currency. Keep the
+// useful USD buying-power bands, then localize the submitted thresholds.
+const USD_PRESETS = [
+  { kind: 'under', minUsd: 0, maxUsd: 25 },
+  { kind: 'range', minUsd: 25, maxUsd: 100 },
+  { kind: 'range', minUsd: 100, maxUsd: 500 },
+  { kind: 'over', minUsd: 500, maxUsd: null },
 ];
 
 export default function PriceRangeFilter({ min, max, onChange }) {
   const { palette } = useTheme();
   const colors = palette.colors;
   const styles = makeStyles(palette);
-  const { formatAmount } = useCurrency();
+  const { currency, convertAmount, formatAmount } = useCurrency();
   const [minStr, setMinStr] = useState(min ? String(min) : '');
   const [maxStr, setMaxStr] = useState(max ? String(max) : '');
+  const presets = useMemo(() => USD_PRESETS.map(preset => ({
+    ...preset,
+    min: convertAmount(preset.minUsd, 'USD', currency),
+    max: preset.maxUsd == null ? null : convertAmount(preset.maxUsd, 'USD', currency),
+  })), [convertAmount, currency]);
 
   useEffect(() => {
     setMinStr(min ? String(min) : '');
@@ -36,7 +43,7 @@ export default function PriceRangeFilter({ min, max, onChange }) {
 
   const applyPreset = (preset) => {
     setMinStr(String(preset.min));
-    setMaxStr(String(preset.max));
+    setMaxStr(preset.max == null ? '' : String(preset.max));
     commit(preset.min, preset.max);
   };
 
@@ -55,15 +62,16 @@ export default function PriceRangeFilter({ min, max, onChange }) {
       </View>
 
       <View style={styles.presetRow}>
-        {PRESETS.map((p) => {
-          const active = String(min) === String(p.min) && String(max) === String(p.max);
-          const label = p.min === 0
-            ? `Under ${formatAmount(p.max, { decimals: 0 })}`
-            : p.max >= 99999
-              ? `Over ${formatAmount(p.min, { decimals: 0 })}`
-              : `${formatAmount(p.min, { decimals: 0 })} - ${formatAmount(p.max, { decimals: 0 })}`;
+        {presets.map((p) => {
+          const active = Number(min || 0) === Number(p.min || 0)
+            && (p.max == null ? max == null : Number(max) === Number(p.max));
+          const label = p.kind === 'under'
+            ? `Under ${formatAmount(p.max, { decimals: 0, targetCurrency: currency })}`
+            : p.kind === 'over'
+              ? `Over ${formatAmount(p.min, { decimals: 0, targetCurrency: currency })}`
+              : `${formatAmount(p.min, { decimals: 0, targetCurrency: currency })} - ${formatAmount(p.max, { decimals: 0, targetCurrency: currency })}`;
           return (
-            <TouchableOpacity key={`${p.min}-${p.max}`} style={[styles.presetChip, active && styles.presetChipActive]} onPress={() => applyPreset(p)} accessibilityLabel={label}>
+            <TouchableOpacity key={`${p.minUsd}-${p.maxUsd ?? 'up'}`} style={[styles.presetChip, active && styles.presetChipActive]} onPress={() => applyPreset(p)} accessibilityLabel={label}>
               <Text style={[styles.presetText, active && styles.presetTextActive]}>{label}</Text>
             </TouchableOpacity>
           );

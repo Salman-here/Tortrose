@@ -7,10 +7,12 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { LayoutAnimation } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as Notifications from 'expo-notifications';
 import * as Haptics from 'expo-haptics';
 import { impact as hapticImpact, notify as hapticNotify } from '../utils/haptics';
 import api from '../config/api';
+import { getNotificationsModule } from '../utils/notificationRuntime';
+
+const Notifications = getNotificationsModule();
 
 export const NOTIF_STORE_KEY = 'notification_inbox';
 export const NOTIF_READ_KEY = 'notifications_read_ids';
@@ -102,6 +104,7 @@ export default function useNotificationInbox({ currentUser, onCountChange } = {}
 
   // Live push listener
   useEffect(() => {
+    if (!Notifications) return undefined;
     listenerRef.current = Notifications.addNotificationReceivedListener(async (notification) => {
       const content = notification.request.content;
       const data = content.data || {};

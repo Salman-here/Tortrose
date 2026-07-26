@@ -4,7 +4,8 @@
  */
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { View, Text, FlatList, StyleSheet, TouchableOpacity, TextInput, SafeAreaView, RefreshControl, Modal, ScrollView } from 'react-native';
+import { View, Text, FlatList, StyleSheet, TouchableOpacity, TextInput, RefreshControl, Modal, ScrollView, Platform } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import api from '../config/api';
@@ -14,7 +15,8 @@ import { ProductCardSkeleton } from '../components/common/Skeleton';
 import { EmptyStores, EmptySearch } from '../components/common/EmptyState';
 import GlassBackground from '../components/common/GlassBackground';
 import GlassPanel from '../components/common/GlassPanel';
-import { spacing, fontSize, borderRadius, fontWeight } from '../styles/theme';
+import GlassBlurFill from '../components/common/GlassBlurFill';
+import { spacing, fontSize, borderRadius, fontWeight, shadows } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 
 const SORT_OPTIONS = [
@@ -113,7 +115,7 @@ export default function StoresListingScreen({ navigation }) {
 
   if (isLoading) return (
     <GlassBackground>
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={styles.container} edges={Platform.OS === 'android' ? [] : ['top']}>
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', padding: spacing.sm, paddingTop: spacing.xl }}>
           {[0,1,2,3,4,5].map((i) => (
             <View key={i} style={{ width: '50%', padding: spacing.xs }}><ProductCardSkeleton /></View>
@@ -125,7 +127,7 @@ export default function StoresListingScreen({ navigation }) {
 
   return (
     <GlassBackground>
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={styles.container} edges={Platform.OS === 'android' ? [] : ['top']}>
         <FlatList
           data={filteredStores}
           keyExtractor={(item) => item._id}
@@ -134,11 +136,25 @@ export default function StoresListingScreen({ navigation }) {
           contentContainerStyle={styles.listContent}
           ListHeaderComponent={
             <View>
-              <GlassPanel variant="floating" style={styles.heroHeader}>
+              {/* Premium glass hero with blurred decorative orbs (matches website) */}
+              <View style={styles.heroHeader}>
+                <View style={styles.orbTopRight} pointerEvents="none">
+                  <LinearGradient colors={['#0EA5E9', '#6366F1']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.orbFill} />
+                </View>
+                <View style={styles.orbBottomLeft} pointerEvents="none">
+                  <LinearGradient colors={['#14B8A6', '#0EA5E9']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.orbFill} />
+                </View>
+                <GlassBlurFill intensity={50} />
+
                 <View style={styles.heroTitleRow}>
-                <View style={{ flex: 1 }}>
-                    <Text style={styles.heroTitle}>Marketplace</Text>
-                    <Text style={styles.heroSubtitle}>Discover stores & brands worldwide</Text>
+                  <View style={styles.heroTitleLeft}>
+                    <View style={styles.heroIconTile}>
+                      <Ionicons name="bag-handle" size={22} color={palette.colors.primary} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.heroTitle}>Marketplace</Text>
+                      <Text style={styles.heroSubtitle}>Discover stores & brands worldwide</Text>
+                    </View>
                   </View>
                   {currentUser && (
                     <TouchableOpacity style={styles.trustedButton} onPress={() => navigation.navigate('TrustedStores')} activeOpacity={0.8} accessibilityLabel="View trusted stores">
@@ -188,7 +204,7 @@ export default function StoresListingScreen({ navigation }) {
                     )}
                   </TouchableOpacity>
                 </View>
-              </GlassPanel>
+              </View>
 
               {/* Active filter chips */}
               {(verifiedOnly || minTrust > 0 || sortBy !== 'newest') && (
@@ -325,9 +341,14 @@ export default function StoresListingScreen({ navigation }) {
 
 const buildStyles = (p) => StyleSheet.create({
   container: { flex: 1 },
-  heroHeader: { paddingHorizontal: spacing.lg, paddingVertical: spacing.lg, marginHorizontal: spacing.md, marginTop: spacing.sm, marginBottom: spacing.sm },
-  heroTitleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: spacing.md },
-  heroTitle: { fontSize: fontSize.xxl, fontWeight: fontWeight.bold, color: p.colors.text, marginBottom: 2 },
+  heroHeader: { paddingHorizontal: spacing.lg, paddingVertical: spacing.lg, marginHorizontal: spacing.md, marginTop: spacing.sm, marginBottom: spacing.sm, borderRadius: 26, overflow: 'hidden', backgroundColor: p.glass.bgStrong, borderWidth: 1, borderColor: p.glass.borderStrong, ...shadows.lg },
+  orbTopRight: { position: 'absolute', top: -46, right: -40, width: 150, height: 150, borderRadius: 75, opacity: 0.5 },
+  orbBottomLeft: { position: 'absolute', bottom: -50, left: -44, width: 128, height: 128, borderRadius: 64, opacity: 0.4 },
+  orbFill: { flex: 1, borderRadius: 999 },
+  heroTitleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: spacing.md, gap: spacing.sm },
+  heroTitleLeft: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: spacing.md, minWidth: 0 },
+  heroIconTile: { width: 46, height: 46, borderRadius: 15, backgroundColor: p.glass.bgStrong, borderWidth: 1, borderColor: p.glass.border, justifyContent: 'center', alignItems: 'center' },
+  heroTitle: { fontSize: fontSize.xxl, fontWeight: fontWeight.extrabold, color: p.colors.text, marginBottom: 2, letterSpacing: -0.4 },
   heroSubtitle: { fontSize: fontSize.sm, color: p.colors.textSecondary },
   trustedButton: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(239,68,68,0.1)', paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: borderRadius.lg, gap: spacing.xs },
   trustedButtonText: { color: p.colors.heart, fontWeight: fontWeight.semibold, fontSize: fontSize.sm },

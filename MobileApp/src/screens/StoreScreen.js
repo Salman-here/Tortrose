@@ -7,8 +7,9 @@
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
-  View, Text, FlatList, StyleSheet, RefreshControl, TouchableOpacity, Linking, Share, TextInput, ScrollView,
+  View, Text, FlatList, StyleSheet, RefreshControl, TouchableOpacity, Linking, Share, TextInput, ScrollView, Platform,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -17,6 +18,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import Toast from 'react-native-toast-message';
 import api from '../config/api';
 import { useAuth } from '../contexts/AuthContext';
+import { useGlobal } from '../contexts/GlobalContext';
 import { useCurrency } from '../contexts/CurrencyContext';
 import ProductCard from '../components/ProductCard';
 import TrustButton from '../components/TrustButton';
@@ -32,6 +34,10 @@ import { spacing, fontSize, borderRadius, fontWeight } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 
 const PRODUCTS_PER_PAGE = 12; // matches website
+
+// Warm violet→sky wash over the store top bar so it reads distinct from the
+// notification header (which carries a cooler indigo-only sheen).
+const STORE_TOPBAR_SHEEN = ['rgba(168,85,247,0.12)', 'rgba(14,165,233,0.05)', 'rgba(20,184,166,0.10)'];
 
 const SOCIAL_LINKS = [
   { key: 'website', icon: 'globe-outline', label: 'Website', color: '#6366f1', bg: 'rgba(99,102,241,0.12)' },
@@ -65,8 +71,15 @@ export default function StoreScreen({ route, navigation }) {
   const { formatPrice } = useCurrency();
 
   const { currentUser } = useAuth();
+  const { cartItems } = useGlobal();
+  const cartCount = Array.isArray(cartItems?.cart)
+    ? cartItems.cart.reduce((total, item) => total + (item.qty || 1), 0)
+    : 0;
   const slug = route.params?.slug || route.params?.storeSlug;
   const [store, setStore] = useState(null);
+  // Shared trust state so the top-bar heart and the header-card Trust button
+  // (two TrustButton instances for the same store) never contradict each other.
+  const [trustInfo, setTrustInfo] = useState({ isTrusted: false, count: 0 });
   const [products, setProducts] = useState([]);
   const [storeCategories, setStoreCategories] = useState([]);
   const [productPagination, setProductPagination] = useState({ total: 0, page: 1, pages: 1 });
@@ -97,6 +110,7 @@ export default function StoreScreen({ route, navigation }) {
     try {
       const res = await api.get(`/api/stores/${slug}`);
       setStore(res.data.store);
+      setTrustInfo({ isTrusted: !!res.data.store?.isTrusted, count: Number(res.data.store?.trustCount) || 0 });
       setStoreRating({
         average: Number(res.data.store?.ratingAverage) || 0,
         count: Number(res.data.store?.ratingCount) || 0,
@@ -165,6 +179,11 @@ export default function StoreScreen({ route, navigation }) {
     } catch {}
   }, [store, storeName, slug]);
 
+  // Keep both TrustButton instances + the trusters count in lockstep.
+  const handleTrustChange = useCallback((isTrusted, count) => {
+    setTrustInfo({ isTrusted, count: Number(count) || 0 });
+  }, []);
+
   const copyCouponCode = useCallback(async (code) => {
     await Clipboard.setStringAsync(code);
     setCopiedCoupon(code);
@@ -231,7 +250,7 @@ export default function StoreScreen({ route, navigation }) {
           {/* Trusters */}
           <TouchableOpacity onPress={() => setTrustSheetVisible(true)} activeOpacity={0.7} style={styles.trustersRow}>
             <Ionicons name="people" size={13} color={palette.colors.textSecondary} />
-            <Text style={styles.trustersText}>{store.trustCount || 0} {store.trustCount === 1 ? 'truster' : 'trusters'}</Text>
+            <Text style={styles.trustersText}>{trustInfo.count} {trustInfo.count === 1 ? 'truster' : 'trusters'}</Text>
             <Ionicons name="information-circle-outline" size={13} color={palette.colors.primary} />
           </TouchableOpacity>
           <View style={styles.ratingRow}>
@@ -282,7 +301,7 @@ export default function StoreScreen({ route, navigation }) {
 
           {/* Actions: Trust + Share */}
           <View style={styles.actionsRow}>
-            {currentUser && <View style={{ flex: 1 }}><TrustButton storeId={store._id} storeName={storeName} initialTrustCount={store.trustCount || 0} initialIsTrusted={store.isTrusted || false} /></View>}
+            {currentUser && <View style={{ flex: 1 }}><TrustButton storeId={store._id} storeName={storeName} initialTrustCount={trustInfo.count} initialIsTrusted={trustInfo.isTrusted} onTrustChange={handleTrustChange} /></View>}
             <TouchableOpacity style={styles.shareButton} onPress={handleShare} activeOpacity={0.8}>
               <Ionicons name="share-social-outline" size={16} color={palette.colors.text} />
               <Text style={styles.shareButtonText}>Share Store</Text>
@@ -400,6 +419,33 @@ export default function StoreScreen({ route, navigation }) {
 
   return (
     <GlassBackground>
+      <SafeAreaView style={{ flex: 1 }} edges={Platform.OS === 'android' ? [] : ['top']}>
+      {/* Full glass top bar — back + store name + quick actions (trust / cart / share) */}
+      <GlassPanel variant="floating" style={styles.topBar}>
+        <LinearGradient colors={STORE_TOPBAR_SHEEN} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} pointerEvents="none" />
+        <TouchableOpacity style={styles.topBarBtn} onPress={() => navigation.goBack()} activeOpacity={0.75} accessibilityRole="button" accessibilityLabel="Go back" hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+          <Ionicons name="arrow-back" size={22} color={palette.colors.text} />
+        </TouchableOpacity>
+        <View style={styles.topBarTitleWrap}>
+          <Text style={styles.topBarTitle} numberOfLines={1}>{storeName}</Text>
+          {isVerified && <VerifiedBadge size="sm" style={{ marginLeft: 4 }} />}
+        </View>
+        <View style={styles.topBarActions}>
+          {currentUser && (
+            <TrustButton storeId={store._id} storeName={storeName} initialTrustCount={trustInfo.count} initialIsTrusted={trustInfo.isTrusted} onTrustChange={handleTrustChange} iconOnly />
+          )}
+          <TouchableOpacity style={styles.topBarActionBtn} onPress={() => navigation.navigate('MainTabs', { screen: 'Cart' })} activeOpacity={0.75} accessibilityLabel="Cart" hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}>
+            <Ionicons name="bag-outline" size={19} color={palette.colors.text} />
+            {cartCount > 0 && (
+              <View style={styles.topBarBadge}><Text style={styles.topBarBadgeText}>{cartCount > 9 ? '9+' : cartCount}</Text></View>
+            )}
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.topBarActionBtn} onPress={handleShare} activeOpacity={0.75} accessibilityLabel="Share store" hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}>
+            <Ionicons name="share-social-outline" size={18} color={palette.colors.text} />
+          </TouchableOpacity>
+        </View>
+      </GlassPanel>
+
       <FlatList
         data={productsLoading ? [] : products} keyExtractor={(item) => item._id} numColumns={2}
         columnWrapperStyle={styles.row} contentContainerStyle={styles.listContent}
@@ -437,11 +483,7 @@ export default function StoreScreen({ route, navigation }) {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[palette.colors.primary]} tintColor={palette.colors.primary} />}
         showsVerticalScrollIndicator={false} initialNumToRender={8} maxToRenderPerBatch={8} windowSize={5} removeClippedSubviews
       />
-      {/* Floating back button over the banner */}
-      <TouchableOpacity style={styles.floatBack} onPress={() => navigation.goBack()}>
-        <GlassBlurFill />
-        <Ionicons name="arrow-back" size={20} color={palette.colors.text} />
-      </TouchableOpacity>
+      </SafeAreaView>
       <TrustScoreSheet visible={trustSheetVisible} onClose={() => setTrustSheetVisible(false)} storeId={store?._id} storeName={storeName} />
     </GlassBackground>
   );
@@ -531,6 +573,13 @@ const buildStyles = (p) => StyleSheet.create({
   pageButtonText: { fontSize: fontSize.sm, color: p.colors.primary, fontWeight: fontWeight.bold },
   pageButtonTextDisabled: { color: p.colors.textLight },
 
-  // Floating back
-  floatBack: { position: 'absolute', top: spacing.lg, left: spacing.md, width: 40, height: 40, borderRadius: 20, backgroundColor: p.glass.bgStrong, borderWidth: 1, borderColor: p.glass.border, justifyContent: 'center', alignItems: 'center', overflow: 'hidden' },
+  // Top bar (glass header box)
+  topBar: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, marginHorizontal: spacing.md, marginTop: spacing.sm, marginBottom: spacing.xs, borderRadius: 22 },
+  topBarBtn: { width: 42, height: 42, borderRadius: 14, backgroundColor: p.glass.bgStrong, borderWidth: 1, borderColor: p.glass.border, justifyContent: 'center', alignItems: 'center' },
+  topBarActionBtn: { width: 36, height: 36, borderRadius: 12, backgroundColor: p.glass.bgSubtle, borderWidth: 1, borderColor: p.glass.borderSubtle, justifyContent: 'center', alignItems: 'center' },
+  topBarTitleWrap: { flex: 1, flexDirection: 'row', alignItems: 'center', minWidth: 0 },
+  topBarTitle: { fontSize: fontSize.lg, fontWeight: fontWeight.bold, color: p.colors.text, flexShrink: 1 },
+  topBarActions: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
+  topBarBadge: { position: 'absolute', top: -3, right: -3, minWidth: 18, height: 18, borderRadius: 9, paddingHorizontal: 4, backgroundColor: p.colors.error, justifyContent: 'center', alignItems: 'center', borderWidth: 1.5, borderColor: p.glass.bgStrong },
+  topBarBadgeText: { fontSize: 10, fontWeight: fontWeight.bold, color: '#fff' },
 });

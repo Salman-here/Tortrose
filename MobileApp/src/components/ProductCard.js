@@ -116,7 +116,7 @@ function ProductCard({ product, index = 0, onPress, compact = false }) {
         activeOpacity={0.9}
         disabled={isOutOfStock}
       >
-        <GlassBlurFill />
+        <GlassBlurFill androidBlur={false} />
         {/* Badges */}
         <View style={styles.badgesContainer}>
           {isFeatured && (
@@ -222,7 +222,7 @@ export function CompactProductCard({ product, onPress }) {
   const imageSource = (typeof images?.[0] === 'string' ? images[0] : images?.[0]?.url) || image;
   return (
     <TouchableOpacity style={styles.compactContainer} onPress={onPress} activeOpacity={0.9}>
-      <GlassBlurFill />
+      <GlassBlurFill androidBlur={false} />
       <View style={styles.compactImageContainer}>
         {imageLoading && <ShimmerPlaceholder style={StyleSheet.absoluteFill} />}
         <Image source={{ uri: imageSource }} style={[styles.compactImage, imageLoading && { opacity: 0 }]} contentFit="cover" cachePolicy="memory-disk" transition={200} onLoad={() => setImageLoading(false)} />

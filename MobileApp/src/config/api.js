@@ -2,6 +2,7 @@ import axios from 'axios';
 import { Platform } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getBuyerLocationParams } from '../utils/buyerLocation';
 
 // SecureStore is unavailable on web — fall back to AsyncStorage there
 const tokenGet = (key) =>
@@ -146,6 +147,18 @@ api.interceptors.request.use(
     } catch (error) {
       console.log('Error getting token from storage:', error);
     }
+
+    // Attach the buyer's location so the backend's store/product visibility
+    // filter returns the same catalog the website shows. Without it, only
+    // `global` stores are visible and country-scoped stores/products vanish.
+    // Existing per-request params win, so callers can still override.
+    try {
+      const locationParams = await getBuyerLocationParams();
+      if (locationParams && Object.keys(locationParams).length) {
+        config.params = { ...locationParams, ...(config.params || {}) };
+      }
+    } catch (_) {}
+
     return config;
   },
   (error) => Promise.reject(error)

@@ -13,6 +13,11 @@
       "resizeMode": "contain",
       "backgroundColor": "#6366f1"
     },
+    "androidStatusBar": {
+      "barStyle": "dark-content",
+      "backgroundColor": "#00000000",
+      "translucent": true
+    },
     "assetBundlePatterns": [
       "**/*"
     ],
@@ -92,7 +97,9 @@
         }
       ],
       "@sentry/react-native",
-      "expo-audio"
+      "expo-audio",
+      "expo-font",
+      "expo-asset"
     ],
     "updates": {
       "fallbackToCacheTimeout": 0

@@ -3,9 +3,9 @@
  */
 
 import React, { useState, useCallback, useEffect } from 'react';
-import { View, Text, StyleSheet, SafeAreaView, ScrollView, TouchableOpacity, Switch, Linking, Alert, Platform } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Switch, Linking, Alert, Platform } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as Notifications from 'expo-notifications';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../contexts/AuthContext';
 import api from '../config/api';
@@ -15,6 +15,10 @@ import GlassPanel from '../components/common/GlassPanel';
 import { spacing, fontSize, fontWeight, borderRadius } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 import { isBiometricEnabled, setBiometricEnabled, isBiometricAvailable, authenticateBiometric } from '../utils/biometricLock';
+import { getNotificationsModule, isAndroidExpoGo } from '../utils/notificationRuntime';
+
+const Notifications = getNotificationsModule();
+const notificationsUnavailableInExpoGo = isAndroidExpoGo();
 
 const APP_VERSION = '1.0.0';
 
@@ -54,7 +58,9 @@ export default function SettingsScreen({ navigation }) {
           AsyncStorage.getItem(SETTINGS_KEYS.NOTIFICATIONS),
           AsyncStorage.getItem(SETTINGS_KEYS.EMAIL_UPDATES),
           AsyncStorage.getItem(HAPTICS_KEY),
-          Notifications.getPermissionsAsync(),
+          Notifications
+            ? Notifications.getPermissionsAsync()
+            : Promise.resolve({ status: 'unavailable' }),
         ]);
         setNotificationsEnabled(status === 'granted' && (notifVal !== null ? notifVal === 'true' : true));
         if (emailVal !== null) setEmailUpdates(emailVal === 'true');
@@ -86,6 +92,13 @@ export default function SettingsScreen({ navigation }) {
   }, []);
 
   const handleNotificationsChange = useCallback(async (value) => {
+    if (!Notifications) {
+      Alert.alert(
+        'Development build required',
+        'Android push notifications are unavailable in Expo Go. Use a Rozare development build to test them.'
+      );
+      return;
+    }
     if (value) {
       const { status: existingStatus } = await Notifications.getPermissionsAsync();
       let finalStatus = existingStatus;
@@ -105,7 +118,7 @@ export default function SettingsScreen({ navigation }) {
 
   return (
     <GlassBackground>
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={styles.container} edges={Platform.OS === 'android' ? [] : ['top']}>
         <GlassPanel variant="floating" style={styles.heroHeader}>
           <TouchableOpacity style={styles.heroBackBtn} onPress={() => navigation.goBack()} activeOpacity={0.7}>
             <Ionicons name="arrow-back" size={22} color={palette.colors.text} />
@@ -193,7 +206,7 @@ export default function SettingsScreen({ navigation }) {
 
           <Text style={styles.sectionLabel}>NOTIFICATIONS</Text>
           <GlassPanel variant="card" style={styles.settingCard}>
-            <SettingRow icon="notifications-outline" iconColor={palette.colors.primary} iconBg="rgba(99,102,241,0.15)" title="Push Notifications" subtitle="Order updates and alerts" rightElement={<Switch value={notificationsEnabled} onValueChange={handleNotificationsChange} trackColor={{ false: palette.colors.grayLighter, true: palette.colors.primaryLight }} thumbColor={notificationsEnabled ? palette.colors.primary : palette.colors.grayLight} />} />
+            <SettingRow icon="notifications-outline" iconColor={palette.colors.primary} iconBg="rgba(99,102,241,0.15)" title="Push Notifications" subtitle={notificationsUnavailableInExpoGo ? 'Use a development build to test on Android' : 'Order updates and alerts'} rightElement={<Switch value={notificationsEnabled} onValueChange={handleNotificationsChange} disabled={!Notifications} trackColor={{ false: palette.colors.grayLighter, true: palette.colors.primaryLight }} thumbColor={notificationsEnabled ? palette.colors.primary : palette.colors.grayLight} />} />
             <SettingRow icon="mail-outline" iconColor={palette.colors.info} iconBg="rgba(59,130,246,0.15)" title="Email Updates" subtitle="Promotions and newsletters" rightElement={<Switch value={emailUpdates} onValueChange={(v) => { setEmailUpdates(v); AsyncStorage.setItem(SETTINGS_KEYS.EMAIL_UPDATES, String(v)); }} trackColor={{ false: palette.colors.grayLighter, true: palette.colors.primaryLight }} thumbColor={emailUpdates ? palette.colors.primary : palette.colors.grayLight} />} />
             <SettingRow icon="options-outline" iconColor="#8B5CF6" iconBg="rgba(139,92,246,0.15)" title="Notification Preferences" subtitle="Choose which categories to receive" showBorder={false} onPress={() => navigation.navigate('NotificationPreferences')} />
           </GlassPanel>
