@@ -221,7 +221,7 @@ const GuardedSellerWhatsAppSettings = createRoleGuard(SellerWhatsAppSettingsScre
 const GuardedSellerComplaints = createRoleGuard(SellerComplaintsScreen, ['seller', 'admin']);
 const GuardedSellerProfile = createRoleGuard(SellerProfileScreen, ['seller', 'admin']);
 const GuardedSellerPayments = createRoleGuard(SellerPaymentsScreen, ['seller', 'admin']);
-const GuardedUserWhatsAppSettings = createRoleGuard(UserWhatsAppSettingsScreen, ['user', 'admin']);
+const GuardedUserWhatsAppSettings = createRoleGuard(UserWhatsAppSettingsScreen, ['user', 'seller', 'admin']);
 const GuardedWallet = createRoleGuard(WalletScreen, ['user', 'seller', 'admin']);
 
 // Helper function to calculate cart item count - exported for testing

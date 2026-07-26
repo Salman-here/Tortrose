@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Keyboard,
-  KeyboardAvoidingView,
   Platform,
   RefreshControl,
   ScrollView,
@@ -12,6 +11,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { Image } from 'expo-image';
@@ -106,6 +106,7 @@ export default function TrackOrderScreen({ navigation }) {
   const [formError, setFormError] = useState('');
   const [resultError, setResultError] = useState('');
   const [activeOrders, setActiveOrders] = useState([]);
+  const [activeOrdersExpanded, setActiveOrdersExpanded] = useState(false);
   const [accountLoading, setAccountLoading] = useState(false);
   const [accountError, setAccountError] = useState('');
 
@@ -167,6 +168,7 @@ export default function TrackOrderScreen({ navigation }) {
     setShowItems(false);
     setFormError('');
     setResultError('');
+    setActiveOrdersExpanded(false);
     revealResult();
   }, [currentUser?.email, revealResult]);
 
@@ -295,19 +297,37 @@ export default function TrackOrderScreen({ navigation }) {
 
             {currentUser && (
               <View style={styles.accountSection}>
-                <View style={styles.sectionHeading}>
+                <TouchableOpacity
+                  style={styles.sectionHeading}
+                  onPress={() => setActiveOrdersExpanded((expanded) => !expanded)}
+                  activeOpacity={0.76}
+                  accessibilityRole="button"
+                  accessibilityState={{ expanded: activeOrdersExpanded }}
+                  accessibilityLabel={`${activeOrders.length} active orders`}
+                >
                   <View>
                     <Text style={styles.sectionEyebrow}>QUICK ACCESS</Text>
                     <Text style={styles.sectionTitle}>Active orders</Text>
                   </View>
-                  {!accountLoading && (
-                    <View style={styles.countPill}>
-                      <Text style={styles.countPillText}>{activeOrders.length}</Text>
+                  <View style={styles.sectionActions}>
+                    {accountLoading ? (
+                      <ActivityIndicator size="small" color={palette.colors.primary} />
+                    ) : (
+                      <View style={styles.countPill}>
+                        <Text style={styles.countPillText}>{activeOrders.length}</Text>
+                      </View>
+                    )}
+                    <View style={styles.collapseButton}>
+                      <Ionicons
+                        name={activeOrdersExpanded ? 'chevron-up' : 'chevron-down'}
+                        size={17}
+                        color={palette.colors.primary}
+                      />
                     </View>
-                  )}
-                </View>
+                  </View>
+                </TouchableOpacity>
 
-                {accountLoading ? (
+                {activeOrdersExpanded && (accountLoading ? (
                   <GlassPanel variant="card" style={styles.accountLoadingCard}>
                     <ActivityIndicator size="small" color={palette.colors.primary} />
                     <Text style={styles.accountLoadingText}>Finding your active deliveries...</Text>
@@ -367,7 +387,7 @@ export default function TrackOrderScreen({ navigation }) {
                       <Text style={styles.ordersLink}>History</Text>
                     </TouchableOpacity>
                   </GlassPanel>
-                )}
+                ))}
               </View>
             )}
 
@@ -715,14 +735,22 @@ const buildStyles = (p) => StyleSheet.create({
   },
   heroTitle: { ...typography.h3, color: p.colors.text, lineHeight: 23 },
   heroText: { marginTop: 5, fontSize: fontSize.sm, lineHeight: 19, color: p.colors.textSecondary },
-  accountSection: { marginBottom: spacing.xl },
-  sectionHeading: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.xs,
-    marginBottom: spacing.sm,
+  accountSection: {
+    marginBottom: spacing.xl,
+    padding: spacing.sm,
+    borderRadius: 20,
+    backgroundColor: p.glass.bgSubtle,
+    borderWidth: 1,
+    borderColor: p.glass.borderSubtle,
   },
+  sectionHeading: {
+    minHeight: 56,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.sm,
+  },
+  sectionActions: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   sectionEyebrow: {
     fontSize: 9,
     fontWeight: fontWeight.extrabold,
@@ -740,7 +768,8 @@ const buildStyles = (p) => StyleSheet.create({
     backgroundColor: p.colors.primarySubtle,
   },
   countPillText: { fontSize: fontSize.xs, fontWeight: fontWeight.bold, color: p.colors.primary },
-  activeList: { gap: spacing.sm },
+  collapseButton: { width: 32, height: 32, borderRadius: 11, alignItems: 'center', justifyContent: 'center', backgroundColor: p.colors.primarySubtle },
+  activeList: { gap: spacing.sm, paddingTop: spacing.sm },
   activeOrderCard: {
     minHeight: 76,
     flexDirection: 'row',

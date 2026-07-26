@@ -13,6 +13,7 @@ import Svg, { Defs, RadialGradient, Stop, Circle } from 'react-native-svg';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../../contexts/ThemeContext';
 import { GlassBlurTargetProvider } from '../../contexts/GlassBlurContext';
+import FeedbackHost from './FeedbackHost';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -113,6 +114,7 @@ export default function GlassBackground({ children, style, variant = 'default' }
             {children}
           </SafeAreaView>
         </View>
+        <FeedbackHost />
       </GlassBlurTargetProvider>
     </View>
   );

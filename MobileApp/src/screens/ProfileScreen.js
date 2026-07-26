@@ -6,8 +6,9 @@
 import React, { useCallback, useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, TextInput, Modal,
-  KeyboardAvoidingView, Platform,
+  Platform,
 } from 'react-native';
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -28,13 +29,18 @@ export const getMenuItemsForRole = (role, palette) => {
     { id: 'orders', title: 'My Orders', icon: 'receipt-outline', screen: 'Orders', color: palette.colors.primary },
     { id: 'track-order', title: 'Track My Order', icon: 'navigate-outline', screen: 'TrackOrder', color: palette.colors.warning },
     { id: 'wallet', title: 'Rozare Wallet', icon: 'wallet-outline', screen: 'Wallet', color: palette.colors.success },
+    { id: 'buyer-whatsapp', title: 'WhatsApp AI & Updates', icon: 'logo-whatsapp', screen: 'UserWhatsAppSettings', color: '#22C55E' },
     { id: 'addresses', title: 'Saved Addresses', icon: 'location-outline', screen: 'SavedAddresses', color: palette.colors.info },
     { id: 'change-password', title: 'Change Password', icon: 'lock-closed-outline', screen: 'ChangePassword', color: palette.colors.warning },
     { id: 'settings', title: 'Settings', icon: 'settings-outline', screen: 'Settings', color: palette.colors.textSecondary },
   ];
   switch (role) {
     case 'seller':
-      return [...baseItems, { id: 'seller', title: 'Seller Dashboard', icon: 'storefront-outline', screen: 'SellerDashboard', highlight: true, color: palette.colors.success }];
+      return [
+        ...baseItems,
+        { id: 'seller-whatsapp', title: 'Seller WhatsApp Alerts', icon: 'briefcase-outline', screen: 'SellerWhatsAppSettings', color: '#16A34A' },
+        { id: 'seller', title: 'Seller Dashboard', icon: 'storefront-outline', screen: 'SellerDashboard', highlight: true, color: palette.colors.success },
+      ];
     case 'user':
     default:
       return [...baseItems, { id: 'become-seller', title: 'Become a Seller', icon: 'storefront-outline', screen: 'BecomeSeller', color: palette.colors.secondary }];

@@ -5,8 +5,9 @@
 import React, { useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
-  ScrollView, KeyboardAvoidingView, Platform, ActivityIndicator,
+  ScrollView, Platform, ActivityIndicator,
 } from 'react-native';
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import Feedback from '../utils/feedback';
@@ -72,7 +73,7 @@ export default function ChangePasswordScreen({ navigation }) {
   return (
     <GlassBackground>
       <SafeAreaView style={{ flex: 1 }} edges={Platform.OS === 'android' ? [] : ['top']}>
-        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
           <ScrollView contentContainerStyle={{ padding: spacing.md, paddingBottom: spacing.xxl }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
           <PremiumBackHeader
             inset={false}

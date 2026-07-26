@@ -5,8 +5,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  TextInput, Modal, RefreshControl, ActivityIndicator, KeyboardAvoidingView, Platform, Alert,
+  TextInput, Modal, RefreshControl, ActivityIndicator, Platform, Alert,
 } from 'react-native';
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import Feedback from '../utils/feedback';
@@ -215,7 +216,7 @@ export default function SavedAddressesScreen({ navigation }) {
 
         {/* Form Modal */}
         <Modal visible={showForm} transparent animationType="slide" onRequestClose={() => setShowForm(false)}>
-          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalRoot}>
+          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalRoot}>
             <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setShowForm(false)} />
             <GlassPanel variant="strong" style={styles.modal}>
               <View style={styles.modalHandle} />

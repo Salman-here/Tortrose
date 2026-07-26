@@ -45,7 +45,7 @@ const TYPE_META = {
 };
 
 export default function FeedbackHost() {
-  const { palette } = useTheme();
+  const { palette, isDark } = useTheme();
   const insets = useSafeAreaInsets();
   const styles = buildStyles(palette);
   const [notice, setNotice] = useState(null);
@@ -110,7 +110,9 @@ export default function FeedbackHost() {
 
   const meta = TYPE_META[notice.type] || TYPE_META.info;
   const bottom = keyboardHeight > 0
-    ? keyboardHeight + 10
+    ? Platform.OS === 'ios'
+      ? keyboardHeight + Math.max(insets.bottom, 10)
+      : Math.max(insets.bottom + 10, 16)
     : Math.max(insets.bottom + 82, 94);
 
   return (
@@ -125,10 +127,19 @@ export default function FeedbackHost() {
         variant="floating"
         accessibilityLiveRegion="polite"
         accessibilityRole="alert"
-        style={[styles.notice, { borderColor: meta.border }]}
+        style={[
+          styles.notice,
+          {
+            borderColor: meta.border,
+            backgroundColor: isDark ? 'rgba(15,23,42,0.88)' : 'rgba(248,250,255,0.88)',
+          },
+        ]}
       >
         <LinearGradient
-          colors={[meta.background, 'rgba(255,255,255,0.025)']}
+          colors={[
+            meta.background,
+            isDark ? 'rgba(15,23,42,0.54)' : 'rgba(255,255,255,0.42)',
+          ]}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
           style={StyleSheet.absoluteFill}
@@ -188,6 +199,11 @@ const buildStyles = (p) => StyleSheet.create({
     paddingVertical: spacing.sm,
     borderRadius: 19,
     backgroundColor: p.glass.bgStrong,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.22,
+    shadowRadius: 24,
+    elevation: 24,
   },
   iconTile: {
     width: 38,
@@ -202,6 +218,9 @@ const buildStyles = (p) => StyleSheet.create({
     fontSize: fontSize.sm,
     lineHeight: 18,
     fontWeight: fontWeight.extrabold,
+    textShadowColor: 'rgba(255,255,255,0.22)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 1,
   },
   message: {
     marginTop: 1,

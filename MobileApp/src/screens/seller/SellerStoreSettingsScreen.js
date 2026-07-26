@@ -5,8 +5,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView,
-  Alert, RefreshControl, Modal, KeyboardAvoidingView, Platform, ActivityIndicator, Switch,
+  Alert, RefreshControl, Modal, Platform, ActivityIndicator, Switch,
 } from 'react-native';
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
@@ -676,7 +677,7 @@ export default function SellerStoreSettingsScreen({ navigation }) {
 
       {/* Verification Modal */}
       <Modal visible={showVerificationModal} animationType="slide" transparent onRequestClose={() => setShowVerificationModal(false)}>
-        <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
           <GlassPanel variant="strong" style={styles.modalSheet}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Apply for Verification</Text>

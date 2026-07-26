@@ -1,7 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import {
   ActivityIndicator,
-  KeyboardAvoidingView,
   Platform,
   ScrollView,
   StyleSheet,
@@ -10,6 +9,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import Feedback from '../../utils/feedback';
@@ -87,7 +87,7 @@ export default function ResetPasswordScreen({ navigation, route }) {
 
   return (
     <GlassBackground>
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
         <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
           <GlassPanel variant="floating" style={styles.header}>
             <TouchableOpacity style={styles.backBtn} onPress={() => navigation.navigate('Login')}>

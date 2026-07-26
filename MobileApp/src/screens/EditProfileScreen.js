@@ -3,7 +3,8 @@
  */
 
 import React, { useState, useCallback } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, Platform } from 'react-native';
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
@@ -63,7 +64,7 @@ export default function EditProfileScreen({ navigation }) {
   return (
     <GlassBackground>
       <SafeAreaView style={styles.container} edges={Platform.OS === 'android' ? [] : ['top']}>
-        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
           <PremiumBackHeader
             title="Edit Profile"
             subtitle="Update your account details"

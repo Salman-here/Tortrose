@@ -4,7 +4,8 @@
  */
 
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Alert, Linking, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Alert, Linking, Platform } from 'react-native';
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import GlassBackground from '../components/common/GlassBackground';
@@ -53,7 +54,7 @@ export default function ContactScreen({ navigation }) {
           style={styles.premiumHeader}
         />
 
-        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
           <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
             {/* Contact Methods */}
             {contactMethods.map((m, i) => (

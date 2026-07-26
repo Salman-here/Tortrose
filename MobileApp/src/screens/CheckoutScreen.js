@@ -5,8 +5,9 @@
 import React, { useState, useEffect } from 'react';
 import {
   View, Text, ScrollView, TextInput, TouchableOpacity,
-  StyleSheet, KeyboardAvoidingView, Platform, Modal, Alert, ActivityIndicator,
+  StyleSheet, Platform, Modal, Alert, ActivityIndicator,
 } from 'react-native';
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { Image } from 'expo-image';
 import Feedback from '../utils/feedback';
 import { Ionicons } from '@expo/vector-icons';

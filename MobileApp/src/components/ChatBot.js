@@ -6,8 +6,10 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, TextInput, FlatList, Modal,
-  KeyboardAvoidingView, Platform, Alert, ActivityIndicator, ScrollView, Image,
+  Platform, Alert, ActivityIndicator, ScrollView, Image,
 } from 'react-native';
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Speech from 'expo-speech';
@@ -444,6 +446,7 @@ export default function ChatBot({
   const { currentUser } = useAuth();
   const { palette } = useTheme();
   const { formatPrice } = useCurrency();
+  const insets = useSafeAreaInsets();
   const c = palette.colors;
   const styles = makeStyles(palette);
   const effectiveRole = dashboardRole || currentUser?.role || 'user';
@@ -1107,8 +1110,8 @@ export default function ChatBot({
   const content = (
     <KeyboardAvoidingView
       style={{ flex: 1 }}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      keyboardVerticalOffset={embedded ? 0 : 90}
+      behavior="padding"
+      keyboardVerticalOffset={0}
     >
       {/* Header */}
       {embedded ? (
@@ -1258,7 +1261,12 @@ export default function ChatBot({
       )}
 
       {/* Input */}
-      <View style={styles.inputContainer}>
+      <View
+        style={[
+          styles.inputContainer,
+          !embedded && { marginBottom: Math.max(spacing.sm, insets.bottom || 0) },
+        ]}
+      >
         <GlassBlurFill intensity={48} nativeAndroidBlur />
         {Platform.OS !== 'android' && (
           <LinearGradient

@@ -18,6 +18,7 @@ const getMenuItemsForRole = (role) => {
     { id: 'orders', title: 'My Orders', icon: 'receipt-outline', screen: 'Orders' },
     { id: 'track-order', title: 'Track My Order', icon: 'navigate-outline', screen: 'TrackOrder' },
     { id: 'wallet', title: 'Rozare Wallet', icon: 'wallet-outline', screen: 'Wallet' },
+    { id: 'buyer-whatsapp', title: 'WhatsApp AI & Updates', icon: 'logo-whatsapp', screen: 'UserWhatsAppSettings' },
     { id: 'addresses', title: 'Saved Addresses', icon: 'location-outline', screen: 'SavedAddresses' },
     { id: 'change-password', title: 'Change Password', icon: 'lock-closed-outline', screen: 'ChangePassword' },
     { id: 'settings', title: 'Settings', icon: 'settings-outline', screen: 'Settings' },
@@ -27,6 +28,7 @@ const getMenuItemsForRole = (role) => {
     case 'seller':
       return [
         ...baseItems,
+        { id: 'seller-whatsapp', title: 'Seller WhatsApp Alerts', icon: 'briefcase-outline', screen: 'SellerWhatsAppSettings' },
         { id: 'seller', title: 'Seller Dashboard', icon: 'storefront-outline', screen: 'SellerDashboard', highlight: true },
       ];
     case 'user':
@@ -119,11 +121,14 @@ describe('ProfileScreen Property Tests', () => {
       );
     });
 
-    it('should have exactly 7 menu items for any role', () => {
+    it('should expose buyer WhatsApp to every account and seller alerts only to sellers', () => {
       fc.assert(
         fc.property(userArbitrary, (user) => {
           const menuItems = getMenuItemsForRole(user.role);
-          expect(menuItems.length).toBe(7);
+          const menuIds = menuItems.map(item => item.id);
+          expect(menuIds).toContain('buyer-whatsapp');
+          expect(menuIds.includes('seller-whatsapp')).toBe(user.role === 'seller');
+          expect(menuItems.length).toBe(user.role === 'seller' ? 9 : 8);
           return true;
         }),
         { numRuns: 100 }

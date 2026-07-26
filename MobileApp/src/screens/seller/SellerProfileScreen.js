@@ -4,7 +4,8 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, StyleSheet, SafeAreaView, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, KeyboardAvoidingView, Platform, RefreshControl } from 'react-native';
+import { View, Text, StyleSheet, SafeAreaView, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, Platform, RefreshControl } from 'react-native';
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { Ionicons } from '@expo/vector-icons';
 import Feedback from '../../utils/feedback';
 import api from '../../config/api';
@@ -210,7 +211,7 @@ export default function SellerProfileScreen({ navigation }) {
   return (
     <GlassBackground>
       <SafeAreaView style={styles.container}>
-        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
           <GlassPanel variant="floating" style={styles.header}>
             <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()} activeOpacity={0.7}>
               <Ionicons name="arrow-back" size={22} color={palette.colors.text} />

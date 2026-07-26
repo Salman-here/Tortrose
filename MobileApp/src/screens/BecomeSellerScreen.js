@@ -9,7 +9,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
-  KeyboardAvoidingView,
   Platform,
   ScrollView,
   StatusBar,
@@ -19,6 +18,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import Feedback from '../utils/feedback';

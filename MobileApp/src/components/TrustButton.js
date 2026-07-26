@@ -66,8 +66,8 @@ const TrustButton = ({ storeId, storeName, initialTrustCount = 0, initialIsTrust
       <TouchableOpacity onPress={handleToggle} disabled={isLoading || !currentUser}
         style={[styles.compactBtn, isTrusted ? styles.trustedBtn : styles.untrustedBtn, (isLoading || !currentUser) && { opacity: 0.5 }]}>
         {isLoading ? <ActivityIndicator size="small" color={isTrusted ? '#fff' : colors.text} /> :
-          <><Ionicons name={isTrusted ? 'checkmark' : 'add'} size={12} color={isTrusted ? '#fff' : colors.text} />
-          <Text style={[styles.compactText, isTrusted ? { color: '#fff' } : { color: colors.text }]}>{isTrusted ? 'Trusting' : 'Trust'}</Text></>}
+          <><Ionicons name={isTrusted ? 'checkmark' : 'add'} size={10} color={isTrusted ? '#fff' : colors.text} />
+          <Text style={[styles.compactText, isTrusted ? { color: '#fff' } : { color: colors.text }]}>{isTrusted ? 'Trusted' : 'Trust'}</Text></>}
       </TouchableOpacity>
     );
   }
@@ -94,11 +94,11 @@ const makeStyles = (palette) => {
   return StyleSheet.create({
     iconBtn: { width: 36, height: 36, borderRadius: 12, backgroundColor: glass.bgSubtle, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: glass.borderSubtle },
     iconBtnTrusted: { backgroundColor: colors.success, borderColor: colors.success },
-    compactBtn: { minHeight: 28, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 9, paddingVertical: 5, borderRadius: 11, gap: 3 },
+    compactBtn: { minHeight: 23, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 7, paddingVertical: 3, borderRadius: 9, gap: 2 },
     fullBtn: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing.lg, paddingVertical: spacing.sm, borderRadius: 14, gap: spacing.sm, flex: 1 },
     trustedBtn: { backgroundColor: colors.success },
     untrustedBtn: { backgroundColor: glass.bg, borderWidth: 1, borderColor: glass.border },
-    compactText: { fontSize: 10, lineHeight: 13, fontWeight: fontWeight.bold },
+    compactText: { fontSize: 9, lineHeight: 11, fontWeight: fontWeight.bold },
     fullText: { fontSize: fontSize.md, fontWeight: fontWeight.medium },
     fullContainer: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
     countWrap: { flexDirection: 'row', alignItems: 'center', gap: 4 },

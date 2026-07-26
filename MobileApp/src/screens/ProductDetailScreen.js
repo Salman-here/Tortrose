@@ -6,8 +6,9 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, TouchableOpacity,
   useWindowDimensions, FlatList, Share, Animated, Modal, TextInput,
-  KeyboardAvoidingView, Platform, ActivityIndicator, RefreshControl,
+  Platform, ActivityIndicator, RefreshControl,
 } from 'react-native';
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -813,7 +814,7 @@ export default function ProductDetailScreen({ route, navigation }) {
 
       {/* Review Modal */}
       <Modal visible={reviewModalVisible} animationType="slide" transparent onRequestClose={() => setReviewModalVisible(false)}>
-        <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
           <GlassPanel variant="strong" style={styles.modalSheet}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.md }}>
               <Text style={{ fontSize: fontSize.xl, fontWeight: fontWeight.bold, color: palette.colors.text }}>Write a Review</Text>
