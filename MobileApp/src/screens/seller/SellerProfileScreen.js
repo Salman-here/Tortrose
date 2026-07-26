@@ -6,7 +6,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, StyleSheet, SafeAreaView, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, KeyboardAvoidingView, Platform, RefreshControl } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import Toast from 'react-native-toast-message';
+import Feedback from '../../utils/feedback';
 import api from '../../config/api';
 import { useAuth } from '../../contexts/AuthContext';
 import GlassBackground from '../../components/common/GlassBackground';
@@ -66,7 +66,7 @@ export default function SellerProfileScreen({ navigation }) {
       const res = await api.get('/api/user/single');
       setData(res.data.user);
     } catch (err) {
-      Toast.show({ type: 'error', text1: 'Failed to load profile' });
+      Feedback.show({ type: 'error', text1: 'Failed to load profile' });
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -119,7 +119,7 @@ export default function SellerProfileScreen({ navigation }) {
     setWaErr('');
     try {
       await api.post('/api/user/seller/change-whatsapp/verify', { newWhatsappNumber: waNew, otp: waOtp });
-      Toast.show({ type: 'success', text1: 'WhatsApp number updated' });
+      Feedback.show({ type: 'success', text1: 'WhatsApp number updated' });
       setWaOpen(false);
       setWaSent(false);
       setWaNew('');
@@ -162,7 +162,7 @@ export default function SellerProfileScreen({ navigation }) {
     setEmErr('');
     try {
       await api.post('/api/user/seller/change-email/verify', { newEmail: emNew, otp: emOtp });
-      Toast.show({ type: 'success', text1: 'Email updated' });
+      Feedback.show({ type: 'success', text1: 'Email updated' });
       setEmOpen(false);
       setEmSent(false);
       setEmNew('');

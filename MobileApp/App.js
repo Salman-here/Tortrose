@@ -3,7 +3,6 @@ import { View, Text, TouchableOpacity, StyleSheet, Animated } from 'react-native
 import { NavigationContainer } from '@react-navigation/native';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar as ExpoStatusBar } from 'expo-status-bar';
-import Toast from 'react-native-toast-message';
 import { Ionicons } from '@expo/vector-icons';
 import NetInfo from '@react-native-community/netinfo';
 import * as Sentry from '@sentry/react-native';
@@ -15,6 +14,7 @@ import AppNavigator from './src/navigation/AppNavigator';
 import OnboardingWalkthrough, { shouldShowOnboarding } from './src/components/OnboardingWalkthrough';
 import { isBiometricEnabled, isBiometricAvailable, authenticateBiometric } from './src/utils/biometricLock';
 import GlassPanel from './src/components/common/GlassPanel';
+import FeedbackHost from './src/components/common/FeedbackHost';
 
 // ─── Sentry Crash Reporting (only when a real DSN is configured) ─────────────
 const SENTRY_DSN = process.env.EXPO_PUBLIC_SENTRY_DSN;
@@ -366,7 +366,7 @@ function App() {
                     <NotificationInitializer />
                     <AppNavigator />
                   </NavigationContainer>
-                  <Toast />
+                  <FeedbackHost />
                   <OfflineBanner />
                 </CurrencyProvider>
               </GlobalProvider>

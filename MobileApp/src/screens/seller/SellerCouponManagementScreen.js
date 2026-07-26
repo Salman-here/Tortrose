@@ -9,7 +9,7 @@ import {
   Modal, ScrollView, Alert, ActivityIndicator, RefreshControl, Switch,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import Toast from 'react-native-toast-message';
+import Feedback from '../../utils/feedback';
 import api from '../../config/api';
 import { useCurrency } from '../../contexts/CurrencyContext';
 import GlassBackground from '../../components/common/GlassBackground';
@@ -66,7 +66,7 @@ export default function SellerCouponManagementScreen({ navigation }) {
 
   const handleSave = async () => {
     if (!form.code || !form.discountValue) {
-      Toast.show({ type: 'error', text1: 'Missing Fields', text2: 'Code and discount value are required' });
+      Feedback.show({ type: 'error', text1: 'Missing Fields', text2: 'Code and discount value are required' });
       return;
     }
     setSaving(true);
@@ -82,14 +82,14 @@ export default function SellerCouponManagementScreen({ navigation }) {
       };
       if (editingCoupon) {
         await api.put(`/api/coupons/update/${editingCoupon._id}`, payload);
-        Toast.show({ type: 'success', text1: 'Updated!', text2: 'Coupon updated successfully' });
+        Feedback.show({ type: 'success', text1: 'Updated!', text2: 'Coupon updated successfully' });
       } else {
         await api.post('/api/coupons/create', payload);
-        Toast.show({ type: 'success', text1: 'Created!', text2: 'Coupon created successfully' });
+        Feedback.show({ type: 'success', text1: 'Created!', text2: 'Coupon created successfully' });
       }
       setShowForm(false); resetForm(); fetchAll();
     } catch (err) {
-      Toast.show({ type: 'error', text1: 'Error', text2: err.response?.data?.msg || 'Failed to save coupon' });
+      Feedback.show({ type: 'error', text1: 'Error', text2: err.response?.data?.msg || 'Failed to save coupon' });
     } finally { setSaving(false); }
   };
 
@@ -97,7 +97,7 @@ export default function SellerCouponManagementScreen({ navigation }) {
     Alert.alert('Delete Coupon', 'Are you sure?', [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Delete', style: 'destructive', onPress: async () => {
-        try { await api.delete(`/api/coupons/delete/${id}`); setCoupons(prev => prev.filter(c => c._id !== id)); Toast.show({ type: 'success', text1: 'Deleted!' }); } catch { Alert.alert('Error', 'Failed to delete'); }
+        try { await api.delete(`/api/coupons/delete/${id}`); setCoupons(prev => prev.filter(c => c._id !== id)); Feedback.show({ type: 'success', text1: 'Deleted!' }); } catch { Alert.alert('Error', 'Failed to delete'); }
       }},
     ]);
   };

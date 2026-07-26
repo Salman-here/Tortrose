@@ -12,7 +12,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { secureSet } from '../../utils/secureStorage';
-import Toast from 'react-native-toast-message';
+import Feedback from '../../utils/feedback';
 import api from '../../config/api';
 import { useAuth } from '../../contexts/AuthContext';
 import GlassBackground from '../../components/common/GlassBackground';
@@ -58,7 +58,7 @@ export default function SellerSignUpScreen({ navigation }) {
     setLoading(true); setError('');
     try {
       const res = await api.post('/api/auth/seller/send-otp', { ...accountForm, ...businessForm });
-      Toast.show({ type: 'success', text1: 'OTP Sent!', text2: res.data.msg || 'Check your email' });
+      Feedback.show({ type: 'success', text1: 'OTP Sent!', text2: res.data.msg || 'Check your email' });
       setStep(3);
     } catch (err) {
       setError(err.response?.data?.msg || 'Failed to send OTP');
@@ -83,7 +83,7 @@ export default function SellerSignUpScreen({ navigation }) {
       });
       await secureSet('jwtToken', res.data.token);
       setCurrentUser(res.data.user);
-      Toast.show({ type: 'success', text1: '🎉 Welcome!', text2: 'Seller account created successfully!' });
+      Feedback.show({ type: 'success', text1: '🎉 Welcome!', text2: 'Seller account created successfully!' });
       setTimeout(() => navigation.reset({ index: 0, routes: [{ name: 'MainTabs' }, { name: 'SellerDashboard' }] }), 1200);
     } catch (err) {
       setError(err.response?.data?.msg || 'Invalid OTP');

@@ -15,7 +15,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Clipboard from 'expo-clipboard';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import Toast from 'react-native-toast-message';
+import Feedback from '../utils/feedback';
 import api from '../config/api';
 import { useAuth } from '../contexts/AuthContext';
 import { useGlobal } from '../contexts/GlobalContext';
@@ -187,7 +187,7 @@ export default function StoreScreen({ route, navigation }) {
   const copyCouponCode = useCallback(async (code) => {
     await Clipboard.setStringAsync(code);
     setCopiedCoupon(code);
-    Toast.show({ type: 'success', text1: 'Copied!', text2: 'Coupon code copied' });
+    Feedback.show({ type: 'success', text1: 'Copied!', text2: 'Coupon code copied' });
     setTimeout(() => setCopiedCoupon(null), 2000);
   }, []);
 

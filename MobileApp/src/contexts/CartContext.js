@@ -2,7 +2,7 @@
  * CartContext — optimistic cart state, isolated from wishlist/notifications.
  */
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import Toast from 'react-native-toast-message';
+import Feedback from '../utils/feedback';
 import * as Haptics from 'expo-haptics';
 import { impact as hapticImpact } from '../utils/haptics';
 import api from '../config/api';
@@ -29,7 +29,7 @@ export const CartProvider = ({ children }) => {
       setCartItems({ cart: res.data.cart, totalCartPrice: res.data.totalCartPrice });
     } catch (error) {
       if (error.response?.status !== 403) {
-        Toast.show({ type: 'error', text1: 'Error', text2: error.response?.data?.msg || 'Failed to fetch cart' });
+        Feedback.show({ type: 'error', text1: 'Error', text2: error.response?.data?.msg || 'Failed to fetch cart' });
       }
     } finally {
       setIsCartLoading(false);
@@ -41,7 +41,7 @@ export const CartProvider = ({ children }) => {
       setQtyUpdateId(id);
       const res = await api.delete(`/api/cart/remove/${id}`);
       setCartItems({ cart: res.data.cart, totalCartPrice: res.data.totalCartPrice });
-      Toast.show({ type: 'info', text1: 'Removed', text2: res.data?.msg || 'Item removed from your cart' });
+      Feedback.show({ type: 'info', text1: 'Removed', text2: res.data?.msg || 'Item removed from your cart' });
     } catch {} finally { setQtyUpdateId(null); }
   };
 
@@ -49,7 +49,7 @@ export const CartProvider = ({ children }) => {
 
   const handleAddToCart = async (id, selectedColor = null, selectedOptions = null, productHint = null) => {
     if (!currentUser) {
-      Toast.show({ type: 'info', text1: 'Login Required', text2: 'Please login to add items to cart' });
+      Feedback.show({ type: 'info', text1: 'Login Required', text2: 'Please login to add items to cart' });
       return;
     }
     const myKey = optionsKeyOf(selectedOptions);
@@ -79,11 +79,11 @@ export const CartProvider = ({ children }) => {
 
     try {
       const res = await api.post(`/api/cart/add/${id}`, { selectedColor, selectedOptions: selectedOptions || undefined });
-      Toast.show({ type: 'success', text1: 'Added', text2: res.data.msg });
+      Feedback.show({ type: 'success', text1: 'Added', text2: res.data.msg });
       setCartItems({ cart: res.data.cart, totalCartPrice: res.data.totalCartPrice });
     } catch (error) {
       setCartItems(previousCart);
-      Toast.show({ type: 'error', text1: 'Error', text2: error.response?.data?.msg || 'Failed to add to cart' });
+      Feedback.show({ type: 'error', text1: 'Error', text2: error.response?.data?.msg || 'Failed to add to cart' });
     } finally {
       setIsCartLoading(false);
       setLoadingProductId(null);
@@ -96,7 +96,7 @@ export const CartProvider = ({ children }) => {
       const res = await api.patch(`/api/cart/qty-inc/${id}`, {});
       setCartItems({ cart: res.data.cart, totalCartPrice: res.data.totalCartPrice });
     } catch (error) {
-      Toast.show({ type: 'error', text1: 'Error', text2: error?.response?.data?.msg || 'Failed to increase quantity' });
+      Feedback.show({ type: 'error', text1: 'Error', text2: error?.response?.data?.msg || 'Failed to increase quantity' });
     } finally { setQtyUpdateId(null); }
   };
 
@@ -106,7 +106,7 @@ export const CartProvider = ({ children }) => {
       const res = await api.patch(`/api/cart/qty-dec/${id}`, {});
       setCartItems({ cart: res.data.cart, totalCartPrice: res.data.totalCartPrice });
     } catch (error) {
-      Toast.show({ type: 'error', text1: 'Error', text2: error?.response?.data?.msg || 'Failed to decrease quantity' });
+      Feedback.show({ type: 'error', text1: 'Error', text2: error?.response?.data?.msg || 'Failed to decrease quantity' });
     } finally { setQtyUpdateId(null); }
   };
 

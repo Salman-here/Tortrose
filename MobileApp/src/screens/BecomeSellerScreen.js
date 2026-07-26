@@ -21,7 +21,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import Toast from 'react-native-toast-message';
+import Feedback from '../utils/feedback';
 import api from '../config/api';
 import { useAuth } from '../contexts/AuthContext';
 import { useTheme } from '../contexts/ThemeContext';
@@ -352,7 +352,7 @@ export default function BecomeSellerScreen({ navigation }) {
       const res = await api.post('/api/user/become-seller', payload);
       if (res.data?.token) await secureSet('jwtToken', res.data.token);
       if (fetchAndUpdateCurrentUser) await fetchAndUpdateCurrentUser();
-      Toast.show({
+      Feedback.show({
         type: 'success',
         text1: 'Your store is ready',
         text2: 'Welcome to Rozare Seller.',

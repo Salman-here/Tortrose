@@ -4,7 +4,7 @@ import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as WebBrowser from 'expo-web-browser';
 import axios from 'axios';
-import Toast from 'react-native-toast-message';
+import Feedback from '../utils/feedback';
 import api, { API_BASE_URL } from '../config/api';
 import { trackAuthEvent, trackError, setUserContext } from '../utils/breadcrumbs';
 import { setBuyerLocation } from '../utils/buyerLocation';
@@ -96,7 +96,7 @@ export const AuthProvider = ({ children }) => {
   const signup = async (data) => {
     try {
       const res = await axios.post(`${API_BASE_URL}/api/auth/send-otp`, data);
-      Toast.show({
+      Feedback.show({
         type: 'success',
         text1: 'OTP Sent!',
         text2: res.data.msg || 'Check your email for the verification code'
@@ -104,7 +104,7 @@ export const AuthProvider = ({ children }) => {
       return { success: true };
     } catch (error) {
       console.error(error);
-      Toast.show({
+      Feedback.show({
         type: 'error',
         text1: 'Error',
         text2: error.response?.data?.msg || 'Signup failed'
@@ -122,7 +122,7 @@ export const AuthProvider = ({ children }) => {
       setCurrentUser(res.data.user);
       setToken(res.data.token);
       seedBuyerLocationFromUser(res.data.user);
-      Toast.show({
+      Feedback.show({
         type: 'success',
         text1: 'Account Created!',
         text2: res.data.msg || 'Welcome to Rozare!'
@@ -130,7 +130,7 @@ export const AuthProvider = ({ children }) => {
       return { success: true };
     } catch (error) {
       console.error(error);
-      Toast.show({
+      Feedback.show({
         type: 'error',
         text1: 'Verification Failed',
         text2: error.response?.data?.msg || 'Invalid or expired OTP'
@@ -153,7 +153,7 @@ export const AuthProvider = ({ children }) => {
       seedBuyerLocationFromUser(res.data.user);
       trackAuthEvent('login_success', { userId: res.data.user?._id });
 
-      Toast.show({
+      Feedback.show({
         type: 'success',
         text1: 'Welcome back!',
         text2: res.data.msg
@@ -163,7 +163,7 @@ export const AuthProvider = ({ children }) => {
     } catch (error) {
       console.error(error);
       trackError('auth', error, { step: 'login' });
-      Toast.show({
+      Feedback.show({
         type: 'error',
         text1: 'Login Failed',
         text2: error.response?.data?.msg || 'Invalid credentials'
@@ -184,7 +184,7 @@ export const AuthProvider = ({ children }) => {
         // Extract token from the redirect URL
         const match = result.url.match(/[?&]token=([^&]*)/);
         if (!match) {
-          Toast.show({ type: 'error', text1: 'Sign-In Failed', text2: 'No token received from Google.' });
+          Feedback.show({ type: 'error', text1: 'Sign-In Failed', text2: 'No token received from Google.' });
           return { success: false };
         }
         const jwtToken = decodeURIComponent(match[1]);
@@ -199,7 +199,7 @@ export const AuthProvider = ({ children }) => {
         setCurrentUser(user);
         seedBuyerLocationFromUser(user);
 
-        Toast.show({
+        Feedback.show({
           type: 'success',
           text1: 'Welcome!',
           text2: `Signed in as ${user?.username || user?.email}`,
@@ -211,7 +211,7 @@ export const AuthProvider = ({ children }) => {
       return { success: false };
     } catch (error) {
       console.error('Google sign-in error:', error);
-      Toast.show({ type: 'error', text1: 'Sign-In Failed', text2: 'Could not sign in with Google. Try again.' });
+      Feedback.show({ type: 'error', text1: 'Sign-In Failed', text2: 'Could not sign in with Google. Try again.' });
       return { success: false, error: error.message };
     }
   };
@@ -225,7 +225,7 @@ export const AuthProvider = ({ children }) => {
       setToken(null);
       setUserContext(null);
 
-      Toast.show({
+      Feedback.show({
         type: 'info',
         text1: 'Logged out',
         text2: 'You have been logged out successfully'

@@ -9,7 +9,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import Toast from 'react-native-toast-message';
+import Feedback from '../../utils/feedback';
 import api from '../../config/api';
 import GlassBackground from '../../components/common/GlassBackground';
 import GlassPanel from '../../components/common/GlassPanel';
@@ -36,10 +36,10 @@ export default function ForgotPasswordScreen({ navigation }) {
     try {
       const res = await api.post('/api/password/forgot', { email });
       setIsSuccess(true);
-      Toast.show({ type: 'success', text1: 'Email Sent', text2: res.data.msg || 'Password reset link sent' });
+      Feedback.show({ type: 'success', text1: 'Email Sent', text2: res.data.msg || 'Password reset link sent' });
     } catch (err) {
       const msg = err.response?.data?.msg || 'Failed to send reset link';
-      setError(msg); Toast.show({ type: 'error', text1: 'Error', text2: msg });
+      setError(msg); Feedback.show({ type: 'error', text1: 'Error', text2: msg });
     } finally { setIsLoading(false); }
   };
 

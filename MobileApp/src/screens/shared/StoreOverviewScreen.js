@@ -8,7 +8,7 @@ import {
 } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
-import Toast from 'react-native-toast-message';
+import Feedback from '../../utils/feedback';
 import api from '../../config/api';
 import { useAuth } from '../../contexts/AuthContext';
 import VerifiedBadge from '../../components/VerifiedBadge';
@@ -44,7 +44,7 @@ export default function StoreOverviewScreen({ route, navigation }) {
       setStore(storeData);
 
       try { const prodRes = await api.get(`/api/products/get-products?store=${storeId}`); setProducts(prodRes.data.products || prodRes.data || []); } catch { setProducts([]); }
-    } catch (e) { Toast.show({ type: 'error', text1: 'Error', text2: 'Failed to load store' }); }
+    } catch (e) { Feedback.show({ type: 'error', text1: 'Error', text2: 'Failed to load store' }); }
     finally { setIsLoading(false); }
   }, [storeId]);
 

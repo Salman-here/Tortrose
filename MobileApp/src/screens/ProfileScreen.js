@@ -6,11 +6,12 @@
 import React, { useCallback, useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, TextInput, Modal,
+  KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import Toast from 'react-native-toast-message';
+import Feedback from '../utils/feedback';
 import api from '../config/api';
 import { useAuth } from '../contexts/AuthContext';
 import GlassBackground from '../components/common/GlassBackground';
@@ -72,8 +73,8 @@ export default function ProfileScreen({ navigation }) {
       await api.patch('/api/user/shipping-info', { shippingInfo: shippingForm });
       setSavedShipping(shippingForm);
       setEditingShipping(false);
-      Toast.show({ type: 'success', text1: 'Saved!', text2: 'Shipping info updated' });
-    } catch { Toast.show({ type: 'error', text1: 'Error', text2: 'Failed to update' }); }
+      Feedback.show({ type: 'success', text1: 'Saved!', text2: 'Shipping info updated' });
+    } catch { Feedback.show({ type: 'error', text1: 'Error', text2: 'Failed to update' }); }
     finally { setSavingShipping(false); }
   };
 
@@ -302,7 +303,11 @@ export default function ProfileScreen({ navigation }) {
 
         {/* Edit Shipping Modal */}
         <Modal visible={editingShipping} transparent animationType="slide" onRequestClose={() => setEditingShipping(false)}>
-          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
+          <KeyboardAvoidingView
+            style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            keyboardVerticalOffset={0}
+          >
             <GlassPanel variant="strong" style={{ borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: spacing.xl, paddingBottom: spacing.xxxl }}>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.lg }}>
                 <Text style={{ fontSize: fontSize.xl, fontWeight: fontWeight.bold, color: palette.colors.text }}>Edit Shipping Info</Text>
@@ -310,7 +315,12 @@ export default function ProfileScreen({ navigation }) {
                   <Ionicons name="close" size={20} color={palette.colors.text} />
                 </TouchableOpacity>
               </View>
-              <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 400 }}>
+              <ScrollView
+                showsVerticalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
+                keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+                style={{ maxHeight: 400 }}
+              >
                 {['fullName', 'email', 'phone', 'address', 'city', 'state', 'postalCode', 'country'].map(field => (
                   <View key={field} style={{ marginBottom: spacing.md }}>
                     <Text style={{ fontSize: fontSize.sm, fontWeight: fontWeight.medium, color: palette.colors.textSecondary, marginBottom: 4, textTransform: 'capitalize' }}>{field.replace(/([A-Z])/g, ' $1')}</Text>
@@ -327,7 +337,7 @@ export default function ProfileScreen({ navigation }) {
                 <Text style={{ fontSize: fontSize.md, fontWeight: fontWeight.bold, color: '#fff' }}>{savingShipping ? 'Saving...' : 'Save Address'}</Text>
               </TouchableOpacity>
             </GlassPanel>
-          </View>
+          </KeyboardAvoidingView>
         </Modal>
 
         <GlassPanel variant="card" style={styles.logoutCard}>

@@ -13,7 +13,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
-import Toast from 'react-native-toast-message';
+import Feedback from '../utils/feedback';
 import api from '../config/api';
 import { useAuth } from '../contexts/AuthContext';
 import { useGlobal } from '../contexts/GlobalContext';
@@ -183,14 +183,14 @@ export default function ProductDetailScreen({ route, navigation }) {
           setRelatedProducts((relRes.data.products || []).filter(p => p._id !== prod._id).slice(0, 4));
         } catch { setRelatedProducts([]); }
       }
-    } catch { Toast.show({ type: 'error', text1: 'Error', text2: 'Product not found' }); handleBack(); }
+    } catch { Feedback.show({ type: 'error', text1: 'Error', text2: 'Product not found' }); handleBack(); }
     finally { setIsLoading(false); setRefreshing(false); }
   };
 
   const copyCouponCode = async (code) => {
     await Clipboard.setStringAsync(code);
     setCopiedCoupon(code);
-    Toast.show({ type: 'success', text1: 'Copied!', text2: 'Coupon code copied' });
+    Feedback.show({ type: 'success', text1: 'Copied!', text2: 'Coupon code copied' });
     setTimeout(() => setCopiedCoupon(null), 2000);
   };
 
@@ -204,7 +204,7 @@ export default function ProductDetailScreen({ route, navigation }) {
   const handleWishlistToggle = () => { if (!currentUser) { navigation.navigate('Login'); return; } isInWishlist ? handleDeleteFromWishlist(product._id) : handleAddToWishlist(product._id); };
   const handleAddToCartClick = () => {
     if (!currentUser) { navigation.navigate('Login'); return; }
-    if (!allOptionsSelected) { Toast.show({ type: 'error', text1: 'Please select all options' }); return; }
+    if (!allOptionsSelected) { Feedback.show({ type: 'error', text1: 'Please select all options' }); return; }
     handleAddToCart(product._id, selectedColor, selectedOptions);
   };
 
@@ -229,12 +229,12 @@ export default function ProductDetailScreen({ route, navigation }) {
 
   const handleSubmitReview = async () => {
     if (!currentUser) { navigation.navigate('Login'); return; }
-    if (!reviewComment.trim()) { Toast.show({ type: 'error', text1: 'Error', text2: 'Please write a comment' }); return; }
+    if (!reviewComment.trim()) { Feedback.show({ type: 'error', text1: 'Error', text2: 'Please write a comment' }); return; }
     setSubmittingReview(true);
     try {
       await api.post(`/api/products/add-review/${productId}`, { rating: reviewRating, comment: reviewComment.trim() });
-      Toast.show({ type: 'success', text1: 'Review Submitted!' }); setReviewModalVisible(false); setReviewComment(''); setReviewRating(5); fetchProduct();
-    } catch (error) { Toast.show({ type: 'error', text1: 'Error', text2: error.response?.data?.msg || 'Failed' }); }
+      Feedback.show({ type: 'success', text1: 'Review Submitted!' }); setReviewModalVisible(false); setReviewComment(''); setReviewRating(5); fetchProduct();
+    } catch (error) { Feedback.show({ type: 'error', text1: 'Error', text2: error.response?.data?.msg || 'Failed' }); }
     finally { setSubmittingReview(false); }
   };
 

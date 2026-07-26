@@ -14,7 +14,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as WebBrowser from 'expo-web-browser';
-import Toast from 'react-native-toast-message';
+import Feedback from '../utils/feedback';
 import api from '../config/api';
 import GlassPanel from './common/GlassPanel';
 import { useCurrency } from '../contexts/CurrencyContext';
@@ -74,7 +74,7 @@ export default function SellerReturnsPanel({ header, route, navigation }) {
       });
       setRequests(response.data?.returns || []);
     } catch (error) {
-      Toast.show({ type: 'error', text1: 'Returns unavailable', text2: error.response?.data?.msg || 'Failed to load return orders.' });
+      Feedback.show({ type: 'error', text1: 'Returns unavailable', text2: error.response?.data?.msg || 'Failed to load return orders.' });
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -88,7 +88,7 @@ export default function SellerReturnsPanel({ header, route, navigation }) {
 
   useEffect(() => {
     if (!route?.params?.return_payment) return;
-    Toast.show({
+    Feedback.show({
       type: route.params.return_payment === 'success' ? 'success' : 'info',
       text1: route.params.return_payment === 'success' ? 'Payment submitted' : 'Payment cancelled',
       text2: route.params.return_payment === 'success'
@@ -102,7 +102,7 @@ export default function SellerReturnsPanel({ header, route, navigation }) {
   const updateStatus = async () => {
     if (!dialog?.request || !dialog?.status) return;
     if (dialog.status === 'rejected' && note.trim().length < 5) {
-      Toast.show({ type: 'error', text1: 'Add a clear rejection reason' });
+      Feedback.show({ type: 'error', text1: 'Add a clear rejection reason' });
       return;
     }
     setSubmitting(true);
@@ -111,12 +111,12 @@ export default function SellerReturnsPanel({ header, route, navigation }) {
         status: dialog.status,
         note: note.trim(),
       });
-      Toast.show({ type: 'success', text1: 'Return updated', text2: 'The buyer was notified on Rozare and WhatsApp.' });
+      Feedback.show({ type: 'success', text1: 'Return updated', text2: 'The buyer was notified on Rozare and WhatsApp.' });
       setDialog(null);
       setNote('');
       await load({ quiet: true });
     } catch (error) {
-      Toast.show({ type: 'error', text1: 'Update failed', text2: error.response?.data?.msg || 'Could not update this return.' });
+      Feedback.show({ type: 'error', text1: 'Update failed', text2: error.response?.data?.msg || 'Could not update this return.' });
     } finally {
       setSubmitting(false);
     }
@@ -138,12 +138,12 @@ export default function SellerReturnsPanel({ header, route, navigation }) {
         await load({ quiet: true });
         return;
       }
-      Toast.show({ type: 'success', text1: response.data?.msg || 'Return completed' });
+      Feedback.show({ type: 'success', text1: response.data?.msg || 'Return completed' });
       setDialog(null);
       await load({ quiet: true });
     } catch (error) {
       const available = error.response?.data?.availableBalanceUSD;
-      Toast.show({
+      Feedback.show({
         type: 'error',
         text1: 'Could not accept return',
         text2: `${error.response?.data?.msg || 'Try again.'}${Number.isFinite(available) ? ` Available balance: $${available.toFixed(2)}.` : ''}`,

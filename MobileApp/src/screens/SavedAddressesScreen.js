@@ -9,7 +9,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import Toast from 'react-native-toast-message';
+import Feedback from '../utils/feedback';
 import api from '../config/api';
 import GlassBackground from '../components/common/GlassBackground';
 import GlassPanel from '../components/common/GlassPanel';
@@ -62,7 +62,7 @@ export default function SavedAddressesScreen({ navigation }) {
       const res = await api.get('/api/user/addresses');
       setAddresses(res.data?.addresses || []);
     } catch (err) {
-      Toast.show({ type: 'error', text1: 'Error', text2: err.response?.data?.msg || 'Failed to load addresses' });
+      Feedback.show({ type: 'error', text1: 'Error', text2: err.response?.data?.msg || 'Failed to load addresses' });
     } finally {
       setLoading(false); setRefreshing(false);
     }
@@ -90,15 +90,15 @@ export default function SavedAddressesScreen({ navigation }) {
       if (editingId) {
         const res = await api.patch(`/api/user/addresses/${editingId}`, payload);
         setAddresses(res.data?.addresses || []);
-        Toast.show({ type: 'success', text1: 'Address updated' });
+        Feedback.show({ type: 'success', text1: 'Address updated' });
       } else {
         const res = await api.post('/api/user/addresses', payload);
         setAddresses(res.data?.addresses || []);
-        Toast.show({ type: 'success', text1: 'Address added' });
+        Feedback.show({ type: 'success', text1: 'Address added' });
       }
       setShowForm(false);
     } catch (err) {
-      Toast.show({ type: 'error', text1: 'Error', text2: err.response?.data?.msg || 'Failed to save' });
+      Feedback.show({ type: 'error', text1: 'Error', text2: err.response?.data?.msg || 'Failed to save' });
     } finally { setSaving(false); }
   };
 
@@ -109,9 +109,9 @@ export default function SavedAddressesScreen({ navigation }) {
         try {
           const res = await api.delete(`/api/user/addresses/${a._id}`);
           setAddresses(res.data?.addresses || []);
-          Toast.show({ type: 'info', text1: 'Address removed' });
+          Feedback.show({ type: 'info', text1: 'Address removed' });
         } catch (err) {
-          Toast.show({ type: 'error', text1: 'Error', text2: err.response?.data?.msg || 'Failed to delete' });
+          Feedback.show({ type: 'error', text1: 'Error', text2: err.response?.data?.msg || 'Failed to delete' });
         }
       }},
     ]);
@@ -122,9 +122,9 @@ export default function SavedAddressesScreen({ navigation }) {
     try {
       const res = await api.patch(`/api/user/addresses/${a._id}/default`);
       setAddresses(res.data?.addresses || []);
-      Toast.show({ type: 'success', text1: 'Default updated' });
+      Feedback.show({ type: 'success', text1: 'Default updated' });
     } catch (err) {
-      Toast.show({ type: 'error', text1: 'Error', text2: err.response?.data?.msg || 'Failed to update' });
+      Feedback.show({ type: 'error', text1: 'Error', text2: err.response?.data?.msg || 'Failed to update' });
     }
   };
 

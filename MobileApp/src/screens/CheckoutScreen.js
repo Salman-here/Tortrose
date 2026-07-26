@@ -8,7 +8,7 @@ import {
   StyleSheet, KeyboardAvoidingView, Platform, Modal, Alert, ActivityIndicator,
 } from 'react-native';
 import { Image } from 'expo-image';
-import Toast from 'react-native-toast-message';
+import Feedback from '../utils/feedback';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as WebBrowser from 'expo-web-browser';
@@ -220,7 +220,7 @@ export default function CheckoutScreen({ navigation }) {
     if (formData.phone && (phoneDigits.length < 10 || !/^\d+$/.test(phoneDigits))) newErrors.phone = 'Please enter a valid phone number';
     setErrors(newErrors);
     if (Object.keys(newErrors).length > 0) {
-      Toast.show({ type: 'error', text1: 'Missing Information', text2: 'Please fill in all required fields correctly' });
+      Feedback.show({ type: 'error', text1: 'Missing Information', text2: 'Please fill in all required fields correctly' });
       return false;
     }
     return true;
@@ -240,7 +240,7 @@ export default function CheckoutScreen({ navigation }) {
         country: savedShippingInfo.country || 'Pakistan',
         countryCode: savedShippingInfo.countryCode || 'PK',
       });
-      Toast.show({ type: 'success', text1: 'Auto-Filled!', text2: 'Shipping info loaded from your profile' });
+      Feedback.show({ type: 'success', text1: 'Auto-Filled!', text2: 'Shipping info loaded from your profile' });
     }
   };
 
@@ -250,7 +250,7 @@ export default function CheckoutScreen({ navigation }) {
   };
 
   const handleApplyCoupon = async () => {
-    if (!couponCode.trim()) { Toast.show({ type: 'error', text1: 'Enter a coupon code' }); return; }
+    if (!couponCode.trim()) { Feedback.show({ type: 'error', text1: 'Enter a coupon code' }); return; }
     setCouponLoading(true);
     try {
       const productIds = cartItems.cart.map(item => item.product._id);
@@ -271,16 +271,16 @@ export default function CheckoutScreen({ navigation }) {
         if (maxDiscount && discount > maxDiscount) discount = maxDiscount;
         setCouponDiscount(discount);
         setAppliedCoupon(coupon);
-        Toast.show({ type: 'success', text1: 'Coupon Applied!', text2: `${coupon.discountType === 'percentage' ? `${coupon.discountValue}%` : formatAmount(couponAmountInCheckoutCurrency(coupon.discountValue, coupon))} off` });
+        Feedback.show({ type: 'success', text1: 'Coupon Applied!', text2: `${coupon.discountType === 'percentage' ? `${coupon.discountValue}%` : formatAmount(couponAmountInCheckoutCurrency(coupon.discountValue, coupon))} off` });
       }
     } catch (err) {
-      Toast.show({ type: 'error', text1: 'Invalid Coupon', text2: err.response?.data?.msg || 'Coupon not valid' });
+      Feedback.show({ type: 'error', text1: 'Invalid Coupon', text2: err.response?.data?.msg || 'Coupon not valid' });
     } finally { setCouponLoading(false); }
   };
 
   const handleRemoveCoupon = () => {
     setAppliedCoupon(null); setCouponDiscount(0); setCouponCode('');
-    Toast.show({ type: 'info', text1: 'Coupon removed' });
+    Feedback.show({ type: 'info', text1: 'Coupon removed' });
   };
 
   const buildOrder = () => {
@@ -348,7 +348,7 @@ export default function CheckoutScreen({ navigation }) {
       try { await api.patch('/api/user/shipping-info', { shippingInfo: formData }); setSavedShippingInfo(formData); } catch {}
     }
     if (paymentMethod !== 'card') {
-      Toast.show({
+      Feedback.show({
         type: 'success',
         text1: paymentMethod === 'wallet' ? 'Payment Successful!' : 'Order Placed!',
         text2: paymentMethod === 'wallet'
@@ -364,7 +364,7 @@ export default function CheckoutScreen({ navigation }) {
   const handlePlaceOrder = async () => {
     trackCheckoutStep('place_order_clicked', { paymentMethod, items: cartItems?.cart?.length, total: totalAmount });
     if (paymentMethod === 'cash_on_delivery' && codRestrictedSellers.length > 0) {
-      Toast.show({
+      Feedback.show({
         type: 'error',
         text1: 'Advance payment required',
         text2: 'One or more sellers require online payment.',
@@ -373,11 +373,11 @@ export default function CheckoutScreen({ navigation }) {
       return;
     }
     if (paymentMethod === 'wallet' && !currentUser) {
-      Toast.show({ type: 'error', text1: 'Login required', text2: 'Log in to pay with Rozare Wallet.' });
+      Feedback.show({ type: 'error', text1: 'Login required', text2: 'Log in to pay with Rozare Wallet.' });
       return;
     }
     if (paymentMethod === 'wallet' && !walletAvailable) {
-      Toast.show({
+      Feedback.show({
         type: 'error',
         text1: wallet?.status === 'locked' ? 'Wallet locked' : 'Insufficient wallet balance',
         text2: wallet?.status === 'locked'
@@ -417,7 +417,7 @@ export default function CheckoutScreen({ navigation }) {
       }
     } catch (error) {
       trackError('checkout', error, { step: 'place_order', paymentMethod });
-      Toast.show({ type: 'error', text1: 'Order Failed', text2: error.response?.data?.msg || 'Failed to place order.' });
+      Feedback.show({ type: 'error', text1: 'Order Failed', text2: error.response?.data?.msg || 'Failed to place order.' });
     } finally { setIsProcessing(false); }
   };
 
@@ -652,7 +652,7 @@ export default function CheckoutScreen({ navigation }) {
               ]}
               onPress={() => {
                 if (codRestrictedSellers.length > 0) {
-                  Toast.show({ type: 'info', text1: 'Advance payment required', text2: 'Please pay with card or Rozare Wallet for this cart.' });
+                  Feedback.show({ type: 'info', text1: 'Advance payment required', text2: 'Please pay with card or Rozare Wallet for this cart.' });
                   return;
                 }
                 setPaymentMethod('cash_on_delivery');
@@ -692,7 +692,7 @@ export default function CheckoutScreen({ navigation }) {
                   return;
                 }
                 if (wallet?.status === 'locked') {
-                  Toast.show({ type: 'error', text1: 'Wallet locked', text2: wallet.lockedReason || 'Contact support for help.' });
+                  Feedback.show({ type: 'error', text1: 'Wallet locked', text2: wallet.lockedReason || 'Contact support for help.' });
                   return;
                 }
                 setPaymentMethod('wallet');

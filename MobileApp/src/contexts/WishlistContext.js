@@ -2,7 +2,7 @@
  * WishlistContext — optimistic wishlist state, isolated from cart/notifications.
  */
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
-import Toast from 'react-native-toast-message';
+import Feedback from '../utils/feedback';
 import * as Haptics from 'expo-haptics';
 import { impact as hapticImpact } from '../utils/haptics';
 import api from '../config/api';
@@ -114,7 +114,7 @@ export const WishlistProvider = ({ children }) => {
       if (sessionGenerationRef.current !== sessionGeneration) {
         return wishlistItemsRef.current;
       }
-      Toast.show({ type: 'error', text1: 'Error', text2: error.response?.data?.msg || 'Failed to fetch wishlist' });
+      Feedback.show({ type: 'error', text1: 'Error', text2: error.response?.data?.msg || 'Failed to fetch wishlist' });
       return null;
     }
   };
@@ -122,7 +122,7 @@ export const WishlistProvider = ({ children }) => {
   const handleAddToWishlist = async (id, productHint = null) => {
     ensureActiveSession();
     if (!currentUser) {
-      Toast.show({ type: 'info', text1: 'Login Required', text2: 'Please login to add items to wishlist' });
+      Feedback.show({ type: 'info', text1: 'Login Required', text2: 'Please login to add items to wishlist' });
       return;
     }
 
@@ -148,18 +148,18 @@ export const WishlistProvider = ({ children }) => {
               : item
           )));
         }
-        Toast.show({ type: 'success', text1: 'Saved', text2: res.data.msg });
+        Feedback.show({ type: 'success', text1: 'Saved', text2: res.data.msg });
       } catch (err) {
         if (!isCurrentMutation(key, version, sessionGeneration)) return;
         if (
           err.response?.status === 400
           && /already in wishlist/i.test(err.response?.data?.msg || '')
         ) {
-          Toast.show({ type: 'success', text1: 'Saved', text2: 'Already in your favorites' });
+          Feedback.show({ type: 'success', text1: 'Saved', text2: 'Already in your favorites' });
           return;
         }
         replaceWishlist((items) => items.filter((item) => !sameProduct(item, id)));
-        Toast.show({ type: 'error', text1: 'Error', text2: err.response?.data?.msg || 'Error adding to wishlist' });
+        Feedback.show({ type: 'error', text1: 'Error', text2: err.response?.data?.msg || 'Error adding to wishlist' });
       }
     });
   };
@@ -180,7 +180,7 @@ export const WishlistProvider = ({ children }) => {
       try {
         const res = await api.delete(`/api/products/delete-from-wishlist/${id}`);
         if (!isCurrentMutation(key, version, sessionGeneration)) return;
-        Toast.show({ type: 'info', text1: 'Removed', text2: res.data.msg });
+        Feedback.show({ type: 'info', text1: 'Removed', text2: res.data.msg });
       } catch (err) {
         if (!isCurrentMutation(key, version, sessionGeneration)) return;
         replaceWishlist((items) => (
@@ -188,7 +188,7 @@ export const WishlistProvider = ({ children }) => {
             ? items
             : [...items, removedItem]
         ));
-        Toast.show({ type: 'error', text1: 'Error', text2: err.response?.data?.msg || 'Error removing from wishlist' });
+        Feedback.show({ type: 'error', text1: 'Error', text2: err.response?.data?.msg || 'Error removing from wishlist' });
       }
     });
   };

@@ -11,7 +11,7 @@ import {
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import Toast from 'react-native-toast-message';
+import Feedback from '../../utils/feedback';
 import api, { API_ENDPOINTS } from '../../config/api';
 import GlassBackground from '../../components/common/GlassBackground';
 import GlassPanel from '../../components/common/GlassPanel';
@@ -131,7 +131,7 @@ export default function SellerPaymentsScreen({ navigation }) {
     setSavingAccount(true);
     try {
       const res = await api.put(API_ENDPOINTS.PAYMENTS.SELLER_ACCOUNT, accountForm);
-      Toast.show({ type: 'success', text1: res.data?.msg || 'Payment account saved' });
+      Feedback.show({ type: 'success', text1: res.data?.msg || 'Payment account saved' });
       setShowAccountForm(false);
       await fetchSummary();
     } catch (error) {
@@ -177,7 +177,7 @@ export default function SellerPaymentsScreen({ navigation }) {
         requestedAmount: amount,
         requestedCurrency: currency,
       });
-      Toast.show({ type: 'success', text1: 'Withdrawal request submitted' });
+      Feedback.show({ type: 'success', text1: 'Withdrawal request submitted' });
       setWithdrawAmount('');
       await fetchSummary();
     } catch (error) {

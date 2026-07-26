@@ -9,7 +9,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import Toast from 'react-native-toast-message';
+import Feedback from '../utils/feedback';
 import api from '../config/api';
 import GlassBackground from '../components/common/GlassBackground';
 import GlassPanel from '../components/common/GlassPanel';
@@ -47,10 +47,10 @@ export default function ChangePasswordScreen({ navigation }) {
     setLoading(true);
     try {
       await api.patch('/api/password/change', { currentPassword, newPassword });
-      Toast.show({ type: 'success', text1: 'Password Changed', text2: 'Your password has been updated successfully' });
+      Feedback.show({ type: 'success', text1: 'Password Changed', text2: 'Your password has been updated successfully' });
       setTimeout(() => navigation.goBack(), 1500);
     } catch (error) {
-      Toast.show({ type: 'error', text1: 'Error', text2: error.response?.data?.msg || 'Failed to change password' });
+      Feedback.show({ type: 'error', text1: 'Error', text2: error.response?.data?.msg || 'Failed to change password' });
     } finally { setLoading(false); }
   };
 

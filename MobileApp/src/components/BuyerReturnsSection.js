@@ -13,7 +13,7 @@ import {
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import * as Crypto from 'expo-crypto';
-import Toast from 'react-native-toast-message';
+import Feedback from '../utils/feedback';
 import api from '../config/api';
 import GlassPanel from './common/GlassPanel';
 import { useTheme } from '../contexts/ThemeContext';
@@ -59,7 +59,7 @@ export default function BuyerReturnsSection({ order, formatMoney }) {
       setGroups(eligibility.data?.groups || []);
       setRequests(existing.data?.returns || []);
     } catch (error) {
-      Toast.show({ type: 'error', text1: 'Returns unavailable', text2: error.response?.data?.msg || 'Could not load return options.' });
+      Feedback.show({ type: 'error', text1: 'Returns unavailable', text2: error.response?.data?.msg || 'Could not load return options.' });
     } finally {
       setLoading(false);
     }
@@ -92,11 +92,11 @@ export default function BuyerReturnsSection({ order, formatMoney }) {
 
   const submit = async () => {
     if (!selectedItems.length) {
-      Toast.show({ type: 'error', text1: 'Select at least one item' });
+      Feedback.show({ type: 'error', text1: 'Select at least one item' });
       return;
     }
     if (reasonDetails.trim().length < 10) {
-      Toast.show({ type: 'error', text1: 'Add more detail', text2: 'Explain the return reason in at least 10 characters.' });
+      Feedback.show({ type: 'error', text1: 'Add more detail', text2: 'Explain the return reason in at least 10 characters.' });
       return;
     }
     setSubmitting(true);
@@ -109,11 +109,11 @@ export default function BuyerReturnsSection({ order, formatMoney }) {
         reasonDetails: reasonDetails.trim(),
         requestKey: Crypto.randomUUID(),
       });
-      Toast.show({ type: 'success', text1: 'Return request sent', text2: 'The seller has been notified.' });
+      Feedback.show({ type: 'success', text1: 'Return request sent', text2: 'The seller has been notified.' });
       setSelectedGroup(null);
       await load();
     } catch (error) {
-      Toast.show({ type: 'error', text1: 'Request failed', text2: error.response?.data?.msg || 'Could not submit the return.' });
+      Feedback.show({ type: 'error', text1: 'Request failed', text2: error.response?.data?.msg || 'Could not submit the return.' });
     } finally {
       setSubmitting(false);
     }
@@ -129,10 +129,10 @@ export default function BuyerReturnsSection({ order, formatMoney }) {
           setCancellingId(request._id);
           try {
             await api.post(`/api/returns/${request._id}/cancel`, {});
-            Toast.show({ type: 'success', text1: 'Return request cancelled' });
+            Feedback.show({ type: 'success', text1: 'Return request cancelled' });
             await load();
           } catch (error) {
-            Toast.show({ type: 'error', text1: 'Could not cancel', text2: error.response?.data?.msg || 'Try again.' });
+            Feedback.show({ type: 'error', text1: 'Could not cancel', text2: error.response?.data?.msg || 'Try again.' });
           } finally {
             setCancellingId(null);
           }

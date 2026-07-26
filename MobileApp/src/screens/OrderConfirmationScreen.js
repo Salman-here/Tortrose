@@ -11,7 +11,7 @@ import {
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import Toast from 'react-native-toast-message';
+import Feedback from '../utils/feedback';
 import api from '../config/api';
 import GlassBackground from '../components/common/GlassBackground';
 import GlassPanel from '../components/common/GlassPanel';
@@ -74,11 +74,11 @@ export default function OrderConfirmationScreen({ navigation, route }) {
     try {
       const res = await api.post(`/api/order-confirm/${token}/${action}`);
       setOrder(res.data?.order || null);
-      Toast.show({ type: 'success', text1: res.data?.msg || 'Order updated' });
+      Feedback.show({ type: 'success', text1: res.data?.msg || 'Order updated' });
     } catch (err) {
       const msg = err.response?.data?.msg || 'Could not update this order.';
       if (err.response?.data?.order) setOrder(err.response.data.order);
-      Toast.show({ type: 'error', text1: 'Order confirmation', text2: msg });
+      Feedback.show({ type: 'error', text1: 'Order confirmation', text2: msg });
       setError(msg);
     } finally {
       setSubmitting(false);

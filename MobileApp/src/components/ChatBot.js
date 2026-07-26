@@ -1105,7 +1105,11 @@ export default function ChatBot({
   ) : null;
 
   const content = (
-    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={embedded ? 0 : 90}>
+    <KeyboardAvoidingView
+      style={{ flex: 1 }}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={embedded ? 0 : 90}
+    >
       {/* Header */}
       {embedded ? (
         <PremiumTopBar
@@ -1173,6 +1177,7 @@ export default function ChatBot({
       {/* Messages */}
       <FlatList
         ref={flatListRef}
+        style={styles.messageListView}
         data={messages}
         renderItem={renderMessage}
         keyExtractor={item => item.id}
@@ -1482,7 +1487,8 @@ const makeStyles = (palette) => {
     },
 
     // Messages
-    messageList: { paddingHorizontal: spacing.md, paddingTop: spacing.sm, paddingBottom: spacing.lg },
+    messageListView: { flex: 1 },
+    messageList: { flexGrow: 1, paddingHorizontal: spacing.md, paddingTop: spacing.sm, paddingBottom: spacing.lg },
     msgRow: { flexDirection: 'row', alignItems: 'flex-end', marginBottom: spacing.md, gap: spacing.xs },
     msgRowUser: { justifyContent: 'flex-end' },
     botAvatar: { width: 28, height: 28, borderRadius: 9, justifyContent: 'center', alignItems: 'center' },

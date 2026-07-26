@@ -14,7 +14,7 @@ import {
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import Toast from 'react-native-toast-message';
+import Feedback from '../utils/feedback';
 import api, { API_ENDPOINTS } from '../config/api';
 import GlassBackground from '../components/common/GlassBackground';
 import GlassPanel from '../components/common/GlassPanel';
@@ -99,7 +99,7 @@ export default function UserWhatsAppSettingsScreen({ navigation }) {
       setOtpSent(true);
       setOtp('');
       startCooldown();
-      Toast.show({ type: 'success', text1: 'Verification code sent on WhatsApp' });
+      Feedback.show({ type: 'success', text1: 'Verification code sent on WhatsApp' });
     } catch (error) {
       Alert.alert('WhatsApp AI', error.response?.data?.msg || 'Could not send verification code');
     } finally {
@@ -115,7 +115,7 @@ export default function UserWhatsAppSettingsScreen({ navigation }) {
     setVerifying(true);
     try {
       const res = await api.post(API_ENDPOINTS.USER_WHATSAPP.VERIFY_OTP, { whatsappNumber: number, otp });
-      Toast.show({ type: 'success', text1: res.data?.msg || 'WhatsApp connected' });
+      Feedback.show({ type: 'success', text1: res.data?.msg || 'WhatsApp connected' });
       setOtpSent(false);
       setOtp('');
       await fetchStatus();
@@ -136,7 +136,7 @@ export default function UserWhatsAppSettingsScreen({ navigation }) {
           setUnlinking(true);
           try {
             await api.post(API_ENDPOINTS.USER_WHATSAPP.UNLINK, {});
-            Toast.show({ type: 'success', text1: 'WhatsApp number unlinked' });
+            Feedback.show({ type: 'success', text1: 'WhatsApp number unlinked' });
             setOtpSent(false);
             setOtp('');
             await fetchStatus();

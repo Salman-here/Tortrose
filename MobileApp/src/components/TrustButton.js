@@ -5,7 +5,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import Toast from 'react-native-toast-message';
+import Feedback from '../utils/feedback';
 import api from '../config/api';
 import { useAuth } from '../contexts/AuthContext';
 import { useTheme } from '../contexts/ThemeContext';
@@ -31,24 +31,24 @@ const TrustButton = ({ storeId, storeName, initialTrustCount = 0, initialIsTrust
   }, [storeId, currentUser]);
 
   const handleToggle = async () => {
-    if (!currentUser) { Toast.show({ type: 'info', text1: 'Login Required', text2: 'Please login to trust stores' }); return; }
+    if (!currentUser) { Feedback.show({ type: 'info', text1: 'Login Required', text2: 'Please login to trust stores' }); return; }
     setIsLoading(true);
     const prev = isTrusted; const prevCount = trustCount;
     try {
       if (isTrusted) {
         setIsTrusted(false); setTrustCount(c => Math.max(0, c - 1));
         const r = await api.delete(`/api/stores/${storeId}/trust`); setTrustCount(r.data.data.trustCount);
-        Toast.show({ type: 'success', text1: 'Untrusted', text2: `You no longer trust ${storeName}` });
+        Feedback.show({ type: 'success', text1: 'Untrusted', text2: `You no longer trust ${storeName}` });
         onTrustChange?.(false, r.data.data.trustCount);
       } else {
         setIsTrusted(true); setTrustCount(c => c + 1);
         const r = await api.post(`/api/stores/${storeId}/trust`, {}); setTrustCount(r.data.data.trustCount);
-        Toast.show({ type: 'success', text1: 'Trusted', text2: `You now trust ${storeName}` });
+        Feedback.show({ type: 'success', text1: 'Trusted', text2: `You now trust ${storeName}` });
         onTrustChange?.(true, r.data.data.trustCount);
       }
     } catch (error) {
       setIsTrusted(prev); setTrustCount(prevCount);
-      Toast.show({ type: 'error', text1: 'Error', text2: error.response?.data?.message || 'Failed to update' });
+      Feedback.show({ type: 'error', text1: 'Error', text2: error.response?.data?.message || 'Failed to update' });
     } finally { setIsLoading(false); }
   };
 
@@ -66,7 +66,7 @@ const TrustButton = ({ storeId, storeName, initialTrustCount = 0, initialIsTrust
       <TouchableOpacity onPress={handleToggle} disabled={isLoading || !currentUser}
         style={[styles.compactBtn, isTrusted ? styles.trustedBtn : styles.untrustedBtn, (isLoading || !currentUser) && { opacity: 0.5 }]}>
         {isLoading ? <ActivityIndicator size="small" color={isTrusted ? '#fff' : colors.text} /> :
-          <><Ionicons name={isTrusted ? 'checkmark' : 'add'} size={14} color={isTrusted ? '#fff' : colors.text} />
+          <><Ionicons name={isTrusted ? 'checkmark' : 'add'} size={12} color={isTrusted ? '#fff' : colors.text} />
           <Text style={[styles.compactText, isTrusted ? { color: '#fff' } : { color: colors.text }]}>{isTrusted ? 'Trusting' : 'Trust'}</Text></>}
       </TouchableOpacity>
     );
@@ -94,11 +94,11 @@ const makeStyles = (palette) => {
   return StyleSheet.create({
     iconBtn: { width: 36, height: 36, borderRadius: 12, backgroundColor: glass.bgSubtle, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: glass.borderSubtle },
     iconBtnTrusted: { backgroundColor: colors.success, borderColor: colors.success },
-    compactBtn: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, gap: 4 },
+    compactBtn: { minHeight: 28, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 9, paddingVertical: 5, borderRadius: 11, gap: 3 },
     fullBtn: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing.lg, paddingVertical: spacing.sm, borderRadius: 14, gap: spacing.sm, flex: 1 },
     trustedBtn: { backgroundColor: colors.success },
     untrustedBtn: { backgroundColor: glass.bg, borderWidth: 1, borderColor: glass.border },
-    compactText: { fontSize: fontSize.xs, fontWeight: fontWeight.semibold },
+    compactText: { fontSize: 10, lineHeight: 13, fontWeight: fontWeight.bold },
     fullText: { fontSize: fontSize.md, fontWeight: fontWeight.medium },
     fullContainer: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
     countWrap: { flexDirection: 'row', alignItems: 'center', gap: 4 },

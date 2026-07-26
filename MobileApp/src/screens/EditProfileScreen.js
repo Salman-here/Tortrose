@@ -9,7 +9,7 @@ import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import Toast from 'react-native-toast-message';
+import Feedback from '../utils/feedback';
 import api from '../config/api';
 import { useAuth } from '../contexts/AuthContext';
 import GlassBackground from '../components/common/GlassBackground';
@@ -32,7 +32,7 @@ export default function EditProfileScreen({ navigation }) {
   const pickAvatar = useCallback(async () => {
     try {
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (status !== 'granted') { Toast.show({ type: 'error', text1: 'Permission Required' }); return; }
+      if (status !== 'granted') { Feedback.show({ type: 'error', text1: 'Permission Required' }); return; }
       const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, allowsEditing: true, aspect: [1, 1], quality: 0.8 });
       if (result.canceled || !result.assets?.[0]) return;
       const asset = result.assets[0];
@@ -42,8 +42,8 @@ export default function EditProfileScreen({ navigation }) {
       await api.post('/api/upload/profile-image', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
       setAvatarUri(asset.uri);
       await fetchAndUpdateCurrentUser();
-      Toast.show({ type: 'success', text1: 'Photo Updated' });
-    } catch (err) { Toast.show({ type: 'error', text1: 'Upload Failed', text2: err.response?.data?.msg || 'Could not upload photo.' }); }
+      Feedback.show({ type: 'success', text1: 'Photo Updated' });
+    } catch (err) { Feedback.show({ type: 'error', text1: 'Upload Failed', text2: err.response?.data?.msg || 'Could not upload photo.' }); }
     finally { setIsUploadingAvatar(false); }
   }, [fetchAndUpdateCurrentUser]);
 
@@ -54,9 +54,9 @@ export default function EditProfileScreen({ navigation }) {
     try {
       await api.patch('/api/user/update', { username: trimmed });
       await fetchAndUpdateCurrentUser();
-      Toast.show({ type: 'success', text1: 'Profile Updated' });
+      Feedback.show({ type: 'success', text1: 'Profile Updated' });
       navigation.goBack();
-    } catch (err) { Toast.show({ type: 'error', text1: 'Error', text2: err.response?.data?.msg || 'Failed to update profile.' }); }
+    } catch (err) { Feedback.show({ type: 'error', text1: 'Error', text2: err.response?.data?.msg || 'Failed to update profile.' }); }
     finally { setIsSaving(false); }
   }, [name, fetchAndUpdateCurrentUser, navigation]);
 

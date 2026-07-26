@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import Toast from 'react-native-toast-message';
+import Feedback from '../../utils/feedback';
 import api from '../../config/api';
 import GlassBackground from '../../components/common/GlassBackground';
 import GlassPanel from '../../components/common/GlassPanel';
@@ -49,11 +49,11 @@ export default function ResetPasswordScreen({ navigation, route }) {
     try {
       const res = await api.post(`/api/password/reset/${token}`, { password });
       setComplete(true);
-      Toast.show({ type: 'success', text1: 'Password reset', text2: res.data?.msg || 'You can sign in now.' });
+      Feedback.show({ type: 'success', text1: 'Password reset', text2: res.data?.msg || 'You can sign in now.' });
     } catch (error) {
       const msg = error.response?.data?.msg || 'Reset link is invalid or expired.';
       setErrors({ form: msg });
-      Toast.show({ type: 'error', text1: 'Reset failed', text2: msg });
+      Feedback.show({ type: 'error', text1: 'Reset failed', text2: msg });
     } finally {
       setLoading(false);
     }
