@@ -14,9 +14,7 @@
       "backgroundColor": "#6366f1"
     },
     "androidStatusBar": {
-      "barStyle": "dark-content",
-      "backgroundColor": "#00000000",
-      "translucent": true
+      "barStyle": "dark-content"
     },
     "assetBundlePatterns": [
       "**/*"
@@ -72,11 +70,6 @@
       "favicon": "./assets/favicon.png",
       "bundler": "metro"
     },
-    "extra": {
-      "eas": {
-        "projectId": "your-project-id"
-      }
-    },
     "plugins": [
       "expo-secure-store",
       [
@@ -97,9 +90,9 @@
           "project": "rozare-mobile"
         }
       ],
-      "@sentry/react-native",
       "expo-audio",
       "expo-font",
+      "expo-system-ui",
       "expo-asset",
       "expo-image",
       "expo-sharing"
@@ -110,6 +103,12 @@
     "locales": {
       "en": "./locales/en.json"
     },
-    "primaryColor": "#6366f1"
+    "primaryColor": "#6366f1",
+    "extra": {
+      "eas": {
+        "projectId": "21e1e6b1-bb29-47bc-a337-236fb17314cf"
+      }
+    },
+    "owner": "rozare"
   }
 }
