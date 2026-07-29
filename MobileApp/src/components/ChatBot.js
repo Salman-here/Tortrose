@@ -8,7 +8,7 @@ import {
   View, Text, StyleSheet, TouchableOpacity, TextInput, FlatList, Modal,
   Platform, Alert, ActivityIndicator, ScrollView, Image,
 } from 'react-native';
-import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
+import { KeyboardStickyView } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -1108,11 +1108,7 @@ export default function ChatBot({
   ) : null;
 
   const content = (
-    <KeyboardAvoidingView
-      style={{ flex: 1 }}
-      behavior="padding"
-      keyboardVerticalOffset={0}
-    >
+    <View style={{ flex: 1 }}>
       {/* Header */}
       {embedded ? (
         <PremiumTopBar
@@ -1219,125 +1215,125 @@ export default function ChatBot({
         </ScrollView>
       )}
 
-      {!!pendingAttachments.length && (
-        <View style={styles.pendingTray}>
-          <GlassBlurFill intensity={40} />
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.pendingList}>
-            {pendingAttachments.map((attachment) => (
-              <View key={attachment.id} style={styles.pendingItem}>
-                {renderAttachmentPreview(attachment, true)}
-                <TouchableOpacity
-                  onPress={() => removePendingAttachment(attachment.id)}
-                  style={styles.pendingRemove}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Remove ${attachment.name || 'attachment'}`}
-                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                >
-                  <Ionicons name="close" size={12} color="#fff" />
-                </TouchableOpacity>
-              </View>
-            ))}
-          </ScrollView>
-        </View>
-      )}
+      <KeyboardStickyView
+        offset={{ closed: 0, opened: Math.max(insets.bottom, 0) }}
+        style={styles.composerDock}
+      >
+        {!!pendingAttachments.length && (
+          <View style={styles.pendingTray}>
+            <GlassBlurFill intensity={40} />
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.pendingList}>
+              {pendingAttachments.map((attachment) => (
+                <View key={attachment.id} style={styles.pendingItem}>
+                  {renderAttachmentPreview(attachment, true)}
+                  <TouchableOpacity
+                    onPress={() => removePendingAttachment(attachment.id)}
+                    style={styles.pendingRemove}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Remove ${attachment.name || 'attachment'}`}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Ionicons name="close" size={12} color="#fff" />
+                  </TouchableOpacity>
+                </View>
+              ))}
+            </ScrollView>
+          </View>
+        )}
 
-      {recorderState.isRecording && (
-        <View style={styles.recordingBar}>
-          <View style={styles.recordingDot} />
-          <Text style={styles.recordingText}>
-            Recording voice note {formatRecordingTime(Math.floor((recorderState.durationMillis || 0) / 1000))}
-          </Text>
+        {recorderState.isRecording && (
+          <View style={styles.recordingBar}>
+            <View style={styles.recordingDot} />
+            <Text style={styles.recordingText}>
+              Recording voice note {formatRecordingTime(Math.floor((recorderState.durationMillis || 0) / 1000))}
+            </Text>
+            <TouchableOpacity
+              onPress={stopVoiceRecording}
+              disabled={recordingBusy}
+              style={styles.stopRecordingBtn}
+              accessibilityRole="button"
+              accessibilityLabel="Stop voice recording"
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Text style={styles.stopRecordingText}>Stop</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* The whole composer dock follows the native keyboard frame. */}
+        <View style={styles.inputContainer}>
+          <GlassBlurFill intensity={48} nativeAndroidBlur />
+          {Platform.OS !== 'android' && (
+            <LinearGradient
+              colors={[
+                'rgba(20,184,166,0.08)',
+                'rgba(14,165,233,0.03)',
+                'rgba(99,102,241,0.09)',
+              ]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={StyleSheet.absoluteFill}
+              pointerEvents="none"
+            />
+          )}
           <TouchableOpacity
-            onPress={stopVoiceRecording}
-            disabled={recordingBusy}
-            style={styles.stopRecordingBtn}
+            onPress={pickImages}
+            disabled={loading || recorderState.isRecording}
+            style={[styles.composerBtn, (loading || recorderState.isRecording) && { opacity: 0.45 }]}
             accessibilityRole="button"
-            accessibilityLabel="Stop voice recording"
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            accessibilityLabel="Attach product image"
+            hitSlop={4}
           >
-            <Text style={styles.stopRecordingText}>Stop</Text>
+            <Ionicons name="image-outline" size={18} color={c.primary} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={pickFiles}
+            disabled={loading || recorderState.isRecording}
+            style={[styles.composerBtn, (loading || recorderState.isRecording) && { opacity: 0.45 }]}
+            accessibilityRole="button"
+            accessibilityLabel="Attach product file"
+            hitSlop={4}
+          >
+            <Ionicons name="attach" size={19} color={c.primary} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={recorderState.isRecording ? stopVoiceRecording : startVoiceRecording}
+            disabled={loading || recordingBusy}
+            style={[
+              styles.composerBtn,
+              recorderState.isRecording && styles.recordingComposerBtn,
+              (loading || recordingBusy) && { opacity: 0.45 },
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel={recorderState.isRecording ? 'Stop voice recording' : 'Record voice note'}
+            hitSlop={4}
+          >
+            <Ionicons name={recorderState.isRecording ? 'stop' : 'mic-outline'} size={18} color={recorderState.isRecording ? '#fff' : c.primary} />
+          </TouchableOpacity>
+          <TextInput
+            style={styles.input}
+            value={input}
+            onChangeText={setInput}
+            placeholder={recorderState.isRecording ? 'Recording voice note...' : effectiveRole === 'seller' ? 'Ask your business assistant...' : 'Ask your stylist...'}
+            placeholderTextColor={c.textLight}
+            returnKeyType="send"
+            onSubmitEditing={() => sendMessage()}
+            editable={!loading && !recorderState.isRecording}
+            multiline={false}
+          />
+          <TouchableOpacity
+            onPress={() => sendMessage()}
+            disabled={(!input.trim() && pendingAttachments.length === 0) || loading || recorderState.isRecording}
+            style={[styles.sendBtn, ((!input.trim() && pendingAttachments.length === 0) || loading || recorderState.isRecording) && { opacity: 0.4 }]}
+            accessibilityRole="button"
+            accessibilityLabel="Send message"
+            hitSlop={4}
+          >
+            <Ionicons name="send" size={16} color="#fff" />
           </TouchableOpacity>
         </View>
-      )}
-
-      {/* Input */}
-      <View
-        style={[
-          styles.inputContainer,
-          !embedded && { marginBottom: Math.max(spacing.sm, insets.bottom || 0) },
-        ]}
-      >
-        <GlassBlurFill intensity={48} nativeAndroidBlur />
-        {Platform.OS !== 'android' && (
-          <LinearGradient
-            colors={[
-              'rgba(20,184,166,0.08)',
-              'rgba(14,165,233,0.03)',
-              'rgba(99,102,241,0.09)',
-            ]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={StyleSheet.absoluteFill}
-            pointerEvents="none"
-          />
-        )}
-        <TouchableOpacity
-          onPress={pickImages}
-          disabled={loading || recorderState.isRecording}
-          style={[styles.composerBtn, (loading || recorderState.isRecording) && { opacity: 0.45 }]}
-          accessibilityRole="button"
-          accessibilityLabel="Attach product image"
-          hitSlop={4}
-        >
-          <Ionicons name="image-outline" size={18} color={c.primary} />
-        </TouchableOpacity>
-        <TouchableOpacity
-          onPress={pickFiles}
-          disabled={loading || recorderState.isRecording}
-          style={[styles.composerBtn, (loading || recorderState.isRecording) && { opacity: 0.45 }]}
-          accessibilityRole="button"
-          accessibilityLabel="Attach product file"
-          hitSlop={4}
-        >
-          <Ionicons name="attach" size={19} color={c.primary} />
-        </TouchableOpacity>
-        <TouchableOpacity
-          onPress={recorderState.isRecording ? stopVoiceRecording : startVoiceRecording}
-          disabled={loading || recordingBusy}
-          style={[
-            styles.composerBtn,
-            recorderState.isRecording && styles.recordingComposerBtn,
-            (loading || recordingBusy) && { opacity: 0.45 },
-          ]}
-          accessibilityRole="button"
-          accessibilityLabel={recorderState.isRecording ? 'Stop voice recording' : 'Record voice note'}
-          hitSlop={4}
-        >
-          <Ionicons name={recorderState.isRecording ? 'stop' : 'mic-outline'} size={18} color={recorderState.isRecording ? '#fff' : c.primary} />
-        </TouchableOpacity>
-        <TextInput
-          style={styles.input}
-          value={input}
-          onChangeText={setInput}
-          placeholder={recorderState.isRecording ? 'Recording voice note...' : effectiveRole === 'seller' ? 'Ask your business assistant...' : 'Ask your stylist...'}
-          placeholderTextColor={c.textLight}
-          returnKeyType="send"
-          onSubmitEditing={() => sendMessage()}
-          editable={!loading && !recorderState.isRecording}
-          multiline={false}
-        />
-        <TouchableOpacity
-          onPress={() => sendMessage()}
-          disabled={(!input.trim() && pendingAttachments.length === 0) || loading || recorderState.isRecording}
-          style={[styles.sendBtn, ((!input.trim() && pendingAttachments.length === 0) || loading || recorderState.isRecording) && { opacity: 0.4 }]}
-          accessibilityRole="button"
-          accessibilityLabel="Send message"
-          hitSlop={4}
-        >
-          <Ionicons name="send" size={16} color="#fff" />
-        </TouchableOpacity>
-      </View>
-    </KeyboardAvoidingView>
+      </KeyboardStickyView>
+    </View>
   );
 
   // Embedded mode (in dashboard)
@@ -1557,6 +1553,7 @@ const makeStyles = (palette) => {
     stopRecordingText: { fontSize: 10, fontWeight: fontWeight.bold, color: '#fff' },
 
     // Input — floating glass composer
+    composerDock: { flexShrink: 0 },
     inputContainer: { overflow: 'hidden', flexDirection: 'row', alignItems: 'center', minHeight: 58, marginHorizontal: spacing.md, marginBottom: spacing.sm, paddingHorizontal: spacing.sm, paddingVertical: spacing.sm, borderWidth: 1, borderColor: g.border, borderRadius: 20, gap: 6, backgroundColor: g.bgStrong, shadowColor: '#6366F1', shadowOffset: { width: 0, height: 7 }, shadowOpacity: 0.12, shadowRadius: 16, elevation: Platform.OS === 'android' ? 0 : 4 },
     composerBtn: { width: 38, height: 38, borderRadius: 12, backgroundColor: c.primarySubtle, borderWidth: 1, borderColor: c.primaryLighter, justifyContent: 'center', alignItems: 'center' },
     recordingComposerBtn: { backgroundColor: c.error, borderColor: c.error },
