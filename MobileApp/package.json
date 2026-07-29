@@ -8,7 +8,9 @@
     "ios": "expo run:ios",
     "web": "expo start --web",
     "test": "jest",
-    "test:watch": "jest --watch"
+    "test:watch": "jest --watch",
+    "validate:build-config": "node scripts/validate-build-config.js",
+    "eas-build-post-install": "npm run validate:build-config"
   },
   "dependencies": {
     "@expo/metro-runtime": "~55.0.12",

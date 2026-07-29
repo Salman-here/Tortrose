@@ -1,5 +1,8 @@
 {
-  "expo": {
-    "name": "Rozare - AI Marketplace"
+  "android": {
+    "app_name": "Rozare - AI Marketplace"
+  },
+  "ios": {
+    "CFBundleDisplayName": "Rozare - AI Marketplace"
   }
 }
