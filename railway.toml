@@ -2,6 +2,7 @@
 builder = "NIXPACKS"
 
 [deploy]
+preDeployCommand = "sh -c 'if [ -f Backend/package.json ]; then npm --prefix Backend run preflight:stripe-payment-indexes; else npm run preflight:stripe-payment-indexes; fi'"
 startCommand = "sh -c 'if [ -f Backend/package.json ]; then npm --prefix Backend start; else npm start; fi'"
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 10
