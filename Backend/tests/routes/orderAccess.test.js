@@ -223,4 +223,72 @@ describe('Order access isolation', () => {
     expect(updateRes.status).toBe(403);
     expect(cancelRes.status).toBe(403);
   });
+
+  test('exposes only webhook-fulfilled payment status to the owning buyer', async () => {
+    const seller = await createUser('seller-payment', 'seller');
+    const otherSeller = await createUser('seller-payment-other', 'seller');
+    const buyer = await createUser('buyer-payment', 'user');
+    const otherBuyer = await createUser('buyer-payment-other', 'user');
+    const sellerProduct = await createProduct(seller, 'seller-payment', 100);
+    const otherProduct = await createProduct(otherSeller, 'other-payment', 50);
+    const order = await createOrder({ buyer, sellerProduct, otherProduct });
+    order.paymentMethod = 'stripe';
+    order.stripeSessionId = 'cs_test_verified';
+    order.awaitingPayment = false;
+    order.inventoryCommitted = true;
+    order.paymentFulfilledAt = new Date();
+    order.isPaid = true;
+    await order.save();
+
+    const ownRes = await request(app)
+      .get(`/api/order/payment-status/${order.orderId}?sessionId=cs_test_verified`)
+      .set('Authorization', tokenFor(buyer));
+    const otherRes = await request(app)
+      .get(`/api/order/payment-status/${order.orderId}?sessionId=cs_test_verified`)
+      .set('Authorization', tokenFor(otherBuyer));
+    const mismatchRes = await request(app)
+      .get(`/api/order/payment-status/${order.orderId}?sessionId=cs_wrong`)
+      .set('Authorization', tokenFor(buyer));
+
+    expect(ownRes.status).toBe(200);
+    expect(ownRes.body).toMatchObject({
+      status: 'paid',
+      isPaid: true,
+      webhookProcessed: true,
+      orderId: order.orderId,
+    });
+    expect(otherRes.status).toBe(403);
+    expect(mismatchRes.status).toBe(400);
+    expect(mismatchRes.body.code).toBe('PAYMENT_SESSION_MISMATCH');
+  });
+
+  test('registers buyer reorder and invoice routes with strict ownership', async () => {
+    const seller = await createUser('seller-actions', 'seller');
+    const otherSeller = await createUser('seller-actions-other', 'seller');
+    const buyer = await createUser('buyer-actions', 'user');
+    const otherBuyer = await createUser('buyer-actions-other', 'user');
+    const sellerProduct = await createProduct(seller, 'seller-actions', 100);
+    const otherProduct = await createProduct(otherSeller, 'other-actions', 50);
+    const order = await createOrder({ buyer, sellerProduct, otherProduct });
+    order.currency = 'PKR';
+    await order.save();
+
+    const reorderRes = await request(app)
+      .post(`/api/order/reorder/${order._id}`)
+      .set('Authorization', tokenFor(buyer));
+    const invoiceRes = await request(app)
+      .get(`/api/order/invoice/${order._id}`)
+      .set('Authorization', tokenFor(buyer));
+    const forbiddenInvoice = await request(app)
+      .get(`/api/order/invoice/${order._id}`)
+      .set('Authorization', tokenFor(otherBuyer));
+
+    expect(reorderRes.status).toBe(200);
+    expect(reorderRes.body).toMatchObject({ added: 2, unavailable: 0 });
+    expect(invoiceRes.status).toBe(200);
+    expect(invoiceRes.body.html).toContain(`Invoice #${order.orderId}`);
+    expect(invoiceRes.body.html).toContain('PKR');
+    expect(invoiceRes.body.html).not.toContain('$290.00');
+    expect(forbiddenInvoice.status).toBe(403);
+  });
 });

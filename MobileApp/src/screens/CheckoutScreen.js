@@ -2,10 +2,10 @@
  * CheckoutScreen — Liquid Glass Design
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   View, Text, ScrollView, TextInput, TouchableOpacity,
-  StyleSheet, Platform, Modal, Alert, ActivityIndicator,
+  StyleSheet, Platform, Modal, ActivityIndicator,
 } from 'react-native';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { Image } from 'expo-image';
@@ -13,6 +13,7 @@ import Feedback from '../utils/feedback';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as WebBrowser from 'expo-web-browser';
+import * as Crypto from 'expo-crypto';
 import api, { API_ENDPOINTS } from '../config/api';
 import { useAuth } from '../contexts/AuthContext';
 import { useGlobal } from '../contexts/GlobalContext';
@@ -22,8 +23,22 @@ import GlassBackground from '../components/common/GlassBackground';
 import GlassPanel from '../components/common/GlassPanel';
 import LocationAutocomplete from '../components/common/LocationAutocomplete';
 import { trackCheckoutStep, trackPaymentEvent, trackError } from '../utils/breadcrumbs';
-import { spacing, fontSize, borderRadius, shadows, fontWeight } from '../styles/theme';
+import { spacing, fontSize, fontWeight } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
+import {
+  buildSellerShipping,
+  calculateCouponPricing,
+  createCheckoutAttemptKey,
+  findCouponOverlap,
+  getCartItemQuantity,
+  getCartItemSellerId,
+  getSellerDisplayName,
+  parsePaymentRedirect,
+  selectDefaultShippingMethods,
+  verifyOrderPayment,
+} from '../utils/checkout';
+
+WebBrowser.maybeCompleteAuthSession();
 
 export default function CheckoutScreen({ navigation }) {
   const { palette } = useTheme();
@@ -42,7 +57,7 @@ export default function CheckoutScreen({ navigation }) {
 
   const [isProcessing, setIsProcessing] = useState(false);
   const [errors, setErrors] = useState({});
-  const [paymentMethod, setPaymentMethod] = useState('cash_on_delivery');
+  const [paymentMethod, setPaymentMethod] = useState('card');
   const [formData, setFormData] = useState({
     fullName: '', email: '', phone: '', address: '',
     city: '', state: '', stateCode: '', postalCode: '', country: 'Pakistan', countryCode: 'PK',
@@ -51,21 +66,24 @@ export default function CheckoutScreen({ navigation }) {
   const [showUpdatePrompt, setShowUpdatePrompt] = useState(false);
   const [pendingOrderData, setPendingOrderData] = useState(null);
 
-  const [shippingCost, setShippingCost] = useState(0);
-  const [shippingLabel, setShippingLabel] = useState('Loading...');
-  const [sellerShipping, setSellerShipping] = useState([]);
-  const [codRestrictedSellers, setCodRestrictedSellers] = useState([]);
+  const [sellerShippingMethods, setSellerShippingMethods] = useState({});
+  const [selectedShippingPerSeller, setSelectedShippingPerSeller] = useState({});
+  const [shippingError, setShippingError] = useState('');
   const [tax, setTax] = useState(0);
   const [taxLabel, setTaxLabel] = useState('Tax');
   const [summaryLoading, setSummaryLoading] = useState(true);
   const [wallet, setWallet] = useState(null);
   const [walletLoading, setWalletLoading] = useState(false);
+  const [instructions, setInstructions] = useState('');
+  const [paymentNotice, setPaymentNotice] = useState(null);
+  const checkoutAttemptKeyRef = useRef(null);
+  const submittingRef = useRef(false);
 
   // Coupon state
   const [couponCode, setCouponCode] = useState('');
-  const [appliedCoupon, setAppliedCoupon] = useState(null);
+  const [appliedCoupons, setAppliedCoupons] = useState([]);
+  const [sellerCoupons, setSellerCoupons] = useState({});
   const [couponLoading, setCouponLoading] = useState(false);
-  const [couponDiscount, setCouponDiscount] = useState(0);
 
   const getEffectivePriceField = (product) => (
     Number(product?.discountedPrice || 0) > 0 && Number(product?.discountedPrice) < Number(product?.price)
@@ -100,9 +118,42 @@ export default function CheckoutScreen({ navigation }) {
   }[method?.type] || `${method?.type || 'Shipping'} Shipping`);
 
   const subtotal = cartItems?.cart?.reduce((total, item) => {
-    return total + (productPriceInCheckoutCurrency(item.product) * (item.qty || item.quantity || 1));
+    return total + (productPriceInCheckoutCurrency(item.product) * getCartItemQuantity(item));
   }, 0) || 0;
 
+  const cartItemsBySeller = useMemo(() => {
+    const grouped = {};
+    (cartItems?.cart || []).forEach((item) => {
+      const sellerId = getCartItemSellerId(item);
+      if (!sellerId) return;
+      if (!grouped[sellerId]) grouped[sellerId] = [];
+      grouped[sellerId].push(item);
+    });
+    return grouped;
+  }, [cartItems?.cart]);
+
+  const shippingPricing = buildSellerShipping({
+    sellerMap: sellerShippingMethods,
+    selections: selectedShippingPerSeller,
+    convertShippingCost: shippingCostInCheckoutCurrency,
+  });
+  const shippingCost = shippingPricing.shippingCost;
+  const sellerShipping = shippingPricing.sellerShipping;
+  const shippingLabel = Object.keys(sellerShippingMethods).length > 1
+    ? `Shipping (${Object.keys(sellerShippingMethods).length} sellers)`
+    : 'Shipping';
+
+  const codRestrictedSellers = useMemo(() => Object.entries(sellerShippingMethods)
+    .filter(([, sellerData]) => sellerData?.allowsCashOnDelivery === false)
+    .map(([, sellerData]) => getSellerDisplayName(sellerData, 'A seller')), [sellerShippingMethods]);
+
+  const couponPricing = calculateCouponPricing({
+    appliedCoupons,
+    cartItems: cartItems?.cart || [],
+    getItemPrice: (item) => productPriceInCheckoutCurrency(item.product),
+    convertCouponAmount: couponAmountInCheckoutCurrency,
+  });
+  const couponDiscount = couponPricing.totalDiscount;
   const totalAmount = subtotal + shippingCost + tax - couponDiscount;
   const walletBalance = Number(wallet?.balances?.[currency] || 0);
   const walletAvailable = !!currentUser && wallet?.status === 'active' && walletBalance + 0.001 >= totalAmount;
@@ -146,13 +197,26 @@ export default function CheckoutScreen({ navigation }) {
     return unsubscribe;
   }, [currentUser, currency, navigation]);
 
+  useEffect(() => {
+    const cartProductIds = new Set((cartItems?.cart || []).map((item) => String(item.product?._id || '')));
+    setAppliedCoupons((previous) => previous
+      .map((coupon) => ({
+        ...coupon,
+        applicableProductIds: (coupon.applicableProductIds || []).filter((id) => cartProductIds.has(String(id))),
+      }))
+      .filter((coupon) => coupon.applicableProductIds.length > 0));
+  }, [cartItems?.cart]);
+
   const fetchSummary = async () => {
     setSummaryLoading(true);
+    setShippingError('');
     try {
       const taxRes = await api.get('/api/tax/config');
       const taxConfig = taxRes.data.taxConfig;
       if (taxConfig && taxConfig.type !== 'none') {
-        const computedTax = taxConfig.type === 'percentage' ? subtotal * (taxConfig.value / 100) : Number(taxConfig.value || 0);
+        const computedTax = taxConfig.type === 'percentage'
+          ? subtotal * (taxConfig.value / 100)
+          : convertAmount(Number(taxConfig.value || 0), taxConfig.currency || 'USD', currency);
         setTax(computedTax);
         setTaxLabel(taxConfig.type === 'percentage' ? `Tax (${taxConfig.value}%)` : `Tax (Fixed)`);
       } else { setTax(0); setTaxLabel('Tax'); }
@@ -162,43 +226,27 @@ export default function CheckoutScreen({ navigation }) {
       const cartPayload = cartItems.cart.map(item => ({ productId: item.product?._id, qty: item.qty || item.quantity || 1 }));
       const shipRes = await api.post(API_ENDPOINTS.SHIPPING.CART, { cartItems: cartPayload });
       const sellerMap = shipRes.data.shippingMethods || {};
-      let totalShipping = 0;
-      const methodNames = [];
-      const nextSellerShipping = [];
-      const nextCodRestrictedSellers = [];
-      Object.entries(sellerMap).forEach(([sellerId, sellerData]) => {
-        if (sellerData?.allowsCashOnDelivery === false) {
-          nextCodRestrictedSellers.push(sellerData?.store?.storeName || sellerData?.seller?.username || 'A seller');
-        }
-        const methods = sellerData.methods || [];
-        if (methods.length > 0) {
-          const sorted = [...methods].sort((a, b) => shippingCostInCheckoutCurrency(a, sellerData) - shippingCostInCheckoutCurrency(b, sellerData));
-          const selectedMethod = sorted[0];
-          const selectedCost = shippingCostInCheckoutCurrency(selectedMethod, sellerData);
-          totalShipping += selectedCost;
-          methodNames.push(getShippingMethodTitle(selectedMethod));
-          nextSellerShipping.push({
-            seller: sellerId,
-            shippingMethod: {
-              name: selectedMethod.type || 'free',
-              price: selectedCost,
-              estimatedDays: selectedMethod.deliveryDays || 5,
-            },
-          });
-        }
-      });
-      setShippingCost(totalShipping);
-      setSellerShipping(nextSellerShipping);
-      setCodRestrictedSellers(nextCodRestrictedSellers);
-      if (nextCodRestrictedSellers.length > 0 && paymentMethod === 'cash_on_delivery') {
-        setPaymentMethod('card');
+      if (!Object.keys(sellerMap).length) throw new Error('No delivery methods were returned for this cart.');
+      const unavailableSeller = Object.values(sellerMap).find((sellerData) => !(sellerData?.methods || []).some((method) => method?.isActive !== false));
+      if (unavailableSeller) throw new Error(`${getSellerDisplayName(unavailableSeller)} has no delivery method available.`);
+      setSellerShippingMethods(sellerMap);
+      setSelectedShippingPerSeller((previous) => selectDefaultShippingMethods(sellerMap, previous));
+      const restricted = Object.values(sellerMap).some((sellerData) => sellerData?.allowsCashOnDelivery === false);
+      if (restricted && paymentMethod === 'cash_on_delivery') setPaymentMethod('card');
+    } catch (error) {
+      setSellerShippingMethods({});
+      setSelectedShippingPerSeller({});
+      setShippingError(error?.response?.data?.msg || error.message || 'Delivery options could not be loaded.');
+    }
+
+    try {
+      if (currentUser) {
+        const sellerIds = [...new Set((cartItems?.cart || []).map(getCartItemSellerId).filter(Boolean))];
+        const couponResponse = await api.post(API_ENDPOINTS.COUPONS.CHECKOUT, { sellerIds });
+        setSellerCoupons(couponResponse.data?.sellerCoupons || {});
       }
-      setShippingLabel(methodNames.length > 0 ? `Shipping (${methodNames.length === 1 ? methodNames[0] : `${methodNames.length} sellers`})` : 'Shipping (Free)');
     } catch {
-      setShippingCost(0);
-      setSellerShipping([]);
-      setCodRestrictedSellers([]);
-      setShippingLabel('Shipping (Free)');
+      setSellerCoupons({});
     }
     setSummaryLoading(false);
   };
@@ -210,7 +258,7 @@ export default function CheckoutScreen({ navigation }) {
 
   const validateForm = () => {
     const newErrors = {};
-    const required = ['fullName', 'email', 'phone', 'address', 'country', 'city', 'postalCode'];
+    const required = ['fullName', 'email', 'phone', 'address', 'country', 'state', 'city', 'postalCode'];
     for (let field of required) {
       if (!formData[field]?.trim()) newErrors[field] = `${field.replace(/([A-Z])/g, ' $1').trim()} is required`;
     }
@@ -250,41 +298,50 @@ export default function CheckoutScreen({ navigation }) {
     return Object.keys(formData).some(key => (formData[key] || '') !== (savedShippingInfo[key] || ''));
   };
 
-  const handleApplyCoupon = async () => {
-    if (!couponCode.trim()) { Feedback.show({ type: 'error', text1: 'Enter a coupon code' }); return; }
+  const handleApplyCoupon = async (suggestedCode = '') => {
+    const requestedCode = String(suggestedCode || couponCode).trim();
+    if (!requestedCode) { Feedback.show({ type: 'error', text1: 'Enter a coupon code' }); return; }
+    if (appliedCoupons.some((coupon) => coupon.code === requestedCode.toUpperCase())) {
+      Feedback.show({ type: 'info', text1: 'Coupon already applied' });
+      return;
+    }
     setCouponLoading(true);
     try {
       const productIds = cartItems.cart.map(item => item.product._id);
-      const res = await api.post(API_ENDPOINTS.COUPONS.VALIDATE, { code: couponCode.trim(), productIds, currency });
+      const res = await api.post(API_ENDPOINTS.COUPONS.VALIDATE, { code: requestedCode, productIds, currency });
       if (res.data.valid) {
         const coupon = res.data.coupon;
-        let discount = 0;
-        const applicableIds = (coupon.applicableProductIds || []).map(id => String(id));
-        cartItems.cart.forEach(item => {
-          if (applicableIds.includes(String(item.product._id))) {
-            const price = productPriceInCheckoutCurrency(item.product);
-            const qty = item.qty || item.quantity || 1;
-            if (coupon.discountType === 'percentage') discount += (price * qty * coupon.discountValue) / 100;
-            else discount += couponAmountInCheckoutCurrency(coupon.discountValue, coupon);
-          }
-        });
-        const maxDiscount = coupon.maxDiscountAmount ? couponAmountInCheckoutCurrency(coupon.maxDiscountAmount, coupon) : null;
-        if (maxDiscount && discount > maxDiscount) discount = maxDiscount;
-        setCouponDiscount(discount);
-        setAppliedCoupon(coupon);
-        Feedback.show({ type: 'success', text1: 'Coupon Applied!', text2: `${coupon.discountType === 'percentage' ? `${coupon.discountValue}%` : formatAmount(couponAmountInCheckoutCurrency(coupon.discountValue, coupon))} off` });
+        const overlap = findCouponOverlap(coupon, appliedCoupons);
+        if (overlap.length) {
+          Feedback.show({ type: 'error', text1: 'Coupon overlaps', text2: 'A product can only receive one coupon per order.' });
+          return;
+        }
+        const applicableIds = new Set((coupon.applicableProductIds || []).map(String));
+        const applicableSubtotal = cartItems.cart.reduce((sum, item) => (
+          applicableIds.has(String(item.product?._id))
+            ? sum + productPriceInCheckoutCurrency(item.product) * getCartItemQuantity(item)
+            : sum
+        ), 0);
+        const minimum = couponAmountInCheckoutCurrency(coupon.minOrderAmount || 0, coupon);
+        if (minimum > 0 && applicableSubtotal + 0.0001 < minimum) {
+          Feedback.show({ type: 'error', text1: 'Minimum not reached', text2: `Spend ${formatAmount(minimum)} on eligible products to use this coupon.` });
+          return;
+        }
+        setAppliedCoupons((previous) => [...previous, coupon]);
+        setCouponCode('');
+        Feedback.show({ type: 'success', text1: 'Coupon applied', text2: `${coupon.code} is ready for checkout.` });
       }
     } catch (err) {
       Feedback.show({ type: 'error', text1: 'Invalid Coupon', text2: err.response?.data?.msg || 'Coupon not valid' });
     } finally { setCouponLoading(false); }
   };
 
-  const handleRemoveCoupon = () => {
-    setAppliedCoupon(null); setCouponDiscount(0); setCouponCode('');
+  const handleRemoveCoupon = (couponId) => {
+    setAppliedCoupons((previous) => previous.filter((coupon) => String(coupon._id) !== String(couponId)));
     Feedback.show({ type: 'info', text1: 'Coupon removed' });
   };
 
-  const buildOrder = () => {
+  const buildOrder = (idempotencyKey) => {
     const primaryShipping = sellerShipping[0]?.shippingMethod || {
       name: shippingCost === 0 ? 'free' : 'standard',
       price: shippingCost,
@@ -323,24 +380,26 @@ export default function CheckoutScreen({ navigation }) {
       sellerShipping,
       orderSummary: { subtotal, shippingCost, tax, couponDiscount, totalAmount },
       currency,
-      appliedCoupons: appliedCoupon ? [{
-        couponId: appliedCoupon._id,
-        code: appliedCoupon.code,
-        discountType: appliedCoupon.discountType,
-        discountValue: appliedCoupon.discountType === 'fixed'
-          ? couponAmountInCheckoutCurrency(appliedCoupon.discountValue, appliedCoupon)
-          : appliedCoupon.discountValue,
+      appliedCoupons: appliedCoupons.map((coupon) => ({
+        couponId: coupon._id,
+        code: coupon.code,
+        discountType: coupon.discountType,
+        discountValue: coupon.discountType === 'fixed'
+          ? couponAmountInCheckoutCurrency(coupon.discountValue, coupon)
+          : coupon.discountValue,
         currency,
-        sourceDiscountValue: appliedCoupon.discountValue,
-        sourceCurrency: couponCurrency(appliedCoupon),
-        applicableProductIds: appliedCoupon.applicableProductIds,
-      }] : [],
+        sourceDiscountValue: coupon.discountValue,
+        sourceCurrency: couponCurrency(coupon),
+        applicableProductIds: coupon.applicableProductIds,
+      })),
       paymentMethod: paymentMethod === 'card'
         ? 'stripe'
         : paymentMethod === 'wallet'
           ? 'wallet'
           : 'cash_on_delivery',
       platform: paymentMethod === 'card' ? 'mobile' : undefined,
+      ...(instructions.trim() ? { instructions: instructions.trim() } : {}),
+      idempotencyKey,
     };
   };
 
@@ -357,13 +416,29 @@ export default function CheckoutScreen({ navigation }) {
           : 'Your order has been placed successfully',
       });
       await api.delete(API_ENDPOINTS.CART.CLEAR);
-      fetchCart();
-      setTimeout(() => { navigation.reset({ index: 0, routes: [{ name: 'MainTabs' }, { name: 'Orders' }] }); }, 1200);
+      await fetchCart();
+      checkoutAttemptKeyRef.current = null;
+      setTimeout(() => { navigation.reset({ index: 1, routes: [{ name: 'MainTabs' }, { name: 'Orders' }] }); }, 700);
     }
   };
 
   const handlePlaceOrder = async () => {
+    if (submittingRef.current || isProcessing) return;
     trackCheckoutStep('place_order_clicked', { paymentMethod, items: cartItems?.cart?.length, total: totalAmount });
+    setPaymentNotice(null);
+    if (!currentUser) {
+      Feedback.show({ type: 'info', text1: 'Sign in to checkout', text2: 'Your cart will be kept while you sign in.' });
+      navigation.navigate('Login', { returnTo: 'Cart', intent: 'checkout' });
+      return;
+    }
+    if (summaryLoading) {
+      Feedback.show({ type: 'info', text1: 'Preparing checkout', text2: 'Please wait while delivery and tax are confirmed.' });
+      return;
+    }
+    if (shippingError || !shippingPricing.valid) {
+      Feedback.show({ type: 'error', text1: 'Choose delivery', text2: shippingError || 'Select one delivery method for every store.' });
+      return;
+    }
     if (paymentMethod === 'cash_on_delivery' && codRestrictedSellers.length > 0) {
       Feedback.show({
         type: 'error',
@@ -391,21 +466,67 @@ export default function CheckoutScreen({ navigation }) {
       trackCheckoutStep('validation_failed');
       return;
     }
+    submittingRef.current = true;
     setIsProcessing(true);
     try {
-      const order = buildOrder();
+      if (!checkoutAttemptKeyRef.current) {
+        checkoutAttemptKeyRef.current = createCheckoutAttemptKey(Crypto.randomUUID);
+      }
+      const idempotencyKey = checkoutAttemptKeyRef.current;
+      const order = buildOrder(idempotencyKey);
       trackCheckoutStep('order_built', { itemCount: order.orderItems.length });
-      const res = await api.post('/api/order/place', { order });
+      const res = await api.post('/api/order/place', { order }, {
+        headers: { 'X-Idempotency-Key': idempotencyKey },
+      });
       trackCheckoutStep('order_api_success', { orderId: res.data?.orderId });
       if (paymentMethod === 'card') {
-        const { url } = res.data;
-        if (!url) throw new Error('No Stripe URL returned');
-        trackPaymentEvent('stripe_redirect', { url: url.substring(0, 60) });
-        await WebBrowser.openBrowserAsync(url, { dismissButtonStyle: 'cancel', presentationStyle: WebBrowser.WebBrowserPresentationStyle.FULL_SCREEN });
-        // Save shipping info on first order
-        if (!savedShippingInfo?.fullName) {
-          try { await api.patch('/api/user/shipping-info', { shippingInfo: formData }); setSavedShippingInfo(formData); } catch {}
+        const { url, id: sessionId } = res.data;
+        const orderId = res.data?.orderId || res.data?.order?.orderId;
+        if (res.data?.isPaid === true) {
+          navigation.replace('PaymentSuccess', { orderId, session_id: sessionId });
+          return;
         }
+        if (!url || !sessionId || !orderId) throw new Error('Secure checkout did not return a complete payment reference.');
+        trackPaymentEvent('stripe_redirect', { url: url.substring(0, 60) });
+        // Listen at the scheme root so both Stripe success and cancel deep links
+        // complete the Android auth-session polyfill.
+        const browserResult = await WebBrowser.openAuthSessionAsync(url, 'rozare://', {
+          dismissButtonStyle: 'cancel',
+          presentationStyle: WebBrowser.WebBrowserPresentationStyle.FULL_SCREEN,
+          showTitle: true,
+          enableBarCollapsing: true,
+        });
+        if (!savedShippingInfo?.fullName || hasShippingInfoChanged()) {
+          try {
+            await api.patch('/api/user/shipping-info', { shippingInfo: formData });
+            setSavedShippingInfo(formData);
+          } catch {}
+        }
+
+        if (browserResult.type === 'success' && browserResult.url) {
+          const redirect = parsePaymentRedirect(browserResult.url);
+          if (redirect.type === 'cancel') {
+            navigation.replace('PaymentCancel', { orderId: redirect.orderId || orderId, session_id: redirect.sessionId || sessionId });
+          } else {
+            navigation.replace('PaymentSuccess', { orderId: redirect.orderId || orderId, session_id: redirect.sessionId || sessionId });
+          }
+          return;
+        }
+
+        const verification = await verifyOrderPayment({ apiClient: api, orderId, sessionId, attempts: 1 });
+        if (verification.status === 'paid') {
+          navigation.replace('PaymentSuccess', { orderId, session_id: sessionId });
+          return;
+        }
+        setPaymentNotice({
+          type: 'pending',
+          orderId,
+          sessionId,
+          text: browserResult.type === 'cancel' || browserResult.type === 'dismiss'
+            ? 'Secure payment was closed. Your cart is safe and no success has been assumed.'
+            : 'Payment is still being confirmed. Your cart will stay here until confirmation.',
+        });
+        Feedback.show({ type: 'info', text1: 'Payment not confirmed', text2: 'You can safely return to secure checkout.' });
       } else {
         // Check if info changed
         if (savedShippingInfo?.fullName && hasShippingInfoChanged()) {
@@ -418,8 +539,21 @@ export default function CheckoutScreen({ navigation }) {
       }
     } catch (error) {
       trackError('checkout', error, { step: 'place_order', paymentMethod });
-      Feedback.show({ type: 'error', text1: 'Order Failed', text2: error.response?.data?.msg || 'Failed to place order.' });
-    } finally { setIsProcessing(false); }
+      const code = error.response?.data?.code;
+      if (code === 'COD_NOT_AVAILABLE_FOR_CART') setPaymentMethod('card');
+      if (code === 'SHIPPING_METHOD_REQUIRED' || code === 'SHIPPING_METHOD_NOT_AVAILABLE' || code === 'SHIPPING_SCOPE_INVALID') {
+        fetchSummary();
+      }
+      if (error.response?.status === 401 || error.response?.status === 403) {
+        navigation.navigate('Login', { returnTo: 'Cart', intent: 'checkout' });
+      }
+      const isRetryable = !error.response || error.response?.status >= 500 || error.response?.status === 408;
+      if (!isRetryable) checkoutAttemptKeyRef.current = null;
+      Feedback.show({ type: 'error', text1: 'Order not completed', text2: error.response?.data?.msg || error.message || 'Please check your connection and try again.' });
+    } finally {
+      submittingRef.current = false;
+      setIsProcessing(false);
+    }
   };
 
   const renderInput = (field, placeholder, options = {}) => {
@@ -601,32 +735,131 @@ export default function CheckoutScreen({ navigation }) {
             {renderInput('postalCode', 'Postal Code', { keyboardType: 'numeric' })}
           </GlassPanel>
 
-          {/* Coupon Code */}
+          {/* Delivery methods */}
+          <GlassPanel variant="card" style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <Ionicons name="car-outline" size={18} color={palette.colors.info} />
+              <Text style={styles.sectionTitle}>Delivery</Text>
+              {summaryLoading && <ActivityIndicator size="small" color={palette.colors.primary} />}
+            </View>
+            {Object.keys(sellerShippingMethods).length > 1 && !shippingError && (
+              <View style={styles.multiSellerNotice}>
+                <Ionicons name="information-circle-outline" size={18} color={palette.colors.info} />
+                <Text style={styles.multiSellerNoticeText}>
+                  This cart ships from {Object.keys(sellerShippingMethods).length} stores. Choose delivery for each store.
+                </Text>
+              </View>
+            )}
+            {!!shippingError && (
+              <View style={styles.shippingErrorCard}>
+                <View style={styles.shippingErrorCopy}>
+                  <Ionicons name="cloud-offline-outline" size={20} color={palette.colors.error} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.shippingErrorTitle}>Delivery options unavailable</Text>
+                    <Text style={styles.shippingErrorText}>{shippingError}</Text>
+                  </View>
+                </View>
+                <TouchableOpacity style={styles.retryButton} onPress={fetchSummary} disabled={summaryLoading}>
+                  <Ionicons name="refresh" size={15} color="#fff" />
+                  <Text style={styles.retryButtonText}>Retry</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+            {!shippingError && Object.entries(sellerShippingMethods).map(([sellerId, sellerData]) => {
+              const sellerItems = cartItemsBySeller[sellerId] || [];
+              return (
+                <View key={sellerId} style={styles.sellerDeliveryCard}>
+                  <View style={styles.sellerDeliveryHeader}>
+                    <View style={styles.sellerIcon}><Ionicons name="storefront-outline" size={17} color={palette.colors.primary} /></View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.sellerName} numberOfLines={1}>{getSellerDisplayName(sellerData)}</Text>
+                      <Text style={styles.sellerItemsText}>{sellerItems.length} {sellerItems.length === 1 ? 'item' : 'items'} in this shipment</Text>
+                    </View>
+                  </View>
+                  {(sellerData.methods || []).filter((method) => method?.isActive !== false).map((method) => {
+                    const selected = selectedShippingPerSeller[sellerId]?.type === method.type;
+                    const methodCost = shippingCostInCheckoutCurrency(method, sellerData);
+                    return (
+                      <TouchableOpacity
+                        key={method.type}
+                        activeOpacity={0.78}
+                        style={[styles.shippingOption, selected && styles.shippingOptionSelected]}
+                        onPress={() => setSelectedShippingPerSeller((previous) => ({ ...previous, [sellerId]: method }))}
+                        accessibilityRole="radio"
+                        accessibilityState={{ checked: selected }}
+                      >
+                        <View style={[styles.radio, selected && styles.radioSelected]}>{selected && <View style={styles.radioInner} />}</View>
+                        <View style={styles.shippingOptionIcon}><Ionicons name={method.type === 'fast' ? 'flash-outline' : 'car-outline'} size={18} color={selected ? palette.colors.primary : palette.colors.textSecondary} /></View>
+                        <View style={{ flex: 1 }}>
+                          <View style={styles.shippingTitleRow}>
+                            <Text style={styles.shippingOptionTitle}>{getShippingMethodTitle(method)}</Text>
+                            {method.type === 'free' && <Text style={styles.recommendedBadge}>Recommended</Text>}
+                          </View>
+                          <Text style={styles.shippingOptionSub}>Estimated {Math.max(1, Number(method.deliveryDays) || 5)} {Number(method.deliveryDays) === 1 ? 'day' : 'days'}</Text>
+                        </View>
+                        <Text style={[styles.shippingOptionPrice, methodCost === 0 && { color: palette.colors.success }]}>{methodCost === 0 ? 'Free' : formatAmount(methodCost)}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              );
+            })}
+            <Text style={styles.instructionsLabel}>Delivery instructions <Text style={styles.optionalText}>(optional)</Text></Text>
+            <View style={[styles.inputContainer, styles.instructionsInput]}>
+              <Ionicons name="chatbox-ellipses-outline" size={18} color={palette.colors.textSecondary} style={styles.inputIcon} />
+              <TextInput
+                style={[styles.input, styles.instructionsText]}
+                placeholder="Gate code, landmark, or delivery note"
+                placeholderTextColor={palette.colors.grayLight}
+                value={instructions}
+                onChangeText={setInstructions}
+                multiline
+                maxLength={500}
+                textAlignVertical="top"
+              />
+            </View>
+          </GlassPanel>
+
+          {/* Coupon codes */}
           <GlassPanel variant="card" style={styles.section}>
             <View style={styles.sectionHeader}>
               <Ionicons name="pricetag-outline" size={18} color="#f97316" />
-              <Text style={styles.sectionTitle}>Coupon Code</Text>
+              <Text style={styles.sectionTitle}>Coupons</Text>
+              {!!appliedCoupons.length && <View style={styles.badge}><Text style={styles.badgeText}>{appliedCoupons.length}</Text></View>}
             </View>
-            {appliedCoupon ? (
-              <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(34,197,94,0.1)', padding: spacing.md, borderRadius: 14, gap: spacing.sm }}>
-                <Ionicons name="checkmark-circle" size={20} color={palette.colors.success} />
-                <View style={{ flex: 1 }}>
-                  <Text style={{ fontSize: fontSize.md, fontWeight: fontWeight.bold, color: palette.colors.success }}>{appliedCoupon.code}</Text>
-                  <Text style={{ fontSize: fontSize.xs, color: palette.colors.textSecondary }}>
-                    {appliedCoupon.discountType === 'percentage' ? `${appliedCoupon.discountValue}% off` : `${formatAmount(couponAmountInCheckoutCurrency(appliedCoupon.discountValue, appliedCoupon))} off`} - Saving {formatAmount(couponDiscount)}
-                  </Text>
+            {appliedCoupons.map((coupon) => {
+              const pricing = couponPricing.couponDiscounts.find((entry) => String(entry.coupon._id) === String(coupon._id));
+              return (
+                <View key={String(coupon._id)} style={styles.appliedCouponCard}>
+                  <Ionicons name="checkmark-circle" size={20} color={palette.colors.success} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.appliedCouponCode}>{coupon.code}</Text>
+                    <Text style={styles.appliedCouponText}>Saving {formatAmount(pricing?.discount || 0)} on eligible items</Text>
+                  </View>
+                  <TouchableOpacity onPress={() => handleRemoveCoupon(coupon._id)} hitSlop={8}><Ionicons name="close-circle" size={22} color={palette.colors.error} /></TouchableOpacity>
                 </View>
-                <TouchableOpacity onPress={handleRemoveCoupon}><Ionicons name="close-circle" size={22} color={palette.colors.error} /></TouchableOpacity>
+              );
+            })}
+            <View style={styles.couponInputRow}>
+              <View style={[styles.inputContainer, { flex: 1 }]}>
+                <Ionicons name="pricetag-outline" size={16} color={palette.colors.textSecondary} style={styles.inputIcon} />
+                <TextInput style={styles.input} placeholder="Enter coupon code" placeholderTextColor={palette.colors.grayLight} value={couponCode} onChangeText={setCouponCode} autoCapitalize="characters" autoCorrect={false} returnKeyType="done" onSubmitEditing={() => handleApplyCoupon()} />
               </View>
-            ) : (
-              <View style={{ flexDirection: 'row', gap: spacing.sm }}>
-                <View style={[styles.inputContainer, { flex: 1 }]}>
-                  <Ionicons name="pricetag-outline" size={16} color="rgba(255,255,255,0.5)" style={styles.inputIcon} />
-                  <TextInput style={styles.input} placeholder="Enter coupon code" placeholderTextColor={palette.colors.grayLight} value={couponCode} onChangeText={setCouponCode} autoCapitalize="characters" />
-                </View>
-                <TouchableOpacity style={{ backgroundColor: palette.colors.primary, paddingHorizontal: spacing.lg, borderRadius: 14, justifyContent: 'center', alignItems: 'center' }} onPress={handleApplyCoupon} disabled={couponLoading}>
-                  {couponLoading ? <ActivityIndicator color="#fff" size="small" /> : <Text style={{ color: '#fff', fontWeight: fontWeight.bold, fontSize: fontSize.sm }}>Apply</Text>}
-                </TouchableOpacity>
+              <TouchableOpacity style={styles.applyCouponButton} onPress={() => handleApplyCoupon()} disabled={couponLoading}>
+                {couponLoading ? <ActivityIndicator color="#fff" size="small" /> : <Text style={styles.applyCouponText}>Apply</Text>}
+              </TouchableOpacity>
+            </View>
+            {!!Object.values(sellerCoupons).flat().length && (
+              <View style={styles.availableCoupons}>
+                <Text style={styles.availableCouponsLabel}>Available for this cart</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.availableCouponRow}>
+                  {Object.values(sellerCoupons).flat().map((coupon) => (
+                    <TouchableOpacity key={String(coupon._id)} style={styles.availableCouponChip} onPress={() => handleApplyCoupon(coupon.code)} disabled={couponLoading}>
+                      <Ionicons name="ticket-outline" size={14} color={palette.colors.primary} />
+                      <Text style={styles.availableCouponCode}>{coupon.code}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
               </View>
             )}
           </GlassPanel>
@@ -637,6 +870,24 @@ export default function CheckoutScreen({ navigation }) {
               <Ionicons name="card-outline" size={18} color={palette.colors.info} />
               <Text style={styles.sectionTitle}>Payment Method</Text>
             </View>
+            {!!paymentNotice && (
+              <View style={styles.paymentNotice}>
+                <Ionicons name="time-outline" size={19} color={palette.colors.warning} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.paymentNoticeTitle}>Payment not confirmed</Text>
+                  <Text style={styles.paymentNoticeText}>{paymentNotice.text}</Text>
+                </View>
+                <TouchableOpacity
+                  style={styles.verifyPaymentButton}
+                  onPress={() => navigation.navigate('PaymentSuccess', {
+                    orderId: paymentNotice.orderId,
+                    session_id: paymentNotice.sessionId,
+                  })}
+                >
+                  <Text style={styles.verifyPaymentButtonText}>Check</Text>
+                </TouchableOpacity>
+              </View>
+            )}
             {codRestrictedSellers.length > 0 && (
               <View style={styles.advanceOnlyNotice}>
                 <Ionicons name="information-circle-outline" size={18} color={palette.colors.info} />
@@ -743,7 +994,11 @@ export default function CheckoutScreen({ navigation }) {
             <Text style={styles.footerLabel}>Total</Text>
             <Text style={styles.footerValue}>{formatAmount(totalAmount)}</Text>
           </View>
-          <TouchableOpacity style={[styles.placeOrderBtn, isProcessing && { opacity: 0.6 }]} onPress={handlePlaceOrder} disabled={isProcessing}>
+          <TouchableOpacity
+            style={[styles.placeOrderBtn, (isProcessing || summaryLoading || !!shippingError || !shippingPricing.valid) && { opacity: 0.55 }]}
+            onPress={handlePlaceOrder}
+            disabled={isProcessing || summaryLoading || !!shippingError || !shippingPricing.valid}
+          >
             <LinearGradient colors={['#14B8A6', '#0EA5E9', '#6366F1']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
             {isProcessing ? <InlineLoader size="small" color="#fff" /> : (
               <>
@@ -756,7 +1011,15 @@ export default function CheckoutScreen({ navigation }) {
       </KeyboardAvoidingView>
 
       {/* Update Shipping Info Modal */}
-      <Modal visible={showUpdatePrompt} transparent animationType="fade" onRequestClose={() => setShowUpdatePrompt(false)}>
+      <Modal
+        visible={showUpdatePrompt}
+        transparent
+        animationType="fade"
+        onRequestClose={async () => {
+          setShowUpdatePrompt(false);
+          await completeOrder(pendingOrderData?.order, false);
+        }}
+      >
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: spacing.lg }}>
           <GlassPanel variant="strong" style={{ padding: spacing.xl, width: '100%', maxWidth: 360, borderRadius: 24 }}>
             <View style={{ alignItems: 'center', marginBottom: spacing.lg }}>
@@ -808,11 +1071,52 @@ const buildStyles = (p) => StyleSheet.create({
   errorText: { fontSize: fontSize.xs, color: p.colors.error, marginTop: 4, marginLeft: 4 },
   row: { flexDirection: 'row', gap: spacing.md },
   halfInput: { flex: 1 },
+  multiSellerNotice: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm, padding: spacing.md, borderRadius: 14, backgroundColor: `${p.colors.info}12`, borderWidth: 1, borderColor: `${p.colors.info}24`, marginBottom: spacing.md },
+  multiSellerNoticeText: { flex: 1, fontSize: fontSize.sm, lineHeight: 19, color: p.colors.textSecondary },
+  shippingErrorCard: { borderRadius: 16, padding: spacing.md, backgroundColor: `${p.colors.error}0D`, borderWidth: 1, borderColor: `${p.colors.error}28`, gap: spacing.md },
+  shippingErrorCopy: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm },
+  shippingErrorTitle: { color: p.colors.text, fontSize: fontSize.sm, fontWeight: fontWeight.bold, marginBottom: 3 },
+  shippingErrorText: { color: p.colors.textSecondary, fontSize: fontSize.xs, lineHeight: 17 },
+  retryButton: { alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, paddingVertical: 9, borderRadius: 12, backgroundColor: p.colors.primary },
+  retryButtonText: { color: '#fff', fontSize: fontSize.sm, fontWeight: fontWeight.bold },
+  sellerDeliveryCard: { padding: spacing.md, borderRadius: 18, backgroundColor: p.glass.bgSubtle, borderWidth: 1, borderColor: p.glass.borderSubtle, marginBottom: spacing.md, gap: spacing.sm },
+  sellerDeliveryHeader: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingBottom: spacing.xs },
+  sellerIcon: { width: 36, height: 36, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: `${p.colors.primary}12`, borderWidth: 1, borderColor: `${p.colors.primary}22` },
+  sellerName: { color: p.colors.text, fontSize: fontSize.md, fontWeight: fontWeight.bold },
+  sellerItemsText: { marginTop: 2, color: p.colors.textSecondary, fontSize: fontSize.xs },
+  shippingOption: { minHeight: 70, flexDirection: 'row', alignItems: 'center', gap: spacing.sm, padding: spacing.md, borderRadius: 15, borderWidth: 1.5, borderColor: p.glass.borderSubtle, backgroundColor: p.glass.bgSubtle },
+  shippingOptionSelected: { borderColor: p.colors.primary, backgroundColor: `${p.colors.primary}0D` },
+  shippingOptionIcon: { width: 34, height: 34, borderRadius: 11, alignItems: 'center', justifyContent: 'center', backgroundColor: p.glass.bgStrong },
+  shippingTitleRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6 },
+  shippingOptionTitle: { color: p.colors.text, fontSize: fontSize.sm, fontWeight: fontWeight.semibold },
+  shippingOptionSub: { marginTop: 3, color: p.colors.textSecondary, fontSize: fontSize.xs },
+  shippingOptionPrice: { color: p.colors.text, fontSize: fontSize.sm, fontWeight: fontWeight.bold },
+  recommendedBadge: { color: p.colors.success, backgroundColor: `${p.colors.success}12`, borderRadius: 10, paddingHorizontal: 7, paddingVertical: 2, fontSize: 9, fontWeight: fontWeight.bold, overflow: 'hidden' },
+  instructionsLabel: { color: p.colors.text, fontSize: fontSize.sm, fontWeight: fontWeight.semibold, marginTop: spacing.xs, marginBottom: spacing.sm },
+  optionalText: { color: p.colors.textSecondary, fontWeight: fontWeight.regular },
+  instructionsInput: { alignItems: 'flex-start', minHeight: 92, paddingTop: spacing.sm },
+  instructionsText: { minHeight: 78, paddingTop: 5, lineHeight: 20 },
+  appliedCouponCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: `${p.colors.success}0D`, padding: spacing.md, borderRadius: 14, gap: spacing.sm, borderWidth: 1, borderColor: `${p.colors.success}24`, marginBottom: spacing.sm },
+  appliedCouponCode: { fontSize: fontSize.md, fontWeight: fontWeight.bold, color: p.colors.success },
+  appliedCouponText: { marginTop: 2, fontSize: fontSize.xs, color: p.colors.textSecondary },
+  couponInputRow: { flexDirection: 'row', gap: spacing.sm },
+  applyCouponButton: { minWidth: 76, backgroundColor: p.colors.primary, paddingHorizontal: spacing.md, borderRadius: 14, justifyContent: 'center', alignItems: 'center' },
+  applyCouponText: { color: '#fff', fontWeight: fontWeight.bold, fontSize: fontSize.sm },
+  availableCoupons: { marginTop: spacing.md },
+  availableCouponsLabel: { color: p.colors.textSecondary, fontSize: fontSize.xs, fontWeight: fontWeight.semibold, marginBottom: spacing.sm },
+  availableCouponRow: { gap: spacing.sm, paddingRight: spacing.md },
+  availableCouponChip: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 11, paddingVertical: 8, borderRadius: 13, backgroundColor: `${p.colors.primary}0B`, borderWidth: 1, borderColor: `${p.colors.primary}20` },
+  availableCouponCode: { color: p.colors.primary, fontSize: fontSize.xs, fontWeight: fontWeight.bold },
   paymentOption: { flexDirection: 'row', alignItems: 'center', backgroundColor: p.glass.bgSubtle, padding: spacing.md, borderRadius: 16, borderWidth: 1.5, borderColor: p.glass.borderSubtle, gap: spacing.md },
   paymentSelected: { borderColor: p.colors.primary, backgroundColor: 'rgba(99,102,241,0.08)' },
   paymentDisabled: { opacity: 0.55 },
   advanceOnlyNotice: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm, padding: spacing.md, borderRadius: 14, backgroundColor: `${p.colors.info}12`, borderWidth: 1, borderColor: `${p.colors.info}28`, marginBottom: spacing.md },
   advanceOnlyNoticeText: { flex: 1, fontSize: fontSize.sm, color: p.colors.textSecondary, lineHeight: 18 },
+  paymentNotice: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm, padding: spacing.md, borderRadius: 14, backgroundColor: `${p.colors.warning}10`, borderWidth: 1, borderColor: `${p.colors.warning}28`, marginBottom: spacing.md },
+  paymentNoticeTitle: { color: p.colors.text, fontSize: fontSize.sm, fontWeight: fontWeight.bold },
+  paymentNoticeText: { color: p.colors.textSecondary, fontSize: fontSize.xs, lineHeight: 17, marginTop: 2 },
+  verifyPaymentButton: { alignSelf: 'center', paddingHorizontal: 11, paddingVertical: 7, borderRadius: 10, backgroundColor: `${p.colors.warning}18` },
+  verifyPaymentButtonText: { color: p.colors.warning, fontSize: fontSize.xs, fontWeight: fontWeight.bold },
   radio: { width: 20, height: 20, borderRadius: 10, borderWidth: 2, borderColor: 'rgba(255,255,255,0.3)', justifyContent: 'center', alignItems: 'center' },
   radioSelected: { borderColor: p.colors.primary },
   radioInner: { width: 10, height: 10, borderRadius: 5, backgroundColor: p.colors.primary },

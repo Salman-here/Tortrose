@@ -19,7 +19,7 @@ import AuthTopHeader from '../../components/common/AuthTopHeader';
 import { spacing, fontSize, borderRadius, shadows, fontWeight } from '../../styles/theme';
 import { useTheme } from '../../contexts/ThemeContext';
 
-export default function SignUpScreen({ navigation }) {
+export default function SignUpScreen({ navigation, route }) {
   const { palette, isDark } = useTheme();
   const styles = buildStyles(palette);
 
@@ -34,12 +34,23 @@ export default function SignUpScreen({ navigation }) {
   const [googleLoading, setGoogleLoading] = useState(false);
   const [errors, setErrors] = useState({});
   const [focused, setFocused] = useState({});
+  const returnTo = route?.params?.returnTo;
+
+  const finishAuthentication = () => {
+    navigation.reset({
+      index: 0,
+      routes: [{
+        name: 'MainTabs',
+        ...(returnTo === 'Cart' ? { params: { screen: 'Cart' } } : {}),
+      }],
+    });
+  };
 
   const handleGoogleSignUp = async () => {
     setGoogleLoading(true);
     const result = await googleSignIn();
     setGoogleLoading(false);
-    if (result?.success) navigation.reset({ index: 0, routes: [{ name: 'MainTabs' }] });
+    if (result?.success) finishAuthentication();
   };
 
   const handleSignUp = async () => {
@@ -60,6 +71,7 @@ export default function SignUpScreen({ navigation }) {
       email: email.trim(),
       name: name.trim(),
       password,
+      returnTo,
     });
   };
 
@@ -197,7 +209,7 @@ export default function SignUpScreen({ navigation }) {
 
             <View style={styles.loginRow}>
               <Text style={styles.loginText}>Already have an account?</Text>
-              <TouchableOpacity onPress={() => navigation.navigate('Login')}><Text style={styles.loginLink}> Sign In</Text></TouchableOpacity>
+              <TouchableOpacity onPress={() => navigation.navigate('Login', { returnTo })}><Text style={styles.loginLink}> Sign In</Text></TouchableOpacity>
             </View>
 
             <View style={[styles.loginRow, { marginTop: spacing.md }]}>

@@ -92,8 +92,10 @@ function validateLocales(expoConfig) {
 
 function validateEasConfig(expoConfig) {
   const easConfig = readJson('eas.json');
+  const packageConfig = readJson('package.json');
   const projectId = expoConfig.extra?.eas?.projectId;
   const preview = easConfig.build?.preview;
+  const production = easConfig.build?.production;
 
   if (
     typeof projectId !== 'string' ||
@@ -112,6 +114,17 @@ function validateEasConfig(expoConfig) {
     fail('build.preview.android.buildType must be "apk"');
   }
 
+  if (preview?.channel !== 'preview' || preview?.environment !== 'preview') {
+    fail('Preview builds must use the preview update channel and environment');
+  }
+
+  if (
+    production?.channel !== 'production' ||
+    production?.environment !== 'production'
+  ) {
+    fail('Production builds must use the production update channel and environment');
+  }
+
   if (preview?.env?.EXPO_PUBLIC_PROJECT_ID !== projectId) {
     fail('Preview EXPO_PUBLIC_PROJECT_ID must match expo.extra.eas.projectId');
   }
@@ -121,6 +134,24 @@ function validateEasConfig(expoConfig) {
     preview?.env?.SENTRY_DISABLE_NATIVE_DEBUG_UPLOAD !== 'true'
   ) {
     fail('Preview builds must disable authenticated Sentry artifact uploads');
+  }
+
+  const expectedUpdatesUrl = `https://u.expo.dev/${projectId}`;
+  if (
+    expoConfig.updates?.url !== expectedUpdatesUrl ||
+    expoConfig.updates?.enabled !== true ||
+    expoConfig.updates?.checkAutomatically !== 'ON_LOAD' ||
+    expoConfig.updates?.fallbackToCacheTimeout !== 0
+  ) {
+    fail('Expo Updates must use the linked EAS project and safe on-load policy');
+  }
+
+  if (expoConfig.runtimeVersion?.policy !== 'appVersion') {
+    fail('runtimeVersion.policy must be "appVersion" for OTA compatibility');
+  }
+
+  if (!packageConfig.dependencies?.['expo-updates']) {
+    fail('expo-updates must be installed as a direct dependency');
   }
 }
 

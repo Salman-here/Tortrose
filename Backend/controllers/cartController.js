@@ -54,6 +54,9 @@ exports.addToCart = async (req, res) => {
         if (!product) {
             return res.status(404).json({ msg: 'Product is not available' });
         }
+        if (Number(product.stock) < 1) {
+            return res.status(409).json({ msg: 'Product is out of stock' });
+        }
 
         const existingCart = await Cart.findOne({ user: userId })
 
@@ -211,12 +214,23 @@ exports.qtyIncrement = async (req, res) => {
 
         const userCart = await Cart.findOne({ user: userId })
 
+        if (!userCart) {
+            return res.status(404).json({ msg: 'cart not found' })
+        }
+
         await userCart.populate('cartItems.product')
 
         // console.log('user cart:::', userCart);
         const cartItem = userCart.cartItems.find(item => item._id.equals(id))
+        if (!cartItem) {
+            return res.status(404).json({ msg: 'Cart item not found' })
+        }
+        if (!cartItem.product || isProductBlocked(cartItem.product)) {
+            return res.status(404).json({ msg: 'Product is not available' })
+        }
         // console.log('cart to increase qty', cartItem);
-        if (cartItem.qty == cartItem.product.stock) return res.status(409).json({ msg: 'You have reached stock limit' })
+        if (Number(cartItem.product.stock) < 1) return res.status(409).json({ msg: 'Product is out of stock' })
+        if (cartItem.qty >= cartItem.product.stock) return res.status(409).json({ msg: 'You have reached stock limit' })
 
         cartItem.qty += 1
         // console.log(userCart);
@@ -238,11 +252,18 @@ exports.qtyDecrement = async (req, res) => {
     try {
         const userCart = await Cart.findOne({ user: userId })
 
+        if (!userCart) {
+            return res.status(404).json({ msg: 'cart not found' })
+        }
+
         // console.log('user cart:::', userCart);
         const cartItem = userCart.cartItems.find(item => item._id.equals(id))
+        if (!cartItem) {
+            return res.status(404).json({ msg: 'Cart item not found' })
+        }
         // console.log('cart to increase qty', cartItem);
 
-        if (cartItem.qty == 1) return res.status(401).json({ msg: 'Quantity cannot be less than 1' })
+        if (cartItem.qty <= 1) return res.status(409).json({ msg: 'Quantity cannot be less than 1' })
         cartItem.qty -= 1
         // console.log(userCart);
         await userCart.populate('cartItems.product')
@@ -263,6 +284,17 @@ exports.removeCartItem = async (req, res) => {
 
     try {
         let userCart = await Cart.findOne({ user: userId })
+        if (!userCart) {
+            return res.status(404).json({ msg: 'cart not found' })
+        }
+        const matchingItem = userCart.cartItems.find(item => {
+            const isCartLine = item._id?.equals?.(id);
+            const isProduct = item.product?.equals?.(id);
+            return isCartLine || isProduct;
+        });
+        if (!matchingItem) {
+            return res.status(404).json({ msg: 'Cart item not found' })
+        }
         userCart.cartItems = userCart.cartItems.filter(item => {
             const isCartLine = item._id?.equals?.(id);
             const isProduct = item.product?.equals?.(id);

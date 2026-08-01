@@ -21,7 +21,7 @@ import AuthTopHeader from '../../components/common/AuthTopHeader';
 import { spacing, fontSize, borderRadius, shadows, fontWeight } from '../../styles/theme';
 import { useTheme } from '../../contexts/ThemeContext';
 
-export default function LoginScreen({ navigation }) {
+export default function LoginScreen({ navigation, route }) {
   const { palette, isDark } = useTheme();
   const styles = buildStyles(palette);
 
@@ -34,12 +34,23 @@ export default function LoginScreen({ navigation }) {
   const [emailFocused, setEmailFocused] = useState(false);
   const [passwordFocused, setPasswordFocused] = useState(false);
   const [errors, setErrors] = useState({});
+  const returnTo = route?.params?.returnTo;
+
+  const finishAuthentication = () => {
+    navigation.reset({
+      index: 0,
+      routes: [{
+        name: 'MainTabs',
+        ...(returnTo === 'Cart' ? { params: { screen: 'Cart' } } : {}),
+      }],
+    });
+  };
 
   const handleGoogleSignIn = async () => {
     setGoogleLoading(true);
     const result = await googleSignIn();
     setGoogleLoading(false);
-    if (result?.success) navigation.reset({ index: 0, routes: [{ name: 'MainTabs' }] });
+    if (result?.success) finishAuthentication();
   };
 
   const handleLogin = async () => {
@@ -51,7 +62,7 @@ export default function LoginScreen({ navigation }) {
     setIsLoading(true);
     const result = await login({ email, password });
     setIsLoading(false);
-    if (result.success) navigation.reset({ index: 0, routes: [{ name: 'MainTabs' }] });
+    if (result.success) finishAuthentication();
   };
 
   return (
@@ -159,7 +170,7 @@ export default function LoginScreen({ navigation }) {
 
             <View style={styles.signUpRow}>
               <Text style={styles.signUpText}>Don't have an account?</Text>
-              <TouchableOpacity onPress={() => navigation.navigate('SignUp')}><Text style={styles.signUpLink}> Sign up</Text></TouchableOpacity>
+              <TouchableOpacity onPress={() => navigation.navigate('SignUp', { returnTo })}><Text style={styles.signUpLink}> Sign up</Text></TouchableOpacity>
             </View>
           </GlassPanel>
 

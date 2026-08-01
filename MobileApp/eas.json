@@ -5,6 +5,8 @@
   },
   "build": {
     "preview": {
+      "channel": "preview",
+      "environment": "preview",
       "distribution": "internal",
       "android": {
         "buildType": "apk"
@@ -16,6 +18,8 @@
       }
     },
     "production": {
+      "channel": "production",
+      "environment": "production",
       "autoIncrement": true,
       "env": {
         "EXPO_PUBLIC_PROJECT_ID": "21e1e6b1-bb29-47bc-a337-236fb17314cf"

@@ -112,24 +112,33 @@ Edit `app.json` to customize:
 - Icons and splash screen
 - Permissions
 
-## 📦 Building for Production
+## 📦 Builds and over-the-air updates
 
-### Android APK
+Create an internally installable Android APK on the `preview` update channel:
+
 ```bash
-expo build:android
+npm run build:preview
 ```
 
-### iOS IPA
+After that OTA-enabled APK has been installed once, publish compatible
+JavaScript and asset changes to testers with:
+
 ```bash
-expo build:ios
+npm run update:preview -- --message "Describe the tested change"
 ```
 
-### Using EAS Build (Recommended)
+Publish a tested update to store builds with:
+
 ```bash
-npm install -g eas-cli
-eas build --platform android
-eas build --platform ios
+npm run update:production -- --message "Describe the production change"
 ```
+
+The `preview` and `production` channels are isolated. Updates use the matching
+EAS environment and the app-version runtime policy. Increment `expo.version`
+and create a new binary whenever native dependencies, permissions, config
+plugins, or the Expo SDK change. With the zero-second launch timeout, a device
+downloads an update without delaying startup and applies it on the next full
+restart.
 
 ## 🎨 Customization
 

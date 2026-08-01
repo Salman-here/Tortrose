@@ -1,7 +1,8 @@
-// const { default: mongoose } = require('mongoose');
+const mongoose = require('mongoose');
 const Cart = require('../models/Cart');
 const Order = require('../models/Order');
 const Product = require('../models/Product')
+const crypto = require('crypto');
 const { stripe } = require('../config/stripe');
 const TaxConfig = require('../models/TaxConfig');
 const Store = require('../models/Store');
@@ -25,6 +26,12 @@ const { isStoreVisibleToBuyer, normalizeBuyerLocation } = require('../services/s
 const { storeAllowsCashOnDelivery } = require('../services/storePaymentPolicyService');
 const { normalizeReturnPolicy } = require('../services/returnPolicyService');
 const { payOrderWithWallet } = require('../services/walletService');
+const { commitOrderInventory, restoreOrderInventory } = require('../services/orderInventoryService');
+const {
+    toStripeMinorUnits,
+    validateStripeOrderSession,
+    isPaymentFulfilled,
+} = require('../services/stripeOrderPaymentService');
 const {
     validateAndPriceCoupons,
     validateAndPriceShipping,
@@ -40,8 +47,11 @@ const {
 } = require('../services/orderFulfillmentService');
 const {
     formatItemOptionsText,
+    formatOrderMoney,
     orderItemName,
+    orderItemOptionsHtml,
     paymentMethodLabel,
+    escapeHtml,
     toPlainOptions,
 } = require('../utils/orderPresentation');
 
@@ -62,16 +72,93 @@ const STRIPE_SUPPORTED_CURRENCIES = new Set(
         .map(code => normalizeCurrency(code)),
     ]
 );
-const STRIPE_ZERO_DECIMAL_CURRENCIES = new Set([
-    'BIF', 'CLP', 'DJF', 'GNF', 'JPY', 'KMF', 'KRW', 'MGA',
-    'PYG', 'RWF', 'UGX', 'VND', 'VUV', 'XAF', 'XOF', 'XPF',
-]);
+const normalizeCheckoutIdempotencyKey = (value) => {
+    const key = String(value || '').trim();
+    if (!key) return null;
+    if (key.length > 160 || !/^[A-Za-z0-9:_\-.]+$/.test(key)) return null;
+    return key;
+};
 
-const toStripeMinorUnits = (amount, currency) => {
-    const value = Math.max(0, Number(amount) || 0);
-    return STRIPE_ZERO_DECIMAL_CURRENCIES.has(String(currency || '').toUpperCase())
-        ? Math.round(value)
-        : Math.round(value * 100);
+const orderResponseSummary = (order) => ({
+    _id: order._id,
+    orderId: order.orderId,
+    totalAmount: order.orderSummary?.totalAmount || 0,
+    currency: order.currency,
+    email: order.shippingInfo?.email,
+});
+
+const respondWithExistingCheckout = async (res, existingOrder) => {
+    if (existingOrder.paymentMethod === 'stripe') {
+        if (existingOrder.isPaid && !existingOrder.awaitingPayment) {
+            return res.status(200).json({
+                msg: 'Payment already completed.',
+                idempotentReplay: true,
+                isPaid: true,
+                id: existingOrder.stripeSessionId,
+                orderId: existingOrder.orderId,
+                order: orderResponseSummary(existingOrder),
+            });
+        }
+        if (!existingOrder.stripeSessionId) {
+            return res.status(409).json({
+                msg: 'Secure checkout is still being prepared. Please retry in a moment.',
+                code: 'CHECKOUT_IN_PROGRESS',
+                orderId: existingOrder.orderId,
+            });
+        }
+        if (!existingOrder.inventoryCommitted) {
+            return res.status(409).json({
+                msg: 'Your items are still being secured. Please retry in a moment.',
+                code: 'CHECKOUT_IN_PROGRESS',
+                orderId: existingOrder.orderId,
+            });
+        }
+        try {
+            const session = await stripe.checkout.sessions.retrieve(existingOrder.stripeSessionId);
+            if (session?.status === 'expired') {
+                return res.status(409).json({
+                    msg: 'This secure checkout attempt expired. Please start payment again.',
+                    code: 'CHECKOUT_ATTEMPT_EXPIRED',
+                    orderId: existingOrder.orderId,
+                });
+            }
+            return res.status(200).json({
+                msg: 'Secure checkout resumed.',
+                idempotentReplay: true,
+                id: session.id,
+                url: session.url,
+                orderId: existingOrder.orderId,
+                order: orderResponseSummary(existingOrder),
+            });
+        } catch (error) {
+            return res.status(409).json({
+                msg: 'Secure checkout could not be resumed. Please start a new attempt.',
+                code: 'CHECKOUT_ATTEMPT_UNAVAILABLE',
+                orderId: existingOrder.orderId,
+            });
+        }
+    }
+
+    const complete = existingOrder.paymentMethod === 'cash_on_delivery'
+        ? existingOrder.inventoryCommitted === true
+        : existingOrder.isPaid === true;
+    if (!complete) {
+        return res.status(409).json({
+            msg: 'This checkout is still being processed. Please retry in a moment.',
+            code: 'CHECKOUT_IN_PROGRESS',
+            orderId: existingOrder.orderId,
+        });
+    }
+    return res.status(200).json({
+        msg: existingOrder.paymentMethod === 'wallet'
+            ? 'Order already paid with Rozare Wallet.'
+            : 'Order already placed successfully.',
+        idempotentReplay: true,
+        isPaid: existingOrder.isPaid,
+        paymentMethod: existingOrder.paymentMethod,
+        orderId: existingOrder.orderId,
+        order: orderResponseSummary(existingOrder),
+    });
 };
 
 const getSellerProductIds = async (sellerId) => {
@@ -283,8 +370,22 @@ exports.placeOrder = async (req, res) => {
     // console.log(order);
 
     const userId = req.user?.id || null;
+    const rawIdempotencyKey = req.headers['idempotency-key']
+        || req.headers['x-idempotency-key']
+        || order?.idempotencyKey;
+    const checkoutIdempotencyKey = normalizeCheckoutIdempotencyKey(rawIdempotencyKey);
 
     try {
+        if (rawIdempotencyKey && !checkoutIdempotencyKey) {
+            return res.status(400).json({
+                msg: 'Invalid checkout attempt key.',
+                code: 'INVALID_IDEMPOTENCY_KEY',
+            });
+        }
+        if (userId && checkoutIdempotencyKey) {
+            const existingOrder = await Order.findOne({ user: userId, checkoutIdempotencyKey });
+            if (existingOrder) return respondWithExistingCheckout(res, existingOrder);
+        }
         if (
             !order ||
             !order.orderItems ||
@@ -427,7 +528,11 @@ exports.placeOrder = async (req, res) => {
         let tax = 0;
         const taxConfig = await TaxConfig.findOne({ isActive: true });
         if (taxConfig) {
-            tax = calculateTax(subtotal, taxConfig);
+            // The admin-configured fixed tax is denominated in USD, matching the
+            // website display. Percentage tax is naturally currency independent.
+            tax = taxConfig.type === 'fixed'
+                ? await convertAmount(taxConfig.value, 'USD', orderCurrency)
+                : calculateTax(subtotal, taxConfig);
         }
 
         const couponDiscount = couponPricing.couponDiscount;
@@ -443,9 +548,10 @@ exports.placeOrder = async (req, res) => {
 
         const newOrder = new Order({
             ...(userId ? { user: userId } : {}),
+            ...(checkoutIdempotencyKey ? { checkoutIdempotencyKey } : {}),
             guestEmail: !userId ? order.shippingInfo.email : null,
             currency: orderCurrency,
-            orderId: `ORD-${Date.now()}`,
+            orderId: `ORD-${Date.now()}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`,
 
             orderItems: normalizedOrderItems,
 
@@ -528,6 +634,19 @@ exports.placeOrder = async (req, res) => {
         }
 
         await newOrder.save();
+
+        // Reserve COD inventory before any buyer/seller notification is sent.
+        // The transaction guarantees that either every line is reserved or none
+        // is, so an order can never be announced with partially reduced stock.
+        if (isCOD) {
+            try {
+                await commitOrderInventory(newOrder._id);
+                newOrder.inventoryCommitted = true;
+            } catch (inventoryError) {
+                await Order.deleteOne({ _id: newOrder._id, inventoryCommitted: false }).catch(() => {});
+                throw inventoryError;
+            }
+        }
 
         // Send order confirmation email to buyer — ONLY for COD here.
         // For Stripe orders, the buyer + seller emails are sent from the Stripe
@@ -615,16 +734,8 @@ exports.placeOrder = async (req, res) => {
         }
 
         if (newOrder.paymentMethod === 'cash_on_delivery') {
-            // Reduce stock for cash on delivery orders
-            for (const item of newOrder.orderItems) {
-                await Product.findByIdAndUpdate(
-                    item.productId,
-                    { $inc: { stock: -item.quantity } }
-                );
-            }
-            newOrder.inventoryCommitted = true;
-            await newOrder.save();
             await recordOrderCoupons(newOrder, userId);
+            await Cart.updateOne({ user: userId }, { $set: { cartItems: [] } }).catch(() => {});
 
             trackOrderEvent({
                 event: 'PlaceAnOrder',
@@ -745,6 +856,7 @@ exports.placeOrder = async (req, res) => {
             session = await stripe.checkout.sessions.create({
                 payment_method_types: ['card'],
                 mode: 'payment',
+                ...(isMobile ? { origin_context: 'mobile_app' } : {}),
                 line_items,
                 ...(stripeDiscounts ? { discounts: stripeDiscounts } : {}),
                 success_url: successUrl,
@@ -756,6 +868,8 @@ exports.placeOrder = async (req, res) => {
                     orderId: newOrder.orderId,
                     tiktokPurchaseEventId: newOrder.tracking?.tiktokPurchaseEventId || '',
                 }
+            }, {
+                idempotencyKey: `rozare-order-checkout:${newOrder._id}`,
             });
         } catch (stripeError) {
             await Order.deleteOne({ _id: newOrder._id, awaitingPayment: true });
@@ -766,6 +880,17 @@ exports.placeOrder = async (req, res) => {
         // when the buyer abandons / the session expires.
         newOrder.stripeSessionId = session.id;
         await newOrder.save();
+
+        // Reserve inventory before the app/browser receives the hosted checkout
+        // URL. Expired sessions release this reservation in the webhook handler.
+        try {
+            await commitOrderInventory(newOrder._id);
+            newOrder.inventoryCommitted = true;
+        } catch (inventoryError) {
+            await stripe.checkout.sessions.expire(session.id).catch(() => {});
+            await Order.deleteOne({ _id: newOrder._id, isPaid: false }).catch(() => {});
+            throw inventoryError;
+        }
 
         trackOrderEvent({
             event: 'PlaceAnOrder',
@@ -785,12 +910,106 @@ exports.placeOrder = async (req, res) => {
             },
         });
     } catch (error) {
-        console.error("Stripe session error:::", error);
+        if (error?.code === 11000 && userId && checkoutIdempotencyKey) {
+            const existingOrder = await Order.findOne({ user: userId, checkoutIdempotencyKey }).catch(() => null);
+            if (existingOrder) return respondWithExistingCheckout(res, existingOrder);
+        }
+        console.error('Order checkout error:', error);
         return res.status(error.statusCode || 500).json({
-            msg: error.statusCode ? error.message : "Server error while creating checkout session. Try again!"
+            msg: error.statusCode ? error.message : "Server error while creating checkout session. Try again!",
+            ...(error.code ? { code: error.code } : {}),
         });
     }
 }
+
+// Authenticated, server-authoritative status for hosted Stripe checkout. The
+// mobile deep link is only navigation; it never proves that payment succeeded.
+exports.getPaymentStatus = async (req, res) => {
+    const reference = String(req.params.orderId || '').trim();
+    const requestedSessionId = String(req.query.sessionId || req.query.session_id || '').trim();
+    const { id: userId, role } = req.user;
+
+    try {
+        const selectors = [{ orderId: reference }];
+        if (mongoose.Types.ObjectId.isValid(reference)) selectors.push({ _id: reference });
+        const order = await Order.findOne({ $or: selectors });
+        if (!order) return res.status(404).json({ msg: 'Order not found.' });
+
+        if (role !== 'admin' && toId(order.user) !== toId(userId)) {
+            return res.status(403).json({ msg: 'You can only verify your own payment.' });
+        }
+        if (order.paymentMethod !== 'stripe') {
+            return res.status(400).json({
+                msg: 'This order does not use card payment.',
+                code: 'NOT_STRIPE_ORDER',
+            });
+        }
+        if (!order.stripeSessionId) {
+            return res.status(409).json({
+                msg: 'Secure checkout is still being prepared.',
+                code: 'CHECKOUT_IN_PROGRESS',
+            });
+        }
+        if (requestedSessionId && requestedSessionId !== order.stripeSessionId) {
+            return res.status(400).json({
+                msg: 'The payment session does not belong to this order.',
+                code: 'PAYMENT_SESSION_MISMATCH',
+            });
+        }
+
+        const response = {
+            orderId: order.orderId,
+            mongoOrderId: order._id,
+            paymentMethod: order.paymentMethod,
+            isPaid: isPaymentFulfilled(order),
+            webhookProcessed: isPaymentFulfilled(order),
+        };
+        if (response.webhookProcessed) {
+            return res.status(200).json({ ...response, status: 'paid' });
+        }
+        if (order.orderStatus === 'cancelled' && !order.isPaid) {
+            return res.status(200).json({ ...response, status: 'cancelled' });
+        }
+        if (!stripe) {
+            return res.status(503).json({
+                ...response,
+                status: 'pending',
+                msg: 'Payment verification is temporarily unavailable.',
+                code: 'STRIPE_UNAVAILABLE',
+            });
+        }
+
+        let session;
+        try {
+            session = await stripe.checkout.sessions.retrieve(order.stripeSessionId);
+        } catch (error) {
+            return res.status(502).json({
+                ...response,
+                status: 'pending',
+                msg: 'Could not refresh payment status yet. Please retry.',
+                code: 'PAYMENT_STATUS_UNAVAILABLE',
+            });
+        }
+        validateStripeOrderSession(order, session);
+
+        if (session.status === 'expired') {
+            return res.status(200).json({ ...response, status: 'expired' });
+        }
+        // Stripe may report paid a moment before our signed webhook finishes.
+        // Keep the client pending until inventory and the order are committed.
+        return res.status(200).json({
+            ...response,
+            status: 'pending',
+            stripePaymentReceived: session.payment_status === 'paid',
+        });
+    } catch (error) {
+        console.error('Payment status verification failed:', error.message);
+        return res.status(error.statusCode || 500).json({
+            msg: error.statusCode ? error.message : 'Could not verify payment status.',
+            ...(error.code ? { code: error.code } : {}),
+        });
+    }
+};
 
 
 
@@ -1495,7 +1714,21 @@ exports.cancelOrder = async (req, res) => {
             order.confirmation.confirmedVia = order.confirmation.confirmedVia || 'dashboard';
         }
 
-        await order.save();
+        const shouldRestoreInventory = order.paymentMethod === 'cash_on_delivery'
+            && !order.isPaid
+            && order.inventoryCommitted === true;
+        if (shouldRestoreInventory) {
+            await restoreOrderInventory(order._id);
+            order.inventoryCommitted = false;
+        }
+
+        try {
+            await order.save();
+        } catch (saveError) {
+            // Compensate if cancellation persistence fails after releasing stock.
+            if (shouldRestoreInventory) await commitOrderInventory(order._id).catch(() => {});
+            throw saveError;
+        }
 
         // Send cancellation email
         try {
@@ -1525,7 +1758,7 @@ exports.reorder = async (req, res) => {
     try {
         const order = await Order.findById(orderId);
         if (!order) return res.status(404).json({ msg: 'Order not found' });
-        if (order.user && order.user.toString() !== userId.toString()) {
+        if (!order.user || order.user.toString() !== userId.toString()) {
             return res.status(403).json({ msg: 'Not your order' });
         }
 
@@ -1535,7 +1768,7 @@ exports.reorder = async (req, res) => {
         let added = 0;
         let unavailable = 0;
         for (const item of order.orderItems) {
-            const product = await Product.findById(item.productId);
+            const product = await Product.findOne(publicProductFilter({ _id: item.productId }));
             if (!product || product.stock <= 0) { unavailable++; continue; }
             const qty = Math.min(item.quantity || 1, product.stock);
             const selectedOptions = toPlainOptions(item.selectedOptions);
@@ -1580,31 +1813,23 @@ exports.getInvoice = async (req, res) => {
         const order = await Order.findById(id);
         if (!order) return res.status(404).json({ msg: 'Order not found' });
 
-        if (role !== 'admin') {
-            const ownsOrder = order.user && order.user.toString() === userId.toString();
-            if (!ownsOrder) {
-                if (role === 'seller') {
-                    const sellerProducts = await Product.find({ seller: userId }).select('_id');
-                    const ids = sellerProducts.map((p) => p._id.toString());
-                    const hasItem = order.orderItems.some((it) => ids.includes(it.productId.toString()));
-                    if (!hasItem) return res.status(403).json({ msg: 'Forbidden' });
-                } else {
-                    return res.status(403).json({ msg: 'Forbidden' });
-                }
-            }
+        if (role !== 'admin' && (!order.user || order.user.toString() !== userId.toString())) {
+            return res.status(403).json({ msg: 'Forbidden' });
         }
 
-        const fmt = (n) => `$${(Number(n) || 0).toFixed(2)}`;
+        const fmt = (n) => escapeHtml(formatOrderMoney(n, order));
         const rows = order.orderItems.map((it) => `
             <tr>
-              <td style="padding:10px;border-bottom:1px solid #e5e7eb;">${it.name}${it.selectedColor ? ` <span style="color:#6366f1;font-size:11px;">(${it.selectedColor})</span>` : ''}</td>
-              <td style="padding:10px;border-bottom:1px solid #e5e7eb;text-align:center;">${it.quantity}</td>
+              <td style="padding:10px;border-bottom:1px solid #e5e7eb;">${escapeHtml(orderItemName(it))}${orderItemOptionsHtml(it)}</td>
+              <td style="padding:10px;border-bottom:1px solid #e5e7eb;text-align:center;">${escapeHtml(Math.max(1, Number(it.quantity) || 1))}</td>
               <td style="padding:10px;border-bottom:1px solid #e5e7eb;text-align:right;">${fmt(it.price)}</td>
               <td style="padding:10px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:600;">${fmt(it.price * it.quantity)}</td>
             </tr>`).join('');
 
         const summary = order.orderSummary || {};
-        const html = `<!doctype html><html><head><meta charset="utf-8"/><title>Invoice ${order.orderId}</title>
+        const safeOrderId = escapeHtml(order.orderId);
+        const safeStatus = escapeHtml(String(order.orderStatus || 'pending').toUpperCase());
+        const html = `<!doctype html><html><head><meta charset="utf-8"/><title>Invoice ${safeOrderId}</title>
 <style>
   body{font-family:-apple-system,BlinkMacSystemFont,'Inter',sans-serif;color:#1f2937;background:#f9fafb;padding:24px;margin:0;}
   .card{background:#fff;max-width:760px;margin:0 auto;border-radius:18px;padding:36px;box-shadow:0 6px 24px rgba(0,0,0,0.08);}
@@ -1630,20 +1855,20 @@ exports.getInvoice = async (req, res) => {
       <div class="muted">Verified marketplace for trusted sellers</div>
     </div>
     <div style="text-align:right;">
-      <div style="font-size:13px;font-weight:600;">Invoice #${order.orderId}</div>
+      <div style="font-size:13px;font-weight:600;">Invoice #${safeOrderId}</div>
       <div class="muted">${new Date(order.createdAt).toLocaleDateString('en-US',{year:'numeric',month:'long',day:'numeric'})}</div>
-      <div style="margin-top:6px;"><span class="badge">${(order.orderStatus || 'pending').toUpperCase()}</span></div>
+      <div style="margin-top:6px;"><span class="badge">${safeStatus}</span></div>
     </div>
   </div>
   <div class="grid">
     <div>
       <div class="label">Billed To</div>
-      <div style="font-weight:600;">${order.shippingInfo.fullName}</div>
-      <div class="muted">${order.shippingInfo.address}<br/>${order.shippingInfo.city}, ${order.shippingInfo.state || ''} ${order.shippingInfo.postalCode || ''}<br/>${order.shippingInfo.country}<br/>${order.shippingInfo.email}</div>
+      <div style="font-weight:600;">${escapeHtml(order.shippingInfo.fullName)}</div>
+      <div class="muted">${escapeHtml(order.shippingInfo.address)}<br/>${escapeHtml(order.shippingInfo.city)}, ${escapeHtml(order.shippingInfo.state || '')} ${escapeHtml(order.shippingInfo.postalCode || '')}<br/>${escapeHtml(order.shippingInfo.country)}<br/>${escapeHtml(order.shippingInfo.email)}</div>
     </div>
     <div>
       <div class="label">Payment</div>
-      <div style="font-weight:600;">${paymentMethodLabel(order.paymentMethod)}</div>
+      <div style="font-weight:600;">${escapeHtml(paymentMethodLabel(order.paymentMethod))}</div>
       <div class="muted">Status: ${order.isPaid ? 'Paid' : 'Unpaid'}</div>
     </div>
   </div>

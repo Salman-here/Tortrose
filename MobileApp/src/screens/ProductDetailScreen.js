@@ -204,9 +204,8 @@ export default function ProductDetailScreen({ route, navigation }) {
 
   const handleWishlistToggle = () => { if (!currentUser) { navigation.navigate('Login'); return; } isInWishlist ? handleDeleteFromWishlist(product._id) : handleAddToWishlist(product._id); };
   const handleAddToCartClick = () => {
-    if (!currentUser) { navigation.navigate('Login'); return; }
     if (!allOptionsSelected) { Feedback.show({ type: 'error', text1: 'Please select all options' }); return; }
-    handleAddToCart(product._id, selectedColor, selectedOptions);
+    handleAddToCart(product._id, selectedColor, selectedOptions, product);
   };
 
   const handleAskAI = () => {

@@ -6,6 +6,9 @@ const orderSchema = mongoose.Schema(
         guestEmail: { type: String, default: null },
         currency: { type: String, enum: ["USD", "PKR", "EUR", "GBP"], default: "USD" },
         orderId: { type: String, required: true },
+        // A client-generated key makes retries/double taps return the original
+        // checkout instead of creating a second order or charging stock twice.
+        checkoutIdempotencyKey: { type: String, default: null, trim: true },
 
 
         orderItems: [
@@ -179,6 +182,8 @@ const orderSchema = mongoose.Schema(
 
         inventoryCommitted: { type: Boolean, default: false, index: true },
         paymentFulfilledAt: { type: Date, default: null, index: true },
+        paymentProcessingStartedAt: { type: Date, default: null, index: true },
+        stripeWebhookEventId: { type: String, default: null },
         returnVersion: { type: Number, default: 0 },
 
         isPaid: {
@@ -265,5 +270,13 @@ orderSchema.virtual('confirmationSourceLabel').get(function () {
 orderSchema.index({ awaitingPayment: 1, orderStatus: 1, 'orderItems.seller': 1, createdAt: -1 });
 orderSchema.index({ awaitingPayment: 1, orderStatus: 1, 'orderItems.productId': 1, createdAt: -1 });
 orderSchema.index({ 'sellerFulfillment.seller': 1, 'sellerFulfillment.status': 1, createdAt: -1 });
+orderSchema.index(
+    { user: 1, checkoutIdempotencyKey: 1 },
+    {
+        unique: true,
+        partialFilterExpression: { checkoutIdempotencyKey: { $type: 'string' } },
+        name: 'uniq_user_checkout_attempt',
+    }
+);
 
 module.exports = mongoose.model("Order", orderSchema);

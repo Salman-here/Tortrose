@@ -184,7 +184,7 @@ describe('Cart Total Calculation', () => {
   describe('Property 2: Guest User Access Control', () => {
     // Function to check if screen requires authentication
     const requiresAuth = (screenName) => {
-      const protectedScreens = ['Cart', 'Checkout', 'Wishlist', 'Orders', 'OrderDetail', 'Profile'];
+      const protectedScreens = ['Checkout', 'Wishlist', 'Orders', 'OrderDetail', 'Profile'];
       return protectedScreens.includes(screenName);
     };
 
@@ -196,9 +196,9 @@ describe('Cart Total Calculation', () => {
       return 'AuthenticatedContent';
     };
 
-    // Property: Cart should show login prompt for guests
-    it('Cart should show login prompt for guests', () => {
-      expect(getScreenContent('Cart', null)).toBe('LoginPrompt');
+    // Property: Guests can manage a local cart and authenticate only at checkout.
+    it('Cart should remain available to guests', () => {
+      expect(getScreenContent('Cart', null)).toBe('AuthenticatedContent');
       expect(getScreenContent('Cart', { _id: '123' })).toBe('AuthenticatedContent');
     });
 
@@ -222,7 +222,7 @@ describe('Cart Total Calculation', () => {
 
     // Property: All protected screens should require auth
     it('all protected screens should require authentication', () => {
-      const protectedScreens = ['Cart', 'Checkout', 'Wishlist', 'Orders', 'OrderDetail', 'Profile'];
+      const protectedScreens = ['Checkout', 'Wishlist', 'Orders', 'OrderDetail', 'Profile'];
       
       fc.assert(
         fc.property(
@@ -239,7 +239,7 @@ describe('Cart Total Calculation', () => {
 
     // Property: Public screens should not require auth
     it('public screens should not require authentication', () => {
-      const publicScreens = ['Home', 'ProductDetail', 'StoresListing', 'Store'];
+      const publicScreens = ['Home', 'ProductDetail', 'StoresListing', 'Store', 'Cart'];
       
       fc.assert(
         fc.property(
@@ -270,16 +270,17 @@ describe('Cart Total Calculation', () => {
       );
     });
 
-    // Property: Quantity decrease should not go below 1
-    it('quantity decrease should not go below 1', () => {
-      const decreaseQty = (currentQty) => Math.max(1, currentQty - 1);
+    // Property: Decrementing one removes the line instead of sending an invalid zero.
+    it('quantity decrease should remove a line at one and never produce zero', () => {
+      const decreaseQty = (currentQty) => currentQty <= 1 ? null : currentQty - 1;
       
       fc.assert(
         fc.property(
           fc.integer({ min: 1, max: 100 }),
           (qty) => {
             const newQty = decreaseQty(qty);
-            expect(newQty).toBeGreaterThanOrEqual(1);
+            if (newQty !== null) expect(newQty).toBeGreaterThanOrEqual(1);
+            if (qty === 1) expect(newQty).toBeNull();
             return true;
           }
         ),

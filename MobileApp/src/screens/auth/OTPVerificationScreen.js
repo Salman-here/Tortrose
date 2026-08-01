@@ -24,7 +24,7 @@ export default function OTPVerificationScreen({ route, navigation }) {
   const { palette, isDark } = useTheme();
   const styles = buildStyles(palette);
 
-  const { email, name, password } = route.params || {};
+  const { email, name, password, returnTo } = route.params || {};
   const { verifyOTP, signup } = useAuth();
 
   const [otp, setOtp] = useState(Array(OTP_LENGTH).fill(''));
@@ -56,8 +56,20 @@ export default function OTPVerificationScreen({ route, navigation }) {
     setIsVerifying(true);
     const result = await verifyOTP({ email, otp: otpCode });
     setIsVerifying(false);
-    if (!result.success) { setError(result.error || 'Invalid OTP.'); setOtp(Array(OTP_LENGTH).fill('')); inputRefs.current[0]?.focus(); }
-  }, [otp, email, verifyOTP]);
+    if (result.success) {
+      navigation.reset({
+        index: 0,
+        routes: [{
+          name: 'MainTabs',
+          ...(returnTo === 'Cart' ? { params: { screen: 'Cart' } } : {}),
+        }],
+      });
+      return;
+    }
+    setError(result.error || 'Invalid OTP.');
+    setOtp(Array(OTP_LENGTH).fill(''));
+    inputRefs.current[0]?.focus();
+  }, [otp, email, navigation, returnTo, verifyOTP]);
 
   const handleResend = async () => {
     if (countdown > 0) return;

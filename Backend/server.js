@@ -29,6 +29,8 @@ const Order = require('./models/Order')
 const Product = require('./models/Product')
 const { trackOrderEvent } = require('./services/tiktokEventsApi')
 const { configKeyFor } = require('./services/whatsapp/gatewayMode')
+const { restoreOrderInventory } = require('./services/orderInventoryService')
+const { fulfillStripeOrder } = require('./services/stripeOrderPaymentService')
 
 
 // ── Stripe Webhook (raw body required — must come before express.json) ──
@@ -110,37 +112,30 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
     console.log("Session ID:", session.id);
     console.log("Order ID (metadata):", session.metadata?.orderId);
 
-    const paymentIntentId = session.payment_intent;
-    const email = session.customer_details?.email;
-
     const orderId = session.metadata?.orderId;
     let order = await Order.findOne({ orderId });
+    if (!order) {
+      console.error('[stripe] checkout references an unknown order:', orderId);
+      return res.sendStatus(400);
+    }
+
+    let fulfillmentResult;
+    try {
+      fulfillmentResult = await fulfillStripeOrder({
+        order,
+        stripeSession: session,
+        eventId: event.id,
+      });
+    } catch (paymentError) {
+      console.error('[stripe] order fulfillment rejected:', paymentError.code || paymentError.message);
+      return res.sendStatus(paymentError.statusCode >= 500 ? 500 : 400);
+    }
+    order = fulfillmentResult.order;
+    const wasAwaiting = fulfillmentResult.newlyFulfilled;
+    if (!wasAwaiting) return res.sendStatus(200);
+    const email = session.customer_details?.email || order.shippingInfo?.email;
+
     if (order) {
-      const shouldCommitInventory = order.inventoryCommitted !== true;
-      order.isPaid = true;
-      order.paidAt = Date.now();
-      order.paymentFulfilledAt = order.paymentFulfilledAt || new Date();
-      order.paymentResult.paymentIntentId = paymentIntentId;
-      order.paymentResult.emailAddress = email;
-
-      // Auto-confirm online-paid orders — buyer already committed by paying.
-      // Also clear the `awaitingPayment` gate so the order becomes visible to
-      // sellers / users / admins.
-      const wasAwaiting = order.awaitingPayment === true;
-      order.awaitingPayment = false;
-      order.orderStatus = 'confirmed';
-      for (const fulfillment of order.sellerFulfillment || []) {
-        if (fulfillment.status === 'pending') {
-          fulfillment.status = 'confirmed';
-          fulfillment.updatedAt = new Date();
-        }
-      }
-      if (order.confirmation) {
-        order.confirmation.confirmedAt = new Date();
-        order.confirmation.confirmedVia = 'stripe_payment';
-      }
-
-      await order.save();
       console.log("✅ Order updated & auto-confirmed:", order.orderId);
 
       trackOrderEvent({
@@ -268,16 +263,6 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
         }
       }
 
-      if (shouldCommitInventory) {
-        for (const item of order.orderItems) {
-          await Product.findByIdAndUpdate(item.productId, {
-            $inc: { stock: -item.quantity, totalSales: item.quantity },
-          });
-        }
-        order.inventoryCommitted = true;
-        await order.save();
-      }
-
       if (wasAwaiting && order.user && Array.isArray(order.appliedCoupons)) {
         const { recordCouponUsage } = require('./controllers/couponController');
         for (const couponData of order.appliedCoupons) {
@@ -334,9 +319,14 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
     }
     if (session.mode === 'payment' && session.metadata?.orderId) {
       try {
-        const order = await Order.findOne({ orderId: session.metadata.orderId });
+        const order = await Order.findOne({
+          orderId: session.metadata.orderId,
+          stripeSessionId: session.id,
+          paymentMethod: 'stripe',
+        });
         if (order && order.awaitingPayment && !order.isPaid) {
-          await Order.deleteOne({ _id: order._id });
+          if (order.inventoryCommitted) await restoreOrderInventory(order._id);
+          await Order.deleteOne({ _id: order._id, isPaid: false, awaitingPayment: true });
           console.log(`🗑️  Deleted abandoned/unpaid checkout order ${order.orderId}`);
         }
       } catch (cleanupErr) {

@@ -85,7 +85,9 @@ function ProductCard({ product, index = 0, onPress, compact = false }) {
     isInWishlist ? handleDeleteFromWishlist(_id) : handleAddToWishlist(_id, product);
   };
 
-  const handleAddToCartClick = () => { if (!currentUser) { navigation.navigate('Login'); return; } handleAddToCart(_id, null, product); };
+  const handleAddToCartClick = () => {
+    handleAddToCart(_id, null, null, product);
+  };
   // Some legacy products store a text label instead of a URL — treat those as missing
   const rawImageSource = (typeof images?.[0] === 'string' ? images[0] : images?.[0]?.url) || image;
   const imageSource = typeof rawImageSource === 'string' && /^(https?:|data:|file:)/.test(rawImageSource) ? rawImageSource : null;
@@ -108,9 +110,8 @@ function ProductCard({ product, index = 0, onPress, compact = false }) {
         onPress={onPress}
         onLongPress={() => {
           if (isOutOfStock) return;
-          if (!currentUser) { navigation.navigate('Login'); return; }
           hapticTap();
-          handleAddToCart(_id, null, product);
+          handleAddToCart(_id, null, null, product);
         }}
         delayLongPress={350}
         accessibilityHint="Long-press to quick-add to cart"

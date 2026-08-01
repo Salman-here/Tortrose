@@ -4,7 +4,6 @@
 
 import React, {
   useCallback,
-  useEffect,
   useMemo,
   useState,
 } from 'react';
@@ -33,7 +32,6 @@ import {
   InlineLoader,
 } from '../components/common';
 import GlassBackground from '../components/common/GlassBackground';
-import GlassBlurFill from '../components/common/GlassBlurFill';
 import GlassPanel from '../components/common/GlassPanel';
 import PremiumTopBar, {
   PremiumTopBarAction,
@@ -79,10 +77,6 @@ export default function CartScreen({ navigation }) {
     0
   );
   const hasCartItems = lineItemCount > 0;
-
-  useEffect(() => {
-    if (currentUser) fetchCart();
-  }, [currentUser]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -139,8 +133,12 @@ export default function CartScreen({ navigation }) {
       Alert.alert('Empty Cart', 'Please add items to your cart before checkout');
       return;
     }
+    if (!currentUser) {
+      navigation.navigate('Login', { returnTo: 'Cart', intent: 'checkout' });
+      return;
+    }
     navigation.navigate('Checkout');
-  }, [hasCartItems, navigation]);
+  }, [currentUser, hasCartItems, navigation]);
 
   const handleCheckoutDockLayout = useCallback((event) => {
     const measuredHeight = Math.ceil(event.nativeEvent.layout.height);
@@ -150,7 +148,9 @@ export default function CartScreen({ navigation }) {
   }, []);
 
   const topBarSubtitle = !currentUser
-    ? 'Sign in to sync your shopping bag'
+    ? hasCartItems
+      ? `${itemCount} ${itemCount === 1 ? 'item' : 'items'} saved on this device`
+      : 'Your local shopping bag'
     : isCartLoading && !hasCartItems
       ? 'Loading your saved shopping bag'
       : hasCartItems
@@ -194,95 +194,6 @@ export default function CartScreen({ navigation }) {
       </View>
     </GlassPanel>
   );
-
-  const guestSignInCard = (
-    <GlassPanel variant="strong" style={styles.guestCard}>
-      {Platform.OS !== 'android' && (
-        <LinearGradient
-          colors={[
-            'rgba(20,184,166,0.12)',
-            'rgba(14,165,233,0.05)',
-            'rgba(99,102,241,0.13)',
-          ]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={StyleSheet.absoluteFill}
-          pointerEvents="none"
-        />
-      )}
-      <View style={styles.guestVisual}>
-        <View style={styles.guestIconGlass}>
-          <GlassBlurFill intensity={42} />
-          <LinearGradient
-            colors={palette.gradients.cta}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={styles.guestIconCore}
-          >
-            <Ionicons name="bag-handle-outline" size={29} color="#fff" />
-          </LinearGradient>
-        </View>
-      </View>
-
-      <View style={styles.guestEyebrow}>
-        <Ionicons name="sparkles" size={11} color={palette.colors.primary} />
-        <Text style={styles.guestEyebrowText}>YOUR BAG, ON EVERY DEVICE</Text>
-      </View>
-      <Text style={styles.guestTitle}>Sign in to keep shopping seamlessly</Text>
-      <Text style={styles.guestText}>
-        Save products, sync quantities, and continue to protected checkout
-        without losing what you picked.
-      </Text>
-
-      <TouchableOpacity
-        style={styles.guestPrimaryButton}
-        onPress={() => navigation.navigate('Login')}
-        activeOpacity={0.86}
-        accessibilityRole="button"
-        accessibilityLabel="Sign in to your Rozare account"
-      >
-        <LinearGradient
-          colors={palette.gradients.cta}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={StyleSheet.absoluteFill}
-        />
-        <Ionicons name="person-outline" size={18} color="#fff" />
-        <Text style={styles.guestPrimaryButtonText}>Sign in</Text>
-        <Ionicons name="arrow-forward" size={17} color="#fff" />
-      </TouchableOpacity>
-      <TouchableOpacity
-        style={styles.guestBrowseButton}
-        onPress={() => navigation.navigate('Home')}
-        activeOpacity={0.8}
-        accessibilityRole="button"
-        accessibilityLabel="Continue browsing products"
-      >
-        <Ionicons name="storefront-outline" size={17} color={palette.colors.primary} />
-        <Text style={styles.guestBrowseButtonText}>Continue browsing</Text>
-      </TouchableOpacity>
-    </GlassPanel>
-  );
-
-  if (!currentUser) {
-    return (
-      <GlassBackground>
-        <SafeAreaView style={styles.container} edges={Platform.OS === 'android' ? [] : ['top']}>
-          {topBar}
-          <ScrollView
-            contentContainerStyle={[
-              styles.stateContent,
-              { paddingBottom: stateBottomPadding },
-            ]}
-            showsVerticalScrollIndicator={false}
-          >
-            {guestSignInCard}
-            {channelPromise}
-          </ScrollView>
-        </SafeAreaView>
-      </GlassBackground>
-    );
-  }
 
   if (isCartLoading && !hasCartItems) {
     return (
@@ -740,7 +651,9 @@ export default function CartScreen({ navigation }) {
                 style={StyleSheet.absoluteFill}
               />
               <Ionicons name="lock-closed-outline" size={18} color="#fff" />
-              <Text style={styles.checkoutButtonText}>Continue to Secure Checkout</Text>
+              <Text style={styles.checkoutButtonText}>
+                {currentUser ? 'Continue to Secure Checkout' : 'Sign in to Secure Checkout'}
+              </Text>
               <Ionicons name="arrow-forward" size={18} color="#fff" />
             </TouchableOpacity>
 

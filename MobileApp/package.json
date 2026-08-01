@@ -1,6 +1,6 @@
 {
   "name": "mobile-app",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "main": "index.js",
   "scripts": {
     "start": "expo start",
@@ -10,6 +10,9 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "validate:build-config": "node scripts/validate-build-config.js",
+    "build:preview": "npx eas-cli build --platform android --profile preview",
+    "update:preview": "npx eas-cli update --channel preview --environment preview --platform android",
+    "update:production": "npx eas-cli update --channel production --environment production",
     "eas-build-post-install": "npm run validate:build-config"
   },
   "dependencies": {
@@ -30,6 +33,7 @@
     "expo-auth-session": "~55.0.17",
     "expo-blur": "~55.0.16",
     "expo-clipboard": "~55.0.15",
+    "expo-constants": "~55.0.17",
     "expo-crypto": "~55.0.17",
     "expo-document-picker": "~55.0.15",
     "expo-font": "~55.0.8",
@@ -46,6 +50,7 @@
     "expo-status-bar": "~55.0.6",
     "expo-store-review": "~55.0.16",
     "expo-system-ui": "~55.0.20",
+    "expo-updates": "~55.0.26",
     "expo-web-browser": "~55.0.18",
     "react": "19.2.0",
     "react-dom": "19.2.0",

@@ -7,6 +7,7 @@
  */
 
 import * as fc from 'fast-check';
+import { canCancelOrder } from '../../src/utils/orderPresentation';
 
 /**
  * Check if order can be cancelled
@@ -14,28 +15,23 @@ import * as fc from 'fast-check';
  * Validates: Requirements 11.5
  * 
  * For any Order displayed in OrderDetailScreen, the "Cancel Order" button 
- * SHALL be visible if and only if the order status is 'pending' or 'processing'.
+ * SHALL be visible for unpaid pending/confirmed/processing orders before shipment.
  */
-const canCancelOrder = (status) => {
-  const cancellableStatuses = ['pending', 'processing'];
-  return cancellableStatuses.includes(status?.toLowerCase());
-};
-
 // All possible order statuses
 const allStatuses = ['pending', 'confirmed', 'processing', 'shipped', 'delivered', 'cancelled'];
-const cancellableStatuses = ['pending', 'processing'];
-const nonCancellableStatuses = ['confirmed', 'shipped', 'delivered', 'cancelled'];
+const cancellableStatuses = ['pending', 'confirmed', 'processing'];
+const nonCancellableStatuses = ['shipped', 'delivered', 'cancelled'];
 
 describe('OrderDetailScreen Property Tests', () => {
   /**
    * Property 29: Order Cancellation Eligibility
    * For any Order displayed in OrderDetailScreen, the "Cancel Order" button 
-   * SHALL be visible if and only if the order status is 'pending' or 'processing'.
+   * SHALL be visible for unpaid pending/confirmed/processing orders before shipment.
    * 
    * Validates: Requirements 11.5
    */
   describe('Property 29: Order Cancellation Eligibility', () => {
-    it('should return true for cancellable statuses (pending, processing)', () => {
+    it('should return true before payment or fulfillment begins', () => {
       fc.assert(
         fc.property(
           fc.constantFrom(...cancellableStatuses),

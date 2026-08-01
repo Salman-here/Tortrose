@@ -5,6 +5,7 @@
  */
 
 import * as SecureStore from 'expo-secure-store';
+import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 import api from '../config/api';
 import { getNotificationsModule } from '../utils/notificationRuntime';
@@ -68,13 +69,16 @@ export async function registerForPushNotifications() {
   }
 
   try {
-    const projectId = process.env.EXPO_PUBLIC_PROJECT_ID;
+    const projectId =
+      process.env.EXPO_PUBLIC_PROJECT_ID ||
+      Constants.expoConfig?.extra?.eas?.projectId ||
+      Constants.easConfig?.projectId;
     // Skip remote push-token fetch if no valid EAS projectId is configured
     // (e.g. when running in Expo Go during development without an EAS project).
     // Expo's server requires a real UUID; a missing/placeholder value throws a 400.
     const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     if (!projectId || !UUID_RE.test(projectId)) {
-      console.log('Skipping push token fetch: EXPO_PUBLIC_PROJECT_ID not set to a valid UUID.');
+      console.log('Skipping push token fetch: no valid EAS project ID is configured.');
       return null;
     }
 
