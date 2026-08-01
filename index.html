@@ -3,6 +3,55 @@
 
 <head>
   <meta charset="UTF-8" />
+  <script>
+    // Stripe can append client secrets and payment references to return URLs.
+    // Remove them before any analytics or third-party script can observe the URL.
+    (() => {
+      try {
+        const url = new URL(window.location.href);
+        const params = url.searchParams;
+        const setupIntentId = params.get('setup_intent') || '';
+        const hasSetupReturn = /^seti_[A-Za-z0-9_]+$/.test(setupIntentId)
+          && params.has('setup_intent_client_secret');
+        const checkoutSessionId = params.get('session_id') || '';
+        const hasStripeReturnParams = hasSetupReturn
+          || checkoutSessionId
+          || ['setup_intent', 'setup_intent_client_secret', 'payment_intent', 'payment_intent_client_secret', 'redirect_status', 'card_setup']
+            .some(key => params.has(key));
+        if (!hasStripeReturnParams) return;
+
+        try {
+          const state = JSON.parse(sessionStorage.getItem('rozare_stripe_return_v1') || '{}');
+          if (hasSetupReturn) {
+            state.paymentMethodSetup = {
+              path: url.pathname,
+              redirectStatus: params.get('redirect_status') || '',
+              receivedAt: Date.now(),
+            };
+          }
+          if (/^cs_[A-Za-z0-9_]+$/.test(checkoutSessionId)) {
+            state.checkoutSession = {
+              id: checkoutSessionId,
+              path: url.pathname,
+              orderId: params.get('orderId') || '',
+              receivedAt: Date.now(),
+            };
+          }
+          sessionStorage.setItem('rozare_stripe_return_v1', JSON.stringify(state));
+        } catch (_) {}
+        [
+          'setup_intent',
+          'setup_intent_client_secret',
+          'payment_intent',
+          'payment_intent_client_secret',
+          'redirect_status',
+          'session_id',
+          'card_setup',
+        ].forEach(key => params.delete(key));
+        window.history.replaceState({}, document.title, `${url.pathname}${params.toString() ? `?${params}` : ''}${url.hash}`);
+      } catch (_) {}
+    })();
+  </script>
   <link rel="icon" type="image/png" sizes="512x512" href="/favicon-512.png" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="shortcut icon" href="/favicon-512.png" />

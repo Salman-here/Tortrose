@@ -6,6 +6,7 @@ const WalletTransaction = require('../models/WalletTransaction');
 const Order = require('../models/Order');
 const Product = require('../models/Product');
 const { formatMoneySync } = require('./currencyService');
+const { STRIPE_MODE } = require('../config/stripe');
 
 const WALLET_CURRENCIES = Object.freeze(['USD', 'PKR', 'EUR', 'GBP']);
 const ZERO_DECIMAL_CURRENCIES = new Set([
@@ -48,6 +49,12 @@ const toStripeMinorUnits = (amount, currency) => {
   const normalized = normalizeWalletCurrency(currency);
   const value = Math.max(0, Number(amount) || 0);
   return ZERO_DECIMAL_CURRENCIES.has(normalized) ? Math.round(value) : Math.round(value * 100);
+};
+
+const fromStripeMinorUnits = (amount, currency) => {
+  const normalized = normalizeWalletCurrency(currency);
+  const value = Math.max(0, Number(amount) || 0);
+  return roundMoney(ZERO_DECIMAL_CURRENCIES.has(normalized) ? value : value / 100);
 };
 
 const runInTransaction = async (work) => {
@@ -212,20 +219,113 @@ const debitWalletInSession = async ({
   return transaction;
 };
 
-const completeWalletTopUp = async (stripeSession) => {
-  const transactionId = stripeSession?.metadata?.walletTransactionId;
-  if (!transactionId) return null;
-  if (stripeSession.payment_status !== 'paid') {
-    const error = new Error('Stripe has not marked this wallet top-up as paid.');
-    error.code = 'TOP_UP_NOT_PAID';
-    throw error;
-  }
+const walletPaymentError = (message, code, statusCode = 400) => {
+  const error = new Error(message);
+  error.code = code;
+  error.statusCode = statusCode;
+  return error;
+};
 
+const stripeLivemodeMatches = (stripeObject, stripeMode) => (
+  typeof stripeObject?.livemode !== 'boolean'
+  || stripeObject.livemode === (stripeMode === 'live')
+);
+
+const validateWalletTopUpPaymentIntent = (transaction, paymentIntent) => {
+  if (!transaction || transaction.paymentFlow !== 'payment_sheet') {
+    throw walletPaymentError('This is not a native Wallet top-up.', 'NOT_PAYMENT_SHEET_TOP_UP');
+  }
+  const metadata = paymentIntent?.metadata || {};
+  const customerId = typeof paymentIntent?.customer === 'string'
+    ? paymentIntent.customer
+    : paymentIntent?.customer?.id;
+  if (
+    !paymentIntent?.id
+    || paymentIntent.id !== transaction.stripePaymentIntentId
+    || metadata.type !== 'wallet_top_up'
+    || metadata.paymentFlow !== 'payment_sheet'
+    || String(metadata.walletTransactionId || '') !== String(transaction._id || '')
+    || String(metadata.userId || '') !== String(transaction.user || '')
+  ) {
+    throw walletPaymentError('Wallet top-up ownership is invalid.', 'TOP_UP_TRANSACTION_MISMATCH');
+  }
+  if (!transaction.stripeCustomerId || customerId !== transaction.stripeCustomerId) {
+    throw walletPaymentError('Wallet top-up customer ownership is invalid.', 'TOP_UP_CUSTOMER_MISMATCH');
+  }
+  const expectedMinor = toStripeMinorUnits(transaction.amount, transaction.currency);
+  if (
+    Number(paymentIntent.amount) !== expectedMinor
+    || Number(metadata.amountMinor) !== expectedMinor
+    || String(paymentIntent.currency || '').toUpperCase() !== transaction.currency
+  ) {
+    throw walletPaymentError('Wallet top-up amount or currency is invalid.', 'TOP_UP_AMOUNT_MISMATCH');
+  }
+  if (
+    !transaction.stripeMode
+    || metadata.stripeMode !== transaction.stripeMode
+    || !stripeLivemodeMatches(paymentIntent, transaction.stripeMode)
+  ) {
+    throw walletPaymentError('Wallet top-up Stripe mode is invalid.', 'TOP_UP_MODE_MISMATCH');
+  }
+  return true;
+};
+
+const validateWalletTopUpCheckoutSession = (transaction, checkoutSession) => {
+  const metadata = checkoutSession?.metadata || {};
+  const customerId = typeof checkoutSession?.customer === 'string'
+    ? checkoutSession.customer
+    : checkoutSession?.customer?.id;
+  if (
+    !transaction
+    || transaction.paymentFlow !== 'checkout_session'
+    || checkoutSession?.id !== transaction.stripeSessionId
+    || checkoutSession?.mode !== 'payment'
+    || metadata.type !== 'wallet_top_up'
+    || metadata.paymentFlow !== 'checkout_session'
+    || String(metadata.walletTransactionId || '') !== String(transaction._id || '')
+    || String(metadata.userId || '') !== String(transaction.user || '')
+  ) {
+    throw walletPaymentError('Wallet top-up Checkout ownership is invalid.', 'TOP_UP_TRANSACTION_MISMATCH');
+  }
+  if (!transaction.stripeCustomerId || customerId !== transaction.stripeCustomerId) {
+    throw walletPaymentError('Wallet top-up customer ownership is invalid.', 'TOP_UP_CUSTOMER_MISMATCH');
+  }
+  if (
+    Number(checkoutSession.amount_total) !== toStripeMinorUnits(transaction.amount, transaction.currency)
+    || String(checkoutSession.currency || '').toUpperCase() !== transaction.currency
+  ) {
+    throw walletPaymentError('Wallet top-up amount or currency is invalid.', 'TOP_UP_AMOUNT_MISMATCH');
+  }
+  if (
+    !transaction.stripeMode
+    || metadata.stripeMode !== transaction.stripeMode
+    || !stripeLivemodeMatches(checkoutSession, transaction.stripeMode)
+  ) {
+    throw walletPaymentError('Wallet top-up Stripe mode is invalid.', 'TOP_UP_MODE_MISMATCH');
+  }
+  return true;
+};
+
+const settleWalletTopUp = async ({
+  transactionId,
+  stripeObjectId,
+  paymentIntentId,
+  chargeId,
+  customerId,
+  amountMinor,
+  currency,
+  userId,
+  stripeMode,
+  eventId,
+  sourceField,
+  stripeObject,
+}) => {
+  if (!transactionId) return null;
   return runInTransaction(async (session) => {
     const transaction = await WalletTransaction.findOne({
       _id: transactionId,
       type: 'top_up',
-      stripeSessionId: stripeSession.id,
+      [sourceField]: stripeObjectId,
     }).session(session);
 
     if (!transaction) {
@@ -234,29 +334,42 @@ const completeWalletTopUp = async (stripeSession) => {
       throw error;
     }
     if (transaction.status === 'completed') return transaction;
-    if (transaction.status !== 'pending') {
+    if (!['pending', 'failed', 'cancelled', 'expired'].includes(transaction.status)) {
       const error = new Error(`Wallet top-up cannot complete from status ${transaction.status}.`);
       error.code = 'INVALID_TOP_UP_STATUS';
       throw error;
     }
 
     const expectedMinor = toStripeMinorUnits(transaction.amount, transaction.currency);
-    const receivedCurrency = String(stripeSession.currency || '').toUpperCase();
-    if (Number(stripeSession.amount_total) !== expectedMinor || receivedCurrency !== transaction.currency) {
-      const error = new Error('Stripe top-up amount or currency did not match the stored transaction.');
-      error.code = 'TOP_UP_AMOUNT_MISMATCH';
-      throw error;
+    const receivedCurrency = String(currency || '').toUpperCase();
+    if (Number(amountMinor) !== expectedMinor || receivedCurrency !== transaction.currency) {
+      throw walletPaymentError(
+        'Stripe top-up amount or currency did not match the stored transaction.',
+        'TOP_UP_AMOUNT_MISMATCH',
+      );
+    }
+    if (String(userId || '') !== String(transaction.user)) {
+      throw walletPaymentError('Stripe top-up user ownership is invalid.', 'TOP_UP_USER_MISMATCH');
+    }
+    if (transaction.stripeCustomerId && String(customerId || '') !== transaction.stripeCustomerId) {
+      throw walletPaymentError('Stripe top-up customer ownership is invalid.', 'TOP_UP_CUSTOMER_MISMATCH');
+    }
+    const expectedMode = transaction.stripeMode || stripeMode || STRIPE_MODE;
+    if (
+      (transaction.paymentFlow === 'payment_sheet' && stripeMode !== expectedMode)
+      || (transaction.paymentFlow !== 'payment_sheet' && stripeMode && stripeMode !== expectedMode)
+    ) {
+      throw walletPaymentError('Stripe top-up mode is invalid.', 'TOP_UP_MODE_MISMATCH');
+    }
+    if (!stripeLivemodeMatches(stripeObject, expectedMode)) {
+      throw walletPaymentError('Stripe top-up live mode is invalid.', 'TOP_UP_MODE_MISMATCH');
     }
 
     const wallet = await ensureWallet(transaction.user, session);
-    if (wallet.status !== 'active') {
-      const error = new Error('Wallet is locked.');
-      error.code = 'WALLET_LOCKED';
-      throw error;
-    }
-
+    // Stripe has already captured the money. Credit even if an operational
+    // lock was added while payment was in flight; the lock still prevents use.
     const updatedWallet = await Wallet.findOneAndUpdate(
-      { _id: wallet._id, status: 'active' },
+      { _id: wallet._id },
       { $inc: { [balancePath(transaction.currency)]: transaction.amount } },
       { new: true, session }
     );
@@ -264,10 +377,75 @@ const completeWalletTopUp = async (stripeSession) => {
     transaction.wallet = wallet._id;
     transaction.status = 'completed';
     transaction.balanceAfter = roundMoney(updatedWallet.balances?.[transaction.currency] || 0);
-    transaction.stripePaymentIntentId = stripeSession.payment_intent || null;
+    transaction.stripePaymentIntentId = paymentIntentId || transaction.stripePaymentIntentId || null;
+    transaction.stripeChargeId = chargeId || transaction.stripeChargeId || null;
+    transaction.stripeCustomerId = customerId || transaction.stripeCustomerId || null;
+    transaction.stripeWebhookEventId = eventId || transaction.stripeWebhookEventId || null;
+    transaction.failureReason = '';
     transaction.completedAt = new Date();
     await transaction.save({ session });
     return transaction;
+  });
+};
+
+const completeWalletTopUp = async (stripeSession, eventId = null) => {
+  if (stripeSession?.payment_status !== 'paid') {
+    throw walletPaymentError('Stripe has not marked this wallet top-up as paid.', 'TOP_UP_NOT_PAID', 409);
+  }
+  if (stripeSession.metadata?.type && stripeSession.metadata.type !== 'wallet_top_up') {
+    throw walletPaymentError('Stripe top-up metadata type is invalid.', 'TOP_UP_TYPE_MISMATCH');
+  }
+  return settleWalletTopUp({
+    transactionId: stripeSession?.metadata?.walletTransactionId,
+    stripeObjectId: stripeSession?.id,
+    paymentIntentId: typeof stripeSession?.payment_intent === 'string'
+      ? stripeSession.payment_intent
+      : stripeSession?.payment_intent?.id,
+    chargeId: null,
+    customerId: typeof stripeSession?.customer === 'string'
+      ? stripeSession.customer
+      : stripeSession?.customer?.id,
+    amountMinor: stripeSession?.amount_total,
+    currency: stripeSession?.currency,
+    userId: stripeSession?.metadata?.userId,
+    stripeMode: stripeSession?.metadata?.stripeMode,
+    eventId,
+    sourceField: 'stripeSessionId',
+    stripeObject: stripeSession,
+  });
+};
+
+const completeWalletTopUpFromPaymentIntent = async (paymentIntent, eventId = null) => {
+  if (paymentIntent?.status !== 'succeeded') {
+    throw walletPaymentError('Stripe has not confirmed this Wallet top-up.', 'TOP_UP_NOT_PAID', 409);
+  }
+  if (
+    paymentIntent.metadata?.type !== 'wallet_top_up'
+    || paymentIntent.metadata?.paymentFlow !== 'payment_sheet'
+  ) {
+    throw walletPaymentError('Stripe top-up metadata is invalid.', 'TOP_UP_TYPE_MISMATCH');
+  }
+  const amountReceived = Number(paymentIntent.amount_received);
+  if (amountReceived !== Number(paymentIntent.amount)) {
+    throw walletPaymentError('Stripe did not capture the complete Wallet top-up.', 'TOP_UP_AMOUNT_MISMATCH');
+  }
+  return settleWalletTopUp({
+    transactionId: paymentIntent.metadata.walletTransactionId,
+    stripeObjectId: paymentIntent.id,
+    paymentIntentId: paymentIntent.id,
+    chargeId: typeof paymentIntent.latest_charge === 'string'
+      ? paymentIntent.latest_charge
+      : paymentIntent.latest_charge?.id,
+    customerId: typeof paymentIntent.customer === 'string'
+      ? paymentIntent.customer
+      : paymentIntent.customer?.id,
+    amountMinor: amountReceived,
+    currency: paymentIntent.currency,
+    userId: paymentIntent.metadata.userId,
+    stripeMode: paymentIntent.metadata.stripeMode,
+    eventId,
+    sourceField: 'stripePaymentIntentId',
+    stripeObject: paymentIntent,
   });
 };
 
@@ -275,9 +453,75 @@ const failWalletTopUp = async (stripeSession, reason = 'Stripe checkout expired 
   const transactionId = stripeSession?.metadata?.walletTransactionId;
   if (!transactionId) return null;
   return WalletTransaction.findOneAndUpdate(
-    { _id: transactionId, type: 'top_up', status: 'pending' },
+    { _id: transactionId, type: 'top_up', status: 'pending', stripeSessionId: stripeSession.id },
     { $set: { status: 'failed', failureReason: reason } },
     { new: true }
+  );
+};
+
+const recordWalletTopUpPaymentFailure = async (paymentIntent, eventId = null) => {
+  if (
+    paymentIntent?.metadata?.type !== 'wallet_top_up'
+    || paymentIntent?.metadata?.paymentFlow !== 'payment_sheet'
+  ) return null;
+  const transaction = await WalletTransaction.findOne({
+    _id: paymentIntent.metadata.walletTransactionId,
+    user: paymentIntent.metadata.userId,
+    type: 'top_up',
+    status: 'pending',
+    stripePaymentIntentId: paymentIntent.id,
+    stripeCustomerId: typeof paymentIntent.customer === 'string'
+      ? paymentIntent.customer
+      : paymentIntent.customer?.id,
+  });
+  if (!transaction) throw walletPaymentError('Wallet top-up ownership is invalid.', 'TOP_UP_TRANSACTION_NOT_FOUND');
+  validateWalletTopUpPaymentIntent(transaction, paymentIntent);
+
+  // A failed attempt can return to requires_payment_method and then succeed.
+  // Keep the transaction pending and reusable until explicit cancel/expiry.
+  transaction.failureReason = String(
+    paymentIntent.last_payment_error?.message || 'The card was declined. Try another payment method.'
+  ).slice(0, 500);
+  transaction.stripeWebhookEventId = eventId || transaction.stripeWebhookEventId;
+  await transaction.save();
+  return transaction;
+};
+
+const cancelWalletTopUpFromPaymentIntent = async (
+  paymentIntent,
+  { eventId = null, status = 'cancelled', reason = 'Payment was cancelled.' } = {},
+) => {
+  if (
+    paymentIntent?.metadata?.type !== 'wallet_top_up'
+    || paymentIntent?.metadata?.paymentFlow !== 'payment_sheet'
+  ) return null;
+  const customerId = typeof paymentIntent.customer === 'string'
+    ? paymentIntent.customer
+    : paymentIntent.customer?.id;
+  const transaction = await WalletTransaction.findOne({
+    _id: paymentIntent.metadata.walletTransactionId,
+    user: paymentIntent.metadata.userId,
+    type: 'top_up',
+    status: 'pending',
+    stripePaymentIntentId: paymentIntent.id,
+    stripeCustomerId: customerId,
+    stripeMode: paymentIntent.metadata.stripeMode,
+  });
+  if (!transaction) return null;
+  validateWalletTopUpPaymentIntent(transaction, paymentIntent);
+  return WalletTransaction.findOneAndUpdate(
+    {
+      _id: transaction._id,
+      status: 'pending',
+    },
+    {
+      $set: {
+        status,
+        failureReason: String(reason).slice(0, 500),
+        stripeWebhookEventId: eventId,
+      },
+    },
+    { new: true },
   );
 };
 
@@ -375,12 +619,25 @@ const getWalletSummary = async (userId, { limit = 50 } = {}) => {
       lockedReason: wallet.lockedReason || '',
       updatedAt: wallet.updatedAt,
     },
-    transactions: transactions.map((transaction) => ({
-      ...transaction,
-      description: getWalletTransactionDescription(transaction),
-    })),
+    transactions: transactions.map(serializeWalletTransaction),
   };
 };
+
+const serializeWalletTransaction = (transaction) => ({
+  _id: transaction._id,
+  type: transaction.type,
+  direction: transaction.direction,
+  status: transaction.status,
+  amount: roundMoney(transaction.amount),
+  currency: transaction.currency,
+  balanceAfter: transaction.balanceAfter == null ? null : roundMoney(transaction.balanceAfter),
+  description: getWalletTransactionDescription(transaction),
+  referenceType: transaction.referenceType,
+  failureReason: transaction.failureReason || '',
+  completedAt: transaction.completedAt || null,
+  createdAt: transaction.createdAt,
+  updatedAt: transaction.updatedAt,
+});
 
 module.exports = {
   WALLET_CURRENCIES,
@@ -390,12 +647,19 @@ module.exports = {
   walletTopUpDescription,
   getWalletTransactionDescription,
   toStripeMinorUnits,
+  fromStripeMinorUnits,
   runInTransaction,
   ensureWallet,
   creditWalletInSession,
   debitWalletInSession,
   completeWalletTopUp,
+  completeWalletTopUpFromPaymentIntent,
   failWalletTopUp,
+  recordWalletTopUpPaymentFailure,
+  cancelWalletTopUpFromPaymentIntent,
   payOrderWithWallet,
   getWalletSummary,
+  serializeWalletTransaction,
+  validateWalletTopUpPaymentIntent,
+  validateWalletTopUpCheckoutSession,
 };

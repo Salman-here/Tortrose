@@ -10,6 +10,7 @@ import * as Sentry from '@sentry/react-native';
 import { AuthProvider } from './src/contexts/AuthContext';
 import { GlobalProvider } from './src/contexts/GlobalContext';
 import { CurrencyProvider } from './src/contexts/CurrencyContext';
+import { StripeBootstrapProvider } from './src/contexts/StripeContext';
 import { ThemeProvider, useTheme } from './src/contexts/ThemeContext';
 import AppNavigator from './src/navigation/AppNavigator';
 import OnboardingWalkthrough, { shouldShowOnboarding } from './src/components/OnboardingWalkthrough';
@@ -274,6 +275,7 @@ const linking = {
       AIChat: 'ai-chat',
       UserDashboard: 'user-dashboard',
       Wallet: 'wallet',
+      PaymentMethods: 'payment-methods',
       PaymentSuccess: 'payment-success',
       PaymentCancel: 'payment-cancel',
       FAQ: 'faq',
@@ -363,19 +365,21 @@ function App() {
             navigationBarTranslucent
             preserveEdgeToEdge
           >
-            <BiometricGate>
-              <AuthProvider>
-                <GlobalProvider>
-                  <CurrencyProvider>
-                    <NavigationContainer linking={linking}>
-                      <NotificationInitializer />
-                      <AppNavigator />
-                    </NavigationContainer>
-                    <OfflineBanner />
-                  </CurrencyProvider>
-                </GlobalProvider>
-              </AuthProvider>
-            </BiometricGate>
+            <StripeBootstrapProvider>
+              <BiometricGate>
+                <AuthProvider>
+                  <GlobalProvider>
+                    <CurrencyProvider>
+                      <NavigationContainer linking={linking}>
+                        <NotificationInitializer />
+                        <AppNavigator />
+                      </NavigationContainer>
+                      <OfflineBanner />
+                    </CurrencyProvider>
+                  </GlobalProvider>
+                </AuthProvider>
+              </BiometricGate>
+            </StripeBootstrapProvider>
           </KeyboardProvider>
         </ThemeProvider>
       </SafeAreaProvider>

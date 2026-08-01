@@ -78,6 +78,7 @@ const AccountOverview = () => {
         { label: 'Browse Products', icon: <Sparkles size={14} />, link: '/products' },
         { label: 'Your Orders', icon: <Box size={14} />, link: '/user-dashboard/orders' },
         { label: 'WhatsApp AI', icon: <MessageCircle size={14} />, link: '/user-dashboard/whatsapp' },
+        { label: 'Saved Cards', icon: <CreditCard size={14} />, link: '/user-dashboard/payment-methods' },
         { label: 'Edit Profile', icon: <User size={14} />, link: '/user-dashboard/profile' },
     ];
 

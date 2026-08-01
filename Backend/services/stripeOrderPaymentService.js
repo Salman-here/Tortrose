@@ -51,8 +51,88 @@ const validateStripeOrderSession = (order, stripeSession, { requirePaid = false 
   if (Number(stripeSession.amount_total) !== getExpectedStripeTotalMinor(order)) {
     throw paymentError('The payment session total is invalid.', 'PAYMENT_AMOUNT_MISMATCH');
   }
+  if (order.stripeMode) {
+    if (
+      stripeSession.metadata?.type !== 'order_payment'
+      || stripeSession.metadata?.paymentFlow !== 'checkout_session'
+      || stripeSession.metadata?.stripeMode !== order.stripeMode
+      || String(stripeSession.metadata?.mongoOrderId || '') !== String(order._id || '')
+      || Number(stripeSession.metadata?.amountMinor) !== getExpectedStripeTotalMinor(order)
+      || (typeof stripeSession.livemode === 'boolean'
+        && stripeSession.livemode !== (order.stripeMode === 'live'))
+    ) {
+      throw paymentError('The payment session metadata is invalid.', 'PAYMENT_MODE_MISMATCH');
+    }
+  }
+  if (order.stripeCustomerId) {
+    const sessionCustomer = typeof stripeSession.customer === 'string'
+      ? stripeSession.customer
+      : stripeSession.customer?.id;
+    if (sessionCustomer !== order.stripeCustomerId) {
+      throw paymentError('The payment customer does not belong to this order.', 'PAYMENT_CUSTOMER_MISMATCH');
+    }
+  }
+  if (
+    stripeSession.metadata?.userId
+    && String(stripeSession.metadata.userId) !== String(order.user || '')
+  ) {
+    throw paymentError('The payment user does not belong to this order.', 'PAYMENT_USER_MISMATCH');
+  }
   if (requirePaid && stripeSession.payment_status !== 'paid') {
     throw paymentError('Stripe has not confirmed this payment.', 'PAYMENT_NOT_CONFIRMED', 409);
+  }
+  return true;
+};
+
+const validateStripeOrderPaymentIntent = (order, paymentIntent, { requireSucceeded = false } = {}) => {
+  if (!order || order.paymentMethod !== 'stripe' || order.paymentFlow !== 'payment_sheet') {
+    throw paymentError('This order is not a native card-payment order.', 'NOT_PAYMENT_SHEET_ORDER');
+  }
+  if (!paymentIntent?.id || paymentIntent.id !== order.stripePaymentIntentId) {
+    throw paymentError('The PaymentIntent does not belong to this order.', 'PAYMENT_INTENT_MISMATCH');
+  }
+  const metadata = paymentIntent.metadata || {};
+  if (
+    metadata.type !== 'order_payment'
+    || metadata.paymentFlow !== 'payment_sheet'
+    || String(metadata.orderId || '') !== String(order.orderId || '')
+    || String(metadata.mongoOrderId || '') !== String(order._id || '')
+  ) {
+    throw paymentError('The PaymentIntent order reference is invalid.', 'PAYMENT_ORDER_MISMATCH');
+  }
+  if (String(metadata.userId || '') !== String(order.user || '')) {
+    throw paymentError('The PaymentIntent user is invalid.', 'PAYMENT_USER_MISMATCH');
+  }
+  const customerId = typeof paymentIntent.customer === 'string'
+    ? paymentIntent.customer
+    : paymentIntent.customer?.id;
+  if (!order.stripeCustomerId || customerId !== order.stripeCustomerId) {
+    throw paymentError('The PaymentIntent customer is invalid.', 'PAYMENT_CUSTOMER_MISMATCH');
+  }
+  if (
+    order.stripeMode
+    && (
+      metadata.stripeMode !== order.stripeMode
+      || (typeof paymentIntent.livemode === 'boolean'
+        && paymentIntent.livemode !== (order.stripeMode === 'live'))
+    )
+  ) {
+    throw paymentError('The PaymentIntent Stripe mode is invalid.', 'PAYMENT_MODE_MISMATCH');
+  }
+  const expected = getExpectedStripeTotalMinor(order);
+  if (
+    Number(paymentIntent.amount) !== expected
+    || (metadata.amountMinor && Number(metadata.amountMinor) !== expected)
+  ) {
+    throw paymentError('The PaymentIntent total is invalid.', 'PAYMENT_AMOUNT_MISMATCH');
+  }
+  if (String(paymentIntent.currency || '').toUpperCase() !== String(order.currency || '').toUpperCase()) {
+    throw paymentError('The PaymentIntent currency is invalid.', 'PAYMENT_CURRENCY_MISMATCH');
+  }
+  if (requireSucceeded) {
+    if (paymentIntent.status !== 'succeeded' || Number(paymentIntent.amount_received) !== expected) {
+      throw paymentError('Stripe has not confirmed the complete payment.', 'PAYMENT_NOT_CONFIRMED', 409);
+    }
   }
   return true;
 };
@@ -68,8 +148,7 @@ const isPaymentFulfilled = (order) => Boolean(
  * Claims and fulfills one Stripe checkout exactly once. The short lease lets a
  * later webhook retry recover if a process stops before the order is saved.
  */
-const fulfillStripeOrder = async ({ order, stripeSession, eventId }) => {
-  validateStripeOrderSession(order, stripeSession, { requirePaid: true });
+const fulfillClaimedStripeOrder = async ({ order, eventId, paymentIntentId, emailAddress }) => {
   if (isPaymentFulfilled(order)) {
     return { order, newlyFulfilled: false };
   }
@@ -81,6 +160,7 @@ const fulfillStripeOrder = async ({ order, stripeSession, eventId }) => {
       _id: order._id,
       isPaid: false,
       awaitingPayment: true,
+      orderStatus: { $ne: 'cancelled' },
       $or: [
         { paymentProcessingStartedAt: null },
         { paymentProcessingStartedAt: { $lt: staleBefore } },
@@ -116,8 +196,11 @@ const fulfillStripeOrder = async ({ order, stripeSession, eventId }) => {
     claimed.paymentFulfilledAt = now;
     claimed.paymentProcessingStartedAt = null;
     claimed.paymentResult = claimed.paymentResult || {};
-    claimed.paymentResult.paymentIntentId = stripeSession.payment_intent || null;
-    claimed.paymentResult.emailAddress = stripeSession.customer_details?.email || claimed.shippingInfo?.email || null;
+    claimed.paymentResult.paymentIntentId = paymentIntentId || null;
+    claimed.paymentResult.emailAddress = emailAddress || claimed.shippingInfo?.email || null;
+    claimed.paymentResult.failureCode = '';
+    claimed.paymentResult.failureMessage = '';
+    claimed.paymentResult.failureAt = null;
 
     for (const fulfillment of claimed.sellerFulfillment || []) {
       if (fulfillment.status === 'pending') {
@@ -141,10 +224,49 @@ const fulfillStripeOrder = async ({ order, stripeSession, eventId }) => {
   }
 };
 
+const fulfillStripeOrder = async ({ order, stripeSession, eventId }) => {
+  validateStripeOrderSession(order, stripeSession, { requirePaid: true });
+  return fulfillClaimedStripeOrder({
+    order,
+    eventId,
+    paymentIntentId: typeof stripeSession.payment_intent === 'string'
+      ? stripeSession.payment_intent
+      : stripeSession.payment_intent?.id,
+    emailAddress: stripeSession.customer_details?.email,
+  });
+};
+
+const fulfillStripeOrderPaymentIntent = async ({ order, paymentIntent, eventId }) => {
+  validateStripeOrderPaymentIntent(order, paymentIntent, { requireSucceeded: true });
+  return fulfillClaimedStripeOrder({
+    order,
+    eventId,
+    paymentIntentId: paymentIntent.id,
+    emailAddress: paymentIntent.receipt_email,
+  });
+};
+
+const recordStripeOrderPaymentFailure = async ({ order, paymentIntent }) => {
+  validateStripeOrderPaymentIntent(order, paymentIntent);
+  if (!order.awaitingPayment || order.isPaid || order.orderStatus === 'cancelled') return order;
+  order.paymentResult = order.paymentResult || {};
+  order.paymentResult.failureCode = String(paymentIntent.last_payment_error?.code || 'card_declined').slice(0, 120);
+  order.paymentResult.failureMessage = String(
+    paymentIntent.last_payment_error?.message || 'The card payment failed. Try another payment method.'
+  ).slice(0, 500);
+  order.paymentResult.failureAt = new Date();
+  await order.save();
+  return order;
+};
+
 module.exports = {
   toStripeMinorUnits,
   getExpectedStripeTotalMinor,
   validateStripeOrderSession,
+  validateStripeOrderPaymentIntent,
   isPaymentFulfilled,
   fulfillStripeOrder,
+  fulfillStripeOrderPaymentIntent,
+  recordStripeOrderPaymentFailure,
+  paymentError,
 };

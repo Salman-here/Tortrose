@@ -3,7 +3,7 @@ const Cart = require('../models/Cart');
 const Order = require('../models/Order');
 const Product = require('../models/Product')
 const crypto = require('crypto');
-const { stripe } = require('../config/stripe');
+const { stripe, STRIPE_MODE } = require('../config/stripe');
 const TaxConfig = require('../models/TaxConfig');
 const Store = require('../models/Store');
 const { calculateTax } = require('./taxController');
@@ -29,9 +29,26 @@ const { payOrderWithWallet } = require('../services/walletService');
 const { commitOrderInventory, restoreOrderInventory } = require('../services/orderInventoryService');
 const {
     toStripeMinorUnits,
+    getExpectedStripeTotalMinor,
     validateStripeOrderSession,
+    validateStripeOrderPaymentIntent,
     isPaymentFulfilled,
 } = require('../services/stripeOrderPaymentService');
+const {
+    ensureStripeCustomerForUser,
+    createMobileCustomerSession,
+    getStripeMobileConfig,
+} = require('../services/stripeCustomerService');
+const {
+    createPaymentExpiry,
+    closeOrderPaymentIntent,
+} = require('../services/stripePendingPaymentService');
+const {
+    buildCustomerInitiatedPaymentIntentParams,
+    isDefinitiveStripeCreationError,
+} = require('../services/stripePaymentIntentFactory');
+const { checkoutRequestFingerprint } = require('../services/checkoutIdempotencyService');
+const { removeFulfilledOrderItemsFromCart } = require('../services/cartFulfillmentService');
 const {
     validateAndPriceCoupons,
     validateAndPriceShipping,
@@ -78,7 +95,6 @@ const normalizeCheckoutIdempotencyKey = (value) => {
     if (key.length > 160 || !/^[A-Za-z0-9:_\-.]+$/.test(key)) return null;
     return key;
 };
-
 const orderResponseSummary = (order) => ({
     _id: order._id,
     orderId: order.orderId,
@@ -87,6 +103,139 @@ const orderResponseSummary = (order) => ({
     email: order.shippingInfo?.email,
 });
 
+const createNativeOrderPaymentIntent = (order) => {
+    const expectedAmountMinor = getExpectedStripeTotalMinor(order);
+    return stripe.paymentIntents.create(
+        buildCustomerInitiatedPaymentIntentParams({
+            amountMinor: expectedAmountMinor,
+            currency: order.currency,
+            customerId: order.stripeCustomerId,
+            receiptEmail: order.shippingInfo?.email,
+            metadata: {
+                type: 'order_payment',
+                paymentFlow: 'payment_sheet',
+                orderId: order.orderId,
+                mongoOrderId: String(order._id),
+                userId: String(order.user),
+                amountMinor: String(expectedAmountMinor),
+                currency: order.currency,
+                stripeMode: order.stripeMode || STRIPE_MODE,
+                tiktokPurchaseEventId: order.tracking?.tiktokPurchaseEventId || '',
+            },
+        }),
+        { idempotencyKey: `rozare-order-pi:${order.stripeMode || STRIPE_MODE}:${order._id}` },
+    );
+};
+
+const hostedOrderLineItems = (order) => {
+    const currency = order.currency.toLowerCase();
+    return [
+        ...(order.orderItems || []).map(item => ({
+            price_data: {
+                currency,
+                product_data: { name: item.name, images: item.image ? [item.image] : undefined },
+                unit_amount: toStripeMinorUnits(item.price, order.currency),
+            },
+            quantity: item.quantity,
+        })),
+        {
+            price_data: {
+                currency,
+                product_data: {
+                    name: (order.sellerShipping || []).length > 1
+                        ? `Shipping (${order.sellerShipping.length} sellers)`
+                        : `${order.shippingMethod.name} Shipping`,
+                },
+                unit_amount: toStripeMinorUnits(order.orderSummary.shippingCost, order.currency),
+            },
+            quantity: 1,
+        },
+        ...(Number(order.orderSummary.tax) > 0 ? [{
+            price_data: {
+                currency,
+                product_data: { name: 'Tax' },
+                unit_amount: toStripeMinorUnits(order.orderSummary.tax, order.currency),
+            },
+            quantity: 1,
+        }] : []),
+    ];
+};
+
+const createHostedOrderCheckoutSession = async (order) => {
+    const stripeCurrency = order.currency.toLowerCase();
+    let discounts;
+    const discountAmount = Number(order.orderSummary?.couponDiscount) || 0;
+    if (discountAmount > 0) {
+        const amountOff = toStripeMinorUnits(discountAmount, order.currency);
+        if (amountOff > 0) {
+            const coupon = await stripe.coupons.create({
+                amount_off: amountOff,
+                currency: stripeCurrency,
+                duration: 'once',
+                name: 'Coupon discount',
+            }, {
+                idempotencyKey: `rozare-order-coupon:${order.stripeMode || STRIPE_MODE}:${order._id}`,
+            });
+            discounts = [{ coupon: coupon.id }];
+        }
+    }
+    const isMobile = order.clientSurface === 'mobile';
+    const frontendUrl = process.env.FRONTEND_URL || 'https://rozare.com';
+    return stripe.checkout.sessions.create({
+        payment_method_types: ['card'],
+        mode: 'payment',
+        customer: order.stripeCustomerId,
+        saved_payment_method_options: {
+            payment_method_save: 'enabled',
+            payment_method_remove: 'disabled',
+        },
+        ...(isMobile ? { origin_context: 'mobile_app' } : {}),
+        line_items: hostedOrderLineItems(order),
+        ...(discounts ? { discounts } : {}),
+        success_url: isMobile
+            ? `rozare://payment-success?session_id={CHECKOUT_SESSION_ID}&orderId=${order.orderId}`
+            : `${frontendUrl}/success?session_id={CHECKOUT_SESSION_ID}&orderId=${order.orderId}`,
+        cancel_url: isMobile
+            ? `rozare://payment-cancel?orderId=${order.orderId}`
+            : `${frontendUrl}/checkout`,
+        expires_at: Math.floor(new Date(order.paymentExpiresAt).getTime() / 1000),
+        metadata: {
+            type: 'order_payment',
+            paymentFlow: 'checkout_session',
+            orderId: order.orderId,
+            mongoOrderId: String(order._id),
+            userId: String(order.user),
+            amountMinor: String(getExpectedStripeTotalMinor(order)),
+            currency: order.currency,
+            stripeMode: order.stripeMode || STRIPE_MODE,
+            tiktokPurchaseEventId: order.tracking?.tiktokPurchaseEventId || '',
+        },
+    }, {
+        idempotencyKey: `rozare-order-checkout:${order.stripeMode || STRIPE_MODE}:${order._id}`,
+    });
+};
+
+const paymentIntentResponse = async (order, paymentIntent, { idempotentReplay = false } = {}) => {
+    const customerSession = await createMobileCustomerSession(order.stripeCustomerId);
+    return {
+        msg: idempotentReplay ? 'Secure mobile payment resumed.' : 'Secure mobile payment is ready.',
+        idempotentReplay,
+        paymentFlow: 'payment_sheet',
+        paymentIntentId: paymentIntent.id,
+        paymentIntentClientSecret: paymentIntent.client_secret,
+        customerId: order.stripeCustomerId,
+        customerSessionClientSecret: customerSession.client_secret,
+        expiresAt: order.paymentExpiresAt,
+        orderId: order.orderId,
+        order: orderResponseSummary(order),
+        ...getStripeMobileConfig(),
+        consent: {
+            usage: 'on_session',
+            message: 'A card is saved only when the customer opts in inside Stripe PaymentSheet.',
+        },
+    };
+};
+
 const respondWithExistingCheckout = async (res, existingOrder) => {
     if (existingOrder.paymentMethod === 'stripe') {
         if (existingOrder.isPaid && !existingOrder.awaitingPayment) {
@@ -94,31 +243,225 @@ const respondWithExistingCheckout = async (res, existingOrder) => {
                 msg: 'Payment already completed.',
                 idempotentReplay: true,
                 isPaid: true,
-                id: existingOrder.stripeSessionId,
+                paymentFlow: existingOrder.paymentFlow || 'checkout_session',
+                id: existingOrder.stripeSessionId || existingOrder.stripePaymentIntentId,
                 orderId: existingOrder.orderId,
                 order: orderResponseSummary(existingOrder),
             });
         }
+        if (existingOrder.paymentFlow === 'payment_sheet') {
+            if (!existingOrder.stripeCustomerId) {
+                return res.status(409).json({
+                    msg: 'Secure mobile payment is still being prepared. Please retry in a moment.',
+                    code: 'CHECKOUT_IN_PROGRESS',
+                    orderId: existingOrder.orderId,
+                });
+            }
+            if (existingOrder.paymentExpiresAt && existingOrder.paymentExpiresAt <= new Date()) {
+                if (!existingOrder.stripePaymentIntentId) {
+                    if (existingOrder.inventoryCommitted) {
+                        await restoreOrderInventory(existingOrder._id).catch(() => {});
+                    }
+                    await Order.deleteOne({ _id: existingOrder._id, isPaid: false }).catch(() => {});
+                    return res.status(409).json({
+                        msg: 'This secure mobile payment attempt expired. Please start payment again.',
+                        code: 'CHECKOUT_ATTEMPT_EXPIRED',
+                        orderId: existingOrder.orderId,
+                    });
+                }
+                const closed = await closeOrderPaymentIntent(existingOrder, {
+                    status: 'expired',
+                    reason: 'The secure mobile payment window expired.',
+                    requireExpired: true,
+                });
+                if (closed?.status !== 'payment_succeeded') {
+                    return res.status(409).json({
+                        msg: 'This secure mobile payment attempt expired. Please start payment again.',
+                        code: 'CHECKOUT_ATTEMPT_EXPIRED',
+                        orderId: existingOrder.orderId,
+                    });
+                }
+            }
+            try {
+                let paymentIntent;
+                if (!existingOrder.stripePaymentIntentId) {
+                    if (!existingOrder.inventoryCommitted) {
+                        try {
+                            await commitOrderInventory(existingOrder._id);
+                            existingOrder.inventoryCommitted = true;
+                        } catch (inventoryError) {
+                            await Order.deleteOne({ _id: existingOrder._id, isPaid: false }).catch(() => {});
+                            throw inventoryError;
+                        }
+                    }
+                    paymentIntent = await createNativeOrderPaymentIntent(existingOrder);
+                    existingOrder.stripePaymentIntentId = paymentIntent.id;
+                    await existingOrder.save();
+                } else {
+                    try {
+                        paymentIntent = await stripe.paymentIntents.retrieve(existingOrder.stripePaymentIntentId);
+                    } catch (retrieveError) {
+                        if (retrieveError?.code === 'resource_missing') {
+                            if (existingOrder.inventoryCommitted) {
+                                await restoreOrderInventory(existingOrder._id);
+                            }
+                            await Order.deleteOne({
+                                _id: existingOrder._id,
+                                isPaid: false,
+                                awaitingPayment: true,
+                            });
+                            return res.status(409).json({
+                                msg: 'This secure mobile payment attempt is no longer available. Please start payment again.',
+                                code: 'CHECKOUT_ATTEMPT_EXPIRED',
+                                orderId: existingOrder.orderId,
+                            });
+                        }
+                        return res.status(502).json({
+                            msg: 'Secure mobile payment is still being recovered. Retry this same checkout attempt.',
+                            code: 'PAYMENT_ATTEMPT_RECOVERY_PENDING',
+                            orderId: existingOrder.orderId,
+                        });
+                    }
+                }
+                if (!existingOrder.inventoryCommitted) {
+                    try {
+                        await commitOrderInventory(existingOrder._id);
+                        existingOrder.inventoryCommitted = true;
+                    } catch (inventoryError) {
+                        await stripe.paymentIntents.cancel(paymentIntent.id, {
+                            cancellation_reason: 'abandoned',
+                        }).catch(() => {});
+                        await Order.deleteOne({ _id: existingOrder._id, isPaid: false }).catch(() => {});
+                        throw inventoryError;
+                    }
+                }
+                validateStripeOrderPaymentIntent(existingOrder, paymentIntent);
+                if (paymentIntent.status === 'canceled') {
+                    if (existingOrder.inventoryCommitted) {
+                        await restoreOrderInventory(existingOrder._id);
+                    }
+                    await Order.deleteOne({
+                        _id: existingOrder._id,
+                        isPaid: false,
+                        awaitingPayment: true,
+                    });
+                    return res.status(409).json({
+                        msg: 'This secure mobile payment attempt is closed. Please start payment again.',
+                        code: 'CHECKOUT_ATTEMPT_EXPIRED',
+                        orderId: existingOrder.orderId,
+                    });
+                }
+                if (paymentIntent.status === 'succeeded') {
+                    return res.status(202).json({
+                        msg: 'Stripe received the payment. Final confirmation is processing.',
+                        idempotentReplay: true,
+                        paymentFlow: 'payment_sheet',
+                        stripePaymentReceived: true,
+                        paymentIntentId: paymentIntent.id,
+                        orderId: existingOrder.orderId,
+                        order: orderResponseSummary(existingOrder),
+                    });
+                }
+                return res.status(200).json(await paymentIntentResponse(existingOrder, paymentIntent, {
+                    idempotentReplay: true,
+                }));
+            } catch (error) {
+                if (error?.statusCode) throw error;
+                return res.status(502).json({
+                    msg: 'Secure mobile payment is still being recovered. Retry this same checkout attempt.',
+                    code: 'PAYMENT_ATTEMPT_RECOVERY_PENDING',
+                    orderId: existingOrder.orderId,
+                });
+            }
+        }
         if (!existingOrder.stripeSessionId) {
-            return res.status(409).json({
-                msg: 'Secure checkout is still being prepared. Please retry in a moment.',
-                code: 'CHECKOUT_IN_PROGRESS',
-                orderId: existingOrder.orderId,
-            });
-        }
-        if (!existingOrder.inventoryCommitted) {
-            return res.status(409).json({
-                msg: 'Your items are still being secured. Please retry in a moment.',
-                code: 'CHECKOUT_IN_PROGRESS',
-                orderId: existingOrder.orderId,
-            });
-        }
-        try {
-            const session = await stripe.checkout.sessions.retrieve(existingOrder.stripeSessionId);
-            if (session?.status === 'expired') {
+            if (existingOrder.paymentExpiresAt && existingOrder.paymentExpiresAt <= new Date()) {
+                if (existingOrder.inventoryCommitted) {
+                    await restoreOrderInventory(existingOrder._id).catch(() => {});
+                }
+                await Order.deleteOne({ _id: existingOrder._id, isPaid: false }).catch(() => {});
                 return res.status(409).json({
                     msg: 'This secure checkout attempt expired. Please start payment again.',
                     code: 'CHECKOUT_ATTEMPT_EXPIRED',
+                    orderId: existingOrder.orderId,
+                });
+            }
+            try {
+                if (!existingOrder.inventoryCommitted) {
+                    try {
+                        await commitOrderInventory(existingOrder._id);
+                        existingOrder.inventoryCommitted = true;
+                    } catch (inventoryError) {
+                        await Order.deleteOne({ _id: existingOrder._id, isPaid: false }).catch(() => {});
+                        throw inventoryError;
+                    }
+                }
+                const recoveredSession = await createHostedOrderCheckoutSession(existingOrder);
+                existingOrder.stripeSessionId = recoveredSession.id;
+                await existingOrder.save();
+            } catch (error) {
+                if (error?.statusCode) throw error;
+                return res.status(502).json({
+                    msg: 'Secure checkout is still being recovered. Retry this same checkout attempt.',
+                    code: 'PAYMENT_ATTEMPT_RECOVERY_PENDING',
+                    orderId: existingOrder.orderId,
+                });
+            }
+        }
+        if (!existingOrder.inventoryCommitted) {
+            try {
+                await commitOrderInventory(existingOrder._id);
+                existingOrder.inventoryCommitted = true;
+            } catch (inventoryError) {
+                await stripe.checkout.sessions.expire(existingOrder.stripeSessionId).catch(() => {});
+                await Order.deleteOne({ _id: existingOrder._id, isPaid: false }).catch(() => {});
+                throw inventoryError;
+            }
+        }
+        try {
+            const session = await stripe.checkout.sessions.retrieve(existingOrder.stripeSessionId);
+            validateStripeOrderSession(existingOrder, session);
+            if (session?.status === 'expired') {
+                if (existingOrder.inventoryCommitted) {
+                    await restoreOrderInventory(existingOrder._id).catch(() => {});
+                }
+                await Order.deleteOne({ _id: existingOrder._id, isPaid: false }).catch(() => {});
+                return res.status(409).json({
+                    msg: 'This secure checkout attempt expired. Please start payment again.',
+                    code: 'CHECKOUT_ATTEMPT_EXPIRED',
+                    orderId: existingOrder.orderId,
+                });
+            }
+            if (session?.status === 'complete' && session.payment_status === 'paid') {
+                return res.status(202).json({
+                    msg: 'Stripe received the payment. Final confirmation is processing.',
+                    idempotentReplay: true,
+                    paymentFlow: 'checkout_session',
+                    stripePaymentReceived: true,
+                    id: session.id,
+                    orderId: existingOrder.orderId,
+                    order: orderResponseSummary(existingOrder),
+                });
+            }
+            if (session?.status === 'complete') {
+                if (existingOrder.inventoryCommitted) {
+                    await restoreOrderInventory(existingOrder._id);
+                }
+                await Order.deleteOne({
+                    _id: existingOrder._id,
+                    isPaid: false,
+                    awaitingPayment: true,
+                });
+                return res.status(409).json({
+                    msg: 'This secure checkout did not complete. Please start payment again.',
+                    code: 'CHECKOUT_ATTEMPT_EXPIRED',
+                    orderId: existingOrder.orderId,
+                });
+            }
+            if (!session?.url) {
+                return res.status(502).json({
+                    msg: 'Secure checkout is still being recovered. Retry this same checkout attempt.',
+                    code: 'PAYMENT_ATTEMPT_RECOVERY_PENDING',
                     orderId: existingOrder.orderId,
                 });
             }
@@ -131,9 +474,24 @@ const respondWithExistingCheckout = async (res, existingOrder) => {
                 order: orderResponseSummary(existingOrder),
             });
         } catch (error) {
-            return res.status(409).json({
-                msg: 'Secure checkout could not be resumed. Please start a new attempt.',
-                code: 'CHECKOUT_ATTEMPT_UNAVAILABLE',
+            if (error?.code === 'resource_missing') {
+                if (existingOrder.inventoryCommitted) {
+                    await restoreOrderInventory(existingOrder._id);
+                }
+                await Order.deleteOne({
+                    _id: existingOrder._id,
+                    isPaid: false,
+                    awaitingPayment: true,
+                });
+                return res.status(409).json({
+                    msg: 'This secure checkout attempt is no longer available. Please start payment again.',
+                    code: 'CHECKOUT_ATTEMPT_EXPIRED',
+                    orderId: existingOrder.orderId,
+                });
+            }
+            return res.status(502).json({
+                msg: 'Secure checkout is still being recovered. Retry this same checkout attempt.',
+                code: 'PAYMENT_ATTEMPT_RECOVERY_PENDING',
                 orderId: existingOrder.orderId,
             });
         }
@@ -149,6 +507,11 @@ const respondWithExistingCheckout = async (res, existingOrder) => {
             orderId: existingOrder.orderId,
         });
     }
+    await removeFulfilledOrderItemsFromCart({
+        userId: existingOrder.user,
+        orderItems: existingOrder.orderItems,
+        fulfillmentId: existingOrder._id,
+    });
     return res.status(200).json({
         msg: existingOrder.paymentMethod === 'wallet'
             ? 'Order already paid with Rozare Wallet.'
@@ -160,6 +523,10 @@ const respondWithExistingCheckout = async (res, existingOrder) => {
         order: orderResponseSummary(existingOrder),
     });
 };
+
+if (process.env.NODE_ENV === 'test') {
+    exports._respondWithExistingCheckout = respondWithExistingCheckout;
+}
 
 const getSellerProductIds = async (sellerId) => {
     const ids = await Product.find({ seller: sellerId }).distinct('_id');
@@ -374,6 +741,11 @@ exports.placeOrder = async (req, res) => {
         || req.headers['x-idempotency-key']
         || order?.idempotencyKey;
     const checkoutIdempotencyKey = normalizeCheckoutIdempotencyKey(rawIdempotencyKey);
+    const rawPaymentFlow = req.body?.paymentFlow ?? order?.paymentFlow ?? 'checkout_session';
+    const rawClientSurface = req.body?.clientSurface
+        ?? order?.clientSurface
+        ?? (order?.platform === 'mobile' ? 'mobile' : 'web');
+    const requestFingerprint = checkoutRequestFingerprint(order, rawPaymentFlow, rawClientSurface);
 
     try {
         if (rawIdempotencyKey && !checkoutIdempotencyKey) {
@@ -382,9 +754,27 @@ exports.placeOrder = async (req, res) => {
                 code: 'INVALID_IDEMPOTENCY_KEY',
             });
         }
+        if (!['checkout_session', 'payment_sheet'].includes(rawPaymentFlow)) {
+            return res.status(400).json({ msg: 'Choose a valid payment flow.', code: 'INVALID_PAYMENT_FLOW' });
+        }
+        if (!['web', 'mobile'].includes(rawClientSurface)) {
+            return res.status(400).json({ msg: 'Choose a valid client surface.', code: 'INVALID_CLIENT_SURFACE' });
+        }
         if (userId && checkoutIdempotencyKey) {
-            const existingOrder = await Order.findOne({ user: userId, checkoutIdempotencyKey });
-            if (existingOrder) return respondWithExistingCheckout(res, existingOrder);
+            const existingOrder = await Order.findOne({ user: userId, checkoutIdempotencyKey })
+                .select('+checkoutRequestFingerprint');
+            if (existingOrder) {
+                if (
+                    existingOrder.checkoutRequestFingerprint
+                    && existingOrder.checkoutRequestFingerprint !== requestFingerprint
+                ) {
+                    return res.status(409).json({
+                        msg: 'This checkout attempt key was already used with different order details.',
+                        code: 'IDEMPOTENCY_CONFLICT',
+                    });
+                }
+                return respondWithExistingCheckout(res, existingOrder);
+            }
         }
         if (
             !order ||
@@ -408,6 +798,25 @@ exports.placeOrder = async (req, res) => {
             : null;
         if (!normalizedPaymentMethod) {
             return res.status(400).json({ msg: 'Choose a valid payment method.' });
+        }
+        const isNativeStripePayment = normalizedPaymentMethod === 'stripe' && rawPaymentFlow === 'payment_sheet';
+        if (rawPaymentFlow === 'payment_sheet' && !isNativeStripePayment) {
+            return res.status(400).json({
+                msg: 'Stripe PaymentSheet can only be used for card orders.',
+                code: 'PAYMENT_FLOW_METHOD_MISMATCH',
+            });
+        }
+        if (isNativeStripePayment && rawClientSurface !== 'mobile') {
+            return res.status(400).json({
+                msg: 'Stripe PaymentSheet is available only in the mobile app.',
+                code: 'PAYMENT_SHEET_MOBILE_ONLY',
+            });
+        }
+        if (isNativeStripePayment && !checkoutIdempotencyKey) {
+            return res.status(400).json({
+                msg: 'A checkout attempt key is required for secure mobile payment.',
+                code: 'IDEMPOTENCY_KEY_REQUIRED',
+            });
         }
         if (normalizedPaymentMethod === 'wallet' && !userId) {
             return res.status(401).json({
@@ -549,6 +958,7 @@ exports.placeOrder = async (req, res) => {
         const newOrder = new Order({
             ...(userId ? { user: userId } : {}),
             ...(checkoutIdempotencyKey ? { checkoutIdempotencyKey } : {}),
+            ...(checkoutIdempotencyKey ? { checkoutRequestFingerprint: requestFingerprint } : {}),
             guestEmail: !userId ? order.shippingInfo.email : null,
             currency: orderCurrency,
             orderId: `ORD-${Date.now()}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`,
@@ -614,6 +1024,8 @@ exports.placeOrder = async (req, res) => {
 
             // ✅ Schema expects just string ("stripe" | "cash_on_delivery")
             paymentMethod: normalizedPaymentMethod,
+            paymentFlow: isNativeStripePayment ? 'payment_sheet' : 'checkout_session',
+            clientSurface: rawClientSurface,
         });
         if (order.instructions && order.instructions !== '') newOrder.instructions = order.instructions
 
@@ -703,7 +1115,11 @@ exports.placeOrder = async (req, res) => {
                 console.error('Wallet order notification failed:', notificationError.message);
             }
 
-            await Cart.updateOne({ user: userId }, { $set: { cartItems: [] } }).catch(() => {});
+            await removeFulfilledOrderItemsFromCart({
+                userId,
+                orderItems: paidOrder.orderItems,
+                fulfillmentId: paidOrder._id,
+            });
             await recordOrderCoupons(paidOrder, userId);
             trackOrderEvent({
                 event: 'PlaceAnOrder',
@@ -735,7 +1151,11 @@ exports.placeOrder = async (req, res) => {
 
         if (newOrder.paymentMethod === 'cash_on_delivery') {
             await recordOrderCoupons(newOrder, userId);
-            await Cart.updateOne({ user: userId }, { $set: { cartItems: [] } }).catch(() => {});
+            await removeFulfilledOrderItemsFromCart({
+                userId,
+                orderItems: newOrder.orderItems,
+                fulfillmentId: newOrder._id,
+            });
 
             trackOrderEvent({
                 event: 'PlaceAnOrder',
@@ -765,131 +1185,135 @@ exports.placeOrder = async (req, res) => {
                     : `Card payments are not available in ${newOrder.currency} yet. Please choose cash on delivery or switch checkout currency.`,
             });
         }
-        const stripeCurrency = newOrder.currency.toLowerCase();
-
-        const line_items = [
-            ...newOrder.orderItems.map(item => ({
-                price_data: {
-                    currency: stripeCurrency,
-                    product_data: {
-                        name: item.name,
-                        images: item.image ? [item.image] : undefined
-                    },
-                    unit_amount: toStripeMinorUnits(item.price, newOrder.currency)
-                },
-                quantity: item.quantity
-            })),
-
-
-            // SHIPPING
-            {
-                price_data: {
-                    currency: stripeCurrency,
-                    product_data: {
-                        name: newOrder.sellerShipping.length > 1
-                            ? `Shipping (${newOrder.sellerShipping.length} sellers)`
-                            : `${newOrder.shippingMethod.name} Shipping`,
-                    },
-                    unit_amount: toStripeMinorUnits(newOrder.orderSummary.shippingCost, newOrder.currency)
-                },
-                quantity: 1
-            },
-
-            // TAX (only if tax > 0)
-            ...(newOrder.orderSummary.tax > 0 ? [{
-                price_data: {
-                    currency: stripeCurrency,
-                    product_data: {
-                        name: taxConfig && taxConfig.type === 'percentage'
-                            ? `Tax (${taxConfig.value}%)`
-                            : 'Tax',
-                    },
-                    unit_amount: toStripeMinorUnits(newOrder.orderSummary.tax, newOrder.currency)
-                },
-                quantity: 1
-            }] : [])
-        ]
-
-        // console.log(line_items);
-
-        // Support mobile deep-link redirects when platform === 'mobile'
-        const isMobile = order.platform === 'mobile';
-        const successUrl = isMobile
-            ? `rozare://payment-success?session_id={CHECKOUT_SESSION_ID}&orderId=${newOrder.orderId}`
-            : `${process.env.FRONTEND_URL}/success?session_id={CHECKOUT_SESSION_ID}`;
-        const cancelUrl = isMobile
-            ? `rozare://payment-cancel?orderId=${newOrder.orderId}`
-            : `${process.env.FRONTEND_URL}/checkout`;
-
         if (!stripe) {
-            // Stripe not configured — clean up the awaiting order so it doesn't linger
-            await Order.deleteOne({ _id: newOrder._id });
-            return res.status(500).json({ msg: "Online payments are not configured. Please contact support." });
+            await Order.deleteOne({ _id: newOrder._id, awaitingPayment: true });
+            return res.status(503).json({
+                msg: 'Online payments are not configured. Please contact support.',
+                code: 'STRIPE_NOT_CONFIGURED',
+            });
         }
 
-        // Apply coupon discount on Stripe via a one-off coupon (line items can't be negative).
-        let stripeDiscounts = undefined;
-        const couponDiscountAmount = Number(newOrder.orderSummary.couponDiscount) || 0;
-        if (couponDiscountAmount > 0) {
+        let stripeCustomer;
+        try {
+            ({ customer: stripeCustomer } = await ensureStripeCustomerForUser(userId));
+            newOrder.stripeCustomerId = stripeCustomer.id;
+            newOrder.stripeMode = STRIPE_MODE;
+            newOrder.paymentExpiresAt = isNativeStripePayment
+                ? createPaymentExpiry()
+                : new Date(Date.now() + 35 * 60 * 1000);
+            await newOrder.save();
+        } catch (customerError) {
+            await Order.deleteOne({ _id: newOrder._id, awaitingPayment: true }).catch(() => {});
+            throw customerError;
+        }
+
+        // Reserve stock before creating a payable Stripe object. If Stripe's
+        // response is ambiguous, the same local order/key retains this
+        // reservation while an exact idempotent retry recovers the object.
+        try {
+            await commitOrderInventory(newOrder._id);
+            newOrder.inventoryCommitted = true;
+        } catch (inventoryError) {
+            await Order.deleteOne({ _id: newOrder._id, isPaid: false }).catch(() => {});
+            throw inventoryError;
+        }
+
+        if (isNativeStripePayment) {
+            let paymentIntent;
             try {
-                const amountOff = toStripeMinorUnits(couponDiscountAmount, newOrder.currency);
-                if (amountOff > 0) {
-                    const stripeCoupon = await stripe.coupons.create({
-                        amount_off: amountOff,
-                        currency: stripeCurrency,
-                        duration: 'once',
-                        name: 'Coupon discount',
-                    });
-                    stripeDiscounts = [{ coupon: stripeCoupon.id }];
+                paymentIntent = await createNativeOrderPaymentIntent(newOrder);
+            } catch (creationError) {
+                if (!isDefinitiveStripeCreationError(creationError)) {
+                    const recoveryError = new Error(
+                        'Secure mobile payment is being recovered. Retry this same checkout attempt.'
+                    );
+                    recoveryError.statusCode = 502;
+                    recoveryError.code = 'PAYMENT_ATTEMPT_RECOVERY_PENDING';
+                    recoveryError.cause = creationError;
+                    throw recoveryError;
                 }
-            } catch (couponErr) {
-                console.error('Failed to create Stripe coupon:', couponErr.message);
-                await Order.deleteOne({ _id: newOrder._id, awaitingPayment: true });
-                couponErr.statusCode = 502;
-                couponErr.message = 'The secure checkout discount could not be created. Please try again.';
-                throw couponErr;
+                await restoreOrderInventory(newOrder._id).catch(() => {});
+                await Order.deleteOne({ _id: newOrder._id, isPaid: false }).catch(() => {});
+                const rejectedError = new Error('Stripe could not prepare this secure payment. Please try again.');
+                rejectedError.statusCode = 502;
+                rejectedError.code = 'PAYMENT_ATTEMPT_REJECTED';
+                rejectedError.cause = creationError;
+                throw rejectedError;
             }
+
+            newOrder.stripePaymentIntentId = paymentIntent.id;
+            try {
+                await newOrder.save();
+            } catch (persistenceError) {
+                const recoveryError = new Error(
+                    'Secure mobile payment is being recovered. Retry this same checkout attempt.'
+                );
+                recoveryError.statusCode = 502;
+                recoveryError.code = 'PAYMENT_ATTEMPT_RECOVERY_PENDING';
+                recoveryError.cause = persistenceError;
+                throw recoveryError;
+            }
+
+            let nativePaymentResponse;
+            try {
+                nativePaymentResponse = await paymentIntentResponse(newOrder, paymentIntent);
+            } catch (customerSessionError) {
+                const recoveryError = new Error(
+                    'Secure mobile payment access is being prepared. Retry this same checkout attempt.'
+                );
+                recoveryError.statusCode = 503;
+                recoveryError.code = 'PAYMENT_ATTEMPT_RECOVERY_PENDING';
+                recoveryError.cause = customerSessionError;
+                throw recoveryError;
+            }
+
+            trackOrderEvent({
+                event: 'PlaceAnOrder',
+                req,
+                order: newOrder,
+                eventId: newOrder.tracking?.tiktokPlaceOrderEventId,
+                tracking: newOrder.tracking || {},
+            }).catch(() => {});
+
+            res.set('Cache-Control', 'no-store, private, max-age=0');
+            return res.status(201).json(nativePaymentResponse);
         }
 
         let session;
         try {
-            session = await stripe.checkout.sessions.create({
-                payment_method_types: ['card'],
-                mode: 'payment',
-                ...(isMobile ? { origin_context: 'mobile_app' } : {}),
-                line_items,
-                ...(stripeDiscounts ? { discounts: stripeDiscounts } : {}),
-                success_url: successUrl,
-                cancel_url: cancelUrl,
-                // Auto-expire abandoned checkouts after 30 minutes (Stripe min) so the
-                // `checkout.session.expired` webhook can mark the order as cancelled.
-                expires_at: Math.floor(Date.now() / 1000) + 30 * 60,
-                metadata: {
-                    orderId: newOrder.orderId,
-                    tiktokPurchaseEventId: newOrder.tracking?.tiktokPurchaseEventId || '',
-                }
-            }, {
-                idempotencyKey: `rozare-order-checkout:${newOrder._id}`,
-            });
-        } catch (stripeError) {
-            await Order.deleteOne({ _id: newOrder._id, awaitingPayment: true });
-            throw stripeError;
+            session = await createHostedOrderCheckoutSession(newOrder);
+        } catch (creationError) {
+            if (!isDefinitiveStripeCreationError(creationError)) {
+                const recoveryError = new Error(
+                    'Secure checkout is being recovered. Retry this same checkout attempt.'
+                );
+                recoveryError.statusCode = 502;
+                recoveryError.code = 'PAYMENT_ATTEMPT_RECOVERY_PENDING';
+                recoveryError.cause = creationError;
+                throw recoveryError;
+            }
+            await restoreOrderInventory(newOrder._id).catch(() => {});
+            await Order.deleteOne({ _id: newOrder._id, awaitingPayment: true }).catch(() => {});
+            const rejectedError = new Error('Stripe could not prepare secure checkout. Please try again.');
+            rejectedError.statusCode = 502;
+            rejectedError.code = 'PAYMENT_ATTEMPT_REJECTED';
+            rejectedError.cause = creationError;
+            throw rejectedError;
         }
 
         // Persist the Stripe session id so webhook handlers can locate this order
         // when the buyer abandons / the session expires.
         newOrder.stripeSessionId = session.id;
-        await newOrder.save();
-
-        // Reserve inventory before the app/browser receives the hosted checkout
-        // URL. Expired sessions release this reservation in the webhook handler.
         try {
-            await commitOrderInventory(newOrder._id);
-            newOrder.inventoryCommitted = true;
-        } catch (inventoryError) {
-            await stripe.checkout.sessions.expire(session.id).catch(() => {});
-            await Order.deleteOne({ _id: newOrder._id, isPaid: false }).catch(() => {});
-            throw inventoryError;
+            await newOrder.save();
+        } catch (persistenceError) {
+            const recoveryError = new Error(
+                'Secure checkout is being recovered. Retry this same checkout attempt.'
+            );
+            recoveryError.statusCode = 502;
+            recoveryError.code = 'PAYMENT_ATTEMPT_RECOVERY_PENDING';
+            recoveryError.cause = persistenceError;
+            throw recoveryError;
         }
 
         trackOrderEvent({
@@ -911,8 +1335,21 @@ exports.placeOrder = async (req, res) => {
         });
     } catch (error) {
         if (error?.code === 11000 && userId && checkoutIdempotencyKey) {
-            const existingOrder = await Order.findOne({ user: userId, checkoutIdempotencyKey }).catch(() => null);
-            if (existingOrder) return respondWithExistingCheckout(res, existingOrder);
+            const existingOrder = await Order.findOne({ user: userId, checkoutIdempotencyKey })
+                .select('+checkoutRequestFingerprint')
+                .catch(() => null);
+            if (existingOrder) {
+                if (
+                    existingOrder.checkoutRequestFingerprint
+                    && existingOrder.checkoutRequestFingerprint !== requestFingerprint
+                ) {
+                    return res.status(409).json({
+                        msg: 'This checkout attempt key was already used with different order details.',
+                        code: 'IDEMPOTENCY_CONFLICT',
+                    });
+                }
+                return respondWithExistingCheckout(res, existingOrder);
+            }
         }
         console.error('Order checkout error:', error);
         return res.status(error.statusCode || 500).json({
@@ -927,6 +1364,9 @@ exports.placeOrder = async (req, res) => {
 exports.getPaymentStatus = async (req, res) => {
     const reference = String(req.params.orderId || '').trim();
     const requestedSessionId = String(req.query.sessionId || req.query.session_id || '').trim();
+    const requestedPaymentIntentId = String(
+        req.query.paymentIntentId || req.query.payment_intent_id || ''
+    ).trim();
     const { id: userId, role } = req.user;
 
     try {
@@ -944,25 +1384,37 @@ exports.getPaymentStatus = async (req, res) => {
                 code: 'NOT_STRIPE_ORDER',
             });
         }
-        if (!order.stripeSessionId) {
-            return res.status(409).json({
-                msg: 'Secure checkout is still being prepared.',
-                code: 'CHECKOUT_IN_PROGRESS',
+        if (
+            order.paymentFlow === 'payment_sheet'
+            && requestedPaymentIntentId
+            && requestedPaymentIntentId !== order.stripePaymentIntentId
+        ) {
+            return res.status(400).json({
+                msg: 'The PaymentIntent does not belong to this order.',
+                code: 'PAYMENT_INTENT_MISMATCH',
             });
         }
-        if (requestedSessionId && requestedSessionId !== order.stripeSessionId) {
+        if (
+            order.paymentFlow !== 'payment_sheet'
+            && requestedSessionId
+            && requestedSessionId !== order.stripeSessionId
+        ) {
             return res.status(400).json({
                 msg: 'The payment session does not belong to this order.',
                 code: 'PAYMENT_SESSION_MISMATCH',
             });
         }
-
         const response = {
             orderId: order.orderId,
             mongoOrderId: order._id,
             paymentMethod: order.paymentMethod,
+            paymentFlow: order.paymentFlow || 'checkout_session',
+            paymentIntentId: order.stripePaymentIntentId || null,
             isPaid: isPaymentFulfilled(order),
             webhookProcessed: isPaymentFulfilled(order),
+            failureCode: order.paymentResult?.failureCode || '',
+            failureMessage: order.paymentResult?.failureMessage || '',
+            expiresAt: order.paymentExpiresAt || null,
         };
         if (response.webhookProcessed) {
             return res.status(200).json({ ...response, status: 'paid' });
@@ -979,10 +1431,113 @@ exports.getPaymentStatus = async (req, res) => {
             });
         }
 
+        if (order.paymentFlow === 'payment_sheet') {
+            if (!order.stripePaymentIntentId) {
+                return res.status(409).json({
+                    ...response,
+                    msg: 'Secure mobile payment is still being prepared.',
+                    code: 'CHECKOUT_IN_PROGRESS',
+                });
+            }
+            if (requestedPaymentIntentId && requestedPaymentIntentId !== order.stripePaymentIntentId) {
+                return res.status(400).json({
+                    ...response,
+                    msg: 'The PaymentIntent does not belong to this order.',
+                    code: 'PAYMENT_INTENT_MISMATCH',
+                });
+            }
+
+            let paymentIntent;
+            try {
+                paymentIntent = await stripe.paymentIntents.retrieve(order.stripePaymentIntentId);
+            } catch (error) {
+                if (error?.code === 'resource_missing') {
+                    if (order.inventoryCommitted) await restoreOrderInventory(order._id);
+                    await Order.deleteOne({
+                        _id: order._id,
+                        isPaid: false,
+                        awaitingPayment: true,
+                    });
+                    return res.status(409).json({
+                        ...response,
+                        status: 'expired',
+                        msg: 'This secure mobile payment attempt is no longer available.',
+                        code: 'CHECKOUT_ATTEMPT_EXPIRED',
+                    });
+                }
+                return res.status(502).json({
+                    ...response,
+                    status: 'pending',
+                    msg: 'Could not refresh payment status yet. Please retry.',
+                    code: 'PAYMENT_STATUS_UNAVAILABLE',
+                });
+            }
+            validateStripeOrderPaymentIntent(order, paymentIntent);
+
+            if (paymentIntent.status === 'canceled') {
+                return res.status(200).json({ ...response, status: 'cancelled' });
+            }
+            if (
+                paymentIntent.status !== 'succeeded'
+                && order.paymentExpiresAt
+                && order.paymentExpiresAt <= new Date()
+            ) {
+                const closeResult = await closeOrderPaymentIntent(order, {
+                    status: 'expired',
+                    reason: 'The secure mobile payment window expired.',
+                    requireExpired: true,
+                });
+                if (closeResult?.status === 'payment_succeeded') {
+                    return res.status(200).json({
+                        ...response,
+                        status: 'pending',
+                        stripeStatus: 'succeeded',
+                        stripePaymentReceived: true,
+                    });
+                }
+                return res.status(200).json({ ...response, status: 'expired' });
+            }
+            return res.status(200).json({
+                ...response,
+                status: 'pending',
+                stripeStatus: paymentIntent.status,
+                stripePaymentReceived: paymentIntent.status === 'succeeded',
+            });
+        }
+
+        if (!order.stripeSessionId) {
+            return res.status(409).json({
+                ...response,
+                msg: 'Secure checkout is still being prepared.',
+                code: 'CHECKOUT_IN_PROGRESS',
+            });
+        }
+        if (requestedSessionId && requestedSessionId !== order.stripeSessionId) {
+            return res.status(400).json({
+                ...response,
+                msg: 'The payment session does not belong to this order.',
+                code: 'PAYMENT_SESSION_MISMATCH',
+            });
+        }
+
         let session;
         try {
             session = await stripe.checkout.sessions.retrieve(order.stripeSessionId);
         } catch (error) {
+            if (error?.code === 'resource_missing') {
+                if (order.inventoryCommitted) await restoreOrderInventory(order._id);
+                await Order.deleteOne({
+                    _id: order._id,
+                    isPaid: false,
+                    awaitingPayment: true,
+                });
+                return res.status(409).json({
+                    ...response,
+                    status: 'expired',
+                    msg: 'This secure checkout attempt is no longer available.',
+                    code: 'CHECKOUT_ATTEMPT_EXPIRED',
+                });
+            }
             return res.status(502).json({
                 ...response,
                 status: 'pending',
@@ -993,6 +1548,12 @@ exports.getPaymentStatus = async (req, res) => {
         validateStripeOrderSession(order, session);
 
         if (session.status === 'expired') {
+            if (order.inventoryCommitted) await restoreOrderInventory(order._id);
+            await Order.deleteOne({
+                _id: order._id,
+                isPaid: false,
+                awaitingPayment: true,
+            });
             return res.status(200).json({ ...response, status: 'expired' });
         }
         // Stripe may report paid a moment before our signed webhook finishes.
@@ -1006,6 +1567,53 @@ exports.getPaymentStatus = async (req, res) => {
         console.error('Payment status verification failed:', error.message);
         return res.status(error.statusCode || 500).json({
             msg: error.statusCode ? error.message : 'Could not verify payment status.',
+            ...(error.code ? { code: error.code } : {}),
+        });
+    }
+};
+
+exports.cancelStripePaymentAttempt = async (req, res) => {
+    const reference = String(req.params.orderId || '').trim();
+    try {
+        const selectors = [{ orderId: reference }];
+        if (mongoose.Types.ObjectId.isValid(reference)) selectors.push({ _id: reference });
+        const order = await Order.findOne({ user: req.user.id, $or: selectors });
+        if (!order) return res.status(404).json({ msg: 'Order payment attempt not found.' });
+        if (order.paymentMethod !== 'stripe' || order.paymentFlow !== 'payment_sheet') {
+            return res.status(400).json({
+                msg: 'Only native Stripe PaymentSheet attempts can be cancelled here.',
+                code: 'NOT_PAYMENT_SHEET_ORDER',
+            });
+        }
+        const requestedIntentId = String(
+            req.body?.paymentIntentId || req.body?.payment_intent_id || ''
+        ).trim();
+        if (requestedIntentId && requestedIntentId !== order.stripePaymentIntentId) {
+            return res.status(400).json({
+                msg: 'The PaymentIntent does not belong to this order.',
+                code: 'PAYMENT_INTENT_MISMATCH',
+            });
+        }
+        const result = await closeOrderPaymentIntent(order, {
+            status: 'cancelled',
+            reason: 'The buyer dismissed Stripe PaymentSheet.',
+        });
+        if (result?.status === 'payment_succeeded') {
+            return res.status(409).json({
+                msg: 'Stripe already received this payment. Waiting for secure webhook confirmation.',
+                code: 'PAYMENT_ALREADY_SUCCEEDED',
+            });
+        }
+        return res.status(200).json({
+            success: true,
+            orderId: order.orderId,
+            paymentIntentId: order.stripePaymentIntentId,
+            status: result?.status || 'cancelled',
+        });
+    } catch (error) {
+        console.error('Payment cancellation failed:', error.message);
+        return res.status(error.statusCode || 500).json({
+            msg: error.statusCode ? error.message : 'Could not cancel this payment attempt.',
             ...(error.code ? { code: error.code } : {}),
         });
     }

@@ -29,6 +29,16 @@ jest.mock('expo-document-picker', () => ({
   getDocumentAsync: jest.fn(() => Promise.resolve({ canceled: true, assets: null })),
 }));
 
+jest.mock('@stripe/stripe-react-native', () => ({
+  StripeProvider: ({ children }) => children,
+  initStripe: jest.fn(() => Promise.resolve()),
+  useStripe: jest.fn(() => ({
+    initPaymentSheet: jest.fn(() => Promise.resolve({})),
+    presentPaymentSheet: jest.fn(() => Promise.resolve({})),
+  })),
+  PaymentSheetError: { Canceled: 'Canceled', Failed: 'Failed', Timeout: 'Timeout' },
+}));
+
 jest.mock('expo-audio', () => ({
   RecordingPresets: { LOW_QUALITY: {}, HIGH_QUALITY: {} },
   requestRecordingPermissionsAsync: jest.fn(() => Promise.resolve({ granted: true })),

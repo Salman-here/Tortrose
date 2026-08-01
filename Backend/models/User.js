@@ -50,6 +50,15 @@ const userSchema = mongoose.Schema({
     // Currency preference
     currency: { type: String, enum: ['USD', 'PKR', 'EUR', 'GBP'], default: 'USD' },
 
+    // Buyer-commerce Stripe Customers are separated by mode. Seller recurring
+    // subscriptions can adopt these IDs, but test resources must never be sent
+    // to the live API (or vice versa). These fields are never serialized by
+    // default and contain IDs only, never card data or secrets.
+    stripeCustomers: {
+        test: { type: String, trim: true, select: false },
+        live: { type: String, trim: true, select: false },
+    },
+
     // Saved shipping/address info for auto-fill (legacy default address)
     savedShippingInfo: {
         fullName: { type: String, default: '' },
@@ -143,6 +152,14 @@ userSchema.virtual('store', {
 userSchema.index(
     { 'whatsappInfo.number': 1 },
     { unique: true, sparse: true, partialFilterExpression: { 'whatsappInfo.number': { $gt: '' } } }
+);
+userSchema.index(
+    { 'stripeCustomers.test': 1 },
+    { unique: true, partialFilterExpression: { 'stripeCustomers.test': { $type: 'string' } } }
+);
+userSchema.index(
+    { 'stripeCustomers.live': 1 },
+    { unique: true, partialFilterExpression: { 'stripeCustomers.live': { $type: 'string' } } }
 );
 
 // Ensure virtuals are included when converting to JSON

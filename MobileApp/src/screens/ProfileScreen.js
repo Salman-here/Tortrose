@@ -21,14 +21,16 @@ import GlassBlurFill from '../components/common/GlassBlurFill';
 import RozareLogo from '../components/common/RozareLogo';
 import { spacing, fontSize, borderRadius, fontWeight, typography } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
+import Constants from 'expo-constants';
 
-const APP_VERSION = '1.0.0';
+const APP_VERSION = Constants.expoConfig?.version || '1.0.3';
 
 export const getMenuItemsForRole = (role, palette) => {
   const baseItems = [
     { id: 'orders', title: 'My Orders', icon: 'receipt-outline', screen: 'Orders', color: palette.colors.primary },
     { id: 'track-order', title: 'Track My Order', icon: 'navigate-outline', screen: 'TrackOrder', color: palette.colors.warning },
     { id: 'wallet', title: 'Rozare Wallet', icon: 'wallet-outline', screen: 'Wallet', color: palette.colors.success },
+    { id: 'payment-methods', title: 'Payment Methods', icon: 'card-outline', screen: 'PaymentMethods', color: palette.colors.info },
     { id: 'buyer-whatsapp', title: 'WhatsApp AI & Updates', icon: 'logo-whatsapp', screen: 'UserWhatsAppSettings', color: '#22C55E' },
     { id: 'addresses', title: 'Saved Addresses', icon: 'location-outline', screen: 'SavedAddresses', color: palette.colors.info },
     { id: 'change-password', title: 'Change Password', icon: 'lock-closed-outline', screen: 'ChangePassword', color: palette.colors.warning },

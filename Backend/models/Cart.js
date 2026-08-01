@@ -31,6 +31,14 @@ const cartSchema = mongoose.Schema({
         unique: true,
     },
     cartItems: [cartItemSchema],
+    // A bounded, server-managed receipt list makes fulfilled-order cleanup
+    // idempotent. Stripe may deliver the same webhook more than once and a
+    // client may retry COD/Wallet checkout after a lost response.
+    fulfilledOrderIds: {
+        type: [mongoose.Schema.Types.ObjectId],
+        default: [],
+        select: false,
+    },
     totalCartPrice: {
         type: Number,
         default: 0,

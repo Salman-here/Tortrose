@@ -28,12 +28,12 @@ const conditionalVars = [
   {
     name: 'Stripe (Test Mode)',
     condition: () => !process.env.STRIPE_MODE || process.env.STRIPE_MODE === 'test',
-    vars: ['STRIPE_TEST_SECRET_KEY', 'STRIPE_TEST_WEBHOOK_SECRET']
+    vars: ['STRIPE_TEST_SECRET_KEY', 'STRIPE_TEST_PUBLISHABLE_KEY', 'STRIPE_TEST_WEBHOOK_SECRET', 'STRIPE_MERCHANT_COUNTRY_CODE']
   },
   {
     name: 'Stripe (Live Mode)',
     condition: () => process.env.STRIPE_MODE === 'live',
-    vars: ['STRIPE_LIVE_SECRET_KEY', 'STRIPE_LIVE_WEBHOOK_SECRET']
+    vars: ['STRIPE_LIVE_SECRET_KEY', 'STRIPE_LIVE_PUBLISHABLE_KEY', 'STRIPE_LIVE_WEBHOOK_SECRET', 'STRIPE_MERCHANT_COUNTRY_CODE']
   }
 ];
 
@@ -69,6 +69,7 @@ let foundRequired = [];
 let foundOptional = [];
 let missingConditional = [];
 let foundConditional = [];
+let invalidConfiguration = [];
 
 // Check required variables
 requiredVars.forEach(varName => {
@@ -101,6 +102,35 @@ conditionalVars.forEach(group => {
   }
 });
 
+const stripeMode = String(process.env.STRIPE_MODE || 'test').trim().toLowerCase();
+if (!['test', 'live'].includes(stripeMode)) {
+  invalidConfiguration.push('STRIPE_MODE must be test or live');
+}
+const activeSecretKey = stripeMode === 'live'
+  ? process.env.STRIPE_LIVE_SECRET_KEY
+  : process.env.STRIPE_TEST_SECRET_KEY;
+const activePublishableKey = stripeMode === 'live'
+  ? process.env.STRIPE_LIVE_PUBLISHABLE_KEY
+  : process.env.STRIPE_TEST_PUBLISHABLE_KEY;
+const activeWebhookSecret = stripeMode === 'live'
+  ? process.env.STRIPE_LIVE_WEBHOOK_SECRET
+  : process.env.STRIPE_TEST_WEBHOOK_SECRET;
+if (activeSecretKey && !activeSecretKey.startsWith(`sk_${stripeMode}_`)) {
+  invalidConfiguration.push(`Active Stripe secret key does not match ${stripeMode} mode`);
+}
+if (activePublishableKey && !activePublishableKey.startsWith(`pk_${stripeMode}_`)) {
+  invalidConfiguration.push(`Active Stripe publishable key does not match ${stripeMode} mode`);
+}
+if (activeWebhookSecret && !activeWebhookSecret.startsWith('whsec_')) {
+  invalidConfiguration.push('Active Stripe webhook secret must start with whsec_');
+}
+if (
+  process.env.STRIPE_MERCHANT_COUNTRY_CODE
+  && !/^[A-Z]{2}$/.test(process.env.STRIPE_MERCHANT_COUNTRY_CODE.trim().toUpperCase())
+) {
+  invalidConfiguration.push('STRIPE_MERCHANT_COUNTRY_CODE must be a two-letter ISO country code');
+}
+
 console.log('\n--- Optional Variables ---\n');
 
 // Check optional variables
@@ -124,7 +154,7 @@ console.log(`⚠️  Optional variables found: ${foundOptional.length}/${optiona
 
 const allMissing = [...missingRequired, ...missingConditional];
 
-if (allMissing.length > 0) {
+if (allMissing.length > 0 || invalidConfiguration.length > 0) {
   console.log('\n❌ MISSING REQUIRED VARIABLES:');
   if (missingRequired.length > 0) {
     console.log('\n   Core Variables:');
@@ -137,6 +167,10 @@ if (allMissing.length > 0) {
     missingConditional.forEach(varName => {
       console.log(`   - ${varName}`);
     });
+  }
+  if (invalidConfiguration.length > 0) {
+    console.log('\n   Invalid configuration:');
+    invalidConfiguration.forEach(message => console.log(`   - ${message}`));
   }
   console.log('\n⚠️  Your application may not work correctly!');
   console.log('📝 Please set these variables in your .env file or Heroku Config Vars.\n');

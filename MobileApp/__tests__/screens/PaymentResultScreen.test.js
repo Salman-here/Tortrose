@@ -69,7 +69,7 @@ describe('payment result screens', () => {
     mockFetchCart.mockResolvedValue(undefined);
   });
 
-  it('clears the cart and celebrates only after server verification says paid', async () => {
+  it('refreshes the backend-cleaned cart and celebrates only after server verification says paid', async () => {
     verifyOrderPayment.mockResolvedValue({ status: 'paid', payload: { isPaid: true } });
     const navigation = { reset: jest.fn(), replace: jest.fn() };
     const screen = render(
@@ -80,7 +80,7 @@ describe('payment result screens', () => {
     );
 
     await waitFor(() => expect(screen.getByText('Payment confirmed')).toBeTruthy());
-    expect(api.delete).toHaveBeenCalledWith('/api/cart/clear');
+    expect(api.delete).not.toHaveBeenCalled();
     expect(mockFetchCart).toHaveBeenCalledTimes(1);
     expect(mockRecordSuccessfulOrder).toHaveBeenCalledTimes(1);
   });

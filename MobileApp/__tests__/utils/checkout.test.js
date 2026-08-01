@@ -1,5 +1,6 @@
 import {
   buildSellerShipping,
+  cancelOrderPaymentAttempt,
   calculateCouponPricing,
   createCheckoutAttemptKey,
   findCouponOverlap,
@@ -106,8 +107,57 @@ describe('checkout production contracts', () => {
     expect(apiClient.get).toHaveBeenLastCalledWith('/api/order/payment-status/ORD-1', { params: { sessionId: 'cs_123' } });
   });
 
+  it('sends a native PaymentIntent reference without requiring a Checkout Session', async () => {
+    const apiClient = { get: jest.fn().mockResolvedValue({ data: { status: 'paid', isPaid: true } }) };
+    const result = await verifyOrderPayment({
+      apiClient,
+      orderId: 'ORD-2',
+      paymentIntentId: 'pi_123',
+      attempts: 1,
+    });
+    expect(result.status).toBe('paid');
+    expect(apiClient.get).toHaveBeenCalledWith('/api/order/payment-status/ORD-2', {
+      params: { paymentIntentId: 'pi_123' },
+    });
+  });
+
+  it('closes a dismissed native order payment through the authoritative cancel endpoint', async () => {
+    const apiClient = { post: jest.fn().mockResolvedValue({ data: { status: 'cancelled' } }) };
+    const result = await cancelOrderPaymentAttempt({
+      apiClient,
+      orderId: 'ORD/3',
+      paymentIntentId: 'pi_123',
+    });
+    expect(result.status).toBe('cancelled');
+    expect(apiClient.post).toHaveBeenCalledWith('/api/order/payment/ORD%2F3/cancel', {
+      paymentIntentId: 'pi_123',
+    });
+  });
+
+  it('routes an already-succeeded cancellation race to server verification', async () => {
+    const error = Object.assign(new Error('Already succeeded'), {
+      response: { status: 409, data: { code: 'PAYMENT_ALREADY_SUCCEEDED' } },
+    });
+    const result = await cancelOrderPaymentAttempt({
+      apiClient: { post: jest.fn().mockRejectedValue(error) },
+      orderId: 'ORD-4',
+      paymentIntentId: 'pi_456',
+    });
+    expect(result.status).toBe('payment_received');
+  });
+
+  it('keeps an unresolved payment attempt retry-safe when cancellation is unavailable', async () => {
+    const result = await cancelOrderPaymentAttempt({
+      apiClient: { post: jest.fn().mockRejectedValue(new Error('offline')) },
+      orderId: 'ORD-5',
+      paymentIntentId: 'pi_789',
+    });
+    expect(result).toEqual(expect.objectContaining({
+      status: 'unavailable', reason: 'cancellation_unconfirmed',
+    }));
+  });
+
   it('creates a stable namespaced idempotency value from secure UUID entropy', () => {
     expect(createCheckoutAttemptKey(() => 'uuid-1')).toBe('mobile-checkout:uuid-1');
   });
 });
-

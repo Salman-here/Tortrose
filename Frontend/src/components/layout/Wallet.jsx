@@ -1,13 +1,43 @@
 import { useCallback, useEffect, useState } from 'react';
 import axios from 'axios';
 import { motion } from 'framer-motion';
-import { ArrowDownLeft, ArrowUpRight, CreditCard, Loader2, RefreshCw, WalletCards } from 'lucide-react';
+import { AlertCircle, ArrowDownLeft, ArrowUpRight, CheckCircle2, Clock3, CreditCard, Loader2, RefreshCw, WalletCards } from 'lucide-react';
 import { toast } from 'react-toastify';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { getAuthToken } from '../../utils/cookieHelper';
 
 const API = `${import.meta.env.VITE_API_URL}api/wallet`;
 const currencies = ['USD', 'PKR', 'EUR', 'GBP'];
+const TOP_UP_ATTEMPT_KEY = 'rozare_wallet_topup_attempt_v1';
+const STRIPE_RETURN_KEY = 'rozare_stripe_return_v1';
+const TOP_UP_ATTEMPT_MAX_AGE_MS = 60 * 60 * 1000;
+
+const getTopUpAttempt = (amount, currency) => {
+  const fingerprint = `${String(currency).toUpperCase()}:${Number(amount).toFixed(2)}`;
+  try {
+    const stored = JSON.parse(sessionStorage.getItem(TOP_UP_ATTEMPT_KEY) || 'null');
+    const isFresh = Number(stored?.createdAt) > Date.now() - TOP_UP_ATTEMPT_MAX_AGE_MS;
+    if (stored?.requestKey && stored.fingerprint === fingerprint && isFresh) return stored;
+    if (stored) sessionStorage.removeItem(TOP_UP_ATTEMPT_KEY);
+  } catch (_) {}
+  const entropy = globalThis.crypto?.randomUUID?.()
+    || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const attempt = { requestKey: `web-wallet:${entropy}`, fingerprint, createdAt: Date.now() };
+  try { sessionStorage.setItem(TOP_UP_ATTEMPT_KEY, JSON.stringify(attempt)); } catch (_) {}
+  return attempt;
+};
+
+const clearTopUpAttempt = () => {
+  try { sessionStorage.removeItem(TOP_UP_ATTEMPT_KEY); } catch (_) {}
+};
+
+const clearWalletStripeReturn = () => {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(STRIPE_RETURN_KEY) || '{}');
+    if (saved?.checkoutSession?.path === window.location.pathname) delete saved.checkoutSession;
+    sessionStorage.setItem(STRIPE_RETURN_KEY, JSON.stringify(saved));
+  } catch (_) {}
+};
 
 const formatAmount = (amount, currency) => new Intl.NumberFormat(undefined, {
   style: 'currency',
@@ -29,6 +59,7 @@ export default function Wallet() {
   const [submitting, setSubmitting] = useState(false);
   const [amount, setAmount] = useState('');
   const [currency, setCurrency] = useState('PKR');
+  const [topUpStatus, setTopUpStatus] = useState(null);
   const [searchParams, setSearchParams] = useSearchParams();
 
   const load = useCallback(async ({ quiet = false } = {}) => {
@@ -51,28 +82,62 @@ export default function Wallet() {
   useEffect(() => {
     const result = searchParams.get('top_up');
     if (!result) return undefined;
-    if (result === 'success') toast.success('Payment received. Your wallet will update after Stripe verification.');
-    if (result === 'cancelled') toast.info('Wallet top-up was cancelled.');
+    const transactionId = searchParams.get('transactionId') || '';
     if (result !== 'success') {
+      setTopUpStatus({ type: 'info', message: 'Stripe checkout was closed. No Wallet credit has been assumed.' });
+      clearWalletStripeReturn();
       const next = new URLSearchParams(searchParams);
       next.delete('top_up');
       next.delete('session_id');
+      next.delete('transactionId');
       setSearchParams(next, { replace: true });
       return undefined;
     }
-    let attempts = 0;
-    const interval = setInterval(() => {
-      attempts += 1;
-      load({ quiet: true });
-      if (attempts >= 6) {
-        clearInterval(interval);
-        const next = new URLSearchParams(searchParams);
-        next.delete('top_up');
-        next.delete('session_id');
-        setSearchParams(next, { replace: true });
+
+    let active = true;
+    const verify = async () => {
+      if (!transactionId) {
+        if (active) setTopUpStatus({ type: 'error', message: 'The Wallet top-up reference is missing. Refresh your transaction history before trying again.' });
+        return;
       }
-    }, 2000);
-    return () => clearInterval(interval);
+      setTopUpStatus({ type: 'pending', message: 'Stripe returned successfully. Rozare is verifying the signed payment event…' });
+      for (let attempt = 0; attempt < 8; attempt += 1) {
+        try {
+          const response = await axios.get(`${API}/top-ups/${encodeURIComponent(transactionId)}/status`, {
+            headers: { Authorization: `Bearer ${getAuthToken()}` },
+          });
+          const status = String(response.data?.status || '').toLowerCase();
+          if (status === 'completed' && response.data?.webhookProcessed === true) {
+            if (!active) return;
+            setTopUpStatus({ type: 'success', message: 'Wallet top-up verified. Your available balance has been updated.' });
+            clearTopUpAttempt();
+            clearWalletStripeReturn();
+            await load({ quiet: true });
+            const next = new URLSearchParams(searchParams);
+            next.delete('top_up');
+            next.delete('session_id');
+            next.delete('transactionId');
+            setSearchParams(next, { replace: true });
+            return;
+          }
+          if (['failed', 'cancelled', 'canceled', 'expired', 'reversed'].includes(status)) {
+            if (!active) return;
+            setTopUpStatus({ type: 'error', message: response.data?.failureReason || 'This Wallet top-up was not completed. No balance was credited.' });
+            clearTopUpAttempt();
+            return;
+          }
+        } catch (error) {
+          if (error.response?.status >= 400 && error.response?.status < 500 && error.response?.status !== 408) {
+            if (active) setTopUpStatus({ type: 'error', message: error.response?.data?.msg || 'Rozare could not verify this Wallet top-up.' });
+            return;
+          }
+        }
+        if (attempt < 7) await new Promise(resolve => setTimeout(resolve, 1200));
+      }
+      if (active) setTopUpStatus({ type: 'pending', message: 'Confirmation is taking longer than usual. Your balance will update only after Stripe is verified.' });
+    };
+    verify();
+    return () => { active = false; };
   }, [load, searchParams, setSearchParams]);
 
   const startTopUp = async () => {
@@ -83,15 +148,31 @@ export default function Wallet() {
     }
     setSubmitting(true);
     try {
+      const attempt = getTopUpAttempt(numericAmount, currency);
       const response = await axios.post(`${API}/top-ups`, {
         amount: numericAmount,
         currency,
-        requestKey: crypto.randomUUID(),
+        requestKey: attempt.requestKey,
+        paymentFlow: 'checkout_session',
+        clientSurface: 'web',
       }, { headers: { Authorization: `Bearer ${getAuthToken()}` } });
       if (response.data?.url) window.location.assign(response.data.url);
-      else if (response.data?.completed) await load();
+      else if (response.data?.completed) {
+        clearTopUpAttempt();
+        await load();
+        setSubmitting(false);
+      }
+      else if (response.data?.stripePaymentReceived && response.data?.transactionId) {
+        setTopUpStatus({ type: 'pending', message: 'Stripe received your payment. Rozare is waiting for the signed confirmation before updating your balance.' });
+        setSubmitting(false);
+        setSearchParams({
+          top_up: 'success',
+          transactionId: String(response.data.transactionId),
+        }, { replace: true });
+      }
       else throw new Error('Stripe checkout URL was not returned.');
     } catch (error) {
+      if (['IDEMPOTENCY_CONFLICT', 'WALLET_TOP_UP_RETRY_REQUIRED'].includes(error.response?.data?.code)) clearTopUpAttempt();
       toast.error(error.response?.data?.msg || error.message || 'Failed to start wallet top-up.');
       setSubmitting(false);
     }
@@ -116,6 +197,24 @@ export default function Wallet() {
         </div>
       )}
 
+      {topUpStatus && (
+        <div
+          className="rounded-2xl p-4 mb-5 flex items-start gap-3 text-sm"
+          style={topUpStatus.type === 'success'
+            ? { background: 'rgba(16,185,129,0.09)', border: '1px solid rgba(16,185,129,0.22)', color: 'hsl(150,60%,34%)' }
+            : topUpStatus.type === 'error'
+              ? { background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', color: 'hsl(0,72%,48%)' }
+              : { background: 'rgba(245,158,11,0.09)', border: '1px solid rgba(245,158,11,0.22)', color: 'hsl(35,82%,38%)' }}
+        >
+          {topUpStatus.type === 'success'
+            ? <CheckCircle2 size={18} className="shrink-0" />
+            : topUpStatus.type === 'error'
+              ? <AlertCircle size={18} className="shrink-0" />
+              : <Clock3 size={18} className="shrink-0" />}
+          <span>{topUpStatus.message}</span>
+        </div>
+      )}
+
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
         {currencies.map((code, index) => (
           <motion.div key={code} className="glass-card p-4 sm:p-5" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: index * 0.04 }}>
@@ -128,7 +227,10 @@ export default function Wallet() {
       <div className="grid lg:grid-cols-[360px_minmax(0,1fr)] gap-5">
         <section className="glass-panel p-5 h-fit">
           <h2 className="font-semibold flex items-center gap-2" style={{ color: 'hsl(var(--foreground))' }}><CreditCard size={17} style={{ color: 'hsl(var(--primary))' }} /> Add balance</h2>
-          <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>Stripe verifies payment before any balance is credited.</p>
+          <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>Stripe verifies payment before any balance is credited. You can select a saved card at secure checkout.</p>
+          <Link to="/user-dashboard/payment-methods" className="mt-3 inline-flex items-center gap-2 text-xs font-semibold" style={{ color: 'hsl(var(--primary))' }}>
+            <CreditCard size={13} /> Manage saved cards
+          </Link>
           <label className="block text-xs font-semibold mt-5 mb-2" style={{ color: 'hsl(var(--muted-foreground))' }}>Currency</label>
           <div className="grid grid-cols-4 gap-2">
             {currencies.map(code => (

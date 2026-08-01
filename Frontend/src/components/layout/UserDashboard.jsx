@@ -172,6 +172,7 @@ const Sidebar = ({ activeTab, setActiveTab }) => {
         { id: 'profile', label: 'Profile', icon: <User size={18} />, link: '/user-dashboard/profile' },
         { id: 'orders', label: 'Your Orders', icon: <ShoppingCart size={18} />, link: '/user-dashboard/orders' },
         { id: 'wallet', label: 'Rozare Wallet', icon: <WalletCards size={18} />, link: '/user-dashboard/wallet' },
+        { id: 'payment methods', label: 'Saved Cards', icon: <CreditCard size={18} />, link: '/user-dashboard/payment-methods' },
         { id: 'whatsapp', label: 'WhatsApp AI', icon: <MessageCircle size={18} />, link: '/user-dashboard/whatsapp' },
     ];
 

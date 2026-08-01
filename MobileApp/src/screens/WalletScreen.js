@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Platform,
@@ -15,14 +15,23 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Crypto from 'expo-crypto';
-import * as WebBrowser from 'expo-web-browser';
+import { useStripe } from '@stripe/stripe-react-native';
 import api from '../config/api';
 import GlassBackground from '../components/common/GlassBackground';
 import GlassPanel from '../components/common/GlassPanel';
 import PremiumBackHeader from '../components/common/PremiumBackHeader';
 import { useCurrency } from '../contexts/CurrencyContext';
+import { useAuth } from '../contexts/AuthContext';
+import { useStripeConfig } from '../contexts/StripeContext';
 import { useTheme } from '../contexts/ThemeContext';
 import { fontSize, fontWeight, shadows, spacing, typography } from '../styles/theme';
+import {
+  assertPaymentSheetPayload,
+  buildPaymentSheetOptions,
+  normalizePaymentSheetPayload,
+  runPaymentSheet,
+  verifyWalletTopUp,
+} from '../utils/stripePaymentSheet';
 
 const WALLET_CURRENCIES = ['USD', 'PKR', 'EUR', 'GBP'];
 const CURRENCY_META = {
@@ -57,8 +66,11 @@ const formatActivityDate = (value) => {
 };
 
 export default function WalletScreen({ navigation, route }) {
-  const { palette } = useTheme();
+  const { palette, isDark } = useTheme();
   const styles = buildStyles(palette);
+  const { currentUser } = useAuth();
+  const { initPaymentSheet, presentPaymentSheet } = useStripe();
+  const { ensureReady: ensureStripeReady } = useStripeConfig();
   const { currency, formatAmount } = useCurrency();
   const [wallet, setWallet] = useState(null);
   const [transactions, setTransactions] = useState([]);
@@ -72,6 +84,7 @@ export default function WalletScreen({ navigation, route }) {
   );
   const [amount, setAmount] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const topUpAttemptKeyRef = useRef(null);
 
   const loadWallet = useCallback(async ({ quiet = false } = {}) => {
     if (!quiet) setLoading(true);
@@ -80,8 +93,10 @@ export default function WalletScreen({ navigation, route }) {
       setWallet(response.data?.wallet || null);
       setTransactions(response.data?.transactions || []);
       setLoadError('');
+      return response.data;
     } catch (error) {
       setLoadError(error.response?.data?.msg || 'Your Rozare Wallet could not be loaded.');
+      return null;
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -144,14 +159,22 @@ export default function WalletScreen({ navigation, route }) {
     setNotice(null);
     setSubmitting(true);
     try {
+      const stripeConfig = await ensureStripeReady();
+      if (!topUpAttemptKeyRef.current) topUpAttemptKeyRef.current = Crypto.randomUUID();
+      const requestKey = topUpAttemptKeyRef.current;
       const response = await api.post('/api/wallet/top-ups', {
         amount: value,
         currency: topUpCurrency,
         platform: 'mobile',
-        requestKey: Crypto.randomUUID(),
+        paymentFlow: 'payment_sheet',
+        clientSurface: 'mobile',
+        requestKey,
+      }, {
+        headers: { 'X-Idempotency-Key': requestKey },
       });
       if (response.data?.completed) {
         await loadWallet({ quiet: true });
+        topUpAttemptKeyRef.current = null;
         setAmount('');
         setNotice({
           type: 'success',
@@ -160,16 +183,90 @@ export default function WalletScreen({ navigation, route }) {
         });
         return;
       }
-      if (!response.data?.url) throw new Error('Stripe checkout URL was not returned.');
-      await WebBrowser.openBrowserAsync(response.data.url, {
-        dismissButtonStyle: 'cancel',
-        presentationStyle: WebBrowser.WebBrowserPresentationStyle.FULL_SCREEN,
+      const reference = normalizePaymentSheetPayload(response);
+      if (!reference.topUpId) {
+        throw new Error('Rozare did not return a secure top-up reference. Your Wallet has not been credited.');
+      }
+      const payment = assertPaymentSheetPayload(response, 'payment');
+      const sheetResult = await runPaymentSheet({
+        initPaymentSheet,
+        presentPaymentSheet,
+        options: buildPaymentSheetOptions({
+          payment,
+          config: stripeConfig,
+          currentUser,
+          currency: topUpCurrency,
+          palette,
+          isDark,
+          intentType: 'payment',
+        }),
       });
-      await loadWallet({ quiet: true });
+      let cancellationError = null;
+      if (sheetResult.status !== 'presented') {
+        try {
+          await api.post(`/api/wallet/top-ups/${encodeURIComponent(reference.topUpId)}/cancel`, {
+            paymentIntentId: reference.paymentIntentId,
+          });
+        } catch (error) {
+          cancellationError = error;
+        }
+      }
+      const verification = await verifyWalletTopUp({
+        apiClient: api,
+        topUpId: reference.topUpId,
+        paymentIntentId: reference.paymentIntentId,
+        currency: topUpCurrency,
+        startingBalance: selectedBalance,
+        amount: value,
+        attempts: sheetResult.status === 'presented' || cancellationError?.response?.data?.code === 'PAYMENT_ALREADY_SUCCEEDED' ? 8 : 2,
+        delayMs: 900,
+      });
+      if (verification.status === 'paid') {
+        await loadWallet({ quiet: true });
+        topUpAttemptKeyRef.current = null;
+        setAmount('');
+        setNotice({
+          type: 'success',
+          title: 'Balance added',
+          message: `${formatAmount(value, { targetCurrency: topUpCurrency })} is ready to use.`,
+        });
+      } else if (verification.status === 'failed') {
+        topUpAttemptKeyRef.current = null;
+        setNotice({
+          type: 'error',
+          title: 'Top-up was not completed',
+          message: 'Stripe did not complete this payment. Your wallet was not credited.',
+        });
+      } else if (verification.status === 'cancelled') {
+        topUpAttemptKeyRef.current = null;
+        setNotice({
+          type: 'info',
+          title: 'Top-up cancelled',
+          message: 'Rozare confirmed that this payment attempt is closed. Your Wallet was not credited.',
+        });
+      } else if (sheetResult.status === 'failed') {
+        setNotice({
+          type: 'error',
+          title: 'Top-up could not be completed',
+          message: sheetResult.error?.localizedMessage || sheetResult.error?.message || 'The secure payment attempt could not be completed.',
+        });
+      } else if (sheetResult.status === 'cancelled') {
+        setNotice({
+          type: 'info',
+          title: cancellationError ? 'Closing your top-up' : 'Top-up closing',
+          message: 'No balance has been added. Rozare is confirming the final status with the payment server.',
+        });
+      } else {
+        setNotice({
+          type: 'info',
+          title: 'Confirming your top-up',
+          message: 'Stripe accepted the payment. Rozare will show the balance only after backend confirmation.',
+        });
+      }
     } catch (error) {
       setNotice({
         type: 'error',
-        title: 'Top-up could not start',
+        title: 'Top-up could not be completed',
         message: error.response?.data?.msg || error.message || 'Please try again in a moment.',
       });
     } finally {

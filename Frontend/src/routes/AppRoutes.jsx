@@ -45,6 +45,7 @@ const OrderDetail = lazy(() => import('../components/layout/OrderDetail'))
 const UserManagement = lazy(() => import('../components/layout/UserManagement'))
 const UserWhatsAppSettings = lazy(() => import('../components/layout/UserWhatsAppSettings'))
 const Wallet = lazy(() => import('../components/layout/Wallet'))
+const PaymentMethods = lazy(() => import('../components/layout/PaymentMethods'))
 
 // ── Admin dashboard
 const AdminDashboard = lazy(() => import('../components/layout/AdminDashboard'))
@@ -171,6 +172,7 @@ function AppRoutes({ subdomainSlug = null }) {
                     <Route path='/user-dashboard/orders' element={<ProtectedRoute><UserOrdersManagement /></ProtectedRoute>} />
                     <Route path='/user-dashboard/whatsapp' element={<ProtectedRoute><UserWhatsAppSettings /></ProtectedRoute>} />
                     <Route path='/user-dashboard/wallet' element={<ProtectedRoute><Wallet /></ProtectedRoute>} />
+                    <Route path='/user-dashboard/payment-methods' element={<ProtectedRoute><PaymentMethods /></ProtectedRoute>} />
                     <Route path='/user-dashboard/order/:id' element={<ProtectedRoute><OrderDetail /></ProtectedRoute>} />
                     <Route path='/user-dashboard/user-management' element={<ProtectedRoute><UserManagement /></ProtectedRoute>} />
                     <Route path='/user-dashboard/order/detail/:id' element={<ProtectedRoute><UserOrderDetail /></ProtectedRoute>} />
@@ -215,6 +217,7 @@ function AppRoutes({ subdomainSlug = null }) {
                     <Route path='/seller-dashboard/shipping-configuration' element={<ProtectedRoute role={'seller'}><ShippingConfiguration /></ProtectedRoute>} />
                     <Route path='/seller-dashboard/analytics' element={<ProtectedRoute role={'seller'}><SellerAnalytics /></ProtectedRoute>} />
                     <Route path='/seller-dashboard/payments' element={<ProtectedRoute role={'seller'}><SellerPayments /></ProtectedRoute>} />
+                    <Route path='/seller-dashboard/payment-methods' element={<ProtectedRoute role={'seller'}><PaymentMethods /></ProtectedRoute>} />
                     <Route path='/seller-dashboard/notifications' element={<ProtectedRoute role={'seller'}><NotificationsPage /></ProtectedRoute>} />
                     <Route path='/seller-dashboard/notification-settings' element={<ProtectedRoute role={'seller'}><NotificationSettings /></ProtectedRoute>} />
                     <Route path='/seller-dashboard/subdomain' element={<ProtectedRoute role={'seller'}><SellerSubdomainManagement /></ProtectedRoute>} />

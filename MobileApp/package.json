@@ -1,6 +1,6 @@
 {
   "name": "mobile-app",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "main": "index.js",
   "scripts": {
     "start": "expo start",
@@ -26,6 +26,7 @@
     "@react-navigation/native": "^6.1.9",
     "@react-navigation/stack": "^6.3.20",
     "@sentry/react-native": "~7.11.0",
+    "@stripe/stripe-react-native": "0.63.0",
     "axios": "^1.6.2",
     "expo": "^55.0.0",
     "expo-asset": "~55.0.18",

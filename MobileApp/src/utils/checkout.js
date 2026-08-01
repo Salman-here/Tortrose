@@ -170,10 +170,43 @@ export const normalizePaymentStatus = (payload = {}) => {
   return 'pending';
 };
 
+export const cancelOrderPaymentAttempt = async ({ apiClient, orderId, paymentIntentId }) => {
+  if (!orderId || !paymentIntentId) {
+    return { status: 'unavailable', reason: 'missing_reference' };
+  }
+
+  try {
+    const response = await apiClient.post(
+      `/api/order/payment/${encodeURIComponent(orderId)}/cancel`,
+      { paymentIntentId }
+    );
+    const payload = response?.data || response || {};
+    const rawStatus = String(payload?.status || '').toLowerCase();
+    if (
+      payload?.isPaid === true
+      || payload?.stripePaymentReceived === true
+      || ['paid', 'succeeded', 'payment_succeeded'].includes(rawStatus)
+    ) {
+      return { status: 'payment_received', payload };
+    }
+    if (['cancelled', 'canceled'].includes(rawStatus)) {
+      return { status: 'cancelled', payload };
+    }
+    return { status: 'pending', payload };
+  } catch (error) {
+    const code = String(error?.response?.data?.code || '');
+    if (code === 'PAYMENT_ALREADY_SUCCEEDED') {
+      return { status: 'payment_received', error, payload: error.response?.data };
+    }
+    return { status: 'unavailable', error, code, reason: 'cancellation_unconfirmed' };
+  }
+};
+
 export const verifyOrderPayment = async ({
   apiClient,
   orderId,
   sessionId,
+  paymentIntentId,
   attempts = 5,
   delayMs = 1200,
   sleep = (duration) => new Promise((resolve) => setTimeout(resolve, duration)),
@@ -188,7 +221,12 @@ export const verifyOrderPayment = async ({
     try {
       const response = await apiClient.get(
         `/api/order/payment-status/${encodeURIComponent(orderId)}`,
-        { params: sessionId ? { sessionId } : {} }
+        {
+          params: {
+            ...(sessionId ? { sessionId } : {}),
+            ...(paymentIntentId ? { paymentIntentId } : {}),
+          },
+        }
       );
       lastPayload = response?.data || response;
       const status = normalizePaymentStatus(lastPayload);

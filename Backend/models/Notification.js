@@ -29,10 +29,16 @@ const notificationSchema = new mongoose.Schema(
         sentBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
         read: { type: Boolean, default: false, index: true },
         readAt: { type: Date },
+        // Optional event idempotency key for retry-safe system notifications.
+        dedupeKey: { type: String, trim: true, select: false },
     },
     { timestamps: true }
 );
 
 notificationSchema.index({ user: 1, read: 1, createdAt: -1 });
+notificationSchema.index(
+    { dedupeKey: 1 },
+    { unique: true, partialFilterExpression: { dedupeKey: { $type: 'string' } } }
+);
 
 module.exports = mongoose.model('Notification', notificationSchema);

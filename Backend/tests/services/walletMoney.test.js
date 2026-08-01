@@ -5,6 +5,7 @@ const {
   formatWalletMoney,
   walletTopUpDescription,
   getWalletTransactionDescription,
+  validateWalletTopUpPaymentIntent,
 } = require('../../services/walletService');
 
 describe('wallet money helpers', () => {
@@ -39,5 +40,43 @@ describe('wallet money helpers', () => {
       currency: 'PKR',
       description: 'Payment for order ROZ-123',
     })).toBe('Payment for order ROZ-123');
+  });
+
+  test('validates native Wallet top-up ownership, amount, currency, and mode', () => {
+    const transaction = {
+      _id: '507f1f77bcf86cd799439011',
+      user: '507f1f77bcf86cd799439012',
+      paymentFlow: 'payment_sheet',
+      stripePaymentIntentId: 'pi_wallet_123',
+      stripeCustomerId: 'cus_wallet_123',
+      stripeMode: 'test',
+      amount: 250,
+      currency: 'PKR',
+    };
+    const intent = {
+      id: 'pi_wallet_123',
+      customer: 'cus_wallet_123',
+      amount: 25000,
+      currency: 'pkr',
+      livemode: false,
+      metadata: {
+        type: 'wallet_top_up',
+        paymentFlow: 'payment_sheet',
+        walletTransactionId: transaction._id,
+        userId: transaction.user,
+        amountMinor: '25000',
+        stripeMode: 'test',
+      },
+    };
+
+    expect(validateWalletTopUpPaymentIntent(transaction, intent)).toBe(true);
+    expect(() => validateWalletTopUpPaymentIntent(transaction, {
+      ...intent,
+      customer: 'cus_other',
+    })).toThrow(expect.objectContaining({ code: 'TOP_UP_CUSTOMER_MISMATCH' }));
+    expect(() => validateWalletTopUpPaymentIntent(transaction, {
+      ...intent,
+      livemode: true,
+    })).toThrow(expect.objectContaining({ code: 'TOP_UP_MODE_MISMATCH' }));
   });
 });

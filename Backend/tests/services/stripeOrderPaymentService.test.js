@@ -2,6 +2,7 @@ const {
   toStripeMinorUnits,
   getExpectedStripeTotalMinor,
   validateStripeOrderSession,
+  validateStripeOrderPaymentIntent,
 } = require('../../services/stripeOrderPaymentService');
 
 const order = {
@@ -30,6 +31,36 @@ const session = (overrides = {}) => ({
   ...overrides,
 });
 
+const nativeOrder = {
+  ...order,
+  _id: '507f1f77bcf86cd799439011',
+  user: '507f1f77bcf86cd799439012',
+  paymentFlow: 'payment_sheet',
+  stripeMode: 'test',
+  stripeCustomerId: 'cus_test_123',
+  stripePaymentIntentId: 'pi_test_123',
+};
+
+const paymentIntent = (overrides = {}) => ({
+  id: 'pi_test_123',
+  status: 'succeeded',
+  amount: getExpectedStripeTotalMinor(nativeOrder),
+  amount_received: getExpectedStripeTotalMinor(nativeOrder),
+  currency: 'pkr',
+  customer: 'cus_test_123',
+  livemode: false,
+  metadata: {
+    type: 'order_payment',
+    paymentFlow: 'payment_sheet',
+    orderId: nativeOrder.orderId,
+    mongoOrderId: nativeOrder._id,
+    userId: nativeOrder.user,
+    amountMinor: String(getExpectedStripeTotalMinor(nativeOrder)),
+    stripeMode: 'test',
+  },
+  ...overrides,
+});
+
 describe('Stripe order payment validation', () => {
   test('uses Stripe minor-unit rules and the exact checkout line total', () => {
     expect(toStripeMinorUnits(10.235, 'USD')).toBe(1024);
@@ -50,5 +81,24 @@ describe('Stripe order payment validation', () => {
   ])('rejects mismatched or unconfirmed session data', (override, code) => {
     expect(() => validateStripeOrderSession(order, session(override), { requirePaid: true }))
       .toThrow(expect.objectContaining({ code }));
+  });
+
+  test('accepts a fully owned and fully captured native PaymentIntent', () => {
+    expect(validateStripeOrderPaymentIntent(nativeOrder, paymentIntent(), {
+      requireSucceeded: true,
+    })).toBe(true);
+  });
+
+  test.each([
+    [{ id: 'pi_other' }, 'PAYMENT_INTENT_MISMATCH'],
+    [{ customer: 'cus_other' }, 'PAYMENT_CUSTOMER_MISMATCH'],
+    [{ amount: 1 }, 'PAYMENT_AMOUNT_MISMATCH'],
+    [{ currency: 'usd' }, 'PAYMENT_CURRENCY_MISMATCH'],
+    [{ livemode: true }, 'PAYMENT_MODE_MISMATCH'],
+    [{ status: 'requires_payment_method' }, 'PAYMENT_NOT_CONFIRMED'],
+  ])('rejects invalid native PaymentIntent ownership or capture data', (override, code) => {
+    expect(() => validateStripeOrderPaymentIntent(nativeOrder, paymentIntent(override), {
+      requireSucceeded: true,
+    })).toThrow(expect.objectContaining({ code }));
   });
 });

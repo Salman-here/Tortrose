@@ -167,12 +167,33 @@ const orderSchema = mongoose.Schema(
         paymentResult: {
             paymentIntentId: String,
             emailAddress: String,
-            walletTransactionId: { type: mongoose.Schema.Types.ObjectId, ref: 'WalletTransaction' }
+            walletTransactionId: { type: mongoose.Schema.Types.ObjectId, ref: 'WalletTransaction' },
+            failureCode: { type: String, default: '' },
+            failureMessage: { type: String, default: '' },
+            failureAt: { type: Date, default: null },
         },
+
+        paymentFlow: {
+            type: String,
+            enum: ['checkout_session', 'payment_sheet'],
+            default: 'checkout_session',
+            index: true,
+        },
+        clientSurface: {
+            type: String,
+            enum: ['web', 'mobile', 'unknown'],
+            default: 'unknown',
+        },
+        stripeMode: { type: String, enum: ['test', 'live'], default: null },
+        stripeCustomerId: { type: String, default: null, index: true },
+        stripePaymentIntentId: { type: String, default: null },
+        paymentExpiresAt: { type: Date, default: null, index: true },
+        paymentCancelledAt: { type: Date, default: null },
+        checkoutRequestFingerprint: { type: String, default: null, select: false },
 
         // Stripe checkout session id — used by webhook handlers (expired/failed) to
         // locate the corresponding awaiting-payment order.
-        stripeSessionId: { type: String, default: null, index: true },
+        stripeSessionId: { type: String, default: null },
 
         // True for stripe-mode orders that have been created in DB but the buyer
         // has not yet paid. These orders are HIDDEN from seller/user/admin
@@ -182,6 +203,7 @@ const orderSchema = mongoose.Schema(
 
         inventoryCommitted: { type: Boolean, default: false, index: true },
         paymentFulfilledAt: { type: Date, default: null, index: true },
+        cartCleanupCompletedAt: { type: Date, default: null },
         paymentProcessingStartedAt: { type: Date, default: null, index: true },
         stripeWebhookEventId: { type: String, default: null },
         returnVersion: { type: Number, default: 0 },
@@ -270,6 +292,22 @@ orderSchema.virtual('confirmationSourceLabel').get(function () {
 orderSchema.index({ awaitingPayment: 1, orderStatus: 1, 'orderItems.seller': 1, createdAt: -1 });
 orderSchema.index({ awaitingPayment: 1, orderStatus: 1, 'orderItems.productId': 1, createdAt: -1 });
 orderSchema.index({ 'sellerFulfillment.seller': 1, 'sellerFulfillment.status': 1, createdAt: -1 });
+orderSchema.index(
+    { stripeSessionId: 1 },
+    {
+        unique: true,
+        partialFilterExpression: { stripeSessionId: { $type: 'string' } },
+        name: 'uniq_order_stripe_session',
+    }
+);
+orderSchema.index(
+    { stripePaymentIntentId: 1 },
+    {
+        unique: true,
+        partialFilterExpression: { stripePaymentIntentId: { $type: 'string' } },
+        name: 'uniq_order_stripe_payment_intent',
+    }
+);
 orderSchema.index(
     { user: 1, checkoutIdempotencyKey: 1 },
     {

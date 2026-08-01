@@ -8,6 +8,7 @@
     "start": "node server.js",
     "migrate:product-currency:dry-run": "node scripts/migrateProductNativeCurrency.js",
     "migrate:product-currency:write": "node scripts/migrateProductNativeCurrency.js --write",
+    "preflight:stripe-payment-indexes": "node scripts/checkStripePaymentReferenceDuplicates.js",
     "heroku-postbuild": "echo 'Backend build complete'"
   },
   "jest": {

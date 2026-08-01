@@ -87,6 +87,11 @@ export const API_ENDPOINTS = {
     ADMIN_OVERVIEW: '/api/payments/admin/overview',
     ADMIN_WITHDRAWAL: '/api/payments/admin/withdrawals',
   },
+  PAYMENT_METHODS: {
+    CONFIG: '/api/payment-methods/config',
+    LIST: '/api/payment-methods',
+    SETUP: '/api/payment-methods/setup',
+  },
   SHIPPING: {
     SELLER: '/api/shipping/seller',
     METHODS: '/api/shipping/methods',

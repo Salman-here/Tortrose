@@ -18,6 +18,7 @@ const getMenuItemsForRole = (role) => {
     { id: 'orders', title: 'My Orders', icon: 'receipt-outline', screen: 'Orders' },
     { id: 'track-order', title: 'Track My Order', icon: 'navigate-outline', screen: 'TrackOrder' },
     { id: 'wallet', title: 'Rozare Wallet', icon: 'wallet-outline', screen: 'Wallet' },
+    { id: 'payment-methods', title: 'Payment Methods', icon: 'card-outline', screen: 'PaymentMethods' },
     { id: 'buyer-whatsapp', title: 'WhatsApp AI & Updates', icon: 'logo-whatsapp', screen: 'UserWhatsAppSettings' },
     { id: 'addresses', title: 'Saved Addresses', icon: 'location-outline', screen: 'SavedAddresses' },
     { id: 'change-password', title: 'Change Password', icon: 'lock-closed-outline', screen: 'ChangePassword' },
@@ -113,6 +114,7 @@ describe('ProfileScreen Property Tests', () => {
           // Base items should always be present
           expect(menuIds).toContain('orders');
           expect(menuIds).toContain('track-order');
+          expect(menuIds).toContain('payment-methods');
           expect(menuIds).not.toContain('trusted');
           expect(menuIds).not.toContain('notifications');
           return true;
@@ -128,7 +130,7 @@ describe('ProfileScreen Property Tests', () => {
           const menuIds = menuItems.map(item => item.id);
           expect(menuIds).toContain('buyer-whatsapp');
           expect(menuIds.includes('seller-whatsapp')).toBe(user.role === 'seller');
-          expect(menuItems.length).toBe(user.role === 'seller' ? 9 : 8);
+          expect(menuItems.length).toBe(user.role === 'seller' ? 10 : 9);
           return true;
         }),
         { numRuns: 100 }

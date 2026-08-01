@@ -23,6 +23,7 @@ export default function PaymentSuccessScreen({ navigation, route }) {
   const { fetchCart } = useGlobal();
   const orderId = route.params?.orderId || '';
   const sessionId = route.params?.session_id || route.params?.sessionId || '';
+  const paymentIntentId = route.params?.payment_intent || route.params?.paymentIntentId || '';
   const [verification, setVerification] = useState({ status: 'checking' });
   const [retrying, setRetrying] = useState(false);
   const completedRef = useRef(false);
@@ -40,30 +41,29 @@ export default function PaymentSuccessScreen({ navigation, route }) {
   const confirmPayment = useCallback(async ({ attempts = 6 } = {}) => {
     setRetrying(true);
     setVerification({ status: 'checking' });
-    const result = await verifyOrderPayment({ apiClient: api, orderId, sessionId, attempts, delayMs: 1200 });
+    const result = await verifyOrderPayment({ apiClient: api, orderId, sessionId, paymentIntentId, attempts, delayMs: 1200 });
     if (!mountedRef.current) return;
 
     setVerification(result);
     setRetrying(false);
     animateIn();
-    trackPaymentEvent(`verification_${result.status}`, { orderId, sessionId });
+    trackPaymentEvent(`verification_${result.status}`, { orderId, sessionId, paymentIntentId });
 
     if (result.status === 'paid' && !completedRef.current) {
       completedRef.current = true;
       try {
-        await api.delete('/api/cart/clear');
         await fetchCart();
       } catch {}
       recordSuccessfulOrder();
     }
-  }, [animateIn, fetchCart, orderId, sessionId]);
+  }, [animateIn, fetchCart, orderId, paymentIntentId, sessionId]);
 
   useEffect(() => {
     mountedRef.current = true;
-    trackPaymentEvent('return_received', { orderId, sessionId });
+    trackPaymentEvent('return_received', { orderId, sessionId, paymentIntentId });
     confirmPayment();
     return () => { mountedRef.current = false; };
-  }, [confirmPayment, orderId, sessionId]);
+  }, [confirmPayment, orderId, paymentIntentId, sessionId]);
 
   const status = verification.status;
   const paid = status === 'paid';

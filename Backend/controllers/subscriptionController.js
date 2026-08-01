@@ -3,6 +3,7 @@ const Store = require('../models/Store');
 const User = require('../models/User');
 const { sendEmail } = require('./mailController');
 const { stripe, STRIPE_MODE } = require('../config/stripe');
+const { ensureStripeCustomerForUser } = require('../services/stripeCustomerService');
 const { notifySeller } = require('../services/whatsapp/sellerNotificationService');
 const sellerTemplates = require('../services/whatsapp/sellerMessageTemplates');
 const {
@@ -205,47 +206,25 @@ async function checkAndUpdateStatus(sub) {
     return sub;
 }
 
-async function createStripeCustomerForSeller(user, sellerId) {
-    const customer = await stripe.customers.create({
-        email: user.email,
-        name: user.username || user.email,
-        metadata: { sellerId: sellerId.toString(), stripeMode: STRIPE_MODE },
-    });
-
-    return customer.id;
-}
-
 async function getUsableStripeCustomerId(sub, user, sellerId) {
-    if (!sub.stripeCustomerId) {
-        sub.stripeCustomerId = await createStripeCustomerForSeller(user, sellerId);
+    const previousCustomerId = sub.stripeCustomerId || null;
+    const mustPreserveExistingSubscriptionCustomer = Boolean(
+        previousCustomerId
+        && sub.stripeSubscriptionId
+        && ['trial', 'free_period', 'active', 'past_due'].includes(sub.status)
+    );
+    const { customer } = await ensureStripeCustomerForUser(sellerId, {
+        preferredCustomerId: mustPreserveExistingSubscriptionCustomer ? previousCustomerId : null,
+    });
+    if (previousCustomerId !== customer.id) {
+        sub.stripeCustomerId = customer.id;
+        // A resource-missing customer belongs to another Stripe mode or was
+        // deleted. Its subscription/price IDs are unusable in this mode too.
         sub.stripeSubscriptionId = undefined;
         sub.stripePriceId = undefined;
         await sub.save();
-        return sub.stripeCustomerId;
     }
-
-    try {
-        const customer = await stripe.customers.retrieve(sub.stripeCustomerId);
-        if (customer?.deleted) {
-            throw Object.assign(new Error(`Stripe customer ${sub.stripeCustomerId} is deleted`), { code: 'resource_missing' });
-        }
-
-        return sub.stripeCustomerId;
-    } catch (error) {
-        if (error?.code !== 'resource_missing') throw error;
-
-        console.warn('[subscription] Stored Stripe customer is not available in current mode; creating a new customer.', {
-            sellerId: sellerId.toString(),
-            staleCustomerId: sub.stripeCustomerId,
-            stripeMode: STRIPE_MODE,
-        });
-
-        sub.stripeCustomerId = await createStripeCustomerForSeller(user, sellerId);
-        sub.stripeSubscriptionId = undefined;
-        sub.stripePriceId = undefined;
-        await sub.save();
-        return sub.stripeCustomerId;
-    }
+    return customer.id;
 }
 
 // Create Stripe checkout for subscription

@@ -12,12 +12,13 @@ import { Image } from 'expo-image';
 import Feedback from '../utils/feedback';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import * as WebBrowser from 'expo-web-browser';
 import * as Crypto from 'expo-crypto';
+import { useStripe } from '@stripe/stripe-react-native';
 import api, { API_ENDPOINTS } from '../config/api';
 import { useAuth } from '../contexts/AuthContext';
 import { useGlobal } from '../contexts/GlobalContext';
 import { useCurrency } from '../contexts/CurrencyContext';
+import { useStripeConfig } from '../contexts/StripeContext';
 import { Loader, InlineLoader } from '../components/common';
 import GlassBackground from '../components/common/GlassBackground';
 import GlassPanel from '../components/common/GlassPanel';
@@ -27,22 +28,28 @@ import { spacing, fontSize, fontWeight } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 import {
   buildSellerShipping,
+  cancelOrderPaymentAttempt,
   calculateCouponPricing,
   createCheckoutAttemptKey,
   findCouponOverlap,
   getCartItemQuantity,
   getCartItemSellerId,
   getSellerDisplayName,
-  parsePaymentRedirect,
   selectDefaultShippingMethods,
   verifyOrderPayment,
 } from '../utils/checkout';
-
-WebBrowser.maybeCompleteAuthSession();
+import {
+  assertPaymentSheetPayload,
+  buildPaymentSheetOptions,
+  normalizePaymentSheetPayload,
+  runPaymentSheet,
+} from '../utils/stripePaymentSheet';
 
 export default function CheckoutScreen({ navigation }) {
-  const { palette } = useTheme();
+  const { palette, isDark } = useTheme();
   const styles = buildStyles(palette);
+  const { initPaymentSheet, presentPaymentSheet } = useStripe();
+  const { ensureReady: ensureStripeReady } = useStripeConfig();
 
   const { currentUser } = useAuth();
   const { cartItems, fetchCart } = useGlobal();
@@ -398,6 +405,8 @@ export default function CheckoutScreen({ navigation }) {
           ? 'wallet'
           : 'cash_on_delivery',
       platform: paymentMethod === 'card' ? 'mobile' : undefined,
+      paymentFlow: paymentMethod === 'card' ? 'payment_sheet' : undefined,
+      clientSurface: 'mobile',
       ...(instructions.trim() ? { instructions: instructions.trim() } : {}),
       idempotencyKey,
     };
@@ -415,7 +424,6 @@ export default function CheckoutScreen({ navigation }) {
           ? 'Your Rozare Wallet payment is complete.'
           : 'Your order has been placed successfully',
       });
-      await api.delete(API_ENDPOINTS.CART.CLEAR);
       await fetchCart();
       checkoutAttemptKeyRef.current = null;
       setTimeout(() => { navigation.reset({ index: 1, routes: [{ name: 'MainTabs' }, { name: 'Orders' }] }); }, 700);
@@ -475,27 +483,50 @@ export default function CheckoutScreen({ navigation }) {
       const idempotencyKey = checkoutAttemptKeyRef.current;
       const order = buildOrder(idempotencyKey);
       trackCheckoutStep('order_built', { itemCount: order.orderItems.length });
-      const res = await api.post('/api/order/place', { order }, {
+      const stripeConfig = paymentMethod === 'card' ? await ensureStripeReady() : null;
+      const res = await api.post('/api/order/place', {
+        order,
+        ...(paymentMethod === 'card' ? { paymentFlow: 'payment_sheet', clientSurface: 'mobile' } : {}),
+      }, {
         headers: { 'X-Idempotency-Key': idempotencyKey },
       });
       trackCheckoutStep('order_api_success', { orderId: res.data?.orderId });
       if (paymentMethod === 'card') {
-        const { url, id: sessionId } = res.data;
-        const orderId = res.data?.orderId || res.data?.order?.orderId;
-        if (res.data?.isPaid === true) {
-          navigation.replace('PaymentSuccess', { orderId, session_id: sessionId });
+        const payment = normalizePaymentSheetPayload(res);
+        const orderId = payment.orderId || res.data?.orderId || res.data?.order?.orderId;
+        if (res.data?.isPaid === true || payment.completed) {
+          navigation.replace('PaymentSuccess', { orderId, payment_intent: payment.paymentIntentId });
           return;
         }
-        if (!url || !sessionId || !orderId) throw new Error('Secure checkout did not return a complete payment reference.');
-        trackPaymentEvent('stripe_redirect', { url: url.substring(0, 60) });
-        // Listen at the scheme root so both Stripe success and cancel deep links
-        // complete the Android auth-session polyfill.
-        const browserResult = await WebBrowser.openAuthSessionAsync(url, 'rozare://', {
-          dismissButtonStyle: 'cancel',
-          presentationStyle: WebBrowser.WebBrowserPresentationStyle.FULL_SCREEN,
-          showTitle: true,
-          enableBarCollapsing: true,
+        if (!orderId) throw new Error('Secure checkout did not return an order reference.');
+        const verifiedPayment = assertPaymentSheetPayload(res, 'payment');
+        trackPaymentEvent('payment_sheet_initialized', { orderId });
+        const sheetResult = await runPaymentSheet({
+          initPaymentSheet,
+          presentPaymentSheet,
+          options: buildPaymentSheetOptions({
+            payment: verifiedPayment,
+            config: stripeConfig,
+            currentUser,
+            billingDetails: {
+              name: formData.fullName,
+              email: formData.email,
+              phone: formData.phone,
+              address: {
+                line1: formData.address,
+                city: formData.city,
+                state: formData.state,
+                postalCode: formData.postalCode,
+                country: formData.countryCode,
+              },
+            },
+            currency,
+            palette,
+            isDark,
+            intentType: 'payment',
+          }),
         });
+
         if (!savedShippingInfo?.fullName || hasShippingInfoChanged()) {
           try {
             await api.patch('/api/user/shipping-info', { shippingInfo: formData });
@@ -503,30 +534,58 @@ export default function CheckoutScreen({ navigation }) {
           } catch {}
         }
 
-        if (browserResult.type === 'success' && browserResult.url) {
-          const redirect = parsePaymentRedirect(browserResult.url);
-          if (redirect.type === 'cancel') {
-            navigation.replace('PaymentCancel', { orderId: redirect.orderId || orderId, session_id: redirect.sessionId || sessionId });
-          } else {
-            navigation.replace('PaymentSuccess', { orderId: redirect.orderId || orderId, session_id: redirect.sessionId || sessionId });
+        if (sheetResult.status === 'cancelled') {
+          const cancellation = await cancelOrderPaymentAttempt({
+            apiClient: api,
+            orderId,
+            paymentIntentId: verifiedPayment.paymentIntentId,
+          });
+          if (cancellation.status === 'payment_received') {
+            navigation.replace('PaymentSuccess', { orderId, payment_intent: verifiedPayment.paymentIntentId });
+            return;
           }
+          if (cancellation.status === 'cancelled') {
+            checkoutAttemptKeyRef.current = null;
+            setPaymentNotice({
+              type: 'cancelled',
+              title: 'Payment cancelled safely',
+              orderId,
+              paymentIntentId: verifiedPayment.paymentIntentId,
+              text: 'Rozare confirmed the payment attempt is closed. Your cart is safe, and Retry will start a fresh secure payment.',
+            });
+            return;
+          }
+          setPaymentNotice({
+            type: 'pending',
+            title: 'Checking payment status',
+            orderId,
+            paymentIntentId: verifiedPayment.paymentIntentId,
+            text: 'Rozare could not confirm cancellation yet. Use Check before retrying so another payable payment is not created.',
+          });
           return;
         }
 
-        const verification = await verifyOrderPayment({ apiClient: api, orderId, sessionId, attempts: 1 });
+        const verification = await verifyOrderPayment({
+          apiClient: api,
+          orderId,
+          paymentIntentId: verifiedPayment.paymentIntentId,
+          attempts: sheetResult.status === 'presented' ? 2 : 1,
+          delayMs: 650,
+        });
         if (verification.status === 'paid') {
-          navigation.replace('PaymentSuccess', { orderId, session_id: sessionId });
+          navigation.replace('PaymentSuccess', { orderId, payment_intent: verifiedPayment.paymentIntentId });
           return;
         }
-        setPaymentNotice({
-          type: 'pending',
-          orderId,
-          sessionId,
-          text: browserResult.type === 'cancel' || browserResult.type === 'dismiss'
-            ? 'Secure payment was closed. Your cart is safe and no success has been assumed.'
-            : 'Payment is still being confirmed. Your cart will stay here until confirmation.',
-        });
-        Feedback.show({ type: 'info', text1: 'Payment not confirmed', text2: 'You can safely return to secure checkout.' });
+        if (sheetResult.status === 'presented') {
+          trackPaymentEvent('payment_sheet_presented', { orderId });
+          navigation.replace('PaymentSuccess', { orderId, payment_intent: verifiedPayment.paymentIntentId });
+          return;
+        }
+        if (sheetResult.status === 'failed') {
+          const sheetError = new Error(sheetResult.error?.localizedMessage || sheetResult.error?.message || 'Your card payment could not be opened.');
+          sheetError.code = sheetResult.error?.code;
+          throw sheetError;
+        }
       } else {
         // Check if info changed
         if (savedShippingInfo?.fullName && hasShippingInfoChanged()) {
@@ -874,14 +933,14 @@ export default function CheckoutScreen({ navigation }) {
               <View style={styles.paymentNotice}>
                 <Ionicons name="time-outline" size={19} color={palette.colors.warning} />
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.paymentNoticeTitle}>Payment not confirmed</Text>
+                  <Text style={styles.paymentNoticeTitle}>{paymentNotice.title || 'Payment status needs confirmation'}</Text>
                   <Text style={styles.paymentNoticeText}>{paymentNotice.text}</Text>
                 </View>
                 <TouchableOpacity
                   style={styles.verifyPaymentButton}
                   onPress={() => navigation.navigate('PaymentSuccess', {
                     orderId: paymentNotice.orderId,
-                    session_id: paymentNotice.sessionId,
+                    payment_intent: paymentNotice.paymentIntentId,
                   })}
                 >
                   <Text style={styles.verifyPaymentButtonText}>Check</Text>

@@ -19,6 +19,7 @@ export default function PaymentCancelScreen({ navigation, route }) {
   const styles = buildStyles(palette);
   const orderId = route.params?.orderId || '';
   const sessionId = route.params?.session_id || route.params?.sessionId || '';
+  const paymentIntentId = route.params?.payment_intent || route.params?.paymentIntentId || '';
   const [status, setStatus] = useState('checking');
   const mountedRef = useRef(true);
   const scaleAnim = useRef(new Animated.Value(0.82)).current;
@@ -26,16 +27,20 @@ export default function PaymentCancelScreen({ navigation, route }) {
 
   const checkStatus = useCallback(async () => {
     setStatus('checking');
-    const result = await verifyOrderPayment({ apiClient: api, orderId, sessionId, attempts: 2, delayMs: 700 });
+    const result = await verifyOrderPayment({ apiClient: api, orderId, sessionId, paymentIntentId, attempts: 2, delayMs: 700 });
     if (!mountedRef.current) return;
-    trackPaymentEvent(`cancel_return_${result.status}`, { orderId, sessionId });
+    trackPaymentEvent(`cancel_return_${result.status}`, { orderId, sessionId, paymentIntentId });
     if (result.status === 'paid') {
-      navigation.replace('PaymentSuccess', { orderId, session_id: sessionId });
+      navigation.replace('PaymentSuccess', {
+        orderId,
+        ...(sessionId ? { session_id: sessionId } : {}),
+        ...(paymentIntentId ? { payment_intent: paymentIntentId } : {}),
+      });
       return;
     }
     setStatus(result.status === 'pending' ? 'pending' : 'not_paid');
     Animated.spring(scaleAnim, { toValue: 1, friction: 6, tension: 65, useNativeDriver: true }).start();
-  }, [navigation, orderId, scaleAnim, sessionId]);
+  }, [navigation, orderId, paymentIntentId, scaleAnim, sessionId]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -82,7 +87,11 @@ export default function PaymentCancelScreen({ navigation, route }) {
       </View>
       <View style={styles.footer}>
         {pending ? (
-          <TouchableOpacity style={styles.primaryBtn} onPress={() => navigation.replace('PaymentSuccess', { orderId, session_id: sessionId })}>
+          <TouchableOpacity style={styles.primaryBtn} onPress={() => navigation.replace('PaymentSuccess', {
+            orderId,
+            ...(sessionId ? { session_id: sessionId } : {}),
+            ...(paymentIntentId ? { payment_intent: paymentIntentId } : {}),
+          })}>
             <Ionicons name="refresh" size={19} color="#fff" /><Text style={styles.primaryBtnText}>Check Status</Text>
           </TouchableOpacity>
         ) : (

@@ -8,15 +8,7 @@ const app = express()
 app.set('trust proxy', Number(process.env.TRUST_PROXY_HOPS || 1))
 
 // ── Stripe Configuration with Live/Test Mode Support ──
-const STRIPE_MODE = process.env.STRIPE_MODE || 'test'; // 'test' or 'live'
-const STRIPE_SECRET_KEY = STRIPE_MODE === 'live' 
-  ? process.env.STRIPE_LIVE_SECRET_KEY 
-  : process.env.STRIPE_TEST_SECRET_KEY;
-const STRIPE_WEBHOOK_SECRET = STRIPE_MODE === 'live'
-  ? process.env.STRIPE_LIVE_WEBHOOK_SECRET
-  : process.env.STRIPE_TEST_WEBHOOK_SECRET;
-
-const stripe = STRIPE_SECRET_KEY ? require('stripe')(STRIPE_SECRET_KEY) : null;
+const { stripe, STRIPE_MODE, STRIPE_WEBHOOK_SECRET } = require('./config/stripe');
 
 if (stripe) {
   console.log(`✅ Stripe initialized in ${STRIPE_MODE.toUpperCase()} mode`);
@@ -30,7 +22,11 @@ const Product = require('./models/Product')
 const { trackOrderEvent } = require('./services/tiktokEventsApi')
 const { configKeyFor } = require('./services/whatsapp/gatewayMode')
 const { restoreOrderInventory } = require('./services/orderInventoryService')
-const { fulfillStripeOrder } = require('./services/stripeOrderPaymentService')
+const {
+  fulfillStripeOrder,
+  fulfillStripeOrderPaymentIntent,
+  recordStripeOrderPaymentFailure,
+} = require('./services/stripeOrderPaymentService')
 
 
 // ── Stripe Webhook (raw body required — must come before express.json) ──
@@ -64,11 +60,12 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
     }
   }
 
-  if (event.type === "checkout.session.completed") {
+  if (event.type === 'checkout.session.completed' || event.type === 'payment_intent.succeeded') {
     const session = event.data.object;
+    const isPaymentIntentEvent = event.type === 'payment_intent.succeeded';
 
     // Skip subscription checkouts (handled above)
-    if (session.mode === 'subscription') {
+    if (!isPaymentIntentEvent && session.mode === 'subscription') {
       return res.sendStatus(200);
     }
 
@@ -79,9 +76,14 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
 
     if (session.metadata?.type === 'wallet_top_up') {
       try {
-        const { completeWalletTopUp } = require('./services/walletService');
+        const {
+          completeWalletTopUp,
+          completeWalletTopUpFromPaymentIntent,
+        } = require('./services/walletService');
         const { notifyTopUpCompleted } = require('./controllers/walletController');
-        const transaction = await completeWalletTopUp(session);
+        const transaction = isPaymentIntentEvent
+          ? await completeWalletTopUpFromPaymentIntent(session, event.id)
+          : await completeWalletTopUp(session, event.id);
         await notifyTopUpCompleted(transaction);
         console.log(`[wallet] completed top-up ${transaction?._id || session.id}`);
         return res.sendStatus(200);
@@ -91,7 +93,13 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
       }
     }
 
-    if (session.metadata?.type === 'return_settlement') {
+    // PaymentIntents from subscriptions and unrelated Stripe integrations are
+    // handled by their own event types/controllers. Never treat them as orders.
+    if (isPaymentIntentEvent && session.metadata?.type !== 'order_payment') {
+      return res.sendStatus(200);
+    }
+
+    if (!isPaymentIntentEvent && session.metadata?.type === 'return_settlement') {
       try {
         const { completeReturnCardSettlement } = require('./services/returnService');
         const { notifyReturnSettlementCompleted } = require('./services/returnNotificationService');
@@ -121,19 +129,39 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
 
     let fulfillmentResult;
     try {
-      fulfillmentResult = await fulfillStripeOrder({
-        order,
-        stripeSession: session,
-        eventId: event.id,
-      });
+      fulfillmentResult = isPaymentIntentEvent
+        ? await fulfillStripeOrderPaymentIntent({
+          order,
+          paymentIntent: session,
+          eventId: event.id,
+        })
+        : await fulfillStripeOrder({
+          order,
+          stripeSession: session,
+          eventId: event.id,
+        });
     } catch (paymentError) {
       console.error('[stripe] order fulfillment rejected:', paymentError.code || paymentError.message);
       return res.sendStatus(paymentError.statusCode >= 500 ? 500 : 400);
     }
     order = fulfillmentResult.order;
     const wasAwaiting = fulfillmentResult.newlyFulfilled;
+    try {
+      const { removeFulfilledOrderItemsFromCart } = require('./services/cartFulfillmentService');
+      await removeFulfilledOrderItemsFromCart({
+        userId: order.user,
+        orderItems: order.orderItems,
+        fulfillmentId: order._id,
+      });
+    } catch (cartCleanupError) {
+      // The cleanup write is idempotent by order ID, so asking Stripe to retry
+      // is safe even when the first database response was ambiguous.
+      console.error('[cart] fulfilled-order cleanup failed:', cartCleanupError.message);
+      return res.sendStatus(500);
+    }
     if (!wasAwaiting) return res.sendStatus(200);
-    const email = session.customer_details?.email || order.shippingInfo?.email;
+    const email = (isPaymentIntentEvent ? session.receipt_email : session.customer_details?.email)
+      || order.shippingInfo?.email;
 
     if (order) {
       console.log("✅ Order updated & auto-confirmed:", order.orderId);
@@ -272,11 +300,6 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
         }
       }
 
-      const cart = await Cart.findOne({ user: order.user });
-      if (cart) {
-        cart.cartItems = [];
-        await cart.save();
-      }
     }
   }
 
@@ -284,6 +307,89 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
   // When a buyer closes the Stripe page or the session expires, DELETE the
   // awaiting-payment order entirely. We never want unpaid orders to appear
   // in the buyer/seller dashboards (not even as "cancelled").
+  if (event.type === 'payment_intent.payment_failed') {
+    const paymentIntent = event.data.object;
+    try {
+      if (paymentIntent.metadata?.type === 'wallet_top_up') {
+        const { recordWalletTopUpPaymentFailure } = require('./services/walletService');
+        await recordWalletTopUpPaymentFailure(paymentIntent, event.id);
+      } else if (paymentIntent.metadata?.type === 'order_payment') {
+        const order = await Order.findOne({
+          orderId: paymentIntent.metadata.orderId,
+          stripePaymentIntentId: paymentIntent.id,
+          paymentFlow: 'payment_sheet',
+        });
+        if (!order) return res.sendStatus(400);
+        await recordStripeOrderPaymentFailure({ order, paymentIntent });
+      }
+      return res.sendStatus(200);
+    } catch (error) {
+      console.error('[stripe] PaymentIntent failure processing failed:', error.message);
+      return res.sendStatus(error.statusCode >= 500 ? 500 : 400);
+    }
+  }
+
+  if (event.type === 'payment_intent.canceled') {
+    const paymentIntent = event.data.object;
+    try {
+      if (paymentIntent.metadata?.type === 'wallet_top_up') {
+        const { cancelWalletTopUpFromPaymentIntent } = require('./services/walletService');
+        await cancelWalletTopUpFromPaymentIntent(paymentIntent, {
+          eventId: event.id,
+          status: 'cancelled',
+          reason: 'Stripe confirmed that the Wallet top-up was cancelled.',
+        });
+      } else if (paymentIntent.metadata?.type === 'order_payment') {
+        const { closeOrderPaymentIntent } = require('./services/stripePendingPaymentService');
+        const order = await Order.findOne({
+          orderId: paymentIntent.metadata.orderId,
+          stripePaymentIntentId: paymentIntent.id,
+          paymentFlow: 'payment_sheet',
+        });
+        if (!order) return res.sendStatus(400);
+        await closeOrderPaymentIntent(order, {
+          status: 'cancelled',
+          reason: 'Stripe confirmed that the payment was cancelled.',
+        });
+      }
+      return res.sendStatus(200);
+    } catch (error) {
+      console.error('[stripe] PaymentIntent cancellation processing failed:', error.message);
+      return res.sendStatus(error.statusCode >= 500 ? 500 : 400);
+    }
+  }
+
+  if (event.type === 'setup_intent.succeeded') {
+    try {
+      if (event.data.object.metadata?.type !== 'saved_payment_method_setup') {
+        return res.sendStatus(200);
+      }
+      const { finalizeSavedPaymentMethodSetup } = require('./services/stripeCustomerService');
+      await finalizeSavedPaymentMethodSetup(event.data.object);
+      return res.sendStatus(200);
+    } catch (error) {
+      console.error('[stripe] saved-card setup processing failed:', error.message);
+      return res.sendStatus(error.statusCode >= 500 ? 500 : 400);
+    }
+  }
+
+  if (event.type === 'charge.refunded' || event.type === 'charge.dispute.created') {
+    try {
+      let charge = event.data.object;
+      if (event.type === 'charge.dispute.created' && charge.charge) {
+        const chargeId = typeof charge.charge === 'string' ? charge.charge : charge.charge.id;
+        const retrievedCharge = await stripe.charges.retrieve(chargeId);
+        charge = { ...retrievedCharge, amount: charge.amount || retrievedCharge.amount };
+      }
+      const { flagWalletTopUpPaymentRisk } = require('./services/walletPaymentRiskService');
+      await flagWalletTopUpPaymentRisk({ charge, eventId: event.id, eventType: event.type });
+      return res.sendStatus(200);
+    } catch (error) {
+      console.error('[wallet] Stripe refund/dispute review failed:', error.message);
+      return res.sendStatus(500);
+    }
+  }
+
   if (
     event.type === 'checkout.session.expired' ||
     event.type === 'checkout.session.async_payment_failed'
@@ -385,6 +491,10 @@ const allowedCorsHeaders = [
   'origin',
   'X-Requested-With',
   'x-requested-with',
+  'Idempotency-Key',
+  'idempotency-key',
+  'X-Idempotency-Key',
+  'x-idempotency-key',
 ];
 
 const isAllowedCorsOrigin = (origin) => {
@@ -510,7 +620,6 @@ const cartRoutes = require('./routes/cartRoutes');
 const orderRoutes = require('./routes/orderRoutes');
 const userRoutes = require('./routes/userRoutes');
 const uploadRoutes = require('./routes/uploadRoutes');
-const sessionRoutes = require('./routes/sessionRoutes');
 const storeRoutes = require('./routes/storeRoutes');
 const taxRoutes = require('./routes/taxRoutes');
 const shippingRoutes = require('./routes/shippingRoutes');
@@ -526,6 +635,7 @@ const aiChatRoutes = require('./routes/aiChatRoutes');
 const subscriptionRoutes = require('./routes/subscriptionRoutes');
 const couponRoutes = require('./routes/couponRoutes');
 const paymentRoutes = require('./routes/paymentRoutes');
+const paymentMethodRoutes = require('./routes/paymentMethodRoutes');
 const walletRoutes = require('./routes/walletRoutes');
 const returnRoutes = require('./routes/returnRoutes');
 const storeReviewRoutes = require('./routes/storeReviewRoutes');
@@ -534,7 +644,6 @@ const sellerWhatsappRoutes = require('./routes/sellerWhatsappRoutes');
 const userWhatsappRoutes = require('./routes/userWhatsappRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
 const sellerAdRoutes = require('./routes/sellerAdRoutes');
-const Cart = require('./models/Cart');
 const { sendEmail } = require('./controllers/mailController');
 const User = require('./models/User');
 
@@ -547,7 +656,6 @@ app.use('/api/order', orderRoutes);
 app.use('/api/order-confirm', require('./routes/orderConfirmationRoutes'));
 app.use('/api/user', userRoutes);
 app.use('/api/upload', uploadRoutes);
-app.use('/api/session', sessionRoutes);
 app.use('/api/stores', trustRoutes);
 app.use('/api/stores', storeRoutes);
 app.use('/api/tax', taxRoutes);
@@ -565,6 +673,7 @@ app.use('/api/ai-prompts', require('./routes/aiPromptRoutes'));
 app.use('/api/subscription', subscriptionRoutes);
 app.use('/api/coupons', couponRoutes);
 app.use('/api/payments', paymentRoutes);
+app.use('/api/payment-methods', paymentMethodRoutes);
 app.use('/api/wallet', walletRoutes);
 app.use('/api/returns', returnRoutes);
 app.use('/api/ads', sellerAdRoutes);
@@ -589,6 +698,18 @@ setTimeout(processTrialExpirations, 30000); // 30s after boot
 // ── One-time migration (runs on boot): mark existing paid sellers as hasUsedFreePeriod ──
 setTimeout(migrateHasUsedFreePeriod, 15000); // 15s after boot
 setTimeout(migrateFounderPromotion, 17000); // preserve existing subscriber pricing before new billing cycles
+
+// Cancel and release stale native PaymentIntents so reserved stock and pending
+// Wallet top-ups cannot remain open indefinitely after an app is closed.
+if (stripe) {
+  const { cleanupStaleStripePaymentIntents } = require('./services/stripePendingPaymentService');
+  const runStripePaymentCleanup = () => cleanupStaleStripePaymentIntents()
+    .catch(error => console.error('[stripe-cleanup] scheduled cleanup failed:', error.message));
+  const cleanupTimer = setInterval(runStripePaymentCleanup, 5 * 60 * 1000);
+  cleanupTimer.unref?.();
+  const initialCleanupTimer = setTimeout(runStripePaymentCleanup, 45000);
+  initialCleanupTimer.unref?.();
+}
 
 // ── Subdomain removal processor (runs every 6 hours) ──
 const { processSubdomainRemovals } = require('./controllers/subdomainPurchaseController');

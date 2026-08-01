@@ -47,6 +47,9 @@ npm start
 - Product Browsing with Search
 - Product Details
 - Shopping Cart
+- Checkout with card, Cash on Delivery, and Rozare Wallet
+- Stripe PaymentSheet and saved-card management
+- Order management and payment-status tracking
 - Wishlist
 - Store Listings
 - Store Details
@@ -60,9 +63,6 @@ npm start
 - Backend integration (100% compatible)
 
 ### 📋 To Be Implemented
-- Checkout Flow
-- Order Management
-- Payment Integration
 - Admin/Seller Dashboards
 - Push Notifications
 - Image Upload
@@ -104,6 +104,23 @@ Edit `src/config/api.js`:
 ```javascript
 export const API_BASE_URL = 'http://YOUR_BACKEND_URL:5000';
 ```
+
+### Native Stripe payments
+
+Card checkout, Wallet top-ups, and saved-card management use Stripe PaymentSheet.
+The publishable key and Google Pay merchant country are loaded from the authenticated
+backend payment configuration endpoint; secret keys must never be included in the app.
+PaymentSheet returning successfully is not proof that an order or top-up is complete:
+the app waits for the backend status endpoint, which is settled by signed Stripe webhooks.
+
+Google Pay is enabled by the Expo Stripe config plugin. Apple Pay is intentionally not
+enabled yet: production Apple Pay requires a real Apple Merchant ID, the matching
+certificate and entitlement, and Stripe dashboard/domain configuration. Add the
+`merchantIdentifier` only after those production credentials exist; do not ship a
+placeholder merchant ID.
+
+Because Stripe adds native code, version 1.0.3/build 4 requires a newly installed native
+build. Once that build is installed, compatible JavaScript-only changes can use EAS Update.
 
 ### App Metadata
 Edit `app.json` to customize:

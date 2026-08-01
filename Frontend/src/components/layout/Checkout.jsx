@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from "react";
+import React, { useState, useMemo, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { CheckCircle, Minus, Plus, CreditCard, DollarSign, Truck, MapPin, User, Mail, Phone, Home, Navigation, CreditCardIcon, X, Loader2, ChevronDown, ChevronUp, Zap, Ticket, Tag, Check, WalletCards } from "lucide-react";
 import { useForm, Controller } from "react-hook-form";
@@ -9,7 +9,6 @@ import { useBuyerLocation } from "../../contexts/BuyerLocationContext";
 import axios from "axios";
 import { toast } from "react-toastify";
 import { useNavigate } from "react-router-dom";
-import { loadStripe } from '@stripe/stripe-js'
 import Loader from "../common/Loader";
 import PhoneField, { isValidPhone } from "../common/PhoneField";
 import LocationAutocomplete from "../common/LocationAutocomplete";
@@ -24,15 +23,67 @@ import {
 import { formatOrderItemOptions } from "../../utils/orderItems";
 import { rememberPostAuthRedirect } from "../../utils/postAuthRedirect";
 
+const CHECKOUT_ATTEMPT_STORAGE_KEY = 'rozare_checkout_attempt_v1';
+const ORDER_SUCCESS_STORAGE_KEY = 'rozare_order_success_v1';
+const STRIPE_RETURN_STORAGE_KEY = 'rozare_stripe_return_v1';
+const CHECKOUT_ATTEMPT_MAX_AGE_MS = 60 * 60 * 1000;
+
+const createCheckoutAttemptKey = () => {
+  const entropy = globalThis.crypto?.randomUUID?.()
+    || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return `web-checkout:${entropy}`;
+};
+
+const checkoutFingerprint = (order) => JSON.stringify({
+  items: (order.orderItems || []).map(item => ({
+    id: item.id,
+    quantity: item.quantity,
+    selectedColor: item.selectedColor || null,
+    selectedOptions: item.selectedOptions || item.options || null,
+  })),
+  shippingInfo: order.shippingInfo,
+  buyerLocation: order.buyerLocation,
+  shippingMethod: order.shippingMethod,
+  sellerShipping: order.sellerShipping,
+  currency: order.currency,
+  appliedCoupons: (order.appliedCoupons || []).map(coupon => ({
+    couponId: coupon.couponId,
+    code: coupon.code,
+    applicableProductIds: coupon.applicableProductIds,
+  })),
+  paymentMethod: order.paymentMethod,
+  instructions: order.instructions || '',
+});
+
+const rememberConfirmedOrder = (orderId, paymentMethod) => {
+  if (!orderId || !['cash_on_delivery', 'wallet'].includes(paymentMethod)) return;
+  try {
+    sessionStorage.setItem(ORDER_SUCCESS_STORAGE_KEY, JSON.stringify({
+      orderId,
+      paymentMethod,
+      receivedAt: Date.now(),
+    }));
+  } catch (_) {}
+};
+
+const rememberStripeCheckoutReturn = (orderId, sessionId) => {
+  if (!orderId || !sessionId) return false;
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(STRIPE_RETURN_STORAGE_KEY) || '{}');
+    saved.checkoutSession = {
+      id: sessionId,
+      orderId,
+      path: '/success',
+      receivedAt: Date.now(),
+    };
+    sessionStorage.setItem(STRIPE_RETURN_STORAGE_KEY, JSON.stringify(saved));
+    return true;
+  } catch (_) {
+    return false;
+  }
+};
+
 export default function Checkout() {
-
-  // Stripe configuration with live/test mode support
-  const STRIPE_MODE = import.meta.env.VITE_STRIPE_MODE || 'test';
-  const STRIPE_PUBLISHABLE_KEY = STRIPE_MODE === 'live'
-    ? import.meta.env.VITE_STRIPE_LIVE_PUBLISHABLE_KEY
-    : import.meta.env.VITE_STRIPE_TEST_PUBLISHABLE_KEY;
-
-  const stripePromise = loadStripe(STRIPE_PUBLISHABLE_KEY);
 
   const steps = ["Cart", "Shipping", "Payment"];
   const CHECKOUT_STORAGE_KEY = 'checkoutProgress_v1';
@@ -48,6 +99,7 @@ export default function Checkout() {
   });
 
   const [isProcessing, setIsProcessing] = useState(false);
+  const checkoutAttemptRef = useRef(null);
   const navigate = useNavigate();
   const { currentUser } = useAuth();
   const { buyerLocation } = useBuyerLocation();
@@ -721,10 +773,34 @@ export default function Checkout() {
     if (data.instructions !== '') order.instructions = data.instructions
 
     try {
-      const headers = { Authorization: `Bearer ${token}` };
+      const fingerprint = checkoutFingerprint(order);
+      let attempt = checkoutAttemptRef.current;
+      if (!attempt) {
+        try {
+          const stored = JSON.parse(sessionStorage.getItem(CHECKOUT_ATTEMPT_STORAGE_KEY) || 'null');
+          const isFresh = Number(stored?.createdAt) > Date.now() - CHECKOUT_ATTEMPT_MAX_AGE_MS;
+          if (stored?.key && stored?.fingerprint === fingerprint && isFresh) {
+            attempt = stored;
+          } else if (stored) {
+            sessionStorage.removeItem(CHECKOUT_ATTEMPT_STORAGE_KEY);
+          }
+        } catch (_) {}
+      }
+      const attemptIsFresh = Number(attempt?.createdAt) > Date.now() - CHECKOUT_ATTEMPT_MAX_AGE_MS;
+      if (!attempt || attempt.fingerprint !== fingerprint || !attemptIsFresh) {
+        attempt = { key: createCheckoutAttemptKey(), fingerprint, createdAt: Date.now() };
+        try { sessionStorage.setItem(CHECKOUT_ATTEMPT_STORAGE_KEY, JSON.stringify(attempt)); } catch (_) {}
+      }
+      checkoutAttemptRef.current = attempt;
+      order.idempotencyKey = attempt.key;
+
+      const headers = {
+        Authorization: `Bearer ${token}`,
+        'Idempotency-Key': attempt.key,
+      };
       const res = await axios.post(
         `${import.meta.env.VITE_API_URL}api/order/place`,
-        { order },
+        { order, paymentFlow: 'checkout_session', clientSurface: 'web' },
         { headers }
       );
 
@@ -754,6 +830,9 @@ export default function Checkout() {
       }
 
       if (['cash_on_delivery', 'wallet'].includes(order.paymentMethod)) {
+        rememberConfirmedOrder(res.data.orderId || res.data.order?.orderId, order.paymentMethod);
+        checkoutAttemptRef.current = null;
+        try { sessionStorage.removeItem(CHECKOUT_ATTEMPT_STORAGE_KEY); } catch (_) {}
         setIsProcessing(false);
         trackPlaceAnOrder({
           orderId: res.data.order?.orderId || res.data.order?._id,
@@ -766,11 +845,7 @@ export default function Checkout() {
         if (hasChanged && currentUser) return;
 
         setTimeout(async () => {
-          if (token) {
-            axios.delete(`${import.meta.env.VITE_API_URL}api/cart/clear`, {
-              headers: { Authorization: `Bearer ${token}` }
-            }).then(() => fetchCart()).catch(error => console.error('Error clearing cart:', error));
-          }
+          if (token) await fetchCart().catch(error => console.error('Error refreshing cart:', error));
           try { sessionStorage.removeItem(CHECKOUT_STORAGE_KEY); } catch (_) {}
           navigate(`/success?payment=${order.paymentMethod}&orderId=${encodeURIComponent(res.data.orderId || res.data.order?.orderId || '')}`);
         }, 1500);
@@ -788,11 +863,28 @@ export default function Checkout() {
         eventId: tiktokPlaceOrderEventId,
       });
 
-      const stripe = await stripePromise;
-      await stripe.redirectToCheckout({ sessionId: res.data.id })
+      if (res.data?.isPaid === true && res.data?.orderId) {
+        checkoutAttemptRef.current = null;
+        try { sessionStorage.removeItem(CHECKOUT_ATTEMPT_STORAGE_KEY); } catch (_) {}
+        if (rememberStripeCheckoutReturn(res.data.orderId, res.data.id)) {
+          navigate(`/success?orderId=${encodeURIComponent(res.data.orderId)}`, { replace: true });
+        } else {
+          navigate('/user-dashboard/orders', { replace: true });
+        }
+        return;
+      }
+
+      if (!res.data?.url) {
+        throw new Error('Stripe did not return a secure checkout URL. Please try again.');
+      }
+      window.location.assign(res.data.url);
 
 
     } catch (error) {
+      if (['IDEMPOTENCY_CONFLICT', 'CHECKOUT_ATTEMPT_EXPIRED'].includes(error.response?.data?.code)) {
+        checkoutAttemptRef.current = null;
+        try { sessionStorage.removeItem(CHECKOUT_ATTEMPT_STORAGE_KEY); } catch (_) {}
+      }
       if (error.response?.status === 401 || error.response?.status === 403) {
         try {
           sessionStorage.setItem(
@@ -1487,9 +1579,25 @@ export default function Checkout() {
                         transition={{ duration: 0.3 }}
                         className="glass-inner p-4 rounded-xl mb-6"
                       >
-                        <p className="text-sm" style={{ color: 'hsl(220, 70%, 55%)' }}>
-                          You will be redirected to Stripe's secure payment page to complete your transaction.
-                        </p>
+                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-semibold" style={{ color: 'hsl(220, 70%, 55%)' }}>
+                              Continue to Stripe's secure checkout.
+                            </p>
+                            <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                              Choose a saved card or securely save a new card for purchases and wallet top-ups you initiate.
+                            </p>
+                          </div>
+                          {currentUser && (
+                            <button
+                              type="button"
+                              onClick={() => navigate('/user-dashboard/payment-methods')}
+                              className="glass-button rounded-xl px-3 py-2 text-xs font-semibold whitespace-nowrap"
+                            >
+                              Manage saved cards
+                            </button>
+                          )}
+                        </div>
                       </motion.div>
                     )}
 
@@ -1795,10 +1903,8 @@ export default function Checkout() {
                     setShowUpdatePrompt(false);
                     // Continue with order flow
                     if (pendingOrderData?.data) {
-                      const token = getAuthToken();
                       if (['cash_on_delivery', 'wallet'].includes(pendingOrderData.order?.paymentMethod)) {
-                        axios.delete(`${import.meta.env.VITE_API_URL}api/cart/clear`, { headers: { Authorization: `Bearer ${token}` } })
-                          .then(() => fetchCart()).catch(() => {});
+                        fetchCart().catch(() => {});
                         try { sessionStorage.removeItem(CHECKOUT_STORAGE_KEY); } catch (_) {}
                         navigate(`/success?payment=${pendingOrderData.order.paymentMethod}&orderId=${encodeURIComponent(pendingOrderData.data?.orderId || '')}`);
                       }
@@ -1820,9 +1926,7 @@ export default function Checkout() {
                     } catch (e) { console.error(e); }
                     setShowUpdatePrompt(false);
                     if (['cash_on_delivery', 'wallet'].includes(pendingOrderData?.order?.paymentMethod)) {
-                      const token = getAuthToken();
-                      axios.delete(`${import.meta.env.VITE_API_URL}api/cart/clear`, { headers: { Authorization: `Bearer ${token}` } })
-                        .then(() => fetchCart()).catch(() => {});
+                      fetchCart().catch(() => {});
                       try { sessionStorage.removeItem(CHECKOUT_STORAGE_KEY); } catch (_) {}
                       navigate(`/success?payment=${pendingOrderData.order.paymentMethod}&orderId=${encodeURIComponent(pendingOrderData.data?.orderId || '')}`);
                     }
