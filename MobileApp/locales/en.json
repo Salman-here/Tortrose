@@ -1,8 +1,8 @@
 {
   "android": {
-    "app_name": "Rozare - AI Marketplace"
+    "app_name": "Rozare"
   },
   "ios": {
-    "CFBundleDisplayName": "Rozare - AI Marketplace"
+    "CFBundleDisplayName": "Rozare"
   }
 }

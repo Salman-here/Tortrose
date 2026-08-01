@@ -1,8 +1,8 @@
 {
   "expo": {
-    "name": "Rozare - AI Marketplace",
+    "name": "Rozare",
     "slug": "rozare",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "runtimeVersion": {
       "policy": "appVersion"
     },
@@ -24,12 +24,15 @@
     ],
     "android": {
       "softwareKeyboardLayoutMode": "resize",
+      "icon": "./assets/android-legacy-icon.png",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#6366f1"
+        "backgroundImage": "./assets/adaptive-icon-background.png",
+        "monochromeImage": "./assets/adaptive-icon-monochrome.png",
+        "backgroundColor": "#0EA5E9"
       },
       "package": "com.rozare.app",
-      "versionCode": 2,
+      "versionCode": 3,
       "permissions": [
         "CAMERA",
         "READ_EXTERNAL_STORAGE",
@@ -59,7 +62,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.rozare.app",
-      "buildNumber": "2",
+      "buildNumber": "3",
       "associatedDomains": [
         "applinks:rozare.com"
       ],
@@ -78,7 +81,7 @@
       [
         "expo-notifications",
         {
-          "icon": "./assets/icon.png",
+          "icon": "./assets/notification-icon.png",
           "color": "#6366f1",
           "sounds": [],
           "androidMode": "default",

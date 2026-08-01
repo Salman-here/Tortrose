@@ -168,6 +168,34 @@ function validatePlugins(expoConfig) {
   }
 }
 
+function validateBranding(expoConfig) {
+  if (expoConfig.name !== 'Rozare') {
+    fail('expo.name must be exactly "Rozare"');
+  }
+
+  const englishLocale = readJson(expoConfig.locales?.en || 'locales/en.json');
+  if (
+    englishLocale.android?.app_name !== expoConfig.name ||
+    englishLocale.ios?.CFBundleDisplayName !== expoConfig.name
+  ) {
+    fail('Localized Android and iOS display names must match expo.name');
+  }
+
+  const requiredIcons = [
+    expoConfig.icon,
+    expoConfig.android?.icon,
+    expoConfig.android?.adaptiveIcon?.foregroundImage,
+    expoConfig.android?.adaptiveIcon?.backgroundImage,
+    expoConfig.android?.adaptiveIcon?.monochromeImage,
+  ];
+
+  for (const iconPath of requiredIcons) {
+    if (typeof iconPath !== 'string' || !fs.existsSync(path.join(projectRoot, iconPath))) {
+      fail(`Missing configured launcher icon asset: ${iconPath || '<unset>'}`);
+    }
+  }
+}
+
 const appConfig = readJson('app.json');
 const expoConfig = appConfig.expo;
 
@@ -178,6 +206,7 @@ if (!expoConfig || typeof expoConfig !== 'object') {
 validateLocales(expoConfig);
 validateEasConfig(expoConfig);
 validatePlugins(expoConfig);
+validateBranding(expoConfig);
 
 console.log(
   '[build-config] Validated Expo project, preview APK profile, plugins, and localized native resources.'
