@@ -6,6 +6,7 @@ jest.mock('expo-constants', () => ({
   default: { appOwnership: 'standalone' },
 }));
 
+import { Platform } from 'react-native';
 import {
   assertPaymentSheetPayload,
   assertUsableStripeConfig,
@@ -27,11 +28,16 @@ const palette = {
 };
 
 describe('native Stripe PaymentSheet contracts', () => {
+  beforeAll(() => {
+    Object.defineProperty(Platform, 'OS', { configurable: true, get: () => 'android' });
+  });
+
   it('normalizes and validates only publishable client keys', () => {
     expect(normalizeStripeConfig({ data: {
       publishableKey: 'pk_test_123', mode: 'test', merchantCountryCode: 'pk',
     } })).toEqual({
       publishableKey: 'pk_test_123', mode: 'test', merchantCountryCode: 'PK',
+      merchantDisplayName: 'Rozare', googlePayEnabled: false,
     });
     expect(() => assertUsableStripeConfig({
       publishableKey: 'sk_live_secret', merchantCountryCode: 'US',
@@ -43,6 +49,7 @@ describe('native Stripe PaymentSheet contracts', () => {
       publishableKey: 'pk_live_123', stripeMode: 'live', merchantCountryCode: 'gb',
     } })).toEqual({
       publishableKey: 'pk_live_123', mode: 'live', merchantCountryCode: 'GB',
+      merchantDisplayName: 'Rozare', googlePayEnabled: false,
     });
   });
 
@@ -67,7 +74,7 @@ describe('native Stripe PaymentSheet contracts', () => {
     } })).toEqual(expect.objectContaining({ topUpId: 'top-up-1', paymentIntentId: 'pi_topup' }));
   });
 
-  it('builds branded PaymentSheet options with CustomerSession and Google Pay', () => {
+  it('builds branded PaymentSheet options with CustomerSession and omits Google Pay until enabled', () => {
     const options = buildPaymentSheetOptions({
       payment: {
         paymentIntentClientSecret: 'pi_123_secret_abc',
@@ -85,13 +92,40 @@ describe('native Stripe PaymentSheet contracts', () => {
       customerSessionClientSecret: 'cuss_123_secret_abc',
       paymentIntentClientSecret: 'pi_123_secret_abc',
       allowsDelayedPaymentMethods: false,
-      googlePay: { merchantCountryCode: 'PK', currencyCode: 'PKR', testEnv: true },
     }));
+    expect(options.googlePay).toBeUndefined();
+  });
+
+  it('adds Android Google Pay only when the backend enables it', () => {
+    const options = buildPaymentSheetOptions({
+      payment: {
+        paymentIntentClientSecret: 'pi_123_secret_abc',
+        customerId: 'cus_123',
+        customerSessionClientSecret: 'cuss_123_secret_abc',
+      },
+      config: {
+        publishableKey: 'pk_test_123',
+        mode: 'test',
+        merchantCountryCode: 'PK',
+        googlePayEnabled: true,
+      },
+      currentUser: { name: 'Buyer', email: 'buyer@example.com' },
+      currency: 'PKR',
+      palette,
+    });
+    expect(options.googlePay).toEqual({ merchantCountryCode: 'PK', currencyCode: 'PKR', testEnv: true });
   });
 
   it('distinguishes a user cancellation from a PaymentSheet failure', async () => {
     const initPaymentSheet = jest.fn().mockResolvedValue({});
     const presentPaymentSheet = jest.fn().mockResolvedValue({ error: { code: 'Canceled' } });
+    await expect(runPaymentSheet({ initPaymentSheet, presentPaymentSheet, options: {} }))
+      .resolves.toEqual(expect.objectContaining({ status: 'cancelled', stage: 'present' }));
+  });
+
+  it('treats didCancel as cancellation even without a Stripe error object', async () => {
+    const initPaymentSheet = jest.fn().mockResolvedValue({});
+    const presentPaymentSheet = jest.fn().mockResolvedValue({ didCancel: true });
     await expect(runPaymentSheet({ initPaymentSheet, presentPaymentSheet, options: {} }))
       .resolves.toEqual(expect.objectContaining({ status: 'cancelled', stage: 'present' }));
   });

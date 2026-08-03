@@ -8,6 +8,7 @@ const {
   STRIPE_PUBLISHABLE_KEY,
   STRIPE_MERCHANT_COUNTRY_CODE,
   STRIPE_MERCHANT_DISPLAY_NAME,
+  STRIPE_GOOGLE_PAY_ENABLED,
 } = require('../config/stripe');
 
 // Only cards for which Stripe captured an explicit redisplay choice are shown.
@@ -273,6 +274,7 @@ const getStripeMobileConfig = () => {
     publishableKey: STRIPE_PUBLISHABLE_KEY,
     merchantDisplayName: STRIPE_MERCHANT_DISPLAY_NAME,
     merchantCountryCode: STRIPE_MERCHANT_COUNTRY_CODE,
+    googlePayEnabled: STRIPE_GOOGLE_PAY_ENABLED,
     stripeMode: STRIPE_MODE,
   };
 };

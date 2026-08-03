@@ -32,6 +32,7 @@ import {
   runPaymentSheet,
   verifyWalletTopUp,
 } from '../utils/stripePaymentSheet';
+import { trackError, trackPaymentEvent } from '../utils/breadcrumbs';
 
 const WALLET_CURRENCIES = ['USD', 'PKR', 'EUR', 'GBP'];
 const CURRENCY_META = {
@@ -160,6 +161,10 @@ export default function WalletScreen({ navigation, route }) {
     setSubmitting(true);
     try {
       const stripeConfig = await ensureStripeReady();
+      trackPaymentEvent('wallet_top_up_started', {
+        currency: topUpCurrency,
+        googlePayEnabled: !!stripeConfig.googlePayEnabled,
+      });
       if (!topUpAttemptKeyRef.current) topUpAttemptKeyRef.current = Crypto.randomUUID();
       const requestKey = topUpAttemptKeyRef.current;
       const response = await api.post('/api/wallet/top-ups', {
@@ -184,6 +189,10 @@ export default function WalletScreen({ navigation, route }) {
         return;
       }
       const reference = normalizePaymentSheetPayload(response);
+      trackPaymentEvent('wallet_top_up_reference_created', {
+        hasTopUpId: !!reference.topUpId,
+        hasPaymentIntent: !!reference.paymentIntentId,
+      });
       if (!reference.topUpId) {
         throw new Error('Rozare did not return a secure top-up reference. Your Wallet has not been credited.');
       }
@@ -200,6 +209,10 @@ export default function WalletScreen({ navigation, route }) {
           isDark,
           intentType: 'payment',
         }),
+      });
+      trackPaymentEvent(`wallet_top_up_sheet_${sheetResult.status}`, {
+        stage: sheetResult.stage,
+        code: sheetResult.error?.code,
       });
       let cancellationError = null;
       if (sheetResult.status !== 'presented') {
@@ -264,6 +277,7 @@ export default function WalletScreen({ navigation, route }) {
         });
       }
     } catch (error) {
+      trackError('wallet_top_up', error, { currency: topUpCurrency });
       setNotice({
         type: 'error',
         title: 'Top-up could not be completed',

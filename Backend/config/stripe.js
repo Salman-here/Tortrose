@@ -8,6 +8,8 @@ const STRIPE_MODE = ['test', 'live'].includes(requestedStripeMode)
   ? requestedStripeMode
   : 'invalid';
 
+const envFlag = (value) => ['1', 'true', 'yes', 'on'].includes(String(value || '').trim().toLowerCase());
+
 const configuredSecretKey = STRIPE_MODE === 'live'
   ? process.env.STRIPE_LIVE_SECRET_KEY
   : STRIPE_MODE === 'test' ? process.env.STRIPE_TEST_SECRET_KEY : null;
@@ -36,6 +38,7 @@ const STRIPE_MERCHANT_COUNTRY_CODE = /^[A-Z]{2}$/.test(merchantCountry)
 const STRIPE_MERCHANT_DISPLAY_NAME = String(
   process.env.STRIPE_MERCHANT_DISPLAY_NAME || 'Rozare'
 ).trim().slice(0, 120) || 'Rozare';
+const STRIPE_GOOGLE_PAY_ENABLED = envFlag(process.env.STRIPE_GOOGLE_PAY_ENABLED);
 
 const stripe = STRIPE_SECRET_KEY
   ? require('stripe')(STRIPE_SECRET_KEY, { apiVersion: '2025-08-27.basil' })
@@ -57,6 +60,7 @@ module.exports = {
   STRIPE_WEBHOOK_SECRET,
   STRIPE_MERCHANT_COUNTRY_CODE,
   STRIPE_MERCHANT_DISPLAY_NAME,
+  STRIPE_GOOGLE_PAY_ENABLED,
   isLiveMode: () => STRIPE_MODE === 'live',
   isTestMode: () => STRIPE_MODE === 'test',
 };

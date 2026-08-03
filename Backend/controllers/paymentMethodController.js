@@ -29,10 +29,21 @@ const requestKey = (req) => {
   return key;
 };
 
-const sendError = (res, error, fallback) => res.status(error.statusCode || 500).json({
-  msg: error.statusCode ? error.message : fallback,
-  ...(error.code ? { code: error.code } : {}),
-});
+const sendError = (res, error, fallback) => {
+  if ((error.statusCode || 500) >= 500 || String(error.type || '').startsWith('Stripe')) {
+    console.error('[payment-methods] request error:', {
+      code: error.code,
+      type: error.type,
+      statusCode: error.statusCode,
+      param: error.param,
+      message: error.message,
+    });
+  }
+  return res.status(error.statusCode || 500).json({
+    msg: error.statusCode ? error.message : fallback,
+    ...(error.code ? { code: error.code } : {}),
+  });
+};
 
 exports.getConfig = async (req, res) => {
   try {

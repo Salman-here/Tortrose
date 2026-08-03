@@ -29,6 +29,7 @@ import {
   normalizeSavedCards,
   runPaymentSheet,
 } from '../utils/stripePaymentSheet';
+import { trackError, trackPaymentEvent } from '../utils/breadcrumbs';
 import { fontSize, fontWeight, shadows, spacing } from '../styles/theme';
 
 const BRAND_META = {
@@ -127,6 +128,9 @@ export default function PaymentMethodsScreen({ navigation }) {
     setNotice(null);
     try {
       const stripeConfig = await ensureReady();
+      trackPaymentEvent('saved_card_setup_started', {
+        googlePayEnabled: !!stripeConfig.googlePayEnabled,
+      });
       const requestKey = Crypto.randomUUID();
       const response = await api.post('/api/payment-methods/setup', {
         paymentFlow: 'payment_sheet',
@@ -138,6 +142,9 @@ export default function PaymentMethodsScreen({ navigation }) {
         headers: { 'X-Idempotency-Key': requestKey },
       });
       const payment = assertPaymentSheetPayload(response, 'setup');
+      trackPaymentEvent('saved_card_setup_reference_created', {
+        hasSetupIntent: !!payment.setupIntentClientSecret,
+      });
       const result = await runPaymentSheet({
         initPaymentSheet,
         presentPaymentSheet,
@@ -151,6 +158,10 @@ export default function PaymentMethodsScreen({ navigation }) {
           intentType: 'setup',
         }),
       });
+      trackPaymentEvent(`saved_card_setup_sheet_${result.status}`, {
+        stage: result.stage,
+        code: result.error?.code,
+      });
 
       if (result.status === 'cancelled') {
         setNotice({ type: 'info', title: 'Nothing changed', text: 'Card setup was closed before a card was saved.' });
@@ -162,6 +173,7 @@ export default function PaymentMethodsScreen({ navigation }) {
       setConsentToSave(false);
       setNotice({ type: 'success', title: 'Card saved securely', text: 'It is now ready for faster checkout.' });
     } catch (error) {
+      trackError('saved_card_setup', error);
       setNotice({
         type: 'error',
         title: 'Card was not saved',

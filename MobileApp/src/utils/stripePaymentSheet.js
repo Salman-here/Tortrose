@@ -1,7 +1,16 @@
 import * as Linking from 'expo-linking';
 import Constants from 'expo-constants';
+import { Platform } from 'react-native';
 
 const firstValue = (...values) => values.find((value) => value !== undefined && value !== null && value !== '');
+const booleanValue = (value, fallback = false) => {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value === 1;
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+  return fallback;
+};
 
 const unwrap = (payload = {}) => {
   const root = payload?.data || payload || {};
@@ -35,6 +44,19 @@ export const normalizeStripeConfig = (payload = {}) => {
       root?.merchantCountryCode,
       root?.merchant_country_code
     ) || '').trim().toUpperCase(),
+    merchantDisplayName: String(firstValue(
+      source?.merchantDisplayName,
+      source?.merchant_display_name,
+      root?.merchantDisplayName,
+      root?.merchant_display_name,
+      'Rozare'
+    ) || 'Rozare').trim() || 'Rozare',
+    googlePayEnabled: booleanValue(firstValue(
+      source?.googlePayEnabled,
+      source?.google_pay_enabled,
+      root?.googlePayEnabled,
+      root?.google_pay_enabled
+    ), false),
   };
 };
 
@@ -161,8 +183,9 @@ export const buildPaymentSheetOptions = ({
   intentType = 'payment',
 }) => {
   const normalized = assertPaymentSheetPayload(payment, intentType);
+  const usableConfig = assertUsableStripeConfig(config);
   const options = {
-    merchantDisplayName: 'Rozare',
+    merchantDisplayName: usableConfig.merchantDisplayName || 'Rozare',
     customerId: normalized.customerId,
     customerSessionClientSecret: normalized.customerSessionClientSecret,
     returnURL: getStripeReturnUrl(),
@@ -175,18 +198,21 @@ export const buildPaymentSheetOptions = ({
       phone: billingDetails?.phone || currentUser?.phone || '',
       address: billingDetails?.address,
     },
-    googlePay: {
-      merchantCountryCode: assertUsableStripeConfig(config).merchantCountryCode,
-      currencyCode: String(currency || 'USD').toUpperCase(),
-      testEnv: config.mode !== 'live',
-    },
     paymentMethodLayout: 'Automatic',
   };
+
+  if (Platform.OS === 'android' && usableConfig.googlePayEnabled) {
+    options.googlePay = {
+      merchantCountryCode: usableConfig.merchantCountryCode,
+      currencyCode: String(currency || 'USD').toUpperCase(),
+      testEnv: usableConfig.mode !== 'live',
+    };
+  }
 
   if (intentType === 'setup') {
     options.setupIntentClientSecret = normalized.setupIntentClientSecret;
     options.primaryButtonLabel = 'Save card';
-    options.googlePay.amount = '0';
+    if (options.googlePay) options.googlePay.amount = '0';
   } else {
     options.paymentIntentClientSecret = normalized.paymentIntentClientSecret;
     options.primaryButtonLabel = 'Pay securely';
@@ -208,6 +234,9 @@ export const runPaymentSheet = async ({
   if (initialized?.error) return { status: 'failed', error: initialized.error, stage: 'initialize' };
 
   const presented = await presentPaymentSheet();
+  if (presented?.didCancel) {
+    return { status: 'cancelled', stage: 'present' };
+  }
   if (presented?.error) {
     return {
       status: isPaymentSheetCancellation(presented.error) ? 'cancelled' : 'failed',
