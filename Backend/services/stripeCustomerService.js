@@ -203,7 +203,6 @@ const createMobileCustomerSession = async (customerId) => {
         enabled: true,
         features: {
           payment_method_save: 'enabled',
-          payment_method_save_usage: 'on_session',
           payment_method_redisplay: 'enabled',
           // Removal must pass through Rozare's authenticated DELETE endpoint so
           // active seller-subscription billing cards cannot be detached.

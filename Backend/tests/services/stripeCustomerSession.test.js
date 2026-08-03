@@ -33,7 +33,6 @@ describe('Stripe mobile CustomerSession', () => {
           enabled: true,
           features: {
             payment_method_save: 'enabled',
-            payment_method_save_usage: 'on_session',
             payment_method_redisplay: 'enabled',
             payment_method_remove: 'disabled',
             payment_method_allow_redisplay_filters: ['always'],
