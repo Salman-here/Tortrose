@@ -1,16 +1,22 @@
 const mockCreateCustomerSession = jest.fn();
+const mockCreateEphemeralKey = jest.fn();
 
 jest.mock('../../config/stripe', () => ({
   stripe: {
     customerSessions: { create: mockCreateCustomerSession },
+    ephemeralKeys: { create: mockCreateEphemeralKey },
   },
   STRIPE_MODE: 'test',
   STRIPE_PUBLISHABLE_KEY: 'pk_test_example',
   STRIPE_MERCHANT_COUNTRY_CODE: 'PK',
   STRIPE_MERCHANT_DISPLAY_NAME: 'Rozare',
+  STRIPE_GOOGLE_PAY_ENABLED: false,
+  STRIPE_CUSTOMER_SESSION_ENABLED: false,
+  STRIPE_API_VERSION: '2025-08-27.basil',
 }));
 
 const {
+  createMobileCustomerAccess,
   createMobileCustomerSession,
   PAYMENT_METHOD_FILTERS,
   selectRedisplayableReplacement,
@@ -19,7 +25,9 @@ const {
 describe('Stripe mobile CustomerSession', () => {
   beforeEach(() => {
     mockCreateCustomerSession.mockReset();
+    mockCreateEphemeralKey.mockReset();
     mockCreateCustomerSession.mockResolvedValue({ id: 'css_123', client_secret: 'cuss_secret_123' });
+    mockCreateEphemeralKey.mockResolvedValue({ id: 'ephkey_123', secret: 'ek_test_secret_123' });
   });
 
   test('uses a single PaymentSheet component with explicit opt-in and protected removal', async () => {
@@ -40,6 +48,18 @@ describe('Stripe mobile CustomerSession', () => {
         },
       },
     });
+  });
+
+  test('uses ephemeral keys as the default mobile PaymentSheet customer access path', async () => {
+    await expect(createMobileCustomerAccess('cus_123')).resolves.toEqual({
+      customerAccessMode: 'ephemeral_key',
+      customerEphemeralKeySecret: 'ek_test_secret_123',
+    });
+    expect(mockCreateEphemeralKey).toHaveBeenCalledWith(
+      { customer: 'cus_123' },
+      { apiVersion: '2025-08-27.basil' },
+    );
+    expect(mockCreateCustomerSession).not.toHaveBeenCalled();
   });
 
   test('never falls back to legacy unspecified cards when replacing a deleted default', () => {

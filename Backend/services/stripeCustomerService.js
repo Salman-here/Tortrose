@@ -9,6 +9,8 @@ const {
   STRIPE_MERCHANT_COUNTRY_CODE,
   STRIPE_MERCHANT_DISPLAY_NAME,
   STRIPE_GOOGLE_PAY_ENABLED,
+  STRIPE_CUSTOMER_SESSION_ENABLED,
+  STRIPE_API_VERSION,
 } = require('../config/stripe');
 
 // Only cards for which Stripe captured an explicit redisplay choice are shown.
@@ -215,6 +217,41 @@ const createMobileCustomerSession = async (customerId) => {
   });
 };
 
+const createMobileEphemeralKey = async (customerId) => {
+  assertStripeMobileConfigured();
+  return stripe.ephemeralKeys.create(
+    { customer: customerId },
+    { apiVersion: STRIPE_API_VERSION },
+  );
+};
+
+const createMobileCustomerAccess = async (customerId) => {
+  assertStripeMobileConfigured();
+
+  if (STRIPE_CUSTOMER_SESSION_ENABLED) {
+    try {
+      const customerSession = await createMobileCustomerSession(customerId);
+      return {
+        customerAccessMode: 'customer_session',
+        customerSessionClientSecret: customerSession.client_secret,
+      };
+    } catch (error) {
+      console.error('[stripe-mobile] CustomerSession failed; using ephemeral key fallback:', {
+        code: error.code,
+        type: error.type,
+        statusCode: error.statusCode,
+        message: error.message,
+      });
+    }
+  }
+
+  const ephemeralKey = await createMobileEphemeralKey(customerId);
+  return {
+    customerAccessMode: 'ephemeral_key',
+    customerEphemeralKeySecret: ephemeralKey.secret,
+  };
+};
+
 const finalizeSavedPaymentMethodSetup = async (setupIntent) => {
   assertStripeServerConfigured();
   if (setupIntent?.status !== 'succeeded') return null;
@@ -275,6 +312,7 @@ const getStripeMobileConfig = () => {
     merchantDisplayName: STRIPE_MERCHANT_DISPLAY_NAME,
     merchantCountryCode: STRIPE_MERCHANT_COUNTRY_CODE,
     googlePayEnabled: STRIPE_GOOGLE_PAY_ENABLED,
+    customerSessionEnabled: STRIPE_CUSTOMER_SESSION_ENABLED,
     stripeMode: STRIPE_MODE,
   };
 };
@@ -330,6 +368,8 @@ module.exports = {
   assertStripeMobileConfigured,
   ensureStripeCustomerForUser,
   createMobileCustomerSession,
+  createMobileEphemeralKey,
+  createMobileCustomerAccess,
   getStripeMobileConfig,
   sanitizePaymentMethod,
   verifyPaymentMethodOwnership,

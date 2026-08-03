@@ -5,7 +5,7 @@ const SellerSubscription = require('../models/SellerSubscription');
 const { stripe, STRIPE_MODE } = require('../config/stripe');
 const {
   ensureStripeCustomerForUser,
-  createMobileCustomerSession,
+  createMobileCustomerAccess,
   getStripeMobileConfig,
   sanitizePaymentMethod,
   verifyPaymentMethodOwnership,
@@ -94,7 +94,7 @@ exports.createSetup = async (req, res) => {
     const { customer } = await ensureStripeCustomerForUser(req.user.id);
     const key = requestKey(req);
     const isMobile = req.body?.clientSurface === 'mobile';
-    const [setupIntent, customerSession] = await Promise.all([
+    const [setupIntent, customerAccess] = await Promise.all([
       stripe.setupIntents.create({
         customer: customer.id,
         usage: 'on_session',
@@ -109,14 +109,14 @@ exports.createSetup = async (req, res) => {
           clientSurface: isMobile ? 'mobile' : 'web',
         },
       }, { idempotencyKey: `rozare-setup:${STRIPE_MODE}:${req.user.id}:${key}` }),
-      isMobile ? createMobileCustomerSession(customer.id) : Promise.resolve(null),
+      isMobile ? createMobileCustomerAccess(customer.id) : Promise.resolve(null),
     ]);
     return res.status(201).json({
       success: true,
       setupIntentId: setupIntent.id,
       setupIntentClientSecret: setupIntent.client_secret,
       customerId: customer.id,
-      ...(customerSession ? { customerSessionClientSecret: customerSession.client_secret } : {}),
+      ...(customerAccess || {}),
       ...getStripeMobileConfig(),
       consent: {
         accepted: true,

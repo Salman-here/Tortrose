@@ -36,7 +36,7 @@ const {
 } = require('../services/stripeOrderPaymentService');
 const {
     ensureStripeCustomerForUser,
-    createMobileCustomerSession,
+    createMobileCustomerAccess,
     getStripeMobileConfig,
 } = require('../services/stripeCustomerService');
 const {
@@ -216,7 +216,7 @@ const createHostedOrderCheckoutSession = async (order) => {
 };
 
 const paymentIntentResponse = async (order, paymentIntent, { idempotentReplay = false } = {}) => {
-    const customerSession = await createMobileCustomerSession(order.stripeCustomerId);
+    const customerAccess = await createMobileCustomerAccess(order.stripeCustomerId);
     return {
         msg: idempotentReplay ? 'Secure mobile payment resumed.' : 'Secure mobile payment is ready.',
         idempotentReplay,
@@ -224,7 +224,7 @@ const paymentIntentResponse = async (order, paymentIntent, { idempotentReplay = 
         paymentIntentId: paymentIntent.id,
         paymentIntentClientSecret: paymentIntent.client_secret,
         customerId: order.stripeCustomerId,
-        customerSessionClientSecret: customerSession.client_secret,
+        ...customerAccess,
         expiresAt: order.paymentExpiresAt,
         orderId: order.orderId,
         order: orderResponseSummary(order),

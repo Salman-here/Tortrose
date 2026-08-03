@@ -58,10 +58,11 @@ describe('native Stripe PaymentSheet contracts', () => {
       orderId: 'order-1',
       paymentIntentClientSecret: 'pi_123_secret_abc',
       customerId: 'cus_123',
-      customerSessionClientSecret: 'cuss_123_secret_abc',
+      customerEphemeralKeySecret: 'ek_test_secret_abc',
     } });
     expect(payment).toEqual(expect.objectContaining({
       orderId: 'order-1', paymentIntentId: 'pi_123', customerId: 'cus_123',
+      customerEphemeralKeySecret: 'ek_test_secret_abc',
     }));
     expect(assertPaymentSheetPayload(payment, 'payment')).toEqual(payment);
 
@@ -70,11 +71,34 @@ describe('native Stripe PaymentSheet contracts', () => {
       paymentIntentClientSecret: 'pi_topup_secret_abc',
       paymentIntentId: 'pi_topup',
       customerId: 'cus_123',
-      customerSessionClientSecret: 'cuss_123_secret_abc',
+      customerEphemeralKeySecret: 'ek_test_secret_abc',
     } })).toEqual(expect.objectContaining({ topUpId: 'top-up-1', paymentIntentId: 'pi_topup' }));
   });
 
-  it('builds branded PaymentSheet options with CustomerSession and omits Google Pay until enabled', () => {
+  it('builds branded PaymentSheet options with the stable ephemeral-key access path', () => {
+    const options = buildPaymentSheetOptions({
+      payment: {
+        paymentIntentClientSecret: 'pi_123_secret_abc',
+        customerId: 'cus_123',
+        customerEphemeralKeySecret: 'ek_test_secret_abc',
+      },
+      config: { publishableKey: 'pk_test_123', mode: 'test', merchantCountryCode: 'PK' },
+      currentUser: { name: 'Buyer', email: 'buyer@example.com' },
+      currency: 'PKR',
+      palette,
+    });
+    expect(options).toEqual(expect.objectContaining({
+      merchantDisplayName: 'Rozare',
+      customerId: 'cus_123',
+      customerEphemeralKeySecret: 'ek_test_secret_abc',
+      paymentIntentClientSecret: 'pi_123_secret_abc',
+      allowsDelayedPaymentMethods: false,
+    }));
+    expect(options.customerSessionClientSecret).toBeUndefined();
+    expect(options.googlePay).toBeUndefined();
+  });
+
+  it('still supports CustomerSession when the backend explicitly sends it', () => {
     const options = buildPaymentSheetOptions({
       payment: {
         paymentIntentClientSecret: 'pi_123_secret_abc',
@@ -87,13 +111,11 @@ describe('native Stripe PaymentSheet contracts', () => {
       palette,
     });
     expect(options).toEqual(expect.objectContaining({
-      merchantDisplayName: 'Rozare',
       customerId: 'cus_123',
       customerSessionClientSecret: 'cuss_123_secret_abc',
       paymentIntentClientSecret: 'pi_123_secret_abc',
-      allowsDelayedPaymentMethods: false,
     }));
-    expect(options.googlePay).toBeUndefined();
+    expect(options.customerEphemeralKeySecret).toBeUndefined();
   });
 
   it('adds Android Google Pay only when the backend enables it', () => {
@@ -101,7 +123,7 @@ describe('native Stripe PaymentSheet contracts', () => {
       payment: {
         paymentIntentClientSecret: 'pi_123_secret_abc',
         customerId: 'cus_123',
-        customerSessionClientSecret: 'cuss_123_secret_abc',
+        customerEphemeralKeySecret: 'ek_test_secret_abc',
       },
       config: {
         publishableKey: 'pk_test_123',

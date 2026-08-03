@@ -18,7 +18,7 @@ const {
 } = require('../services/walletService');
 const {
     ensureStripeCustomerForUser,
-    createMobileCustomerSession,
+    createMobileCustomerAccess,
     getStripeMobileConfig,
 } = require('../services/stripeCustomerService');
 const {
@@ -169,7 +169,7 @@ exports.createTopUpCheckout = async (req, res) => {
                     transaction: serializeWalletTransaction(existing.toObject()),
                 });
             }
-            const customerSession = await createMobileCustomerSession(existing.stripeCustomerId);
+            const customerAccess = await createMobileCustomerAccess(existing.stripeCustomerId);
             res.set('Cache-Control', 'no-store, private, max-age=0');
             return res.status(200).json({
                 success: true,
@@ -180,7 +180,7 @@ exports.createTopUpCheckout = async (req, res) => {
                 topUpId: existing._id,
                 paymentIntentClientSecret: intent.client_secret,
                 customerId: existing.stripeCustomerId,
-                customerSessionClientSecret: customerSession.client_secret,
+                ...customerAccess,
                 expiresAt: existing.paymentExpiresAt,
                 transaction: serializeWalletTransaction(existing.toObject()),
                 ...getStripeMobileConfig(),
@@ -324,7 +324,7 @@ exports.createTopUpCheckout = async (req, res) => {
             transaction.stripePaymentIntentId = paymentIntent.id;
             transaction.paymentExpiresAt = transaction.paymentExpiresAt || expiresAt;
             await transaction.save();
-            const customerSession = await createMobileCustomerSession(transaction.stripeCustomerId);
+            const customerAccess = await createMobileCustomerAccess(transaction.stripeCustomerId);
             res.set('Cache-Control', 'no-store, private, max-age=0');
             return res.status(201).json({
                 success: true,
@@ -334,7 +334,7 @@ exports.createTopUpCheckout = async (req, res) => {
                 topUpId: transaction._id,
                 paymentIntentClientSecret: paymentIntent.client_secret,
                 customerId: transaction.stripeCustomerId,
-                customerSessionClientSecret: customerSession.client_secret,
+                ...customerAccess,
                 expiresAt: transaction.paymentExpiresAt,
                 transaction: serializeWalletTransaction(transaction.toObject()),
                 ...getStripeMobileConfig(),

@@ -44,15 +44,28 @@ const CURRENCY_META = {
 
 const getTransactionMeta = (transaction) => {
   const isCredit = transaction.direction === 'credit';
-  if (transaction.status === 'failed') {
-    return { icon: 'close', color: '#DC2626', tint: 'rgba(239,68,68,0.12)', label: 'Failed' };
+  const status = String(transaction.status || '').toLowerCase();
+  if (status === 'completed') {
+    return isCredit
+      ? { icon: 'arrow-down', color: '#16A34A', tint: 'rgba(34,197,94,0.12)', label: 'Received' }
+      : { icon: 'arrow-up', color: '#4F46E5', tint: 'rgba(99,102,241,0.12)', label: 'Sent' };
   }
-  if (transaction.status === 'pending') {
+  if (status === 'pending') {
     return { icon: 'time-outline', color: '#D97706', tint: 'rgba(245,158,11,0.12)', label: 'Pending' };
   }
-  return isCredit
-    ? { icon: 'arrow-down', color: '#16A34A', tint: 'rgba(34,197,94,0.12)', label: 'Received' }
-    : { icon: 'arrow-up', color: '#4F46E5', tint: 'rgba(99,102,241,0.12)', label: 'Sent' };
+  if (status === 'cancelled' || status === 'canceled') {
+    return { icon: 'remove-circle-outline', color: '#64748B', tint: 'rgba(100,116,139,0.12)', label: 'Cancelled' };
+  }
+  if (status === 'expired') {
+    return { icon: 'timer-outline', color: '#EA580C', tint: 'rgba(249,115,22,0.12)', label: 'Expired' };
+  }
+  if (status === 'reversed') {
+    return { icon: 'swap-horizontal-outline', color: '#7C3AED', tint: 'rgba(124,58,237,0.12)', label: 'Reversed' };
+  }
+  if (status === 'failed') {
+    return { icon: 'close', color: '#DC2626', tint: 'rgba(239,68,68,0.12)', label: 'Failed' };
+  }
+  return { icon: 'ellipse-outline', color: '#64748B', tint: 'rgba(100,116,139,0.12)', label: status ? status.replace(/_/g, ' ') : 'Recorded' };
 };
 
 const formatActivityDate = (value) => {
@@ -65,6 +78,12 @@ const formatActivityDate = (value) => {
     minute: '2-digit',
   });
 };
+
+const paymentSheetFailureMessage = (error) => (
+  error?.localizedMessage
+  || error?.message
+  || 'Stripe could not open the secure card sheet. Please try again.'
+);
 
 export default function WalletScreen({ navigation, route }) {
   const { palette, isDark } = useTheme();
@@ -215,10 +234,29 @@ export default function WalletScreen({ navigation, route }) {
         code: sheetResult.error?.code,
       });
       let cancellationError = null;
-      if (sheetResult.status !== 'presented') {
+      if (sheetResult.status === 'failed') {
         try {
           await api.post(`/api/wallet/top-ups/${encodeURIComponent(reference.topUpId)}/cancel`, {
             paymentIntentId: reference.paymentIntentId,
+            closeReason: `payment_sheet_${sheetResult.stage || 'failed'}`,
+          });
+        } catch (error) {
+          cancellationError = error;
+        }
+        await loadWallet({ quiet: true });
+        topUpAttemptKeyRef.current = null;
+        setNotice({
+          type: 'error',
+          title: sheetResult.stage === 'initialize' ? 'Secure payment could not open' : 'Top-up could not be completed',
+          message: paymentSheetFailureMessage(sheetResult.error),
+        });
+        return;
+      }
+      if (sheetResult.status === 'cancelled') {
+        try {
+          await api.post(`/api/wallet/top-ups/${encodeURIComponent(reference.topUpId)}/cancel`, {
+            paymentIntentId: reference.paymentIntentId,
+            closeReason: 'buyer_cancelled_payment_sheet',
           });
         } catch (error) {
           cancellationError = error;
@@ -244,6 +282,7 @@ export default function WalletScreen({ navigation, route }) {
           message: `${formatAmount(value, { targetCurrency: topUpCurrency })} is ready to use.`,
         });
       } else if (verification.status === 'failed') {
+        await loadWallet({ quiet: true });
         topUpAttemptKeyRef.current = null;
         setNotice({
           type: 'error',
@@ -251,19 +290,15 @@ export default function WalletScreen({ navigation, route }) {
           message: 'Stripe did not complete this payment. Your wallet was not credited.',
         });
       } else if (verification.status === 'cancelled') {
+        await loadWallet({ quiet: true });
         topUpAttemptKeyRef.current = null;
         setNotice({
           type: 'info',
           title: 'Top-up cancelled',
           message: 'Rozare confirmed that this payment attempt is closed. Your Wallet was not credited.',
         });
-      } else if (sheetResult.status === 'failed') {
-        setNotice({
-          type: 'error',
-          title: 'Top-up could not be completed',
-          message: sheetResult.error?.localizedMessage || sheetResult.error?.message || 'The secure payment attempt could not be completed.',
-        });
       } else if (sheetResult.status === 'cancelled') {
+        await loadWallet({ quiet: true });
         setNotice({
           type: 'info',
           title: cancellationError ? 'Closing your top-up' : 'Top-up closing',
@@ -565,10 +600,15 @@ export default function WalletScreen({ navigation, route }) {
                     </GlassPanel>
                   ) : recentTransactions.map((transaction) => {
                     const isCredit = transaction.direction === 'credit';
+                    const isCompleted = String(transaction.status || '').toLowerCase() === 'completed';
                     const meta = getTransactionMeta(transaction);
                     const description = transaction.type === 'top_up'
                       ? 'Wallet top-up'
                       : transaction.description || transaction.type?.replace(/_/g, ' ');
+                    const amountPrefix = isCompleted ? (isCredit ? '+' : '-') : '';
+                    const amountColor = isCompleted
+                      ? (isCredit ? palette.colors.success : palette.colors.text)
+                      : meta.color;
                     return (
                       <GlassPanel key={transaction._id} variant="card" style={styles.transactionCard}>
                         <View style={[styles.transactionIcon, { backgroundColor: meta.tint }]}>
@@ -582,8 +622,8 @@ export default function WalletScreen({ navigation, route }) {
                             <Text style={[styles.transactionStatus, { color: meta.color }]}>{meta.label}</Text>
                           </View>
                         </View>
-                        <Text style={[styles.transactionAmount, { color: isCredit ? palette.colors.success : palette.colors.text }]}>
-                          {isCredit ? '+' : '-'}{formatAmount(transaction.amount || 0, { targetCurrency: transaction.currency })}
+                        <Text style={[styles.transactionAmount, { color: amountColor }]}>
+                          {amountPrefix}{formatAmount(transaction.amount || 0, { targetCurrency: transaction.currency })}
                         </Text>
                       </GlassPanel>
                     );

@@ -96,6 +96,16 @@ export const normalizePaymentSheetPayload = (payload = {}) => {
       root?.customerSessionClientSecret,
       root?.customerSession
     ) || ''),
+    customerEphemeralKeySecret: String(firstValue(
+      source?.customerEphemeralKeySecret,
+      source?.customerEphemeralKey,
+      source?.ephemeralKeySecret,
+      source?.ephemeralKey,
+      root?.customerEphemeralKeySecret,
+      root?.customerEphemeralKey,
+      root?.ephemeralKeySecret,
+      root?.ephemeralKey
+    ) || ''),
     orderId: String(firstValue(root?.orderId, root?.order?._id, root?.order?.orderId, source?.orderId) || ''),
     topUpId: String(firstValue(
       root?.topUpId,
@@ -130,7 +140,10 @@ export const assertPaymentSheetPayload = (payload, intentType = 'payment') => {
       ? 'Stripe did not return a valid card setup reference.'
       : 'Stripe did not return a valid payment reference.');
   }
-  if (!normalized.customerId || !normalized.customerSessionClientSecret) {
+  if (
+    !normalized.customerId
+    || (!normalized.customerSessionClientSecret && !normalized.customerEphemeralKeySecret)
+  ) {
     throw new Error('Stripe customer access could not be prepared securely.');
   }
   return normalized;
@@ -187,7 +200,6 @@ export const buildPaymentSheetOptions = ({
   const options = {
     merchantDisplayName: usableConfig.merchantDisplayName || 'Rozare',
     customerId: normalized.customerId,
-    customerSessionClientSecret: normalized.customerSessionClientSecret,
     returnURL: getStripeReturnUrl(),
     allowsDelayedPaymentMethods: false,
     style: isDark ? 'alwaysDark' : 'alwaysLight',
@@ -200,6 +212,12 @@ export const buildPaymentSheetOptions = ({
     },
     paymentMethodLayout: 'Automatic',
   };
+
+  if (normalized.customerSessionClientSecret) {
+    options.customerSessionClientSecret = normalized.customerSessionClientSecret;
+  } else {
+    options.customerEphemeralKeySecret = normalized.customerEphemeralKeySecret;
+  }
 
   if (Platform.OS === 'android' && usableConfig.googlePayEnabled) {
     options.googlePay = {

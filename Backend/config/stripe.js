@@ -39,9 +39,11 @@ const STRIPE_MERCHANT_DISPLAY_NAME = String(
   process.env.STRIPE_MERCHANT_DISPLAY_NAME || 'Rozare'
 ).trim().slice(0, 120) || 'Rozare';
 const STRIPE_GOOGLE_PAY_ENABLED = envFlag(process.env.STRIPE_GOOGLE_PAY_ENABLED);
+const STRIPE_CUSTOMER_SESSION_ENABLED = envFlag(process.env.STRIPE_CUSTOMER_SESSION_ENABLED);
+const STRIPE_API_VERSION = '2025-08-27.basil';
 
 const stripe = STRIPE_SECRET_KEY
-  ? require('stripe')(STRIPE_SECRET_KEY, { apiVersion: '2025-08-27.basil' })
+  ? require('stripe')(STRIPE_SECRET_KEY, { apiVersion: STRIPE_API_VERSION })
   : null;
 
 if (STRIPE_MODE === 'invalid') {
@@ -61,6 +63,8 @@ module.exports = {
   STRIPE_MERCHANT_COUNTRY_CODE,
   STRIPE_MERCHANT_DISPLAY_NAME,
   STRIPE_GOOGLE_PAY_ENABLED,
+  STRIPE_CUSTOMER_SESSION_ENABLED,
+  STRIPE_API_VERSION,
   isLiveMode: () => STRIPE_MODE === 'live',
   isTestMode: () => STRIPE_MODE === 'test',
 };
