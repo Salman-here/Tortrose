@@ -10,14 +10,17 @@ import { Platform } from 'react-native';
 import {
   assertPaymentSheetPayload,
   assertUsableStripeConfig,
+  buildPaymentSheetAppearance,
   buildPaymentSheetOptions,
   normalizePaymentSheetPayload,
   normalizeSavedCards,
   normalizeStripeConfig,
   normalizeWalletTopUpStatus,
   runPaymentSheet,
+  toStripeHexColor,
   verifyWalletTopUp,
 } from '../../src/utils/stripePaymentSheet';
+import { darkPalette, lightPalette } from '../../src/styles/palettes';
 
 const palette = {
   colors: {
@@ -25,6 +28,12 @@ const palette = {
     borderStrong: '#E5E7EB', border: '#EEF2F7', text: '#111827',
     textSecondary: '#6B7280', textLight: '#9CA3AF', error: '#EF4444',
   },
+};
+
+const STRIPE_HEX = /^#[0-9A-F]{6}$/;
+const expectValidAppearanceColors = (appearance) => {
+  Object.values(appearance.colors).forEach((color) => expect(color).toMatch(STRIPE_HEX));
+  Object.values(appearance.primaryButton.colors).forEach((color) => expect(color).toMatch(STRIPE_HEX));
 };
 
 describe('native Stripe PaymentSheet contracts', () => {
@@ -51,6 +60,25 @@ describe('native Stripe PaymentSheet contracts', () => {
       publishableKey: 'pk_live_123', mode: 'live', merchantCountryCode: 'GB',
       merchantDisplayName: 'Rozare', googlePayEnabled: false,
     });
+  });
+
+  it('converts React Native rgba colors into Stripe-safe opaque hex colors', () => {
+    expect(toStripeHexColor('rgba(0,0,0,0.16)', '#E5E7EB', '#FFFFFF')).toBe('#D6D6D6');
+    expect(toStripeHexColor('rgba(0,0,0,0.08)', '#EEF2F7', '#FFFFFF')).toBe('#EBEBEB');
+    expect(toStripeHexColor('rgba(255,255,255,0.18)', '#374151', '#1E2540')).toBe('#474C62');
+    expect(toStripeHexColor('not-a-color', '#6366F1', '#FFFFFF')).toBe('#6366F1');
+  });
+
+  it('builds valid native appearance colors from the real light and dark palettes', () => {
+    const lightAppearance = buildPaymentSheetAppearance(lightPalette, false);
+    const darkAppearance = buildPaymentSheetAppearance(darkPalette, true);
+
+    expectValidAppearanceColors(lightAppearance);
+    expectValidAppearanceColors(darkAppearance);
+    expect(lightAppearance.colors.componentBorder).toBe('#D6D6D6');
+    expect(lightAppearance.colors.componentDivider).toBe('#EBEBEB');
+    expect(darkAppearance.colors.componentBorder).toBe('#474C62');
+    expect(darkAppearance.colors.componentDivider).toBe('#30364F');
   });
 
   it('accepts the order and wallet PaymentSheet response contract', () => {
@@ -85,7 +113,7 @@ describe('native Stripe PaymentSheet contracts', () => {
       config: { publishableKey: 'pk_test_123', mode: 'test', merchantCountryCode: 'PK' },
       currentUser: { name: 'Buyer', email: 'buyer@example.com' },
       currency: 'PKR',
-      palette,
+      palette: lightPalette,
     });
     expect(options).toEqual(expect.objectContaining({
       merchantDisplayName: 'Rozare',
@@ -96,6 +124,7 @@ describe('native Stripe PaymentSheet contracts', () => {
     }));
     expect(options.customerSessionClientSecret).toBeUndefined();
     expect(options.googlePay).toBeUndefined();
+    expectValidAppearanceColors(options.appearance);
   });
 
   it('still supports CustomerSession when the backend explicitly sends it', () => {
@@ -136,6 +165,19 @@ describe('native Stripe PaymentSheet contracts', () => {
       palette,
     });
     expect(options.googlePay).toEqual({ merchantCountryCode: 'PK', currencyCode: 'PKR', testEnv: true });
+  });
+
+  it('reports native initialization failures without presenting the sheet', async () => {
+    const initError = {
+      code: 'Failed',
+      localizedMessage: 'Expected hex string of length 6 or 8',
+    };
+    const initPaymentSheet = jest.fn().mockResolvedValue({ error: initError });
+    const presentPaymentSheet = jest.fn();
+
+    await expect(runPaymentSheet({ initPaymentSheet, presentPaymentSheet, options: {} }))
+      .resolves.toEqual({ status: 'failed', error: initError, stage: 'initialize' });
+    expect(presentPaymentSheet).not.toHaveBeenCalled();
   });
 
   it('distinguishes a user cancellation from a PaymentSheet failure', async () => {

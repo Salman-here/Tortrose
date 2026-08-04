@@ -12,6 +12,73 @@ const booleanValue = (value, fallback = false) => {
   return fallback;
 };
 
+const clamp = (value, minimum, maximum) => Math.min(maximum, Math.max(minimum, value));
+const byteToHex = (value) => Math.round(clamp(Number(value) || 0, 0, 255))
+  .toString(16)
+  .padStart(2, '0')
+  .toUpperCase();
+
+/**
+ * React Native themes commonly use CSS-style rgba() colors, while Stripe's
+ * native PaymentSheet bridge accepts only 6/8 digit hexadecimal strings.
+ * Normalize every appearance color at this boundary so a future theme change
+ * cannot prevent the secure sheet from opening on Android or iOS.
+ */
+const parseThemeColor = (value) => {
+  const color = String(value || '').trim();
+  const shortHex = color.match(/^#?([0-9a-f]{3})$/i);
+  if (shortHex) {
+    const [r, g, b] = shortHex[1].split('').map((digit) => parseInt(`${digit}${digit}`, 16));
+    return { r, g, b, a: 1 };
+  }
+
+  const fullHex = color.match(/^#?([0-9a-f]{6})([0-9a-f]{2})?$/i);
+  if (fullHex) {
+    const rgb = fullHex[1];
+    return {
+      r: parseInt(rgb.slice(0, 2), 16),
+      g: parseInt(rgb.slice(2, 4), 16),
+      b: parseInt(rgb.slice(4, 6), 16),
+      // React Native's 8-digit color notation is #RRGGBBAA. We composite it
+      // to an opaque color to avoid platform-specific alpha ordering in Stripe.
+      a: fullHex[2] ? parseInt(fullHex[2], 16) / 255 : 1,
+    };
+  }
+
+  const functional = color.match(
+    /^rgba?\(\s*(-?(?:\d+(?:\.\d+)?|\.\d+))\s*,\s*(-?(?:\d+(?:\.\d+)?|\.\d+))\s*,\s*(-?(?:\d+(?:\.\d+)?|\.\d+))(?:\s*,\s*(-?(?:\d+(?:\.\d+)?|\.\d+))\s*)?\)$/i
+  );
+  if (!functional) return null;
+
+  return {
+    r: clamp(Number(functional[1]), 0, 255),
+    g: clamp(Number(functional[2]), 0, 255),
+    b: clamp(Number(functional[3]), 0, 255),
+    a: functional[4] === undefined ? 1 : clamp(Number(functional[4]), 0, 1),
+  };
+};
+
+const compositeColor = (foreground, background) => ({
+  r: foreground.r * foreground.a + background.r * (1 - foreground.a),
+  g: foreground.g * foreground.a + background.g * (1 - foreground.a),
+  b: foreground.b * foreground.a + background.b * (1 - foreground.a),
+  a: 1,
+});
+
+export const toStripeHexColor = (value, fallback = '#000000', background = '#FFFFFF') => {
+  const safeFallback = parseThemeColor(fallback) || { r: 0, g: 0, b: 0, a: 1 };
+  const parsedBackground = parseThemeColor(background) || safeFallback;
+  const opaqueBackground = parsedBackground.a < 1
+    ? compositeColor(parsedBackground, { r: 255, g: 255, b: 255, a: 1 })
+    : parsedBackground;
+  const parsedValue = parseThemeColor(value) || safeFallback;
+  const opaqueValue = parsedValue.a < 1
+    ? compositeColor(parsedValue, opaqueBackground)
+    : parsedValue;
+
+  return `#${byteToHex(opaqueValue.r)}${byteToHex(opaqueValue.g)}${byteToHex(opaqueValue.b)}`;
+};
+
 const unwrap = (payload = {}) => {
   const root = payload?.data || payload || {};
   return root?.paymentSheet || root?.payment || root?.stripe || root;
@@ -157,33 +224,71 @@ export const getStripeUrlScheme = () => (
 
 export const getStripeReturnUrl = () => Linking.createURL('stripe-redirect');
 
-export const buildPaymentSheetAppearance = (palette, isDark = false) => ({
-  colors: {
-    primary: palette?.colors?.primary || '#6366F1',
-    background: palette?.colors?.surface || (isDark ? '#141A2E' : '#FFFFFF'),
-    componentBackground: palette?.colors?.surfaceElevated || (isDark ? '#1E2540' : '#FFFFFF'),
-    componentBorder: palette?.colors?.borderStrong || (isDark ? '#374151' : '#E5E7EB'),
-    componentDivider: palette?.colors?.border || (isDark ? '#273047' : '#EEF2F7'),
-    primaryText: palette?.colors?.text || (isDark ? '#F9FAFB' : '#1F2937'),
-    secondaryText: palette?.colors?.textSecondary || (isDark ? '#CBD5E1' : '#6B7280'),
-    componentText: palette?.colors?.text || (isDark ? '#F9FAFB' : '#1F2937'),
-    placeholderText: palette?.colors?.textLight || '#9CA3AF',
-    icon: palette?.colors?.primary || '#6366F1',
-    error: palette?.colors?.error || '#EF4444',
-  },
-  shapes: {
-    borderRadius: 16,
-    borderWidth: 1,
-  },
-  primaryButton: {
-    shapes: { borderRadius: 16 },
+export const buildPaymentSheetAppearance = (palette, isDark = false) => {
+  const background = toStripeHexColor(
+    palette?.colors?.surface,
+    isDark ? '#141A2E' : '#FFFFFF'
+  );
+  const componentBackground = toStripeHexColor(
+    palette?.colors?.surfaceElevated,
+    isDark ? '#1E2540' : '#FFFFFF',
+    background
+  );
+  const primary = toStripeHexColor(
+    palette?.colors?.primary,
+    '#6366F1',
+    background
+  );
+  const primaryText = toStripeHexColor(
+    palette?.colors?.text,
+    isDark ? '#F9FAFB' : '#1F2937',
+    background
+  );
+
+  return {
     colors: {
-      background: palette?.colors?.primary || '#6366F1',
-      text: '#FFFFFF',
-      border: palette?.colors?.primary || '#6366F1',
+      primary,
+      background,
+      componentBackground,
+      componentBorder: toStripeHexColor(
+        palette?.colors?.borderStrong,
+        isDark ? '#374151' : '#E5E7EB',
+        componentBackground
+      ),
+      componentDivider: toStripeHexColor(
+        palette?.colors?.border,
+        isDark ? '#273047' : '#EEF2F7',
+        componentBackground
+      ),
+      primaryText,
+      secondaryText: toStripeHexColor(
+        palette?.colors?.textSecondary,
+        isDark ? '#CBD5E1' : '#6B7280',
+        background
+      ),
+      componentText: primaryText,
+      placeholderText: toStripeHexColor(
+        palette?.colors?.textLight,
+        '#9CA3AF',
+        componentBackground
+      ),
+      icon: primary,
+      error: toStripeHexColor(palette?.colors?.error, '#EF4444', background),
     },
-  },
-});
+    shapes: {
+      borderRadius: 16,
+      borderWidth: 1,
+    },
+    primaryButton: {
+      shapes: { borderRadius: 16 },
+      colors: {
+        background: primary,
+        text: '#FFFFFF',
+        border: primary,
+      },
+    },
+  };
+};
 
 export const buildPaymentSheetOptions = ({
   payment,
