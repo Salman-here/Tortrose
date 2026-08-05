@@ -35,6 +35,7 @@ import {
   getCartItemQuantity,
   getCartItemSellerId,
   getSellerDisplayName,
+  runOrderPaymentSheetAttempt,
   selectDefaultShippingMethods,
   verifyOrderPayment,
 } from '../utils/checkout';
@@ -42,7 +43,6 @@ import {
   assertPaymentSheetPayload,
   buildPaymentSheetOptions,
   normalizePaymentSheetPayload,
-  runPaymentSheet,
 } from '../utils/stripePaymentSheet';
 
 export default function CheckoutScreen({ navigation }) {
@@ -476,6 +476,8 @@ export default function CheckoutScreen({ navigation }) {
     }
     submittingRef.current = true;
     setIsProcessing(true);
+    let paymentAttempt = null;
+    let paymentCleanupAttempted = false;
     try {
       if (!checkoutAttemptKeyRef.current) {
         checkoutAttemptKeyRef.current = createCheckoutAttemptKey(Crypto.randomUUID);
@@ -494,6 +496,10 @@ export default function CheckoutScreen({ navigation }) {
       if (paymentMethod === 'card') {
         const payment = normalizePaymentSheetPayload(res);
         const orderId = payment.orderId || res.data?.orderId || res.data?.order?.orderId;
+        paymentAttempt = {
+          orderId,
+          paymentIntentId: payment.paymentIntentId,
+        };
         if (res.data?.isPaid === true || payment.completed) {
           navigation.replace('PaymentSuccess', { orderId, payment_intent: payment.paymentIntentId });
           return;
@@ -501,9 +507,12 @@ export default function CheckoutScreen({ navigation }) {
         if (!orderId) throw new Error('Secure checkout did not return an order reference.');
         const verifiedPayment = assertPaymentSheetPayload(res, 'payment');
         trackPaymentEvent('payment_sheet_initialized', { orderId });
-        const sheetResult = await runPaymentSheet({
+        const sheetResult = await runOrderPaymentSheetAttempt({
           initPaymentSheet,
           presentPaymentSheet,
+          apiClient: api,
+          orderId,
+          paymentIntentId: verifiedPayment.paymentIntentId,
           options: buildPaymentSheetOptions({
             payment: verifiedPayment,
             config: stripeConfig,
@@ -526,6 +535,7 @@ export default function CheckoutScreen({ navigation }) {
             intentType: 'payment',
           }),
         });
+        paymentCleanupAttempted = sheetResult.status !== 'presented';
 
         if (!savedShippingInfo?.fullName || hasShippingInfoChanged()) {
           try {
@@ -534,12 +544,8 @@ export default function CheckoutScreen({ navigation }) {
           } catch {}
         }
 
-        if (sheetResult.status === 'cancelled') {
-          const cancellation = await cancelOrderPaymentAttempt({
-            apiClient: api,
-            orderId,
-            paymentIntentId: verifiedPayment.paymentIntentId,
-          });
+        if (sheetResult.status === 'cancelled' || sheetResult.status === 'failed') {
+          const cancellation = sheetResult.cancellation;
           if (cancellation.status === 'payment_received') {
             navigation.replace('PaymentSuccess', { orderId, payment_intent: verifiedPayment.paymentIntentId });
             return;
@@ -547,11 +553,15 @@ export default function CheckoutScreen({ navigation }) {
           if (cancellation.status === 'cancelled') {
             checkoutAttemptKeyRef.current = null;
             setPaymentNotice({
-              type: 'cancelled',
-              title: 'Payment cancelled safely',
+              type: sheetResult.status === 'failed' ? 'error' : 'cancelled',
+              title: sheetResult.status === 'failed'
+                ? 'Secure payment could not open'
+                : 'Payment cancelled safely',
               orderId,
               paymentIntentId: verifiedPayment.paymentIntentId,
-              text: 'Rozare confirmed the payment attempt is closed. Your cart is safe, and Retry will start a fresh secure payment.',
+              text: sheetResult.status === 'failed'
+                ? 'Rozare closed the failed payment immediately and released the reserved stock. Your cart is unchanged.'
+                : 'Rozare confirmed the payment attempt is closed. Your cart is safe, and Retry will start a fresh secure payment.',
             });
             return;
           }
@@ -560,7 +570,7 @@ export default function CheckoutScreen({ navigation }) {
             title: 'Checking payment status',
             orderId,
             paymentIntentId: verifiedPayment.paymentIntentId,
-            text: 'Rozare could not confirm cancellation yet. Use Check before retrying so another payable payment is not created.',
+            text: 'Rozare could not confirm cleanup yet. Use Check before retrying so another payable payment is not created.',
           });
           return;
         }
@@ -581,11 +591,6 @@ export default function CheckoutScreen({ navigation }) {
           navigation.replace('PaymentSuccess', { orderId, payment_intent: verifiedPayment.paymentIntentId });
           return;
         }
-        if (sheetResult.status === 'failed') {
-          const sheetError = new Error(sheetResult.error?.localizedMessage || sheetResult.error?.message || 'Your card payment could not be opened.');
-          sheetError.code = sheetResult.error?.code;
-          throw sheetError;
-        }
       } else {
         // Check if info changed
         if (savedShippingInfo?.fullName && hasShippingInfoChanged()) {
@@ -598,6 +603,40 @@ export default function CheckoutScreen({ navigation }) {
       }
     } catch (error) {
       trackError('checkout', error, { step: 'place_order', paymentMethod });
+      if (paymentMethod === 'card' && paymentAttempt?.orderId && !paymentCleanupAttempted) {
+        const cancellation = await cancelOrderPaymentAttempt({
+          apiClient: api,
+          orderId: paymentAttempt.orderId,
+          paymentIntentId: paymentAttempt.paymentIntentId,
+        });
+        paymentCleanupAttempted = true;
+        if (cancellation.status === 'payment_received') {
+          navigation.replace('PaymentSuccess', {
+            orderId: paymentAttempt.orderId,
+            payment_intent: paymentAttempt.paymentIntentId,
+          });
+          return;
+        }
+        if (cancellation.status === 'cancelled') {
+          checkoutAttemptKeyRef.current = null;
+          setPaymentNotice({
+            type: 'error',
+            title: 'Secure payment could not open',
+            orderId: paymentAttempt.orderId,
+            paymentIntentId: paymentAttempt.paymentIntentId,
+            text: 'Rozare closed the failed payment immediately and released the reserved stock. Your cart is unchanged.',
+          });
+          return;
+        }
+        setPaymentNotice({
+          type: 'pending',
+          title: 'Closing the failed payment',
+          orderId: paymentAttempt.orderId,
+          paymentIntentId: paymentAttempt.paymentIntentId,
+          text: 'Rozare could not confirm cleanup yet. Use Check before retrying so another payable payment is not created.',
+        });
+        return;
+      }
       const code = error.response?.data?.code;
       if (code === 'COD_NOT_AVAILABLE_FOR_CART') setPaymentMethod('card');
       if (code === 'SHIPPING_METHOD_REQUIRED' || code === 'SHIPPING_METHOD_NOT_AVAILABLE' || code === 'SHIPPING_SCOPE_INVALID') {

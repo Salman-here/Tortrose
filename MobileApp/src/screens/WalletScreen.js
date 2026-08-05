@@ -28,8 +28,9 @@ import { fontSize, fontWeight, shadows, spacing, typography } from '../styles/th
 import {
   assertPaymentSheetPayload,
   buildPaymentSheetOptions,
+  cancelWalletTopUpPaymentAttempt,
   normalizePaymentSheetPayload,
-  runPaymentSheet,
+  runWalletPaymentSheetAttempt,
   verifyWalletTopUp,
 } from '../utils/stripePaymentSheet';
 import { trackError, trackPaymentEvent } from '../utils/breadcrumbs';
@@ -178,6 +179,8 @@ export default function WalletScreen({ navigation, route }) {
     setAmountError('');
     setNotice(null);
     setSubmitting(true);
+    let topUpReference = null;
+    let paymentCleanupAttempted = false;
     try {
       const stripeConfig = await ensureStripeReady();
       trackPaymentEvent('wallet_top_up_started', {
@@ -208,6 +211,7 @@ export default function WalletScreen({ navigation, route }) {
         return;
       }
       const reference = normalizePaymentSheetPayload(response);
+      topUpReference = reference;
       trackPaymentEvent('wallet_top_up_reference_created', {
         hasTopUpId: !!reference.topUpId,
         hasPaymentIntent: !!reference.paymentIntentId,
@@ -216,9 +220,12 @@ export default function WalletScreen({ navigation, route }) {
         throw new Error('Rozare did not return a secure top-up reference. Your Wallet has not been credited.');
       }
       const payment = assertPaymentSheetPayload(response, 'payment');
-      const sheetResult = await runPaymentSheet({
+      const sheetResult = await runWalletPaymentSheetAttempt({
         initPaymentSheet,
         presentPaymentSheet,
+        apiClient: api,
+        topUpId: reference.topUpId,
+        paymentIntentId: reference.paymentIntentId,
         options: buildPaymentSheetOptions({
           payment,
           config: stripeConfig,
@@ -229,39 +236,12 @@ export default function WalletScreen({ navigation, route }) {
           intentType: 'payment',
         }),
       });
+      paymentCleanupAttempted = sheetResult.status !== 'presented';
       trackPaymentEvent(`wallet_top_up_sheet_${sheetResult.status}`, {
         stage: sheetResult.stage,
         code: sheetResult.error?.code,
       });
-      let cancellationError = null;
-      if (sheetResult.status === 'failed') {
-        try {
-          await api.post(`/api/wallet/top-ups/${encodeURIComponent(reference.topUpId)}/cancel`, {
-            paymentIntentId: reference.paymentIntentId,
-            closeReason: `payment_sheet_${sheetResult.stage || 'failed'}`,
-          });
-        } catch (error) {
-          cancellationError = error;
-        }
-        await loadWallet({ quiet: true });
-        topUpAttemptKeyRef.current = null;
-        setNotice({
-          type: 'error',
-          title: sheetResult.stage === 'initialize' ? 'Secure payment could not open' : 'Top-up could not be completed',
-          message: paymentSheetFailureMessage(sheetResult.error),
-        });
-        return;
-      }
-      if (sheetResult.status === 'cancelled') {
-        try {
-          await api.post(`/api/wallet/top-ups/${encodeURIComponent(reference.topUpId)}/cancel`, {
-            paymentIntentId: reference.paymentIntentId,
-            closeReason: 'buyer_cancelled_payment_sheet',
-          });
-        } catch (error) {
-          cancellationError = error;
-        }
-      }
+      const cancellationError = sheetResult.cleanupError;
       const verification = await verifyWalletTopUp({
         apiClient: api,
         topUpId: reference.topUpId,
@@ -293,9 +273,20 @@ export default function WalletScreen({ navigation, route }) {
         await loadWallet({ quiet: true });
         topUpAttemptKeyRef.current = null;
         setNotice({
-          type: 'info',
-          title: 'Top-up cancelled',
-          message: 'Rozare confirmed that this payment attempt is closed. Your Wallet was not credited.',
+          type: sheetResult.status === 'failed' ? 'error' : 'info',
+          title: sheetResult.status === 'failed' ? 'Secure payment could not open' : 'Top-up cancelled',
+          message: sheetResult.status === 'failed'
+            ? `${paymentSheetFailureMessage(sheetResult.error)} Rozare closed the failed attempt and your Wallet was not credited.`
+            : 'Rozare confirmed that this payment attempt is closed. Your Wallet was not credited.',
+        });
+      } else if (sheetResult.status === 'failed') {
+        await loadWallet({ quiet: true });
+        setNotice({
+          type: 'error',
+          title: sheetResult.stage === 'initialize' ? 'Secure payment could not open' : 'Top-up could not be completed',
+          message: cancellationError
+            ? 'The payment could not open and Rozare is still confirming cleanup. No Wallet balance has been added.'
+            : paymentSheetFailureMessage(sheetResult.error),
         });
       } else if (sheetResult.status === 'cancelled') {
         await loadWallet({ quiet: true });
@@ -313,6 +304,29 @@ export default function WalletScreen({ navigation, route }) {
       }
     } catch (error) {
       trackError('wallet_top_up', error, { currency: topUpCurrency });
+      if (topUpReference?.topUpId && !paymentCleanupAttempted) {
+        let cleanupError = null;
+        try {
+          await cancelWalletTopUpPaymentAttempt({
+            apiClient: api,
+            topUpId: topUpReference.topUpId,
+            paymentIntentId: topUpReference.paymentIntentId,
+            closeReason: 'payment_sheet_preparation_failed',
+          });
+          topUpAttemptKeyRef.current = null;
+        } catch (nextError) {
+          cleanupError = nextError;
+        }
+        await loadWallet({ quiet: true });
+        setNotice({
+          type: 'error',
+          title: 'Secure payment could not open',
+          message: cleanupError
+            ? 'Rozare is still confirming cleanup. No Wallet balance has been added.'
+            : 'Rozare closed the failed payment attempt. Your Wallet was not credited.',
+        });
+        return;
+      }
       setNotice({
         type: 'error',
         title: 'Top-up could not be completed',

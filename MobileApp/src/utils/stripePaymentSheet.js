@@ -124,6 +124,24 @@ export const normalizeStripeConfig = (payload = {}) => {
       root?.googlePayEnabled,
       root?.google_pay_enabled
     ), false),
+    customerSessionEnabled: booleanValue(firstValue(
+      source?.customerSessionEnabled,
+      source?.customer_session_enabled,
+      root?.customerSessionEnabled,
+      root?.customer_session_enabled
+    ), false),
+    customerAccessMode: String(firstValue(
+      source?.customerAccessMode,
+      source?.customer_access_mode,
+      root?.customerAccessMode,
+      root?.customer_access_mode
+    ) || '').trim().toLowerCase(),
+    ephemeralKeyEnabled: booleanValue(firstValue(
+      source?.ephemeralKeyEnabled,
+      source?.ephemeral_key_enabled,
+      root?.ephemeralKeyEnabled,
+      root?.ephemeral_key_enabled
+    ), false),
   };
 };
 
@@ -133,6 +151,13 @@ export const assertUsableStripeConfig = (config) => {
   }
   if (!/^[A-Z]{2}$/.test(config.merchantCountryCode || '')) {
     throw new Error('The payment merchant country is not configured correctly.');
+  }
+  if (
+    config.customerSessionEnabled !== true
+    || config.customerAccessMode !== 'customer_session'
+    || config.ephemeralKeyEnabled !== false
+  ) {
+    throw new Error('Secure saved-card access is temporarily unavailable. Please try again later.');
   }
   return config;
 };
@@ -163,15 +188,10 @@ export const normalizePaymentSheetPayload = (payload = {}) => {
       root?.customerSessionClientSecret,
       root?.customerSession
     ) || ''),
-    customerEphemeralKeySecret: String(firstValue(
-      source?.customerEphemeralKeySecret,
-      source?.customerEphemeralKey,
-      source?.ephemeralKeySecret,
-      source?.ephemeralKey,
-      root?.customerEphemeralKeySecret,
-      root?.customerEphemeralKey,
-      root?.ephemeralKeySecret,
-      root?.ephemeralKey
+    setupIntentId: String(firstValue(
+      source?.setupIntentId,
+      root?.setupIntentId,
+      setupIntentClientSecret.split('_secret_')[0]
     ) || ''),
     orderId: String(firstValue(root?.orderId, root?.order?._id, root?.order?.orderId, source?.orderId) || ''),
     topUpId: String(firstValue(
@@ -209,9 +229,9 @@ export const assertPaymentSheetPayload = (payload, intentType = 'payment') => {
   }
   if (
     !normalized.customerId
-    || (!normalized.customerSessionClientSecret && !normalized.customerEphemeralKeySecret)
+    || !normalized.customerSessionClientSecret
   ) {
-    throw new Error('Stripe customer access could not be prepared securely.');
+    throw new Error('Stripe CustomerSession could not be prepared securely.');
   }
   return normalized;
 };
@@ -318,11 +338,7 @@ export const buildPaymentSheetOptions = ({
     paymentMethodLayout: 'Automatic',
   };
 
-  if (normalized.customerSessionClientSecret) {
-    options.customerSessionClientSecret = normalized.customerSessionClientSecret;
-  } else {
-    options.customerEphemeralKeySecret = normalized.customerEphemeralKeySecret;
-  }
+  options.customerSessionClientSecret = normalized.customerSessionClientSecret;
 
   if (Platform.OS === 'android' && usableConfig.googlePayEnabled) {
     options.googlePay = {
@@ -353,10 +369,24 @@ export const runPaymentSheet = async ({
   presentPaymentSheet,
   options,
 }) => {
-  const initialized = await initPaymentSheet(options);
+  let initialized;
+  try {
+    initialized = await initPaymentSheet(options);
+  } catch (error) {
+    return { status: 'failed', error, stage: 'initialize' };
+  }
   if (initialized?.error) return { status: 'failed', error: initialized.error, stage: 'initialize' };
 
-  const presented = await presentPaymentSheet();
+  let presented;
+  try {
+    presented = await presentPaymentSheet();
+  } catch (error) {
+    return {
+      status: isPaymentSheetCancellation(error) ? 'cancelled' : 'failed',
+      error,
+      stage: 'present',
+    };
+  }
   if (presented?.didCancel) {
     return { status: 'cancelled', stage: 'present' };
   }
@@ -369,6 +399,93 @@ export const runPaymentSheet = async ({
   }
   return { status: 'presented' };
 };
+
+const runPaymentSheetWithCleanup = async ({
+  initPaymentSheet,
+  presentPaymentSheet,
+  options,
+  cleanup,
+}) => {
+  const sheetResult = await runPaymentSheet({ initPaymentSheet, presentPaymentSheet, options });
+  if (sheetResult.status === 'presented') return { ...sheetResult, cleanupResult: null, cleanupError: null };
+
+  try {
+    const cleanupResult = await cleanup(sheetResult);
+    return { ...sheetResult, cleanupResult, cleanupError: null };
+  } catch (cleanupError) {
+    return { ...sheetResult, cleanupResult: null, cleanupError };
+  }
+};
+
+export const cancelWalletTopUpPaymentAttempt = async ({
+  apiClient,
+  topUpId,
+  paymentIntentId,
+  closeReason = 'payment_sheet_closed',
+}) => {
+  if (!topUpId) throw new Error('A Wallet top-up reference is required for secure cleanup.');
+  const response = await apiClient.post(
+    `/api/wallet/top-ups/${encodeURIComponent(topUpId)}/cancel`,
+    {
+      ...(paymentIntentId ? { paymentIntentId } : {}),
+      closeReason,
+    },
+  );
+  return response?.data || response || {};
+};
+
+export const runWalletPaymentSheetAttempt = async ({
+  initPaymentSheet,
+  presentPaymentSheet,
+  options,
+  apiClient,
+  topUpId,
+  paymentIntentId,
+}) => runPaymentSheetWithCleanup({
+  initPaymentSheet,
+  presentPaymentSheet,
+  options,
+  cleanup: (sheetResult) => cancelWalletTopUpPaymentAttempt({
+    apiClient,
+    topUpId,
+    paymentIntentId,
+    closeReason: sheetResult.status === 'cancelled'
+      ? 'buyer_cancelled_payment_sheet'
+      : `payment_sheet_${sheetResult.stage || 'failed'}`,
+  }),
+});
+
+export const cancelSetupIntentPaymentAttempt = async ({
+  apiClient,
+  setupIntentId,
+  closeReason = 'payment_sheet_closed',
+}) => {
+  if (!setupIntentId) throw new Error('A card setup reference is required for secure cleanup.');
+  const response = await apiClient.post(
+    `/api/payment-methods/setup/${encodeURIComponent(setupIntentId)}/cancel`,
+    { closeReason },
+  );
+  return response?.data || response || {};
+};
+
+export const runSetupIntentPaymentSheetAttempt = async ({
+  initPaymentSheet,
+  presentPaymentSheet,
+  options,
+  apiClient,
+  setupIntentId,
+}) => runPaymentSheetWithCleanup({
+  initPaymentSheet,
+  presentPaymentSheet,
+  options,
+  cleanup: (sheetResult) => cancelSetupIntentPaymentAttempt({
+    apiClient,
+    setupIntentId,
+    closeReason: sheetResult.status === 'cancelled'
+      ? 'buyer_cancelled_payment_sheet'
+      : `payment_sheet_${sheetResult.stage || 'failed'}`,
+  }),
+});
 
 const paymentMethodId = (value) => String(value?.id || value?._id || value?.paymentMethodId || '');
 

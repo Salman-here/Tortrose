@@ -324,7 +324,43 @@ exports.createTopUpCheckout = async (req, res) => {
             transaction.stripePaymentIntentId = paymentIntent.id;
             transaction.paymentExpiresAt = transaction.paymentExpiresAt || expiresAt;
             await transaction.save();
-            const customerAccess = await createMobileCustomerAccess(transaction.stripeCustomerId);
+            let customerAccess;
+            try {
+                customerAccess = await createMobileCustomerAccess(transaction.stripeCustomerId);
+            } catch (customerSessionError) {
+                let closed;
+                try {
+                    closed = await closeWalletTopUpPaymentIntent(transaction, {
+                        status: 'cancelled',
+                        reason: 'Stripe CustomerSession preparation failed before PaymentSheet opened.',
+                    });
+                    transaction = closed?.transaction || transaction;
+                } catch (cleanupError) {
+                    cleanupError.code = cleanupError.code || 'PAYMENT_ATTEMPT_RECOVERY_PENDING';
+                    throw cleanupError;
+                }
+                if (closed?.status === 'payment_succeeded') {
+                    return res.status(202).json({
+                        success: true,
+                        completed: false,
+                        webhookProcessed: false,
+                        stripePaymentReceived: true,
+                        paymentFlow: 'payment_sheet',
+                        paymentIntentId: paymentIntent.id,
+                        transactionId: transaction._id,
+                        topUpId: transaction._id,
+                        status: 'pending',
+                        transaction: serializeWalletTransaction(transaction.toObject()),
+                    });
+                }
+                const preparationError = new Error(
+                    'Secure Wallet payment could not open. The payment attempt was closed and no balance was added.'
+                );
+                preparationError.statusCode = 503;
+                preparationError.code = 'PAYMENT_SHEET_PREPARATION_FAILED';
+                preparationError.cause = customerSessionError;
+                throw preparationError;
+            }
             res.set('Cache-Control', 'no-store, private, max-age=0');
             return res.status(201).json({
                 success: true,

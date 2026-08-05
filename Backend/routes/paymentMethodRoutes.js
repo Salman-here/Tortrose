@@ -7,6 +7,7 @@ const {
   getConfig,
   listPaymentMethods,
   createSetup,
+  cancelSetup,
   deletePaymentMethod,
   setDefaultPaymentMethod,
 } = require('../controllers/paymentMethodController');
@@ -16,6 +17,7 @@ router.get('/config', getConfig);
 router.use(verifyToken);
 router.get('/', listPaymentMethods);
 router.post('/setup', cardSetupCreationLimiter, createSetup);
+router.post('/setup/:setupIntentId/cancel', cancelSetup);
 router.delete('/:id', deletePaymentMethod);
 router.patch('/:id/default', setDefaultPaymentMethod);
 

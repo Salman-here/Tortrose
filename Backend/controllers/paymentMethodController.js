@@ -16,6 +16,52 @@ const {
 } = require('../services/stripeCustomerService');
 
 const noStore = (res) => res.set('Cache-Control', 'no-store, private, max-age=0');
+const SETUP_INTENT_ID_PATTERN = /^seti_[A-Za-z0-9]+$/;
+const CANCELLABLE_SETUP_INTENT_STATUSES = new Set([
+  'requires_payment_method',
+  'requires_confirmation',
+  'requires_action',
+]);
+const EXPLICIT_CUSTOMER_CLOSE_REASONS = new Set([
+  'buyer_cancelled_payment_sheet',
+  'requested_by_customer',
+]);
+
+const setupIntentCustomerId = (setupIntent) => (
+  typeof setupIntent?.customer === 'string'
+    ? setupIntent.customer
+    : setupIntent?.customer?.id || ''
+);
+
+const setupIntentBelongsToUser = ({ setupIntent, customerId, userId }) => (
+  setupIntentCustomerId(setupIntent) === customerId
+  && setupIntent?.metadata?.type === 'saved_payment_method_setup'
+  && setupIntent?.metadata?.userId === String(userId)
+  && setupIntent?.metadata?.stripeMode === STRIPE_MODE
+);
+
+const setupIntentCancellationReason = (closeReason) => (
+  EXPLICIT_CUSTOMER_CLOSE_REASONS.has(String(closeReason || '').trim().toLowerCase())
+    ? 'requested_by_customer'
+    : 'abandoned'
+);
+
+const sendSetupIntentNotFound = (res) => res.status(404).json({
+  msg: 'Card setup not found.',
+  code: 'SETUP_INTENT_NOT_FOUND',
+});
+
+const sendSetupIntentCancelled = (res, setupIntent, { alreadyCancelled = false } = {}) => (
+  res.status(200).json({
+    success: true,
+    cancelled: true,
+    alreadyCancelled,
+    setupIntentId: setupIntent.id,
+    status: 'canceled',
+    cancellationReason: setupIntent.cancellation_reason || null,
+  })
+);
+
 const requestKey = (req) => {
   const key = String(
     req.headers['idempotency-key']
@@ -94,23 +140,55 @@ exports.createSetup = async (req, res) => {
     const { customer } = await ensureStripeCustomerForUser(req.user.id);
     const key = requestKey(req);
     const isMobile = req.body?.clientSurface === 'mobile';
-    const [setupIntent, customerAccess] = await Promise.all([
-      stripe.setupIntents.create({
-        customer: customer.id,
-        usage: 'on_session',
-        payment_method_types: ['card'],
-        metadata: {
-          type: 'saved_payment_method_setup',
-          userId: String(req.user.id),
-          stripeMode: STRIPE_MODE,
-          consent: 'customer_initiated_on_session',
-          consentAccepted: 'true',
-          consentVersion: SAVED_CARD_CONSENT_VERSION,
-          clientSurface: isMobile ? 'mobile' : 'web',
-        },
-      }, { idempotencyKey: `rozare-setup:${STRIPE_MODE}:${req.user.id}:${key}` }),
-      isMobile ? createMobileCustomerAccess(customer.id) : Promise.resolve(null),
-    ]);
+    const setupIntent = await stripe.setupIntents.create({
+      customer: customer.id,
+      usage: 'on_session',
+      payment_method_types: ['card'],
+      metadata: {
+        type: 'saved_payment_method_setup',
+        userId: String(req.user.id),
+        stripeMode: STRIPE_MODE,
+        consent: 'customer_initiated_on_session',
+        consentAccepted: 'true',
+        consentVersion: SAVED_CARD_CONSENT_VERSION,
+        clientSurface: isMobile ? 'mobile' : 'web',
+      },
+    }, { idempotencyKey: `rozare-setup:${STRIPE_MODE}:${req.user.id}:${key}` });
+    let customerAccess = null;
+    if (isMobile) {
+      try {
+        customerAccess = await createMobileCustomerAccess(customer.id);
+      } catch (customerSessionError) {
+        try {
+          await stripe.setupIntents.cancel(
+            setupIntent.id,
+            { cancellation_reason: 'abandoned' },
+            { idempotencyKey: `rozare-setup-access-failure:${STRIPE_MODE}:${setupIntent.id}` },
+          );
+        } catch (cleanupError) {
+          console.error('[payment-methods] SetupIntent cleanup after CustomerSession failure:', {
+            code: cleanupError.code,
+            type: cleanupError.type,
+            statusCode: cleanupError.statusCode,
+            message: cleanupError.message,
+          });
+          const recoveryError = stripeError(
+            'Secure card setup cleanup is still being confirmed. Please wait before retrying.',
+            'SETUP_INTENT_CLEANUP_PENDING',
+            503,
+          );
+          recoveryError.cause = cleanupError;
+          throw recoveryError;
+        }
+        const preparationError = stripeError(
+          'Secure card setup could not open. The incomplete SetupIntent was cancelled.',
+          'PAYMENT_SHEET_PREPARATION_FAILED',
+          503,
+        );
+        preparationError.cause = customerSessionError;
+        throw preparationError;
+      }
+    }
     return res.status(201).json({
       success: true,
       setupIntentId: setupIntent.id,
@@ -127,6 +205,86 @@ exports.createSetup = async (req, res) => {
     });
   } catch (error) {
     return sendError(res, error, 'Could not start secure card setup.');
+  }
+};
+
+exports.cancelSetup = async (req, res) => {
+  try {
+    noStore(res);
+    const setupIntentId = String(req.params?.setupIntentId || '').trim();
+    if (!SETUP_INTENT_ID_PATTERN.test(setupIntentId)) {
+      return res.status(400).json({
+        msg: 'Invalid card setup reference.',
+        code: 'SETUP_INTENT_INVALID',
+      });
+    }
+
+    const { customer } = await ensureStripeCustomerForUser(req.user.id);
+    let setupIntent;
+    try {
+      setupIntent = await stripe.setupIntents.retrieve(setupIntentId);
+    } catch (error) {
+      if (error?.code === 'resource_missing') return sendSetupIntentNotFound(res);
+      throw error;
+    }
+
+    if (!setupIntentBelongsToUser({
+      setupIntent,
+      customerId: customer.id,
+      userId: req.user.id,
+    })) {
+      return sendSetupIntentNotFound(res);
+    }
+
+    if (setupIntent.status === 'canceled') {
+      return sendSetupIntentCancelled(res, setupIntent, { alreadyCancelled: true });
+    }
+    if (setupIntent.status === 'succeeded') {
+      return res.status(409).json({
+        msg: 'This card setup already succeeded and cannot be cancelled.',
+        code: 'SETUP_INTENT_ALREADY_SUCCEEDED',
+      });
+    }
+    if (!CANCELLABLE_SETUP_INTENT_STATUSES.has(setupIntent.status)) {
+      return res.status(409).json({
+        msg: 'This card setup is no longer in a cancellable state.',
+        code: 'SETUP_INTENT_NOT_CANCELLABLE',
+        status: setupIntent.status,
+      });
+    }
+
+    const cancellationReason = setupIntentCancellationReason(req.body?.closeReason);
+    let cancelledSetupIntent;
+    try {
+      cancelledSetupIntent = await stripe.setupIntents.cancel(
+        setupIntentId,
+        { cancellation_reason: cancellationReason },
+        { idempotencyKey: `rozare-setup-cancel:${STRIPE_MODE}:${setupIntentId}` },
+      );
+    } catch (cancelError) {
+      // A concurrent retry may have cancelled the same SetupIntent after this
+      // request retrieved it. Re-read Stripe once so that cancellation remains
+      // idempotent even when requests overlap.
+      let refreshedSetupIntent = null;
+      try {
+        refreshedSetupIntent = await stripe.setupIntents.retrieve(setupIntentId);
+      } catch {}
+      if (
+        refreshedSetupIntent?.status === 'canceled'
+        && setupIntentBelongsToUser({
+          setupIntent: refreshedSetupIntent,
+          customerId: customer.id,
+          userId: req.user.id,
+        })
+      ) {
+        return sendSetupIntentCancelled(res, refreshedSetupIntent, { alreadyCancelled: true });
+      }
+      throw cancelError;
+    }
+
+    return sendSetupIntentCancelled(res, cancelledSetupIntent);
+  } catch (error) {
+    return sendError(res, error, 'Could not cancel secure card setup.');
   }
 };
 

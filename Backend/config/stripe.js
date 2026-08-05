@@ -8,7 +8,11 @@ const STRIPE_MODE = ['test', 'live'].includes(requestedStripeMode)
   ? requestedStripeMode
   : 'invalid';
 
-const envFlag = (value) => ['1', 'true', 'yes', 'on'].includes(String(value || '').trim().toLowerCase());
+const envFlag = (value, fallback = false) => {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (!normalized) return fallback;
+  return ['1', 'true', 'yes', 'on'].includes(normalized);
+};
 
 const configuredSecretKey = STRIPE_MODE === 'live'
   ? process.env.STRIPE_LIVE_SECRET_KEY
@@ -39,7 +43,13 @@ const STRIPE_MERCHANT_DISPLAY_NAME = String(
   process.env.STRIPE_MERCHANT_DISPLAY_NAME || 'Rozare'
 ).trim().slice(0, 120) || 'Rozare';
 const STRIPE_GOOGLE_PAY_ENABLED = envFlag(process.env.STRIPE_GOOGLE_PAY_ENABLED);
-const STRIPE_CUSTOMER_SESSION_ENABLED = envFlag(process.env.STRIPE_CUSTOMER_SESSION_ENABLED);
+// CustomerSession is the supported mobile customer-access contract. An
+// explicit false value fails mobile payment setup closed; it never falls back
+// to legacy Ephemeral Keys.
+const STRIPE_CUSTOMER_SESSION_ENABLED = envFlag(
+  process.env.STRIPE_CUSTOMER_SESSION_ENABLED,
+  true,
+);
 const STRIPE_API_VERSION = '2025-08-27.basil';
 
 const stripe = STRIPE_SECRET_KEY

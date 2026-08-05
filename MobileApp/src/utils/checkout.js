@@ -1,3 +1,5 @@
+import { runPaymentSheet } from './stripePaymentSheet';
+
 const toId = (value) => value?._id?.toString?.() || value?.toString?.() || '';
 
 export const roundMoney = (value) => Math.round((Number(value) || 0) * 100) / 100;
@@ -171,14 +173,14 @@ export const normalizePaymentStatus = (payload = {}) => {
 };
 
 export const cancelOrderPaymentAttempt = async ({ apiClient, orderId, paymentIntentId }) => {
-  if (!orderId || !paymentIntentId) {
+  if (!orderId) {
     return { status: 'unavailable', reason: 'missing_reference' };
   }
 
   try {
     const response = await apiClient.post(
       `/api/order/payment/${encodeURIComponent(orderId)}/cancel`,
-      { paymentIntentId }
+      paymentIntentId ? { paymentIntentId } : {}
     );
     const payload = response?.data || response || {};
     const rawStatus = String(payload?.status || '').toLowerCase();
@@ -200,6 +202,20 @@ export const cancelOrderPaymentAttempt = async ({ apiClient, orderId, paymentInt
     }
     return { status: 'unavailable', error, code, reason: 'cancellation_unconfirmed' };
   }
+};
+
+export const runOrderPaymentSheetAttempt = async ({
+  initPaymentSheet,
+  presentPaymentSheet,
+  options,
+  apiClient,
+  orderId,
+  paymentIntentId,
+}) => {
+  const sheetResult = await runPaymentSheet({ initPaymentSheet, presentPaymentSheet, options });
+  if (sheetResult.status === 'presented') return { ...sheetResult, cancellation: null };
+  const cancellation = await cancelOrderPaymentAttempt({ apiClient, orderId, paymentIntentId });
+  return { ...sheetResult, cancellation };
 };
 
 export const verifyOrderPayment = async ({

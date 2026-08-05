@@ -26,8 +26,10 @@ import { useTheme } from '../contexts/ThemeContext';
 import {
   assertPaymentSheetPayload,
   buildPaymentSheetOptions,
+  cancelSetupIntentPaymentAttempt,
+  normalizePaymentSheetPayload,
   normalizeSavedCards,
-  runPaymentSheet,
+  runSetupIntentPaymentSheetAttempt,
 } from '../utils/stripePaymentSheet';
 import { trackError, trackPaymentEvent } from '../utils/breadcrumbs';
 import { fontSize, fontWeight, shadows, spacing } from '../styles/theme';
@@ -126,6 +128,8 @@ export default function PaymentMethodsScreen({ navigation }) {
     }
     setAdding(true);
     setNotice(null);
+    let setupReference = null;
+    let setupCleanupAttempted = false;
     try {
       const stripeConfig = await ensureReady();
       trackPaymentEvent('saved_card_setup_started', {
@@ -141,13 +145,16 @@ export default function PaymentMethodsScreen({ navigation }) {
       }, {
         headers: { 'X-Idempotency-Key': requestKey },
       });
+      setupReference = normalizePaymentSheetPayload(response);
       const payment = assertPaymentSheetPayload(response, 'setup');
       trackPaymentEvent('saved_card_setup_reference_created', {
         hasSetupIntent: !!payment.setupIntentClientSecret,
       });
-      const result = await runPaymentSheet({
+      const result = await runSetupIntentPaymentSheetAttempt({
         initPaymentSheet,
         presentPaymentSheet,
+        apiClient: api,
+        setupIntentId: payment.setupIntentId,
         options: buildPaymentSheetOptions({
           payment,
           config: stripeConfig,
@@ -158,22 +165,58 @@ export default function PaymentMethodsScreen({ navigation }) {
           intentType: 'setup',
         }),
       });
+      setupCleanupAttempted = result.status !== 'presented';
       trackPaymentEvent(`saved_card_setup_sheet_${result.status}`, {
         stage: result.stage,
         code: result.error?.code,
       });
 
       if (result.status === 'cancelled') {
-        setNotice({ type: 'info', title: 'Nothing changed', text: 'Card setup was closed before a card was saved.' });
+        setNotice({
+          type: result.cleanupError ? 'error' : 'info',
+          title: result.cleanupError ? 'Closing card setup' : 'Nothing changed',
+          text: result.cleanupError
+            ? 'The setup was closed, and Rozare is still confirming cleanup with Stripe.'
+            : 'Card setup was closed and the incomplete SetupIntent was cancelled.',
+        });
         return;
       }
-      if (result.status !== 'presented') throw result.error || new Error('The card could not be saved.');
+      if (result.status !== 'presented') {
+        setNotice({
+          type: 'error',
+          title: 'Card setup could not open',
+          text: result.cleanupError
+            ? 'Rozare is still confirming cleanup with Stripe. No card was saved.'
+            : 'The failed SetupIntent was cancelled immediately. No card was saved.',
+        });
+        return;
+      }
 
       await loadCards({ quiet: true });
       setConsentToSave(false);
       setNotice({ type: 'success', title: 'Card saved securely', text: 'It is now ready for faster checkout.' });
     } catch (error) {
       trackError('saved_card_setup', error);
+      if (setupReference?.setupIntentId && !setupCleanupAttempted) {
+        let cleanupError = null;
+        try {
+          await cancelSetupIntentPaymentAttempt({
+            apiClient: api,
+            setupIntentId: setupReference.setupIntentId,
+            closeReason: 'payment_sheet_preparation_failed',
+          });
+        } catch (nextError) {
+          cleanupError = nextError;
+        }
+        setNotice({
+          type: 'error',
+          title: 'Card setup could not open',
+          text: cleanupError
+            ? 'Rozare is still confirming cleanup with Stripe. No card was saved.'
+            : 'The failed SetupIntent was cancelled immediately. No card was saved.',
+        });
+        return;
+      }
       setNotice({
         type: 'error',
         title: 'Card was not saved',

@@ -17,17 +17,20 @@ import {
   normalizeStripeConfig,
   normalizeWalletTopUpStatus,
   runPaymentSheet,
+  runSetupIntentPaymentSheetAttempt,
+  runWalletPaymentSheetAttempt,
   toStripeHexColor,
   verifyWalletTopUp,
 } from '../../src/utils/stripePaymentSheet';
 import { darkPalette, lightPalette } from '../../src/styles/palettes';
 
-const palette = {
-  colors: {
-    primary: '#6366F1', surface: '#FFFFFF', surfaceElevated: '#FFFFFF',
-    borderStrong: '#E5E7EB', border: '#EEF2F7', text: '#111827',
-    textSecondary: '#6B7280', textLight: '#9CA3AF', error: '#EF4444',
-  },
+const testStripeConfig = {
+  publishableKey: 'pk_test_123',
+  mode: 'test',
+  merchantCountryCode: 'PK',
+  customerSessionEnabled: true,
+  customerAccessMode: 'customer_session',
+  ephemeralKeyEnabled: false,
 };
 
 const STRIPE_HEX = /^#[0-9A-F]{6}$/;
@@ -47,6 +50,7 @@ describe('native Stripe PaymentSheet contracts', () => {
     } })).toEqual({
       publishableKey: 'pk_test_123', mode: 'test', merchantCountryCode: 'PK',
       merchantDisplayName: 'Rozare', googlePayEnabled: false,
+      customerSessionEnabled: false, customerAccessMode: '', ephemeralKeyEnabled: false,
     });
     expect(() => assertUsableStripeConfig({
       publishableKey: 'sk_live_secret', merchantCountryCode: 'US',
@@ -59,7 +63,18 @@ describe('native Stripe PaymentSheet contracts', () => {
     } })).toEqual({
       publishableKey: 'pk_live_123', mode: 'live', merchantCountryCode: 'GB',
       merchantDisplayName: 'Rozare', googlePayEnabled: false,
+      customerSessionEnabled: false, customerAccessMode: '', ephemeralKeyEnabled: false,
     });
+    expect(assertUsableStripeConfig(normalizeStripeConfig({ data: {
+      publishableKey: 'pk_live_123', stripeMode: 'live', merchantCountryCode: 'ae',
+      customerSessionEnabled: true, customerAccessMode: 'customer_session',
+      ephemeralKeyEnabled: false, googlePayEnabled: true,
+    } }))).toEqual(expect.objectContaining({
+      customerSessionEnabled: true,
+      customerAccessMode: 'customer_session',
+      ephemeralKeyEnabled: false,
+      googlePayEnabled: true,
+    }));
   });
 
   it('converts React Native rgba colors into Stripe-safe opaque hex colors', () => {
@@ -86,11 +101,11 @@ describe('native Stripe PaymentSheet contracts', () => {
       orderId: 'order-1',
       paymentIntentClientSecret: 'pi_123_secret_abc',
       customerId: 'cus_123',
-      customerEphemeralKeySecret: 'ek_test_secret_abc',
+      customerSessionClientSecret: 'cuss_123_secret_abc',
     } });
     expect(payment).toEqual(expect.objectContaining({
       orderId: 'order-1', paymentIntentId: 'pi_123', customerId: 'cus_123',
-      customerEphemeralKeySecret: 'ek_test_secret_abc',
+      customerSessionClientSecret: 'cuss_123_secret_abc',
     }));
     expect(assertPaymentSheetPayload(payment, 'payment')).toEqual(payment);
 
@@ -99,18 +114,18 @@ describe('native Stripe PaymentSheet contracts', () => {
       paymentIntentClientSecret: 'pi_topup_secret_abc',
       paymentIntentId: 'pi_topup',
       customerId: 'cus_123',
-      customerEphemeralKeySecret: 'ek_test_secret_abc',
+      customerSessionClientSecret: 'cuss_123_secret_abc',
     } })).toEqual(expect.objectContaining({ topUpId: 'top-up-1', paymentIntentId: 'pi_topup' }));
   });
 
-  it('builds branded PaymentSheet options with the stable ephemeral-key access path', () => {
+  it('builds branded PaymentSheet options with CustomerSession only', () => {
     const options = buildPaymentSheetOptions({
       payment: {
         paymentIntentClientSecret: 'pi_123_secret_abc',
         customerId: 'cus_123',
-        customerEphemeralKeySecret: 'ek_test_secret_abc',
+        customerSessionClientSecret: 'cuss_123_secret_abc',
       },
-      config: { publishableKey: 'pk_test_123', mode: 'test', merchantCountryCode: 'PK' },
+      config: testStripeConfig,
       currentUser: { name: 'Buyer', email: 'buyer@example.com' },
       currency: 'PKR',
       palette: lightPalette,
@@ -118,33 +133,28 @@ describe('native Stripe PaymentSheet contracts', () => {
     expect(options).toEqual(expect.objectContaining({
       merchantDisplayName: 'Rozare',
       customerId: 'cus_123',
-      customerEphemeralKeySecret: 'ek_test_secret_abc',
+      customerSessionClientSecret: 'cuss_123_secret_abc',
       paymentIntentClientSecret: 'pi_123_secret_abc',
       allowsDelayedPaymentMethods: false,
     }));
-    expect(options.customerSessionClientSecret).toBeUndefined();
+    expect(options.customerEphemeralKeySecret).toBeUndefined();
     expect(options.googlePay).toBeUndefined();
     expectValidAppearanceColors(options.appearance);
   });
 
-  it('still supports CustomerSession when the backend explicitly sends it', () => {
-    const options = buildPaymentSheetOptions({
+  it('rejects an Ephemeral Key-only payload', () => {
+    expect(() => buildPaymentSheetOptions({
       payment: {
         paymentIntentClientSecret: 'pi_123_secret_abc',
         customerId: 'cus_123',
-        customerSessionClientSecret: 'cuss_123_secret_abc',
+        customerEphemeralKeySecret: 'ek_test_secret_abc',
       },
-      config: { publishableKey: 'pk_test_123', mode: 'test', merchantCountryCode: 'PK' },
+      config: testStripeConfig,
       currentUser: { name: 'Buyer', email: 'buyer@example.com' },
       currency: 'PKR',
-      palette,
-    });
-    expect(options).toEqual(expect.objectContaining({
-      customerId: 'cus_123',
-      customerSessionClientSecret: 'cuss_123_secret_abc',
-      paymentIntentClientSecret: 'pi_123_secret_abc',
-    }));
-    expect(options.customerEphemeralKeySecret).toBeUndefined();
+      palette: darkPalette,
+      isDark: true,
+    })).toThrow('CustomerSession');
   });
 
   it('adds Android Google Pay only when the backend enables it', () => {
@@ -152,32 +162,85 @@ describe('native Stripe PaymentSheet contracts', () => {
       payment: {
         paymentIntentClientSecret: 'pi_123_secret_abc',
         customerId: 'cus_123',
-        customerEphemeralKeySecret: 'ek_test_secret_abc',
+        customerSessionClientSecret: 'cuss_123_secret_abc',
       },
       config: {
-        publishableKey: 'pk_test_123',
-        mode: 'test',
-        merchantCountryCode: 'PK',
+        ...testStripeConfig,
         googlePayEnabled: true,
       },
       currentUser: { name: 'Buyer', email: 'buyer@example.com' },
       currency: 'PKR',
-      palette,
+      palette: lightPalette,
     });
     expect(options.googlePay).toEqual({ merchantCountryCode: 'PK', currencyCode: 'PKR', testEnv: true });
   });
 
-  it('reports native initialization failures without presenting the sheet', async () => {
+  it('uses the live Google Pay environment for production wallet and checkout sheets', () => {
+    const options = buildPaymentSheetOptions({
+      payment: {
+        paymentIntentClientSecret: 'pi_live_secret_abc',
+        customerId: 'cus_live',
+        customerSessionClientSecret: 'cuss_live_secret_abc',
+      },
+      config: {
+        ...testStripeConfig,
+        publishableKey: 'pk_live_123',
+        mode: 'live',
+        merchantCountryCode: 'AE',
+        googlePayEnabled: true,
+      },
+      currentUser: { name: 'Buyer', email: 'buyer@example.com' },
+      currency: 'AED',
+      palette: darkPalette,
+      isDark: true,
+    });
+
+    expect(options.googlePay).toEqual({ merchantCountryCode: 'AE', currencyCode: 'AED', testEnv: false });
+    expectValidAppearanceColors(options.appearance);
+  });
+
+  it('cancels a Wallet top-up immediately when PaymentSheet initialization fails', async () => {
     const initError = {
       code: 'Failed',
       localizedMessage: 'Expected hex string of length 6 or 8',
     };
     const initPaymentSheet = jest.fn().mockResolvedValue({ error: initError });
     const presentPaymentSheet = jest.fn();
+    const apiClient = { post: jest.fn().mockResolvedValue({ data: { status: 'cancelled' } }) };
 
-    await expect(runPaymentSheet({ initPaymentSheet, presentPaymentSheet, options: {} }))
-      .resolves.toEqual({ status: 'failed', error: initError, stage: 'initialize' });
+    await expect(runWalletPaymentSheetAttempt({
+      initPaymentSheet,
+      presentPaymentSheet,
+      options: {},
+      apiClient,
+      topUpId: 'top-up/1',
+      paymentIntentId: 'pi_topup',
+    })).resolves.toEqual(expect.objectContaining({
+      status: 'failed', error: initError, stage: 'initialize', cleanupError: null,
+    }));
     expect(presentPaymentSheet).not.toHaveBeenCalled();
+    expect(apiClient.post).toHaveBeenCalledWith('/api/wallet/top-ups/top-up%2F1/cancel', {
+      paymentIntentId: 'pi_topup',
+      closeReason: 'payment_sheet_initialize',
+    });
+  });
+
+  it('cancels an Add Card SetupIntent when PaymentSheet initialization throws', async () => {
+    const initError = new Error('Native bridge unavailable');
+    const apiClient = { post: jest.fn().mockResolvedValue({ data: { status: 'canceled' } }) };
+
+    await expect(runSetupIntentPaymentSheetAttempt({
+      initPaymentSheet: jest.fn().mockRejectedValue(initError),
+      presentPaymentSheet: jest.fn(),
+      options: {},
+      apiClient,
+      setupIntentId: 'seti_123',
+    })).resolves.toEqual(expect.objectContaining({
+      status: 'failed', error: initError, stage: 'initialize', cleanupError: null,
+    }));
+    expect(apiClient.post).toHaveBeenCalledWith('/api/payment-methods/setup/seti_123/cancel', {
+      closeReason: 'payment_sheet_initialize',
+    });
   });
 
   it('distinguishes a user cancellation from a PaymentSheet failure', async () => {

@@ -1,3 +1,11 @@
+jest.mock('expo-linking', () => ({
+  createURL: jest.fn((path = '') => `rozare://${String(path).replace(/^\//, '')}`),
+}));
+jest.mock('expo-constants', () => ({
+  __esModule: true,
+  default: { appOwnership: 'standalone' },
+}));
+
 import {
   buildSellerShipping,
   cancelOrderPaymentAttempt,
@@ -6,6 +14,7 @@ import {
   findCouponOverlap,
   normalizePaymentStatus,
   parsePaymentRedirect,
+  runOrderPaymentSheetAttempt,
   selectDefaultShippingMethods,
   verifyOrderPayment,
 } from '../../src/utils/checkout';
@@ -132,6 +141,38 @@ describe('checkout production contracts', () => {
     expect(apiClient.post).toHaveBeenCalledWith('/api/order/payment/ORD%2F3/cancel', {
       paymentIntentId: 'pi_123',
     });
+  });
+
+  it('cancels the order and releases its reservation when PaymentSheet initialization fails', async () => {
+    const initError = { code: 'Failed', localizedMessage: 'PaymentSheet could not initialize' };
+    const apiClient = { post: jest.fn().mockResolvedValue({ data: { status: 'cancelled' } }) };
+    const presentPaymentSheet = jest.fn();
+
+    const result = await runOrderPaymentSheetAttempt({
+      initPaymentSheet: jest.fn().mockResolvedValue({ error: initError }),
+      presentPaymentSheet,
+      options: {},
+      apiClient,
+      orderId: 'ORD/INIT',
+      paymentIntentId: 'pi_init',
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      status: 'failed', stage: 'initialize', error: initError,
+      cancellation: expect.objectContaining({ status: 'cancelled' }),
+    }));
+    expect(presentPaymentSheet).not.toHaveBeenCalled();
+    expect(apiClient.post).toHaveBeenCalledWith('/api/order/payment/ORD%2FINIT/cancel', {
+      paymentIntentId: 'pi_init',
+    });
+  });
+
+  it('still calls order cleanup when the PaymentIntent reference is unavailable', async () => {
+    const apiClient = { post: jest.fn().mockResolvedValue({ data: { status: 'cancelled' } }) };
+    const result = await cancelOrderPaymentAttempt({ apiClient, orderId: 'ORD-REF' });
+
+    expect(result.status).toBe('cancelled');
+    expect(apiClient.post).toHaveBeenCalledWith('/api/order/payment/ORD-REF/cancel', {});
   });
 
   it('routes an already-succeeded cancellation race to server verification', async () => {

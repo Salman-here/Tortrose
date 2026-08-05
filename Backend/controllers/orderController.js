@@ -1258,13 +1258,38 @@ exports.placeOrder = async (req, res) => {
             try {
                 nativePaymentResponse = await paymentIntentResponse(newOrder, paymentIntent);
             } catch (customerSessionError) {
-                const recoveryError = new Error(
-                    'Secure mobile payment access is being prepared. Retry this same checkout attempt.'
+                let closed;
+                try {
+                    closed = await closeOrderPaymentIntent(newOrder, {
+                        status: 'cancelled',
+                        reason: 'Stripe CustomerSession preparation failed before PaymentSheet opened.',
+                    });
+                } catch (cleanupError) {
+                    const recoveryError = new Error(
+                        'Secure mobile payment cleanup is still being confirmed. Retry this same checkout attempt.'
+                    );
+                    recoveryError.statusCode = 503;
+                    recoveryError.code = 'PAYMENT_ATTEMPT_RECOVERY_PENDING';
+                    recoveryError.cause = cleanupError;
+                    throw recoveryError;
+                }
+                if (closed?.status === 'payment_succeeded') {
+                    return res.status(202).json({
+                        msg: 'Stripe received the payment. Final confirmation is processing.',
+                        paymentFlow: 'payment_sheet',
+                        stripePaymentReceived: true,
+                        paymentIntentId: paymentIntent.id,
+                        orderId: newOrder.orderId,
+                        order: orderResponseSummary(newOrder),
+                    });
+                }
+                const preparationError = new Error(
+                    'Secure mobile payment could not open. The payment attempt was closed and reserved inventory was released.'
                 );
-                recoveryError.statusCode = 503;
-                recoveryError.code = 'PAYMENT_ATTEMPT_RECOVERY_PENDING';
-                recoveryError.cause = customerSessionError;
-                throw recoveryError;
+                preparationError.statusCode = 503;
+                preparationError.code = 'PAYMENT_SHEET_PREPARATION_FAILED';
+                preparationError.cause = customerSessionError;
+                throw preparationError;
             }
 
             trackOrderEvent({

@@ -10,7 +10,6 @@ const {
   STRIPE_MERCHANT_DISPLAY_NAME,
   STRIPE_GOOGLE_PAY_ENABLED,
   STRIPE_CUSTOMER_SESSION_ENABLED,
-  STRIPE_API_VERSION,
 } = require('../config/stripe');
 
 // Only cards for which Stripe captured an explicit redisplay choice are shown.
@@ -47,6 +46,9 @@ const assertStripeMobileConfigured = () => {
   }
   if (!STRIPE_MERCHANT_COUNTRY_CODE) {
     throw stripeError('Stripe merchant country is not configured.', 'STRIPE_MERCHANT_COUNTRY_MISSING', 503);
+  }
+  if (!STRIPE_CUSTOMER_SESSION_ENABLED) {
+    throw stripeError('Stripe CustomerSession is not enabled.', 'STRIPE_CUSTOMER_SESSION_DISABLED', 503);
   }
 };
 
@@ -217,38 +219,12 @@ const createMobileCustomerSession = async (customerId) => {
   });
 };
 
-const createMobileEphemeralKey = async (customerId) => {
-  assertStripeMobileConfigured();
-  return stripe.ephemeralKeys.create(
-    { customer: customerId },
-    { apiVersion: STRIPE_API_VERSION },
-  );
-};
-
 const createMobileCustomerAccess = async (customerId) => {
   assertStripeMobileConfigured();
-
-  if (STRIPE_CUSTOMER_SESSION_ENABLED) {
-    try {
-      const customerSession = await createMobileCustomerSession(customerId);
-      return {
-        customerAccessMode: 'customer_session',
-        customerSessionClientSecret: customerSession.client_secret,
-      };
-    } catch (error) {
-      console.error('[stripe-mobile] CustomerSession failed; using ephemeral key fallback:', {
-        code: error.code,
-        type: error.type,
-        statusCode: error.statusCode,
-        message: error.message,
-      });
-    }
-  }
-
-  const ephemeralKey = await createMobileEphemeralKey(customerId);
+  const customerSession = await createMobileCustomerSession(customerId);
   return {
-    customerAccessMode: 'ephemeral_key',
-    customerEphemeralKeySecret: ephemeralKey.secret,
+    customerAccessMode: 'customer_session',
+    customerSessionClientSecret: customerSession.client_secret,
   };
 };
 
@@ -313,6 +289,8 @@ const getStripeMobileConfig = () => {
     merchantCountryCode: STRIPE_MERCHANT_COUNTRY_CODE,
     googlePayEnabled: STRIPE_GOOGLE_PAY_ENABLED,
     customerSessionEnabled: STRIPE_CUSTOMER_SESSION_ENABLED,
+    customerAccessMode: 'customer_session',
+    ephemeralKeyEnabled: false,
     stripeMode: STRIPE_MODE,
   };
 };
@@ -368,7 +346,6 @@ module.exports = {
   assertStripeMobileConfigured,
   ensureStripeCustomerForUser,
   createMobileCustomerSession,
-  createMobileEphemeralKey,
   createMobileCustomerAccess,
   getStripeMobileConfig,
   sanitizePaymentMethod,

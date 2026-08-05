@@ -13,5 +13,10 @@ describe('payment method route authentication boundaries', () => {
 
     const listResponse = await request(app).get('/api/payment-methods');
     expect(listResponse.status).toBe(401);
+
+    const cancelSetupResponse = await request(app)
+      .post('/api/payment-methods/setup/seti_123ABC/cancel')
+      .send({ closeReason: 'payment_sheet_initialize' });
+    expect(cancelSetupResponse.status).toBe(401);
   });
 });
