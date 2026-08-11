@@ -1,4 +1,5 @@
 const SellerSubscription = require('../models/SellerSubscription');
+const crypto = require('crypto');
 const Store = require('../models/Store');
 const User = require('../models/User');
 const { sendEmail } = require('./mailController');
@@ -11,6 +12,14 @@ const {
     buildPlanPricing,
     getPricingCatalog,
 } = require('../services/subscriptionPricingService');
+const { getHostedCheckoutReturnUrls } = require('../utils/hostedCheckoutReturnUrls');
+const {
+    fingerprintCheckoutRequest,
+    claimSellerCheckout,
+    attachSellerCheckoutSession,
+    releaseSellerCheckoutClaim,
+    checkoutClaimRetryAfterSeconds,
+} = require('../services/sellerCheckoutClaimService');
 const {
     FOUNDER_PROMOTION,
     normalizePromotionCode,
@@ -230,6 +239,8 @@ async function getUsableStripeCustomerId(sub, user, sellerId) {
 // Create Stripe checkout for subscription
 exports.createCheckout = async (req, res) => {
     let founderReservation = null;
+    let checkoutClaim = null;
+    let checkoutSession = null;
     let sellerId = null;
     try {
         // Guard: Stripe must be configured. In live mode this is the most common
@@ -276,6 +287,50 @@ exports.createCheckout = async (req, res) => {
         if (['active', 'free_period'].includes(sub.status)) {
             return res.status(400).json({ msg: 'You already have an active subscription.' });
         }
+
+        if (requestedCouponCode === FOUNDER_PROMOTION.code && (
+            sub.founderOffer?.claimedAt || sub.founderOffer?.forfeitedAt
+        )) {
+            return res.status(400).json({
+                msg: sub.founderOffer?.active
+                    ? 'Your founder price is already locked to this subscription.'
+                    : 'This seller account has already used the founder coupon. The founder rate ends when the subscription ends.',
+                code: 'FOUNDER_COUPON_ALREADY_USED',
+            });
+        }
+
+        const requestFingerprint = fingerprintCheckoutRequest({
+            plan,
+            includeMetaAds: includeMetaAdsRequested,
+            couponCode: requestedCouponCode,
+            checkoutClient: String(req.body?.checkoutClient || 'web').trim().toLowerCase(),
+        });
+        const claimResult = await claimSellerCheckout({
+            sellerId,
+            flow: 'subscription',
+            requestFingerprint,
+        });
+        if (!claimResult.acquired) {
+            const existingClaim = claimResult.claim;
+            if (
+                existingClaim.requestFingerprint === requestFingerprint
+                && existingClaim.sessionId
+                && existingClaim.sessionUrl
+            ) {
+                return res.json({
+                    url: existingClaim.sessionUrl,
+                    sessionId: existingClaim.sessionId,
+                    founderOfferReserved: requestedCouponCode === FOUNDER_PROMOTION.code,
+                    reused: true,
+                });
+            }
+            return res.status(409).json({
+                msg: 'A subscription checkout is already in progress. Complete or cancel it before starting another.',
+                code: 'CHECKOUT_PENDING',
+                retryAfterSeconds: checkoutClaimRetryAfterSeconds(existingClaim),
+            });
+        }
+        checkoutClaim = claimResult.claim;
 
         // Create or validate Stripe customer. A saved customer can be stale when
         // switching test/live mode or if it was deleted in Stripe.
@@ -345,14 +400,6 @@ exports.createCheckout = async (req, res) => {
         }
 
         if (requestedCouponCode === FOUNDER_PROMOTION.code) {
-            if (sub.founderOffer?.claimedAt || sub.founderOffer?.forfeitedAt) {
-                return res.status(400).json({
-                    msg: sub.founderOffer?.active
-                        ? 'Your founder price is already locked to this subscription.'
-                        : 'This seller account has already used the founder coupon. The founder rate ends when the subscription ends.',
-                    code: 'FOUNDER_COUPON_ALREADY_USED',
-                });
-            }
             founderReservation = await reserveFounderSlot(sellerId);
         }
 
@@ -373,6 +420,14 @@ exports.createCheckout = async (req, res) => {
             : getsFreePeriod
                 ? `Rozare Starter - First 30 days free, then $${(priceAmount / 100).toFixed(2)}/month${founderReservation ? ' at the FIRST100 founder rate' : ''}. Cancel anytime.`
                 : `Rozare Starter - $${(priceAmount / 100).toFixed(2)}/month${founderReservation ? ' at the FIRST100 founder rate' : ''}. Cancel anytime.`;
+
+        const checkoutReturnUrls = getHostedCheckoutReturnUrls({
+            client: req.body?.checkoutClient,
+            flow: 'subscription',
+            frontendUrl: process.env.FRONTEND_URL,
+            backendUrl: process.env.BACKEND_PUBLIC_URL || 'https://rozare.up.railway.app',
+            couponCode: founderReservation ? FOUNDER_PROMOTION.code : '',
+        });
 
         // Create a subscription (with or without free trial period)
         const sessionConfig = {
@@ -399,10 +454,11 @@ exports.createCheckout = async (req, res) => {
                     metaAdsAddonCents: String(metaAddOn || 0),
                     founderCouponCode: founderReservation ? FOUNDER_PROMOTION.code : '',
                     founderReservationToken: founderReservation?.token || '',
+                    checkoutClaimToken: checkoutClaim.token,
                 },
             },
-            success_url: `${process.env.FRONTEND_URL}/seller-dashboard/subscription?success=true`,
-            cancel_url: `${process.env.FRONTEND_URL}/seller-dashboard/subscription?cancelled=true${founderReservation ? `&coupon=${FOUNDER_PROMOTION.code}` : ''}`,
+            success_url: checkoutReturnUrls.successUrl,
+            cancel_url: checkoutReturnUrls.cancelUrl,
             metadata: {
                 sellerId: sellerId.toString(),
                 plan: isElite ? 'elite' : 'starter',
@@ -410,26 +466,36 @@ exports.createCheckout = async (req, res) => {
                 metaAdsAddonCents: String(metaAddOn || 0),
                 founderCouponCode: founderReservation ? FOUNDER_PROMOTION.code : '',
                 founderReservationToken: founderReservation?.token || '',
+                checkoutClaimToken: checkoutClaim.token,
             },
+            expires_at: Math.floor(new Date(checkoutClaim.expiresAt).getTime() / 1000),
         };
-
-        if (founderReservation) {
-            sessionConfig.expires_at = Math.floor(Date.now() / 1000)
-                + FOUNDER_PROMOTION.checkoutReservationMinutes * 60;
-        }
 
         // Only add trial days if seller hasn't used free period before
         if (trialDays > 0) {
             sessionConfig.subscription_data.trial_period_days = trialDays;
         }
 
-        const session = await stripe.checkout.sessions.create(sessionConfig);
+        checkoutSession = await stripe.checkout.sessions.create(sessionConfig, {
+            idempotencyKey: `rozare-subscription-checkout-${checkoutClaim.token}`,
+        });
+        if (!checkoutSession?.id || !checkoutSession?.url) {
+            throw new Error('Stripe did not return a usable Checkout Session.');
+        }
+
+        await attachSellerCheckoutSession({
+            sellerId,
+            flow: 'subscription',
+            token: checkoutClaim.token,
+            sessionId: checkoutSession.id,
+            sessionUrl: checkoutSession.url,
+        });
 
         if (founderReservation) {
             try {
-                await attachCheckoutSessionToReservation(sellerId, founderReservation.token, session.id);
+                await attachCheckoutSessionToReservation(sellerId, founderReservation.token, checkoutSession.id);
             } catch (reservationError) {
-                await stripe.checkout.sessions.expire(session.id).catch(expireError => {
+                await stripe.checkout.sessions.expire(checkoutSession.id).catch(expireError => {
                     console.error('[subscription] Failed to expire Checkout after reservation attach failure:', expireError.message);
                 });
                 throw reservationError;
@@ -437,11 +503,25 @@ exports.createCheckout = async (req, res) => {
         }
 
         res.json({
-            url: session.url,
-            sessionId: session.id,
+            url: checkoutSession.url,
+            sessionId: checkoutSession.id,
             founderOfferReserved: Boolean(founderReservation),
         });
     } catch (error) {
+        if (checkoutSession?.id && stripe?.checkout?.sessions?.expire) {
+            await stripe.checkout.sessions.expire(checkoutSession.id).catch(expireError => {
+                console.error('[subscription] Failed to expire unusable Checkout:', expireError.message);
+            });
+        }
+        if (checkoutClaim && sellerId) {
+            await releaseSellerCheckoutClaim({
+                sellerId,
+                flow: 'subscription',
+                token: checkoutClaim.token,
+            }).catch(releaseError => {
+                console.error('[subscription] Failed to release Checkout claim:', releaseError.message);
+            });
+        }
         if (founderReservation) {
             await releaseFounderReservation({ sellerId, token: founderReservation.token }).catch(releaseError => {
                 console.error('[subscription] Failed to release founder reservation after Checkout error:', releaseError.message);
@@ -461,6 +541,8 @@ exports.createCheckout = async (req, res) => {
             'FOUNDER_COUPON_FULL',
             'FOUNDER_COUPON_ALREADY_USED',
             'FOUNDER_CHECKOUT_PENDING',
+            'CHECKOUT_PENDING',
+            'CHECKOUT_CLAIM_LOST',
         ].includes(error?.code) ? 409 : 500;
         res.status(status).json({
             msg: error?.raw?.message || error?.message || 'Failed to create checkout session',
@@ -475,12 +557,29 @@ exports.handleWebhook = async (event) => {
         switch (event.type) {
             case 'checkout.session.expired': {
                 const session = event.data.object;
-                if (session.mode !== 'subscription' || !session.metadata?.founderReservationToken) break;
-                await releaseFounderReservation({
-                    sellerId: session.metadata?.sellerId,
-                    token: session.metadata.founderReservationToken,
-                    checkoutSessionId: session.id,
-                });
+                const sellerId = session.metadata?.sellerId;
+                const checkoutClaimToken = session.metadata?.checkoutClaimToken;
+                const checkoutFlow = session.mode === 'payment'
+                    && session.metadata?.type === 'subdomain_purchase'
+                    ? 'subdomain'
+                    : session.mode === 'subscription' ? 'subscription' : null;
+                if (sellerId && checkoutFlow && (checkoutClaimToken || session.id)) {
+                    await releaseSellerCheckoutClaim({
+                        sellerId,
+                        flow: checkoutFlow,
+                        token: checkoutClaimToken,
+                        sessionId: session.id,
+                    }).catch(releaseError => {
+                        console.error('[subscription] Failed to release expired Checkout claim:', releaseError.message);
+                    });
+                }
+                if (session.mode === 'subscription' && session.metadata?.founderReservationToken) {
+                    await releaseFounderReservation({
+                        sellerId,
+                        token: session.metadata.founderReservationToken,
+                        checkoutSessionId: session.id,
+                    });
+                }
                 break;
             }
 
@@ -490,7 +589,20 @@ exports.handleWebhook = async (event) => {
                 // Handle subdomain purchase (one-time payment)
                 if (session.mode === 'payment' && session.metadata?.type === 'subdomain_purchase') {
                     const { handleSubdomainPurchaseWebhook } = require('./subdomainPurchaseController');
-                    await handleSubdomainPurchaseWebhook(session);
+                    const processed = await handleSubdomainPurchaseWebhook(session);
+                    if (!processed) {
+                        const error = new Error('The completed subdomain Checkout was not processed.');
+                        error.code = 'SUBDOMAIN_CHECKOUT_NOT_PROCESSED';
+                        throw error;
+                    }
+                    await releaseSellerCheckoutClaim({
+                        sellerId: session.metadata?.sellerId,
+                        flow: 'subdomain',
+                        token: session.metadata?.checkoutClaimToken,
+                        sessionId: session.id,
+                    }).catch(releaseError => {
+                        console.error('[subscription] Failed to release completed subdomain Checkout claim:', releaseError.message);
+                    });
                     break;
                 }
 
@@ -546,6 +658,14 @@ exports.handleWebhook = async (event) => {
                             checkoutSessionId: session.id,
                         });
                     }
+                    await releaseSellerCheckoutClaim({
+                        sellerId,
+                        flow: 'subscription',
+                        token: session.metadata?.checkoutClaimToken,
+                        sessionId: session.id,
+                    }).catch(releaseError => {
+                        console.error('[subscription] Failed to release duplicate Checkout claim:', releaseError.message);
+                    });
                     break;
                 }
 
@@ -706,6 +826,17 @@ exports.handleWebhook = async (event) => {
                     }
                 );
 
+                // Billing state is durable at this point; the seller can safely
+                // start a future Checkout only after this paid session is closed.
+                await releaseSellerCheckoutClaim({
+                    sellerId,
+                    flow: 'subscription',
+                    token: session.metadata?.checkoutClaimToken,
+                    sessionId: session.id,
+                }).catch(releaseError => {
+                    console.error('[subscription] Failed to release completed Checkout claim:', releaseError.message);
+                });
+
                 // Send confirmation email
                 const user = await User.findById(sellerId);
                 if (user?.email) {
@@ -751,13 +882,55 @@ exports.handleWebhook = async (event) => {
 
             case 'customer.subscription.deleted': {
                 const subscription = event.data.object;
-                const sub = await SellerSubscription.findOne({ stripeSubscriptionId: subscription.id });
+                let sub = await SellerSubscription.findOne({ stripeSubscriptionId: subscription.id });
                 if (!sub) break;
 
                 const now = new Date();
 
                 // Check if this is a downgrade to Starter (not a real cancellation)
                 if (sub.pendingDowngrade?.toPlan === 'starter') {
+                    const transitionToken = crypto.randomUUID();
+                    const transitionEventId = String(event.id || `subscription-deleted:${subscription.id}`);
+                    const staleTransitionCutoff = new Date(now.getTime() - 10 * 60 * 1000);
+                    const transitionClaim = await SellerSubscription.findOneAndUpdate(
+                        {
+                            _id: sub._id,
+                            stripeSubscriptionId: subscription.id,
+                            'pendingDowngrade.toPlan': 'starter',
+                            $or: [
+                                { 'pendingDowngrade.processingToken': null },
+                                { 'pendingDowngrade.processingToken': { $exists: false } },
+                                { 'pendingDowngrade.processingStartedAt': { $lte: staleTransitionCutoff } },
+                            ],
+                        },
+                        {
+                            $set: {
+                                'pendingDowngrade.processingToken': transitionToken,
+                                'pendingDowngrade.processingEventId': transitionEventId,
+                                'pendingDowngrade.processingStartedAt': now,
+                            },
+                        },
+                        { new: true }
+                    );
+
+                    if (!transitionClaim) {
+                        const current = await SellerSubscription.findById(sub._id)
+                            .select('stripeSubscriptionId pendingDowngrade')
+                            .lean();
+                        if (
+                            !current
+                            || current.stripeSubscriptionId !== subscription.id
+                            || current.pendingDowngrade?.toPlan !== 'starter'
+                        ) {
+                            // The first delivery already completed the transition.
+                            break;
+                        }
+                        const inProgressError = new Error('This downgrade webhook transition is already being processed.');
+                        inProgressError.code = 'DOWNGRADE_TRANSITION_IN_PROGRESS';
+                        throw inProgressError;
+                    }
+                    sub = transitionClaim;
+
                     // Auto-create a new Starter subscription via Stripe
                     try {
                         // Ensure customer has a default payment method
@@ -812,7 +985,11 @@ exports.handleWebhook = async (event) => {
                             subCreateParams.default_payment_method = defaultPaymentMethod;
                         }
 
-                        const newSubscription = await stripe.subscriptions.create(subCreateParams);
+                        const newSubscription = await stripe.subscriptions.create(subCreateParams, {
+                            // Stable across Stripe retries and even distinct
+                            // deletion events for the same ended subscription.
+                            idempotencyKey: `rozare-downgrade-${sub._id}-${subscription.id}`,
+                        });
 
                         // Update local subscription to Starter
                         sub.status = 'active';
@@ -853,6 +1030,8 @@ exports.handleWebhook = async (event) => {
                             category: 'subscription',
                             linkTo: '/seller-dashboard/subscription',
                             source: 'system',
+                            targetRole: 'seller',
+                            audience: 'specific',
                         }).catch(e => console.error('Downgrade complete notification failed:', e.message));
 
                         const user = await User.findById(sub.seller);
@@ -885,7 +1064,26 @@ exports.handleWebhook = async (event) => {
                         break;
                     } catch (downgradeErr) {
                         console.error('Auto-downgrade to Starter failed:', downgradeErr);
-                        // Fall through to regular block behavior if Stripe fails
+                        await SellerSubscription.updateOne(
+                            {
+                                _id: sub._id,
+                                stripeSubscriptionId: subscription.id,
+                                'pendingDowngrade.processingToken': transitionToken,
+                            },
+                            {
+                                $set: {
+                                    'pendingDowngrade.processingToken': null,
+                                    'pendingDowngrade.processingEventId': null,
+                                    'pendingDowngrade.processingStartedAt': null,
+                                },
+                            }
+                        ).catch(releaseError => {
+                            console.error('Failed to release downgrade transition claim:', releaseError.message);
+                        });
+                        // Stripe must retry a failed paid-plan transition. Falling
+                        // through would incorrectly block a seller who requested
+                        // a downgrade rather than a cancellation.
+                        throw downgradeErr;
                     }
                 }
 
@@ -955,6 +1153,8 @@ exports.handleWebhook = async (event) => {
                 category: 'subscription',
                 linkTo: '/seller-dashboard/subscription',
                 source: 'system',
+                targetRole: 'seller',
+                audience: 'specific',
             }).catch(e => console.error('Subscription end notification failed:', e.message));
 
             // Send grace period email if applicable
@@ -1056,6 +1256,8 @@ exports.handleWebhook = async (event) => {
                         category: 'subscription',
                         linkTo: '/seller-dashboard/subscription',
                         source: 'system',
+                        targetRole: 'seller',
+                        audience: 'specific',
                     }).catch(e => console.error('Payment success notification failed:', e.message));
 
                     // WhatsApp notification to seller (fire-and-forget)
@@ -1248,6 +1450,8 @@ exports.upgradeToElite = async (req, res) => {
             category: 'subscription',
             linkTo: '/seller-dashboard/subscription',
             source: 'system',
+            targetRole: 'seller',
+            audience: 'specific',
         }).catch(e => console.error('Upgrade notification failed:', e.message));
 
         res.json({
@@ -1360,6 +1564,8 @@ exports.downgradeToStarter = async (req, res) => {
             category: 'subscription',
             linkTo: '/seller-dashboard/subscription',
             source: 'system',
+            targetRole: 'seller',
+            audience: 'specific',
         }).catch(e => console.error('Downgrade notification failed:', e.message));
 
         res.json({
@@ -1459,6 +1665,8 @@ exports.processTrialExpirations = async () => {
                 category: 'subscription',
                 linkTo: '/seller-dashboard/subscription',
                 source: 'system',
+                targetRole: 'seller',
+                audience: 'specific',
             }).catch(e => console.error('Warning notification failed:', e.message));
 
             sub.warningEmailSent = true;
@@ -1525,6 +1733,8 @@ exports.processTrialExpirations = async () => {
                 category: 'subscription',
                 linkTo: '/seller-dashboard/subscription',
                 source: 'system',
+                targetRole: 'seller',
+                audience: 'specific',
             }).catch(e => console.error('Block notification failed:', e.message));
 
             // ── Cart cleanup: remove this seller's products from ALL customer carts ──
@@ -1580,6 +1790,8 @@ exports.processTrialExpirations = async () => {
                 category: 'subscription',
                 linkTo: '/seller-dashboard/subscription',
                 source: 'system',
+                targetRole: 'seller',
+                audience: 'specific',
             }).catch(e => console.error('Sub expiry warning notification failed:', e.message));
 
             sub.warningEmailSent = true;
@@ -1636,6 +1848,8 @@ exports.processTrialExpirations = async () => {
                 category: 'subscription',
                 linkTo: '/seller-dashboard/subscription',
                 source: 'system',
+                targetRole: 'seller',
+                audience: 'specific',
             }).catch(e => console.error('Bonus expiry warning notification failed:', e.message));
 
             sub.bonusExpiryWarningEmailSent = true;
@@ -1665,6 +1879,8 @@ exports.processTrialExpirations = async () => {
                 category: 'subscription',
                 linkTo: '/seller-dashboard/subscription',
                 source: 'system',
+                targetRole: 'seller',
+                audience: 'specific',
             }).catch(e => console.error('Bonus expired notification failed:', e.message));
 
             if (user?.email) {
@@ -1725,6 +1941,8 @@ exports.processTrialExpirations = async () => {
                 category: 'subscription',
                 linkTo: '/seller-dashboard/subscription',
                 source: 'system',
+                targetRole: 'seller',
+                audience: 'specific',
             }).catch(e => console.error('Grace expiry notification failed:', e.message));
 
             if (user?.email) {

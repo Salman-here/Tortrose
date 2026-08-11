@@ -79,6 +79,8 @@ const notifySellerReturnRequested = async (returnRequest, order) => {
       category: 'order',
       linkTo: sellerReturnLink(current),
       source: 'system',
+      targetRole: 'seller',
+      audience: 'specific',
     }),
     sendPushToUser(current.seller, {
       title: 'New return request',
@@ -128,6 +130,10 @@ const notifyBuyerReturnStatus = async (returnRequest, order, note = '') => {
       category: 'order',
       linkTo: buyerReturnLink(current),
       source: 'system',
+      // Sellers can also purchase as buyers, so buyer transaction updates are
+      // intentionally valid for both shopping-capable roles.
+      targetRole: 'both',
+      audience: 'specific',
     }),
     sendPushToUser(current.buyer, {
       title: label,
@@ -176,6 +182,8 @@ const notifySellerReturnSettled = async (returnRequest) => {
       category: 'seller',
       linkTo: sellerReturnLink(returnRequest),
       source: 'system',
+      targetRole: 'seller',
+      audience: 'specific',
     }),
     notifySeller(
       returnRequest.seller,

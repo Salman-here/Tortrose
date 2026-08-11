@@ -23,6 +23,7 @@ const userSchema = mongoose.Schema({
     sellerInfo: {
         phoneNumber: { type: String },
         whatsappNumber: { type: String },           // separate WhatsApp number, E.164 format
+        whatsappDigits: { type: String, select: false }, // canonical uniqueness key, digits only
         whatsappVerified: { type: Boolean, default: false }, // verified via OTP
         address: { type: String },
         city: { type: String },
@@ -151,7 +152,14 @@ userSchema.virtual('store', {
 // Unique sparse index: only one user can link a given WhatsApp number
 userSchema.index(
     { 'whatsappInfo.number': 1 },
-    { unique: true, sparse: true, partialFilterExpression: { 'whatsappInfo.number': { $gt: '' } } }
+    { unique: true, partialFilterExpression: { 'whatsappInfo.number': { $gt: '' } } }
+);
+userSchema.index(
+    { 'sellerInfo.whatsappDigits': 1 },
+    {
+        unique: true,
+        partialFilterExpression: { 'sellerInfo.whatsappDigits': { $type: 'string', $gt: '' } },
+    }
 );
 userSchema.index(
     { 'stripeCustomers.test': 1 },

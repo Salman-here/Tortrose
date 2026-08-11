@@ -1,8 +1,20 @@
 
 const express = require('express')
-const { getUsers, toggleBlockUser, unblockSellerSubscription, toggleAdminUser, deleteUser, deleteOwnAccount, getSingle, updateUser, becomeSeller, getShippingInfo, updateShippingInfo, getAddresses, addAddress, updateAddress, deleteAddress, setDefaultAddress, savePushToken, removePushToken, initiateWhatsAppChange, verifyWhatsAppChange, initiateEmailChange, verifyEmailChange } = require('../controllers/userController')
+const { rateLimit } = require('express-rate-limit')
+const { getUsers, toggleBlockUser, unblockSellerSubscription, toggleAdminUser, deleteUser, deleteOwnAccount, getSingle, updateUser, becomeSeller, getShippingInfo, updateShippingInfo, getAddresses, addAddress, updateAddress, deleteAddress, setDefaultAddress, savePushToken, removePushToken, revokePushToken, initiateWhatsAppChange, verifyWhatsAppChange, initiateEmailChange, verifyEmailChange } = require('../controllers/userController')
 const verifyToken = require('../middleware/authMiddleware')
+const {
+    emailChangeInitiateLimiter,
+    emailChangeVerifyLimiter,
+} = require('../middleware/sellerProfileVerificationLimiter')
 const router = express.Router()
+const pushTokenRevokeLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 60,
+    standardHeaders: 'draft-8',
+    legacyHeaders: false,
+    message: { msg: 'Too many push-token revocation attempts. Please try again later.' },
+})
 
 router.get('/get', verifyToken, getUsers)
 router.patch('/block-toggle/:id' , verifyToken, toggleBlockUser)
@@ -23,8 +35,8 @@ router.post('/seller/change-whatsapp/initiate', verifyToken, initiateWhatsAppCha
 router.post('/seller/change-whatsapp/verify', verifyToken, verifyWhatsAppChange)
 
 // Seller profile — change email
-router.post('/seller/change-email/initiate', verifyToken, initiateEmailChange)
-router.post('/seller/change-email/verify', verifyToken, verifyEmailChange)
+router.post('/seller/change-email/initiate', verifyToken, emailChangeInitiateLimiter, initiateEmailChange)
+router.post('/seller/change-email/verify', verifyToken, emailChangeVerifyLimiter, verifyEmailChange)
 
 // Shipping info (single default for back-compat)
 router.get('/shipping-info', verifyToken, getShippingInfo)
@@ -40,5 +52,6 @@ router.patch('/addresses/:addressId/default', verifyToken, setDefaultAddress)
 // Expo push notification token registration
 router.post('/push-token', verifyToken, savePushToken)
 router.delete('/push-token', verifyToken, removePushToken)
+router.post('/push-token/revoke', pushTokenRevokeLimiter, revokePushToken)
 
 module.exports = router

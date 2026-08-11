@@ -5,9 +5,9 @@
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView,
-  Alert, Platform, Modal, ActivityIndicator,
+  Alert, Platform, Modal, ActivityIndicator, Switch,
 } from 'react-native';
-import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
@@ -16,27 +16,38 @@ import SmartTagGenerator from '../../components/SmartTagGenerator';
 import Loader from '../../components/common/Loader';
 import GlassBackground from '../../components/common/GlassBackground';
 import GlassPanel from '../../components/common/GlassPanel';
+import KeyboardAwareFormScrollView from '../../components/common/KeyboardAwareFormScrollView';
+import {
+  SellerInlineError,
+  SellerScreenHeader,
+  SellerScreenSkeleton,
+  SellerSectionHeader,
+} from '../../components/seller/SellerUI';
 import { spacing, fontSize, borderRadius, fontWeight, typography } from '../../styles/theme';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useCurrency } from '../../contexts/CurrencyContext';
 import { PRESET_CATEGORIES, isPresetCategory, MAX_TAGS, MAX_DESCRIPTION_LENGTH } from '../../utils/categories';
+import {
+  DEFAULT_PRODUCT_RETURN_POLICY,
+  buildProductImagePayload,
+  buildProductPayload,
+  buildProductReturnPolicy,
+  getProductFormMode,
+  normalizeInitialProductImages,
+  normalizeProductImageUri,
+  validateProductFormContract,
+} from '../../utils/productFormContract';
 
-export const getFormMode = (product) => product && product._id ? 'edit' : 'create';
+export const getFormMode = getProductFormMode;
+export const normalizeInitialImages = normalizeInitialProductImages;
+export { buildProductImagePayload, buildProductPayload, buildProductReturnPolicy };
+export const validateProductForm = validateProductFormContract;
 
-export const validateProductForm = (data) => {
-  const errors = {};
-  if (!data.name?.trim()) errors.name = 'Product name is required';
-  else if (data.name.length < 3) errors.name = 'Min 3 characters';
-  if (!data.price || isNaN(parseFloat(data.price)) || parseFloat(data.price) <= 0) errors.price = 'Valid price required';
-  if (!data.stock || isNaN(parseInt(data.stock)) || parseInt(data.stock) < 0) errors.stock = 'Valid stock required';
-  return { isValid: Object.keys(errors).length === 0, errors };
-};
-
-const normalizeImageUri = (image) => {
-  if (!image) return '';
-  if (typeof image === 'string') return image;
-  return image.url || image.secure_url || image.imageUrl || image.uri || '';
-};
+const REFUND_TYPES = [
+  { value: 'full_refund', label: 'Full refund', icon: 'cash-outline' },
+  { value: 'store_credit', label: 'Store credit', icon: 'wallet-outline' },
+  { value: 'replacement_only', label: 'Replacement', icon: 'swap-horizontal-outline' },
+];
 
 const isRemoteImage = (uri) => /^https?:\/\//i.test(String(uri || ''));
 
@@ -62,9 +73,19 @@ export default function ProductFormScreen({ navigation, route }) {
     price: product?.price?.toString() || '', discountedPrice: product?.discountedPrice?.toString() || '',
     stock: product?.stock?.toString() || '', category: product?.category || '', brand: product?.brand || '',
   });
-  const [images, setImages] = useState((product?.images || (product?.image ? [product.image] : [])).map(normalizeImageUri).filter(Boolean));
+  const [images, setImages] = useState(() => normalizeInitialProductImages(product));
   const [tags, setTags] = useState(product?.tags || []);
   const [optionGroups, setOptionGroups] = useState(product?.optionGroups || []);
+  const [returnPolicy, setReturnPolicy] = useState(() => ({
+    ...DEFAULT_PRODUCT_RETURN_POLICY,
+    ...(product?.returnPolicy || {}),
+    returnDuration: product?.returnPolicy?.returnDuration
+      ? String(product.returnPolicy.returnDuration)
+      : '',
+    warrantyDuration: product?.returnPolicy?.warrantyDuration
+      ? String(product.returnPolicy.warrantyDuration)
+      : '',
+  }));
   const [newGroupName, setNewGroupName] = useState('');
   const [valueDrafts, setValueDrafts] = useState({});
   const [errors, setErrors] = useState({});
@@ -79,6 +100,8 @@ export default function ProductFormScreen({ navigation, route }) {
     canAddProduct: true,
   });
   const [productCurrencyLoading, setProductCurrencyLoading] = useState(!isAdmin && !isEditMode);
+  const [productCurrencyError, setProductCurrencyError] = useState('');
+  const [productCurrencyReloadKey, setProductCurrencyReloadKey] = useState(0);
 
   // Category combobox
   const [showCategoryPicker, setShowCategoryPicker] = useState(false);
@@ -93,6 +116,11 @@ export default function ProductFormScreen({ navigation, route }) {
   // AI tag generator
   const [generatingTags, setGeneratingTags] = useState(false);
 
+  const handleBack = useCallback(() => {
+    if (navigation.canGoBack?.()) navigation.goBack();
+    else navigation.navigate('SellerProductManagement', { isAdmin });
+  }, [isAdmin, navigation]);
+
   const filteredCategories = useMemo(() => {
     const q = categorySearch.trim().toLowerCase();
     if (!q) return PRESET_CATEGORIES;
@@ -104,7 +132,11 @@ export default function ProductFormScreen({ navigation, route }) {
     ? initialProductCurrency
     : normalizeCurrency(productCurrencyInfo.activeCurrency || accountCurrency || 'USD');
   const productCurrencySymbol = currencies[productCurrency]?.symbol || productCurrency;
-  const creationBlockedByCurrency = !isEditMode && !isAdmin && productCurrencyInfo.status === 'pending_conversion';
+  const creationBlockedByCurrency = !isEditMode && !isAdmin && (
+    productCurrencyInfo.status === 'pending_conversion'
+    || productCurrencyInfo.canAddProduct === false
+    || !!productCurrencyError
+  );
 
   // Fetch featured product stats (entitlement + count/limit).
   useEffect(() => {
@@ -116,12 +148,12 @@ export default function ProductFormScreen({ navigation, route }) {
         const stats = res.data;
         if (!cancelled) {
           setFeaturedStats(stats);
-          setCanFeature(stats.allowed || stats.current < stats.max);
+          setCanFeature(!!product?.isFeatured || stats.allowed || stats.current < stats.max);
         }
-      } catch { if (!cancelled) setCanFeature(false); }
+      } catch { if (!cancelled) setCanFeature(!!product?.isFeatured); }
     })();
     return () => { cancelled = true; };
-  }, [isAdmin]);
+  }, [isAdmin, product?.isFeatured]);
 
   useEffect(() => {
     if (isAdmin || isEditMode) {
@@ -132,6 +164,7 @@ export default function ProductFormScreen({ navigation, route }) {
     let cancelled = false;
     (async () => {
       setProductCurrencyLoading(true);
+      setProductCurrencyError('');
       try {
         const res = await api.get(API_ENDPOINTS.STORES.PRODUCT_CURRENCY);
         const info = res.data?.productCurrency || {};
@@ -141,13 +174,17 @@ export default function ProductFormScreen({ navigation, route }) {
             activeCurrency: normalizeCurrency(info.activeCurrency || accountCurrency || 'USD'),
           });
         }
-      } catch (_) {
+      } catch (error) {
         if (!cancelled) {
-          setProductCurrencyInfo({
-            activeCurrency: normalizeCurrency(accountCurrency || 'USD'),
-            status: 'active',
-            canAddProduct: true,
-          });
+          setProductCurrencyInfo((previous) => ({
+            ...previous,
+            status: 'unavailable',
+            canAddProduct: false,
+          }));
+          setProductCurrencyError(
+            error.response?.data?.msg
+            || 'We could not verify your product currency. Retry before creating this listing.'
+          );
         }
       } finally {
         if (!cancelled) setProductCurrencyLoading(false);
@@ -155,7 +192,7 @@ export default function ProductFormScreen({ navigation, route }) {
     })();
 
     return () => { cancelled = true; };
-  }, [accountCurrency, isAdmin, isEditMode, normalizeCurrency]);
+  }, [accountCurrency, isAdmin, isEditMode, normalizeCurrency, productCurrencyReloadKey]);
 
   const updateField = useCallback((field, value) => {
     setFormData(prev => ({ ...prev, [field]: value }));
@@ -165,14 +202,34 @@ export default function ProductFormScreen({ navigation, route }) {
   const pickImage = useCallback(async () => {
     try {
       const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, allowsMultipleSelection: true, quality: 0.8, aspect: [1, 1] });
-      if (!result.canceled && result.assets) setImages(prev => [...prev, ...result.assets.map(a => a.uri)].slice(0, 5));
+      if (!result.canceled && result.assets) {
+        setImages((previous) => [...new Set([
+          ...previous.map(normalizeProductImageUri),
+          ...result.assets.map((asset) => normalizeProductImageUri(asset)),
+        ].filter(Boolean))].slice(0, 5));
+        setErrors((previous) => ({ ...previous, images: null }));
+      }
     } catch (e) { Alert.alert('Error', 'Failed to pick image'); }
   }, []);
 
   const removeImage = useCallback((index) => { setImages(prev => prev.filter((_, i) => i !== index)); }, []);
 
+  const makePrimaryImage = useCallback((index) => {
+    if (index <= 0) return;
+    setImages((previous) => {
+      const next = [...previous];
+      const [selected] = next.splice(index, 1);
+      return selected ? [selected, ...next] : previous;
+    });
+  }, []);
+
+  const updateReturnPolicy = useCallback((field, value) => {
+    setReturnPolicy((previous) => ({ ...previous, [field]: value }));
+    if (errors[field]) setErrors((previous) => ({ ...previous, [field]: null }));
+  }, [errors]);
+
   const uploadProductImage = async (uri) => {
-    const cleanUri = normalizeImageUri(uri);
+    const cleanUri = normalizeProductImageUri(uri);
     if (!cleanUri || isRemoteImage(cleanUri)) return cleanUri;
 
     const formData = new FormData();
@@ -191,7 +248,7 @@ export default function ProductFormScreen({ navigation, route }) {
   };
 
   const prepareImagesForSave = async () => {
-    const normalized = images.map(normalizeImageUri).filter(Boolean).slice(0, 5);
+    const normalized = images.map(normalizeProductImageUri).filter(Boolean).slice(0, 5);
     const uploaded = await Promise.all(normalized.map(uploadProductImage));
     return uploaded.filter(Boolean);
   };
@@ -246,42 +303,85 @@ export default function ProductFormScreen({ navigation, route }) {
   const saveProduct = async () => {
     if (creationBlockedByCurrency) {
       Alert.alert(
-        'Product currency needs conversion',
-        productCurrencyInfo.message || `Convert existing products to ${productCurrencyInfo.pendingCurrency || productCurrency}, or cancel the pending currency change before adding new products.`
+        productCurrencyInfo.status === 'pending_conversion' ? 'Product currency needs conversion' : 'Product currency unavailable',
+        productCurrencyError
+          || productCurrencyInfo.message
+          || `Convert existing products to ${productCurrencyInfo.pendingCurrency || productCurrency}, or cancel the pending currency change before adding new products.`
       );
       return;
     }
 
-    const validation = validateProductForm(formData);
-    if (!validation.isValid) { setErrors(validation.errors); setTouched({ name: true, price: true, stock: true }); return; }
+    const validation = validateProductForm(formData, { images, returnPolicy });
+    if (!validation.isValid) {
+      setErrors(validation.errors);
+      setTouched({
+        name: true,
+        description: true,
+        price: true,
+        discountedPrice: true,
+        stock: true,
+        category: true,
+        brand: true,
+      });
+      Alert.alert('Check product details', 'Complete the highlighted fields before saving.');
+      return;
+    }
     setLoading(true);
     try {
       const uploadedImages = await prepareImagesForSave();
-      const price = parseFloat(formData.price);
-      const discountedPrice = formData.discountedPrice ? parseFloat(formData.discountedPrice) : 0;
-      const safeDiscountedPrice = Number.isFinite(discountedPrice) ? discountedPrice : 0;
-      const productData = {
-        name: formData.name.trim(),
-        description: formData.description.trim().slice(0, MAX_DESCRIPTION_LENGTH),
-        price,
-        discountedPrice: safeDiscountedPrice,
+      const productData = buildProductPayload({
+        data: formData,
+        uploadedImages,
         currency: productCurrency,
-        priceCurrency: productCurrency,
-        priceInputAmount: price,
-        discountedPriceCurrency: productCurrency,
-        discountedPriceInputAmount: safeDiscountedPrice,
-        stock: parseInt(formData.stock, 10),
-        category: formData.category.trim(),
-        brand: formData.brand.trim(),
-        image: uploadedImages[0] || '',
-        images: uploadedImages,
-        tags: tags.slice(0, MAX_TAGS),
-        optionGroups: optionGroups.filter(g => g.name && g.values.length > 0),
+        tags,
+        optionGroups,
+        returnPolicy,
         isFeatured: canFeature ? isFeatured : false,
-      };
-      if (isEditMode) { await api.put(`${API_ENDPOINTS.PRODUCTS.UPDATE}/${product._id}`, { product: productData }); Alert.alert('Success', 'Product updated', [{ text: 'OK', onPress: () => navigation.goBack() }]); }
-      else { await api.post(API_ENDPOINTS.PRODUCTS.CREATE, { product: productData }); Alert.alert('Success', 'Product created', [{ text: 'OK', onPress: () => navigation.goBack() }]); }
-    } catch (e) { Alert.alert('Error', e.response?.data?.message || e.response?.data?.msg || 'Failed to save'); }
+      });
+      if (!productData.image) {
+        throw new Error('At least one product image is required.');
+      }
+      const response = isEditMode
+        ? await api.put(`${API_ENDPOINTS.PRODUCTS.UPDATE}/${product._id}`, { product: productData })
+        : await api.post(API_ENDPOINTS.PRODUCTS.CREATE, { product: productData });
+      setImages(uploadedImages);
+      const blocked = response.data?.blocked === true;
+      const serverMessage = response.data?.msg;
+      const moderationReason = response.data?.moderationReason
+        || response.data?.product?.blockedReason
+        || response.data?.product?.moderationReason;
+
+      if (blocked) {
+        const savedProduct = response.data?.product;
+        const keepEditing = () => {
+          if (isEditMode || !savedProduct?._id) return;
+          navigation.replace('ProductForm', { product: savedProduct, isAdmin });
+        };
+        const moderationMessage = serverMessage
+          ? `${serverMessage}${moderationReason && !serverMessage.includes(moderationReason) ? `\n\nReason: ${moderationReason}` : ''}`
+          : `This product needs changes before customers can see it.${moderationReason ? `\n\nReason: ${moderationReason}` : ''}`;
+        Alert.alert(
+          'Product saved but hidden',
+          moderationMessage,
+          [
+            { text: 'Keep Editing', style: 'cancel', onPress: keepEditing },
+            { text: 'View Products', onPress: handleBack },
+          ]
+        );
+      } else {
+        Alert.alert(
+          isEditMode ? 'Product updated' : 'Product created',
+          serverMessage || `Your product is ${isEditMode ? 'updated' : 'ready'} and visible according to your store status.`,
+          [{ text: 'Done', onPress: handleBack }]
+        );
+      }
+    } catch (e) {
+      if (e.response?.data?.featuredStats) {
+        setFeaturedStats(e.response.data.featuredStats);
+        setCanFeature(false);
+      }
+      Alert.alert('Could not save product', e.response?.data?.message || e.response?.data?.msg || e.message || 'Please try again.');
+    }
     finally { setLoading(false); }
   };
 
@@ -296,6 +396,7 @@ export default function ProductFormScreen({ navigation, route }) {
           <TextInput style={[styles.input, multiline && styles.textArea, prefix && { paddingLeft: spacing.xs }]}
             value={formData[field]} onChangeText={(v) => updateField(field, v)} onBlur={() => setTouched(p => ({ ...p, [field]: true }))}
             placeholder={placeholder} placeholderTextColor={palette.colors.textSecondary} keyboardType={keyboardType}
+            accessibilityLabel={label}
             multiline={multiline} numberOfLines={multiline ? 4 : 1} textAlignVertical={multiline ? 'top' : 'center'} />
         </View>
         {hasError && <Text style={styles.errorText}>{errors[field]}</Text>}
@@ -303,34 +404,88 @@ export default function ProductFormScreen({ navigation, route }) {
     );
   };
 
+  if (productCurrencyLoading) {
+    return (
+      <SellerScreenSkeleton
+        navigation={navigation}
+        title={isEditMode ? 'Edit Product' : 'Add Product'}
+        subtitle="Preparing product details"
+        icon={isEditMode ? 'create-outline' : 'add-circle-outline'}
+        variant="form"
+      />
+    );
+  }
+
   return (
     <GlassBackground>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
-        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
-          <GlassPanel variant="floating" style={styles.header}>
-            <View style={styles.headerIcon}><Ionicons name={isEditMode ? 'create-outline' : 'add-circle-outline'} size={28} color={palette.colors.primary} /></View>
-            <Text style={styles.headerTitle}>{isEditMode ? 'Edit Product' : 'Add New Product'}</Text>
-            <Text style={styles.headerSubtitle}>{isEditMode ? 'Update your product details' : 'Fill in the details'}</Text>
-          </GlassPanel>
-
+      <SafeAreaView
+        style={styles.safeArea}
+        edges={Platform.OS === 'android' ? [] : ['top']}
+      >
+        <SellerScreenHeader
+          navigation={navigation}
+          title={isEditMode ? 'Edit Product' : 'Add Product'}
+          subtitle={isEditMode ? 'Keep your catalog accurate and conversion-ready' : 'Create a polished marketplace listing'}
+          icon={isEditMode ? 'create-outline' : 'add-circle-outline'}
+          onBack={handleBack}
+        />
+        <KeyboardAwareFormScrollView contentContainerStyle={styles.scroll}>
+          {!!productCurrencyError && !isEditMode && !isAdmin && (
+            <View style={styles.inlineErrorWrap}>
+              <SellerInlineError
+                title="Product currency unavailable"
+                message={productCurrencyError}
+                onRetry={() => setProductCurrencyReloadKey((value) => value + 1)}
+              />
+            </View>
+          )}
           <GlassPanel variant="card" style={styles.section}>
-            <Text style={styles.sectionTitle}>Product Images</Text>
+            <SellerSectionHeader
+              title="Product Images"
+              subtitle="Add up to 5 clear photos. The first image is your marketplace cover."
+              icon="images-outline"
+            />
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.imagesContainer}>
               {images.map((uri, index) => (
                 <View key={index} style={styles.imageWrapper}>
-                  <Image source={{ uri }} style={styles.imagePreview} contentFit="cover" />
-                  <TouchableOpacity style={styles.removeImageButton} onPress={() => removeImage(index)}>
+                  <TouchableOpacity
+                    onPress={() => makePrimaryImage(index)}
+                    activeOpacity={0.84}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: index === 0 }}
+                    accessibilityLabel={index === 0 ? 'Primary product image' : `Set product image ${index + 1} as primary`}
+                  >
+                    <Image source={{ uri }} style={[styles.imagePreview, index === 0 && styles.primaryImage]} contentFit="cover" />
+                    <View style={[styles.imageLabel, index === 0 && styles.primaryImageLabel]}>
+                      <Ionicons name={index === 0 ? 'star' : 'star-outline'} size={11} color={index === 0 ? '#fff' : palette.colors.text} />
+                      <Text style={[styles.imageLabelText, index === 0 && { color: '#fff' }]}>{index === 0 ? 'Main' : 'Make main'}</Text>
+                    </View>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.removeImageButton}
+                    onPress={() => removeImage(index)}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Remove product image ${index + 1}`}
+                  >
                     <Ionicons name="close" size={16} color="white" />
                   </TouchableOpacity>
                 </View>
               ))}
               {images.length < 5 && (
-                <TouchableOpacity style={styles.addImageButton} onPress={pickImage} activeOpacity={0.7}>
+                <TouchableOpacity
+                  style={styles.addImageButton}
+                  onPress={pickImage}
+                  activeOpacity={0.7}
+                  accessibilityRole="button"
+                  accessibilityLabel="Add product photos"
+                  accessibilityHint={`${5 - images.length} photo slots remaining`}
+                >
                   <Ionicons name="camera-outline" size={28} color={palette.colors.primary} />
                   <Text style={styles.addImageText}>Add Photo</Text>
                 </TouchableOpacity>
               )}
             </ScrollView>
+            {!!errors.images && <Text style={styles.errorText}>{errors.images}</Text>}
           </GlassPanel>
 
           <GlassPanel variant="card" style={styles.section}>
@@ -353,7 +508,7 @@ export default function ProductFormScreen({ navigation, route }) {
             {/* Description with AI improver */}
             <View style={styles.inputGroup}>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.sm }}>
-                <Text style={styles.label}>Description</Text>
+                <Text style={styles.label}>Description <Text style={{ color: palette.colors.error }}>*</Text></Text>
                 <Text style={{ fontSize: fontSize.xs, color: (formData.description?.length || 0) >= MAX_DESCRIPTION_LENGTH ? palette.colors.error : palette.colors.textSecondary }}>
                   {formData.description?.length || 0}/{MAX_DESCRIPTION_LENGTH}
                 </Text>
@@ -363,14 +518,17 @@ export default function ProductFormScreen({ navigation, route }) {
                   style={[styles.input, styles.textArea]}
                   value={formData.description}
                   onChangeText={(v) => updateField('description', v.slice(0, MAX_DESCRIPTION_LENGTH))}
+                  onBlur={() => setTouched(p => ({ ...p, description: true }))}
                   placeholder="Describe your product..."
                   placeholderTextColor={palette.colors.textSecondary}
                   multiline
                   numberOfLines={5}
                   textAlignVertical="top"
                   maxLength={MAX_DESCRIPTION_LENGTH}
+                  accessibilityLabel="Product description"
                 />
               </View>
+              {touched.description && errors.description && <Text style={styles.errorText}>{errors.description}</Text>}
               <View style={{ flexDirection: 'row', gap: spacing.sm, marginTop: spacing.sm, flexWrap: 'wrap' }}>
                 <TouchableOpacity
                   onPress={handleImproveDescription}
@@ -406,6 +564,7 @@ export default function ProductFormScreen({ navigation, route }) {
                       placeholder="0.00"
                       placeholderTextColor={palette.colors.textSecondary}
                       keyboardType="decimal-pad"
+                      accessibilityLabel="Regular product price"
                     />
                   </View>
                   {touched.price && errors.price && <Text style={styles.errorText}>{errors.price}</Text>}
@@ -417,11 +576,14 @@ export default function ProductFormScreen({ navigation, route }) {
 
             {/* Category combobox */}
             <View style={styles.inputGroup}>
-              <Text style={styles.label}>Category</Text>
+              <Text style={styles.label}>Category <Text style={{ color: palette.colors.error }}>*</Text></Text>
               <TouchableOpacity
                 activeOpacity={0.8}
                 onPress={() => { setCategorySearch(''); setShowCategoryPicker(true); }}
-                style={[styles.inputContainer, { paddingHorizontal: spacing.md, paddingVertical: spacing.md, justifyContent: 'space-between' }]}>
+                accessibilityRole="button"
+                accessibilityLabel="Choose product category"
+                accessibilityValue={{ text: formData.category || 'No category selected' }}
+                style={[styles.inputContainer, touched.category && errors.category && styles.inputError, { paddingHorizontal: spacing.md, paddingVertical: spacing.md, justifyContent: 'space-between' }]}>
                 <Text style={{ flex: 1, fontSize: fontSize.md, color: formData.category ? palette.colors.text : palette.colors.textSecondary }} numberOfLines={1}>
                   {formData.category || 'Choose a category'}
                 </Text>
@@ -430,9 +592,10 @@ export default function ProductFormScreen({ navigation, route }) {
               {formData.category && !isPresetCategory(formData.category) && (
                 <Text style={{ fontSize: fontSize.xs, color: palette.colors.textSecondary, marginTop: 4 }}>Custom category</Text>
               )}
+              {touched.category && errors.category && <Text style={styles.errorText}>{errors.category}</Text>}
             </View>
 
-            {renderInput('brand', 'Brand', { placeholder: 'e.g., Apple' })}
+            {renderInput('brand', 'Brand', { placeholder: 'e.g., Apple', required: true })}
           </GlassPanel>
 
           {/* Product Options (Size, Color, Material, etc.) */}
@@ -530,6 +693,161 @@ export default function ProductFormScreen({ navigation, route }) {
             />
           </GlassPanel>
 
+          <GlassPanel variant="card" style={styles.section}>
+            <SellerSectionHeader
+              title="Returns & Warranty"
+              subtitle="Use your store policy or define a product-specific promise."
+              icon="shield-checkmark-outline"
+            />
+
+            <View style={styles.policyModeCard}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.policyModeTitle}>Use store default policy</Text>
+                <Text style={styles.policyModeText}>Recommended for a consistent customer experience across your catalog.</Text>
+              </View>
+              <Switch
+                value={returnPolicy.useStorePolicy !== false}
+                onValueChange={(value) => updateReturnPolicy('useStorePolicy', value)}
+                accessibilityLabel="Use store default return policy"
+                trackColor={{ false: palette.colors.grayLighter, true: palette.colors.primaryLight }}
+                thumbColor={returnPolicy.useStorePolicy !== false ? palette.colors.primary : palette.colors.grayLight}
+              />
+            </View>
+
+            {returnPolicy.useStorePolicy === false && (
+              <View style={styles.customPolicyWrap}>
+                <View style={styles.policyToggleRow}>
+                  <View style={styles.policyToggleIcon}>
+                    <Ionicons name="return-down-back-outline" size={18} color={palette.colors.primary} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.policyToggleTitle}>Accept returns</Text>
+                    <Text style={styles.policyToggleText}>Let buyers request a return after delivery.</Text>
+                  </View>
+                  <Switch
+                    value={returnPolicy.returnsEnabled === true}
+                    onValueChange={(value) => updateReturnPolicy('returnsEnabled', value)}
+                    accessibilityLabel="Accept returns for this product"
+                    trackColor={{ false: palette.colors.grayLighter, true: palette.colors.primaryLight }}
+                    thumbColor={returnPolicy.returnsEnabled ? palette.colors.primary : palette.colors.grayLight}
+                  />
+                </View>
+
+                {returnPolicy.returnsEnabled && (
+                  <View style={styles.policyFields}>
+                    <View style={styles.inputGroup}>
+                      <Text style={styles.label}>Return window (days) <Text style={{ color: palette.colors.error }}>*</Text></Text>
+                      <View style={[styles.inputContainer, errors.returnDuration && styles.inputError]}>
+                        <TextInput
+                          style={styles.input}
+                          value={returnPolicy.returnDuration}
+                          onChangeText={(value) => updateReturnPolicy('returnDuration', value.replace(/[^0-9]/g, ''))}
+                          keyboardType="number-pad"
+                          placeholder="e.g., 14"
+                          placeholderTextColor={palette.colors.textSecondary}
+                          maxLength={3}
+                          accessibilityLabel="Return window in days"
+                        />
+                      </View>
+                      {!!errors.returnDuration && <Text style={styles.errorText}>{errors.returnDuration}</Text>}
+                    </View>
+
+                    <Text style={styles.label}>Approved return resolution <Text style={{ color: palette.colors.error }}>*</Text></Text>
+                    <View style={styles.refundTypeGrid}>
+                      {REFUND_TYPES.map((option) => {
+                        const active = returnPolicy.refundType === option.value;
+                        return (
+                          <TouchableOpacity
+                            key={option.value}
+                            style={[styles.refundTypeCard, active && styles.refundTypeCardActive]}
+                            onPress={() => updateReturnPolicy('refundType', option.value)}
+                            activeOpacity={0.76}
+                            accessibilityRole="button"
+                            accessibilityState={{ selected: active }}
+                            accessibilityLabel={`${option.label} return resolution`}
+                          >
+                            <Ionicons name={option.icon} size={17} color={active ? '#fff' : palette.colors.primary} />
+                            <Text style={[styles.refundTypeText, active && styles.refundTypeTextActive]}>{option.label}</Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                    {!!errors.refundType && <Text style={styles.errorText}>{errors.refundType}</Text>}
+
+                    <View style={styles.inputGroup}>
+                      <Text style={styles.label}>Return notes (optional)</Text>
+                      <View style={[styles.inputContainer, { alignItems: 'flex-start' }]}>
+                        <TextInput
+                          style={[styles.input, styles.compactTextArea]}
+                          value={returnPolicy.policyDescription}
+                          onChangeText={(value) => updateReturnPolicy('policyDescription', value.slice(0, 500))}
+                          multiline
+                          textAlignVertical="top"
+                          placeholder="Condition requirements, packaging, exclusions..."
+                          placeholderTextColor={palette.colors.textSecondary}
+                        />
+                      </View>
+                      <Text style={styles.characterHint}>{returnPolicy.policyDescription.length}/500</Text>
+                    </View>
+                  </View>
+                )}
+
+                <View style={[styles.policyToggleRow, styles.warrantyDivider]}>
+                  <View style={styles.policyToggleIcon}>
+                    <Ionicons name="ribbon-outline" size={18} color="#8B5CF6" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.policyToggleTitle}>Product warranty</Text>
+                    <Text style={styles.policyToggleText}>Offer repair, replacement, or coverage terms.</Text>
+                  </View>
+                  <Switch
+                    value={returnPolicy.warrantyEnabled === true}
+                    onValueChange={(value) => updateReturnPolicy('warrantyEnabled', value)}
+                    accessibilityLabel="Offer a warranty for this product"
+                    trackColor={{ false: palette.colors.grayLighter, true: palette.colors.primaryLight }}
+                    thumbColor={returnPolicy.warrantyEnabled ? palette.colors.primary : palette.colors.grayLight}
+                  />
+                </View>
+
+                {returnPolicy.warrantyEnabled && (
+                  <View style={styles.policyFields}>
+                    <View style={styles.inputGroup}>
+                      <Text style={styles.label}>Warranty duration (months) <Text style={{ color: palette.colors.error }}>*</Text></Text>
+                      <View style={[styles.inputContainer, errors.warrantyDuration && styles.inputError]}>
+                        <TextInput
+                          style={styles.input}
+                          value={returnPolicy.warrantyDuration}
+                          onChangeText={(value) => updateReturnPolicy('warrantyDuration', value.replace(/[^0-9]/g, ''))}
+                          keyboardType="number-pad"
+                          placeholder="e.g., 12"
+                          placeholderTextColor={palette.colors.textSecondary}
+                          maxLength={3}
+                          accessibilityLabel="Warranty duration in months"
+                        />
+                      </View>
+                      {!!errors.warrantyDuration && <Text style={styles.errorText}>{errors.warrantyDuration}</Text>}
+                    </View>
+                    <View style={styles.inputGroup}>
+                      <Text style={styles.label}>Warranty details (optional)</Text>
+                      <View style={[styles.inputContainer, { alignItems: 'flex-start' }]}>
+                        <TextInput
+                          style={[styles.input, styles.compactTextArea]}
+                          value={returnPolicy.warrantyDescription}
+                          onChangeText={(value) => updateReturnPolicy('warrantyDescription', value.slice(0, 200))}
+                          multiline
+                          textAlignVertical="top"
+                          placeholder="What is covered and how buyers can claim..."
+                          placeholderTextColor={palette.colors.textSecondary}
+                        />
+                      </View>
+                      <Text style={styles.characterHint}>{returnPolicy.warrantyDescription.length}/200</Text>
+                    </View>
+                  </View>
+                )}
+              </View>
+            )}
+          </GlassPanel>
+
           {/* Featured Product (Premium / Bonus) */}
           <GlassPanel variant="card" style={styles.section}>
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.md }}>
@@ -551,6 +869,9 @@ export default function ProductFormScreen({ navigation, route }) {
                 disabled={!canFeature || (!isFeatured && featuredStats.current >= featuredStats.max)}
                 onPress={() => setIsFeatured(v => !v)}
                 activeOpacity={0.8}
+                accessibilityRole="switch"
+                accessibilityState={{ checked: isFeatured, disabled: !canFeature }}
+                accessibilityLabel="Feature product on homepage"
                 style={{
                   width: 52, height: 30, borderRadius: 15, padding: 3,
                   backgroundColor: (canFeature && isFeatured) ? palette.colors.primary : 'rgba(255,255,255,0.12)',
@@ -572,7 +893,15 @@ export default function ProductFormScreen({ navigation, route }) {
           </GlassPanel>
 
           <View style={styles.submitContainer}>
-            <TouchableOpacity style={[styles.submitButton, (loading || productCurrencyLoading || creationBlockedByCurrency) && { opacity: 0.6 }]} onPress={saveProduct} disabled={loading || productCurrencyLoading || creationBlockedByCurrency} activeOpacity={0.8}>
+            <TouchableOpacity
+              style={[styles.submitButton, (loading || productCurrencyLoading || creationBlockedByCurrency) && { opacity: 0.6 }]}
+              onPress={saveProduct}
+              disabled={loading || productCurrencyLoading || creationBlockedByCurrency}
+              activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityState={{ disabled: loading || productCurrencyLoading || creationBlockedByCurrency, busy: loading }}
+              accessibilityLabel={isEditMode ? 'Update product' : 'Create product'}
+            >
               {loading ? <Loader size="small" color="white" /> : (
                 <><Ionicons name={isEditMode ? 'checkmark-circle' : 'add-circle'} size={22} color="white" />
                 <Text style={styles.submitButtonText}>{isEditMode ? 'Update' : 'Create'} Product</Text></>
@@ -580,8 +909,8 @@ export default function ProductFormScreen({ navigation, route }) {
             </TouchableOpacity>
           </View>
           <View style={{ height: 100 }} />
-        </ScrollView>
-      </KeyboardAvoidingView>
+        </KeyboardAwareFormScrollView>
+      </SafeAreaView>
 
       {/* Category Picker Modal */}
       <Modal visible={showCategoryPicker} transparent animationType="fade" onRequestClose={() => setShowCategoryPicker(false)}>
@@ -602,6 +931,7 @@ export default function ProductFormScreen({ navigation, route }) {
                 placeholder="Search categories..."
                 placeholderTextColor={palette.colors.textSecondary}
                 autoFocus
+                accessibilityLabel="Search product categories"
               />
             </View>
             <ScrollView style={{ maxHeight: 320 }} keyboardShouldPersistTaps="handled">
@@ -646,6 +976,7 @@ export default function ProductFormScreen({ navigation, route }) {
                 placeholderTextColor={palette.colors.textSecondary}
                 autoFocus
                 maxLength={40}
+                accessibilityLabel="Custom product category"
               />
             </View>
             <View style={{ flexDirection: 'row', gap: spacing.sm }}>
@@ -666,7 +997,9 @@ export default function ProductFormScreen({ navigation, route }) {
 }
 
 const buildStyles = (p) => StyleSheet.create({
-  scroll: { paddingBottom: spacing.xxl },
+  safeArea: { flex: 1 },
+  scroll: { width: '100%', maxWidth: 680, alignSelf: 'center', paddingBottom: spacing.xxl },
+  inlineErrorWrap: { marginHorizontal: spacing.lg, marginTop: spacing.md },
   header: { alignItems: 'center', margin: spacing.lg, padding: spacing.xl },
   headerIcon: { width: 60, height: 60, borderRadius: 30, backgroundColor: 'rgba(99,102,241,0.12)', justifyContent: 'center', alignItems: 'center', marginBottom: spacing.md },
   headerTitle: { ...typography.h2, color: p.colors.text, marginBottom: spacing.xs },
@@ -679,6 +1012,10 @@ const buildStyles = (p) => StyleSheet.create({
   imagesContainer: { gap: spacing.md },
   imageWrapper: { position: 'relative' },
   imagePreview: { width: 100, height: 100, borderRadius: borderRadius.lg, backgroundColor: 'rgba(255,255,255,0.06)' },
+  primaryImage: { borderWidth: 2, borderColor: p.colors.primary },
+  imageLabel: { position: 'absolute', left: 5, right: 5, bottom: 5, minHeight: 22, paddingHorizontal: 6, borderRadius: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 3, backgroundColor: p.glass.bgStrong },
+  primaryImageLabel: { backgroundColor: p.colors.primary },
+  imageLabelText: { fontSize: 9, fontWeight: fontWeight.bold, color: p.colors.text },
   removeImageButton: { position: 'absolute', top: -8, right: -8, width: 24, height: 24, borderRadius: 12, backgroundColor: p.colors.error, justifyContent: 'center', alignItems: 'center' },
   addImageButton: { width: 100, height: 100, borderRadius: borderRadius.lg, borderWidth: 2, borderColor: p.colors.primary, borderStyle: 'dashed', justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(99,102,241,0.08)' },
   addImageText: { ...typography.caption, color: p.colors.primary, marginTop: spacing.xs },
@@ -689,7 +1026,24 @@ const buildStyles = (p) => StyleSheet.create({
   inputPrefix: { ...typography.body, color: p.colors.textSecondary, paddingLeft: spacing.md },
   input: { flex: 1, padding: spacing.md, fontSize: fontSize.md, color: p.colors.text },
   textArea: { height: 100, textAlignVertical: 'top' },
+  compactTextArea: { minHeight: 88, textAlignVertical: 'top' },
   errorText: { ...typography.caption, color: p.colors.error, marginTop: spacing.xs },
+  characterHint: { ...typography.caption, color: p.colors.textSecondary, textAlign: 'right', marginTop: spacing.xs },
+  policyModeCard: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, padding: spacing.md, borderRadius: borderRadius.lg, backgroundColor: p.colors.primarySubtle, borderWidth: 1, borderColor: p.colors.primaryLighter },
+  policyModeTitle: { ...typography.bodySemibold, color: p.colors.text },
+  policyModeText: { ...typography.caption, color: p.colors.textSecondary, marginTop: 3, lineHeight: 17 },
+  customPolicyWrap: { marginTop: spacing.md, borderRadius: borderRadius.lg, backgroundColor: p.glass.bgSubtle, borderWidth: 1, borderColor: p.glass.borderSubtle, overflow: 'hidden' },
+  policyToggleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, padding: spacing.md },
+  policyToggleIcon: { width: 38, height: 38, borderRadius: 13, alignItems: 'center', justifyContent: 'center', backgroundColor: p.colors.primarySubtle },
+  policyToggleTitle: { ...typography.bodySemibold, color: p.colors.text },
+  policyToggleText: { ...typography.caption, color: p.colors.textSecondary, marginTop: 2, lineHeight: 16 },
+  warrantyDivider: { borderTopWidth: 1, borderTopColor: p.glass.borderSubtle },
+  policyFields: { paddingHorizontal: spacing.md, paddingBottom: spacing.md },
+  refundTypeGrid: { flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.md },
+  refundTypeCard: { flex: 1, minHeight: 68, paddingHorizontal: spacing.xs, paddingVertical: spacing.sm, borderRadius: borderRadius.lg, alignItems: 'center', justifyContent: 'center', gap: 5, backgroundColor: p.glass.bgStrong, borderWidth: 1, borderColor: p.glass.borderSubtle },
+  refundTypeCardActive: { backgroundColor: p.colors.primary, borderColor: p.colors.primary },
+  refundTypeText: { fontSize: 10, fontWeight: fontWeight.bold, color: p.colors.text, textAlign: 'center' },
+  refundTypeTextActive: { color: '#fff' },
   row: { flexDirection: 'row', gap: spacing.md },
   submitContainer: { paddingHorizontal: spacing.lg, marginTop: spacing.md },
   submitButton: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: spacing.sm, backgroundColor: p.colors.primary, borderRadius: borderRadius.xl, paddingVertical: spacing.lg },

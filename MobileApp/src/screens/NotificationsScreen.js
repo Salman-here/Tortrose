@@ -4,7 +4,7 @@
  * Card rendering lives in NotificationCard / OrderGroupCard.
  */
 
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View, Text, FlatList, StyleSheet, TouchableOpacity,
   RefreshControl, Animated, Platform, UIManager,
@@ -20,6 +20,10 @@ import GlassPanel from '../components/common/GlassPanel';
 import OrderGroupCard from '../components/notifications/OrderGroupCard';
 import NotificationCard from '../components/notifications/NotificationCard';
 import useNotificationInbox, { groupNotifications } from '../hooks/useNotificationInbox';
+import {
+  getNotificationCategoriesForRole,
+  normalizeNotificationRole,
+} from '../utils/notificationScope';
 import { spacing, fontSize, fontWeight, borderRadius } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 
@@ -37,22 +41,19 @@ const CTA_GRADIENT = ['#14B8A6', '#0EA5E9', '#6366F1'];
 // top bar (which carries a warmer violet wash).
 const NOTIF_SHEEN = ['rgba(99,102,241,0.13)', 'rgba(14,165,233,0.05)', 'rgba(139,92,246,0.11)'];
 
-const CATEGORIES = [
-  { key: 'all', label: 'All', icon: 'apps-outline' },
-  { key: 'order', label: 'Orders', icon: 'receipt-outline' },
-  { key: 'delivery', label: 'Delivery', icon: 'bicycle-outline' },
-  { key: 'promo', label: 'Promos', icon: 'pricetag-outline' },
-  { key: 'seller', label: 'Seller', icon: 'storefront-outline' },
-  { key: 'system', label: 'System', icon: 'information-circle-outline' },
-];
-
 export default function NotificationsScreen({ navigation }) {
   const { palette } = useTheme();
   const styles = buildStyles(palette);
 
   const { currentUser } = useAuth();
+  const role = normalizeNotificationRole(currentUser);
+  const categories = useMemo(() => getNotificationCategoriesForRole(currentUser), [currentUser?.role]);
   const { refreshUnreadCount } = useGlobal();
   const [activeCategory, setActiveCategory] = useState('all');
+
+  useEffect(() => {
+    if (!categories.some(({ key }) => key === activeCategory)) setActiveCategory('all');
+  }, [activeCategory, categories]);
 
   const {
     notifications, isLoading, refreshing, readIds,
@@ -70,11 +71,21 @@ export default function NotificationsScreen({ navigation }) {
 
   const handlePress = useCallback((item) => {
     markRead(item.id);
-    if (item.orderId) navigation.navigate('OrderDetail', { orderId: item.orderId });
+    if (role === 'seller' && ['new_order_received', 'order_confirmed_by_buyer', 'order_cancelled_by_buyer'].includes(item.data?.type)) {
+      if (item.data?.orderObjectId) {
+        navigation.navigate('OrderDetailManagement', { orderId: item.data.orderObjectId, isAdmin: false });
+      } else navigation.navigate('SellerOrderManagement');
+    }
+    else if (role === 'seller' && item.data?.type === 'return_requested') {
+      navigation.navigate('SellerOrderManagement', {
+        initialTab: 'returns',
+        returnRequestId: item.data?.returnRequestId,
+      });
+    }
+    else if (role === 'seller' && item.data?.type === 'low_stock') navigation.navigate('SellerProductManagement');
+    else if (item.orderId) navigation.navigate('OrderDetail', { orderId: item.orderId });
     else if (item.data?.productId) navigation.navigate('ProductDetail', { productId: item.data.productId });
-    else if (item.data?.type === 'new_order_received') navigation.navigate('SellerOrderManagement');
-    else if (item.data?.type === 'low_stock') navigation.navigate('SellerProductManagement');
-  }, [navigation, markRead]);
+  }, [navigation, markRead, role]);
 
   const renderRightActions = useCallback((progress, dragX) => {
     const scale = dragX.interpolate({ inputRange: [-100, 0], outputRange: [1, 0.5], extrapolate: 'clamp' });
@@ -154,7 +165,7 @@ export default function NotificationsScreen({ navigation }) {
           {/* Category Filter Chips */}
           <FlatList
             horizontal
-            data={CATEGORIES}
+            data={categories}
             keyExtractor={c => c.key}
             showsHorizontalScrollIndicator={false}
             style={styles.chipListBar}

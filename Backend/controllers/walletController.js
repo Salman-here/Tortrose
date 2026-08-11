@@ -636,6 +636,8 @@ exports.notifyTopUpCompleted = async (transaction) => {
         category: 'system',
         linkTo: '/user-dashboard/wallet',
         source: 'system',
+        targetRole: 'both',
+        audience: 'specific',
         dedupeKey,
     } }, { upsert: true, new: true, setDefaultsOnInsert: true });
     await WalletTransaction.updateOne(

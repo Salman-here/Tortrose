@@ -1,5 +1,6 @@
 // Middleware to detect and handle subdomain routing
 const Store = require('../models/Store');
+const { findActiveStore } = require('../services/publicCatalogService');
 
 const subdomainDetector = async (req, res, next) => {
     try {
@@ -38,10 +39,10 @@ const subdomainDetector = async (req, res, next) => {
 
         // Subdomains are live for active stores. Verification is a trust badge,
         // not a routing requirement.
-        const store = await Store.findOne({ 
-            storeSlug: subdomain,
-            isActive: true
-        });
+        // A live Store row is not enough: legacy/manual deletions may have left
+        // an orphaned store behind. Require its owning User to still be an
+        // active seller before exposing the subdomain.
+        const store = await findActiveStore({ storeSlug: subdomain }, { lean: false });
         
         if (store) {
             req.subdomainStore = store;

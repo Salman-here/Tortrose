@@ -28,6 +28,14 @@ const {
     lineTotal,
     roundMoney,
 } = require('../services/orderMoneyService');
+const {
+    ensureOrderSellerFulfillment,
+    sellerFulfillmentFor,
+    setAllSellerFulfillmentStatus,
+    setSellerFulfillmentStatus,
+    syncAggregateDeliveryState,
+} = require('../services/orderFulfillmentService');
+const { deleteAccountCascade } = require('../services/accountDeletionService');
 
 // Helper: get today's date string
 const getToday = () => new Date().toISOString().split('T')[0];
@@ -40,8 +48,61 @@ const getSellerProductIds = async (sellerId) => {
     return ids.map(toId);
 };
 
-const getSellerOrderItems = (order, sellerProductIds) =>
-    (order.orderItems || []).filter(item => sellerProductIds.includes(toId(item.productId)));
+const normalizedIdSet = (values = []) => new Set(
+    [...(values instanceof Set ? values : values || [])].map(value => toId(value?._id || value)).filter(Boolean)
+);
+
+const getSellerOrderItems = (order, sellerProductIds, sellerId) => {
+    const normalizedSellerId = toId(sellerId);
+    const legacyProductIds = normalizedIdSet(sellerProductIds);
+
+    return (order.orderItems || []).filter(item => {
+        const snapshotSellerId = toId(item.seller?._id || item.seller);
+        if (snapshotSellerId) return snapshotSellerId === normalizedSellerId;
+        return legacyProductIds.has(toId(item.productId?._id || item.productId));
+    });
+};
+
+const buildSellerOrderScope = (sellerId, sellerProductIds = []) => {
+    const normalizedSellerId = toId(sellerId);
+    if (!normalizedSellerId) return { _id: null };
+
+    const clauses = [
+        { orderItems: { $elemMatch: { seller: normalizedSellerId } } },
+    ];
+    const legacyProductIds = [...normalizedIdSet(sellerProductIds)];
+    if (legacyProductIds.length) {
+        clauses.push({
+            orderItems: {
+                $elemMatch: {
+                    seller: null,
+                    productId: { $in: legacyProductIds },
+                },
+            },
+        });
+    }
+
+    return clauses.length === 1 ? clauses[0] : { $or: clauses };
+};
+
+const buildSellerStatusScope = (sellerId, status) => {
+    const normalizedSellerId = toId(sellerId);
+    if (!normalizedSellerId) return { _id: null };
+    return {
+        $or: [
+            { sellerFulfillment: { $elemMatch: { seller: normalizedSellerId, status } } },
+            {
+                $and: [
+                    { sellerFulfillment: { $not: { $elemMatch: { seller: normalizedSellerId } } } },
+                    { orderStatus: status },
+                ],
+            },
+        ],
+    };
+};
+
+const sellerOrderStatus = (order, sellerId) =>
+    sellerFulfillmentFor(order, sellerId)?.status || order.orderStatus;
 
 const sellerOrderTotal = (items) =>
     items.reduce((sum, item) => sum + ((Number(item.price) || 0) * (Number(item.quantity) || 0)), 0);
@@ -64,7 +125,7 @@ const buildSellerOrderSummary = (order, sellerItems, sellerId) => {
 };
 
 const summarizeOrderForRole = (order, role, sellerProductIds = [], sellerId = null) => {
-    const items = role === 'seller' ? getSellerOrderItems(order, sellerProductIds) : (order.orderItems || []);
+    const items = role === 'seller' ? getSellerOrderItems(order, sellerProductIds, sellerId) : (order.orderItems || []);
     const total = role === 'seller'
         ? buildSellerOrderSummary(order, items, sellerId).totalAmount
         : (order.orderSummary?.totalAmount || 0);
@@ -72,7 +133,7 @@ const summarizeOrderForRole = (order, role, sellerProductIds = [], sellerId = nu
     return {
         orderId: order.orderId,
         _id: order._id,
-        status: order.orderStatus,
+        status: role === 'seller' ? sellerOrderStatus(order, sellerId) : order.orderStatus,
         isPaid: order.isPaid,
         total: Math.round(total * 100) / 100,
         date: order.createdAt,
@@ -401,11 +462,18 @@ exports.getSellerAnalytics = async (req, res) => {
         const products = await Product.find(role === 'seller' ? { seller: userId } : {});
         const productIds = products.map(p => p._id.toString());
 
-        const allOrders = await Order.find({ awaitingPayment: { $ne: true } });
+        const orderScope = role === 'seller'
+            ? buildSellerOrderScope(userId, productIds)
+            : {};
+        const allOrders = await Order.find({
+            $and: [orderScope, { awaitingPayment: { $ne: true } }],
+        });
         let revenue = 0, unitsSold = 0, orderCount = 0;
 
         for (const order of allOrders) {
-            const items = order.orderItems.filter(i => productIds.includes(i.productId.toString()));
+            const items = role === 'seller'
+                ? getSellerOrderItems(order, productIds, userId)
+                : (order.orderItems || []);
             if (items.length > 0) {
                 orderCount++;
                 for (const i of items) {
@@ -449,19 +517,20 @@ exports.getSellerOrders = async (req, res) => {
     try {
         if (role !== 'seller' && role !== 'admin') return res.status(403).json({ msg: 'Unauthorized' });
 
-        let query = publicProductFilter();
-        if (status) query.orderStatus = status;
+        const query = { awaitingPayment: { $ne: true } };
 
         if (role === 'seller') {
             const spIds = await getSellerProductIds(userId);
-            if (spIds.length === 0) return res.json({ orders: [] });
-
-            query['orderItems.productId'] = { $in: spIds };
-            const sellerOrders = await Order.find(query).sort({ createdAt: -1 }).limit(parseInt(limit));
+            const conditions = [query, buildSellerOrderScope(userId, spIds)];
+            if (status && status !== 'all') conditions.push(buildSellerStatusScope(userId, status));
+            const sellerOrders = await Order.find({
+                $and: conditions,
+            }).sort({ createdAt: -1 }).limit(parseInt(limit));
             return res.json({ orders: sellerOrders.map(o => summarizeOrderForRole(o, role, spIds, userId)) });
         }
 
-        const allOrders = await Order.find(query).sort({ createdAt: -1 }).limit(parseInt(limit));
+        const adminQuery = status && status !== 'all' ? { ...query, orderStatus: status } : query;
+        const allOrders = await Order.find(adminQuery).sort({ createdAt: -1 }).limit(parseInt(limit));
         res.json({ orders: allOrders.map(o => summarizeOrderForRole(o, role)) });
     } catch (error) {
         console.error('AI seller orders error:', error);
@@ -474,23 +543,84 @@ exports.updateOrderStatus = async (req, res) => {
     const { role, id: userId } = req.user;
     try {
         if (role !== 'seller' && role !== 'admin') return res.status(403).json({ msg: 'Unauthorized' });
-
-        const order = await Order.findById(orderId);
-        if (!order) return res.status(404).json({ msg: 'Order not found' });
-
-        if (role === 'seller') {
-            const spIds = await getSellerProductIds(userId);
-            if (!order.orderItems.some(i => spIds.includes(i.productId.toString()))) {
-                return res.status(403).json({ msg: 'This order does not contain your products' });
-            }
-            if (newStatus === 'cancelled') return res.status(403).json({ msg: 'Sellers cannot cancel orders' });
+        const validStatuses = ['pending', 'confirmed', 'processing', 'shipped', 'delivered', 'cancelled'];
+        if (!validStatuses.includes(newStatus)) {
+            return res.status(400).json({ msg: 'Choose a valid order status.' });
         }
 
-        order.orderStatus = newStatus;
-        if (newStatus === 'delivered') order.isPaid = true;
+        const spIds = role === 'seller' ? await getSellerProductIds(userId) : [];
+        const order = role === 'seller'
+            ? await Order.findOne({
+                $and: [
+                    { _id: orderId },
+                    { awaitingPayment: { $ne: true } },
+                    buildSellerOrderScope(userId, spIds),
+                ],
+            })
+            : await Order.findById(orderId);
+        if (!order) {
+            return role === 'seller'
+                ? res.status(403).json({ msg: 'This order does not contain your products' })
+                : res.status(404).json({ msg: 'Order not found' });
+        }
+
+        const sellerIds = await ensureOrderSellerFulfillment(order);
+        if (newStatus === 'cancelled' && order.isPaid) {
+            return res.status(409).json({
+                msg: role === 'seller'
+                    ? 'Paid seller portions require a verified refund before cancellation.'
+                    : 'Paid orders require a verified refund before cancellation.',
+                code: 'PAID_ORDER_REQUIRES_REFUND',
+            });
+        }
+
+        if (role === 'seller') {
+            if (getSellerOrderItems(order, spIds, userId).length === 0) {
+                return res.status(403).json({ msg: 'This order does not contain your products' });
+            }
+            const fulfillment = sellerFulfillmentFor(order, userId);
+            if (!fulfillment) {
+                return res.status(403).json({ msg: 'Seller fulfillment record was not found for this order.' });
+            }
+            if (newStatus === 'cancelled' && ['shipped', 'delivered'].includes(fulfillment.status)) {
+                return res.status(403).json({ msg: 'Cannot cancel an order that is already shipped or delivered.' });
+            }
+            setSellerFulfillmentStatus(order, userId, newStatus);
+        } else if (order.sellerFulfillment.length) {
+            setAllSellerFulfillmentStatus(order, newStatus);
+        }
+
+        const buyerAlreadyDecided = !!(order.confirmation?.confirmedAt || order.confirmation?.declinedAt);
+        const updatesWholeOrderDecision = role === 'admin' || sellerIds.length <= 1;
+        if (updatesWholeOrderDecision && newStatus === 'confirmed' && !buyerAlreadyDecided) {
+            order.confirmation = order.confirmation || {};
+            order.confirmation.confirmedAt = new Date();
+            order.confirmation.confirmedVia = role === 'admin' ? 'admin' : 'manual';
+            order.confirmation.decidedAt = new Date();
+            order.confirmation.decidedVia = role === 'admin' ? 'admin' : 'manual';
+        } else if (updatesWholeOrderDecision && newStatus === 'cancelled' && !buyerAlreadyDecided) {
+            order.confirmation = order.confirmation || {};
+            order.confirmation.declinedAt = new Date();
+            order.confirmation.confirmedVia = role === 'admin' ? 'admin' : 'manual';
+            order.confirmation.decidedAt = new Date();
+            order.confirmation.decidedVia = role === 'admin' ? 'admin' : 'manual';
+        }
+
+        if (role === 'admin' && !order.sellerFulfillment.length) {
+            order.orderStatus = newStatus;
+            order.isDelivered = newStatus === 'delivered';
+            if (newStatus === 'delivered' && !order.deliveredAt) order.deliveredAt = new Date();
+        } else {
+            syncAggregateDeliveryState(order);
+        }
+        if (order.orderStatus === 'delivered') order.isPaid = true;
         await order.save();
 
-        res.json({ msg: `Order ${order.orderId} status updated to ${newStatus}` });
+        res.json({
+            msg: `Order ${order.orderId} status updated to ${newStatus}`,
+            orderStatus: role === 'seller' ? sellerOrderStatus(order, userId) : order.orderStatus,
+            aggregateOrderStatus: order.orderStatus,
+        });
     } catch (error) {
         console.error('AI update order status error:', error);
         res.status(500).json({ msg: 'Server error' });
@@ -631,9 +761,10 @@ exports.deleteUser = async (req, res) => {
 
         const user = await User.findById(userId);
         if (!user) return res.status(404).json({ msg: 'User not found' });
+        if (user.role === 'admin') return res.status(409).json({ msg: 'Cannot delete an admin user' });
 
         const username = user.username;
-        await User.findByIdAndDelete(userId);
+        await deleteAccountCascade(userId);
         res.json({ msg: `User "${username}" deleted successfully` });
     } catch (error) {
         console.error('AI delete user error:', error);
@@ -737,16 +868,28 @@ exports.getOrderDetail = async (req, res) => {
     const { orderId } = req.query;
     const { role, id: userId } = req.user;
     try {
-        const order = await Order.findById(orderId);
-        if (!order) return res.status(404).json({ msg: 'Order not found' });
+        const sellerProductIds = role === 'seller' ? await getSellerProductIds(userId) : [];
+        const order = role === 'seller'
+            ? await Order.findOne({
+                $and: [
+                    { _id: orderId },
+                    { awaitingPayment: { $ne: true } },
+                    buildSellerOrderScope(userId, sellerProductIds),
+                ],
+            })
+            : await Order.findById(orderId);
+        if (!order) {
+            return role === 'seller'
+                ? res.status(403).json({ msg: 'You can only view orders containing your products' })
+                : res.status(404).json({ msg: 'Order not found' });
+        }
 
         if (role === 'seller') {
-            const sellerProductIds = await getSellerProductIds(userId);
-            const sellerItems = getSellerOrderItems(order, sellerProductIds);
+            const sellerItems = getSellerOrderItems(order, sellerProductIds, userId);
             if (sellerItems.length === 0) return res.status(403).json({ msg: 'You can only view orders containing your products' });
 
             return res.json({
-                orderId: order.orderId, status: order.orderStatus, isPaid: order.isPaid,
+                orderId: order.orderId, status: sellerOrderStatus(order, userId), isPaid: order.isPaid,
                 orderItems: sellerItems, shippingInfo: order.shippingInfo,
                 orderSummary: buildSellerOrderSummary(order, sellerItems, userId),
                 paymentMethod: order.paymentMethod,
@@ -1614,6 +1757,7 @@ function normalizeToolHttpResult(result) {
         error: result?.error,
         data: result?.data,
         ...data,
+        ...(result?.code ? { code: result.code } : {}),
         ...(result?.missingFields ? { missingFields: result.missingFields } : {}),
         ...(result?.cooldown ? { cooldown: result.cooldown } : {}),
         ...(result?.requiresConfirmation ? { requiresConfirmation: true } : {}),
@@ -1638,7 +1782,9 @@ function aiActionToolRoute(toolName, source = 'body', transform) {
                 ? req.query
                 : req.body;
         const result = await executeUnifiedToolCall(toolName, args || {}, req.user || { role: 'guest' });
-        const status = result?.success === false ? 400 : 200;
+        const status = result?.success === false
+            ? (result?.code === 'PAID_ORDER_REQUIRES_REFUND' ? 409 : 400)
+            : 200;
         return res.status(status).json(normalizeToolHttpResult(result));
     };
 }

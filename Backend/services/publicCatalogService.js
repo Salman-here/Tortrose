@@ -1,6 +1,7 @@
 'use strict';
 
 const Store = require('../models/Store');
+const User = require('../models/User');
 
 const ACTIVE_STORE_QUERY = {
   isActive: true,
@@ -16,7 +17,14 @@ async function getActiveSellerIds(extraStoreFilter = {}) {
   const stores = await Store.find({ ...ACTIVE_STORE_QUERY, ...extraStoreFilter })
     .select('seller')
     .lean();
-  return stores.map(store => store.seller).filter(Boolean);
+  const sellerIds = stores.map(store => store.seller).filter(Boolean);
+  if (!sellerIds.length) return [];
+  const activeSellers = await User.find({
+    _id: { $in: sellerIds },
+    role: 'seller',
+    status: 'active',
+  }).select('_id').lean();
+  return activeSellers.map(seller => seller._id);
 }
 
 function activeStoreQuery(extra = {}) {
@@ -48,7 +56,11 @@ async function publicProductFilterWithActiveStores(productFilter = {}, extraStor
 async function isProductSellerPubliclyActive(sellerId) {
   const id = normalizeId(sellerId);
   if (!id) return true;
-  return Boolean(await Store.exists(activeStoreQuery({ seller: id })));
+  const [store, seller] = await Promise.all([
+    Store.exists(activeStoreQuery({ seller: id })),
+    User.exists({ _id: id, role: 'seller', status: 'active' }),
+  ]);
+  return Boolean(store && seller);
 }
 
 async function findActiveStore(filter = {}, options = {}) {
@@ -57,7 +69,12 @@ async function findActiveStore(filter = {}, options = {}) {
   if (options.select) cursor = cursor.select(options.select);
   if (options.populate) cursor = cursor.populate(options.populate);
   if (options.lean !== false) cursor = cursor.lean();
-  return cursor;
+  const store = await cursor;
+  if (!store) return null;
+  const sellerId = normalizeId(store.seller);
+  if (!sellerId) return null;
+  const activeSeller = await User.exists({ _id: sellerId, role: 'seller', status: 'active' });
+  return activeSeller ? store : null;
 }
 
 module.exports = {

@@ -8,7 +8,8 @@ const { convertAmountSync } = require('../services/currencyService');
 const { getProductCurrency, getProductEffectivePrice } = require('../services/productPricingService');
 const {
     resolveRequestedCurrency,
-    convertOrderTotal,
+    convertOrderAmount,
+    lineTotal,
     roundMoney,
 } = require('../services/orderMoneyService');
 const {
@@ -19,6 +20,33 @@ const { attachStoreReviewSummaries } = require('../services/storeReviewService')
 
 const comparablePriceUSD = (product) =>
     convertAmountSync(getProductEffectivePrice(product), getProductCurrency(product), 'USD');
+
+const idString = (value) => String(value?._id || value || '');
+
+const sellerItemsForOrder = (order, sellerId, productIds = []) => {
+    const sellerKey = idString(sellerId);
+    const productKeys = new Set(productIds.map(idString));
+    return (order?.orderItems || []).filter((item) => {
+        // Newer orders carry an immutable seller snapshot. It is authoritative;
+        // live product ownership is only a legacy fallback for unsnapshotted rows.
+        if (item?.seller) return idString(item.seller) === sellerKey;
+        return productKeys.has(idString(item?.productId));
+    });
+};
+
+const sellerOrderScope = (sellerId, productIds = []) => ({
+    $or: [
+        { 'orderItems.seller': sellerId },
+        ...(productIds.length ? [{
+            orderItems: {
+                $elemMatch: {
+                    seller: null,
+                    productId: { $in: productIds },
+                },
+            },
+        }] : []),
+    ],
+});
 
 // Get store data for subdomain
 exports.getSubdomainStore = async (req, res) => {
@@ -129,6 +157,10 @@ exports.getSubdomainProducts = async (req, res) => {
 // SELLER SUBDOMAIN ANALYTICS
 // ============================
 exports.getSellerSubdomainAnalytics = async (req, res) => {
+    if (req.user?.role !== 'seller') {
+        return res.status(403).json({ msg: 'Seller access required' });
+    }
+
     try {
         const sellerId = req.user.id;
         const store = await Store.findOne({ seller: sellerId });
@@ -142,35 +174,26 @@ exports.getSellerSubdomainAnalytics = async (req, res) => {
         const productIds = products.map(p => p._id);
 
         const orders = await Order.find({
-            'orderItems.productId': { $in: productIds },
-            isPaid: true
+            ...sellerOrderScope(sellerId, productIds),
+            awaitingPayment: { $ne: true },
+            isPaid: true,
         });
 
         const targetCurrency = await resolveRequestedCurrency(req, User);
         let totalRevenue = 0;
         for (const order of orders) {
-            totalRevenue += await convertOrderTotal(order, targetCurrency);
+            const sellerSubtotal = sellerItemsForOrder(order, sellerId, productIds)
+                .reduce((sum, item) => sum + lineTotal(item), 0);
+            totalRevenue += await convertOrderAmount(order, sellerSubtotal, targetCurrency);
         }
         totalRevenue = roundMoney(totalRevenue);
         const totalOrders = orders.length;
 
-        // Simulate subdomain traffic data (views is the closest proxy)
+        // Store views are currently retained only as a lifetime counter. Do not
+        // fabricate a monthly series: consumers can render the real total and an
+        // honest unavailable-history state until dated traffic events are stored.
         const totalViews = store.views || 0;
-
-        // Monthly traffic simulation from views
         const now = new Date();
-        const monthlyTraffic = [];
-        for (let i = 5; i >= 0; i--) {
-            const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-            const monthLabel = d.toLocaleDateString('en', { month: 'short', year: '2-digit' });
-            // Distribute views proportionally with some variance
-            const baseViews = Math.floor(totalViews / 6);
-            const variance = Math.floor(Math.random() * Math.max(baseViews * 0.3, 5));
-            monthlyTraffic.push({
-                month: monthLabel,
-                views: Math.max(0, baseViews + (i === 0 ? variance : -variance + Math.floor(Math.random() * variance * 2))),
-            });
-        }
 
         const removalAt = store.subdomainPurchase?.removalScheduledAt;
         const isPurchased = !!(store.subdomainPurchase?.isPurchased &&
@@ -206,7 +229,8 @@ exports.getSellerSubdomainAnalytics = async (req, res) => {
                 totalRevenue,
                 productCount: products.length,
                 trustCount: store.trustCount || 0,
-                monthlyTraffic,
+                monthlyTraffic: [],
+                trafficHistoryAvailable: false,
                 conversionRate: totalViews > 0 ? Math.round((totalOrders / totalViews) * 10000) / 100 : 0,
             }
         });
@@ -220,6 +244,10 @@ exports.getSellerSubdomainAnalytics = async (req, res) => {
 // ADMIN: GET ALL SUBDOMAINS
 // ============================
 exports.getAllSubdomains = async (req, res) => {
+    if (req.user?.role !== 'admin') {
+        return res.status(403).json({ msg: 'Access denied. Admin privileges required.' });
+    }
+
     try {
         const { status, search, page = 1, limit = 20 } = req.query;
 
@@ -255,17 +283,21 @@ exports.getAllSubdomains = async (req, res) => {
 
         // Enrich with product count and revenue
         const enrichedStores = await Promise.all(stores.map(async (store) => {
-            const products = await Product.find({ seller: store.seller?._id }).select('_id');
+            const sellerId = store.seller?._id || store.seller;
+            const products = await Product.find({ seller: sellerId }).select('_id');
             const productIds = products.map(p => p._id);
 
             const orders = await Order.find({
-                'orderItems.productId': { $in: productIds },
-                isPaid: true
+                ...sellerOrderScope(sellerId, productIds),
+                awaitingPayment: { $ne: true },
+                isPaid: true,
             });
 
             let totalRevenue = 0;
             for (const order of orders) {
-                totalRevenue += await convertOrderTotal(order, targetCurrency);
+                const sellerSubtotal = sellerItemsForOrder(order, sellerId, productIds)
+                    .reduce((sum, item) => sum + lineTotal(item), 0);
+                totalRevenue += await convertOrderAmount(order, sellerSubtotal, targetCurrency);
             }
             totalRevenue = roundMoney(totalRevenue);
 
@@ -323,6 +355,10 @@ exports.getAllSubdomains = async (req, res) => {
 // ADMIN: UPDATE SUBDOMAIN SLUG
 // ============================
 exports.adminUpdateSubdomain = async (req, res) => {
+    if (req.user?.role !== 'admin') {
+        return res.status(403).json({ msg: 'Access denied. Admin privileges required.' });
+    }
+
     try {
         const { storeId } = req.params;
         const { newSlug } = req.body;

@@ -3,12 +3,11 @@ import { Platform } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getBuyerLocationParams } from '../utils/buyerLocation';
+import { notifyUnauthorizedSession } from '../services/authSessionEvents';
 
 // SecureStore is unavailable on web — fall back to AsyncStorage there
 const tokenGet = (key) =>
   Platform.OS === 'web' ? AsyncStorage.getItem(key) : SecureStore.getItemAsync(key);
-const tokenDel = (key) =>
-  Platform.OS === 'web' ? AsyncStorage.removeItem(key) : SecureStore.deleteItemAsync(key);
 
 export const API_BASE_URL = (process.env.EXPO_PUBLIC_API_URL || 'https://rozare.up.railway.app').replace(/\/$/, '');
 
@@ -40,11 +39,15 @@ export const API_ENDPOINTS = {
   UPLOAD: {
     PRODUCT_IMAGE: '/api/upload/product-image',
     PROFILE_IMAGE: '/api/upload/profile-image',
+    STORE_IMAGE: '/api/upload/store-image',
   },
   ORDERS: {
     GET_ALL: '/api/order/get',
     MY_ORDERS: '/api/order/user-orders',
     PLACE: '/api/order/place',
+    EXPORT: '/api/order/export',
+    DETAIL: '/api/order/detail',
+    UPDATE_STATUS: '/api/order/update-status',
   },
   STORES: {
     GET_ALL: '/api/stores',
@@ -146,7 +149,7 @@ api.interceptors.request.use(
   async (config) => {
     try {
       const token = await tokenGet('jwtToken');
-      if (token) {
+      if (token && !config.headers?.Authorization && !config.headers?.authorization) {
         config.headers.Authorization = `Bearer ${token}`;
       }
     } catch (error) {
@@ -172,11 +175,31 @@ api.interceptors.request.use(
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
-    if (error.response?.status === 401) {
-      try {
-        await tokenDel('jwtToken');
-        await tokenDel('currentUser');
-      } catch (_) {}
+    const headers = error.config?.headers;
+    const authorization = (
+      headers?.Authorization
+      || headers?.authorization
+      || (typeof headers?.get === 'function' && headers.get('Authorization'))
+    );
+    const failedBearerToken = typeof authorization === 'string'
+      ? authorization.match(/^Bearer\s+(.+)$/i)?.[1]
+      : null;
+    if (
+      error.response?.status === 401
+      && error.response?.data?.code === 'AUTH_SESSION_INVALID'
+      && failedBearerToken
+      && !error.config?.skipAuthSessionCleanup
+    ) {
+      // A delayed 401 from account A (or a pre-rotation JWT) must never erase
+      // the newer account/session now stored on the device. Only the token that
+      // is still current is allowed to trigger the shared logout coordinator.
+      const currentToken = await tokenGet('jwtToken').catch(() => null);
+      if (currentToken && currentToken === failedBearerToken) {
+        // Route forced/session-expiry cleanup through AuthContext so push-token
+        // revocation, delivered-notification clearing, and in-memory auth state
+        // follow the exact same durable contract as a manual logout.
+        await notifyUnauthorizedSession().catch(() => {});
+      }
     }
     return Promise.reject(error);
   }

@@ -1,144 +1,531 @@
-/**
- * NotificationSettingsScreen — Liquid Glass
- * Shared between admin and seller with role-based sections
- */
-
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  View, Text, ScrollView, StyleSheet, TouchableOpacity, Switch,
-  Alert, ActivityIndicator,
+  ActivityIndicator,
+  Platform,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Switch,
+  Text,
+  TouchableOpacity,
+  View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import api from '../../config/api';
-import Loader from '../../components/common/Loader';
 import GlassBackground from '../../components/common/GlassBackground';
 import GlassPanel from '../../components/common/GlassPanel';
-import { spacing, fontSize, fontWeight, borderRadius, typography } from '../../styles/theme';
+import {
+  SellerInlineError,
+  SellerScreenHeader,
+  SellerScreenSkeleton,
+  SellerSectionHeader,
+} from '../../components/seller/SellerUI';
 import { useTheme } from '../../contexts/ThemeContext';
+import { borderRadius, fontSize, fontWeight, spacing } from '../../styles/theme';
 
-const defaultPrefs = {
-  stockAlerts: true, lowStockAlerts: true, orderAlerts: true,
-  paymentAlerts: true, deliveryAlerts: true, storeCreation: true, storeVerification: true,
+export const DEFAULT_NOTIFICATION_PREFS = Object.freeze({
+  stockAlerts: true,
+  lowStockAlerts: true,
+  orderAlerts: true,
+  paymentAlerts: true,
+  deliveryAlerts: true,
+  storeCreation: true,
+  storeVerification: true,
+});
+
+export function normalizeNotificationPreferences(value = {}) {
+  return Object.keys(DEFAULT_NOTIFICATION_PREFS).reduce((preferences, key) => {
+    preferences[key] = value[key] !== false;
+    return preferences;
+  }, {});
+}
+
+const BASE_SECTIONS = [
+  {
+    title: 'Inventory alerts',
+    subtitle: 'Stay ahead of stock issues before they affect sales.',
+    icon: 'cube-outline',
+    items: [
+      {
+        key: 'stockAlerts',
+        label: 'Out-of-stock alerts',
+        description: 'Know immediately when a product reaches zero inventory.',
+        icon: 'alert-circle-outline',
+      },
+      {
+        key: 'lowStockAlerts',
+        label: 'Low-stock warnings',
+        description: 'Get an early warning when inventory drops below 10 units.',
+        icon: 'trending-down-outline',
+      },
+    ],
+  },
+  {
+    title: 'Order and payment alerts',
+    subtitle: 'Follow every important step from checkout to delivery.',
+    icon: 'receipt-outline',
+    items: [
+      {
+        key: 'orderAlerts',
+        label: 'New orders',
+        description: 'Receive an alert when a customer places an order.',
+        icon: 'cart-outline',
+      },
+      {
+        key: 'paymentAlerts',
+        label: 'Payment confirmations',
+        description: 'Know when a payment is confirmed for an order.',
+        icon: 'wallet-outline',
+      },
+      {
+        key: 'deliveryAlerts',
+        label: 'Delivery updates',
+        description: 'Track shipped and delivered order milestones.',
+        icon: 'car-outline',
+      },
+    ],
+  },
+];
+
+const ADMIN_SECTION = {
+  title: 'Store administration alerts',
+  subtitle: 'Platform-level events available to administrators.',
+  icon: 'shield-checkmark-outline',
+  items: [
+    {
+      key: 'storeCreation',
+      label: 'New store creation',
+      description: 'Receive an alert when a seller creates a new store.',
+      icon: 'storefront-outline',
+    },
+    {
+      key: 'storeVerification',
+      label: 'Verification requests',
+      description: 'Be notified when a store is ready for review.',
+      icon: 'shield-outline',
+    },
+  ],
 };
 
-export default function NotificationSettingsScreen({ route }) {
+export default function NotificationSettingsScreen({ navigation, route }) {
   const { palette } = useTheme();
-  const styles = buildStyles(palette);
+  const styles = useMemo(() => buildStyles(palette), [palette]);
+  const isAdmin = route?.params?.isAdmin === true;
+  const sections = useMemo(() => (isAdmin ? [...BASE_SECTIONS, ADMIN_SECTION] : BASE_SECTIONS), [isAdmin]);
 
-  const isAdmin = route.params?.isAdmin ?? false;
-  const [prefs, setPrefs] = useState(defaultPrefs);
+  const [prefs, setPrefs] = useState(() => normalizeNotificationPreferences());
+  const [savedPrefs, setSavedPrefs] = useState(() => normalizeNotificationPreferences());
   const [loading, setLoading] = useState(true);
+  const [hasLoaded, setHasLoaded] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
+  const [resetting, setResetting] = useState(false);
+  const [loadError, setLoadError] = useState('');
+  const [actionError, setActionError] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
 
-  useEffect(() => {
-    (async () => {
-      try { const res = await api.get('/api/analytics/notification-prefs'); setPrefs({ ...defaultPrefs, ...res.data.prefs }); } catch { }
-      finally { setLoading(false); }
-    })();
+  const loadPreferences = useCallback(async ({ initial = false } = {}) => {
+    if (initial) setLoading(true);
+    setLoadError('');
+    try {
+      const response = await api.get('/api/analytics/notification-prefs');
+      const normalized = normalizeNotificationPreferences(response?.data?.prefs);
+      setPrefs(normalized);
+      setSavedPrefs(normalized);
+      setHasLoaded(true);
+    } catch {
+      setLoadError('Your saved notification preferences could not be loaded. Check your connection and try again.');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
   }, []);
 
-  const handleToggle = (key) => { setPrefs(prev => ({ ...prev, [key]: !prev[key] })); setSaved(false); };
+  useEffect(() => {
+    loadPreferences({ initial: true });
+  }, [loadPreferences]);
 
-  const handleSave = async () => {
+  const dirty = useMemo(
+    () => Object.keys(DEFAULT_NOTIFICATION_PREFS).some((key) => prefs[key] !== savedPrefs[key]),
+    [prefs, savedPrefs],
+  );
+
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    setSuccessMessage('');
+    loadPreferences();
+  }, [loadPreferences]);
+
+  const handleToggle = useCallback((key) => {
+    setPrefs((current) => ({ ...current, [key]: !current[key] }));
+    setActionError('');
+    setSuccessMessage('');
+  }, []);
+
+  const handleSave = useCallback(async () => {
+    if (saving || resetting || !dirty) return;
     setSaving(true);
-    try { await api.put('/api/analytics/notification-prefs', { prefs }); setSaved(true); setTimeout(() => setSaved(false), 2000); Alert.alert('Success', 'Preferences saved'); }
-    catch { Alert.alert('Error', 'Failed to save'); }
-    finally { setSaving(false); }
-  };
+    setActionError('');
+    setSuccessMessage('');
+    try {
+      const response = await api.put('/api/analytics/notification-prefs', { prefs });
+      const normalized = normalizeNotificationPreferences(response?.data?.prefs || prefs);
+      setPrefs(normalized);
+      setSavedPrefs(normalized);
+      setSuccessMessage('Your notification preferences are saved.');
+    } catch {
+      setActionError('Your changes were not saved. Please check your connection and try again.');
+    } finally {
+      setSaving(false);
+    }
+  }, [dirty, prefs, resetting, saving]);
 
-  const handleReset = async () => {
-    setPrefs(defaultPrefs);
-    try { await api.put('/api/analytics/notification-prefs', { prefs: defaultPrefs }); Alert.alert('Reset', 'Defaults restored'); } catch { }
-  };
+  const handleReset = useCallback(async () => {
+    if (saving || resetting) return;
+    const defaults = normalizeNotificationPreferences();
+    setResetting(true);
+    setActionError('');
+    setSuccessMessage('');
+    try {
+      const response = await api.put('/api/analytics/notification-prefs', { prefs: defaults });
+      const normalized = normalizeNotificationPreferences(response?.data?.prefs || defaults);
+      setPrefs(normalized);
+      setSavedPrefs(normalized);
+      setSuccessMessage('Default notification preferences were restored.');
+    } catch {
+      setActionError('Defaults were not restored. Your current preferences are unchanged.');
+    } finally {
+      setResetting(false);
+    }
+  }, [resetting, saving]);
 
-  const sections = [
-    { title: 'Stock Alerts', desc: 'Inventory notifications', items: [
-      { key: 'stockAlerts', label: 'Out of stock alerts', desc: 'When a product runs out', icon: 'cube-outline' },
-      { key: 'lowStockAlerts', label: 'Low stock warnings', desc: 'Stock below 10 units', icon: 'cube-outline' },
-    ]},
-    { title: 'Order Alerts', desc: 'Order activity', items: [
-      { key: 'orderAlerts', label: 'New orders', desc: 'When orders are placed', icon: 'cart-outline' },
-      { key: 'paymentAlerts', label: 'Payment confirmations', desc: 'When payments received', icon: 'checkmark-circle-outline' },
-      { key: 'deliveryAlerts', label: 'Delivery updates', desc: 'When orders delivered', icon: 'car-outline' },
-    ]},
-    ...(isAdmin ? [{ title: 'Store Alerts', desc: 'Admin-specific', items: [
-      { key: 'storeCreation', label: 'New store creation', desc: 'When sellers create stores', icon: 'storefront-outline' },
-      { key: 'storeVerification', label: 'Verification requests', desc: 'Stores needing review', icon: 'shield-outline' },
-    ]}] : []),
-  ];
+  if (loading && !hasLoaded) {
+    return (
+      <SellerScreenSkeleton
+        navigation={navigation}
+        title="Alert Preferences"
+        subtitle="Control the updates you receive"
+        icon="options-outline"
+        variant="form"
+      />
+    );
+  }
 
-  if (loading) return <GlassBackground><Loader fullScreen message="Loading preferences..." /></GlassBackground>;
+  if (!hasLoaded) {
+    return (
+      <GlassBackground>
+        <SafeAreaView
+          style={styles.safeArea}
+          edges={Platform.OS === 'android' ? [] : ['top']}
+        >
+          <SellerScreenHeader
+            navigation={navigation}
+            title="Alert Preferences"
+            subtitle="Control the updates you receive"
+            icon="options-outline"
+          />
+          <View style={styles.fullError}>
+            <SellerInlineError
+              title="Preferences unavailable"
+              message={loadError}
+              onRetry={() => loadPreferences({ initial: true })}
+            />
+          </View>
+        </SafeAreaView>
+      </GlassBackground>
+    );
+  }
 
   return (
     <GlassBackground>
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
-        <View style={styles.headerRow}>
-          <View style={styles.tagPill}><Ionicons name="settings-outline" size={12} color={palette.colors.primary} /><Text style={styles.tagText}>Settings</Text></View>
-          <Text style={styles.headerTitle}>Notification Settings</Text>
-          <Text style={styles.headerSubtitle}>Choose which notifications to receive</Text>
-        </View>
+      <SafeAreaView
+        style={styles.safeArea}
+        edges={Platform.OS === 'android' ? [] : ['top']}
+      >
+        <SellerScreenHeader
+          navigation={navigation}
+          title="Alert Preferences"
+          subtitle="Control the updates you receive"
+          icon="options-outline"
+          rightIcon="refresh-outline"
+          rightLabel="Refresh"
+          onRightPress={onRefresh}
+        />
 
-        {sections.map((section, si) => (
-          <GlassPanel key={section.title} variant="card" style={styles.section}>
-            <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>{section.title}</Text>
-              <Text style={styles.sectionDesc}>{section.desc}</Text>
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.scrollContent}
+          refreshControl={(
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={palette.colors.primary}
+              colors={[palette.colors.primary]}
+            />
+          )}
+        >
+          <GlassPanel variant="strong" style={styles.heroCard}>
+            <View style={styles.heroIcon}>
+              <Ionicons name="notifications-outline" size={24} color={palette.colors.primary} />
             </View>
-            {section.items.map(item => (
-              <View key={item.key} style={styles.toggleRow}>
-                <View style={[styles.toggleIcon, { backgroundColor: prefs[item.key] ? 'rgba(99,102,241,0.12)' : 'rgba(255,255,255,0.06)' }]}>
-                  <Ionicons name={item.icon} size={16} color={prefs[item.key] ? palette.colors.primary : palette.colors.textSecondary} />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.toggleLabel}>{item.label}</Text>
-                  <Text style={styles.toggleDesc}>{item.desc}</Text>
-                </View>
-                <Switch value={prefs[item.key]} onValueChange={() => handleToggle(item.key)}
-                  trackColor={{ false: 'rgba(255,255,255,0.1)', true: palette.colors.primary }}
-                  thumbColor="white" />
-              </View>
-            ))}
+            <View style={styles.heroCopy}>
+              <Text style={styles.heroEyebrow}>{isAdmin ? 'ADMIN ALERTS' : 'SELLER ALERTS'}</Text>
+              <Text style={styles.heroTitle}>Only receive what matters</Text>
+              <Text style={styles.heroSubtitle}>
+                Fine-tune operational alerts without losing access to important announcements in your inbox.
+              </Text>
+            </View>
           </GlassPanel>
-        ))}
 
-        <View style={styles.actionsRow}>
-          <TouchableOpacity style={styles.resetBtn} onPress={handleReset}>
-            <Text style={styles.resetBtnText}>Reset to defaults</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={[styles.saveBtn, saving && { opacity: 0.6 }]} onPress={handleSave} disabled={saving}>
-            {saving ? <ActivityIndicator color="white" size="small" /> : saved ? (
-              <><Ionicons name="checkmark-circle" size={16} color="white" /><Text style={styles.saveBtnText}>Saved!</Text></>
-            ) : (
-              <><Ionicons name="save-outline" size={16} color="white" /><Text style={styles.saveBtnText}>Save</Text></>
-            )}
-          </TouchableOpacity>
-        </View>
+          {!!loadError && (
+            <SellerInlineError
+              compact
+              title="Refresh failed"
+              message={loadError}
+              onRetry={onRefresh}
+            />
+          )}
+          {!!actionError && (
+            <SellerInlineError
+              compact
+              title="Preferences were not updated"
+              message={actionError}
+            />
+          )}
+          {!!successMessage && (
+            <View style={styles.successBanner} accessibilityRole="alert">
+              <View style={styles.successIcon}>
+                <Ionicons name="checkmark-circle" size={19} color={palette.colors.successDark} />
+              </View>
+              <Text style={styles.successText}>{successMessage}</Text>
+            </View>
+          )}
 
-        <View style={{ height: 100 }} />
-      </ScrollView>
+          {sections.map((section) => (
+            <View key={section.title} style={styles.sectionWrap}>
+              <SellerSectionHeader
+                title={section.title}
+                subtitle={section.subtitle}
+                icon={section.icon}
+              />
+              <GlassPanel variant="card" style={styles.sectionCard}>
+                {section.items.map((item, index) => {
+                  const enabled = prefs[item.key];
+                  return (
+                    <View
+                      key={item.key}
+                      style={[styles.preferenceRow, index > 0 && styles.preferenceRowBorder]}
+                    >
+                      <View style={[styles.preferenceIcon, enabled && styles.preferenceIconEnabled]}>
+                        <Ionicons
+                          name={item.icon}
+                          size={18}
+                          color={enabled ? palette.colors.primary : palette.colors.textLight}
+                        />
+                      </View>
+                      <View style={styles.preferenceCopy}>
+                        <Text style={styles.preferenceLabel}>{item.label}</Text>
+                        <Text style={styles.preferenceDescription}>{item.description}</Text>
+                      </View>
+                      <Switch
+                        value={enabled}
+                        onValueChange={() => handleToggle(item.key)}
+                        trackColor={{
+                          false: pColorWithOpacity(palette.colors.textLight, '35'),
+                          true: palette.colors.primaryLight,
+                        }}
+                        thumbColor={enabled ? palette.colors.primary : palette.colors.surface}
+                        ios_backgroundColor={pColorWithOpacity(palette.colors.textLight, '35')}
+                        accessibilityLabel={`${item.label}. ${enabled ? 'Enabled' : 'Disabled'}`}
+                      />
+                    </View>
+                  );
+                })}
+              </GlassPanel>
+            </View>
+          ))}
+
+          <GlassPanel variant="strong" style={styles.actionCard}>
+            <View style={styles.actionCopy}>
+              <Text style={styles.actionTitle}>{dirty ? 'You have unsaved changes' : 'Preferences are up to date'}</Text>
+              <Text style={styles.actionSubtitle}>
+                {dirty ? 'Save to apply these settings to your seller account.' : 'Changes are synced with the website and backend.'}
+              </Text>
+            </View>
+            <View style={styles.actionButtons}>
+              <TouchableOpacity
+                style={[styles.resetButton, (saving || resetting) && styles.buttonDisabled]}
+                onPress={handleReset}
+                disabled={saving || resetting}
+                activeOpacity={0.76}
+                accessibilityRole="button"
+                accessibilityLabel="Restore default notification preferences"
+              >
+                {resetting
+                  ? <ActivityIndicator size="small" color={palette.colors.textSecondary} />
+                  : <Ionicons name="refresh-outline" size={16} color={palette.colors.textSecondary} />}
+                <Text style={styles.resetButtonText}>{resetting ? 'Restoring' : 'Defaults'}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.saveButton, (!dirty || saving || resetting) && styles.buttonDisabled]}
+                onPress={handleSave}
+                disabled={!dirty || saving || resetting}
+                activeOpacity={0.8}
+                accessibilityRole="button"
+                accessibilityLabel="Save notification preferences"
+                accessibilityState={{ disabled: !dirty || saving || resetting }}
+              >
+                {saving
+                  ? <ActivityIndicator size="small" color="#fff" />
+                  : <Ionicons name="checkmark" size={17} color="#fff" />}
+                <Text style={styles.saveButtonText}>{saving ? 'Saving' : 'Save changes'}</Text>
+              </TouchableOpacity>
+            </View>
+          </GlassPanel>
+        </ScrollView>
+      </SafeAreaView>
     </GlassBackground>
   );
 }
 
+function pColorWithOpacity(color, opacity) {
+  if (typeof color === 'string' && /^#[0-9a-f]{6}$/i.test(color)) return `${color}${opacity}`;
+  return color;
+}
+
 const buildStyles = (p) => StyleSheet.create({
-  scroll: { paddingBottom: spacing.xxl },
-  headerRow: { paddingHorizontal: spacing.lg, paddingTop: spacing.lg, marginBottom: spacing.lg },
-  tagPill: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(99,102,241,0.12)', alignSelf: 'flex-start', paddingHorizontal: spacing.sm, paddingVertical: 4, borderRadius: borderRadius.full, marginBottom: spacing.sm },
-  tagText: { ...typography.caption, color: p.colors.primary, fontWeight: fontWeight.semibold },
-  headerTitle: { fontSize: fontSize.xxl + 4, fontWeight: fontWeight.bold, color: p.colors.text, letterSpacing: -0.5 },
-  headerSubtitle: { ...typography.bodySmall, color: p.colors.textSecondary, marginTop: 2 },
-  section: { marginHorizontal: spacing.lg, marginBottom: spacing.md, overflow: 'hidden' },
-  sectionHeader: { padding: spacing.lg, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.08)' },
-  sectionTitle: { ...typography.bodySemibold, color: p.colors.text },
-  sectionDesc: { ...typography.caption, color: p.colors.textSecondary, marginTop: 2 },
-  toggleRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing.lg, paddingVertical: spacing.md, gap: spacing.md, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.04)' },
-  toggleIcon: { width: 36, height: 36, borderRadius: borderRadius.lg, justifyContent: 'center', alignItems: 'center' },
-  toggleLabel: { ...typography.bodySemibold, color: p.colors.text, fontSize: fontSize.sm },
-  toggleDesc: { ...typography.caption, color: p.colors.textSecondary },
-  actionsRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: spacing.lg, marginTop: spacing.md, gap: spacing.md },
-  resetBtn: { paddingHorizontal: spacing.md, paddingVertical: spacing.md, borderRadius: borderRadius.xl, backgroundColor: 'rgba(255,255,255,0.08)' },
-  resetBtnText: { ...typography.bodySmall, color: p.colors.textSecondary },
-  saveBtn: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingHorizontal: spacing.xl, paddingVertical: spacing.md, borderRadius: borderRadius.xl, backgroundColor: p.colors.primary },
-  saveBtnText: { ...typography.bodySemibold, color: 'white' },
+  safeArea: { flex: 1 },
+  fullError: { flex: 1, justifyContent: 'center' },
+  scrollContent: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
+    paddingBottom: 96,
+  },
+  heroCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    padding: spacing.xl,
+    borderRadius: borderRadius.xxl,
+    marginBottom: spacing.md,
+  },
+  heroIcon: {
+    width: 54,
+    height: 54,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: p.colors.primarySubtle,
+    borderWidth: 1,
+    borderColor: p.colors.primaryLighter,
+  },
+  heroCopy: { flex: 1 },
+  heroEyebrow: {
+    fontSize: 9,
+    letterSpacing: 1.1,
+    fontWeight: fontWeight.extrabold,
+    color: p.colors.primary,
+  },
+  heroTitle: {
+    marginTop: 3,
+    fontSize: fontSize.xl,
+    fontWeight: fontWeight.extrabold,
+    color: p.colors.text,
+  },
+  heroSubtitle: {
+    marginTop: 4,
+    fontSize: fontSize.xs,
+    lineHeight: 17,
+    color: p.colors.textSecondary,
+  },
+  successBanner: {
+    marginVertical: spacing.sm,
+    minHeight: 48,
+    paddingHorizontal: spacing.md,
+    borderRadius: borderRadius.lg,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    backgroundColor: p.colors.successSubtle,
+    borderWidth: 1,
+    borderColor: p.colors.successLighter,
+  },
+  successIcon: {
+    width: 30,
+    height: 30,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: p.colors.surface,
+  },
+  successText: { flex: 1, fontSize: fontSize.sm, fontWeight: fontWeight.semibold, color: p.colors.successDark },
+  sectionWrap: { marginTop: spacing.xl },
+  sectionCard: { padding: 0, overflow: 'hidden', borderRadius: borderRadius.xl },
+  preferenceRow: {
+    minHeight: 82,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+  },
+  preferenceRowBorder: { borderTopWidth: 1, borderTopColor: p.glass.borderSubtle },
+  preferenceIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: p.colors.surfaceHover,
+    borderWidth: 1,
+    borderColor: p.glass.borderSubtle,
+  },
+  preferenceIconEnabled: {
+    backgroundColor: p.colors.primarySubtle,
+    borderColor: p.colors.primaryLighter,
+  },
+  preferenceCopy: { flex: 1, minWidth: 0 },
+  preferenceLabel: { fontSize: fontSize.md, fontWeight: fontWeight.bold, color: p.colors.text },
+  preferenceDescription: {
+    marginTop: 3,
+    fontSize: fontSize.xs,
+    lineHeight: 17,
+    color: p.colors.textSecondary,
+  },
+  actionCard: {
+    marginTop: spacing.xxl,
+    padding: spacing.lg,
+    borderRadius: borderRadius.xxl,
+  },
+  actionCopy: { marginBottom: spacing.md },
+  actionTitle: { fontSize: fontSize.md, fontWeight: fontWeight.extrabold, color: p.colors.text },
+  actionSubtitle: { marginTop: 3, fontSize: fontSize.xs, lineHeight: 17, color: p.colors.textSecondary },
+  actionButtons: { flexDirection: 'row', gap: spacing.sm },
+  resetButton: {
+    minHeight: 46,
+    paddingHorizontal: spacing.lg,
+    borderRadius: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.sm,
+    backgroundColor: p.colors.surfaceHover,
+    borderWidth: 1,
+    borderColor: p.glass.border,
+  },
+  resetButtonText: { fontSize: fontSize.sm, fontWeight: fontWeight.bold, color: p.colors.textSecondary },
+  saveButton: {
+    flex: 1,
+    minHeight: 46,
+    paddingHorizontal: spacing.lg,
+    borderRadius: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.sm,
+    backgroundColor: p.colors.primary,
+  },
+  saveButtonText: { fontSize: fontSize.sm, fontWeight: fontWeight.bold, color: '#fff' },
+  buttonDisabled: { opacity: 0.48 },
 });

@@ -3,7 +3,6 @@ import {
   ActivityIndicator,
   Alert,
   Modal,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -16,6 +15,7 @@ import * as Crypto from 'expo-crypto';
 import Feedback from '../utils/feedback';
 import api from '../config/api';
 import GlassPanel from './common/GlassPanel';
+import KeyboardAwareFormScrollView from './common/KeyboardAwareFormScrollView';
 import { useTheme } from '../contexts/ThemeContext';
 import { borderRadius, fontSize, fontWeight, spacing } from '../styles/theme';
 import {
@@ -246,7 +246,7 @@ export default function BuyerReturnsSection({ order, formatMoney }) {
               <Text style={styles.mutedText}>{selectedGroup?.store?.storeName || selectedGroup?.seller?.username}</Text>
             </View>
           </View>
-          <ScrollView contentContainerStyle={styles.modalScroll} keyboardShouldPersistTaps="handled">
+          <KeyboardAwareFormScrollView contentContainerStyle={styles.modalScroll} bottomOffset={32}>
             {selectedGroup?.items.filter(item => item.eligible && item.remainingReturnableQuantity > 0).map(item => {
               const key = String(item.orderItemId);
               const quantity = Number(quantities[key] || 0);
@@ -301,7 +301,7 @@ export default function BuyerReturnsSection({ order, formatMoney }) {
               {submitting ? <ActivityIndicator size="small" color="#fff" /> : <Ionicons name="send-outline" size={18} color="#fff" />}
               <Text style={styles.submitText}>{submitting ? 'Sending...' : 'Submit Return Request'}</Text>
             </TouchableOpacity>
-          </ScrollView>
+          </KeyboardAwareFormScrollView>
         </View>
       </Modal>
     </View>

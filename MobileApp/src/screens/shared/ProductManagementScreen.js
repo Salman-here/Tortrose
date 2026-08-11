@@ -2,63 +2,47 @@
  * ProductManagementScreen - shared admin/seller product management.
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, FlatList, TouchableOpacity, StyleSheet, Alert,
-  RefreshControl, TextInput, Modal, ScrollView, ActivityIndicator,
+  RefreshControl, TextInput, Modal, ScrollView, ActivityIndicator, Platform,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import api, { API_ENDPOINTS } from '../../config/api';
-import Loader from '../../components/common/Loader';
-import { EmptyProducts, EmptySearch } from '../../components/common/EmptyState';
 import GlassBackground from '../../components/common/GlassBackground';
 import GlassPanel from '../../components/common/GlassPanel';
+import KeyboardAwareFormScrollView from '../../components/common/KeyboardAwareFormScrollView';
+import {
+  SellerEmptyState,
+  SellerInlineError,
+  SellerScreenHeader,
+  SellerScreenSkeleton,
+} from '../../components/seller/SellerUI';
 import { spacing, fontSize, borderRadius, fontWeight, typography } from '../../styles/theme';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useCurrency } from '../../contexts/CurrencyContext';
+import {
+  buildProductListParams,
+  filterProductsByQuery,
+  getManagedProductImage,
+  getProductModerationReason,
+  isProductHiddenByModeration,
+  mergeProducts,
+  normalizeProductCategories,
+  normalizeProductResponse,
+  validateBulkActionSelection,
+} from '../../utils/productManagement';
 
 const PAGE_LIMIT = 24;
 
-export const filterProductsByQuery = (products, query) => {
-  if (!Array.isArray(products)) return [];
-  if (!query?.trim()) return products;
-  const q = query.toLowerCase().trim();
-  return products.filter(p =>
-    p.name?.toLowerCase().includes(q) ||
-    p.category?.toLowerCase().includes(q) ||
-    p.brand?.toLowerCase().includes(q)
-  );
-};
-
-const normalizeProductResponse = (data) => {
-  if (Array.isArray(data)) return { products: data, pagination: null };
-  return {
-    products: Array.isArray(data?.products) ? data.products : [],
-    pagination: data?.pagination || null,
-  };
-};
-
-const mergeProducts = (current, next) => {
-  const seen = new Set();
-  return [...current, ...next].filter((product) => {
-    const id = product?._id;
-    if (!id || seen.has(id)) return false;
-    seen.add(id);
-    return true;
-  });
-};
-
-const getProductImage = (product) => {
-  const firstImage = product?.images?.[0];
-  if (typeof firstImage === 'string') return firstImage;
-  return firstImage?.url || product?.image || null;
-};
+export { filterProductsByQuery, isProductHiddenByModeration };
 
 const getStockStatus = (stock, palette) => {
   const amount = Number(stock || 0);
   if (amount <= 0) return { label: 'Out of Stock', color: palette.colors.error };
-  if (amount <= 5) return { label: 'Low Stock', color: palette.colors.warning };
+  if (amount <= 10) return { label: 'Low Stock', color: palette.colors.warning };
   return { label: 'In Stock', color: palette.colors.success };
 };
 
@@ -72,8 +56,12 @@ export default function ProductManagementScreen({ navigation, route }) {
   const [pagination, setPagination] = useState({ page: 1, limit: PAGE_LIMIT, totalProducts: 0, totalPages: 1, hasMore: false });
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [searching, setSearching] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [categories, setCategories] = useState([]);
+  const [selectedCategory, setSelectedCategory] = useState('all');
+  const [filtersLoading, setFiltersLoading] = useState(true);
   const [deletingId, setDeletingId] = useState(null);
   const [selectMode, setSelectMode] = useState(false);
   const [selectedProducts, setSelectedProducts] = useState([]);
@@ -84,26 +72,51 @@ export default function ProductManagementScreen({ navigation, route }) {
   const [bulkPriceType, setBulkPriceType] = useState('percentage');
   const [bulkPriceValue, setBulkPriceValue] = useState('');
   const [bulkLoading, setBulkLoading] = useState(false);
-  const [hasStore, setHasStore] = useState(true);
+  const [hasStore, setHasStore] = useState(isAdmin ? true : null);
+  const [loadError, setLoadError] = useState('');
+  const [storeCheckError, setStoreCheckError] = useState('');
+  const hasLoadedRef = useRef(false);
+  const fetchProductsRef = useRef(null);
+  const checkStoreRef = useRef(null);
+  const fetchRequestRef = useRef(0);
 
   const endpoint = isAdmin ? API_ENDPOINTS.PRODUCTS.GET_ADMIN : API_ENDPOINTS.PRODUCTS.GET_SELLER;
   const moneySymbol = getCurrencySymbol();
 
+  const handleBack = useCallback(() => {
+    if (navigation.canGoBack?.()) navigation.goBack();
+    else navigation.navigate('SellerDashboard');
+  }, [navigation]);
+
+  const openProductForm = useCallback((product) => {
+    if (!isAdmin && hasStore === false) {
+      navigation.navigate('SellerStoreSettings');
+      return;
+    }
+    navigation.navigate('ProductForm', { ...(product ? { product } : {}), isAdmin });
+  }, [hasStore, isAdmin, navigation]);
+
   const fetchProducts = useCallback(async ({ page = 1, append = false, silent = false } = {}) => {
+    const requestId = ++fetchRequestRef.current;
     if (append) setLoadingMore(true);
-    else if (!silent) setLoading(true);
+    else if (!silent && !hasLoadedRef.current) setLoading(true);
+    else if (!silent) setSearching(true);
 
     try {
+      if (!append) setLoadError('');
       const res = await api.get(endpoint, {
-        params: {
+        params: buildProductListParams({
           page,
           limit: PAGE_LIMIT,
           currency,
-          search: searchQuery.trim() || undefined,
-        },
+          searchQuery,
+          selectedCategory,
+        }),
       });
+      if (requestId !== fetchRequestRef.current) return;
       const normalized = normalizeProductResponse(res.data);
       setProducts(prev => append ? mergeProducts(prev, normalized.products) : normalized.products);
+      setCategories((previous) => normalizeProductCategories(previous, normalized.products));
       setPagination(normalized.pagination || {
         page,
         limit: PAGE_LIMIT,
@@ -112,37 +125,83 @@ export default function ProductManagementScreen({ navigation, route }) {
         hasMore: false,
       });
     } catch (e) {
-      Alert.alert('Error', e.response?.data?.msg || 'Failed to fetch products');
+      if (requestId !== fetchRequestRef.current) return;
+      const message = e.response?.data?.msg || 'We could not load your products. Check your connection and try again.';
+      setLoadError(message);
+      if (append) Alert.alert('Could not load more products', message);
     } finally {
+      if (requestId !== fetchRequestRef.current) return;
       setLoading(false);
       setLoadingMore(false);
+      setSearching(false);
       setRefreshing(false);
+      hasLoadedRef.current = true;
     }
-  }, [endpoint, currency, searchQuery]);
+  }, [endpoint, currency, searchQuery, selectedCategory]);
+
+  const fetchCategories = useCallback(async () => {
+    setFiltersLoading(true);
+    try {
+      const response = await api.get('/api/products/get-filters');
+      setCategories((previous) => normalizeProductCategories(previous, response.data?.categories));
+    } catch (_) {
+      // Product categories observed in seller results remain available as a safe fallback.
+    } finally {
+      setFiltersLoading(false);
+    }
+  }, []);
 
   const checkStore = useCallback(async () => {
     if (isAdmin) return;
     try {
+      setStoreCheckError('');
       const res = await api.get(API_ENDPOINTS.STORES.MY_STORE);
       setHasStore(!!res.data?.store);
-    } catch {
-      setHasStore(false);
+    } catch (error) {
+      if (error.response?.status === 404) {
+        setHasStore(false);
+      } else {
+        setHasStore(null);
+        setStoreCheckError(error.response?.data?.msg || 'Store status could not be verified right now.');
+      }
     }
   }, [isAdmin]);
 
   useEffect(() => {
     checkStore();
-  }, [checkStore]);
+    fetchCategories();
+  }, [checkStore, fetchCategories]);
 
   useEffect(() => {
     const timer = setTimeout(() => fetchProducts({ page: 1 }), searchQuery ? 350 : 0);
     return () => clearTimeout(timer);
-  }, [fetchProducts, searchQuery]);
+  }, [fetchProducts, searchQuery, selectedCategory]);
 
-  const onRefresh = useCallback(() => {
+  useEffect(() => {
+    setSelectMode(false);
+    setSelectedProducts([]);
+  }, [searchQuery, selectedCategory]);
+
+  useEffect(() => {
+    fetchProductsRef.current = fetchProducts;
+    checkStoreRef.current = checkStore;
+  }, [checkStore, fetchProducts]);
+
+  useEffect(() => navigation.addListener('focus', () => {
+    if (!hasLoadedRef.current) return;
+    fetchProductsRef.current?.({ page: 1, silent: true });
+    checkStoreRef.current?.();
+    fetchCategories();
+  }), [fetchCategories, navigation]);
+
+  const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    fetchProducts({ page: 1, silent: true });
-  }, [fetchProducts]);
+    await Promise.all([
+      fetchProducts({ page: 1, silent: true }),
+      checkStore(),
+      fetchCategories(),
+    ]);
+  }, [checkStore, fetchCategories, fetchProducts]);
 
   const loadMore = () => {
     if (loading || loadingMore || !pagination?.hasMore) return;
@@ -161,6 +220,10 @@ export default function ProductManagementScreen({ navigation, route }) {
             await api.delete(`${API_ENDPOINTS.PRODUCTS.DELETE}/${id}`);
             setProducts(prev => prev.filter(p => p._id !== id));
             setSelectedProducts(prev => prev.filter(p => p._id !== id));
+            setPagination((previous) => ({
+              ...previous,
+              totalProducts: Math.max(0, Number(previous?.totalProducts || 0) - 1),
+            }));
           } catch (e) {
             Alert.alert('Error', e.response?.data?.msg || 'Failed to delete product');
           } finally {
@@ -193,30 +256,38 @@ export default function ProductManagementScreen({ navigation, route }) {
     setBulkPriceValue('');
   };
 
-  const selectedIds = selectedProducts.map(p => p._id);
+  const selectedIds = [...new Set(selectedProducts.map((product) => product?._id).filter(Boolean))];
 
-  const requireSelection = () => {
-    if (selectedIds.length > 0) return true;
-    Alert.alert('No products selected', 'Select at least one product first.');
-    return false;
+  const requireSelection = (max) => {
+    const validation = validateBulkActionSelection(selectedIds, { max });
+    if (validation.isValid) return validation.ids;
+    Alert.alert('Selection required', validation.message);
+    return null;
   };
 
   const handleBulkDiscount = async () => {
-    if (!requireSelection()) return;
-    if (!bulkDiscountValue || isNaN(Number(bulkDiscountValue))) {
-      Alert.alert('Error', 'Enter a valid discount value');
+    const productIds = requireSelection();
+    if (!productIds) return;
+    const discountValue = Number(bulkDiscountValue);
+    if (!Number.isFinite(discountValue) || discountValue <= 0) {
+      Alert.alert('Invalid discount', 'Enter a discount greater than zero.');
+      return;
+    }
+    if (bulkDiscountType === 'percentage' && discountValue >= 100) {
+      Alert.alert('Invalid discount', 'Percentage discounts must be less than 100%.');
       return;
     }
     setBulkLoading(true);
     try {
-      await api.post(API_ENDPOINTS.PRODUCTS.BULK_DISCOUNT, {
-        productIds: selectedIds,
+      const response = await api.post(API_ENDPOINTS.PRODUCTS.BULK_DISCOUNT, {
+        productIds,
         discountType: bulkDiscountType,
-        discountValue: Number(bulkDiscountValue),
+        discountValue,
         currency,
       });
       exitBulkMode();
       fetchProducts({ page: 1, silent: true });
+      Alert.alert('Discount applied', response.data?.msg || `Updated ${productIds.length} products.`);
     } catch (e) {
       Alert.alert('Error', e.response?.data?.msg || 'Failed to apply discount');
     } finally {
@@ -225,21 +296,28 @@ export default function ProductManagementScreen({ navigation, route }) {
   };
 
   const handleBulkPriceUpdate = async () => {
-    if (!requireSelection()) return;
-    if (bulkPriceValue === '' || isNaN(Number(bulkPriceValue)) || (bulkPriceType !== 'set' && Number(bulkPriceValue) === 0)) {
-      Alert.alert('Error', 'Enter a valid price value');
+    const productIds = requireSelection();
+    if (!productIds) return;
+    const priceValue = Number(bulkPriceValue);
+    if (!Number.isFinite(priceValue) || (bulkPriceType === 'set' ? priceValue <= 0 : priceValue === 0)) {
+      Alert.alert('Invalid price change', bulkPriceType === 'set' ? 'The new price must be greater than zero.' : 'Enter a non-zero price change.');
+      return;
+    }
+    if (bulkPriceType === 'percentage' && priceValue <= -100) {
+      Alert.alert('Invalid price change', 'A percentage decrease must be less than 100%.');
       return;
     }
     setBulkLoading(true);
     try {
-      await api.post(API_ENDPOINTS.PRODUCTS.BULK_PRICE_UPDATE, {
-        productIds: selectedIds,
+      const response = await api.post(API_ENDPOINTS.PRODUCTS.BULK_PRICE_UPDATE, {
+        productIds,
         updateType: bulkPriceType,
-        value: Number(bulkPriceValue),
+        value: priceValue,
         currency,
       });
       exitBulkMode();
       fetchProducts({ page: 1, silent: true });
+      Alert.alert('Prices updated', response.data?.msg || `Updated ${productIds.length} products.`);
     } catch (e) {
       Alert.alert('Error', e.response?.data?.msg || 'Failed to update prices');
     } finally {
@@ -248,12 +326,14 @@ export default function ProductManagementScreen({ navigation, route }) {
   };
 
   const handleRemoveDiscount = async () => {
-    if (!requireSelection()) return;
+    const productIds = requireSelection();
+    if (!productIds) return;
     setBulkLoading(true);
     try {
-      await api.post(API_ENDPOINTS.PRODUCTS.REMOVE_DISCOUNT, { productIds: selectedIds });
+      const response = await api.post(API_ENDPOINTS.PRODUCTS.REMOVE_DISCOUNT, { productIds });
       exitBulkMode();
       fetchProducts({ page: 1, silent: true });
+      Alert.alert('Discounts removed', response.data?.msg || `Updated ${productIds.length} products.`);
     } catch (e) {
       Alert.alert('Error', e.response?.data?.msg || 'Failed to remove discounts');
     } finally {
@@ -262,10 +342,11 @@ export default function ProductManagementScreen({ navigation, route }) {
   };
 
   const handleBulkDelete = () => {
-    if (!requireSelection()) return;
+    const productIds = requireSelection(250);
+    if (!productIds) return;
     Alert.alert(
       'Delete selected products?',
-      `This will permanently delete ${selectedIds.length} product${selectedIds.length === 1 ? '' : 's'}.`,
+      `This will permanently delete ${productIds.length} product${productIds.length === 1 ? '' : 's'}.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -274,9 +355,10 @@ export default function ProductManagementScreen({ navigation, route }) {
           onPress: async () => {
             setBulkLoading(true);
             try {
-              await api.post(API_ENDPOINTS.PRODUCTS.BULK_DELETE, { productIds: selectedIds });
+              const response = await api.post(API_ENDPOINTS.PRODUCTS.BULK_DELETE, { productIds });
               exitBulkMode();
               fetchProducts({ page: 1, silent: true });
+              Alert.alert('Products deleted', response.data?.msg || `Deleted ${productIds.length} products.`);
             } catch (e) {
               Alert.alert('Error', e.response?.data?.msg || 'Failed to delete selected products');
             } finally {
@@ -292,8 +374,10 @@ export default function ProductManagementScreen({ navigation, route }) {
     const stockStatus = getStockStatus(item.stock, palette);
     const isDeleting = deletingId === item._id;
     const isSelected = selectedProducts.some(p => p._id === item._id);
-    const imageUri = getProductImage(item);
+    const imageUri = getManagedProductImage(item);
     const hasDiscount = Number(item.discountedPrice || 0) > 0 && Number(item.discountedPrice) < Number(item.price);
+    const isHidden = isProductHiddenByModeration(item);
+    const hiddenReason = getProductModerationReason(item);
 
     return (
       <GlassPanel variant="card" style={[styles.productCard, isSelected && styles.productCardSelected]}>
@@ -304,7 +388,7 @@ export default function ProductManagementScreen({ navigation, route }) {
               handleSelectProduct(item);
               return;
             }
-            navigation.navigate('ProductForm', { product: item, isAdmin });
+            openProductForm(item);
           }}
           onLongPress={() => {
             if (!selectMode) {
@@ -314,6 +398,10 @@ export default function ProductManagementScreen({ navigation, route }) {
           }}
           activeOpacity={0.7}
           disabled={isDeleting}
+          accessibilityRole="button"
+          accessibilityLabel={`${item.name || 'Untitled product'}, ${stockStatus.label}${isHidden ? ', hidden from customers' : ''}`}
+          accessibilityHint={selectMode ? 'Toggles selection' : 'Opens product editor'}
+          accessibilityState={{ selected: isSelected, disabled: isDeleting }}
         >
           {selectMode && (
             <View style={[styles.checkbox, isSelected && styles.checkboxChecked]}>
@@ -322,7 +410,7 @@ export default function ProductManagementScreen({ navigation, route }) {
           )}
           <View style={styles.imageContainer}>
             {imageUri ? (
-              <Image source={{ uri: imageUri }} style={styles.productImage} contentFit="cover" />
+              <Image source={{ uri: imageUri }} style={styles.productImage} contentFit="cover" accessibilityLabel={`${item.name || 'Product'} image`} />
             ) : (
               <View style={[styles.productImage, styles.imagePlaceholder]}>
                 <Ionicons name="cube-outline" size={24} color={palette.colors.textSecondary} />
@@ -332,6 +420,12 @@ export default function ProductManagementScreen({ navigation, route }) {
           <View style={styles.productInfo}>
             <Text style={styles.productName} numberOfLines={2}>{item.name || 'Untitled product'}</Text>
             <Text style={styles.metaText} numberOfLines={1}>{item.category || 'Uncategorized'}{item.brand ? ` - ${item.brand}` : ''}</Text>
+            {isHidden && (
+              <View style={styles.hiddenProductBadge}>
+                <Ionicons name="eye-off-outline" size={12} color={palette.colors.error} />
+                <Text style={styles.hiddenProductText}>Hidden from customers</Text>
+              </View>
+            )}
             <View style={styles.priceRow}>
               <Text style={styles.productPrice}>{formatProductPrice(item, { field: hasDiscount ? 'discountedPrice' : 'price' })}</Text>
               {hasDiscount && <Text style={styles.originalPrice}>{formatProductPrice(item, { field: 'price' })}</Text>}
@@ -339,33 +433,50 @@ export default function ProductManagementScreen({ navigation, route }) {
             <View style={[styles.stockBadge, { backgroundColor: `${stockStatus.color}20` }]}>
               <Text style={[styles.stockText, { color: stockStatus.color }]}>{stockStatus.label} - {Number(item.stock || 0)} left</Text>
             </View>
+            {isHidden && <Text style={styles.hiddenReason} numberOfLines={2}>{hiddenReason}</Text>}
           </View>
           <View style={styles.actions}>
-            <TouchableOpacity style={styles.actionButton} onPress={() => navigation.navigate('ProductForm', { product: item, isAdmin })}>
+            <TouchableOpacity style={styles.actionButton} onPress={() => openProductForm(item)} accessibilityRole="button" accessibilityLabel={`Edit ${item.name || 'product'}`}>
               <Ionicons name="create-outline" size={22} color={palette.colors.primary} />
             </TouchableOpacity>
-            <TouchableOpacity style={styles.actionButton} onPress={() => deleteProduct(item._id, item.name)} disabled={isDeleting}>
+            <TouchableOpacity style={styles.actionButton} onPress={() => deleteProduct(item._id, item.name)} disabled={isDeleting} accessibilityRole="button" accessibilityLabel={`Delete ${item.name || 'product'}`} accessibilityState={{ disabled: isDeleting, busy: isDeleting }}>
               <Ionicons name="trash-outline" size={22} color={isDeleting ? palette.colors.textSecondary : palette.colors.error} />
             </TouchableOpacity>
           </View>
         </TouchableOpacity>
       </GlassPanel>
     );
-  }, [navigation, isAdmin, deletingId, deleteProduct, selectMode, selectedProducts, handleSelectProduct, palette, formatProductPrice, styles]);
+  }, [deletingId, deleteProduct, selectMode, selectedProducts, handleSelectProduct, palette, formatProductPrice, styles, openProductForm]);
 
   const renderHeader = useCallback(() => (
     <View style={styles.headerContainer}>
+      {!!loadError && (
+        <SellerInlineError
+          compact
+          title="Products could not refresh"
+          message={loadError}
+          onRetry={() => fetchProducts({ page: 1 })}
+        />
+      )}
+      {!!storeCheckError && (
+        <SellerInlineError
+          compact
+          title="Store status unavailable"
+          message={storeCheckError}
+          onRetry={checkStore}
+        />
+      )}
       {selectMode ? (
         <GlassPanel variant="floating" style={styles.bulkBar}>
-          <TouchableOpacity onPress={() => { setSelectMode(false); setSelectedProducts([]); }}>
+          <TouchableOpacity onPress={() => { setSelectMode(false); setSelectedProducts([]); }} accessibilityRole="button" accessibilityLabel="Exit product selection">
             <Ionicons name="close" size={20} color={palette.colors.text} />
           </TouchableOpacity>
           <Text style={styles.bulkCountText}>{selectedProducts.length} selected</Text>
-          <TouchableOpacity onPress={toggleSelectAllLoaded}>
+          <TouchableOpacity onPress={toggleSelectAllLoaded} accessibilityRole="button" accessibilityLabel={selectedProducts.length === products.length ? 'Clear selected products' : 'Select all loaded products'}>
             <Text style={styles.selectAllText}>{selectedProducts.length === products.length ? 'Clear' : 'Select loaded'}</Text>
           </TouchableOpacity>
           {selectedProducts.length > 0 && (
-            <TouchableOpacity style={styles.bulkActionsBtn} onPress={() => setBulkModalVisible(true)}>
+            <TouchableOpacity style={styles.bulkActionsBtn} onPress={() => setBulkModalVisible(true)} accessibilityRole="button" accessibilityLabel={`Open bulk actions for ${selectedProducts.length} products`}>
               <Ionicons name="flash" size={16} color="white" />
               <Text style={styles.bulkActionsBtnText}>Actions</Text>
             </TouchableOpacity>
@@ -381,18 +492,47 @@ export default function ProductManagementScreen({ navigation, route }) {
               placeholderTextColor={palette.colors.textSecondary}
               value={searchQuery}
               onChangeText={setSearchQuery}
+              accessibilityLabel="Search products"
+              returnKeyType="search"
             />
+            {searching && <ActivityIndicator size="small" color={palette.colors.primary} />}
             {searchQuery.length > 0 && (
-              <TouchableOpacity onPress={() => setSearchQuery('')}>
+              <TouchableOpacity onPress={() => setSearchQuery('')} accessibilityRole="button" accessibilityLabel="Clear product search">
                 <Ionicons name="close-circle" size={20} color={palette.colors.textSecondary} />
               </TouchableOpacity>
             )}
           </View>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.categoryFilters}
+            accessibilityRole="tablist"
+          >
+            {['all', ...categories].map((category) => {
+              const selected = category === selectedCategory;
+              return (
+                <TouchableOpacity
+                  key={category}
+                  style={[styles.categoryChip, selected && styles.categoryChipActive]}
+                  onPress={() => setSelectedCategory(category)}
+                  accessibilityRole="tab"
+                  accessibilityState={{ selected }}
+                  accessibilityLabel={category === 'all' ? 'All product categories' : `${category} products`}
+                >
+                  {category === 'all' && <Ionicons name="apps-outline" size={14} color={selected ? '#fff' : palette.colors.textSecondary} />}
+                  <Text style={[styles.categoryChipText, selected && styles.categoryChipTextActive]}>
+                    {category === 'all' ? 'All' : category}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+            {filtersLoading && <ActivityIndicator size="small" color={palette.colors.primary} style={styles.filterLoader} />}
+          </ScrollView>
           <View style={styles.resultsRow}>
             <Text style={styles.resultsText}>
               <Text style={styles.resultsCount}>{pagination?.totalProducts ?? products.length}</Text> products
             </Text>
-            <TouchableOpacity style={styles.selectModeBtn} onPress={() => setSelectMode(true)} disabled={products.length === 0}>
+            <TouchableOpacity style={styles.selectModeBtn} onPress={() => setSelectMode(true)} disabled={products.length === 0} accessibilityRole="button" accessibilityLabel="Select products for bulk actions" accessibilityState={{ disabled: products.length === 0 }}>
               <Ionicons name="checkmark-circle-outline" size={16} color={products.length ? palette.colors.primary : palette.colors.textSecondary} />
               <Text style={[styles.selectModeBtnText, products.length === 0 && { color: palette.colors.textSecondary }]}>Select</Text>
             </TouchableOpacity>
@@ -400,7 +540,7 @@ export default function ProductManagementScreen({ navigation, route }) {
         </>
       )}
     </View>
-  ), [searchQuery, selectMode, selectedProducts.length, products.length, pagination?.totalProducts, palette, styles]);
+  ), [categories, checkStore, fetchProducts, filtersLoading, loadError, pagination?.totalProducts, palette, products.length, searchQuery, searching, selectedCategory, selectedProducts.length, selectMode, storeCheckError, styles]);
 
   const renderFooter = () => {
     if (loadingMore) {
@@ -419,11 +559,36 @@ export default function ProductManagementScreen({ navigation, route }) {
     );
   };
 
-  if (loading) return <GlassBackground><Loader fullScreen message="Loading products..." /></GlassBackground>;
+  if (loading) {
+    return (
+      <SellerScreenSkeleton
+        navigation={navigation}
+        title="Products"
+        subtitle="Loading your catalog and inventory"
+        icon="cube-outline"
+        variant="list"
+        rows={6}
+      />
+    );
+  }
 
   return (
     <GlassBackground>
-      {!isAdmin && !hasStore && (
+      <SafeAreaView
+        style={styles.safeArea}
+        edges={Platform.OS === 'android' ? [] : ['top']}
+      >
+      <SellerScreenHeader
+        navigation={navigation}
+        title="Products"
+        subtitle={`${pagination?.totalProducts ?? products.length} listings | inventory, pricing and visibility`}
+        icon="cube-outline"
+        onBack={handleBack}
+        rightIcon={hasStore === false && !isAdmin ? 'storefront-outline' : 'add'}
+        rightLabel={hasStore === false && !isAdmin ? 'Set up' : 'Add'}
+        onRightPress={() => openProductForm()}
+      />
+      {!isAdmin && hasStore === false && (
         <GlassPanel variant="card" style={styles.storeWarning}>
           <View style={styles.warningRow}>
             <Ionicons name="alert-circle" size={22} color={palette.colors.warning} />
@@ -443,27 +608,45 @@ export default function ProductManagementScreen({ navigation, route }) {
         contentContainerStyle={styles.list}
         ListHeaderComponent={renderHeader()}
         ListFooterComponent={renderFooter()}
-        ListEmptyComponent={searchQuery
-          ? <EmptySearch query={searchQuery} onClear={() => setSearchQuery('')} />
-          : <EmptyProducts onAdd={hasStore || isAdmin ? () => navigation.navigate('ProductForm', { isAdmin }) : undefined} />}
+        ListEmptyComponent={loadError
+          ? null
+          : searchQuery || selectedCategory !== 'all'
+            ? (
+              <SellerEmptyState
+                icon="search-outline"
+                title="No matching products"
+                message="Try a different search or category filter."
+                actionLabel="Clear filters"
+                onAction={() => { setSearchQuery(''); setSelectedCategory('all'); }}
+              />
+            )
+            : (
+              <SellerEmptyState
+                icon="cube-outline"
+                title="Your catalog is ready for its first product"
+                message="Add a complete listing with clear images, inventory, pricing, and buyer-protection details."
+                actionLabel={hasStore !== false || isAdmin ? 'Add product' : undefined}
+                onAction={hasStore !== false || isAdmin ? () => openProductForm() : undefined}
+              />
+            )}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={palette.colors.primary} />}
         onEndReached={loadMore}
         onEndReachedThreshold={0.45}
         showsVerticalScrollIndicator={false}
       />
 
-      {!selectMode && (hasStore || isAdmin) && (
-        <TouchableOpacity style={styles.fab} onPress={() => navigation.navigate('ProductForm', { isAdmin })} activeOpacity={0.8}>
+      {!selectMode && (hasStore !== false || isAdmin) && (
+        <TouchableOpacity style={styles.fab} onPress={() => openProductForm()} activeOpacity={0.8} accessibilityRole="button" accessibilityLabel="Add product">
           <Ionicons name="add" size={28} color="white" />
         </TouchableOpacity>
       )}
 
-      <Modal visible={bulkModalVisible} transparent animationType="slide" onRequestClose={() => setBulkModalVisible(false)}>
-        <TouchableOpacity style={styles.bulkModalOverlay} activeOpacity={1} onPress={() => setBulkModalVisible(false)} />
+      <Modal visible={bulkModalVisible} transparent animationType="slide" onRequestClose={() => setBulkModalVisible(false)} accessibilityViewIsModal>
+        <TouchableOpacity style={styles.bulkModalOverlay} activeOpacity={1} onPress={() => setBulkModalVisible(false)} accessibilityRole="button" accessibilityLabel="Close bulk actions" />
         <GlassPanel variant="strong" style={styles.bulkModalSheet}>
           <View style={styles.bulkModalTitleRow}>
             <Text style={styles.bulkModalTitle}>Bulk Actions - {selectedProducts.length} products</Text>
-            <TouchableOpacity onPress={() => setBulkModalVisible(false)}>
+            <TouchableOpacity onPress={() => setBulkModalVisible(false)} accessibilityRole="button" accessibilityLabel="Close bulk actions">
               <Ionicons name="close" size={22} color={palette.colors.text} />
             </TouchableOpacity>
           </View>
@@ -474,13 +657,13 @@ export default function ProductManagementScreen({ navigation, route }) {
               { key: 'remove', label: 'Remove', icon: 'close-circle-outline' },
               { key: 'delete', label: 'Delete', icon: 'trash-outline' },
             ].map(tab => (
-              <TouchableOpacity key={tab.key} style={[styles.bulkTab, bulkTab === tab.key && styles.bulkTabActive]} onPress={() => setBulkTab(tab.key)}>
+              <TouchableOpacity key={tab.key} style={[styles.bulkTab, bulkTab === tab.key && styles.bulkTabActive]} onPress={() => setBulkTab(tab.key)} accessibilityRole="tab" accessibilityState={{ selected: bulkTab === tab.key }} accessibilityLabel={`${tab.label} bulk action`}>
                 <Ionicons name={tab.icon} size={16} color={bulkTab === tab.key ? 'white' : palette.colors.textSecondary} />
                 <Text style={[styles.bulkTabText, bulkTab === tab.key && { color: 'white' }]}>{tab.label}</Text>
               </TouchableOpacity>
             ))}
           </View>
-          <ScrollView showsVerticalScrollIndicator={false}>
+          <KeyboardAwareFormScrollView bottomOffset={32}>
             {bulkTab === 'discount' && (
               <View style={styles.bulkContent}>
                 <Text style={styles.label}>Discount Type</Text>
@@ -549,28 +732,36 @@ export default function ProductManagementScreen({ navigation, route }) {
                 </TouchableOpacity>
               </View>
             )}
-          </ScrollView>
+          </KeyboardAwareFormScrollView>
         </GlassPanel>
       </Modal>
+      </SafeAreaView>
     </GlassBackground>
   );
 }
 
 const buildStyles = (p) => StyleSheet.create({
+  safeArea: { flex: 1 },
   headerContainer: { paddingBottom: spacing.sm },
   searchContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: borderRadius.xl, paddingHorizontal: spacing.md, marginHorizontal: spacing.lg, marginTop: spacing.lg, marginBottom: spacing.md, height: 44, borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)' },
   searchInput: { flex: 1, marginLeft: spacing.sm, fontSize: fontSize.md, color: p.colors.text },
+  categoryFilters: { paddingHorizontal: spacing.lg, paddingBottom: spacing.md, gap: spacing.sm, alignItems: 'center' },
+  categoryChip: { minHeight: 34, flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: borderRadius.full, backgroundColor: p.glass.bgSubtle, borderWidth: 1, borderColor: p.glass.borderSubtle },
+  categoryChipActive: { backgroundColor: p.colors.primary, borderColor: p.colors.primary },
+  categoryChipText: { ...typography.caption, color: p.colors.textSecondary, fontWeight: fontWeight.semibold },
+  categoryChipTextActive: { color: '#fff' },
+  filterLoader: { marginHorizontal: spacing.xs },
   resultsRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: spacing.lg, marginBottom: spacing.sm },
   resultsText: { ...typography.bodySmall, color: p.colors.textSecondary },
   resultsCount: { fontWeight: fontWeight.bold, color: p.colors.text },
   selectModeBtn: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
   selectModeBtnText: { ...typography.bodySmall, color: p.colors.primary },
-  bulkBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', margin: spacing.lg, padding: spacing.md, gap: spacing.md },
+  bulkBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', margin: spacing.lg, padding: spacing.md, gap: spacing.md },
   bulkCountText: { ...typography.bodySemibold, color: p.colors.text },
   selectAllText: { ...typography.bodySmall, color: p.colors.primary, fontWeight: fontWeight.semibold },
   bulkActionsBtn: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, backgroundColor: p.colors.primary, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: borderRadius.lg },
   bulkActionsBtnText: { ...typography.bodySmall, color: 'white', fontWeight: fontWeight.semibold },
-  list: { paddingHorizontal: spacing.md, paddingBottom: 120, flexGrow: 1 },
+  list: { width: '100%', maxWidth: 680, alignSelf: 'center', paddingHorizontal: spacing.md, paddingBottom: 120, flexGrow: 1 },
   productCard: { marginBottom: spacing.sm },
   productCardSelected: { borderWidth: 2, borderColor: p.colors.primary },
   productCardInner: { flexDirection: 'row', alignItems: 'center', padding: spacing.md },
@@ -582,6 +773,9 @@ const buildStyles = (p) => StyleSheet.create({
   productInfo: { flex: 1 },
   productName: { ...typography.bodySemibold, color: p.colors.text, marginBottom: 2 },
   metaText: { ...typography.caption, color: p.colors.textSecondary, marginBottom: spacing.xs },
+  hiddenProductBadge: { alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: spacing.xs, paddingHorizontal: spacing.sm, paddingVertical: 3, borderRadius: borderRadius.full, backgroundColor: p.colors.errorSubtle, borderWidth: 1, borderColor: `${p.colors.error}30` },
+  hiddenProductText: { ...typography.caption, color: p.colors.error, fontWeight: fontWeight.bold },
+  hiddenReason: { ...typography.caption, color: p.colors.error, marginTop: spacing.xs, lineHeight: 15 },
   priceRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginBottom: spacing.xs, flexWrap: 'wrap' },
   productPrice: { ...typography.bodySemibold, color: p.colors.primary },
   originalPrice: { ...typography.bodySmall, color: p.colors.textSecondary, textDecorationLine: 'line-through' },

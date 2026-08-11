@@ -66,6 +66,8 @@ const {
   isProductSellerPubliclyActive,
 } = require('./publicCatalogService');
 const { storeAllowsCashOnDelivery } = require('./storePaymentPolicyService');
+const { deleteAccountCascade } = require('./accountDeletionService');
+const { buildScopedNotificationQuery } = require('./notificationAudienceService');
 const { normalizeReturnPolicy, normalizeProductReturnPolicy } = require('./returnPolicyService');
 const {
   ensureOrderSellerFulfillment,
@@ -952,6 +954,90 @@ function normalizeObjectIdString(value) {
   return id ? String(id) : '';
 }
 
+function normalizedIdSet(values = []) {
+  return new Set(
+    [...(values instanceof Set ? values : values || [])]
+      .map(normalizeObjectIdString)
+      .filter(Boolean)
+  );
+}
+
+/**
+ * Resolve seller ownership for an immutable order line.
+ *
+ * New orders persist `orderItems.seller` as a checkout-time snapshot. Once
+ * present, that snapshot is authoritative even if the product is reassigned
+ * later. Only legacy lines without a seller snapshot may inherit the product's
+ * current owner.
+ */
+function sellerOwnsOrderItem(item, sellerId, sellerProductIds = []) {
+  const normalizedSellerId = normalizeObjectIdString(sellerId);
+  if (!normalizedSellerId) return false;
+
+  const snapshotSellerId = normalizeObjectIdString(item?.seller);
+  if (snapshotSellerId) return snapshotSellerId === normalizedSellerId;
+
+  return normalizedIdSet(sellerProductIds).has(normalizeObjectIdString(item?.productId));
+}
+
+function filterSellerOrderItems(order, sellerId, sellerProductIds = []) {
+  const normalizedSellerId = normalizeObjectIdString(sellerId);
+  const legacyProductIds = normalizedIdSet(sellerProductIds);
+
+  return (order?.orderItems || []).filter(item => {
+    const snapshotSellerId = normalizeObjectIdString(item?.seller);
+    if (snapshotSellerId) return snapshotSellerId === normalizedSellerId;
+    return legacyProductIds.has(normalizeObjectIdString(item?.productId));
+  });
+}
+
+/**
+ * Mongo scope matching snapshot-owned lines plus current-product ownership for
+ * legacy lines only. The `seller: null` elemMatch is intentional: it matches a
+ * missing or null snapshot without allowing an explicitly different seller.
+ */
+function buildSellerOrderScope(sellerId, sellerProductIds = []) {
+  const normalizedSellerId = normalizeObjectIdString(sellerId);
+  if (!normalizedSellerId) return { _id: null };
+
+  const clauses = [
+    { orderItems: { $elemMatch: { seller: normalizedSellerId } } },
+  ];
+  const legacyProductIds = [...normalizedIdSet(sellerProductIds)];
+  if (legacyProductIds.length) {
+    clauses.push({
+      orderItems: {
+        $elemMatch: {
+          seller: null,
+          productId: { $in: legacyProductIds },
+        },
+      },
+    });
+  }
+
+  return clauses.length === 1 ? clauses[0] : { $or: clauses };
+}
+
+function buildSellerOrderStatusScope(sellerId, status) {
+  const normalizedSellerId = normalizeObjectIdString(sellerId);
+  if (!normalizedSellerId) return { _id: null };
+  return {
+    $or: [
+      { sellerFulfillment: { $elemMatch: { seller: normalizedSellerId, status } } },
+      {
+        $and: [
+          { sellerFulfillment: { $not: { $elemMatch: { seller: normalizedSellerId } } } },
+          { orderStatus: status },
+        ],
+      },
+    ],
+  };
+}
+
+function sellerOrderStatus(order, sellerId) {
+  return getSellerFulfillment(order, sellerId)?.status || order?.orderStatus;
+}
+
 function plainOptions(value) {
   if (!value) return {};
   if (value instanceof Map) return Object.fromEntries(value.entries());
@@ -1072,13 +1158,18 @@ async function hydrateStoresForProducts(products = []) {
   });
 }
 
-async function resolveStoreScope(args = {}) {
+async function resolveStoreScope(args = {}, activeSellerIds = null) {
   const storeId = toId(args.storeId);
   const sellerId = toId(args.sellerId || args.seller);
   const storeSlug = String(args.storeSlug || args.slug || '').trim().toLowerCase();
   const storeName = String(args.storeName || args.store || '').trim();
+  const visibleSellerIds = Array.isArray(activeSellerIds)
+    ? activeSellerIds
+    : await getActiveSellerIds();
+  const visibleSellerIdSet = new Set(visibleSellerIds.map(normalizeObjectIdString));
 
   if (sellerId) {
+    if (!visibleSellerIdSet.has(normalizeObjectIdString(sellerId))) return { notFound: true };
     const store = await Store.findOne(activeStoreQuery({ seller: sellerId }))
       .select('_id seller storeName storeSlug verification.isVerified')
       .lean();
@@ -1086,7 +1177,10 @@ async function resolveStoreScope(args = {}) {
   }
 
   if (storeId) {
-    const store = await Store.findOne(activeStoreQuery({ _id: storeId }))
+    const store = await Store.findOne(activeStoreQuery({
+      _id: storeId,
+      seller: { $in: visibleSellerIds },
+    }))
       .select('_id seller storeName storeSlug verification.isVerified')
       .lean();
     return store ? { store, filter: { seller: store.seller } } : { notFound: true };
@@ -1103,7 +1197,10 @@ async function resolveStoreScope(args = {}) {
     storeQueries.push({ storeSlug: { $regex: safeName.replace(/\s+/g, '-'), $options: 'i' } });
   }
 
-  const matches = await Store.find(activeStoreQuery({ $or: storeQueries }))
+  const matches = await Store.find(activeStoreQuery({
+    seller: { $in: visibleSellerIds },
+    $or: storeQueries,
+  }))
     .limit(5)
     .select('_id seller storeName storeSlug verification.isVerified')
     .lean();
@@ -1232,7 +1329,7 @@ async function executeToolCall(toolName, args = {}, user) {
           publicProductFilter(buildSmartSearchFilter(query, category)),
           activeSellerIds
         );
-        const storeScope = await resolveStoreScope(args);
+        const storeScope = await resolveStoreScope(args, activeSellerIds);
         if (storeScope.notFound) {
           return {
             success: false,
@@ -1340,8 +1437,14 @@ async function executeToolCall(toolName, args = {}, user) {
         if (role === 'seller') {
           const myProducts = await Product.find({ seller: userId }).select('_id').lean();
           const productIds = myProducts.map(p => p._id);
-          const filter = { 'orderItems.productId': { $in: productIds } };
-          if (status && status !== 'all') filter.orderStatus = status;
+          const conditions = [
+            buildSellerOrderScope(userId, productIds),
+            { awaitingPayment: { $ne: true } },
+          ];
+          if (status && status !== 'all') {
+            conditions.push(buildSellerOrderStatusScope(userId, status));
+          }
+          const filter = { $and: conditions };
 
           // Get TOTAL count first (no limit) for accurate reporting
           totalCount = await Order.countDocuments(filter);
@@ -1355,12 +1458,15 @@ async function executeToolCall(toolName, args = {}, user) {
 
           // CRITICAL: Filter order items to only show THIS seller's products + recalculate seller-specific total
           orders = orders.map(o => {
-            const sellerItems = (o.orderItems || []).filter(i =>
-              productIds.some(pid => pid.toString() === (i.productId?._id || i.productId)?.toString())
-            );
+            const sellerItems = filterSellerOrderItems(o, userId, productIds);
             const sellerTotal = sellerItems.reduce((sum, i) => sum + (i.price || 0) * (i.quantity || 1), 0);
-            return { ...o, orderItems: sellerItems, _sellerTotal: sellerTotal };
-          });
+            return {
+              ...o,
+              orderItems: sellerItems,
+              _sellerTotal: sellerTotal,
+              _sellerStatus: sellerOrderStatus(o, userId),
+            };
+          }).filter(o => o.orderItems.length > 0);
         } else {
           // Regular user: show their OWN orders only
           const filter = { user: userId };
@@ -1381,7 +1487,7 @@ async function executeToolCall(toolName, args = {}, user) {
             orders: orders.map(o => ({
               _id: o._id,
               orderId: o.orderId,
-              status: o.orderStatus,
+              status: role === 'seller' ? o._sellerStatus : o.orderStatus,
               total: role === 'seller' ? (o._sellerTotal || 0) : (o.orderSummary?.totalAmount || 0),
               buyer: role === 'seller' ? (o.user?.username || 'Guest') : undefined,
               items: (o.orderItems || []).map(i => ({
@@ -1406,13 +1512,17 @@ async function executeToolCall(toolName, args = {}, user) {
         if (!orderId) return { success: false, error: 'Please provide an order ID.' };
 
         let order;
+        let sellerProductIds = [];
         if (role === 'seller') {
           // Sellers can view orders containing THEIR products
           const myProducts = await Product.find({ seller: userId }).select('_id').lean();
-          const productIds = myProducts.map(p => p._id.toString());
+          sellerProductIds = myProducts.map(p => p._id);
           order = await Order.findOne({
-            $or: [{ _id: toId(orderId) }, { orderId: orderId }],
-            'orderItems.productId': { $in: myProducts.map(p => p._id) },
+            $and: [
+              { $or: [{ _id: toId(orderId) }, { orderId: orderId }] },
+              { awaitingPayment: { $ne: true } },
+              buildSellerOrderScope(userId, sellerProductIds),
+            ],
           })
             .populate('orderItems.productId', 'name image price currency priceCurrency category seller')
             .populate('user', 'username email')
@@ -1443,10 +1553,8 @@ async function executeToolCall(toolName, args = {}, user) {
         let items = order.orderItems || [];
         let summary = order.orderSummary;
         if (role === 'seller') {
-          const myProductIds = (await Product.find({ seller: userId }).select('_id').lean()).map(p => p._id.toString());
-          items = items.filter(i =>
-            myProductIds.includes((i.productId?._id || i.productId)?.toString())
-          );
+          items = filterSellerOrderItems(order, userId, sellerProductIds);
+          if (!items.length) return { success: false, error: 'Order not found or access denied.' };
           const sellerSubtotal = items.reduce((sum, i) => sum + (i.price || 0) * (i.quantity || 1), 0);
           summary = { subtotal: sellerSubtotal, totalAmount: sellerSubtotal, note: 'Shows only your products from this order' };
         }
@@ -1455,7 +1563,7 @@ async function executeToolCall(toolName, args = {}, user) {
           success: true,
           data: {
             orderId: order.orderId,
-            status: order.orderStatus,
+            status: role === 'seller' ? sellerOrderStatus(order, userId) : order.orderStatus,
             buyer: role === 'seller' ? (order.user?.username || 'Guest') : undefined,
             items: items.map(i => ({
               name: i.name || i.productId?.name,
@@ -1659,10 +1767,11 @@ async function executeToolCall(toolName, args = {}, user) {
         if (!userId) return { success: false, error: 'Authentication required.' };
         const { limit } = args;
 
+        const scopedQuery = buildScopedNotificationQuery({ userId, role });
         const [notifications, totalCount, totalUnread] = await Promise.all([
-          Notification.find({ user: userId }).sort({ createdAt: -1 }).limit(safeLimit(limit, 20)).lean(),
-          Notification.countDocuments({ user: userId }),
-          Notification.countDocuments({ user: userId, read: false }),
+          Notification.find(scopedQuery).sort({ createdAt: -1 }).limit(safeLimit(limit, 20)).lean(),
+          Notification.countDocuments(scopedQuery),
+          Notification.countDocuments(buildScopedNotificationQuery({ userId, role, read: false })),
         ]);
 
         return {
@@ -1687,7 +1796,7 @@ async function executeToolCall(toolName, args = {}, user) {
       case 'mark_notifications_read': {
         if (!userId) return { success: false, error: 'Authentication required.' };
         const result = await Notification.updateMany(
-          { user: userId, read: false },
+          buildScopedNotificationQuery({ userId, role, read: false }),
           { $set: { read: true, readAt: new Date() } }
         );
         return { success: true, message: `Marked ${result.modifiedCount} notification${result.modifiedCount !== 1 ? 's' : ''} as read.` };
@@ -3151,32 +3260,44 @@ async function executeToolCall(toolName, args = {}, user) {
         const myProducts = await Product.find({ seller: userId }).select('_id').lean();
         const productIds = myProducts.map(p => p._id);
 
-        const orders = await Order.find({ 'orderItems.productId': { $in: productIds } })
-          .select('orderSummary orderStatus createdAt orderItems currency')
+        const orders = await Order.find({
+          $and: [
+            buildSellerOrderScope(userId, productIds),
+            { awaitingPayment: { $ne: true } },
+          ],
+        })
+          .select('orderSummary orderStatus sellerFulfillment isPaid createdAt orderItems currency')
           .lean();
+        const sellerOrders = orders
+          .map(order => ({
+            order,
+            items: filterSellerOrderItems(order, userId, productIds),
+            status: sellerOrderStatus(order, userId),
+          }))
+          .filter(entry => entry.items.length > 0);
 
-        // CRITICAL: Calculate revenue from ONLY this seller's items, not the full order total.
+        // Revenue follows the seller dashboard contract: paid seller-owned
+        // lines only, excluding this seller's cancelled fulfillment.
         let totalRevenue = 0;
-        for (const order of orders.filter(o => o.orderStatus !== 'cancelled')) {
-          const sellerItemsRevenue = (order.orderItems || [])
-            .filter(i => productIds.some(pid => pid.toString() === i.productId?.toString()))
+        const paidSellerOrders = sellerOrders.filter(({ order, status }) => order.isPaid && status !== 'cancelled');
+        for (const { order, items } of paidSellerOrders) {
+          const sellerItemsRevenue = items
             .reduce((sum, item) => sum + (item.price || 0) * (item.quantity || 1), 0);
           totalRevenue += await convertAmount(sellerItemsRevenue, order.currency || preferredCurrency, preferredCurrency);
         }
 
         const statusCounts = {};
-        orders.forEach(o => {
-          statusCounts[o.orderStatus] = (statusCounts[o.orderStatus] || 0) + 1;
+        sellerOrders.forEach(({ status }) => {
+          const sellerStatus = status || 'pending';
+          statusCounts[sellerStatus] = (statusCounts[sellerStatus] || 0) + 1;
         });
 
         // Top products by order frequency
         const productFreq = {};
-        orders.forEach(o => {
-          (o.orderItems || []).forEach(item => {
-            if (productIds.some(pid => pid.toString() === item.productId?.toString())) {
-              const key = item.name || item.productId?.toString();
-              productFreq[key] = (productFreq[key] || 0) + item.quantity;
-            }
+        paidSellerOrders.forEach(({ items }) => {
+          items.forEach(item => {
+            const key = item.name || normalizeObjectIdString(item.productId);
+            productFreq[key] = (productFreq[key] || 0) + item.quantity;
           });
         });
         const topProducts = Object.entries(productFreq)
@@ -3194,7 +3315,7 @@ async function executeToolCall(toolName, args = {}, user) {
           data: {
             storeName: store?.storeName,
             totalProducts: myProducts.length,
-            totalOrders: orders.length,
+            totalOrders: sellerOrders.length,
             totalRevenue: Math.round(totalRevenue * 100) / 100,
             currency: preferredCurrency,
             storeViews: store?.views || 0,
@@ -3203,7 +3324,7 @@ async function executeToolCall(toolName, args = {}, user) {
             topProducts,
             lowStockAlerts: lowStock.map(p => ({ name: p.name, stock: p.stock })),
           },
-          message: `📊 Store "${store?.storeName}": ${myProducts.length} products, ${orders.length} orders, ${await userMoney(totalRevenue, preferredCurrency)} revenue, ${store?.views || 0} views.`,
+          message: `📊 Store "${store?.storeName}": ${myProducts.length} products, ${sellerOrders.length} orders, ${await userMoney(totalRevenue, preferredCurrency)} revenue, ${store?.views || 0} views.`,
         };
       }
 
@@ -3238,20 +3359,10 @@ async function executeToolCall(toolName, args = {}, user) {
         const myProducts = await Product.find({ seller: userId }).select('_id').lean();
         const productIds = myProducts.map(p => p._id);
 
-        const sellerScope = {
-          $or: [
-            { 'orderItems.seller': userId },
-            { 'orderItems.productId': { $in: productIds } },
-          ],
-        };
+        const sellerScope = buildSellerOrderScope(userId, productIds);
         const conditions = [sellerScope, { awaitingPayment: { $ne: true } }];
         if (status && status !== 'all') {
-          conditions.push({
-            $or: [
-              { sellerFulfillment: { $elemMatch: { seller: userId, status } } },
-              { 'sellerFulfillment.0': { $exists: false }, orderStatus: status },
-            ],
-          });
+          conditions.push(buildSellerOrderStatusScope(userId, status));
         }
         const filter = { $and: conditions };
 
@@ -3266,10 +3377,7 @@ async function executeToolCall(toolName, args = {}, user) {
 
         // Filter items & compute seller-specific totals per order
         const sellerOrders = orders.map(o => {
-          const sellerItems = (o.orderItems || []).filter(i =>
-            toId(i.seller) === toId(userId) ||
-            productIds.some(pid => pid.toString() === (i.productId?._id || i.productId)?.toString())
-          );
+          const sellerItems = filterSellerOrderItems(o, userId, productIds);
           const sellerTotal = sellerItems.reduce((sum, i) => sum + (i.price || 0) * (i.quantity || 1), 0);
           const fulfillment = getSellerFulfillment(o, userId);
           return {
@@ -3282,7 +3390,7 @@ async function executeToolCall(toolName, args = {}, user) {
             paymentMethod: o.paymentMethod,
             isPaid: o.isPaid,
           };
-        });
+        }).filter(order => order.itemCount > 0);
 
         return {
           success: true,
@@ -3293,11 +3401,14 @@ async function executeToolCall(toolName, args = {}, user) {
 
       case 'update_order_status': {
         if (!userId) return { success: false, error: 'Authentication required.' };
+        if (role !== 'seller' && role !== 'admin') {
+          return { success: false, error: 'Only sellers and admins can update order status.' };
+        }
         const { orderId } = args;
         const newStatus = args.newStatus || args.status;
         if (!orderId || !newStatus) return { success: false, error: 'Please provide orderId and new status.' };
 
-        const validStatuses = ['confirmed', 'processing', 'shipped', 'delivered'];
+        const validStatuses = ['pending', 'confirmed', 'processing', 'shipped', 'delivered', 'cancelled'];
         if (!validStatuses.includes(newStatus)) {
           return { success: false, error: `Invalid status. Valid: ${validStatuses.join(', ')}` };
         }
@@ -3307,30 +3418,80 @@ async function executeToolCall(toolName, args = {}, user) {
           ? []
           : (await Product.find({ seller: userId }).select('_id').lean()).map(p => p._id.toString());
 
-        const order = await Order.findOne({
-          $or: [{ _id: toId(orderId) }, { orderId: orderId }],
-        });
-        if (!order) return { success: false, error: 'Order not found.' };
+        const orderIdentity = { $or: [{ _id: toId(orderId) }, { orderId: orderId }] };
+        const orderFilter = role === 'admin'
+          ? orderIdentity
+          : {
+            $and: [
+              orderIdentity,
+              { awaitingPayment: { $ne: true } },
+              buildSellerOrderScope(userId, productIds),
+            ],
+          };
+        const order = await Order.findOne(orderFilter);
+        if (!order) {
+          return role === 'admin'
+            ? { success: false, error: 'Order not found.' }
+            : { success: false, error: 'This order doesn\'t contain your products.' };
+        }
 
-        const ownsItems = role === 'admin' || order.orderItems.some(i => (
-          toId(i.seller) === toId(userId) || productIds.includes(i.productId?.toString())
-        ));
+        const ownsItems = role === 'admin' || filterSellerOrderItems(order, userId, productIds).length > 0;
         if (!ownsItems) return { success: false, error: 'This order doesn\'t contain your products.' };
 
-        await ensureOrderSellerFulfillment(order);
-        if (role === 'admin') {
-          setAllSellerFulfillmentStatus(order, newStatus);
-        } else if (!setSellerFulfillmentStatus(order, userId, newStatus)) {
-          return { success: false, error: 'Seller fulfillment record was not found for this order.' };
+        const sellerIds = await ensureOrderSellerFulfillment(order);
+        if (newStatus === 'cancelled' && order.isPaid) {
+          return {
+            success: false,
+            error: role === 'seller'
+              ? 'Paid seller portions require a verified refund before cancellation.'
+              : 'Paid orders require a verified refund before cancellation.',
+            code: 'PAID_ORDER_REQUIRES_REFUND',
+          };
         }
-        syncAggregateDeliveryState(order);
+
+        if (role === 'admin' && order.sellerFulfillment.length) {
+          setAllSellerFulfillmentStatus(order, newStatus);
+        } else if (role === 'seller') {
+          const fulfillment = getSellerFulfillment(order, userId);
+          if (!fulfillment) {
+            return { success: false, error: 'Seller fulfillment record was not found for this order.' };
+          }
+          if (newStatus === 'cancelled' && ['shipped', 'delivered'].includes(fulfillment.status)) {
+            return { success: false, error: 'Cannot cancel an order that is already shipped or delivered.' };
+          }
+          setSellerFulfillmentStatus(order, userId, newStatus);
+        }
+
+        const buyerAlreadyDecided = !!(order.confirmation?.confirmedAt || order.confirmation?.declinedAt);
+        const updatesWholeOrderDecision = role === 'admin' || sellerIds.length <= 1;
+        if (updatesWholeOrderDecision && newStatus === 'confirmed' && !buyerAlreadyDecided) {
+          order.confirmation = order.confirmation || {};
+          order.confirmation.confirmedAt = new Date();
+          order.confirmation.confirmedVia = role === 'admin' ? 'admin' : 'manual';
+          order.confirmation.decidedAt = new Date();
+          order.confirmation.decidedVia = role === 'admin' ? 'admin' : 'manual';
+        } else if (updatesWholeOrderDecision && newStatus === 'cancelled' && !buyerAlreadyDecided) {
+          order.confirmation = order.confirmation || {};
+          order.confirmation.declinedAt = new Date();
+          order.confirmation.confirmedVia = role === 'admin' ? 'admin' : 'manual';
+          order.confirmation.decidedAt = new Date();
+          order.confirmation.decidedVia = role === 'admin' ? 'admin' : 'manual';
+        }
+
+        if (role === 'admin' && !order.sellerFulfillment.length) {
+          order.orderStatus = newStatus;
+          order.isDelivered = newStatus === 'delivered';
+          if (newStatus === 'delivered' && !order.deliveredAt) order.deliveredAt = new Date();
+        } else {
+          syncAggregateDeliveryState(order);
+        }
         if (order.orderStatus === 'delivered') order.isPaid = true;
         await order.save();
 
         return {
           success: true,
           data: {
-            status: role === 'seller' ? getSellerFulfillment(order, userId)?.status : order.orderStatus,
+            status: role === 'seller' ? sellerOrderStatus(order, userId) : order.orderStatus,
             aggregateOrderStatus: order.orderStatus,
           },
           message: `Order #${order.orderId} status updated to "${newStatus}"`,
@@ -3981,18 +4142,12 @@ async function executeToolCall(toolName, args = {}, user) {
         if (!target) return { success: false, error: 'User not found.' };
         if (target.role === 'admin') return { success: false, error: 'Cannot delete an admin user.' };
 
-        // Clean up related data
-        await Promise.all([
-          Order.deleteMany({ user: targetId }),
-          Complaint.deleteMany({ user: targetId }),
-          Notification.deleteMany({ user: targetId }),
-          Store.findOneAndDelete({ seller: targetId }),
-          Product.deleteMany({ seller: targetId }),
-          SellerSubscription.findOneAndDelete({ seller: targetId }),
-          User.findByIdAndDelete(targetId),
-        ]);
+        await deleteAccountCascade(targetId);
 
-        return { success: true, message: `User "${target.username}" and all their data have been permanently deleted. ⚠️` };
+        return {
+          success: true,
+          message: `User "${target.username}" was deleted. Historical order and financial evidence was retained.`,
+        };
       }
 
       case 'block_user': {
@@ -4197,7 +4352,9 @@ async function executeToolCall(toolName, args = {}, user) {
           },
         }, { new: true }).select('storeName').lean();
 
-        if (!store) return { success: false, error: 'Store not found.' };
+        if (!store || (role !== 'admin' && (
+          store.seller?.role !== 'seller' || store.seller?.status !== 'active'
+        ))) return { success: false, error: 'Store not found.' };
         return { success: true, message: `Store "${store.storeName}" has been verified! ✅🛡️` };
       }
 
@@ -4545,6 +4702,7 @@ async function executeToolCall(toolName, args = {}, user) {
         const activeSellerIds = await getActiveSellerIds();
 
         const storeMatches = await Store.find(activeStoreQuery({
+          seller: { $in: activeSellerIds },
           $or: [
             { storeName: { $regex: safeQuery, $options: 'i' } },
             { storeSlug: { $regex: safeQuery, $options: 'i' } },
@@ -4640,6 +4798,11 @@ module.exports = {
   CLIENT_SIDE_TOOLS,
   storeChangeLimits,
   __private: {
+    buildSellerOrderScope,
+    buildSellerOrderStatusScope,
+    filterSellerOrderItems,
+    sellerOrderStatus,
+    sellerOwnsOrderItem,
     detectExplicitCurrencyInText,
     resolveAIPriceCurrency,
     buildProductCurrencyConversionNotice,

@@ -3,6 +3,14 @@ const User = require('../models/User');
 const Notification = require('../models/Notification');
 const { sendEmail } = require('./mailController');
 const { stripe } = require('../config/stripe');
+const { getHostedCheckoutReturnUrls } = require('../utils/hostedCheckoutReturnUrls');
+const {
+    fingerprintCheckoutRequest,
+    claimSellerCheckout,
+    attachSellerCheckoutSession,
+    releaseSellerCheckoutClaim,
+    checkoutClaimRetryAfterSeconds,
+} = require('../services/sellerCheckoutClaimService');
 
 const SUBDOMAIN_PRICE_CENTS = 1500; // $15.00
 const SUBDOMAIN_OWNERSHIP_YEARS = 3;
@@ -78,11 +86,17 @@ exports.getSubdomainOwnership = async (req, res) => {
 // Create Stripe checkout for subdomain purchase ($15 one-time)
 // Also supports renewal when ownership is still valid (extends the expiry by 3 more years)
 exports.purchaseSubdomain = async (req, res) => {
+    let checkoutClaim = null;
+    let checkoutSession = null;
+    let sellerId = null;
     try {
-        const sellerId = req.user.id;
+        sellerId = req.user.id;
         const user = await User.findById(sellerId);
         const store = await Store.findOne({ seller: sellerId });
 
+        if (!user || user.role !== 'seller') {
+            return res.status(403).json({ msg: 'Only sellers can purchase a store subdomain.' });
+        }
         if (!store) {
             return res.status(404).json({ msg: 'Store not found. Create a store first.' });
         }
@@ -94,8 +108,48 @@ exports.purchaseSubdomain = async (req, res) => {
             return res.status(500).json({ msg: 'Payment system not configured' });
         }
 
+        const requestFingerprint = fingerprintCheckoutRequest({
+            storeId: store._id.toString(),
+            storeSlug: store.storeSlug,
+            isRenewal: Boolean(isRenewal),
+            checkoutClient: String(req.body?.checkoutClient || 'web').trim().toLowerCase(),
+        });
+        const claimResult = await claimSellerCheckout({
+            sellerId,
+            flow: 'subdomain',
+            requestFingerprint,
+        });
+        if (!claimResult.acquired) {
+            const existingClaim = claimResult.claim;
+            if (
+                existingClaim.requestFingerprint === requestFingerprint
+                && existingClaim.sessionId
+                && existingClaim.sessionUrl
+            ) {
+                return res.json({
+                    url: existingClaim.sessionUrl,
+                    sessionId: existingClaim.sessionId,
+                    isRenewal: Boolean(isRenewal),
+                    reused: true,
+                });
+            }
+            return res.status(409).json({
+                msg: 'A subdomain checkout is already in progress. Complete or cancel it before starting another.',
+                code: 'CHECKOUT_PENDING',
+                retryAfterSeconds: checkoutClaimRetryAfterSeconds(existingClaim),
+            });
+        }
+        checkoutClaim = claimResult.claim;
+
+        const checkoutReturnUrls = getHostedCheckoutReturnUrls({
+            client: req.body?.checkoutClient,
+            flow: 'subdomain',
+            frontendUrl: process.env.FRONTEND_URL,
+            backendUrl: process.env.BACKEND_PUBLIC_URL || 'https://rozare.up.railway.app',
+        });
+
         // Create Stripe checkout session for one-time payment
-        const session = await stripe.checkout.sessions.create({
+        checkoutSession = await stripe.checkout.sessions.create({
             mode: 'payment',
             payment_method_types: ['card'],
             line_items: [{
@@ -111,21 +165,54 @@ exports.purchaseSubdomain = async (req, res) => {
                 },
                 quantity: 1,
             }],
-            success_url: `${process.env.FRONTEND_URL}/seller-dashboard/subdomain?purchase=success`,
-            cancel_url: `${process.env.FRONTEND_URL}/seller-dashboard/subdomain?purchase=cancelled`,
+            success_url: checkoutReturnUrls.successUrl,
+            cancel_url: checkoutReturnUrls.cancelUrl,
             metadata: {
                 sellerId: sellerId.toString(),
                 storeId: store._id.toString(),
+                storeSlug: store.storeSlug,
                 type: 'subdomain_purchase',
                 isRenewal: isRenewal ? 'true' : 'false',
+                checkoutClaimToken: checkoutClaim.token,
             },
             customer_email: user.email,
+            expires_at: Math.floor(new Date(checkoutClaim.expiresAt).getTime() / 1000),
+        }, {
+            idempotencyKey: `rozare-subdomain-checkout-${checkoutClaim.token}`,
         });
 
-        res.json({ url: session.url, sessionId: session.id, isRenewal });
+        if (!checkoutSession?.id || !checkoutSession?.url) {
+            throw new Error('Stripe did not return a usable Checkout Session.');
+        }
+        await attachSellerCheckoutSession({
+            sellerId,
+            flow: 'subdomain',
+            token: checkoutClaim.token,
+            sessionId: checkoutSession.id,
+            sessionUrl: checkoutSession.url,
+        });
+
+        res.json({ url: checkoutSession.url, sessionId: checkoutSession.id, isRenewal });
     } catch (error) {
         console.error('Purchase subdomain error:', error);
-        res.status(500).json({ msg: 'Failed to create checkout session' });
+        if (checkoutSession?.id && stripe?.checkout?.sessions?.expire) {
+            await stripe.checkout.sessions.expire(checkoutSession.id).catch(expireError => {
+                console.error('Failed to expire unusable subdomain Checkout:', expireError.message);
+            });
+        }
+        if (checkoutClaim && sellerId) {
+            await releaseSellerCheckoutClaim({
+                sellerId,
+                flow: 'subdomain',
+                token: checkoutClaim.token,
+            }).catch(releaseError => {
+                console.error('Failed to release subdomain Checkout claim:', releaseError.message);
+            });
+        }
+        res.status(error?.code === 'CHECKOUT_PENDING' ? 409 : 500).json({
+            msg: error?.message || 'Failed to create checkout session',
+            code: error?.code || 'CHECKOUT_ERROR',
+        });
     }
 };
 
@@ -136,30 +223,92 @@ exports.handleSubdomainPurchaseWebhook = async (session) => {
 
         const storeId = session.metadata.storeId;
         const sellerId = session.metadata.sellerId;
+        const purchasedSlug = String(session.metadata.storeSlug || '').trim().toLowerCase();
+        const hasSlugSnapshot = Boolean(purchasedSlug);
         const isRenewal = session.metadata.isRenewal === 'true';
-
-        const store = await Store.findById(storeId);
-        if (!store) {
-            console.error('Subdomain purchase webhook: store not found', storeId);
-            return false;
+        const paymentReference = String(session.payment_intent?.id || session.payment_intent || session.id || '').trim();
+        if (!storeId || !sellerId || !paymentReference) {
+            const error = new Error('Subdomain purchase webhook has incomplete payment metadata.');
+            error.code = 'SUBDOMAIN_CHECKOUT_METADATA_INVALID';
+            throw error;
+        }
+        if (!hasSlugSnapshot) {
+            // Sessions opened before the slug-binding deployment did not carry
+            // storeSlug. Ownership is still bound by both immutable ids; retain
+            // this narrow compatibility path until those sessions expire.
+            console.warn('Subdomain purchase webhook: processing legacy session without storeSlug snapshot', {
+                sessionId: session.id,
+                storeId,
+                sellerId,
+            });
         }
 
         const now = new Date();
-        // On renewal, extend from current expiry; on new purchase, extend from now
-        const currentPurchase = store.subdomainPurchase || {};
-        const baseDate = (isRenewal && currentPurchase.expiresAt && new Date(currentPurchase.expiresAt) > now)
-            ? new Date(currentPurchase.expiresAt)
+        const ownershipMs = SUBDOMAIN_OWNERSHIP_YEARS * 365 * 24 * 60 * 60 * 1000;
+        const expiryBase = isRenewal
+            ? {
+                $cond: [
+                    { $gt: ['$subdomainPurchase.expiresAt', now] },
+                    '$subdomainPurchase.expiresAt',
+                    now,
+                ],
+            }
             : now;
-        const expiresAt = new Date(baseDate.getTime() + SUBDOMAIN_OWNERSHIP_YEARS * 365 * 24 * 60 * 60 * 1000);
+        const purchasedAt = isRenewal
+            ? { $ifNull: ['$subdomainPurchase.purchasedAt', now] }
+            : now;
 
-        store.subdomainPurchase = {
-            isPurchased: true,
-            purchasedAt: isRenewal && currentPurchase.purchasedAt ? currentPurchase.purchasedAt : now,
-            expiresAt,
-            stripePaymentId: session.payment_intent || session.id,
-            removalScheduledAt: null, // Clear any scheduled removal
-        };
-        await store.save();
+        // Claim and apply this payment atomically. Stripe may deliver the same
+        // completion more than once (including concurrently), and renewals must
+        // never gain another three years from a retry. Seller ownership is part
+        // of the write filter so stale/tampered metadata cannot mutate a store.
+        const store = await Store.findOneAndUpdate(
+            {
+                _id: storeId,
+                seller: sellerId,
+                ...(hasSlugSnapshot ? { storeSlug: purchasedSlug } : {}),
+                'subdomainPurchase.stripePaymentId': { $ne: paymentReference },
+                'subdomainPurchase.processedPaymentIds': { $ne: paymentReference },
+            },
+            [{
+                $set: {
+                    subdomainPurchase: {
+                        isPurchased: true,
+                        purchasedAt,
+                        expiresAt: { $add: [expiryBase, ownershipMs] },
+                        stripePaymentId: paymentReference,
+                        processedPaymentIds: {
+                            $setUnion: [
+                                { $ifNull: ['$subdomainPurchase.processedPaymentIds', []] },
+                                [paymentReference],
+                            ],
+                        },
+                        removalScheduledAt: null,
+                    },
+                },
+            }],
+            { new: true }
+        );
+
+        if (!store) {
+            const existingStore = await Store.findOne({
+                _id: storeId,
+                seller: sellerId,
+                ...(hasSlugSnapshot ? { storeSlug: purchasedSlug } : {}),
+            })
+                .select('subdomainPurchase.stripePaymentId subdomainPurchase.processedPaymentIds')
+                .lean();
+            const alreadyProcessed = existingStore && (
+                existingStore.subdomainPurchase?.stripePaymentId === paymentReference
+                || existingStore.subdomainPurchase?.processedPaymentIds?.includes(paymentReference)
+            );
+            if (alreadyProcessed) return true;
+
+            const error = new Error('The paid subdomain no longer matches the seller and store recorded at Checkout.');
+            error.code = 'SUBDOMAIN_CHECKOUT_STORE_MISMATCH';
+            throw error;
+        }
+        const expiresAt = new Date(store.subdomainPurchase.expiresAt);
 
         // Send confirmation email
         const user = await User.findById(sellerId);
@@ -177,7 +326,8 @@ exports.handleSubdomainPurchaseWebhook = async (session) => {
                 <p>Your subdomain cannot be claimed by anyone else until ${expiresAt.toLocaleDateString()}.</p>
                 <p style="text-align:center"><a href="${process.env.FRONTEND_URL}/seller-dashboard/subdomain" class="button">View Subdomain</a></p>`
             );
-            await sendEmail({ to: user.email, subject: emailTitle, html });
+            await sendEmail({ to: user.email, subject: emailTitle, html })
+                .catch(error => console.error('Subdomain purchase confirmation email failed:', error.message));
         }
 
         // In-app notification
@@ -188,12 +338,14 @@ exports.handleSubdomainPurchaseWebhook = async (session) => {
             category: 'system',
             linkTo: '/seller-dashboard/subdomain',
             source: 'system',
+            targetRole: 'seller',
+            audience: 'specific',
         }).catch(e => console.error('Subdomain purchase notification failed:', e.message));
 
         return true;
     } catch (error) {
         console.error('Subdomain purchase webhook error:', error);
-        return false;
+        throw error;
     }
 };
 
@@ -278,6 +430,8 @@ exports.processSubdomainRemovals = async () => {
                 category: 'system',
                 linkTo: '/seller-dashboard/subdomain',
                 source: 'system',
+                targetRole: 'seller',
+                audience: 'specific',
             }).catch(e => console.error('Subdomain removal notification failed:', e.message));
         }
 
@@ -319,6 +473,8 @@ exports.processSubdomainRemovals = async () => {
                 category: 'system',
                 linkTo: '/seller-dashboard/subdomain',
                 source: 'system',
+                targetRole: 'seller',
+                audience: 'specific',
             }).catch(e => console.error('Subdomain expiry notification failed:', e.message));
         }
 

@@ -24,7 +24,7 @@ process.env.OPENROUTER_API_KEY = 'test-openrouter-key';
 
 const { getMediaFromMessage } = require('../../services/whatsapp/evolutionMediaService');
 const { cloudinary } = require('../../utils/cloudinary');
-const { processChatAttachments } = require('../../services/aiAttachmentService');
+const { processChatAttachments, __private } = require('../../services/aiAttachmentService');
 
 describe('aiAttachmentService WhatsApp media handling', () => {
   const originalFetch = global.fetch;
@@ -40,6 +40,19 @@ describe('aiAttachmentService WhatsApp media handling', () => {
     } else {
       process.env.OPENROUTER_API_KEY = ORIGINAL_OPENROUTER_API_KEY;
     }
+  });
+
+  test('keeps OpenRouter and direct OpenAI transcription model settings isolated', () => {
+    const env = {
+      OPENAI_TRANSCRIPTION_MODEL: 'gpt-4o-mini-transcribe',
+      OPENROUTER_TRANSCRIPTION_MODEL: 'openai/gpt-4o-transcribe',
+    };
+
+    expect(__private.transcriptionModelFor('openrouter', env)).toBe('openai/gpt-4o-transcribe');
+    expect(__private.transcriptionModelFor('openai', env)).toBe('gpt-4o-mini-transcribe');
+    expect(__private.transcriptionModelFor('openrouter', {
+      OPENAI_TRANSCRIPTION_MODEL: 'gpt-4o-mini-transcribe',
+    })).toBe('openai/gpt-4o-transcribe');
   });
 
   test('downloads WhatsApp images through Evolution and persists them to Cloudinary', async () => {
@@ -140,6 +153,10 @@ describe('aiAttachmentService WhatsApp media handling', () => {
     expect(global.fetch).toHaveBeenCalledTimes(1);
     const [, request] = global.fetch.mock.calls[0];
     const body = JSON.parse(request.body);
+    expect(request.headers).toEqual(expect.objectContaining({
+      'X-OpenRouter-Title': 'Rozare AI Seller Assistant',
+      'X-Title': 'Rozare AI Seller Assistant',
+    }));
     expect(body).toMatchObject({
       model: 'openai/gpt-4o-transcribe',
       input_audio: {

@@ -55,7 +55,8 @@ const orderSchema = mongoose.Schema(
             city: { type: String, required: true },
             state: { type: String, required: true },
             postalCode: { type: String, required: true },
-            country: { type: String, required: true, default: "Pakistan" }
+            country: { type: String, required: true, default: "Pakistan" },
+            countryCode: { type: String, default: '' }
         },
 
         shippingMethod: {

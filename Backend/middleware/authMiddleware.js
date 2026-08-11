@@ -1,19 +1,36 @@
 const jwt = require('jsonwebtoken')
 const User = require('../models/User')
 
+const sendAuthRequired = res => res.status(401).json({
+    msg: 'No token provided!',
+    code: 'AUTH_REQUIRED',
+})
+
+const sendInvalidSession = res => res.status(401).json({
+    msg: 'Login required',
+    code: 'AUTH_SESSION_INVALID',
+})
+
 const verifyToken = async (req, res, next) => {
     const authHeader = req.header('Authorization')
     const token = authHeader?.split(' ')[1]
 
-    if (!token) return res.status(401).json({ msg: 'No token provided!' })
+    if (!token) return sendAuthRequired(res)
+
+    let decoded
+    try {
+        decoded = jwt.verify(token, process.env.JWT_SECRET)
+    } catch (error) {
+        console.warn('Token verification failed:', error.name)
+        return sendInvalidSession(res)
+    }
+
+    const userId = decoded.id || decoded._id;
+    if (!userId) return sendInvalidSession(res)
 
     try {
-        const decoded = jwt.verify(token, process.env.JWT_SECRET)
-        const userId = decoded.id || decoded._id;
-        if (!userId) return res.status(403).json({ msg: 'Login required' });
-
         const user = await User.findById(userId).select('_id username email role avatar');
-        if (!user) return res.status(403).json({ msg: 'Login required' });
+        if (!user) return sendInvalidSession(res)
 
         req.user = {
             ...decoded,
@@ -24,10 +41,13 @@ const verifyToken = async (req, res, next) => {
             role: user.role,
             avatar: user.avatar,
         }
-        next()
+        return next()
     } catch (error) {
-        console.error('Token verification error:', error.message);
-        res.status(403).json({ msg: 'Login required' })
+        // A database outage is not proof that the session is invalid. Avoid
+        // instructing clients to erase a valid local session for a transient
+        // backend failure.
+        console.error('Session user lookup error:', error.message)
+        return res.status(500).json({ msg: 'Unable to verify session' })
     }
 }
 

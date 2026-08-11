@@ -6,9 +6,7 @@
 import React, { useCallback, useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, TextInput, Modal,
-  Platform,
 } from 'react-native';
-import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -19,11 +17,20 @@ import GlassBackground from '../components/common/GlassBackground';
 import GlassPanel from '../components/common/GlassPanel';
 import GlassBlurFill from '../components/common/GlassBlurFill';
 import RozareLogo from '../components/common/RozareLogo';
+import KeyboardAwareFormScrollView from '../components/common/KeyboardAwareFormScrollView';
+import PhoneNumberInput from '../components/common/PhoneNumberInput';
 import { spacing, fontSize, borderRadius, fontWeight, typography } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 import Constants from 'expo-constants';
+import { isValidPhoneNumber } from '../utils/phoneNumber';
+import { resolveBuyerLocation } from '../utils/buyerLocation';
+import { addressCountrySeed } from '../utils/addressCountrySeed';
 
 const APP_VERSION = Constants.expoConfig?.version || '1.0.3';
+const EMPTY_SHIPPING_FORM = {
+  fullName: '', email: '', phone: '', address: '', city: '', state: '', stateCode: '',
+  postalCode: '', country: '', countryCode: '',
+};
 
 export const getMenuItemsForRole = (role, palette) => {
   const baseItems = [
@@ -43,6 +50,10 @@ export const getMenuItemsForRole = (role, palette) => {
         { id: 'seller-whatsapp', title: 'Seller WhatsApp Alerts', icon: 'briefcase-outline', screen: 'SellerWhatsAppSettings', color: '#16A34A' },
         { id: 'seller', title: 'Seller Dashboard', icon: 'storefront-outline', screen: 'SellerDashboard', highlight: true, color: palette.colors.success },
       ];
+    case 'admin':
+      // The mobile app has no admin-as-seller impersonation contract. Keep the
+      // buyer account tools available without exposing seller-only routes.
+      return baseItems;
     case 'user':
     default:
       return [...baseItems, { id: 'become-seller', title: 'Become a Seller', icon: 'storefront-outline', screen: 'BecomeSeller', color: palette.colors.secondary }];
@@ -56,13 +67,26 @@ export default function ProfileScreen({ navigation }) {
   const { currentUser, logout } = useAuth();
   const [savedShipping, setSavedShipping] = useState(null);
   const [editingShipping, setEditingShipping] = useState(false);
-  const [shippingForm, setShippingForm] = useState({
-    fullName: '', email: '', phone: '', address: '', city: '', state: '', postalCode: '', country: 'Pakistan',
-  });
+  const [shippingForm, setShippingForm] = useState(EMPTY_SHIPPING_FORM);
   const [savingShipping, setSavingShipping] = useState(false);
 
   useEffect(() => {
-    if (currentUser) fetchShippingInfo();
+    if (!currentUser) return undefined;
+    let active = true;
+    fetchShippingInfo();
+    resolveBuyerLocation()
+      .catch(() => null)
+      .then((detectedLocation) => {
+        if (!active) return;
+        setShippingForm((previous) => {
+          if (previous.countryCode || previous.country) return previous;
+          return {
+            ...previous,
+            ...addressCountrySeed(null, detectedLocation),
+          };
+        });
+      });
+    return () => { active = false; };
   }, [currentUser]);
 
   const fetchShippingInfo = async () => {
@@ -76,6 +100,10 @@ export default function ProfileScreen({ navigation }) {
   };
 
   const saveShippingInfo = async () => {
+    if (shippingForm.phone && !isValidPhoneNumber(shippingForm.phone)) {
+      Feedback.show({ type: 'error', text1: 'Invalid phone number', text2: 'Select a country code and enter a valid number.' });
+      return;
+    }
     setSavingShipping(true);
     try {
       await api.patch('/api/user/shipping-info', { shippingInfo: shippingForm });
@@ -287,7 +315,7 @@ export default function ProfileScreen({ navigation }) {
               <Ionicons name="location-outline" size={18} color={palette.colors.primary} />
               <Text style={{ fontSize: fontSize.md, fontWeight: fontWeight.bold, color: palette.colors.text }}>Shipping Address</Text>
             </View>
-            <TouchableOpacity onPress={() => { setShippingForm(savedShipping || { fullName: '', email: '', phone: '', address: '', city: '', state: '', postalCode: '', country: 'Pakistan' }); setEditingShipping(true); }}
+            <TouchableOpacity onPress={() => { setShippingForm({ ...EMPTY_SHIPPING_FORM, ...(savedShipping || shippingForm) }); setEditingShipping(true); }}
               style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
               <Ionicons name="pencil-outline" size={14} color={palette.colors.primary} />
               <Text style={{ fontSize: fontSize.sm, color: palette.colors.primary, fontWeight: fontWeight.medium }}>{savedShipping?.fullName ? 'Edit' : 'Add'}</Text>
@@ -311,10 +339,8 @@ export default function ProfileScreen({ navigation }) {
 
         {/* Edit Shipping Modal */}
         <Modal visible={editingShipping} transparent animationType="slide" onRequestClose={() => setEditingShipping(false)}>
-          <KeyboardAvoidingView
+          <View
             style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-            keyboardVerticalOffset={0}
           >
             <GlassPanel variant="strong" style={{ borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: spacing.xl, paddingBottom: spacing.xxxl }}>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.lg }}>
@@ -323,29 +349,42 @@ export default function ProfileScreen({ navigation }) {
                   <Ionicons name="close" size={20} color={palette.colors.text} />
                 </TouchableOpacity>
               </View>
-              <ScrollView
-                showsVerticalScrollIndicator={false}
-                keyboardShouldPersistTaps="handled"
-                keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+              <KeyboardAwareFormScrollView
                 style={{ maxHeight: 400 }}
               >
-                {['fullName', 'email', 'phone', 'address', 'city', 'state', 'postalCode', 'country'].map(field => (
+                {['fullName', 'email', 'phone', 'address', 'city', 'state', 'postalCode', 'country'].map(field => field === 'phone' ? (
+                  <PhoneNumberInput
+                    key={field}
+                    label="Phone"
+                    value={shippingForm.phone}
+                    onChangeText={(value) => setShippingForm(previous => ({ ...previous, phone: value }))}
+                    defaultCountryCode={shippingForm.phone ? shippingForm.countryCode : undefined}
+                    profileCountryCode={savedShipping?.countryCode || shippingForm.countryCode}
+                    profileCountry={savedShipping?.country || shippingForm.country}
+                    onCountryChange={(option) => setShippingForm(previous => ({
+                      ...previous,
+                      country: option.name,
+                      countryCode: option.isoCode,
+                    }))}
+                    testID="profile-shipping-phone"
+                  />
+                ) : (
                   <View key={field} style={{ marginBottom: spacing.md }}>
                     <Text style={{ fontSize: fontSize.sm, fontWeight: fontWeight.medium, color: palette.colors.textSecondary, marginBottom: 4, textTransform: 'capitalize' }}>{field.replace(/([A-Z])/g, ' $1')}</Text>
                     <TextInput style={{ backgroundColor: palette.glass.bgSubtle, borderRadius: 12, borderWidth: 1, borderColor: palette.glass.borderSubtle, padding: spacing.md, fontSize: fontSize.md, color: palette.colors.text }}
                       value={shippingForm[field]} onChangeText={v => setShippingForm(p => ({ ...p, [field]: v }))}
                       placeholderTextColor={palette.colors.textSecondary} placeholder={`Enter ${field.replace(/([A-Z])/g, ' $1').toLowerCase()}`}
-                      keyboardType={field === 'email' ? 'email-address' : field === 'phone' || field === 'postalCode' ? 'phone-pad' : 'default'} />
+                      keyboardType={field === 'email' ? 'email-address' : field === 'postalCode' ? 'phone-pad' : 'default'} />
                   </View>
                 ))}
-              </ScrollView>
+              </KeyboardAwareFormScrollView>
               <TouchableOpacity style={{ borderRadius: 16, paddingVertical: 14, alignItems: 'center', justifyContent: 'center', marginTop: spacing.md, opacity: savingShipping ? 0.6 : 1, overflow: 'hidden' }}
                 onPress={saveShippingInfo} disabled={savingShipping} activeOpacity={0.85}>
                 <LinearGradient colors={palette.gradients.cta} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
                 <Text style={{ fontSize: fontSize.md, fontWeight: fontWeight.bold, color: '#fff' }}>{savingShipping ? 'Saving...' : 'Save Address'}</Text>
               </TouchableOpacity>
             </GlassPanel>
-          </KeyboardAvoidingView>
+          </View>
         </Modal>
 
         <GlassPanel variant="card" style={styles.logoutCard}>

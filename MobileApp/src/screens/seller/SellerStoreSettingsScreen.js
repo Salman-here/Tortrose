@@ -5,21 +5,24 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView,
-  Alert, RefreshControl, Modal, Platform, ActivityIndicator, Switch,
+  Alert, RefreshControl, Modal, Platform, ActivityIndicator, Switch, Linking,
 } from 'react-native';
-import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import api, { API_ENDPOINTS } from '../../config/api';
-import Loader from '../../components/common/Loader';
 import VerifiedBadge from '../../components/VerifiedBadge';
 import GlassBackground from '../../components/common/GlassBackground';
 import GlassPanel from '../../components/common/GlassPanel';
+import KeyboardAwareFormScrollView from '../../components/common/KeyboardAwareFormScrollView';
+import { SellerInlineError, SellerScreenHeader, SellerScreenSkeleton } from '../../components/seller/SellerUI';
 import LocationAutocomplete from '../../components/common/LocationAutocomplete';
+import PhoneNumberInput from '../../components/common/PhoneNumberInput';
 import { spacing, fontSize, borderRadius, fontWeight, typography } from '../../styles/theme';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useCurrency } from '../../contexts/CurrencyContext';
+import { isValidPhoneNumber } from '../../utils/phoneNumber';
 
 const VISIBILITY_MODES = [
   { mode: 'global', label: 'Global', icon: 'earth-outline', desc: 'Visible to all buyers' },
@@ -42,6 +45,22 @@ const THEME_PREVIEWS = [
   ['Mint Catalog', '#5abf9f', '#84d4c2', '#7d9fe3'],
 ];
 
+const isRemoteImage = (uri) => /^https?:\/\//i.test(String(uri || ''));
+const imageMimeType = (uri) => {
+  const clean = String(uri || '').split('?')[0].toLowerCase();
+  if (clean.endsWith('.png')) return 'image/png';
+  if (clean.endsWith('.webp')) return 'image/webp';
+  if (clean.endsWith('.gif')) return 'image/gif';
+  return 'image/jpeg';
+};
+
+const cooldownDaysRemaining = (changedAt, windowDays) => {
+  if (!changedAt) return 0;
+  const nextAllowedAt = new Date(changedAt).getTime() + windowDays * 86400000;
+  if (!Number.isFinite(nextAllowedAt) || nextAllowedAt <= Date.now()) return 0;
+  return Math.max(1, Math.ceil((nextAllowedAt - Date.now()) / 86400000));
+};
+
 export default function SellerStoreSettingsScreen({ navigation }) {
   const { palette } = useTheme();
   const { currency, currencies } = useCurrency();
@@ -49,6 +68,7 @@ export default function SellerStoreSettingsScreen({ navigation }) {
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [deletingStore, setDeletingStore] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [store, setStore] = useState(null);
   const [formData, setFormData] = useState({
@@ -56,6 +76,8 @@ export default function SellerStoreSettingsScreen({ navigation }) {
     description: '',
     sellerType: 'store',
     paymentPolicy: 'online_and_cod',
+    address: { street: '', city: '', state: '', stateCode: '', country: '', countryCode: '', postalCode: '' },
+    socialLinks: { website: '', facebook: '', instagram: '', twitter: '', youtube: '', tiktok: '' },
     returnPolicy: {
       returnsEnabled: false,
       returnDuration: 0,
@@ -73,11 +95,15 @@ export default function SellerStoreSettingsScreen({ navigation }) {
   const [showVerificationModal, setShowVerificationModal] = useState(false);
   const [verificationForm, setVerificationForm] = useState({ applicationMessage: '', contactEmail: '', contactPhone: '' });
   const [submittingVerification, setSubmittingVerification] = useState(false);
+  const [verificationError, setVerificationError] = useState('');
   const [productCurrencyInfo, setProductCurrencyInfo] = useState({ activeCurrency: currency || 'USD', status: 'active' });
   const [productCurrencyDraft, setProductCurrencyDraft] = useState(currency || 'USD');
   const [productCurrencySaving, setProductCurrencySaving] = useState(false);
+  const [productCurrencyError, setProductCurrencyError] = useState('');
   const [visibilitySaving, setVisibilitySaving] = useState(false);
   const [visibility, setVisibility] = useState({ mode: 'country', country: '', countryCode: '', region: '', regionCode: '', city: '', town: '' });
+  const [loadError, setLoadError] = useState('');
+  const [hasLoaded, setHasLoaded] = useState(false);
 
   useEffect(() => { fetchSettings(); fetchVerificationStatus(); fetchProductCurrency(); }, []);
 
@@ -91,6 +117,23 @@ export default function SellerStoreSettingsScreen({ navigation }) {
         description: storeData?.description || '',
         sellerType: storeData?.sellerType || 'store',
         paymentPolicy: storeData?.paymentPolicy || 'online_and_cod',
+        address: {
+          street: storeData?.address?.street || '',
+          city: storeData?.address?.city || '',
+          state: storeData?.address?.state || '',
+          stateCode: storeData?.address?.stateCode || '',
+          country: storeData?.address?.country || '',
+          countryCode: storeData?.address?.countryCode || '',
+          postalCode: storeData?.address?.postalCode || '',
+        },
+        socialLinks: {
+          website: storeData?.socialLinks?.website || '',
+          facebook: storeData?.socialLinks?.facebook || '',
+          instagram: storeData?.socialLinks?.instagram || '',
+          twitter: storeData?.socialLinks?.twitter || '',
+          youtube: storeData?.socialLinks?.youtube || '',
+          tiktok: storeData?.socialLinks?.tiktok || '',
+        },
         returnPolicy: {
           returnsEnabled: storeData?.returnPolicy?.returnsEnabled === true,
           returnDuration: Number(storeData?.returnPolicy?.returnDuration || 0),
@@ -104,7 +147,17 @@ export default function SellerStoreSettingsScreen({ navigation }) {
       setLogo(storeData?.logo || null);
       setBanner(storeData?.banner || null);
       setVisibility(storeData?.visibility || { mode: 'country', country: storeData?.address?.country || '', countryCode: storeData?.address?.countryCode || '', region: storeData?.address?.state || '', regionCode: storeData?.address?.stateCode || '', city: storeData?.address?.city || '', town: '' });
-    } catch (error) { console.error('Error fetching settings:', error); }
+      setLoadError('');
+      setHasLoaded(true);
+    } catch (error) {
+      if (error.response?.status === 404) {
+        setStore(null);
+        setLoadError('');
+        setHasLoaded(true);
+      } else {
+        setLoadError(error.response?.data?.msg || 'Live store settings could not be loaded. Saving is disabled until you retry.');
+      }
+    }
     finally { setLoading(false); setRefreshing(false); }
   };
 
@@ -114,20 +167,30 @@ export default function SellerStoreSettingsScreen({ navigation }) {
       const info = res.data?.productCurrency || {};
       setProductCurrencyInfo(info);
       setProductCurrencyDraft(info.pendingCurrency || info.activeCurrency || currency || 'USD');
-    } catch (_) {
-      setProductCurrencyDraft(currency || 'USD');
+      setProductCurrencyError('');
+    } catch (error) {
+      setProductCurrencyError(error.response?.data?.msg || 'Product currency settings could not be loaded.');
     }
   };
 
   const fetchVerificationStatus = async () => {
-    try { const response = await api.get('/api/stores/verification/status'); setVerification(response.data); }
-    catch (error) { console.log('Verification status unavailable'); }
+    try {
+      const response = await api.get('/api/stores/verification/status');
+      setVerification(response.data);
+      setVerificationError('');
+    } catch (error) {
+      setVerificationError(error.response?.data?.msg || 'Verification status could not be loaded.');
+    }
   };
 
   const submitVerificationApplication = async () => {
     const { applicationMessage, contactEmail, contactPhone } = verificationForm;
     if (!applicationMessage.trim() || !contactEmail.trim() || !contactPhone.trim()) {
       Alert.alert('Missing Fields', 'Please fill in all fields before submitting.'); return;
+    }
+    if (!isValidPhoneNumber(contactPhone)) {
+      Alert.alert('Invalid Phone', 'Select a country and enter a valid contact phone number.');
+      return;
     }
     setSubmittingVerification(true);
     try {
@@ -155,6 +218,13 @@ export default function SellerStoreSettingsScreen({ navigation }) {
     setFormData(previous => ({
       ...previous,
       returnPolicy: { ...previous.returnPolicy, [field]: value },
+    }));
+  }, []);
+
+  const updateNestedField = useCallback((group, field, value) => {
+    setFormData(previous => ({
+      ...previous,
+      [group]: { ...(previous[group] || {}), [field]: value },
     }));
   }, []);
 
@@ -187,21 +257,109 @@ export default function SellerStoreSettingsScreen({ navigation }) {
     } catch (error) { Alert.alert('Error', 'Failed to pick image'); }
   }, []);
 
-  const saveSettings = async () => {
-    if (!formData.storeName.trim()) { setErrors({ storeName: 'Store name is required' }); return; }
+  const uploadStoreImage = async (uri, type) => {
+    if (!uri || isRemoteImage(uri)) return uri || '';
+    const mimeType = imageMimeType(uri);
+    const extension = mimeType.split('/')[1] || 'jpg';
+    const body = new FormData();
+    body.append('storeImage', {
+      uri,
+      type: mimeType,
+      name: `store_${type}_${Date.now()}.${extension}`,
+    });
+    const response = await api.post(API_ENDPOINTS.UPLOAD.STORE_IMAGE, body, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    if (!response.data?.imageUrl) throw new Error(`The ${type} upload did not return a secure URL.`);
+    return response.data.imageUrl;
+  };
+
+  const saveSettings = async (cooldownConfirmed = false) => {
+    const storeName = formData.storeName.trim();
+    if (storeName.length < 3 || storeName.length > 50) {
+      setErrors({ storeName: 'Store name must be between 3 and 50 characters' });
+      return;
+    }
+    if (formData.description.trim().length > 500) {
+      Alert.alert('Description too long', 'Store description must be 500 characters or fewer.');
+      return;
+    }
+    if (formData.returnPolicy?.returnsEnabled) {
+      const days = Number(formData.returnPolicy.returnDuration);
+      if (!Number.isInteger(days) || days < 1 || days > 365 || !['full_refund', 'store_credit', 'replacement_only'].includes(formData.returnPolicy.refundType)) {
+        Alert.alert('Review return policy', 'Choose a valid resolution and a return window between 1 and 365 days.');
+        return;
+      }
+    }
+    if (formData.returnPolicy?.warrantyEnabled) {
+      const months = Number(formData.returnPolicy.warrantyDuration);
+      if (!Number.isInteger(months) || months < 1 || months > 120) {
+        Alert.alert('Review warranty', 'Warranty duration must be between 1 and 120 months.');
+        return;
+      }
+    }
+    if (!hasLoaded || loadError) {
+      Alert.alert('Store settings unavailable', 'Retry loading your live store before saving changes.');
+      return;
+    }
+    if (store?._id && store.isActive === false) {
+      Alert.alert(
+        'Store is blocked',
+        'Reactivate your seller subscription before changing store settings.',
+        [
+          { text: 'Not now', style: 'cancel' },
+          { text: 'View subscription', onPress: () => navigation.navigate('SellerSubscription') },
+        ],
+      );
+      return;
+    }
+
+    const identityChanges = [];
+    if (store?._id && storeName.toLowerCase() !== String(store.storeName || '').trim().toLowerCase()) {
+      identityChanges.push('Store name will be locked for 7 days');
+    }
+    if (store?._id && (formData.sellerType || 'store') !== (store.sellerType || 'store')) {
+      identityChanges.push('Listing type will be locked for 30 days');
+    }
+    if (!cooldownConfirmed && identityChanges.length > 0) {
+      Alert.alert(
+        'Confirm identity changes',
+        `After saving:\n\n${identityChanges.map((item) => `• ${item}`).join('\n')}`,
+        [
+          { text: 'Review', style: 'cancel' },
+          { text: 'Confirm & Save', onPress: () => saveSettings(true) },
+        ],
+      );
+      return;
+    }
     setSaving(true);
     try {
-      await api.put('/api/stores/update', {
-        storeName: formData.storeName.trim(),
+      const [uploadedLogo, uploadedBanner] = await Promise.all([
+        uploadStoreImage(logo, 'logo'),
+        uploadStoreImage(banner, 'banner'),
+      ]);
+      const payload = {
+        storeName,
         description: formData.description.trim(),
         sellerType: formData.sellerType || 'store',
         paymentPolicy: formData.paymentPolicy || 'online_and_cod',
         returnPolicy: formData.returnPolicy,
-        logo,
-        banner,
-      });
-      Alert.alert('Success', 'Store settings saved successfully');
-    } catch (error) { Alert.alert('Error', error.response?.data?.message || 'Failed to save settings'); }
+        address: formData.address,
+        socialLinks: formData.socialLinks,
+        logo: uploadedLogo,
+        banner: uploadedBanner,
+        visibility,
+      };
+      const response = store?._id
+        ? await api.put('/api/stores/update', payload)
+        : await api.post('/api/stores/create', payload);
+      const savedStore = response.data?.store || response.data?.newStore || store;
+      if (savedStore) setStore(savedStore);
+      setLogo(uploadedLogo || null);
+      setBanner(uploadedBanner || null);
+      if (!store?._id) await Promise.all([fetchProductCurrency(), fetchVerificationStatus()]);
+      Alert.alert('Saved', store?._id ? 'Store settings updated successfully.' : 'Your store is ready.');
+    } catch (error) { Alert.alert('Could not save store', error.response?.data?.msg || error.message || 'Failed to save settings'); }
     finally { setSaving(false); }
   };
 
@@ -265,6 +423,10 @@ export default function SellerStoreSettingsScreen({ navigation }) {
   const updateVisibilityField = (field, value) => setVisibility((previous) => ({ ...previous, [field]: value }));
 
   const saveVisibility = async () => {
+    if (store?.isActive === false) {
+      Alert.alert('Store is blocked', 'Reactivate your seller subscription before changing visibility.');
+      return;
+    }
     if (visibility.mode !== 'global' && !String(visibility.country || '').trim()) {
       Alert.alert('Visibility', 'Country is required for this visibility mode.');
       return;
@@ -285,22 +447,104 @@ export default function SellerStoreSettingsScreen({ navigation }) {
     }
   };
 
-  if (loading) return <GlassBackground><Loader fullScreen message="Loading settings..." /></GlassBackground>;
+  const deleteStore = () => {
+    if (!store?._id || deletingStore) return;
+    Alert.alert(
+      'Delete this store?',
+      'This permanently removes the storefront and its store settings. This action cannot be undone.',
+      [
+        { text: 'Keep Store', style: 'cancel' },
+        {
+          text: 'Delete Permanently',
+          style: 'destructive',
+          onPress: async () => {
+            setDeletingStore(true);
+            try {
+              await api.delete('/api/stores/delete');
+              Alert.alert('Store deleted', 'Your storefront has been removed. You can create a new store later.', [
+                { text: 'OK', onPress: () => navigation.goBack() },
+              ]);
+            } catch (error) {
+              Alert.alert('Could not delete store', error.response?.data?.msg || 'Try again later.');
+            } finally {
+              setDeletingStore(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  if (loading) return <SellerScreenSkeleton navigation={navigation} title="Store Settings" subtitle="Loading your live storefront" icon="settings-outline" variant="form" />;
+
+  if (loadError && !hasLoaded) {
+    return (
+      <GlassBackground>
+        <SafeAreaView style={styles.safe} edges={Platform.OS === 'android' ? [] : ['top']}>
+          <SellerScreenHeader navigation={navigation} title="Store Settings" subtitle="Brand, policies and visibility" icon="settings-outline" />
+          <SellerInlineError title="Store settings unavailable" message={loadError} onRetry={fetchSettings} />
+        </SafeAreaView>
+      </GlassBackground>
+    );
+  }
 
   const isVerified = store?.verification?.isVerified;
   const verificationStatus = verification?.status || (isVerified ? 'verified' : 'none');
-  const canApplyForVerification = verificationStatus === 'none' || verificationStatus === 'rejected';
+  const storeBlocked = Boolean(store?._id && store.isActive === false);
+  const canApplyForVerification = Boolean(store?._id) && !storeBlocked && !verificationError && (verificationStatus === 'none' || verificationStatus === 'rejected');
+  const purchasedSubdomain = Boolean(
+    store?.subdomainPurchase?.isPurchased
+    && store?.subdomainPurchase?.expiresAt
+    && new Date(store.subdomainPurchase.expiresAt).getTime() > Date.now()
+  );
+  const removalAt = store?.subdomainPurchase?.removalScheduledAt;
+  const daysUntilRemoval = storeBlocked && !purchasedSubdomain && removalAt
+    ? Math.max(0, Math.ceil((new Date(removalAt).getTime() - Date.now()) / 86400000))
+    : null;
+  const nameCooldownDays = cooldownDaysRemaining(store?.lastNameChangeAt, 7);
+  const typeCooldownDays = cooldownDaysRemaining(store?.lastTypeChangeAt, 30);
+
+  const previewStore = async () => {
+    if (!store?.storeSlug) return;
+    try {
+      await Linking.openURL(`https://${store.storeSlug}.rozare.com`);
+    } catch {
+      Alert.alert('Could not open store', 'Please try again after checking your connection.');
+    }
+  };
 
   return (
     <GlassBackground>
+      <SafeAreaView style={styles.safe} edges={Platform.OS === 'android' ? [] : ['top']}>
+      <SellerScreenHeader navigation={navigation} title="Store Settings" subtitle="Brand, policies and visibility" icon="settings-outline" rightIcon="refresh" rightLabel="Refresh" onRightPress={onRefresh} />
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={palette.colors.primary} />}>
-        
-        <GlassPanel variant="floating" style={styles.header}>
-          <View style={styles.headerIcon}><Ionicons name="settings-outline" size={28} color={palette.colors.primary} /></View>
-          <Text style={styles.headerTitle}>Store Settings</Text>
-          <Text style={styles.headerSubtitle}>Manage your store information</Text>
-        </GlassPanel>
+
+        {!!loadError && <SellerInlineError title="Refresh incomplete" message={loadError} onRetry={fetchSettings} />}
+
+        {storeBlocked && (
+          <GlassPanel variant="card" style={[styles.section, styles.blockedBanner]} accessibilityRole="alert">
+            <View style={styles.blockedRow}>
+              <View style={styles.blockedIcon}>
+                <Ionicons name="lock-closed-outline" size={20} color={palette.colors.error} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.blockedTitle}>Store blocked — subscription inactive</Text>
+                <Text style={styles.blockedText}>
+                  {purchasedSubdomain
+                    ? 'Your purchased subdomain remains protected. Reactivate your subscription to restore the storefront and editing.'
+                    : daysUntilRemoval !== null
+                      ? `${store.storeSlug}.rozare.com may be released in ${daysUntilRemoval} day${daysUntilRemoval === 1 ? '' : 's'}. Reactivate to keep it.`
+                      : 'Reactivate your subscription to restore the storefront and editing.'}
+                </Text>
+                <TouchableOpacity style={styles.blockedAction} onPress={() => navigation.navigate('SellerSubscription')} activeOpacity={0.78} accessibilityRole="button">
+                  <Text style={styles.blockedActionText}>View subscription</Text>
+                  <Ionicons name="arrow-forward" size={14} color="#fff" />
+                </TouchableOpacity>
+              </View>
+            </View>
+          </GlassPanel>
+        )}
 
         {/* Verification Status */}
         <GlassPanel variant="card" style={styles.section}>
@@ -320,6 +564,9 @@ export default function SellerStoreSettingsScreen({ navigation }) {
             </View>
             {isVerified && <VerifiedBadge size="md" />}
           </View>
+          {!!store?._id && !!verificationError && (
+            <SellerInlineError compact title="Verification status unavailable" message={verificationError} onRetry={fetchVerificationStatus} />
+          )}
           {canApplyForVerification && (
             <TouchableOpacity style={styles.applyBtn} onPress={() => setShowVerificationModal(true)} activeOpacity={0.8}>
               <Ionicons name="shield-checkmark-outline" size={18} color="white" />
@@ -357,8 +604,10 @@ export default function SellerStoreSettingsScreen({ navigation }) {
           <Text style={styles.sectionTitle}>Store Details</Text>
           <Text style={styles.label}>Store Name <Text style={{ color: palette.colors.error }}>*</Text></Text>
           <TextInput style={[styles.input, errors.storeName && styles.inputError]} value={formData.storeName}
-            onChangeText={(v) => updateField('storeName', v)} placeholder="Enter store name" placeholderTextColor={palette.colors.textSecondary} />
+            onChangeText={(v) => updateField('storeName', v)} placeholder="Enter store name" placeholderTextColor={palette.colors.textSecondary}
+            editable={!storeBlocked && nameCooldownDays === 0} />
           {errors.storeName && <Text style={styles.errorText}>{errors.storeName}</Text>}
+          {nameCooldownDays > 0 && <Text style={styles.cooldownHint}>Name changes unlock again in {nameCooldownDays} day{nameCooldownDays === 1 ? '' : 's'}.</Text>}
           
           <Text style={[styles.label, { marginTop: spacing.lg }]}>Description</Text>
           <TextInput style={[styles.input, styles.textArea]} value={formData.description}
@@ -373,6 +622,7 @@ export default function SellerStoreSettingsScreen({ navigation }) {
                 <TouchableOpacity
                   key={t}
                   onPress={() => updateField('sellerType', t)}
+                  disabled={storeBlocked || typeCooldownDays > 0}
                   activeOpacity={0.8}
                   style={{
                     flex: 1,
@@ -420,6 +670,91 @@ export default function SellerStoreSettingsScreen({ navigation }) {
               );
             })}
           </View>
+          {typeCooldownDays > 0 && <Text style={styles.cooldownHint}>Listing type changes unlock again in {typeCooldownDays} day{typeCooldownDays === 1 ? '' : 's'}.</Text>}
+        </GlassPanel>
+
+        <GlassPanel variant="card" style={styles.section}>
+          <Text style={styles.sectionTitle}>Business Address</Text>
+          <Text style={styles.helperText}>Used for store identity, regional visibility and buyer confidence.</Text>
+          <Text style={styles.label}>Street address</Text>
+          <TextInput
+            style={styles.input}
+            value={formData.address?.street || ''}
+            onChangeText={(value) => updateNestedField('address', 'street', value)}
+            placeholder="Building, street or area"
+            placeholderTextColor={palette.colors.textSecondary}
+          />
+          <View style={{ marginTop: spacing.md }}>
+            <LocationAutocomplete
+              type="country"
+              label="Country"
+              value={formData.address?.country || ''}
+              code={formData.address?.countryCode || ''}
+              placeholder="Select country"
+              onSelect={(option) => setFormData(previous => ({
+                ...previous,
+                address: { ...previous.address, country: option.name, countryCode: option.isoCode, state: '', stateCode: '', city: '' },
+              }))}
+              onClear={() => setFormData(previous => ({ ...previous, address: { ...previous.address, country: '', countryCode: '', state: '', stateCode: '', city: '' } }))}
+            />
+            <LocationAutocomplete
+              type="state"
+              label="State / Province"
+              value={formData.address?.state || ''}
+              code={formData.address?.stateCode || ''}
+              countryCode={formData.address?.countryCode || ''}
+              countryName={formData.address?.country || ''}
+              placeholder="Select state"
+              disabled={!formData.address?.country}
+              onSelect={(option) => setFormData(previous => ({ ...previous, address: { ...previous.address, state: option.name, stateCode: option.isoCode, city: '' } }))}
+              onClear={() => setFormData(previous => ({ ...previous, address: { ...previous.address, state: '', stateCode: '', city: '' } }))}
+            />
+            <LocationAutocomplete
+              type="city"
+              label="City"
+              value={formData.address?.city || ''}
+              countryCode={formData.address?.countryCode || ''}
+              countryName={formData.address?.country || ''}
+              stateCode={formData.address?.stateCode || ''}
+              stateName={formData.address?.state || ''}
+              placeholder="Select city"
+              disabled={!formData.address?.country}
+              onSelect={(option) => setFormData(previous => ({ ...previous, address: { ...previous.address, city: option.name, state: previous.address?.state || option.stateName || '', stateCode: previous.address?.stateCode || option.stateCode || '' } }))}
+              onClear={() => updateNestedField('address', 'city', '')}
+            />
+          </View>
+          <Text style={[styles.label, { marginTop: spacing.md }]}>Postal code</Text>
+          <TextInput style={styles.input} value={formData.address?.postalCode || ''} onChangeText={(value) => updateNestedField('address', 'postalCode', value)} placeholder="Postal or ZIP code" placeholderTextColor={palette.colors.textSecondary} />
+        </GlassPanel>
+
+        <GlassPanel variant="card" style={styles.section}>
+          <Text style={styles.sectionTitle}>Social Links</Text>
+          <Text style={styles.helperText}>Add only official profiles buyers can safely recognize.</Text>
+          {[
+            ['website', 'Website', 'https://yourstore.com', 'globe-outline'],
+            ['instagram', 'Instagram', 'https://instagram.com/yourstore', 'logo-instagram'],
+            ['facebook', 'Facebook', 'https://facebook.com/yourstore', 'logo-facebook'],
+            ['tiktok', 'TikTok', 'https://tiktok.com/@yourstore', 'logo-tiktok'],
+            ['youtube', 'YouTube', 'https://youtube.com/@yourstore', 'logo-youtube'],
+            ['twitter', 'X / Twitter', 'https://x.com/yourstore', 'logo-twitter'],
+          ].map(([field, label, placeholder, icon], index) => (
+            <View key={field} style={index ? styles.socialField : null}>
+              <Text style={styles.label}>{label}</Text>
+              <View style={styles.iconInput}>
+                <Ionicons name={icon} size={17} color={palette.colors.textSecondary} />
+                <TextInput
+                  style={styles.iconInputText}
+                  value={formData.socialLinks?.[field] || ''}
+                  onChangeText={(value) => updateNestedField('socialLinks', field, value)}
+                  placeholder={placeholder}
+                  placeholderTextColor={palette.colors.textSecondary}
+                  keyboardType="url"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+              </View>
+            </View>
+          ))}
         </GlassPanel>
 
         <GlassPanel variant="card" style={styles.section}>
@@ -484,9 +819,47 @@ export default function SellerStoreSettingsScreen({ navigation }) {
               </View>
             </>
           )}
+          <View style={styles.policyDivider} />
+          <View style={styles.returnHeader}>
+            <View style={styles.returnHeaderText}>
+              <Text style={styles.sectionTitle}>Warranty</Text>
+              <Text style={styles.helperText}>Show buyers how long eligible products are covered.</Text>
+            </View>
+            <Switch
+              value={formData.returnPolicy?.warrantyEnabled === true}
+              onValueChange={(value) => updateReturnPolicy('warrantyEnabled', value)}
+              trackColor={{ false: palette.glass.border, true: `${palette.colors.primary}80` }}
+              thumbColor={formData.returnPolicy?.warrantyEnabled ? palette.colors.primary : palette.colors.textSecondary}
+            />
+          </View>
+          {formData.returnPolicy?.warrantyEnabled && (
+            <>
+              <Text style={[styles.label, { marginTop: spacing.md }]}>Warranty duration (months)</Text>
+              <TextInput
+                style={styles.input}
+                value={String(formData.returnPolicy.warrantyDuration || '')}
+                onChangeText={(value) => updateReturnPolicy('warrantyDuration', Math.min(120, Math.max(0, Number(value.replace(/\D/g, '')) || 0)))}
+                keyboardType="number-pad"
+                placeholder="12"
+                placeholderTextColor={palette.colors.textSecondary}
+              />
+              <Text style={[styles.label, { marginTop: spacing.lg }]}>Warranty details</Text>
+              <TextInput
+                style={[styles.input, styles.textArea]}
+                value={formData.returnPolicy.warrantyDescription}
+                onChangeText={(value) => updateReturnPolicy('warrantyDescription', value)}
+                maxLength={200}
+                multiline
+                textAlignVertical="top"
+                placeholder="Explain what is covered and how buyers can claim warranty support."
+                placeholderTextColor={palette.colors.textSecondary}
+              />
+            </>
+          )}
         </GlassPanel>
 
         {/* Product Currency */}
+        {Boolean(store?._id) && (
         <GlassPanel variant="card" style={styles.section}>
           <View style={styles.cardHeaderRow}>
             <View>
@@ -501,6 +874,14 @@ export default function SellerStoreSettingsScreen({ navigation }) {
               </Text>
             </View>
           </View>
+          {!!productCurrencyError && (
+            <SellerInlineError
+              compact
+              title="Currency settings unavailable"
+              message={productCurrencyError}
+              onRetry={fetchProductCurrency}
+            />
+          )}
           <View style={styles.currencyGrid}>
             {Object.entries(currencies || {}).map(([code, info]) => {
               const active = productCurrencyDraft === code;
@@ -509,7 +890,7 @@ export default function SellerStoreSettingsScreen({ navigation }) {
                   key={code}
                   style={[styles.currencyChip, active && styles.currencyChipActive]}
                   onPress={() => updateProductCurrency(code)}
-                  disabled={productCurrencySaving}
+                  disabled={productCurrencySaving || storeBlocked || Boolean(productCurrencyError)}
                   activeOpacity={0.8}
                 >
                   <Text style={[styles.currencyChipText, active && styles.currencyChipTextActive]}>{code}</Text>
@@ -527,10 +908,10 @@ export default function SellerStoreSettingsScreen({ navigation }) {
                   Existing products are still in {productCurrencyInfo.previousCurrency || productCurrencyInfo.activeCurrency}. Convert all product prices to {productCurrencyInfo.pendingCurrency}, or cancel and keep the previous currency.
                 </Text>
                 <View style={styles.warningActions}>
-                  <TouchableOpacity style={styles.warningSecondaryBtn} onPress={cancelProductCurrencyChange} disabled={productCurrencySaving}>
+                  <TouchableOpacity style={styles.warningSecondaryBtn} onPress={cancelProductCurrencyChange} disabled={productCurrencySaving || storeBlocked || Boolean(productCurrencyError)}>
                     <Text style={styles.warningSecondaryText}>Keep {productCurrencyInfo.previousCurrency || productCurrencyInfo.activeCurrency}</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity style={styles.warningPrimaryBtn} onPress={convertProductCurrency} disabled={productCurrencySaving}>
+                  <TouchableOpacity style={styles.warningPrimaryBtn} onPress={convertProductCurrency} disabled={productCurrencySaving || storeBlocked || Boolean(productCurrencyError)}>
                     {productCurrencySaving ? <ActivityIndicator size="small" color="#fff" /> : <Text style={styles.warningPrimaryText}>Convert to {productCurrencyInfo.pendingCurrency}</Text>}
                   </TouchableOpacity>
                 </View>
@@ -538,11 +919,12 @@ export default function SellerStoreSettingsScreen({ navigation }) {
             </View>
           )}
         </GlassPanel>
+        )}
 
         {/* Visibility */}
         <GlassPanel variant="card" style={styles.section}>
           <Text style={styles.sectionTitle}>Store Visibility</Text>
-          <Text style={styles.helperText}>Control which buyers can discover your store and products. GPS radius targeting is commented out for now.</Text>
+          <Text style={styles.helperText}>Control which buyers can discover your store and products.</Text>
           <View style={styles.visibilityModes}>
             {VISIBILITY_MODES.map((item) => {
               const active = visibility.mode === item.mode;
@@ -633,9 +1015,9 @@ export default function SellerStoreSettingsScreen({ navigation }) {
               )}
             </View>
           )}
-          <TouchableOpacity style={[styles.applyBtn, visibilitySaving && { opacity: 0.6 }]} onPress={saveVisibility} disabled={visibilitySaving} activeOpacity={0.8}>
+          <TouchableOpacity style={[styles.applyBtn, (visibilitySaving || storeBlocked || !store?._id) && { opacity: 0.6 }]} onPress={saveVisibility} disabled={visibilitySaving || storeBlocked || !store?._id} activeOpacity={0.8}>
             {visibilitySaving ? <ActivityIndicator color="white" /> : <Ionicons name="save-outline" size={18} color="white" />}
-            <Text style={styles.applyBtnText}>Save Visibility</Text>
+            <Text style={styles.applyBtnText}>{store?._id ? 'Save Visibility' : 'Saved when store is created'}</Text>
           </TouchableOpacity>
         </GlassPanel>
 
@@ -665,31 +1047,59 @@ export default function SellerStoreSettingsScreen({ navigation }) {
         </GlassPanel>
 
         <View style={styles.submitContainer}>
-          <TouchableOpacity style={[styles.submitButton, saving && { opacity: 0.6 }]} onPress={saveSettings} disabled={saving} activeOpacity={0.8}>
+          <TouchableOpacity style={[styles.submitButton, (saving || storeBlocked) && { opacity: 0.6 }]} onPress={() => saveSettings(false)} disabled={saving || storeBlocked} activeOpacity={0.8}>
             {saving ? <ActivityIndicator color="white" /> : (
               <><Ionicons name="checkmark-circle" size={22} color="white" /><Text style={styles.submitButtonText}>Save Settings</Text></>
             )}
           </TouchableOpacity>
+          {Boolean(store?.storeSlug) && !storeBlocked && (
+            <TouchableOpacity style={styles.previewButton} onPress={previewStore} activeOpacity={0.8} accessibilityRole="button" accessibilityLabel="Preview live store">
+              <Ionicons name="eye-outline" size={19} color={palette.colors.primary} />
+              <Text style={styles.previewButtonText}>Preview Store</Text>
+            </TouchableOpacity>
+          )}
         </View>
+
+        {Boolean(store?._id) && (
+          <GlassPanel variant="card" style={[styles.section, styles.dangerSection]}>
+            <View style={styles.dangerRow}>
+              <View style={styles.dangerIcon}><Ionicons name="trash-outline" size={19} color={palette.colors.error} /></View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.dangerTitle}>Delete store</Text>
+                <Text style={styles.dangerText}>Permanently remove this storefront and its settings.</Text>
+              </View>
+              <TouchableOpacity style={styles.deleteButton} onPress={deleteStore} disabled={deletingStore} activeOpacity={0.75}>
+                {deletingStore ? <ActivityIndicator size="small" color={palette.colors.error} /> : <Text style={styles.deleteButtonText}>Delete</Text>}
+              </TouchableOpacity>
+            </View>
+          </GlassPanel>
+        )}
 
         <View style={{ height: 100 }} />
       </ScrollView>
 
       {/* Verification Modal */}
       <Modal visible={showVerificationModal} animationType="slide" transparent onRequestClose={() => setShowVerificationModal(false)}>
-        <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+        <View style={styles.modalOverlay}>
           <GlassPanel variant="strong" style={styles.modalSheet}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Apply for Verification</Text>
               <TouchableOpacity onPress={() => setShowVerificationModal(false)}><Ionicons name="close" size={24} color={palette.colors.text} /></TouchableOpacity>
             </View>
-            <ScrollView keyboardShouldPersistTaps="handled">
+            <KeyboardAwareFormScrollView>
               <Text style={styles.label}>Contact Email <Text style={{ color: palette.colors.error }}>*</Text></Text>
               <TextInput style={styles.input} value={verificationForm.contactEmail}
                 onChangeText={(v) => setVerificationForm(p => ({ ...p, contactEmail: v }))} placeholder="your@email.com" placeholderTextColor={palette.colors.textSecondary} keyboardType="email-address" autoCapitalize="none" />
-              <Text style={[styles.label, { marginTop: spacing.md }]}>Contact Phone <Text style={{ color: palette.colors.error }}>*</Text></Text>
-              <TextInput style={styles.input} value={verificationForm.contactPhone}
-                onChangeText={(v) => setVerificationForm(p => ({ ...p, contactPhone: v }))} placeholder="+1 234 567 8900" placeholderTextColor={palette.colors.textSecondary} keyboardType="phone-pad" />
+              <PhoneNumberInput
+                label="Contact Phone"
+                required
+                value={verificationForm.contactPhone}
+                onChangeText={(value) => setVerificationForm(previous => ({ ...previous, contactPhone: value }))}
+                defaultCountryCode={formData.address?.countryCode}
+                profileCountry={formData.address?.country}
+                helperText="Verification staff will use this number only if they need to confirm your application."
+                testID="store-verification-phone"
+              />
               <Text style={[styles.label, { marginTop: spacing.md }]}>Message <Text style={{ color: palette.colors.error }}>*</Text></Text>
               <TextInput style={[styles.input, styles.textArea]} value={verificationForm.applicationMessage}
                 onChangeText={(v) => setVerificationForm(p => ({ ...p, applicationMessage: v }))} placeholder="Why should your store be verified?" placeholderTextColor={palette.colors.textSecondary} multiline numberOfLines={5} textAlignVertical="top" />
@@ -698,20 +1108,18 @@ export default function SellerStoreSettingsScreen({ navigation }) {
                   <><Ionicons name="shield-checkmark-outline" size={20} color="white" /><Text style={styles.submitButtonText}>Submit Application</Text></>
                 )}
               </TouchableOpacity>
-            </ScrollView>
+            </KeyboardAwareFormScrollView>
           </GlassPanel>
-        </KeyboardAvoidingView>
+        </View>
       </Modal>
+      </SafeAreaView>
     </GlassBackground>
   );
 }
 
 const buildStyles = (p) => StyleSheet.create({
-  scroll: { paddingBottom: spacing.xxl },
-  header: { alignItems: 'center', margin: spacing.lg, padding: spacing.xl },
-  headerIcon: { width: 60, height: 60, borderRadius: 30, backgroundColor: 'rgba(99,102,241,0.12)', justifyContent: 'center', alignItems: 'center', marginBottom: spacing.md },
-  headerTitle: { ...typography.h2, color: p.colors.text, marginBottom: spacing.xs },
-  headerSubtitle: { ...typography.body, color: p.colors.textSecondary },
+  safe: { flex: 1 },
+  scroll: { width: '100%', maxWidth: 680, alignSelf: 'center', paddingTop: spacing.md, paddingBottom: 100 },
   section: { marginHorizontal: spacing.lg, marginTop: spacing.md, padding: spacing.lg },
   sectionTitle: { ...typography.h4, color: p.colors.text, marginBottom: spacing.md },
   helperText: { ...typography.bodySmall, color: p.colors.textSecondary, marginTop: -spacing.xs, marginBottom: spacing.md, lineHeight: 19 },
@@ -743,8 +1151,12 @@ const buildStyles = (p) => StyleSheet.create({
   paymentPolicyCardActive: { borderColor: p.colors.primary, backgroundColor: `${p.colors.primary}12` },
   paymentPolicyTitle: { ...typography.bodySemibold, color: p.colors.text },
   paymentPolicyDesc: { ...typography.caption, color: p.colors.textSecondary, marginTop: 2 },
+  socialField: { marginTop: spacing.md },
+  iconInput: { minHeight: 48, flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingHorizontal: spacing.md, borderRadius: borderRadius.lg, backgroundColor: p.glass.bgSubtle, borderWidth: 1, borderColor: p.glass.borderSubtle },
+  iconInputText: { flex: 1, paddingVertical: spacing.sm, fontSize: fontSize.sm, color: p.colors.text },
   returnHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: spacing.md },
   returnHeaderText: { flex: 1 },
+  policyDivider: { height: 1, backgroundColor: p.glass.borderSubtle, marginVertical: spacing.lg },
   refundNotice: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm, marginTop: spacing.md, padding: spacing.md, borderRadius: borderRadius.lg, backgroundColor: `${p.colors.info}10`, borderWidth: 1, borderColor: `${p.colors.info}26` },
   refundNoticeText: { flex: 1, ...typography.caption, color: p.colors.textSecondary, lineHeight: 17 },
   comingSoonPill: { paddingHorizontal: spacing.sm, paddingVertical: spacing.xs, borderRadius: borderRadius.full, backgroundColor: `${p.colors.warning}14`, borderWidth: 1, borderColor: `${p.colors.warning}28` },
@@ -767,6 +1179,7 @@ const buildStyles = (p) => StyleSheet.create({
   inputError: { borderColor: p.colors.error },
   textArea: { minHeight: 100 },
   errorText: { ...typography.caption, color: p.colors.error, marginTop: spacing.xs },
+  cooldownHint: { marginTop: spacing.sm, fontSize: fontSize.xs, lineHeight: 17, color: p.colors.warningDark, fontWeight: fontWeight.semibold },
   bannerPicker: { borderRadius: borderRadius.xl, overflow: 'hidden', marginBottom: spacing.lg },
   bannerImage: { width: '100%', height: 160, borderRadius: borderRadius.xl },
   bannerPlaceholder: { width: '100%', height: 160, borderRadius: borderRadius.xl, backgroundColor: 'rgba(255,255,255,0.06)', justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)', borderStyle: 'dashed' },
@@ -777,6 +1190,22 @@ const buildStyles = (p) => StyleSheet.create({
   submitContainer: { paddingHorizontal: spacing.lg, marginTop: spacing.md },
   submitButton: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: spacing.sm, backgroundColor: p.colors.primary, borderRadius: borderRadius.xl, paddingVertical: spacing.lg },
   submitButtonText: { fontSize: fontSize.md, fontWeight: fontWeight.bold, color: 'white' },
+  previewButton: { marginTop: spacing.sm, minHeight: 50, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: spacing.sm, borderRadius: borderRadius.xl, borderWidth: 1, borderColor: p.colors.primaryLighter, backgroundColor: p.colors.primarySubtle },
+  previewButtonText: { fontSize: fontSize.sm, fontWeight: fontWeight.bold, color: p.colors.primary },
+  blockedBanner: { borderColor: `${p.colors.error}35`, backgroundColor: p.colors.errorSubtle },
+  blockedRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.md },
+  blockedIcon: { width: 42, height: 42, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: `${p.colors.error}14` },
+  blockedTitle: { fontSize: fontSize.sm, fontWeight: fontWeight.extrabold, color: p.colors.error },
+  blockedText: { marginTop: 4, fontSize: fontSize.xs, lineHeight: 18, color: p.colors.textSecondary },
+  blockedAction: { alignSelf: 'flex-start', marginTop: spacing.md, minHeight: 38, paddingHorizontal: spacing.md, borderRadius: 12, flexDirection: 'row', alignItems: 'center', gap: spacing.xs, backgroundColor: p.colors.error },
+  blockedActionText: { color: '#fff', fontSize: fontSize.xs, fontWeight: fontWeight.bold },
+  dangerSection: { borderColor: `${p.colors.error}30`, backgroundColor: p.colors.errorSubtle },
+  dangerRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  dangerIcon: { width: 40, height: 40, borderRadius: 13, alignItems: 'center', justifyContent: 'center', backgroundColor: `${p.colors.error}14` },
+  dangerTitle: { fontSize: fontSize.sm, fontWeight: fontWeight.bold, color: p.colors.text },
+  dangerText: { marginTop: 2, fontSize: fontSize.xs, color: p.colors.textSecondary },
+  deleteButton: { minHeight: 38, paddingHorizontal: spacing.md, borderRadius: 12, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: `${p.colors.error}45`, backgroundColor: `${p.colors.error}0D` },
+  deleteButtonText: { fontSize: fontSize.xs, fontWeight: fontWeight.bold, color: p.colors.error },
   modalOverlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.5)' },
   modalSheet: { maxHeight: '85%', borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: spacing.lg },
   modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.lg },

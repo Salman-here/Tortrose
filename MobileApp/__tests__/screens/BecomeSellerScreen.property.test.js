@@ -61,7 +61,7 @@ describe('BecomeSellerScreen Property Tests', () => {
 
   /**
    * Property 10: Seller Role Redirect
-   * Users with seller or admin role should be redirected to SellerDashboard
+   * Only sellers should be redirected to the seller-only dashboard.
    */
   describe('Property 10: Seller Role Redirect', () => {
     it('should redirect sellers to SellerDashboard', () => {
@@ -70,7 +70,7 @@ describe('BecomeSellerScreen Property Tests', () => {
           userArbitrary.filter(u => u.role === 'seller'),
           (user) => {
             // Simulate the redirect logic
-            const shouldRedirect = user.role === 'seller' || user.role === 'admin';
+            const shouldRedirect = user.role === 'seller';
             
             if (shouldRedirect) {
               mockNavigation.replace('SellerDashboard');
@@ -84,18 +84,13 @@ describe('BecomeSellerScreen Property Tests', () => {
       );
     });
 
-    it('should redirect admins to SellerDashboard', () => {
+    it('should not redirect admins to seller-only tools', () => {
       fc.assert(
         fc.property(
           userArbitrary.filter(u => u.role === 'admin'),
           (user) => {
-            const shouldRedirect = user.role === 'seller' || user.role === 'admin';
-            
-            if (shouldRedirect) {
-              mockNavigation.replace('SellerDashboard');
-            }
-
-            expect(shouldRedirect).toBe(true);
+            const shouldRedirect = user.role === 'seller';
+            expect(shouldRedirect).toBe(false);
           }
         ),
         { numRuns: 50 }
@@ -107,7 +102,7 @@ describe('BecomeSellerScreen Property Tests', () => {
         fc.property(
           userArbitrary.filter(u => u.role === 'user'),
           (user) => {
-            const shouldRedirect = user.role === 'seller' || user.role === 'admin';
+            const shouldRedirect = user.role === 'seller';
             expect(shouldRedirect).toBe(false);
           }
         ),

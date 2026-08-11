@@ -149,6 +149,8 @@ exports.cancelReturn = async (req, res) => {
                 category: 'order',
                 linkTo: sellerReturnLink(returnRequest),
                 source: 'system',
+                targetRole: 'seller',
+                audience: 'specific',
             }),
             notifySeller(returnRequest.seller, 'return_update', body),
         ]);

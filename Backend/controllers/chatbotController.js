@@ -262,6 +262,10 @@ exports.getMyComplaints = async (req, res) => {
 
 // Admin: Get all complaints
 exports.getAllComplaints = async (req, res) => {
+    if (req.user?.role !== 'admin') {
+        return res.status(403).json({ msg: 'Access denied. Admin privileges required.' });
+    }
+
     const { category, status, page = 1, limit = 20 } = req.query;
 
     try {
@@ -303,6 +307,10 @@ exports.getAllComplaints = async (req, res) => {
 
 // Admin: Update complaint
 exports.updateComplaint = async (req, res) => {
+    if (req.user?.role !== 'admin') {
+        return res.status(403).json({ msg: 'Access denied. Admin privileges required.' });
+    }
+
     const { id } = req.params;
     const { status, adminResponse, priority } = req.body;
 

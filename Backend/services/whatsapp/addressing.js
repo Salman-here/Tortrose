@@ -24,7 +24,12 @@ const toPhoneJid = (phone) => {
     return digits ? `${digits}@s.whatsapp.net` : '';
 };
 const JID_PATTERN = /\b\d{5,}@(lid|s\.whatsapp\.net)\b/g;
-const ADDRESS_PATH_PATTERN = /(jid|phone|number|sender|remote|participant|author|from|user|owner)/i;
+const ADDRESS_PATH_PATTERN = /(jid|phone|number|sender|remote|participant|author|from|user)/i;
+// Evolution/Baileys envelopes may contain both the message author and the
+// connected instance owner. The latter is routing metadata, never the person
+// who sent the inbound message. Treating owner/wuid/instance fields as generic
+// address hints can make the bot reply to its own WhatsApp number.
+const OWNER_PATH_PATTERN = /(^|\.)(owner(?:jid|pn|phone|number)?|instance(?:owner)?(?:jid|pn|phone|number)?|wuid|me|self(?:jid|pn|phone|number)?|connected(?:owner)?(?:jid|pn|phone|number)?)(\.|\[|$)/i;
 
 const memoryKey = (phone, scope = 'global') => {
     const digits = phoneFromJid(phone);
@@ -54,17 +59,32 @@ const resolveReplyTo = (phone, requestedRecipient, scope = 'global') => {
     return getRememberedLid(phone, scope) || getRememberedLid(phone) || requestedRecipient || phone;
 };
 
-const collectAddressHints = (value, path = '', out = { lidJids: [], phoneJids: [], phoneNumbers: [] }, seen = new WeakSet(), depth = 0) => {
+const collectAddressHints = (
+    value,
+    path = '',
+    out = { lidJids: [], phoneJids: [], phoneNumbers: [], excludedOwnerPhones: [] },
+    seen = new WeakSet(),
+    depth = 0
+) => {
     if (value == null || depth > 8) return out;
 
     if (typeof value === 'string') {
+        const ownerMetadata = OWNER_PATH_PATTERN.test(path);
         const matches = value.match(JID_PATTERN) || [];
         for (const jid of matches) {
+            if (ownerMetadata) {
+                const digits = phoneFromJid(jid);
+                if (digits) out.excludedOwnerPhones.push(digits);
+                continue;
+            }
             if (isLidJid(jid)) out.lidJids.push(jid);
             if (isPhoneJid(jid)) out.phoneJids.push(jid);
         }
 
-        if (ADDRESS_PATH_PATTERN.test(path) && !value.includes('@lid')) {
+        if (ownerMetadata) {
+            const digits = value.replace(/\D/g, '');
+            if (digits.length >= 8 && digits.length <= 15) out.excludedOwnerPhones.push(digits);
+        } else if (ADDRESS_PATH_PATTERN.test(path) && !value.includes('@lid')) {
             const digits = value.replace(/\D/g, '');
             if (digits.length >= 8 && digits.length <= 15) out.phoneNumbers.push(digits);
         }
@@ -100,6 +120,22 @@ const resolveInboundAddress = (msg) => {
         '';
     const participantJid = msg?.key?.participant || msg?.participant || '';
     const participantAltJid = msg?.key?.participantAlt || msg?.participantAlt || '';
+    // Baileys 7 exposes the real phone-number JID in senderPn/participantPn
+    // when remoteJid is an opaque @lid address. Prefer these explicit sender
+    // fields over recursively discovered metadata.
+    const senderPhoneValues = uniqueNonEmpty([
+        msg?.key?.senderPn,
+        msg?.senderPn,
+        msg?.key?.senderPN,
+        msg?.senderPN,
+        msg?.key?.participantPn,
+        msg?.participantPn,
+        msg?.key?.participantPN,
+        msg?.participantPN,
+    ]);
+    const senderPhoneJids = senderPhoneValues.filter(isPhoneJid);
+    const senderPhoneDigits = uniqueNonEmpty(senderPhoneValues.map(phoneFromJid))
+        .filter(number => number.length >= 8 && number.length <= 15);
     const deepHints = collectAddressHints(msg);
     const jidCandidates = uniqueNonEmpty([
         remoteJid,
@@ -116,14 +152,16 @@ const resolveInboundAddress = (msg) => {
     const participantPhone = phoneFromJid(participantJid);
     const participantAltPhone = phoneFromJid(participantAltJid);
     const phoneJidDigits = phoneFromJid(phoneJid);
+    const excludedOwnerPhones = uniqueNonEmpty(deepHints.excludedOwnerPhones);
 
     const explicitPhoneJidDigits = uniqueNonEmpty([
-        phoneJidDigits,
+        ...senderPhoneDigits,
         isPhoneJid(altJid) ? altPhone : '',
         isPhoneJid(remoteJid) ? remotePhone : '',
         isPhoneJid(participantAltJid) ? participantAltPhone : '',
         isPhoneJid(participantJid) ? participantPhone : '',
-    ]);
+        phoneJidDigits,
+    ]).filter(number => !excludedOwnerPhones.includes(number));
     const lidDigits = uniqueNonEmpty([
         isLidJid(remoteJid) ? remotePhone : '',
         isLidJid(altJid) ? altPhone : '',
@@ -131,8 +169,23 @@ const resolveInboundAddress = (msg) => {
         isLidJid(participantAltJid) ? participantAltPhone : '',
     ]);
     const barePhones = uniqueNonEmpty(deepHints.phoneNumbers)
-        .filter(number => !explicitPhoneJidDigits.includes(number) && !lidDigits.includes(number));
-    const identityPhone = explicitPhoneJidDigits[0] || barePhones[0] || lidDigits[0] || '';
+        .filter(number => (
+            !explicitPhoneJidDigits.includes(number) &&
+            !lidDigits.includes(number) &&
+            !excludedOwnerPhones.includes(number)
+        ));
+    // A LID is an opaque WhatsApp identifier, not a telephone number. Never
+    // use its digits for account lookup; fail closed until a PN mapping arrives.
+    const identityPhone = explicitPhoneJidDigits[0] || barePhones[0] || '';
+    const replyPhoneJid = uniqueNonEmpty([
+        ...senderPhoneJids,
+        altJid,
+        remoteJid,
+        participantAltJid,
+        participantJid,
+        phoneJid,
+        ...deepHints.phoneJids,
+    ]).find(jid => isPhoneJid(jid) && phoneFromJid(jid) === identityPhone) || '';
     rememberPhoneLid(identityPhone, lidJid);
 
     return {
@@ -143,8 +196,9 @@ const resolveInboundAddress = (msg) => {
         lidJid,
         phoneJid,
         identityPhone,
-        replyTo: lidJid || phoneJid || remoteJid || altJid || participantJid || participantAltJid || identityPhone,
-        candidatePhones: uniqueNonEmpty([...explicitPhoneJidDigits, ...barePhones, ...lidDigits]),
+        replyTo: lidJid || replyPhoneJid || (identityPhone ? toPhoneJid(identityPhone) : ''),
+        candidatePhones: uniqueNonEmpty([...explicitPhoneJidDigits, ...barePhones]),
+        excludedOwnerPhones,
     };
 };
 

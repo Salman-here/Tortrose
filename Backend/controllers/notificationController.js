@@ -6,6 +6,11 @@ const { sendEmail } = require('./mailController');
 const { broadcastEmail } = require('../utils/emailTemplates');
 const WhatsAppConfig = require('../models/WhatsAppConfig');
 const sellerEvolution = require('../services/whatsapp/sellerEvolutionClient');
+const {
+    VALID_BROADCAST_AUDIENCES,
+    buildScopedNotificationQuery,
+    normalizeBroadcastAudience,
+} = require('../services/notificationAudienceService');
 
 // ─────────────────────────── helpers ───────────────────────────
 
@@ -16,7 +21,10 @@ const buildAudienceQuery = (audience, userIds) => {
     if (audience === 'all_users') return { role: 'user' };
     if (audience === 'all_sellers') return { role: 'seller' };
     if (audience === 'both') return { role: { $in: ['user', 'seller'] } };
-    return {};
+    // Invalid/missing audiences must never degrade into a query for every
+    // account. Validation normally rejects this before dispatch, while this
+    // fail-closed branch also protects scheduled/legacy jobs.
+    return { _id: { $in: [] } };
 };
 
 const computeNextRunAt = (current, recurrence) => {
@@ -36,7 +44,7 @@ const dispatchBroadcast = async (job) => {
     const channels = job.channels || ['inapp', 'push'];
     const audienceQuery = buildAudienceQuery(job.audience, job.userIds);
     const recipients = await User.find(audienceQuery)
-        .select('_id expoPushTokens email sellerInfo whatsappNotificationPrefs')
+        .select('_id role expoPushTokens email sellerInfo whatsappNotificationPrefs')
         .lean();
 
     if (!recipients.length) return { recipients: 0, pushSent: 0, emailSent: 0, whatsappSent: 0 };
@@ -54,6 +62,8 @@ const dispatchBroadcast = async (job) => {
             category: job.category,
             linkTo: job.linkTo,
             source: 'admin_broadcast',
+            targetRole: u.role,
+            audience: job.audience,
             broadcastJob: job._id,
             sentBy: job.createdBy,
         }));
@@ -64,20 +74,34 @@ const dispatchBroadcast = async (job) => {
 
     // ── Channel: Push Notifications (Expo) ──
     if (channels.includes('push')) {
-        const tokens = recipients.flatMap((u) => u.expoPushTokens || []);
-        if (tokens.length) {
-            await sendExpoPush(tokens, {
-                title: job.title,
-                body: job.body,
-                data: {
-                    type: 'admin_broadcast',
-                    jobId: String(job._id),
-                    category: job.category,
-                    linkTo: job.linkTo || undefined,
-                },
-                channelId: 'general',
-            });
-            pushSent = tokens.length;
+        // Keep each authority scope and payload bound to one account. Bounded
+        // concurrency avoids serial latency without reintroducing role-wide
+        // token groups that can cross account boundaries during ownership lag.
+        const pushRecipients = recipients.filter(recipient => recipient.expoPushTokens?.length);
+        const PUSH_CONCURRENCY = 10;
+        for (let i = 0; i < pushRecipients.length; i += PUSH_CONCURRENCY) {
+            const batch = pushRecipients.slice(i, i + PUSH_CONCURRENCY);
+            const deliveries = await Promise.all(batch.map((recipient) => {
+                const recipientUserId = String(recipient._id);
+                const targetRole = recipient.role || 'user';
+                return sendExpoPush(recipient.expoPushTokens, {
+                    title: job.title,
+                    body: job.body,
+                    data: {
+                        type: 'admin_broadcast',
+                        jobId: String(job._id),
+                        category: job.category,
+                        linkTo: job.linkTo || undefined,
+                        recipientUserId,
+                        targetRole,
+                        audience: job.audience,
+                    },
+                    channelId: 'general',
+                }, {
+                    recipientUserId,
+                });
+            }));
+            pushSent += deliveries.reduce((sum, delivery) => sum + (delivery?.sentCount || 0), 0);
         }
     }
 
@@ -189,6 +213,11 @@ exports.createBroadcast = async (req, res) => {
         }
         if (audience === 'specific' && (!Array.isArray(userIds) || userIds.length === 0)) {
             return res.status(400).json({ msg: 'userIds required when audience is "specific"' });
+        }
+        if (!normalizeBroadcastAudience(audience)) {
+            return res.status(400).json({
+                msg: `Invalid audience. Allowed: ${Array.from(VALID_BROADCAST_AUDIENCES).join(', ')}`,
+            });
         }
 
         const now = new Date();
@@ -333,11 +362,19 @@ exports.searchUsers = async (req, res) => {
 // GET /api/notifications/me — list my notifications
 exports.listMine = async (req, res) => {
     try {
-        const items = await Notification.find({ user: req.user.id })
+        const scopedQuery = buildScopedNotificationQuery({
+            userId: req.user.id,
+            role: req.user.role,
+        });
+        const items = await Notification.find(scopedQuery)
             .sort({ createdAt: -1 })
             .limit(100)
             .lean();
-        const unread = await Notification.countDocuments({ user: req.user.id, read: false });
+        const unread = await Notification.countDocuments(buildScopedNotificationQuery({
+            userId: req.user.id,
+            role: req.user.role,
+            read: false,
+        }));
         res.json({ items, unread });
     } catch (err) {
         console.error('listMine:', err);
@@ -349,7 +386,13 @@ exports.listMine = async (req, res) => {
 exports.markRead = async (req, res) => {
     try {
         const n = await Notification.findOneAndUpdate(
-            { _id: req.params.id, user: req.user.id },
+            {
+                _id: req.params.id,
+                ...buildScopedNotificationQuery({
+                    userId: req.user.id,
+                    role: req.user.role,
+                }),
+            },
             { read: true, readAt: new Date() },
             { new: true }
         );
@@ -365,7 +408,11 @@ exports.markRead = async (req, res) => {
 exports.markAllRead = async (req, res) => {
     try {
         await Notification.updateMany(
-            { user: req.user.id, read: false },
+            buildScopedNotificationQuery({
+                userId: req.user.id,
+                role: req.user.role,
+                read: false,
+            }),
             { read: true, readAt: new Date() }
         );
         res.json({ ok: true });

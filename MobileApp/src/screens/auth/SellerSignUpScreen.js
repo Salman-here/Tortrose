@@ -7,9 +7,8 @@
 import React, { useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
-  Platform, ScrollView, ActivityIndicator,
+  ActivityIndicator,
 } from 'react-native';
-import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { secureSet } from '../../utils/secureStorage';
@@ -18,8 +17,12 @@ import api from '../../config/api';
 import { useAuth } from '../../contexts/AuthContext';
 import GlassBackground from '../../components/common/GlassBackground';
 import GlassPanel from '../../components/common/GlassPanel';
+import KeyboardAwareFormScrollView from '../../components/common/KeyboardAwareFormScrollView';
+import PhoneNumberInput from '../../components/common/PhoneNumberInput';
 import { spacing, fontSize, borderRadius, fontWeight, shadows } from '../../styles/theme';
 import { useTheme } from '../../contexts/ThemeContext';
+import { isValidPhoneNumber } from '../../utils/phoneNumber';
+import useOtpCountdown from '../../hooks/useOtpCountdown';
 
 const STEPS = ['Account', 'Business', 'Store', 'Verify'];
 
@@ -34,9 +37,10 @@ export default function SellerSignUpScreen({ navigation }) {
   const [error, setError] = useState('');
 
   const [accountForm, setAccountForm] = useState({ username: '', email: '', password: '' });
-  const [businessForm, setBusinessForm] = useState({ phoneNumber: '', businessName: '', address: '', city: '', country: '' });
+  const [businessForm, setBusinessForm] = useState({ phoneNumber: '', businessName: '', address: '', city: '', country: '', countryCode: '' });
   const [storeForm, setStoreForm] = useState({ storeName: '', storeDescription: '', sellerType: 'store', website: '', instagram: '', facebook: '', twitter: '', youtube: '', tiktok: '' });
   const [otp, setOtp] = useState('');
+  const emailOtpTimer = useOtpCountdown({ expirySeconds: 600, resendSeconds: 60 });
 
   const handleAccountNext = () => {
     if (!accountForm.username || !accountForm.email || !accountForm.password) { setError('Please fill in all fields'); return; }
@@ -45,7 +49,7 @@ export default function SellerSignUpScreen({ navigation }) {
   };
 
   const handleBusinessNext = () => {
-    if (!businessForm.phoneNumber || businessForm.phoneNumber.trim().length < 10) { setError('Enter a valid phone number (at least 10 digits)'); return; }
+    if (!isValidPhoneNumber(businessForm.phoneNumber)) { setError('Select a country and enter a valid phone number'); return; }
     if (!businessForm.address || businessForm.address.trim().length < 5) { setError('Enter a valid address'); return; }
     if (!businessForm.city || businessForm.city.trim().length < 2) { setError('Enter your city'); return; }
     if (!businessForm.country || businessForm.country.trim().length < 2) { setError('Enter your country'); return; }
@@ -53,6 +57,7 @@ export default function SellerSignUpScreen({ navigation }) {
   };
 
   const handleStoreNext = async (skip = false) => {
+    if (step === 3 && !emailOtpTimer.canResend) return;
     if (!skip && storeForm.storeName && storeForm.storeName.trim().length < 3) {
       setError('Store name must be at least 3 characters'); return;
     }
@@ -60,6 +65,7 @@ export default function SellerSignUpScreen({ navigation }) {
     try {
       const res = await api.post('/api/auth/seller/send-otp', { ...accountForm, ...businessForm });
       Feedback.show({ type: 'success', text1: 'OTP Sent!', text2: res.data.msg || 'Check your email' });
+      emailOtpTimer.start();
       setStep(3);
     } catch (err) {
       setError(err.response?.data?.msg || 'Failed to send OTP');
@@ -68,6 +74,7 @@ export default function SellerSignUpScreen({ navigation }) {
 
   const handleVerifyOTP = async () => {
     if (!otp.trim()) { setError('Please enter the OTP'); return; }
+    if (emailOtpTimer.isExpired) { setError('This code has expired. Request a new one.'); return; }
     setLoading(true); setError('');
     try {
       const socialLinks = {};
@@ -132,8 +139,7 @@ export default function SellerSignUpScreen({ navigation }) {
 
   return (
     <GlassBackground>
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ padding: spacing.md, paddingBottom: spacing.xxxl }}>
+      <KeyboardAwareFormScrollView contentContainerStyle={{ padding: spacing.md, paddingBottom: spacing.xxxl }} bottomOffset={32}>
           {/* Header */}
           <GlassPanel variant="floating" style={styles.header}>
             <TouchableOpacity style={styles.backBtn} onPress={() => step > 0 ? setStep(step - 1) : navigation.goBack()}>
@@ -178,7 +184,23 @@ export default function SellerSignUpScreen({ navigation }) {
             <GlassPanel variant="card" style={styles.formCard}>
               <Text style={styles.formTitle}>Business Details</Text>
               <Text style={styles.formSubtitle}>Tell us about your business</Text>
-              {renderInput(businessForm.phoneNumber, v => setBusinessForm(p => ({ ...p, phoneNumber: v })), '+1 234 567 8900', { label: 'Phone Number *', icon: 'call-outline', keyboardType: 'phone-pad' })}
+              <PhoneNumberInput
+                label="Phone Number"
+                required
+                value={businessForm.phoneNumber}
+                onChangeText={(value) => {
+                  setBusinessForm(previous => ({ ...previous, phoneNumber: value }));
+                  if (error) setError('');
+                }}
+                defaultCountryCode={businessForm.countryCode}
+                onCountryChange={(option) => setBusinessForm(previous => ({
+                  ...previous,
+                  countryCode: option.isoCode,
+                  country: previous.country || option.name,
+                }))}
+                helperText="Choose the country code before entering the local number."
+                testID="seller-signup-phone"
+              />
               {renderInput(businessForm.businessName, v => setBusinessForm(p => ({ ...p, businessName: v })), 'Your brand name', { label: 'Business Name (Optional)', icon: 'storefront-outline' })}
               {renderInput(businessForm.address, v => setBusinessForm(p => ({ ...p, address: v })), 'Street address', { label: 'Address *', icon: 'location-outline' })}
               <View style={{ flexDirection: 'row', gap: spacing.sm }}>
@@ -269,14 +291,17 @@ export default function SellerSignUpScreen({ navigation }) {
                 <Text style={styles.formSubtitle}>We sent a code to {accountForm.email}</Text>
               </View>
               {renderInput(otp, setOtp, 'Enter 6-digit OTP', { label: 'OTP Code *', icon: 'keypad-outline', keyboardType: 'number-pad' })}
-              <TouchableOpacity style={[styles.nextBtn, loading && { opacity: 0.6 }]} onPress={handleVerifyOTP} disabled={loading} activeOpacity={0.85}>
+              <Text style={[styles.otpTimer, emailOtpTimer.expiryRemaining <= 60 && styles.otpTimerUrgent]}>
+                {emailOtpTimer.isExpired ? 'Code expired. Request a new one.' : `Code expires in ${emailOtpTimer.expiryLabel}`}
+              </Text>
+              <TouchableOpacity style={[styles.nextBtn, (loading || emailOtpTimer.isExpired) && { opacity: 0.6 }]} onPress={handleVerifyOTP} disabled={loading || emailOtpTimer.isExpired} activeOpacity={0.85}>
                 <LinearGradient colors={palette.gradients.cta} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
                 {loading ? <ActivityIndicator color="#fff" size="small" /> : (
                   <><Ionicons name="checkmark-circle" size={18} color="#fff" /><Text style={styles.nextBtnText}>Verify & Create Account</Text></>
                 )}
               </TouchableOpacity>
-              <TouchableOpacity style={styles.resendBtn} onPress={() => handleStoreNext(true)} disabled={loading}>
-                <Text style={styles.resendText}>Didn't receive? Resend OTP</Text>
+              <TouchableOpacity style={styles.resendBtn} onPress={() => handleStoreNext(true)} disabled={loading || !emailOtpTimer.canResend}>
+                <Text style={styles.resendText}>{emailOtpTimer.canResend ? "Didn't receive? Resend OTP" : `Resend available in ${emailOtpTimer.resendRemaining}s`}</Text>
               </TouchableOpacity>
             </GlassPanel>
           )}
@@ -288,8 +313,7 @@ export default function SellerSignUpScreen({ navigation }) {
               <Text style={styles.loginLink}>Login</Text>
             </TouchableOpacity>
           </View>
-        </ScrollView>
-      </KeyboardAvoidingView>
+      </KeyboardAwareFormScrollView>
     </GlassBackground>
   );
 }
@@ -325,6 +349,8 @@ const buildStyles = (p) => StyleSheet.create({
   otpIcon: { width: 72, height: 72, borderRadius: 36, backgroundColor: 'rgba(99,102,241,0.12)', justifyContent: 'center', alignItems: 'center', marginBottom: spacing.md },
   resendBtn: { alignItems: 'center', marginTop: spacing.lg },
   resendText: { fontSize: fontSize.sm, color: p.colors.primary, fontWeight: fontWeight.semibold },
+  otpTimer: { marginBottom: spacing.sm, color: p.colors.textSecondary, fontSize: fontSize.sm, fontWeight: fontWeight.semibold, textAlign: 'center' },
+  otpTimerUrgent: { color: p.colors.error },
   loginRow: { flexDirection: 'row', justifyContent: 'center', marginTop: spacing.xl },
   loginText: { fontSize: fontSize.md, color: p.colors.textSecondary },
   loginLink: { fontSize: fontSize.md, fontWeight: fontWeight.bold, color: p.colors.primary },

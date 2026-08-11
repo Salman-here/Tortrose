@@ -34,6 +34,7 @@ const {
     syncAllSellerFulfillmentStatus,
 } = require('../orderFulfillmentService');
 const { processIncomingWhatsAppMessage } = require('./whatsappAIChatService');
+const { processInboundMessageOnce } = require('./inboundProcessingService');
 const {
     isGroupOrBroadcastJid,
     resolveInboundAddress,
@@ -50,6 +51,30 @@ const {
 } = require('./gatewayMode');
 
 const asArray = (value) => Array.isArray(value) ? value : [value].filter(Boolean);
+
+const isFromMeMessage = (msg = {}) => {
+    const value = msg?.key?.fromMe ?? msg?.fromMe;
+    return value === true || value === 1 || value === '1' || String(value).toLowerCase() === 'true';
+};
+
+const unwrapMessageContent = (message = {}) => {
+    let current = message && typeof message === 'object' ? message : {};
+    const seen = new Set();
+    for (let depth = 0; depth < 6 && current && typeof current === 'object'; depth += 1) {
+        if (seen.has(current)) break;
+        seen.add(current);
+        const wrapped =
+            current.ephemeralMessage?.message ||
+            current.viewOnceMessage?.message ||
+            current.viewOnceMessageV2?.message ||
+            current.viewOnceMessageV2Extension?.message ||
+            current.editedMessage?.message ||
+            null;
+        if (!wrapped) break;
+        current = wrapped;
+    }
+    return current || {};
+};
 
 const latestMessageUpdateStatus = (msg = {}) => {
     const updates = msg.MessageUpdate || msg.messageUpdate || msg.updates || [];
@@ -279,6 +304,8 @@ const notifySellers = async (order, isConfirmed) => {
                 category: 'order',
                 linkTo: `/seller/orders/${order._id}`,
                 source: 'system',
+                targetRole: 'seller',
+                audience: 'specific',
             }).catch(e => console.error('[whatsapp] seller in-app notification failed:', e.message));
 
             // 4. WhatsApp notification to seller (fire-and-forget)
@@ -327,7 +354,7 @@ const { parseButtonId } = require('./messageBuilder');
 const extractDecision = (msg) => {
     if (!msg || typeof msg !== 'object') return null;
     // Skip our own outgoing messages
-    if (msg?.key?.fromMe) return null;
+    if (isFromMeMessage(msg)) return null;
 
     const m = msg.message || {};
 
@@ -422,7 +449,7 @@ const findPendingJobByCandidatePhones = async (phones = []) => {
 };
 
 const extractMessageText = (msg) => {
-    const m = msg?.message || {};
+    const m = unwrapMessageContent(msg?.message || {});
     return (
         m.conversation ||
         m.extendedTextMessage?.text ||
@@ -438,6 +465,7 @@ const findWebhookBase64 = (msg, media) => (
     media?.base64 ||
     msg?.base64 ||
     msg?.message?.base64 ||
+    unwrapMessageContent(msg?.message || {})?.base64 ||
     msg?.message?.mediaMessage?.base64 ||
     msg?.message?.messageContextInfo?.base64 ||
     msg?.data?.base64 ||
@@ -445,7 +473,7 @@ const findWebhookBase64 = (msg, media) => (
 );
 
 const extractMediaAttachments = (msg, options = {}) => {
-    const m = msg?.message || {};
+    const m = unwrapMessageContent(msg?.message || {});
     const candidates = [
         { kind: 'image', media: m.imageMessage },
         { kind: 'document', media: m.documentMessage },
@@ -485,6 +513,37 @@ const extractMediaAttachments = (msg, options = {}) => {
 // ──────────────────────────────────────────────────────────────────────────
 // Main webhook entry
 // ──────────────────────────────────────────────────────────────────────────
+const processAIInboundDurably = async ({
+    msg,
+    phone,
+    text,
+    instanceType,
+    instanceName,
+    attachments,
+    replyTo,
+    candidatePhones,
+}) => {
+    const messageId = String(msg?.key?.id || msg?.id || '').trim();
+    return processInboundMessageOnce({
+        instanceName,
+        messageId,
+        phone,
+        work: ({ attempt }) => processIncomingWhatsAppMessage(
+            phone,
+            String(text || '').trim(),
+            instanceType,
+            attachments,
+            {
+                replyTo,
+                candidatePhones,
+                durableAttempt: attempt,
+                propagateErrors: true,
+                suppressErrorResponse: true,
+            }
+        ),
+    });
+};
+
 exports.handleEvolutionWebhook = async (req, res) => {
     try {
         // Optional shared-secret check
@@ -551,7 +610,7 @@ exports.handleEvolutionWebhook = async (req, res) => {
             for (const update of updates) {
                 const status = latestMessageUpdateStatus(update);
                 const key = messageKeyFromUpdate(update);
-                if (status === 'ERROR' && key.fromMe !== false) {
+                if (status === 'ERROR' && isFromMeMessage({ ...update, key })) {
                     await markOutboundDeliveryFailure(update, singletonKey);
                 }
             }
@@ -565,7 +624,7 @@ exports.handleEvolutionWebhook = async (req, res) => {
             if (event === 'messages.upsert' || event === 'MESSAGES_UPSERT') {
                 const messages = Array.isArray(body.data) ? body.data : [body.data].filter(Boolean);
                 for (const msg of messages) {
-                    if (msg?.key?.fromMe) continue;
+                    if (isFromMeMessage(msg)) continue;
                     const address = resolveInboundAddress(msg);
                     const { remoteJid, identityPhone: phone, replyTo } = address;
                     // Skip group messages — only process 1:1 private chats
@@ -588,12 +647,16 @@ exports.handleEvolutionWebhook = async (req, res) => {
                     });
                     if ((!text || !text.trim()) && attachments.length === 0) continue;
 
-                    // Route to AI chat (fire-and-forget — don't block webhook response)
-                    processIncomingWhatsAppMessage(phone, String(text || '').trim(), 'seller', attachments, {
+                    // Complete or durably fail AI work before acknowledging the event.
+                    await processAIInboundDurably({
+                        msg,
+                        phone,
+                        text,
+                        instanceType: 'seller',
+                        instanceName: incomingInstance || sellerInstanceName,
+                        attachments,
                         replyTo: outboundTo,
                         candidatePhones: address.candidatePhones,
-                    }).catch(err => {
-                        console.error('[whatsapp] seller AI chat error:', err.message);
                     });
                 }
             }
@@ -608,7 +671,7 @@ exports.handleEvolutionWebhook = async (req, res) => {
 
             for (const msg of messages) {
                 // Never process messages we sent
-                if (msg?.key?.fromMe) continue;
+                if (isFromMeMessage(msg)) continue;
 
                 const address = resolveInboundAddress(msg);
                 const { remoteJid, identityPhone: phone, replyTo } = address;
@@ -676,11 +739,15 @@ exports.handleEvolutionWebhook = async (req, res) => {
                 if (!job) {
                     const rawText = replyTextForHint || (extracted?.source === 'text' ? extracted.text : '') || mediaText;
                     if (rawText || attachments.length) {
-                        processIncomingWhatsAppMessage(phone, rawText, aiInstanceType, attachments, {
+                        await processAIInboundDurably({
+                            msg,
+                            phone,
+                            text: rawText,
+                            instanceType: aiInstanceType,
+                            instanceName: effectiveInstanceName,
+                            attachments,
                             replyTo: outboundTo,
                             candidatePhones: address.candidatePhones,
-                        }).catch(err => {
-                            console.error(`[whatsapp] ${routeLabel} AI chat error:`, err.message);
                         });
                     }
                     continue;
@@ -690,11 +757,15 @@ exports.handleEvolutionWebhook = async (req, res) => {
                 // route to AI chat instead of treating text as a confirmation decision. The AI is
                 // smarter and can help with order questions or other requests.
                 if (!decision && (replyTextForHint || attachments.length)) {
-                    processIncomingWhatsAppMessage(phone, replyTextForHint || mediaText, aiInstanceType, attachments, {
+                    await processAIInboundDurably({
+                        msg,
+                        phone,
+                        text: replyTextForHint || mediaText,
+                        instanceType: aiInstanceType,
+                        instanceName: effectiveInstanceName,
+                        attachments,
                         replyTo: outboundTo,
                         candidatePhones: address.candidatePhones,
-                    }).catch(err => {
-                        console.error(`[whatsapp] ${routeLabel} AI chat error (with pending order):`, err.message);
                     });
                     continue;
                 }
@@ -1071,6 +1142,22 @@ exports.handleEvolutionWebhook = async (req, res) => {
         return res.status(200).json({ ok: true, ignored: event });
     } catch (err) {
         console.error('[whatsapp] webhook handler error:', err.message);
-        return res.status(200).json({ ok: false, error: err.message });
+        // Do not acknowledge a message that was not durably completed. A 503
+        // asks Evolution to redeliver the original event (including inline
+        // media) while the receipt ledger prevents duplicate successful work.
+        return res.status(503).json({
+            ok: false,
+            retryable: true,
+            error: 'WhatsApp event processing failed',
+        });
     }
+};
+
+exports.__private = {
+    extractMediaAttachments,
+    extractMessageText,
+    findWebhookBase64,
+    isFromMeMessage,
+    processAIInboundDurably,
+    unwrapMessageContent,
 };

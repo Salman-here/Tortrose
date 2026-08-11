@@ -72,8 +72,9 @@ describe('Navigation Role Redirect', () => {
     const getDashboardAccess = (role) => {
       switch (role) {
         case 'seller':
-        case 'admin': // Admin dashboard removed from mobile; admins retain seller access
           return ['SellerDashboard'];
+        case 'admin': // Admin-as-seller impersonation is not supported on mobile.
+          return [];
         case 'user':
         default:
           return [];
@@ -93,11 +94,11 @@ describe('Navigation Role Redirect', () => {
       expect(dashboards).not.toContain('AdminDashboard');
     });
 
-    // Property: Admins retain seller dashboard access only (admin dashboard removed)
-    it('admins should have seller dashboard access only', () => {
+    // Property: Admin identities cannot call seller-scoped mobile tools.
+    it('admins should not have seller dashboard access', () => {
       const dashboards = getDashboardAccess('admin');
       expect(dashboards).not.toContain('AdminDashboard');
-      expect(dashboards).toContain('SellerDashboard');
+      expect(dashboards).not.toContain('SellerDashboard');
     });
 
     // Property: Dashboard access should be deterministic

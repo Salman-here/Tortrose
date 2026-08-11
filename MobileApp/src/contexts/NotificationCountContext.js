@@ -1,35 +1,48 @@
 /**
  * NotificationCountContext — global unread badge count.
  */
-import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
+import React, { createContext, useContext, useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import api from '../config/api';
 import { useAuth } from './AuthContext';
 import { getNotificationsModule } from '../utils/notificationRuntime';
+import {
+  getNotificationIdentity,
+  getNotificationStorageKeys,
+  isNotificationAllowedForRole,
+  normalizeNotificationRole,
+  scopeNotificationsForRole,
+} from '../utils/notificationScope';
 
 const Notifications = getNotificationsModule();
-
-const NOTIF_STORE_KEY = 'notification_inbox';
-const NOTIF_READ_KEY = 'notifications_read_ids';
 
 const NotificationCountContext = createContext();
 
 export const NotificationCountProvider = ({ children }) => {
   const { currentUser } = useAuth();
+  const role = normalizeNotificationRole(currentUser);
+  const identity = getNotificationIdentity(currentUser);
+  const activeIdentityRef = useRef(identity);
+  activeIdentityRef.current = identity;
+  const storageKeys = useMemo(
+    () => getNotificationStorageKeys(currentUser),
+    [currentUser?._id, currentUser?.id, currentUser?.role]
+  );
   const [unreadNotifCount, setUnreadNotifCount] = useState(0);
   const notifListenerRef = useRef(null);
 
   const refreshUnreadCount = useCallback(async () => {
+    const requestIdentity = identity;
     try {
       const [storedRaw, readRaw] = await Promise.all([
-        AsyncStorage.getItem(NOTIF_STORE_KEY),
-        AsyncStorage.getItem(NOTIF_READ_KEY),
+        AsyncStorage.getItem(storageKeys.inbox),
+        AsyncStorage.getItem(storageKeys.read),
       ]);
-      const stored = storedRaw ? JSON.parse(storedRaw) : [];
+      const stored = scopeNotificationsForRole(storedRaw ? JSON.parse(storedRaw) : [], currentUser);
       const readSet = readRaw ? new Set(JSON.parse(readRaw)) : new Set();
 
       let orderUnread = 0;
-      if (currentUser) {
+      if (currentUser && (role === 'user' || role === 'seller')) {
         try {
           const res = await api.get('/api/order/user-orders');
           const orders = res.data?.orders || [];
@@ -41,22 +54,27 @@ export const NotificationCountProvider = ({ children }) => {
         } catch {}
       }
       const pushUnread = stored.filter(n => !readSet.has(n.id) && !n.read).length;
-      setUnreadNotifCount(pushUnread + orderUnread);
+      if (activeIdentityRef.current === requestIdentity) {
+        setUnreadNotifCount(pushUnread + orderUnread);
+      }
     } catch {
-      setUnreadNotifCount(0);
+      if (activeIdentityRef.current === requestIdentity) setUnreadNotifCount(0);
     }
-  }, [currentUser]);
+  }, [currentUser?._id, currentUser?.id, currentUser?.role, identity, role, storageKeys.inbox, storageKeys.read]);
 
   useEffect(() => {
+    setUnreadNotifCount(0);
     refreshUnreadCount();
     if (!Notifications) return undefined;
-    notifListenerRef.current = Notifications.addNotificationReceivedListener(() => {
-      setUnreadNotifCount(prev => prev + 1);
+    notifListenerRef.current = Notifications.addNotificationReceivedListener((notification) => {
+      const data = notification?.request?.content?.data || {};
+      if (!isNotificationAllowedForRole({ data, category: data.category }, currentUser)) return;
+      setUnreadNotifCount((prev) => prev + 1);
     });
     return () => {
       if (notifListenerRef.current) notifListenerRef.current.remove();
     };
-  }, [refreshUnreadCount]);
+  }, [currentUser?._id, currentUser?.id, currentUser?.role, refreshUnreadCount]);
 
   return (
     <NotificationCountContext.Provider value={{ unreadNotifCount, refreshUnreadCount }}>

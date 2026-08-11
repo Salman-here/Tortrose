@@ -66,3 +66,23 @@ exports.productImage = async (req, res) => {
         res.status(500).json({ msg: 'Server error during upload' });
     }
 }
+
+exports.storeImage = async (req, res) => {
+    try {
+        if (req.user?.role !== 'seller') {
+            return res.status(403).json({ msg: 'Seller access required' });
+        }
+        if (!req.file) {
+            return res.status(400).json({ msg: 'No file uploaded' });
+        }
+
+        const imageUrl = await uploadBufferToCloudinary(req.file, 'Rozare/Stores');
+        res.json({
+            message: 'Store image uploaded successfully',
+            imageUrl,
+        });
+    } catch (error) {
+        console.error('Store image upload error:', error);
+        res.status(500).json({ msg: 'Server error during store image upload' });
+    }
+}

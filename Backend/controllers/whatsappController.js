@@ -1005,6 +1005,20 @@ exports.sellerDisconnect = async (req, res) => {
     }
 };
 
+// Reconcile webhook configuration on every backend boot. This makes media
+// base64/event settings self-healing after an Evolution restart or a backend
+// deployment, rather than depending on an administrator opening the QR panel.
+exports.registerConfiguredWebhooks = async () => {
+    if (useUnifiedWhatsAppInstance()) {
+        await registerSellerWebhookIfPossible();
+        return;
+    }
+    await Promise.all([
+        registerWebhookIfPossible(),
+        registerSellerWebhookIfPossible(),
+    ]);
+};
+
 // POST /api/whatsapp/seller/reset — admin: hard-reset the seller gateway instance.
 exports.sellerReset = async (req, res) => {
     try {

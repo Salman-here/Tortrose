@@ -41,9 +41,19 @@ const {
 } = require('../services/storePaymentPolicyService');
 const { normalizeReturnPolicy } = require('../services/returnPolicyService');
 const { attachStoreReviewSummaries } = require('../services/storeReviewService');
+const {
+    MAX_STORE_SLUG_LENGTH,
+    validateStoreSlug,
+    slugifyStoreName,
+} = require('../utils/storeSlug');
 
 const comparablePriceUSD = (product) =>
     convertAmountSync(getProductEffectivePrice(product), getProductCurrency(product), 'USD');
+const isActiveSellerAccount = async sellerId => Boolean(sellerId && await User.exists({
+    _id: sellerId,
+    role: 'seller',
+    status: 'active',
+}));
 
 const cleanList = (items) => [...new Set(
     (items || [])
@@ -90,19 +100,17 @@ const storeEmailTemplate = (title, bodyHtml, ctaUrl, ctaText) => `
 
 // Helper function to generate unique slug
 const generateUniqueSlug = async (storeName) => {
-    let slug = storeName
-        .toLowerCase()
-        .trim()
-        .replace(/[^\w\s-]/g, '') // Remove special characters
-        .replace(/\s+/g, '-') // Replace spaces with hyphens
-        .replace(/-+/g, '-'); // Replace multiple hyphens with single hyphen
+    const generated = slugifyStoreName(storeName);
+    const baseSlug = generated || `store-${crypto.randomBytes(4).toString('hex')}`;
+    let slug = baseSlug;
 
     // Check if slug exists
     let existingStore = await Store.findOne({ storeSlug: slug });
     let counter = 1;
 
     while (existingStore) {
-        slug = `${slug}-${counter}`;
+        const suffix = `-${counter}`;
+        slug = `${baseSlug.slice(0, MAX_STORE_SLUG_LENGTH - suffix.length).replace(/-+$/g, '')}${suffix}`;
         existingStore = await Store.findOne({ storeSlug: slug });
         counter++;
     }
@@ -155,24 +163,18 @@ exports.checkSubdomainAvailability = async (req, res) => {
     try {
         const { slug } = req.params;
 
-        if (!slug || slug.trim().length < 3) {
-            return res.status(400).json({
+        const validation = validateStoreSlug(slug);
+        if (!validation.valid) {
+            return res.status(validation.code === 'RESERVED_SUBDOMAIN' ? 200 : 400).json({
                 available: false,
-                msg: 'Subdomain must be at least 3 characters'
+                msg: validation.msg,
+                code: validation.code,
             });
         }
-
-        // Reserved subdomains
-        const reserved = ['www', 'api', 'admin', 'app', 'mail', 'ftp', 'shop', 'store', 'blog', 'docs', 'help', 'cdn', 'static', 'support'];
-        if (reserved.includes(slug.toLowerCase())) {
-            return res.status(200).json({
-                available: false,
-                msg: 'This subdomain is reserved by the system'
-            });
-        }
+        const normalizedSlug = validation.slug;
 
         // Check if slug is taken
-        let existingStore = await Store.findOne({ storeSlug: slug.toLowerCase() });
+        let existingStore = await Store.findOne({ storeSlug: normalizedSlug });
 
         // If a store has the slug but is past its blocked-removal window, free it
         if (existingStore) {
@@ -237,18 +239,15 @@ exports.createStore = async (req, res) => {
         let finalSlug;
         if (storeSlug) {
             // Validate custom slug
-            if (storeSlug.length < 3) {
-                return res.status(400).json({ msg: 'Subdomain must be at least 3 characters long' });
+            const validation = validateStoreSlug(storeSlug);
+            if (!validation.valid) {
+                return res.status(400).json({ msg: validation.msg, code: validation.code });
             }
-            const reserved = ['www', 'api', 'admin', 'app', 'mail', 'ftp', 'shop', 'store', 'blog', 'docs', 'help', 'cdn', 'static', 'support'];
-            if (reserved.includes(storeSlug.toLowerCase())) {
-                return res.status(400).json({ msg: 'This subdomain is reserved by the system' });
-            }
-            const duplicateSlug = await Store.findOne({ storeSlug: storeSlug.toLowerCase() });
+            const duplicateSlug = await Store.findOne({ storeSlug: validation.slug });
             if (duplicateSlug) {
                 return res.status(409).json({ msg: 'This subdomain is already taken' });
             }
-            finalSlug = storeSlug.toLowerCase();
+            finalSlug = validation.slug;
         } else {
             // Generate unique slug
             finalSlug = await generateUniqueSlug(storeName);
@@ -456,7 +455,12 @@ exports.updateStore = async (req, res) => {
 
         // Detect intended changes (against current values) before applying
         const wantsNameChange = !!storeName && storeName.trim().toLowerCase() !== store.storeName.toLowerCase();
-        const wantsSlugChange = !!storeSlug && storeSlug.toLowerCase() !== store.storeSlug;
+        const slugValidation = storeSlug ? validateStoreSlug(storeSlug) : null;
+        if (slugValidation && !slugValidation.valid) {
+            return res.status(400).json({ msg: slugValidation.msg, code: slugValidation.code });
+        }
+        const normalizedRequestedSlug = slugValidation?.slug || '';
+        const wantsSlugChange = !!normalizedRequestedSlug && normalizedRequestedSlug !== store.storeSlug;
         const wantsTypeChange = sellerType !== undefined &&
             (sellerType === 'store' || sellerType === 'brand') &&
             sellerType !== (store.sellerType || 'store');
@@ -517,17 +521,7 @@ exports.updateStore = async (req, res) => {
         }
 
         // Handle custom slug/subdomain update if provided
-        if (storeSlug && storeSlug !== store.storeSlug) {
-            // Validate slug
-            if (storeSlug.length < 3) {
-                return res.status(400).json({ msg: 'Subdomain must be at least 3 characters long' });
-            }
-
-            const reserved = ['www', 'api', 'admin', 'app', 'mail', 'ftp', 'shop', 'store', 'blog', 'docs', 'help', 'cdn', 'static', 'support'];
-            if (reserved.includes(storeSlug.toLowerCase())) {
-                return res.status(400).json({ msg: 'This subdomain is reserved by the system' });
-            }
-
+        if (wantsSlugChange) {
             // Warn: changing slug will forfeit the purchased subdomain ownership
             // If seller has purchased the subdomain, require explicit confirmation
             if (store.subdomainPurchase?.isPurchased && store.subdomainPurchase?.expiresAt && new Date(store.subdomainPurchase.expiresAt) > new Date()) {
@@ -536,7 +530,7 @@ exports.updateStore = async (req, res) => {
                         msg: `You have purchased the subdomain "${store.storeSlug}.rozare.com". Changing it will forfeit your ownership of the old subdomain — anyone else can claim it. To proceed, resend with confirmSubdomainChange: true.`,
                         requiresConfirmation: true,
                         currentSubdomain: store.storeSlug,
-                        newSubdomain: storeSlug.toLowerCase(),
+                        newSubdomain: normalizedRequestedSlug,
                     });
                 }
 
@@ -552,7 +546,7 @@ exports.updateStore = async (req, res) => {
 
             // Check if available (lazy-release stale blocked slugs)
             let duplicateSlug = await Store.findOne({
-                storeSlug: storeSlug.toLowerCase(),
+                storeSlug: normalizedRequestedSlug,
                 _id: { $ne: store._id }
             });
             if (duplicateSlug) {
@@ -563,7 +557,7 @@ exports.updateStore = async (req, res) => {
                 return res.status(409).json({ msg: 'This subdomain is already taken by another store' });
             }
 
-            store.storeSlug = storeSlug.toLowerCase();
+            store.storeSlug = normalizedRequestedSlug;
             store.lastSlugChangeAt = new Date();
         }
         // Note: we no longer auto-regenerate the slug from the store name —
@@ -730,9 +724,9 @@ exports.getStoreBySlug = async (req, res) => {
         const buyerLocation = buyerLocationFromRequest(req);
 
         const store = await Store.findOne(activeStoreQuery({ storeSlug: slug }))
-            .populate('seller', 'username email avatar');
+            .populate('seller', 'username email avatar role status');
 
-        if (!store) {
+        if (!store || store.seller?.role !== 'seller' || store.seller?.status !== 'active') {
             return res.status(404).json({ msg: 'Store not found' });
         }
         if (!isStoreVisibleToBuyer(store, buyerLocation)) {
@@ -760,9 +754,9 @@ exports.getStoreBySellerId = async (req, res) => {
 
         const store = await Store.findOne(activeStoreQuery({ seller: id }))
             .select('+verification')
-            .populate('seller', 'username email avatar');
+            .populate('seller', 'username email avatar role status');
 
-        if (!store) {
+        if (!store || store.seller?.role !== 'seller' || store.seller?.status !== 'active') {
             return res.status(404).json({ msg: 'Store not found for this seller' });
         }
         if (!isStoreVisibleToBuyer(store, buyerLocation)) {
@@ -795,6 +789,9 @@ exports.getStoreProducts = async (req, res) => {
         const store = await Store.findOne(activeStoreQuery({ storeSlug: slug }));
 
         if (!store) {
+            return res.status(404).json({ msg: 'Store not found' });
+        }
+        if (!await isActiveSellerAccount(store.seller)) {
             return res.status(404).json({ msg: 'Store not found' });
         }
         if (!isStoreVisibleToBuyer(store, buyerLocation)) {
@@ -989,9 +986,12 @@ exports.incrementStoreView = async (req, res) => {
     try {
         const { slug } = req.params;
 
-        const store = await Store.findOne(activeStoreQuery({ storeSlug: slug })).select('_id views');
+        const store = await Store.findOne(activeStoreQuery({ storeSlug: slug })).select('_id views seller');
 
         if (!store) {
+            return res.status(404).json({ msg: 'Store not found' });
+        }
+        if (!await isActiveSellerAccount(store.seller)) {
             return res.status(404).json({ msg: 'Store not found' });
         }
 
@@ -1044,8 +1044,19 @@ exports.getStoreAnalytics = async (req, res) => {
 
         const Order = require('../models/Order');
         const orders = await Order.find({
-            'orderItems.productId': { $in: sellerProductIds },
-            isPaid: true
+            isPaid: true,
+            awaitingPayment: { $ne: true },
+            $or: [
+                { 'orderItems.seller': sellerId },
+                ...(sellerProductIds.length ? [{
+                    orderItems: {
+                        $elemMatch: {
+                            seller: null,
+                            productId: { $in: sellerProductIds },
+                        },
+                    },
+                }] : []),
+            ],
         });
 
         const sellerProductIdSet = new Set(sellerProductIds.map(id => id.toString()));
@@ -1062,6 +1073,7 @@ exports.getStoreAnalytics = async (req, res) => {
                 currency: targetCurrency,
                 views: store.views || 0,
                 productCount: productCount || 0,
+                totalOrders: orders.length,
                 totalSales: totalSales || 0,
                 trustCount: store.trustCount || 0,
                 storeName: store.storeName,

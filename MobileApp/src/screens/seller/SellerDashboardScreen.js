@@ -5,17 +5,17 @@
  * quick-action tiles, and recent orders.
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
-  View, Text, ScrollView, StyleSheet, RefreshControl, TouchableOpacity, Dimensions, SafeAreaView, Modal,
+  View, Text, ScrollView, StyleSheet, RefreshControl, TouchableOpacity, Modal, Platform,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import api from '../../config/api';
 import { useAuth } from '../../contexts/AuthContext';
 import OrderCard from '../../components/common/OrderCard';
-import Loader from '../../components/common/Loader';
 import { EmptyOrders } from '../../components/common/EmptyState';
 import GlassBackground from '../../components/common/GlassBackground';
 import GlassPanel from '../../components/common/GlassPanel';
@@ -24,9 +24,77 @@ import ChatBot from '../../components/ChatBot';
 import { spacing, fontSize, borderRadius, fontWeight } from '../../styles/theme';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useCurrency } from '../../contexts/CurrencyContext';
+import {
+  SellerInlineError,
+  SellerScreenHeader,
+  SellerScreenSkeleton,
+  SellerSectionHeader,
+} from '../../components/seller/SellerUI';
+import { fetchCompleteSellerCatalog } from '../../utils/sellerCatalog';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const TILE_GAP = spacing.sm;
+export { fetchCompleteSellerCatalog } from '../../utils/sellerCatalog';
+
+export const SELLER_TOOL_GROUPS = [
+  {
+    id: 'sell',
+    title: 'Sell & fulfil',
+    subtitle: 'Products, orders, returns and delivery',
+    tools: [
+      { id: 'products', label: 'Products', detail: 'Catalog & inventory', icon: 'cube-outline', color: '#0EA5E9', screen: 'SellerProductManagement' },
+      { id: 'orders', label: 'Orders', detail: 'Process customer orders', icon: 'receipt-outline', color: '#6366F1', screen: 'SellerOrderManagement' },
+      { id: 'returns', label: 'Returns', detail: 'Review return requests', icon: 'return-down-back-outline', color: '#F97316', screen: 'SellerOrderManagement', params: { tab: 'returns' } },
+      { id: 'shipping', label: 'Shipping', detail: 'Rates and delivery methods', icon: 'car-outline', color: '#F59E0B', screen: 'SellerShippingConfiguration' },
+    ],
+  },
+  {
+    id: 'grow',
+    title: 'Grow your business',
+    subtitle: 'Performance, promotions and campaigns',
+    tools: [
+      { id: 'analytics', label: 'Analytics', detail: 'Revenue and conversion', icon: 'bar-chart-outline', color: '#14B8A6', screen: 'SellerAnalytics' },
+      { id: 'coupons', label: 'Coupons', detail: 'Offers and redemptions', icon: 'pricetag-outline', color: '#F97316', screen: 'SellerCouponManagement' },
+      { id: 'ads', label: 'Rozare Ads', detail: 'TikTok and Meta campaigns', icon: 'megaphone-outline', color: '#A855F7', screen: 'SellerAds' },
+      { id: 'storefront', label: 'Store Overview', detail: 'Preview store performance', icon: 'eye-outline', color: '#10B981', screen: 'SellerStoreOverview' },
+    ],
+  },
+  {
+    id: 'money',
+    title: 'Money & plan',
+    subtitle: 'Payouts, billing and your seller plan',
+    tools: [
+      { id: 'payments', label: 'Payments', detail: 'Balance and withdrawals', icon: 'wallet-outline', color: '#10B981', screen: 'SellerPayments' },
+      { id: 'cards', label: 'Saved Cards', detail: 'Secure payment methods', icon: 'card-outline', color: '#2563EB', screen: 'PaymentMethods' },
+      { id: 'plan', label: 'Subscription', detail: 'Plan and benefits', icon: 'diamond-outline', color: '#A855F7', screen: 'SellerSubscription' },
+      { id: 'subdomain', label: 'Subdomain', detail: 'Your Rozare address', icon: 'globe-outline', color: '#0284C7', screen: 'SellerSubdomainManagement' },
+    ],
+  },
+  {
+    id: 'store',
+    title: 'Store & account',
+    subtitle: 'Identity, notifications and preferences',
+    tools: [
+      { id: 'settings', label: 'Store Settings', detail: 'Brand, policies and visibility', icon: 'storefront-outline', color: '#8B5CF6', screen: 'SellerStoreSettings' },
+      { id: 'profile', label: 'Seller Profile', detail: 'Secure contact details', icon: 'person-circle-outline', color: '#06B6D4', screen: 'SellerProfile' },
+      { id: 'notifications', label: 'Notifications', detail: 'Orders, stock and updates', icon: 'notifications-outline', color: '#EC4899', screen: 'SellerNotifications' },
+      { id: 'notification-settings', label: 'Alert Preferences', detail: 'Choose what reaches you', icon: 'options-outline', color: '#64748B', screen: 'NotificationSettings' },
+      { id: 'whatsapp', label: 'WhatsApp', detail: 'Seller alerts and verification', icon: 'logo-whatsapp', color: '#22C55E', screen: 'SellerWhatsAppSettings' },
+    ],
+  },
+];
+
+export const calculateStoreSetup = (store) => {
+  if (!store) return { completed: 0, total: 6, percent: 0 };
+  const checks = [
+    store.storeName || store.name,
+    store.description,
+    store.logo,
+    store.banner,
+    store.paymentPolicy,
+    store.returnPolicy && typeof store.returnPolicy === 'object',
+  ];
+  const completed = checks.filter(Boolean).length;
+  return { completed, total: checks.length, percent: Math.round((completed / checks.length) * 100) };
+};
 
 // Mirrors the website's SellerHome math exactly:
 // revenue counts PAID orders only (converted per-order currency),
@@ -66,50 +134,89 @@ export default function SellerDashboardScreen({ navigation }) {
   const [store, setStore] = useState(null);
   const [products, setProducts] = useState([]);
   const [orders, setOrders] = useState([]);
-  const [stats, setStats] = useState(calculateSellerStats([], []));
   const [showAI, setShowAI] = useState(false);
   const [subscription, setSubscription] = useState(null);
   const [showFounderOffer, setShowFounderOffer] = useState(false);
+  const [loadError, setLoadError] = useState('');
+  const [unreadCount, setUnreadCount] = useState(0);
 
-  useEffect(() => { fetchDashboardData(); }, []);
+  const sellerKey = currentUser?._id || currentUser?.id || currentUser?.email || 'seller';
 
-  const fetchDashboardData = async () => {
-    try {
-      const [storeRes, productsRes, ordersRes, subRes] = await Promise.all([
-        api.get('/api/stores/my-store').catch(() => ({ data: { store: null } })),
-        api.get('/api/products/get-seller-products').catch(() => ({ data: [] })),
-        api.get('/api/order/get').catch(() => ({ data: { orders: [] } })),
-        api.get('/api/subscription/status').catch(() => ({ data: { subscription: null } })),
-      ]);
-      setStore(storeRes.data?.store);
-      const fetchedProducts = productsRes.data?.products || productsRes.data || [];
-      setProducts(fetchedProducts);
-      const fetchedOrders = ordersRes.data?.orders || [];
-      setOrders(fetchedOrders);
-      setStats(calculateSellerStats(fetchedProducts, fetchedOrders, convertAmount, currency));
-      const nextSubscription = subRes.data?.subscription;
+  const fetchDashboardData = useCallback(async () => {
+    const requests = await Promise.allSettled([
+      api.get('/api/stores/my-store'),
+      fetchCompleteSellerCatalog(),
+      api.get('/api/order/get'),
+      api.get('/api/subscription/status'),
+      api.get('/api/notifications/me'),
+    ]);
+    const [storeResult, productsResult, ordersResult, subscriptionResult, notificationsResult] = requests;
+    const coreFailures = [];
+
+    if (storeResult.status === 'fulfilled') {
+      setStore(storeResult.value.data?.store || storeResult.value.data || null);
+    } else if (storeResult.reason?.response?.status === 404) {
+      setStore(null);
+    } else {
+      coreFailures.push('store');
+    }
+
+    if (productsResult.status === 'fulfilled') {
+      const nextProducts = productsResult.value;
+      setProducts(Array.isArray(nextProducts) ? nextProducts : []);
+    } else {
+      coreFailures.push('products');
+    }
+
+    if (ordersResult.status === 'fulfilled') {
+      const nextOrders = ordersResult.value.data?.orders || ordersResult.value.data || [];
+      setOrders(Array.isArray(nextOrders) ? nextOrders : []);
+    } else {
+      coreFailures.push('orders');
+    }
+
+    let nextSubscription = null;
+    if (subscriptionResult.status === 'fulfilled') {
+      nextSubscription = subscriptionResult.value.data?.subscription || null;
       setSubscription(nextSubscription);
+    }
 
-      const promotion = nextSubscription?.founderPromotion;
-      if (promotion?.available && promotion?.sellerEligible && !promotion?.entitlementActive) {
-        try {
-          const sellerKey = currentUser?._id || currentUser?.id || currentUser?.email || 'seller';
-          const storageKey = `rozare-founder-promotion-last-shown:${sellerKey}`;
-          const lastShown = Number(await AsyncStorage.getItem(storageKey) || 0);
-          if (!lastShown || Date.now() - lastShown >= 4 * 60 * 60 * 1000) {
-            await AsyncStorage.setItem(storageKey, String(Date.now()));
-            setShowFounderOffer(true);
-          }
-        } catch (storageError) {
-          console.warn('Founder promotion display storage unavailable:', storageError?.message);
+    if (notificationsResult.status === 'fulfilled') {
+      setUnreadCount(Number(notificationsResult.value.data?.unread || 0));
+    }
+
+    if (coreFailures.length) {
+      setLoadError(`Live ${coreFailures.join(', ')} data could not be refreshed. Existing information is shown where available.`);
+    } else {
+      setLoadError('');
+    }
+
+    const promotion = nextSubscription?.founderPromotion;
+    if (promotion?.available && promotion?.sellerEligible && !promotion?.entitlementActive) {
+      try {
+        const storageKey = `rozare-founder-promotion-last-shown:${sellerKey}`;
+        const lastShown = Number(await AsyncStorage.getItem(storageKey) || 0);
+        if (!lastShown || Date.now() - lastShown >= 4 * 60 * 60 * 1000) {
+          await AsyncStorage.setItem(storageKey, String(Date.now()));
           setShowFounderOffer(true);
         }
+      } catch (storageError) {
+        console.warn('Founder promotion display storage unavailable:', storageError?.message);
+        setShowFounderOffer(true);
       }
-    } catch (error) { console.error('Error fetching dashboard data:', error); }
-    finally { setIsLoading(false); setRefreshing(false); }
-  };
+    }
 
-  const onRefresh = useCallback(() => { setRefreshing(true); fetchDashboardData(); }, []);
+    setIsLoading(false);
+    setRefreshing(false);
+  }, [sellerKey]);
+
+  useEffect(() => { fetchDashboardData(); }, [fetchDashboardData]);
+
+  const stats = useMemo(
+    () => calculateSellerStats(products, orders, convertAmount, currency),
+    [products, orders, convertAmount, currency]
+  );
+  const onRefresh = useCallback(() => { setRefreshing(true); fetchDashboardData(); }, [fetchDashboardData]);
   // Newest first — sort explicitly so we don't depend on API ordering
   const recentOrders = [...orders]
     .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
@@ -123,11 +230,25 @@ export default function SellerDashboardScreen({ navigation }) {
     return formatAmount(value);
   };
 
-  if (isLoading) return <GlassBackground><SafeAreaView style={{ flex: 1 }}><Loader fullScreen message="Loading dashboard..." /></SafeAreaView></GlassBackground>;
+  if (isLoading) {
+    return (
+      <SellerScreenSkeleton
+        navigation={navigation}
+        title="Seller Dashboard"
+        subtitle="Preparing your live store overview"
+        icon="storefront-outline"
+        variant="dashboard"
+        fallbackScreen="Account"
+      />
+    );
+  }
 
   const isTrialExpiring = subscription?.isTrialExpiringSoon;
   const isBlocked = subscription?.status === 'blocked';
+  const isPastDue = subscription?.status === 'past_due';
   const storeName = store?.storeName || store?.name;
+  const storeSetup = calculateStoreSetup(store);
+  const isStoreLive = Boolean(store?._id) && store?.isActive !== false && !store?.isBlocked && !isBlocked;
 
   const heroStats = [
     { label: 'Total Revenue', value: formatCompactPrice(stats.revenue), icon: 'cash-outline', color: '#10b981', bg: 'rgba(16,185,129,0.12)' },
@@ -143,39 +264,45 @@ export default function SellerDashboardScreen({ navigation }) {
     { label: 'Low Stock', count: stats.lowStock + stats.outOfStock, color: '#ef4444', bg: 'rgba(239,68,68,0.12)' },
   ];
 
-  const quickActions = [
-    { icon: 'cube-outline', color: '#0ea5e9', label: 'Products', onPress: () => navigation.navigate('SellerProductManagement'), badge: stats.totalProducts },
-    { icon: 'receipt-outline', color: '#6366f1', label: 'Orders', onPress: () => navigation.navigate('SellerOrderManagement'), badge: stats.pendingOrders },
-    { icon: 'wallet-outline', color: '#10b981', label: 'Payments', onPress: () => navigation.navigate('SellerPayments') },
-    { icon: 'storefront-outline', color: '#8b5cf6', label: 'Store', onPress: () => navigation.navigate('SellerStoreSettings') },
-    { icon: 'car-outline', color: '#f59e0b', label: 'Shipping', onPress: () => navigation.navigate('SellerShippingConfiguration') },
-    { icon: 'pricetag-outline', color: '#f97316', label: 'Coupons', onPress: () => navigation.navigate('SellerCouponManagement') },
-    { icon: 'bar-chart-outline', color: '#14b8a6', label: 'Analytics', onPress: () => navigation.navigate('SellerAnalytics') },
-    { icon: 'globe-outline', color: '#0284c7', label: 'Subdomain', onPress: () => navigation.navigate('SellerSubdomainManagement') },
-    { icon: 'diamond-outline', color: '#a855f7', label: 'Plan', onPress: () => navigation.navigate('SellerSubscription') },
-    { icon: 'logo-whatsapp', color: '#22c55e', label: 'WhatsApp', onPress: () => navigation.navigate('SellerWhatsAppSettings') },
-    { icon: 'chatbubbles-outline', color: '#ec4899', label: 'Complaints', onPress: () => navigation.navigate('SellerComplaints') },
-    { icon: 'person-circle-outline', color: '#06b6d4', label: 'Profile', onPress: () => navigation.navigate('SellerProfile') },
-  ];
+  const navigateBack = () => {
+    if (navigation.canGoBack?.()) navigation.goBack();
+    else navigation.navigate('MainTabs', { screen: 'Account' });
+  };
+
+  const navigateToTool = (tool) => {
+    const dynamicParams = tool.id === 'storefront' && store?._id ? { storeId: store._id } : {};
+    navigation.navigate(tool.screen, { ...(tool.params || {}), ...dynamicParams });
+  };
 
   return (
     <GlassBackground>
-      <SafeAreaView style={{ flex: 1 }}>
+      <SafeAreaView
+        style={{ flex: 1 }}
+        edges={Platform.OS === 'android' ? [] : ['top']}
+      >
+      <SellerScreenHeader
+        navigation={navigation}
+        title="Seller Dashboard"
+        subtitle={storeName || 'Your Rozare business command center'}
+        icon="storefront-outline"
+        onBack={navigateBack}
+        rightIcon="notifications-outline"
+        rightBadge={unreadCount}
+        onRightPress={() => navigation.navigate('SellerNotifications')}
+      />
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scroll}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={palette.colors.primary} />}
       >
         {/* ── Top Bar: back + title ── */}
-        <View style={styles.topBar}>
-          <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()} accessibilityLabel="Go back">
-            <Ionicons name="arrow-back" size={20} color={palette.colors.text} />
-          </TouchableOpacity>
-          <Text style={styles.topBarTitle}>Seller Dashboard</Text>
-          <TouchableOpacity style={styles.backBtn} onPress={() => navigation.navigate('SellerNotifications')} accessibilityLabel="Seller notifications">
-            <Ionicons name="notifications-outline" size={19} color={palette.colors.text} />
-          </TouchableOpacity>
-        </View>
+        {!!loadError && (
+          <SellerInlineError
+            title="Some live data is unavailable"
+            message={loadError}
+            onRetry={fetchDashboardData}
+          />
+        )}
 
         {/* Subscription Warnings */}
         {isBlocked && (
@@ -192,6 +319,13 @@ export default function SellerDashboardScreen({ navigation }) {
             <Ionicons name="chevron-forward" size={14} color={palette.colors.warning} />
           </TouchableOpacity>
         )}
+        {isPastDue && !isBlocked && (
+          <TouchableOpacity onPress={() => navigation.navigate('SellerSubscription')} activeOpacity={0.8} style={[styles.alertBanner, { backgroundColor: 'rgba(239,68,68,0.08)', borderColor: 'rgba(239,68,68,0.25)' }]}>
+            <Ionicons name="card-outline" size={16} color={palette.colors.error} />
+            <Text style={[styles.alertBannerText, { color: palette.colors.error }]}>Payment needs attention — update subscription billing</Text>
+            <Ionicons name="chevron-forward" size={14} color={palette.colors.error} />
+          </TouchableOpacity>
+        )}
 
         {/* ── Welcome Hub (matches website) ── */}
         <GlassPanel variant="strong" style={styles.header}>
@@ -200,23 +334,73 @@ export default function SellerDashboardScreen({ navigation }) {
             <Text style={styles.tagPillText}>Seller Hub</Text>
           </View>
           <Text style={styles.headerName}>{getGreeting()}, {currentUser?.name?.split(' ')[0] || currentUser?.username || 'Seller'}</Text>
-          <Text style={styles.headerSub}>Here's what's happening with your store today</Text>
+          <Text style={styles.headerSub}>Your live performance, priorities and seller tools in one place.</Text>
           {storeName && (
-            <View style={styles.storeNameRow}>
-              <Ionicons name="business-outline" size={14} color={palette.colors.textSecondary} />
-              <Text style={styles.storeName}>{storeName}</Text>
-              {store?.storeSlug && (
-                <TouchableOpacity style={styles.viewStoreBtn} onPress={() => navigation.navigate('Store', { storeSlug: store.storeSlug })} activeOpacity={0.8}>
-                  <Text style={styles.viewStoreBtnText}>View Store</Text>
-                  <Ionicons name="open-outline" size={12} color={palette.colors.primary} />
+            <View style={styles.storeSummary}>
+              <View style={styles.storeNameRow}>
+                <View style={styles.storeIdentityIcon}>
+                  <Ionicons name="business-outline" size={15} color={palette.colors.primary} />
+                </View>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={styles.storeName} numberOfLines={1}>{storeName}</Text>
+                  <View style={styles.storePills}>
+                    <View style={[styles.storePill, { backgroundColor: store?.verification?.isVerified ? palette.colors.successSubtle : palette.colors.warningSubtle }]}>
+                      <Ionicons name={store?.verification?.isVerified ? 'checkmark-circle' : 'shield-outline'} size={11} color={store?.verification?.isVerified ? palette.colors.success : palette.colors.warning} />
+                      <Text style={[styles.storePillText, { color: store?.verification?.isVerified ? palette.colors.success : palette.colors.warning }]}>
+                        {store?.verification?.isVerified ? 'Verified' : 'Not verified'}
+                      </Text>
+                    </View>
+                    <View style={[styles.storePill, { backgroundColor: isStoreLive ? palette.colors.successSubtle : palette.colors.errorSubtle }]}>
+                      <View style={[styles.liveDot, { backgroundColor: isStoreLive ? palette.colors.success : palette.colors.error }]} />
+                      <Text style={[styles.storePillText, { color: isStoreLive ? palette.colors.success : palette.colors.error }]}>
+                        {isStoreLive ? 'Live' : 'Not live'}
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+                {store?.storeSlug && (
+                  <TouchableOpacity style={styles.viewStoreBtn} onPress={() => navigation.navigate('Store', { storeSlug: store.storeSlug })} activeOpacity={0.8}>
+                    <Text style={styles.viewStoreBtnText}>View</Text>
+                    <Ionicons name="open-outline" size={12} color={palette.colors.primary} />
+                  </TouchableOpacity>
+                )}
+              </View>
+              {storeSetup.percent < 100 && (
+                <TouchableOpacity style={styles.setupRow} onPress={() => navigation.navigate('SellerStoreSettings')} activeOpacity={0.78}>
+                  <View style={{ flex: 1 }}>
+                    <View style={styles.setupCopy}>
+                      <Text style={styles.setupLabel}>Store setup</Text>
+                      <Text style={styles.setupPercent}>{storeSetup.percent}%</Text>
+                    </View>
+                    <View style={styles.progressTrack}>
+                      <LinearGradient colors={palette.gradients.cta} style={[styles.progressFill, { width: `${storeSetup.percent}%` }]} />
+                    </View>
+                  </View>
+                  <Ionicons name="chevron-forward" size={16} color={palette.colors.textSecondary} />
                 </TouchableOpacity>
               )}
             </View>
           )}
-          <TouchableOpacity style={styles.addProductBtn} onPress={() => navigation.navigate('ProductForm', { isAdmin: false })} activeOpacity={0.85}>
+          {!storeName && (
+            <TouchableOpacity style={styles.missingStore} onPress={() => navigation.navigate('SellerStoreSettings')} activeOpacity={0.78}>
+              <Ionicons name="alert-circle-outline" size={18} color={palette.colors.warning} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.missingStoreTitle}>Finish setting up your store</Text>
+                <Text style={styles.missingStoreText}>Add your identity, policies and storefront details before selling.</Text>
+              </View>
+              <Ionicons name="arrow-forward" size={16} color={palette.colors.warning} />
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity
+            style={styles.addProductBtn}
+            onPress={() => store?._id
+              ? navigation.navigate('ProductForm', { isAdmin: false })
+              : navigation.navigate('SellerStoreSettings')}
+            activeOpacity={0.85}
+          >
             <LinearGradient colors={palette.gradients.cta} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
-            <Ionicons name="flash" size={15} color="#fff" />
-            <Text style={styles.addProductBtnText}>Add Product</Text>
+            <Ionicons name={store?._id ? 'flash' : 'storefront-outline'} size={15} color="#fff" />
+            <Text style={styles.addProductBtnText}>{store?._id ? 'Add Product' : 'Create Store'}</Text>
           </TouchableOpacity>
         </GlassPanel>
 
@@ -284,37 +468,65 @@ export default function SellerDashboardScreen({ navigation }) {
 
         {/* ── Quick Actions ── */}
         <View style={styles.sectionContainer}>
-          <Text style={styles.sectionTitle}>Quick Actions</Text>
-          <View style={styles.actionsGrid}>
-            {quickActions.map((action, i) => (
-              <TouchableOpacity key={i} onPress={action.onPress} activeOpacity={0.7} style={styles.quickTile}>
-                <GlassPanel variant="inner" style={styles.quickTileInner}>
-                  <View style={[styles.quickTileIcon, { backgroundColor: `${action.color}15` }]}>
-                    <Ionicons name={action.icon} size={22} color={action.color} />
-                    {action.badge > 0 && (
-                      <View style={[styles.tileBadge, { backgroundColor: action.color }]}>
-                        <Text style={styles.tileBadgeText}>{action.badge > 99 ? '99+' : action.badge}</Text>
+          <SellerSectionHeader
+            title="Seller tools"
+            subtitle="Everything available on your website dashboard, organized for mobile"
+            icon="grid-outline"
+          />
+          {SELLER_TOOL_GROUPS.map((group) => (
+            <GlassPanel key={group.id} variant="card" style={styles.toolGroup}>
+              <View style={styles.toolGroupHeader}>
+                <Text style={styles.toolGroupTitle}>{group.title}</Text>
+                <Text style={styles.toolGroupSubtitle}>{group.subtitle}</Text>
+              </View>
+              <View style={styles.toolsGrid}>
+                {group.tools.map((tool) => {
+                  const badge = tool.id === 'products'
+                    ? stats.lowStock + stats.outOfStock
+                    : tool.id === 'orders'
+                      ? stats.pendingOrders
+                      : tool.id === 'notifications'
+                        ? unreadCount
+                        : 0;
+                  return (
+                    <TouchableOpacity
+                      key={tool.id}
+                      onPress={() => navigateToTool(tool)}
+                      activeOpacity={0.72}
+                      style={styles.toolCard}
+                      accessibilityRole="button"
+                      accessibilityLabel={`${tool.label}. ${tool.detail}`}
+                    >
+                      <View style={[styles.toolIcon, { backgroundColor: `${tool.color}16`, borderColor: `${tool.color}30` }]}>
+                        <Ionicons name={tool.icon} size={20} color={tool.color} />
+                        {badge > 0 && (
+                          <View style={[styles.tileBadge, { backgroundColor: tool.color }]}>
+                            <Text style={styles.tileBadgeText}>{badge > 99 ? '99+' : badge}</Text>
+                          </View>
+                        )}
                       </View>
-                    )}
-                  </View>
-                  <Text style={styles.quickTileLabel} numberOfLines={1}>{action.label}</Text>
-                </GlassPanel>
-              </TouchableOpacity>
-            ))}
-          </View>
+                      <View style={styles.toolCopy}>
+                        <Text style={styles.toolLabel} numberOfLines={1}>{tool.label}</Text>
+                        <Text style={styles.toolDetail} numberOfLines={2}>{tool.detail}</Text>
+                      </View>
+                      <Ionicons name="chevron-forward" size={15} color={palette.colors.textLight} />
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </GlassPanel>
+          ))}
         </View>
 
         {/* ── Recent Orders ── */}
         <GlassPanel variant="card" style={styles.ordersPanel}>
-          <View style={styles.ordersHeader}>
-            <Text style={styles.sectionTitle}>Recent Orders</Text>
-            {orders.length > 0 && (
-              <TouchableOpacity onPress={() => navigation.navigate('SellerOrderManagement')} activeOpacity={0.7} style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
-                <Text style={styles.viewAllText}>View all</Text>
-                <Ionicons name="arrow-forward" size={12} color={palette.colors.primary} />
-              </TouchableOpacity>
-            )}
-          </View>
+          <SellerSectionHeader
+            title="Recent orders"
+            subtitle="Your five newest customer orders"
+            icon="time-outline"
+            actionLabel={orders.length > 0 ? 'View all' : undefined}
+            onAction={orders.length > 0 ? () => navigation.navigate('SellerOrderManagement') : undefined}
+          />
           {recentOrders.length > 0 ? (
             <View style={styles.ordersContainer}>
               {recentOrders.map((order) => (
@@ -385,7 +597,7 @@ export default function SellerDashboardScreen({ navigation }) {
 }
 
 const buildStyles = (p) => StyleSheet.create({
-  scroll: { paddingBottom: spacing.xxl },
+  scroll: { width: '100%', maxWidth: 680, alignSelf: 'center', paddingBottom: 96 },
 
   founderBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center', padding: spacing.lg },
   founderModal: { width: '100%', maxWidth: 440, padding: spacing.xl, position: 'relative' },
@@ -400,11 +612,6 @@ const buildStyles = (p) => StyleSheet.create({
   founderCta: { minHeight: 46, borderRadius: borderRadius.lg, backgroundColor: p.colors.primary, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.sm, marginTop: spacing.lg },
   founderCtaText: { color: '#fff', fontSize: fontSize.sm, fontWeight: fontWeight.bold },
 
-  /* Top bar */
-  topBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: spacing.lg, paddingTop: spacing.md },
-  backBtn: { width: 38, height: 38, borderRadius: 19, backgroundColor: p.glass.bgStrong, borderWidth: 1, borderColor: p.glass.border, justifyContent: 'center', alignItems: 'center' },
-  topBarTitle: { fontSize: fontSize.lg, fontWeight: fontWeight.bold, color: p.colors.text },
-
   /* Banners */
   alertBanner: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginHorizontal: spacing.lg, marginTop: spacing.md, padding: spacing.md, borderRadius: borderRadius.lg, borderWidth: 1 },
   alertBannerText: { fontSize: fontSize.xs, fontWeight: fontWeight.bold, flex: 1 },
@@ -415,16 +622,31 @@ const buildStyles = (p) => StyleSheet.create({
   tagPillText: { color: p.colors.primary, fontSize: fontSize.xs, fontWeight: fontWeight.semibold },
   headerName: { fontSize: fontSize.xxxl, fontWeight: fontWeight.extrabold, color: p.colors.text, letterSpacing: -0.5 },
   headerSub: { fontSize: fontSize.sm, color: p.colors.textSecondary, marginTop: 4 },
-  storeNameRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: spacing.md, paddingTop: spacing.md, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: p.glass.borderSubtle },
-  storeName: { flex: 1, fontSize: fontSize.sm, color: p.colors.textSecondary },
+  storeSummary: { marginTop: spacing.lg, paddingTop: spacing.md, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: p.glass.borderSubtle },
+  storeNameRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  storeIdentityIcon: { width: 38, height: 38, borderRadius: 13, alignItems: 'center', justifyContent: 'center', backgroundColor: p.colors.primarySubtle, borderWidth: 1, borderColor: p.colors.primaryLighter },
+  storeName: { fontSize: fontSize.sm, fontWeight: fontWeight.bold, color: p.colors.text },
+  storePills: { flexDirection: 'row', flexWrap: 'wrap', gap: 5, marginTop: 4 },
+  storePill: { minHeight: 22, flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 7, borderRadius: borderRadius.full },
+  storePillText: { fontSize: 9, fontWeight: fontWeight.bold },
+  liveDot: { width: 6, height: 6, borderRadius: 3 },
   viewStoreBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(99,102,241,0.1)', borderWidth: 1, borderColor: 'rgba(99,102,241,0.18)', paddingHorizontal: spacing.md, paddingVertical: 5, borderRadius: borderRadius.full },
   viewStoreBtnText: { fontSize: fontSize.xs, fontWeight: fontWeight.semibold, color: p.colors.primary },
+  setupRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginTop: spacing.md, padding: spacing.md, borderRadius: borderRadius.lg, backgroundColor: p.glass.bgSubtle, borderWidth: 1, borderColor: p.glass.borderSubtle },
+  setupCopy: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 },
+  setupLabel: { fontSize: fontSize.xs, fontWeight: fontWeight.semibold, color: p.colors.textSecondary },
+  setupPercent: { fontSize: fontSize.xs, fontWeight: fontWeight.bold, color: p.colors.primary },
+  progressTrack: { height: 6, borderRadius: 3, overflow: 'hidden', backgroundColor: p.colors.primarySubtle },
+  progressFill: { height: '100%', borderRadius: 3 },
+  missingStore: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginTop: spacing.lg, padding: spacing.md, borderRadius: borderRadius.lg, backgroundColor: p.colors.warningSubtle, borderWidth: 1, borderColor: p.colors.warningLighter },
+  missingStoreTitle: { fontSize: fontSize.sm, fontWeight: fontWeight.bold, color: p.colors.text },
+  missingStoreText: { marginTop: 2, fontSize: fontSize.xs, lineHeight: 16, color: p.colors.textSecondary },
   addProductBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: spacing.lg, paddingVertical: spacing.md, borderRadius: borderRadius.xl, overflow: 'hidden', shadowColor: '#0EA5E9', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.35, shadowRadius: 16, elevation: 6 },
   addProductBtnText: { color: '#fff', fontSize: fontSize.md, fontWeight: fontWeight.bold },
 
   /* Stats */
   statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, paddingHorizontal: spacing.lg, marginTop: spacing.md },
-  statCardWrap: { width: (SCREEN_WIDTH - spacing.lg * 2 - TILE_GAP) / 2 },
+  statCardWrap: { flexGrow: 1, flexBasis: '47%', minWidth: 140 },
   statCard: { padding: spacing.lg },
   statIcon: { width: 42, height: 42, borderRadius: 14, justifyContent: 'center', alignItems: 'center', marginBottom: spacing.md },
   statLabel: { fontSize: fontSize.xs, fontWeight: fontWeight.medium, color: p.colors.textSecondary, marginBottom: 2 },
@@ -443,20 +665,22 @@ const buildStyles = (p) => StyleSheet.create({
   summaryCount: { fontSize: fontSize.xxl, fontWeight: fontWeight.extrabold, letterSpacing: -0.6 },
   summaryLabel: { fontSize: 10, fontWeight: fontWeight.medium, color: p.colors.textSecondary, marginTop: 2 },
 
-  /* Quick Actions */
+  /* Seller tools */
   sectionContainer: { paddingHorizontal: spacing.lg, marginTop: spacing.lg },
-  sectionTitle: { fontSize: fontSize.md, fontWeight: fontWeight.semibold, color: p.colors.text, marginBottom: spacing.sm },
-  actionsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
-  quickTile: { width: (SCREEN_WIDTH - spacing.lg * 2 - TILE_GAP * 2) / 3 },
-  quickTileInner: { padding: spacing.md, alignItems: 'center', minHeight: 90 },
-  quickTileIcon: { width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center', marginBottom: spacing.xs },
-  quickTileLabel: { fontSize: fontSize.xs, fontWeight: fontWeight.medium, color: p.colors.text, textAlign: 'center', marginBottom: 2 },
+  toolGroup: { padding: spacing.md, marginBottom: spacing.md },
+  toolGroupHeader: { paddingHorizontal: spacing.xs, marginBottom: spacing.md },
+  toolGroupTitle: { fontSize: fontSize.sm, fontWeight: fontWeight.extrabold, color: p.colors.text },
+  toolGroupSubtitle: { marginTop: 2, fontSize: fontSize.xs, color: p.colors.textSecondary },
+  toolsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+  toolCard: { flexGrow: 1, flexBasis: '47%', minWidth: 138, minHeight: 112, position: 'relative', alignItems: 'flex-start', padding: spacing.md, borderRadius: borderRadius.xl, backgroundColor: p.glass.bgSubtle, borderWidth: 1, borderColor: p.glass.borderSubtle },
+  toolIcon: { width: 40, height: 40, borderRadius: 13, justifyContent: 'center', alignItems: 'center', borderWidth: 1, marginBottom: spacing.sm },
+  toolCopy: { flex: 1, minWidth: 0, paddingRight: spacing.sm },
+  toolLabel: { fontSize: fontSize.sm, fontWeight: fontWeight.bold, color: p.colors.text },
+  toolDetail: { marginTop: 2, fontSize: 10, lineHeight: 14, color: p.colors.textSecondary },
   tileBadge: { position: 'absolute', top: -4, right: -6, minWidth: 18, height: 18, borderRadius: 9, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 4 },
   tileBadgeText: { fontSize: 9, fontWeight: fontWeight.bold, color: '#fff' },
 
   /* Orders */
   ordersPanel: { marginHorizontal: spacing.lg, marginTop: spacing.lg, padding: spacing.lg },
-  ordersHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.sm },
-  viewAllText: { fontSize: fontSize.sm, color: p.colors.primary, fontWeight: fontWeight.semibold },
   ordersContainer: { gap: spacing.sm },
 });

@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const verifyToken = require('../middleware/authMiddleware');
-const { optionalAuth } = require('../middleware/authMiddleware');
+const { optionalAuth, admin } = require('../middleware/authMiddleware');
 const {
     chat,
     getUserContext,
@@ -23,8 +23,8 @@ router.get('/user-context', verifyToken, getUserContext);
 // Complaint routes (authenticated)
 router.post('/complaint', verifyToken, submitComplaint);
 router.get('/my-complaints', verifyToken, getMyComplaints);
-router.get('/complaints', verifyToken, getAllComplaints); // admin
-router.put('/complaint/:id', verifyToken, updateComplaint); // admin
+router.get('/complaints', verifyToken, admin, getAllComplaints);
+router.put('/complaint/:id', verifyToken, admin, updateComplaint);
 
 // Chat history routes (authenticated)
 router.get('/history', verifyToken, getChatHistory);

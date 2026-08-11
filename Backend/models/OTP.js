@@ -16,7 +16,12 @@ const otpSchema = new mongoose.Schema({
         email: String,
         password: String,
         role: String,
-        isVerified: Boolean
+        isVerified: Boolean,
+        // Bound email-change OTPs to the seller who requested them. These
+        // fields are explicit because Mongoose drops unknown nested fields in
+        // strict mode, which previously made every email-change code fail.
+        sellerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+        type: { type: String, enum: ['email-change'] }
     },
     createdAt: {
         type: Date,

@@ -97,6 +97,12 @@ const sellerSubscriptionSchema = new mongoose.Schema({
             default: null,
         },
         scheduledAt: { type: Date, default: null },
+        // Short database lease used while converting a cancelled Elite
+        // subscription into Starter. It prevents duplicate webhook deliveries
+        // from creating two paid Starter subscriptions.
+        processingToken: { type: String, default: null },
+        processingEventId: { type: String, default: null },
+        processingStartedAt: { type: Date, default: null },
     },
 }, { timestamps: true });
 

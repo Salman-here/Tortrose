@@ -1,10 +1,12 @@
 const {
+  findVisibleStores,
   haversineKm,
   isStoreVisibleToBuyer,
   nonRadiusVisibilityFilter,
   normalizeBuyerLocation,
   normalizeStoreVisibility,
 } = require('../../services/storeVisibilityService');
+const User = require('../../models/User');
 
 describe('storeVisibilityService', () => {
   test('defaults seller visibility to seller country', () => {
@@ -63,5 +65,29 @@ describe('storeVisibilityService', () => {
     const km = haversineKm({ lat: 31.5204, lng: 74.3587 }, { lat: 31.521, lng: 74.359 });
     expect(km).toBeGreaterThan(0);
     expect(km).toBeLessThan(1);
+  });
+
+  test('excludes an otherwise active store when its seller account is missing', async () => {
+    const activeSellerId = '111111111111111111111111';
+    const orphanSellerId = '222222222222222222222222';
+    const stores = [
+      { _id: 'aaaaaaaaaaaaaaaaaaaaaaaa', seller: activeSellerId },
+      { _id: 'bbbbbbbbbbbbbbbbbbbbbbbb', seller: orphanSellerId },
+    ];
+    const lean = jest.fn().mockResolvedValue(stores);
+    const StoreModel = { find: jest.fn(() => ({ lean })) };
+    const userLean = jest.fn().mockResolvedValue([{ _id: activeSellerId }]);
+    const userSelect = jest.fn(() => ({ lean: userLean }));
+    const userFind = jest.spyOn(User, 'find').mockReturnValue({ select: userSelect });
+
+    await expect(findVisibleStores(StoreModel, { isActive: true }, {}, {}))
+      .resolves.toEqual([stores[0]]);
+    expect(userFind).toHaveBeenCalledWith({
+      _id: { $in: [activeSellerId, orphanSellerId] },
+      role: 'seller',
+      status: 'active',
+    });
+
+    userFind.mockRestore();
   });
 });

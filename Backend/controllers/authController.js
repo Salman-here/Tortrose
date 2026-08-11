@@ -1,7 +1,6 @@
 const User = require("../models/User");
 const OTP = require("../models/OTP");
 const bcrypt = require('bcrypt')
-const jwt = require('jsonwebtoken')
 const { sendEmail } = require('./mailController')
 const { welcomeEmail, sellerAccountCreatedEmail } = require('../utils/emailTemplates');
 const { trackCompleteRegistration } = require('../services/tiktokEventsApi');
@@ -9,6 +8,9 @@ const { trackSellerLead } = require('../services/metaConversionsApi');
 const { normalizeSocialLinks } = require('../services/socialLinksService');
 const { notifySeller } = require('../services/whatsapp/sellerNotificationService');
 const sellerTemplates = require('../services/whatsapp/sellerMessageTemplates');
+const { normalizePhoneDigits, toE164PhoneNumber } = require('../utils/phoneNumber');
+const { MAX_STORE_SLUG_LENGTH, slugifyStoreName } = require('../utils/storeSlug');
+const { generateSixDigitOTP, signAuthToken } = require('../utils/authSecurity');
 
 
 // Step 1: Send OTP to email
@@ -23,7 +25,7 @@ exports.sendOTP = async (req, res) => {
         }
 
         // Generate 6-digit OTP
-        const otp = Math.floor(100000 + Math.random() * 900000).toString();
+        const otp = generateSixDigitOTP();
 
         // Delete any existing OTP for this email
         await OTP.deleteMany({ email });
@@ -177,7 +179,7 @@ exports.verifyOTPAndRegister = async (req, res) => {
             avatar: newUser.avatar
         }
 
-        const token = jwt.sign(payload, process.env.JWT_SECRET);
+        const token = signAuthToken(payload);
 
         // Send welcome email
         try {
@@ -248,7 +250,7 @@ exports.login = async (req, res) => {
             avatar: userFound.avatar
         }
 
-        const token = jwt.sign(payload, process.env.JWT_SECRET)
+        const token = signAuthToken(payload)
 
         return res.status(200).json({ msg: 'Log in successfull.', token: token, user: payload })
     } catch (error) {
@@ -272,7 +274,7 @@ exports.googleCallback = async (req, res) => {
             avatar: user.profilePicture || user.avatar
         }
 
-        const token = jwt.sign(payload, process.env.JWT_SECRET);
+        const token = signAuthToken(payload);
 
         if (isMobile) {
             // Redirect to app deep link — WebBrowser.openAuthSessionAsync will intercept this
@@ -302,7 +304,7 @@ exports.sendSellerOTP = async (req, res) => {
             return res.status(409).json({ msg: 'E-mail is already taken.' });
         }
 
-        const otp = Math.floor(100000 + Math.random() * 900000).toString();
+        const otp = generateSixDigitOTP();
         await OTP.deleteMany({ email });
 
         const otpDoc = new OTP({
@@ -431,7 +433,8 @@ exports.verifySellerOTPAndRegister = async (req, res) => {
         const newUser = new User(userData);
         newUser.sellerInfo = {
             phoneNumber: phoneNumber?.trim() || '',
-            whatsappNumber: whatsappVerifiedServerSide ? whatsappNumber.trim() : '',
+            whatsappNumber: whatsappVerifiedServerSide ? toE164PhoneNumber(whatsappNumber) : '',
+            whatsappDigits: whatsappVerifiedServerSide ? normalizePhoneDigits(whatsappNumber) : '',
             whatsappVerified: whatsappVerifiedServerSide,
             address: address?.trim() || '',
             city: city?.trim() || '',
@@ -453,11 +456,13 @@ exports.verifySellerOTPAndRegister = async (req, res) => {
                 const { initializeSubscription } = require('./subscriptionController');
                 
                 // Generate unique slug
-                let slug = storeName.trim().toLowerCase().replace(/[^\w\s-]/g, '').replace(/\s+/g, '-').replace(/-+/g, '-');
+                const baseSlug = slugifyStoreName(storeName) || `store-${newUser._id.toString().slice(-8)}`;
+                let slug = baseSlug;
                 let existingStore = await Store.findOne({ storeSlug: slug });
                 let counter = 1;
                 while (existingStore) {
-                    slug = `${slug}-${counter}`;
+                    const suffix = `-${counter}`;
+                    slug = `${baseSlug.slice(0, MAX_STORE_SLUG_LENGTH - suffix.length).replace(/-+$/g, '')}${suffix}`;
                     existingStore = await Store.findOne({ storeSlug: slug });
                     counter++;
                 }
@@ -492,7 +497,7 @@ exports.verifySellerOTPAndRegister = async (req, res) => {
         );
 
         const payload = { id: newUser._id, username: newUser.username, email: newUser.email, role: newUser.role, avatar: newUser.avatar };
-        const token = jwt.sign(payload, process.env.JWT_SECRET);
+        const token = signAuthToken(payload);
 
         // Send seller welcome email
         try {

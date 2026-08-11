@@ -9,8 +9,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
-  Platform,
-  ScrollView,
   StatusBar,
   StyleSheet,
   Text,
@@ -18,20 +16,25 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import Feedback from '../utils/feedback';
 import api from '../config/api';
 import { useAuth } from '../contexts/AuthContext';
 import { useTheme } from '../contexts/ThemeContext';
+import { getStorefrontHost } from '../utils/storefrontUrl';
 import { secureSet } from '../utils/secureStorage';
 import GlassBackground from '../components/common/GlassBackground';
 import GlassPanel from '../components/common/GlassPanel';
 import AuthTopHeader from '../components/common/AuthTopHeader';
 import GoogleSignInButton from '../components/common/GoogleSignInButton';
 import LocationAutocomplete from '../components/common/LocationAutocomplete';
+import KeyboardAwareFormScrollView from '../components/common/KeyboardAwareFormScrollView';
+import PhoneNumberInput from '../components/common/PhoneNumberInput';
 import { borderRadius, fontSize, fontWeight, spacing } from '../styles/theme';
+import { isValidPhoneNumber as isValidPhone } from '../utils/phoneNumber';
+import { resolveBuyerLocation } from '../utils/buyerLocation';
+import useOtpCountdown from '../hooks/useOtpCountdown';
 
 const SELLER_STEPS = [
   { key: 'details', label: 'Details' },
@@ -39,8 +42,6 @@ const SELLER_STEPS = [
   { key: 'whatsapp', label: 'Verify' },
 ];
 
-const cleanPhone = (value) => String(value || '').replace(/[\s\-()+]/g, '');
-const isValidPhone = (value) => /^\d{10,15}$/.test(cleanPhone(value));
 const generateSlug = (value) => String(value || '')
   .toLowerCase()
   .trim()
@@ -99,27 +100,38 @@ export default function BecomeSellerScreen({ navigation }) {
   const [whatsappSending, setWhatsappSending] = useState(false);
   const [whatsappVerifying, setWhatsappVerifying] = useState(false);
   const [whatsappError, setWhatsappError] = useState('');
-  const [otpCountdown, setOtpCountdown] = useState(0);
-  const [resendCooldown, setResendCooldown] = useState(0);
   const [editingNumber, setEditingNumber] = useState(false);
+  const emailOtpTimer = useOtpCountdown({ expirySeconds: 600, resendSeconds: 60 });
+  const whatsappOtpTimer = useOtpCountdown({ expirySeconds: 120, resendSeconds: 30 });
+  const otpCountdown = whatsappOtpTimer.expiryRemaining;
+  const resendCooldown = whatsappOtpTimer.resendRemaining;
 
   useEffect(() => {
-    if (currentUser?.role === 'seller' || currentUser?.role === 'admin') {
+    if (currentUser?.role === 'seller') {
       navigation.replace('SellerDashboard');
+    } else if (currentUser?.role === 'admin') {
+      navigation.replace('MainTabs');
     }
   }, [currentUser, navigation]);
 
   useEffect(() => {
-    if (otpCountdown <= 0) return undefined;
-    const timer = setTimeout(() => setOtpCountdown(value => value - 1), 1000);
-    return () => clearTimeout(timer);
-  }, [otpCountdown]);
-
-  useEffect(() => {
-    if (resendCooldown <= 0) return undefined;
-    const timer = setTimeout(() => setResendCooldown(value => value - 1), 1000);
-    return () => clearTimeout(timer);
-  }, [resendCooldown]);
+    let active = true;
+    const profileLocation = currentUser?.sellerInfo?.countryCode || currentUser?.sellerInfo?.country
+      ? currentUser.sellerInfo
+      : currentUser?.savedShippingInfo;
+    Promise.resolve(profileLocation || resolveBuyerLocation())
+      .then((location) => {
+        const resolved = location || { country: 'Pakistan', countryCode: 'PK' };
+        if (!active || (!resolved.countryCode && !resolved.country)) return;
+        setFormData(previous => previous.countryCode || previous.country ? previous : {
+          ...previous,
+          country: resolved.country || '',
+          countryCode: resolved.countryCode || '',
+        });
+      })
+      .catch(() => {});
+    return () => { active = false; };
+  }, [currentUser]);
 
   const storeSlug = useMemo(() => generateSlug(storeData.storeName), [storeData.storeName]);
 
@@ -180,6 +192,7 @@ export default function BecomeSellerScreen({ navigation }) {
   };
 
   const handleGuestSignup = async () => {
+    if (flowStep === 'emailOtp' && !emailOtpTimer.canResend) return;
     setFormError('');
     if (accountData.username.trim().length < 2) {
       setFormError('Please enter a valid full name.');
@@ -201,13 +214,20 @@ export default function BecomeSellerScreen({ navigation }) {
       password: accountData.password,
     });
     setEmailSending(false);
-    if (result?.success) setFlowStep('emailOtp');
+    if (result?.success) {
+      emailOtpTimer.start();
+      setFlowStep('emailOtp');
+    }
     else setFormError(result?.error || 'Failed to send the verification code.');
   };
 
   const handleVerifyEmail = async () => {
     if (!/^\d{6}$/.test(emailOtp)) {
       setFormError('Enter the 6-digit code sent to your email.');
+      return;
+    }
+    if (emailOtpTimer.isExpired) {
+      setFormError('This verification code has expired. Request a new one.');
       return;
     }
     setEmailVerifying(true);
@@ -270,12 +290,12 @@ export default function BecomeSellerScreen({ navigation }) {
     setWhatsappVerified(false);
     setWhatsappCodeSent(false);
     setWhatsappOtp('');
-    setOtpCountdown(0);
-    setResendCooldown(0);
+    whatsappOtpTimer.clear();
     setWhatsappError('');
   };
 
   const handleSendWhatsAppOtp = async () => {
+    if (whatsappCodeSent && !whatsappOtpTimer.canResend) return;
     if (!isValidPhone(formData.phoneNumber)) {
       setWhatsappError('Enter a valid WhatsApp number first.');
       return;
@@ -286,8 +306,7 @@ export default function BecomeSellerScreen({ navigation }) {
       await api.post('/api/seller-whatsapp/send-otp', { whatsappNumber: formData.phoneNumber.trim() });
       setWhatsappCodeSent(true);
       setWhatsappOtp('');
-      setOtpCountdown(120);
-      setResendCooldown(30);
+      whatsappOtpTimer.start();
       setEditingNumber(false);
     } catch (error) {
       const status = error.response?.status;
@@ -312,7 +331,7 @@ export default function BecomeSellerScreen({ navigation }) {
       setWhatsappVerified(true);
       setWhatsappCodeSent(false);
       setWhatsappOtp('');
-      setOtpCountdown(0);
+      whatsappOtpTimer.clear();
     } catch (error) {
       setWhatsappError(error.response?.data?.message || error.response?.data?.msg || 'Invalid code. Please try again.');
     } finally {
@@ -588,15 +607,20 @@ export default function BecomeSellerScreen({ navigation }) {
         keyboardType="number-pad"
         maxLength={6}
       />
-      <TouchableOpacity style={styles.primaryButton} onPress={handleVerifyEmail} disabled={emailVerifying} activeOpacity={0.85}>
+      <Text style={[styles.countdownText, emailOtpTimer.expiryRemaining <= 60 && { color: palette.colors.error }]}>
+        {emailOtpTimer.isExpired ? 'Code expired. Request a new one.' : `Code expires in ${emailOtpTimer.expiryLabel}`}
+      </Text>
+      <TouchableOpacity style={[styles.primaryButton, emailOtpTimer.isExpired && styles.disabledButton]} onPress={handleVerifyEmail} disabled={emailVerifying || emailOtpTimer.isExpired} activeOpacity={0.85}>
         <LinearGradient colors={palette.gradients.cta} style={StyleSheet.absoluteFill} />
         {emailVerifying
           ? <ActivityIndicator color="#fff" />
           : <><Ionicons name="checkmark-circle-outline" size={18} color="#fff" /><Text style={styles.primaryButtonText}>Verify and continue</Text></>}
       </TouchableOpacity>
-      <TouchableOpacity style={styles.secondaryAction} onPress={handleGuestSignup} disabled={emailSending}>
+      <TouchableOpacity style={styles.secondaryAction} onPress={handleGuestSignup} disabled={emailSending || !emailOtpTimer.canResend}>
         <Ionicons name="refresh-outline" size={16} color={palette.colors.primary} />
-        <Text style={styles.secondaryActionText}>{emailSending ? 'Sending…' : 'Resend code'}</Text>
+        <Text style={styles.secondaryActionText}>
+          {emailSending ? 'Sending...' : emailOtpTimer.canResend ? 'Resend code' : `Resend available in ${emailOtpTimer.resendRemaining}s`}
+        </Text>
       </TouchableOpacity>
     </GlassPanel>
   );
@@ -606,17 +630,20 @@ export default function BecomeSellerScreen({ navigation }) {
       <Text style={styles.formTitle}>Tell us about your business</Text>
       <Text style={styles.formSubtitle}>These details establish your store and seller profile.</Text>
       {renderError()}
-      {renderInput({
-        label: 'WhatsApp / Phone Number *',
-        icon: 'logo-whatsapp',
-        value: formData.phoneNumber,
-        onChangeText: value => {
+      <PhoneNumberInput
+        label="WhatsApp / Phone Number"
+        required
+        value={formData.phoneNumber}
+        onChangeText={(value) => {
           setFormData(prev => ({ ...prev, phoneNumber: value }));
           resetWhatsAppVerification();
-        },
-        placeholder: '+92 300 1234567',
-        keyboardType: 'phone-pad',
-      })}
+        }}
+        defaultCountryCode={formData.phoneNumber ? formData.countryCode : undefined}
+        profileCountryCode={currentUser?.savedShippingInfo?.countryCode}
+        profileCountry={currentUser?.savedShippingInfo?.country}
+        helperText="We will send the seller verification code to this WhatsApp number."
+        testID="become-seller-phone"
+      />
       {renderInput({
         label: 'Business Name (Optional)',
         icon: 'briefcase-outline',
@@ -716,7 +743,7 @@ export default function BecomeSellerScreen({ navigation }) {
               size={15}
               color={storeNameAvailable ? palette.colors.success : palette.colors.primary}
             />
-            <Text style={styles.slugText} numberOfLines={1}>rozare.com/store/{storeSlug}</Text>
+            <Text style={styles.slugText} numberOfLines={1}>{getStorefrontHost(storeSlug)}</Text>
             {storeNameChecking && <ActivityIndicator size="small" color={palette.colors.primary} />}
           </View>
         )}
@@ -767,16 +794,18 @@ export default function BecomeSellerScreen({ navigation }) {
         {editingNumber ? (
           <>
             <Text style={styles.phoneCardLabel}>Edit WhatsApp Number</Text>
-            <TextInput
-              style={styles.phoneEditInput}
+            <PhoneNumberInput
+              label=""
               value={formData.phoneNumber}
-              onChangeText={value => {
+              onChangeText={(value) => {
                 setFormData(prev => ({ ...prev, phoneNumber: value }));
                 resetWhatsAppVerification();
               }}
-              keyboardType="phone-pad"
-              placeholder="+92 300 1234567"
-              placeholderTextColor={palette.colors.grayLight}
+              defaultCountryCode={formData.countryCode}
+              profileCountryCode={currentUser?.savedShippingInfo?.countryCode}
+              profileCountry={currentUser?.savedShippingInfo?.country}
+              autoFocus
+              testID="become-seller-edit-phone"
             />
             <TouchableOpacity style={styles.doneButton} onPress={() => setEditingNumber(false)}>
               <Text style={styles.doneButtonText}>Done</Text>
@@ -869,12 +898,7 @@ export default function BecomeSellerScreen({ navigation }) {
   return (
     <GlassBackground>
       <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
-      <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-        <ScrollView
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-          contentContainerStyle={styles.scrollContent}
-        >
+      <KeyboardAwareFormScrollView contentContainerStyle={styles.scrollContent} bottomOffset={32}>
           <AuthTopHeader
             title={headerTitle}
             subtitle={headerSubtitle}
@@ -890,8 +914,7 @@ export default function BecomeSellerScreen({ navigation }) {
           {flowStep === 'details' && renderDetails()}
           {flowStep === 'store' && renderStore()}
           {flowStep === 'whatsapp' && renderWhatsApp()}
-        </ScrollView>
-      </KeyboardAvoidingView>
+      </KeyboardAwareFormScrollView>
     </GlassBackground>
   );
 }

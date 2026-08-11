@@ -3,20 +3,19 @@
  * Revenue trend, order volume, order status, top products, category breakdown
  */
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
-  View, Text, ScrollView, StyleSheet, RefreshControl, TouchableOpacity, SafeAreaView, Dimensions,
+  View, Text, ScrollView, StyleSheet, RefreshControl, TouchableOpacity, Platform,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import api from '../../config/api';
-import Loader from '../../components/common/Loader';
 import GlassBackground from '../../components/common/GlassBackground';
 import GlassPanel from '../../components/common/GlassPanel';
+import { SellerInlineError, SellerScreenHeader, SellerScreenSkeleton } from '../../components/seller/SellerUI';
 import { spacing, fontSize, fontWeight, borderRadius, typography } from '../../styles/theme';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useCurrency } from '../../contexts/CurrencyContext';
-
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 const RANGES = [
   { label: '7 Days', value: '7' },
@@ -31,7 +30,7 @@ export default function SellerAnalyticsScreen({ navigation }) {
   const { palette } = useTheme();
   const styles = buildStyles(palette);
   const STATUS_COLORS = getStatusColors(palette);
-  const { currency, convertAmount, formatAmount } = useCurrency();
+  const { currency, formatAmount } = useCurrency();
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -39,114 +38,36 @@ export default function SellerAnalyticsScreen({ navigation }) {
   const [analytics, setAnalytics] = useState(null);
   const [error, setError] = useState(null);
 
-  const fetchAnalytics = async () => {
+  const fetchAnalytics = useCallback(async () => {
     setLoading(true); setError(null);
     try {
       const res = await api.get(`/api/analytics/seller?days=${timeRange}&currency=${currency}`);
       setAnalytics(res.data.analytics);
     } catch (e) {
-      // Fallback: try to build from local data
-      try {
-        const [productsRes, ordersRes] = await Promise.all([
-          api.get('/api/products/get-seller-products').catch(() => ({ data: { products: [] } })),
-          api.get('/api/order/get').catch(() => ({ data: { orders: [] } })),
-        ]);
-        const products = productsRes.data?.products || productsRes.data || [];
-        const orders = ordersRes.data?.orders || [];
-        buildLocalAnalytics(products, orders);
-      } catch {
-        setError('Failed to load analytics.');
-      }
+      const status = e.response?.status;
+      setAnalytics(null);
+      setError(status === 403
+        ? 'Advanced Analytics is not included in your current seller entitlement. Open Subscription to compare plans and unlock live performance reporting.'
+        : e.response?.data?.msg || 'Live analytics could not be loaded. Check your connection and try again.');
     } finally { setLoading(false); setRefreshing(false); }
-  };
-
-  const buildLocalAnalytics = (products, orders) => {
-    const days = parseInt(timeRange);
-    const now = new Date();
-    const startDate = new Date(now); startDate.setDate(startDate.getDate() - days);
-    const filtered = orders.filter(o => new Date(o.createdAt) >= startDate);
-
-    const dayBuckets = {};
-    for (let i = days - 1; i >= 0; i--) {
-      const d = new Date(now); d.setDate(d.getDate() - i);
-      const key = d.toISOString().slice(0, 10);
-      dayBuckets[key] = { date: key, revenue: 0, orders: 0 };
-    }
-    filtered.forEach(o => {
-      const key = new Date(o.createdAt).toISOString().slice(0, 10);
-      if (dayBuckets[key]) {
-        dayBuckets[key].orders++;
-        if (o.isPaid || o.status !== 'cancelled') {
-          const total = o.orderSummary?.totalAmount || o.totalAmount || o.total || 0;
-          dayBuckets[key].revenue += convertAmount(total, o.currency || currency, currency);
-        }
-      }
-    });
-
-    const productMap = {};
-    filtered.forEach(o => {
-      if (o.status === 'cancelled') return;
-      o.orderItems?.forEach(item => {
-        const id = item.productId || item._id;
-        if (!productMap[id]) productMap[id] = { name: item.name, revenue: 0, sold: 0 };
-        const qty = item.quantity || item.qty || 1;
-        productMap[id].revenue += convertAmount((item.price || 0) * qty, item.currency || o.currency || currency, currency);
-        productMap[id].sold += qty;
-      });
-    });
-
-    const catMap = {};
-    products.forEach(p => {
-      const cat = p.category || 'Uncategorized';
-      if (!catMap[cat]) catMap[cat] = { name: cat, count: 0 };
-      catMap[cat].count++;
-    });
-
-    const statusCounts = { pending: 0, processing: 0, shipped: 0, delivered: 0, cancelled: 0 };
-    filtered.forEach(o => {
-      const s = o.orderStatus || o.status || 'pending';
-      if (statusCounts[s] !== undefined) statusCounts[s]++;
-    });
-
-    const totalRevenue = filtered.reduce((sum, o) => {
-      if (o.status === 'cancelled') return sum;
-      const total = o.orderSummary?.totalAmount || o.totalAmount || o.total || 0;
-      return sum + convertAmount(total, o.currency || currency, currency);
-    }, 0);
-    const paidOrders = filtered.filter(o => o.status !== 'cancelled').length;
-    const totalUnitsSold = filtered.reduce((s, o) => o.status !== 'cancelled' ? s + (o.orderItems?.reduce((a, i) => a + (i.quantity || i.qty || 1), 0) || 0) : s, 0);
-
-    setAnalytics({
-      revenueByDay: Object.values(dayBuckets),
-      topProducts: Object.values(productMap).sort((a, b) => b.revenue - a.revenue).slice(0, 10),
-      categoryBreakdown: Object.values(catMap).sort((a, b) => b.count - a.count),
-      statusBreakdown: Object.entries(statusCounts).map(([name, value]) => ({ name, value })),
-      summary: {
-        totalRevenue: Math.round(totalRevenue * 100) / 100,
-        paidOrders,
-        avgOrderValue: paidOrders > 0 ? Math.round((totalRevenue / paidOrders) * 100) / 100 : 0,
-        totalUnitsSold,
-        conversionRate: filtered.length > 0 ? Math.round((paidOrders / filtered.length) * 100) : 0,
-      }
-    });
-  };
+  }, [currency, timeRange]);
 
   useEffect(() => { fetchAnalytics(); }, [timeRange, currency]);
   const onRefresh = useCallback(() => { setRefreshing(true); fetchAnalytics(); }, [timeRange, currency]);
 
-  if (loading) return <GlassBackground><SafeAreaView style={{flex:1}}><Loader fullScreen message="Loading analytics..." /></SafeAreaView></GlassBackground>;
+  if (loading) return <SellerScreenSkeleton navigation={navigation} title="Store Analytics" subtitle="Loading verified performance data" icon="bar-chart-outline" variant="dashboard" />;
 
   if (error) return (
     <GlassBackground>
-      <SafeAreaView style={{flex:1}}>
-        <View style={styles.errorContainer}>
-          <GlassPanel variant="card" style={styles.errorCard}>
-            <Ionicons name="alert-circle-outline" size={48} color={palette.colors.warning} />
-            <Text style={styles.errorTitle}>Analytics Unavailable</Text>
-            <Text style={styles.errorText}>{error}</Text>
-            <TouchableOpacity style={styles.retryBtn} onPress={fetchAnalytics}><Text style={styles.retryBtnText}>Retry</Text></TouchableOpacity>
-          </GlassPanel>
-        </View>
+      <SafeAreaView style={{flex:1}} edges={Platform.OS === 'android' ? [] : ['top']}>
+        <SellerScreenHeader navigation={navigation} title="Store Analytics" subtitle="Verified seller performance" icon="bar-chart-outline" />
+        <SellerInlineError title="Analytics unavailable" message={error} onRetry={fetchAnalytics} />
+        {String(error).includes('entitlement') && (
+          <TouchableOpacity style={styles.planButton} onPress={() => navigation.navigate('SellerSubscription')}>
+            <Ionicons name="diamond-outline" size={17} color="#fff" />
+            <Text style={styles.planButtonText}>View seller plans</Text>
+          </TouchableOpacity>
+        )}
       </SafeAreaView>
     </GlassBackground>
   );
@@ -169,21 +90,10 @@ export default function SellerAnalyticsScreen({ navigation }) {
 
   return (
     <GlassBackground>
-      <SafeAreaView style={{flex:1}}>
+      <SafeAreaView style={{flex:1}} edges={Platform.OS === 'android' ? [] : ['top']}>
+      <SellerScreenHeader navigation={navigation} title="Store Analytics" subtitle="Verified seller performance" icon="bar-chart-outline" rightIcon="refresh" rightLabel="Refresh" onRightPress={fetchAnalytics} />
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={palette.colors.primary} />}>
-        
-        {/* Header */}
-        <View style={styles.headerRow}>
-          <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()} activeOpacity={0.7}>
-            <Ionicons name="arrow-back" size={22} color={palette.colors.text} />
-          </TouchableOpacity>
-          <View style={{flex:1}}>
-            <View style={styles.tagPill}><Ionicons name="sparkles" size={12} color={palette.colors.primary} /><Text style={styles.tagText}>Analytics</Text></View>
-            <Text style={styles.headerTitle}>Store Analytics</Text>
-            <Text style={styles.headerSubtitle}>Track your store performance</Text>
-          </View>
-        </View>
 
         {/* Period Selector */}
         <View style={styles.rangeRow}>
@@ -347,19 +257,13 @@ export default function SellerAnalyticsScreen({ navigation }) {
 }
 
 const buildStyles = (p) => StyleSheet.create({
-  scroll: { paddingBottom: spacing.xxl },
-  headerRow: { flexDirection: 'row', alignItems: 'flex-start', paddingHorizontal: spacing.lg, paddingTop: spacing.md, gap: spacing.md },
-  backBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.15)', justifyContent: 'center', alignItems: 'center', marginTop: 4 },
-  tagPill: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(99,102,241,0.12)', alignSelf: 'flex-start', paddingHorizontal: spacing.sm, paddingVertical: 4, borderRadius: borderRadius.full, marginBottom: spacing.xs },
-  tagText: { fontSize: 11, color: p.colors.primary, fontWeight: fontWeight.semibold },
-  headerTitle: { fontSize: fontSize.xxl + 2, fontWeight: fontWeight.bold, color: p.colors.text, letterSpacing: -0.5 },
-  headerSubtitle: { fontSize: fontSize.sm, color: p.colors.textSecondary, marginTop: 2 },
+  scroll: { width: '100%', maxWidth: 680, alignSelf: 'center', paddingBottom: 100 },
   rangeRow: { flexDirection: 'row', gap: spacing.sm, paddingHorizontal: spacing.lg, marginTop: spacing.md, marginBottom: spacing.lg },
   rangeBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: borderRadius.xl, backgroundColor: 'rgba(255,255,255,0.08)' },
   rangeBtnActive: { backgroundColor: 'rgba(99,102,241,0.12)', borderWidth: 1, borderColor: 'rgba(99,102,241,0.3)' },
   rangeBtnText: { fontSize: 12, color: p.colors.textSecondary, fontWeight: fontWeight.medium },
   statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md, paddingHorizontal: spacing.lg },
-  statCard: { width: (SCREEN_WIDTH - spacing.lg * 2 - spacing.md) / 2, padding: spacing.md },
+  statCard: { flexGrow: 1, flexBasis: '47%', minWidth: 140, padding: spacing.md },
   statIcon: { width: 40, height: 40, borderRadius: borderRadius.lg, justifyContent: 'center', alignItems: 'center', marginBottom: spacing.md },
   statLabel: { fontSize: 12, color: p.colors.textSecondary, fontWeight: fontWeight.medium },
   statValue: { fontSize: fontSize.xxl, fontWeight: fontWeight.bold, color: p.colors.text, letterSpacing: -0.5, marginTop: 2 },
@@ -390,10 +294,6 @@ const buildStyles = (p) => StyleSheet.create({
   catBarContainer: { flex: 1, height: 8, borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.06)' },
   catBar: { height: 8, borderRadius: 4 },
   catCount: { fontSize: 12, fontWeight: fontWeight.bold, color: p.colors.text, width: 30, textAlign: 'right' },
-  errorContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: spacing.xxl },
-  errorCard: { alignItems: 'center', padding: spacing.xxl },
-  errorTitle: { fontSize: fontSize.lg, fontWeight: fontWeight.bold, color: p.colors.text, marginTop: spacing.md },
-  errorText: { fontSize: fontSize.sm, color: p.colors.textSecondary, textAlign: 'center', marginTop: spacing.sm },
-  retryBtn: { backgroundColor: p.colors.primary, paddingHorizontal: spacing.xl, paddingVertical: spacing.md, borderRadius: borderRadius.xl, marginTop: spacing.lg },
-  retryBtnText: { fontSize: fontSize.sm, fontWeight: fontWeight.bold, color: 'white' },
+  planButton: { minHeight: 48, marginHorizontal: spacing.lg, marginTop: spacing.sm, borderRadius: borderRadius.xl, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.sm, backgroundColor: p.colors.primary },
+  planButtonText: { color: '#fff', fontSize: fontSize.sm, fontWeight: fontWeight.bold },
 });

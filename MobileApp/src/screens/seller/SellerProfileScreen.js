@@ -4,31 +4,37 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, StyleSheet, SafeAreaView, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, Platform, RefreshControl } from 'react-native';
-import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
+import { View, Text, StyleSheet, TouchableOpacity, TextInput, ActivityIndicator, Platform, RefreshControl } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import Feedback from '../../utils/feedback';
 import api from '../../config/api';
 import { useAuth } from '../../contexts/AuthContext';
 import GlassBackground from '../../components/common/GlassBackground';
 import GlassPanel from '../../components/common/GlassPanel';
-import { spacing, fontSize, fontWeight, borderRadius } from '../../styles/theme';
+import KeyboardAwareFormScrollView from '../../components/common/KeyboardAwareFormScrollView';
+import PhoneNumberInput from '../../components/common/PhoneNumberInput';
+import {
+  SellerInlineError,
+  SellerScreenHeader,
+  SellerScreenSkeleton,
+  SellerSectionHeader,
+} from '../../components/seller/SellerUI';
+import { spacing, fontSize, fontWeight, borderRadius, shadows, typography } from '../../styles/theme';
 import { useTheme } from '../../contexts/ThemeContext';
-
-const formatCountdown = (s) => {
-  const m = Math.floor(s / 60);
-  const r = s % 60;
-  return `${m}:${r.toString().padStart(2, '0')}`;
-};
+import { isValidPhoneNumber } from '../../utils/phoneNumber';
+import useOtpCountdown, { formatOtpCountdown } from '../../hooks/useOtpCountdown';
 
 export default function SellerProfileScreen({ navigation }) {
   const { palette } = useTheme();
   const styles = buildStyles(palette);
-  const { fetchAndUpdateCurrentUser } = useAuth();
+  const { fetchAndUpdateCurrentUser, replaceAuthToken } = useAuth();
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [data, setData] = useState(null);
+  const [loadError, setLoadError] = useState('');
 
   // WhatsApp change
   const [waOpen, setWaOpen] = useState(false);
@@ -37,7 +43,6 @@ export default function SellerProfileScreen({ navigation }) {
   const [waSent, setWaSent] = useState(false);
   const [waBusy, setWaBusy] = useState(false);
   const [waErr, setWaErr] = useState('');
-  const [waCountdown, setWaCountdown] = useState(0);
 
   // Email change
   const [emOpen, setEmOpen] = useState(false);
@@ -46,28 +51,16 @@ export default function SellerProfileScreen({ navigation }) {
   const [emSent, setEmSent] = useState(false);
   const [emBusy, setEmBusy] = useState(false);
   const [emErr, setEmErr] = useState('');
-  const [emCountdown, setEmCountdown] = useState(0);
-
-  useEffect(() => {
-    if (waCountdown > 0) {
-      const t = setTimeout(() => setWaCountdown(waCountdown - 1), 1000);
-      return () => clearTimeout(t);
-    }
-  }, [waCountdown]);
-
-  useEffect(() => {
-    if (emCountdown > 0) {
-      const t = setTimeout(() => setEmCountdown(emCountdown - 1), 1000);
-      return () => clearTimeout(t);
-    }
-  }, [emCountdown]);
+  const waTimer = useOtpCountdown({ expirySeconds: 120, resendSeconds: 30 });
+  const emTimer = useOtpCountdown({ expirySeconds: 600, resendSeconds: 60 });
 
   const fetchProfile = useCallback(async () => {
     try {
       const res = await api.get('/api/user/single');
       setData(res.data.user);
+      setLoadError('');
     } catch (err) {
-      Feedback.show({ type: 'error', text1: 'Failed to load profile' });
+      setLoadError(err.response?.data?.msg || 'We could not load your seller profile.');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -94,8 +87,12 @@ export default function SellerProfileScreen({ navigation }) {
 
   // WhatsApp handlers
   const sendWhatsAppOtp = async () => {
-    if (!waNew || waNew.replace(/[^\d]/g, '').length < 8) {
-      setWaErr('Enter a valid WhatsApp number with country code');
+    if (waSent && !waTimer.canResend) {
+      setWaErr(`You can request another code in ${formatOtpCountdown(waTimer.resendRemaining)}.`);
+      return;
+    }
+    if (!isValidPhoneNumber(waNew)) {
+      setWaErr('Select a country and enter a valid WhatsApp number');
       return;
     }
     setWaBusy(true);
@@ -103,15 +100,20 @@ export default function SellerProfileScreen({ navigation }) {
     try {
       await api.post('/api/user/seller/change-whatsapp/initiate', { newWhatsappNumber: waNew });
       setWaSent(true);
-      setWaCountdown(120);
+      setWaOtp('');
+      waTimer.start();
     } catch (err) {
-      setWaErr(err.response?.data?.msg || 'Failed to send code');
+      setWaErr(err.response?.data?.msg || err.message || 'Failed to send code');
     } finally {
       setWaBusy(false);
     }
   };
 
   const verifyWhatsApp = async () => {
+    if (waTimer.isExpired) {
+      setWaErr('This code has expired. Request a new code and try again.');
+      return;
+    }
     if (waOtp.length !== 6) {
       setWaErr('Enter the 6-digit code');
       return;
@@ -119,17 +121,16 @@ export default function SellerProfileScreen({ navigation }) {
     setWaBusy(true);
     setWaErr('');
     try {
-      await api.post('/api/user/seller/change-whatsapp/verify', { newWhatsappNumber: waNew, otp: waOtp });
+      await api.post('/api/user/seller/change-whatsapp/verify', { newWhatsappNumber: waNew.trim(), otp: waOtp });
       Feedback.show({ type: 'success', text1: 'WhatsApp number updated' });
       setWaOpen(false);
       setWaSent(false);
       setWaNew('');
       setWaOtp('');
-      setWaCountdown(0);
-      fetchProfile();
-      fetchAndUpdateCurrentUser();
+      waTimer.clear();
+      await Promise.all([fetchProfile(), fetchAndUpdateCurrentUser()]);
     } catch (err) {
-      setWaErr(err.response?.data?.msg || 'Verification failed');
+      setWaErr(err.response?.data?.msg || err.message || 'Verification failed');
     } finally {
       setWaBusy(false);
     }
@@ -137,6 +138,10 @@ export default function SellerProfileScreen({ navigation }) {
 
   // Email handlers
   const sendEmailOtp = async () => {
+    if (emSent && !emTimer.canResend) {
+      setEmErr(`You can request another code in ${formatOtpCountdown(emTimer.resendRemaining)}.`);
+      return;
+    }
     if (!emNew || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emNew)) {
       setEmErr('Enter a valid email address');
       return;
@@ -144,17 +149,24 @@ export default function SellerProfileScreen({ navigation }) {
     setEmBusy(true);
     setEmErr('');
     try {
-      await api.post('/api/user/seller/change-email/initiate', { newEmail: emNew });
+      const nextEmail = emNew.trim().toLowerCase();
+      await api.post('/api/user/seller/change-email/initiate', { newEmail: nextEmail });
+      setEmNew(nextEmail);
       setEmSent(true);
-      setEmCountdown(600);
+      setEmOtp('');
+      emTimer.start();
     } catch (err) {
-      setEmErr(err.response?.data?.msg || 'Failed to send code');
+      setEmErr(err.response?.data?.msg || err.message || 'Failed to send code');
     } finally {
       setEmBusy(false);
     }
   };
 
   const verifyEmail = async () => {
+    if (emTimer.isExpired) {
+      setEmErr('This code has expired. Request a new code and try again.');
+      return;
+    }
     if (emOtp.length !== 6) {
       setEmErr('Enter the 6-digit code');
       return;
@@ -162,30 +174,32 @@ export default function SellerProfileScreen({ navigation }) {
     setEmBusy(true);
     setEmErr('');
     try {
-      await api.post('/api/user/seller/change-email/verify', { newEmail: emNew, otp: emOtp });
+      const response = await api.post('/api/user/seller/change-email/verify', {
+        newEmail: emNew.trim().toLowerCase(),
+        otp: emOtp,
+      });
+      if (!response.data?.token) {
+        setEmErr('Your email changed, but the secure session could not be refreshed. Please sign in again before continuing.');
+        await fetchProfile();
+        return;
+      }
+      await replaceAuthToken(response.data.token);
       Feedback.show({ type: 'success', text1: 'Email updated' });
       setEmOpen(false);
       setEmSent(false);
       setEmNew('');
       setEmOtp('');
-      setEmCountdown(0);
-      fetchProfile();
-      fetchAndUpdateCurrentUser();
+      emTimer.clear();
+      await Promise.all([fetchProfile(), fetchAndUpdateCurrentUser()]);
     } catch (err) {
-      setEmErr(err.response?.data?.msg || 'Verification failed');
+      setEmErr(err.response?.data?.msg || err.message || 'Verification failed');
     } finally {
       setEmBusy(false);
     }
   };
 
   if (loading) {
-    return (
-      <GlassBackground>
-        <SafeAreaView style={[styles.container, styles.center]}>
-          <ActivityIndicator size="large" color={palette.colors.primary} />
-        </SafeAreaView>
-      </GlassBackground>
-    );
+    return <SellerScreenSkeleton navigation={navigation} title="Seller Profile" subtitle="Loading account and verification" icon="person-circle-outline" variant="form" />;
   }
 
   const InfoRow = ({ icon, iconColor, label, value, badge, footer, action }) => (
@@ -210,29 +224,45 @@ export default function SellerProfileScreen({ navigation }) {
 
   return (
     <GlassBackground>
-      <SafeAreaView style={styles.container}>
-        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-          <GlassPanel variant="floating" style={styles.header}>
-            <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()} activeOpacity={0.7}>
-              <Ionicons name="arrow-back" size={22} color={palette.colors.text} />
-            </TouchableOpacity>
-            <View style={styles.headerCenter}>
-              <Text style={styles.headerTitle}>Seller Profile</Text>
-              <Text style={styles.headerSubtitle}>Account & verification details</Text>
-            </View>
-            <View style={styles.headerIcon}>
-              <Ionicons name="person-circle-outline" size={22} color={palette.colors.primary} />
-            </View>
-          </GlassPanel>
+      <SafeAreaView
+        style={styles.container}
+        edges={Platform.OS === 'android' ? [] : ['top']}
+      >
+        <SellerScreenHeader
+          navigation={navigation}
+          title="Seller Profile"
+          subtitle="Identity, contact, and verification"
+          icon="person-circle-outline"
+        />
 
-          <ScrollView
+          <KeyboardAwareFormScrollView
             contentContainerStyle={styles.scrollContent}
             showsVerticalScrollIndicator={false}
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={palette.colors.primary} />}
-            keyboardShouldPersistTaps="handled"
           >
+            {!!loadError && <SellerInlineError compact title="Profile unavailable" message={loadError} onRetry={fetchProfile} />}
+
+            {!!data && (
+              <GlassPanel variant="strong" style={styles.hero}>
+                <LinearGradient colors={['rgba(99,102,241,0.20)', 'rgba(14,165,233,0.08)', 'rgba(139,92,246,0.14)']} style={StyleSheet.absoluteFill} />
+                <View style={styles.avatar}>
+                  <Text style={styles.avatarText}>{String(data?.username || data?.email || 'S').slice(0, 1).toUpperCase()}</Text>
+                </View>
+                <View style={styles.heroCopy}>
+                  <Text style={styles.heroEyebrow}>SELLER ACCOUNT</Text>
+                  <Text style={styles.heroTitle} numberOfLines={1}>{data?.username || 'Rozare seller'}</Text>
+                  <View style={styles.heroBadge}>
+                    <Ionicons name={data?.isVerified ? 'shield-checkmark' : 'shield-outline'} size={13} color={data?.isVerified ? palette.colors.success : palette.colors.warning} />
+                    <Text style={[styles.heroBadgeText, { color: data?.isVerified ? palette.colors.success : palette.colors.warning }]}>{data?.isVerified ? 'Email verified' : 'Verification pending'}</Text>
+                  </View>
+                </View>
+              </GlassPanel>
+            )}
+
+            {!!data && (
+            <>
             <GlassPanel variant="card" style={styles.card}>
-              <Text style={styles.cardTitle}>Account Information</Text>
+              <SellerSectionHeader title="Account information" subtitle="Your protected seller identity" icon="shield-checkmark-outline" />
 
               <InfoRow icon="person-outline" iconColor={palette.colors.primary} label="Name" value={data?.username} />
 
@@ -249,6 +279,8 @@ export default function SellerProfileScreen({ navigation }) {
                       disabled={!!emCooldown}
                       style={[styles.actionBtn, emCooldown && { opacity: 0.4 }]}
                       activeOpacity={0.7}
+                      accessibilityRole="button"
+                      accessibilityLabel="Change seller email"
                     >
                       <Ionicons name="create-outline" size={14} color={palette.colors.primary} />
                       <Text style={styles.actionBtnText}>Change</Text>
@@ -273,6 +305,9 @@ export default function SellerProfileScreen({ navigation }) {
                         onChangeText={(t) => { setEmNew(t); setEmErr(''); }}
                         keyboardType="email-address"
                         autoCapitalize="none"
+                        autoComplete="email"
+                        textContentType="emailAddress"
+                        accessibilityLabel="New seller email address"
                       />
                       {emErr ? <Text style={styles.errText}>{emErr}</Text> : null}
                       <View style={styles.btnRow}>
@@ -295,16 +330,30 @@ export default function SellerProfileScreen({ navigation }) {
                         onChangeText={(t) => { setEmOtp(t.replace(/\D/g, '').slice(0, 6)); setEmErr(''); }}
                         keyboardType="number-pad"
                         maxLength={6}
+                        autoComplete="one-time-code"
+                        textContentType="oneTimeCode"
+                        accessibilityLabel="Email verification code"
                       />
-                      {emCountdown > 0 && (
-                        <Text style={styles.helpText}>Code expires in {formatCountdown(emCountdown)}</Text>
-                      )}
+                      <Text style={[styles.helpText, emTimer.isExpired && styles.errText]} accessibilityLiveRegion="polite">
+                        {emTimer.isExpired ? 'Code expired' : `Code expires in ${emTimer.expiryLabel}`}
+                      </Text>
+                      <TouchableOpacity
+                        style={[styles.resendBtn, (emBusy || !emTimer.canResend) && styles.disabled]}
+                        onPress={sendEmailOtp}
+                        disabled={emBusy || !emTimer.canResend}
+                        accessibilityRole="button"
+                      >
+                        <Ionicons name="refresh-outline" size={14} color={palette.colors.primary} />
+                        <Text style={styles.resendText}>
+                          {emTimer.canResend ? 'Resend code' : `Resend in ${formatOtpCountdown(emTimer.resendRemaining)}`}
+                        </Text>
+                      </TouchableOpacity>
                       {emErr ? <Text style={styles.errText}>{emErr}</Text> : null}
                       <View style={styles.btnRow}>
-                        <TouchableOpacity style={[styles.primaryBtn, { backgroundColor: palette.colors.success }]} onPress={verifyEmail} disabled={emBusy || emOtp.length !== 6} activeOpacity={0.8}>
+                        <TouchableOpacity style={[styles.primaryBtn, { backgroundColor: palette.colors.success }, (emBusy || emOtp.length !== 6 || emTimer.isExpired) && styles.disabled]} onPress={verifyEmail} disabled={emBusy || emOtp.length !== 6 || emTimer.isExpired} activeOpacity={0.8}>
                           {emBusy ? <ActivityIndicator color="#fff" size="small" /> : <Text style={styles.primaryBtnText}>Verify & Update</Text>}
                         </TouchableOpacity>
-                        <TouchableOpacity style={styles.secondaryBtn} onPress={() => { setEmOpen(false); setEmSent(false); setEmNew(''); setEmOtp(''); setEmErr(''); setEmCountdown(0); }} activeOpacity={0.8}>
+                        <TouchableOpacity style={styles.secondaryBtn} onPress={() => { setEmOpen(false); setEmSent(false); setEmNew(''); setEmOtp(''); setEmErr(''); emTimer.clear(); }} activeOpacity={0.8}>
                           <Text style={styles.secondaryBtnText}>Cancel</Text>
                         </TouchableOpacity>
                       </View>
@@ -327,6 +376,8 @@ export default function SellerProfileScreen({ navigation }) {
                       disabled={!!waCooldown}
                       style={[styles.actionBtn, waCooldown && { opacity: 0.4 }]}
                       activeOpacity={0.7}
+                      accessibilityRole="button"
+                      accessibilityLabel="Change seller WhatsApp number"
                     >
                       <Ionicons name="create-outline" size={14} color={palette.colors.primary} />
                       <Text style={styles.actionBtnText}>Change</Text>
@@ -343,13 +394,15 @@ export default function SellerProfileScreen({ navigation }) {
                   </View>
                   {!waSent ? (
                     <>
-                      <TextInput
-                        style={styles.input}
-                        placeholder="+1 555 123 4567"
-                        placeholderTextColor={palette.colors.textLight}
+                      <PhoneNumberInput
+                        label="New WhatsApp number"
                         value={waNew}
-                        onChangeText={(t) => { setWaNew(t); setWaErr(''); }}
-                        keyboardType="phone-pad"
+                        onChangeText={(value) => { setWaNew(value); setWaErr(''); }}
+                        defaultCountryCode={data?.sellerInfo?.countryCode}
+                        profileCountry={data?.sellerInfo?.country}
+                        helperText="The code will be delivered to this WhatsApp number."
+                        accessibilityLabel="New seller WhatsApp number"
+                        testID="seller-profile-whatsapp"
                       />
                       {waErr ? <Text style={styles.errText}>{waErr}</Text> : null}
                       <View style={styles.btnRow}>
@@ -372,16 +425,30 @@ export default function SellerProfileScreen({ navigation }) {
                         onChangeText={(t) => { setWaOtp(t.replace(/\D/g, '').slice(0, 6)); setWaErr(''); }}
                         keyboardType="number-pad"
                         maxLength={6}
+                        autoComplete="one-time-code"
+                        textContentType="oneTimeCode"
+                        accessibilityLabel="WhatsApp verification code"
                       />
-                      {waCountdown > 0 && (
-                        <Text style={styles.helpText}>Code expires in {formatCountdown(waCountdown)}</Text>
-                      )}
+                      <Text style={[styles.helpText, waTimer.isExpired && styles.errText]} accessibilityLiveRegion="polite">
+                        {waTimer.isExpired ? 'Code expired' : `Code expires in ${waTimer.expiryLabel}`}
+                      </Text>
+                      <TouchableOpacity
+                        style={[styles.resendBtn, (waBusy || !waTimer.canResend) && styles.disabled]}
+                        onPress={sendWhatsAppOtp}
+                        disabled={waBusy || !waTimer.canResend}
+                        accessibilityRole="button"
+                      >
+                        <Ionicons name="refresh-outline" size={14} color={palette.colors.primary} />
+                        <Text style={styles.resendText}>
+                          {waTimer.canResend ? 'Resend code' : `Resend in ${formatOtpCountdown(waTimer.resendRemaining)}`}
+                        </Text>
+                      </TouchableOpacity>
                       {waErr ? <Text style={styles.errText}>{waErr}</Text> : null}
                       <View style={styles.btnRow}>
-                        <TouchableOpacity style={[styles.primaryBtn, { backgroundColor: palette.colors.success }]} onPress={verifyWhatsApp} disabled={waBusy || waOtp.length !== 6} activeOpacity={0.8}>
+                        <TouchableOpacity style={[styles.primaryBtn, { backgroundColor: palette.colors.success }, (waBusy || waOtp.length !== 6 || waTimer.isExpired) && styles.disabled]} onPress={verifyWhatsApp} disabled={waBusy || waOtp.length !== 6 || waTimer.isExpired} activeOpacity={0.8}>
                           {waBusy ? <ActivityIndicator color="#fff" size="small" /> : <Text style={styles.primaryBtnText}>Verify & Update</Text>}
                         </TouchableOpacity>
-                        <TouchableOpacity style={styles.secondaryBtn} onPress={() => { setWaOpen(false); setWaSent(false); setWaNew(''); setWaOtp(''); setWaErr(''); setWaCountdown(0); }} activeOpacity={0.8}>
+                        <TouchableOpacity style={styles.secondaryBtn} onPress={() => { setWaOpen(false); setWaSent(false); setWaNew(''); setWaOtp(''); setWaErr(''); waTimer.clear(); }} activeOpacity={0.8}>
                           <Text style={styles.secondaryBtnText}>Cancel</Text>
                         </TouchableOpacity>
                       </View>
@@ -395,32 +462,33 @@ export default function SellerProfileScreen({ navigation }) {
             </GlassPanel>
 
             <GlassPanel variant="card" style={styles.card}>
-              <Text style={styles.cardTitle}>Quick Actions</Text>
-              <TouchableOpacity style={styles.linkRow} onPress={() => navigation.navigate('SellerStoreSettings')} activeOpacity={0.7}>
+              <SellerSectionHeader title="Account shortcuts" subtitle="Continue managing your business" icon="grid-outline" />
+              <TouchableOpacity style={styles.linkRow} onPress={() => navigation.navigate('SellerStoreSettings')} activeOpacity={0.7} accessibilityRole="button" accessibilityLabel="Open store settings">
                 <Ionicons name="storefront-outline" size={18} color={palette.colors.primary} />
                 <Text style={styles.linkText}>Store Settings</Text>
                 <Ionicons name="chevron-forward" size={16} color={palette.colors.textSecondary} />
               </TouchableOpacity>
-              <TouchableOpacity style={styles.linkRow} onPress={() => navigation.navigate('SellerWhatsAppSettings')} activeOpacity={0.7}>
+              <TouchableOpacity style={styles.linkRow} onPress={() => navigation.navigate('SellerWhatsAppSettings')} activeOpacity={0.7} accessibilityRole="button" accessibilityLabel="Open WhatsApp settings">
                 <Ionicons name="logo-whatsapp" size={18} color="#22C55E" />
                 <Text style={styles.linkText}>WhatsApp Settings</Text>
                 <Ionicons name="chevron-forward" size={16} color={palette.colors.textSecondary} />
               </TouchableOpacity>
-              <TouchableOpacity style={styles.linkRow} onPress={() => navigation.navigate('SellerSubscription')} activeOpacity={0.7}>
+              <TouchableOpacity style={styles.linkRow} onPress={() => navigation.navigate('SellerSubscription')} activeOpacity={0.7} accessibilityRole="button" accessibilityLabel="Open subscription plan">
                 <Ionicons name="diamond-outline" size={18} color="#8b5cf6" />
                 <Text style={styles.linkText}>Subscription Plan</Text>
                 <Ionicons name="chevron-forward" size={16} color={palette.colors.textSecondary} />
               </TouchableOpacity>
-              <TouchableOpacity style={[styles.linkRow, { borderBottomWidth: 0 }]} onPress={() => navigation.navigate('EditProfile')} activeOpacity={0.7}>
+              <TouchableOpacity style={[styles.linkRow, { borderBottomWidth: 0 }]} onPress={() => navigation.navigate('EditProfile')} activeOpacity={0.7} accessibilityRole="button" accessibilityLabel="Edit display name and photo">
                 <Ionicons name="person-outline" size={18} color={palette.colors.info} />
                 <Text style={styles.linkText}>Edit Display Name & Photo</Text>
                 <Ionicons name="chevron-forward" size={16} color={palette.colors.textSecondary} />
               </TouchableOpacity>
             </GlassPanel>
+            </>
+            )}
 
             <View style={{ height: 100 }} />
-          </ScrollView>
-        </KeyboardAvoidingView>
+          </KeyboardAwareFormScrollView>
       </SafeAreaView>
     </GlassBackground>
   );
@@ -428,16 +496,16 @@ export default function SellerProfileScreen({ navigation }) {
 
 const buildStyles = (p) => StyleSheet.create({
   container: { flex: 1 },
-  center: { justifyContent: 'center', alignItems: 'center' },
-  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing.lg, paddingVertical: spacing.lg, marginHorizontal: spacing.md, marginTop: spacing.sm },
-  backBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.15)', justifyContent: 'center', alignItems: 'center' },
-  headerCenter: { flex: 1, marginLeft: spacing.md },
-  headerTitle: { fontSize: fontSize.xxl, fontWeight: fontWeight.bold, color: p.colors.text },
-  headerSubtitle: { fontSize: fontSize.sm, color: p.colors.textSecondary, marginTop: 2 },
-  headerIcon: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.15)', justifyContent: 'center', alignItems: 'center' },
-  scrollContent: { paddingHorizontal: spacing.md, paddingTop: spacing.md },
+  scrollContent: { paddingHorizontal: spacing.lg, paddingTop: spacing.md },
+  hero: { minHeight: 126, flexDirection: 'row', alignItems: 'center', gap: spacing.lg, overflow: 'hidden', padding: spacing.xl, marginBottom: spacing.md },
+  avatar: { width: 62, height: 62, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: p.colors.primary, borderWidth: 1, borderColor: 'rgba(255,255,255,0.62)', ...shadows.md },
+  avatarText: { color: '#fff', fontSize: fontSize.xxl, fontWeight: fontWeight.extrabold },
+  heroCopy: { flex: 1, minWidth: 0 },
+  heroEyebrow: { fontSize: 9, letterSpacing: 1, fontWeight: fontWeight.extrabold, color: p.colors.primary },
+  heroTitle: { marginTop: 3, ...typography.h4, color: p.colors.text },
+  heroBadge: { alignSelf: 'flex-start', minHeight: 26, flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: spacing.sm, paddingHorizontal: 9, borderRadius: borderRadius.full, backgroundColor: p.glass.bgSubtle },
+  heroBadgeText: { fontSize: 10, fontWeight: fontWeight.bold },
   card: { padding: spacing.lg, marginBottom: spacing.md },
-  cardTitle: { fontSize: fontSize.lg, fontWeight: fontWeight.bold, color: p.colors.text, marginBottom: spacing.md },
   infoRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.md, paddingVertical: spacing.md, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: p.glass.borderSubtle },
   infoIcon: { width: 36, height: 36, borderRadius: borderRadius.lg, justifyContent: 'center', alignItems: 'center' },
   infoLabel: { fontSize: 11, fontWeight: fontWeight.semibold, color: p.colors.textSecondary, textTransform: 'uppercase', letterSpacing: 0.5 },
@@ -454,11 +522,14 @@ const buildStyles = (p) => StyleSheet.create({
   otpInput: { textAlign: 'center', letterSpacing: 8, fontWeight: fontWeight.bold, fontSize: fontSize.lg },
   errText: { fontSize: fontSize.xs, color: p.colors.error },
   helpText: { fontSize: fontSize.xs, color: p.colors.textSecondary, textAlign: 'center' },
+  resendBtn: { minHeight: 36, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, borderRadius: borderRadius.md, backgroundColor: p.colors.primarySubtle },
+  resendText: { fontSize: fontSize.xs, fontWeight: fontWeight.bold, color: p.colors.primary },
   btnRow: { flexDirection: 'row', gap: spacing.sm },
   primaryBtn: { flex: 1, backgroundColor: p.colors.primary, borderRadius: borderRadius.md, paddingVertical: spacing.sm, alignItems: 'center' },
   primaryBtnText: { fontSize: fontSize.sm, fontWeight: fontWeight.bold, color: p.colors.white },
   secondaryBtn: { paddingHorizontal: spacing.lg, paddingVertical: spacing.sm, borderRadius: borderRadius.md, backgroundColor: 'rgba(255,255,255,0.08)', alignItems: 'center', justifyContent: 'center' },
   secondaryBtnText: { fontSize: fontSize.sm, fontWeight: fontWeight.semibold, color: p.colors.textSecondary },
+  disabled: { opacity: 0.52 },
   linkRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingVertical: spacing.md, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: p.glass.borderSubtle },
   linkText: { flex: 1, fontSize: fontSize.md, fontWeight: fontWeight.medium, color: p.colors.text },
 });

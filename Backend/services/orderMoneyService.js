@@ -6,7 +6,7 @@ const roundMoney = (value) => {
   return Math.round(amount * 100) / 100;
 };
 
-const toId = (value) => value?.toString?.() || String(value || '');
+const toId = (value) => value?._id?.toString?.() || value?.toString?.() || String(value || '');
 
 const getOrderCurrency = (order, fallbackCurrency = 'USD') =>
   normalizeCurrency(order?.currency || order?.displayCurrency || order?.orderCurrency || fallbackCurrency);
@@ -33,6 +33,15 @@ const lineTotal = (item) =>
 const buildIdSet = (ids) =>
   ids instanceof Set ? ids : new Set((ids || []).map(toId));
 
+// Order item seller snapshots are immutable ownership evidence. The current
+// product owner is only a compatibility fallback for legacy lines that were
+// created before seller snapshots were stored.
+const itemBelongsToSeller = (item, sellerId, sellerProductIds = []) => {
+  const snapshotSellerId = toId(item?.seller);
+  if (snapshotSellerId) return snapshotSellerId === toId(sellerId);
+  return buildIdSet(sellerProductIds).has(toId(item?.productId));
+};
+
 const orderItemsSubtotal = (order, predicate = () => true) =>
   (order?.orderItems || []).reduce((sum, item) => (
     predicate(item) ? sum + lineTotal(item) : sum
@@ -51,15 +60,23 @@ const convertOrderAmount = async (order, amount, targetCurrency = 'USD') =>
 const convertOrderTotal = async (order, targetCurrency = 'USD') =>
   convertOrderAmount(order, Number(order?.orderSummary?.totalAmount) || 0, targetCurrency);
 
-const sellerOrderSubtotal = (order, sellerProductIds) => {
+const sellerOrderSubtotal = (order, sellerProductIds, sellerId) => {
   const idSet = buildIdSet(sellerProductIds);
-  return orderItemsSubtotal(order, item => idSet.has(toId(item.productId)));
+  return orderItemsSubtotal(order, item => (
+    sellerId
+      ? itemBelongsToSeller(item, sellerId, idSet)
+      : idSet.has(toId(item?.productId))
+  ));
 };
 
-const sellerOrderUnits = (order, sellerProductIds) => {
+const sellerOrderUnits = (order, sellerProductIds, sellerId) => {
   const idSet = buildIdSet(sellerProductIds);
   return (order?.orderItems || []).reduce((sum, item) => (
-    idSet.has(toId(item.productId)) ? sum + (Number(item.quantity) || 0) : sum
+    (sellerId
+      ? itemBelongsToSeller(item, sellerId, idSet)
+      : idSet.has(toId(item?.productId)))
+      ? sum + (Number(item.quantity) || 0)
+      : sum
   ), 0);
 };
 
@@ -71,7 +88,7 @@ const sellerShippingAmount = (order, sellerId) => {
 };
 
 const sellerOrderSummary = (order, sellerProductIds, sellerId) => {
-  const subtotal = sellerOrderSubtotal(order, sellerProductIds);
+  const subtotal = sellerOrderSubtotal(order, sellerProductIds, sellerId);
   const totalOrderSubtotal = orderSubtotal(order);
   const sellerProportion = totalOrderSubtotal > 0 ? subtotal / totalOrderSubtotal : 0;
   const tax = (Number(order?.orderSummary?.tax) || 0) * sellerProportion;
@@ -107,6 +124,7 @@ module.exports = {
   getRequestedCurrency,
   resolveRequestedCurrency,
   lineTotal,
+  itemBelongsToSeller,
   orderItemsSubtotal,
   orderSubtotal,
   convertOrderAmount,

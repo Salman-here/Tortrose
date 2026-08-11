@@ -2,23 +2,32 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Platform,
   RefreshControl,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import Feedback from '../../utils/feedback';
 import api, { API_ENDPOINTS } from '../../config/api';
 import GlassBackground from '../../components/common/GlassBackground';
 import GlassPanel from '../../components/common/GlassPanel';
-import Loader from '../../components/common/Loader';
+import KeyboardAwareFormScrollView from '../../components/common/KeyboardAwareFormScrollView';
+import {
+  SellerEmptyState,
+  SellerInlineError,
+  SellerScreenHeader,
+  SellerScreenSkeleton,
+  SellerSectionHeader,
+} from '../../components/seller/SellerUI';
 import { useCurrency } from '../../contexts/CurrencyContext';
 import { useTheme } from '../../contexts/ThemeContext';
-import { borderRadius, fontSize, fontWeight, spacing, typography } from '../../styles/theme';
+import { borderRadius, fontSize, fontWeight, shadows, spacing, typography } from '../../styles/theme';
 
 const defaultAccountForm = {
   accountHolderName: '',
@@ -64,6 +73,7 @@ export default function SellerPaymentsScreen({ navigation }) {
   const [savingAccount, setSavingAccount] = useState(false);
   const [requesting, setRequesting] = useState(false);
   const [summary, setSummary] = useState(null);
+  const [loadError, setLoadError] = useState('');
   const [showAccountForm, setShowAccountForm] = useState(false);
   const [accountForm, setAccountForm] = useState(defaultAccountForm);
   const [withdrawAmount, setWithdrawAmount] = useState('');
@@ -74,6 +84,7 @@ export default function SellerPaymentsScreen({ navigation }) {
       const next = res.data || {};
       const account = next.paymentAccount;
       setSummary(next);
+      setLoadError('');
       setAccountForm({
         ...defaultAccountForm,
         accountHolderName: account?.accountHolderName || '',
@@ -86,7 +97,7 @@ export default function SellerPaymentsScreen({ navigation }) {
         iban: '',
       });
     } catch (error) {
-      Alert.alert('Payments', error.response?.data?.msg || 'Failed to load payments');
+      setLoadError(error.response?.data?.msg || 'We could not load your live payment summary.');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -188,38 +199,60 @@ export default function SellerPaymentsScreen({ navigation }) {
   };
 
   if (loading) {
-    return (
-      <GlassBackground>
-        <Loader fullScreen message="Loading payments..." />
-      </GlassBackground>
-    );
+    return <SellerScreenSkeleton navigation={navigation} title="Payments & Revenue" subtitle="Loading balances and payouts" icon="wallet-outline" variant="dashboard" />;
   }
 
   return (
     <GlassBackground>
-      <ScrollView
-        contentContainerStyle={styles.scroll}
-        showsVerticalScrollIndicator={false}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={palette.colors.primary} />}
+      <SafeAreaView
+        style={styles.safeArea}
+        edges={Platform.OS === 'android' ? [] : ['top']}
       >
-        <GlassPanel variant="floating" style={styles.header}>
-          <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()} activeOpacity={0.8}>
-            <Ionicons name="arrow-back" size={20} color={palette.colors.text} />
-          </TouchableOpacity>
-          <View style={styles.headerIcon}>
-            <Ionicons name="wallet-outline" size={22} color="white" />
+        <SellerScreenHeader
+          navigation={navigation}
+          title="Payments & Revenue"
+          subtitle="Balances, payout account, and withdrawals"
+          icon="wallet-outline"
+          rightIcon="refresh-outline"
+          rightLabel="Refresh"
+          onRightPress={fetchSummary}
+        />
+        <KeyboardAwareFormScrollView
+          contentContainerStyle={styles.scroll}
+          bottomOffset={32}
+          showsVerticalScrollIndicator={false}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={palette.colors.primary} />}
+          keyboardShouldPersistTaps="handled"
+        >
+        {!!loadError && (
+          <SellerInlineError
+            compact
+            title="Payment summary unavailable"
+            message={loadError}
+            onRetry={fetchSummary}
+          />
+        )}
+
+        {!!summary && (
+        <>
+        <GlassPanel variant="strong" style={styles.hero}>
+          <LinearGradient
+            colors={['rgba(99,102,241,0.22)', 'rgba(14,165,233,0.10)', 'rgba(16,185,129,0.12)']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={StyleSheet.absoluteFill}
+            pointerEvents="none"
+          />
+          <View style={styles.heroIcon}><Ionicons name="wallet" size={24} color="#fff" /></View>
+          <View style={styles.heroCopy}>
+            <Text style={styles.heroEyebrow}>AVAILABLE TO WITHDRAW</Text>
+            <Text style={styles.heroValue} numberOfLines={1} adjustsFontSizeToFit>{formatPrice(revenue.withdrawableBalance || 0)}</Text>
+            <Text style={styles.heroText}>Delivered card and Rozare Wallet revenue after payout reservations and return-refund debits.</Text>
           </View>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.title}>Payments & Revenue</Text>
-            <Text style={styles.subtitle}>Stripe balance, COD revenue, and withdrawals</Text>
-          </View>
-          <TouchableOpacity style={styles.iconButton} onPress={fetchSummary} activeOpacity={0.8}>
-            <Ionicons name="refresh-outline" size={18} color={palette.colors.primary} />
-          </TouchableOpacity>
         </GlassPanel>
 
         <View style={styles.statsGrid}>
-          <StatCard styles={styles} icon="wallet-outline" label="Withdrawable" value={formatPrice(revenue.withdrawableBalance || 0)} description="Delivered Stripe orders minus withdrawals" color={palette.colors.success} />
+          <StatCard styles={styles} icon="card-outline" label="Online delivered" value={formatPrice((revenue.stripeDeliveredRevenue || 0) + (revenue.walletDeliveredRevenue || 0))} description="Delivered card and Wallet revenue" color={palette.colors.success} />
           <StatCard styles={styles} icon="cash-outline" label="Delivered COD" value={formatPrice(revenue.codDeliveredRevenue || 0)} description="Collected directly from buyers" color={palette.colors.warning} />
           <StatCard styles={styles} icon="trending-up-outline" label="Delivered Total" value={formatPrice(revenue.totalDeliveredRevenue || 0)} description="Stripe plus COD delivered revenue" color={palette.colors.primary} />
           <StatCard styles={styles} icon="time-outline" label="Estimated" value={formatPrice(revenue.estimatedRevenue || 0)} description="Delivered plus pending revenue" color={palette.colors.info} />
@@ -227,13 +260,12 @@ export default function SellerPaymentsScreen({ navigation }) {
 
         <GlassPanel variant="card" style={styles.section}>
           <View style={styles.sectionHeader}>
-            <View>
-              <Text style={styles.sectionTitle}>Bank Account</Text>
-              <Text style={styles.sectionSubtitle}>Used for manual payouts</Text>
+            <View style={styles.sectionHeading}>
+              <SellerSectionHeader title="Payout account" subtitle="Where approved withdrawals are sent" icon="business-outline" />
             </View>
             <TouchableOpacity style={styles.secondaryButton} onPress={() => setShowAccountForm((value) => !value)} activeOpacity={0.8}>
               <Ionicons name="business-outline" size={14} color={palette.colors.primary} />
-              <Text style={styles.secondaryButtonText}>{paymentAccount ? 'Update' : 'Add'}</Text>
+              <Text style={styles.secondaryButtonText}>{showAccountForm ? 'Hide' : paymentAccount ? 'Update' : 'Add'}</Text>
             </TouchableOpacity>
           </View>
 
@@ -258,11 +290,12 @@ export default function SellerPaymentsScreen({ navigation }) {
 
           {showAccountForm && (
             <View style={styles.form}>
-              <Field styles={styles} label="Account holder name" value={accountForm.accountHolderName} onChangeText={(value) => updateAccountField('accountHolderName', value)} />
-              <Field styles={styles} label="Bank name" value={accountForm.bankName} onChangeText={(value) => updateAccountField('bankName', value)} />
-              <Field styles={styles} label="Account number" value={accountForm.accountNumber} onChangeText={(value) => updateAccountField('accountNumber', value)} placeholder={paymentAccount?.maskedAccountNumber || 'Enter account number'} keyboardType="number-pad" />
-              <Field styles={styles} label="IBAN" value={accountForm.iban} onChangeText={(value) => updateAccountField('iban', value)} placeholder={paymentAccount?.maskedIban || 'Optional IBAN'} autoCapitalize="characters" />
-              <Field styles={styles} label="Country" value={accountForm.country} onChangeText={(value) => updateAccountField('country', value)} />
+              <Field styles={styles} label="Account holder name" value={accountForm.accountHolderName} onChangeText={(value) => updateAccountField('accountHolderName', value)} accessibilityLabel="Account holder name" />
+              <Field styles={styles} label="Bank name" value={accountForm.bankName} onChangeText={(value) => updateAccountField('bankName', value)} accessibilityLabel="Bank name" />
+              <Field styles={styles} label="Account number" value={accountForm.accountNumber} onChangeText={(value) => updateAccountField('accountNumber', value)} placeholder={paymentAccount?.maskedAccountNumber || 'Enter account number'} keyboardType="number-pad" accessibilityLabel="Bank account number" />
+              <Field styles={styles} label="IBAN" value={accountForm.iban} onChangeText={(value) => updateAccountField('iban', value.toUpperCase())} placeholder={paymentAccount?.maskedIban || 'Optional IBAN'} autoCapitalize="characters" accessibilityLabel="IBAN" />
+              <Field styles={styles} label="SWIFT / BIC" value={accountForm.swiftCode} onChangeText={(value) => updateAccountField('swiftCode', value.toUpperCase())} placeholder="Optional SWIFT code" autoCapitalize="characters" accessibilityLabel="SWIFT or BIC code" />
+              <Field styles={styles} label="Country" value={accountForm.country} onChangeText={(value) => updateAccountField('country', value)} accessibilityLabel="Payout bank country" />
               <Text style={styles.inputLabel}>Payout currency</Text>
               <View style={styles.currencyGrid}>
                 {Object.keys(currencies).map((code) => (
@@ -271,12 +304,15 @@ export default function SellerPaymentsScreen({ navigation }) {
                     style={[styles.currencyChip, accountForm.currency === code && styles.currencyChipActive]}
                     onPress={() => updateAccountField('currency', code)}
                     activeOpacity={0.8}
+                    accessibilityRole="radio"
+                    accessibilityState={{ checked: accountForm.currency === code }}
+                    accessibilityLabel={`Payout currency ${code}`}
                   >
                     <Text style={[styles.currencyChipText, accountForm.currency === code && styles.currencyChipTextActive]}>{code}</Text>
                   </TouchableOpacity>
                 ))}
               </View>
-              <Field styles={styles} label="Payout instructions" value={accountForm.payoutInstructions} onChangeText={(value) => updateAccountField('payoutInstructions', value)} placeholder="Optional transfer details" multiline />
+              <Field styles={styles} label="Payout instructions" value={accountForm.payoutInstructions} onChangeText={(value) => updateAccountField('payoutInstructions', value)} placeholder="Optional transfer details" multiline accessibilityLabel="Payout instructions" />
               <TouchableOpacity style={[styles.primaryButton, savingAccount && styles.disabledButton]} onPress={saveAccount} disabled={savingAccount} activeOpacity={0.85}>
                 {savingAccount ? <ActivityIndicator size="small" color="#fff" /> : <Ionicons name="checkmark-circle-outline" size={18} color="#fff" />}
                 <Text style={styles.primaryButtonText}>Save payment account</Text>
@@ -305,33 +341,57 @@ export default function SellerPaymentsScreen({ navigation }) {
                 keyboardType="decimal-pad"
                 placeholder="0.00"
                 placeholderTextColor={palette.colors.textSecondary}
+                accessibilityLabel={`Withdrawal amount in ${currency}`}
               />
             </View>
             <TouchableOpacity style={styles.fullButton} onPress={() => setWithdrawAmount(availableInCurrentCurrency.toFixed(2))} activeOpacity={0.8}>
               <Text style={styles.fullButtonText}>Full</Text>
             </TouchableOpacity>
           </View>
-          <TouchableOpacity style={[styles.primaryButton, requesting && styles.disabledButton]} onPress={requestWithdrawal} disabled={requesting} activeOpacity={0.85}>
+          <TouchableOpacity style={[styles.primaryButton, (requesting || !paymentAccount) && styles.disabledButton]} onPress={requestWithdrawal} disabled={requesting || !paymentAccount} activeOpacity={0.85} accessibilityRole="button">
             {requesting ? <ActivityIndicator size="small" color="#fff" /> : <Ionicons name="send-outline" size={18} color="#fff" />}
             <Text style={styles.primaryButtonText}>Send withdrawal request</Text>
           </TouchableOpacity>
         </GlassPanel>
 
         <GlassPanel variant="card" style={styles.section}>
-          <Text style={styles.sectionTitle}>Withdrawal History</Text>
-          {withdrawals.length === 0 ? (
-            <View style={styles.emptyState}>
-              <Ionicons name="wallet-outline" size={34} color={palette.colors.textSecondary} />
-              <Text style={styles.emptyText}>No withdrawal requests yet.</Text>
+          <SellerSectionHeader title="Balance details" subtitle="How your available amount is calculated" icon="calculator-outline" />
+          {[
+            ['Card delivered revenue', revenue.stripeDeliveredRevenue || 0, 'card-outline'],
+            ['Wallet delivered revenue', revenue.walletDeliveredRevenue || 0, 'wallet-outline'],
+            ['Pending online estimate', (revenue.stripePendingRevenue || 0) + (revenue.walletPendingRevenue || 0), 'hourglass-outline'],
+            ['Pending withdrawals', revenue.pendingWithdrawalAmount || 0, 'paper-plane-outline'],
+            ['Processing withdrawals', revenue.processingWithdrawalAmount || 0, 'sync-outline'],
+            ['Paid out', revenue.totalWithdrawn || 0, 'checkmark-done-outline'],
+            ['Return-refund reserve', revenue.returnRefundDebits || 0, 'return-down-back-outline'],
+            ['Pending COD estimate', revenue.codPendingRevenue || 0, 'cash-outline'],
+          ].map(([label, amount, icon], index, rows) => (
+            <View key={label} style={[styles.balanceRow, index === rows.length - 1 && styles.lastRow]}>
+              <View style={styles.balanceLabelRow}>
+                <Ionicons name={icon} size={16} color={palette.colors.textSecondary} />
+                <Text style={styles.balanceLabel}>{label}</Text>
+              </View>
+              <Text style={styles.balanceValue}>{formatPrice(amount)}</Text>
             </View>
+          ))}
+        </GlassPanel>
+
+        <GlassPanel variant="card" style={styles.section}>
+          <SellerSectionHeader title="Withdrawal history" subtitle="Every request and its current review status" icon="receipt-outline" />
+          {withdrawals.length === 0 ? (
+            <SellerEmptyState icon="wallet-outline" title="No withdrawals yet" message="Your first request will appear here with live status updates." />
           ) : (
             withdrawals.map((request) => (
               <View key={request._id} style={styles.withdrawalRow}>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.withdrawalAmount}>{formatPrice(request.amount || 0)}</Text>
                   <Text style={styles.withdrawalMeta}>
-                    {new Date(request.createdAt).toLocaleDateString()} - {request.paymentAccountSnapshot?.bankName || 'Bank account'}
+                    {new Date(request.createdAt).toLocaleDateString()} · {request.paymentAccountSnapshot?.bankName || 'Bank account'}
+                    {request.paymentAccountSnapshot?.accountNumberLast4 ? ` · •••• ${request.paymentAccountSnapshot.accountNumberLast4}` : ''}
                   </Text>
+                  {!!request.requestedCurrency && request.requestedCurrency !== 'USD' && Number.isFinite(Number(request.requestedAmount)) && (
+                    <Text style={styles.requestedAmount}>Requested as {Number(request.requestedAmount).toLocaleString()} {request.requestedCurrency}</Text>
+                  )}
                   {!!request.adminNote && <Text style={styles.adminNote}>Admin note: {request.adminNote}</Text>}
                 </View>
                 <View style={[styles.statusPill, { backgroundColor: `${statusColor(request.status, palette)}18` }]}>
@@ -341,7 +401,10 @@ export default function SellerPaymentsScreen({ navigation }) {
             ))
           )}
         </GlassPanel>
-      </ScrollView>
+        </>
+        )}
+      </KeyboardAwareFormScrollView>
+      </SafeAreaView>
     </GlassBackground>
   );
 }
@@ -359,21 +422,23 @@ const Field = ({ styles, label, multiline = false, ...props }) => (
 );
 
 const makeStyles = (p) => StyleSheet.create({
-  scroll: { padding: spacing.md, paddingBottom: spacing.xxl * 2 },
-  header: { flexDirection: 'row', alignItems: 'center', padding: spacing.md, marginBottom: spacing.md, gap: spacing.sm },
-  backButton: { width: 38, height: 38, borderRadius: 19, backgroundColor: p.glass.bgSubtle, justifyContent: 'center', alignItems: 'center' },
-  headerIcon: { width: 42, height: 42, borderRadius: 21, backgroundColor: p.colors.primary, justifyContent: 'center', alignItems: 'center' },
-  iconButton: { width: 38, height: 38, borderRadius: 19, backgroundColor: p.glass.bgSubtle, justifyContent: 'center', alignItems: 'center' },
-  title: { ...typography.h4, color: p.colors.text },
-  subtitle: { ...typography.caption, color: p.colors.textSecondary, marginTop: 2 },
+  safeArea: { flex: 1 },
+  scroll: { paddingHorizontal: spacing.lg, paddingTop: spacing.md, paddingBottom: spacing.xxl * 2 },
+  hero: { minHeight: 142, flexDirection: 'row', alignItems: 'center', gap: spacing.lg, overflow: 'hidden', padding: spacing.xl, marginBottom: spacing.md },
+  heroIcon: { width: 56, height: 56, borderRadius: 19, alignItems: 'center', justifyContent: 'center', backgroundColor: p.colors.primary, borderWidth: 1, borderColor: 'rgba(255,255,255,0.55)', ...shadows.md },
+  heroCopy: { flex: 1, minWidth: 0 },
+  heroEyebrow: { fontSize: 9, letterSpacing: 0.9, fontWeight: fontWeight.extrabold, color: p.colors.primary },
+  heroValue: { marginTop: 3, fontSize: fontSize.xxl, fontWeight: fontWeight.extrabold, color: p.colors.text },
+  heroText: { marginTop: 4, ...typography.caption, color: p.colors.textSecondary, lineHeight: 17 },
   statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginBottom: spacing.md },
-  statCard: { width: '48%', padding: spacing.md, minHeight: 142 },
+  statCard: { minWidth: 142, flexBasis: '47%', flexGrow: 1, padding: spacing.md, minHeight: 142 },
   statIcon: { width: 40, height: 40, borderRadius: 14, justifyContent: 'center', alignItems: 'center' },
   statValue: { fontSize: fontSize.lg, fontWeight: fontWeight.bold, color: p.colors.text, marginTop: spacing.sm },
   statLabel: { ...typography.caption, color: p.colors.textSecondary, textTransform: 'uppercase', marginTop: 2 },
   statDescription: { fontSize: 10, color: p.colors.textSecondary, marginTop: spacing.xs, lineHeight: 14 },
   section: { padding: spacing.lg, marginBottom: spacing.md },
-  sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: spacing.md, marginBottom: spacing.md },
+  sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: spacing.md },
+  sectionHeading: { flex: 1, minWidth: 0 },
   sectionTitle: { ...typography.bodySemibold, color: p.colors.text, fontSize: fontSize.lg },
   sectionSubtitle: { ...typography.caption, color: p.colors.textSecondary, marginTop: 2 },
   linkedAccount: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, backgroundColor: p.glass.bgSubtle, borderRadius: borderRadius.lg, padding: spacing.md },
@@ -402,9 +467,15 @@ const makeStyles = (p) => StyleSheet.create({
   fullButtonText: { ...typography.bodySemibold, color: p.colors.primary },
   emptyState: { alignItems: 'center', paddingVertical: spacing.xl },
   emptyText: { ...typography.bodySmall, color: p.colors.textSecondary, marginTop: spacing.sm },
+  balanceRow: { minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.md, paddingVertical: spacing.sm, borderBottomWidth: 1, borderBottomColor: p.glass.borderSubtle },
+  lastRow: { borderBottomWidth: 0 },
+  balanceLabelRow: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  balanceLabel: { ...typography.bodySmall, color: p.colors.textSecondary },
+  balanceValue: { ...typography.bodySemibold, color: p.colors.text },
   withdrawalRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.md, paddingVertical: spacing.md, borderBottomWidth: 1, borderBottomColor: p.glass.borderSubtle },
   withdrawalAmount: { ...typography.bodySemibold, color: p.colors.text },
   withdrawalMeta: { ...typography.caption, color: p.colors.textSecondary, marginTop: 2 },
+  requestedAmount: { ...typography.caption, color: p.colors.primary, marginTop: 3 },
   adminNote: { ...typography.caption, color: p.colors.text, marginTop: spacing.xs },
   statusPill: { paddingHorizontal: spacing.sm, paddingVertical: spacing.xs, borderRadius: borderRadius.full },
   statusText: { ...typography.caption, fontWeight: fontWeight.bold, textTransform: 'capitalize' },

@@ -1,29 +1,30 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
 
   Linking,
-  Platform,
   RefreshControl,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
-import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import Feedback from '../utils/feedback';
 import api, { API_ENDPOINTS } from '../config/api';
 import GlassBackground from '../components/common/GlassBackground';
 import GlassPanel from '../components/common/GlassPanel';
+import KeyboardAwareFormScrollView from '../components/common/KeyboardAwareFormScrollView';
 import Loader from '../components/common/Loader';
 import PremiumBackHeader from '../components/common/PremiumBackHeader';
+import PhoneNumberInput from '../components/common/PhoneNumberInput';
 import { useTheme } from '../contexts/ThemeContext';
 import { borderRadius, fontSize, fontWeight, spacing, typography } from '../styles/theme';
+import { isValidPhoneNumber } from '../utils/phoneNumber';
+import useOtpCountdown from '../hooks/useOtpCountdown';
 
 const maskNumber = (value) => {
   if (!value) return 'Not linked';
@@ -32,12 +33,9 @@ const maskNumber = (value) => {
   return `${text.slice(0, 3)}${'*'.repeat(Math.max(3, text.length - 7))}${text.slice(-4)}`;
 };
 
-const isValidPhone = (value) => /^\+?[1-9]\d{7,14}$/.test(String(value || '').replace(/\s+/g, ''));
-
 export default function UserWhatsAppSettingsScreen({ navigation }) {
   const { palette } = useTheme();
   const styles = makeStyles(palette);
-  const cooldownRef = useRef(null);
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -48,8 +46,9 @@ export default function UserWhatsAppSettingsScreen({ navigation }) {
   const [sending, setSending] = useState(false);
   const [verifying, setVerifying] = useState(false);
   const [unlinking, setUnlinking] = useState(false);
-  const [cooldown, setCooldown] = useState(0);
   const [inlineNotice, setInlineNotice] = useState(null);
+  const otpTimer = useOtpCountdown({ expirySeconds: 120, resendSeconds: 30 });
+  const cooldown = otpTimer.resendRemaining;
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -67,9 +66,6 @@ export default function UserWhatsAppSettingsScreen({ navigation }) {
 
   useEffect(() => {
     fetchStatus();
-    return () => {
-      if (cooldownRef.current) clearInterval(cooldownRef.current);
-    };
   }, [fetchStatus]);
 
   const onRefresh = useCallback(() => {
@@ -78,22 +74,16 @@ export default function UserWhatsAppSettingsScreen({ navigation }) {
   }, [fetchStatus]);
 
   const startCooldown = () => {
-    if (cooldownRef.current) clearInterval(cooldownRef.current);
-    setCooldown(60);
-    cooldownRef.current = setInterval(() => {
-      setCooldown((previous) => {
-        if (previous <= 1) {
-          clearInterval(cooldownRef.current);
-          return 0;
-        }
-        return previous - 1;
-      });
-    }, 1000);
+    otpTimer.start();
   };
 
   const sendOtp = async () => {
+    if (otpSent && !otpTimer.canResend) {
+      setInlineNotice({ type: 'error', text: `You can request another code in ${otpTimer.resendRemaining} seconds.` });
+      return;
+    }
     const normalized = number.replace(/\s+/g, '');
-    if (!isValidPhone(normalized)) {
+    if (!isValidPhoneNumber(normalized)) {
       setInlineNotice({ type: 'error', text: 'Enter a valid WhatsApp number with country code, for example +923001234567.' });
       return;
     }
@@ -118,6 +108,10 @@ export default function UserWhatsAppSettingsScreen({ navigation }) {
       setInlineNotice({ type: 'error', text: 'Enter the complete 6-digit verification code.' });
       return;
     }
+    if (otpTimer.isExpired) {
+      setInlineNotice({ type: 'error', text: 'This verification code has expired. Request a new code.' });
+      return;
+    }
     setInlineNotice(null);
     setVerifying(true);
     try {
@@ -125,6 +119,7 @@ export default function UserWhatsAppSettingsScreen({ navigation }) {
       Feedback.show({ type: 'success', text1: res.data?.msg || 'WhatsApp connected' });
       setOtpSent(false);
       setOtp('');
+      otpTimer.clear();
       await fetchStatus();
     } catch (error) {
       setInlineNotice({ type: 'error', text: error.response?.data?.msg || 'That verification code is not valid.' });
@@ -146,6 +141,7 @@ export default function UserWhatsAppSettingsScreen({ navigation }) {
             Feedback.show({ type: 'success', text1: 'WhatsApp number unlinked' });
             setOtpSent(false);
             setOtp('');
+            otpTimer.clear();
             await fetchStatus();
           } catch (error) {
             setInlineNotice({ type: 'error', text: error.response?.data?.msg || 'We could not unlink WhatsApp.' });
@@ -194,12 +190,9 @@ export default function UserWhatsAppSettingsScreen({ navigation }) {
         rightLabel={verified ? 'Linked' : 'Private'}
         onBack={() => navigation.goBack()}
       />
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding" keyboardVerticalOffset={0}>
-        <ScrollView
+      <KeyboardAwareFormScrollView
           contentContainerStyle={styles.scroll}
           showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={palette.colors.primary} />}
         >
           <GlassPanel variant="strong" style={styles.hero}>
@@ -277,22 +270,18 @@ export default function UserWhatsAppSettingsScreen({ navigation }) {
               </View>
             </View>
 
-            <Text style={styles.inputLabel}>WhatsApp number</Text>
-            <TextInput
-              style={styles.input}
+            <PhoneNumberInput
+              label="WhatsApp number"
               value={number}
               onChangeText={(value) => { setNumber(value); setOtpSent(false); }}
-              placeholder="+923001234567"
-              placeholderTextColor={palette.colors.textSecondary}
-              keyboardType="phone-pad"
-              textContentType="telephoneNumber"
-              autoComplete="tel"
+              helperText="Used for AI shopping and personal order updates."
+              testID="buyer-whatsapp-number"
             />
 
             <TouchableOpacity
-              style={[styles.primaryButton, (sending || cooldown > 0 || !isValidPhone(number)) && styles.disabledButton]}
+              style={[styles.primaryButton, (sending || cooldown > 0 || !isValidPhoneNumber(number)) && styles.disabledButton]}
               onPress={sendOtp}
-              disabled={sending || cooldown > 0 || !isValidPhone(number)}
+              disabled={sending || cooldown > 0 || !isValidPhoneNumber(number)}
               activeOpacity={0.85}
             >
               {sending ? <ActivityIndicator size="small" color="#fff" /> : <Ionicons name={cooldown > 0 ? 'refresh-outline' : 'send-outline'} size={18} color="#fff" />}
@@ -311,12 +300,15 @@ export default function UserWhatsAppSettingsScreen({ navigation }) {
                   keyboardType="number-pad"
                   maxLength={6}
                 />
+                <Text style={[styles.otpExpiry, otpTimer.expiryRemaining <= 30 && styles.otpExpiryUrgent]}>
+                  {otpTimer.isExpired ? 'Code expired. Request a new one.' : `Code expires in ${otpTimer.expiryLabel}`}
+                </Text>
                 <View style={styles.otpActions}>
-                  <TouchableOpacity style={[styles.primaryButton, styles.flexButton, (verifying || otp.length !== 6) && styles.disabledButton]} onPress={verifyOtp} disabled={verifying || otp.length !== 6} activeOpacity={0.85}>
+                  <TouchableOpacity style={[styles.primaryButton, styles.flexButton, (verifying || otp.length !== 6 || otpTimer.isExpired) && styles.disabledButton]} onPress={verifyOtp} disabled={verifying || otp.length !== 6 || otpTimer.isExpired} activeOpacity={0.85}>
                     {verifying ? <ActivityIndicator size="small" color="#fff" /> : <Ionicons name="checkmark-circle-outline" size={18} color="#fff" />}
                     <Text style={styles.primaryButtonText}>Verify</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity style={[styles.secondaryButton, styles.flexButton]} onPress={() => { setOtpSent(false); setOtp(''); }} activeOpacity={0.8}>
+                  <TouchableOpacity style={[styles.secondaryButton, styles.flexButton]} onPress={() => { setOtpSent(false); setOtp(''); otpTimer.clear(); }} activeOpacity={0.8}>
                     <Text style={styles.secondaryButtonText}>Cancel</Text>
                   </TouchableOpacity>
                 </View>
@@ -367,8 +359,7 @@ export default function UserWhatsAppSettingsScreen({ navigation }) {
               </TouchableOpacity>
             </View>
           </GlassPanel>
-        </ScrollView>
-      </KeyboardAvoidingView>
+      </KeyboardAwareFormScrollView>
     </GlassBackground>
   );
 }
@@ -404,6 +395,8 @@ const makeStyles = (p) => StyleSheet.create({
   otpBox: { marginTop: spacing.md, padding: spacing.md, borderRadius: borderRadius.lg, backgroundColor: p.glass.bgSubtle, borderWidth: 1, borderColor: p.glass.borderSubtle },
   otpTitle: { ...typography.bodySmall, color: p.colors.text, marginBottom: spacing.sm },
   otpInput: { fontSize: 22, textAlign: 'center', letterSpacing: 8, fontWeight: fontWeight.bold },
+  otpExpiry: { marginBottom: spacing.sm, color: p.colors.textSecondary, fontSize: fontSize.xs, fontWeight: fontWeight.semibold, textAlign: 'center' },
+  otpExpiryUrgent: { color: p.colors.error },
   otpActions: { flexDirection: 'row', gap: spacing.sm },
   flexButton: { flex: 1 },
   secondaryButton: { alignItems: 'center', justifyContent: 'center', minHeight: 48, borderRadius: borderRadius.lg, backgroundColor: p.glass.bg, borderWidth: 1, borderColor: p.glass.borderSubtle },

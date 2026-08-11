@@ -4,13 +4,19 @@
  * Extracted from NotificationsScreen.js so the screen stays focused on layout.
  */
 
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { LayoutAnimation } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
 import { impact as hapticImpact, notify as hapticNotify } from '../utils/haptics';
 import api from '../config/api';
 import { getNotificationsModule } from '../utils/notificationRuntime';
+import {
+  getNotificationIdentity,
+  getNotificationStorageKeys,
+  normalizeNotificationRole,
+  scopeNotificationsForRole,
+} from '../utils/notificationScope';
 
 const Notifications = getNotificationsModule();
 
@@ -19,9 +25,10 @@ export const NOTIF_READ_KEY = 'notifications_read_ids';
 
 export function categorizeNotification(type) {
   if (!type) return 'system';
+  if (type === 'new_order_received' || type === 'order_confirmed_by_buyer' || type === 'order_cancelled_by_buyer' || type === 'return_requested' || type === 'low_stock' || type === 'store_verified' || type === 'new_review' || type === 'subscription_expiring' || type === 'payout_received') return 'seller';
+  if (type === 'return_status_update') return 'order';
   if (type === 'order_shipped' || type === 'order_delivered') return 'delivery';
   if (type.startsWith('order_') || type === 'order_placed' || type === 'order_confirmed' || type === 'order_processing') return 'order';
-  if (type === 'new_order_received' || type === 'low_stock' || type === 'store_verified' || type === 'new_review' || type === 'subscription_expiring' || type === 'payout_received') return 'seller';
   if (type === 'price_drop' || type === 'back_in_stock' || type === 'wishlist_sale' || type === 'coupon_available' || type === 'cart_reminder') return 'promo';
   return 'system';
 }
@@ -54,6 +61,28 @@ export function buildNotificationsFromOrders(orders) {
       items.push({ id: `${order._id}_cancelled_${id++}`, orderId: order._id, category: 'alert', title: 'Order Cancelled', body: `Order #${shortId} has been cancelled.`, createdAt: order.updatedAt || createdAt, read: false });
   });
   return items;
+}
+
+export function normalizePersistentInboxNotification(notification) {
+  if (!notification?._id) return null;
+  return {
+    id: `broadcast_${notification._id}`,
+    category: notification.category || 'system',
+    title: notification.title,
+    body: notification.body,
+    createdAt: notification.createdAt,
+    read: !!notification.read,
+    data: {
+      type: notification.source === 'admin_broadcast' ? 'admin_broadcast' : 'persistent_system',
+      source: notification.source,
+      category: notification.category,
+      linkTo: notification.linkTo,
+      broadcastId: notification._id,
+      recipientUserId: notification.user,
+      targetRole: notification.targetRole,
+      audience: notification.audience,
+    },
+  };
 }
 
 /** Group notifications by orderId. Non-order notifs get their own group. */
@@ -89,26 +118,50 @@ export default function useNotificationInbox({ currentUser, onCountChange } = {}
   const [notifications, setNotifications] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [storageReady, setStorageReady] = useState(false);
   const readIds = useRef(new Set());
   const listenerRef = useRef(null);
+  const role = normalizeNotificationRole(currentUser);
+  const identity = getNotificationIdentity(currentUser);
+  const activeIdentityRef = useRef(identity);
+  activeIdentityRef.current = identity;
+  const storageKeys = useMemo(
+    () => getNotificationStorageKeys(currentUser),
+    [currentUser?._id, currentUser?.id, currentUser?.role]
+  );
 
-  // Hydrate read-id set
+  // Every signed-in account and role gets a separate local inbox. This avoids
+  // showing a prior seller session's cached alerts after the same device signs
+  // into a buyer account (and vice versa).
   useEffect(() => {
+    let cancelled = false;
+    setStorageReady(false);
+    setIsLoading(true);
+    setNotifications([]);
+    readIds.current = new Set();
+
     (async () => {
       try {
-        const r = await AsyncStorage.getItem(NOTIF_READ_KEY);
-        if (r) readIds.current = new Set(JSON.parse(r));
+        const r = await AsyncStorage.getItem(storageKeys.read);
+        if (!cancelled && r) readIds.current = new Set(JSON.parse(r));
       } catch {}
+      if (!cancelled) setStorageReady(true);
     })();
-  }, []);
+
+    // The v1 keys were shared by all users. Remove them once so stale
+    // cross-account entries can never be revived by a future code path.
+    AsyncStorage.multiRemove([NOTIF_STORE_KEY, NOTIF_READ_KEY]).catch(() => {});
+    return () => { cancelled = true; };
+  }, [storageKeys.read]);
 
   // Live push listener
   useEffect(() => {
-    if (!Notifications) return undefined;
+    if (!Notifications || !storageReady || role === 'guest') return undefined;
     listenerRef.current = Notifications.addNotificationReceivedListener(async (notification) => {
+      if (activeIdentityRef.current !== identity) return;
       const content = notification.request.content;
       const data = content.data || {};
-      const newNotif = {
+      const [newNotif] = scopeNotificationsForRole([{
         id: notification.request.identifier || `push_${Date.now()}`,
         orderId: data.orderId || null,
         category: categorizeNotification(data.type),
@@ -117,45 +170,53 @@ export default function useNotificationInbox({ currentUser, onCountChange } = {}
         createdAt: new Date().toISOString(),
         read: false,
         data,
-      };
+        accountScope: identity,
+      }], currentUser);
+      if (!newNotif) return;
+
+      if (activeIdentityRef.current !== identity) return;
       setNotifications(prev => [newNotif, ...prev]);
       try {
-        const stored = await AsyncStorage.getItem(NOTIF_STORE_KEY);
+        const stored = await AsyncStorage.getItem(storageKeys.inbox);
         const arr = stored ? JSON.parse(stored) : [];
         arr.unshift(newNotif);
-        await AsyncStorage.setItem(NOTIF_STORE_KEY, JSON.stringify(arr.slice(0, 200)));
+        await AsyncStorage.setItem(storageKeys.inbox, JSON.stringify(arr.slice(0, 200)));
       } catch {}
     });
     return () => { if (listenerRef.current) listenerRef.current.remove(); };
-  }, []);
+  }, [currentUser?._id, currentUser?.id, identity, role, storageKeys.inbox, storageReady]);
 
   const fetchNotifications = useCallback(async () => {
+    if (!storageReady) return;
+    const requestIdentity = identity;
     try {
       let pushNotifs = [];
-      try { const stored = await AsyncStorage.getItem(NOTIF_STORE_KEY); if (stored) pushNotifs = JSON.parse(stored); } catch {}
+      try {
+        const stored = await AsyncStorage.getItem(storageKeys.inbox);
+        if (stored) pushNotifs = JSON.parse(stored);
+      } catch {}
 
       let orderNotifs = [];
       let broadcastNotifs = [];
-      if (currentUser) {
+      if (currentUser && (role === 'user' || role === 'seller')) {
         try { const res = await api.get('/api/order/user-orders'); orderNotifs = buildNotificationsFromOrders(res.data?.orders || []); } catch {}
+      }
+      if (currentUser) {
         try {
           const res = await api.get('/api/notifications/me');
-          broadcastNotifs = (res.data?.items || []).map(b => ({
-            id: `broadcast_${b._id}`,
-            category: b.category === 'promo' ? 'promo' : 'system',
-            title: b.title,
-            body: b.body,
-            createdAt: b.createdAt,
-            read: !!b.read,
-            data: { type: 'admin_broadcast', linkTo: b.linkTo, broadcastId: b._id },
-          }));
+          broadcastNotifs = (res.data?.items || [])
+            .map(normalizePersistentInboxNotification)
+            .filter(Boolean);
         } catch {}
       }
 
       const allMap = new Map();
-      [...broadcastNotifs, ...orderNotifs, ...pushNotifs].forEach(n => { if (!allMap.has(n.id)) allMap.set(n.id, n); });
+      scopeNotificationsForRole(
+        [...broadcastNotifs, ...orderNotifs, ...pushNotifs],
+        currentUser
+      ).forEach(n => { if (!allMap.has(n.id)) allMap.set(n.id, n); });
 
-      if (allMap.size === 0) {
+      if (allMap.size === 0 && role === 'user') {
         allMap.set('welcome', { id: 'welcome', category: 'system', title: 'Welcome to Rozare', body: 'Start shopping to see notifications here.', createdAt: new Date().toISOString(), read: false });
       }
 
@@ -163,17 +224,23 @@ export default function useNotificationInbox({ currentUser, onCountChange } = {}
         .map(n => readIds.current.has(n.id) ? { ...n, read: true } : n)
         .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
+      if (activeIdentityRef.current !== requestIdentity) return;
       setNotifications(merged);
     } catch {}
-    finally { setIsLoading(false); setRefreshing(false); }
-  }, [currentUser]);
+    finally {
+      if (activeIdentityRef.current === requestIdentity) {
+        setIsLoading(false);
+        setRefreshing(false);
+      }
+    }
+  }, [currentUser?._id, currentUser?.id, currentUser?.role, identity, role, storageKeys.inbox, storageReady]);
 
-  useEffect(() => { fetchNotifications(); }, [fetchNotifications]);
+  useEffect(() => { if (storageReady) fetchNotifications(); }, [fetchNotifications, storageReady]);
 
   const persistReadIds = useCallback(() => {
-    AsyncStorage.setItem(NOTIF_READ_KEY, JSON.stringify([...readIds.current])).catch(() => {});
+    AsyncStorage.setItem(storageKeys.read, JSON.stringify([...readIds.current])).catch(() => {});
     onCountChange?.();
-  }, [onCountChange]);
+  }, [onCountChange, storageKeys.read]);
 
   const markRead = useCallback((ids) => {
     const arr = Array.isArray(ids) ? ids : [ids];
@@ -195,9 +262,9 @@ export default function useNotificationInbox({ currentUser, onCountChange } = {}
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setNotifications([]);
     readIds.current.clear();
-    await AsyncStorage.multiRemove([NOTIF_STORE_KEY, NOTIF_READ_KEY]).catch(() => {});
+    await AsyncStorage.multiRemove([storageKeys.inbox, storageKeys.read]).catch(() => {});
     onCountChange?.();
-  }, [onCountChange]);
+  }, [onCountChange, storageKeys.inbox, storageKeys.read]);
 
   const dismiss = useCallback(async (notifId) => {
     hapticImpact(Haptics.ImpactFeedbackStyle.Medium);
@@ -205,15 +272,15 @@ export default function useNotificationInbox({ currentUser, onCountChange } = {}
     readIds.current.add(notifId);
     setNotifications(prev => prev.filter(n => n.id !== notifId));
     try {
-      const stored = await AsyncStorage.getItem(NOTIF_STORE_KEY);
+      const stored = await AsyncStorage.getItem(storageKeys.inbox);
       if (stored) {
         const arr = JSON.parse(stored).filter(n => n.id !== notifId);
-        await AsyncStorage.setItem(NOTIF_STORE_KEY, JSON.stringify(arr));
+        await AsyncStorage.setItem(storageKeys.inbox, JSON.stringify(arr));
       }
-      await AsyncStorage.setItem(NOTIF_READ_KEY, JSON.stringify([...readIds.current]));
+      await AsyncStorage.setItem(storageKeys.read, JSON.stringify([...readIds.current]));
     } catch {}
     onCountChange?.();
-  }, [onCountChange]);
+  }, [onCountChange, storageKeys.inbox, storageKeys.read]);
 
   const dismissGroup = useCallback(async (ids) => {
     hapticImpact(Haptics.ImpactFeedbackStyle.Medium);
@@ -221,15 +288,15 @@ export default function useNotificationInbox({ currentUser, onCountChange } = {}
     ids.forEach(id => readIds.current.add(id));
     setNotifications(prev => prev.filter(n => !ids.includes(n.id)));
     try {
-      const stored = await AsyncStorage.getItem(NOTIF_STORE_KEY);
+      const stored = await AsyncStorage.getItem(storageKeys.inbox);
       if (stored) {
         const arr = JSON.parse(stored).filter(n => !ids.includes(n.id));
-        await AsyncStorage.setItem(NOTIF_STORE_KEY, JSON.stringify(arr));
+        await AsyncStorage.setItem(storageKeys.inbox, JSON.stringify(arr));
       }
-      await AsyncStorage.setItem(NOTIF_READ_KEY, JSON.stringify([...readIds.current]));
+      await AsyncStorage.setItem(storageKeys.read, JSON.stringify([...readIds.current]));
     } catch {}
     onCountChange?.();
-  }, [onCountChange]);
+  }, [onCountChange, storageKeys.inbox, storageKeys.read]);
 
   const refresh = useCallback(() => {
     setRefreshing(true);

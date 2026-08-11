@@ -150,9 +150,13 @@ const sellerRevenueForItems = (order, sellerId, sellerItems = []) => {
 
 const sellerRevenueForOrder = (order, sellerId, sellerProductIdSet) => {
     const sellerIdStr = toId(sellerId);
-    const sellerItems = (order.orderItems || []).filter((item) =>
-        toId(item.seller) === sellerIdStr || sellerProductIdSet.has(toId(item.productId))
-    );
+    const sellerItems = (order.orderItems || []).filter((item) => {
+        // New order items carry the seller at checkout. Treat that immutable
+        // snapshot as authoritative and use live product ownership only for
+        // legacy items where no seller was recorded.
+        if (item?.seller) return toId(item.seller) === sellerIdStr;
+        return sellerProductIdSet.has(toId(item.productId));
+    });
     return sellerRevenueForItems(order, sellerIdStr, sellerItems);
 };
 
@@ -295,7 +299,10 @@ const buildSellerOrderGroups = (order, sellerIdSet, productSellerById) => {
     for (const item of order.orderItems || []) {
         const snapshotSellerId = toId(item.seller);
         const productSellerId = productSellerById.get(toId(item.productId));
-        const sellerId = sellerIdSet.has(snapshotSellerId) ? snapshotSellerId : productSellerId;
+        // Never reattribute a snapshotted sale to a product's later owner. If
+        // the historical seller no longer exists, omit that orphan from the
+        // current-seller overview instead of crediting somebody else.
+        const sellerId = snapshotSellerId ? snapshotSellerId : productSellerId;
         if (!sellerId || !sellerIdSet.has(sellerId)) continue;
         if (!grouped.has(sellerId)) grouped.set(sellerId, []);
         grouped.get(sellerId).push(item);
@@ -406,6 +413,8 @@ const createInAppNotification = (user, title, body, linkTo, category = 'seller')
         category,
         linkTo,
         source: 'system',
+        targetRole: 'seller',
+        audience: 'specific',
     }).catch((err) => console.error('[payments] notification failed:', err.message));
 
 const notifyAdmins = async (title, body, linkTo) => {
@@ -419,6 +428,8 @@ const notifyAdmins = async (title, body, linkTo) => {
             category: 'system',
             linkTo,
             source: 'system',
+            targetRole: 'admin',
+            audience: 'specific',
         })),
         { ordered: false }
     ).catch((err) => console.error('[payments] admin notification failed:', err.message));

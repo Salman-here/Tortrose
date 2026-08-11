@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { Platform } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -8,6 +8,12 @@ import Feedback from '../utils/feedback';
 import api, { API_BASE_URL } from '../config/api';
 import { trackAuthEvent, trackError, setUserContext } from '../utils/breadcrumbs';
 import { setBuyerLocation } from '../utils/buyerLocation';
+import {
+  clearAllNotifications,
+  preparePushTokenLogout,
+  setActiveNotificationIdentity,
+} from '../services/notifications';
+import { registerUnauthorizedSessionHandler } from '../services/authSessionEvents';
 
 const AuthContext = createContext();
 
@@ -48,6 +54,8 @@ export const AuthProvider = ({ children }) => {
   const [currentUser, setCurrentUser] = useState(null);
   const [token, setToken] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
+  const logoutInFlightRef = useRef(null);
+  const logoutHandlerRef = useRef(null);
 
   // Load user and token from secure storage on mount
   useEffect(() => {
@@ -90,6 +98,17 @@ export const AuthProvider = ({ children }) => {
         console.error('Error fetching user:', error);
       }
     }
+  };
+
+  // Atomically replace a server-issued session token (for example after a
+  // verified seller email change) so subsequent API calls and app restarts use
+  // the same authenticated identity.
+  const replaceAuthToken = async (nextToken) => {
+    if (typeof nextToken !== 'string' || !nextToken.trim()) {
+      throw new Error('A valid replacement session token is required.');
+    }
+    await secureSet('jwtToken', nextToken);
+    setToken(nextToken);
   };
 
   // Step 1 of registration: send OTP to email
@@ -216,24 +235,52 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  const logout = async () => {
+  const logout = (options = {}) => {
+    if (logoutInFlightRef.current) return logoutInFlightRef.current;
+    const sessionExpired = Boolean(options?.sessionExpired);
+    const cleanup = (async () => {
     trackAuthEvent('logout');
-    try {
-      await secureDel('jwtToken');
-      await secureDel('currentUser');
-      setCurrentUser(null);
-      setToken(null);
-      setUserContext(null);
+    // Invalidate new registrations immediately. Cleanup is durably queued
+    // with a per-installation credential, so offline network calls never
+    // delay local logout and retry safely on the next app start.
+    await setActiveNotificationIdentity(null).catch(() => {});
+    await preparePushTokenLogout({ authToken: token }).catch(() => {});
+    await clearAllNotifications().catch(() => {});
 
-      Feedback.show({
-        type: 'info',
-        text1: 'Logged out',
-        text2: 'You have been logged out successfully'
-      });
-    } catch (error) {
-      console.error('Logout error:', error);
+    const storageCleanup = await Promise.allSettled([
+      secureDel('jwtToken'),
+      secureDel('currentUser'),
+    ]);
+    if (storageCleanup.some(result => result.status === 'rejected')) {
+      console.error('Logout secure-storage cleanup was incomplete.');
     }
+
+    // Local auth state always clears, even if secure storage or the network is
+    // temporarily unavailable. This prevents a failed cleanup from trapping a
+    // person inside the previous account.
+    setCurrentUser(null);
+    setToken(null);
+    setUserContext(null);
+
+    Feedback.show({
+      type: sessionExpired ? 'warning' : 'info',
+      text1: sessionExpired ? 'Session expired' : 'Logged out',
+      text2: sessionExpired
+        ? 'For your security, please sign in again.'
+        : 'You have been logged out successfully'
+    });
+    })();
+    logoutInFlightRef.current = cleanup;
+    cleanup.finally(() => {
+      if (logoutInFlightRef.current === cleanup) logoutInFlightRef.current = null;
+    });
+    return cleanup;
   };
+
+  logoutHandlerRef.current = logout;
+  useEffect(() => registerUnauthorizedSessionHandler(
+    () => logoutHandlerRef.current?.({ sessionExpired: true })
+  ), []);
 
   return (
     <AuthContext.Provider
@@ -241,6 +288,7 @@ export const AuthProvider = ({ children }) => {
         currentUser,
         setCurrentUser,
         token,
+        replaceAuthToken,
         fetchAndUpdateCurrentUser,
         signup,
         verifyOTP,

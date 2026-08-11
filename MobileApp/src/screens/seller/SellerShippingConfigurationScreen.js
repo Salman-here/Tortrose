@@ -4,14 +4,16 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView,
-  Alert, RefreshControl, ActivityIndicator, Switch,
+  View, Text, TextInput, TouchableOpacity, StyleSheet,
+  Alert, RefreshControl, ActivityIndicator, Switch, Platform,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import api, { API_ENDPOINTS } from '../../config/api';
-import Loader from '../../components/common/Loader';
 import GlassBackground from '../../components/common/GlassBackground';
 import GlassPanel from '../../components/common/GlassPanel';
+import KeyboardAwareFormScrollView from '../../components/common/KeyboardAwareFormScrollView';
+import { SellerInlineError, SellerScreenHeader, SellerScreenSkeleton } from '../../components/seller/SellerUI';
 import { spacing, fontSize, borderRadius, fontWeight, typography } from '../../styles/theme';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useCurrency } from '../../contexts/CurrencyContext';
@@ -39,17 +41,19 @@ export default function SellerShippingConfigurationScreen({ navigation }) {
   const [saving, setSaving] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [methods, setMethods] = useState(DEFAULT_METHODS(currency));
+  const [loadError, setLoadError] = useState('');
+  const [hasLoaded, setHasLoaded] = useState(false);
 
   const normalizeForDisplay = useCallback((method) => {
     const methodCurrency = method?.currency || method?.costCurrency || currency;
     const cost = method?.type === 'free' ? 0 : convertAmount(method?.cost || 0, methodCurrency, currency);
     return {
       ...method,
-      cost,
+      cost: method?.type === 'free' ? '0' : String(Math.round(cost * 100) / 100),
       currency,
       costCurrency: currency,
       costInputAmount: cost,
-      deliveryDays: Number(method?.deliveryDays || 1),
+      deliveryDays: String(Number(method?.deliveryDays || 1)),
       isActive: method?.isActive !== false,
     };
   }, [currency, convertAmount]);
@@ -63,14 +67,16 @@ export default function SellerShippingConfigurationScreen({ navigation }) {
     try {
       const sellerId = currentUser?._id || currentUser?.id;
       if (!sellerId) {
-        Alert.alert('Login required', 'Please login again to manage shipping methods.');
+        setLoadError('Your seller session could not be identified. Please sign in again.');
         return;
       }
       const res = await api.get(`${API_ENDPOINTS.SHIPPING.SELLER}/${sellerId}`);
       const remoteMethods = res.data?.shippingMethods?.methods || [];
       setMethods(mergeWithDefaults(remoteMethods));
+      setLoadError('');
+      setHasLoaded(true);
     } catch (e) {
-      Alert.alert('Error', e.response?.data?.msg || 'Failed to load shipping methods');
+      setLoadError(e.response?.data?.msg || 'Shipping methods could not be loaded. Saving is disabled until live settings are available.');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -89,12 +95,11 @@ export default function SellerShippingConfigurationScreen({ navigation }) {
       if (method.type !== type) return method;
       if (type === 'free' && field === 'cost') return method;
       if (field === 'cost') {
-        const cost = Number(value);
-        return { ...method, cost: Number.isFinite(cost) ? cost : 0, currency, costCurrency: currency, costInputAmount: Number.isFinite(cost) ? cost : 0 };
+        const cleaned = String(value).replace(/[^0-9.]/g, '').replace(/(\..*)\./g, '$1');
+        return { ...method, cost: cleaned, currency, costCurrency: currency };
       }
       if (field === 'deliveryDays') {
-        const deliveryDays = parseInt(value, 10);
-        return { ...method, deliveryDays: Number.isFinite(deliveryDays) ? deliveryDays : 1 };
+        return { ...method, deliveryDays: String(value).replace(/[^0-9]/g, '') };
       }
       return { ...method, [field]: value };
     }));
@@ -153,29 +158,31 @@ export default function SellerShippingConfigurationScreen({ navigation }) {
     fast: palette.colors.warning,
   }[type] || palette.colors.primary);
 
-  if (loading) return <GlassBackground><Loader fullScreen message="Loading shipping methods..." /></GlassBackground>;
+  if (loading) return <SellerScreenSkeleton navigation={navigation} title="Shipping Methods" subtitle="Loading your live delivery settings" icon="car-outline" variant="form" />;
+
+  if (loadError && !hasLoaded) {
+    return (
+      <GlassBackground>
+        <SafeAreaView style={styles.safe} edges={Platform.OS === 'android' ? [] : ['top']}>
+          <SellerScreenHeader navigation={navigation} title="Shipping Methods" subtitle="Delivery choices and rates" icon="car-outline" />
+          <SellerInlineError title="Shipping settings unavailable" message={loadError} onRetry={fetchConfig} />
+        </SafeAreaView>
+      </GlassBackground>
+    );
+  }
 
   return (
     <GlassBackground>
-      <ScrollView
+      <SafeAreaView style={styles.safe} edges={Platform.OS === 'android' ? [] : ['top']}>
+      <SellerScreenHeader navigation={navigation} title="Shipping Methods" subtitle="Delivery choices and rates" icon="car-outline" rightIcon="refresh" rightLabel="Refresh" onRightPress={onRefresh} />
+      <KeyboardAwareFormScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scroll}
+        bottomOffset={32}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={palette.colors.primary} />}
       >
-        <GlassPanel variant="floating" style={styles.header}>
-          <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
-            <Ionicons name="arrow-back" size={20} color={palette.colors.text} />
-          </TouchableOpacity>
-          <View style={styles.headerIcon}>
-            <Ionicons name="car-outline" size={28} color={palette.colors.primary} />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.headerTitle}>Shipping Methods</Text>
-            <Text style={styles.headerSubtitle}>Configure customer delivery choices</Text>
-          </View>
-        </GlassPanel>
-
         <View style={styles.content}>
+          {!!loadError && <SellerInlineError compact title="Refresh incomplete" message={loadError} onRetry={fetchConfig} />}
           {methods.map((method) => {
             const copy = METHOD_COPY[method.type] || METHOD_COPY.standard;
             const color = methodColor(method.type);
@@ -255,18 +262,15 @@ export default function SellerShippingConfigurationScreen({ navigation }) {
         </View>
 
         <View style={{ height: 100 }} />
-      </ScrollView>
+      </KeyboardAwareFormScrollView>
+      </SafeAreaView>
     </GlassBackground>
   );
 }
 
 const buildStyles = (p) => StyleSheet.create({
-  scroll: { paddingBottom: spacing.xxl },
-  header: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, margin: spacing.lg, padding: spacing.lg },
-  backBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: p.glass.bgSubtle, justifyContent: 'center', alignItems: 'center' },
-  headerIcon: { width: 52, height: 52, borderRadius: 26, backgroundColor: 'rgba(99,102,241,0.12)', justifyContent: 'center', alignItems: 'center' },
-  headerTitle: { ...typography.h3, color: p.colors.text },
-  headerSubtitle: { ...typography.bodySmall, color: p.colors.textSecondary, marginTop: 2 },
+  safe: { flex: 1 },
+  scroll: { width: '100%', maxWidth: 680, alignSelf: 'center', paddingTop: spacing.md, paddingBottom: 100 },
   content: { paddingHorizontal: spacing.lg },
   methodCard: { padding: spacing.lg, marginBottom: spacing.md, opacity: 1 },
   methodHeader: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, marginBottom: spacing.md },

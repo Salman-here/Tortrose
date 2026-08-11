@@ -25,7 +25,7 @@ describe('WhatsApp inbound addressing', () => {
 
     expect(address.identityPhone).toBe('923028588506');
     expect(address.replyTo).toBe('78220481290301@lid');
-    expect(address.candidatePhones).toEqual(['923028588506', '78220481290301']);
+    expect(address.candidatePhones).toEqual(['923028588506']);
   });
 
   test('handles Evolution webhook payloads where phone and LID fields are reversed', () => {
@@ -38,7 +38,7 @@ describe('WhatsApp inbound addressing', () => {
 
     expect(address.identityPhone).toBe('923499166402');
     expect(address.replyTo).toBe('39767790104698@lid');
-    expect(address.candidatePhones).toEqual(['923499166402', '39767790104698']);
+    expect(address.candidatePhones).toEqual(['923499166402']);
   });
 
   test('prefers explicit phone JID over unrelated bare numeric fields', () => {
@@ -57,7 +57,7 @@ describe('WhatsApp inbound addressing', () => {
     expect(address.identityPhone).toBe('923499166402');
     expect(address.replyTo).toBe('923499166402@s.whatsapp.net');
     expect(address.candidatePhones[0]).toBe('923499166402');
-    expect(address.candidatePhones).toContain('39767790104698');
+    expect(address.candidatePhones).not.toContain('39767790104698');
   });
 
   test('finds phone and LID hints nested inside unknown Evolution payload fields', () => {
@@ -99,6 +99,57 @@ describe('WhatsApp inbound addressing', () => {
     expect(hints.lidJids).toEqual(['39767790104698@lid']);
     expect(hints.phoneNumbers).toContain('923499166402');
     expect(hints.phoneNumbers).not.toContain('123456789');
+  });
+
+  test('Evolution v2.3.7 LID payload gives senderPn priority and rejects connected owner metadata', () => {
+    const address = resolveInboundAddress({
+      key: {
+        remoteJid: '39767790104698@lid',
+        senderPn: '923499166402@s.whatsapp.net',
+      },
+      senderPn: '923499166402@s.whatsapp.net',
+      owner: '923028588506@s.whatsapp.net',
+      instance: {
+        ownerJid: '923028588506@s.whatsapp.net',
+        owner: '+92 302 8588506',
+      },
+      message: { conversation: 'Hi' },
+    });
+
+    expect(address.identityPhone).toBe('923499166402');
+    expect(address.replyTo).toBe('39767790104698@lid');
+    expect(address.candidatePhones).toEqual(['923499166402']);
+    expect(address.excludedOwnerPhones).toContain('923028588506');
+  });
+
+  test('fails closed when a LID envelope only contains the connected owner number', () => {
+    const address = resolveInboundAddress({
+      key: { remoteJid: '39767790104698@lid' },
+      owner: '923028588506@s.whatsapp.net',
+      instance: { owner: '+92 302 8588506' },
+    });
+
+    expect(address.identityPhone).toBe('');
+    expect(address.replyTo).toBe('39767790104698@lid');
+    expect(address.candidatePhones).toEqual([]);
+    expect(address.excludedOwnerPhones).toContain('923028588506');
+  });
+
+  test('fails closed when a malformed inbound phone-JID points at the connected owner', () => {
+    const address = resolveInboundAddress({
+      key: {
+        remoteJid: '923028588506@s.whatsapp.net',
+        fromMe: false,
+      },
+      owner: '923028588506@s.whatsapp.net',
+      instance: { ownerJid: '923028588506@s.whatsapp.net' },
+      message: { conversation: 'misaddressed webhook' },
+    });
+
+    expect(address.identityPhone).toBe('');
+    expect(address.replyTo).toBe('');
+    expect(address.candidatePhones).toEqual([]);
+    expect(address.excludedOwnerPhones).toContain('923028588506');
   });
 
   test('builds explicit phone JID for proactive outbound sends', () => {

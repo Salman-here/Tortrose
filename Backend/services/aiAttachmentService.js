@@ -10,8 +10,17 @@ const { getMediaFromMessage } = require('./whatsapp/evolutionMediaService');
 const MAX_ATTACHMENT_BYTES = Number(process.env.AI_CHAT_ATTACHMENT_MAX_BYTES || 15 * 1024 * 1024);
 const MAX_CONTEXT_CHARS = Number(process.env.AI_CHAT_ATTACHMENT_CONTEXT_CHARS || 30000);
 const TRANSCRIPTION_PROVIDER = String(process.env.TRANSCRIPTION_PROVIDER || 'openrouter').trim().toLowerCase();
-const OPENROUTER_TRANSCRIPTION_MODEL = process.env.OPENROUTER_TRANSCRIPTION_MODEL || process.env.OPENAI_TRANSCRIPTION_MODEL || 'openai/gpt-4o-transcribe';
-const OPENAI_TRANSCRIPTION_MODEL = process.env.OPENAI_TRANSCRIPTION_MODEL || 'gpt-4o-transcribe';
+const transcriptionModelFor = (provider, env = process.env) => (
+  provider === 'openai'
+    ? (env.OPENAI_TRANSCRIPTION_MODEL || 'gpt-4o-transcribe')
+    : (env.OPENROUTER_TRANSCRIPTION_MODEL || 'openai/gpt-4o-transcribe')
+);
+// Keep provider model configuration isolated. An OpenAI model id such as
+// `gpt-4o-transcribe` is not a valid OpenRouter id (which is provider-prefixed),
+// so falling across env vars can silently break every WhatsApp voice note.
+const OPENROUTER_TRANSCRIPTION_MODEL = transcriptionModelFor('openrouter');
+const OPENAI_TRANSCRIPTION_MODEL = transcriptionModelFor('openai');
+const TRANSCRIPTION_TIMEOUT_MS = Number(process.env.AI_TRANSCRIPTION_TIMEOUT_MS || 45000);
 
 const IMAGE_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp']);
 const AUDIO_EXTENSIONS = new Set(['ogg', 'oga', 'opus', 'mp3', 'm4a', 'mp4', 'mpeg', 'mpga', 'wav', 'webm', 'flac']);
@@ -298,7 +307,27 @@ function bufferFromBase64(value = '') {
   const raw = String(value).replace(/^data:[^;]+;base64,/i, '').replace(/\s/g, '');
   if (!raw) return null;
   if (!/^[A-Za-z0-9+/]+=*$/.test(raw)) return null;
+  // Check encoded size before allocating the decoded Buffer. The webhook has a
+  // larger HTTP body allowance so several normal attachments can arrive, but
+  // each individual AI attachment still observes the stricter product limit.
+  if (raw.length > Math.ceil(MAX_ATTACHMENT_BYTES * 4 / 3) + 8) {
+    throw new Error('Attachment is too large.');
+  }
   return Buffer.from(raw, 'base64');
+}
+
+async function fetchWithTimeout(url, options = {}) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), TRANSCRIPTION_TIMEOUT_MS);
+  timeout.unref?.();
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (error) {
+    if (error?.name === 'AbortError') throw new Error('Voice transcription timed out.');
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function isWhatsAppAttachment(att = {}) {
@@ -394,7 +423,7 @@ async function transcribeAudioBuffer(buffer, { filename = 'voice-message.ogg', m
     form.append('model', OPENAI_TRANSCRIPTION_MODEL);
     form.append('response_format', 'json');
 
-    const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+    const response = await fetchWithTimeout('https://api.openai.com/v1/audio/transcriptions', {
       method: 'POST',
       headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
       body: form,
@@ -433,12 +462,13 @@ async function transcribeAudioBuffer(buffer, { filename = 'voice-message.ogg', m
     body.language = process.env.OPENROUTER_TRANSCRIPTION_LANGUAGE;
   }
 
-  const response = await fetch('https://openrouter.ai/api/v1/audio/transcriptions', {
+  const response = await fetchWithTimeout('https://openrouter.ai/api/v1/audio/transcriptions', {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
       'Content-Type': 'application/json',
       ...(process.env.FRONTEND_URL ? { 'HTTP-Referer': process.env.FRONTEND_URL } : {}),
+      'X-OpenRouter-Title': process.env.OPENROUTER_APP_TITLE || 'Rozare AI Seller Assistant',
       'X-Title': process.env.OPENROUTER_APP_TITLE || 'Rozare AI Seller Assistant',
     },
     body: JSON.stringify(body),
@@ -599,5 +629,6 @@ module.exports = {
   __private: {
     decodeTextBuffer,
     parseBestDelimited,
+    transcriptionModelFor,
   },
 };

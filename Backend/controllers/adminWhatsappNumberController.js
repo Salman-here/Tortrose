@@ -7,6 +7,10 @@
  */
 
 const AdminWhatsAppNumber = require('../models/AdminWhatsAppNumber');
+const {
+    conflictMessage,
+    findWhatsAppIdentityConflict,
+} = require('../services/whatsappIdentityService');
 
 const cleanNumber = (number) => String(number || '').replace(/\D/g, '');
 
@@ -25,6 +29,11 @@ exports.addAdminNumber = async (req, res) => {
         const digits = cleanNumber(number);
         if (!digits || digits.length < 10) {
             return res.status(400).json({ success: false, msg: 'Invalid phone number format. Use country code + number (e.g. 923001234567)' });
+        }
+
+        const identityConflict = await findWhatsAppIdentityConflict(digits, { channel: 'admin' });
+        if (identityConflict) {
+            return res.status(409).json({ success: false, msg: conflictMessage(identityConflict) });
         }
 
         // Check duplicate
@@ -119,15 +128,25 @@ exports.toggleAdminNumber = async (req, res) => {
             return res.status(400).json({ success: false, msg: 'isActive (boolean) is required.' });
         }
 
+        const existing = await AdminWhatsAppNumber.findById(req.params.id);
+        if (!existing) {
+            return res.status(404).json({ success: false, msg: 'Admin number not found.' });
+        }
+        if (isActive) {
+            const identityConflict = await findWhatsAppIdentityConflict(existing.number, {
+                channel: 'admin',
+                adminNumberId: existing._id,
+            });
+            if (identityConflict) {
+                return res.status(409).json({ success: false, msg: conflictMessage(identityConflict) });
+            }
+        }
+
         const doc = await AdminWhatsAppNumber.findByIdAndUpdate(
             req.params.id,
             { $set: { isActive } },
             { new: true }
         );
-        if (!doc) {
-            return res.status(404).json({ success: false, msg: 'Admin number not found.' });
-        }
-
         return res.status(200).json({
             success: true,
             msg: `Admin number ${doc.number} is now ${isActive ? 'active' : 'inactive'}.`,

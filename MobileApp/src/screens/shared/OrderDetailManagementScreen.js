@@ -2,7 +2,7 @@
  * OrderDetailManagementScreen - Liquid Glass
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -10,17 +10,29 @@ import {
   TouchableOpacity,
   StyleSheet,
   Alert,
+  Platform,
   RefreshControl,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
-import api from '../../config/api';
-import Loader from '../../components/common/Loader';
+import api, { API_ENDPOINTS } from '../../config/api';
 import GlassBackground from '../../components/common/GlassBackground';
 import GlassPanel from '../../components/common/GlassPanel';
+import {
+  SellerInlineError,
+  SellerScreenHeader,
+  SellerScreenSkeleton,
+} from '../../components/seller/SellerUI';
 import { spacing, fontSize, borderRadius, fontWeight, typography } from '../../styles/theme';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useCurrency } from '../../contexts/CurrencyContext';
+import {
+  getConfirmationSourceLabel,
+  hasWhatsAppPhone,
+  isOrderConfirmedByBuyer,
+  openWhatsAppVerify,
+} from '../../utils/whatsapp';
 
 const getStatusConfig = (palette) => ({
   pending: { color: palette.colors.warning, icon: 'time-outline', label: 'Pending' },
@@ -34,13 +46,14 @@ const getStatusConfig = (palette) => ({
 const STATUS_OPTIONS = ['pending', 'confirmed', 'processing', 'shipped', 'delivered', 'cancelled'];
 const TIMELINE_STATUSES = ['pending', 'confirmed', 'processing', 'shipped', 'delivered'];
 
-const getItemImage = (item) => (
-  item?.image ||
-  item?.product?.image ||
-  item?.productId?.image ||
-  item?.product?.images?.[0] ||
-  item?.productId?.images?.[0]
-);
+const getItemImage = (item) => {
+  const image = item?.image
+    || item?.product?.image
+    || item?.productId?.image
+    || item?.product?.images?.[0]
+    || item?.productId?.images?.[0];
+  return typeof image === 'string' ? image : (image?.url || image?.secure_url || '');
+};
 
 const getItemName = (item) => item?.name || item?.product?.name || item?.productId?.name || 'Product';
 
@@ -52,8 +65,8 @@ const getSelectedOptions = (item) => {
 export default function OrderDetailManagementScreen({ route, navigation }) {
   const { palette } = useTheme();
   const { formatPrice } = useCurrency();
-  const styles = buildStyles(palette);
-  const STATUS_CONFIG = getStatusConfig(palette);
+  const styles = useMemo(() => buildStyles(palette), [palette]);
+  const STATUS_CONFIG = useMemo(() => getStatusConfig(palette), [palette]);
 
   const { orderId, isAdmin } = route.params || {};
   const [order, setOrder] = useState(null);
@@ -61,15 +74,22 @@ export default function OrderDetailManagementScreen({ route, navigation }) {
   const [refreshing, setRefreshing] = useState(false);
   const [updating, setUpdating] = useState(false);
   const [selectedStatus, setSelectedStatus] = useState(null);
+  const [hasLoaded, setHasLoaded] = useState(false);
+  const [loadError, setLoadError] = useState('');
+  const [actionError, setActionError] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
 
-  const fetchOrder = useCallback(async () => {
+  const fetchOrder = useCallback(async ({ initial = false } = {}) => {
+    if (initial) setLoading(true);
+    setLoadError('');
     try {
-      const res = await api.get(`/api/order/detail/${orderId}`);
+      const res = await api.get(`${API_ENDPOINTS.ORDERS.DETAIL}/${orderId}`);
       const nextOrder = res.data?.order || res.data;
       setOrder(nextOrder);
       setSelectedStatus(nextOrder?.orderStatus || nextOrder?.status || 'pending');
+      setHasLoaded(true);
     } catch (e) {
-      Alert.alert('Error', e.response?.data?.msg || 'Failed to fetch order');
+      setLoadError(e.response?.data?.msg || 'This order could not be loaded.');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -77,7 +97,7 @@ export default function OrderDetailManagementScreen({ route, navigation }) {
   }, [orderId]);
 
   useEffect(() => {
-    fetchOrder();
+    fetchOrder({ initial: true });
   }, [fetchOrder]);
 
   const onRefresh = useCallback(() => {
@@ -95,13 +115,17 @@ export default function OrderDetailManagementScreen({ route, navigation }) {
         text: 'Update',
         onPress: async () => {
           setUpdating(true);
+          setActionError('');
+          setSuccessMessage('');
           try {
-            await api.patch(`/api/order/update-status/${orderId}`, { newStatus });
-            setOrder((previous) => ({ ...previous, orderStatus: newStatus, status: newStatus }));
-            setSelectedStatus(newStatus);
-            Alert.alert('Success', 'Status updated');
+            const response = await api.patch(`${API_ENDPOINTS.ORDERS.UPDATE_STATUS}/${orderId}`, { newStatus });
+            const sellerStatus = response?.data?.orderStatus || newStatus;
+            setOrder((previous) => ({ ...previous, orderStatus: sellerStatus, status: sellerStatus }));
+            setSelectedStatus(sellerStatus);
+            setSuccessMessage(`Fulfilment status changed to ${STATUS_CONFIG[sellerStatus]?.label || sellerStatus}.`);
+            await fetchOrder();
           } catch (e) {
-            Alert.alert('Error', e.response?.data?.msg || 'Failed to update status');
+            setActionError(e.response?.data?.msg || 'The order status could not be updated.');
           } finally {
             setUpdating(false);
           }
@@ -110,24 +134,31 @@ export default function OrderDetailManagementScreen({ route, navigation }) {
     ]);
   };
 
-  if (loading) {
+  if (loading && !hasLoaded) {
     return (
-      <GlassBackground>
-        <Loader fullScreen message="Loading order..." />
-      </GlassBackground>
+      <SellerScreenSkeleton
+        navigation={navigation}
+        title="Order Details"
+        subtitle="Customer, items and fulfilment"
+        icon="receipt-outline"
+        variant="form"
+      />
     );
   }
 
-  if (!order) {
+  if (!order || !hasLoaded) {
     return (
       <GlassBackground>
-        <View style={styles.errorContainer}>
-          <Ionicons name="receipt-outline" size={64} color={palette.colors.textSecondary} />
-          <Text style={styles.errorTitle}>Order not found</Text>
-          <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
-            <Text style={styles.backButtonText}>Go Back</Text>
-          </TouchableOpacity>
-        </View>
+        <SafeAreaView style={styles.safeArea} edges={Platform.OS === 'android' ? [] : ['top']}>
+          <SellerScreenHeader navigation={navigation} title="Order Details" subtitle="Customer, items and fulfilment" icon="receipt-outline" />
+          <View style={styles.errorContainer}>
+            <SellerInlineError
+              title="Order unavailable"
+              message={loadError || 'This order was not found or is outside your seller account.'}
+              onRetry={() => fetchOrder({ initial: true })}
+            />
+          </View>
+        </SafeAreaView>
       </GlassBackground>
     );
   }
@@ -143,9 +174,28 @@ export default function OrderDetailManagementScreen({ route, navigation }) {
   const totalAmount = summary.totalAmount ?? order.totalAmount ?? order.total ?? 0;
   const subtotal = summary.subtotal ?? Math.max(0, totalAmount - shippingCost - (summary.tax || 0) + (summary.couponDiscount || 0));
   const customerEmail = order.user?.email || shippingInfo.email || 'N/A';
+  const confirmationLabel = getConfirmationSourceLabel(order);
+  const confirmation = order.confirmation || {};
+  const canVerifyOnWhatsApp = hasWhatsAppPhone(order) && !isOrderConfirmedByBuyer(order);
+  const paymentMethodLabel = {
+    cash_on_delivery: 'Cash on delivery',
+    stripe: 'Card / Stripe',
+    wallet: 'Rozare Wallet',
+  }[order.paymentMethod] || order.paymentMethod || 'Payment method unavailable';
+  const displayOrderId = order.orderId || `#${String(order._id || '').slice(-8).toUpperCase()}`;
 
   return (
     <GlassBackground>
+      <SafeAreaView style={styles.safeArea} edges={Platform.OS === 'android' ? [] : ['top']}>
+      <SellerScreenHeader
+        navigation={navigation}
+        title="Order Details"
+        subtitle={displayOrderId}
+        icon="receipt-outline"
+        rightIcon="refresh-outline"
+        rightLabel="Refresh"
+        onRightPress={onRefresh}
+      />
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scroll}
@@ -154,11 +204,83 @@ export default function OrderDetailManagementScreen({ route, navigation }) {
         <GlassPanel variant="floating" style={styles.header}>
           <View>
             <Text style={styles.orderIdLabel}>Order</Text>
-            <Text style={styles.orderId}>#{(order.orderId || order._id || '').toString().slice(-8).toUpperCase() || 'N/A'}</Text>
+            <Text style={styles.orderId} numberOfLines={1}>{displayOrderId}</Text>
           </View>
           <View style={[styles.statusBadge, { backgroundColor: statusConfig.color }]}>
             <Ionicons name={statusConfig.icon} size={16} color="white" />
             <Text style={styles.statusText}>{statusConfig.label}</Text>
+          </View>
+        </GlassPanel>
+
+        {!!loadError && (
+          <SellerInlineError compact title="Order did not refresh" message={loadError} onRetry={onRefresh} />
+        )}
+        {!!actionError && (
+          <SellerInlineError compact title="Status was not updated" message={actionError} />
+        )}
+        {!!successMessage && (
+          <View style={styles.successBanner} accessibilityRole="alert">
+            <Ionicons name="checkmark-circle" size={18} color={palette.colors.success} />
+            <Text style={styles.successText}>{successMessage}</Text>
+          </View>
+        )}
+
+        <GlassPanel variant="strong" style={styles.decisionSection}>
+          <View style={styles.decisionHeader}>
+            <View style={[styles.decisionIcon, { backgroundColor: confirmationLabel && !/cancel/i.test(confirmationLabel) ? palette.colors.successSubtle : palette.colors.primarySubtle }]}>
+              <Ionicons
+                name={confirmationLabel ? (/cancel/i.test(confirmationLabel) ? 'close-circle-outline' : 'shield-checkmark-outline') : 'help-circle-outline'}
+                size={22}
+                color={confirmationLabel && !/cancel/i.test(confirmationLabel) ? palette.colors.success : (/cancel/i.test(confirmationLabel) ? palette.colors.error : palette.colors.primary)}
+              />
+            </View>
+            <View style={styles.decisionCopy}>
+              <Text style={styles.decisionEyebrow}>BUYER CONFIRMATION</Text>
+              <Text style={styles.decisionTitle}>{confirmationLabel || 'Waiting for buyer confirmation'}</Text>
+              <Text style={styles.decisionSubtitle}>
+                {confirmation.confirmedAt || confirmation.declinedAt
+                  ? `Decision recorded ${new Date(confirmation.confirmedAt || confirmation.declinedAt).toLocaleString()}`
+                  : 'Use Rozare WhatsApp only when the buyer has not already confirmed.'}
+              </Text>
+            </View>
+          </View>
+          {!!confirmation.cancelledFromDashboardNote && (
+            <View style={styles.decisionNote}>
+              <Ionicons name="information-circle-outline" size={16} color={palette.colors.warning} />
+              <Text style={styles.decisionNoteText}>{confirmation.cancelledFromDashboardNote}</Text>
+            </View>
+          )}
+          {canVerifyOnWhatsApp && (
+            <TouchableOpacity
+              style={styles.whatsAppButton}
+              onPress={() => openWhatsAppVerify(order, formatPrice)}
+              accessibilityRole="button"
+              accessibilityLabel="Verify this order with the buyer on WhatsApp"
+            >
+              <Ionicons name="logo-whatsapp" size={18} color="#fff" />
+              <Text style={styles.whatsAppText}>Verify on WhatsApp</Text>
+            </TouchableOpacity>
+          )}
+        </GlassPanel>
+
+        <GlassPanel variant="card" style={styles.section}>
+          <Text style={styles.sectionTitle}>Payment & source</Text>
+          <View style={styles.paymentGrid}>
+            <View style={styles.paymentTile}>
+              <Ionicons name={order.paymentMethod === 'cash_on_delivery' ? 'cash-outline' : order.paymentMethod === 'wallet' ? 'wallet-outline' : 'card-outline'} size={19} color={palette.colors.primary} />
+              <Text style={styles.paymentCaption}>METHOD</Text>
+              <Text style={styles.paymentValue}>{paymentMethodLabel}</Text>
+            </View>
+            <View style={styles.paymentTile}>
+              <Ionicons name={order.isPaid ? 'checkmark-circle-outline' : 'time-outline'} size={19} color={order.isPaid ? palette.colors.success : palette.colors.warning} />
+              <Text style={styles.paymentCaption}>PAYMENT</Text>
+              <Text style={styles.paymentValue}>{order.isPaid ? 'Paid' : 'Not paid'}</Text>
+            </View>
+            <View style={styles.paymentTile}>
+              <Ionicons name="phone-portrait-outline" size={19} color={palette.colors.secondary} />
+              <Text style={styles.paymentCaption}>SOURCE</Text>
+              <Text style={styles.paymentValue}>{order.orderSource || order.source || order.platform || 'Rozare checkout'}</Text>
+            </View>
           </View>
         </GlassPanel>
 
@@ -246,8 +368,14 @@ export default function OrderDetailManagementScreen({ route, navigation }) {
         {orderStatus !== 'delivered' && orderStatus !== 'cancelled' && (
           <GlassPanel variant="card" style={styles.section}>
             <Text style={styles.sectionTitle}>Update Status</Text>
+            {order.isPaid && (
+              <View style={styles.paidCancellationNote}>
+                <Ionicons name="shield-checkmark-outline" size={16} color={palette.colors.info} />
+                <Text style={styles.paidCancellationText}>Paid orders cannot be cancelled from fulfilment. Use the verified return and refund workflow when needed.</Text>
+              </View>
+            )}
             <View style={styles.statusOptions}>
-              {STATUS_OPTIONS.map((status) => {
+              {STATUS_OPTIONS.filter((status) => !(order.isPaid && status === 'cancelled')).map((status) => {
                 const config = STATUS_CONFIG[status];
                 const isSelected = selectedStatus === status;
                 const isCurrent = orderStatus === status;
@@ -271,12 +399,14 @@ export default function OrderDetailManagementScreen({ route, navigation }) {
 
         <View style={{ height: 100 }} />
       </ScrollView>
+      </SafeAreaView>
     </GlassBackground>
   );
 }
 
 const buildStyles = (p) => StyleSheet.create({
-  scroll: { paddingBottom: spacing.xxl },
+  safeArea: { flex: 1 },
+  scroll: { width: '100%', maxWidth: 680, alignSelf: 'center', paddingBottom: spacing.xxl },
   errorContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: spacing.xxl },
   errorTitle: { ...typography.h3, color: p.colors.text, marginTop: spacing.lg, marginBottom: spacing.xl },
   backButton: { backgroundColor: p.colors.primary, paddingHorizontal: spacing.xl, paddingVertical: spacing.md, borderRadius: borderRadius.lg },
@@ -286,6 +416,23 @@ const buildStyles = (p) => StyleSheet.create({
   orderId: { ...typography.h3, color: p.colors.text },
   statusBadge: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: borderRadius.full, gap: spacing.xs },
   statusText: { ...typography.bodySemibold, color: 'white', fontSize: fontSize.sm },
+  successBanner: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginHorizontal: spacing.lg, marginTop: spacing.sm, padding: spacing.md, borderRadius: 14, backgroundColor: p.colors.successSubtle, borderWidth: 1, borderColor: `${p.colors.success}35` },
+  successText: { flex: 1, color: p.colors.success, fontSize: fontSize.xs, lineHeight: 17, fontWeight: fontWeight.semibold },
+  decisionSection: { marginHorizontal: spacing.lg, marginTop: spacing.md, padding: spacing.lg },
+  decisionHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.md },
+  decisionIcon: { width: 46, height: 46, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
+  decisionCopy: { flex: 1 },
+  decisionEyebrow: { color: p.colors.primary, fontSize: 9, letterSpacing: 1.1, fontWeight: fontWeight.extrabold },
+  decisionTitle: { marginTop: 3, color: p.colors.text, fontSize: fontSize.md, lineHeight: 20, fontWeight: fontWeight.extrabold },
+  decisionSubtitle: { marginTop: 4, color: p.colors.textSecondary, fontSize: fontSize.xs, lineHeight: 17 },
+  decisionNote: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm, marginTop: spacing.md, padding: spacing.md, borderRadius: 12, backgroundColor: p.colors.warningSubtle },
+  decisionNoteText: { flex: 1, color: p.colors.textSecondary, fontSize: fontSize.xs, lineHeight: 17 },
+  whatsAppButton: { minHeight: 44, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.sm, marginTop: spacing.md, borderRadius: 13, backgroundColor: '#16A34A' },
+  whatsAppText: { color: '#fff', fontSize: fontSize.sm, fontWeight: fontWeight.bold },
+  paymentGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+  paymentTile: { flexGrow: 1, flexBasis: '30%', minWidth: 96, minHeight: 100, padding: spacing.md, borderRadius: 14, backgroundColor: p.glass.bgSubtle, borderWidth: 1, borderColor: p.glass.borderSubtle },
+  paymentCaption: { marginTop: spacing.sm, color: p.colors.textLight, fontSize: 8, letterSpacing: 0.8, fontWeight: fontWeight.bold },
+  paymentValue: { marginTop: 3, color: p.colors.text, fontSize: fontSize.xs, lineHeight: 16, fontWeight: fontWeight.bold, textTransform: 'capitalize' },
   section: { marginHorizontal: spacing.lg, marginTop: spacing.md, padding: spacing.lg },
   sectionTitle: { ...typography.h4, color: p.colors.text, marginBottom: spacing.md },
   timelineItem: { flexDirection: 'row', minHeight: 50 },
@@ -314,6 +461,8 @@ const buildStyles = (p) => StyleSheet.create({
   totalLabel: { ...typography.bodySemibold, color: p.colors.text },
   totalValue: { ...typography.h3, color: p.colors.primary, textAlign: 'right' },
   statusOptions: { gap: spacing.sm },
+  paidCancellationNote: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm, marginBottom: spacing.md, padding: spacing.md, borderRadius: 12, backgroundColor: p.colors.infoSubtle },
+  paidCancellationText: { flex: 1, color: p.colors.textSecondary, fontSize: fontSize.xs, lineHeight: 17 },
   statusOption: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingHorizontal: spacing.md, paddingVertical: spacing.md, borderRadius: borderRadius.xl, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.12)' },
   statusOptionText: { ...typography.bodySemibold, color: p.colors.textSecondary, flex: 1 },
   currentBadge: { paddingHorizontal: spacing.sm, paddingVertical: 2, borderRadius: borderRadius.md },

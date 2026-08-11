@@ -32,6 +32,8 @@ const getMenuItemsForRole = (role) => {
         { id: 'seller-whatsapp', title: 'Seller WhatsApp Alerts', icon: 'briefcase-outline', screen: 'SellerWhatsAppSettings' },
         { id: 'seller', title: 'Seller Dashboard', icon: 'storefront-outline', screen: 'SellerDashboard', highlight: true },
       ];
+    case 'admin':
+      return baseItems;
     case 'user':
     default:
       return [
@@ -53,23 +55,19 @@ describe('ProfileScreen Property Tests', () => {
   /**
    * Property 4: Role-Based Menu Visibility
    * For any user with a specific role, the ProfileScreen menu SHALL display 
-   * role-appropriate options: 'user' role shows "Become a Seller", 
-   * 'seller' role shows "Seller Dashboard", 'admin' role shows "Admin Dashboard".
+   * role-appropriate options: users can become sellers, sellers receive the
+   * seller dashboard, and admin identities keep common account tools only.
    * 
    * Validates: Requirements 13.3, 13.4, 13.5
    */
   describe('Property 4: Role-Based Menu Visibility', () => {
-    it('should show "Become a Seller" for non-seller users', () => {
+    it('should show "Become a Seller" only for regular users', () => {
       fc.assert(
         fc.property(userArbitrary, (user) => {
           const menuItems = getMenuItemsForRole(user.role);
           const hasBecomeSeller = menuItems.some(item => item.id === 'become-seller');
 
-          if (user.role === 'seller') {
-            expect(hasBecomeSeller).toBe(false);
-          } else {
-            expect(hasBecomeSeller).toBe(true);
-          }
+          expect(hasBecomeSeller).toBe(user.role === 'user');
           return true;
         }),
         { numRuns: 100 }
@@ -130,7 +128,8 @@ describe('ProfileScreen Property Tests', () => {
           const menuIds = menuItems.map(item => item.id);
           expect(menuIds).toContain('buyer-whatsapp');
           expect(menuIds.includes('seller-whatsapp')).toBe(user.role === 'seller');
-          expect(menuItems.length).toBe(user.role === 'seller' ? 10 : 9);
+          const expectedCount = user.role === 'seller' ? 10 : user.role === 'user' ? 9 : 8;
+          expect(menuItems.length).toBe(expectedCount);
           return true;
         }),
         { numRuns: 100 }
@@ -176,11 +175,12 @@ describe('ProfileScreen Property Tests', () => {
           const menuItems = getMenuItemsForRole(user.role);
           const menuIds = menuItems.map(item => item.id);
 
-          // Only one of these should be present
+          // Regular users and sellers receive one role action. Admin identities
+          // receive none because the mobile app has no admin dashboard.
           const roleSpecificItems = ['become-seller', 'seller', 'admin'];
           const presentRoleItems = roleSpecificItems.filter(id => menuIds.includes(id));
           
-          expect(presentRoleItems.length).toBe(1);
+          expect(presentRoleItems.length).toBe(user.role === 'admin' ? 0 : 1);
           return true;
         }),
         { numRuns: 100 }

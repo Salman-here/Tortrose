@@ -8,40 +8,31 @@
 
 import * as fc from 'fast-check';
 
-/**
- * Determine form mode (create vs edit)
- * Property 28: Product Form Mode Detection
- * Validates: Requirements 19.4, 19.5
- */
-const getFormMode = (product) => {
-  return product && product._id ? 'edit' : 'create';
-};
+import {
+  buildProductImagePayload,
+  buildProductPayload,
+  buildProductReturnPolicy,
+  getProductFormMode as getFormMode,
+  normalizeInitialProductImages as normalizeInitialImages,
+  validateProductFormContract as validateProductForm,
+} from '../../../src/utils/productFormContract';
 
-/**
- * Validate product form data
- */
-const validateProductForm = (data) => {
-  const errors = {};
-  
-  if (!data.name || !data.name.trim()) {
-    errors.name = 'Product name is required';
-  } else if (data.name.length < 3) {
-    errors.name = 'Product name must be at least 3 characters';
-  }
-  
-  if (!data.price || isNaN(parseFloat(data.price)) || parseFloat(data.price) <= 0) {
-    errors.price = 'Valid price is required';
-  }
-  
-  if (!data.stock || isNaN(parseInt(data.stock)) || parseInt(data.stock) < 0) {
-    errors.stock = 'Valid stock quantity is required';
-  }
-  
-  return {
-    isValid: Object.keys(errors).length === 0,
-    errors,
-  };
-};
+const validForm = (overrides = {}) => ({
+  name: 'Premium Leather Wallet',
+  description: 'A durable handmade wallet with clean stitching.',
+  price: '49.99',
+  discountedPrice: '',
+  stock: '5',
+  category: 'Accessories',
+  brand: 'Rozare Studio',
+  ...overrides,
+});
+
+const validOptions = (overrides = {}) => ({
+  images: ['https://cdn.example.com/product.jpg'],
+  returnPolicy: { useStorePolicy: true },
+  ...overrides,
+});
 
 // Product generator for existing products
 const existingProductArbitrary = fc.record({
@@ -130,13 +121,13 @@ describe('ProductFormScreen Property Tests', () => {
    */
   describe('Form Validation', () => {
     it('should require product name', () => {
-      const result = validateProductForm({ name: '', price: '10', stock: '5' });
+      const result = validateProductForm(validForm({ name: '' }), validOptions());
       expect(result.isValid).toBe(false);
       expect(result.errors.name).toBeDefined();
     });
 
     it('should require name to be at least 3 characters', () => {
-      const result = validateProductForm({ name: 'AB', price: '10', stock: '5' });
+      const result = validateProductForm(validForm({ name: 'AB' }), validOptions());
       expect(result.isValid).toBe(false);
       expect(result.errors.name).toContain('at least 3 characters');
     });
@@ -144,7 +135,7 @@ describe('ProductFormScreen Property Tests', () => {
     it('should require valid price', () => {
       const invalidPrices = ['', '0', '-10', 'abc', null, undefined];
       invalidPrices.forEach(price => {
-        const result = validateProductForm({ name: 'Valid Name', price, stock: '5' });
+        const result = validateProductForm(validForm({ price }), validOptions());
         expect(result.isValid).toBe(false);
         expect(result.errors.price).toBeDefined();
       });
@@ -153,7 +144,7 @@ describe('ProductFormScreen Property Tests', () => {
     it('should require valid stock', () => {
       const invalidStocks = ['', '-1', 'abc', null, undefined];
       invalidStocks.forEach(stock => {
-        const result = validateProductForm({ name: 'Valid Name', price: '10', stock });
+        const result = validateProductForm(validForm({ stock }), validOptions());
         expect(result.isValid).toBe(false);
         expect(result.errors.stock).toBeDefined();
       });
@@ -163,12 +154,16 @@ describe('ProductFormScreen Property Tests', () => {
       fc.assert(
         fc.property(
           fc.record({
-            name: fc.string({ minLength: 3, maxLength: 100 }),
+            name: fc.string({ minLength: 1, maxLength: 80 }).map(value => `Product ${value}`),
+            description: fc.string({ minLength: 1, maxLength: 300 }).map(value => `Description ${value}`),
             price: fc.integer({ min: 1, max: 100000 }).map(n => (n / 100).toString()),
             stock: fc.integer({ min: 0, max: 1000 }).map(n => n.toString()),
+            category: fc.constant('Accessories'),
+            brand: fc.constant('Rozare Studio'),
+            discountedPrice: fc.constant(''),
           }),
           (data) => {
-            const result = validateProductForm(data);
+            const result = validateProductForm(data, validOptions());
             expect(result.isValid).toBe(true);
             expect(Object.keys(result.errors).length).toBe(0);
             return true;
@@ -179,14 +174,146 @@ describe('ProductFormScreen Property Tests', () => {
     });
 
     it('should allow zero stock', () => {
-      const result = validateProductForm({ name: 'Valid Name', price: '10', stock: '0' });
+      const result = validateProductForm(validForm({ stock: '0' }), validOptions());
       expect(result.isValid).toBe(true);
     });
 
     it('should trim whitespace from name validation', () => {
-      const result = validateProductForm({ name: '   ', price: '10', stock: '5' });
+      const result = validateProductForm(validForm({ name: '   ' }), validOptions());
       expect(result.isValid).toBe(false);
       expect(result.errors.name).toBeDefined();
+    });
+
+    it.each([
+      ['description', ''],
+      ['category', ''],
+      ['brand', ''],
+    ])('should require %s', (field, value) => {
+      const result = validateProductForm(validForm({ [field]: value }), validOptions());
+      expect(result.isValid).toBe(false);
+      expect(result.errors[field]).toBeDefined();
+    });
+
+    it('should require at least one product image', () => {
+      const result = validateProductForm(validForm(), validOptions({ images: [] }));
+      expect(result.isValid).toBe(false);
+      expect(result.errors.images).toBeDefined();
+    });
+
+    it('should reject a sale price that is not below the regular price', () => {
+      const result = validateProductForm(validForm({ price: '50', discountedPrice: '50' }), validOptions());
+      expect(result.errors.discountedPrice).toBeDefined();
+    });
+
+    it('should validate custom return and warranty limits', () => {
+      const result = validateProductForm(validForm(), validOptions({
+        returnPolicy: {
+          useStorePolicy: false,
+          returnsEnabled: true,
+          returnDuration: '0',
+          refundType: 'none',
+          warrantyEnabled: true,
+          warrantyDuration: '121',
+        },
+      }));
+      expect(result.errors.returnDuration).toBeDefined();
+      expect(result.errors.refundType).toBeDefined();
+      expect(result.errors.warrantyDuration).toBeDefined();
+    });
+  });
+
+  describe('Backend product contract', () => {
+    it('serializes uploaded images as embedded { url } documents and keeps the first as primary', () => {
+      const payload = buildProductImagePayload([
+        'https://cdn.example.com/main.jpg',
+        'https://cdn.example.com/detail.jpg',
+        'https://cdn.example.com/main.jpg',
+      ]);
+      expect(payload).toEqual({
+        image: 'https://cdn.example.com/main.jpg',
+        images: [
+          { url: 'https://cdn.example.com/main.jpg' },
+          { url: 'https://cdn.example.com/detail.jpg' },
+        ],
+      });
+    });
+
+    it('normalizes an existing primary image before gallery images without duplicates', () => {
+      expect(normalizeInitialImages({
+        image: 'https://cdn.example.com/main.jpg',
+        images: [
+          { url: 'https://cdn.example.com/detail.jpg' },
+          { url: 'https://cdn.example.com/main.jpg' },
+        ],
+      })).toEqual([
+        'https://cdn.example.com/main.jpg',
+        'https://cdn.example.com/detail.jpg',
+      ]);
+    });
+
+    it('sends only inheritance for the store-default policy', () => {
+      expect(buildProductReturnPolicy({ useStorePolicy: true, returnsEnabled: true })).toEqual({ useStorePolicy: true });
+    });
+
+    it('normalizes a custom return policy for the strict backend contract', () => {
+      expect(buildProductReturnPolicy({
+        useStorePolicy: false,
+        returnsEnabled: true,
+        returnDuration: '14',
+        refundType: 'store_credit',
+        warrantyEnabled: true,
+        warrantyDuration: '12',
+        warrantyDescription: ' Manufacturer warranty ',
+        policyDescription: ' Unused and in original packaging ',
+      })).toEqual({
+        useStorePolicy: false,
+        returnsEnabled: true,
+        returnDuration: 14,
+        refundType: 'store_credit',
+        warrantyEnabled: true,
+        warrantyDuration: 12,
+        warrantyDescription: 'Manufacturer warranty',
+        policyDescription: 'Unused and in original packaging',
+      });
+    });
+
+    it('builds the complete backend payload with native currency metadata and a primary image', () => {
+      const payload = buildProductPayload({
+        data: validForm({ price: '50', discountedPrice: '40', stock: '7' }),
+        uploadedImages: ['https://cdn.example.com/main.jpg', 'https://cdn.example.com/detail.jpg'],
+        currency: 'PKR',
+        tags: [' leather ', 'gift', 'gift'],
+        optionGroups: [
+          { name: ' Color ', values: ['Black', ' Black ', 'Brown'], default: 'Black' },
+          { name: '', values: ['Ignored'] },
+        ],
+        returnPolicy: { useStorePolicy: true },
+        isFeatured: true,
+      });
+
+      expect(payload).toEqual(expect.objectContaining({
+        name: 'Premium Leather Wallet',
+        description: 'A durable handmade wallet with clean stitching.',
+        price: 50,
+        discountedPrice: 40,
+        stock: 7,
+        category: 'Accessories',
+        brand: 'Rozare Studio',
+        currency: 'PKR',
+        priceCurrency: 'PKR',
+        priceInputAmount: 50,
+        discountedPriceCurrency: 'PKR',
+        discountedPriceInputAmount: 40,
+        image: 'https://cdn.example.com/main.jpg',
+        images: [
+          { url: 'https://cdn.example.com/main.jpg' },
+          { url: 'https://cdn.example.com/detail.jpg' },
+        ],
+        tags: ['leather', 'gift'],
+        optionGroups: [{ name: 'Color', values: ['Black', 'Brown'], default: 'Black' }],
+        returnPolicy: { useStorePolicy: true },
+        isFeatured: true,
+      }));
     });
   });
 });

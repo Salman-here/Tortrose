@@ -2,13 +2,12 @@
  * ProductDetailScreen — Liquid Glass Design
  */
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, TouchableOpacity,
   useWindowDimensions, FlatList, Share, Animated, Modal, TextInput,
-  Platform, ActivityIndicator, RefreshControl,
+  Platform, ActivityIndicator, RefreshControl, PanResponder,
 } from 'react-native';
-import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -24,8 +23,15 @@ import VerifiedBadge from '../components/VerifiedBadge';
 import ProductCard from '../components/ProductCard';
 import GlassBackground from '../components/common/GlassBackground';
 import GlassPanel from '../components/common/GlassPanel';
+import KeyboardAwareFormScrollView from '../components/common/KeyboardAwareFormScrollView';
 import PremiumTopBar, { PremiumTopBarAction } from '../components/common/PremiumTopBar';
 import { trackProductView } from '../utils/recentlyViewed';
+import {
+  clampGalleryIndex,
+  galleryIndexFromOffset,
+  gallerySwipeTarget,
+  normalizeProductGalleryImages,
+} from '../utils/productGallery';
 import { spacing, fontSize, borderRadius, shadows, fontWeight } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 
@@ -66,7 +72,11 @@ export default function ProductDetailScreen({ route, navigation }) {
   const [copiedCoupon, setCopiedCoupon] = useState(null);
   const [relatedProducts, setRelatedProducts] = useState([]);
   const flatListRef = useRef(null);
+  const selectedImageIndexRef = useRef(0);
+  const galleryGestureStartIndexRef = useRef(0);
   const bottomBarAnim = useRef(new Animated.Value(0)).current;
+
+  const images = useMemo(() => normalizeProductGalleryImages(product), [product]);
 
   const [reviewModalVisible, setReviewModalVisible] = useState(false);
   const [reviewRating, setReviewRating] = useState(5);
@@ -99,6 +109,9 @@ export default function ProductDetailScreen({ route, navigation }) {
   }, [navigation]);
 
   useEffect(() => {
+    selectedImageIndexRef.current = 0;
+    setSelectedImageIndex(0);
+    flatListRef.current?.scrollToOffset?.({ offset: 0, animated: false });
     fetchProduct();
     if (productId) trackProductView(productId);
     Animated.spring(bottomBarAnim, { toValue: 1, friction: 8, tension: 40, useNativeDriver: true }).start();
@@ -238,19 +251,62 @@ export default function ProductDetailScreen({ route, navigation }) {
     finally { setSubmittingReview(false); }
   };
 
-  const scrollToImage = (index) => {
-    setSelectedImageIndex(index);
-    flatListRef.current?.scrollToIndex({ index, animated: true });
-  };
-
-  const updateGalleryIndex = (offsetX, imageCount) => {
-    const lastIndex = Math.max(0, imageCount - 1);
-    const nextIndex = Math.max(
-      0,
-      Math.min(lastIndex, Math.round(offsetX / galleryWidth))
-    );
+  const scrollToImage = useCallback((index, animated = true) => {
+    const nextIndex = clampGalleryIndex(index, images.length);
+    selectedImageIndexRef.current = nextIndex;
     setSelectedImageIndex(nextIndex);
-  };
+    flatListRef.current?.scrollToOffset({
+      offset: nextIndex * galleryWidth,
+      animated,
+    });
+  }, [galleryWidth, images.length]);
+
+  const updateGalleryIndex = useCallback((offsetX) => {
+    const nextIndex = galleryIndexFromOffset(offsetX, galleryWidth, images.length);
+    selectedImageIndexRef.current = nextIndex;
+    setSelectedImageIndex(nextIndex);
+  }, [galleryWidth, images.length]);
+
+  // A native horizontal FlatList nested inside the vertical product ScrollView
+  // can lose the responder contest on Android. Capture only deliberate
+  // horizontal movement here, drive the list offset while the finger moves,
+  // and settle exactly one page on release. Vertical gestures still belong to
+  // the parent ScrollView.
+  const galleryPanResponder = useMemo(() => PanResponder.create({
+    onMoveShouldSetPanResponder: (_, gesture) => (
+      images.length > 1
+      && Math.abs(gesture.dx) > 7
+      && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.15
+    ),
+    onMoveShouldSetPanResponderCapture: (_, gesture) => (
+      images.length > 1
+      && Math.abs(gesture.dx) > 7
+      && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.15
+    ),
+    onPanResponderGrant: () => {
+      galleryGestureStartIndexRef.current = selectedImageIndexRef.current;
+    },
+    onPanResponderMove: (_, gesture) => {
+      const maxOffset = Math.max(0, (images.length - 1) * galleryWidth);
+      const startOffset = galleryGestureStartIndexRef.current * galleryWidth;
+      const nextOffset = Math.max(0, Math.min(maxOffset, startOffset - gesture.dx));
+      flatListRef.current?.scrollToOffset({ offset: nextOffset, animated: false });
+    },
+    onPanResponderRelease: (_, gesture) => {
+      scrollToImage(gallerySwipeTarget({
+        currentIndex: galleryGestureStartIndexRef.current,
+        imageCount: images.length,
+        translationX: gesture.dx,
+        velocityX: gesture.vx * 1000,
+        galleryWidth,
+      }));
+    },
+    onPanResponderTerminate: () => {
+      scrollToImage(galleryGestureStartIndexRef.current);
+    },
+    onPanResponderTerminationRequest: () => false,
+    onShouldBlockNativeResponder: () => true,
+  }), [galleryWidth, images.length, scrollToImage]);
 
   const renderStars = (rating) => {
     const stars = []; const full = Math.floor(rating); const half = rating % 1 >= 0.5;
@@ -324,15 +380,6 @@ export default function ProductDetailScreen({ route, navigation }) {
     );
   }
 
-  // Normalize images: accept string or {url} entries, drop values that aren't real URLs
-  // (some legacy products store a text label in the image field)
-  const isValidImageUri = (u) => typeof u === 'string' && /^(https?:|data:|file:)/.test(u);
-  const rawImages = product.images?.length > 0 ? product.images : [product.image];
-  const validImages = rawImages
-    .map((img) => ({ url: typeof img === 'string' ? img : img?.url }))
-    .filter((img) => isValidImageUri(img.url));
-  const images = validImages.length > 0 ? validImages : [{ url: null }];
-
   return (
     <GlassBackground>
       <View style={[styles.screen, { paddingTop: topInset }]}>
@@ -346,7 +393,10 @@ export default function ProductDetailScreen({ route, navigation }) {
         >
         {/* Premium media gallery */}
         <GlassPanel variant="strong" style={[styles.galleryCard, { width: contentWidth }]}>
-          <View style={[styles.imageSection, { width: galleryWidth, height: galleryHeight }]}>
+          <View
+            style={[styles.imageSection, { width: galleryWidth, height: galleryHeight }]}
+            {...galleryPanResponder.panHandlers}
+          >
             <LinearGradient
               colors={['rgba(255,255,255,0.10)', 'rgba(99,102,241,0.05)', 'rgba(14,165,233,0.08)']}
               start={{ x: 0, y: 0 }}
@@ -358,23 +408,20 @@ export default function ProductDetailScreen({ route, navigation }) {
               key={`product-gallery-${product._id}-${galleryWidth}`}
               ref={flatListRef}
               data={images}
+              initialScrollIndex={clampGalleryIndex(selectedImageIndexRef.current, images.length)}
               horizontal
               pagingEnabled
-              nestedScrollEnabled
-              directionalLockEnabled
-              disableIntervalMomentum
               decelerationRate="fast"
               snapToInterval={galleryWidth}
               snapToAlignment="start"
-              scrollEnabled={images.length > 1}
+              scrollEnabled={false}
               style={{ width: galleryWidth }}
               contentContainerStyle={styles.galleryTrack}
               showsHorizontalScrollIndicator={false}
               removeClippedSubviews={false}
               scrollEventThrottle={16}
               getItemLayout={(_, index) => ({ length: galleryWidth, offset: galleryWidth * index, index })}
-              onScrollEndDrag={(e) => updateGalleryIndex(e.nativeEvent.contentOffset.x, images.length)}
-              onMomentumScrollEnd={(e) => updateGalleryIndex(e.nativeEvent.contentOffset.x, images.length)}
+              onMomentumScrollEnd={(e) => updateGalleryIndex(e.nativeEvent.contentOffset.x)}
               onScrollToIndexFailed={({ index }) => {
                 flatListRef.current?.scrollToOffset({
                   offset: index * galleryWidth,
@@ -813,7 +860,8 @@ export default function ProductDetailScreen({ route, navigation }) {
 
       {/* Review Modal */}
       <Modal visible={reviewModalVisible} animationType="slide" transparent onRequestClose={() => setReviewModalVisible(false)}>
-        <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+        <View style={styles.modalOverlay}>
+          <KeyboardAwareFormScrollView contentContainerStyle={styles.reviewModalScrollContent} bottomOffset={spacing.md}>
           <GlassPanel variant="strong" style={styles.modalSheet}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.md }}>
               <Text style={{ fontSize: fontSize.xl, fontWeight: fontWeight.bold, color: palette.colors.text }}>Write a Review</Text>
@@ -866,7 +914,8 @@ export default function ProductDetailScreen({ route, navigation }) {
               {submittingReview ? <ActivityIndicator size="small" color="#fff" /> : <><Ionicons name="send" size={16} color="#fff" /><Text style={{ fontSize: fontSize.md, fontWeight: fontWeight.bold, color: '#fff' }}>Submit Review</Text></>}
             </TouchableOpacity>
           </GlassPanel>
-        </KeyboardAvoidingView>
+          </KeyboardAwareFormScrollView>
+        </View>
       </Modal>
 
       {/* Safe-area-aware persistent purchase controls */}
@@ -1790,6 +1839,10 @@ const buildStyles = (p) => StyleSheet.create({
     borderTopRightRadius: 30,
     padding: spacing.xl,
     paddingBottom: spacing.xxxl,
+  },
+  reviewModalScrollContent: {
+    flexGrow: 1,
+    justifyContent: 'flex-end',
   },
   modalClose: {
     width: 38,

@@ -1,4 +1,4 @@
-
+const crypto = require('crypto')
 const User = require('../models/User')
 const { sendEmail } = require('./mailController')
 const { sellerAccountCreatedEmail } = require('../utils/emailTemplates')
@@ -9,10 +9,36 @@ const { notifySeller } = require('../services/whatsapp/sellerNotificationService
 const sellerTemplates = require('../services/whatsapp/sellerMessageTemplates')
 const SellerSubscription = require('../models/SellerSubscription')
 const Store = require('../models/Store')
+const WhatsAppOTP = require('../models/WhatsAppOTP')
+const WhatsAppConfig = require('../models/WhatsAppConfig')
+const sellerEvolutionClient = require('../services/whatsapp/sellerEvolutionClient')
+const { verifyAndClaimWhatsAppOTP } = require('../services/whatsappOtpVerificationService')
+const {
+    reserveWhatsAppOtpSend,
+    releaseWhatsAppOtpSend,
+} = require('../services/whatsappOtpRateLimitService')
+const {
+    normalizePhoneDigits,
+    toE164PhoneNumber,
+    sellerPhoneConflictQuery,
+} = require('../utils/phoneNumber')
+const { slugifyStoreName } = require('../utils/storeSlug')
+const {
+    conflictMessage,
+    findWhatsAppIdentityConflict,
+} = require('../services/whatsappIdentityService')
 const {
     presentSellerSubscription,
     resolveUserJoinedAt,
 } = require('../services/adminUserPresentationService')
+const { deleteAccountCascade } = require('../services/accountDeletionService')
+const { isValidExpoToken } = require('../utils/expoPush')
+const {
+    registerPushToken,
+    revokePushToken: revokePushTokenRegistration,
+    isCredentialShape,
+    unregisterPushTokenForUser,
+} = require('../services/pushTokenRevocationService')
 
 exports.getUsers = async (req, res) => {
     const { role: userRole, id: _id } = req.user
@@ -201,14 +227,13 @@ exports.deleteUser = async (req, res) => {
     const { id } = req.params
     if (role !== 'admin') return res.status(403).json({ msg: 'Admin access only.' })
     try {
-        const user = await User.findByIdAndDelete(id)
-
-        // if (!user) res.status(404).json({ msg: "User not found." })
-
-        // user.role = user.role === 'admin' ? 'user' : 'admin'
-        // await user.save()
+        const result = await deleteAccountCascade(id)
+        if (!result.found) return res.status(404).json({ msg: 'User not found.' })
         res.status(200).json({ msg: `User has been successfully deleted.` })
     } catch (error) {
+        if (error?.code === 'ADMIN_ACCOUNT_DELETE_FORBIDDEN') {
+            return res.status(409).json({ msg: error.message })
+        }
         console.error(error);
         res.status(500).json({ msg: 'Server error while deleting user.' })
     }
@@ -217,8 +242,8 @@ exports.deleteUser = async (req, res) => {
 exports.deleteOwnAccount = async (req, res) => {
     const { id: _id } = req.user
     try {
-        const user = await User.findByIdAndDelete(_id)
-        if (!user) return res.status(404).json({ msg: 'User not found.' })
+        const result = await deleteAccountCascade(_id, { allowAdminDeletion: true })
+        if (!result.found) return res.status(404).json({ msg: 'User not found.' })
         res.status(200).json({ msg: 'Your account has been successfully deleted.' })
     } catch (error) {
         console.error(error);
@@ -301,7 +326,8 @@ exports.becomeSeller = async (req, res) => {
 
         // Check store name uniqueness before proceeding
         const StoreModel = require('../models/Store')
-        const desiredSlug = storeName.trim().toLowerCase().replace(/[^\w\s-]/g, '').replace(/\s+/g, '-').replace(/-+/g, '-')
+        const baseSlug = slugifyStoreName(storeName) || `store-${user._id.toString().slice(-8)}`
+        const desiredSlug = baseSlug
         const slugTaken = await StoreModel.findOne({ storeSlug: desiredSlug })
         if (slugTaken) {
             return res.status(409).json({ message: 'This store name is already taken. Please choose a different name.' })
@@ -313,7 +339,7 @@ exports.becomeSeller = async (req, res) => {
         let whatsappVerifiedServerSide = false;
         if (whatsappNumber) {
             const { consumeVerifiedWhatsAppNumber } = require('./sellerWhatsappController');
-            whatsappVerifiedServerSide = await consumeVerifiedWhatsAppNumber(whatsappNumber);
+            whatsappVerifiedServerSide = await consumeVerifiedWhatsAppNumber(whatsappNumber, _id);
         }
         if (!whatsappVerifiedServerSide) {
             return res.status(400).json({
@@ -325,7 +351,8 @@ exports.becomeSeller = async (req, res) => {
         user.role = 'seller'
         user.sellerInfo = {
             phoneNumber: phoneNumber.trim(),
-            whatsappNumber: whatsappVerifiedServerSide ? whatsappNumber.trim() : '',
+            whatsappNumber: whatsappVerifiedServerSide ? toE164PhoneNumber(whatsappNumber) : '',
+            whatsappDigits: whatsappVerifiedServerSide ? normalizePhoneDigits(whatsappNumber) : '',
             whatsappVerified: whatsappVerifiedServerSide,
             address: address.trim(),
             city: city.trim(),
@@ -583,20 +610,38 @@ exports.setDefaultAddress = async (req, res) => {
 // Register / save an Expo push token for the authenticated user
 exports.savePushToken = async (req, res) => {
     const { id: userId } = req.user;
-    const { pushToken } = req.body;
+    const { pushToken, revocationCredential } = req.body || {};
     if (!pushToken || typeof pushToken !== 'string') {
         return res.status(400).json({ msg: 'pushToken is required' });
     }
-    if (!pushToken.startsWith('ExponentPushToken[') && !pushToken.startsWith('ExpoPushToken[')) {
+    const normalizedToken = pushToken.trim()
+    if (!isValidExpoToken(normalizedToken)) {
         return res.status(400).json({ msg: 'Invalid Expo push token format' });
     }
+    if (revocationCredential !== undefined && !isCredentialShape(revocationCredential)) {
+        return res.status(400).json({ msg: 'Invalid revocationCredential format' })
+    }
     try {
-        await User.updateOne(
-            { _id: userId },
-            { $addToSet: { expoPushTokens: pushToken } }
-        );
-        res.status(200).json({ msg: 'Push token saved' });
+        const { credential, clientProvidedCredential } = await registerPushToken(
+            userId,
+            normalizedToken,
+            revocationCredential
+        )
+        res.status(200).json({
+            msg: 'Push token saved',
+            registered: true,
+            // Legacy clients can still migrate by persisting the generated
+            // credential. New clients supply their own before making the
+            // request, so a lost response is never an ambiguous commit.
+            ...(!clientProvidedCredential ? { revocationCredential: credential } : {}),
+        });
     } catch (error) {
+        if (error?.code === 'PUSH_TOKEN_USER_NOT_FOUND') {
+            return res.status(404).json({ msg: 'User not found' })
+        }
+        if (error?.code === 'PUSH_TOKEN_OWNERSHIP_CHANGED') {
+            return res.status(409).json({ msg: 'Push token ownership changed. Please retry.' })
+        }
         console.error('savePushToken error:', error.message);
         res.status(500).json({ msg: 'Server error saving push token' });
     }
@@ -606,18 +651,48 @@ exports.savePushToken = async (req, res) => {
 exports.removePushToken = async (req, res) => {
     const { id: userId } = req.user;
     const { pushToken } = req.body;
-    if (!pushToken) return res.status(400).json({ msg: 'pushToken is required' });
+    if (!pushToken || typeof pushToken !== 'string') {
+        return res.status(400).json({ msg: 'pushToken is required' });
+    }
+    const normalizedToken = pushToken.trim()
+    if (!isValidExpoToken(normalizedToken)) {
+        return res.status(400).json({ msg: 'Invalid Expo push token format' });
+    }
     try {
-        await User.updateOne(
-            { _id: userId },
-            { $pull: { expoPushTokens: pushToken } }
-        );
+        await unregisterPushTokenForUser(userId, normalizedToken)
         res.status(200).json({ msg: 'Push token removed' });
     } catch (error) {
         console.error('removePushToken error:', error.message);
         res.status(500).json({ msg: 'Server error removing push token' });
     }
 };
+
+// Public installation cleanup for offline logout. Possession of the random
+// per-registration credential authorizes only this exact Expo token.
+exports.revokePushToken = async (req, res) => {
+    const { pushToken, revocationCredential } = req.body || {}
+    if (!pushToken || typeof pushToken !== 'string' || !isValidExpoToken(pushToken.trim())) {
+        return res.status(400).json({ msg: 'A valid pushToken is required' })
+    }
+    if (!isCredentialShape(revocationCredential)) {
+        return res.status(400).json({ msg: 'A valid revocationCredential is required' })
+    }
+
+    try {
+        const result = await revokePushTokenRegistration(pushToken.trim(), revocationCredential.trim())
+        return res.status(200).json({
+            msg: 'Push token revoked',
+            revoked: true,
+            alreadyRevoked: result.alreadyRevoked,
+        })
+    } catch (error) {
+        if (error?.code === 'INVALID_PUSH_REVOCATION_CREDENTIAL') {
+            return res.status(401).json({ msg: 'Invalid revocation credential' })
+        }
+        console.error('revokePushToken error:', error.message)
+        return res.status(500).json({ msg: 'Server error revoking push token' })
+    }
+}
 
 // ============================================================
 // SELLER PROFILE — Change WhatsApp Number & Email
@@ -641,14 +716,14 @@ exports.initiateWhatsAppChange = async (req, res) => {
             return res.status(403).json({ msg: 'Only sellers can change their WhatsApp number.' });
         }
 
-        if (!newWhatsappNumber || newWhatsappNumber.trim().length < 10) {
+        const cleanDigits = normalizePhoneDigits(newWhatsappNumber);
+        if (cleanDigits.length < 10) {
             return res.status(400).json({ msg: 'Please provide a valid WhatsApp number.' });
         }
 
         // Check if the new number is the same as the current one
-        const cleanDigits = String(newWhatsappNumber).replace(/\D/g, '');
-        const currentWhatsApp = String(user.sellerInfo?.whatsappNumber || '').replace(/\D/g, '');
-        const currentPhone = String(user.sellerInfo?.phoneNumber || '').replace(/\D/g, '');
+        const currentWhatsApp = normalizePhoneDigits(user.sellerInfo?.whatsappNumber);
+        const currentPhone = normalizePhoneDigits(user.sellerInfo?.phoneNumber);
         if (cleanDigits === currentWhatsApp || cleanDigits === currentPhone) {
             return res.status(400).json({ msg: 'This is already your current WhatsApp number.' });
         }
@@ -662,26 +737,24 @@ exports.initiateWhatsAppChange = async (req, res) => {
             }
         }
 
+        const identityConflict = await findWhatsAppIdentityConflict(cleanDigits, {
+            channel: 'seller',
+            userId,
+        })
+        if (identityConflict) {
+            return res.status(409).json({ msg: conflictMessage(identityConflict) })
+        }
+
         // Check if the new number is already used by another seller
-        const numberVariants = [newWhatsappNumber, `+${cleanDigits}`, cleanDigits];
-        const existingSeller = await User.findOne({
-            _id: { $ne: userId },
-            role: 'seller',
-            $or: [
-                { 'sellerInfo.whatsappNumber': { $in: numberVariants } },
-                { 'sellerInfo.phoneNumber': { $in: numberVariants } }
-            ]
-        });
+        const existingSeller = await User.findOne(
+            sellerPhoneConflictQuery(cleanDigits, userId)
+        ).select('_id');
         if (existingSeller) {
             return res.status(409).json({ msg: 'This number is already associated with another seller account.' });
         }
 
         // Send WhatsApp OTP to the new number using the existing WhatsApp OTP system
         // We forward to the sellerWhatsapp send-otp logic
-        const WhatsAppOTP = require('../models/WhatsAppOTP');
-        const WhatsAppConfig = require('../models/WhatsAppConfig');
-        const sellerEvolutionClient = require('../services/whatsapp/sellerEvolutionClient');
-
         const cfg = await WhatsAppConfig.findOne({ singletonKey: 'seller' });
         if (!cfg || cfg.status !== 'connected') {
             return res.status(503).json({ msg: 'WhatsApp verification service is temporarily unavailable.' });
@@ -691,19 +764,23 @@ exports.initiateWhatsAppChange = async (req, res) => {
             return res.status(503).json({ msg: 'WhatsApp service is not configured.' });
         }
 
-        // Rate limit: max 3 per hour for this number
-        const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
-        const perNumberCount = await WhatsAppOTP.countDocuments({ number: cleanDigits, createdAt: { $gte: oneHourAgo } });
-        if (perNumberCount >= 3) {
-            return res.status(429).json({ msg: 'Too many attempts. Please try again in an hour.' });
+        let rateReservation;
+        try {
+            rateReservation = await reserveWhatsAppOtpSend({ number: cleanDigits, sellerId: userId });
+        } catch (rateError) {
+            if (rateError?.code?.startsWith('WHATSAPP_OTP_')) {
+                return res.status(429).json({ msg: rateError.message });
+            }
+            throw rateError;
         }
 
-        const otp = Math.floor(100000 + Math.random() * 900000).toString();
+        const otp = crypto.randomInt(100000, 1000000).toString();
         const message = `*Rozare Verification*\n\nYour verification code is: *${otp}*\n\nThis code expires in 2 minutes.\nDo not share this code with anyone.`;
 
         try {
             await sellerEvolutionClient.sendText(cleanDigits, message);
         } catch (sendErr) {
+            await releaseWhatsAppOtpSend(rateReservation).catch(() => null);
             return res.status(502).json({ msg: 'Failed to send verification code. Please try again.' });
         }
 
@@ -740,64 +817,98 @@ exports.verifyWhatsAppChange = async (req, res) => {
             return res.status(400).json({ msg: 'Number and OTP are required.' });
         }
 
-        const cleanDigits = String(newWhatsappNumber).replace(/\D/g, '');
-        const WhatsAppOTP = require('../models/WhatsAppOTP');
+        const cleanDigits = normalizePhoneDigits(newWhatsappNumber);
+        if (cleanDigits.length < 10 || !/^\d{6}$/.test(String(otp).trim())) {
+            return res.status(400).json({ msg: 'Invalid WhatsApp number or code format.' });
+        }
 
-        // Find and verify the OTP
-        const otpRecord = await WhatsAppOTP.findOne({
+        const currentDigits = normalizePhoneDigits(user.sellerInfo?.whatsappNumber);
+        if (user.sellerInfo?.whatsappVerified && currentDigits === cleanDigits) {
+            return res.status(400).json({ msg: 'This is already your current WhatsApp number.' });
+        }
+
+        // Re-check the cooldown at verification time so an older code cannot
+        // bypass a number change completed after that code was issued.
+        if (user.sellerInfo?.lastWhatsAppChange) {
+            const daysSinceChange = (Date.now() - new Date(user.sellerInfo.lastWhatsAppChange).getTime()) / (1000 * 60 * 60 * 24);
+            if (daysSinceChange < CHANGE_COOLDOWN_DAYS) {
+                const daysLeft = Math.ceil(CHANGE_COOLDOWN_DAYS - daysSinceChange);
+                await WhatsAppOTP.deleteMany({ number: cleanDigits, sellerId: userId });
+                return res.status(429).json({ msg: `You can only change your WhatsApp number once every 30 days. Please try again in ${daysLeft} day${daysLeft > 1 ? 's' : ''}.` });
+            }
+        }
+
+        const verification = await verifyAndClaimWhatsAppOTP({
             number: cleanDigits,
-            verified: false,
-        }).sort({ createdAt: -1 });
+            sellerId: userId,
+            otp: String(otp).trim(),
+            validAfter: new Date(Date.now() - 2 * 60 * 1000),
+            maxAttempts: 5,
+        });
 
-        if (!otpRecord) {
+        if (verification.status === 'missing') {
             return res.status(400).json({ msg: 'No verification code found. Please request a new one.' });
         }
-
-        // Check expiry (2 minutes)
-        const ageMs = Date.now() - new Date(otpRecord.createdAt).getTime();
-        if (ageMs > 2 * 60 * 1000) {
-            return res.status(400).json({ msg: 'Verification code has expired. Please request a new one.' });
-        }
-
-        // Check attempts
-        if (otpRecord.attempts >= 5) {
+        if (verification.status === 'locked') {
             return res.status(400).json({ msg: 'Too many wrong attempts. Please request a new code.' });
         }
-
-        // Verify OTP
-        if (otpRecord.otp !== otp) {
-            otpRecord.attempts += 1;
-            await otpRecord.save();
+        if (verification.status === 'invalid') {
             return res.status(400).json({ msg: 'Invalid code. Please try again.' });
+        }
+        const otpRecord = verification.record;
+
+        const identityConflict = await findWhatsAppIdentityConflict(cleanDigits, {
+            channel: 'seller',
+            userId,
+        })
+        if (identityConflict) {
+            await WhatsAppOTP.deleteOne({ _id: otpRecord._id })
+            return res.status(409).json({ msg: conflictMessage(identityConflict) })
         }
 
         // Double-check the number isn't taken (race condition protection)
-        const numberVariants = [newWhatsappNumber, `+${cleanDigits}`, cleanDigits];
-        const existingSeller = await User.findOne({
-            _id: { $ne: userId },
-            role: 'seller',
-            $or: [
-                { 'sellerInfo.whatsappNumber': { $in: numberVariants } },
-                { 'sellerInfo.phoneNumber': { $in: numberVariants } }
-            ]
-        });
+        const existingSeller = await User.findOne(
+            sellerPhoneConflictQuery(cleanDigits, userId)
+        ).select('_id');
         if (existingSeller) {
-            otpRecord.verified = true;
-            await otpRecord.save();
+            await WhatsAppOTP.deleteOne({ _id: otpRecord._id });
             return res.status(409).json({ msg: 'This number is now associated with another seller account. Please use a different number.' });
         }
 
         // OTP matches — update user's WhatsApp number
-        otpRecord.verified = true;
-        await otpRecord.save();
+        const canonicalNumber = toE164PhoneNumber(cleanDigits);
+        try {
+            const updatedUser = await User.findOneAndUpdate(
+                { _id: userId, role: 'seller', updatedAt: user.updatedAt },
+                {
+                    $set: {
+                        'sellerInfo.whatsappNumber': canonicalNumber,
+                        'sellerInfo.phoneNumber': canonicalNumber,
+                        'sellerInfo.whatsappDigits': cleanDigits,
+                        'sellerInfo.whatsappVerified': true,
+                        'sellerInfo.lastWhatsAppChange': new Date(),
+                    },
+                },
+                { new: true }
+            );
+            if (!updatedUser) {
+                await WhatsAppOTP.deleteOne({ _id: otpRecord._id });
+                return res.status(409).json({
+                    msg: 'Your seller profile changed while this code was being verified. Please request a new code.',
+                });
+            }
+        } catch (updateError) {
+            await WhatsAppOTP.deleteOne({ _id: otpRecord._id });
+            if (updateError?.code === 11000) {
+                return res.status(409).json({
+                    msg: 'This number is now associated with another seller account. Please use a different number.',
+                });
+            }
+            throw updateError;
+        }
+        await WhatsAppOTP.deleteOne({ _id: otpRecord._id });
 
-        user.sellerInfo.whatsappNumber = newWhatsappNumber.trim();
-        user.sellerInfo.phoneNumber = newWhatsappNumber.trim();
-        user.sellerInfo.whatsappVerified = true;
-        user.sellerInfo.lastWhatsAppChange = new Date();
-        await user.save();
-
-        res.status(200).json({ msg: 'WhatsApp number updated successfully.', whatsappNumber: newWhatsappNumber.trim() });
+        res.status(200).json({ msg: 'WhatsApp number updated successfully.', whatsappNumber: canonicalNumber });
     } catch (error) {
         console.error('verifyWhatsAppChange error:', error.message);
         res.status(500).json({ msg: 'Server error. Please try again.' });
@@ -842,8 +953,13 @@ exports.initiateEmailChange = async (req, res) => {
         }
 
         // Generate OTP and send to new email
-        const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
-        await OTP.deleteMany({ email: newEmail.toLowerCase() });
+        const otpCode = crypto.randomInt(100000, 1000000).toString();
+        // A seller may have only one live email-change challenge. Reissuing a
+        // code invalidates challenges for every previously requested address.
+        await OTP.deleteMany({
+            'userData.type': 'email-change',
+            'userData.sellerId': userId,
+        });
 
         const otpDoc = new OTP({
             email: newEmail.toLowerCase(),
@@ -918,6 +1034,20 @@ exports.verifyEmailChange = async (req, res) => {
             return res.status(400).json({ msg: 'Email and OTP are required.' });
         }
 
+        // Re-check at consumption time. A code issued before another successful
+        // change must not bypass the 30-day policy.
+        if (user.sellerInfo?.lastEmailChange) {
+            const daysSinceChange = (Date.now() - new Date(user.sellerInfo.lastEmailChange).getTime()) / (1000 * 60 * 60 * 24);
+            if (daysSinceChange < CHANGE_COOLDOWN_DAYS) {
+                const daysLeft = Math.ceil(CHANGE_COOLDOWN_DAYS - daysSinceChange);
+                await OTP.deleteMany({
+                    'userData.type': 'email-change',
+                    'userData.sellerId': userId,
+                });
+                return res.status(429).json({ msg: `You can only change your email once every 30 days. Please try again in ${daysLeft} day${daysLeft > 1 ? 's' : ''}.` });
+            }
+        }
+
         // Find the OTP record
         const otpDoc = await OTP.findOne({ email: newEmail.toLowerCase(), otp });
         if (!otpDoc) {
@@ -925,7 +1055,10 @@ exports.verifyEmailChange = async (req, res) => {
         }
 
         // Verify it's for an email change
-        if (otpDoc.userData?.type !== 'email-change' || otpDoc.userData?.sellerId !== userId) {
+        if (
+            otpDoc.userData?.type !== 'email-change' ||
+            String(otpDoc.userData?.sellerId || '') !== String(userId)
+        ) {
             return res.status(400).json({ msg: 'Invalid verification code for this request.' });
         }
 
@@ -940,13 +1073,17 @@ exports.verifyEmailChange = async (req, res) => {
         user.email = newEmail.toLowerCase();
         user.sellerInfo.lastEmailChange = new Date();
         await user.save();
-        await OTP.deleteOne({ _id: otpDoc._id });
+        await OTP.deleteMany({
+            'userData.type': 'email-change',
+            'userData.sellerId': userId,
+        });
 
         // Generate new JWT with updated email
         const jwt = require('jsonwebtoken');
         const token = jwt.sign(
             { id: user._id, username: user.username, email: user.email, role: user.role, avatar: user.profilePicture || user.avatar },
-            process.env.JWT_SECRET
+            process.env.JWT_SECRET,
+            { expiresIn: '7d' }
         );
 
         res.status(200).json({ msg: 'Email updated successfully.', email: user.email, token });

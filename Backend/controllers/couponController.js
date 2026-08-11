@@ -9,6 +9,8 @@ const {
     convertOrderAmount,
     lineTotal,
     roundMoney,
+    toId,
+    itemBelongsToSeller,
 } = require('../services/orderMoneyService');
 
 const isObjectId = (value) => (
@@ -469,40 +471,83 @@ exports.getCouponAnalytics = async (req, res) => {
             .populate('applicableProducts', 'name image price currency priceCurrency')
             .sort({ usedCount: -1 });
 
+        const sellerProductIds = await Product.find({ seller: sellerId }).distinct('_id');
+        const sellerProductIdSet = new Set(sellerProductIds.map(toId));
+
         // Get all orders with this seller's coupons
         const sellerCouponIds = coupons.map(c => c._id.toString());
         const ordersWithCoupons = await Order.find({
-            'appliedCoupons.couponId': { $in: sellerCouponIds }
+            'appliedCoupons.couponId': { $in: sellerCouponIds },
+            awaitingPayment: { $ne: true },
         });
 
         // Calculate per-coupon analytics
         const couponAnalytics = await Promise.all(coupons.map(async coupon => {
-            const couponOrders = ordersWithCoupons.filter(order =>
-                order.appliedCoupons.some(ac => ac.couponId?.toString() === coupon._id.toString())
-            );
+            const couponId = toId(coupon._id);
+            const attributedOrders = [];
+
+            for (const order of ordersWithCoupons) {
+                const appliedCoupon = (order.appliedCoupons || []).find(
+                    entry => toId(entry?.couponId) === couponId
+                );
+                if (!appliedCoupon) continue;
+
+                // The checkout snapshot is the source of truth for which lines
+                // this coupon actually discounted. Current coupon configuration
+                // may have changed since the order was placed.
+                const applicableProductIds = new Set(
+                    (appliedCoupon.applicableProductIds || []).map(toId).filter(Boolean)
+                );
+                if (!applicableProductIds.size) continue;
+
+                const applicableItems = (order.orderItems || []).filter(
+                    item => applicableProductIds.has(toId(item?.productId))
+                );
+                const sellerItems = applicableItems.filter(
+                    item => itemBelongsToSeller(item, sellerId, sellerProductIdSet)
+                );
+                if (!sellerItems.length) continue;
+
+                const applicableSubtotal = applicableItems.reduce((sum, item) => sum + lineTotal(item), 0);
+                const sellerSubtotal = sellerItems.reduce((sum, item) => sum + lineTotal(item), 0);
+                if (sellerSubtotal <= 0) continue;
+
+                // A malformed legacy record can contain another seller's line.
+                // Attribute only this seller's proportional share of the exact
+                // discount persisted for this coupon, never the global order
+                // couponDiscount value.
+                const persistedDiscount = Math.max(0, Number(appliedCoupon.appliedDiscountAmount) || 0);
+                const sellerDiscount = applicableSubtotal > 0
+                    ? Math.min(sellerSubtotal, persistedDiscount * (sellerSubtotal / applicableSubtotal))
+                    : 0;
+
+                attributedOrders.push({ order, sellerSubtotal, sellerDiscount });
+            }
 
             let totalRevenue = 0;
-            for (const order of couponOrders) {
-                const sellerItems = order.orderItems.filter(item => {
-                    if (coupon.applicableTo === 'all') return true;
-                    return coupon.applicableProducts.some(p => p._id.toString() === item.productId.toString());
-                });
+            let totalDiscount = 0;
+            for (const attribution of attributedOrders) {
                 totalRevenue += await convertOrderAmount(
-                    order,
-                    sellerItems.reduce((sum, item) => sum + lineTotal(item), 0),
+                    attribution.order,
+                    attribution.sellerSubtotal,
+                    targetCurrency
+                );
+                totalDiscount += await convertOrderAmount(
+                    attribution.order,
+                    attribution.sellerDiscount,
                     targetCurrency
                 );
             }
             totalRevenue = roundMoney(totalRevenue);
-
-            let totalDiscount = 0;
-            for (const order of couponOrders) {
-                totalDiscount += await convertOrderAmount(order, order.orderSummary?.couponDiscount || 0, targetCurrency);
-            }
             totalDiscount = roundMoney(totalDiscount);
 
+            const ordersGenerated = attributedOrders.length;
+            const uniqueUsers = new Set(
+                attributedOrders.map(({ order }) => toId(order.user)).filter(Boolean)
+            ).size;
+
             const conversionRate = coupon.maxUses
-                ? Math.round((coupon.usedCount / coupon.maxUses) * 100)
+                ? Math.round((ordersGenerated / coupon.maxUses) * 100)
                 : null;
 
             return {
@@ -521,23 +566,26 @@ exports.getCouponAnalytics = async (req, res) => {
                 description: coupon.description,
                 totalRevenue,
                 totalDiscount,
-                ordersGenerated: couponOrders.length,
+                ordersGenerated,
                 conversionRate,
-                avgOrderValue: couponOrders.length > 0
-                    ? roundMoney(totalRevenue / couponOrders.length)
+                avgOrderValue: ordersGenerated > 0
+                    ? roundMoney(totalRevenue / ordersGenerated)
                     : 0,
-                uniqueUsers: coupon.usedBy?.length || 0,
+                uniqueUsers,
             };
         }));
 
         // Summary stats
         const totalCoupons = coupons.length;
         const activeCoupons = coupons.filter(c => c.isActive && new Date() <= new Date(c.expiryDate)).length;
-        const totalUses = coupons.reduce((s, c) => s + c.usedCount, 0);
+        const totalUses = couponAnalytics.reduce((sum, coupon) => sum + coupon.ordersGenerated, 0);
         const totalRevenueFromCoupons = couponAnalytics.reduce((s, c) => s + c.totalRevenue, 0);
         const totalDiscountGiven = couponAnalytics.reduce((s, c) => s + c.totalDiscount, 0);
         const topCoupon = couponAnalytics.length > 0
-            ? couponAnalytics.reduce((best, c) => c.usedCount > best.usedCount ? c : best, couponAnalytics[0])
+            ? couponAnalytics.reduce(
+                (best, current) => current.ordersGenerated > best.ordersGenerated ? current : best,
+                couponAnalytics[0]
+            )
             : null;
 
         res.json({

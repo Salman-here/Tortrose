@@ -291,6 +291,12 @@ const storeSchema = new mongoose.Schema({
       type: String,
       default: ''
     },
+    // Durable idempotency history for Stripe Checkout completion retries.
+    // Subdomain purchases are rare (multi-year), so this remains naturally small.
+    processedPaymentIds: {
+      type: [String],
+      default: []
+    },
     // Track removal schedule for blocked (non-purchased) accounts
     removalScheduledAt: {
       type: Date  // blockedAt + 7 days; null if purchased or not blocked

@@ -4,7 +4,7 @@
  */
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, TextInput, Modal, ScrollView, Alert, ActivityIndicator,
+  View, Text, TouchableOpacity, StyleSheet, TextInput, Modal, Alert, ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
@@ -12,6 +12,7 @@ import api from '../../config/api';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import GlassPanel from './GlassPanel';
+import KeyboardAwareFormScrollView from './KeyboardAwareFormScrollView';
 import { spacing, fontSize, fontWeight, borderRadius, shadows } from '../../styles/theme';
 
 const Stars = ({ value = 0, size = 14, color, emptyColor }) => {
@@ -303,7 +304,7 @@ export default function StoreReviews({ storeId, storeOwnerId, onSummaryChange })
                 <Ionicons name="close" size={22} color={palette.colors.text} />
               </TouchableOpacity>
             </View>
-            <ScrollView showsVerticalScrollIndicator={false}>
+            <KeyboardAwareFormScrollView bottomOffset={32}>
               <Text style={styles.formLabel}>Your rating</Text>
               <StarPicker value={form.rating} onChange={(v) => setForm((p) => ({ ...p, rating: v }))} />
 
@@ -339,7 +340,7 @@ export default function StoreReviews({ storeId, storeOwnerId, onSummaryChange })
                   </>
                 )}
               </TouchableOpacity>
-            </ScrollView>
+            </KeyboardAwareFormScrollView>
           </GlassPanel>
         </View>
       </Modal>

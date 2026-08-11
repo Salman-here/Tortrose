@@ -1,5 +1,7 @@
 'use strict';
 
+const User = require('../models/User');
+
 const EARTH_RADIUS_KM = 6371;
 const MAX_RADIUS_KM = 500;
 const {
@@ -404,10 +406,28 @@ async function findVisibleStores(StoreModel, baseFilter = {}, buyerLocation = {}
     stores = [...stores, ...radiusStores.filter(store => isStoreVisibleToBuyer(store, location))];
   }
 
+  // Store.isActive alone is insufficient for legacy rows whose seller was
+  // deleted without a cascade. Require a currently active seller account so
+  // orphaned or blocked storefronts disappear immediately from marketplace
+  // lists even before a maintenance cleanup runs.
+  const sellerIds = [...new Set(stores
+    .map(store => store?.seller?._id || store?.seller)
+    .filter(Boolean)
+    .map(String))];
+  const activeSellers = sellerIds.length
+    ? await User.find({
+      _id: { $in: sellerIds },
+      role: 'seller',
+      status: 'active',
+    }).select('_id').lean()
+    : [];
+  const activeSellerIds = new Set(activeSellers.map(seller => String(seller._id)));
+
   const seen = new Set();
   return stores.filter(store => {
     const id = String(store._id || '');
-    if (!id || seen.has(id)) return false;
+    const sellerId = String(store?.seller?._id || store?.seller || '');
+    if (!id || seen.has(id) || !activeSellerIds.has(sellerId)) return false;
     seen.add(id);
     return true;
   });

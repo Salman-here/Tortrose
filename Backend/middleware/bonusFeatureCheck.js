@@ -54,7 +54,14 @@ const bonusFeatureCheck = (featureName) => async (req, res, next) => {
         next();
     } catch (error) {
         console.error('Bonus feature check error:', error);
-        next(); // Don't block on errors
+        if (req.user?.role === 'seller') {
+            return res.status(503).json({
+                msg: `${featureName} entitlement could not be verified. Please try again shortly.`,
+                code: 'BONUS_ENTITLEMENT_UNAVAILABLE',
+                featureName,
+            });
+        }
+        next();
     }
 };
 

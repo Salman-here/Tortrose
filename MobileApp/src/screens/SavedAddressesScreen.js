@@ -2,12 +2,11 @@
  * SavedAddressesScreen — manage multiple shipping addresses (address book).
  * Full CRUD: add, edit, delete, set default. Liquid Glass design.
  */
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   TextInput, Modal, RefreshControl, ActivityIndicator, Platform, Alert,
 } from 'react-native';
-import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import Feedback from '../utils/feedback';
@@ -15,13 +14,18 @@ import api from '../config/api';
 import GlassBackground from '../components/common/GlassBackground';
 import GlassPanel from '../components/common/GlassPanel';
 import PremiumBackHeader from '../components/common/PremiumBackHeader';
+import KeyboardAwareFormScrollView from '../components/common/KeyboardAwareFormScrollView';
+import PhoneNumberInput from '../components/common/PhoneNumberInput';
 import { EmptyState } from '../components/common';
 import { spacing, fontSize, fontWeight, borderRadius } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
+import { resolveBuyerLocation } from '../utils/buyerLocation';
+import { isValidPhoneNumber } from '../utils/phoneNumber';
+import { addressCountrySeed } from '../utils/addressCountrySeed';
 
 const EMPTY_FORM = {
   label: 'Home', fullName: '', email: '', phone: '',
-  address: '', city: '', state: '', postalCode: '', country: 'Pakistan',
+  address: '', city: '', state: '', stateCode: '', postalCode: '', country: '', countryCode: '',
   isDefault: false,
 };
 
@@ -57,6 +61,7 @@ export default function SavedAddressesScreen({ navigation }) {
   const [form, setForm] = useState(EMPTY_FORM);
   const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
+  const countrySeedRequest = useRef(0);
 
   const fetchAddresses = useCallback(async () => {
     try {
@@ -71,14 +76,44 @@ export default function SavedAddressesScreen({ navigation }) {
 
   useEffect(() => { fetchAddresses(); }, [fetchAddresses]);
 
-  const openAdd = () => { setEditingId(null); setForm(EMPTY_FORM); setErrors({}); setShowForm(true); };
-  const openEdit = (a) => { setEditingId(a._id); setForm({ ...a }); setErrors({}); setShowForm(true); };
+  const openAdd = () => {
+    const requestId = countrySeedRequest.current + 1;
+    countrySeedRequest.current = requestId;
+    const savedCountry = addresses.find(address => address.isDefault) || addresses[0] || null;
+    const initialCountry = addressCountrySeed(savedCountry, null, false);
+    const initialForm = { ...EMPTY_FORM, ...initialCountry };
+    setEditingId(null);
+    setForm(initialForm);
+    setErrors({});
+    setShowForm(true);
+
+    if (initialCountry.country && initialCountry.countryCode) return;
+    resolveBuyerLocation()
+      .catch(() => null)
+      .then((detectedLocation) => {
+        if (countrySeedRequest.current !== requestId) return;
+        const resolvedCountry = addressCountrySeed(savedCountry, detectedLocation, true);
+        setForm(previous => {
+          const countryWasChanged = previous.country !== initialForm.country
+            || previous.countryCode !== initialForm.countryCode;
+          return countryWasChanged ? previous : { ...previous, ...resolvedCountry };
+        });
+      });
+  };
+  const openEdit = (a) => {
+    countrySeedRequest.current += 1;
+    setEditingId(a._id);
+    setForm({ ...a });
+    setErrors({});
+    setShowForm(true);
+  };
 
   const validate = () => {
     const e = {};
     if (!form.fullName?.trim() || form.fullName.trim().length < 2) e.fullName = 'Full name required';
     if (!form.address?.trim() || form.address.trim().length < 4) e.address = 'Street address required';
     if (!form.city?.trim()) e.city = 'City required';
+    if (form.phone && !isValidPhoneNumber(form.phone)) e.phone = 'Select a country and enter a valid phone number';
     setErrors(e);
     return Object.keys(e).length === 0;
   };
@@ -216,7 +251,7 @@ export default function SavedAddressesScreen({ navigation }) {
 
         {/* Form Modal */}
         <Modal visible={showForm} transparent animationType="slide" onRequestClose={() => setShowForm(false)}>
-          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalRoot}>
+          <View style={styles.modalRoot}>
             <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setShowForm(false)} />
             <GlassPanel variant="strong" style={styles.modal}>
               <View style={styles.modalHandle} />
@@ -226,7 +261,7 @@ export default function SavedAddressesScreen({ navigation }) {
                   <Ionicons name="close" size={20} color={palette.colors.text} />
                 </TouchableOpacity>
               </View>
-              <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" style={{ maxHeight: 460 }}>
+              <KeyboardAwareFormScrollView style={{ maxHeight: 460 }}>
                 {/* Label preset chips */}
                 <Text style={styles.fieldLabel}>Label</Text>
                 <View style={styles.chipRow}>
@@ -245,7 +280,19 @@ export default function SavedAddressesScreen({ navigation }) {
                 </View>
 
                 <FormField label="Full Name" value={form.fullName} onChangeText={(v) => setForm((f) => ({ ...f, fullName: v }))} error={errors.fullName} icon="person-outline" />
-                <FormField label="Phone" value={form.phone} onChangeText={(v) => setForm((f) => ({ ...f, phone: v }))} icon="call-outline" keyboardType="phone-pad" />
+                <PhoneNumberInput
+                  label="Phone"
+                  value={form.phone}
+                  onChangeText={(value) => {
+                    setForm(previous => ({ ...previous, phone: value }));
+                    setErrors(previous => ({ ...previous, phone: null }));
+                  }}
+                  defaultCountryCode={form.phone ? form.countryCode : undefined}
+                  profileCountryCode={form.countryCode}
+                  profileCountry={form.country}
+                  error={errors.phone}
+                  testID="saved-address-phone"
+                />
                 <FormField label="Email" value={form.email} onChangeText={(v) => setForm((f) => ({ ...f, email: v }))} icon="mail-outline" keyboardType="email-address" autoCapitalize="none" />
                 <FormField label="Street Address" value={form.address} onChangeText={(v) => setForm((f) => ({ ...f, address: v }))} error={errors.address} icon="home-outline" multiline />
                 <View style={{ flexDirection: 'row', gap: spacing.sm }}>
@@ -267,7 +314,7 @@ export default function SavedAddressesScreen({ navigation }) {
                   </View>
                   <Text style={styles.defaultToggleText}>Use as default address</Text>
                 </TouchableOpacity>
-              </ScrollView>
+              </KeyboardAwareFormScrollView>
 
               <TouchableOpacity
                 style={[styles.saveBtn, saving && { opacity: 0.7 }]}
@@ -278,7 +325,7 @@ export default function SavedAddressesScreen({ navigation }) {
                 {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveBtnText}>{editingId ? 'Save Changes' : 'Add Address'}</Text>}
               </TouchableOpacity>
             </GlassPanel>
-          </KeyboardAvoidingView>
+          </View>
         </Modal>
       </SafeAreaView>
     </GlassBackground>

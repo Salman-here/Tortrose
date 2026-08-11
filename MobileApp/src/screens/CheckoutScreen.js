@@ -5,9 +5,8 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   View, Text, ScrollView, TextInput, TouchableOpacity,
-  StyleSheet, Platform, Modal, ActivityIndicator,
+  StyleSheet, Modal, ActivityIndicator,
 } from 'react-native';
-import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { Image } from 'expo-image';
 import Feedback from '../utils/feedback';
 import { Ionicons } from '@expo/vector-icons';
@@ -23,9 +22,13 @@ import { Loader, InlineLoader } from '../components/common';
 import GlassBackground from '../components/common/GlassBackground';
 import GlassPanel from '../components/common/GlassPanel';
 import LocationAutocomplete from '../components/common/LocationAutocomplete';
+import KeyboardAwareFormScrollView from '../components/common/KeyboardAwareFormScrollView';
+import PhoneNumberInput from '../components/common/PhoneNumberInput';
 import { trackCheckoutStep, trackPaymentEvent, trackError } from '../utils/breadcrumbs';
 import { spacing, fontSize, fontWeight } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
+import { isValidPhoneNumber } from '../utils/phoneNumber';
+import { resolveBuyerLocation } from '../utils/buyerLocation';
 import {
   buildSellerShipping,
   cancelOrderPaymentAttempt,
@@ -67,7 +70,7 @@ export default function CheckoutScreen({ navigation }) {
   const [paymentMethod, setPaymentMethod] = useState('card');
   const [formData, setFormData] = useState({
     fullName: '', email: '', phone: '', address: '',
-    city: '', state: '', stateCode: '', postalCode: '', country: 'Pakistan', countryCode: 'PK',
+    city: '', state: '', stateCode: '', postalCode: '', country: '', countryCode: '',
   });
   const [savedShippingInfo, setSavedShippingInfo] = useState(null);
   const [showUpdatePrompt, setShowUpdatePrompt] = useState(false);
@@ -167,15 +170,41 @@ export default function CheckoutScreen({ navigation }) {
 
   // Fetch saved shipping info
   useEffect(() => {
+    let active = true;
     const fetchShippingInfo = async () => {
+      let shippingInfo = null;
       try {
         const res = await api.get('/api/user/shipping-info');
         if (res.data?.shippingInfo) {
-          setSavedShippingInfo(res.data.shippingInfo);
+          shippingInfo = res.data.shippingInfo;
+          if (active) setSavedShippingInfo(shippingInfo);
         }
       } catch {}
+      const location = shippingInfo?.countryCode || shippingInfo?.country
+        ? shippingInfo
+        : await resolveBuyerLocation().catch(() => null) || { country: 'Pakistan', countryCode: 'PK' };
+      if (active && (location?.countryCode || location?.country)) {
+        setFormData(previous => previous.countryCode || previous.country ? previous : {
+          ...previous,
+          country: location.country || '',
+          countryCode: location.countryCode || '',
+        });
+      }
     };
     if (currentUser) fetchShippingInfo();
+    else {
+      resolveBuyerLocation().then((location) => {
+        const resolved = location || { country: 'Pakistan', countryCode: 'PK' };
+        if (active && (resolved.countryCode || resolved.country)) {
+          setFormData(previous => previous.countryCode || previous.country ? previous : {
+            ...previous,
+            country: resolved.country || '',
+            countryCode: resolved.countryCode || '',
+          });
+        }
+      }).catch(() => {});
+    }
+    return () => { active = false; };
   }, [currentUser]);
 
   useEffect(() => {
@@ -272,8 +301,7 @@ export default function CheckoutScreen({ navigation }) {
     if (!formData.countryCode) newErrors.country = 'Please select your country from the list';
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (formData.email && !emailRegex.test(formData.email)) newErrors.email = 'Please enter a valid email address';
-    const phoneDigits = formData.phone?.replace(/[\s\-\(\)\+]/g, '') || '';
-    if (formData.phone && (phoneDigits.length < 10 || !/^\d+$/.test(phoneDigits))) newErrors.phone = 'Please enter a valid phone number';
+    if (formData.phone && !isValidPhoneNumber(formData.phone)) newErrors.phone = 'Please enter a valid phone number';
     setErrors(newErrors);
     if (Object.keys(newErrors).length > 0) {
       Feedback.show({ type: 'error', text1: 'Missing Information', text2: 'Please fill in all required fields correctly' });
@@ -293,8 +321,8 @@ export default function CheckoutScreen({ navigation }) {
         state: savedShippingInfo.state || '',
         stateCode: savedShippingInfo.stateCode || '',
         postalCode: savedShippingInfo.postalCode || '',
-        country: savedShippingInfo.country || 'Pakistan',
-        countryCode: savedShippingInfo.countryCode || 'PK',
+        country: savedShippingInfo.country || formData.country || '',
+        countryCode: savedShippingInfo.countryCode || formData.countryCode || '',
       });
       Feedback.show({ type: 'success', text1: 'Auto-Filled!', text2: 'Shipping info loaded from your profile' });
     }
@@ -690,7 +718,7 @@ export default function CheckoutScreen({ navigation }) {
 
   return (
     <GlassBackground>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
+      <View style={{ flex: 1 }}>
         {/* Glass Header */}
         <GlassPanel variant="floating" style={styles.header}>
           <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
@@ -705,7 +733,7 @@ export default function CheckoutScreen({ navigation }) {
           </View>
         </GlassPanel>
 
-        <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingHorizontal: spacing.md, paddingBottom: 120, paddingTop: spacing.md }}>
+        <KeyboardAwareFormScrollView contentContainerStyle={{ paddingHorizontal: spacing.md, paddingBottom: 120, paddingTop: spacing.md }} bottomOffset={32}>
           {/* Order Items */}
           <GlassPanel variant="card" style={styles.section}>
             <View style={styles.sectionHeader}>
@@ -757,7 +785,21 @@ export default function CheckoutScreen({ navigation }) {
             </View>
             {renderInput('fullName', 'Full Name', { icon: 'person-outline' })}
             {renderInput('email', 'Email Address', { icon: 'mail-outline', keyboardType: 'email-address', autoCapitalize: 'none' })}
-            {renderInput('phone', 'Phone Number', { icon: 'call-outline', keyboardType: 'phone-pad' })}
+            <PhoneNumberInput
+              label="Phone Number"
+              required
+              value={formData.phone}
+              onChangeText={(value) => {
+                setFormData(previous => ({ ...previous, phone: value }));
+                setErrors(previous => ({ ...previous, phone: null }));
+              }}
+              defaultCountryCode={formData.phone ? formData.countryCode : undefined}
+              profileCountryCode={currentUser?.savedShippingInfo?.countryCode}
+              profileCountry={currentUser?.savedShippingInfo?.country}
+              error={errors.phone}
+              helperText="Select a country, then enter the local mobile number."
+              testID="checkout-phone"
+            />
             {renderInput('address', 'Street Address', { icon: 'home-outline', multiline: true, numberOfLines: 2 })}
             <LocationAutocomplete
               type="country"
@@ -1084,7 +1126,7 @@ export default function CheckoutScreen({ navigation }) {
             <View style={styles.divider} />
             <View style={styles.summaryRow}><Text style={styles.totalLabel}>Total</Text><Text style={styles.totalValue}>{formatAmount(totalAmount)}</Text></View>
           </GlassPanel>
-        </ScrollView>
+        </KeyboardAwareFormScrollView>
 
         {/* Footer */}
         <GlassPanel variant="floating" style={styles.footer}>
@@ -1106,7 +1148,7 @@ export default function CheckoutScreen({ navigation }) {
             )}
           </TouchableOpacity>
         </GlassPanel>
-      </KeyboardAvoidingView>
+      </View>
 
       {/* Update Shipping Info Modal */}
       <Modal

@@ -252,4 +252,31 @@ describe('PaymentController buildSellerPaymentSummary', () => {
         expect(overview.summary.withdrawableBalance).toBe(45);
         expect(overview.withdrawals).toHaveLength(1);
     });
+
+    test('treats the checkout seller snapshot as authoritative after product ownership changes', async () => {
+        const originalSeller = await createUser('originalsnapshot', 'seller');
+        const currentOwner = await createUser('currentowner', 'seller');
+        const buyer = await createUser('snapshottransferbuyer', 'user');
+        const product = await createProduct(originalSeller, 'transferred', 75);
+
+        await createOrder({
+            buyer,
+            items: [{ product, quantity: 1 }],
+            sellerShipping: [{ seller: originalSeller._id, shippingMethod: { name: 'standard', price: 0, estimatedDays: 5 } }],
+            paymentMethod: 'stripe',
+            isPaid: true,
+            orderStatus: 'delivered',
+        });
+
+        await Product.updateOne({ _id: product._id }, { seller: currentOwner._id });
+
+        const [originalSummary, currentOwnerSummary] = await Promise.all([
+            buildSellerPaymentSummary(originalSeller._id),
+            buildSellerPaymentSummary(currentOwner._id),
+        ]);
+
+        expect(originalSummary.revenue.stripeDeliveredRevenue).toBe(75);
+        expect(currentOwnerSummary.revenue.stripeDeliveredRevenue).toBe(0);
+        expect(currentOwnerSummary.revenue.totalRelevantOrders).toBe(0);
+    });
 });

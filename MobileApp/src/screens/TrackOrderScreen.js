@@ -4,14 +4,12 @@ import {
   Keyboard,
   Platform,
   RefreshControl,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
-import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { Image } from 'expo-image';
@@ -23,6 +21,7 @@ import { useCurrency } from '../contexts/CurrencyContext';
 import { useTheme } from '../contexts/ThemeContext';
 import GlassBackground from '../components/common/GlassBackground';
 import GlassPanel from '../components/common/GlassPanel';
+import KeyboardAwareFormScrollView from '../components/common/KeyboardAwareFormScrollView';
 import PremiumBackHeader from '../components/common/PremiumBackHeader';
 import { fontSize, fontWeight, shadows, spacing, typography } from '../styles/theme';
 
@@ -241,11 +240,7 @@ export default function TrackOrderScreen({ navigation }) {
   return (
     <GlassBackground>
       <SafeAreaView style={styles.container} edges={Platform.OS === 'android' ? [] : ['top']}>
-        <KeyboardAvoidingView
-          style={styles.container}
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          keyboardVerticalOffset={0}
-        >
+        <View style={styles.container}>
           <PremiumBackHeader
             title="Track Order"
             subtitle="Live progress for every delivery"
@@ -267,11 +262,8 @@ export default function TrackOrderScreen({ navigation }) {
             style={styles.premiumHeader}
           />
 
-          <ScrollView
+          <KeyboardAwareFormScrollView
             ref={scrollRef}
-            keyboardShouldPersistTaps="handled"
-            keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
-            showsVerticalScrollIndicator={false}
             contentContainerStyle={styles.scrollContent}
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={palette.colors.primary} />}
           >
@@ -689,8 +681,8 @@ export default function TrackOrderScreen({ navigation }) {
                 <Text style={styles.notFoundTitle}>No order selected</Text>
               </GlassPanel>
             )}
-          </ScrollView>
-        </KeyboardAvoidingView>
+          </KeyboardAwareFormScrollView>
+        </View>
       </SafeAreaView>
     </GlassBackground>
   );

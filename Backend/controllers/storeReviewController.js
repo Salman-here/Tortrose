@@ -144,6 +144,8 @@ exports.createOrUpdateReview = asyncHandler(async (req, res) => {
       category: 'seller',
       linkTo: `/store/${store.storeSlug}#store-reviews`,
       source: 'system',
+      targetRole: 'seller',
+      audience: 'specific',
     }).catch((error) => console.error('[store-reviews] seller notification failed:', error.message));
   }
 

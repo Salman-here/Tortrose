@@ -2,20 +2,19 @@ import React, { useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Platform,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
-import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import Feedback from '../../utils/feedback';
 import api from '../../config/api';
 import GlassBackground from '../../components/common/GlassBackground';
 import GlassPanel from '../../components/common/GlassPanel';
+import KeyboardAwareFormScrollView from '../../components/common/KeyboardAwareFormScrollView';
 import { borderRadius, fontSize, fontWeight, shadows, spacing } from '../../styles/theme';
 import { useTheme } from '../../contexts/ThemeContext';
 
@@ -87,8 +86,7 @@ export default function ResetPasswordScreen({ navigation, route }) {
 
   return (
     <GlassBackground>
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-        <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+      <KeyboardAwareFormScrollView contentContainerStyle={styles.container} bottomOffset={32}>
           <GlassPanel variant="floating" style={styles.header}>
             <TouchableOpacity style={styles.backBtn} onPress={() => navigation.navigate('Login')}>
               <Ionicons name="arrow-back" size={20} color={palette.colors.text} />
@@ -133,8 +131,7 @@ export default function ResetPasswordScreen({ navigation, route }) {
               </TouchableOpacity>
             )}
           </GlassPanel>
-        </ScrollView>
-      </KeyboardAvoidingView>
+      </KeyboardAwareFormScrollView>
     </GlassBackground>
   );
 }

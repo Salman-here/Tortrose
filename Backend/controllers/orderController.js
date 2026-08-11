@@ -542,7 +542,9 @@ const recordOrderCoupons = async (savedOrder, userId) => {
 
 // True if any orderItem belongs to this seller (snapshot first, fallback to live product list).
 const itemBelongsToSeller = (item, sellerId, sellerProductIds) => {
-    if (item.seller && toId(item.seller) === toId(sellerId)) return true;
+    // A persisted seller snapshot is authoritative. Only legacy order items
+    // without one may fall back to the product's current owner.
+    if (item.seller) return toId(item.seller) === toId(sellerId);
     return sellerProductIds.includes(toId(item.productId));
 };
 
@@ -611,7 +613,19 @@ const getSellerScopedOrders = async (query, sellerId, sort = null) => {
 
     // Match either by snapshot seller (new orders) OR by current product ownership (legacy).
     const sellerScope = sellerProductIds.length > 0
-        ? { $or: [{ 'orderItems.seller': sellerId }, { 'orderItems.productId': { $in: sellerProductIds } }] }
+        ? {
+            $or: [
+                { 'orderItems.seller': sellerId },
+                {
+                    orderItems: {
+                        $elemMatch: {
+                            seller: null,
+                            productId: { $in: sellerProductIds },
+                        },
+                    },
+                },
+            ],
+        }
         : { 'orderItems.seller': sellerId };
 
     const baseQuery = { ...query };
@@ -974,6 +988,7 @@ exports.placeOrder = async (req, res) => {
                 state: order.shippingInfo.state,
                 postalCode: order.shippingInfo.postalCode,
                 country: order.shippingInfo.country,
+                countryCode: String(order.shippingInfo.countryCode || '').trim().toUpperCase(),
             },
 
             shippingMethod: {
@@ -1682,9 +1697,9 @@ exports.getOrders = async (req, res) => {
         let orders
 
         if (role === 'seller') {
-            orders = await getSellerScopedOrders(query, userId)
+            orders = await getSellerScopedOrders(query, userId, { createdAt: -1 })
         } else if (role === 'admin') {
-            orders = await Order.find(query)
+            orders = await Order.find(query).sort({ createdAt: -1 })
         } else {
             return res.status(403).json({ msg: 'Admin or seller access required for this order list' })
         }
@@ -1704,9 +1719,10 @@ exports.getOrders = async (req, res) => {
  */
 exports.exportOrders = async (req, res) => {
     const { role, id: userId } = req.user;
-    const { search, paymentStatus, status, startDate, endDate, format = 'csv' } = req.query;
+    const { search, paymentStatus, status, startDate, endDate, format = 'csv', currency: requestedCurrency } = req.query;
     const Store = require('../models/Store');
     const User = require('../models/User');
+    const reportCurrency = normalizeCurrency(requestedCurrency || 'USD');
 
     // Hide awaiting-payment Stripe orders from exports.
     let query = { awaitingPayment: { $ne: true } };
@@ -1753,9 +1769,17 @@ exports.exportOrders = async (req, res) => {
         }
 
         // Normalize orders to plain objects
-        const rows = orders.map(order => {
+        const rows = [];
+        for (const order of orders) {
             const o = order.toObject ? order.toObject() : order;
-            return {
+            const sourceCurrency = normalizeCurrency(o.currency || 'USD');
+            // Resolve conversions sequentially so a cold exchange-rate cache cannot
+            // fan out several identical network requests during a large export.
+            const subtotal = await convertAmount(Number(o.orderSummary?.subtotal) || 0, sourceCurrency, reportCurrency);
+            const shipping = await convertAmount(Number(o.orderSummary?.shippingCost) || 0, sourceCurrency, reportCurrency);
+            const tax = await convertAmount(Number(o.orderSummary?.tax) || 0, sourceCurrency, reportCurrency);
+            const total = await convertAmount(Number(o.orderSummary?.totalAmount) || 0, sourceCurrency, reportCurrency);
+            rows.push({
                 orderId: o.orderId || '',
                 date: new Date(o.createdAt).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }),
                 customer: o.shippingInfo?.fullName || '',
@@ -1771,20 +1795,31 @@ exports.exportOrders = async (req, res) => {
                     return `${orderItemName(i)}${options ? ` (${options})` : ''} x${i.quantity}`;
                 }).join(', '),
                 itemCount: (o.orderItems || []).reduce((sum, i) => sum + i.quantity, 0),
-                subtotal: o.orderSummary?.subtotal?.toFixed(2) || '0.00',
-                shipping: o.orderSummary?.shippingCost?.toFixed(2) || '0.00',
-                tax: o.orderSummary?.tax?.toFixed(2) || '0.00',
-                total: o.orderSummary?.totalAmount?.toFixed(2) || '0.00',
-            };
-        });
+                subtotal: Number(subtotal || 0).toFixed(2),
+                shipping: Number(shipping || 0).toFixed(2),
+                tax: Number(tax || 0).toFixed(2),
+                total: Number(total || 0).toFixed(2),
+                currency: reportCurrency,
+            });
+        }
 
         const dateStr = new Date().toISOString().split('T')[0];
         const generatedDate = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+        const safeExportName = String(brandName || 'Rozare')
+            .replace(/[^a-z0-9_-]+/gi, '-')
+            .replace(/^-+|-+$/g, '') || 'Rozare';
+        const neutralizeSpreadsheetText = (value) => {
+            const text = String(value ?? '');
+            return /^[\u0000-\u0020]*[=+\-@]/.test(text) || /^[\t\r\n]/.test(text)
+                ? `'${text}`
+                : text;
+        };
         const filterDesc = [
             status ? `Status: ${status.charAt(0).toUpperCase() + status.slice(1)}` : null,
             paymentStatus ? `Payment: ${paymentStatus}` : null,
             startDate ? `From: ${startDate}` : null,
             endDate ? `To: ${endDate}` : null,
+            `Currency: ${reportCurrency}`,
         ].filter(Boolean).join(' | ') || 'All Orders';
 
         // Totals
@@ -1797,15 +1832,15 @@ exports.exportOrders = async (req, res) => {
         // ── CSV Format ──
         if (format === 'csv') {
             const lines = [];
-            lines.push(`"${brandName} - Order Report"`);
-            if (storeName && role === 'seller') lines.push(`"Store: ${storeName}"`);
+            const esc = (value) => `"${neutralizeSpreadsheetText(value).replace(/"/g, '""')}"`;
+            lines.push(esc(`${brandName} - Order Report`));
+            if (storeName && role === 'seller') lines.push(esc(`Store: ${storeName}`));
             lines.push(`"Generated: ${generatedDate}"`);
             lines.push(`"Filter: ${filterDesc}"`);
-            lines.push(`"Total Orders: ${rows.length} | Total Items: ${totalItems} | Grand Total: $${grandTotal}"`);
+            lines.push(`"Total Orders: ${rows.length} | Total Items: ${totalItems} | Grand Total: ${reportCurrency} ${grandTotal}"`);
             lines.push('');
-            lines.push('Order ID,Date,Customer,Email,Phone,City,Country,Status,Payment,Method,Items,Qty,Subtotal,Shipping,Tax,Total');
+            lines.push(`Order ID,Date,Customer,Email,Phone,City,Country,Status,Payment,Method,Items,Qty,Subtotal (${reportCurrency}),Shipping (${reportCurrency}),Tax (${reportCurrency}),Total (${reportCurrency})`);
             rows.forEach(r => {
-                const esc = (val) => `"${String(val).replace(/"/g, '""')}"`;
                 lines.push([esc(r.orderId), esc(r.date), esc(r.customer), esc(r.email), esc(r.phone), esc(r.city), esc(r.country), esc(r.status), esc(r.payment), esc(r.paymentMethod), esc(r.items), r.itemCount, r.subtotal, r.shipping, r.tax, r.total].join(','));
             });
             lines.push('');
@@ -1814,7 +1849,7 @@ exports.exportOrders = async (req, res) => {
             lines.push(`"Powered by Rozare - www.rozare.com"`);
 
             res.setHeader('Content-Type', 'text/csv');
-            res.setHeader('Content-Disposition', `attachment; filename="${brandName.replace(/\s/g, '-')}-orders-${dateStr}.csv"`);
+            res.setHeader('Content-Disposition', `attachment; filename="${safeExportName}-orders-${dateStr}.csv"`);
             return res.status(200).send(lines.join('\n'));
         }
 
@@ -1829,7 +1864,7 @@ exports.exportOrders = async (req, res) => {
             // ─── Title section ───
             sheet.mergeCells('A1:P1');
             const titleCell = sheet.getCell('A1');
-            titleCell.value = `${brandName} - Order Report`;
+            titleCell.value = neutralizeSpreadsheetText(`${brandName} - Order Report`);
             titleCell.font = { bold: true, size: 16, color: { argb: 'FF6366F1' } };
             titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
             sheet.getRow(1).height = 30;
@@ -1837,7 +1872,7 @@ exports.exportOrders = async (req, res) => {
             if (storeName && role === 'seller') {
                 sheet.mergeCells('A2:P2');
                 const storeCell = sheet.getCell('A2');
-                storeCell.value = `Store: ${storeName}`;
+                storeCell.value = neutralizeSpreadsheetText(`Store: ${storeName}`);
                 storeCell.font = { size: 11, color: { argb: 'FF64748B' } };
                 storeCell.alignment = { horizontal: 'center' };
             }
@@ -1845,7 +1880,7 @@ exports.exportOrders = async (req, res) => {
             const infoRow = role === 'seller' && storeName ? 3 : 2;
             sheet.mergeCells(`A${infoRow}:P${infoRow}`);
             const infoCell = sheet.getCell(`A${infoRow}`);
-            infoCell.value = `Generated: ${generatedDate} | ${filterDesc} | ${rows.length} orders | Grand Total: $${grandTotal}`;
+            infoCell.value = `Generated: ${generatedDate} | ${filterDesc} | ${rows.length} orders | Grand Total: ${reportCurrency} ${grandTotal}`;
             infoCell.font = { size: 10, italic: true, color: { argb: 'FF94A3B8' } };
             infoCell.alignment = { horizontal: 'center' };
 
@@ -1874,7 +1909,7 @@ exports.exportOrders = async (req, res) => {
 
             // Move header row to correct position
             const headerRow = sheet.getRow(dataStartRow);
-            headerRow.values = ['Order ID', 'Date', 'Customer', 'Email', 'Phone', 'City', 'Country', 'Status', 'Payment', 'Method', 'Items', 'Qty', 'Subtotal', 'Shipping', 'Tax', 'Total'];
+            headerRow.values = ['Order ID', 'Date', 'Customer', 'Email', 'Phone', 'City', 'Country', 'Status', 'Payment', 'Method', 'Items', 'Qty', `Subtotal (${reportCurrency})`, `Shipping (${reportCurrency})`, `Tax (${reportCurrency})`, `Total (${reportCurrency})`];
             headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 11 };
             headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF6366F1' } };
             headerRow.alignment = { vertical: 'middle', horizontal: 'center' };
@@ -1884,7 +1919,12 @@ exports.exportOrders = async (req, res) => {
             // Add data rows
             rows.forEach((r, i) => {
                 const row = sheet.getRow(dataStartRow + 1 + i);
-                row.values = [r.orderId, r.date, r.customer, r.email, r.phone, r.city, r.country, r.status, r.payment, r.paymentMethod, r.items, r.itemCount, r.subtotal, r.shipping, r.tax, r.total];
+                row.values = [
+                    r.orderId, r.date, r.customer, r.email, r.phone, r.city,
+                    r.country, r.status, r.payment, r.paymentMethod, r.items,
+                ].map(neutralizeSpreadsheetText).concat([
+                    r.itemCount, r.subtotal, r.shipping, r.tax, r.total,
+                ]);
                 row.alignment = { vertical: 'middle' };
                 if (i % 2 === 0) {
                     row.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8FAFC' } };
@@ -1915,7 +1955,7 @@ exports.exportOrders = async (req, res) => {
             footerCell.alignment = { horizontal: 'center' };
 
             res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-            res.setHeader('Content-Disposition', `attachment; filename="${brandName.replace(/\s/g, '-')}-orders-${dateStr}.xlsx"`);
+            res.setHeader('Content-Disposition', `attachment; filename="${safeExportName}-orders-${dateStr}.xlsx"`);
             await workbook.xlsx.write(res);
             return res.end();
         }
@@ -1927,7 +1967,7 @@ exports.exportOrders = async (req, res) => {
             const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margins: { top: margin, bottom: margin, left: margin, right: margin }, autoFirstPage: false });
 
             res.setHeader('Content-Type', 'application/pdf');
-            res.setHeader('Content-Disposition', `attachment; filename="${brandName.replace(/\s/g, '-')}-orders-${dateStr}.pdf"`);
+            res.setHeader('Content-Disposition', `attachment; filename="${safeExportName}-orders-${dateStr}.pdf"`);
             doc.pipe(res);
 
             doc.addPage({ size: 'A4', layout: 'landscape', margins: { top: margin, bottom: margin, left: margin, right: margin } });
@@ -1949,7 +1989,7 @@ exports.exportOrders = async (req, res) => {
                 { label: 'Payment', width: 48 },
                 { label: 'Method', width: 38 },
                 { label: 'Items', width: 150 },
-                { label: 'Total', width: 58 },
+                { label: `Total ${reportCurrency}`, width: 58 },
             ];
             const tableWidth = cols.reduce((s, c) => s + c.width, 0);
             const rowH = 20;
@@ -1967,7 +2007,7 @@ exports.exportOrders = async (req, res) => {
                 doc.text('Order Report', margin, y, { width: contentWidth, align: 'center', lineBreak: false });
                 y += 16;
                 doc.font('Helvetica').fontSize(9).fillColor('#64748b');
-                doc.text(`${generatedDate} | ${filterDesc} | ${rows.length} orders | Total: $${grandTotal}`, margin, y, { width: contentWidth, align: 'center', lineBreak: false });
+                doc.text(`${generatedDate} | ${filterDesc} | ${rows.length} orders | Total: ${reportCurrency} ${grandTotal}`, margin, y, { width: contentWidth, align: 'center', lineBreak: false });
                 y += 20;
                 return y;
             };
@@ -2003,7 +2043,7 @@ exports.exportOrders = async (req, res) => {
                 doc.rect(margin, y, tableWidth, rowH).lineWidth(0.2).strokeColor('#e2e8f0').stroke();
 
                 // Row values
-                const values = [String(i + 1), r.orderId, r.date, r.customer, r.phone, r.city, r.status, r.payment, r.paymentMethod, r.items, `$${r.total}`];
+                const values = [String(i + 1), r.orderId, r.date, r.customer, r.phone, r.city, r.status, r.payment, r.paymentMethod, r.items, r.total];
                 let x = margin;
                 values.forEach((val, ci) => {
                     let color = '#334155';
@@ -2033,7 +2073,7 @@ exports.exportOrders = async (req, res) => {
                 doc.rect(margin, y, tableWidth, 22).fill('#ede9fe');
                 doc.font('Helvetica-Bold').fontSize(8.5).fillColor('#4f46e5');
                 doc.text(
-                    `TOTALS: ${rows.length} orders | Subtotal: $${totalSubtotal} | Shipping: $${totalShipping} | Tax: $${totalTax} | Grand Total: $${grandTotal}`,
+                    `TOTALS: ${rows.length} orders | Subtotal: ${reportCurrency} ${totalSubtotal} | Shipping: ${reportCurrency} ${totalShipping} | Tax: ${reportCurrency} ${totalTax} | Grand Total: ${reportCurrency} ${grandTotal}`,
                     margin + 10, y + 6, { width: tableWidth - 20, lineBreak: false }
                 );
                 y += 30;
@@ -2105,7 +2145,12 @@ exports.updateStatus = async (req, res) => {
             return res.status(403).json({ msg: 'Only sellers and admins can update order status' })
         }
 
-        const existingOrder = await Order.findById(_id)
+        const existingOrder = await Order.findOne({
+            _id,
+            // Awaiting-payment rows are abandoned/incomplete Checkout state,
+            // not fulfillable seller orders. Keep admin recovery intentional.
+            ...(role === 'seller' ? { awaitingPayment: { $ne: true } } : {}),
+        })
 
         if (!existingOrder) {
             return res.status(404).json({ msg: 'Order not found' })
@@ -2132,8 +2177,7 @@ exports.updateStatus = async (req, res) => {
             const sellerProductIds = sellerProducts.map(p => p._id.toString())
 
             const hasSellerProduct = existingOrder.orderItems.some(item =>
-                (item.seller && toId(item.seller) === toId(userId)) ||
-                sellerProductIds.includes(toId(item.productId))
+                itemBelongsToSeller(item, userId, sellerProductIds)
             )
 
             if (!hasSellerProduct) {
@@ -2220,7 +2264,12 @@ exports.getOrderDetail = async (req, res) => {
     const { role, id: userId } = req.user
 
     try {
-        const order = await Order.findOne({ _id: id })
+        const order = await Order.findOne({
+            _id: id,
+            // Do not expose buyer shipping PII from an unpaid Checkout to a
+            // seller who learned or guessed its database id.
+            ...(role === 'seller' ? { awaitingPayment: { $ne: true } } : {}),
+        })
 
         if (!order) {
             return res.status(404).json({ msg: 'Order not found' })

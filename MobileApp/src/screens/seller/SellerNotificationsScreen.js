@@ -1,188 +1,493 @@
-/**
- * SellerNotificationsScreen — Liquid Glass Design
- * Full notification hub for seller users with category filtering
- */
-
-import React, { useState, useCallback, useEffect } from 'react';
-import { View, Text, FlatList, StyleSheet, SafeAreaView, TouchableOpacity, RefreshControl } from 'react-native';
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
+import {
+  FlatList,
+  Platform,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import api from '../../config/api';
-import { useAuth } from '../../contexts/AuthContext';
 import GlassBackground from '../../components/common/GlassBackground';
 import GlassPanel from '../../components/common/GlassPanel';
-import { spacing, fontSize, fontWeight, borderRadius } from '../../styles/theme';
+import {
+  SellerEmptyState,
+  SellerInlineError,
+  SellerScreenHeader,
+  SellerScreenSkeleton,
+  SellerSectionHeader,
+} from '../../components/seller/SellerUI';
 import { useTheme } from '../../contexts/ThemeContext';
+import { useAuth } from '../../contexts/AuthContext';
+import { borderRadius, fontSize, fontWeight, spacing } from '../../styles/theme';
+import {
+  SELLER_NOTIFICATION_CATEGORIES,
+  buildAnalyticsNotificationReadKey,
+  filterSellerNotifications,
+  formatSellerNotificationTime,
+  normalizeAnalyticsNotification,
+  normalizePersistentNotification,
+  resolveSellerNotificationTarget,
+  sortSellerNotifications,
+} from '../../utils/sellerNotifications';
 
-const CATEGORIES = [
-  { key: 'all', label: 'All', icon: 'apps-outline' },
-  { key: 'orders', label: 'Orders', icon: 'receipt-outline' },
-  { key: 'stock', label: 'Stock', icon: 'cube-outline' },
-  { key: 'reviews', label: 'Reviews', icon: 'star-outline' },
-  { key: 'store', label: 'Store', icon: 'storefront-outline' },
-];
-
-const getCategoryStyles = (palette) => ({
-  orders: { icon: 'receipt-outline', color: palette.colors.primary, bg: 'rgba(99,102,241,0.15)' },
-  stock: { icon: 'cube-outline', color: palette.colors.warning, bg: 'rgba(245,158,11,0.15)' },
-  reviews: { icon: 'star-outline', color: '#F59E0B', bg: 'rgba(245,158,11,0.12)' },
-  store: { icon: 'storefront-outline', color: palette.colors.success, bg: 'rgba(16,185,129,0.15)' },
-  delivery: { icon: 'bicycle-outline', color: '#06B6D4', bg: 'rgba(6,182,212,0.15)' },
-  system: { icon: 'information-circle-outline', color: palette.colors.info, bg: 'rgba(59,130,246,0.15)' },
+const getNotificationVisuals = (palette) => ({
+  order: {
+    icon: 'receipt-outline',
+    color: palette.colors.primary,
+    background: palette.colors.primarySubtle,
+    label: 'Order',
+  },
+  stock: {
+    icon: 'cube-outline',
+    color: palette.colors.warningDark,
+    background: palette.colors.warningSubtle,
+    label: 'Stock',
+  },
+  payment: {
+    icon: 'wallet-outline',
+    color: palette.colors.successDark,
+    background: palette.colors.successSubtle,
+    label: 'Payment',
+  },
+  review: {
+    icon: 'star-outline',
+    color: palette.colors.warningDark,
+    background: palette.colors.warningSubtle,
+    label: 'Review',
+  },
+  promotion: {
+    icon: 'megaphone-outline',
+    color: palette.colors.secondary,
+    background: palette.colors.secondarySubtle,
+    label: 'Update',
+  },
+  store: {
+    icon: 'storefront-outline',
+    color: palette.colors.successDark,
+    background: palette.colors.successSubtle,
+    label: 'Store',
+  },
+  system: {
+    icon: 'information-circle-outline',
+    color: palette.colors.infoDark,
+    background: palette.colors.infoSubtle,
+    label: 'System',
+  },
 });
 
-function formatTime(dateStr) {
-  const diffMs = Date.now() - new Date(dateStr);
-  const mins = Math.floor(diffMs / 60000);
-  if (mins < 1) return 'Just now';
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.floor(diffMs / 3600000);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(diffMs / 86400000);
-  if (days < 7) return `${days}d ago`;
-  return new Date(dateStr).toLocaleDateString();
+function responseItems(response, key) {
+  const value = response?.data?.[key] ?? response?.data;
+  return Array.isArray(value) ? value : [];
 }
 
 export default function SellerNotificationsScreen({ navigation }) {
   const { palette } = useTheme();
-  const styles = buildStyles(palette);
-  const CATEGORY_STYLES = getCategoryStyles(palette);
+  const { currentUser } = useAuth();
+  const styles = useMemo(() => buildStyles(palette), [palette]);
+  const notificationVisuals = useMemo(() => getNotificationVisuals(palette), [palette]);
+  const analyticReadKeys = useRef(new Set());
+  const readStorageKey = useMemo(() => {
+    const sellerId = currentUser?._id || currentUser?.id || 'unknown';
+    return `seller:analytics-notification-read:${sellerId}`;
+  }, [currentUser?._id, currentUser?.id]);
 
-  const { currentUser, token } = useAuth();
   const [notifications, setNotifications] = useState([]);
+  const [activeCategory, setActiveCategory] = useState('all');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [activeCategory, setActiveCategory] = useState('all');
+  const [markingAll, setMarkingAll] = useState(false);
+  const [loadError, setLoadError] = useState('');
+  const [actionError, setActionError] = useState('');
+  const [readStateReady, setReadStateReady] = useState(false);
 
-  const fetchNotifications = useCallback(async () => {
-    try {
-      const res = await api.get('/api/analytics/notifications');
-      const data = res.data?.notifications || res.data || [];
-      const normalized = Array.isArray(data) ? data.map((n, i) => ({
-        id: n._id || n.id || `seller_notif_${i}`,
-        type: n.type || n.category || 'orders',
-        title: n.title || n.message || 'Notification',
-        body: n.body || n.description || n.message || '',
-        createdAt: n.createdAt || n.date || new Date().toISOString(),
-        read: n.read || false,
-      })) : [];
-      setNotifications(normalized);
-    } catch (err) {
-      const samples = [
-        { id: '1', type: 'orders', title: 'New Order!', body: 'You have a new order to fulfill.', createdAt: new Date(Date.now() - 1800000).toISOString(), read: false },
-        { id: '2', type: 'orders', title: 'Order Shipped', body: 'Order has been marked as shipped.', createdAt: new Date(Date.now() - 7200000).toISOString(), read: false },
-        { id: '3', type: 'stock', title: 'Low Stock Warning', body: 'A product is running low on inventory.', createdAt: new Date(Date.now() - 14400000).toISOString(), read: false },
-        { id: '4', type: 'reviews', title: 'New Review', body: 'A customer left a review on your product.', createdAt: new Date(Date.now() - 28800000).toISOString(), read: true },
-        { id: '5', type: 'store', title: 'Store Trusted', body: 'A user has trusted your store.', createdAt: new Date(Date.now() - 86400000).toISOString(), read: true },
-        { id: '6', type: 'delivery', title: 'Delivery Confirmed', body: 'An order has been delivered to the customer.', createdAt: new Date(Date.now() - 172800000).toISOString(), read: true },
-      ];
-      setNotifications(samples);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
+  useEffect(() => {
+    let active = true;
+    setReadStateReady(false);
+    AsyncStorage.getItem(readStorageKey)
+      .then((stored) => {
+        if (!active) return;
+        const parsed = stored ? JSON.parse(stored) : [];
+        analyticReadKeys.current = new Set(Array.isArray(parsed) ? parsed.filter(Boolean).slice(-500) : []);
+      })
+      .catch(() => {
+        if (active) analyticReadKeys.current = new Set();
+      })
+      .finally(() => {
+        if (active) setReadStateReady(true);
+      });
+    return () => { active = false; };
+  }, [readStorageKey]);
+
+  const persistAnalyticsReadState = useCallback(async () => {
+    const boundedKeys = Array.from(analyticReadKeys.current).slice(-500);
+    analyticReadKeys.current = new Set(boundedKeys);
+    await AsyncStorage.setItem(readStorageKey, JSON.stringify(boundedKeys));
+  }, [readStorageKey]);
+
+  const fetchNotifications = useCallback(async ({ initial = false } = {}) => {
+    if (initial) setLoading(true);
+    setLoadError('');
+
+    const [analyticsResult, inboxResult] = await Promise.allSettled([
+      api.get('/api/analytics/notifications'),
+      api.get('/api/notifications/me'),
+    ]);
+
+    const analyticsLoaded = analyticsResult.status === 'fulfilled';
+    const inboxLoaded = inboxResult.status === 'fulfilled';
+    const analyticsItems = analyticsLoaded
+      ? responseItems(analyticsResult.value, 'notifications')
+        .map(normalizeAnalyticsNotification)
+        .filter(Boolean)
+        .map((notification) => analyticReadKeys.current.has(buildAnalyticsNotificationReadKey(notification))
+          ? { ...notification, read: true }
+          : notification)
+      : null;
+    const inboxItems = inboxLoaded
+      ? responseItems(inboxResult.value, 'items').map(normalizePersistentNotification).filter(Boolean)
+      : null;
+
+    setNotifications((previous) => {
+      const nextAnalytics = analyticsItems ?? previous.filter(({ source }) => source === 'analytics');
+      const nextInbox = inboxItems ?? previous.filter(({ source }) => source === 'persistent');
+      const byId = new Map();
+      [...nextAnalytics, ...nextInbox].forEach((notification) => byId.set(notification.id, notification));
+      return sortSellerNotifications(Array.from(byId.values()));
+    });
+
+    if (!analyticsLoaded && !inboxLoaded) {
+      setLoadError('We could not reach either notification service. Check your connection and try again.');
+    } else if (!analyticsLoaded) {
+      setLoadError('Your inbox loaded, but live order and stock alerts are temporarily unavailable.');
+    } else if (!inboxLoaded) {
+      setLoadError('Live seller alerts loaded, but saved announcements are temporarily unavailable.');
     }
+
+    setLoading(false);
+    setRefreshing(false);
   }, []);
 
-  useEffect(() => { fetchNotifications(); }, [fetchNotifications]);
+  useEffect(() => {
+    if (readStateReady) fetchNotifications({ initial: true });
+  }, [fetchNotifications, readStateReady]);
 
-  const onRefresh = useCallback(() => { setRefreshing(true); fetchNotifications(); }, [fetchNotifications]);
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    fetchNotifications();
+  }, [fetchNotifications]);
 
-  const filtered = activeCategory === 'all' ? notifications : notifications.filter(n => n.type === activeCategory);
-  const unreadCount = notifications.filter(n => !n.read).length;
+  const unreadCount = useMemo(
+    () => notifications.reduce((count, notification) => count + (notification.read ? 0 : 1), 0),
+    [notifications],
+  );
+  const filteredNotifications = useMemo(
+    () => filterSellerNotifications(notifications, activeCategory),
+    [activeCategory, notifications],
+  );
+  const categoryCounts = useMemo(() => {
+    const counts = { all: notifications.length };
+    notifications.forEach(({ category }) => {
+      counts[category] = (counts[category] || 0) + 1;
+    });
+    return counts;
+  }, [notifications]);
 
-  const markAllRead = () => {
-    setNotifications(prev => prev.map(n => ({ ...n, read: true })));
-  };
+  const markNotificationRead = useCallback((notification) => {
+    if (notification.read) return;
 
-  const renderCategory = ({ item }) => {
-    const isActive = activeCategory === item.key;
-    const count = item.key === 'all' ? notifications.length : notifications.filter(n => n.type === item.key).length;
+    setActionError('');
+    if (!notification.persisted) {
+      const readKey = buildAnalyticsNotificationReadKey(notification);
+      if (readKey) analyticReadKeys.current.add(readKey);
+      persistAnalyticsReadState().catch(() => {
+        setActionError('The alert opened, but its read status could not be saved on this device.');
+      });
+    }
+    setNotifications((current) => current.map((item) => (
+      item.id === notification.id ? { ...item, read: true } : item
+    )));
+
+    if (!notification.persisted) return;
+    if (!notification.backendId) {
+      setNotifications((current) => current.map((item) => (
+        item.id === notification.id ? { ...item, read: false } : item
+      )));
+      setActionError('This saved notification is missing its server identifier and could not be marked as read.');
+      return;
+    }
+
+    api.patch(`/api/notifications/${encodeURIComponent(notification.backendId)}/read`).catch(() => {
+      setNotifications((current) => current.map((item) => (
+        item.id === notification.id ? { ...item, read: false } : item
+      )));
+      setActionError('The notification opened, but its read status could not be saved.');
+    });
+  }, [persistAnalyticsReadState]);
+
+  const handleNotificationPress = useCallback((notification) => {
+    markNotificationRead(notification);
+    const target = resolveSellerNotificationTarget(notification);
+    if (target) navigation.navigate(target.screen, target.params);
+  }, [markNotificationRead, navigation]);
+
+  const markAllRead = useCallback(async () => {
+    if (markingAll || unreadCount === 0) return;
+
+    const previousReadState = new Map(
+      notifications.filter(({ persisted }) => persisted).map(({ id, read }) => [id, read]),
+    );
+    const persistedUnread = notifications.some(({ persisted, read }) => persisted && !read);
+
+    const analyticsUnread = notifications
+      .filter(({ persisted, read }) => !persisted && !read)
+      .map((notification) => buildAnalyticsNotificationReadKey(notification))
+      .filter(Boolean);
+    analyticsUnread.forEach((readKey) => analyticReadKeys.current.add(readKey));
+    setActionError('');
+    setNotifications((current) => current.map((notification) => ({ ...notification, read: true })));
+
+    setMarkingAll(true);
+    if (analyticsUnread.length) {
+      try {
+        await persistAnalyticsReadState();
+      } catch {
+        setActionError('Alerts were cleared, but their read status could not be saved on this device.');
+      }
+    }
+
+    if (!persistedUnread) {
+      setMarkingAll(false);
+      return;
+    }
+
+    try {
+      await api.post('/api/notifications/read-all');
+    } catch {
+      setNotifications((current) => current.map((notification) => (
+        notification.persisted && previousReadState.has(notification.id)
+          ? { ...notification, read: previousReadState.get(notification.id) }
+          : notification
+      )));
+      setActionError('Live alerts were cleared, but saved inbox items could not be updated. Please retry.');
+    } finally {
+      setMarkingAll(false);
+    }
+  }, [markingAll, notifications, persistAnalyticsReadState, unreadCount]);
+
+  const renderCategory = useCallback((category) => {
+    const active = category.key === activeCategory;
+    const count = categoryCounts[category.key] || 0;
     return (
       <TouchableOpacity
-        onPress={() => setActiveCategory(item.key)}
-        style={[styles.categoryChip, isActive && styles.categoryChipActive]}
+        key={category.key}
+        style={[styles.categoryChip, active && styles.categoryChipActive]}
+        onPress={() => setActiveCategory(category.key)}
+        activeOpacity={0.76}
+        accessibilityRole="button"
+        accessibilityState={{ selected: active }}
+        accessibilityLabel={`${category.label}, ${count} notifications`}
       >
-        <Ionicons name={item.icon} size={14} color={isActive ? '#fff' : palette.colors.grayLight} />
-        <Text style={[styles.categoryLabel, isActive && styles.categoryLabelActive]}>{item.label}</Text>
+        <Ionicons
+          name={category.icon}
+          size={15}
+          color={active ? '#fff' : palette.colors.textSecondary}
+        />
+        <Text style={[styles.categoryLabel, active && styles.categoryLabelActive]}>{category.label}</Text>
         {count > 0 && (
-          <View style={[styles.categoryCount, isActive && styles.categoryCountActive]}>
-            <Text style={[styles.categoryCountText, isActive && { color: palette.colors.primary }]}>{count}</Text>
+          <View style={[styles.categoryCount, active && styles.categoryCountActive]}>
+            <Text style={[styles.categoryCountText, active && styles.categoryCountTextActive]}>
+              {count > 99 ? '99+' : count}
+            </Text>
           </View>
         )}
       </TouchableOpacity>
     );
-  };
+  }, [activeCategory, categoryCounts, palette.colors.textSecondary, styles]);
 
-  const renderNotification = ({ item }) => {
-    const style = CATEGORY_STYLES[item.type] || CATEGORY_STYLES.system;
+  const renderNotification = useCallback(({ item }) => {
+    const visual = notificationVisuals[item.category] || notificationVisuals.system;
+    const target = resolveSellerNotificationTarget(item);
+    const critical = item.severity === 'critical';
     return (
       <TouchableOpacity
-        onPress={() => {
-          setNotifications(prev => prev.map(n => n.id === item.id ? { ...n, read: true } : n));
-          if (item.type === 'orders' && item.orderId) navigation.navigate('OrderDetailManagement', { orderId: item.orderId });
-        }}
-        activeOpacity={0.7}
+        onPress={() => handleNotificationPress(item)}
+        activeOpacity={0.78}
+        accessibilityRole="button"
+        accessibilityLabel={`${item.read ? '' : 'Unread. '}${item.title}. ${item.body}`}
+        accessibilityHint={target ? 'Opens the related seller screen' : 'Marks this notification as read'}
       >
-        <GlassPanel style={[styles.notifCard, !item.read && styles.notifUnread]}>
-          <View style={[styles.notifIcon, { backgroundColor: style.bg }]}>
-            <Ionicons name={style.icon} size={20} color={style.color} />
+        <GlassPanel
+          variant="card"
+          style={[
+            styles.notificationCard,
+            !item.read && styles.notificationCardUnread,
+            critical && styles.notificationCardCritical,
+          ]}
+        >
+          <View style={[styles.notificationIcon, { backgroundColor: visual.background }]}>
+            <Ionicons
+              name={critical ? 'alert-circle-outline' : visual.icon}
+              size={21}
+              color={critical ? palette.colors.error : visual.color}
+            />
           </View>
-          <View style={styles.notifContent}>
-            <View style={styles.notifHeader}>
-              <Text style={styles.notifTitle} numberOfLines={1}>{item.title}</Text>
-              {!item.read && <View style={styles.unreadDot} />}
+          <View style={styles.notificationContent}>
+            <View style={styles.notificationMetaRow}>
+              <View style={[styles.categoryPill, { backgroundColor: visual.background }]}>
+                <Text style={[styles.categoryPillText, { color: visual.color }]}>{visual.label}</Text>
+              </View>
+              <Text style={styles.notificationTime}>{formatSellerNotificationTime(item.createdAt)}</Text>
+              {!item.read && <View style={styles.unreadDot} accessibilityLabel="Unread" />}
             </View>
-            <Text style={styles.notifBody} numberOfLines={2}>{item.body}</Text>
-            <Text style={styles.notifTime}>{formatTime(item.createdAt)}</Text>
+            <Text style={styles.notificationTitle} numberOfLines={2}>{item.title}</Text>
+            {!!item.body && <Text style={styles.notificationBody} numberOfLines={3}>{item.body}</Text>}
+            <View style={styles.notificationFooter}>
+              <Text style={styles.sourceLabel}>
+                {item.persisted ? 'Seller inbox' : 'Live seller activity'}
+              </Text>
+              {!!target && (
+                <View style={styles.openHint}>
+                  <Text style={styles.openHintText}>Open</Text>
+                  <Ionicons name="arrow-forward" size={13} color={palette.colors.primary} />
+                </View>
+              )}
+            </View>
           </View>
         </GlassPanel>
       </TouchableOpacity>
     );
-  };
+  }, [handleNotificationPress, notificationVisuals, palette.colors.error, palette.colors.primary, styles]);
+
+  if (loading) {
+    return (
+      <SellerScreenSkeleton
+        navigation={navigation}
+        title="Seller Notifications"
+        subtitle="Orders, stock and store activity"
+        icon="notifications-outline"
+        variant="list"
+        rows={5}
+      />
+    );
+  }
 
   return (
     <GlassBackground>
-      <SafeAreaView style={styles.safeArea}>
-        <GlassPanel style={styles.header}>
-          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-            <Ionicons name="arrow-back" size={22} color={palette.colors.dark} />
-          </TouchableOpacity>
-          <View style={styles.headerCenter}>
-            <Text style={styles.headerTitle}>Notifications</Text>
-            {unreadCount > 0 && (
-              <View style={styles.headerBadge}>
-                <Text style={styles.headerBadgeText}>{unreadCount}</Text>
-              </View>
-            )}
-          </View>
-          {unreadCount > 0 && (
-            <TouchableOpacity onPress={markAllRead} style={styles.markAllBtn}>
-              <Ionicons name="checkmark-done" size={20} color={palette.colors.primary} />
-            </TouchableOpacity>
-          )}
-        </GlassPanel>
-
-        <FlatList
-          data={CATEGORIES}
-          renderItem={renderCategory}
-          keyExtractor={item => item.key}
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={styles.categoryListBar}
-          contentContainerStyle={styles.categoryList}
+      <SafeAreaView
+        style={styles.safeArea}
+        edges={Platform.OS === 'android' ? [] : ['top']}
+      >
+        <SellerScreenHeader
+          navigation={navigation}
+          title="Seller Notifications"
+          subtitle="Orders, stock and store activity"
+          icon="notifications-outline"
+          rightIcon="options-outline"
+          rightLabel="Preferences"
+          rightBadge={unreadCount}
+          onRightPress={() => navigation.navigate('NotificationSettings', { isAdmin: false })}
         />
 
-        <FlatList
-          data={filtered}
-          renderItem={renderNotification}
-          keyExtractor={item => item.id}
-          contentContainerStyle={styles.list}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={palette.colors.primary} />}
-          ListEmptyComponent={
-            <View style={styles.empty}>
-              <Ionicons name="notifications-off-outline" size={48} color={palette.colors.grayLight} />
-              <Text style={styles.emptyText}>No notifications</Text>
+        <View style={styles.controls}>
+          <GlassPanel variant="strong" style={styles.summaryCard}>
+            <View style={styles.summaryIcon}>
+              <Ionicons name="notifications-outline" size={22} color={palette.colors.primary} />
             </View>
-          }
+            <View style={styles.summaryCopy}>
+              <Text style={styles.summaryEyebrow}>SELLER INBOX</Text>
+              <Text style={styles.summaryTitle}>
+                {unreadCount > 0 ? `${unreadCount} unread update${unreadCount === 1 ? '' : 's'}` : 'You are all caught up'}
+              </Text>
+              <Text style={styles.summarySubtitle}>Live activity and saved announcements in one place.</Text>
+            </View>
+            <TouchableOpacity
+              style={[styles.markAllButton, (unreadCount === 0 || markingAll) && styles.buttonDisabled]}
+              onPress={markAllRead}
+              disabled={unreadCount === 0 || markingAll}
+              activeOpacity={0.76}
+              accessibilityRole="button"
+              accessibilityLabel="Mark all notifications as read"
+              accessibilityState={{ disabled: unreadCount === 0 || markingAll }}
+            >
+              <Ionicons name="checkmark-done" size={17} color={palette.colors.primary} />
+              <Text style={styles.markAllText}>{markingAll ? 'Saving' : 'Read all'}</Text>
+            </TouchableOpacity>
+          </GlassPanel>
+
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.categories}
+            accessibilityRole="tablist"
+          >
+            {SELLER_NOTIFICATION_CATEGORIES.map(renderCategory)}
+          </ScrollView>
+        </View>
+
+        <FlatList
+          data={filteredNotifications}
+          renderItem={renderNotification}
+          keyExtractor={({ id }) => id}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.notificationList}
+          refreshControl={(
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={palette.colors.primary}
+              colors={[palette.colors.primary]}
+            />
+          )}
+          ListHeaderComponent={(
+            <View>
+              {(loadError && notifications.length > 0) && (
+                <SellerInlineError
+                  compact
+                  title="Some notifications are unavailable"
+                  message={loadError}
+                  onRetry={onRefresh}
+                />
+              )}
+              {!!actionError && (
+                <SellerInlineError
+                  compact
+                  title="Read status was not saved"
+                  message={actionError}
+                  onRetry={onRefresh}
+                />
+              )}
+              <SellerSectionHeader
+                title={activeCategory === 'all'
+                  ? 'Latest activity'
+                  : SELLER_NOTIFICATION_CATEGORIES.find(({ key }) => key === activeCategory)?.label}
+                subtitle={`${filteredNotifications.length} result${filteredNotifications.length === 1 ? '' : 's'}`}
+                icon="sparkles-outline"
+              />
+            </View>
+          )}
+          ListEmptyComponent={(
+            <SellerEmptyState
+              icon={loadError ? 'cloud-offline-outline' : 'notifications-off-outline'}
+              title={loadError ? 'Notifications unavailable' : 'Nothing here yet'}
+              message={loadError || (activeCategory === 'all'
+                ? 'New order, stock, payment and store updates will appear here.'
+                : 'There are no notifications in this category right now.')}
+              actionLabel={loadError ? 'Try again' : undefined}
+              onAction={loadError ? onRefresh : undefined}
+            />
+          )}
         />
       </SafeAreaView>
     </GlassBackground>
@@ -191,41 +496,136 @@ export default function SellerNotificationsScreen({ navigation }) {
 
 const buildStyles = (p) => StyleSheet.create({
   safeArea: { flex: 1 },
-  header: {
-    flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing.md, paddingVertical: spacing.md,
-    marginHorizontal: spacing.md, marginTop: spacing.sm, borderRadius: borderRadius.xl,
+  controls: { paddingHorizontal: spacing.lg, paddingTop: spacing.md },
+  summaryCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    padding: spacing.lg,
+    borderRadius: borderRadius.xxl,
   },
-  backBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(0,0,0,0.05)', justifyContent: 'center', alignItems: 'center' },
-  headerCenter: { flex: 1, flexDirection: 'row', alignItems: 'center', marginLeft: spacing.sm },
-  headerTitle: { fontSize: fontSize.xl, fontWeight: fontWeight.bold, color: p.colors.dark },
-  headerBadge: { marginLeft: spacing.sm, backgroundColor: p.colors.error, borderRadius: 10, minWidth: 20, height: 20, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 6 },
-  headerBadgeText: { color: '#fff', fontSize: 11, fontWeight: fontWeight.bold },
-  markAllBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(99,102,241,0.1)', justifyContent: 'center', alignItems: 'center' },
-
-  categoryListBar: { flexGrow: 0, flexShrink: 0 },
-  categoryList: { paddingHorizontal: spacing.md, paddingVertical: spacing.sm, gap: spacing.sm, alignItems: 'center' },
+  summaryIcon: {
+    width: 46,
+    height: 46,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: p.colors.primarySubtle,
+    borderWidth: 1,
+    borderColor: p.colors.primaryLighter,
+  },
+  summaryCopy: { flex: 1 },
+  summaryEyebrow: {
+    fontSize: 9,
+    letterSpacing: 1.1,
+    fontWeight: fontWeight.extrabold,
+    color: p.colors.primary,
+  },
+  summaryTitle: {
+    marginTop: 2,
+    fontSize: fontSize.lg,
+    fontWeight: fontWeight.extrabold,
+    color: p.colors.text,
+  },
+  summarySubtitle: {
+    marginTop: 3,
+    fontSize: fontSize.xs,
+    lineHeight: 16,
+    color: p.colors.textSecondary,
+  },
+  markAllButton: {
+    minHeight: 40,
+    paddingHorizontal: spacing.md,
+    borderRadius: 13,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    backgroundColor: p.colors.primarySubtle,
+    borderWidth: 1,
+    borderColor: p.colors.primaryLighter,
+  },
+  markAllText: { fontSize: fontSize.xs, fontWeight: fontWeight.bold, color: p.colors.primary },
+  buttonDisabled: { opacity: 0.45 },
+  categories: { paddingVertical: spacing.md, gap: spacing.sm },
   categoryChip: {
-    flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 8,
-    borderRadius: 20, backgroundColor: p.glass.bgSubtle, borderWidth: 1, borderColor: p.glass.borderSubtle, gap: 6,
+    minHeight: 36,
+    paddingHorizontal: spacing.md,
+    borderRadius: borderRadius.full,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: p.glass.bg,
+    borderWidth: 1,
+    borderColor: p.glass.border,
   },
   categoryChipActive: { backgroundColor: p.colors.primary, borderColor: p.colors.primary },
-  categoryLabel: { fontSize: fontSize.sm, color: p.colors.grayLight, fontWeight: fontWeight.medium },
+  categoryLabel: { fontSize: fontSize.xs, fontWeight: fontWeight.semibold, color: p.colors.textSecondary },
   categoryLabelActive: { color: '#fff' },
-  categoryCount: { backgroundColor: 'rgba(0,0,0,0.08)', borderRadius: 10, minWidth: 20, height: 18, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 5 },
-  categoryCountActive: { backgroundColor: 'rgba(255,255,255,0.3)' },
-  categoryCountText: { fontSize: 10, fontWeight: fontWeight.bold, color: p.colors.grayLight },
-
-  list: { paddingHorizontal: spacing.md, paddingBottom: 100, gap: spacing.sm },
-  notifCard: { flexDirection: 'row', padding: spacing.md, borderRadius: borderRadius.lg, gap: spacing.sm },
-  notifUnread: { borderLeftWidth: 3, borderLeftColor: p.colors.primary },
-  notifIcon: { width: 40, height: 40, borderRadius: 12, justifyContent: 'center', alignItems: 'center' },
-  notifContent: { flex: 1 },
-  notifHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  notifTitle: { fontSize: fontSize.md, fontWeight: fontWeight.semibold, color: p.colors.dark, flex: 1 },
-  unreadDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: p.colors.primary, marginLeft: spacing.sm },
-  notifBody: { fontSize: fontSize.sm, color: p.colors.grayLight, marginTop: 2, lineHeight: 18 },
-  notifTime: { fontSize: fontSize.xs, color: p.colors.grayLight, marginTop: 4, opacity: 0.7 },
-
-  empty: { alignItems: 'center', justifyContent: 'center', paddingTop: 80, gap: spacing.md },
-  emptyText: { fontSize: fontSize.md, color: p.colors.grayLight },
+  categoryCount: {
+    minWidth: 20,
+    height: 20,
+    paddingHorizontal: 5,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: p.colors.surfaceHover,
+  },
+  categoryCountActive: { backgroundColor: 'rgba(255,255,255,0.24)' },
+  categoryCountText: { fontSize: 9, fontWeight: fontWeight.extrabold, color: p.colors.textSecondary },
+  categoryCountTextActive: { color: '#fff' },
+  notificationList: {
+    flexGrow: 1,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.xs,
+    paddingBottom: 96,
+    gap: spacing.sm,
+  },
+  notificationCard: {
+    flexDirection: 'row',
+    gap: spacing.md,
+    padding: spacing.md,
+    borderRadius: borderRadius.xl,
+  },
+  notificationCardUnread: {
+    borderLeftWidth: 3,
+    borderLeftColor: p.colors.primary,
+    backgroundColor: p.glass.bgStrong,
+  },
+  notificationCardCritical: { borderColor: `${p.colors.error}45` },
+  notificationIcon: {
+    width: 46,
+    height: 46,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  notificationContent: { flex: 1, minWidth: 0 },
+  notificationMetaRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  categoryPill: { paddingHorizontal: 7, paddingVertical: 3, borderRadius: borderRadius.full },
+  categoryPillText: { fontSize: 9, fontWeight: fontWeight.extrabold, textTransform: 'uppercase' },
+  notificationTime: { flex: 1, fontSize: fontSize.xs, color: p.colors.textLight },
+  unreadDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: p.colors.primary },
+  notificationTitle: {
+    marginTop: spacing.sm,
+    fontSize: fontSize.md,
+    lineHeight: 19,
+    fontWeight: fontWeight.bold,
+    color: p.colors.text,
+  },
+  notificationBody: {
+    marginTop: 3,
+    fontSize: fontSize.sm,
+    lineHeight: 18,
+    color: p.colors.textSecondary,
+  },
+  notificationFooter: {
+    marginTop: spacing.sm,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  sourceLabel: { fontSize: 9, fontWeight: fontWeight.medium, color: p.colors.textLight },
+  openHint: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+  openHintText: { fontSize: fontSize.xs, fontWeight: fontWeight.bold, color: p.colors.primary },
 });

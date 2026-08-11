@@ -5,6 +5,14 @@ jest.mock('@react-native-async-storage/async-storage', () =>
   require('@react-native-async-storage/async-storage/jest/async-storage-mock')
 );
 
+jest.mock('@react-native-community/netinfo', () => ({
+  __esModule: true,
+  default: {
+    addEventListener: jest.fn(() => jest.fn()),
+    fetch: jest.fn(() => Promise.resolve({ isConnected: true, isInternetReachable: true })),
+  },
+}));
+
 // Mock expo-secure-store
 jest.mock('expo-secure-store', () => ({
   getItemAsync: jest.fn(),
@@ -15,7 +23,27 @@ jest.mock('expo-secure-store', () => ({
 // Mock Expo native modules that are safe to no-op in unit/property tests.
 jest.mock('expo-notifications', () => ({
   addNotificationReceivedListener: jest.fn(() => ({ remove: jest.fn() })),
+  addNotificationResponseReceivedListener: jest.fn(() => ({ remove: jest.fn() })),
+  addPushTokenListener: jest.fn(() => ({ remove: jest.fn() })),
+  cancelAllScheduledNotificationsAsync: jest.fn(() => Promise.resolve()),
+  dismissAllNotificationsAsync: jest.fn(() => Promise.resolve()),
+  setBadgeCountAsync: jest.fn(() => Promise.resolve()),
+  setNotificationHandler: jest.fn(),
 }));
+
+jest.mock('expo-crypto', () => {
+  let sequence = 0;
+  return {
+    getRandomBytesAsync: jest.fn(async length => {
+      sequence += 1;
+      return Uint8Array.from(
+        { length },
+        (_, index) => (index * 17 + 29 + sequence) % 256
+      );
+    }),
+    randomUUID: jest.fn(() => '00000000-0000-4000-8000-000000000001'),
+  };
+});
 
 jest.mock('expo-haptics', () => ({
   ImpactFeedbackStyle: { Light: 'Light', Medium: 'Medium', Heavy: 'Heavy' },
@@ -52,6 +80,21 @@ jest.mock('expo-audio', () => ({
   })),
   useAudioRecorderState: jest.fn(() => ({ isRecording: false, durationMillis: 0 })),
 }));
+
+// The keyboard controller is a native module. Unit tests exercise the form
+// composition, so use React Native primitives while preserving refs/props.
+jest.mock('react-native-keyboard-controller', () => {
+  const React = require('react');
+  const { ScrollView, View } = require('react-native');
+
+  return {
+    KeyboardProvider: ({ children }) => React.createElement(View, null, children),
+    KeyboardStickyView: ({ children, ...props }) => React.createElement(View, props, children),
+    KeyboardAwareScrollView: React.forwardRef((props, ref) => (
+      React.createElement(ScrollView, { ...props, ref })
+    )),
+  };
+});
 
 // Mock axios
 jest.mock('axios', () => ({

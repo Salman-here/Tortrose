@@ -31,6 +31,7 @@ const {
     normalizeProductReturnPolicy,
 } = require('../services/returnPolicyService')
 const { findProductReviewEligibility } = require('../services/reviewEligibilityService')
+const { findActiveStore } = require('../services/publicCatalogService')
 
 const OTHER_BRANDS_FILTER = '__other_brands__';
 const POPULAR_BRAND_MIN_PRODUCTS = Math.max(2, parseInt(process.env.POPULAR_BRAND_MIN_PRODUCTS || '3', 10) || 3);
@@ -517,8 +518,7 @@ exports.getSingleProduct = async (req, res) => {
         // Check if seller's store is active (hide products from blocked sellers)
         let storePolicy = null;
         if (singleProduct.seller) {
-            const Store = require('../models/Store');
-            const store = await Store.findOne({ seller: singleProduct.seller, isActive: true });
+            const store = await findActiveStore({ seller: singleProduct.seller });
             if (!store) {
                 return res.status(404).json({ msg: 'Product not available' });
             }

@@ -48,7 +48,14 @@ const paymentLabel = (method) => ({
   cash_on_delivery: 'Cash on delivery',
 }[method] || 'Payment');
 
-const OrderCard = ({ order, onPress, showCustomer = false, onWhatsApp, style }) => {
+const OrderCard = ({
+  order,
+  onPress,
+  showCustomer = false,
+  onWhatsApp,
+  confirmationLabel = '',
+  style,
+}) => {
   const { palette } = useTheme();
   const { formatPrice } = useCurrency();
   const styles = React.useMemo(() => buildStyles(palette), [palette]);
@@ -113,6 +120,31 @@ const OrderCard = ({ order, onPress, showCustomer = false, onWhatsApp, style }) 
             <Text style={styles.customerText} numberOfLines={1}>{customerName}</Text>
           </View>
         ) : null}
+
+        {!!confirmationLabel && (
+          <View
+            style={[
+              styles.confirmationPill,
+              /cancel/i.test(confirmationLabel) && styles.confirmationPillCancelled,
+            ]}
+            accessibilityLabel={`Buyer decision: ${confirmationLabel}`}
+          >
+            <Ionicons
+              name={/cancel/i.test(confirmationLabel) ? 'close-circle-outline' : 'checkmark-circle-outline'}
+              size={13}
+              color={/cancel/i.test(confirmationLabel) ? palette.colors.error : palette.colors.success}
+            />
+            <Text
+              style={[
+                styles.confirmationText,
+                /cancel/i.test(confirmationLabel) && { color: palette.colors.error },
+              ]}
+              numberOfLines={2}
+            >
+              {confirmationLabel}
+            </Text>
+          </View>
+        )}
 
         <View style={styles.productRow}>
           <View style={styles.imageFrame}>
@@ -235,6 +267,9 @@ const buildStyles = (p) => StyleSheet.create({
   statusText: { fontSize: 11, fontWeight: fontWeight.bold },
   customerPill: { alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: spacing.sm, paddingHorizontal: spacing.sm, paddingVertical: 5, borderRadius: 10, backgroundColor: p.glass.bgSubtle },
   customerText: { maxWidth: 220, fontSize: fontSize.xs, color: p.colors.textSecondary, fontWeight: fontWeight.medium },
+  confirmationPill: { alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: spacing.sm, maxWidth: '100%', paddingHorizontal: spacing.sm, paddingVertical: 6, borderRadius: 10, backgroundColor: p.colors.successSubtle, borderWidth: 1, borderColor: `${p.colors.success}35` },
+  confirmationPillCancelled: { backgroundColor: p.colors.errorSubtle, borderColor: `${p.colors.error}35` },
+  confirmationText: { flexShrink: 1, fontSize: 10, lineHeight: 14, color: p.colors.success, fontWeight: fontWeight.semibold },
   productRow: { flexDirection: 'row', alignItems: 'center', marginTop: spacing.lg },
   imageFrame: { position: 'relative', width: 76, height: 76 },
   productImage: { width: 76, height: 76, borderRadius: 20, backgroundColor: p.glass.bgSubtle },

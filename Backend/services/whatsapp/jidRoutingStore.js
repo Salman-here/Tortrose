@@ -6,6 +6,7 @@ const {
     phoneFromJid,
     isLidJid,
     isPhoneJid,
+    toPhoneJid,
     rememberPhoneLid,
     getRememberedLid,
 } = require('./addressing');
@@ -42,10 +43,18 @@ const rememberInboundRoute = async (address, { instanceType, instanceName = '', 
 
 const resolveOutboundRecipient = async (phone, requestedRecipient, { instanceType } = {}) => {
     if (isLidJid(requestedRecipient)) return requestedRecipient;
-    if (isPhoneJid(requestedRecipient)) return requestedRecipient;
 
     const digits = normalizePhone(phone);
     if (!digits) return requestedRecipient || phone;
+
+    if (isPhoneJid(requestedRecipient)) {
+        if (normalizePhone(requestedRecipient) === digits) return requestedRecipient;
+        // Never let a mismatched PN hint override the already-resolved inbound
+        // identity. This is the final guard against owner/instance metadata
+        // becoming the outbound destination.
+        console.warn('[whatsapp:jids] rejected mismatched phone-JID recipient hint');
+        requestedRecipient = '';
+    }
 
     const remembered = getRememberedLid(digits, instanceType) || getRememberedLid(digits);
     if (remembered) return remembered;
@@ -64,7 +73,7 @@ const resolveOutboundRecipient = async (phone, requestedRecipient, { instanceTyp
         console.warn('[whatsapp:jids] failed to resolve route:', err.message);
     }
 
-    return requestedRecipient || phone;
+    return requestedRecipient || toPhoneJid(digits) || phone;
 };
 
 module.exports = {

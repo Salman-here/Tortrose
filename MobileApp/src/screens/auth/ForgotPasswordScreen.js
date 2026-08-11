@@ -5,9 +5,8 @@
 import React, { useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
-  Platform, ScrollView, ActivityIndicator, StatusBar,
+  ActivityIndicator, StatusBar,
 } from 'react-native';
-import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import Feedback from '../../utils/feedback';
@@ -15,6 +14,7 @@ import api from '../../config/api';
 import GlassBackground from '../../components/common/GlassBackground';
 import GlassPanel from '../../components/common/GlassPanel';
 import AuthTopHeader from '../../components/common/AuthTopHeader';
+import KeyboardAwareFormScrollView from '../../components/common/KeyboardAwareFormScrollView';
 import { spacing, fontSize, borderRadius, shadows, fontWeight } from '../../styles/theme';
 import { useTheme } from '../../contexts/ThemeContext';
 
@@ -47,8 +47,7 @@ export default function ForgotPasswordScreen({ navigation }) {
   return (
     <GlassBackground>
       <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
-        <ScrollView contentContainerStyle={{ flexGrow: 1, padding: spacing.md, paddingBottom: spacing.xxxl }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+      <KeyboardAwareFormScrollView contentContainerStyle={{ flexGrow: 1, padding: spacing.md, paddingBottom: spacing.xxxl }} bottomOffset={32}>
           <AuthTopHeader
             title="Reset Password"
             subtitle="Recover your Rozare account"
@@ -108,8 +107,7 @@ export default function ForgotPasswordScreen({ navigation }) {
               <TouchableOpacity onPress={() => navigation.navigate('Login')}><Text style={{ color: palette.colors.primary, fontWeight: fontWeight.bold }}> Sign In</Text></TouchableOpacity>
             </View>
           </GlassPanel>
-        </ScrollView>
-      </KeyboardAvoidingView>
+      </KeyboardAwareFormScrollView>
     </GlassBackground>
   );
 }

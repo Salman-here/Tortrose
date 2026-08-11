@@ -286,6 +286,9 @@ const linking = {
       Docs: 'docs',
       SellerDashboard: 'seller-dashboard',
       SellerOrderManagement: 'seller-returns',
+      SellerSubscription: 'seller-subscription',
+      SellerSubdomainManagement: 'seller-subdomain',
+      SellerAds: 'seller-ads',
     },
   },
 };

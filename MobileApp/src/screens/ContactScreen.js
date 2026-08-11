@@ -4,12 +4,12 @@
  */
 
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Alert, Linking, Platform } from 'react-native';
-import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
+import { View, Text, StyleSheet, TouchableOpacity, TextInput, Alert, Linking, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import GlassBackground from '../components/common/GlassBackground';
 import GlassPanel from '../components/common/GlassPanel';
+import KeyboardAwareFormScrollView from '../components/common/KeyboardAwareFormScrollView';
 import PremiumBackHeader from '../components/common/PremiumBackHeader';
 import { spacing, fontSize, fontWeight, borderRadius } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
@@ -54,8 +54,7 @@ export default function ContactScreen({ navigation }) {
           style={styles.premiumHeader}
         />
 
-        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-          <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
+          <KeyboardAwareFormScrollView contentContainerStyle={styles.scrollContent}>
             {/* Contact Methods */}
             {contactMethods.map((m, i) => (
               <GlassPanel key={i} variant="card" style={styles.methodCard}>
@@ -102,8 +101,7 @@ export default function ContactScreen({ navigation }) {
             </GlassPanel>
 
             <View style={{ height: 100 }} />
-          </ScrollView>
-        </KeyboardAvoidingView>
+          </KeyboardAwareFormScrollView>
       </SafeAreaView>
     </GlassBackground>
   );

@@ -7,11 +7,27 @@ const {
     convertOrderAmount,
     convertOrderTotal,
     lineTotal,
-    sellerOrderSubtotal,
-    sellerOrderUnits,
     roundMoney,
     formatOrderMoney,
 } = require('../services/orderMoneyService');
+
+const sellerOrderScope = (sellerId, sellerProductIds = []) => ({
+    $or: [
+        { 'orderItems.seller': sellerId },
+        ...(sellerProductIds.length ? [{
+            orderItems: {
+                $elemMatch: {
+                    seller: null,
+                    productId: { $in: sellerProductIds },
+                },
+            },
+        }] : []),
+    ],
+});
+
+const productAlertTime = (product) => (
+    product?.updatedAt || product?._id?.getTimestamp?.() || new Date(0)
+);
 
 // ============================
 // SELLER ANALYTICS
@@ -31,34 +47,31 @@ exports.getSellerAnalytics = async (req, res) => {
         startDate.setDate(startDate.getDate() - daysNum);
         startDate.setHours(0, 0, 0, 0);
 
-        const sellerProducts = await Product.find({ seller: userId }).select('_id name image category stock');
-        const sellerProductIds = sellerProducts.map(p => p._id.toString());
+        const sellerProducts = await Product.find({ seller: userId }).select('_id name image category stock updatedAt');
+        const sellerProductIds = sellerProducts.map(p => String(p._id));
 
-        if (sellerProductIds.length === 0) {
-            return res.status(200).json({
-                msg: 'Analytics fetched',
-                analytics: {
-                    currency: targetCurrency,
-                    revenueByDay: [], topProducts: [], categoryBreakdown: [],
-                    summary: { totalRevenue: 0, paidOrders: 0, avgOrderValue: 0, totalUnitsSold: 0, conversionRate: 0 },
-                    notifications: []
-                }
-            });
-        }
-
-        const allOrders = await Order.find({ createdAt: { $gte: startDate } });
+        const allOrders = await Order.find({
+            createdAt: { $gte: startDate },
+            awaitingPayment: { $ne: true },
+            ...sellerOrderScope(userId, sellerProductIds),
+        });
 
         const sellerOrders = [];
         allOrders.forEach(order => {
-            const sellerItems = order.orderItems.filter(item =>
-                sellerProductIds.includes(item.productId.toString())
+            const sellerItems = (order.orderItems || []).filter(item =>
+                String(item?.seller || '') === String(userId)
+                || (!item?.seller && item?.productId && sellerProductIds.includes(String(item.productId)))
             );
             if (sellerItems.length > 0) {
+                const sellerFulfillment = (order.sellerFulfillment || []).find(
+                    entry => String(entry?.seller || '') === String(userId)
+                );
                 sellerOrders.push({
                     ...order.toObject(),
                     sellerItems,
-                    sellerRevenue: sellerOrderSubtotal(order, sellerProductIds),
-                    sellerUnits: sellerOrderUnits(order, sellerProductIds),
+                    sellerStatus: sellerFulfillment?.status || order.orderStatus || 'pending',
+                    sellerRevenue: sellerItems.reduce((sum, item) => sum + lineTotal(item), 0),
+                    sellerUnits: sellerItems.reduce((sum, item) => sum + (Number(item?.quantity) || 0), 0),
                 });
             }
         });
@@ -85,7 +98,7 @@ exports.getSellerAnalytics = async (req, res) => {
         for (const o of sellerOrders) {
             if (!o.isPaid) continue;
             for (const item of o.sellerItems) {
-                const id = item.productId.toString();
+                const id = String(item.productId);
                 if (!productMap[id]) productMap[id] = { name: item.name, image: item.image, revenue: 0, sold: 0 };
                 productMap[id].revenue += await convertOrderAmount(o, lineTotal(item), targetCurrency);
                 productMap[id].revenue = roundMoney(productMap[id].revenue);
@@ -102,15 +115,20 @@ exports.getSellerAnalytics = async (req, res) => {
         const totalRevenue = Object.values(dayBuckets).reduce((s, b) => s + b.revenue, 0);
         const paidOrders = sellerOrders.filter(o => o.isPaid).length;
         const totalUnitsSold = sellerOrders.reduce((s, o) => o.isPaid ? s + o.sellerUnits : s, 0);
+        const statusCounts = sellerOrders.reduce((counts, order) => {
+            const status = order.sellerStatus || 'pending';
+            counts[status] = (counts[status] || 0) + 1;
+            return counts;
+        }, {});
 
         const notifications = [];
         sellerProducts.filter(p => p.stock === 0).forEach(p => {
-            notifications.push({ type: 'critical', category: 'stock', title: `${p.name} is out of stock`, time: new Date().toISOString(), productId: p._id });
+            notifications.push({ type: 'critical', category: 'stock', title: `${p.name} is out of stock`, time: productAlertTime(p), productId: p._id });
         });
         sellerProducts.filter(p => p.stock > 0 && p.stock <= 10).forEach(p => {
-            notifications.push({ type: 'warning', category: 'stock', title: `${p.name} has only ${p.stock} units left`, time: new Date().toISOString(), productId: p._id });
+            notifications.push({ type: 'warning', category: 'stock', title: `${p.name} has only ${p.stock} units left`, time: productAlertTime(p), productId: p._id });
         });
-        sellerOrders.filter(o => o.orderStatus === 'pending').slice(0, 5).forEach(o => {
+        sellerOrders.filter(o => o.sellerStatus === 'pending').slice(0, 5).forEach(o => {
             notifications.push({ type: 'info', category: 'order', title: `New order ${o.orderId} needs attention`, time: o.createdAt, orderId: o._id });
         });
 
@@ -121,6 +139,7 @@ exports.getSellerAnalytics = async (req, res) => {
                 revenueByDay: Object.values(dayBuckets),
                 topProducts: Object.values(productMap).sort((a, b) => b.revenue - a.revenue).slice(0, 10),
                 categoryBreakdown: Object.values(catMap).sort((a, b) => b.count - a.count),
+                statusBreakdown: Object.entries(statusCounts).map(([name, value]) => ({ name, value })),
                 summary: {
                     totalRevenue: roundMoney(totalRevenue),
                     paidOrders,
@@ -151,31 +170,39 @@ exports.getSellerNotifications = async (req, res) => {
             return res.status(403).json({ msg: 'Unauthorized' });
         }
 
-        const sellerProducts = await Product.find({ seller: userId }).select('_id name stock');
-        const sellerProductIds = sellerProducts.map(p => p._id.toString());
+        const sellerProducts = await Product.find({ seller: userId }).select('_id name stock updatedAt');
+        const sellerProductIds = sellerProducts.map(p => String(p._id));
 
         const recentOrders = await Order.find({
-            createdAt: { $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) }
+            createdAt: { $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) },
+            awaitingPayment: { $ne: true },
+            ...sellerOrderScope(userId, sellerProductIds),
         }).sort({ createdAt: -1 });
 
         const notifications = [];
 
         sellerProducts.filter(p => p.stock === 0).forEach(p => {
-            notifications.push({ id: `stock-${p._id}`, type: 'critical', category: 'stock', title: `${p.name} is out of stock`, description: 'Update inventory to avoid lost sales', time: new Date().toISOString(), read: false });
+            notifications.push({ id: `stock-${p._id}`, type: 'critical', category: 'stock', title: `${p.name} is out of stock`, description: 'Update inventory to avoid lost sales', time: productAlertTime(p), read: false });
         });
         sellerProducts.filter(p => p.stock > 0 && p.stock <= 10).forEach(p => {
-            notifications.push({ id: `low-${p._id}`, type: 'warning', category: 'stock', title: `${p.name} is running low`, description: `Only ${p.stock} units remaining`, time: new Date().toISOString(), read: false });
+            notifications.push({ id: `low-${p._id}`, type: 'warning', category: 'stock', title: `${p.name} is running low`, description: `Only ${p.stock} units remaining`, time: productAlertTime(p), read: false });
         });
 
         recentOrders.forEach(order => {
-            const sellerItems = order.orderItems.filter(item => sellerProductIds.includes(item.productId.toString()));
+            const sellerItems = (order.orderItems || []).filter(item =>
+                String(item?.seller || '') === String(userId)
+                || (!item?.seller && item?.productId && sellerProductIds.includes(String(item.productId)))
+            );
             if (sellerItems.length === 0) return;
             const sellerTotal = sellerItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
+            const sellerStatus = (order.sellerFulfillment || []).find(
+                entry => String(entry?.seller || '') === String(userId)
+            )?.status || order.orderStatus;
 
-            if (order.orderStatus === 'pending') {
-                notifications.push({ id: `order-${order._id}`, type: 'info', category: 'order', title: `New order ${order.orderId}`, description: `${order.shippingInfo?.fullName} - ${sellerItems.length} item(s)`, time: order.createdAt, read: false, orderId: order._id });
+            if (sellerStatus === 'pending') {
+                notifications.push({ id: `order-${order._id}`, type: 'info', category: 'order', title: `New order ${order.orderId}`, description: `${sellerItems.length} item(s) awaiting your review`, time: order.createdAt, read: false, orderId: order._id });
             }
-            if (order.isPaid && order.orderStatus === 'confirmed') {
+            if (order.isPaid && sellerStatus === 'confirmed') {
                 notifications.push({ id: `paid-${order._id}`, type: 'success', category: 'payment', title: `Payment received for ${order.orderId}`, description: formatOrderMoney(sellerTotal, order.currency), time: order.paidAt || order.createdAt, read: false, orderId: order._id });
             }
             if (order.confirmation?.confirmedAt && order.confirmation?.confirmedVia === 'email') {
@@ -184,7 +211,7 @@ exports.getSellerNotifications = async (req, res) => {
                     type: 'success',
                     category: 'order',
                     title: `Buyer confirmed order ${order.orderId} via email`,
-                    description: `${order.shippingInfo?.fullName} verified the order — ready to process`,
+                    description: 'Buyer verified the order — ready to process',
                     time: order.confirmation.confirmedAt,
                     read: false,
                     orderId: order._id,

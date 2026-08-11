@@ -8,9 +8,45 @@ import {
   formatTime,
   buildNotificationsFromOrders,
   groupNotifications,
+  normalizePersistentInboxNotification,
 } from '../../src/hooks/useNotificationInbox';
 
 describe('useNotificationInbox helpers', () => {
+  describe('normalizePersistentInboxNotification', () => {
+    it('preserves server recipient and role metadata for final client-side isolation', () => {
+      expect(normalizePersistentInboxNotification({
+        _id: 'notification-1',
+        user: 'seller-1',
+        title: 'Seller operation',
+        body: 'A seller-only update.',
+        category: 'order',
+        source: 'system',
+        targetRole: 'seller',
+        audience: 'specific',
+        linkTo: '/seller/orders/one',
+      })).toEqual(expect.objectContaining({
+        id: 'broadcast_notification-1',
+        data: expect.objectContaining({
+          recipientUserId: 'seller-1',
+          type: 'persistent_system',
+          targetRole: 'seller',
+          audience: 'specific',
+        }),
+      }));
+    });
+
+    it('marks only actual broadcast records as broadcasts', () => {
+      expect(normalizePersistentInboxNotification({
+        _id: 'broadcast-1',
+        source: 'admin_broadcast',
+      }).data.type).toBe('admin_broadcast');
+    });
+
+    it('drops malformed persistent records without a stable server id', () => {
+      expect(normalizePersistentInboxNotification({ title: 'No id' })).toBeNull();
+    });
+  });
+
   describe('categorizeNotification', () => {
     test.each([
       ['order_placed', 'order'],
@@ -18,6 +54,10 @@ describe('useNotificationInbox helpers', () => {
       ['order_shipped', 'delivery'],
       ['order_delivered', 'delivery'],
       ['new_order_received', 'seller'],
+      ['order_confirmed_by_buyer', 'seller'],
+      ['order_cancelled_by_buyer', 'seller'],
+      ['return_requested', 'seller'],
+      ['return_status_update', 'order'],
       ['low_stock', 'seller'],
       ['store_verified', 'seller'],
       ['price_drop', 'promo'],

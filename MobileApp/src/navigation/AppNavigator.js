@@ -131,8 +131,8 @@ import SellerSubscriptionScreen from '../screens/seller/SellerSubscriptionScreen
 import SellerSubdomainManagementScreen from '../screens/seller/SellerSubdomainManagementScreen';
 import SellerCouponManagementScreen from '../screens/seller/SellerCouponManagementScreen';
 import SellerWhatsAppSettingsScreen from '../screens/seller/SellerWhatsAppSettingsScreen';
-import SellerComplaintsScreen from '../screens/seller/SellerComplaintsScreen';
 import SellerPaymentsScreen from '../screens/seller/SellerPaymentsScreen';
+import SellerAdsScreen from '../screens/seller/SellerAdsScreen';
 
 // Shared Screens
 import ProductManagementScreen from '../screens/shared/ProductManagementScreen';
@@ -152,7 +152,6 @@ import SettingsScreen from '../screens/SettingsScreen';
 import EditProfileScreen from '../screens/EditProfileScreen';
 import SellerNotificationsScreen from '../screens/seller/SellerNotificationsScreen';
 import NotificationSettingsScreen from '../screens/shared/NotificationSettingsScreen';
-import SellerHomeScreen from '../screens/seller/SellerHomeScreen';
 import UserDashboardScreen from '../screens/UserDashboardScreen';
 import AIChatScreen from '../screens/AIChatScreen';
 import UserWhatsAppSettingsScreen from '../screens/UserWhatsAppSettingsScreen';
@@ -187,12 +186,16 @@ function createRoleGuard(Component, allowedRoles) {
 
     useEffect(() => {
       if (!hasAccess) {
+        const leaveRestrictedScreen = () => {
+          if (navigation.canGoBack?.()) navigation.goBack();
+          else navigation.navigate('MainTabs', { screen: 'Account' });
+        };
         Alert.alert(
           'Access Denied',
           currentUser
             ? 'You do not have permission to access this page.'
             : 'Please log in to continue.',
-          [{ text: 'OK', onPress: () => navigation.goBack() }]
+          [{ text: 'OK', onPress: leaveRestrictedScreen }]
         );
       }
     }, [hasAccess, navigation]);
@@ -202,26 +205,26 @@ function createRoleGuard(Component, allowedRoles) {
   };
 }
 
-// Guarded seller screens (seller or admin)
-const GuardedSellerDashboard = createRoleGuard(SellerDashboardScreen, ['seller', 'admin']);
-const GuardedSellerAnalytics = createRoleGuard(SellerAnalyticsScreen, ['seller', 'admin']);
-const GuardedSellerStoreOverview = createRoleGuard(StoreOverviewScreen, ['seller', 'admin']);
-const GuardedSellerProductManagement = createRoleGuard(ProductManagementScreen, ['seller', 'admin']);
-const GuardedSellerOrderManagement = createRoleGuard(OrderManagementScreen, ['seller', 'admin']);
-const GuardedSellerStoreSettings = createRoleGuard(SellerStoreSettingsScreen, ['seller', 'admin']);
-const GuardedSellerShippingConfiguration = createRoleGuard(SellerShippingConfigurationScreen, ['seller', 'admin']);
-const GuardedProductForm = createRoleGuard(ProductFormScreen, ['seller', 'admin']);
-const GuardedOrderDetailManagement = createRoleGuard(OrderDetailManagementScreen, ['seller', 'admin']);
-const GuardedSellerNotifications = createRoleGuard(SellerNotificationsScreen, ['seller', 'admin']);
-const GuardedSellerHome = createRoleGuard(SellerHomeScreen, ['seller', 'admin']);
-const GuardedNotificationSettings = createRoleGuard(NotificationSettingsScreen, ['seller', 'admin']);
-const GuardedSellerSubscription = createRoleGuard(SellerSubscriptionScreen, ['seller', 'admin']);
-const GuardedSellerSubdomainManagement = createRoleGuard(SellerSubdomainManagementScreen, ['seller', 'admin']);
-const GuardedSellerCouponManagement = createRoleGuard(SellerCouponManagementScreen, ['seller', 'admin']);
-const GuardedSellerWhatsAppSettings = createRoleGuard(SellerWhatsAppSettingsScreen, ['seller', 'admin']);
-const GuardedSellerComplaints = createRoleGuard(SellerComplaintsScreen, ['seller', 'admin']);
-const GuardedSellerProfile = createRoleGuard(SellerProfileScreen, ['seller', 'admin']);
-const GuardedSellerPayments = createRoleGuard(SellerPaymentsScreen, ['seller', 'admin']);
+// Seller tools call seller-scoped APIs and must not be opened under an admin
+// identity without an explicit impersonation/target-seller contract.
+const GuardedSellerDashboard = createRoleGuard(SellerDashboardScreen, ['seller']);
+const GuardedSellerAnalytics = createRoleGuard(SellerAnalyticsScreen, ['seller']);
+const GuardedSellerStoreOverview = createRoleGuard(StoreOverviewScreen, ['seller']);
+const GuardedSellerProductManagement = createRoleGuard(ProductManagementScreen, ['seller']);
+const GuardedSellerOrderManagement = createRoleGuard(OrderManagementScreen, ['seller']);
+const GuardedSellerStoreSettings = createRoleGuard(SellerStoreSettingsScreen, ['seller']);
+const GuardedSellerShippingConfiguration = createRoleGuard(SellerShippingConfigurationScreen, ['seller']);
+const GuardedProductForm = createRoleGuard(ProductFormScreen, ['seller']);
+const GuardedOrderDetailManagement = createRoleGuard(OrderDetailManagementScreen, ['seller']);
+const GuardedSellerNotifications = createRoleGuard(SellerNotificationsScreen, ['seller']);
+const GuardedNotificationSettings = createRoleGuard(NotificationSettingsScreen, ['seller']);
+const GuardedSellerSubscription = createRoleGuard(SellerSubscriptionScreen, ['seller']);
+const GuardedSellerSubdomainManagement = createRoleGuard(SellerSubdomainManagementScreen, ['seller']);
+const GuardedSellerCouponManagement = createRoleGuard(SellerCouponManagementScreen, ['seller']);
+const GuardedSellerWhatsAppSettings = createRoleGuard(SellerWhatsAppSettingsScreen, ['seller']);
+const GuardedSellerProfile = createRoleGuard(SellerProfileScreen, ['seller']);
+const GuardedSellerPayments = createRoleGuard(SellerPaymentsScreen, ['seller']);
+const GuardedSellerAds = createRoleGuard(SellerAdsScreen, ['seller']);
 const GuardedUserWhatsAppSettings = createRoleGuard(UserWhatsAppSettingsScreen, ['user', 'seller', 'admin']);
 const GuardedWallet = createRoleGuard(WalletScreen, ['user', 'seller', 'admin']);
 const GuardedPaymentMethods = createRoleGuard(PaymentMethodsScreen, ['user', 'seller', 'admin']);
@@ -610,7 +613,7 @@ export default function AppNavigator() {
         component={OrderConfirmationScreen}
         options={{ headerShown: false }}
       />
-      {/* Seller Dashboard (role-guarded: seller or admin) */}
+      {/* Seller Dashboard (seller identity only) */}
       <Stack.Screen name="SellerDashboard" component={GuardedSellerDashboard} options={{ headerShown: false }} />
       <Stack.Screen name="SellerAnalytics" component={GuardedSellerAnalytics} options={{ headerShown: false }} />
       <Stack.Screen name="SellerStoreOverview" component={GuardedSellerStoreOverview} initialParams={{ isAdmin: false }} options={{ headerShown: false }} />
@@ -619,22 +622,23 @@ export default function AppNavigator() {
       <Stack.Screen name="SellerStoreSettings" component={GuardedSellerStoreSettings} options={{ headerShown: false }} />
       <Stack.Screen name="SellerShippingConfiguration" component={GuardedSellerShippingConfiguration} options={{ headerShown: false }} />
       <Stack.Screen name="SellerNotifications" component={GuardedSellerNotifications} options={{ headerShown: false }} />
-      <Stack.Screen name="SellerHome" component={GuardedSellerHome} options={{ headerShown: false }} />
+      {/* Preserve the historical route name without exposing the obsolete duplicate dashboard. */}
+      <Stack.Screen name="SellerHome" component={GuardedSellerDashboard} options={{ headerShown: false }} />
       <Stack.Screen name="NotificationSettings" component={GuardedNotificationSettings} options={{ headerShown: false }} />
       <Stack.Screen name="SellerSubscription" component={GuardedSellerSubscription} options={{ headerShown: false }} />
       <Stack.Screen name="SellerSubdomainManagement" component={GuardedSellerSubdomainManagement} options={{ headerShown: false }} />
       <Stack.Screen name="SellerCouponManagement" component={GuardedSellerCouponManagement} options={{ headerShown: false }} />
       <Stack.Screen name="SellerWhatsAppSettings" component={GuardedSellerWhatsAppSettings} options={{ headerShown: false }} />
-      <Stack.Screen name="SellerComplaints" component={GuardedSellerComplaints} options={{ headerShown: false }} />
       <Stack.Screen name="SellerProfile" component={GuardedSellerProfile} options={{ headerShown: false }} />
       <Stack.Screen name="SellerPayments" component={GuardedSellerPayments} options={{ headerShown: false }} />
+      <Stack.Screen name="SellerAds" component={GuardedSellerAds} options={{ headerShown: false }} />
       <Stack.Screen name="AIChat" component={AIChatScreen} options={{ headerShown: false }} />
       <Stack.Screen name="UserDashboard" component={UserDashboardScreen} options={{ headerShown: false }} />
       <Stack.Screen name="UserWhatsAppSettings" component={GuardedUserWhatsAppSettings} options={{ headerShown: false }} />
       <Stack.Screen name="Wallet" component={GuardedWallet} options={{ headerShown: false }} />
       <Stack.Screen name="PaymentMethods" component={GuardedPaymentMethods} options={{ headerShown: false }} />
 
-      {/* Shared Screens (role-guarded: seller or admin) */}
+      {/* Shared management screens (seller identity only in this stack) */}
       <Stack.Screen name="ProductForm" component={GuardedProductForm} options={{ headerShown: false }} />
       <Stack.Screen name="OrderDetailManagement" component={GuardedOrderDetailManagement} options={{ headerShown: false }} />
 

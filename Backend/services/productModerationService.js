@@ -260,6 +260,8 @@ async function notifyProductBlocked({ sellerId, product }) {
       category: 'seller',
       linkTo: '/seller-dashboard/product-management',
       source: 'system',
+      targetRole: 'seller',
+      audience: 'specific',
     });
   } catch (err) {
     console.error('[productModeration] dashboard notification failed:', err.message);

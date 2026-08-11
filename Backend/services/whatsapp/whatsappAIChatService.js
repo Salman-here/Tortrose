@@ -21,6 +21,7 @@ const sellerEvolution = require('./sellerEvolutionClient'); // seller instance (
 const { resolveOutboundRecipient } = require('./jidRoutingStore');
 const { phoneFromJid, uniqueNonEmpty } = require('./addressing');
 const { routingScopeFor } = require('./gatewayMode');
+const { findWhatsAppIdentityConflict } = require('../whatsappIdentityService');
 
 const SITE_URL = process.env.FRONTEND_URL || 'https://www.rozare.com';
 const RATE_LIMIT_PER_HOUR = Number(process.env.WHATSAPP_AI_RATE_LIMIT_PER_HOUR || 30);
@@ -209,24 +210,36 @@ async function identifyUserByPhone(phone, instanceType) {
         const adminNumber = await AdminWhatsAppNumber.findOne({
             number: digits,
             isActive: true,
-        }).populate('addedBy', '_id role username');
+        }).populate('addedBy', '_id role status username');
         if (adminNumber) {
-            // Prefer the admin who added this number; fall back to any admin
-            let adminUser = adminNumber.addedBy?.role === 'admin' ? adminNumber.addedBy : null;
-            if (!adminUser) {
-                adminUser = await User.findOne({ role: 'admin' }).select('_id role username');
-            }
-            if (adminUser) {
+            // Fail closed. A stale admin-number record must never inherit the
+            // privileges of an arbitrary surviving administrator after the
+            // original account is deleted or demoted.
+            const adminUser = adminNumber.addedBy;
+            const conflictingIdentity = await findWhatsAppIdentityConflict(digits, {
+                channel: 'admin',
+                adminNumberId: adminNumber._id,
+            });
+            if (
+                !conflictingIdentity
+                && adminUser?.role === 'admin'
+                && adminUser?.status === 'active'
+            ) {
                 return { user: adminUser, role: 'admin' };
             }
+            console.warn('[wa-ai-chat] Ignoring stale or conflicting admin WhatsApp authorization');
         }
 
         // 2. Check sellers
         const seller = await User.findOne({
             role: 'seller',
-            'sellerInfo.whatsappNumber': { $in: phoneVariants },
+            status: 'active',
             'sellerInfo.whatsappVerified': true,
-        }).select('_id role username sellerInfo.whatsappNumber');
+            $or: [
+                { 'sellerInfo.whatsappDigits': digits },
+                { 'sellerInfo.whatsappNumber': { $in: phoneVariants } },
+            ],
+        }).select('_id role status username sellerInfo.whatsappNumber sellerInfo.whatsappDigits');
 
         if (seller) {
             return { user: seller, role: 'seller' };
@@ -240,6 +253,7 @@ async function identifyUserByPhone(phone, instanceType) {
     // regardless of their actual account role. In unified mode this route still
     // runs after the seller/admin lookup so seller/admin AI keeps priority.
     const user = await User.findOne({
+        status: 'active',
         'whatsappInfo.number': { $in: phoneVariants },
         'whatsappInfo.verified': true,
     }).select('_id role username whatsappInfo.number');
@@ -386,6 +400,7 @@ async function handleUnlinkedUserOnMainInstance(recipient) {
         await evolution.sendText(recipient, msg);
     } catch (err) {
         console.error('[wa-ai-chat] Failed to send unlinked user message:', err.message);
+        throw err;
     }
 }
 
@@ -435,6 +450,7 @@ async function handleNonSellerOnSellerInstance(phone, recipient = phone) {
         await sellerEvolution.sendText(recipient, msg);
     } catch (err) {
         console.error('[wa-ai-chat] Failed to send non-seller message:', err.message);
+        throw err;
     }
 }
 
@@ -515,6 +531,26 @@ async function processIncomingWhatsAppMessageNow(phone, messageText, instanceTyp
         const attachmentResult = attachments.length
             ? await processChatAttachments(attachments)
             : { context: '', attachments: [] };
+        for (const item of attachmentResult.processed || []) {
+            if (!item.success) {
+                console.warn(`[wa-ai-chat] ${item.type || 'attachment'} processing failed: ${String(item.error || 'unknown error').slice(0, 240)}`);
+            }
+        }
+        const failedVoice = (attachmentResult.processed || []).find(
+            (item) => item?.type === 'audio' && item.success === false
+        );
+        if (
+            failedVoice &&
+            options.propagateErrors === true &&
+            Number(options.durableAttempt || 1) < 3
+        ) {
+            const voiceError = new Error(
+                `Voice transcription failed: ${failedVoice.error || 'unknown error'}`
+            );
+            voiceError.code = 'WHATSAPP_VOICE_TRANSCRIPTION_RETRY';
+            voiceError.retryable = true;
+            throw voiceError;
+        }
         const attachmentsAt = Date.now();
         const userContent = [trimmedText, attachmentResult.context].filter(Boolean).join('\n\n') ||
             (attachments.length ? 'Attachment uploaded' : trimmedText);
@@ -574,16 +610,22 @@ async function processIncomingWhatsAppMessageNow(phone, messageText, instanceTyp
     } catch (err) {
         console.error(`[wa-ai-chat] Error processing message from ${primaryPhone || phone}:`, err.message);
 
-        // Send error message to user
-        try {
-            const errorMsg = err.message?.includes('rate limit')
-                ? "I'm a bit busy right now. Please try again in a moment! 🙏"
-                : err.message?.includes('credits')
-                    ? "I'm temporarily unavailable. Please try again later or use the web chat at " + SITE_URL + "/ai-chat"
-                    : "Oops! Something went wrong on my end. Please try again or visit " + SITE_URL + "/ai-chat 💙";
-            await sendResponse(replyTo, errorMsg, instanceType);
-        } catch (sendErr) {
-            console.error('[wa-ai-chat] Failed to send error message:', sendErr.message);
+        if (!options.suppressErrorResponse) {
+            // Send error message to user for non-durable callers. Webhook retries
+            // suppress this so the same failed event cannot produce duplicate replies.
+            try {
+                const errorMsg = err.message?.includes('rate limit')
+                    ? "I'm a bit busy right now. Please try again in a moment! 🙏"
+                    : err.message?.includes('credits')
+                        ? "I'm temporarily unavailable. Please try again later or use the web chat at " + SITE_URL + "/ai-chat"
+                        : "Oops! Something went wrong on my end. Please try again or visit " + SITE_URL + "/ai-chat 💙";
+                await sendResponse(replyTo, errorMsg, instanceType);
+            } catch (sendErr) {
+                console.error('[wa-ai-chat] Failed to send error message:', sendErr.message);
+            }
+        }
+        if (options.propagateErrors) {
+            throw err;
         }
     }
 }

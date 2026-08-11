@@ -99,4 +99,21 @@ describe('WhatsApp JID routing store', () => {
     expect(recipient).toBe('22222222222222@lid');
     expect(WhatsAppJidMapping.findOne).not.toHaveBeenCalled();
   });
+
+  test('rejects a connected-owner phone JID that does not match the resolved sender', async () => {
+    WhatsAppJidMapping.findOne.mockReturnValue({
+      sort: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue(null),
+      }),
+    });
+
+    const recipient = await resolveOutboundRecipient(
+      '923499166499',
+      '923028588506@s.whatsapp.net',
+      { instanceType: 'seller' }
+    );
+
+    expect(recipient).toBe('923499166499@s.whatsapp.net');
+    expect(recipient).not.toContain('923028588506');
+  });
 });

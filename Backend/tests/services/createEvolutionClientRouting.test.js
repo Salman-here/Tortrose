@@ -16,6 +16,7 @@ describe('Evolution client recipient routing', () => {
     process.env.EVOLUTION_API_URL = 'http://evolution.test';
     process.env.EVOLUTION_API_KEY = 'test-key';
     delete process.env.EVOLUTION_SELLER_INSTANCE_NAME;
+    delete process.env.EVOLUTION_WEBHOOK_BASE64;
   });
 
   test('keeps an explicit phone JID unchanged before sending text', async () => {
@@ -107,6 +108,8 @@ describe('Evolution client recipient routing', () => {
     // Media base64 inlining uses the v2.3.x `base64` field (plus legacy alias).
     expect(webhookPayload.webhook).toHaveProperty('base64');
     expect(webhookPayload.webhook).toHaveProperty('webhookBase64');
+    expect(webhookPayload.webhook.base64).toBe(true);
+    expect(webhookPayload.webhook.webhookBase64).toBe(true);
     expect(webhookPayload.webhook.events).toEqual(expect.arrayContaining([
       'MESSAGES_UPSERT',
       'MESSAGES_UPDATE',
@@ -114,6 +117,23 @@ describe('Evolution client recipient routing', () => {
       'QRCODE_UPDATED',
     ]));
     expect(webhookPayload.webhook.events).not.toContain('SEND_MESSAGE');
+  });
+
+  test('allows media base64 inlining to be explicitly disabled', async () => {
+    process.env.EVOLUTION_WEBHOOK_BASE64 = 'false';
+    let webhookPayload;
+    axios.create.mockReturnValue({
+      post: jest.fn(async (_url, payload) => {
+        webhookPayload = payload;
+        return { data: { ok: true } };
+      }),
+    });
+
+    const client = createEvolutionClient('EVOLUTION_SELLER_INSTANCE_NAME', 'rozare-seller');
+    await client.setWebhook('https://rozare.up.railway.app/api/whatsapp/webhook', 'test-secret');
+
+    expect(webhookPayload.webhook.base64).toBe(false);
+    expect(webhookPayload.webhook.webhookBase64).toBe(false);
   });
 
   test('applies low-latency Evolution settings by default', async () => {

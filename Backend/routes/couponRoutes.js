@@ -1,5 +1,6 @@
 const express = require('express');
 const verifyToken = require('../middleware/authMiddleware');
+const { seller } = require('../middleware/authMiddleware');
 const bonusFeatureCheck = require('../middleware/bonusFeatureCheck');
 const {
     createCoupon,
@@ -17,12 +18,12 @@ const {
 const router = express.Router();
 
 // Seller routes (bonus feature restricted)
-router.post('/create', verifyToken, bonusFeatureCheck('Coupon Management'), createCoupon);
-router.get('/seller', verifyToken, bonusFeatureCheck('Coupon Management'), getSellerCoupons);
-router.get('/analytics', verifyToken, bonusFeatureCheck('Coupon Management'), getCouponAnalytics);
-router.put('/update/:id', verifyToken, bonusFeatureCheck('Coupon Management'), updateCoupon);
-router.delete('/delete/:id', verifyToken, bonusFeatureCheck('Coupon Management'), deleteCoupon);
-router.patch('/toggle/:id', verifyToken, bonusFeatureCheck('Coupon Management'), toggleCoupon);
+router.post('/create', verifyToken, seller, bonusFeatureCheck('Coupon Management'), createCoupon);
+router.get('/seller', verifyToken, seller, bonusFeatureCheck('Coupon Management'), getSellerCoupons);
+router.get('/analytics', verifyToken, seller, bonusFeatureCheck('Coupon Management'), getCouponAnalytics);
+router.put('/update/:id', verifyToken, seller, bonusFeatureCheck('Coupon Management'), updateCoupon);
+router.delete('/delete/:id', verifyToken, seller, bonusFeatureCheck('Coupon Management'), deleteCoupon);
+router.patch('/toggle/:id', verifyToken, seller, bonusFeatureCheck('Coupon Management'), toggleCoupon);
 
 // Public routes (no auth needed for buyers to see available coupons)
 router.get('/product/:productId', getProductCoupons);

@@ -8,33 +8,33 @@
  * that logical route is backed by the seller/admin Evolution instance.
  */
 
+const crypto = require('crypto');
 const WhatsAppOTP = require('../models/WhatsAppOTP');
 const WhatsAppConfig = require('../models/WhatsAppConfig');
 const User = require('../models/User');
 const evolution = require('../services/whatsapp/evolutionClient');
 const { configKeyFor } = require('../services/whatsapp/gatewayMode');
+const { verifyAndClaimWhatsAppOTP } = require('../services/whatsappOtpVerificationService');
+const {
+    reserveWhatsAppOtpSend,
+    releaseWhatsAppOtpSend,
+} = require('../services/whatsappOtpRateLimitService');
+const {
+    normalizePhoneDigits,
+    toE164PhoneNumber,
+} = require('../utils/phoneNumber');
+const {
+    conflictMessage,
+    findWhatsAppIdentityConflict,
+} = require('../services/whatsappIdentityService');
 
 // ─── Config ───
 const OTP_EXPIRY_MINUTES = 2;
-const VERIFIED_EXPIRY_MINUTES = 10;
 const MAX_ATTEMPTS = 5;
-const RATE_LIMIT_PER_HOUR = 3;
-const GLOBAL_RATE_LIMIT_PER_HOUR = 200;
 
-const generateOTP = () => Math.floor(100000 + Math.random() * 900000).toString();
+const generateOTP = () => crypto.randomInt(100000, 1000000).toString();
 
-const cleanNumber = (number) => String(number || '').replace(/\D/g, '');
-
-// Constant-time string comparison
-const safeEqual = (a, b) => {
-    if (typeof a !== 'string' || typeof b !== 'string') return false;
-    if (a.length !== b.length) return false;
-    let mismatch = 0;
-    for (let i = 0; i < a.length; i++) {
-        mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i);
-    }
-    return mismatch === 0;
-};
+const cleanNumber = normalizePhoneDigits;
 
 /**
  * POST /api/user-whatsapp/send-otp
@@ -74,65 +74,63 @@ exports.sendUserWhatsAppOTP = async (req, res) => {
             });
         }
 
-        // Check if number is already linked to ANY user account (uniqueness)
-        const numberVariants = [whatsappNumber, `+${digits}`, digits];
-        const existingUser = await User.findOne({
-            'whatsappInfo.number': { $in: numberVariants },
-            'whatsappInfo.verified': true,
+        // A verified number has one owner and one role across buyer, seller and
+        // admin routing. This avoids an inherently ambiguous inbound identity.
+        const currentUser = await User.findById(userId).select('whatsappInfo');
+        if (
+            currentUser?.whatsappInfo?.verified
+            && cleanNumber(currentUser.whatsappInfo.number) === digits
+        ) {
+            return res.status(409).json({
+                success: false,
+                msg: 'This is already your linked WhatsApp number.',
+            });
+        }
+
+        const identityConflict = await findWhatsAppIdentityConflict(digits, {
+            channel: 'buyer',
+            userId,
         });
-        if (existingUser) {
-            if (existingUser._id.toString() === String(userId)) {
-                return res.status(409).json({
+        if (identityConflict) {
+            return res.status(409).json({
+                success: false,
+                msg: conflictMessage(identityConflict),
+            });
+        }
+
+        let rateReservation;
+        try {
+            rateReservation = await reserveWhatsAppOtpSend({ number: digits, sellerId: userId });
+        } catch (rateError) {
+            if (rateError?.code === 'WHATSAPP_OTP_GLOBAL_RATE_LIMIT') {
+                return res.status(429).json({
                     success: false,
-                    msg: 'This is already your linked WhatsApp number.'
-                });
-            } else {
-                return res.status(409).json({
-                    success: false,
-                    msg: 'This number is already linked to another account. Each WhatsApp number can only be linked to one account.'
+                    msg: 'Verification service is busy. Please try again in a few minutes.',
                 });
             }
-        }
-
-        // If user already has a different linked number, inform them it will be replaced
-        const currentUser = await User.findById(userId).select('whatsappInfo');
-        const hasExistingNumber = currentUser?.whatsappInfo?.number && currentUser?.whatsappInfo?.verified;
-
-        // A seller/admin number may also be linked for buyer AI mode. Unified
-        // routing gives seller/admin identity priority, while this user link is
-        // still allowed for buyer tools. We only block if another USER has it.
-
-        // Per-number rate limit
-        const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
-        const perNumberCount = await WhatsAppOTP.countDocuments({
-            number: digits,
-            createdAt: { $gte: oneHourAgo }
-        });
-        if (perNumberCount >= RATE_LIMIT_PER_HOUR) {
-            return res.status(429).json({
-                success: false,
-                msg: 'Too many verification attempts for this number. Please try again in an hour.'
-            });
-        }
-
-        // Global rate limit
-        const globalCount = await WhatsAppOTP.countDocuments({ createdAt: { $gte: oneHourAgo } });
-        if (globalCount >= GLOBAL_RATE_LIMIT_PER_HOUR) {
-            return res.status(429).json({
-                success: false,
-                msg: 'Verification service is busy. Please try again in a few minutes.'
-            });
+            if (rateError?.code === 'WHATSAPP_OTP_NUMBER_RATE_LIMIT') {
+                return res.status(429).json({ success: false, msg: rateError.message });
+            }
+            throw rateError;
         }
 
         // Check if number is on WhatsApp
-        const isOnWhatsApp = await evolution.checkWhatsAppNumber(digits);
+        let isOnWhatsApp;
+        try {
+            isOnWhatsApp = await evolution.checkWhatsAppNumber(digits);
+        } catch (checkError) {
+            await releaseWhatsAppOtpSend(rateReservation).catch(() => null);
+            throw checkError;
+        }
         if (isOnWhatsApp === false) {
+            await releaseWhatsAppOtpSend(rateReservation).catch(() => null);
             return res.status(400).json({
                 success: false,
                 msg: 'This number is not registered on WhatsApp. Please use a valid WhatsApp number.'
             });
         }
         if (isOnWhatsApp === null) {
+            await releaseWhatsAppOtpSend(rateReservation).catch(() => null);
             return res.status(503).json({
                 success: false,
                 msg: 'Unable to verify the number with WhatsApp right now. Please try again shortly.'
@@ -156,6 +154,7 @@ exports.sendUserWhatsAppOTP = async (req, res) => {
             await evolution.sendText(digits, message);
         } catch (sendErr) {
             console.error('[userWhatsapp] sendText failed:', sendErr.message);
+            await releaseWhatsAppOtpSend(rateReservation).catch(() => null);
             return res.status(502).json({
                 success: false,
                 msg: 'Failed to send verification code. Please try again.'
@@ -207,36 +206,30 @@ exports.verifyUserWhatsAppOTP = async (req, res) => {
             return res.status(400).json({ success: false, msg: 'Invalid WhatsApp number or code format' });
         }
 
-        // Find the most recent unexpired, unverified OTP
-        const otpExpiry = new Date(Date.now() - OTP_EXPIRY_MINUTES * 60 * 1000);
-        const otpRecord = await WhatsAppOTP.findOne({
+        const verification = await verifyAndClaimWhatsAppOTP({
             number: digits,
-            verified: false,
-            createdAt: { $gte: otpExpiry },
-        }).sort({ createdAt: -1 });
+            sellerId: userId,
+            otp: otpStr,
+            validAfter: new Date(Date.now() - OTP_EXPIRY_MINUTES * 60 * 1000),
+            maxAttempts: MAX_ATTEMPTS,
+        });
 
-        if (!otpRecord) {
+        if (verification.status === 'missing') {
             return res.status(400).json({
                 success: false,
                 msg: 'No pending verification. Please request a new code.'
             });
         }
 
-        // Brute-force lockout
-        if (otpRecord.attempts >= MAX_ATTEMPTS) {
-            otpRecord.createdAt = new Date(0);
-            await otpRecord.save().catch(() => null);
+        if (verification.status === 'locked') {
             return res.status(429).json({
                 success: false,
                 msg: 'Too many incorrect attempts. Please request a new code.'
             });
         }
 
-        // Constant-time compare
-        if (!safeEqual(otpRecord.otp, otpStr)) {
-            otpRecord.attempts = (otpRecord.attempts || 0) + 1;
-            await otpRecord.save().catch(() => null);
-            const remaining = Math.max(0, MAX_ATTEMPTS - otpRecord.attempts);
+        if (verification.status === 'invalid') {
+            const remaining = verification.remaining;
             return res.status(400).json({
                 success: false,
                 msg: remaining > 0
@@ -246,35 +239,50 @@ exports.verifyUserWhatsAppOTP = async (req, res) => {
         }
 
         // OTP correct — check uniqueness one more time before saving
-        const storedNumber = whatsappNumber.trim().startsWith('+')
-            ? whatsappNumber.trim()
-            : `+${digits}`;
-
-        const numberVariants = [storedNumber, `+${digits}`, digits];
-        const existingUser = await User.findOne({
-            _id: { $ne: userId },
-            'whatsappInfo.number': { $in: numberVariants },
-            'whatsappInfo.verified': true,
+        const otpRecord = verification.record;
+        const identityConflict = await findWhatsAppIdentityConflict(digits, {
+            channel: 'buyer',
+            userId,
         });
-        if (existingUser) {
+        if (identityConflict) {
+            await WhatsAppOTP.deleteOne({ _id: otpRecord._id });
             return res.status(409).json({
                 success: false,
-                msg: 'This number was just linked to another account. Please use a different number.'
+                msg: conflictMessage(identityConflict),
             });
         }
 
-        // Update user's whatsappInfo
-        await User.findByIdAndUpdate(userId, {
-            $set: {
-                'whatsappInfo.number': storedNumber,
-                'whatsappInfo.verified': true,
-                'whatsappInfo.verifiedAt': new Date(),
-                'whatsappInfo.lastChange': new Date(),
-            }
-        });
+        const storedNumber = toE164PhoneNumber(digits);
 
-        // Clean up OTP records
-        await WhatsAppOTP.deleteMany({ number: digits });
+        try {
+            const updated = await User.findOneAndUpdate(
+                { _id: userId },
+                {
+                    $set: {
+                        'whatsappInfo.number': storedNumber,
+                        'whatsappInfo.verified': true,
+                        'whatsappInfo.verifiedAt': new Date(),
+                        'whatsappInfo.lastChange': new Date(),
+                    },
+                },
+                { new: true }
+            );
+            if (!updated) {
+                await WhatsAppOTP.deleteOne({ _id: otpRecord._id });
+                return res.status(404).json({ success: false, msg: 'User not found' });
+            }
+        } catch (updateError) {
+            await WhatsAppOTP.deleteOne({ _id: otpRecord._id });
+            if (updateError?.code === 11000) {
+                return res.status(409).json({
+                    success: false,
+                    msg: 'This number was just linked to another account. Please use a different number.',
+                });
+            }
+            throw updateError;
+        }
+
+        await WhatsAppOTP.deleteOne({ _id: otpRecord._id });
 
         return res.status(200).json({
             success: true,

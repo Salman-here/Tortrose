@@ -27,6 +27,7 @@ import CurrencySelector from '../components/CurrencySelector';
 import { PersonalizedSliders, SearchAutocomplete, PriceRangeFilter, TrustedStoresSection } from '../components/common';
 import GlassBackground from '../components/common/GlassBackground';
 import GlassPanel from '../components/common/GlassPanel';
+import KeyboardAwareFormScrollView from '../components/common/KeyboardAwareFormScrollView';
 import GlassBlurFill from '../components/common/GlassBlurFill';
 import AIChatFab from '../components/common/AIChatFab';
 import { addSearchHistory } from '../utils/searchHistory';
@@ -878,11 +879,11 @@ export default function HomeScreen({ navigation }) {
               </TouchableOpacity>
             </View>
 
-            <ScrollView
+            <KeyboardAwareFormScrollView
               style={styles.modalBody}
               contentContainerStyle={styles.modalBodyContent}
               showsVerticalScrollIndicator={false}
-              keyboardShouldPersistTaps="handled"
+              bottomOffset={32}
             >
               <View style={styles.sheetSearchBox}>
                 <Ionicons name="search-outline" size={19} color={palette.colors.primary} />
@@ -1055,7 +1056,7 @@ export default function HomeScreen({ navigation }) {
                   onChange={(range) => setFilterDraft(previous => ({ ...previous, priceRange: range }))}
                 />
               </View>
-            </ScrollView>
+            </KeyboardAwareFormScrollView>
 
             <View style={styles.modalFooter}>
               <TouchableOpacity

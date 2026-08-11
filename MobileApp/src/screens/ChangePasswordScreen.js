@@ -5,15 +5,15 @@
 import React, { useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
-  ScrollView, Platform, ActivityIndicator,
+  Platform, ActivityIndicator,
 } from 'react-native';
-import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import Feedback from '../utils/feedback';
 import api from '../config/api';
 import GlassBackground from '../components/common/GlassBackground';
 import GlassPanel from '../components/common/GlassPanel';
+import KeyboardAwareFormScrollView from '../components/common/KeyboardAwareFormScrollView';
 import PremiumBackHeader from '../components/common/PremiumBackHeader';
 import { spacing, fontSize, borderRadius, shadows, fontWeight } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
@@ -73,8 +73,7 @@ export default function ChangePasswordScreen({ navigation }) {
   return (
     <GlassBackground>
       <SafeAreaView style={{ flex: 1 }} edges={Platform.OS === 'android' ? [] : ['top']}>
-        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-          <ScrollView contentContainerStyle={{ padding: spacing.md, paddingBottom: spacing.xxl }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+          <KeyboardAwareFormScrollView contentContainerStyle={{ padding: spacing.md, paddingBottom: spacing.xxl }}>
           <PremiumBackHeader
             inset={false}
             title="Change Password"
@@ -114,8 +113,7 @@ export default function ChangePasswordScreen({ navigation }) {
               <><Ionicons name="checkmark-circle-outline" size={20} color="#fff" /><Text style={styles.submitText}>Update Password</Text></>
             )}
           </TouchableOpacity>
-          </ScrollView>
-        </KeyboardAvoidingView>
+          </KeyboardAwareFormScrollView>
       </SafeAreaView>
     </GlassBackground>
   );

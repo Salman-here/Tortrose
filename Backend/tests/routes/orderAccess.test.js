@@ -181,6 +181,92 @@ describe('Order access isolation', () => {
     expect(res.body.orders[0].orderSummary.totalAmount).toBe(230);
   });
 
+  test('treats an order-item seller snapshot as authoritative over current product ownership', async () => {
+    const seller = await createUser('snapshot-owner', 'seller');
+    const snapshotSeller = await createUser('snapshot-other', 'seller');
+    const buyer = await createUser('snapshot-buyer', 'user');
+    const currentlyOwnedProduct = await createProduct(seller, 'snapshot-current', 100);
+    const otherProduct = await createProduct(snapshotSeller, 'snapshot-other', 50);
+    const order = await createOrder({
+      buyer,
+      sellerProduct: currentlyOwnedProduct,
+      otherProduct,
+    });
+
+    order.orderItems[0].seller = snapshotSeller._id;
+    order.orderItems[1].seller = snapshotSeller._id;
+    await order.save();
+
+    const listResponse = await request(app)
+      .get('/api/order/get')
+      .set('Authorization', tokenFor(seller));
+    const updateResponse = await request(app)
+      .patch(`/api/order/update-status/${order._id}`)
+      .send({ newStatus: 'processing' })
+      .set('Authorization', tokenFor(seller));
+
+    expect(listResponse.status).toBe(200);
+    expect(listResponse.body.orders).toEqual([]);
+    expect(updateResponse.status).toBe(403);
+    expect(updateResponse.body.msg).toBe('You can only update orders containing your products');
+  });
+
+  test('seller CSV export stays seller-scoped and labels totals in the requested report currency', async () => {
+    const seller = await createUser('export-seller', 'seller');
+    const otherSeller = await createUser('export-other', 'seller');
+    const buyer = await createUser('export-buyer', 'user');
+    const sellerProduct = await createProduct(seller, 'export-seller', 100);
+    const otherProduct = await createProduct(otherSeller, 'export-other', 50);
+    const order = await createOrder({ buyer, sellerProduct, otherProduct });
+    order.currency = 'PKR';
+    order.shippingInfo.fullName = '=HYPERLINK("https://evil.example","click")';
+    order.orderItems[0].name = '@SUM(1+1)';
+    await order.save();
+
+    const response = await request(app)
+      .get('/api/order/export?format=csv&currency=PKR')
+      .set('Authorization', tokenFor(seller));
+
+    expect(response.status).toBe(200);
+    expect(response.headers['content-type']).toContain('text/csv');
+    expect(response.text).toContain('Grand Total: PKR 230.00');
+    expect(response.text).toContain('Subtotal (PKR)');
+    expect(response.text).toContain("'@SUM(1+1)");
+    expect(response.text).not.toContain('Product export-other');
+    expect(response.text).not.toContain('$230.00');
+    expect(response.text).toContain("'=HYPERLINK");
+    expect(response.text).not.toContain('"=HYPERLINK');
+  });
+
+  test('seller cannot view or update an awaiting-payment Checkout order by id', async () => {
+    const seller = await createUser('seller-awaiting', 'seller');
+    const otherSeller = await createUser('seller-awaiting-other', 'seller');
+    const buyer = await createUser('buyer-awaiting', 'user');
+    const sellerProduct = await createProduct(seller, 'seller-awaiting', 100);
+    const otherProduct = await createProduct(otherSeller, 'other-awaiting', 50);
+    const order = await createOrder({ buyer, sellerProduct, otherProduct });
+    order.awaitingPayment = true;
+    order.isPaid = false;
+    await order.save();
+
+    const detailResponse = await request(app)
+      .get(`/api/order/detail/${order._id}`)
+      .set('Authorization', tokenFor(seller));
+    const updateResponse = await request(app)
+      .patch(`/api/order/update-status/${order._id}`)
+      .send({ newStatus: 'processing' })
+      .set('Authorization', tokenFor(seller));
+
+    expect(detailResponse.status).toBe(404);
+    expect(detailResponse.body).toEqual({ msg: 'Order not found' });
+    expect(updateResponse.status).toBe(404);
+    expect(updateResponse.body).toEqual({ msg: 'Order not found' });
+
+    const unchanged = await Order.findById(order._id);
+    expect(unchanged.orderStatus).toBe('pending');
+    expect(unchanged.awaitingPayment).toBe(true);
+  });
+
   test('buyers can view their own order but not another buyer order', async () => {
     const seller = await createUser('seller-detail', 'seller');
     const otherSeller = await createUser('seller-detail-other', 'seller');

@@ -724,6 +724,17 @@ startQueueProcessor();
 const { startGatewayHealthMonitor } = require('./services/whatsapp/gatewayHealthMonitor');
 startGatewayHealthMonitor();
 
+// Re-apply the signed Evolution webhook and inline-media settings on boot.
+// Without this, voice notes can silently stop working after gateway changes
+// until an administrator manually reconnects the instance.
+const { registerConfiguredWebhooks } = require('./controllers/whatsappController');
+const webhookRegistrationTimer = setTimeout(() => {
+  registerConfiguredWebhooks().catch(err => {
+    console.warn('[whatsapp] startup webhook registration failed:', err.message);
+  });
+}, 8000);
+webhookRegistrationTimer.unref?.();
+
 // ── Admin broadcast dispatcher (runs every minute on the persistent dyno) ──
 const { processDueBroadcasts } = require('./controllers/notificationController');
 setInterval(() => {

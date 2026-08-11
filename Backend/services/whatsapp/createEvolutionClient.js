@@ -469,7 +469,10 @@ function createEvolutionClient(instanceEnvVar, defaultName) {
         // Send BOTH so inbound media base64 inlining survives a re-register on
         // any build (it drives whether voice notes / images / documents can be
         // ingested — inbound messages are not persisted, so re-download fails).
-        const base64Enabled = String(process.env.EVOLUTION_WEBHOOK_BASE64 || '').toLowerCase() === 'true';
+        // Media ingestion is a core product feature. Default to inline media
+        // because inbound messages may not remain downloadable after the
+        // webhook is acknowledged. Operators can still opt out explicitly.
+        const base64Enabled = envBool('EVOLUTION_WEBHOOK_BASE64', true);
         const webhook = {
             enabled: true,
             url,
