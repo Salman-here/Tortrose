@@ -52,7 +52,7 @@ describe('aiAttachmentService WhatsApp media handling', () => {
     expect(__private.transcriptionModelFor('openai', env)).toBe('gpt-4o-mini-transcribe');
     expect(__private.transcriptionModelFor('openrouter', {
       OPENAI_TRANSCRIPTION_MODEL: 'gpt-4o-mini-transcribe',
-    })).toBe('openai/gpt-4o-transcribe');
+    })).toBe('openai/whisper-large-v3');
   });
 
   test('downloads WhatsApp images through Evolution and persists them to Cloudinary', async () => {
@@ -158,7 +158,7 @@ describe('aiAttachmentService WhatsApp media handling', () => {
       'X-Title': 'Rozare AI Seller Assistant',
     }));
     expect(body).toMatchObject({
-      model: 'openai/gpt-4o-transcribe',
+      model: 'openai/whisper-large-v3',
       input_audio: {
         data: audio.toString('base64'),
         format: 'ogg',

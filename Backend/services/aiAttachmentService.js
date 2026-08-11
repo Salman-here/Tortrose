@@ -13,11 +13,14 @@ const TRANSCRIPTION_PROVIDER = String(process.env.TRANSCRIPTION_PROVIDER || 'ope
 const transcriptionModelFor = (provider, env = process.env) => (
   provider === 'openai'
     ? (env.OPENAI_TRANSCRIPTION_MODEL || 'gpt-4o-transcribe')
-    : (env.OPENROUTER_TRANSCRIPTION_MODEL || 'openai/gpt-4o-transcribe')
+    : (env.OPENROUTER_TRANSCRIPTION_MODEL || 'openai/whisper-large-v3')
 );
 // Keep provider model configuration isolated. An OpenAI model id such as
 // `gpt-4o-transcribe` is not a valid OpenRouter id (which is provider-prefixed),
 // so falling across env vars can silently break every WhatsApp voice note.
+// Whisper Large V3 is the verified production default for OpenRouter's
+// dedicated STT endpoint; deployments can still opt into another model with
+// OPENROUTER_TRANSCRIPTION_MODEL.
 const OPENROUTER_TRANSCRIPTION_MODEL = transcriptionModelFor('openrouter');
 const OPENAI_TRANSCRIPTION_MODEL = transcriptionModelFor('openai');
 const TRANSCRIPTION_TIMEOUT_MS = Number(process.env.AI_TRANSCRIPTION_TIMEOUT_MS || 45000);
