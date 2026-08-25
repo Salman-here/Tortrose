@@ -1,21 +1,29 @@
-const crypto = require('crypto');
 const mongoose = require('mongoose');
 const WalletTransaction = require('../models/WalletTransaction');
 const Notification = require('../models/Notification');
 const { stripe, STRIPE_MODE } = require('../config/stripe');
-const { convertToUSD } = require('../services/currencyService');
+const { convertAmountUsingTrustedRates } = require('../services/currencyService');
 const {
     getWalletSummary,
     ensureWallet,
     normalizeWalletCurrency,
-    toStripeMinorUnits,
     roundMoney,
-    formatWalletMoney,
     walletTopUpDescription,
     serializeWalletTransaction,
     validateWalletTopUpPaymentIntent,
     validateWalletTopUpCheckoutSession,
+    recoverWalletTopUpStripeSetup,
+    closeWalletTopUpWithoutStripeReference,
+    cancelWalletTopUpFromPaymentIntent,
+    completeWalletTopUp,
+    completeWalletTopUpFromPaymentIntent,
+    failWalletTopUp,
+    reconcileWalletPaymentLiability,
 } = require('../services/walletService');
+const {
+    getWalletPaymentRiskSummary,
+    isWalletPaymentRiskLock,
+} = require('../services/walletPaymentLiabilityService');
 const {
     ensureStripeCustomerForUser,
     createMobileCustomerAccess,
@@ -26,12 +34,96 @@ const {
     closeWalletTopUpPaymentIntent,
 } = require('../services/stripePendingPaymentService');
 const {
-    buildCustomerInitiatedPaymentIntentParams,
-    isDefinitiveStripeCreationError,
-} = require('../services/stripePaymentIntentFactory');
+    enqueueWalletTransactionNotification,
+} = require('../services/financialNotificationOutboxService');
 
-const MIN_TOP_UP_USD = Number(process.env.WALLET_MIN_TOP_UP_USD || 1);
-const MAX_TOP_UP_USD = Number(process.env.WALLET_MAX_TOP_UP_USD || 10000);
+const configuredPositiveUsdLimit = (name, fallback, environment = process.env) => {
+    const raw = environment[name];
+    if (raw === undefined || String(raw).trim() === '') return fallback;
+    const value = Number(raw);
+    if (!Number.isFinite(value) || value <= 0) {
+        throw new Error(`${name} must be a positive finite USD amount.`);
+    }
+    const normalizedValue = roundMoney(value);
+    if (normalizedValue <= 0) {
+        throw new Error(`${name} must be at least 0.01 USD after cent rounding.`);
+    }
+    return normalizedValue;
+};
+
+const configuredWalletTopUpLimits = (environment = process.env) => {
+    const minimumUSD = configuredPositiveUsdLimit('WALLET_MIN_TOP_UP_USD', 1, environment);
+    const maximumUSD = configuredPositiveUsdLimit('WALLET_MAX_TOP_UP_USD', 10000, environment);
+    if (maximumUSD < minimumUSD) {
+        throw new Error('WALLET_MAX_TOP_UP_USD must be greater than or equal to WALLET_MIN_TOP_UP_USD.');
+    }
+    return { minimumUSD, maximumUSD };
+};
+
+const {
+    minimumUSD: MIN_TOP_UP_USD,
+    maximumUSD: MAX_TOP_UP_USD,
+} = configuredWalletTopUpLimits();
+
+exports.__private = {
+    configuredPositiveUsdLimit,
+    configuredWalletTopUpLimits,
+};
+
+const parseWalletTopUpAmount = (rawAmount) => {
+    const invalid = () => {
+        const error = new Error('Enter a valid Wallet top-up amount greater than zero.');
+        error.statusCode = 400;
+        error.code = 'WALLET_TOP_UP_AMOUNT_INVALID';
+        return error;
+    };
+    if (
+        rawAmount === null
+        || rawAmount === undefined
+        || typeof rawAmount === 'boolean'
+        || !['number', 'string'].includes(typeof rawAmount)
+        || (typeof rawAmount === 'string' && rawAmount.trim() === '')
+        || !Number.isFinite(Number(rawAmount))
+    ) throw invalid();
+
+    let amount;
+    try {
+        amount = roundMoney(rawAmount);
+    } catch (error) {
+        if (error?.code !== 'MONEY_AMOUNT_OUT_OF_RANGE') throw error;
+        const rangeError = new Error('Wallet top-up amount is too large to process safely.');
+        rangeError.statusCode = 400;
+        rangeError.code = 'WALLET_TOP_UP_AMOUNT_OUT_OF_RANGE';
+        throw rangeError;
+    }
+    if (!Number.isFinite(amount) || amount <= 0) throw invalid();
+    return amount;
+};
+
+const expireHostedWalletSessionIfDue = async (transaction, checkoutSession, now = new Date()) => {
+    if (
+        transaction?.status !== 'pending'
+        || !transaction.paymentExpiresAt
+        || transaction.paymentExpiresAt > now
+        || checkoutSession?.status !== 'open'
+    ) return checkoutSession;
+
+    let authoritative = checkoutSession;
+    try {
+        authoritative = await stripe.checkout.sessions.expire(checkoutSession.id);
+    } catch (expireError) {
+        // Payment completion can win between retrieve and expire. Re-read the
+        // signed/provider-authoritative state before any local close.
+        authoritative = await stripe.checkout.sessions.retrieve(checkoutSession.id);
+        if (
+            authoritative.payment_status !== 'paid'
+            && authoritative.status !== 'expired'
+            && !(authoritative.status === 'complete' && authoritative.payment_status !== 'paid')
+        ) throw expireError;
+    }
+    validateWalletTopUpCheckoutSession(transaction, authoritative);
+    return authoritative;
+};
 
 exports.getMyWallet = async (req, res) => {
     try {
@@ -45,18 +137,16 @@ exports.getMyWallet = async (req, res) => {
 
 exports.createTopUpCheckout = async (req, res) => {
     let transaction = null;
-    let creationWasDefinitivelyRejected = false;
     try {
+        const amount = parseWalletTopUpAmount(req.body?.amount);
         if (!stripe) {
             return res.status(503).json({ msg: 'Card payments are not configured.' });
         }
 
-        const amount = roundMoney(req.body?.amount);
-        if (!Number.isFinite(amount) || amount <= 0) {
-            return res.status(400).json({ msg: 'Top-up amount must be greater than zero.' });
-        }
         const currency = normalizeWalletCurrency(req.body?.currency || req.user?.currency || 'USD');
-        const amountUSD = await convertToUSD(amount, currency);
+        // The USD-equivalent risk limits are part of a monetary write. Do not
+        // approve a non-USD top-up from hard-coded or stale display rates.
+        const amountUSD = await convertAmountUsingTrustedRates(amount, currency, 'USD');
         if (amountUSD < MIN_TOP_UP_USD || amountUSD > MAX_TOP_UP_USD) {
             return res.status(400).json({
                 msg: `Wallet top-ups must be between $${MIN_TOP_UP_USD} and $${MAX_TOP_UP_USD} USD equivalent.`,
@@ -76,16 +166,16 @@ exports.createTopUpCheckout = async (req, res) => {
             });
         }
         const rawRequestKey = String(req.body?.requestKey || '').trim();
-        if (paymentFlow === 'payment_sheet' && !rawRequestKey) {
+        if (!rawRequestKey) {
             return res.status(400).json({
-                msg: 'A requestKey is required for a native Wallet top-up.',
+                msg: 'A requestKey is required for every Wallet top-up.',
                 code: 'IDEMPOTENCY_KEY_REQUIRED',
             });
         }
         if (rawRequestKey.length > 160) {
             return res.status(400).json({ msg: 'Invalid Wallet top-up requestKey.', code: 'INVALID_IDEMPOTENCY_KEY' });
         }
-        const requestKey = String(rawRequestKey || crypto.randomUUID()).slice(0, 160);
+        const requestKey = rawRequestKey.slice(0, 160);
         if (!/^[A-Za-z0-9:_\-.]+$/.test(requestKey)) {
             return res.status(400).json({ msg: 'Invalid Wallet top-up requestKey.', code: 'INVALID_IDEMPOTENCY_KEY' });
         }
@@ -125,6 +215,8 @@ exports.createTopUpCheckout = async (req, res) => {
             } catch (retrieveError) {
                 if (retrieveError?.code === 'resource_missing') {
                     existing.status = 'failed';
+                    existing.paymentSetupState = 'closed';
+                    existing.paymentSetupCompletedAt = new Date();
                     existing.failureReason = 'The secure Stripe PaymentIntent is no longer available.';
                     await existing.save();
                     return res.status(409).json({
@@ -148,6 +240,8 @@ exports.createTopUpCheckout = async (req, res) => {
             }
             if (intent.status === 'canceled') {
                 existing.status = 'cancelled';
+                existing.paymentSetupState = 'closed';
+                existing.paymentSetupCompletedAt = new Date();
                 existing.failureReason = 'Stripe confirmed that this Wallet top-up was cancelled.';
                 await existing.save();
                 return res.status(409).json({
@@ -156,17 +250,22 @@ exports.createTopUpCheckout = async (req, res) => {
                 });
             }
             if (intent.status === 'succeeded') {
-                return res.status(202).json({
+                const completed = await completeWalletTopUpFromPaymentIntent(
+                    intent,
+                    `api-recovery:${intent.id}`,
+                );
+                await exports.notifyTopUpCompleted(completed);
+                return res.status(200).json({
                     success: true,
-                    completed: false,
-                    webhookProcessed: false,
+                    completed: true,
+                    webhookProcessed: true,
                     stripePaymentReceived: true,
                     paymentFlow: 'payment_sheet',
                     paymentIntentId: intent.id,
-                    transactionId: existing._id,
-                    topUpId: existing._id,
-                    status: 'pending',
-                    transaction: serializeWalletTransaction(existing.toObject()),
+                    transactionId: completed._id,
+                    topUpId: completed._id,
+                    status: completed.status,
+                    transaction: serializeWalletTransaction(completed.toObject()),
                 });
             }
             const customerAccess = await createMobileCustomerAccess(existing.stripeCustomerId);
@@ -193,6 +292,8 @@ exports.createTopUpCheckout = async (req, res) => {
             } catch (retrieveError) {
                 if (retrieveError?.code === 'resource_missing') {
                     existing.status = 'failed';
+                    existing.paymentSetupState = 'closed';
+                    existing.paymentSetupCompletedAt = new Date();
                     existing.failureReason = 'The secure Stripe Checkout Session is no longer available.';
                     await existing.save();
                     return res.status(409).json({
@@ -203,6 +304,7 @@ exports.createTopUpCheckout = async (req, res) => {
                 throw retrieveError;
             }
             validateWalletTopUpCheckoutSession(existing, existingSession);
+            existingSession = await expireHostedWalletSessionIfDue(existing, existingSession);
             if (existingSession?.status === 'open' && existingSession.url) {
                 return res.status(200).json({
                     success: true,
@@ -214,19 +316,26 @@ exports.createTopUpCheckout = async (req, res) => {
                 });
             }
             if (existingSession?.status === 'complete' && existingSession.payment_status === 'paid') {
-                return res.status(202).json({
+                const completed = await completeWalletTopUp(
+                    existingSession,
+                    `api-recovery:${existingSession.id}`,
+                );
+                await exports.notifyTopUpCompleted(completed);
+                return res.status(200).json({
                     success: true,
-                    completed: false,
-                    webhookProcessed: false,
+                    completed: true,
+                    webhookProcessed: true,
                     stripePaymentReceived: true,
-                    transactionId: existing._id,
-                    topUpId: existing._id,
-                    status: 'pending',
-                    transaction: serializeWalletTransaction(existing.toObject()),
+                    transactionId: completed._id,
+                    topUpId: completed._id,
+                    status: completed.status,
+                    transaction: serializeWalletTransaction(completed.toObject()),
                 });
             }
             if (existingSession?.status === 'expired' || existingSession?.status === 'complete') {
                 existing.status = existingSession.status === 'expired' ? 'expired' : 'failed';
+                existing.paymentSetupState = 'closed';
+                existing.paymentSetupCompletedAt = new Date();
                 existing.failureReason = 'The hosted Wallet top-up did not complete successfully.';
                 await existing.save();
                 return res.status(409).json({
@@ -245,10 +354,13 @@ exports.createTopUpCheckout = async (req, res) => {
             && existing.paymentExpiresAt <= new Date()
             && !existing.stripePaymentIntentId
             && !existing.stripeSessionId
+            && existing.paymentSetupState === 'not_started'
         ) {
-            existing.status = 'expired';
-            existing.failureReason = 'The secure Wallet top-up window expired.';
-            await existing.save();
+            await closeWalletTopUpWithoutStripeReference(existing, {
+                status: 'expired',
+                reason: 'The secure Wallet top-up window expired.',
+                requireExpired: true,
+            });
             return res.status(409).json({
                 msg: 'That Wallet top-up attempt expired. Start a new top-up with a new requestKey.',
                 code: 'WALLET_TOP_UP_RETRY_REQUIRED',
@@ -263,67 +375,108 @@ exports.createTopUpCheckout = async (req, res) => {
         }
 
         const wallet = await ensureWallet(req.user.id);
-        if (wallet.status !== 'active') {
-            return res.status(423).json({ msg: 'Your Rozare Wallet is locked.', code: 'WALLET_LOCKED' });
+        if (wallet.status !== 'active' && !existing) {
+            const paymentRisk = await getWalletPaymentRiskSummary(wallet._id);
+            const outstanding = paymentRisk.byCurrency[currency]?.outstanding || 0;
+            if (outstanding <= 0 || !isWalletPaymentRiskLock(wallet)) {
+                return res.status(423).json({
+                    msg: outstanding > 0
+                        ? 'Your Rozare Wallet has an independent security lock. Contact support before adding funds.'
+                        : 'Your Rozare Wallet is locked while a card dispute is reviewed.',
+                    code: 'WALLET_LOCKED',
+                    paymentRisk,
+                });
+            }
+            // Completion applies every cent FIFO to terminal debt before any
+            // surplus becomes available. Partial payments remain restricted,
+            // while overpayments settle debt and credit only the remainder.
         }
         const { customer, user } = await ensureStripeCustomerForUser(req.user.id);
         const expiresAt = paymentFlow === 'payment_sheet'
             ? createPaymentExpiry()
             : new Date(Date.now() + 35 * 60 * 1000);
-        transaction = existing || await WalletTransaction.create({
-            user: req.user.id,
-            type: 'top_up',
-            direction: 'credit',
-            status: 'pending',
-            amount,
-            currency,
-            description: walletTopUpDescription(amount, currency),
-            referenceType: paymentFlow === 'payment_sheet' ? 'stripe_payment_intent' : 'stripe_checkout',
-            referenceId: requestKey,
-            idempotencyKey,
-            stripeCustomerId: customer.id,
-            stripeMode: STRIPE_MODE,
-            paymentFlow,
-            clientSurface,
-            paymentExpiresAt: expiresAt,
-            metadata: {
-                requestedBy: req.user.id,
-                paymentFlow,
-                clientSurface,
-                receiptEmail: user.email || '',
+        transaction = existing || await WalletTransaction.findOneAndUpdate(
+            { idempotencyKey, user: req.user.id, type: 'top_up' },
+            {
+                $setOnInsert: {
+                    user: req.user.id,
+                    type: 'top_up',
+                    direction: 'credit',
+                    status: 'pending',
+                    amount,
+                    currency,
+                    description: walletTopUpDescription(amount, currency),
+                    referenceType: paymentFlow === 'payment_sheet' ? 'stripe_payment_intent' : 'stripe_checkout',
+                    referenceId: requestKey,
+                    idempotencyKey,
+                    stripeCustomerId: customer.id,
+                    stripeMode: STRIPE_MODE,
+                    paymentFlow,
+                    paymentSetupState: 'not_started',
+                    clientSurface,
+                    paymentExpiresAt: expiresAt,
+                    metadata: {
+                        requestedBy: req.user.id,
+                        paymentFlow,
+                        clientSurface,
+                        receiptEmail: user.email || '',
+                    },
+                },
             },
-        });
+            {
+                new: true,
+                upsert: true,
+                setDefaultsOnInsert: true,
+                runValidators: true,
+                context: 'query',
+            },
+        );
+
+        if (
+            Number(transaction.amount) !== amount
+            || transaction.currency !== currency
+            || transaction.paymentFlow !== paymentFlow
+            || transaction.clientSurface !== clientSurface
+        ) {
+            return res.status(409).json({
+                msg: 'This requestKey was already used with different top-up details.',
+                code: 'IDEMPOTENCY_CONFLICT',
+            });
+        }
 
         if (paymentFlow === 'payment_sheet') {
-            let paymentIntent;
-            try {
-                paymentIntent = await stripe.paymentIntents.create({
-                    ...buildCustomerInitiatedPaymentIntentParams({
-                        amountMinor: toStripeMinorUnits(transaction.amount, transaction.currency),
-                        currency: transaction.currency,
-                        customerId: transaction.stripeCustomerId,
-                        receiptEmail: transaction.metadata?.receiptEmail || user.email,
-                        metadata: {
-                        type: 'wallet_top_up',
-                        paymentFlow: 'payment_sheet',
-                        walletTransactionId: String(transaction._id),
-                        userId: String(req.user.id),
-                        amountMinor: String(toStripeMinorUnits(transaction.amount, transaction.currency)),
-                        currency: transaction.currency,
-                        stripeMode: transaction.stripeMode || STRIPE_MODE,
-                        },
-                    }),
-                    description: walletTopUpDescription(transaction.amount, transaction.currency),
-                }, {
-                    idempotencyKey: `wallet-topup-pi:${transaction.stripeMode || STRIPE_MODE}:${transaction._id}`,
+            const setup = await recoverWalletTopUpStripeSetup(transaction);
+            transaction = setup.transaction;
+            const paymentIntent = setup.stripeObject;
+            if (paymentIntent.status === 'canceled') {
+                transaction = await cancelWalletTopUpFromPaymentIntent(paymentIntent, {
+                    status: 'cancelled',
+                    reason: 'Stripe confirmed that this Wallet top-up was cancelled.',
+                }) || transaction;
+                return res.status(409).json({
+                    msg: 'That Wallet top-up attempt is closed. Start a new top-up.',
+                    code: 'WALLET_TOP_UP_RETRY_REQUIRED',
                 });
-            } catch (creationError) {
-                creationWasDefinitivelyRejected = isDefinitiveStripeCreationError(creationError);
-                throw creationError;
             }
-            transaction.stripePaymentIntentId = paymentIntent.id;
-            transaction.paymentExpiresAt = transaction.paymentExpiresAt || expiresAt;
-            await transaction.save();
+            if (paymentIntent.status === 'succeeded') {
+                const completed = await completeWalletTopUpFromPaymentIntent(
+                    paymentIntent,
+                    `api-recovery:${paymentIntent.id}`,
+                );
+                await exports.notifyTopUpCompleted(completed);
+                return res.status(200).json({
+                    success: true,
+                    completed: true,
+                    webhookProcessed: true,
+                    stripePaymentReceived: true,
+                    paymentFlow: 'payment_sheet',
+                    paymentIntentId: paymentIntent.id,
+                    transactionId: completed._id,
+                    topUpId: completed._id,
+                    status: completed.status,
+                    transaction: serializeWalletTransaction(completed.toObject()),
+                });
+            }
             let customerAccess;
             try {
                 customerAccess = await createMobileCustomerAccess(transaction.stripeCustomerId);
@@ -340,17 +493,22 @@ exports.createTopUpCheckout = async (req, res) => {
                     throw cleanupError;
                 }
                 if (closed?.status === 'payment_succeeded') {
-                    return res.status(202).json({
+                    const completed = await completeWalletTopUpFromPaymentIntent(
+                        closed.paymentIntent,
+                        `api-recovery:${closed.paymentIntent.id}`,
+                    );
+                    await exports.notifyTopUpCompleted(completed);
+                    return res.status(200).json({
                         success: true,
-                        completed: false,
-                        webhookProcessed: false,
+                        completed: true,
+                        webhookProcessed: true,
                         stripePaymentReceived: true,
                         paymentFlow: 'payment_sheet',
                         paymentIntentId: paymentIntent.id,
-                        transactionId: transaction._id,
-                        topUpId: transaction._id,
-                        status: 'pending',
-                        transaction: serializeWalletTransaction(transaction.toObject()),
+                        transactionId: completed._id,
+                        topUpId: completed._id,
+                        status: completed.status,
+                        transaction: serializeWalletTransaction(completed.toObject()),
                     });
                 }
                 const preparationError = new Error(
@@ -381,51 +539,35 @@ exports.createTopUpCheckout = async (req, res) => {
             });
         }
 
-        const frontendUrl = process.env.FRONTEND_URL || 'https://rozare.com';
-        const isMobile = transaction.clientSurface === 'mobile';
-        const session = await stripe.checkout.sessions.create({
-            mode: 'payment',
-            payment_method_types: ['card'],
-            customer: transaction.stripeCustomerId,
-            saved_payment_method_options: {
-                payment_method_save: 'enabled',
-                payment_method_remove: 'disabled',
-            },
-            client_reference_id: String(transaction._id),
-            line_items: [{
-                price_data: {
-                    currency: currency.toLowerCase(),
-                    product_data: {
-                        name: 'Rozare Wallet top-up',
-                        description: 'Balance added to your Rozare Wallet after payment confirmation.',
-                    },
-                    unit_amount: toStripeMinorUnits(amount, currency),
-                },
-                quantity: 1,
-            }],
-            success_url: isMobile
-                ? `rozare://wallet?top_up=success&transactionId=${transaction._id}&session_id={CHECKOUT_SESSION_ID}`
-                : `${frontendUrl}/user-dashboard/wallet?top_up=success&transactionId=${transaction._id}&session_id={CHECKOUT_SESSION_ID}`,
-            cancel_url: isMobile
-                ? `rozare://wallet?top_up=cancelled&transactionId=${transaction._id}`
-                : `${frontendUrl}/user-dashboard/wallet?top_up=cancelled&transactionId=${transaction._id}`,
-            expires_at: Math.floor(new Date(transaction.paymentExpiresAt).getTime() / 1000),
-            metadata: {
-                type: 'wallet_top_up',
-                walletTransactionId: String(transaction._id),
-                userId: String(req.user.id),
-                stripeMode: transaction.stripeMode || STRIPE_MODE,
-                paymentFlow: 'checkout_session',
-            },
-        }, {
-            idempotencyKey: `wallet-topup-checkout:${transaction.stripeMode || STRIPE_MODE}:${transaction._id}`,
-        }).catch((creationError) => {
-            creationWasDefinitivelyRejected = isDefinitiveStripeCreationError(creationError);
-            throw creationError;
-        });
-
-        transaction.stripeSessionId = session.id;
-        await transaction.save();
+        const setup = await recoverWalletTopUpStripeSetup(transaction);
+        transaction = setup.transaction;
+        const session = setup.stripeObject;
+        if (session.payment_status === 'paid') {
+            const completed = await completeWalletTopUp(session, `api-recovery:${session.id}`);
+            await exports.notifyTopUpCompleted(completed);
+            return res.status(200).json({
+                success: true,
+                completed: true,
+                webhookProcessed: true,
+                stripePaymentReceived: true,
+                transactionId: completed._id,
+                topUpId: completed._id,
+                status: completed.status,
+                transaction: serializeWalletTransaction(completed.toObject()),
+            });
+        }
+        if (session.status !== 'open' || !session.url) {
+            transaction = await failWalletTopUp(
+                session,
+                session.status === 'expired'
+                    ? 'The hosted Wallet top-up expired.'
+                    : 'The hosted Wallet top-up did not complete successfully.',
+            ) || transaction;
+            return res.status(409).json({
+                msg: 'That Wallet top-up attempt is closed. Start a new top-up with a new requestKey.',
+                code: 'WALLET_TOP_UP_RETRY_REQUIRED',
+            });
+        }
 
         return res.status(201).json({
             success: true,
@@ -436,23 +578,19 @@ exports.createTopUpCheckout = async (req, res) => {
             transaction: serializeWalletTransaction(transaction.toObject()),
         });
     } catch (error) {
-        console.error('[wallet] top-up checkout error:', error);
-        if (
-            transaction
-            && transaction.status === 'pending'
-            && creationWasDefinitivelyRejected
-            && !transaction.stripeSessionId
-            && !transaction.stripePaymentIntentId
-        ) {
-            transaction.status = 'failed';
-            transaction.failureReason = String(error.message || error).slice(0, 500);
-            await transaction.save().catch(() => {});
+        if (!error.statusCode || error.statusCode >= 500) {
+            console.error('[wallet] top-up checkout error:', error);
         }
+        const current = transaction?._id
+            ? await WalletTransaction.findById(transaction._id).catch(() => transaction)
+            : null;
         const recoveryPending = Boolean(
-            transaction
-            && transaction.status === 'pending'
-            && !creationWasDefinitivelyRejected
-        );
+            current
+            && current.status === 'pending'
+            && current.paymentSetupState === 'creating'
+            && !current.stripeSessionId
+            && !current.stripePaymentIntentId
+        ) || error.code === 'PAYMENT_ATTEMPT_RECOVERY_PENDING';
         return res.status(error.statusCode || (recoveryPending ? 502 : 500)).json({
             msg: error.statusCode
                 ? error.message
@@ -460,7 +598,7 @@ exports.createTopUpCheckout = async (req, res) => {
                     ? 'Secure Wallet top-up is being recovered. Retry with the same requestKey.'
                     : 'Failed to start Wallet top-up.',
             ...(recoveryPending
-                ? { code: 'PAYMENT_ATTEMPT_RECOVERY_PENDING' }
+                ? { code: error.code || 'PAYMENT_ATTEMPT_RECOVERY_PENDING' }
                 : error.code ? { code: error.code } : {}),
         });
     }
@@ -485,6 +623,15 @@ exports.getTopUpStatus = async (req, res) => {
         let stripeStatus = null;
         let stripePaymentReceived = false;
         let authoritativePaymentIntentId = transaction.stripePaymentIntentId || null;
+        if (
+            transaction.status === 'pending'
+            && transaction.paymentSetupState === 'creating'
+            && !transaction.stripePaymentIntentId
+            && !transaction.stripeSessionId
+        ) {
+            const recovered = await recoverWalletTopUpStripeSetup(transaction);
+            transaction = recovered.transaction;
+        }
         if (transaction.paymentFlow === 'payment_sheet' && transaction.stripePaymentIntentId) {
             if (
                 transaction.status === 'pending'
@@ -505,6 +652,8 @@ exports.getTopUpStatus = async (req, res) => {
                 if (retrieveError?.code !== 'resource_missing') throw retrieveError;
                 if (transaction.status === 'pending') {
                     transaction.status = 'failed';
+                    transaction.paymentSetupState = 'closed';
+                    transaction.paymentSetupCompletedAt = new Date();
                     transaction.failureReason = 'The secure Stripe PaymentIntent is no longer available.';
                     await transaction.save();
                 }
@@ -517,6 +666,13 @@ exports.getTopUpStatus = async (req, res) => {
             stripeStatus = intent.status;
             stripePaymentReceived = intent.status === 'succeeded';
             authoritativePaymentIntentId = intent.id;
+            if (transaction.status === 'pending' && intent.status === 'succeeded') {
+                transaction = await completeWalletTopUpFromPaymentIntent(
+                    intent,
+                    `api-status-recovery:${intent.id}`,
+                );
+                await exports.notifyTopUpCompleted(transaction);
+            }
         } else if (transaction.paymentFlow === 'checkout_session' && transaction.stripeSessionId) {
             let checkoutSession;
             try {
@@ -525,6 +681,8 @@ exports.getTopUpStatus = async (req, res) => {
                 if (retrieveError?.code !== 'resource_missing') throw retrieveError;
                 if (transaction.status === 'pending') {
                     transaction.status = 'failed';
+                    transaction.paymentSetupState = 'closed';
+                    transaction.paymentSetupCompletedAt = new Date();
                     transaction.failureReason = 'The secure Stripe Checkout Session is no longer available.';
                     await transaction.save();
                 }
@@ -534,13 +692,22 @@ exports.getTopUpStatus = async (req, res) => {
                 });
             }
             validateWalletTopUpCheckoutSession(transaction, checkoutSession);
+            checkoutSession = await expireHostedWalletSessionIfDue(transaction, checkoutSession);
             stripeStatus = checkoutSession.status;
             stripePaymentReceived = checkoutSession.payment_status === 'paid';
             authoritativePaymentIntentId = typeof checkoutSession.payment_intent === 'string'
                 ? checkoutSession.payment_intent
                 : checkoutSession.payment_intent?.id || null;
-            if (transaction.status === 'pending' && checkoutSession.status === 'expired') {
+            if (transaction.status === 'pending' && checkoutSession.payment_status === 'paid') {
+                transaction = await completeWalletTopUp(
+                    checkoutSession,
+                    `api-status-recovery:${checkoutSession.id}`,
+                );
+                await exports.notifyTopUpCompleted(transaction);
+            } else if (transaction.status === 'pending' && checkoutSession.status === 'expired') {
                 transaction.status = 'expired';
+                transaction.paymentSetupState = 'closed';
+                transaction.paymentSetupCompletedAt = new Date();
                 transaction.failureReason = 'The hosted Wallet top-up expired.';
                 await transaction.save();
             } else if (
@@ -549,6 +716,8 @@ exports.getTopUpStatus = async (req, res) => {
                 && checkoutSession.payment_status !== 'paid'
             ) {
                 transaction.status = 'failed';
+                transaction.paymentSetupState = 'closed';
+                transaction.paymentSetupCompletedAt = new Date();
                 transaction.failureReason = 'The hosted Wallet top-up did not complete successfully.';
                 await transaction.save();
             }
@@ -610,9 +779,21 @@ exports.cancelTopUpPayment = async (req, res) => {
             reason: 'The buyer dismissed Stripe PaymentSheet.',
         });
         if (result?.status === 'payment_succeeded') {
+            const completed = await completeWalletTopUpFromPaymentIntent(
+                result.paymentIntent,
+                `api-cancel-recovery:${result.paymentIntent.id}`,
+            );
+            await exports.notifyTopUpCompleted(completed);
             return res.status(409).json({
-                msg: 'Stripe already received this payment. Waiting for secure webhook confirmation.',
+                msg: 'Stripe already received this payment, so the Wallet top-up was completed.',
                 code: 'PAYMENT_ALREADY_SUCCEEDED',
+                status: completed.status,
+            });
+        }
+        if (['setup_recovery_pending', 'unsafe_without_reference'].includes(result?.status)) {
+            return res.status(409).json({
+                msg: 'Secure Wallet setup is still being recovered. Retry cancellation shortly.',
+                code: 'PAYMENT_ATTEMPT_RECOVERY_PENDING',
             });
         }
         return res.status(200).json({ success: true, status: result?.status || transaction.status });
@@ -627,21 +808,62 @@ exports.cancelTopUpPayment = async (req, res) => {
 
 exports.notifyTopUpCompleted = async (transaction) => {
     if (!transaction) return;
-    if (transaction.status !== 'completed' || transaction.notificationSentAt) return;
-    const dedupeKey = `wallet-top-up-completed:${transaction._id}`;
-    await Notification.findOneAndUpdate({ dedupeKey }, { $setOnInsert: {
-        user: transaction.user,
-        title: 'Wallet top-up completed',
-        body: `${formatWalletMoney(transaction.amount, transaction.currency)} was added to your Rozare Wallet.`,
-        category: 'system',
-        linkTo: '/user-dashboard/wallet',
-        source: 'system',
-        targetRole: 'both',
-        audience: 'specific',
-        dedupeKey,
-    } }, { upsert: true, new: true, setDefaultsOnInsert: true });
+    if (transaction.status !== 'completed') return;
+
+    // Completion normally creates these rows atomically in walletService. This
+    // exported hook remains a replay/legacy repair boundary for API and webhook
+    // recovery paths. Never insert a second, differently-keyed Notification.
+    // If an older deployment already wrote the legacy in-app receipt, repair
+    // only the missing push/email rows so the buyer does not see it twice.
+    const legacyDedupeKey = `wallet-top-up-completed:${transaction._id}`;
+    const legacyInAppExists = Boolean(await Notification.exists({ dedupeKey: legacyDedupeKey }));
+    await enqueueWalletTransactionNotification(transaction, {
+        channels: legacyInAppExists ? ['push', 'email'] : ['inapp', 'push', 'email'],
+    });
     await WalletTransaction.updateOne(
         { _id: transaction._id, status: 'completed', notificationSentAt: null },
         { $set: { notificationSentAt: new Date() } },
     );
+};
+
+exports.reconcilePaymentRiskLiability = async (req, res) => {
+    try {
+        if (req.user?.role !== 'admin') {
+            return res.status(403).json({ msg: 'Admin access only' });
+        }
+        const idempotencyKey = String(
+            req.get?.('Idempotency-Key') || req.body?.idempotencyKey || ''
+        ).trim();
+        if (!idempotencyKey || idempotencyKey.length > 200) {
+            return res.status(400).json({
+                msg: 'A valid Idempotency-Key is required.',
+                code: 'IDEMPOTENCY_KEY_REQUIRED',
+            });
+        }
+        const transaction = await reconcileWalletPaymentLiability({
+            userId: req.params.userId,
+            adminId: req.user.id,
+            amount: req.body?.amount,
+            currency: req.body?.currency,
+            action: req.body?.action,
+            note: req.body?.note,
+            idempotencyKey: `wallet-risk-admin:${req.params.userId}:${idempotencyKey}`,
+        });
+        const summary = await getWalletSummary(req.params.userId);
+        return res.status(200).json({
+            success: true,
+            transaction: serializeWalletTransaction(transaction.toObject()),
+            ...summary,
+        });
+    } catch (error) {
+        console.error('[wallet] payment-risk reconciliation error:', error);
+        return res.status(error.statusCode || 500).json({
+            msg: error.message || 'Failed to reconcile Wallet payment risk.',
+            ...(error.code ? { code: error.code } : {}),
+            ...(error.outstandingAmount != null ? {
+                outstandingAmount: error.outstandingAmount,
+                currency: error.currency,
+            } : {}),
+        });
+    }
 };

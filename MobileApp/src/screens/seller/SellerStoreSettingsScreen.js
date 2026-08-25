@@ -2,7 +2,7 @@
  * SellerStoreSettingsScreen — Liquid Glass
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView,
   Alert, RefreshControl, Modal, Platform, ActivityIndicator, Switch, Linking,
@@ -23,6 +23,10 @@ import { spacing, fontSize, borderRadius, fontWeight, typography } from '../../s
 import { useTheme } from '../../contexts/ThemeContext';
 import { useCurrency } from '../../contexts/CurrencyContext';
 import { isValidPhoneNumber } from '../../utils/phoneNumber';
+import {
+  canonicalProductCurrency,
+  inspectSellerProductCurrencyState,
+} from '../../utils/productCurrencyState';
 
 const VISIBILITY_MODES = [
   { mode: 'global', label: 'Global', icon: 'earth-outline', desc: 'Visible to all buyers' },
@@ -96,10 +100,12 @@ export default function SellerStoreSettingsScreen({ navigation }) {
   const [verificationForm, setVerificationForm] = useState({ applicationMessage: '', contactEmail: '', contactPhone: '' });
   const [submittingVerification, setSubmittingVerification] = useState(false);
   const [verificationError, setVerificationError] = useState('');
-  const [productCurrencyInfo, setProductCurrencyInfo] = useState({ activeCurrency: currency || 'USD', status: 'active' });
-  const [productCurrencyDraft, setProductCurrencyDraft] = useState(currency || 'USD');
+  const [productCurrencyInfo, setProductCurrencyInfo] = useState(null);
+  const [productCurrencyDraft, setProductCurrencyDraft] = useState(() => canonicalProductCurrency(currency));
   const [productCurrencySaving, setProductCurrencySaving] = useState(false);
   const [productCurrencyError, setProductCurrencyError] = useState('');
+  const [productCurrencyLoading, setProductCurrencyLoading] = useState(false);
+  const productCurrencyRequestRef = useRef(0);
   const [visibilitySaving, setVisibilitySaving] = useState(false);
   const [visibility, setVisibility] = useState({ mode: 'country', country: '', countryCode: '', region: '', regionCode: '', city: '', town: '' });
   const [loadError, setLoadError] = useState('');
@@ -162,14 +168,38 @@ export default function SellerStoreSettingsScreen({ navigation }) {
   };
 
   const fetchProductCurrency = async () => {
+    const requestId = productCurrencyRequestRef.current + 1;
+    productCurrencyRequestRef.current = requestId;
     try {
-      const res = await api.get(API_ENDPOINTS.STORES.PRODUCT_CURRENCY);
-      const info = res.data?.productCurrency || {};
-      setProductCurrencyInfo(info);
-      setProductCurrencyDraft(info.pendingCurrency || info.activeCurrency || currency || 'USD');
+      setProductCurrencyLoading(true);
+      setProductCurrencyInfo(null);
+      setProductCurrencyDraft(null);
       setProductCurrencyError('');
+      const res = await api.get(API_ENDPOINTS.STORES.PRODUCT_CURRENCY);
+      const info = inspectSellerProductCurrencyState(res.data?.productCurrency);
+      if (!info.valid || info.hasStore !== true) {
+        throw new Error('The server returned invalid or inconsistent product currency settings.');
+      }
+      if (productCurrencyRequestRef.current !== requestId) return null;
+      setProductCurrencyInfo(info);
+      setProductCurrencyDraft(info.pendingCurrency || info.activeCurrency);
+      setProductCurrencyError('');
+      return info;
     } catch (error) {
-      setProductCurrencyError(error.response?.data?.msg || 'Product currency settings could not be loaded.');
+      if (productCurrencyRequestRef.current !== requestId) return null;
+      const noStore = inspectSellerProductCurrencyState(error.response?.data?.productCurrency);
+      if (error.response?.status === 404 && noStore.valid && noStore.hasStore === false) {
+        setProductCurrencyInfo(null);
+        setProductCurrencyDraft(canonicalProductCurrency(currency));
+        setProductCurrencyError('');
+        return noStore;
+      }
+      setProductCurrencyInfo(null);
+      setProductCurrencyDraft(null);
+      setProductCurrencyError(error.response?.data?.msg || error.message || 'Product currency settings could not be loaded.');
+      return null;
+    } finally {
+      if (productCurrencyRequestRef.current === requestId) setProductCurrencyLoading(false);
     }
   };
 
@@ -302,6 +332,12 @@ export default function SellerStoreSettingsScreen({ navigation }) {
       Alert.alert('Store settings unavailable', 'Retry loading your live store before saving changes.');
       return;
     }
+    const creatingStore = !store?._id;
+    const creationCurrency = canonicalProductCurrency(productCurrencyDraft);
+    if (creatingStore && !creationCurrency) {
+      Alert.alert('Product currency unavailable', 'Choose a supported product currency before creating your store.');
+      return;
+    }
     if (store?._id && store.isActive === false) {
       Alert.alert(
         'Store is blocked',
@@ -349,43 +385,95 @@ export default function SellerStoreSettingsScreen({ navigation }) {
         logo: uploadedLogo,
         banner: uploadedBanner,
         visibility,
+        ...(creatingStore ? {
+          productCurrency: creationCurrency,
+        } : {}),
       };
-      const response = store?._id
-        ? await api.put('/api/stores/update', payload)
-        : await api.post('/api/stores/create', payload);
+      const response = creatingStore
+        ? await api.post('/api/stores/create', payload)
+        : await api.put('/api/stores/update', payload);
       const savedStore = response.data?.store || response.data?.newStore || store;
+      if (!savedStore || typeof savedStore !== 'object') {
+        throw new Error('The saved store response could not be verified. Refresh before making more changes.');
+      }
+      if (creatingStore && canonicalProductCurrency(savedStore.productCurrency) !== creationCurrency) {
+        throw new Error('The store was created, but its saved product currency could not be verified. Refresh before adding products.');
+      }
       if (savedStore) setStore(savedStore);
       setLogo(uploadedLogo || null);
       setBanner(uploadedBanner || null);
-      if (!store?._id) await Promise.all([fetchProductCurrency(), fetchVerificationStatus()]);
-      Alert.alert('Saved', store?._id ? 'Store settings updated successfully.' : 'Your store is ready.');
+      if (creatingStore) {
+        const [currencyState] = await Promise.all([fetchProductCurrency(), fetchVerificationStatus()]);
+        if (!currencyState?.valid || currencyState.hasStore !== true) {
+          throw new Error('The store was created, but its authoritative product currency could not be reloaded. Refresh before adding products.');
+        }
+      }
+      Alert.alert('Saved', creatingStore ? 'Your store is ready.' : 'Store settings updated successfully.');
     } catch (error) { Alert.alert('Could not save store', error.response?.data?.msg || error.message || 'Failed to save settings'); }
     finally { setSaving(false); }
   };
 
   const updateProductCurrency = async (nextCurrency, confirm = false) => {
-    if (!nextCurrency || nextCurrency === productCurrencyDraft && !confirm) return;
-    setProductCurrencyDraft(nextCurrency);
+    const requestedCurrency = canonicalProductCurrency(nextCurrency);
+    const currentState = inspectSellerProductCurrencyState(productCurrencyInfo);
+    if (!requestedCurrency || !currentState.valid || currentState.hasStore !== true || productCurrencyError) {
+      Alert.alert('Product currency unavailable', 'Refresh the authoritative store product currency before changing it.');
+      return;
+    }
+    if (requestedCurrency === productCurrencyDraft && !confirm) return;
+    const requestId = productCurrencyRequestRef.current + 1;
+    productCurrencyRequestRef.current = requestId;
     setProductCurrencySaving(true);
+    setProductCurrencyLoading(false);
     try {
-      const res = await api.patch(API_ENDPOINTS.STORES.PRODUCT_CURRENCY, { currency: nextCurrency, confirm });
-      const info = res.data?.productCurrency || {};
+      const res = await api.patch(API_ENDPOINTS.STORES.PRODUCT_CURRENCY, { currency: requestedCurrency, confirm });
+      const info = inspectSellerProductCurrencyState(res.data?.productCurrency);
+      const requestWasApplied = info.valid
+        && info.hasStore === true
+        && res.data?.requiresConfirmation === false
+        && (info.status === 'pending_conversion'
+          ? info.pendingCurrency === requestedCurrency
+          : info.activeCurrency === requestedCurrency);
+      if (!requestWasApplied) {
+        throw new Error('The server returned an invalid or inconsistent product currency update.');
+      }
+      if (productCurrencyRequestRef.current !== requestId) return;
       setProductCurrencyInfo(info);
-      setProductCurrencyDraft(info.pendingCurrency || info.activeCurrency || nextCurrency);
+      setProductCurrencyDraft(info.pendingCurrency || info.activeCurrency);
+      setProductCurrencyError('');
       Alert.alert('Product currency', res.data?.msg || 'Product currency updated');
     } catch (error) {
       if (error.response?.status === 409 && error.response?.data?.requiresConfirmation) {
+        const body = error.response.data;
+        const info = inspectSellerProductCurrencyState(body.productCurrency);
+        const confirmationIsValid = info.valid
+          && info.hasStore === true
+          && info.requiresConfirmation === true
+          && info.requestedCurrency === requestedCurrency
+          && body.requiresConfirmation === true;
+        if (!confirmationIsValid) {
+          setProductCurrencyInfo(null);
+          setProductCurrencyDraft(null);
+          setProductCurrencyError('The server returned an invalid currency-change confirmation. Refresh before retrying.');
+          Alert.alert('Product currency', 'The product currency confirmation could not be verified.');
+          return;
+        }
+        setProductCurrencyInfo(info);
+        setProductCurrencyDraft(requestedCurrency);
+        setProductCurrencyError('');
         Alert.alert(
           'Confirm currency change',
-          error.response?.data?.msg || `Change product currency to ${nextCurrency}? Existing products may need conversion.`,
+          body.msg || info.msg || `Change product currency to ${requestedCurrency}? Existing products may need conversion.`,
           [
-            { text: 'Cancel', style: 'cancel', onPress: () => setProductCurrencyDraft(productCurrencyInfo.pendingCurrency || productCurrencyInfo.activeCurrency || currency || 'USD') },
-            { text: `Change to ${nextCurrency}`, style: 'destructive', onPress: () => updateProductCurrency(nextCurrency, true) },
+            { text: 'Cancel', style: 'cancel', onPress: () => setProductCurrencyDraft(info.pendingCurrency || info.activeCurrency) },
+            { text: `Change to ${requestedCurrency}`, style: 'destructive', onPress: () => updateProductCurrency(requestedCurrency, true) },
           ]
         );
       } else {
-        Alert.alert('Product currency', error.response?.data?.msg || 'Failed to update product currency');
-        setProductCurrencyDraft(productCurrencyInfo.pendingCurrency || productCurrencyInfo.activeCurrency || currency || 'USD');
+        setProductCurrencyInfo(null);
+        setProductCurrencyDraft(null);
+        setProductCurrencyError('Product currency state is unavailable after the failed update. Refresh before retrying.');
+        Alert.alert('Product currency', error.response?.data?.msg || error.message || 'Failed to update product currency');
       }
     } finally {
       setProductCurrencySaving(false);
@@ -393,28 +481,68 @@ export default function SellerStoreSettingsScreen({ navigation }) {
   };
 
   const convertProductCurrency = async () => {
+    const currentState = inspectSellerProductCurrencyState(productCurrencyInfo);
+    if (!currentState.valid || currentState.status !== 'pending_conversion') {
+      Alert.alert('Product currency unavailable', 'Refresh the pending product currency change before converting prices.');
+      return;
+    }
+    const requestId = productCurrencyRequestRef.current + 1;
+    productCurrencyRequestRef.current = requestId;
     setProductCurrencySaving(true);
     try {
       const res = await api.post(API_ENDPOINTS.STORES.PRODUCT_CURRENCY_CONVERT, {});
-      setProductCurrencyInfo(res.data?.productCurrency || {});
-      setProductCurrencyDraft(res.data?.productCurrency?.activeCurrency || productCurrencyDraft);
+      const info = inspectSellerProductCurrencyState(res.data?.productCurrency);
+      if (
+        !info.valid
+        || info.hasStore !== true
+        || info.status !== 'active'
+        || info.activeCurrency !== currentState.pendingCurrency
+        || !Number.isSafeInteger(res.data?.converted)
+        || res.data.converted !== currentState.productCount
+      ) throw new Error('The converted product currency response is inconsistent.');
+      if (productCurrencyRequestRef.current !== requestId) return;
+      setProductCurrencyInfo(info);
+      setProductCurrencyDraft(info.activeCurrency);
+      setProductCurrencyError('');
       Alert.alert('Product currency', res.data?.msg || 'Product prices converted');
     } catch (error) {
-      Alert.alert('Product currency', error.response?.data?.msg || 'Failed to convert product prices');
+      setProductCurrencyInfo(null);
+      setProductCurrencyDraft(null);
+      setProductCurrencyError('Product currency state is unavailable after the conversion attempt. Refresh before retrying.');
+      Alert.alert('Product currency', error.response?.data?.msg || error.message || 'Failed to convert product prices');
     } finally {
       setProductCurrencySaving(false);
     }
   };
 
   const cancelProductCurrencyChange = async () => {
+    const currentState = inspectSellerProductCurrencyState(productCurrencyInfo);
+    if (!currentState.valid || currentState.status !== 'pending_conversion') {
+      Alert.alert('Product currency unavailable', 'Refresh the pending product currency change before canceling it.');
+      return;
+    }
+    const requestId = productCurrencyRequestRef.current + 1;
+    productCurrencyRequestRef.current = requestId;
     setProductCurrencySaving(true);
     try {
       const res = await api.post(API_ENDPOINTS.STORES.PRODUCT_CURRENCY_CANCEL, {});
-      setProductCurrencyInfo(res.data?.productCurrency || {});
-      setProductCurrencyDraft(res.data?.productCurrency?.activeCurrency || currency || 'USD');
+      const info = inspectSellerProductCurrencyState(res.data?.productCurrency);
+      if (
+        !info.valid
+        || info.hasStore !== true
+        || info.status !== 'active'
+        || info.activeCurrency !== currentState.previousCurrency
+      ) throw new Error('The canceled product currency response is inconsistent.');
+      if (productCurrencyRequestRef.current !== requestId) return;
+      setProductCurrencyInfo(info);
+      setProductCurrencyDraft(info.activeCurrency);
+      setProductCurrencyError('');
       Alert.alert('Product currency', res.data?.msg || 'Product currency change canceled');
     } catch (error) {
-      Alert.alert('Product currency', error.response?.data?.msg || 'Failed to cancel currency change');
+      setProductCurrencyInfo(null);
+      setProductCurrencyDraft(null);
+      setProductCurrencyError('Product currency state is unavailable after the cancellation attempt. Refresh before retrying.');
+      Alert.alert('Product currency', error.response?.data?.msg || error.message || 'Failed to cancel currency change');
     } finally {
       setProductCurrencySaving(false);
     }
@@ -868,9 +996,13 @@ export default function SellerStoreSettingsScreen({ navigation }) {
             </View>
             <View style={styles.currencyStatusPill}>
               <Text style={styles.currencyStatusText}>
-                {productCurrencyInfo.status === 'pending_conversion'
-                  ? `${productCurrencyInfo.previousCurrency || productCurrencyInfo.activeCurrency} to ${productCurrencyInfo.pendingCurrency}`
-                  : productCurrencyInfo.activeCurrency || productCurrencyDraft}
+                {productCurrencyLoading
+                  ? 'Loading…'
+                  : !productCurrencyInfo
+                    ? 'Unavailable'
+                    : productCurrencyInfo.status === 'pending_conversion'
+                      ? `${productCurrencyInfo.previousCurrency} to ${productCurrencyInfo.pendingCurrency}`
+                      : productCurrencyInfo.activeCurrency}
               </Text>
             </View>
           </View>
@@ -883,14 +1015,14 @@ export default function SellerStoreSettingsScreen({ navigation }) {
             />
           )}
           <View style={styles.currencyGrid}>
-            {Object.entries(currencies || {}).map(([code, info]) => {
+            {Object.entries(currencies || {}).filter(([code]) => canonicalProductCurrency(code) === code).map(([code, info]) => {
               const active = productCurrencyDraft === code;
               return (
                 <TouchableOpacity
                   key={code}
                   style={[styles.currencyChip, active && styles.currencyChipActive]}
                   onPress={() => updateProductCurrency(code)}
-                  disabled={productCurrencySaving || storeBlocked || Boolean(productCurrencyError)}
+                  disabled={productCurrencySaving || productCurrencyLoading || storeBlocked || Boolean(productCurrencyError) || !productCurrencyInfo}
                   activeOpacity={0.8}
                 >
                   <Text style={[styles.currencyChipText, active && styles.currencyChipTextActive]}>{code}</Text>
@@ -899,7 +1031,7 @@ export default function SellerStoreSettingsScreen({ navigation }) {
               );
             })}
           </View>
-          {productCurrencyInfo.status === 'pending_conversion' && (
+          {productCurrencyInfo?.status === 'pending_conversion' && (
             <View style={styles.warningPanel}>
               <Ionicons name="alert-circle-outline" size={18} color={palette.colors.warning} />
               <View style={{ flex: 1 }}>

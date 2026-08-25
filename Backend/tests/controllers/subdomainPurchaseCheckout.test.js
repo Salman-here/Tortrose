@@ -17,7 +17,10 @@ const Store = require('../../models/Store');
 const User = require('../../models/User');
 const SellerCheckoutClaim = require('../../models/SellerCheckoutClaim');
 const { stripe } = require('../../config/stripe');
-const { purchaseSubdomain } = require('../../controllers/subdomainPurchaseController');
+const {
+  getSubdomainOwnership,
+  purchaseSubdomain,
+} = require('../../controllers/subdomainPurchaseController');
 
 let mongoServer;
 const previousFrontendUrl = process.env.FRONTEND_URL;
@@ -37,6 +40,11 @@ beforeAll(async () => {
   await mongoose.connect(mongoServer.getUri());
 });
 
+beforeEach(() => {
+  stripe.checkout.sessions.create.mockReset();
+  stripe.checkout.sessions.expire.mockReset().mockResolvedValue({ status: 'expired' });
+});
+
 afterEach(async () => {
   await Promise.all([Store.deleteMany({}), User.deleteMany({}), SellerCheckoutClaim.deleteMany({})]);
   jest.clearAllMocks();
@@ -52,6 +60,61 @@ afterAll(async () => {
 });
 
 describe('subdomain Stripe Checkout creation', () => {
+  test('returns an explicit false ownership flag for an unpurchased subdomain', async () => {
+    const seller = await User.create({
+      username: 'unowned-subdomain-seller',
+      email: 'unowned-subdomain-seller@example.com',
+      role: 'seller',
+      isVerified: true,
+    });
+    await Store.create({
+      seller: seller._id,
+      storeName: 'Unowned Store',
+      storeSlug: 'unowned-store',
+    });
+    const response = responseMock();
+
+    await getSubdomainOwnership({ user: { id: seller._id.toString() } }, response);
+
+    expect(response.json).toHaveBeenCalledWith(expect.objectContaining({
+      ownership: expect.objectContaining({
+        isPurchased: false,
+        isOwned: false,
+        daysRemaining: 0,
+      }),
+    }));
+  });
+
+  test('returns an explicit true ownership flag only while the frozen purchase is valid', async () => {
+    const seller = await User.create({
+      username: 'owned-subdomain-seller',
+      email: 'owned-subdomain-seller@example.com',
+      role: 'seller',
+      isVerified: true,
+    });
+    await Store.create({
+      seller: seller._id,
+      storeName: 'Owned Store',
+      storeSlug: 'owned-store',
+      subdomainPurchase: {
+        isPurchased: true,
+        purchasedAt: new Date(Date.now() - 24 * 60 * 60 * 1000),
+        expiresAt: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000),
+      },
+    });
+    const response = responseMock();
+
+    await getSubdomainOwnership({ user: { id: seller._id.toString() } }, response);
+
+    expect(response.json).toHaveBeenCalledWith(expect.objectContaining({
+      ownership: expect.objectContaining({
+        isPurchased: true,
+        isOwned: true,
+        daysRemaining: 2,
+      }),
+    }));
+  });
+
   test('binds the paid slug and uses the fixed mobile return bridge', async () => {
     const seller = await User.create({
       username: 'checkout-seller',
@@ -159,5 +222,98 @@ describe('subdomain Stripe Checkout creation', () => {
       isRenewal: false,
       reused: true,
     });
+  });
+
+  test('retains and reuses an attached session when local delivery fails and Stripe expiry is ambiguous', async () => {
+    const seller = await User.create({
+      username: 'failed-expiry-checkout-seller',
+      email: 'failed-expiry-checkout-seller@example.com',
+      role: 'seller',
+      isVerified: true,
+    });
+    const store = await Store.create({
+      seller: seller._id,
+      storeName: 'Failed Expiry Store',
+      storeSlug: 'failed-expiry-store',
+    });
+    stripe.checkout.sessions.create.mockResolvedValue({
+      id: 'cs_failed_expiry_recoverable',
+      url: 'https://checkout.stripe.com/cs_failed_expiry_recoverable',
+    });
+    stripe.checkout.sessions.expire.mockRejectedValue(Object.assign(
+      new Error('expiry response timed out'),
+      { type: 'StripeConnectionError', code: 'ETIMEDOUT' },
+    ));
+    const firstResponse = responseMock();
+    firstResponse.json.mockImplementationOnce(() => {
+      throw new Error('client connection closed before response delivery');
+    });
+
+    await purchaseSubdomain({
+      user: { id: seller._id.toString(), role: 'seller' },
+      body: { checkoutClient: 'mobile' },
+    }, firstResponse);
+
+    expect(firstResponse.status).toHaveBeenCalledWith(503);
+    expect(firstResponse.json).toHaveBeenLastCalledWith(expect.objectContaining({
+      code: 'CHECKOUT_RECOVERY_PENDING',
+    }));
+    const retainedClaim = await SellerCheckoutClaim.findOne({ seller: seller._id }).lean();
+    expect(retainedClaim).toMatchObject({
+      flow: 'subdomain',
+      creationState: 'recoverable',
+      sessionId: 'cs_failed_expiry_recoverable',
+      sessionUrl: 'https://checkout.stripe.com/cs_failed_expiry_recoverable',
+    });
+    expect((await Store.findById(store._id)).subdomainResourceLock).toMatchObject({
+      kind: 'checkout',
+      token: retainedClaim.token,
+    });
+
+    const retryResponse = responseMock();
+    await purchaseSubdomain({
+      user: { id: seller._id.toString(), role: 'seller' },
+      body: { checkoutClient: 'mobile' },
+    }, retryResponse);
+
+    expect(stripe.checkout.sessions.create).toHaveBeenCalledTimes(1);
+    expect(retryResponse.json).toHaveBeenCalledWith({
+      url: 'https://checkout.stripe.com/cs_failed_expiry_recoverable',
+      sessionId: 'cs_failed_expiry_recoverable',
+      isRenewal: false,
+      reused: true,
+    });
+  });
+
+  test('returns a retryable lock response without opening Stripe Checkout during a slug change', async () => {
+    const seller = await User.create({
+      username: 'locked-checkout-seller',
+      email: 'locked-checkout-seller@example.com',
+      role: 'seller',
+      isVerified: true,
+    });
+    await Store.create({
+      seller: seller._id,
+      storeName: 'Locked Checkout Store',
+      storeSlug: 'locked-checkout-store',
+      subdomainResourceLock: {
+        kind: 'slug_change',
+        token: 'active-slug-change',
+        expiresAt: new Date(Date.now() + 60 * 1000),
+      },
+    });
+    const response = responseMock();
+
+    await purchaseSubdomain({
+      user: { id: seller._id.toString(), role: 'seller' },
+      body: { checkoutClient: 'web' },
+    }, response);
+
+    expect(response.status).toHaveBeenCalledWith(423);
+    expect(response.json).toHaveBeenCalledWith(expect.objectContaining({
+      code: 'SUBDOMAIN_RESOURCE_LOCKED',
+    }));
+    expect(stripe.checkout.sessions.create).not.toHaveBeenCalled();
+    await expect(SellerCheckoutClaim.countDocuments({ seller: seller._id })).resolves.toBe(0);
   });
 });

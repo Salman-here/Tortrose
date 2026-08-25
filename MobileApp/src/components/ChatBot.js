@@ -15,6 +15,8 @@ import { LinearGradient } from 'expo-linear-gradient';
 import * as Speech from 'expo-speech';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
+import * as Crypto from 'expo-crypto';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   RecordingPresets,
   requestRecordingPermissionsAsync,
@@ -24,17 +26,35 @@ import {
 } from 'expo-audio';
 import api from '../config/api';
 import { useAuth } from '../contexts/AuthContext';
-import { useCurrency } from '../contexts/CurrencyContext';
+import { resolveProductPresentationMoney, useCurrency } from '../contexts/CurrencyContext';
 import {
   spacing, fontSize, borderRadius, fontWeight,
 } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 import PremiumTopBar, { PremiumTopBarAction } from './common/PremiumTopBar';
 import GlassBlurFill from './common/GlassBlurFill';
+import { getOrderCurrency, getOrderTotal } from '../utils/orderPresentation';
+import { shouldRetainIdempotencyKey } from '../utils/currencySafety';
+import {
+  clearPersistedMutationAttemptForFingerprint,
+  createChatMutationFingerprint,
+  createScopedMutationStorageKey,
+  getOrCreatePersistedMutationAttemptForFingerprint,
+} from '../utils/persistedMutationAttempt';
 
 // Uses our own backend (no Supabase) - the /api/ai-chat/once endpoint handles
 // non-streaming tool execution loop server-side and returns the final response.
 const AI_CHAT_ONCE_URL = null; // Set dynamically from api.defaults.baseURL below
+const CHAT_ATTEMPT_STORAGE_KEY = 'rozare_ai_chat_attempt_v1';
+const UNRESOLVED_AI_ACTION_CODES = new Set([
+  'AI_ACTION_PENDING',
+  'AI_ACTION_IDEMPOTENCY_CONFLICT',
+  'AI_ACTION_RECEIPT_COMMIT_AMBIGUOUS',
+]);
+
+const createChatRequestKey = () => (
+  `chat-send:${Crypto.randomUUID()}`
+);
 
 const sanitizeAssistantText = (text = '') => String(text || '')
   .split('\n')
@@ -205,6 +225,8 @@ const buildAttachmentFromAsset = (asset = {}, fallbackType = 'file') => {
     type,
     mimeType: type,
     size: asset.size || asset.fileSize || 0,
+    assetId: asset.assetId || '',
+    lastModified: asset.lastModified || asset.file?.lastModified || 0,
     file: asset.file,
     previewUrl: type.startsWith('image/') ? uri : '',
   };
@@ -262,8 +284,9 @@ const summarizeToolResultsForPrompt = (toolResults = []) => {
   return lines.join('\n');
 };
 
-async function executeToolCall(name, args) {
+async function executeToolCall(name, args, selectedCurrency = 'USD') {
   const apiUrl = '';
+  const requestCurrency = String(selectedCurrency || 'USD').trim().toUpperCase();
   try {
     switch (name) {
       case 'search_products': {
@@ -272,6 +295,7 @@ async function executeToolCall(name, args) {
         if (args.category) url += `category=${encodeURIComponent(args.category)}&`;
         if (args.maxPrice) url += `maxPrice=${args.maxPrice}&`;
         if (args.minPrice) url += `minPrice=${args.minPrice}&`;
+        url += `currency=${encodeURIComponent(requestCurrency)}&`;
         url += 'limit=5';
         const res = await api.get(url);
         return { products: res.data.products || [] };
@@ -281,7 +305,7 @@ async function executeToolCall(name, args) {
       case 'suggest_outfit': return { outfitSuggestion: args };
       case 'get_my_orders': {
         const res = await api.get(`/api/order/user-orders${args.status ? `?status=${args.status}` : ''}`);
-        return { orders: (res.data.orders || []).slice(0, 5).map(o => ({ orderId: o.orderId, status: o.orderStatus, total: o.orderSummary?.totalAmount, date: o.createdAt })) };
+        return { orders: (res.data.orders || []).slice(0, 5).map(o => ({ orderId: o.orderId, status: o.orderStatus, total: getOrderTotal(o), currency: getOrderCurrency(o), date: o.createdAt })) };
       }
       case 'get_order_detail': { const res = await api.get(`/api/ai-actions/order-detail?orderId=${args.orderId}`); return res.data; }
       case 'cancel_order': { const res = await api.post('/api/ai-actions/cancel-order', { orderId: args.orderId }); return res.data; }
@@ -368,7 +392,7 @@ async function executeToolCall(name, args) {
         const res = await api.get(url);
         return res.data;
       }
-      case 'validate_coupon': { const res = await api.post('/api/ai-actions/validate-coupon', { code: args.code, cartTotal: args.cartTotal }); return res.data; }
+      case 'validate_coupon': { const res = await api.post('/api/ai-actions/validate-coupon', { code: args.code, sellerId: args.sellerId, productId: args.productId, currency: requestCurrency }); return res.data; }
       case 'search_stores': {
         let url = '/api/ai-actions/search-stores?';
         if (args.query) url += `query=${encodeURIComponent(args.query)}&`;
@@ -409,7 +433,8 @@ async function executeToolCall(name, args) {
 // ─── Non-streaming AI call via our backend ───
 // Uses /api/ai-chat/once which handles the tool execution loop server-side
 // and returns the final response with tool results included.
-async function callAI(messages, attachments = []) {
+async function callAI(messages, attachments = [], requestKey = createChatRequestKey(), selectedCurrency = 'USD') {
+  const requestCurrency = String(selectedCurrency || 'USD').trim().toUpperCase();
   const uploadAttachments = (Array.isArray(attachments) ? attachments : [])
     .map(buildUploadPart)
     .filter(Boolean);
@@ -417,6 +442,8 @@ async function callAI(messages, attachments = []) {
   if (uploadAttachments.length) {
     const form = new FormData();
     form.append('messages', JSON.stringify(messages));
+    form.append('requestKey', requestKey);
+    form.append('currency', requestCurrency);
     uploadAttachments.forEach((part, index) => {
       if (Platform.OS === 'web' && typeof File !== 'undefined' && part instanceof File) {
         form.append('attachments', part, part.name || attachments[index]?.name || `attachment-${index + 1}`);
@@ -425,12 +452,14 @@ async function callAI(messages, attachments = []) {
       }
     });
     const resp = await api.post('/api/ai-chat/once', form, {
-      headers: { 'Content-Type': 'multipart/form-data' },
+      headers: { 'Content-Type': 'multipart/form-data', 'Idempotency-Key': requestKey },
     });
     return resp.data;
   }
 
-  const resp = await api.post('/api/ai-chat/once', { messages });
+  const resp = await api.post('/api/ai-chat/once', { messages, requestKey, currency: requestCurrency }, {
+    headers: { 'Idempotency-Key': requestKey },
+  });
   return resp.data;
 }
 
@@ -444,8 +473,12 @@ export default function ChatBot({
   initialPrompt = '',
 }) {
   const { currentUser } = useAuth();
+  const chatAttemptStorageKey = createScopedMutationStorageKey(
+    CHAT_ATTEMPT_STORAGE_KEY,
+    currentUser?._id || currentUser?.id || 'guest'
+  );
   const { palette } = useTheme();
-  const { formatPrice } = useCurrency();
+  const { formatPrice, formatProductPrice, currency } = useCurrency();
   const insets = useSafeAreaInsets();
   const c = palette.colors;
   const styles = makeStyles(palette);
@@ -634,20 +667,6 @@ export default function ChatBot({
     } catch { return { used: 0, limit: -1, remaining: -1 }; }
   }, []);
 
-  const incrementRateLimit = useCallback(async () => {
-    try {
-      const res = await api.post('/api/ai-actions/rate-limit/increment');
-      setRateLimit(res.data);
-      return res.data;
-    } catch (err) {
-      if (err.response?.status === 429) {
-        Alert.alert('Limit Reached', 'Daily message limit reached. Resets at midnight.');
-        return null;
-      }
-      return { used: 0, limit: -1, remaining: -1 };
-    }
-  }, []);
-
   // Init
   useEffect(() => {
     if (visible && messages.length === 0) {
@@ -699,18 +718,21 @@ export default function ChatBot({
     sendLockRef.current = true;
     setLoading(true);
 
+    // This is only a UX preflight. The chat endpoint owns the atomic check so a
+    // stale client, parallel request, or direct API caller cannot bypass the cap.
     if (rateLimit.remaining === 0 && rateLimit.limit !== -1) {
-      Alert.alert('Limit', !currentUser ? 'Please log in for more messages!' : 'Daily message limit reached.');
-      sendLockRef.current = false;
-      setLoading(false);
-      return;
-    }
-
-    const rl = await incrementRateLimit();
-    if (!rl) {
-      sendLockRef.current = false;
-      setLoading(false);
-      return;
+      const latestUsage = await checkRateLimit();
+      if (latestUsage.remaining === 0 && latestUsage.limit !== -1) {
+        Alert.alert(
+          'Limit Reached',
+          !currentUser
+            ? 'Guest AI limit reached. Sign in for more messages, or try again after 00:00 UTC.'
+            : 'Daily AI message limit reached. Resets at 00:00 UTC.'
+        );
+        sendLockRef.current = false;
+        setLoading(false);
+        return;
+      }
     }
 
     const visibleContent = msgText || (
@@ -746,10 +768,51 @@ export default function ChatBot({
       });
     aiMessages.push({ role: 'user', content: visibleContent });
 
+    const fingerprint = createChatMutationFingerprint({
+      actorId: currentUser?._id || currentUser?.id || 'guest',
+      currency,
+      text: visibleContent,
+      attachments: attachmentsToSend,
+    });
+    let attemptKey = '';
+
     try {
       // The backend /api/ai-chat/once handles the ENTIRE tool execution loop
       // server-side and returns: { message, toolResults, clientActions, role }
-      const response = await callAI(aiMessages, attachmentsToSend);
+      // Wait for the independent fingerprint record to be persisted and read
+      // back before the server-side mutation loop starts.
+      const attempt = await getOrCreatePersistedMutationAttemptForFingerprint({
+        storage: AsyncStorage,
+        storageKey: chatAttemptStorageKey,
+        fingerprint,
+        keyPrefix: 'chat-send',
+        randomUUID: Crypto.randomUUID,
+      });
+      attemptKey = attempt.key;
+      const response = await callAI(aiMessages, attachmentsToSend, attempt.key, currency);
+      const unresolvedAction = (response.toolResults || []).find(entry => (
+        UNRESOLVED_AI_ACTION_CODES.has(entry?.result?.code)
+      ));
+      if (unresolvedAction) {
+        const retryError = new Error(
+          unresolvedAction.result?.error
+          || 'This action may still be processing. Retry the same message shortly.'
+        );
+        retryError.response = {
+          status: 409,
+          data: {
+            code: unresolvedAction.result?.code,
+            msg: retryError.message,
+          },
+        };
+        throw retryError;
+      }
+      await clearPersistedMutationAttemptForFingerprint(
+        AsyncStorage,
+        chatAttemptStorageKey,
+        fingerprint,
+        attemptKey,
+      );
       const assistantContent = sanitizeAssistantText(response.message?.content || "Sorry, I couldn't process that.");
       const toolResults = (response.toolResults || []).map(tr => ({
         name: tr.tool,
@@ -823,10 +886,29 @@ export default function ChatBot({
       setMessages(prev => [...prev, assistantMsg]);
       if (ttsEnabled && assistantContent) speak(assistantContent);
     } catch (err) {
-      const errorMsg = err.message?.includes('Rate limit') ? 'Too many requests - please try again shortly!'
-        : 'Sorry, please try again!';
+      if (!shouldRetainIdempotencyKey(err.response?.status)) {
+        await clearPersistedMutationAttemptForFingerprint(
+          AsyncStorage,
+          chatAttemptStorageKey,
+          fingerprint,
+          attemptKey,
+        );
+      }
+      const response = err.response?.data || {};
+      const dailyLimitReached = err.response?.status === 429
+        && response.code === 'AI_DAILY_LIMIT_REACHED';
+      if (dailyLimitReached) {
+        setRateLimit(previous => ({ ...previous, ...response }));
+        Alert.alert('Limit Reached', response.msg || 'Daily AI message limit reached. Resets at 00:00 UTC.');
+      }
+      const errorMsg = dailyLimitReached
+        ? (response.msg || 'Daily AI message limit reached. Resets at 00:00 UTC.')
+        : err.message?.includes('Rate limit')
+          ? 'Too many requests - please try again shortly!'
+          : 'Sorry, please try again!';
       setMessages(prev => [...prev, { id: (Date.now() + 1).toString(), role: 'assistant', content: errorMsg }]);
     } finally {
+      checkRateLimit();
       sendLockRef.current = false;
       setLoading(false);
     }
@@ -909,7 +991,12 @@ export default function ChatBot({
                       <View style={styles.productDot} />
                       <View style={{ flex: 1 }}>
                         <Text style={styles.productName} numberOfLines={1}>{p.name}</Text>
-                        <Text style={styles.productPrice}>{formatPrice(p.discountedPrice || p.price || 0, { sourceCurrency: p.currency || p.priceCurrency || 'USD' })}</Text>
+                        <Text style={styles.productPrice}>{formatProductPrice(p, {
+                          field: resolveProductPresentationMoney(p, 'discountedPrice') > 0
+                            && resolveProductPresentationMoney(p, 'discountedPrice') < resolveProductPresentationMoney(p, 'price')
+                            ? 'discountedPrice'
+                            : 'price',
+                        })}</Text>
                       </View>
                       <Ionicons name="chevron-forward" size={14} color={c.textLight} />
                     </TouchableOpacity>

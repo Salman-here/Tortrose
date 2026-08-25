@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createPortal } from 'react-dom';
 import {
@@ -18,6 +18,19 @@ import CurrencySelector from '../common/CurrencySelector';
 import { PRESET_CATEGORIES } from '../../utils/categories';
 import { getAuthToken } from "../../utils/cookieHelper";
 import FounderPromotionModal from '../subscription/FounderPromotionModal';
+import { selectAuthoritativeSellerMetrics } from '../../utils/currencySafety';
+import {
+    inspectProductFormSubmission,
+    inspectSellerProductCurrencyState,
+    normalizeProductForEdit,
+    resolveProductFormCurrency,
+} from '../../utils/productFormCurrency';
+import {
+    inspectProductPagination,
+    inspectSellerProductPresentation,
+    sellerInventoryOverviewIsValid,
+} from '../../utils/productCardSafety';
+import { useNotificationBellInbox } from '../../hooks/useNotificationBellInbox';
 
 // Shared menu items (used by desktop sidebar + mobile inline menu)
 const getSellerMenuItems = ({ pendingOrders = 0, lowStockProducts = 0 } = {}) => ([
@@ -43,32 +56,44 @@ const getSellerMenuItems = ({ pendingOrders = 0, lowStockProducts = 0 } = {}) =>
 
 const DASHBOARD_PRODUCTS_PER_PAGE = 12;
 
-const normalizeDashboardProduct = (product = {}) => ({
-    ...product,
-    name: product.name || '',
-    brand: product.brand || '',
-    category: product.category || '',
-    description: product.description || '',
-    price: Number.isFinite(Number(product.price)) ? Number(product.price) : 0,
-    discountedPrice: Number.isFinite(Number(product.discountedPrice)) ? Number(product.discountedPrice) : 0,
-    stock: Number.isFinite(Number(product.stock)) ? Number(product.stock) : 0,
-    image: product.image || product.images?.[0]?.url || '',
-    images: Array.isArray(product.images) ? product.images.filter(Boolean).map(img => (
+const normalizeDashboardProduct = (product = {}) => {
+    const source = product && typeof product === 'object' && !Array.isArray(product) ? product : {};
+    return ({
+    ...source,
+    name: source.name || '',
+    brand: source.brand || '',
+    category: source.category || '',
+    description: source.description || '',
+    // Money, currency, and stock deliberately remain byte-for-byte from the
+    // API. Their strict presentation inspector must see corruption instead of
+    // receiving a manufactured zero or USD-labelled value.
+    image: source.image || source.images?.[0]?.url || '',
+    images: Array.isArray(source.images) ? source.images.filter(Boolean).map(img => (
         typeof img === 'string' ? { url: img } : { ...img, url: img?.url || '' }
     )).filter(img => img.url) : [],
-    tags: Array.isArray(product.tags) ? product.tags.filter(Boolean) : [],
-    colors: Array.isArray(product.colors) ? product.colors.filter(Boolean) : [],
-    optionGroups: Array.isArray(product.optionGroups) ? product.optionGroups.map(group => ({
+    tags: Array.isArray(source.tags) ? source.tags.filter(Boolean) : [],
+    colors: Array.isArray(source.colors) ? source.colors.filter(Boolean) : [],
+    optionGroups: Array.isArray(source.optionGroups) ? source.optionGroups.map(group => ({
         ...group,
         name: group?.name || '',
         values: Array.isArray(group?.values) ? group.values.filter(Boolean) : [],
         default: group?.default || '',
     })) : [],
-});
+    });
+};
 
 const SellerDashboard = () => {
     const { currentUser } = useAuth();
+    const {
+        accountKey: notificationAccountKey,
+        notifications,
+        notificationBadgeCount,
+        notificationsError,
+        notificationsLoading,
+        reloadNotifications,
+    } = useNotificationBellInbox({ currentUser, role: 'seller' });
     const { currency } = useCurrency();
+    const location = useLocation();
     const [isMobile, setIsMobile] = useState(false);
     const [aiChatOpen, setAiChatOpen] = useState(false);
     const [subscriptionData, setSubscriptionData] = useState(null);
@@ -109,6 +134,12 @@ const SellerDashboard = () => {
     const [activeTab, setActiveTab] = useState('overview');
     const [products, setProducts] = useState([]);
     const [orders, setOrders] = useState([]);
+    const [overviewProducts, setOverviewProducts] = useState(null);
+    const [overviewOrders, setOverviewOrders] = useState(null);
+    const [overviewMetrics, setOverviewMetrics] = useState(null);
+    const [overviewLoading, setOverviewLoading] = useState(true);
+    const [overviewLoaded, setOverviewLoaded] = useState(false);
+    const [overviewError, setOverviewError] = useState('');
     const [editingProduct, setEditingProduct] = useState(null);
     const [isFormOpen, setIsFormOpen] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
@@ -117,30 +148,93 @@ const SellerDashboard = () => {
     const [deleteConfirm, setDeleteConfirm] = useState(null);
     const [loading, setLoading] = useState(true);
     const [productPage, setProductPage] = useState(1);
-    const [productPagination, setProductPagination] = useState({
-        page: 1,
-        limit: DASHBOARD_PRODUCTS_PER_PAGE,
-        totalProducts: 0,
-        totalPages: 1,
-        hasMore: false,
-    });
+    const [productPagination, setProductPagination] = useState(null);
     const [uploadingImages, setUploadingImages] = useState(false);
     const [featuredStats, setFeaturedStats] = useState({ current: 0, max: 6, allowed: true, plan: 'free_trial' });
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
     const [notificationsOpen, setNotificationsOpen] = useState(false);
-    const [notifications, setNotifications] = useState([]);
-    const [notificationsLoading, setNotificationsLoading] = useState(false);
-    const [productCurrencyState, setProductCurrencyState] = useState({
-        activeCurrency: currency || 'USD',
-        status: 'active',
-        pendingCurrency: null,
-        previousCurrency: null,
-        productCount: 0,
-        canAddProduct: true,
-    });
+    const [productCurrencyState, setProductCurrencyState] = useState(null);
     const notifTriggerRef = useRef(null);
     const notifMenuRef = useRef(null);
+    const overviewRequestRef = useRef({ id: 0, controller: null });
     const [notifPos, setNotifPos] = useState({ top: 0, right: 0 });
+
+    const fetchOverviewData = useCallback(async () => {
+        const requestId = overviewRequestRef.current.id + 1;
+        overviewRequestRef.current.controller?.abort();
+        const controller = new AbortController();
+        overviewRequestRef.current = { id: requestId, controller };
+        setOverviewLoading(true);
+        setOverviewLoaded(false);
+        setOverviewError('');
+        setOverviewOrders(null);
+        setOverviewMetrics(null);
+        setOverviewProducts(null);
+
+        const token = getAuthToken();
+        const results = await Promise.allSettled([
+            axios.get(`${import.meta.env.VITE_API_URL}api/order/get`, {
+                headers: { Authorization: `Bearer ${token}` },
+                signal: controller.signal,
+            }),
+            axios.get(`${import.meta.env.VITE_API_URL}api/stores/analytics?currency=${encodeURIComponent(currency)}`, {
+                headers: { Authorization: `Bearer ${token}` },
+                signal: controller.signal,
+            }),
+        ]);
+
+        if (overviewRequestRef.current.id !== requestId || controller.signal.aborted) return;
+        const failures = [];
+        const [ordersResult, metricsResult] = results;
+
+        if (ordersResult.status === 'fulfilled') {
+            const nextOrders = ordersResult.value.data?.orders || ordersResult.value.data || [];
+            setOverviewOrders(Array.isArray(nextOrders) ? nextOrders : []);
+        } else failures.push('order totals');
+
+        if (metricsResult.status === 'fulfilled') {
+            const nextMetrics = metricsResult.value.data?.analytics || null;
+            const inventoryValid = sellerInventoryOverviewIsValid(nextMetrics?.inventory)
+                && Number.isSafeInteger(nextMetrics?.productCount)
+                && nextMetrics.productCount >= 0
+                && nextMetrics.productCount === nextMetrics.inventory.totalProducts;
+            if (selectAuthoritativeSellerMetrics(nextMetrics, currency) !== null && inventoryValid) {
+                setOverviewMetrics(nextMetrics);
+                setOverviewProducts(
+                    Array.isArray(nextMetrics?.inventory?.recentProducts)
+                        ? nextMetrics.inventory.recentProducts.map(normalizeDashboardProduct)
+                        : []
+                );
+            } else {
+                setOverviewMetrics(null);
+                setOverviewProducts([]);
+                failures.push('revenue or inventory totals');
+            }
+        } else {
+            setOverviewMetrics(null);
+            setOverviewProducts([]);
+            failures.push('inventory totals');
+            failures.push('revenue totals');
+        }
+
+        setOverviewLoaded(true);
+        setOverviewError(failures.length
+            ? `Could not refresh ${failures.join(', ')}. Unavailable values are hidden until a successful retry.`
+            : '');
+        setOverviewLoading(false);
+    }, [currency]);
+
+    useEffect(() => {
+        const isOverviewRoute = location.pathname === '/seller-dashboard'
+            || location.pathname.includes('/seller-dashboard/seller-home')
+            || location.pathname.includes('/seller-dashboard/store-overview');
+        if (isOverviewRoute) fetchOverviewData();
+    }, [fetchOverviewData, location.pathname]);
+
+    useEffect(() => () => {
+        overviewRequestRef.current.id += 1;
+        overviewRequestRef.current.controller?.abort();
+    }, []);
 
     const updateNotifPosition = useCallback(() => {
         if (notifTriggerRef.current) {
@@ -179,10 +273,11 @@ const SellerDashboard = () => {
             const res = await axios.get(`${import.meta.env.VITE_API_URL}api/stores/product-currency`, {
                 headers: { Authorization: `Bearer ${token}` }
             });
-            if (res.data?.productCurrency) {
-                setProductCurrencyState(res.data.productCurrency);
-            }
+            const state = inspectSellerProductCurrencyState(res.data?.productCurrency);
+            if (!state.valid) throw new Error('Your store product currency data is unavailable.');
+            setProductCurrencyState(state);
         } catch (error) {
+            setProductCurrencyState(null);
             if (error.response?.status !== 404) {
                 console.error('Failed to fetch product currency settings:', error);
             }
@@ -199,18 +294,20 @@ const SellerDashboard = () => {
             const res = await axios.get(`${import.meta.env.VITE_API_URL}api/products/get-seller-products?${query}`, {
                 headers: { Authorization: `Bearer ${token}` }
             });
-            setProducts(Array.isArray(res.data.products) ? res.data.products.map(normalizeDashboardProduct) : []);
-            setProductPagination({
-                page: res.data.pagination?.page || productPage,
-                limit: res.data.pagination?.limit || DASHBOARD_PRODUCTS_PER_PAGE,
-                totalProducts: res.data.pagination?.totalProducts || 0,
-                totalPages: Math.max(1, res.data.pagination?.totalPages || 1),
-                hasMore: Boolean(res.data.pagination?.hasMore),
+            if (!Array.isArray(res.data?.products)) throw new Error('Product list data is unavailable.');
+            const nextProducts = res.data.products.map(normalizeDashboardProduct);
+            const nextPagination = inspectProductPagination(res.data?.pagination, {
+                productCount: nextProducts.length,
+                expectedPage: productPage,
+                expectedLimit: DASHBOARD_PRODUCTS_PER_PAGE,
             });
+            if (!nextPagination.valid) throw new Error('Product pagination data is unavailable.');
+            setProducts(nextProducts);
+            setProductPagination(nextPagination);
         } catch (err) {
-            toast.error(err.response?.data?.msg || 'Failed to fetch products');
+            toast.error(err.response?.data?.msg || err.message || 'Failed to fetch products');
             setProducts([]);
-            setProductPagination(prev => ({ ...prev, totalProducts: 0, totalPages: 1, hasMore: false }));
+            setProductPagination(null);
         } finally { setLoading(false); }
     };
 
@@ -226,14 +323,24 @@ const SellerDashboard = () => {
     };
 
     useEffect(() => { setProductPage(1); }, [searchTerm, selectedCategory]);
-    useEffect(() => { fetchProducts(); fetchOrders(); }, [searchTerm, selectedCategory, productPage]);
+    useEffect(() => {
+        fetchProducts();
+        fetchOrders();
+        // Fetchers intentionally follow the filter/page state above. Adding
+        // their render-created identities would issue a request every render.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [searchTerm, selectedCategory, productPage]);
 
     const handleCreateProduct = () => {
+        if (!productCurrencyState?.valid || productCurrencyState.canAddProduct !== true) {
+            toast.error('Your active store product currency must be verified before adding a product. Refresh and try again.');
+            return;
+        }
         if (productCurrencyState.status === 'pending_conversion') {
             toast.error(productCurrencyState.message || 'Convert existing product prices or cancel the pending currency change before adding new products.');
             return;
         }
-        const productEntryCurrency = productCurrencyState.activeCurrency || currency || 'USD';
+        const productEntryCurrency = productCurrencyState.activeCurrency;
         setEditingProduct({
             name: '', description: '', price: '', discountedPrice: "",
             currency: productEntryCurrency, priceCurrency: productEntryCurrency, discountedPriceCurrency: productEntryCurrency,
@@ -244,57 +351,90 @@ const SellerDashboard = () => {
     };
 
     const handleEditProduct = (product) => {
-        setEditingProduct(normalizeDashboardProduct(product));
-        setIsFormOpen(true);
+        const presentation = inspectSellerProductPresentation(product);
+        if (!presentation.managementSafe || !presentation.valid) {
+            toast.error('This product has invalid stored price, currency, or stock data. Refresh it before editing.');
+            return;
+        }
+        try {
+            setEditingProduct(normalizeProductForEdit(normalizeDashboardProduct(product)));
+            setIsFormOpen(true);
+        } catch (error) {
+            toast.error(error.message || 'This product cannot be edited until its stored currency data is corrected.');
+        }
     };
 
     const handleSaveProduct = async () => {
-        setUploadingImages(true);
-        try {
-            if (editingProduct.imageFile) {
-                const imageUrl = await uploadImageToCloudinary(editingProduct.imageFile);
-                editingProduct.image = imageUrl;
-                delete editingProduct.imageFile;
-            }
-            if (editingProduct.imageFiles && editingProduct.imageFiles.length > 0) {
-                const uploadedUrls = await Promise.all(editingProduct.imageFiles.map(file => uploadImageToCloudinary(file)));
-                const existingImages = (Array.isArray(editingProduct.images) ? editingProduct.images : []).filter(img => !img.isFile);
-                const newImages = uploadedUrls.map(url => ({ url }));
-                editingProduct.images = [...existingImages, ...newImages];
-                delete editingProduct.imageFiles;
-            }
-            if (editingProduct.images) {
-                editingProduct.images = editingProduct.images.map(img => ({ url: img.url }));
-            }
-        } catch (error) {
-            setUploadingImages(false);
-            toast.error(error.message || 'Failed to upload images');
+        const pricing = inspectProductFormSubmission(editingProduct, currency);
+        if (!pricing.valid) {
+            toast.error('Enter a non-negative exact price, an optional lower sale price, and a whole stock quantity. Free products may use 0.00.');
+            return;
+        }
+        if (!editingProduct._id && (
+            !productCurrencyState?.valid
+            || productCurrencyState.canAddProduct !== true
+            || productCurrencyState.status !== 'active'
+            || productCurrencyState.activeCurrency !== pricing.currency
+        )) {
+            toast.error('Your active store product currency must be verified again before adding this product.');
             return;
         }
 
-        if (editingProduct._id) {
-            try {
+        setUploadingImages(true);
+        const productToSave = {
+            ...editingProduct,
+            price: pricing.price,
+            discountedPrice: pricing.discountedPrice,
+            stock: pricing.stock,
+            currency: pricing.currency,
+            priceCurrency: pricing.currency,
+            priceInputAmount: pricing.price,
+            discountedPriceCurrency: pricing.currency,
+            discountedPriceInputAmount: pricing.discountedPrice,
+        };
+        try {
+            if (productToSave.imageFile) {
+                const imageUrl = await uploadImageToCloudinary(productToSave.imageFile);
+                productToSave.image = imageUrl;
+                delete productToSave.imageFile;
+            }
+            if (productToSave.imageFiles && productToSave.imageFiles.length > 0) {
+                const uploadedUrls = await Promise.all(productToSave.imageFiles.map(file => uploadImageToCloudinary(file)));
+                const existingImages = (Array.isArray(productToSave.images) ? productToSave.images : []).filter(img => !img.isFile);
+                const newImages = uploadedUrls.map(url => ({ url }));
+                productToSave.images = [...existingImages, ...newImages];
+                delete productToSave.imageFiles;
+            }
+            if (productToSave.images) {
+                productToSave.images = productToSave.images.map(img => ({ url: img.url }));
+            }
+
+            if (productToSave._id) {
                 const token = getAuthToken();
-                const res = await axios.put(`${import.meta.env.VITE_API_URL}api/products/edit/${editingProduct._id}`,
-                    { product: editingProduct }, { headers: { Authorization: `Bearer ${token}` } });
+                const res = await axios.put(`${import.meta.env.VITE_API_URL}api/products/edit/${productToSave._id}`,
+                    { product: productToSave }, { headers: { Authorization: `Bearer ${token}` } });
                 toast.success(res.data.msg);
-                fetchProducts(); fetchFilters(); fetchFeaturedStats();
-            } catch (error) { toast.error(error.response?.data?.msg || 'Failed to update product'); }
-        } else {
-            try {
+                fetchProducts(); fetchFilters(); fetchFeaturedStats(); fetchOverviewData();
+            } else {
                 const token = getAuthToken();
                 const res = await axios.post(`${import.meta.env.VITE_API_URL}api/products/add`,
-                    { product: editingProduct }, { headers: { Authorization: `Bearer ${token}` } });
+                    { product: productToSave }, { headers: { Authorization: `Bearer ${token}` } });
                 toast.success(res.data.msg);
-                fetchProducts(); fetchFilters(); fetchFeaturedStats(); fetchProductCurrencyState();
-            } catch (error) {
-                if (error.response?.data?.productCurrency) setProductCurrencyState(error.response.data.productCurrency);
-                toast.error(error.response?.data?.msg || 'Failed to add product');
+                fetchProducts(); fetchFilters(); fetchFeaturedStats(); fetchProductCurrencyState(); fetchOverviewData();
             }
+            setIsFormOpen(false);
+            setEditingProduct(null);
+        } catch (error) {
+            if (error.response?.data?.productCurrency) {
+                const state = inspectSellerProductCurrencyState(error.response.data.productCurrency);
+                setProductCurrencyState(state.valid ? state : null);
+            }
+            toast.error(error.response?.data?.msg || error.message || (
+                productToSave._id ? 'Failed to update product' : 'Failed to add product'
+            ));
+        } finally {
+            setUploadingImages(false);
         }
-        setUploadingImages(false);
-        setIsFormOpen(false);
-        setEditingProduct(null);
     };
 
     const handleConvertProductCurrency = async () => {
@@ -304,8 +444,11 @@ const SellerDashboard = () => {
                 headers: { Authorization: `Bearer ${token}` }
             });
             toast.success(res.data.msg || 'Product prices converted');
-            if (res.data?.productCurrency) setProductCurrencyState(res.data.productCurrency);
+            const state = inspectSellerProductCurrencyState(res.data?.productCurrency);
+            if (!state.valid) throw new Error('The converted product currency state is unavailable. Refresh before changing products.');
+            setProductCurrencyState(state);
             fetchProducts();
+            fetchOverviewData();
         } catch (error) {
             toast.error(error.response?.data?.msg || 'Failed to convert product prices');
         }
@@ -318,28 +461,39 @@ const SellerDashboard = () => {
                 headers: { Authorization: `Bearer ${token}` }
             });
             toast.success(res.data.msg || 'Product currency change canceled');
-            if (res.data?.productCurrency) setProductCurrencyState(res.data.productCurrency);
+            const state = inspectSellerProductCurrencyState(res.data?.productCurrency);
+            if (!state.valid) throw new Error('The restored product currency state is unavailable. Refresh before changing products.');
+            setProductCurrencyState(state);
         } catch (error) {
             toast.error(error.response?.data?.msg || 'Failed to cancel product currency change');
         }
     };
 
     const handleDeleteProduct = async (id) => {
+        if (!inspectSellerProductPresentation({ _id: id }).managementSafe) {
+            toast.error('This product has an invalid identifier. Refresh before deleting it.');
+            setDeleteConfirm(null);
+            return;
+        }
         try {
             const token = getAuthToken();
             const res = await axios.delete(`${import.meta.env.VITE_API_URL}api/products/delete/${id}`,
                 { headers: { Authorization: `Bearer ${token}` } });
             toast.success(res.data.msg || 'Product deleted successfully');
             fetchProducts();
+            fetchOverviewData();
         } catch (error) { toast.error(error.response?.data?.msg || 'Failed to delete product'); }
         setDeleteConfirm(null);
     };
 
     const handleBulkDeleteProducts = async (productIds = []) => {
         try {
-            const ids = Array.isArray(productIds) ? productIds.filter(Boolean) : [];
-            if (ids.length === 0) {
-                toast.error('Select at least one product to delete.');
+            const ids = Array.isArray(productIds) ? [...new Set(productIds)] : [];
+            if (
+                ids.length === 0
+                || ids.some(id => !inspectSellerProductPresentation({ _id: id }).managementSafe)
+            ) {
+                toast.error('Select products with valid identifiers before deleting them.');
                 return false;
             }
             const token = getAuthToken();
@@ -351,6 +505,7 @@ const SellerDashboard = () => {
             fetchFilters();
             fetchFeaturedStats();
             fetchProductCurrencyState();
+            fetchOverviewData();
             return true;
         } catch (error) {
             toast.error(error.response?.data?.msg || 'Failed to delete selected products');
@@ -371,29 +526,47 @@ const SellerDashboard = () => {
         } catch (error) { console.error(error); setOrders([]); }
     };
 
-    const pendingOrders = orders.filter(o => o.orderStatus === 'pending').length;
-    const lowStockProducts = products.filter(p => p.stock <= 10 && p.stock > 0).length;
-    const outOfStockProducts = products.filter(p => p.stock === 0).length;
+    const badgeOrders = overviewLoaded && Array.isArray(overviewOrders) ? overviewOrders : orders;
+    const badgeProducts = overviewLoaded && Array.isArray(overviewProducts) ? overviewProducts : products;
+    const pendingOrders = badgeOrders.filter(o => o.orderStatus === 'pending').length;
+    const inventoryOverview = overviewMetrics?.inventory;
+    const authoritativeInventoryCountsValid = [
+        inventoryOverview?.totalProducts,
+        inventoryOverview?.lowStock,
+        inventoryOverview?.outOfStock,
+    ].every(value => Number.isSafeInteger(value) && value >= 0)
+        && inventoryOverview.lowStock + inventoryOverview.outOfStock <= inventoryOverview.totalProducts;
+    const lowStockProducts = overviewLoaded && authoritativeInventoryCountsValid
+        ? inventoryOverview.lowStock
+        : badgeProducts.filter((product) => {
+            const presentation = inspectSellerProductPresentation(product);
+            return presentation.stockValid && presentation.stock > 0 && presentation.stock <= 10;
+        }).length;
+    const outOfStockProducts = overviewLoaded && authoritativeInventoryCountsValid
+        ? inventoryOverview.outOfStock
+        : badgeProducts.filter((product) => {
+            const presentation = inspectSellerProductPresentation(product);
+            return presentation.stockValid && presentation.stock === 0;
+        }).length;
 
-    const outletContext = useMemo(() => ({
+    const outletContext = {
         dashboardRole: 'seller',
         products, orders, categories, searchTerm, setSearchTerm,
         selectedCategory, setSelectedCategory, deleteConfirm, setDeleteConfirm,
         handleEditProduct, handleCreateProduct, handleDeleteProduct, handleBulkDeleteProducts, loading, fetchProducts,
         productPagination,
-        currentPage: productPagination.page,
-        totalPages: productPagination.totalPages,
-        totalProducts: productPagination.totalProducts,
-        pageSize: productPagination.limit,
+        currentPage: productPagination?.page ?? null,
+        totalPages: productPagination?.totalPages ?? null,
+        totalProducts: productPagination?.totalProducts ?? null,
+        pageSize: productPagination?.limit ?? null,
         setProductPage,
         isFormOpen, editingProduct, setEditingProduct, handleSaveProduct, uploadingImages,
         closeForm: () => { setIsFormOpen(false); setEditingProduct(null); },
         canFeature: subscriptionData?.status === 'trial' || subscriptionData?.bonusFeaturesActive === true || ['active', 'free_period'].includes(subscriptionData?.status),
         featuredStats, fetchFeaturedStats,
         productCurrencyState, fetchProductCurrencyState, handleConvertProductCurrency, handleCancelProductCurrencyChange,
-    }), [products, orders, categories, searchTerm, selectedCategory, deleteConfirm, loading, productPagination, isFormOpen, editingProduct, uploadingImages, subscriptionData, featuredStats, productCurrencyState]);
-
-    const location = useLocation();
+        overviewProducts, overviewOrders, overviewMetrics, overviewLoading, overviewLoaded, overviewError, refreshOverview: fetchOverviewData,
+    };
 
     // Get current page title
     const getPageTitle = () => {
@@ -415,54 +588,14 @@ const SellerDashboard = () => {
         return 'Dashboard';
     };
 
-    const fetchNotifications = async () => {
-        setNotificationsLoading(true);
-        let prefs = {};
-        try {
-            const token = getAuthToken();
-            const prefsRes = await axios.get(`${import.meta.env.VITE_API_URL}api/analytics/notification-prefs`, {
-                headers: { Authorization: `Bearer ${token}` }
-            });
-            prefs = prefsRes.data.prefs || {};
-        } catch { /* fallback to all enabled */ }
-        try {
-            const token = getAuthToken();
-            const res = await axios.get(`${import.meta.env.VITE_API_URL}api/analytics/notifications`, {
-                headers: { Authorization: `Bearer ${token}` }
-            });
-            let notifs = res.data.notifications || [];
-            // Filter by preferences
-            if (prefs.stockAlerts === false) notifs = notifs.filter(n => n.category !== 'stock' || n.type !== 'critical');
-            if (prefs.lowStockAlerts === false) notifs = notifs.filter(n => n.category !== 'stock' || n.type !== 'warning');
-            if (prefs.orderAlerts === false) notifs = notifs.filter(n => n.category !== 'order');
-            if (prefs.paymentAlerts === false) notifs = notifs.filter(n => n.category !== 'payment');
-            setNotifications(notifs);
-        } catch (err) {
-            // Fallback to local notifications from products/orders
-            const localNotifs = [];
-            if (prefs.stockAlerts !== false) {
-                products.filter(p => p.stock === 0).forEach(p => {
-                    localNotifs.push({ id: `s-${p._id}`, type: 'critical', category: 'stock', title: `${p.name} is out of stock`, description: 'Update inventory', time: new Date().toISOString() });
-                });
-            }
-            if (prefs.lowStockAlerts !== false) {
-                products.filter(p => p.stock > 0 && p.stock <= 10).forEach(p => {
-                    localNotifs.push({ id: `l-${p._id}`, type: 'warning', category: 'stock', title: `${p.name} running low`, description: `${p.stock} units left`, time: new Date().toISOString() });
-                });
-            }
-            if (prefs.orderAlerts !== false) {
-                orders.filter(o => o.orderStatus === 'pending').slice(0, 5).forEach(o => {
-                    localNotifs.push({ id: `o-${o._id}`, type: 'info', category: 'order', title: `Pending order ${o.orderId}`, description: o.shippingInfo?.fullName, time: o.createdAt });
-                });
-            }
-            setNotifications(localNotifs);
-        } finally { setNotificationsLoading(false); }
-    };
-
     const handleBellClick = () => {
-        if (!notificationsOpen) fetchNotifications();
+        if (!notificationsOpen) reloadNotifications();
         setNotificationsOpen(!notificationsOpen);
     };
+
+    useEffect(() => {
+        setNotificationsOpen(false);
+    }, [notificationAccountKey]);
 
     // Close notifications on outside click
     useEffect(() => {
@@ -506,6 +639,11 @@ const SellerDashboard = () => {
                         </span>
                     </div>
                     <div className="overflow-y-auto" style={{ maxHeight: 'calc(70vh - 60px)' }}>
+                        {notificationsError && !notificationsLoading && (
+                            <div role="alert" className="px-4 py-2 text-[11px]" style={{ color: 'hsl(0,72%,55%)', borderBottom: '1px solid var(--glass-border)' }}>
+                                {notificationsError}
+                            </div>
+                        )}
                         {notificationsLoading ? (
                                 <div className="flex items-center justify-center py-8">
                                 <Loader2 size={20} className="animate-spin" style={{ color: 'hsl(var(--muted-foreground))' }} />
@@ -513,7 +651,9 @@ const SellerDashboard = () => {
                         ) : notifications.length === 0 ? (
                             <div className="text-center py-8 px-4">
                                 <Bell size={28} style={{ color: 'hsl(var(--muted-foreground))' }} className="mx-auto mb-2 opacity-50" />
-                                <p className="text-sm" style={{ color: 'hsl(var(--muted-foreground))' }}>All caught up!</p>
+                                <p className="text-sm" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                                    {notificationsError ? 'No verified notifications are available.' : 'All caught up!'}
+                                </p>
                             </div>
                         ) : (
                             <div className="p-2 space-y-1">
@@ -531,31 +671,30 @@ const SellerDashboard = () => {
                                         success: { bg: 'rgba(16,185,129,0.12)', color: 'hsl(150,60%,45%)' },
                                     };
                                     const cs = colorMap[n.type] || colorMap.info;
-                                    const linkTo = n.orderId
-                                        ? `/seller-dashboard/order/${n.orderId}`
-                                        : '/seller-dashboard/product-management';
-                                    return (
-                                        <Link key={n.id || i} to={linkTo} onClick={() => setNotificationsOpen(false)}>
-                                            <motion.div
-                                                initial={{ opacity: 0, x: 10 }}
-                                                animate={{ opacity: 1, x: 0 }}
-                                                transition={{ delay: i * 0.03 }}
-                                                className="flex items-start gap-3 p-3 rounded-xl transition-all hover:bg-white/5 cursor-pointer">
-                                                <div className="p-1.5 rounded-lg mt-0.5 shrink-0" style={{ background: cs.bg, color: cs.color }}>
-                                                    {iconMap[n.type]}
-                                                </div>
-                                                <div className="flex-1 min-w-0">
-                                                    <p className="text-xs font-semibold truncate" style={{ color: 'hsl(var(--foreground))' }}>{n.title}</p>
-                                                    {n.description && (
-                                                        <p className="text-[11px] mt-0.5 truncate" style={{ color: 'hsl(var(--muted-foreground))' }}>{n.description}</p>
-                                                    )}
-                                                    <p className="text-[10px] mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                                                        {n.time ? new Date(n.time).toLocaleDateString('en', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Just now'}
-                                                    </p>
-                                                </div>
-                                            </motion.div>
-                                        </Link>
+                                    const row = (
+                                        <motion.div
+                                            initial={{ opacity: 0, x: 10 }}
+                                            animate={{ opacity: 1, x: 0 }}
+                                            transition={{ delay: i * 0.03 }}
+                                            onClick={() => setNotificationsOpen(false)}
+                                            className="flex items-start gap-3 p-3 rounded-xl transition-all hover:bg-white/5 cursor-pointer">
+                                            <div className="p-1.5 rounded-lg mt-0.5 shrink-0" style={{ background: cs.bg, color: cs.color }}>
+                                                {iconMap[n.type]}
+                                            </div>
+                                            <div className="flex-1 min-w-0">
+                                                <p className="text-xs font-semibold truncate" style={{ color: 'hsl(var(--foreground))' }}>{n.title}</p>
+                                                {n.description && (
+                                                    <p className="text-[11px] mt-0.5 truncate" style={{ color: 'hsl(var(--muted-foreground))' }}>{n.description}</p>
+                                                )}
+                                                <p className="text-[10px] mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                                                    {n.time ? new Date(n.time).toLocaleDateString('en', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Just now'}
+                                                </p>
+                                            </div>
+                                        </motion.div>
                                     );
+                                    return n.linkTo
+                                        ? <Link key={n.id} to={n.linkTo}>{row}</Link>
+                                        : <div key={n.id}>{row}</div>;
                                 })}
                             </div>
                         )}
@@ -622,10 +761,10 @@ const SellerDashboard = () => {
                                     style={{ color: 'hsl(var(--foreground))' }}
                                 >
                                     <Bell size={18} />
-                                    {(pendingOrders + lowStockProducts + outOfStockProducts) > 0 && (
+                                    {notificationBadgeCount > 0 && (
                                         <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] flex items-center justify-center rounded-full text-[10px] font-bold text-white px-1"
                                             style={{ background: 'hsl(0, 72%, 55%)' }}>
-                                            {pendingOrders + lowStockProducts + outOfStockProducts}
+                                            {notificationBadgeCount > 99 ? '99+' : notificationBadgeCount}
                                         </span>
                                     )}
                                 </motion.button>
@@ -832,7 +971,6 @@ export { ProductForm };
 // Sidebar Component
 // ============================
 const SellerSidebar = ({ activeTab, setActiveTab, isSidebarOpen, setIsSidebarOpen, isMobile, pendingOrders, lowStockProducts, onAiChat }) => {
-    const { currentUser } = useAuth();
     const location = useLocation();
 
     const menuItems = [
@@ -858,6 +996,9 @@ const SellerSidebar = ({ activeTab, setActiveTab, isSidebarOpen, setIsSidebarOpe
 
     useEffect(() => {
         menuItems.forEach(item => { if (item.link && location.pathname.includes(item.link.split('/').pop())) setActiveTab(item.id); });
+        // menuItems is rebuilt for the current badges, but route selection only
+        // depends on the path and the stable parent setter.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [location]);
 
     const handleTabClick = (tabId, item) => {
@@ -1196,12 +1337,11 @@ const ProductForm = ({ product, setProduct, onSave, onClose, uploadingImages, ca
     const handleRemoveImage = (indexToRemove) => setProduct({ ...product, images: productImages.filter((_, index) => index !== indexToRemove) });
     const handleSetMainImage = (url) => setProduct({ ...product, image: url });
     const handleSubmit = (e) => { e.preventDefault(); onSave(); };
-    const editingCurrency = product.currency || product.priceCurrency || currency;
+    const editingCurrency = resolveProductFormCurrency(product, currency);
     const editingCurrencySymbol = currencies?.[editingCurrency]?.symbol || editingCurrency;
     const displayAmount = (amount) => {
         if (amount === '' || amount === null || amount === undefined) return '';
-        const numericAmount = Number(amount);
-        return Number.isFinite(numericAmount) ? String(numericAmount) : '';
+        return typeof amount === 'number' || typeof amount === 'string' ? String(amount) : '';
     };
 
     const inputClass = "glass-input w-full";
@@ -1293,7 +1433,7 @@ const ProductForm = ({ product, setProduct, onSave, onClose, uploadingImages, ca
                         <div>
                             <label className={labelClass} style={{ color: 'hsl(var(--muted-foreground))' }}>Stock *</label>
                             <input type="number" min={0} required disabled={uploadingImages} value={product.stock}
-                                onChange={(e) => setProduct({ ...product, stock: Math.round(e.target.value) || 0 })}
+                                onChange={(e) => setProduct({ ...product, stock: e.target.value })}
                                 className={inputClass} placeholder="Enter stock quantity" />
                         </div>
                         <div>
@@ -1305,7 +1445,7 @@ const ProductForm = ({ product, setProduct, onSave, onClose, uploadingImages, ca
                                 <input type="number" min="0" step="0.01" required disabled={uploadingImages}
                                     value={displayAmount(product.price)}
                                     onChange={(e) => {
-                                        const inputAmount = e.target.value === '' ? '' : parseFloat(e.target.value) || 0;
+                                        const inputAmount = e.target.value;
                                         setProduct({
                                             ...product,
                                             price: inputAmount,
@@ -1326,7 +1466,7 @@ const ProductForm = ({ product, setProduct, onSave, onClose, uploadingImages, ca
                                 <input type="number" min="0" step="0.01" disabled={uploadingImages}
                                     value={displayAmount(product.discountedPrice)}
                                     onChange={(e) => {
-                                        const inputAmount = parseFloat(e.target.value) || 0;
+                                        const inputAmount = e.target.value;
                                         setProduct({
                                             ...product,
                                             currency: editingCurrency,

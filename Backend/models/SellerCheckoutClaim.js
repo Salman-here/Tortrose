@@ -22,6 +22,15 @@ const sellerCheckoutClaimSchema = new mongoose.Schema({
     token: { type: String, required: true },
     sessionId: { type: String, default: '' },
     sessionUrl: { type: String, default: '' },
+    creationState: {
+        type: String,
+        enum: ['creating', 'recoverable', 'attached'],
+        default: 'creating',
+        index: true,
+    },
+    founderReservationToken: { type: String, default: '' },
+    lastCreationError: { type: String, default: '' },
+    lastCreationErrorAt: { type: Date, default: null },
     expiresAt: { type: Date, required: true },
 }, {
     timestamps: true,

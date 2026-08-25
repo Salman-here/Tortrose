@@ -36,11 +36,15 @@ import {
   buildAnalyticsNotificationReadKey,
   filterSellerNotifications,
   formatSellerNotificationTime,
-  normalizeAnalyticsNotification,
-  normalizePersistentNotification,
+  mergeNormalizedSellerNotifications,
+  parseSellerAnalyticsNotificationsResponse,
+  parseSellerInboxNotificationsResponse,
   resolveSellerNotificationTarget,
-  sortSellerNotifications,
 } from '../../utils/sellerNotifications';
+import {
+  parseNotificationReadAllResponse,
+  parseNotificationReadResponse,
+} from '../../utils/notificationInboxSafety';
 
 const getNotificationVisuals = (palette) => ({
   order: {
@@ -87,85 +91,133 @@ const getNotificationVisuals = (palette) => ({
   },
 });
 
-function responseItems(response, key) {
-  const value = response?.data?.[key] ?? response?.data;
-  return Array.isArray(value) ? value : [];
-}
-
 export default function SellerNotificationsScreen({ navigation }) {
   const { palette } = useTheme();
   const { currentUser } = useAuth();
   const styles = useMemo(() => buildStyles(palette), [palette]);
   const notificationVisuals = useMemo(() => getNotificationVisuals(palette), [palette]);
   const analyticReadKeys = useRef(new Set());
+  const accountGenerationRef = useRef(0);
+  const fetchGenerationRef = useRef(0);
+  const sellerId = useMemo(() => {
+    const rawId = currentUser?._id || currentUser?.id;
+    return currentUser?.role === 'seller' && typeof rawId === 'string' && rawId.trim() === rawId
+      ? rawId
+      : '';
+  }, [currentUser?._id, currentUser?.id, currentUser?.role]);
+  const sellerIdRef = useRef(sellerId);
   const readStorageKey = useMemo(() => {
-    const sellerId = currentUser?._id || currentUser?.id || 'unknown';
-    return `seller:analytics-notification-read:${sellerId}`;
-  }, [currentUser?._id, currentUser?.id]);
+    return sellerId ? `seller:analytics-notification-read:${sellerId}` : '';
+  }, [sellerId]);
 
   const [notifications, setNotifications] = useState([]);
+  const [notificationOwner, setNotificationOwner] = useState('');
   const [activeCategory, setActiveCategory] = useState('all');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [markingAll, setMarkingAll] = useState(false);
   const [loadError, setLoadError] = useState('');
   const [actionError, setActionError] = useState('');
-  const [readStateReady, setReadStateReady] = useState(false);
+  const [readStateIdentity, setReadStateIdentity] = useState('');
 
   useEffect(() => {
+    const accountGeneration = accountGenerationRef.current + 1;
+    accountGenerationRef.current = accountGeneration;
+    fetchGenerationRef.current += 1;
+    sellerIdRef.current = sellerId;
+    analyticReadKeys.current = new Set();
+    setNotifications([]);
+    setNotificationOwner('');
+    setReadStateIdentity('');
+    setActiveCategory('all');
+    setRefreshing(false);
+    setMarkingAll(false);
+    setLoadError('');
+    setActionError('');
+
+    if (!sellerId || !readStorageKey) {
+      setLoading(false);
+      setLoadError('Seller notifications require an active seller account.');
+      return undefined;
+    }
+
+    setLoading(true);
     let active = true;
-    setReadStateReady(false);
     AsyncStorage.getItem(readStorageKey)
       .then((stored) => {
-        if (!active) return;
+        if (
+          !active
+          || accountGenerationRef.current !== accountGeneration
+          || sellerIdRef.current !== sellerId
+        ) return;
         const parsed = stored ? JSON.parse(stored) : [];
         analyticReadKeys.current = new Set(Array.isArray(parsed) ? parsed.filter(Boolean).slice(-500) : []);
       })
       .catch(() => {
-        if (active) analyticReadKeys.current = new Set();
+        if (
+          active
+          && accountGenerationRef.current === accountGeneration
+          && sellerIdRef.current === sellerId
+        ) analyticReadKeys.current = new Set();
       })
       .finally(() => {
-        if (active) setReadStateReady(true);
+        if (
+          active
+          && accountGenerationRef.current === accountGeneration
+          && sellerIdRef.current === sellerId
+        ) setReadStateIdentity(sellerId);
       });
     return () => { active = false; };
-  }, [readStorageKey]);
+  }, [readStorageKey, sellerId]);
 
   const persistAnalyticsReadState = useCallback(async () => {
+    if (!sellerId || !readStorageKey || sellerIdRef.current !== sellerId) {
+      throw new Error('Seller notification account changed.');
+    }
     const boundedKeys = Array.from(analyticReadKeys.current).slice(-500);
     analyticReadKeys.current = new Set(boundedKeys);
     await AsyncStorage.setItem(readStorageKey, JSON.stringify(boundedKeys));
-  }, [readStorageKey]);
+  }, [readStorageKey, sellerId]);
 
   const fetchNotifications = useCallback(async ({ initial = false } = {}) => {
+    if (!sellerId || sellerIdRef.current !== sellerId) return;
+    const accountGeneration = accountGenerationRef.current;
+    const fetchGeneration = fetchGenerationRef.current + 1;
+    fetchGenerationRef.current = fetchGeneration;
     if (initial) setLoading(true);
     setLoadError('');
 
     const [analyticsResult, inboxResult] = await Promise.allSettled([
       api.get('/api/analytics/notifications'),
-      api.get('/api/notifications/me'),
+      api.get('/api/notifications/me?surface=seller'),
     ]);
 
-    const analyticsLoaded = analyticsResult.status === 'fulfilled';
-    const inboxLoaded = inboxResult.status === 'fulfilled';
-    const analyticsItems = analyticsLoaded
-      ? responseItems(analyticsResult.value, 'notifications')
-        .map(normalizeAnalyticsNotification)
-        .filter(Boolean)
-        .map((notification) => analyticReadKeys.current.has(buildAnalyticsNotificationReadKey(notification))
-          ? { ...notification, read: true }
-          : notification)
-      : null;
-    const inboxItems = inboxLoaded
-      ? responseItems(inboxResult.value, 'items').map(normalizePersistentNotification).filter(Boolean)
-      : null;
+    if (
+      accountGenerationRef.current !== accountGeneration
+      || fetchGenerationRef.current !== fetchGeneration
+      || sellerIdRef.current !== sellerId
+    ) return;
 
-    setNotifications((previous) => {
-      const nextAnalytics = analyticsItems ?? previous.filter(({ source }) => source === 'analytics');
-      const nextInbox = inboxItems ?? previous.filter(({ source }) => source === 'persistent');
-      const byId = new Map();
-      [...nextAnalytics, ...nextInbox].forEach((notification) => byId.set(notification.id, notification));
-      return sortSellerNotifications(Array.from(byId.values()));
-    });
+    let analyticsItems = null;
+    let inboxItems = null;
+    if (analyticsResult.status === 'fulfilled') {
+      try {
+        analyticsItems = parseSellerAnalyticsNotificationsResponse(analyticsResult.value?.data, {
+          sellerId,
+          analyticsReadKeys: analyticReadKeys.current,
+        });
+      } catch {}
+    }
+    if (inboxResult.status === 'fulfilled') {
+      try {
+        inboxItems = parseSellerInboxNotificationsResponse(inboxResult.value?.data, { sellerId });
+      } catch {}
+    }
+    const analyticsLoaded = Array.isArray(analyticsItems);
+    const inboxLoaded = Array.isArray(inboxItems);
+
+    setNotifications(mergeNormalizedSellerNotifications(analyticsItems || [], inboxItems || []));
+    setNotificationOwner(sellerId);
 
     if (!analyticsLoaded && !inboxLoaded) {
       setLoadError('We could not reach either notification service. Check your connection and try again.');
@@ -177,42 +229,54 @@ export default function SellerNotificationsScreen({ navigation }) {
 
     setLoading(false);
     setRefreshing(false);
-  }, []);
+  }, [sellerId]);
 
   useEffect(() => {
-    if (readStateReady) fetchNotifications({ initial: true });
-  }, [fetchNotifications, readStateReady]);
+    if (sellerId && readStateIdentity === sellerId) fetchNotifications({ initial: true });
+  }, [fetchNotifications, readStateIdentity, sellerId]);
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
     fetchNotifications();
   }, [fetchNotifications]);
 
+  const visibleNotifications = notificationOwner === sellerId ? notifications : [];
   const unreadCount = useMemo(
-    () => notifications.reduce((count, notification) => count + (notification.read ? 0 : 1), 0),
-    [notifications],
+    () => visibleNotifications.reduce((count, notification) => count + (notification.read ? 0 : 1), 0),
+    [visibleNotifications],
   );
   const filteredNotifications = useMemo(
-    () => filterSellerNotifications(notifications, activeCategory),
-    [activeCategory, notifications],
+    () => filterSellerNotifications(visibleNotifications, activeCategory),
+    [activeCategory, visibleNotifications],
   );
   const categoryCounts = useMemo(() => {
-    const counts = { all: notifications.length };
-    notifications.forEach(({ category }) => {
+    const counts = { all: visibleNotifications.length };
+    visibleNotifications.forEach(({ category }) => {
       counts[category] = (counts[category] || 0) + 1;
     });
     return counts;
-  }, [notifications]);
+  }, [visibleNotifications]);
 
   const markNotificationRead = useCallback((notification) => {
-    if (notification.read) return;
+    if (notification.read || !sellerId || sellerIdRef.current !== sellerId) return;
+    const accountGeneration = accountGenerationRef.current;
+    const accountIsCurrent = () => (
+      accountGenerationRef.current === accountGeneration
+      && sellerIdRef.current === sellerId
+    );
 
     setActionError('');
     if (!notification.persisted) {
       const readKey = buildAnalyticsNotificationReadKey(notification);
       if (readKey) analyticReadKeys.current.add(readKey);
       persistAnalyticsReadState().catch(() => {
-        setActionError('The alert opened, but its read status could not be saved on this device.');
+        if (accountIsCurrent()) {
+          if (readKey) analyticReadKeys.current.delete(readKey);
+          setNotifications((current) => current.map((item) => (
+            item.id === notification.id ? { ...item, read: false } : item
+          )));
+          setActionError('The alert opened, but its read status could not be saved on this device.');
+        }
       });
     }
     setNotifications((current) => current.map((item) => (
@@ -228,13 +292,20 @@ export default function SellerNotificationsScreen({ navigation }) {
       return;
     }
 
-    api.patch(`/api/notifications/${encodeURIComponent(notification.backendId)}/read`).catch(() => {
-      setNotifications((current) => current.map((item) => (
-        item.id === notification.id ? { ...item, read: false } : item
-      )));
-      setActionError('The notification opened, but its read status could not be saved.');
-    });
-  }, [persistAnalyticsReadState]);
+    api.patch(`/api/notifications/${encodeURIComponent(notification.backendId)}/read?surface=seller`)
+      .then((response) => parseNotificationReadResponse(response.data, {
+        currentUser,
+        notificationId: notification.backendId,
+        expectedSurface: 'seller',
+      }))
+      .catch(() => {
+        if (!accountIsCurrent()) return;
+        setNotifications((current) => current.map((item) => (
+          item.id === notification.id ? { ...item, read: false } : item
+        )));
+        setActionError('The notification opened, but its read status could not be saved.');
+      });
+  }, [currentUser, persistAnalyticsReadState, sellerId]);
 
   const handleNotificationPress = useCallback((notification) => {
     markNotificationRead(notification);
@@ -243,14 +314,27 @@ export default function SellerNotificationsScreen({ navigation }) {
   }, [markNotificationRead, navigation]);
 
   const markAllRead = useCallback(async () => {
-    if (markingAll || unreadCount === 0) return;
+    if (
+      markingAll
+      || unreadCount === 0
+      || !sellerId
+      || sellerIdRef.current !== sellerId
+    ) return;
+    const accountGeneration = accountGenerationRef.current;
+    const accountIsCurrent = () => (
+      accountGenerationRef.current === accountGeneration
+      && sellerIdRef.current === sellerId
+    );
 
     const previousReadState = new Map(
-      notifications.filter(({ persisted }) => persisted).map(({ id, read }) => [id, read]),
+      visibleNotifications.filter(({ persisted }) => persisted).map(({ id, read }) => [id, read]),
     );
-    const persistedUnread = notifications.some(({ persisted, read }) => persisted && !read);
+    const previousAnalyticsReadState = new Map(
+      visibleNotifications.filter(({ persisted }) => !persisted).map(({ id, read }) => [id, read]),
+    );
+    const persistedUnread = visibleNotifications.some(({ persisted, read }) => persisted && !read);
 
-    const analyticsUnread = notifications
+    const analyticsUnread = visibleNotifications
       .filter(({ persisted, read }) => !persisted && !read)
       .map((notification) => buildAnalyticsNotificationReadKey(notification))
       .filter(Boolean);
@@ -263,28 +347,41 @@ export default function SellerNotificationsScreen({ navigation }) {
       try {
         await persistAnalyticsReadState();
       } catch {
-        setActionError('Alerts were cleared, but their read status could not be saved on this device.');
+        if (accountIsCurrent()) {
+          analyticsUnread.forEach((readKey) => analyticReadKeys.current.delete(readKey));
+          setNotifications((current) => current.map((notification) => (
+            !notification.persisted && previousAnalyticsReadState.has(notification.id)
+              ? { ...notification, read: previousAnalyticsReadState.get(notification.id) }
+              : notification
+          )));
+          setActionError('Some alerts could not be marked as read on this device. Please retry.');
+        }
       }
     }
 
     if (!persistedUnread) {
-      setMarkingAll(false);
+      if (accountIsCurrent()) setMarkingAll(false);
       return;
     }
 
     try {
-      await api.post('/api/notifications/read-all');
+      const response = await api.post('/api/notifications/read-all?surface=seller');
+      parseNotificationReadAllResponse(response.data, {
+        currentUser,
+        expectedSurface: 'seller',
+      });
     } catch {
+      if (!accountIsCurrent()) return;
       setNotifications((current) => current.map((notification) => (
         notification.persisted && previousReadState.has(notification.id)
           ? { ...notification, read: previousReadState.get(notification.id) }
           : notification
       )));
-      setActionError('Live alerts were cleared, but saved inbox items could not be updated. Please retry.');
+      setActionError('Saved seller inbox items could not be marked as read. Please retry.');
     } finally {
-      setMarkingAll(false);
+      if (accountIsCurrent()) setMarkingAll(false);
     }
-  }, [markingAll, notifications, persistAnalyticsReadState, unreadCount]);
+  }, [currentUser, markingAll, persistAnalyticsReadState, sellerId, unreadCount, visibleNotifications]);
 
   const renderCategory = useCallback((category) => {
     const active = category.key === activeCategory;
@@ -452,7 +549,7 @@ export default function SellerNotificationsScreen({ navigation }) {
           )}
           ListHeaderComponent={(
             <View>
-              {(loadError && notifications.length > 0) && (
+              {(loadError && visibleNotifications.length > 0) && (
                 <SellerInlineError
                   compact
                   title="Some notifications are unavailable"

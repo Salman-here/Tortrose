@@ -6,6 +6,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Animated, ActivityIndicator } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import api from '../config/api';
 import { useGlobal } from '../contexts/GlobalContext';
@@ -13,7 +14,7 @@ import GlassBackground from '../components/common/GlassBackground';
 import GlassPanel from '../components/common/GlassPanel';
 import { recordSuccessfulOrder } from '../hooks/useReviewPrompt';
 import { trackPaymentEvent } from '../utils/breadcrumbs';
-import { verifyOrderPayment } from '../utils/checkout';
+import { clearCheckoutAttempt, verifyOrderPayment } from '../utils/checkout';
 import { spacing, fontSize, shadows, fontWeight } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 
@@ -24,6 +25,13 @@ export default function PaymentSuccessScreen({ navigation, route }) {
   const orderId = route.params?.orderId || '';
   const sessionId = route.params?.session_id || route.params?.sessionId || '';
   const paymentIntentId = route.params?.payment_intent || route.params?.paymentIntentId || '';
+  const noPaymentRequired = route.params?.noPaymentRequired === true;
+  const checkoutAttemptStorageKey = route.params?.checkoutAttemptStorageKey || '';
+  const checkoutAttemptFingerprint = route.params?.checkoutAttemptFingerprint || '';
+  const checkoutAttemptKey = route.params?.checkoutAttemptKey || '';
+  const hasAttemptCorrelation = Boolean(
+    checkoutAttemptStorageKey && checkoutAttemptFingerprint && checkoutAttemptKey
+  );
   const [verification, setVerification] = useState({ status: 'checking' });
   const [retrying, setRetrying] = useState(false);
   const completedRef = useRef(false);
@@ -52,11 +60,32 @@ export default function PaymentSuccessScreen({ navigation, route }) {
     if (result.status === 'paid' && !completedRef.current) {
       completedRef.current = true;
       try {
+        if (hasAttemptCorrelation) {
+          await clearCheckoutAttempt(
+            AsyncStorage,
+            checkoutAttemptStorageKey,
+            checkoutAttemptFingerprint,
+            checkoutAttemptKey,
+          );
+        }
+      } catch {}
+      try {
         await fetchCart();
       } catch {}
       recordSuccessfulOrder();
+    } else if (['failed', 'cancelled'].includes(result.status)) {
+      try {
+        if (hasAttemptCorrelation) {
+          await clearCheckoutAttempt(
+            AsyncStorage,
+            checkoutAttemptStorageKey,
+            checkoutAttemptFingerprint,
+            checkoutAttemptKey,
+          );
+        }
+      } catch {}
     }
-  }, [animateIn, fetchCart, orderId, paymentIntentId, sessionId]);
+  }, [animateIn, checkoutAttemptFingerprint, checkoutAttemptKey, checkoutAttemptStorageKey, fetchCart, hasAttemptCorrelation, orderId, paymentIntentId, sessionId]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -70,11 +99,19 @@ export default function PaymentSuccessScreen({ navigation, route }) {
   const pending = status === 'pending' || status === 'checking';
   const icon = paid ? 'checkmark' : pending ? 'time-outline' : 'close';
   const accent = paid ? palette.colors.success : pending ? palette.colors.warning : palette.colors.error;
-  const title = paid ? 'Payment confirmed' : pending ? 'Confirming your payment' : 'Payment not completed';
-  const subtitle = paid
-    ? 'Your order is secured and the stores can now begin preparing it.'
+  const title = paid
+    ? noPaymentRequired ? 'Order confirmed' : 'Payment confirmed'
     : pending
-      ? 'Stripe may take a few moments to report back. We will not clear your cart or claim success early.'
+      ? noPaymentRequired ? 'Confirming your order' : 'Confirming your payment'
+      : noPaymentRequired ? 'Order not confirmed' : 'Payment not completed';
+  const subtitle = paid
+    ? noPaymentRequired
+      ? 'Your final order total was zero, so no card payment was required. The stores can now begin preparing it.'
+      : 'Your order is secured and the stores can now begin preparing it.'
+    : pending
+      ? noPaymentRequired
+        ? 'Rozare is confirming the completed order before showing success.'
+        : 'Stripe may take a few moments to report back. We will not clear your cart or claim success early.'
       : 'We could not verify a successful charge. Your cart has been kept safely.';
 
   return (
@@ -86,7 +123,7 @@ export default function PaymentSuccessScreen({ navigation, route }) {
           </View>
         </Animated.View>
         <Animated.View style={[styles.copy, { opacity: fadeAnim }]}>
-          <Text style={styles.eyebrow}>{paid ? 'ORDER SECURED' : 'SECURE PAYMENT CHECK'}</Text>
+          <Text style={styles.eyebrow}>{paid ? 'ORDER SECURED' : noPaymentRequired ? 'SECURE ORDER CHECK' : 'SECURE PAYMENT CHECK'}</Text>
           <Text style={styles.title}>{title}</Text>
           <Text style={styles.subtitle}>{subtitle}</Text>
           {!!orderId && (
@@ -97,7 +134,7 @@ export default function PaymentSuccessScreen({ navigation, route }) {
           )}
           {paid && (
             <GlassPanel variant="inner" style={styles.infoCard}>
-              <View style={styles.infoRow}><Ionicons name="shield-checkmark-outline" size={17} color={palette.colors.success} /><Text style={styles.infoText}>Payment verified by Rozare</Text></View>
+              <View style={styles.infoRow}><Ionicons name="shield-checkmark-outline" size={17} color={palette.colors.success} /><Text style={styles.infoText}>{noPaymentRequired ? 'No payment was required' : 'Payment verified by Rozare'}</Text></View>
               <View style={styles.infoRow}><Ionicons name="notifications-outline" size={17} color={palette.colors.primary} /><Text style={styles.infoText}>Order updates will appear in My Orders</Text></View>
             </GlassPanel>
           )}

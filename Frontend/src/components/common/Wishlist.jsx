@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Heart, Trash2 } from 'lucide-react';
 import { useGlobal } from '../../contexts/GlobalContext';
-import { useCurrency } from '../../contexts/CurrencyContext';
+import { resolveProductPresentationMoney, useCurrency } from '../../contexts/CurrencyContext';
 
 export default function WishlistDropdown() {
     const { wishlistItems, handleDeleteFromWishlist } = useGlobal();
@@ -70,7 +70,12 @@ export default function WishlistDropdown() {
                                 <div className="flex-1">
                                     <p className="text-xs sm:text-sm font-medium mr-3">{item.name}</p>
                                     <p className="font-semibold text-base" style={{ color: 'hsl(var(--primary))' }}>
-                                        {formatProductPrice(item, { field: Number(item.discountedPrice || 0) > 0 && Number(item.discountedPrice) < Number(item.price || 0) ? 'discountedPrice' : 'price' })}
+                                        {formatProductPrice(item, {
+                                            field: resolveProductPresentationMoney(item, 'discountedPrice') > 0
+                                                && resolveProductPresentationMoney(item, 'discountedPrice') < resolveProductPresentationMoney(item, 'price')
+                                                ? 'discountedPrice'
+                                                : 'price',
+                                        })}
                                     </p>
                                     <motion.button whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}
                                         className='absolute cursor-pointer top-2 right-2 p-1 rounded-lg glass-button'

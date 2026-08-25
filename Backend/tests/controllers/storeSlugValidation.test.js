@@ -6,7 +6,7 @@ jest.mock('../../controllers/mailController', () => ({ sendEmail: jest.fn().mock
 const Store = require('../../models/Store');
 const User = require('../../models/User');
 const { validateStoreSlug } = require('../../utils/storeSlug');
-const { checkSubdomainAvailability, updateStore } = require('../../controllers/storeController');
+const { checkSubdomainAvailability, createStore, updateStore } = require('../../controllers/storeController');
 
 let mongoServer;
 
@@ -32,6 +32,27 @@ afterAll(async () => {
 }, 60000);
 
 describe('seller subdomain hostname contract', () => {
+  test('store creation rejects an explicitly unsupported product currency before persistence', async () => {
+    const seller = await User.create({
+      username: 'invalid-currency-seller',
+      email: 'invalid-currency-seller@example.com',
+      role: 'seller',
+      isVerified: true,
+    });
+    const response = responseMock();
+
+    await createStore({
+      user: { id: seller._id.toString(), role: 'seller' },
+      body: { storeName: 'Invalid Currency Store', productCurrency: 'DOGE' },
+    }, response);
+
+    expect(response.status).toHaveBeenCalledWith(400);
+    expect(response.json).toHaveBeenCalledWith(expect.objectContaining({
+      code: 'PRODUCT_CURRENCY_NOT_SUPPORTED',
+    }));
+    await expect(Store.countDocuments({ seller: seller._id })).resolves.toBe(0);
+  });
+
   test.each([
     ['ab', 'INVALID_SUBDOMAIN_LENGTH'],
     ['a'.repeat(64), 'INVALID_SUBDOMAIN_LENGTH'],
@@ -114,5 +135,102 @@ describe('seller subdomain hostname contract', () => {
     expect(response.json).toHaveBeenCalledWith(expect.objectContaining({
       cooldown: expect.objectContaining({ field: 'storeSlug', cooldownDays: 30 }),
     }));
+  });
+
+  test('cannot change the slug while a paid subdomain Checkout owns the resource lock', async () => {
+    const seller = await User.create({
+      username: 'slug-checkout-lock-seller',
+      email: 'slug-checkout-lock@example.com',
+      role: 'seller',
+      isVerified: true,
+    });
+    const store = await Store.create({
+      seller: seller._id,
+      storeName: 'Checkout Locked Store',
+      storeSlug: 'checkout-locked-store',
+      subdomainResourceLock: {
+        kind: 'checkout',
+        token: 'checkout-lock-token',
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+      },
+    });
+    const response = responseMock();
+
+    await updateStore({
+      user: { id: seller._id.toString(), role: 'seller' },
+      body: { storeSlug: 'replacement-while-paying' },
+    }, response);
+
+    expect(response.status).toHaveBeenCalledWith(423);
+    expect(response.json).toHaveBeenCalledWith(expect.objectContaining({
+      code: 'SUBDOMAIN_RESOURCE_LOCKED',
+    }));
+    const unchanged = await Store.findById(store._id);
+    expect(unchanged.storeSlug).toBe('checkout-locked-store');
+    expect(unchanged.subdomainResourceLock.token).toBe('checkout-lock-token');
+  });
+
+  test('serializes a valid slug change and releases its short-lived lock after saving', async () => {
+    const seller = await User.create({
+      username: 'slug-serialized-seller',
+      email: 'slug-serialized@example.com',
+      role: 'seller',
+      isVerified: true,
+    });
+    const store = await Store.create({
+      seller: seller._id,
+      storeName: 'Serialized Slug Store',
+      storeSlug: 'serialized-slug-store',
+    });
+    const response = responseMock();
+
+    await updateStore({
+      user: { id: seller._id.toString(), role: 'seller' },
+      body: { storeSlug: 'serialized-new-slug' },
+    }, response);
+
+    expect(response.status).toHaveBeenCalledWith(200);
+    const updated = await Store.findById(store._id);
+    expect(updated.storeSlug).toBe('serialized-new-slug');
+    expect(updated.subdomainResourceLock.token).toBe('');
+    expect(updated.subdomainResourceLock.kind).toBeNull();
+  });
+
+  test('commits slug and other validated settings in the same locked compare-and-set', async () => {
+    const seller = await User.create({
+      username: 'slug-combined-seller',
+      email: 'slug-combined@example.com',
+      role: 'seller',
+      isVerified: true,
+    });
+    const store = await Store.create({
+      seller: seller._id,
+      storeName: 'Combined Settings Store',
+      storeSlug: 'combined-settings-store',
+      description: 'Before',
+      paymentPolicy: 'online_and_cod',
+    });
+    const response = responseMock();
+
+    await updateStore({
+      user: { id: seller._id.toString(), role: 'seller' },
+      body: {
+        storeSlug: 'combined-new-slug',
+        description: 'After the atomic hostname change',
+        paymentPolicy: 'advance_only',
+        socialLinks: { website: 'https://example.com' },
+      },
+    }, response);
+
+    expect(response.status).toHaveBeenCalledWith(200);
+    const updated = await Store.findById(store._id);
+    expect(updated).toMatchObject({
+      storeSlug: 'combined-new-slug',
+      description: 'After the atomic hostname change',
+      paymentPolicy: 'advance_only',
+      socialLinks: { website: 'https://example.com' },
+      subdomainResourceLock: { kind: null, token: '' },
+    });
+    expect(updated.subdomainSlugHistory).toHaveLength(1);
   });
 });

@@ -1,9 +1,8 @@
 // src/context/AuthContext.js
-import { createContext, useContext, useEffect, useState, useMemo } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "react-toastify";
 import { useNavigate } from "react-router-dom";
-import { useGlobal } from "./GlobalContext";
 import {
     setCrossDomainCookie,
     getCookie,
@@ -230,15 +229,15 @@ export const AuthProvider = ({ children }) => {
         }
     };
 
-    // Memoize context value to prevent unnecessary re-renders
-    const contextValue = useMemo(() => ({
+    // Auth actions close over the latest navigation and account state.
+    const contextValue = {
         currentUser,
         setCurrentUser,
         fetchAndUpdateCurrentUser,
         signup,
         login,
         logout
-    }), [currentUser]);
+    };
 
     return (
         <AuthContext.Provider value={contextValue}>

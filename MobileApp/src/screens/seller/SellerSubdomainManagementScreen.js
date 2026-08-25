@@ -31,6 +31,7 @@ import {
 import { useTheme } from '../../contexts/ThemeContext';
 import { useCurrency } from '../../contexts/CurrencyContext';
 import { borderRadius, fontSize, fontWeight, spacing } from '../../styles/theme';
+import { subdomainAnalyticsResponseIsValid } from '../../utils/subdomainAnalyticsSafety';
 
 const SUBDOMAIN_RETURN_URL = 'rozare://seller-subdomain';
 const SLUG_COOLDOWN_DAYS = 30;
@@ -60,6 +61,61 @@ const formatDate = (value) => {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '—';
   return date.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+};
+
+export const resolveSubdomainOwnershipTerms = (value) => {
+  const directMinor = value?.priceMinor;
+  const legacyMajor = value?.price;
+  const hasDirectMinor = Number.isSafeInteger(directMinor) && directMinor >= 0;
+  const amountMinor = hasDirectMinor
+    ? directMinor
+    : (typeof legacyMajor === 'number'
+      && Number.isFinite(legacyMajor)
+      && legacyMajor >= 0
+      && Number.isSafeInteger(Math.round(legacyMajor * 100))
+      && Math.round(legacyMajor * 100) / 100 === legacyMajor
+      ? Math.round(legacyMajor * 100)
+      : null);
+  const currency = typeof value?.priceCurrency === 'string'
+    ? value.priceCurrency.trim().toUpperCase()
+    : (!hasDirectMinor && amountMinor !== null ? 'USD' : '');
+  const years = Number.isSafeInteger(value?.ownershipYears) && value.ownershipYears > 0
+    ? value.ownershipYears
+    : null;
+  if (amountMinor === null || currency !== 'USD' || years === null) return null;
+  return {
+    amountMinor,
+    currency,
+    years,
+    priceLabel: `$${(amountMinor / 100).toFixed(2)} ${currency}`,
+  };
+};
+
+const validDateOrNull = (value) => (
+  value === null
+  || (typeof value === 'string' && Number.isFinite(new Date(value).getTime()))
+  || (value instanceof Date && Number.isFinite(value.getTime()))
+);
+
+export const subdomainOwnershipResponseIsValid = (value) => {
+  const state = value?.ownership;
+  const slug = value?.subdomain;
+  return Boolean(
+    resolveSubdomainOwnershipTerms(value)
+    && typeof slug === 'string'
+    && /^[a-z0-9](?:[a-z0-9-]{1,48}[a-z0-9])?$/.test(slug)
+    && value?.url === `${slug}.rozare.com`
+    && state
+    && typeof state.isPurchased === 'boolean'
+    && typeof state.isOwned === 'boolean'
+    && (!state.isOwned || state.isPurchased)
+    && validDateOrNull(state.purchasedAt)
+    && validDateOrNull(state.expiresAt)
+    && Number.isSafeInteger(state.daysRemaining)
+    && state.daysRemaining >= 0
+    && (!state.isOwned || (state.daysRemaining >= 1 && state.expiresAt))
+    && (state.isOwned || state.daysRemaining === 0)
+  );
 };
 
 function MetricCard({ icon, label, value, color, styles }) {
@@ -93,9 +149,15 @@ export default function SellerSubdomainManagementScreen({ navigation, route }) {
   const checkoutOpenRef = useRef(false);
   const handledReturnRef = useRef('');
   const checkoutRefreshTimersRef = useRef([]);
+  const dataRequestRef = useRef(0);
+  const availabilityRequestRef = useRef(0);
 
-  const fetchData = useCallback(async ({ initial = false } = {}) => {
-    if (initial) setLoading(true);
+  const fetchData = useCallback(async () => {
+    const requestId = dataRequestRef.current + 1;
+    dataRequestRef.current = requestId;
+    setLoading(true);
+    setData(null);
+    setOwnership(null);
     setError('');
     setNoStore(false);
     try {
@@ -103,19 +165,33 @@ export default function SellerSubdomainManagementScreen({ navigation, route }) {
         api.get(`/api/subdomain/analytics/seller?currency=${encodeURIComponent(currency)}`),
         api.get('/api/subscription/subdomain/ownership'),
       ]);
+      if (dataRequestRef.current !== requestId) return null;
       const nextData = analyticsResponse.data;
+      if (!subdomainAnalyticsResponseIsValid(nextData, currency)) {
+        throw new Error('Subdomain analytics returned invalid or inconsistent money data.');
+      }
+      if (!subdomainOwnershipResponseIsValid(ownershipResponse.data)) {
+        throw new Error('Subdomain ownership details returned an invalid or inconsistent state.');
+      }
       setData(nextData);
       setOwnership(ownershipResponse.data);
       setNewSlug(nextData?.subdomain?.slug || '');
       setSlugAvailable(null);
       setSlugMessage('');
+      return nextData;
     } catch (requestError) {
+      if (dataRequestRef.current !== requestId) return null;
       const isMissingStore = requestError.response?.status === 404;
+      setData(null);
+      setOwnership(null);
       setNoStore(isMissingStore);
-      setError(requestError.response?.data?.msg || 'Could not load your subdomain details.');
+      setError(requestError.response?.data?.msg || requestError.message || 'Could not load your subdomain details.');
+      return null;
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (dataRequestRef.current === requestId) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   }, [currency]);
 
@@ -134,6 +210,8 @@ export default function SellerSubdomainManagementScreen({ navigation, route }) {
 
   useEffect(() => () => {
     checkoutRefreshTimersRef.current.forEach(clearTimeout);
+    dataRequestRef.current += 1;
+    availabilityRequestRef.current += 1;
   }, []);
 
   useEffect(() => {
@@ -162,18 +240,26 @@ export default function SellerSubdomainManagementScreen({ navigation, route }) {
   const subdomain = data?.subdomain;
   const analytics = data?.analytics || {};
   const ownershipState = ownership?.ownership || {};
+  const ownershipTerms = resolveSubdomainOwnershipTerms(ownership);
   const isOwned = Boolean(ownershipState.isOwned);
   const cooldown = getSubdomainCooldown(subdomain?.lastSlugChangeAt);
   const currentUrl = subdomain?.url ? `https://${subdomain.url}` : '';
 
   useEffect(() => {
-    if (!editing) return undefined;
+    const requestId = availabilityRequestRef.current + 1;
+    availabilityRequestRef.current = requestId;
+    if (!editing) {
+      setSlugChecking(false);
+      return undefined;
+    }
     if (!newSlug || newSlug.length < 3) {
+      setSlugChecking(false);
       setSlugAvailable(false);
       setSlugMessage('Use at least 3 letters, numbers or hyphens.');
       return undefined;
     }
     if (newSlug === subdomain?.slug) {
+      setSlugChecking(false);
       setSlugAvailable(null);
       setSlugMessage('This is your current subdomain.');
       return undefined;
@@ -183,15 +269,18 @@ export default function SellerSubdomainManagementScreen({ navigation, route }) {
       setSlugChecking(true);
       try {
         const response = await api.get(`/api/stores/check-subdomain/${encodeURIComponent(newSlug)}`);
+        if (availabilityRequestRef.current !== requestId) return;
+        if (typeof response.data?.available !== 'boolean') throw new Error('Availability response is invalid.');
         setSlugAvailable(Boolean(response.data?.available));
         setSlugMessage(response.data?.msg || (response.data?.available
           ? 'Available — save to claim it.'
           : 'This subdomain is unavailable.'));
       } catch (requestError) {
+        if (availabilityRequestRef.current !== requestId) return;
         setSlugAvailable(null);
         setSlugMessage(requestError.response?.data?.msg || 'Availability could not be checked. Try again.');
       } finally {
-        setSlugChecking(false);
+        if (availabilityRequestRef.current === requestId) setSlugChecking(false);
       }
     }, 450);
     return () => clearTimeout(timer);
@@ -279,13 +368,18 @@ export default function SellerSubdomainManagementScreen({ navigation, route }) {
 
   const purchaseSubdomain = useCallback(() => {
     const isRenewal = isOwned;
-    const price = Number(ownership?.price || 15);
-    const years = Number(ownership?.ownershipYears || 3);
+    if (!ownershipTerms) {
+      Alert.alert(
+        'Pricing unavailable',
+        'Refresh to load the authoritative ownership price and duration before opening Checkout.',
+      );
+      return;
+    }
     Alert.alert(
       isRenewal ? 'Renew ownership?' : 'Protect this subdomain?',
       isRenewal
-        ? `A one-time $${price} payment extends ownership by ${years} years from the current expiry date.`
-        : `A one-time $${price} payment protects ${subdomain?.url} for ${years} years, even if the store is later blocked. This is separate from your seller subscription.`,
+        ? `A one-time ${ownershipTerms.priceLabel} payment extends ownership by ${ownershipTerms.years} years from the current expiry date.`
+        : `A one-time ${ownershipTerms.priceLabel} payment protects ${subdomain?.url} for ${ownershipTerms.years} years, even if the store is later blocked. This is separate from your seller subscription.`,
       [
         { text: 'Not now', style: 'cancel' },
         {
@@ -309,7 +403,7 @@ export default function SellerSubdomainManagementScreen({ navigation, route }) {
         },
       ],
     );
-  }, [isOwned, ownership, refreshAfterCheckout, subdomain?.url]);
+  }, [isOwned, ownershipTerms, refreshAfterCheckout, subdomain?.url]);
 
   if (loading) {
     return (
@@ -377,14 +471,14 @@ export default function SellerSubdomainManagementScreen({ navigation, route }) {
   }
 
   const metrics = [
-    ['eye-outline', 'Store views', Number(analytics.totalViews || 0).toLocaleString(), palette.colors.primary],
-    ['receipt-outline', 'Paid orders', Number(analytics.totalOrders || 0).toLocaleString(), palette.colors.success],
-    ['cash-outline', 'Revenue', formatPrice(analytics.totalRevenue || 0, { sourceCurrency: analytics.currency || currency }), palette.colors.info],
-    ['trending-up-outline', 'Conversion', `${Number(analytics.conversionRate || 0).toFixed(2).replace(/\.00$/, '')}%`, palette.colors.secondary],
+    ['eye-outline', 'Store views', analytics.totalViews.toLocaleString(), palette.colors.primary],
+    ['receipt-outline', 'Recognized orders', analytics.totalOrders.toLocaleString(), palette.colors.success],
+    ['cash-outline', 'Recognized revenue', formatPrice(analytics.totalRevenue, { sourceCurrency: analytics.currency }), palette.colors.info],
+    ['trending-up-outline', 'Conversion', `${analytics.conversionRate.toFixed(2).replace(/\.00$/, '')}%`, palette.colors.secondary],
   ];
-  const traffic = Array.isArray(analytics.monthlyTraffic) ? analytics.monthlyTraffic : [];
-  const maxTraffic = Math.max(...traffic.map((item) => Number(item.views || 0)), 1);
-  const canRenew = isOwned && Number(ownershipState.daysRemaining || 0) < 90;
+  const traffic = analytics.monthlyTraffic;
+  const maxTraffic = Math.max(...traffic.map((item) => item.views), 1);
+  const canRenew = isOwned && ownershipState.daysRemaining < 90;
 
   return (
     <GlassBackground>
@@ -530,13 +624,13 @@ export default function SellerSubdomainManagementScreen({ navigation, route }) {
                 </View>
                 {canRenew && (
                   <TouchableOpacity
-                    style={[styles.primaryButton, operation === 'purchase' && styles.disabledButton]}
-                    disabled={operation === 'purchase'}
+                    style={[styles.primaryButton, (operation === 'purchase' || !ownershipTerms) && styles.disabledButton]}
+                    disabled={operation === 'purchase' || !ownershipTerms}
                     onPress={purchaseSubdomain}
                   >
                     <Ionicons name="refresh-outline" size={17} color="#fff" />
                     <Text style={styles.primaryButtonText}>
-                      {operation === 'purchase' ? 'Opening Stripe…' : `Renew for $${Number(ownership?.price || 15)}`}
+                      {operation === 'purchase' ? 'Opening Stripe…' : `Renew for ${ownershipTerms?.priceLabel || 'price unavailable'}`}
                     </Text>
                   </TouchableOpacity>
                 )}
@@ -550,14 +644,14 @@ export default function SellerSubdomainManagementScreen({ navigation, route }) {
                   <View style={styles.ownershipCopy}>
                     <Text style={styles.ownershipTitle}>Protect {subdomain?.url}</Text>
                     <Text style={styles.ownershipText}>
-                      One payment protects this exact address for {ownership?.ownershipYears || 3} years, including while your account is blocked.
+                      One payment protects this exact address for {ownershipTerms?.years || 'the stated number of'} years, including while your account is blocked.
                     </Text>
                   </View>
                 </View>
                 {[
                   ['shield-checkmark-outline', 'No other seller can claim it'],
-                  ['calendar-outline', `${ownership?.ownershipYears || 3}-year ownership, renewable near expiry`],
-                  ['card-outline', `$${Number(ownership?.price || 15)} one-time payment, separate from your plan`],
+                  ['calendar-outline', ownershipTerms ? `${ownershipTerms.years}-year ownership, renewable near expiry` : 'Ownership duration unavailable — refresh required'],
+                  ['card-outline', ownershipTerms ? `${ownershipTerms.priceLabel} one-time payment, separate from your plan` : 'Ownership price unavailable — refresh required'],
                 ].map(([icon, text]) => (
                   <View key={text} style={styles.benefitRow}>
                     <Ionicons name={icon} size={16} color={palette.colors.primary} />
@@ -571,15 +665,15 @@ export default function SellerSubdomainManagementScreen({ navigation, route }) {
                   </Text>
                 </View>
                 <TouchableOpacity
-                  style={[styles.primaryButton, operation === 'purchase' && styles.disabledButton]}
-                  disabled={operation === 'purchase'}
+                  style={[styles.primaryButton, (operation === 'purchase' || !ownershipTerms) && styles.disabledButton]}
+                  disabled={operation === 'purchase' || !ownershipTerms}
                   onPress={purchaseSubdomain}
                 >
                   <Ionicons name="card-outline" size={17} color="#fff" />
                   <Text style={styles.primaryButtonText}>
                     {operation === 'purchase'
                       ? 'Opening Stripe…'
-                      : `Protect for $${Number(ownership?.price || 15)} · one time`}
+                      : `Protect for ${ownershipTerms?.priceLabel || 'price unavailable'} · one time`}
                   </Text>
                 </TouchableOpacity>
               </>
@@ -734,7 +828,9 @@ export default function SellerSubdomainManagementScreen({ navigation, route }) {
             {[
               ['When is it live?', 'Your subdomain is live whenever your store is active. Store verification is separate and adds a trust badge only.'],
               ['Can I change it?', `Yes, when the ${SLUG_COOLDOWN_DAYS}-day cooldown is clear. The old link stops working immediately.`],
-              ['What does ownership cover?', `The $${Number(ownership?.price || 15)} payment protects the exact address for ${ownership?.ownershipYears || 3} years. It does not replace the seller subscription.`],
+              ['What does ownership cover?', ownershipTerms
+                ? `The ${ownershipTerms.priceLabel} payment protects the exact address for ${ownershipTerms.years} years. It does not replace the seller subscription.`
+                : 'Refresh to load the authoritative ownership price and duration before opening Checkout.'],
             ].map(([question, answer]) => (
               <View key={question} style={styles.faqRow}>
                 <Text style={styles.faqQuestion}>{question}</Text>

@@ -14,17 +14,29 @@
  *     which re-validate the caller's role on the server.
  */
 
+const crypto = require('crypto');
 const User = require('../models/User');
 const Order = require('../models/Order');
 const Product = require('../models/Product');
 const Store = require('../models/Store');
 const ChatHistory = require('../models/ChatHistory');
-const { executeToolCall, isClientSideTool, storeChangeLimits } = require('../services/aiActionExecutor');
+const {
+  executeToolCall,
+  isClientSideTool,
+  storeChangeLimits,
+  getDurableAIActionIntentKey,
+} = require('../services/aiActionExecutor');
 const { publicProductFilter } = require('../services/productModerationService');
 const { processChatAttachments, appendAttachmentContextToMessages } = require('../services/aiAttachmentService');
-const { formatMoneySync } = require('../services/currencyService');
+const {
+  formatMoneySync,
+  isSupportedCurrency,
+  normalizeCurrency,
+} = require('../services/currencyService');
 const { getProductCurrency } = require('../services/productPricingService');
+const { roundMoney } = require('../services/moneyMath');
 const { isProductSellerPubliclyActive } = require('../services/publicCatalogService');
+const { consumeDailyUsageForRequest } = require('../services/aiChatRateLimitService');
 
 // ─── OpenRouter Config ───────────────────────────────────────────────
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
@@ -36,6 +48,101 @@ const SITE_NAME = 'Rozare';
 const PRODUCT_IMAGE_ATTACHMENT_RE = /\n?\[Attached product image: (https?:\/\/[^\]\s]+)\]/gi;
 const AI_REQUEST_TIMEOUT_MS = Number(process.env.AI_REQUEST_TIMEOUT_MS || 60000);
 const WHATSAPP_AI_REQUEST_TIMEOUT_MS = Number(process.env.WHATSAPP_AI_REQUEST_TIMEOUT_MS || 35000);
+
+const DAILY_LIMIT_MESSAGE = 'Daily AI message limit reached. Resets at 00:00 UTC.';
+
+const aiContextIntegrityError = label => {
+  const error = new Error(`Stored AI context ${label} is invalid.`);
+  error.statusCode = 409;
+  error.code = 'AI_CONTEXT_DATA_INVALID';
+  return error;
+};
+
+function requireAIContextCurrency(value, fallbackCurrency = 'USD') {
+  // Missing/null legacy order currency is canonical USD. Any present value
+  // must already be a canonical persisted code; personalization must not
+  // silently clean corrupted storage into a plausible display value.
+  const raw = value === null || value === undefined ? fallbackCurrency : value;
+  if (
+    typeof raw !== 'string'
+    || !raw.trim()
+    || raw !== raw.trim().toUpperCase()
+    || !isSupportedCurrency(raw)
+  ) {
+    throw aiContextIntegrityError('currency');
+  }
+  return raw;
+}
+
+function requireAIContextMoney(value, label = 'money') {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    throw aiContextIntegrityError(label);
+  }
+  try {
+    if (roundMoney(value) !== value) throw aiContextIntegrityError(label);
+  } catch (error) {
+    if (error?.code === 'AI_CONTEXT_DATA_INVALID') throw error;
+    throw aiContextIntegrityError(label);
+  }
+  return value;
+}
+
+function buildChatToolRequestKey(rawKey, mode, userId) {
+  const supplied = String(rawKey || '').trim();
+  // A server-generated key cannot be recovered by a client whose response is
+  // lost, so it provides no cross-request idempotency. Keep read-only chat
+  // compatible without a key, but let every durable mutation fail closed at
+  // the executor boundary until the caller supplies a reusable logical key.
+  if (!supplied) return '';
+  const digest = crypto.createHash('sha256')
+    .update(`${mode || 'chat'}\0${userId || 'guest'}\0${supplied}`)
+    .digest('hex');
+  return `${mode || 'chat'}:${digest}`;
+}
+
+function getHttpChatToolRequestKey(req, mode, userId) {
+  const headerKey = typeof req.get === 'function' ? req.get('Idempotency-Key') : null;
+  return buildChatToolRequestKey(
+    headerKey || req.headers?.['idempotency-key'] || req.body?.requestKey,
+    mode,
+    userId
+  );
+}
+
+function setDailyUsageHeaders(res, usage) {
+  if (usage.limit === -1) return;
+  res.setHeader('X-RateLimit-Limit', String(usage.limit));
+  res.setHeader('X-RateLimit-Remaining', String(usage.remaining));
+  res.setHeader('X-RateLimit-Reset', usage.resetAt);
+}
+
+async function enforceDailyChatUsage(req, res) {
+  try {
+    const usage = req.aiChatDailyUsage || await consumeDailyUsageForRequest(req);
+    setDailyUsageHeaders(res, usage);
+    if (usage.allowed) return true;
+
+    res.status(429).json({
+      error: DAILY_LIMIT_MESSAGE,
+      msg: DAILY_LIMIT_MESSAGE,
+      code: 'AI_DAILY_LIMIT_REACHED',
+      used: usage.used,
+      limit: usage.limit,
+      remaining: usage.remaining,
+      role: usage.role,
+      resetAt: usage.resetAt,
+    });
+    return false;
+  } catch (error) {
+    console.error('AI chat daily usage enforcement error:', error);
+    res.status(503).json({
+      error: 'AI usage service is temporarily unavailable.',
+      msg: 'AI usage service is temporarily unavailable.',
+      code: 'AI_USAGE_UNAVAILABLE',
+    });
+    return false;
+  }
+}
 
 function extractImageAttachments(content = '', explicit = []) {
   const seen = new Set();
@@ -68,6 +175,19 @@ function parseMaybeJson(value, fallback) {
   } catch {
     return fallback;
   }
+}
+
+function resolveChatRequestCurrency(value, fallbackCurrency = 'USD') {
+  if (value === undefined || value === null || String(value).trim() === '') {
+    return normalizeCurrency(fallbackCurrency);
+  }
+  if (!isSupportedCurrency(value)) {
+    const error = new Error('Choose a supported chat currency: USD, PKR, EUR, or GBP.');
+    error.statusCode = 400;
+    error.code = 'CHAT_CURRENCY_NOT_SUPPORTED';
+    throw error;
+  }
+  return normalizeCurrency(value);
 }
 
 async function getIncomingMessagesFromRequest(req) {
@@ -105,6 +225,7 @@ const {
   LANGUAGE_STYLE_ADDENDUM,
   TOOL_MEMORY_ADDENDUM,
   COMMERCE_POLICY_ADDENDUM,
+  FINANCIAL_TRUTH_ADDENDUM,
   WHATSAPP_SYSTEM_PROMPT_ADDENDUM,
 } = require('../services/aiPrompts/defaultPrompts');
 const aiPromptService = require('../services/aiPromptService');
@@ -368,6 +489,7 @@ const userTools = [
         type: 'object',
         properties: {
           storeId: { type: 'string', description: 'Optional seller/store id to filter coupons' },
+          productId: { type: 'string', description: 'Optional public product id to list only coupons from its seller that apply to it' },
         },
       },
     },
@@ -376,14 +498,15 @@ const userTools = [
     type: 'function',
     function: {
       name: 'validate_coupon',
-      description: 'Validate a coupon code against a cart total to check savings.',
+      description: 'Validate a coupon against the authenticated buyer current cart using authoritative checkout pricing. Add sellerId or productId when multiple sellers use the same code.',
       parameters: {
         type: 'object',
         properties: {
           code: { type: 'string' },
-          cartTotal: { type: 'number' },
+          sellerId: { type: 'string', description: 'Optional seller ID to disambiguate a code used by multiple sellers' },
+          productId: { type: 'string', description: 'Optional product ID from the current cart to scope the coupon' },
         },
-        required: ['code', 'cartTotal'],
+        required: ['code'],
       },
     },
   },
@@ -717,6 +840,11 @@ const sellerTools = [
           productIds: { type: 'array', items: { type: 'string' } },
           discountType: { type: 'string', enum: ['percentage', 'fixed'] },
           discountValue: { type: 'number' },
+          currency: {
+            type: 'string',
+            enum: ['USD', 'PKR', 'EUR', 'GBP'],
+            description: 'Source currency of a fixed discount. Omit for percentage discounts; defaults to the selected chat currency.',
+          },
         },
         required: ['productIds', 'discountType', 'discountValue'],
       },
@@ -733,6 +861,11 @@ const sellerTools = [
           productIds: { type: 'array', items: { type: 'string' } },
           updateType: { type: 'string', enum: ['percentage', 'fixed', 'set'] },
           value: { type: 'number' },
+          currency: {
+            type: 'string',
+            enum: ['USD', 'PKR', 'EUR', 'GBP'],
+            description: 'Source currency of a fixed change or set price. Omit for percentage changes; defaults to the selected chat currency.',
+          },
         },
         required: ['productIds', 'updateType', 'value'],
       },
@@ -854,6 +987,11 @@ const sellerTools = [
         properties: {
           method: { type: 'string', enum: ['free', 'standard', 'fast'] },
           cost: { type: 'number' },
+          currency: {
+            type: 'string',
+            enum: ['USD', 'PKR', 'EUR', 'GBP'],
+            description: 'Native currency of the shipping cost. Send it whenever cost is supplied or the stored cost currency is being changed.',
+          },
           deliveryDays: { type: 'number' },
           isActive: { type: 'boolean' },
         },
@@ -872,7 +1010,24 @@ const sellerTools = [
         properties: {
           coupon: {
             type: 'object',
-            description: 'Coupon: { code?, discountType? ("percentage"|"fixed"), discountValue? or discountPercent? or fixedAmount?, minOrderAmount?, maxUses?, maxUsesPerUser?, expiryDate?, maxDiscountAmount?, applicableTo?, applicableProducts?, description? }',
+            description: 'Coupon terms. Fixed discounts, minimum order amounts, and maximum discount amounts use the coupon currency.',
+            properties: {
+              code: { type: 'string' },
+              discountType: { type: 'string', enum: ['percentage', 'fixed'] },
+              discountValue: { type: 'number' },
+              discountPercent: { type: 'number' },
+              fixedAmount: { type: 'number' },
+              currency: { type: 'string', enum: ['USD', 'PKR', 'EUR', 'GBP'] },
+              minOrderAmount: { type: 'number' },
+              maxDiscountAmount: { type: 'number' },
+              maxUses: { type: 'integer' },
+              maxUsesPerUser: { type: 'integer' },
+              startDate: { type: 'string', description: 'ISO date/time.' },
+              expiryDate: { type: 'string', description: 'ISO date/time.' },
+              applicableTo: { type: 'string', enum: ['all', 'specific'] },
+              applicableProducts: { type: 'array', items: { type: 'string' } },
+              description: { type: 'string' },
+            },
           },
         },
         required: ['coupon'],
@@ -897,7 +1052,23 @@ const sellerTools = [
         properties: {
           couponId: { type: 'string' },
           couponCode: { type: 'string' },
-          updates: { type: 'object' },
+          updates: {
+            type: 'object',
+            description: 'Coupon fields to change. Include currency with fixed monetary terms; supported values are USD, PKR, EUR, and GBP.',
+            properties: {
+              code: { type: 'string' },
+              discountType: { type: 'string', enum: ['percentage', 'fixed'] },
+              discountValue: { type: 'number' },
+              currency: { type: 'string', enum: ['USD', 'PKR', 'EUR', 'GBP'] },
+              minOrderAmount: { type: 'number' },
+              maxDiscountAmount: { type: 'number' },
+              maxUses: { type: 'integer' },
+              maxUsesPerUser: { type: 'integer' },
+              startDate: { type: 'string', description: 'ISO date/time.' },
+              expiryDate: { type: 'string', description: 'ISO date/time.' },
+              isActive: { type: 'boolean' },
+            },
+          },
         },
         required: ['updates'],
       },
@@ -1142,6 +1313,7 @@ const adminTools = [
         properties: {
           type: { type: 'string', enum: ['none', 'percentage', 'fixed'] },
           value: { type: 'number' },
+          currency: { type: 'string', enum: ['USD', 'PKR', 'EUR', 'GBP'], description: 'Required native currency for a fixed tax.' },
           isActive: { type: 'boolean' },
         },
       },
@@ -1173,9 +1345,13 @@ const adminTools = [
             description: 'Audience target. Use all_users, all_sellers, both, or specific. Legacy object { target, userIds } is also accepted.',
           },
           userIds: { type: 'array', items: { type: 'string' } },
+          category: { type: 'string', enum: ['announcement', 'promo', 'order', 'system', 'seller'] },
+          linkTo: { type: 'string', description: 'Optional in-app route, for example /marketplace.' },
           channels: { type: 'array', items: { type: 'string', enum: ['inapp', 'push', 'email', 'whatsapp'] } },
           scheduleType: { type: 'string', enum: ['immediate', 'one_time', 'recurring'] },
           scheduledAt: { type: 'string', description: 'ISO datetime string; omit for immediate' },
+          recurrence: { type: 'string', enum: ['daily', 'weekly', 'monthly'], description: 'Required when scheduleType is recurring.' },
+          endsAt: { type: 'string', description: 'Optional ISO end datetime for a recurring broadcast.' },
         },
         required: ['title', 'message'],
       },
@@ -1307,7 +1483,12 @@ async function getSystemPrompt(role, channel = 'web') {
         base = USER_PROMPT;
     }
     const whatsapp = channel === 'whatsapp' ? WHATSAPP_SYSTEM_PROMPT_ADDENDUM : '';
-    return base + LANGUAGE_STYLE_ADDENDUM + TOOL_MEMORY_ADDENDUM + COMMERCE_POLICY_ADDENDUM + whatsapp;
+    return base
+      + LANGUAGE_STYLE_ADDENDUM
+      + TOOL_MEMORY_ADDENDUM
+      + COMMERCE_POLICY_ADDENDUM
+      + whatsapp
+      + FINANCIAL_TRUTH_ADDENDUM;
   }
 }
 
@@ -1391,10 +1572,10 @@ function isPlaceholderStoreValue(value) {
   ].includes(v);
 }
 
-async function executeToolCallForChat(toolName, args, userObj, lastUserText = '') {
+async function executeToolCallForChat(toolName, args, userObj, lastUserText = '', turnContext = {}) {
   const argsWithContext = args && typeof args === 'object' && !Array.isArray(args)
-    ? { ...args, _lastUserText: lastUserText }
-    : { _lastUserText: lastUserText };
+    ? { ...args, _lastUserText: lastUserText, ...turnContext }
+    : { _lastUserText: lastUserText, ...turnContext };
 
   if (toolName !== 'update_store') {
     return executeToolCall(toolName, argsWithContext, userObj);
@@ -1424,6 +1605,50 @@ async function executeToolCallForChat(toolName, args, userObj, lastUserText = ''
   }
 
   return executeToolCall(toolName, argsWithContext, userObj);
+}
+
+const TERMINAL_AI_ACTION_CODES = new Set([
+  'AI_ACTION_PENDING',
+  'AI_ACTION_IDEMPOTENCY_CONFLICT',
+  'AI_ACTION_RECEIPT_COMMIT_AMBIGUOUS',
+  'AI_ACTION_IDEMPOTENCY_REQUIRED',
+  'AI_ACTION_IDEMPOTENCY_KEY_INVALID',
+  'AI_ACTION_IDEMPOTENCY_SLOT_INVALID',
+  'AI_ORDER_IDEMPOTENCY_REQUIRED',
+  'IDEMPOTENCY_KEY_REUSED',
+]);
+
+const AI_ACTION_IDEMPOTENCY_INPUT_CODES = new Set([
+  'AI_ACTION_IDEMPOTENCY_REQUIRED',
+  'AI_ACTION_IDEMPOTENCY_KEY_INVALID',
+  'AI_ACTION_IDEMPOTENCY_SLOT_INVALID',
+  'AI_ORDER_IDEMPOTENCY_REQUIRED',
+]);
+
+function durableMutationTransportFailure(toolName, result) {
+  if (!TERMINAL_AI_ACTION_CODES.has(result?.code)) return null;
+  const invalidInput = AI_ACTION_IDEMPOTENCY_INPUT_CODES.has(result.code);
+  return {
+    error: result.error || 'This AI action could not be safely confirmed.',
+    msg: result.error || 'This AI action could not be safely confirmed.',
+    code: result.code,
+    tool: toolName,
+    statusCode: invalidInput ? 400 : 409,
+    retryable: !['AI_ACTION_IDEMPOTENCY_CONFLICT', 'IDEMPOTENCY_KEY_REUSED'].includes(result.code),
+    retainAttempt: !invalidInput,
+    toolResult: result,
+  };
+}
+
+function createDurableMutationSlotAllocator() {
+  const slotByIntent = new Map();
+  let nextSlot = 0;
+  return (toolName, args) => {
+    const intentKey = getDurableAIActionIntentKey?.(toolName, args);
+    if (!intentKey) return 0;
+    if (!slotByIntent.has(intentKey)) slotByIntent.set(intentKey, nextSlot++);
+    return slotByIntent.get(intentKey);
+  };
 }
 
 /**
@@ -1466,7 +1691,7 @@ async function buildUserContext(userId, role) {
       name: user.username || '',
       email: user.email || '',
       role: user.role,
-      currency: user.currency || 'USD',
+      currency: requireAIContextCurrency(user.currency),
       memberSince: user.createdAt ? user.createdAt.toISOString().split('T')[0] : null,
     };
 
@@ -1480,8 +1705,8 @@ async function buildUserContext(userId, role) {
     ctx.recentOrders = recentOrders.map(o => ({
       orderId: o.orderId,
       status: o.orderStatus,
-      total: o.orderSummary?.totalAmount || 0,
-      currency: o.currency || 'USD',
+      total: requireAIContextMoney(o.orderSummary?.totalAmount, 'order total'),
+      currency: requireAIContextCurrency(o.currency),
       items: (o.orderItems || []).map(i => i.productId?.name).filter(Boolean).slice(0, 3),
       date: o.createdAt,
     }));
@@ -1551,7 +1776,9 @@ function formatContextBlock(ctx, role) {
   if (ctx.recentOrders?.length) {
     s += `- Recent orders:\n`;
     ctx.recentOrders.forEach(o => {
-      s += `  • #${o.orderId}: ${o.items?.join(', ') || 'items'} — ${o.status} — ${formatMoneySync(o.total, o.currency || 'USD', { sourceCurrency: o.currency || 'USD' })}\n`;
+      const orderCurrency = requireAIContextCurrency(o.currency);
+      const orderTotal = requireAIContextMoney(o.total, 'order total');
+      s += `  • #${o.orderId}: ${o.items?.join(', ') || 'items'} — ${o.status} — ${formatMoneySync(orderTotal, orderCurrency, { sourceCurrency: orderCurrency })}\n`;
     });
   }
   if (role === 'seller' && ctx.store) {
@@ -1693,8 +1920,26 @@ async function processAIChatMessage(userObj, incomingMessages, options = {}) {
     : 'guest';
 
   const userContext = await buildUserContext(userId, effectiveRole);
+  const selectedCurrency = resolveChatRequestCurrency(
+    options.currency,
+    userContext?.currency || userObj?.currency || 'USD'
+  );
+  const executorUser = {
+    ...userObj,
+    ...(userId ? { _id: userId, id: userId } : {}),
+    role: effectiveRole,
+    currency: selectedCurrency,
+  };
+  const toolTurnContext = {
+    _chatRequestKey: buildChatToolRequestKey(options.requestKey, mode, userId),
+  };
+  const mutationSlotForIntent = createDurableMutationSlotAllocator();
   let systemContent = await getSystemPrompt(effectiveRole, isWhatsApp ? 'whatsapp' : 'web');
-  systemContent += formatContextBlock(userContext, effectiveRole);
+  systemContent += formatContextBlock({
+    ...(userContext || {}),
+    role: effectiveRole,
+    currency: selectedCurrency,
+  }, effectiveRole);
 
   if (effectiveRole === 'guest') {
     systemContent += `\n\n## IMPORTANT: This user is NOT logged in. Encourage them to sign in for personalized help.`;
@@ -1884,8 +2129,17 @@ async function processAIChatMessage(userObj, incomingMessages, options = {}) {
         }
       } else {
         // Server-side execution
-        const result = await executeToolCallForChat(toolName, args, userObj, lastUserText);
+        const result = await executeToolCallForChat(toolName, args, executorUser, lastUserText, {
+          ...toolTurnContext,
+          _chatToolOrdinal: mutationSlotForIntent(toolName, args),
+        });
         toolResults.push({ tool: toolName, result, id: tc.id });
+        const transportFailure = durableMutationTransportFailure(toolName, result);
+        if (transportFailure) {
+          const error = new Error(transportFailure.error);
+          Object.assign(error, transportFailure);
+          throw error;
+        }
         conversationMessages.push({
           role: 'tool',
           tool_call_id: tc.id,
@@ -1960,6 +2214,8 @@ exports.streamChat = async (req, res) => {
       });
     }
 
+    if (!await enforceDailyChatUsage(req, res)) return;
+
     const body = req.body || {};
     const incoming = await getIncomingMessagesFromRequest(req);
 
@@ -1969,13 +2225,25 @@ exports.streamChat = async (req, res) => {
       ? authenticatedRole
       : 'guest';
 
-    // Build the user object for the executor
-    const userObj = userId ? { _id: userId, id: userId, role: effectiveRole } : null;
-
     const userContext = await buildUserContext(userId, effectiveRole);
+    const selectedCurrency = resolveChatRequestCurrency(
+      body.currency,
+      userContext?.currency || 'USD'
+    );
+
+    // Build the user object for the executor
+    const userObj = {
+      ...(userId ? { _id: userId, id: userId } : {}),
+      role: effectiveRole,
+      currency: selectedCurrency,
+    };
 
     let systemContent = await getSystemPrompt(effectiveRole);
-    systemContent += formatContextBlock(userContext, effectiveRole);
+    systemContent += formatContextBlock({
+      ...(userContext || {}),
+      role: effectiveRole,
+      currency: selectedCurrency,
+    }, effectiveRole);
     if (effectiveRole === 'guest') {
       systemContent += `\n\n## IMPORTANT: This user is NOT logged in. Do not try to access their personal data. Encourage them to sign in for personalized help.`;
     }
@@ -2012,6 +2280,10 @@ exports.streamChat = async (req, res) => {
     // Collect tool events from this turn so we can persist them with the assistant message
     const turnToolEvents = [];
     const lastUserText = cleanMessages.filter(m => m.role === 'user').pop()?.content || '';
+    const toolTurnContext = {
+      _chatRequestKey: getHttpChatToolRequestKey(req, 'stream', userId),
+    };
+    const mutationSlotForIntent = createDurableMutationSlotAllocator();
 
     // ═══ Tool Execution Loop ═══
     // The AI may request tool calls. We execute them server-side, feed results back,
@@ -2019,6 +2291,7 @@ exports.streamChat = async (req, res) => {
     const MAX_TOOL_ITERATIONS = 5;
     let iteration = 0;
     let finalTextSent = false;
+    let terminalToolFailure = null;
 
     while (iteration < MAX_TOOL_ITERATIONS && !closed()) {
       iteration++;
@@ -2113,10 +2386,19 @@ exports.streamChat = async (req, res) => {
           // Server-side execution
           send({ type: 'tool_start', tool: toolName, id: tc.id });
 
-          const result = await executeToolCallForChat(toolName, args, userObj, lastUserText);
+          const result = await executeToolCallForChat(toolName, args, userObj, lastUserText, {
+            ...toolTurnContext,
+            _chatToolOrdinal: mutationSlotForIntent(toolName, args),
+          });
 
           send({ type: 'tool_result', tool: toolName, result, id: tc.id });
           turnToolEvents.push({ type: 'tool_result', tool: toolName, result });
+
+          terminalToolFailure = durableMutationTransportFailure(toolName, result);
+          if (terminalToolFailure) {
+            send({ type: 'request_error', ...terminalToolFailure, id: tc.id });
+            break;
+          }
 
           conversationMessages.push({
             role: 'tool',
@@ -2126,11 +2408,13 @@ exports.streamChat = async (req, res) => {
         }
       }
 
+      if (terminalToolFailure) break;
+
       // Loop continues — AI will now see tool results and generate a response
     }
 
     // ── Save chat history to conversation ──
-    if (userId) {
+    if (!terminalToolFailure && userId) {
       try {
         const conversationId = body.conversationId || null;
         const lastUserMsg = cleanMessages.filter(m => m.role === 'user').pop();
@@ -2160,6 +2444,14 @@ exports.streamChat = async (req, res) => {
       }
     }
 
+    // A receipt-level ambiguity must remain a failed transport outcome so the
+    // client retains the same request key. Never emit the normal DONE marker.
+    if (terminalToolFailure) {
+      if (!closed()) res.end();
+      cleanupHB();
+      return;
+    }
+
     // Finalize SSE
     if (!closed()) {
       res.write('data: [DONE]\n\n');
@@ -2169,7 +2461,11 @@ exports.streamChat = async (req, res) => {
   } catch (err) {
     console.error('streamChat fatal error:', err);
     if (!res.headersSent) {
-      return res.status(500).json({ error: err.message || 'Server error' });
+      return res.status(err.statusCode || 500).json({
+        error: err.message || 'Server error',
+        msg: err.message || 'Server error',
+        ...(err.code ? { code: err.code } : {}),
+      });
     }
     try {
       res.write(`data: ${JSON.stringify({ error: err.message || 'Server error' })}\n\n`);
@@ -2189,6 +2485,8 @@ exports.chatOnce = async (req, res) => {
       return res.status(500).json({ error: 'AI service not configured' });
     }
 
+    if (!await enforceDailyChatUsage(req, res)) return;
+
     const body = req.body || {};
     const incoming = await getIncomingMessagesFromRequest(req);
     const authenticatedRole = req.user?.role || 'guest';
@@ -2197,11 +2495,22 @@ exports.chatOnce = async (req, res) => {
       ? authenticatedRole
       : 'guest';
 
-    const userObj = userId ? { _id: userId, id: userId, role: effectiveRole } : null;
-
     const userContext = await buildUserContext(userId, effectiveRole);
+    const selectedCurrency = resolveChatRequestCurrency(
+      body.currency,
+      userContext?.currency || 'USD'
+    );
+    const userObj = {
+      ...(userId ? { _id: userId, id: userId } : {}),
+      role: effectiveRole,
+      currency: selectedCurrency,
+    };
     let systemContent = await getSystemPrompt(effectiveRole);
-    systemContent += formatContextBlock(userContext, effectiveRole);
+    systemContent += formatContextBlock({
+      ...(userContext || {}),
+      role: effectiveRole,
+      currency: selectedCurrency,
+    }, effectiveRole);
     if (effectiveRole === 'guest') {
       systemContent += `\n\n## IMPORTANT: This user is NOT logged in. Encourage them to sign in for personalized help.`;
     }
@@ -2217,6 +2526,10 @@ exports.chatOnce = async (req, res) => {
     const toolResults = []; // Collect tool results for client
     const clientActions = []; // Collect client-side actions
     const lastUserText = cleanMessages.filter(m => m.role === 'user').pop()?.content || '';
+    const toolTurnContext = {
+      _chatRequestKey: getHttpChatToolRequestKey(req, 'once', userId),
+    };
+    const mutationSlotForIntent = createDurableMutationSlotAllocator();
 
     // Tool execution loop (non-streaming)
     const MAX_ITERATIONS = 5;
@@ -2282,8 +2595,15 @@ exports.chatOnce = async (req, res) => {
             content: JSON.stringify({ success: true, message: `${toolName} sent to client.` }),
           });
         } else {
-          const result = await executeToolCallForChat(toolName, args, userObj, lastUserText);
+          const result = await executeToolCallForChat(toolName, args, userObj, lastUserText, {
+            ...toolTurnContext,
+            _chatToolOrdinal: mutationSlotForIntent(toolName, args),
+          });
           toolResults.push({ tool: toolName, result, id: tc.id });
+          const transportFailure = durableMutationTransportFailure(toolName, result);
+          if (transportFailure) {
+            return res.status(transportFailure.statusCode || 409).json(transportFailure);
+          }
           conversationMessages.push({
             role: 'tool',
             tool_call_id: tc.id,
@@ -2336,7 +2656,11 @@ exports.chatOnce = async (req, res) => {
     });
   } catch (err) {
     console.error('chatOnce error:', err);
-    return res.status(500).json({ error: err.message || 'Server error' });
+    return res.status(err.statusCode || 500).json({
+      error: err.message || 'Server error',
+      msg: err.message || 'Server error',
+      ...(err.code ? { code: err.code } : {}),
+    });
   }
 };
 
@@ -2600,4 +2924,16 @@ exports.clearConversation = async (req, res) => {
     console.error('clearConversation error:', err);
     return res.status(500).json({ error: 'Failed to clear.' });
   }
+};
+
+// Narrowly exposed for contract tests; HTTP routes continue to use the public
+// controller handlers above.
+exports.__private = {
+  getTools,
+  resolveChatRequestCurrency,
+  requireAIContextCurrency,
+  requireAIContextMoney,
+  formatContextBlock,
+  createDurableMutationSlotAllocator,
+  durableMutationTransportFailure,
 };

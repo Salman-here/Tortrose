@@ -2,14 +2,18 @@ import { Link, useNavigate } from "react-router-dom";
 import { Heart, ShoppingCart, Eye, Star, Zap, ChevronRight, Loader2, X, Plus, Minus } from "lucide-react";
 import { useGlobal } from "../../contexts/GlobalContext";
 import { useAuth } from "../../contexts/AuthContext";
-import { useCurrency } from "../../contexts/CurrencyContext";
+import {
+  resolveProductPresentationCurrency,
+  resolveProductPresentationMoney,
+  useCurrency,
+} from "../../contexts/CurrencyContext";
 import React, { useState, memo } from "react";
 import { optimizeImage, buildSrcSet } from "../../utils/optimizeImage";
 import { getStoreSubdomainUrl } from "../../utils/subdomainHelper";
 
 const ProductCard = memo(({
   _id, name, image, images, category, price, discountedPrice, currency, priceCurrency,
-  stock, rating, numReviews, isFeatured, idx, store, seller,
+  stock, rating, isFeatured, idx, store, seller,
 }) => {
   const { wishlistItems, handleAddToWishlist, handleDeleteFromWishlist, cartItems, handleAddToCart, handleQtyInc, handleQtyDec, isCartLoading, loadingProductId, qtyUpdateId } = useGlobal();
   const { currentUser } = useAuth();
@@ -22,12 +26,13 @@ const ProductCard = memo(({
   const isInWishlist = wishlistItems?.some((item) => item?._id === _id);
   const cartItem = cartItems?.cart?.find((item) => item?.product?._id === _id);
   const isInCart = !!cartItem;
-  const numericPrice = Number(price || 0);
-  const numericDiscountedPrice = Number(discountedPrice || 0);
+  const productMoney = { price, discountedPrice, currency, priceCurrency };
+  const numericPrice = resolveProductPresentationMoney(productMoney, 'price');
+  const numericDiscountedPrice = resolveProductPresentationMoney(productMoney, 'discountedPrice');
   const hasDiscount = numericDiscountedPrice > 0 && numericDiscountedPrice < numericPrice;
   const displayPrice = hasDiscount ? numericDiscountedPrice : numericPrice;
   const originalDisplayPrice = hasDiscount ? numericPrice : null;
-  const productCurrency = currency || priceCurrency || 'USD';
+  const productCurrency = resolveProductPresentationCurrency(productMoney);
   const discountPercentage = originalDisplayPrice && displayPrice < originalDisplayPrice
     ? Math.round(((originalDisplayPrice - displayPrice) / originalDisplayPrice) * 100) : 0;
 

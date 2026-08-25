@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
 import { AnimatePresence, motion } from 'framer-motion';
 import { AlertCircle, CalendarClock, Check, Loader2, Package, RotateCcw, X } from 'lucide-react';
@@ -10,6 +10,13 @@ import {
   returnResolutionLabel,
   returnStatusTone,
 } from '../../utils/returns';
+import {
+  fetchCompleteBuyerReturns,
+  inspectBuyerReturnEligibilityResponse,
+  inspectBuyerReturnMutationResponse,
+  inspectBuyerReturnOrderContext,
+  inspectBuyerReturnsResponse,
+} from '../../utils/returnPresentationSafety';
 
 const API = `${import.meta.env.VITE_API_URL}api/returns`;
 const reasonOptions = [
@@ -23,93 +30,294 @@ const reasonOptions = [
 ];
 
 const authHeaders = () => ({ Authorization: `Bearer ${getAuthToken()}` });
+const reasonValues = new Set(reasonOptions.map(([value]) => value));
+const canonicalRequestKey = value => (
+  typeof value === 'string'
+  && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(value)
+    ? value
+    : null
+);
+const createRequestKey = () => canonicalRequestKey(globalThis.crypto?.randomUUID?.());
+const responseMessage = (error, fallback) => {
+  const value = error?.response?.data?.msg;
+  return typeof value === 'string' && value.trim() && value.length <= 500
+    ? value.trim()
+    : fallback;
+};
 
 export default function BuyerReturnsPanel({ order, formatMoney }) {
   const [groups, setGroups] = useState([]);
   const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [selectedGroup, setSelectedGroup] = useState(null);
   const [quantities, setQuantities] = useState({});
   const [reasonCategory, setReasonCategory] = useState('damaged');
   const [reasonDetails, setReasonDetails] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const requestKeyRef = useRef(null);
   const [cancellingId, setCancellingId] = useState(null);
+  const loadGenerationRef = useRef(0);
+  const orderContext = useMemo(() => inspectBuyerReturnOrderContext(order), [order]);
+  const currentOrderIdRef = useRef(null);
+  currentOrderIdRef.current = orderContext.valid ? orderContext.orderId : null;
 
-  const load = useCallback(async () => {
-    if (!order?._id) return;
+  const clearPresentedState = useCallback(({ closeForm = true } = {}) => {
+    setGroups([]);
+    setRequests([]);
+    setCancellingId(null);
+    if (closeForm) {
+      setSelectedGroup(null);
+      setQuantities({});
+    }
+  }, []);
+
+  const load = useCallback(async ({ notify = true } = {}) => {
+    const generation = loadGenerationRef.current + 1;
+    loadGenerationRef.current = generation;
+    clearPresentedState();
+    setLoadError('');
     setLoading(true);
+    if (!orderContext.valid) {
+      const message = 'Return information is unavailable because this order could not be verified.';
+      setLoadError(message);
+      setLoading(false);
+      return { valid: false, requests: [], groups: [] };
+    }
     try {
       const [eligibility, existing] = await Promise.all([
-        axios.get(`${API}/order/${order._id}/eligibility`, { headers: authHeaders() }),
-        axios.get(`${API}/mine?orderId=${encodeURIComponent(order._id)}`, { headers: authHeaders() }),
+        axios.get(`${API}/order/${orderContext.orderId}/eligibility`, { headers: authHeaders() }),
+        fetchCompleteBuyerReturns(async (page, limit) => {
+          const response = await axios.get(`${API}/mine`, {
+            headers: authHeaders(),
+            params: { orderId: orderContext.orderId, page, limit },
+          });
+          return response.data;
+        }),
       ]);
-      setGroups(eligibility.data?.groups || []);
-      setRequests(existing.data?.returns || []);
+      const eligibilityInspection = inspectBuyerReturnEligibilityResponse(
+        eligibility.data,
+        orderContext,
+      );
+      const returnsInspection = inspectBuyerReturnsResponse(
+        existing,
+        orderContext,
+        eligibilityInspection,
+      );
+      if (!eligibilityInspection.valid || !returnsInspection.valid) {
+        const error = new Error('Unverified return response');
+        error.code = 'RETURN_RESPONSE_UNVERIFIED';
+        throw error;
+      }
+      if (
+        generation !== loadGenerationRef.current
+        || currentOrderIdRef.current !== orderContext.orderId
+      ) {
+        return { valid: false, stale: true, requests: [], groups: [] };
+      }
+      setGroups(eligibilityInspection.groups);
+      setRequests(returnsInspection.requests);
+      return {
+        valid: true,
+        groups: eligibilityInspection.groups,
+        requests: returnsInspection.requests,
+      };
     } catch (error) {
-      toast.error(error.response?.data?.msg || 'Failed to load return options.');
+      if (
+        generation !== loadGenerationRef.current
+        || currentOrderIdRef.current !== orderContext.orderId
+      ) {
+        return { valid: false, stale: true, requests: [], groups: [] };
+      }
+      clearPresentedState();
+      const message = error?.code === 'RETURN_RESPONSE_UNVERIFIED'
+        ? 'Return information is temporarily unavailable because the server response could not be verified.'
+        : responseMessage(error, 'Could not load verified return information.');
+      setLoadError(message);
+      if (notify) toast.error(message);
+      return { valid: false, requests: [], groups: [] };
     } finally {
-      setLoading(false);
+      if (
+        generation === loadGenerationRef.current
+        && currentOrderIdRef.current === orderContext.orderId
+      ) setLoading(false);
     }
-  }, [order?._id]);
+  }, [clearPresentedState, orderContext]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    void load();
+    return () => { loadGenerationRef.current += 1; };
+  }, [load]);
 
   const openRequest = (group) => {
+    const current = groups.find(entry => entry.seller._id === group?.seller?._id);
+    if (!current?.eligible) {
+      toast.error('This return option is no longer available.');
+      return;
+    }
+    const requestKey = createRequestKey();
+    if (!requestKey) {
+      toast.error('A secure return request could not be started. Please reload and try again.');
+      return;
+    }
     const defaults = {};
-    group.items.forEach((item) => {
-      if (item.eligible && item.remainingReturnableQuantity > 0) defaults[String(item.orderItemId)] = 0;
+    current.items.forEach((item) => {
+      if (item.eligible && item.remainingReturnableQuantity > 0) defaults[item.orderItemId] = 0;
     });
     setQuantities(defaults);
     setReasonCategory('damaged');
     setReasonDetails('');
-    setSelectedGroup(group);
+    requestKeyRef.current = requestKey;
+    setSelectedGroup(current);
   };
 
-  const selectedItems = useMemo(() => Object.entries(quantities)
-    .filter(([, quantity]) => Number(quantity) > 0)
-    .map(([orderItemId, quantity]) => ({ orderItemId, quantity: Number(quantity) })), [quantities]);
+  const selection = useMemo(() => {
+    if (!selectedGroup) return { valid: false, items: [] };
+    const selectable = selectedGroup.items.filter(
+      item => item.eligible && item.remainingReturnableQuantity > 0,
+    );
+    const selectableIds = new Set(selectable.map(item => item.orderItemId));
+    if (Object.keys(quantities).some(key => !selectableIds.has(key))) {
+      return { valid: false, items: [] };
+    }
+    const items = [];
+    for (const item of selectable) {
+      const quantity = Object.prototype.hasOwnProperty.call(quantities, item.orderItemId)
+        ? quantities[item.orderItemId]
+        : null;
+      if (
+        !Number.isSafeInteger(quantity)
+        || quantity < 0
+        || quantity > item.remainingReturnableQuantity
+      ) return { valid: false, items: [] };
+      if (quantity > 0) items.push({ orderItemId: item.orderItemId, quantity });
+    }
+    return { valid: true, items };
+  }, [quantities, selectedGroup]);
+
+  const selectedItems = selection.items;
 
   const submitReturn = async () => {
-    if (!selectedGroup || selectedItems.length === 0) {
+    if (currentOrderIdRef.current !== orderContext.orderId) return;
+    if (!selectedGroup || !selection.valid || selectedItems.length === 0) {
       toast.error('Select at least one item and quantity.');
       return;
     }
-    if (reasonDetails.trim().length < 10) {
+    const cleanReason = reasonDetails.trim();
+    if (!reasonValues.has(reasonCategory) || cleanReason.length < 10 || cleanReason.length > 1500) {
       toast.error('Please explain the return reason in at least 10 characters.');
       return;
     }
+    const requestKey = canonicalRequestKey(requestKeyRef.current);
+    if (!requestKey) {
+      toast.error('This return form is no longer valid. Please close it and start again.');
+      return;
+    }
+    const expectedSellerId = selectedGroup.seller._id;
+    const expectedItems = selectedItems.map(item => ({ ...item }));
     setSubmitting(true);
+    setGroups([]);
+    setRequests([]);
+    setLoadError('');
     try {
-      await axios.post(API, {
-        orderId: order._id,
-        sellerId: selectedGroup.seller._id,
-        items: selectedItems,
+      const response = await axios.post(API, {
+        orderId: orderContext.orderId,
+        sellerId: expectedSellerId,
+        items: expectedItems,
         reasonCategory,
-        reasonDetails: reasonDetails.trim(),
-        requestKey: crypto.randomUUID(),
-      }, { headers: authHeaders() });
-      toast.success('Return request sent to the seller.');
-      setSelectedGroup(null);
-      await load();
+        reasonDetails: cleanReason,
+        requestKey,
+      }, {
+        headers: {
+          ...authHeaders(),
+          'Idempotency-Key': requestKey,
+        },
+      });
+      if (currentOrderIdRef.current !== orderContext.orderId) return;
+      const mutation = inspectBuyerReturnMutationResponse(response.data, orderContext, {
+        mode: 'create',
+        expectedSellerId,
+        expectedItems,
+        expectedReasonCategory: reasonCategory,
+        expectedReasonDetails: cleanReason,
+      });
+      const refreshed = await load({ notify: false });
+      if (refreshed.stale || currentOrderIdRef.current !== orderContext.orderId) return;
+      const refetched = mutation.valid
+        ? refreshed.requests.find(request => request._id === mutation.request._id)
+        : null;
+      if (!mutation.valid || !refreshed.valid || !refetched) {
+        clearPresentedState();
+        setLoadError('The request may have been received, but its saved state could not be verified. Reload before taking another action.');
+        toast.error('Return confirmation is unavailable. Reload before trying again.');
+        return;
+      }
+      requestKeyRef.current = null;
+      toast.success(response.data.replayed
+        ? 'This return request was already received.'
+        : 'Return request sent to the seller.');
     } catch (error) {
-      toast.error(error.response?.data?.msg || 'Failed to submit return request.');
+      if (currentOrderIdRef.current !== orderContext.orderId) return;
+      setGroups([]);
+      setRequests([]);
+      toast.error(responseMessage(error, 'Failed to submit return request. You can retry this form safely.'));
     } finally {
       setSubmitting(false);
     }
   };
 
   const cancelReturn = async (requestId) => {
+    if (currentOrderIdRef.current !== orderContext.orderId) return;
+    const current = requests.find(request => request._id === requestId);
+    if (!current || !BUYER_CANCELLABLE_RETURN_STATUSES.has(current.status)) {
+      toast.error('This return can no longer be cancelled.');
+      return;
+    }
     setCancellingId(requestId);
+    setGroups([]);
+    setRequests([]);
+    setLoadError('');
     try {
-      await axios.post(`${API}/${requestId}/cancel`, {}, { headers: authHeaders() });
+      const response = await axios.post(`${API}/${requestId}/cancel`, {}, { headers: authHeaders() });
+      if (currentOrderIdRef.current !== orderContext.orderId) return;
+      const mutation = inspectBuyerReturnMutationResponse(response.data, orderContext, {
+        mode: 'cancel',
+        expectedRequestId: requestId,
+        expectedStatus: 'cancelled_by_buyer',
+      });
+      const refreshed = await load({ notify: false });
+      if (refreshed.stale || currentOrderIdRef.current !== orderContext.orderId) return;
+      const refetched = refreshed.requests.find(request => request._id === requestId);
+      if (!mutation.valid || !refreshed.valid || refetched?.status !== 'cancelled_by_buyer') {
+        clearPresentedState();
+        setLoadError('The cancellation response could not be verified. Reload before taking another action.');
+        toast.error('Cancellation confirmation is unavailable.');
+        return;
+      }
       toast.success('Return request cancelled.');
-      await load();
     } catch (error) {
-      toast.error(error.response?.data?.msg || 'Return request could not be cancelled.');
+      if (currentOrderIdRef.current !== orderContext.orderId) return;
+      const refreshed = await load({ notify: false });
+      if (refreshed.stale || currentOrderIdRef.current !== orderContext.orderId) return;
+      const refetched = refreshed.requests.find(request => request._id === requestId);
+      if (refreshed.valid && refetched?.status === 'cancelled_by_buyer') {
+        toast.success('Return request cancelled.');
+        return;
+      }
+      toast.error(responseMessage(error, 'Return request could not be cancelled.'));
     } finally {
       setCancellingId(null);
     }
   };
+
+  const moneyLabel = useCallback((amount) => {
+    try {
+      const label = formatMoney(amount);
+      return typeof label === 'string' && label.trim() ? label : 'Money unavailable';
+    } catch (_) {
+      return 'Money unavailable';
+    }
+  }, [formatMoney]);
 
   if (loading) {
     return <div className="glass-panel p-6 flex items-center justify-center"><Loader2 className="animate-spin" size={20} /></div>;
@@ -126,6 +334,17 @@ export default function BuyerReturnsPanel({ order, formatMoney }) {
         </div>
       </div>
 
+      {loadError && (
+        <div className="glass-panel p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3" role="alert">
+          <p className="text-sm inline-flex items-start gap-2" style={{ color: 'hsl(var(--muted-foreground))' }}>
+            <AlertCircle size={16} className="shrink-0 mt-0.5" /> {loadError}
+          </p>
+          <button type="button" className="glass-button px-3 py-2 rounded-lg text-xs font-semibold" onClick={() => load()} disabled={loading}>
+            Retry
+          </button>
+        </div>
+      )}
+
       {requests.map((request) => (
         <article key={request._id} className="glass-panel p-4 sm:p-5">
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
@@ -134,21 +353,21 @@ export default function BuyerReturnsPanel({ order, formatMoney }) {
               <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>{request.storeName || request.seller?.username || 'Seller'} - {request.items.length} item line(s)</p>
             </div>
             <span className="px-3 py-1 rounded-full text-xs font-semibold w-fit" style={returnStatusTone(request.status)}>
-              {RETURN_STATUS_LABELS[request.status] || request.status}
+              {RETURN_STATUS_LABELS[request.status]}
             </span>
           </div>
           <div className="mt-4 grid gap-2">
             {request.items.map((item) => (
-              <div key={String(item.orderItemId)} className="flex items-center justify-between gap-3 text-sm">
+              <div key={item.orderItemId} className="flex items-center justify-between gap-3 text-sm">
                 <span className="truncate" style={{ color: 'hsl(var(--foreground))' }}>{item.name} x {item.quantity}</span>
-                <span className="shrink-0 font-medium" style={{ color: 'hsl(var(--foreground))' }}>{formatMoney(item.lineSubtotal)}</span>
+                <span className="shrink-0 font-medium" style={{ color: 'hsl(var(--foreground))' }}>{moneyLabel(item.lineSubtotal)}</span>
               </div>
             ))}
           </div>
           <div className="mt-4 flex flex-wrap items-center justify-between gap-3 pt-3" style={{ borderTop: '1px solid var(--glass-border)' }}>
             <div>
               <p className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>{returnResolutionLabel(request.policySnapshot?.refundType)}</p>
-              {request.policySnapshot?.refundType !== 'replacement_only' && <p className="font-bold text-sm" style={{ color: 'hsl(var(--foreground))' }}>{formatMoney(request.refund?.totalAmount || 0)}</p>}
+              {request.policySnapshot.refundType !== 'replacement_only' && <p className="font-bold text-sm" style={{ color: 'hsl(var(--foreground))' }}>{moneyLabel(request.refund.totalAmount)}</p>}
             </div>
             {BUYER_CANCELLABLE_RETURN_STATUSES.has(request.status) && (
               <button type="button" onClick={() => cancelReturn(request._id)} disabled={cancellingId === request._id}
@@ -157,13 +376,13 @@ export default function BuyerReturnsPanel({ order, formatMoney }) {
               </button>
             )}
           </div>
-          {request.statusHistory?.length > 0 && (
+          {request.statusHistory.length > 0 && (
             <div className="mt-4 space-y-2">
               {request.statusHistory.map((entry, index) => (
                 <div key={`${entry.status}-${entry.changedAt}-${index}`} className="flex gap-3 text-xs">
                   <span className="mt-1.5 w-2 h-2 rounded-full shrink-0" style={{ background: returnStatusTone(entry.status).color }} />
                   <div>
-                    <p className="font-semibold" style={{ color: 'hsl(var(--foreground))' }}>{RETURN_STATUS_LABELS[entry.status] || entry.status}</p>
+                    <p className="font-semibold" style={{ color: 'hsl(var(--foreground))' }}>{RETURN_STATUS_LABELS[entry.status]}</p>
                     <p style={{ color: 'hsl(var(--muted-foreground))' }}>{new Date(entry.changedAt).toLocaleString()}{entry.note ? ` - ${entry.note}` : ''}</p>
                   </div>
                 </div>
@@ -179,7 +398,7 @@ export default function BuyerReturnsPanel({ order, formatMoney }) {
             <div>
               <p className="font-semibold text-sm" style={{ color: 'hsl(var(--foreground))' }}>{group.store?.storeName || group.seller?.username || 'Seller'}</p>
               <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                {group.policy?.returnsEnabled ? `${group.policy.returnDuration}-day returns - ${returnResolutionLabel(group.policy.refundType)}` : 'Returns are not offered by this seller'}
+                {group.policy.returnsEnabled ? `${group.policy.returnDuration}-day returns - ${returnResolutionLabel(group.policy.refundType)}` : 'Returns are not offered by this seller'}
               </p>
             </div>
             {group.eligible ? (
@@ -215,8 +434,8 @@ export default function BuyerReturnsPanel({ order, formatMoney }) {
 
               <div className="space-y-3">
                 {selectedGroup.items.filter(item => item.eligible && item.remainingReturnableQuantity > 0).map((item) => {
-                  const key = String(item.orderItemId);
-                  const quantity = quantities[key] || 0;
+                  const key = item.orderItemId;
+                  const quantity = quantities[key];
                   return (
                     <div key={key} className="glass-inner p-3 rounded-xl flex items-center gap-3">
                       <button type="button" onClick={() => setQuantities(prev => ({ ...prev, [key]: quantity ? 0 : 1 }))}
@@ -233,9 +452,13 @@ export default function BuyerReturnsPanel({ order, formatMoney }) {
                         {item.eligibilityDeadline && <p className="text-[10px] mt-0.5" style={{ color: 'hsl(var(--muted-foreground))' }}>Request by {new Date(item.eligibilityDeadline).toLocaleString()}</p>}
                       </div>
                       {quantity > 0 && (
-                        <select value={quantity} onChange={(event) => setQuantities(prev => ({ ...prev, [key]: Number(event.target.value) }))} className="glass-input w-16 py-1.5 text-sm">
-                          {Array.from({ length: item.remainingReturnableQuantity }, (_, index) => index + 1).map(value => <option key={value} value={value}>{value}</option>)}
-                        </select>
+                        <input type="number" min="1" max={item.remainingReturnableQuantity} step="1" value={quantity} onChange={(event) => {
+                          const raw = event.target.value;
+                          const parsed = /^[1-9]\d*$/u.test(raw) ? Number(raw) : null;
+                          if (Number.isSafeInteger(parsed) && parsed <= item.remainingReturnableQuantity) {
+                            setQuantities(prev => ({ ...prev, [key]: parsed }));
+                          }
+                        }} className="glass-input w-20 py-1.5 text-sm" aria-label={`Return quantity for ${item.name}`} />
                       )}
                     </div>
                   );
@@ -254,7 +477,7 @@ export default function BuyerReturnsPanel({ order, formatMoney }) {
               <textarea value={reasonDetails} onChange={(event) => setReasonDetails(event.target.value)} maxLength={1500} rows={4} className="glass-input w-full resize-none" placeholder="Describe the issue clearly for the seller." />
               <div className="flex justify-end gap-3 mt-5">
                 <button type="button" className="glass-button px-4 py-2 rounded-xl text-sm font-semibold" onClick={() => setSelectedGroup(null)} disabled={submitting}>Cancel</button>
-                <button type="button" onClick={submitReturn} disabled={submitting} className="px-4 py-2 rounded-xl text-sm font-semibold text-white inline-flex items-center gap-2 disabled:opacity-50" style={{ background: 'hsl(var(--primary))' }}>
+                <button type="button" onClick={submitReturn} disabled={submitting || !selection.valid} className="px-4 py-2 rounded-xl text-sm font-semibold text-white inline-flex items-center gap-2 disabled:opacity-50" style={{ background: 'hsl(var(--primary))' }}>
                   {submitting && <Loader2 size={14} className="animate-spin" />} Submit request
                 </button>
               </div>

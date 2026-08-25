@@ -8,13 +8,38 @@ const {
     notifyProductBlocked,
     publicProductFilter,
 } = require('../services/productModerationService')
-const { normalizeCurrency, convertAmount, convertAmountSync } = require('../services/currencyService')
+const {
+    isSupportedCurrency,
+    normalizeCurrency,
+    convertAmount,
+    convertAmountSync,
+    convertAmountUsingTrustedRates,
+    getExchangeRateSnapshot,
+} = require('../services/currencyService')
 const {
     roundMoney,
-    getProductCurrency,
-    getProductEffectivePrice,
+    applyProductPricePercentage,
+    assertEffectiveProductDiscount,
+    assertRepresentablePositiveProductAmount,
+    assertRepresentableProductAdjustment,
+    requireStoredProductCurrency,
+    requireStoredProductDiscountCurrency,
+    requireStoredProductBasePrice,
+    requireStoredProductDiscountPrice,
+    requireStoredProductEffectivePrice,
 } = require('../services/productPricingService')
-const { assertProductCreationAllowed } = require('../services/storeProductCurrencyService')
+const { percentageOfMoney } = require('../services/moneyMath')
+const {
+    PRODUCT_CURRENCY_ACTIVE_STATUS,
+    assertProductCreationAllowed,
+    getSellerProductCurrencyState,
+    withProductCurrencyWriteLock,
+} = require('../services/storeProductCurrencyService')
+const {
+    getSellerFeaturedProductQuota,
+    assertSellerCanCreateProducts,
+    assertSellerCanFeatureProduct,
+} = require('../services/sellerProductQuotaService')
 const { sanitizeProductPayload } = require('../services/productTextService')
 const {
     buyerLocationFromRequest,
@@ -32,13 +57,259 @@ const {
 } = require('../services/returnPolicyService')
 const { findProductReviewEligibility } = require('../services/reviewEligibilityService')
 const { findActiveStore } = require('../services/publicCatalogService')
+const { runInTransaction } = require('../services/walletService')
+const {
+    parseNonNegativeSafeInteger,
+    parseStrictFiniteNumber,
+} = require('../services/numericInputService')
 
 const OTHER_BRANDS_FILTER = '__other_brands__';
 const POPULAR_BRAND_MIN_PRODUCTS = Math.max(2, parseInt(process.env.POPULAR_BRAND_MIN_PRODUCTS || '3', 10) || 3);
+const MAX_BULK_PRODUCT_MUTATIONS = 250;
+const CANONICAL_PRODUCT_ID_PATTERN = /^[0-9a-f]{24}$/;
 
 const cleanList = (items) => [...new Set(
     (items || []).map(item => String(item || '').trim()).filter(Boolean)
 )].sort((a, b) => a.localeCompare(b));
+
+const PRODUCT_CURRENCY_INPUT_FIELDS = [
+    'currency',
+    'priceCurrency',
+    'discountedCurrency',
+    'discountedPriceCurrency',
+];
+
+const invalidProductCurrencyField = (product = {}) => PRODUCT_CURRENCY_INPUT_FIELDS.find(field => (
+    Object.prototype.hasOwnProperty.call(product, field)
+    && (
+        typeof product[field] !== 'string'
+        || !String(product[field]).trim()
+        || !isSupportedCurrency(product[field])
+    )
+));
+
+const invalidProductNumber = (product = {}) => {
+    for (const field of ['price', 'discountedPrice']) {
+        if (!Object.prototype.hasOwnProperty.call(product, field)) continue;
+        const value = parseStrictFiniteNumber(product[field]);
+        if (value === null || value < 0) return `${field} must be a non-negative number.`;
+        try {
+            roundMoney(value);
+        } catch (_) {
+            return `${field} is too large to store safely.`;
+        }
+    }
+    if (Object.prototype.hasOwnProperty.call(product, 'stock')) {
+        if (parseNonNegativeSafeInteger(product.stock) === null) {
+            return 'stock must be a non-negative safe whole number.';
+        }
+    }
+    return '';
+};
+
+const normalizeBulkMoneyInput = (value, { nonNegative = false } = {}) => {
+    const parsed = parseStrictFiniteNumber(value);
+    if (parsed === null || (nonNegative && parsed < 0)) return null;
+    try {
+        const rounded = roundMoney(parsed);
+        return rounded !== parsed ? null : rounded;
+    } catch (_) {
+        return null;
+    }
+};
+
+const bulkProductMutationError = (message, {
+    status = 400,
+    code = 'PRODUCT_BULK_SELECTION_INVALID',
+} = {}) => {
+    const error = new Error(message);
+    error.status = status;
+    error.statusCode = status;
+    error.code = code;
+    return error;
+};
+
+const bulkProductMutationStatus = (error) => (
+    error?.statusCode
+    || error?.status
+    || (error?.code === 'MONEY_AMOUNT_OUT_OF_RANGE' ? 400 : 500)
+);
+
+const parseBulkMutationProductIds = (productIds, { action = 'change' } = {}) => {
+    if (!Array.isArray(productIds) || productIds.length === 0) {
+        throw bulkProductMutationError('Select at least one product.');
+    }
+    if (productIds.length > MAX_BULK_PRODUCT_MUTATIONS) {
+        throw bulkProductMutationError(
+            `You can ${action} up to ${MAX_BULK_PRODUCT_MUTATIONS} products at a time.`,
+            { code: 'PRODUCT_BULK_SELECTION_LIMIT' }
+        );
+    }
+
+    // Do not trim, stringify, cast, or silently drop mutation identifiers.
+    // A canonical API identifier is the exact lowercase 24-hex string emitted
+    // by MongoDB. Rejecting every other representation makes the requested set
+    // unambiguous before an ownership-scoped query is issued.
+    const ids = Array.from(productIds, (value) => {
+        if (
+            typeof value !== 'string'
+            || !CANONICAL_PRODUCT_ID_PATTERN.test(value)
+            || !mongoose.Types.ObjectId.isValid(value)
+            || new mongoose.Types.ObjectId(value).toHexString() !== value
+        ) {
+            throw bulkProductMutationError(
+                'Every selected product ID must be a canonical lowercase 24-character hexadecimal ID.'
+            );
+        }
+        return value;
+    });
+
+    if (new Set(ids).size !== ids.length) {
+        throw bulkProductMutationError('Each selected product may appear only once.');
+    }
+    return ids;
+};
+
+const assertCompleteBulkProductSelection = (products, productIds) => {
+    const selectedProducts = Array.isArray(products) ? products : [];
+    const selectedIds = new Set(selectedProducts.map(product => String(product?._id || '')));
+    if (
+        selectedProducts.length !== productIds.length
+        || selectedIds.size !== productIds.length
+        || productIds.some(productId => !selectedIds.has(productId))
+    ) {
+        throw bulkProductMutationError(
+            'One or more selected products were not found or are not available to this account. No products were changed.',
+            { status: 404, code: 'PRODUCT_BULK_SELECTION_INCOMPLETE' }
+        );
+    }
+    return selectedProducts;
+};
+
+const normalizeBulkMutationCurrency = (value, { required = false } = {}) => {
+    if (value === undefined && !required) return null;
+    if (typeof value !== 'string' || !value.trim() || !isSupportedCurrency(value)) {
+        throw bulkProductMutationError(
+            required
+                ? 'Currency is required for this money change and must be USD, PKR, EUR, or GBP.'
+                : 'Currency must be USD, PKR, EUR, or GBP.',
+            { code: 'PRODUCT_BULK_CURRENCY_INVALID' }
+        );
+    }
+    return normalizeCurrency(value);
+};
+
+const assertSellerBulkPricingCurrency = (products, state) => {
+    if (!state?.hasStore) {
+        throw bulkProductMutationError(
+            'Store not found. Please create a store before changing product prices.',
+            { status: 404, code: 'PRODUCT_STORE_NOT_FOUND' }
+        );
+    }
+    if (state.status !== PRODUCT_CURRENCY_ACTIVE_STATUS) {
+        throw bulkProductMutationError(
+            state.message || 'Finish or cancel the pending store product currency change before changing prices.',
+            { status: 409, code: 'PRODUCT_CURRENCY_CHANGE_PENDING' }
+        );
+    }
+    const mismatchedProduct = products.find(product => (
+        requireStoredProductCurrency(product, 'USD') !== state.activeCurrency
+    ));
+    if (mismatchedProduct) {
+        throw bulkProductMutationError(
+            `${mismatchedProduct.name || `Product ${mismatchedProduct._id}`} is not stored in the active ${state.activeCurrency} store currency. Finish the product currency migration and refresh before changing prices.`,
+            { status: 409, code: 'PRODUCT_STORE_CURRENCY_CONFLICT' }
+        );
+    }
+};
+
+const requireBulkStoredProductPricing = (product) => {
+    const productCurrency = requireStoredProductCurrency(product, 'USD');
+    const price = requireStoredProductBasePrice(product);
+    const discountedPrice = requireStoredProductDiscountPrice(product);
+    requireStoredProductEffectivePrice(product);
+    const discountedPriceCurrency = requireStoredProductDiscountCurrency(product, productCurrency);
+    if (discountedPrice > 0 && discountedPriceCurrency !== productCurrency) {
+        throw bulkProductMutationError(
+            `${product?.name || `Product ${product?._id || ''}`} has conflicting stored price currencies. Refresh after repairing its product currency metadata.`,
+            { status: 409, code: 'PRODUCT_CURRENCY_METADATA_INVALID' }
+        );
+    }
+    return { productCurrency, price, discountedPrice };
+};
+
+const persistedProductFieldSnapshot = (product, fields = []) => {
+    const plainProduct = product?.toObject
+        ? product.toObject({ getters: false, virtuals: false, depopulate: true })
+        : product;
+    return fields.reduce((filter, field) => {
+        const defaulted = typeof product?.$isDefault === 'function' && product.$isDefault(field);
+        const present = !defaulted
+            && plainProduct
+            && Object.prototype.hasOwnProperty.call(plainProduct, field)
+            && plainProduct[field] !== undefined;
+        filter[field] = present ? plainProduct[field] : { $exists: false };
+        return filter;
+    }, {});
+};
+
+const productPricingMutationFilter = (product, { role, userId, discountOnly = false } = {}) => ({
+    _id: product._id,
+    ...(role === 'seller'
+        ? { seller: userId }
+        : persistedProductFieldSnapshot(product, ['seller'])),
+    ...persistedProductFieldSnapshot(product, discountOnly
+        ? ['discountedPrice', 'discountedPriceInputAmount', 'updatedAt']
+        : [
+            'price',
+            'discountedPrice',
+            'currency',
+            'priceCurrency',
+            'priceInputAmount',
+            'discountedPriceCurrency',
+            'discountedPriceInputAmount',
+            'priceVersion',
+            'updatedAt',
+        ]),
+});
+
+const matchedBulkCount = (result) => {
+    const count = result?.matchedCount ?? result?.nMatched ?? result?.result?.nMatched;
+    return typeof count === 'number' && Number.isSafeInteger(count) && count >= 0
+        ? count
+        : null;
+};
+
+const deletedBulkCount = (result) => {
+    const count = result?.deletedCount ?? result?.n;
+    return typeof count === 'number' && Number.isSafeInteger(count) && count >= 0
+        ? count
+        : null;
+};
+
+const writeProductsAtomically = async (updates = [], { sellerId = null, expectedCurrency = null } = {}) => {
+    const write = async session => {
+        const result = await Product.bulkWrite(updates, { session });
+        const matchedCount = matchedBulkCount(result);
+        if (matchedCount === null) {
+            throw bulkProductMutationError(
+                'The database did not return a trustworthy product update count.',
+                { status: 500, code: 'PRODUCT_BULK_WRITE_RESULT_INVALID' }
+            );
+        }
+        if (matchedCount !== updates.length) {
+            const error = new Error('One or more products changed while this update was being prepared. No product pricing was changed; refresh and retry.');
+            error.status = 409;
+            error.statusCode = 409;
+            error.code = 'PRODUCT_PRICE_UPDATE_CONFLICT';
+            throw error;
+        }
+        return result;
+    };
+    return sellerId
+        ? withProductCurrencyWriteLock(sellerId, expectedCurrency, write)
+        : runInTransaction(write);
+};
 
 const toArray = (value) => Array.isArray(value) ? value : [value];
 
@@ -58,17 +329,40 @@ const parseProductIdsFilter = (...values) => {
     };
 };
 
-async function applyProductCurrencyMetadata(product, fallbackCurrency = 'USD') {
+async function applyProductCurrencyMetadata(product, fallbackCurrency = 'USD', forcedProductCurrency = null) {
     if (!product || typeof product !== 'object') return product;
-    const productCurrency = normalizeCurrency(product.currency || fallbackCurrency);
-    const priceSourceCurrency = normalizeCurrency(product.priceCurrency || product.currency || productCurrency);
+    const fallbackSourceCurrency = normalizeCurrency(fallbackCurrency || 'USD');
+    const productCurrency = normalizeCurrency(forcedProductCurrency || product.currency || fallbackSourceCurrency);
+    // A forced store target describes where the value must be saved, not what
+    // an unlabelled historical value was stored in. Currency-less legacy
+    // Product.price values are canonical USD (the supplied fallback here), so
+    // using the forced target as their source would silently relabel USD 10 as
+    // PKR 10 instead of converting it.
+    const priceSourceCurrency = normalizeCurrency(
+        product.priceCurrency || product.currency || fallbackSourceCurrency
+    );
     const next = { ...product };
+    const productLabel = String(product.name || 'A product').trim() || 'A product';
+    let conversionSnapshot;
+    const convertForWrite = async (amount, sourceCurrency, targetCurrency) => {
+        if (normalizeCurrency(sourceCurrency) === normalizeCurrency(targetCurrency)) return roundMoney(amount);
+        if (!conversionSnapshot) conversionSnapshot = await getExchangeRateSnapshot();
+        return convertAmountUsingTrustedRates(amount, sourceCurrency, targetCurrency, conversionSnapshot);
+    };
 
     if (next.price !== undefined && next.price !== '') {
-        const rawPrice = roundMoney(next.price);
-        next.price = priceSourceCurrency === productCurrency
+        const rawPrice = Number(next.price);
+        const convertedPrice = priceSourceCurrency === productCurrency
             ? rawPrice
-            : await convertAmount(rawPrice, priceSourceCurrency, productCurrency);
+            : await convertForWrite(rawPrice, priceSourceCurrency, productCurrency);
+        next.price = assertRepresentablePositiveProductAmount({
+            sourceAmount: rawPrice,
+            convertedAmount: convertedPrice,
+            sourceCurrency: priceSourceCurrency,
+            targetCurrency: productCurrency,
+            productLabel,
+            field: 'price',
+        });
         next.currency = productCurrency;
         next.priceCurrency = productCurrency;
         next.priceInputAmount = next.price;
@@ -83,14 +377,25 @@ async function applyProductCurrencyMetadata(product, fallbackCurrency = 'USD') {
     }
 
     if (next.discountedPrice !== undefined && next.discountedPrice !== '') {
-        const discountCurrency = normalizeCurrency(product.discountedPriceCurrency || product.discountedCurrency || productCurrency);
-        const rawDiscount = roundMoney(next.discountedPrice);
+        const discountCurrency = normalizeCurrency(
+            product.discountedPriceCurrency
+            || product.discountedCurrency
+            || product.currency
+            || product.priceCurrency
+            || fallbackSourceCurrency
+        );
+        const rawDiscount = Number(next.discountedPrice);
         const convertedDiscount = rawDiscount > 0
-            ? await convertAmount(rawDiscount, discountCurrency, productCurrency)
+            ? await convertForWrite(rawDiscount, discountCurrency, productCurrency)
             : 0;
-        next.discountedPrice = next.price !== undefined && convertedDiscount >= Number(next.price)
-            ? 0
-            : convertedDiscount;
+        next.discountedPrice = assertRepresentablePositiveProductAmount({
+            sourceAmount: rawDiscount,
+            convertedAmount: convertedDiscount,
+            sourceCurrency: discountCurrency,
+            targetCurrency: productCurrency,
+            productLabel,
+            field: 'discountedPrice',
+        });
         next.discountedPriceCurrency = productCurrency;
         next.discountedPriceInputAmount = next.discountedPrice;
         next.priceVersion = 2;
@@ -102,6 +407,31 @@ async function applyProductCurrencyMetadata(product, fallbackCurrency = 'USD') {
 
     delete next.discountedCurrency;
     return next;
+}
+
+function serializeProductCurrencyMetadata(product, fallbackCurrency = 'USD') {
+    if (!product || typeof product !== 'object') return product;
+    const plainProduct = product?.toObject ? product.toObject() : { ...product };
+    // Raw documents created before native product currencies have no currency
+    // fields at all. Their numeric prices were stored canonically in USD.
+    const productCurrency = requireStoredProductCurrency(product, fallbackCurrency || 'USD');
+    requireStoredProductEffectivePrice(product);
+    const storedDiscountedPrice = requireStoredProductDiscountPrice(product);
+    const discountCurrency = requireStoredProductDiscountCurrency(product, productCurrency);
+    if (storedDiscountedPrice > 0 && discountCurrency !== productCurrency) {
+        const error = new Error(`${plainProduct.name || 'A product'} has conflicting stored price currencies.`);
+        error.code = 'PRODUCT_CURRENCY_METADATA_INVALID';
+        error.status = 409;
+        error.statusCode = 409;
+        throw error;
+    }
+
+    return {
+        ...plainProduct,
+        currency: productCurrency,
+        priceCurrency: productCurrency,
+        discountedPriceCurrency: discountCurrency,
+    };
 }
 
 const parsePriceRange = (priceRange) => {
@@ -121,7 +451,11 @@ async function attachComparablePrices(products, targetCurrency = 'USD') {
         const plainProduct = product?.toObject ? product.toObject() : product;
         return {
             ...plainProduct,
-            _comparablePrice: await convertAmount(getProductEffectivePrice(plainProduct), getProductCurrency(plainProduct), currency),
+            _comparablePrice: await convertAmount(
+                requireStoredProductEffectivePrice(plainProduct),
+                requireStoredProductCurrency(plainProduct, 'USD'),
+                currency
+            ),
         };
     }));
 }
@@ -130,8 +464,8 @@ function filterByComparablePriceRange(products, range) {
     if (!range || (range.min === null && range.max === null)) return products;
     return products.filter(product => {
         const price = Number(product._comparablePrice ?? convertAmountSync(
-            getProductEffectivePrice(product),
-            getProductCurrency(product),
+            requireStoredProductEffectivePrice(product),
+            requireStoredProductCurrency(product, 'USD'),
             'USD'
         ));
         if (range.min !== null && price < range.min) return false;
@@ -262,8 +596,8 @@ const applySorting = (products, sortBy, sortOrder, sellerProductCounts, totalSel
     switch(sortBy) {
         case 'price':
             return products.sort((a, b) => {
-                const priceA = a._comparablePrice ?? convertAmountSync(getProductEffectivePrice(a), getProductCurrency(a), 'USD');
-                const priceB = b._comparablePrice ?? convertAmountSync(getProductEffectivePrice(b), getProductCurrency(b), 'USD');
+                const priceA = a._comparablePrice ?? convertAmountSync(requireStoredProductEffectivePrice(a), requireStoredProductCurrency(a, 'USD'), 'USD');
+                const priceB = b._comparablePrice ?? convertAmountSync(requireStoredProductEffectivePrice(b), requireStoredProductCurrency(b, 'USD'), 'USD');
                 return (priceA - priceB) * order;
             });
 
@@ -480,7 +814,9 @@ exports.getProducts = async (req, res) => {
 
         const totalProducts = products.length;
         const totalPages = Math.ceil(totalProducts / limitNum);
-        const paginatedProducts = products.slice(skip, skip + limitNum);
+        const paginatedProducts = products
+            .slice(skip, skip + limitNum)
+            .map(product => serializeProductCurrencyMetadata(product, 'USD'));
 
         res.status(200).json({
             msg: 'fetched products successfully.',
@@ -540,7 +876,11 @@ exports.getSingleProduct = async (req, res) => {
             path: 'reviews.user',
             select: 'avatar username email'
         })
-        res.status(200).json({ msg: 'fetched single product', product: singleProduct, storePolicy })
+        res.status(200).json({
+            msg: 'fetched single product',
+            product: serializeProductCurrencyMetadata(singleProduct, 'USD'),
+            storePolicy,
+        })
     } catch (err) {
         console.error(err)
         res.status(500).json({ msg: 'Server error' })
@@ -694,56 +1034,58 @@ exports.deleteProduct = async (req, res) => {
 
 }
 
-// ── Featured product limits by plan tier ──
-const FEATURED_LIMITS = {
-    free_trial: 6,
-    starter: 6,
-    elite: 12,
-};
-
 exports.bulkDeleteProducts = async (req, res) => {
     const { role, id: userId } = req.user
-    const { productIds } = req.body
+    const { productIds } = req.body || {}
 
     if (role !== 'admin' && role !== 'seller') {
         return res.status(403).json({ msg: 'Unauthorized to delete products' })
     }
 
     try {
-        if (!Array.isArray(productIds) || productIds.length === 0) {
-            return res.status(400).json({ msg: 'Select at least one product to delete.' })
-        }
-
-        const uniqueIds = [...new Set(productIds.map(id => String(id || '').trim()))]
-        const validIds = uniqueIds.filter(id => mongoose.Types.ObjectId.isValid(id))
-
-        if (validIds.length === 0) {
-            return res.status(400).json({ msg: 'No valid product IDs were provided.' })
-        }
-        if (validIds.length > 250) {
-            return res.status(400).json({ msg: 'You can delete up to 250 products at a time.' })
-        }
-
-        const query = { _id: { $in: validIds } }
+        const selectedProductIds = parseBulkMutationProductIds(productIds, { action: 'delete' })
+        const query = { _id: { $in: selectedProductIds } }
         if (role === 'seller') query.seller = userId
 
-        const products = await Product.find(query).select('_id name')
-        if (products.length === 0) {
-            return res.status(404).json({ msg: 'No products found or you do not have permission to delete them.' })
-        }
+        const deletedCount = await runInTransaction(async session => {
+            let productQuery = Product.find(query).select('_id')
+            if (session) productQuery = productQuery.session(session)
+            const products = await productQuery
+            assertCompleteBulkProductSelection(products, selectedProductIds)
 
-        const idsToDelete = products.map(product => product._id)
-        const result = await Product.deleteMany({ _id: { $in: idsToDelete } })
-        const deletedCount = result.deletedCount || products.length
+            // Use the same ownership-scoped selection inside the transaction.
+            // A concurrent removal/ownership change must produce a count
+            // mismatch and roll back the whole delete rather than partially
+            // succeeding against whatever subset remains.
+            const result = await Product.deleteMany(query, { session })
+            const count = deletedBulkCount(result)
+            if (count === null) {
+                throw bulkProductMutationError(
+                    'The database did not return a trustworthy product deletion count.',
+                    { status: 500, code: 'PRODUCT_BULK_DELETE_RESULT_INVALID' }
+                )
+            }
+            if (count !== selectedProductIds.length) {
+                throw bulkProductMutationError(
+                    'One or more products changed while this deletion was being prepared. No products were deleted; refresh and retry.',
+                    { status: 409, code: 'PRODUCT_BULK_DELETE_CONFLICT' }
+                )
+            }
+            return count
+        })
 
         res.status(200).json({
             msg: `Deleted ${deletedCount} product${deletedCount === 1 ? '' : 's'} successfully.`,
             deletedCount,
-            skippedCount: uniqueIds.length - products.length,
+            skippedCount: 0,
         })
     } catch (error) {
-        console.error('Error while bulk deleting products:::', error.message);
-        res.status(500).json({ msg: 'Server error while deleting selected products.' })
+        const status = bulkProductMutationStatus(error)
+        if (status >= 500) console.error('Error while bulk deleting products:::', error.message)
+        res.status(status).json({
+            msg: status < 500 ? error.message : 'Server error while deleting selected products.',
+            ...(error.code ? { code: error.code } : {}),
+        })
     }
 }
 
@@ -753,53 +1095,7 @@ exports.bulkDeleteProducts = async (req, res) => {
  */
 async function sellerCanFeatureProduct(userId, excludeProductId = null) {
     try {
-        const SellerSubscription = require('../models/SellerSubscription');
-        const sub = await SellerSubscription.findOne({ seller: userId });
-
-        // Determine plan tier and entitlement
-        let plan = 'free_trial';
-        let entitled = false;
-
-        if (!sub) {
-            // No subscription record — trial-grace
-            plan = 'free_trial';
-            entitled = true;
-        } else if (sub.status === 'trial') {
-            plan = 'free_trial';
-            entitled = true;
-        } else if (sub.plan === 'elite' && ['active', 'free_period'].includes(sub.status)) {
-            plan = 'elite';
-            entitled = true;
-        } else if (['active', 'free_period'].includes(sub.status)) {
-            plan = sub.plan || 'starter';
-            // Starter: needs bonus features active OR just allow (featured is a core feature per tier now)
-            entitled = true;
-        } else if (sub.bonusFeaturesActive && (!sub.bonusExpiryDate || new Date() < sub.bonusExpiryDate)) {
-            plan = sub.plan || 'starter';
-            entitled = true;
-        } else {
-            plan = sub.plan || 'free_trial';
-            entitled = false;
-        }
-
-        if (!entitled) {
-            return { allowed: false, current: 0, max: 0, plan, reason: 'not_entitled' };
-        }
-
-        const max = FEATURED_LIMITS[plan] || FEATURED_LIMITS.free_trial;
-
-        // Count current featured products for this seller
-        const query = publicProductFilter({ seller: userId, isFeatured: true });
-        if (excludeProductId) {
-            query._id = { $ne: excludeProductId };
-        }
-        const current = await Product.countDocuments(query);
-
-        if (current >= max) {
-            return { allowed: false, current, max, plan, reason: 'limit_reached' };
-        }
-
-        return { allowed: true, current, max, plan };
+        return getSellerFeaturedProductQuota(userId, { excludeProductId });
     } catch (e) {
         console.error('sellerCanFeatureProduct error:', e);
         return { allowed: false, current: 0, max: 0, plan: 'free_trial', reason: 'error' };
@@ -845,6 +1141,12 @@ exports.editProduct = async (req, res) => {
         }
 
         const sanitizedProduct = sanitizeProductPayload({ ...product });
+        const invalidCurrencyField = invalidProductCurrencyField(sanitizedProduct);
+        if (invalidCurrencyField) {
+            return res.status(400).json({ msg: `${invalidCurrencyField} must be USD, PKR, EUR, or GBP.` });
+        }
+        const invalidNumber = invalidProductNumber(sanitizedProduct);
+        if (invalidNumber) return res.status(400).json({ msg: invalidNumber });
         if (Object.prototype.hasOwnProperty.call(sanitizedProduct, 'name') && !sanitizedProduct.name) {
             return res.status(400).json({ msg: 'Product name is required.' });
         }
@@ -855,15 +1157,65 @@ exports.editProduct = async (req, res) => {
             sanitizedProduct.returnPolicy = normalizeProductReturnPolicy(sanitizedProduct.returnPolicy, { strict: true });
         }
 
-        let safeProduct = await applyProductCurrencyMetadata(sanitizedProduct, req.user?.currency || 'USD');
+        const ownerCurrencyState = existingProduct.seller
+            ? await getSellerProductCurrencyState(existingProduct.seller)
+            : null;
+        // Products persisted before native-currency metadata was introduced
+        // stored canonical USD. A buyer/seller display preference must never
+        // reinterpret that historical number as a different native currency.
+        const storedCurrency = requireStoredProductCurrency(existingProduct, 'USD');
+        requireStoredProductEffectivePrice(existingProduct);
+        const storedBasePrice = requireStoredProductBasePrice(existingProduct);
+        const storedDiscountedPrice = requireStoredProductDiscountPrice(existingProduct);
+        const targetProductCurrency = ownerCurrencyState?.hasStore
+            ? ownerCurrencyState.activeCurrency
+            : storedCurrency;
+        const requestedCurrency = sanitizedProduct.priceCurrency || sanitizedProduct.currency;
         if (
-            safeProduct.price !== undefined &&
-            existingProduct.discountedPrice > 0 &&
-            getProductCurrency(existingProduct, req.user?.currency || 'USD') !== normalizeCurrency(safeProduct.currency || safeProduct.priceCurrency)
+            sanitizedProduct.price === undefined
+            && (
+                storedCurrency !== targetProductCurrency
+                || (requestedCurrency && normalizeCurrency(requestedCurrency) !== targetProductCurrency)
+            )
         ) {
+            return res.status(400).json({
+                msg: `This store saves products in ${targetProductCurrency}. Include the price to convert it, or change the store product currency from Product Currency settings.`,
+            });
+        }
+        const explicitDiscountUpdate = Object.prototype.hasOwnProperty.call(sanitizedProduct, 'discountedPrice');
+        const currencyPayload = { ...sanitizedProduct };
+        if (
+            currencyPayload.price !== undefined
+            && storedDiscountedPrice > 0
+            && !explicitDiscountUpdate
+        ) {
+            currencyPayload.discountedPrice = existingProduct.discountedPrice;
+            currencyPayload.discountedPriceCurrency = storedCurrency;
+        }
+        let safeProduct = await applyProductCurrencyMetadata(
+            currencyPayload,
+            storedCurrency,
+            targetProductCurrency
+        );
+        const effectiveRegularPrice = safeProduct.price !== undefined
+            ? Number(safeProduct.price)
+            : storedBasePrice;
+        if (safeProduct.discountedPrice > 0 && safeProduct.discountedPrice >= effectiveRegularPrice) {
+            if (explicitDiscountUpdate) {
+                return res.status(400).json({ msg: 'Discounted price must be lower than the regular price.' });
+            }
             safeProduct.discountedPrice = 0;
-            safeProduct.discountedPriceCurrency = safeProduct.currency || safeProduct.priceCurrency;
+            safeProduct.discountedPriceCurrency = targetProductCurrency;
             safeProduct.discountedPriceInputAmount = 0;
+        }
+        if (
+            Object.prototype.hasOwnProperty.call(safeProduct, 'discountedPrice')
+            && !Object.prototype.hasOwnProperty.call(safeProduct, 'price')
+        ) {
+            // Positive discount update validators run in Query context. Carry
+            // the already validated final price in the same CAS update so the
+            // schema can prove discount < price without a second/stale read.
+            safeProduct.price = effectiveRegularPrice;
         }
 
         // Gate: enforce featured product limits based on subscription tier.
@@ -883,13 +1235,42 @@ exports.editProduct = async (req, res) => {
             ...existingProduct.toObject(),
             ...safeProduct,
         };
-        const { fields: moderationFields } = buildModerationFields(mergedProduct);
+        const { fields: moderationFields } = buildModerationFields(mergedProduct, {
+            previouslyBlocked: wasBlocked,
+        });
         Object.assign(safeProduct, moderationFields);
 
-        const updatedProduct = await Product.findByIdAndUpdate(id,
-            { $set: safeProduct },
-            { new: true, runValidators: true }
-        )
+        const editFilter = {
+            _id: id,
+            ...(role === 'seller' ? { seller: userId } : {}),
+            ...(existingProduct.updatedAt ? { updatedAt: existingProduct.updatedAt } : {}),
+        };
+        const updateProduct = async session => {
+            if (
+                role === 'seller'
+                && safeProduct.isFeatured === true
+                && existingProduct.isFeatured !== true
+            ) {
+                await assertSellerCanFeatureProduct(userId, {
+                    excludeProductId: existingProduct._id,
+                    session,
+                });
+            }
+            return Product.findOneAndUpdate(editFilter,
+                { $set: safeProduct },
+                { new: true, runValidators: true, ...(session ? { session } : {}) }
+            );
+        };
+        const updatedProduct = existingProduct.seller && ownerCurrencyState?.hasStore
+            ? await withProductCurrencyWriteLock(existingProduct.seller, targetProductCurrency, updateProduct)
+            : await updateProduct(null);
+
+        if (!updatedProduct) {
+            return res.status(409).json({
+                msg: 'This product changed while your edit was being prepared. Refresh it and try again.',
+                code: 'PRODUCT_UPDATE_CONFLICT',
+            });
+        }
 
         if (isProductBlocked(updatedProduct) && !wasBlocked) {
             notifyProductBlocked({ sellerId: updatedProduct.seller, product: updatedProduct }).catch(err =>
@@ -905,6 +1286,7 @@ exports.editProduct = async (req, res) => {
 
         res.status(200).json({
             msg,
+            product: serializeProductCurrencyMetadata(updatedProduct, 'USD'),
             blocked: isProductBlocked(updatedProduct),
             moderationReason: updatedProduct.moderationReason || updatedProduct.blockedReason || '',
         })
@@ -912,7 +1294,11 @@ exports.editProduct = async (req, res) => {
     } catch (error) {
         console.error(error.message);
         const status = error.status || error.statusCode || 500;
-        res.status(status).json({ msg: status < 500 ? error.message : 'Server error while editing product.' })
+        const trustedRateFailure = error.code === 'EXCHANGE_RATES_UNAVAILABLE';
+        res.status(status).json({
+            msg: status < 500 || trustedRateFailure ? error.message : 'Server error while editing product.',
+            ...(error.code ? { code: error.code } : {}),
+        })
     }
 }
 
@@ -928,19 +1314,15 @@ exports.addProduct = async (req, res) => {
         // Sellers must have a store before adding products
         if (role === 'seller') {
             await assertProductCreationAllowed(userId);
-
-            // Enforce product limit for trial sellers (15 products max)
-            const SellerSubscription = require('../models/SellerSubscription');
-            const sub = await SellerSubscription.findOne({ seller: userId });
-            if (sub && sub.status === 'trial') {
-                const productCount = await Product.countDocuments({ seller: userId });
-                if (productCount >= 15) {
-                    return res.status(403).json({ msg: 'You have reached the maximum of 15 product listings during your free trial. Subscribe to add unlimited products.' });
-                }
-            }
         }
 
         const sanitizedProduct = sanitizeProductPayload({ ...product });
+        const invalidCurrencyField = invalidProductCurrencyField(sanitizedProduct);
+        if (invalidCurrencyField) {
+            return res.status(400).json({ msg: `${invalidCurrencyField} must be USD, PKR, EUR, or GBP.` });
+        }
+        const invalidNumber = invalidProductNumber(sanitizedProduct);
+        if (invalidNumber) return res.status(400).json({ msg: invalidNumber });
         if (!sanitizedProduct.name) {
             return res.status(400).json({ msg: 'Product name is required.' });
         }
@@ -961,7 +1343,13 @@ exports.addProduct = async (req, res) => {
             currency: productEntryCurrency,
             priceCurrency: sanitizedProduct?.priceCurrency || sanitizedProduct?.currency || productEntryCurrency,
             discountedPriceCurrency: sanitizedProduct?.discountedPriceCurrency || sanitizedProduct?.discountedCurrency || sanitizedProduct?.currency || productEntryCurrency,
-        }, productEntryCurrency);
+        }, productEntryCurrency, productEntryCurrency);
+        if (safeProduct.discountedPrice > 0 && safeProduct.discountedPrice >= safeProduct.price) {
+            return res.status(400).json({ msg: 'Discounted price must be lower than the regular price.' });
+        }
+        if (safeProduct.price === undefined) {
+            return res.status(400).json({ msg: 'Product price is required.' });
+        }
         if (role === 'seller' && product?.isFeatured === true) {
             const featCheck = await sellerCanFeatureProduct(userId);
             if (!featCheck.allowed) {
@@ -978,7 +1366,24 @@ exports.addProduct = async (req, res) => {
             ...moderationFields,
             seller: role === 'seller' ? userId : null // Only set seller for seller role
         })
-        await newProduct.save()
+        if (role === 'seller') {
+            await withProductCurrencyWriteLock(
+                userId,
+                productEntryCurrency,
+                async session => {
+                    // This count and the insert share the seller's Store write
+                    // lock. If two transactions race, Mongo retries the loser
+                    // and this quota check observes the winner's committed row.
+                    await assertSellerCanCreateProducts(userId, { session });
+                    if (newProduct.isFeatured) {
+                        await assertSellerCanFeatureProduct(userId, { session });
+                    }
+                    return newProduct.save({ session });
+                }
+            );
+        } else {
+            await newProduct.save()
+        }
         if (isProductBlocked(newProduct)) {
             await notifyProductBlocked({ sellerId: newProduct.seller, product: newProduct });
         }
@@ -987,7 +1392,7 @@ exports.addProduct = async (req, res) => {
             msg: isProductBlocked(newProduct)
                 ? `Product added, but it was blocked because ${newProduct.blockedReason || newProduct.moderationReason}. Customers cannot see it until you edit it with real product details.`
                 : 'Product added successfully.',
-            product: newProduct,
+            product: serializeProductCurrencyMetadata(newProduct, 'USD'),
             blocked: isProductBlocked(newProduct),
             moderationReason: newProduct.moderationReason || newProduct.blockedReason || '',
         })
@@ -996,69 +1401,114 @@ exports.addProduct = async (req, res) => {
         console.error(error.message);
         const status = error.status || error.statusCode || 500;
         res.status(status).json({
-            msg: status < 500 ? error.message : 'Server error while adding new product.',
+            msg: status < 500 || error.code === 'EXCHANGE_RATES_UNAVAILABLE'
+                ? error.message
+                : 'Server error while adding new product.',
             productCurrency: error.productCurrencyState,
+            ...(error.code ? { code: error.code } : {}),
         })
     }
 }
 
 exports.bulkDiscount = async (req, res) => {
     const { role, id: userId } = req.user
-    const { productIds, discountType, discountValue, currency } = req.body
+    const { productIds, discountType, discountValue, currency } = req.body || {}
 
     try {
         if (role !== 'admin' && role !== 'seller') {
             return res.status(403).json({ msg: 'Unauthorized to apply bulk discount' })
         }
 
-        // Validate input
-        if (!productIds || !Array.isArray(productIds) || productIds.length === 0) {
-            return res.status(400).json({ msg: 'Product IDs array is required' })
-        }
+        const selectedProductIds = parseBulkMutationProductIds(productIds)
 
         if (!discountType || !['percentage', 'fixed'].includes(discountType)) {
             return res.status(400).json({ msg: 'Discount type must be "percentage" or "fixed"' })
         }
 
-        if (discountValue === undefined || discountValue < 0) {
-            return res.status(400).json({ msg: 'Valid discount value is required' })
+        const parsedDiscountValue = parseStrictFiniteNumber(discountValue)
+        const numericDiscountValue = discountType === 'fixed'
+            ? normalizeBulkMoneyInput(discountValue, { nonNegative: true })
+            : parsedDiscountValue
+        if (numericDiscountValue === null || numericDiscountValue <= 0) {
+            return res.status(400).json({ msg: 'A positive discount value is required' })
         }
+        if (discountType === 'percentage' && numericDiscountValue >= 100) {
+            return res.status(400).json({ msg: 'Percentage product discount must be below 100' })
+        }
+        const inputCurrency = normalizeBulkMutationCurrency(currency, {
+            required: discountType === 'fixed',
+        })
 
         // Build query - sellers can only update their own products
-        const query = { _id: { $in: productIds } }
+        const query = { _id: { $in: selectedProductIds } }
         if (role === 'seller') {
             query.seller = userId
         }
 
         // Fetch all products to update
         const products = await Product.find(query)
+        assertCompleteBulkProductSelection(products, selectedProductIds)
+        const sellerCurrencyState = role === 'seller'
+            ? await getSellerProductCurrencyState(userId)
+            : null
+        if (sellerCurrencyState) assertSellerBulkPricingCurrency(products, sellerCurrencyState)
+        const conversionSnapshot = discountType === 'fixed' && products.some(product => (
+            inputCurrency && requireStoredProductCurrency(product, 'USD') !== inputCurrency
+        )) ? await getExchangeRateSnapshot() : null
 
-        if (products.length === 0) {
-            return res.status(404).json({ msg: 'No products found or you do not have permission to update these products' })
-        }
-
-        // Apply discount to each product
-        const updatePromises = products.map(async (product) => {
+        // Compute every value before writing so a failed FX lookup cannot leave
+        // a partially updated product selection.
+        const updates = await Promise.all(products.map(async (product) => {
             let newDiscountedPrice
-            const productCurrency = getProductCurrency(product, req.user?.currency || 'USD')
+            const { productCurrency, price } = requireBulkStoredProductPricing(product)
 
             if (discountType === 'percentage') {
                 // Apply percentage discount
-                const discountAmount = (product.price * discountValue) / 100
-                newDiscountedPrice = Math.max(0, product.price - discountAmount)
+                const discountAmount = percentageOfMoney(price, numericDiscountValue)
+                newDiscountedPrice = Math.max(0, price - discountAmount)
             } else {
                 // Apply fixed amount discount
-                const fixedDiscount = await convertAmount(discountValue, normalizeCurrency(currency || productCurrency), productCurrency)
-                newDiscountedPrice = Math.max(0, product.price - fixedDiscount)
+                const convertedFixedDiscount = await convertAmountUsingTrustedRates(
+                    numericDiscountValue,
+                    inputCurrency || productCurrency,
+                    productCurrency,
+                    conversionSnapshot
+                )
+                const fixedDiscount = assertRepresentableProductAdjustment({
+                    sourceAmount: numericDiscountValue,
+                    convertedAmount: convertedFixedDiscount,
+                    sourceCurrency: inputCurrency || productCurrency,
+                    targetCurrency: productCurrency,
+                    productLabel: product.name || `Product ${product._id}`,
+                })
+                newDiscountedPrice = Math.max(0, price - fixedDiscount)
             }
+            const discountedPrice = assertEffectiveProductDiscount({
+                regularPrice: price,
+                discountedPrice: newDiscountedPrice,
+                productLabel: product.name || `Product ${product._id}`,
+            })
+            return {
+                updateOne: {
+                    filter: productPricingMutationFilter(product, { role, userId }),
+                    update: { $set: {
+                        price,
+                        discountedPrice,
+                        currency: productCurrency,
+                        priceCurrency: productCurrency,
+                        priceInputAmount: price,
+                        discountedPriceCurrency: productCurrency,
+                        discountedPriceInputAmount: discountedPrice,
+                        priceVersion: 2,
+                    } },
+                },
+            }
+        }))
 
-            product.discountedPrice = Math.round(newDiscountedPrice * 100) / 100
-            product.discountedPriceCurrency = productCurrency
-            product.discountedPriceInputAmount = product.discountedPrice
-            return product.save()
+        await writeProductsAtomically(updates, {
+            sellerId: role === 'seller' ? userId : null,
+            expectedCurrency: sellerCurrencyState?.activeCurrency,
         })
-
-        await Promise.all(updatePromises)
 
         res.status(200).json({
             msg: `Bulk discount applied successfully to ${products.length} product(s)`,
@@ -1066,80 +1516,162 @@ exports.bulkDiscount = async (req, res) => {
         })
 
     } catch (error) {
-        console.error('Error while applying bulk discount:::', error.message);
-        res.status(500).json({ msg: 'Server error while applying bulk discount.' })
+        const status = bulkProductMutationStatus(error)
+        if (status >= 500) console.error('Error while applying bulk discount:::', error.message)
+        res.status(status).json({
+            msg: status < 500 || error.code === 'EXCHANGE_RATES_UNAVAILABLE'
+                ? error.message
+                : 'Server error while applying bulk discount.',
+            ...(error.code ? { code: error.code } : {}),
+        })
     }
 }
 
 exports.bulkPriceUpdate = async (req, res) => {
     const { role, id: userId } = req.user
-    const { productIds, updateType, value, currency } = req.body
+    const { productIds, updateType, value, currency } = req.body || {}
 
     try {
         if (role !== 'admin' && role !== 'seller') {
             return res.status(403).json({ msg: 'Unauthorized to update bulk prices' })
         }
 
-        // Validate input
-        if (!productIds || !Array.isArray(productIds) || productIds.length === 0) {
-            return res.status(400).json({ msg: 'Product IDs array is required' })
-        }
+        const selectedProductIds = parseBulkMutationProductIds(productIds)
 
         if (!updateType || !['percentage', 'fixed', 'set'].includes(updateType)) {
             return res.status(400).json({ msg: 'Update type must be "percentage", "fixed", or "set"' })
         }
 
-        if (value === undefined) {
+        const parsedValue = parseStrictFiniteNumber(value)
+        const numericValue = updateType === 'percentage'
+            ? parsedValue
+            : normalizeBulkMoneyInput(value, { nonNegative: updateType === 'set' })
+        if (numericValue === null) {
             return res.status(400).json({ msg: 'Value is required' })
+        }
+        if (updateType !== 'set' && numericValue === 0) {
+            return res.status(400).json({ msg: 'A non-zero price change is required' })
+        }
+        const inputCurrency = normalizeBulkMutationCurrency(currency, {
+            required: updateType !== 'percentage',
+        })
+        if (updateType === 'percentage') {
+            // Reject unsafe percentages before loading products or preparing a
+            // bulk write. The per-product helper also guards the computed
+            // money result against exceeding safe minor-unit bounds.
+            applyProductPricePercentage(0, numericValue)
         }
 
         // Build query - sellers can only update their own products
-        const query = { _id: { $in: productIds } }
+        const query = { _id: { $in: selectedProductIds } }
         if (role === 'seller') {
             query.seller = userId
         }
 
         // Fetch all products to update
         const products = await Product.find(query)
+        assertCompleteBulkProductSelection(products, selectedProductIds)
+        const sellerCurrencyState = role === 'seller'
+            ? await getSellerProductCurrencyState(userId)
+            : null
+        if (sellerCurrencyState) assertSellerBulkPricingCurrency(products, sellerCurrencyState)
+        const conversionSnapshot = updateType !== 'percentage' && numericValue !== 0 && products.some(product => (
+            inputCurrency && requireStoredProductCurrency(product, 'USD') !== inputCurrency
+        )) ? await getExchangeRateSnapshot() : null
 
-        if (products.length === 0) {
-            return res.status(404).json({ msg: 'No products found or you do not have permission to update these products' })
-        }
-
-        // Update price for each product
-        const updatePromises = products.map(async (product) => {
+        const updates = await Promise.all(products.map(async (product) => {
             let newPrice
-            const productCurrency = getProductCurrency(product, req.user?.currency || 'USD')
+            const {
+                productCurrency,
+                price: storedPrice,
+                discountedPrice: storedDiscountedPrice,
+            } = requireBulkStoredProductPricing(product)
 
             if (updateType === 'percentage') {
                 // Increase/decrease by percentage
-                const changeAmount = (product.price * value) / 100
-                newPrice = Math.max(0, product.price + changeAmount)
+                newPrice = applyProductPricePercentage(storedPrice, numericValue)
+                // A percentage of an intentionally free product is exactly
+                // zero, so retaining zero is valid. For positive products a
+                // non-zero request that rounds to no cent-level change must
+                // fail instead of reporting a misleading successful update.
+                if (storedPrice > 0 && newPrice === storedPrice) {
+                    throw bulkProductMutationError(
+                        `${product.name || `Product ${product._id}`}'s percentage change is too small to affect its price at the current currency precision.`,
+                        { status: 409, code: 'PRODUCT_PRICE_ADJUSTMENT_UNREPRESENTABLE' }
+                    )
+                }
             } else if (updateType === 'fixed') {
                 // Increase/decrease by fixed amount
-                const fixedChange = await convertAmount(value, normalizeCurrency(currency || productCurrency), productCurrency)
-                newPrice = Math.max(0, product.price + fixedChange)
+                const convertedFixedChange = await convertAmountUsingTrustedRates(
+                    numericValue,
+                    inputCurrency || productCurrency,
+                    productCurrency,
+                    conversionSnapshot
+                )
+                const fixedChange = assertRepresentableProductAdjustment({
+                    sourceAmount: numericValue,
+                    convertedAmount: convertedFixedChange,
+                    sourceCurrency: inputCurrency || productCurrency,
+                    targetCurrency: productCurrency,
+                    productLabel: product.name || `Product ${product._id}`,
+                })
+                newPrice = Math.max(0, storedPrice + fixedChange)
             } else {
                 // Set to specific price
-                newPrice = Math.max(0, await convertAmount(value, normalizeCurrency(currency || productCurrency), productCurrency))
+                if (numericValue === 0) {
+                    // Zero has no denomination-dependent magnitude. Saving an
+                    // explicitly free product must not depend on a live FX
+                    // service, and it must clear any now-invalid discount.
+                    newPrice = 0
+                } else {
+                    const convertedSetPrice = await convertAmountUsingTrustedRates(
+                        numericValue,
+                        inputCurrency || productCurrency,
+                        productCurrency,
+                        conversionSnapshot
+                    )
+                    newPrice = assertRepresentablePositiveProductAmount({
+                        sourceAmount: numericValue,
+                        convertedAmount: convertedSetPrice,
+                        sourceCurrency: inputCurrency || productCurrency,
+                        targetCurrency: productCurrency,
+                        productLabel: product.name || `Product ${product._id}`,
+                        field: 'price',
+                    })
+                }
             }
 
-            product.price = Math.round(newPrice * 100) / 100
-            product.currency = productCurrency
-            product.priceCurrency = productCurrency
-            product.priceInputAmount = product.price
-            product.priceVersion = 2
-
-            // Reset discounted price if it's higher than new price
-            if (product.discountedPrice > 0 && product.discountedPrice >= product.price) {
-                product.discountedPrice = 0
-                product.discountedPriceInputAmount = 0
+            const price = roundMoney(newPrice)
+            const update = {
+                price,
+                currency: productCurrency,
+                priceCurrency: productCurrency,
+                priceInputAmount: price,
+                priceVersion: 2,
             }
 
-            return product.save()
+            // Bulk writes do not run Mongoose update validators, so persist a
+            // complete, prevalidated pricing pair rather than an isolated base
+            // price that could strand an old discount above the new price.
+            const retainedDiscount = storedDiscountedPrice > 0 && storedDiscountedPrice < price
+                ? storedDiscountedPrice
+                : 0
+            update.discountedPrice = retainedDiscount
+            update.discountedPriceInputAmount = retainedDiscount
+            update.discountedPriceCurrency = productCurrency
+
+            return {
+                updateOne: {
+                    filter: productPricingMutationFilter(product, { role, userId }),
+                    update: { $set: update },
+                },
+            }
+        }))
+
+        await writeProductsAtomically(updates, {
+            sellerId: role === 'seller' ? userId : null,
+            expectedCurrency: sellerCurrencyState?.activeCurrency,
         })
-
-        await Promise.all(updatePromises)
 
         res.status(200).json({
             msg: `Bulk price update applied successfully to ${products.length} product(s)`,
@@ -1147,45 +1679,63 @@ exports.bulkPriceUpdate = async (req, res) => {
         })
 
     } catch (error) {
-        console.error('Error while updating bulk prices:::', error.message);
-        res.status(500).json({ msg: 'Server error while updating bulk prices.' })
+        const status = bulkProductMutationStatus(error)
+        if (status >= 500) console.error('Error while updating bulk prices:::', error.message)
+        res.status(status).json({
+            msg: status < 500 || error.code === 'EXCHANGE_RATES_UNAVAILABLE'
+                ? error.message
+                : 'Server error while updating bulk prices.',
+            ...(error.code ? { code: error.code } : {}),
+        })
     }
 }
 
 exports.removeDiscount = async (req, res) => {
     const { role, id: userId } = req.user
-    const { productIds } = req.body
+    const { productIds } = req.body || {}
 
     try {
         if (role !== 'admin' && role !== 'seller') {
             return res.status(403).json({ msg: 'Unauthorized to remove discounts' })
         }
 
-        // Validate input
-        if (!productIds || !Array.isArray(productIds) || productIds.length === 0) {
-            return res.status(400).json({ msg: 'Product IDs array is required' })
-        }
+        const selectedProductIds = parseBulkMutationProductIds(productIds)
 
         // Build query - sellers can only update their own products
-        const query = { _id: { $in: productIds } }
+        const query = { _id: { $in: selectedProductIds } }
         if (role === 'seller') {
             query.seller = userId
         }
 
-        // Update all products to remove discount
-        const result = await Product.updateMany(
-            query,
-            { $set: { discountedPrice: 0 } }
-        )
+        const products = await Product.find(query)
+        assertCompleteBulkProductSelection(products, selectedProductIds)
+        const updates = products.map(product => {
+            requireBulkStoredProductPricing(product)
+            return {
+                updateOne: {
+                    filter: productPricingMutationFilter(product, {
+                        role,
+                        userId,
+                        discountOnly: true,
+                    }),
+                    update: { $set: { discountedPrice: 0, discountedPriceInputAmount: 0 } },
+                },
+            }
+        })
+        await writeProductsAtomically(updates)
 
         res.status(200).json({
-            msg: `Discounts removed successfully from ${result.modifiedCount} product(s)`,
-            updatedCount: result.modifiedCount
+            msg: `Discounts removed successfully from ${products.length} product(s)`,
+            updatedCount: products.length
         })
 
     } catch (error) {
-        console.error('Error while removing discounts:::', error.message);
-        res.status(500).json({ msg: 'Server error while removing discounts.' })
+        const status = bulkProductMutationStatus(error)
+        if (status >= 500) console.error('Error while removing discounts:::', error.message)
+        res.status(status).json({
+            msg: status < 500 ? error.message : 'Server error while removing discounts.',
+            ...(error.code ? { code: error.code } : {}),
+        })
     }
 }
 
@@ -1240,7 +1790,7 @@ exports.getSellerProducts = async (req, res) => {
 
         res.status(200).json({
             msg: 'Fetched seller products successfully.',
-            products: paginated.products,
+            products: paginated.products.map(product => serializeProductCurrencyMetadata(product, 'USD')),
             pagination: paginated.pagination,
         })
     } catch (error) {
@@ -1305,7 +1855,7 @@ exports.getAdminProducts = async (req, res) => {
 
         res.status(200).json({
             msg: 'Fetched admin products successfully.',
-            products: paginated.products,
+            products: paginated.products.map(product => serializeProductCurrencyMetadata(product, 'USD')),
             pagination: paginated.pagination,
         })
     } catch (error) {
@@ -1313,3 +1863,18 @@ exports.getAdminProducts = async (req, res) => {
         res.status(500).json({ msg: 'Server error while fetching admin products.' })
     }
 }
+
+exports.__private = {
+    MAX_BULK_PRODUCT_MUTATIONS,
+    applyProductCurrencyMetadata,
+    serializeProductCurrencyMetadata,
+    invalidProductCurrencyField,
+    invalidProductNumber,
+    normalizeBulkMoneyInput,
+    parseBulkMutationProductIds,
+    assertCompleteBulkProductSelection,
+    normalizeBulkMutationCurrency,
+    assertSellerBulkPricingCurrency,
+    productPricingMutationFilter,
+    writeProductsAtomically,
+};

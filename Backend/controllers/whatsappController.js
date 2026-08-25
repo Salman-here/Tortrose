@@ -1,10 +1,14 @@
 const WhatsAppConfig = require('../models/WhatsAppConfig');
 const WhatsAppPendingMessage = require('../models/WhatsAppPendingMessage');
+const NotificationOutbox = require('../models/NotificationOutbox');
 const evolution = require('../services/whatsapp/evolutionClient');
 const {
     configKeyFor,
     useUnifiedWhatsAppInstance,
 } = require('../services/whatsapp/gatewayMode');
+const {
+    getOutboundWhatsAppWebhookSecret,
+} = require('../services/whatsapp/webhookSecurity');
 
 const ensureSingleton = async () => {
     const singletonKey = configKeyFor('main');
@@ -211,7 +215,7 @@ const registerWebhookIfPossible = async (req = null) => {
             console.warn('[whatsapp] webhook URL could not be resolved (set BACKEND_PUBLIC_URL)');
             return;
         }
-        const secret = process.env.EVOLUTION_WEBHOOK_SECRET || '';
+        const secret = getOutboundWhatsAppWebhookSecret();
         await evolution.setSettings().catch((settingsErr) => {
             console.warn('[whatsapp] setSettings failed (non-fatal):', settingsErr.response?.data || settingsErr.message);
         });
@@ -631,17 +635,71 @@ exports.retryQueueItem = async (req, res) => {
     try {
         const Order = require('../models/Order');
         const { normalizePhone } = require('../services/whatsapp/messageBuilder');
+        const { orderBuyerPhoneDigits } = require('../services/orderBuyerContactService');
 
         const job = await WhatsAppPendingMessage.findById(req.params.id);
         if (!job) return res.status(404).json({ msg: 'Queue item not found' });
+        if (!['failed', 'failed_invalid_number'].includes(job.status)) {
+            return res.status(409).json({
+                msg: 'Only a terminally failed WhatsApp queue item can be retried.',
+            });
+        }
 
         const order = await Order.findById(job.order);
         if (!order) return res.status(404).json({ msg: 'Linked order not found' });
 
-        const freshPhone = normalizePhone(order.shippingInfo?.phone);
+        // Outbox-backed messages own an immutable event-snapshot destination.
+        // Legacy/order-confirmation rows intentionally retain the old admin
+        // repair behavior of reading a corrected shipping phone.
+        const outboxBacked = String(job.dedupeKey || '').startsWith('outbox:');
+        let revivedParent = null;
+        if (outboxBacked) {
+            if (job.status === 'failed_invalid_number') {
+                return res.status(409).json({
+                    msg: 'This outbox message owns an invalid immutable destination and cannot be manually redirected.',
+                });
+            }
+            const parentDedupeKey = String(job.dedupeKey).slice('outbox:'.length);
+            revivedParent = await NotificationOutbox.findOneAndUpdate({
+                dedupeKey: parentDedupeKey,
+                status: { $in: ['pending', 'retry', 'dead'] },
+            }, {
+                $set: {
+                    status: 'retry',
+                    attempts: 0,
+                    deferredCount: 0,
+                    nextAttemptAt: new Date(Date.now() + 5000),
+                    leaseToken: null,
+                    leaseOwner: '',
+                    leaseExpiresAt: null,
+                    deliveredAt: null,
+                    skippedAt: null,
+                    deadAt: null,
+                    providerMessageId: '',
+                    lastErrorCode: '',
+                    lastError: '',
+                },
+            }, { new: true });
+            if (!revivedParent) {
+                return res.status(409).json({
+                    msg: 'The parent notification is active or terminally completed and cannot be retried from this queue item.',
+                });
+            }
+        }
+        const freshPhone = outboxBacked
+            ? normalizePhone(job.phone)
+            : (() => {
+                try {
+                    return orderBuyerPhoneDigits(order);
+                } catch (_error) {
+                    return '';
+                }
+            })();
         if (!freshPhone || freshPhone.length < 8) {
             return res.status(400).json({
-                msg: `Order phone "${order.shippingInfo?.phone}" is still invalid after normalisation. Update the shipping phone first.`,
+                msg: outboxBacked
+                    ? 'The immutable event-snapshot WhatsApp destination is invalid and cannot be changed.'
+                    : 'The order shipping phone is not a valid international destination. Update the shipping phone and country first.',
             });
         }
 
@@ -649,6 +707,13 @@ exports.retryQueueItem = async (req, res) => {
         job.status = 'queued';
         job.attempts = 0;
         job.lastError = '';
+        job.leaseToken = null;
+        job.leaseOwner = '';
+        job.leaseExpiresAt = null;
+        job.summaryMessageId = '';
+        job.pollMessageId = '';
+        job.sentAt = null;
+        job.repliedAt = null;
         job.nextAttemptAt = new Date(Date.now() + 2000); // retry in 2s
         await job.save();
 
@@ -656,6 +721,7 @@ exports.retryQueueItem = async (req, res) => {
             msg: 'Queued for retry',
             phone: `${freshPhone.slice(0, 3)}••••${freshPhone.slice(-3)}`,
             orderId: job.orderId,
+            parentOutboxRevived: Boolean(revivedParent),
         });
     } catch (err) {
         console.error('whatsapp.retryQueueItem:', err.message);
@@ -785,7 +851,7 @@ const registerSellerWebhookIfPossible = async (req = null) => {
             console.warn('[whatsapp:seller] webhook URL could not be resolved (set BACKEND_PUBLIC_URL)');
             return;
         }
-        const secret = process.env.EVOLUTION_WEBHOOK_SECRET || '';
+        const secret = getOutboundWhatsAppWebhookSecret();
         await sellerEvolution.setSettings().catch((settingsErr) => {
             console.warn('[whatsapp:seller] setSettings failed (non-fatal):', settingsErr.response?.data || settingsErr.message);
         });

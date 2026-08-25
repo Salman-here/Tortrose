@@ -17,6 +17,11 @@ const otpSchema = new mongoose.Schema({
         password: String,
         role: String,
         isVerified: Boolean,
+        // Direct seller signup freezes the chosen native listing currency at
+        // send-OTP time. It is optional only so verification records created
+        // before this field existed can finish using the explicit legacy USD
+        // fallback in sellerOnboardingCurrencyService.
+        productCurrency: { type: String, enum: ['USD', 'PKR', 'EUR', 'GBP'] },
         // Bound email-change OTPs to the seller who requested them. These
         // fields are explicit because Mongoose drops unknown nested fields in
         // strict mode, which previously made every email-change code fail.

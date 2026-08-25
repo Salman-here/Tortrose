@@ -19,7 +19,7 @@ import {
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import api from '../../config/api';
-import { useCurrency } from '../../contexts/CurrencyContext';
+import { resolveProductPresentationMoney, useCurrency } from '../../contexts/CurrencyContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import { clearRecentlyViewed, getRecentlyViewed, subscribeRecentlyViewed } from '../../utils/recentlyViewed';
 import GlassBlurFill from './GlassBlurFill';
@@ -43,8 +43,8 @@ const SliderProductCard = ({ product, onPress, palette }) => {
   const { formatProductPrice } = useCurrency();
   const styles = makeStyles(palette);
   const c = palette.colors;
-  const price = Number(product.price || 0);
-  const discounted = Number(product.discountedPrice || 0);
+  const price = resolveProductPresentationMoney(product, 'price');
+  const discounted = resolveProductPresentationMoney(product, 'discountedPrice');
   const hasDiscount = discounted > 0 && discounted < price;
   const discountPct = hasDiscount ? Math.round(((price - discounted) / price) * 100) : 0;
   const imageSource = product.images?.[0]?.url || product.image;

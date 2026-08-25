@@ -7,44 +7,88 @@ import {
 } from 'lucide-react';
 import { useOutletContext, Link } from 'react-router-dom';
 import { useCurrency } from '../../contexts/CurrencyContext';
+import { inspectOrderListMoney } from '../../utils/orderItems';
 import { useAuth } from '../../contexts/AuthContext';
-import { isOrderConfirmedByBuyer, isOrderDecidedByBuyer, getConfirmationSourceLabel } from '../../utils/whatsapp';
+import { isOrderDecidedByBuyer, getConfirmationSourceLabel } from '../../utils/whatsapp';
+import Loader from '../common/Loader';
+import { selectAuthoritativeSellerRevenue } from '../../utils/currencySafety';
+import {
+    inspectSellerProductPresentation,
+    sellerInventoryOverviewIsValid,
+} from '../../utils/productCardSafety';
 
 const SellerHome = () => {
     const { currentUser } = useAuth();
-    const { formatPrice, currency, convertAmount } = useCurrency();
-    const { products, orders } = useOutletContext();
+    const { formatPrice, currency } = useCurrency();
+    const context = useOutletContext() || {};
+    const {
+        products = [],
+        orders = [],
+        overviewProducts = null,
+        overviewOrders = null,
+        overviewMetrics = null,
+        overviewLoaded = false,
+        overviewError = '',
+        refreshOverview,
+        dashboardRole,
+    } = context;
+    const usesCanonicalOverview = dashboardRole === 'seller';
+    const businessProducts = usesCanonicalOverview
+        ? (Array.isArray(overviewProducts) ? overviewProducts : [])
+        : products;
+    const businessOrders = usesCanonicalOverview
+        ? (Array.isArray(overviewOrders) ? overviewOrders : [])
+        : orders;
+
+    if (usesCanonicalOverview && !overviewLoaded) {
+        return (
+            <div className="flex items-center justify-center min-h-[60vh]">
+                <Loader size="default" text="Loading verified store totals..." />
+            </div>
+        );
+    }
 
     const formatCompactPrice = (amount) => {
-        const value = Number(amount) || 0;
+        const value = amount;
         const symbol = formatPrice(0, { sourceCurrency: currency, decimals: 0 }).replace(/[0-9,.]/g, '');
         if (value >= 1000000) return `${symbol}${(value / 1000000).toFixed(1)}M`;
         if (value >= 10000) return `${symbol}${(value / 1000).toFixed(1)}K`;
         return formatPrice(value, { sourceCurrency: currency });
     };
 
-    const totalProducts = products.length;
-    const totalOrders = orders.length;
-    const pendingOrders = orders.filter(o => o.orderStatus === 'pending').length;
-    const processingOrders = orders.filter(o => o.orderStatus === 'processing').length;
-    const deliveredOrders = orders.filter(o => o.orderStatus === 'delivered').length;
-    const outOfStock = products.filter(p => p.stock === 0).length;
-    const lowStock = products.filter(p => p.stock <= 10 && p.stock > 0).length;
-    const totalRevenue = orders.reduce((sum, order) => (
-        order.isPaid
-            ? sum + convertAmount(order.orderSummary?.totalAmount || 0, order.currency || 'USD', currency)
-            : sum
-    ), 0);
+    const inventoryValid = sellerInventoryOverviewIsValid(overviewMetrics?.inventory)
+        && Number.isSafeInteger(overviewMetrics?.productCount)
+        && overviewMetrics.productCount === overviewMetrics.inventory.totalProducts;
+    const productPresentations = businessProducts.map(inspectSellerProductPresentation);
+    const fallbackStockValid = productPresentations.every(presentation => presentation.stockValid);
+    const totalProducts = usesCanonicalOverview
+        ? (inventoryValid ? overviewMetrics.productCount : null)
+        : businessProducts.length;
+    const totalOrders = businessOrders.length;
+    const pendingOrders = businessOrders.filter(o => o.orderStatus === 'pending').length;
+    const processingOrders = businessOrders.filter(o => o.orderStatus === 'processing').length;
+    const deliveredOrders = businessOrders.filter(o => o.orderStatus === 'delivered').length;
+    const outOfStock = inventoryValid
+        ? overviewMetrics.inventory.outOfStock
+        : (!usesCanonicalOverview && fallbackStockValid
+            ? productPresentations.filter(presentation => presentation.stock === 0).length
+            : null);
+    const lowStock = inventoryValid
+        ? overviewMetrics.inventory.lowStock
+        : (!usesCanonicalOverview && fallbackStockValid
+            ? productPresentations.filter(presentation => presentation.stock > 0 && presentation.stock <= 10).length
+            : null);
+    const totalRevenue = selectAuthoritativeSellerRevenue(overviewMetrics, currency);
 
     const stats = [
-        { label: 'Total Revenue', value: formatCompactPrice(totalRevenue), icon: <DollarSign size={22} />, color: 'hsl(150, 60%, 45%)', bg: 'rgba(16, 185, 129, 0.12)' },
+        { label: 'Total Revenue', value: totalRevenue === null ? 'Unavailable' : formatCompactPrice(totalRevenue), icon: <DollarSign size={22} />, color: 'hsl(150, 60%, 45%)', bg: 'rgba(16, 185, 129, 0.12)' },
         { label: 'Total Orders', value: totalOrders, icon: <ShoppingBag size={22} />, color: 'hsl(220, 70%, 55%)', bg: 'rgba(99, 102, 241, 0.12)' },
-        { label: 'Total Products', value: totalProducts, icon: <Package size={22} />, color: 'hsl(200, 80%, 50%)', bg: 'rgba(14, 165, 233, 0.12)' },
+        { label: 'Total Products', value: totalProducts === null ? 'Unavailable' : totalProducts, icon: <Package size={22} />, color: 'hsl(200, 80%, 50%)', bg: 'rgba(14, 165, 233, 0.12)' },
         { label: 'Conversion', value: totalOrders > 0 ? `${((deliveredOrders / totalOrders) * 100).toFixed(0)}%` : '0%', icon: <TrendingUp size={22} />, color: 'hsl(280, 60%, 55%)', bg: 'rgba(139, 92, 246, 0.12)' },
     ];
 
     const quickActions = [
-        { label: 'View Products', desc: `${totalProducts} products`, icon: <Package size={18} />, link: '/seller-dashboard/product-management', color: 'hsl(200, 80%, 50%)' },
+        { label: 'View Products', desc: totalProducts === null ? 'Count unavailable' : `${totalProducts} products`, icon: <Package size={18} />, link: '/seller-dashboard/product-management', color: 'hsl(200, 80%, 50%)' },
         { label: 'Manage Orders', desc: `${pendingOrders} pending`, icon: <ShoppingBag size={18} />, link: '/seller-dashboard/order-management', color: 'hsl(30, 90%, 50%)' },
         { label: 'Store Overview', desc: 'Stats & analytics', icon: <Eye size={18} />, link: '/seller-dashboard/store-overview', color: 'hsl(150, 60%, 45%)' },
         { label: 'Store Settings', desc: 'Update your store', icon: <BarChart3 size={18} />, link: '/seller-dashboard/store-settings', color: 'hsl(280, 60%, 55%)' },
@@ -100,6 +144,14 @@ const SellerHome = () => {
                     </Link>
                 </div>
             </motion.div>
+
+            {!!overviewError && (
+                <div className="glass-panel p-4 mb-6 flex flex-col sm:flex-row sm:items-center gap-3" role="status" aria-live="polite">
+                    <AlertCircle size={18} className="shrink-0" style={{ color: 'hsl(30,90%,50%)' }} />
+                    <p className="text-sm flex-1" style={{ color: 'hsl(var(--foreground))' }}>{overviewError}</p>
+                    <button type="button" onClick={refreshOverview} className="px-3 py-2 rounded-xl glass-inner text-xs font-semibold">Retry</button>
+                </div>
+            )}
 
             {/* Stats Grid */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
@@ -191,15 +243,18 @@ const SellerHome = () => {
                             </Link>
                         </div>
 
-                        {orders.length === 0 ? (
+                        {businessOrders.length === 0 ? (
                             <div className="text-center py-8">
                                 <div className="glass-inner inline-flex p-3 rounded-xl mb-2"><ShoppingBag size={28} style={{ color: 'hsl(var(--muted-foreground))' }} /></div>
                                 <p className="text-sm" style={{ color: 'hsl(var(--muted-foreground))' }}>No orders yet</p>
                             </div>
                         ) : (
                             <div className="space-y-2">
-                                {[...orders].reverse().slice(0, 5).map((order, i) => {
-                                    const ss = getStatusStyle(order.orderStatus);
+                                {[...businessOrders]
+                                    .sort((left, right) => new Date(right.createdAt || 0) - new Date(left.createdAt || 0))
+                                     .slice(0, 5).map((order, i) => {
+                                     const ss = getStatusStyle(order.orderStatus);
+                                     const money = inspectOrderListMoney(order);
                                     return (
                                         <motion.div key={order._id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
                                             transition={{ delay: i * 0.05 }}>
@@ -232,7 +287,9 @@ const SellerHome = () => {
                                                     </div>
                                                     <div className="text-right shrink-0">
                                                         <p className="text-sm font-semibold" style={{ color: 'hsl(var(--foreground))' }}>
-                                                            {formatPrice(order.orderSummary?.totalAmount || order.orderSummary?.subtotal || 0, { sourceCurrency: order.currency || 'USD' })}
+                                                            {money.valid
+                                                                ? formatPrice(money.total, { sourceCurrency: money.currency })
+                                                                : 'Money unavailable'}
                                                         </p>
                                                         <span className="text-[10px] font-medium px-2 py-0.5 rounded-full"
                                                             style={order.isPaid

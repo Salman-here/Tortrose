@@ -4,12 +4,18 @@ const Store = require('../models/Store');
 const User = require('../models/User');
 const {
     resolveRequestedCurrency,
-    convertOrderAmount,
-    convertOrderTotal,
-    lineTotal,
     roundMoney,
     formatOrderMoney,
+    getFrozenSellerSettlement,
+    sellerSettlementEntry,
+    sellerOrderSummaryForItems,
+    buildOrderItemMoneyAllocations,
+    orderItemKey,
+    isSellerRevenueRecognized,
+    sumOrderAmountsInCurrency,
+    toId,
 } = require('../services/orderMoneyService');
+const { fromMinorUnits } = require('../services/moneyMath');
 
 const sellerOrderScope = (sellerId, sellerProductIds = []) => ({
     $or: [
@@ -25,9 +31,85 @@ const sellerOrderScope = (sellerId, sellerProductIds = []) => ({
     ],
 });
 
+const sellerNotificationMoney = (order, sellerId) => {
+    const frozen = getFrozenSellerSettlement(order);
+    // A paid receipt must never be reconstructed from mutable/legacy order
+    // lines. Older orders without the frozen settlement remain visible as
+    // operational order alerts, but do not receive a guessed money receipt.
+    if (!frozen) return null;
+    const settlement = sellerSettlementEntry(frozen, sellerId);
+    if (!settlement) {
+        const error = new Error('The paid order has no frozen settlement for this seller notification.');
+        error.code = 'SELLER_NOTIFICATION_SETTLEMENT_MISSING';
+        throw error;
+    }
+    return {
+        amount: fromMinorUnits(settlement.sourceAmountMinor),
+        currency: settlement.sourceCurrency,
+    };
+};
+
 const productAlertTime = (product) => (
     product?.updatedAt || product?._id?.getTimestamp?.() || new Date(0)
 );
+
+const analyticsOrderDataError = message => {
+    const error = new Error(message);
+    error.code = 'ORDER_MONEY_INVALID';
+    error.statusCode = 409;
+    return error;
+};
+
+const requireAnalyticsOrderQuantity = value => {
+    if (!Number.isSafeInteger(value) || value < 1) {
+        throw analyticsOrderDataError('A stored order quantity is invalid and analytics cannot be calculated safely.');
+    }
+    return value;
+};
+
+const addAnalyticsUnits = (total, quantity) => {
+    const next = total + requireAnalyticsOrderQuantity(quantity);
+    if (!Number.isSafeInteger(next)) {
+        throw analyticsOrderDataError('Stored order units are outside the supported range.');
+    }
+    return next;
+};
+
+const requireOrderItemAllocation = (allocations, key) => {
+    if (!allocations?.total?.has(key)) {
+        throw analyticsOrderDataError('A stored order line has no deterministic money allocation.');
+    }
+    return allocations.total.get(key);
+};
+
+const normalizeAnalyticsDays = (value) => {
+    const parsed = Number.parseInt(value, 10);
+    return Number.isFinite(parsed) ? Math.min(365, Math.max(1, parsed)) : 30;
+};
+
+const recognizedOrderItemEntries = (order, productSellerById = new Map()) => {
+    if (order?.awaitingPayment === true || order?.orderStatus === 'cancelled') return [];
+    const allocations = buildOrderItemMoneyAllocations(order);
+    return (order?.orderItems || []).flatMap((item, index) => {
+        const sellerId = toId(item?.seller) || productSellerById.get(toId(item?.productId)) || '';
+        const method = order?.paymentMethod || 'cash_on_delivery';
+        const globallyRecognized = method === 'cash_on_delivery'
+            ? (order?.orderStatus === 'delivered' || order?.isDelivered === true)
+            : (['stripe', 'wallet'].includes(method) && order?.isPaid === true);
+        const recognized = sellerId
+            ? isSellerRevenueRecognized(order, sellerId)
+            : globallyRecognized;
+        if (!recognized) return [];
+        const key = orderItemKey(item, index, allocations.itemKeys);
+        return [{
+            order,
+            item,
+            sellerId,
+            productId: toId(item?.productId),
+            amount: requireOrderItemAllocation(allocations, key),
+        }];
+    });
+};
 
 // ============================
 // SELLER ANALYTICS
@@ -42,10 +124,10 @@ exports.getSellerAnalytics = async (req, res) => {
         }
 
         const targetCurrency = await resolveRequestedCurrency(req, User);
-        const daysNum = Math.min(parseInt(days) || 30, 365);
+        const daysNum = normalizeAnalyticsDays(days);
         const startDate = new Date();
-        startDate.setDate(startDate.getDate() - daysNum);
-        startDate.setHours(0, 0, 0, 0);
+        startDate.setUTCHours(0, 0, 0, 0);
+        startDate.setUTCDate(startDate.getUTCDate() - (daysNum - 1));
 
         const sellerProducts = await Product.find({ seller: userId }).select('_id name image category stock updatedAt');
         const sellerProductIds = sellerProducts.map(p => String(p._id));
@@ -66,45 +148,69 @@ exports.getSellerAnalytics = async (req, res) => {
                 const sellerFulfillment = (order.sellerFulfillment || []).find(
                     entry => String(entry?.seller || '') === String(userId)
                 );
+                const sellerMoney = sellerOrderSummaryForItems(order, userId, sellerItems);
                 sellerOrders.push({
                     ...order.toObject(),
                     sellerItems,
                     sellerStatus: sellerFulfillment?.status || order.orderStatus || 'pending',
-                    sellerRevenue: sellerItems.reduce((sum, item) => sum + lineTotal(item), 0),
-                    sellerUnits: sellerItems.reduce((sum, item) => sum + (Number(item?.quantity) || 0), 0),
+                    sellerRevenue: sellerMoney.totalAmount,
+                    sellerMoney,
+                    sellerUnits: sellerMoney.units,
                 });
             }
         });
 
         const dayBuckets = {};
         for (let i = daysNum - 1; i >= 0; i--) {
-            const d = new Date(); d.setDate(d.getDate() - i);
+            const d = new Date();
+            d.setUTCHours(0, 0, 0, 0);
+            d.setUTCDate(d.getUTCDate() - i);
             const key = d.toISOString().slice(0, 10);
-            dayBuckets[key] = { date: key, revenue: 0, orders: 0 };
+            dayBuckets[key] = { date: key, revenue: 0, orders: 0, moneyEntries: [] };
         }
 
         for (const o of sellerOrders) {
             const key = new Date(o.createdAt).toISOString().slice(0, 10);
             if (dayBuckets[key]) {
                 dayBuckets[key].orders++;
-                if (o.isPaid) {
-                    dayBuckets[key].revenue += await convertOrderAmount(o, o.sellerRevenue, targetCurrency);
-                    dayBuckets[key].revenue = roundMoney(dayBuckets[key].revenue);
+                if (isSellerRevenueRecognized(o, userId)) {
+                    dayBuckets[key].moneyEntries.push({ order: o, amount: o.sellerRevenue });
                 }
             }
         }
+        const recognizedMoneyEntries = sellerOrders
+            .filter(order => isSellerRevenueRecognized(order, userId))
+            .map(order => ({ order, amount: order.sellerRevenue }));
+        await Promise.all(Object.values(dayBuckets).map(async bucket => {
+            bucket.revenue = await sumOrderAmountsInCurrency(bucket.moneyEntries, targetCurrency);
+            delete bucket.moneyEntries;
+        }));
 
         const productMap = {};
         for (const o of sellerOrders) {
-            if (!o.isPaid) continue;
+            if (!isSellerRevenueRecognized(o, userId)) continue;
+            const allocations = buildOrderItemMoneyAllocations(o);
             for (const item of o.sellerItems) {
                 const id = String(item.productId);
-                if (!productMap[id]) productMap[id] = { name: item.name, image: item.image, revenue: 0, sold: 0 };
-                productMap[id].revenue += await convertOrderAmount(o, lineTotal(item), targetCurrency);
-                productMap[id].revenue = roundMoney(productMap[id].revenue);
-                productMap[id].sold += item.quantity;
+                if (!productMap[id]) productMap[id] = { name: item.name, image: item.image, revenue: 0, sold: 0, moneyEntries: [] };
+                const orderIndex = (o.orderItems || []).findIndex(candidate => (
+                    candidate === item || String(candidate?._id || '') === String(item?._id || '')
+                ));
+                if (orderIndex < 0) {
+                    throw analyticsOrderDataError('A seller order item no longer matches its frozen order line.');
+                }
+                const itemRevenue = requireOrderItemAllocation(
+                    allocations,
+                    orderItemKey(item, orderIndex, allocations.itemKeys),
+                );
+                productMap[id].moneyEntries.push({ order: o, amount: itemRevenue });
+                productMap[id].sold = addAnalyticsUnits(productMap[id].sold, item.quantity);
             }
         }
+        await Promise.all(Object.values(productMap).map(async product => {
+            product.revenue = await sumOrderAmountsInCurrency(product.moneyEntries, targetCurrency);
+            delete product.moneyEntries;
+        }));
 
         const catMap = {};
         sellerProducts.forEach(p => {
@@ -112,9 +218,15 @@ exports.getSellerAnalytics = async (req, res) => {
             catMap[p.category].count++;
         });
 
-        const totalRevenue = Object.values(dayBuckets).reduce((s, b) => s + b.revenue, 0);
-        const paidOrders = sellerOrders.filter(o => o.isPaid).length;
-        const totalUnitsSold = sellerOrders.reduce((s, o) => o.isPaid ? s + o.sellerUnits : s, 0);
+        // The chart rounds each day for presentation. Compute the summary from
+        // the complete unrounded currency buckets so daily rounding cannot lose
+        // or create a cent relative to payment reporting.
+        const totalRevenue = await sumOrderAmountsInCurrency(recognizedMoneyEntries, targetCurrency);
+        const paidOrders = sellerOrders.filter(o => isSellerRevenueRecognized(o, userId)).length;
+        const totalUnitsSold = sellerOrders.reduce(
+            (sum, order) => isSellerRevenueRecognized(order, userId) ? sum + order.sellerUnits : sum,
+            0
+        );
         const statusCounts = sellerOrders.reduce((counts, order) => {
             const status = order.sellerStatus || 'pending';
             counts[status] = (counts[status] || 0) + 1;
@@ -155,7 +267,10 @@ exports.getSellerAnalytics = async (req, res) => {
         });
     } catch (error) {
         console.error('Analytics error:', error);
-        res.status(500).json({ msg: 'Server error fetching analytics' });
+        res.status(error.statusCode || 500).json({
+            msg: error.statusCode ? error.message : 'Server error fetching analytics',
+            code: error.code,
+        });
     }
 };
 
@@ -194,7 +309,6 @@ exports.getSellerNotifications = async (req, res) => {
                 || (!item?.seller && item?.productId && sellerProductIds.includes(String(item.productId)))
             );
             if (sellerItems.length === 0) return;
-            const sellerTotal = sellerItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
             const sellerStatus = (order.sellerFulfillment || []).find(
                 entry => String(entry?.seller || '') === String(userId)
             )?.status || order.orderStatus;
@@ -203,7 +317,10 @@ exports.getSellerNotifications = async (req, res) => {
                 notifications.push({ id: `order-${order._id}`, type: 'info', category: 'order', title: `New order ${order.orderId}`, description: `${sellerItems.length} item(s) awaiting your review`, time: order.createdAt, read: false, orderId: order._id });
             }
             if (order.isPaid && sellerStatus === 'confirmed') {
-                notifications.push({ id: `paid-${order._id}`, type: 'success', category: 'payment', title: `Payment received for ${order.orderId}`, description: formatOrderMoney(sellerTotal, order.currency), time: order.paidAt || order.createdAt, read: false, orderId: order._id });
+                const sellerMoney = sellerNotificationMoney(order, userId);
+                if (sellerMoney) {
+                    notifications.push({ id: `paid-${order._id}`, type: 'success', category: 'payment', title: `Payment received for ${order.orderId}`, description: formatOrderMoney(sellerMoney.amount, sellerMoney.currency), time: order.paidAt || order.createdAt, read: false, orderId: order._id });
+                }
             }
             if (order.confirmation?.confirmedAt && order.confirmation?.confirmedVia === 'email') {
                 notifications.push({
@@ -220,7 +337,12 @@ exports.getSellerNotifications = async (req, res) => {
         });
 
         notifications.sort((a, b) => new Date(b.time) - new Date(a.time));
-        res.status(200).json({ msg: 'Notifications fetched', notifications: notifications.slice(0, 20) });
+        res.status(200).json({
+            msg: 'Notifications fetched',
+            sellerId: String(userId),
+            audienceRole: role,
+            notifications: notifications.slice(0, 20),
+        });
     } catch (error) {
         console.error('Notifications error:', error);
         res.status(500).json({ msg: 'Server error fetching notifications' });
@@ -240,43 +362,56 @@ exports.getAdminAnalytics = async (req, res) => {
         }
 
         const targetCurrency = await resolveRequestedCurrency(req, User);
-        const daysNum = Math.min(parseInt(days) || 30, 365);
+        const daysNum = normalizeAnalyticsDays(days);
         const now = new Date();
         const startDate = new Date(now);
-        startDate.setDate(startDate.getDate() - daysNum);
-        startDate.setHours(0, 0, 0, 0);
+        startDate.setUTCHours(0, 0, 0, 0);
+        startDate.setUTCDate(startDate.getUTCDate() - (daysNum - 1));
 
         // Previous period for comparison
         const prevStart = new Date(startDate);
-        prevStart.setDate(prevStart.getDate() - daysNum);
+        prevStart.setUTCDate(prevStart.getUTCDate() - daysNum);
 
         // Parallel DB queries
         const [allOrders, prevOrders, allProducts, allStores, allUsers] = await Promise.all([
             Order.find({ createdAt: { $gte: startDate } }),
             Order.find({ createdAt: { $gte: prevStart, $lt: startDate } }),
             Product.find({}).select('_id name category stock price seller image'),
-            Store.find({}).select('storeName logo seller trustCount verification isActive createdAt'),
+            Store.find({}).select('storeName logo seller sellerType trustCount verification isActive createdAt'),
             User.find({}).select('_id username role createdAt'),
         ]);
+        const visibleOrders = allOrders.filter(order => order.awaitingPayment !== true);
+        const visiblePrevOrders = prevOrders.filter(order => order.awaitingPayment !== true);
+        const revenueOrders = visibleOrders.filter(order => order.orderStatus !== 'cancelled');
+        const prevRevenueOrders = visiblePrevOrders.filter(order => order.orderStatus !== 'cancelled');
+        const productSellerById = new Map(allProducts.map(product => [toId(product._id), toId(product.seller)]));
+        const recognizedLines = revenueOrders.flatMap(order => recognizedOrderItemEntries(order, productSellerById));
+        const previousRecognizedLines = prevRevenueOrders.flatMap(order => recognizedOrderItemEntries(order, productSellerById));
 
         // Revenue by day
         const dayBuckets = {};
         for (let i = daysNum - 1; i >= 0; i--) {
-            const d = new Date(now); d.setDate(d.getDate() - i);
+            const d = new Date(now);
+            d.setUTCHours(0, 0, 0, 0);
+            d.setUTCDate(d.getUTCDate() - i);
             const key = d.toISOString().slice(0, 10);
-            dayBuckets[key] = { date: key, revenue: 0, orders: 0, newUsers: 0 };
+            dayBuckets[key] = { date: key, revenue: 0, orders: 0, newUsers: 0, moneyEntries: [] };
         }
 
-        for (const o of allOrders) {
+        for (const o of visibleOrders) {
             const key = new Date(o.createdAt).toISOString().slice(0, 10);
             if (dayBuckets[key]) {
                 dayBuckets[key].orders++;
-                if (o.isPaid) {
-                    dayBuckets[key].revenue += await convertOrderTotal(o, targetCurrency);
-                    dayBuckets[key].revenue = roundMoney(dayBuckets[key].revenue);
-                }
             }
         }
+        for (const entry of recognizedLines) {
+            const key = new Date(entry.order.createdAt).toISOString().slice(0, 10);
+            if (dayBuckets[key]) dayBuckets[key].moneyEntries.push(entry);
+        }
+        await Promise.all(Object.values(dayBuckets).map(async bucket => {
+            bucket.revenue = await sumOrderAmountsInCurrency(bucket.moneyEntries, targetCurrency);
+            delete bucket.moneyEntries;
+        }));
 
         // User growth by day
         allUsers.forEach(u => {
@@ -286,22 +421,18 @@ exports.getAdminAnalytics = async (req, res) => {
         });
 
         // Summary stats
-        let totalRevenue = 0;
-        for (const order of allOrders) {
-            if (order.isPaid) totalRevenue += await convertOrderTotal(order, targetCurrency);
-        }
-        totalRevenue = roundMoney(totalRevenue);
-
-        let prevRevenue = 0;
-        for (const order of prevOrders) {
-            if (order.isPaid) prevRevenue += await convertOrderTotal(order, targetCurrency);
-        }
-        prevRevenue = roundMoney(prevRevenue);
-        const paidOrders = allOrders.filter(o => o.isPaid).length;
-        const prevPaidOrders = prevOrders.filter(o => o.isPaid).length;
+        const totalRevenue = await sumOrderAmountsInCurrency(recognizedLines, targetCurrency);
+        const prevRevenue = await sumOrderAmountsInCurrency(previousRecognizedLines, targetCurrency);
+        const recognizedOrderIds = new Set(recognizedLines.map(entry => toId(entry.order?._id) || entry.order?.orderId));
+        const previousRecognizedOrderIds = new Set(previousRecognizedLines.map(entry => toId(entry.order?._id) || entry.order?.orderId));
+        const paidOrders = recognizedOrderIds.size;
+        const prevPaidOrders = previousRecognizedOrderIds.size;
         const avgOrderValue = paidOrders > 0 ? totalRevenue / paidOrders : 0;
         const prevAvg = prevPaidOrders > 0 ? prevRevenue / prevPaidOrders : 0;
-        const totalUnitsSold = allOrders.reduce((s, o) => o.isPaid ? s + o.orderItems.reduce((a, i) => a + i.quantity, 0) : s, 0);
+        const totalUnitsSold = recognizedLines.reduce(
+            (sum, entry) => addAnalyticsUnits(sum, entry.item?.quantity),
+            0,
+        );
 
         const calcChange = (curr, prev) => {
             if (prev === 0 && curr === 0) return 0;
@@ -327,13 +458,8 @@ exports.getAdminAnalytics = async (req, res) => {
 
         // Top stores by order revenue
         const storeRevenueMap = {};
-        for (const o of allOrders) {
-            if (!o.isPaid) continue;
-            for (const item of o.orderItems) {
-                const product = allProducts.find(p => p._id.toString() === item.productId?.toString());
-                if (!product) continue;
-                const sellerId = product.seller?.toString();
-                const store = allStores.find(s => s.seller?.toString() === sellerId);
+        for (const entry of recognizedLines) {
+                const store = allStores.find(s => toId(s.seller) === entry.sellerId);
                 if (!store) continue;
                 const sid = store._id.toString();
                 if (!storeRevenueMap[sid]) {
@@ -345,13 +471,19 @@ exports.getAdminAnalytics = async (req, res) => {
                         revenue: 0,
                         orders: 0,
                         productCount: 0,
+                        moneyEntries: [],
+                        orderIds: new Set(),
                     };
                 }
-                storeRevenueMap[sid].revenue += await convertOrderAmount(o, lineTotal(item), targetCurrency);
-                storeRevenueMap[sid].revenue = roundMoney(storeRevenueMap[sid].revenue);
-                storeRevenueMap[sid].orders++;
-            }
+                storeRevenueMap[sid].moneyEntries.push(entry);
+                storeRevenueMap[sid].orderIds.add(toId(entry.order?._id) || entry.order?.orderId);
         }
+        await Promise.all(Object.values(storeRevenueMap).map(async row => {
+            row.revenue = await sumOrderAmountsInCurrency(row.moneyEntries, targetCurrency);
+            row.orders = row.orderIds.size;
+            delete row.moneyEntries;
+            delete row.orderIds;
+        }));
         // Add product counts
         Object.keys(storeRevenueMap).forEach(sid => {
             const store = allStores.find(s => s._id.toString() === sid);
@@ -381,7 +513,7 @@ exports.getAdminAnalytics = async (req, res) => {
 
         // Order status breakdown
         const statusCounts = { pending: 0, processing: 0, confirmed: 0, shipped: 0, delivered: 0, cancelled: 0 };
-        allOrders.forEach(o => {
+        visibleOrders.forEach(o => {
             const s = o.orderStatus || 'pending';
             if (statusCounts[s] !== undefined) statusCounts[s]++;
         });
@@ -395,20 +527,21 @@ exports.getAdminAnalytics = async (req, res) => {
 
         // Top products by revenue
         const productRevenueMap = {};
-        for (const o of allOrders) {
-            if (!o.isPaid) continue;
-            for (const item of o.orderItems) {
-                const id = item.productId?.toString();
+        for (const entry of recognizedLines) {
+                const { item } = entry;
+                const id = entry.productId;
                 if (!id) continue;
                 if (!productRevenueMap[id]) {
                     const prod = allProducts.find(p => p._id.toString() === id);
-                    productRevenueMap[id] = { name: item.name || prod?.name || 'Unknown', image: item.image || prod?.image, revenue: 0, sold: 0 };
+                    productRevenueMap[id] = { name: item.name || prod?.name || 'Unknown', image: item.image || prod?.image, revenue: 0, sold: 0, moneyEntries: [] };
                 }
-                productRevenueMap[id].revenue += await convertOrderAmount(o, lineTotal(item), targetCurrency);
-                productRevenueMap[id].revenue = roundMoney(productRevenueMap[id].revenue);
-                productRevenueMap[id].sold += item.quantity;
-            }
+                productRevenueMap[id].moneyEntries.push(entry);
+                productRevenueMap[id].sold = addAnalyticsUnits(productRevenueMap[id].sold, item.quantity);
         }
+        await Promise.all(Object.values(productRevenueMap).map(async row => {
+            row.revenue = await sumOrderAmountsInCurrency(row.moneyEntries, targetCurrency);
+            delete row.moneyEntries;
+        }));
         const topProducts = Object.values(productRevenueMap).sort((a, b) => b.revenue - a.revenue).slice(0, 10);
 
         res.status(200).json({
@@ -419,8 +552,8 @@ exports.getAdminAnalytics = async (req, res) => {
                 summary: {
                     totalRevenue: roundMoney(totalRevenue),
                     revenueChange: calcChange(totalRevenue, prevRevenue),
-                    totalOrders: allOrders.length,
-                    ordersChange: calcChange(allOrders.length, prevOrders.length),
+                    totalOrders: visibleOrders.length,
+                    ordersChange: calcChange(visibleOrders.length, visiblePrevOrders.length),
                     avgOrderValue: roundMoney(avgOrderValue),
                     avgChange: calcChange(avgOrderValue, prevAvg),
                     totalUnitsSold,
@@ -447,7 +580,10 @@ exports.getAdminAnalytics = async (req, res) => {
         });
     } catch (error) {
         console.error('Admin analytics error:', error);
-        res.status(500).json({ msg: 'Server error fetching admin analytics' });
+        res.status(error.statusCode || 500).json({
+            msg: error.statusCode ? error.message : 'Server error fetching admin analytics',
+            code: error.code,
+        });
     }
 };
 
@@ -531,7 +667,7 @@ exports.getAdminNotifications = async (req, res) => {
             notifications.push({
                 id: `paid-${o._id}`, type: 'success', category: 'payment',
                 title: `Payment received for ${o.orderId}`,
-                description: formatOrderMoney(o.orderSummary?.totalAmount || 0, o.currency),
+                description: formatOrderMoney(o.orderSummary?.totalAmount, o.currency),
                 time: o.paidAt || o.createdAt, read: false, orderId: o._id
             });
         });

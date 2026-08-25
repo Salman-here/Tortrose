@@ -16,13 +16,29 @@ import GlassBackground from '../components/common/GlassBackground';
 import GlassPanel from '../components/common/GlassPanel';
 import { spacing, fontSize, fontWeight, borderRadius, typography } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
+import { addCurrencyAmounts } from '../utils/currencySafety';
+import { getOrderCurrency, getOrderTotal } from '../utils/orderPresentation';
+
+const inspectOrderMoney = (order) => {
+  try {
+    return { valid: true, currency: getOrderCurrency(order), total: getOrderTotal(order) };
+  } catch (_) {
+    return { valid: false, currency: null, total: null };
+  }
+};
 
 export default function UserDashboardScreen({ navigation }) {
   const { palette } = useTheme();
   const styles = buildStyles(palette);
 
   const { currentUser } = useAuth();
-  const { convertAmount, formatAmount, currency } = useCurrency();
+  const {
+    convertLineAmounts,
+    currency,
+    exchangeRatesFallback,
+    exchangeRatesLoading,
+    formatAmount,
+  } = useCurrency();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [orders, setOrders] = useState([]);
@@ -30,8 +46,10 @@ export default function UserDashboardScreen({ navigation }) {
   const fetchData = async () => {
     try {
       const res = await api.get('/api/order/user-orders');
-      setOrders(res.data?.orders || res.data || []);
-    } catch (e) { console.error(e); }
+      const nextOrders = res.data?.orders ?? res.data;
+      if (!Array.isArray(nextOrders)) throw new Error('Order history is unavailable.');
+      setOrders(nextOrders);
+    } catch (e) { console.error(e); setOrders([]); }
     finally { setLoading(false); setRefreshing(false); }
   };
 
@@ -42,13 +60,21 @@ export default function UserDashboardScreen({ navigation }) {
 
   const pendingOrders = orders.filter(o => o.status === 'pending' || o.orderStatus === 'pending').length;
   const deliveredOrders = orders.filter(o => o.status === 'delivered' || o.orderStatus === 'delivered').length;
-  const totalSpent = orders.reduce((acc, o) => {
-    if (o.isPaid) {
-      const total = o.orderSummary?.totalAmount ?? 0;
-      return acc + convertAmount(total, o.currency || 'USD', currency);
+  const paidOrderMoney = orders.filter((order) => order.isPaid).map(inspectOrderMoney);
+  const paidOrderTotalsValid = paidOrderMoney.every(row => row.valid);
+  const paidOrderTotals = paidOrderTotalsValid
+    ? paidOrderMoney.map(row => ({ unitAmount: row.total, quantity: 1, sourceCurrency: row.currency }))
+    : [];
+  const totalSpentNeedsLiveRates = paidOrderTotals.some(line => line.sourceCurrency !== currency)
+    && (exchangeRatesLoading || exchangeRatesFallback);
+  let totalSpent = null;
+  if (paidOrderTotalsValid && !totalSpentNeedsLiveRates) {
+    try {
+      totalSpent = addCurrencyAmounts(...convertLineAmounts(paidOrderTotals, currency));
+    } catch (_) {
+      totalSpent = null;
     }
-    return acc;
-  }, 0);
+  }
 
   const greeting = () => {
     const h = new Date().getHours();
@@ -100,7 +126,7 @@ export default function UserDashboardScreen({ navigation }) {
         <View style={[styles.statsRow, { marginTop: spacing.md }]}>
           <GlassPanel variant="card" style={[styles.miniStat, { flex: 1 }]}>  
             <Ionicons name="card-outline" size={18} color={palette.colors.info} style={{ marginBottom: 4 }} />
-            <Text style={[styles.miniStatValue, { color: palette.colors.info, fontSize: fontSize.lg }]}>{formatAmount(totalSpent)}</Text>
+            <Text style={[styles.miniStatValue, { color: palette.colors.info, fontSize: fontSize.lg }]}>{totalSpent === null ? 'Unavailable' : formatAmount(totalSpent)}</Text>
             <Text style={styles.miniStatLabel}>Total Spent</Text>
           </GlassPanel>
         </View>

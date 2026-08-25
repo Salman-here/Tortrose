@@ -30,7 +30,8 @@ router.post('/admin-numbers', verifyToken, admin, adminNumberCtrl.addAdminNumber
 router.delete('/admin-numbers/:id', verifyToken, admin, adminNumberCtrl.removeAdminNumber);
 router.patch('/admin-numbers/:id', verifyToken, admin, adminNumberCtrl.toggleAdminNumber);
 
-// Public webhook (validated via shared secret in handler)
+// Public webhook. server.js authenticates and rate-limits it before its large
+// JSON body parser; the handler repeats the shared-secret check defensively.
 router.post('/webhook', ctrl.webhook);
 
 module.exports = router;

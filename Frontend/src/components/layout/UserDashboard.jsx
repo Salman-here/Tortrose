@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import GlassBackground from '../common/GlassBackground';
 import {
@@ -39,16 +39,14 @@ import {
     LayoutDashboard,
     MessageCircle,
     WalletCards,
+    Bell,
 } from "lucide-react";
 
-import axios from 'axios';
 import { useAuth } from '../../contexts/AuthContext';
-import { toast } from 'react-toastify';
 import { Link, Navigate, Outlet, useLocation } from 'react-router-dom';
 import OrderManagement from './orders';
 import StoreOverview from './StoreOverview';
 import ProductManagement from './ProductManagement';
-import { getAuthToken } from "../../utils/cookieHelper";
 
 
 
@@ -77,25 +75,6 @@ const UserDashboard = () => {
 
 
     const [activeTab, setActiveTab] = useState('account overview');
-    const [orders, setOrders] = useState([]);
-    const [editingProduct, setEditingProduct] = useState(null);
-    const [isFormOpen, setIsFormOpen] = useState(false);
-    const [searchTerm, setSearchTerm] = useState('');
-    const [categories, setCategories] = useState([])
-    const [selectedCategory, setSelectedCategory] = useState('all');
-    const [deleteConfirm, setDeleteConfirm] = useState(null);
-    const [loading, setLoading] = useState(true)
-
-
-
-    const serializeFilters = () => {
-        let params = new URLSearchParams()
-        if (selectedCategory !== 'all') params.append('categories', selectedCategory)
-        if (searchTerm !== '') params.append('search', searchTerm)
-
-        // console.log(params.toString());
-        return params.toString()
-    }
 
     // useEffect(() => {
     //     fetchOrders()
@@ -131,19 +110,7 @@ const UserDashboard = () => {
     // }
 
 
-    const outletContext = useMemo(() => ({
-        // // orders,
-        // categories,
-        // searchTerm,
-        // setSearchTerm,
-        // selectedCategory,
-        // setSelectedCategory,
-        // deleteConfirm,
-        // setDeleteConfirm,
-        // loading
-    }), [
-        categories, searchTerm, selectedCategory
-    ]);
+    const outletContext = { dashboardRole: 'user' };
 
 
     return (
@@ -172,6 +139,7 @@ const Sidebar = ({ activeTab, setActiveTab }) => {
         { id: 'profile', label: 'Profile', icon: <User size={18} />, link: '/user-dashboard/profile' },
         { id: 'orders', label: 'Your Orders', icon: <ShoppingCart size={18} />, link: '/user-dashboard/orders' },
         { id: 'wallet', label: 'Rozare Wallet', icon: <WalletCards size={18} />, link: '/user-dashboard/wallet' },
+        { id: 'notifications', label: 'Notifications', icon: <Bell size={18} />, link: '/user-dashboard/notifications' },
         { id: 'payment methods', label: 'Saved Cards', icon: <CreditCard size={18} />, link: '/user-dashboard/payment-methods' },
         { id: 'whatsapp', label: 'WhatsApp AI', icon: <MessageCircle size={18} />, link: '/user-dashboard/whatsapp' },
     ];
@@ -189,6 +157,8 @@ const Sidebar = ({ activeTab, setActiveTab }) => {
 
     useEffect(() => {
         menuItems.forEach(item => { if (item.link === location.pathname) setActiveTab(item.id) })
+        // The menu definition is local/static; route changes own tab selection.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [location])
 
     const handleTabClick = (tabId) => { setActiveTab(tabId); if (isMobile) setIsSidebarOpen(false); };

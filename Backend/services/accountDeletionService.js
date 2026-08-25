@@ -15,6 +15,7 @@ const StoreReview = require('../models/StoreReview');
 const StoreTrust = require('../models/StoreTrust');
 const StoreView = require('../models/StoreView');
 const Notification = require('../models/Notification');
+const NotificationOutbox = require('../models/NotificationOutbox');
 const ChatHistory = require('../models/ChatHistory');
 const Cart = require('../models/Cart');
 const OTP = require('../models/OTP');
@@ -22,6 +23,8 @@ const WhatsAppOTP = require('../models/WhatsAppOTP');
 const WhatsAppOTPRateEvent = require('../models/WhatsAppOTPRateEvent');
 const WhatsAppAIChatRateLimit = require('../models/WhatsAppAIChatRateLimit');
 const AIRateLimit = require('../models/AIRateLimit');
+const AIChatDailyUsage = require('../models/AIChatDailyUsage');
+const AIActionReceipt = require('../models/AIActionReceipt');
 const WhatsAppJidMapping = require('../models/WhatsAppJidMapping');
 const AdminWhatsAppNumber = require('../models/AdminWhatsAppNumber');
 const ExpoPushTokenRegistration = require('../models/ExpoPushTokenRegistration');
@@ -134,6 +137,7 @@ async function deleteAccountCascade(userId, { allowAdminDeletion = false } = {})
         settlementLocks: () => SellerSettlementLock.deleteMany({ seller: sellerId }),
         notificationLogs: () => SellerNotificationLog.deleteMany({ seller: sellerId }),
         notifications: () => Notification.deleteMany({ user: sellerId }),
+        notificationOutbox: () => NotificationOutbox.deleteMany({ 'recipient.user': sellerId }),
         chatHistory: () => ChatHistory.deleteMany({ user: sellerId }),
         cart: () => Cart.deleteMany({ user: sellerId }),
         emailOtps: () => OTP.deleteMany({
@@ -161,6 +165,8 @@ async function deleteAccountCascade(userId, { allowAdminDeletion = false } = {})
             ],
         }),
         aiRateLimits: () => AIRateLimit.deleteMany({ userId: sellerId }),
+        aiChatDailyUsage: () => AIChatDailyUsage.deleteMany({ userId: sellerId }),
+        aiActionReceipts: () => AIActionReceipt.deleteMany({ user: sellerId }),
         pendingWhatsappMessages: () => WhatsAppPendingMessage.deleteMany(
             phones.length ? { phone: { $in: phones } } : { _id: { $exists: false } }
         ),

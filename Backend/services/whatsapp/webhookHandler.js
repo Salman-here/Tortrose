@@ -16,23 +16,20 @@
 //   3. Seller notified the buyer backed out
 
 const Order = require('../../models/Order');
-const Product = require('../../models/Product');
-const User = require('../../models/User');
-const Notification = require('../../models/Notification');
 const WhatsAppConfig = require('../../models/WhatsAppConfig');
 const WhatsAppPendingMessage = require('../../models/WhatsAppPendingMessage');
-const { sendEmail } = require('../../controllers/mailController');
-const { sellerOrderConfirmedByBuyerEmail } = require('../../utils/emailTemplates');
-const { sendPushToUser } = require('../../utils/expoPush');
 const { findPendingJobByPhone, findPendingJobByOrderId, applyVote, markInboundConversationWindowOpen } = require('./queue');
 const { buildReconfirmButtonsPayload } = require('./messageBuilder');
 const evolution = require('./evolutionClient');
-const { notifySeller } = require('./sellerNotificationService');
-const sellerTemplates = require('./sellerMessageTemplates');
 const {
+    ensureOrderSellerFulfillment,
     getBuyerCancellationBlock,
-    syncAllSellerFulfillmentStatus,
 } = require('../orderFulfillmentService');
+const {
+    cancelOrderSafely,
+    reconfirmCancelledCodOrder,
+} = require('../orderCancellationService');
+const { confirmCodOrderByBuyer } = require('../orderStatusTransitionService');
 const { processIncomingWhatsAppMessage } = require('./whatsappAIChatService');
 const { processInboundMessageOnce } = require('./inboundProcessingService');
 const {
@@ -49,6 +46,9 @@ const {
     routingScopeFor,
     useUnifiedWhatsAppInstance,
 } = require('./gatewayMode');
+const {
+    requireWhatsAppWebhookAuthentication,
+} = require('./webhookSecurity');
 
 const asArray = (value) => Array.isArray(value) ? value : [value].filter(Boolean);
 
@@ -257,69 +257,8 @@ const sendReconfirmPrompt = async (phone, order, contextMessage) => {
 // ──────────────────────────────────────────────────────────────────────────
 // Seller side-effects
 // ──────────────────────────────────────────────────────────────────────────
-const notifySellers = async (order, isConfirmed) => {
-    try {
-        const productIds = order.orderItems.map(i => i.productId);
-        const products = await Product.find({ _id: { $in: productIds } });
-        const sellerIds = [...new Set(products.map(p => p.seller?.toString()).filter(Boolean))];
-        const buyerName = order.shippingInfo?.fullName || 'A buyer';
-
-        for (const sellerId of sellerIds) {
-            const seller = await User.findById(sellerId);
-
-            // 1. Email (confirmation only — we don't spam sellers on cancel emails)
-            if (isConfirmed && seller?.email) {
-                const data = sellerOrderConfirmedByBuyerEmail(order, seller.username);
-                sendEmail({ to: seller.email, ...data }).catch(e =>
-                    console.error('[whatsapp] seller confirm email failed:', e.message)
-                );
-            }
-
-            // 2. Expo push (both confirm + cancel)
-            sendPushToUser(sellerId, {
-                title: isConfirmed
-                    ? 'Buyer confirmed via WhatsApp ✅'
-                    : 'Buyer cancelled via WhatsApp ❌',
-                body: isConfirmed
-                    ? `${buyerName} confirmed order ${order.orderId} through Rozare WhatsApp.`
-                    : `${buyerName} cancelled order ${order.orderId} through Rozare WhatsApp.`,
-                channelId: 'seller',
-                data: {
-                    type: isConfirmed ? 'order_confirmed_by_buyer' : 'order_cancelled_by_buyer',
-                    orderId: order.orderId,
-                    orderObjectId: order._id?.toString(),
-                    via: 'whatsapp',
-                },
-            }).catch(e => console.error('[whatsapp] seller push failed:', e.message));
-
-            // 3. Persistent in-app Notification (the bell in the dashboard)
-            Notification.create({
-                user: sellerId,
-                title: isConfirmed
-                    ? 'Order confirmed via WhatsApp'
-                    : 'Order cancelled via WhatsApp',
-                body: isConfirmed
-                    ? `${buyerName} confirmed order #${order.orderId} through Rozare WhatsApp automation.`
-                    : `${buyerName} cancelled order #${order.orderId} through Rozare WhatsApp automation.`,
-                category: 'order',
-                linkTo: `/seller/orders/${order._id}`,
-                source: 'system',
-                targetRole: 'seller',
-                audience: 'specific',
-            }).catch(e => console.error('[whatsapp] seller in-app notification failed:', e.message));
-
-            // 4. WhatsApp notification to seller (fire-and-forget)
-            const waMsg = isConfirmed
-                ? sellerTemplates.order_confirmed(order)
-                : sellerTemplates.order_cancelled(order);
-            notifySeller(sellerId, 'order_update', waMsg).catch(e =>
-                console.error('[whatsapp] seller order update notification failed:', e.message)
-            );
-        }
-    } catch (err) {
-        console.error('[whatsapp] notifySellers failed:', err.message);
-    }
-};
+// Seller notifications are inserted atomically by the shared order decision
+// services. The WhatsApp handler must not fan out a second, unscoped copy.
 
 // ──────────────────────────────────────────────────────────────────────────
 // Message parsing helpers
@@ -440,14 +379,6 @@ const extractPollVote = (msg) => {
     return optionIndex === 0 ? 'yes' : 'no';
 };
 
-const findPendingJobByCandidatePhones = async (phones = []) => {
-    for (const phone of uniqueNonEmpty(phones)) {
-        const job = await findPendingJobByPhone(phone);
-        if (job) return job;
-    }
-    return null;
-};
-
 const extractMessageText = (msg) => {
     const m = unwrapMessageContent(msg?.message || {});
     return (
@@ -536,6 +467,7 @@ const processAIInboundDurably = async ({
             {
                 replyTo,
                 candidatePhones,
+                messageId,
                 durableAttempt: attempt,
                 propagateErrors: true,
                 suppressErrorResponse: true,
@@ -544,16 +476,73 @@ const processAIInboundDurably = async ({
     });
 };
 
+const pendingJobMatchesInboundPhone = (job, identityPhone) => Boolean(
+    job
+    && identityPhone
+    && String(job.phone || '').replace(/\D/g, '') === String(identityPhone).replace(/\D/g, '')
+);
+
+const pendingJobMatchesOrderConfirmation = (job, order) => Boolean(
+    job?.confirmationToken
+    && order?.confirmation?.token
+    && String(job.confirmationToken) === String(order.confirmation.token)
+);
+
+const orderConfirmationTokenExpired = (order, at = new Date()) => {
+    if (!order?.confirmation?.tokenExpiresAt) return false;
+    const expiresAt = new Date(order.confirmation.tokenExpiresAt).getTime();
+    return !Number.isFinite(expiresAt) || expiresAt <= at.getTime();
+};
+
+const applyFirstOrderDecision = async ({ order, isYes, token = null, at = new Date() }) => {
+    if (isYes) {
+        const sellerIds = await ensureOrderSellerFulfillment(order);
+        const confirmation = await confirmCodOrderByBuyer({
+            orderId: order._id,
+            token,
+            channel: 'whatsapp',
+            sellerIds,
+            // Preserve the existing buyer-precedence rule for an early
+            // seller/admin decision. A cancelled COD order is reopened only
+            // after stock and coupon state are secured transactionally.
+            allowedExistingDecisionChannels: ['manual', 'admin'],
+            at,
+        });
+        return confirmation.status === 'confirmed'
+            ? { order: confirmation.order, newlyApplied: confirmation.newlyConfirmed }
+            : null;
+    }
+
+    try {
+        const cancellation = await cancelOrderSafely({
+            orderId: order._id,
+            token,
+            reason: 'Buyer declined the order through WhatsApp.',
+            confirmationFields: {
+                declinedAt: at,
+                confirmedVia: 'whatsapp',
+                decidedAt: at,
+                decidedVia: 'whatsapp',
+            },
+            allowedExistingDecisionChannels: ['manual', 'admin'],
+            cancellationActorRole: 'buyer',
+            at,
+        });
+        return cancellation.status === 'cancelled'
+            ? { order: cancellation.order, newlyApplied: !cancellation.alreadyCancelled }
+            : null;
+    } catch (error) {
+        if (error.code !== 'ORDER_DECISION_ALREADY_MADE') throw error;
+        return null;
+    }
+};
+
 exports.handleEvolutionWebhook = async (req, res) => {
     try {
-        // Optional shared-secret check
-        const expected = process.env.EVOLUTION_WEBHOOK_SECRET;
-        if (expected) {
-            const got = req.headers['x-rozare-webhook-secret'] || req.headers['apikey'];
-            if (got !== expected && got !== process.env.EVOLUTION_API_KEY) {
-                return res.status(401).json({ msg: 'Unauthorized webhook' });
-            }
-        }
+        // server.js authenticates before parsing the potentially large body.
+        // Keep this guard as defense-in-depth for tests or any future direct
+        // mount of the handler: missing configuration must never fail open.
+        if (!requireWhatsAppWebhookAuthentication(req, res)) return;
 
         const body = req.body || {};
         const event = body.event || body.eventName || '';
@@ -728,11 +717,23 @@ exports.handleEvolutionWebhook = async (req, res) => {
                     const idParts = extracted.rawId.split('_');
                     const btnOrderId = idParts.slice(1).join('_'); // everything after first underscore
                     if (btnOrderId) {
-                        job = await findPendingJobByOrderId(btnOrderId);
+                        const orderJob = await findPendingJobByOrderId(btnOrderId);
+                        if (pendingJobMatchesInboundPhone(orderJob, phone)) {
+                            job = orderJob;
+                        } else if (orderJob) {
+                            console.warn(`[whatsapp] ignored order button from a phone that does not own job ${btnOrderId}`);
+                        }
                     }
                 }
                 if (!job) {
-                    job = await findPendingJobByCandidatePhones(address.candidatePhones);
+                    job = await findPendingJobByPhone(phone);
+                }
+                // The order id embedded in a button is routing data, not
+                // authorization. Only the phone that received this durable
+                // confirmation job may decide it.
+                if (job && !pendingJobMatchesInboundPhone(job, phone)) {
+                    console.warn(`[whatsapp] ignored confirmation job ${job.orderId || ''} for mismatched inbound phone`);
+                    job = null;
                 }
 
                 // ── No pending order confirmation → route to AI chat ──
@@ -774,6 +775,23 @@ exports.handleEvolutionWebhook = async (req, res) => {
                 const isYes = decision === 'yes';
                 const order = await Order.findById(job.order);
                 if (!order) continue;
+                // Bind every mutating decision to the token mirrored into the
+                // original outbound job. A rotated or expired confirmation
+                // capability must never authorize a stale WhatsApp button.
+                if (
+                    !pendingJobMatchesOrderConfirmation(job, order)
+                    || orderConfirmationTokenExpired(order)
+                ) {
+                    if (job.status !== 'expired') {
+                        job.status = 'expired';
+                        await job.save();
+                    }
+                    await evolution.sendText(outboundTo, [
+                        'This order confirmation request has expired or was replaced.',
+                        'Please check your Rozare account for the current order status.',
+                    ].join('\n'));
+                    continue;
+                }
 
                 // ── Handle re-confirm / keep-cancel button responses ──
                 // These are from the "Are you sure?" dialog sent after buyer tapped confirm on a cancelled order
@@ -792,27 +810,25 @@ exports.handleEvolutionWebhook = async (req, res) => {
                         await evolution.sendText(outboundTo, msg);
                         continue;
                     }
-                    const updated = await Order.findOneAndUpdate(
-                        { _id: order._id, orderStatus: 'cancelled' },
-                        {
-                            $set: {
-                                orderStatus: 'confirmed',
-                                'confirmation.confirmedAt': new Date(),
-                                'confirmation.confirmedVia': 'whatsapp',
-                                'confirmation.decidedAt': new Date(),
-                                'confirmation.decidedVia': 'whatsapp',
-                                'confirmation.declinedAt': null,
-                                'confirmation.cancelledFromDashboardAt': null,
-                                'confirmation.cancelledFromDashboardNote': '',
-                            }
+                    const reconfirmedAt = new Date();
+                    const reconfirmed = await reconfirmCancelledCodOrder({
+                        orderId: order._id,
+                        token: job.confirmationToken,
+                        confirmationFields: {
+                            confirmedAt: reconfirmedAt,
+                            confirmedVia: 'whatsapp',
+                            decidedAt: reconfirmedAt,
+                            decidedVia: 'whatsapp',
+                            declinedAt: null,
+                            cancelledFromDashboardAt: null,
+                            cancelledFromDashboardNote: '',
                         },
-                        { new: true }
-                    );
+                        at: reconfirmedAt,
+                    });
+                    const updated = reconfirmed.order;
                     if (updated) {
-                        await syncAllSellerFulfillmentStatus(updated, 'confirmed');
                         await applyVote(job, 'yes');
                         await sendResponseMessage(outboundTo, true, order.orderId, firstName);
-                        notifySellers(updated, true);
                     } else {
                         const msg = `Hey ${firstName}! Something changed. Please visit rozare.com 💙`;
                         await evolution.sendText(outboundTo, msg);
@@ -826,27 +842,29 @@ exports.handleEvolutionWebhook = async (req, res) => {
 
                     // If order is currently confirmed (buyer re-confirmed then changed mind), cancel it
                     if (order.orderStatus !== 'cancelled') {
-                        const updated = await Order.findOneAndUpdate(
-                            { _id: order._id },
-                            {
-                                $set: {
-                                    orderStatus: 'cancelled',
-                                    'confirmation.declinedAt': new Date(),
-                                    'confirmation.confirmedVia': 'whatsapp',
-                                    'confirmation.decidedAt': new Date(),
-                                    'confirmation.decidedVia': 'whatsapp',
-                                    'confirmation.confirmedAt': null,
-                                    'confirmation.cancelledFromDashboardAt': null,
-                                    'confirmation.cancelledFromDashboardNote': '',
-                                }
+                        const cancelledAt = new Date();
+                        const cancellation = await cancelOrderSafely({
+                            orderId: order._id,
+                            token: job.confirmationToken,
+                            reason: 'Buyer chose to keep the order cancelled on WhatsApp.',
+                            confirmationFields: {
+                                declinedAt: cancelledAt,
+                                confirmedVia: 'whatsapp',
+                                decidedAt: cancelledAt,
+                                decidedVia: 'whatsapp',
+                                confirmedAt: null,
+                                cancelledFromDashboardAt: null,
+                                cancelledFromDashboardNote: '',
                             },
-                            { new: true }
-                        );
+                            cancellationActorRole: 'buyer',
+                            at: cancelledAt,
+                        });
+                        const updated = cancellation.status === 'cancelled'
+                            ? cancellation.order
+                            : null;
                         if (updated) {
-                            await syncAllSellerFulfillmentStatus(updated, 'cancelled');
                             await applyVote(job, 'no');
                             await sendResponseMessage(outboundTo, false, order.orderId, firstName);
-                            notifySellers(updated, false);
                         } else {
                             const msg = `Hey ${firstName}! Something changed. Please visit rozare.com 💙`;
                             await evolution.sendText(outboundTo, msg);
@@ -1090,37 +1108,15 @@ exports.handleEvolutionWebhook = async (req, res) => {
                     }
                 }
 
-                // Use atomic update to prevent race with email confirmation
-                const updateFields = isYes
-                    ? {
-                        'confirmation.confirmedAt': new Date(),
-                        'confirmation.confirmedVia': 'whatsapp',
-                        'confirmation.decidedAt': new Date(),
-                        'confirmation.decidedVia': 'whatsapp',
-                        orderStatus: 'confirmed',
-                    }
-                    : {
-                        'confirmation.declinedAt': new Date(),
-                        'confirmation.confirmedVia': 'whatsapp',
-                        'confirmation.decidedAt': new Date(),
-                        'confirmation.decidedVia': 'whatsapp',
-                        orderStatus: 'cancelled',
-                    };
-
-                const updatedOrder = await Order.findOneAndUpdate(
-                    {
-                        _id: order._id,
-                        // Guard: only apply if no one else decided yet via a real channel
-                        $or: [
-                            { 'confirmation.decidedVia': null },
-                            { 'confirmation.decidedVia': { $exists: false } },
-                            // Allow override if seller set it early (manual/admin)
-                            { 'confirmation.decidedVia': { $in: ['manual', 'admin'] } },
-                        ]
-                    },
-                    { $set: updateFields },
-                    { new: true }
-                );
+                // Confirmation is a guarded atomic write. Cancellation goes
+                // through the shared transaction so inventory and coupon state
+                // cannot diverge from the WhatsApp decision.
+                const decisionResult = await applyFirstOrderDecision({
+                    order,
+                    isYes,
+                    token: job.confirmationToken,
+                });
+                const updatedOrder = decisionResult?.order || null;
 
                 if (!updatedOrder) {
                     // Race lost — someone decided via email or another WA tap between our read and write
@@ -1128,12 +1124,9 @@ exports.handleEvolutionWebhook = async (req, res) => {
                     continue;
                 }
 
-                await syncAllSellerFulfillmentStatus(updatedOrder, isYes ? 'confirmed' : 'cancelled');
-
                 // NOW persist the vote on the job (dashboard reads this)
                 await applyVote(job, isYes ? 'yes' : 'no');
                 await sendResponseMessage(outboundTo, isYes, updatedOrder.orderId, updatedOrder.shippingInfo?.fullName);
-                notifySellers(updatedOrder, isYes);
             }
             return res.status(200).json({ ok: true });
         }
@@ -1154,10 +1147,14 @@ exports.handleEvolutionWebhook = async (req, res) => {
 };
 
 exports.__private = {
+    applyFirstOrderDecision,
     extractMediaAttachments,
     extractMessageText,
     findWebhookBase64,
     isFromMeMessage,
+    orderConfirmationTokenExpired,
+    pendingJobMatchesInboundPhone,
+    pendingJobMatchesOrderConfirmation,
     processAIInboundDurably,
     unwrapMessageContent,
 };

@@ -33,6 +33,10 @@ const FORCE_ORDER_IDS = (process.env.REQUEUE_ORDER_IDS || '')
     console.log('Matched', docs.length, 'pending message(s)');
 
     for (const d of docs) {
+        if (String(d.dedupeKey || '').startsWith('outbox:')) {
+            console.log(`  Skipped ${d.orderId} — retry it through the outbox-aware admin endpoint`);
+            continue;
+        }
         const before = d.status;
         d.status = 'queued';
         d.attempts = 0;
@@ -41,6 +45,9 @@ const FORCE_ORDER_IDS = (process.env.REQUEUE_ORDER_IDS || '')
         d.pollMessageId = '';
         d.sentAt = null;
         d.repliedAt = null;
+        d.leaseToken = null;
+        d.leaseOwner = '';
+        d.leaseExpiresAt = null;
         d.nextAttemptAt = new Date(Date.now() + 2000);
         await d.save();
         console.log(`  Requeued ${d.orderId} → ${d.phone} (was ${before})`);

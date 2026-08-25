@@ -15,6 +15,9 @@ const {
   extractMediaAttachments,
   extractMessageText,
   isFromMeMessage,
+  orderConfirmationTokenExpired,
+  pendingJobMatchesInboundPhone,
+  pendingJobMatchesOrderConfirmation,
   processAIInboundDurably,
 } = require('../../services/whatsapp/webhookHandler').__private;
 
@@ -90,6 +93,35 @@ describe('Evolution v2.3.7 webhook media extraction', () => {
     expect(isFromMeMessage({ key: { fromMe: 'false' } })).toBe(false);
   });
 
+  test('binds an order button to its recipient phone and current unexpired token', () => {
+    const token = 'whatsapp-current-confirmation-token';
+    const job = {
+      phone: '923001112222',
+      confirmationToken: token,
+    };
+    const order = {
+      confirmation: {
+        token,
+        tokenExpiresAt: new Date(Date.now() + 60_000),
+      },
+    };
+
+    expect(pendingJobMatchesInboundPhone(job, '923001112222')).toBe(true);
+    expect(pendingJobMatchesInboundPhone(job, '923009999999')).toBe(false);
+    expect(pendingJobMatchesOrderConfirmation(job, order)).toBe(true);
+    expect(pendingJobMatchesOrderConfirmation(
+      { ...job, confirmationToken: 'rotated-token' },
+      order,
+    )).toBe(false);
+    expect(orderConfirmationTokenExpired(order)).toBe(false);
+    expect(orderConfirmationTokenExpired({
+      confirmation: {
+        token,
+        tokenExpiresAt: new Date(Date.now() - 1000),
+      },
+    })).toBe(true);
+  });
+
   test('bridges a stable Evolution message id into retry-safe AI processing', async () => {
     processIncomingWhatsAppMessage.mockResolvedValueOnce('sent');
     const attachment = { kind: 'audio', messageId: 'VOICE-DURABLE-1' };
@@ -119,6 +151,7 @@ describe('Evolution v2.3.7 webhook media extraction', () => {
       {
         replyTo: '39767790104698@lid',
         candidatePhones: ['923001112222'],
+        messageId: 'VOICE-DURABLE-1',
         durableAttempt: 2,
         propagateErrors: true,
         suppressErrorResponse: true,

@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
-const { MongoMemoryServer } = require('mongodb-memory-server');
+const { MongoMemoryReplSet } = require('mongodb-memory-server');
 const Cart = require('../../models/Cart');
+const Order = require('../../models/Order');
 const User = require('../../models/User');
 const Product = require('../../models/Product');
 const {
@@ -33,12 +34,17 @@ const createProduct = (seller, suffix) => Product.create({
 });
 
 beforeAll(async () => {
-  mongoServer = await MongoMemoryServer.create();
+  mongoServer = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
   await mongoose.connect(mongoServer.getUri());
 }, 60000);
 
 afterEach(async () => {
-  await Promise.all([Cart.deleteMany({}), Product.deleteMany({}), User.deleteMany({})]);
+  await Promise.all([
+    Cart.deleteMany({}),
+    Order.deleteMany({}),
+    Product.deleteMany({}),
+    User.deleteMany({}),
+  ]);
 });
 
 afterAll(async () => {
@@ -150,6 +156,38 @@ describe('fulfilled order cart cleanup', () => {
     expect(cart.fulfilledOrderIds.map(String)).toEqual([String(fulfillmentId)]);
   });
 
+  test('the durable order receipt protects a replacement cart from a later replay', async () => {
+    const buyer = await createUser('replacement-buyer');
+    const seller = await createUser('replacement-seller', 'seller');
+    const product = await createProduct(seller, 'replacement-product');
+    const fulfillmentId = new mongoose.Types.ObjectId();
+    await Order.collection.insertOne({
+      _id: fulfillmentId,
+      cartCleanupCompletedAt: null,
+    });
+    await Cart.create({
+      user: buyer._id,
+      cartItems: [{ product: product._id, qty: 5 }],
+    });
+    const cleanup = {
+      userId: buyer._id,
+      fulfillmentId,
+      orderItems: [{ productId: product._id, quantity: 2 }],
+    };
+
+    await removeFulfilledOrderItemsFromCart(cleanup);
+    await Cart.deleteOne({ user: buyer._id });
+    await Cart.create({
+      user: buyer._id,
+      // These are newly-added units after the original cart was consumed.
+      cartItems: [{ product: product._id, qty: 2 }],
+    });
+
+    const replay = await removeFulfilledOrderItemsFromCart(cleanup);
+    expect(replay).toEqual({ matchedLines: 0, removedQuantity: 0 });
+    expect((await Cart.findOne({ user: buyer._id }).lean()).cartItems[0].qty).toBe(2);
+  });
+
   test('concurrent cleanup attempts have exactly one effect', async () => {
     const buyer = await createUser('concurrent-buyer');
     const seller = await createUser('concurrent-seller', 'seller');
@@ -174,6 +212,36 @@ describe('fulfilled order cart cleanup', () => {
     const cart = await Cart.findOne({ user: buyer._id }).select('+fulfilledOrderIds').lean();
     expect(cart.cartItems[0].qty).toBe(4);
     expect(cart.fulfilledOrderIds.map(String)).toEqual([String(fulfillmentId)]);
+  });
+
+  test('participates in a caller transaction so an order rollback also restores the cart', async () => {
+    const buyer = await createUser('transaction-buyer');
+    const seller = await createUser('transaction-seller', 'seller');
+    const product = await createProduct(seller, 'transaction-product');
+    const fulfillmentId = new mongoose.Types.ObjectId();
+    await Cart.create({
+      user: buyer._id,
+      cartItems: [{ product: product._id, qty: 5 }],
+    });
+
+    const session = await mongoose.startSession();
+    try {
+      await expect(session.withTransaction(async () => {
+        await removeFulfilledOrderItemsFromCart({
+          userId: buyer._id,
+          fulfillmentId,
+          orderItems: [{ productId: product._id, quantity: 2 }],
+          session,
+        });
+        throw new Error('simulated order transaction abort');
+      })).rejects.toThrow('simulated order transaction abort');
+    } finally {
+      await session.endSession();
+    }
+
+    const cart = await Cart.findOne({ user: buyer._id }).select('+fulfilledOrderIds').lean();
+    expect(cart.cartItems[0].qty).toBe(5);
+    expect(cart.fulfilledOrderIds).toHaveLength(0);
   });
 
   test('an ambiguous response after the atomic write is safe to retry', async () => {
@@ -204,5 +272,77 @@ describe('fulfilled order cart cleanup', () => {
     const cart = await Cart.findOne({ user: buyer._id }).select('+fulfilledOrderIds').lean();
     expect(cart.cartItems[0].qty).toBe(3);
     expect(cart.fulfilledOrderIds.map(String)).toEqual([String(fulfillmentId)]);
+  });
+
+  test.each(['2', true, 1.5, 0, -1, Number.NaN])(
+    'rejects a present corrupt order-item quantity without mutating the cart (%p)',
+    async (quantity) => {
+      const buyer = await createUser(`bad-order-qty-${String(quantity)}`);
+      const seller = await createUser(`bad-order-qty-seller-${String(quantity)}`, 'seller');
+      const product = await createProduct(seller, `bad-order-qty-product-${String(quantity)}`);
+      await Cart.create({
+        user: buyer._id,
+        cartItems: [{ product: product._id, qty: 4 }],
+      });
+
+      await expect(removeFulfilledOrderItemsFromCart({
+        userId: buyer._id,
+        fulfillmentId: new mongoose.Types.ObjectId(),
+        orderItems: [{ productId: product._id, quantity }],
+      })).rejects.toMatchObject({ code: 'CART_CLEANUP_DATA_INVALID', statusCode: 409 });
+
+      expect((await Cart.findOne({ user: buyer._id }).lean()).cartItems[0].qty).toBe(4);
+    },
+  );
+
+  test('rejects a corrupt persisted cart quantity before recording cleanup', async () => {
+    const buyer = await createUser('bad-cart-qty');
+    const seller = await createUser('bad-cart-qty-seller', 'seller');
+    const product = await createProduct(seller, 'bad-cart-qty-product');
+    const fulfillmentId = new mongoose.Types.ObjectId();
+    const cart = await Cart.create({
+      user: buyer._id,
+      cartItems: [{ product: product._id, qty: 4 }],
+    });
+    await Cart.collection.updateOne(
+      { _id: cart._id },
+      { $set: { 'cartItems.0.qty': '4' } },
+    );
+    await Order.collection.insertOne({ _id: fulfillmentId, cartCleanupCompletedAt: null });
+
+    await expect(removeFulfilledOrderItemsFromCart({
+      userId: buyer._id,
+      fulfillmentId,
+      orderItems: [{ productId: product._id, quantity: 2 }],
+    })).rejects.toMatchObject({ code: 'CART_CLEANUP_DATA_INVALID', statusCode: 409 });
+
+    const [rawCart, rawOrder] = await Promise.all([
+      Cart.collection.findOne({ _id: cart._id }),
+      Order.collection.findOne({ _id: fulfillmentId }),
+    ]);
+    expect(rawCart.cartItems[0].qty).toBe('4');
+    expect(rawOrder.cartCleanupCompletedAt).toBeNull();
+  });
+
+  test('preserves the documented quantity-one meaning for a nullish legacy cart row', async () => {
+    const buyer = await createUser('legacy-missing-qty');
+    const seller = await createUser('legacy-missing-qty-seller', 'seller');
+    const product = await createProduct(seller, 'legacy-missing-qty-product');
+    const cart = await Cart.create({
+      user: buyer._id,
+      cartItems: [{ product: product._id, qty: 1 }],
+    });
+    await Cart.collection.updateOne(
+      { _id: cart._id },
+      { $unset: { 'cartItems.0.qty': '' } },
+    );
+
+    await expect(removeFulfilledOrderItemsFromCart({
+      userId: buyer._id,
+      fulfillmentId: new mongoose.Types.ObjectId(),
+      orderItems: [{ productId: product._id, quantity: 1 }],
+    })).resolves.toEqual({ matchedLines: 1, removedQuantity: 1 });
+
+    expect((await Cart.findOne({ user: buyer._id }).lean()).cartItems).toHaveLength(0);
   });
 });

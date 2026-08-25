@@ -26,19 +26,19 @@ const faqCategories = [
     category: 'Shopping',
     icon: 'bag-handle-outline',
     questions: [
-      { q: 'How do I create an account?', a: 'Tap "Sign Up" from the Account tab. You can register with your email or sign in with Google for a faster setup.' },
-      { q: 'How do I search for products?', a: 'Use the search bar at the top of the Home screen. You can filter results by category, price range, and more.' },
-      { q: 'Can I save items for later?', a: 'Yes! Tap the heart icon on any product to add it to your Wishlist. Access your saved items anytime from the Wishlist tab.' },
+      { q: 'How do I create an account?', a: 'Open "Sign Up" from the account menu. You can register with your email or continue with Google for a faster setup.' },
+      { q: 'How do I search for products?', a: 'Use the main search bar to find products. You can narrow results by category, price range, and other available filters.' },
+      { q: 'Can I save items for later?', a: 'Yes. Select the heart icon on a product to add it to your Wishlist, then open Wishlist from your account whenever you want to review saved items.' },
     ],
   },
   {
     category: 'Payments',
     icon: 'card-outline',
     questions: [
-      { q: 'What payment methods are accepted?', a: 'Checkout supports Stripe card, Rozare Wallet, and Cash on Delivery. One order uses one payment method. COD is available only when every seller allows it; otherwise use card or a sufficient Wallet balance in the checkout currency.' },
-      { q: 'How does Rozare Wallet work?', a: 'Open Wallet from your Dashboard or Profile to add balance securely by card and view transactions. USD, PKR, EUR, and GBP balances stay separate and are not converted automatically.' },
-      { q: 'Is my payment information secure?', a: 'Payments are processed through Stripe where available, and Rozare does not store your card details.' },
-      { q: 'Are there any hidden fees?', a: 'No hidden fees. The price you see includes all applicable taxes (calculated at checkout). Shipping costs are shown before you confirm.' },
+      { q: 'What payment methods are accepted?', a: 'Checkout supports Stripe card, Rozare Wallet, and Cash on Delivery. One order uses one payment method. COD is available only when every seller allows it; if any seller accepts online payment only, use card or a sufficient Wallet balance in the checkout currency.' },
+      { q: 'How does Rozare Wallet work?', a: 'Open Wallet from your account to add balance securely by card and view transactions. USD, PKR, EUR, and GBP balances stay separate, so Wallet checkout requires enough balance in the exact order currency.' },
+      { q: 'Is my payment information secure?', a: 'Payments are processed through Stripe, and Rozare does not store your card details on its servers.' },
+      { q: 'Are there any hidden fees?', a: 'No hidden fees. The price you see includes all applicable taxes (calculated at checkout). Shipping costs are shown before you confirm your order.' },
     ],
   },
   {
@@ -47,33 +47,33 @@ const faqCategories = [
     questions: [
       { q: 'How long does shipping take?', a: 'Shipping times vary by seller and destination. Each seller configures their own shipping methods with estimated delivery times shown at checkout.' },
       { q: 'Do you ship internationally?', a: 'Many sellers offer international shipping. Check the product page for available shipping destinations. Currency conversion is handled automatically.' },
-      { q: 'How do I track my order?', a: 'Once shipped, you\'ll receive a notification with tracking info. You can also track orders from your Dashboard under "Orders".' },
+      { q: 'How do I track my order?', a: 'When an order ships, its status is updated and supported notifications are sent. Open Orders from your account to view the latest status.' },
     ],
   },
   {
     category: 'Returns',
     icon: 'refresh-outline',
     questions: [
-      { q: 'What is the return policy?', a: 'Return eligibility is seller- and item-specific. The policy saved when you order controls the deadline after that seller portion is delivered. In a mixed order, one seller can allow returns even when another does not.' },
-      { q: 'How do I initiate a return?', a: 'Open the delivered order, select Request Return for an eligible seller, choose item quantities, and provide the reason. You can then track approval, pickup, transit, receipt, and review.' },
-      { q: 'When is a refund issued?', a: 'The seller must accept and fund the exact approved amount from seller balance or by Stripe card. Only verified funding credits your Rozare Wallet in the order currency and completes the return.' },
+      { q: 'What is the return policy?', a: 'Return eligibility is set per seller and can be overridden per product. The policy saved when you order controls the deadline. In a multi-seller order, only items from sellers who allow returns become eligible after their portion is delivered.' },
+      { q: 'How do I initiate a return?', a: 'Open the delivered order, select Request Return for an eligible seller, choose item quantities, and provide the reason. The seller then updates pickup, transit, receipt, and review statuses.' },
+      { q: 'When do I receive a return refund?', a: 'The seller must accept the return and fund the approved amount from seller balance or by card. Rozare credits your Wallet in the order currency only after that funding is verified; failed or expired payments cannot complete the return.' },
     ],
   },
   {
     category: 'Selling',
     icon: 'storefront-outline',
     questions: [
-      { q: 'How do I become a seller?', a: 'Tap "Become a Seller" from your profile, add your store details, verify WhatsApp, and activate your seller account. Your 15-day free trial starts when the store is created.' },
-      { q: 'What are the seller fees?', a: 'New sellers start with a 15-day free trial. Starter is $9.99/month after a 15% launch discount and Elite is $21.65/month after a 30% launch discount, with their free intros when eligible. The first 100 sellers who complete Checkout with FIRST100 get an extra locked 40% founder discount: $5.99 Starter or $12.99 Elite while the subscription remains uninterrupted. Meta ads add $4/month.' },
-      { q: 'How do I manage my store?', a: 'The Seller Dashboard gives you full manual control: manage products, track orders, view analytics, configure shipping, and customize settings. You can also use Rozare AI for supported tasks.' },
+      { q: 'How do I become a seller?', a: 'Open "Become a Seller" from the account menu, create or sign in to your account, add your store details, and verify your WhatsApp number. Your store is created instantly and your 15-day free trial begins.' },
+      { q: 'What are the seller fees?', a: 'New sellers start with a 15-day free trial. Starter is $9.99/month after a 15% launch discount, with a 30-day free intro when eligible. Elite is $21.65/month after a 30% launch discount, with a 45-day free intro when eligible. The first 100 sellers to complete Checkout with FIRST100 get an extra locked 40% founder discount: $5.99 Starter or $12.99 Elite while the subscription remains uninterrupted. Meta ads add $4/month.' },
+      { q: 'How do I manage my store?', a: 'The Seller Dashboard gives you full manual control: manage products, track orders, view analytics, configure shipping, and customize your store settings. You can also manage supported tasks by chatting with the Rozare AI.' },
     ],
   },
   {
     category: 'Trust & Safety',
     icon: 'shield-checkmark-outline',
     questions: [
-      { q: 'What is the Trust system?', a: 'Users can "trust" stores they\'ve had good experiences with. Stores with high trust scores get a verified badge, helping other shoppers make confident decisions.' },
-      { q: 'How are stores verified?', a: 'Stores go through an admin verification process. Verified stores display a badge, indicating they meet our quality and reliability standards.' },
+      { q: 'What is the Trust system?', a: 'Users can "trust" stores they\'ve had good experiences with. The public trust count is social proof, but it does not grant a verified badge.' },
+      { q: 'How are stores verified?', a: 'Verification is separate from trust counts. A seller applies and an admin reviews the store before any verified badge is granted.' },
     ],
   },
 ];

@@ -6,12 +6,52 @@ export const filterProductsByQuery = (products, query) => {
     .some((value) => String(value || '').toLowerCase().includes(normalizedQuery)));
 };
 
-export const normalizeProductResponse = (data) => {
+export const inspectProductPagination = (pagination, {
+  productCount,
+  expectedPage,
+  expectedLimit,
+} = {}) => {
+  if (!pagination || typeof pagination !== 'object' || Array.isArray(pagination)) {
+    return { valid: false };
+  }
+  const { page, limit, totalProducts, totalPages, hasMore } = pagination;
+  const valuesAreValid = Number.isSafeInteger(page) && page >= 1
+    && Number.isSafeInteger(limit) && limit >= 1
+    && Number.isSafeInteger(totalProducts) && totalProducts >= 0
+    && Number.isSafeInteger(totalPages) && totalPages >= 1
+    && typeof hasMore === 'boolean'
+    && Number.isSafeInteger(productCount) && productCount >= 0 && productCount <= limit
+    && (expectedPage === undefined || page === expectedPage)
+    && (expectedLimit === undefined || limit === expectedLimit);
+  if (!valuesAreValid) return { valid: false };
+  const calculatedPages = Math.max(1, Math.ceil(totalProducts / limit));
+  const pageStartsAt = (page - 1) * limit;
+  const countFitsPage = page <= totalPages
+    ? pageStartsAt + productCount <= totalProducts
+    : productCount === 0;
+  if (
+    totalPages !== calculatedPages
+    || hasMore !== (page < totalPages)
+    || !countFitsPage
+  ) return { valid: false };
+  return { valid: true, page, limit, totalProducts, totalPages, hasMore };
+};
+
+export const normalizeProductResponse = (data, {
+  expectedPage,
+  expectedLimit,
+} = {}) => {
   if (Array.isArray(data)) return { products: data, pagination: null };
-  return {
-    products: Array.isArray(data?.products) ? data.products : [],
-    pagination: data?.pagination || null,
-  };
+  if (!data || typeof data !== 'object' || !Array.isArray(data.products)) {
+    throw new Error('Product list data is unavailable.');
+  }
+  const pagination = inspectProductPagination(data.pagination, {
+    productCount: data.products.length,
+    expectedPage,
+    expectedLimit,
+  });
+  if (!pagination.valid) throw new Error('Product pagination data is unavailable.');
+  return { products: data.products, pagination };
 };
 
 export const mergeProducts = (current = [], next = []) => {
@@ -64,9 +104,12 @@ export const getProductModerationReason = (product) => (
 );
 
 export const validateBulkActionSelection = (productIds, { max = Number.POSITIVE_INFINITY } = {}) => {
-  const ids = Array.isArray(productIds)
-    ? [...new Set(productIds.map((id) => String(id || '').trim()).filter(Boolean))]
-    : [];
+  const isCanonicalProductId = value => typeof value === 'string' && /^[a-f\d]{24}$/iu.test(value);
+  const rawIds = Array.isArray(productIds) ? productIds : [];
+  if (rawIds.some(id => !isCanonicalProductId(id))) {
+    return { isValid: false, ids: [], message: 'Refresh products before continuing because one or more identifiers are invalid.' };
+  }
+  const ids = [...new Set(rawIds)];
   if (ids.length === 0) return { isValid: false, ids, message: 'Select at least one product first.' };
   if (ids.length > max) return { isValid: false, ids, message: `Select no more than ${max} products at a time.` };
   return { isValid: true, ids, message: '' };

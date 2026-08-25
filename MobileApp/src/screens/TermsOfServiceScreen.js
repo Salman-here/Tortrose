@@ -19,8 +19,8 @@ const sections = [
   { icon: 'warning-outline', title: '4. Prohibited Activities', content: 'Users may not: sell counterfeit or illegal products; engage in fraudulent transactions; harass other users; attempt to circumvent platform fees; use automated tools to scrape data; or violate any applicable laws. Violation of these terms may result in immediate account termination.' },
   { icon: 'globe-outline', title: '5. Intellectual Property', content: 'All content on Rozare, including logos, designs, and software, is owned by Rozare or its licensors. Users retain ownership of content they upload but grant Rozare a non-exclusive license to use, display, and distribute such content in connection with the platform\'s services.' },
   { icon: 'document-text-outline', title: '6. Payments & Refunds', content: 'All payments are processed securely through our payment partners. Refund policies vary by seller and are subject to our platform-wide refund guidelines. Rozare is not liable for disputes between buyers and sellers but will facilitate resolution through our dispute resolution process.' },
-  { icon: 'shield-outline', title: '7. Limitation of Liability', content: 'Rozare provides the platform "as is" without warranties of any kind. We are not liable for any indirect, incidental, special, or consequential damages. Our total liability shall not exceed the amount paid by you to us in the preceding 12 months.' },
-  { icon: 'create-outline', title: '8. Changes to Terms', content: 'We reserve the right to modify these terms at any time. Users will be notified of significant changes via email or platform notification. Continued use of the platform after changes constitutes acceptance of the new terms.' },
+  { icon: 'shield-outline', title: '7. Limitation of Liability', content: 'Rozare provides the platform "as is" without warranties of any kind. We are not liable for any indirect, incidental, special, or consequential damages. Our total liability shall not exceed the amount paid by you to us in the preceding 12 months. We do not guarantee uninterrupted or error-free service.' },
+  { icon: 'create-outline', title: '8. Changes to Terms', content: 'We reserve the right to modify these terms at any time. Users will be notified of significant changes via email or platform notification. Continued use of the platform after changes constitutes acceptance of the new terms. It is your responsibility to review these terms periodically.' },
 ];
 
 export default function TermsOfServiceScreen({ navigation }) {
@@ -43,7 +43,7 @@ export default function TermsOfServiceScreen({ navigation }) {
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
           <GlassPanel variant="card" style={styles.introCard}>
             <Text style={styles.introText}>
-              Welcome to Rozare. These Terms of Service govern your use of our marketplace platform. By using Rozare, you agree to these terms. Please read them carefully.
+              Welcome to Rozare. These Terms of Service govern your use of our marketplace platform. By using Rozare, you agree to these terms. Please read them carefully before creating an account or making any transactions.
             </Text>
           </GlassPanel>
 
@@ -60,10 +60,15 @@ export default function TermsOfServiceScreen({ navigation }) {
           ))}
 
           <GlassPanel variant="card" style={styles.ctaCard}>
-            <Text style={styles.ctaText}>Questions about these terms?</Text>
-            <TouchableOpacity onPress={() => navigation.navigate('Contact')} activeOpacity={0.7}>
-              <Text style={styles.ctaLink}>Contact us →</Text>
-            </TouchableOpacity>
+            <Text style={styles.ctaText}>Questions about these terms? Contact us or read our Privacy Policy.</Text>
+            <View style={styles.ctaLinks}>
+              <TouchableOpacity onPress={() => navigation.navigate('Contact')} activeOpacity={0.7}>
+                <Text style={styles.ctaLink}>Contact us →</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => navigation.navigate('PrivacyPolicy')} activeOpacity={0.7}>
+                <Text style={styles.ctaLink}>Privacy Policy →</Text>
+              </TouchableOpacity>
+            </View>
           </GlassPanel>
 
           <View style={{ height: 100 }} />
@@ -85,6 +90,7 @@ const buildStyles = (p) => StyleSheet.create({
   sectionTitle: { fontSize: fontSize.lg, fontWeight: fontWeight.semibold, color: p.colors.text, flex: 1 },
   sectionContent: { fontSize: fontSize.sm, color: p.colors.textSecondary, lineHeight: 20 },
   ctaCard: { alignItems: 'center' },
-  ctaText: { fontSize: fontSize.sm, color: p.colors.textSecondary, marginBottom: spacing.sm },
+  ctaText: { fontSize: fontSize.sm, color: p.colors.textSecondary, marginBottom: spacing.sm, textAlign: 'center' },
+  ctaLinks: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: spacing.lg },
   ctaLink: { fontSize: fontSize.md, fontWeight: fontWeight.semibold, color: p.colors.primary },
 });

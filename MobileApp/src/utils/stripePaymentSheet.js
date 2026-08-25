@@ -530,9 +530,6 @@ export const normalizeWalletTopUpStatus = ({
   payload,
   topUpId,
   paymentIntentId,
-  currency,
-  startingBalance,
-  amount,
 }) => {
   const root = payload?.data || payload || {};
   const directStatus = String(root?.status || root?.topUp?.status || root?.transaction?.status || '').toLowerCase();
@@ -564,10 +561,10 @@ export const normalizeWalletTopUpStatus = ({
   if (['failed', 'expired'].includes(rawStatus)) {
     return { status: 'failed', payload: root };
   }
-  const balance = Number(wallet?.balances?.[String(currency || '').toUpperCase()] || 0);
-  if (Number(amount) > 0 && balance + 0.0001 >= Number(startingBalance || 0) + Number(amount)) {
-    return { status: 'paid', payload: root };
-  }
+  if (matching) return { status: 'pending', payload: root };
+  // A Wallet balance can move for unrelated refunds, transfers, or top-ups.
+  // Only the owner-scoped status response or the matching ledger transaction
+  // can prove that this specific Stripe payment was credited.
   return { status: 'pending', payload: root };
 };
 

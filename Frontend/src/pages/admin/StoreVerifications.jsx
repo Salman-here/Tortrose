@@ -203,7 +203,7 @@ const StoreVerifications = () => {
                 />
             ) : (
                 <div className="space-y-4">
-                    {activeTab === 'pending' && filteredPending.map((store, idx) => (
+                    {activeTab === 'pending' && filteredPending.map((store) => (
                         <StoreCard key={store._id} store={store} borderColor="hsl(45, 93%, 47%)" actions={<>
                             <motion.button whileHover={{ scale: 1.02 }} onClick={() => handleApprove(store._id)} disabled={processingId === store._id}
                                 className="flex-1 md:flex-none px-5 py-2 rounded-xl text-white font-medium text-sm flex items-center justify-center gap-2 disabled:opacity-50"
@@ -217,7 +217,7 @@ const StoreVerifications = () => {
                             </motion.button>
                         </>} />
                     ))}
-                    {activeTab === 'verified' && filteredVerified.map((store, idx) => (
+                    {activeTab === 'verified' && filteredVerified.map((store) => (
                         <StoreCard key={store._id} store={store} borderColor="hsl(150, 60%, 45%)" actions={
                             <motion.button whileHover={{ scale: 1.02 }} onClick={() => { setSelectedStore(store); setShowRemoveModal(true); }} disabled={processingId === store._id}
                                 className="px-5 py-2 rounded-xl font-medium text-sm flex items-center gap-2 disabled:opacity-50"
@@ -226,7 +226,7 @@ const StoreVerifications = () => {
                             </motion.button>
                         } />
                     ))}
-                    {activeTab === 'unverified' && filteredUnverified.map((store, idx) => (
+                    {activeTab === 'unverified' && filteredUnverified.map((store) => (
                         <StoreCard key={store._id} store={store} actions={
                             !store.verification?.isVerified && (
                                 <motion.button whileHover={{ scale: 1.02 }} onClick={() => { setSelectedStore(store); setShowVerifyModal(true); }} disabled={processingId === store._id}

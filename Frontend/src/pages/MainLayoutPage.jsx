@@ -13,7 +13,6 @@ function MainLayoutPage() {
   const {
     dropdownRef,
     setIsOpen,
-    cartBtn,
     isOpen
   } = useGlobal()
 
@@ -25,13 +24,13 @@ function MainLayoutPage() {
     };
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
+  }, [dropdownRef, setIsOpen]);
 
   const location = useLocation()
 
   useEffect(() => {
     setIsOpen(false);
-  }, [location.pathname])
+  }, [location.pathname, setIsOpen])
 
   return (
     <div className='relative min-h-screen' style={{ overflowX: 'clip' }}>

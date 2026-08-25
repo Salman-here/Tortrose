@@ -51,6 +51,19 @@ const broadcastJobSchema = new mongoose.Schema(
             enum: ['none', 'daily', 'weekly', 'monthly'],
             default: 'none',
         },
+        // Preserve the intended calendar day for monthly schedules. For
+        // example, a January 31 schedule runs on February 28/29 and then
+        // returns to March 31 instead of permanently drifting to the 28th.
+        recurrenceAnchorDay: {
+            type: Number,
+            min: 1,
+            max: 31,
+            default: null,
+            validate: {
+                validator: (value) => value == null || Number.isInteger(value),
+                message: 'recurrenceAnchorDay must be a whole calendar day.',
+            },
+        },
         nextRunAt: { type: Date, index: true },
         // Optional stop date for recurring jobs; null = forever (until cancelled).
         endsAt: { type: Date, default: null },
@@ -62,8 +75,14 @@ const broadcastJobSchema = new mongoose.Schema(
             index: true,
         },
         lastRunAt: { type: Date },
-        runCount: { type: Number, default: 0 },
+        runCount: { type: Number, min: 0, default: 0 },
         lastError: { type: String, default: '' },
+        // A fencing lease lets another worker recover a crashed `sending` job
+        // without allowing the stale worker to finalize over the replacement.
+        leaseToken: { type: String, default: '', select: false },
+        leaseAcquiredAt: { type: Date, default: null },
+        leaseExpiresAt: { type: Date, default: null },
+        leaseRecoveryCount: { type: Number, min: 0, default: 0 },
         // Per-run delivery stats (sum across runs for recurring).
         stats: {
             recipients: { type: Number, default: 0 },
@@ -78,5 +97,6 @@ const broadcastJobSchema = new mongoose.Schema(
 );
 
 broadcastJobSchema.index({ status: 1, nextRunAt: 1 });
+broadcastJobSchema.index({ status: 1, leaseExpiresAt: 1 });
 
 module.exports = mongoose.model('BroadcastJob', broadcastJobSchema);

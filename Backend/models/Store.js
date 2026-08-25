@@ -275,6 +275,44 @@ const storeSchema = new mongoose.Schema({
   lastTypeChangeAt: { type: Date, default: null },
   // Mirrored from subscription so middleware/UI knows the store is currently blocked
   blockedAt: { type: Date, default: null },
+  // Ownership marker for a reversible subscription-payment suspension. The
+  // exact timestamp prevents a won dispute from undoing a later independent
+  // admin/manual store deactivation.
+  subscriptionPaymentRiskLock: {
+    stripeSubscriptionId: { type: String, default: '' },
+    lockedAt: { type: Date, default: null }
+  },
+  // Serializes a payable subdomain Checkout against a slug change. Checkout
+  // locks outlive the hosted Session and are released by completion/expiry;
+  // short slug-change locks make the inverse race safe as well.
+  subdomainResourceLock: {
+    kind: {
+      type: String,
+      enum: { values: ['checkout', 'slug_change', null], message: 'Invalid subdomain resource lock kind' },
+      default: null
+    },
+    token: { type: String, default: '' },
+    expiresAt: { type: Date, default: null }
+  },
+  // Bounded operational audit for every public hostname reassignment. Stripe
+  // entitlement rows remain the immutable financial record for a purchased
+  // slug; this history records who intentionally moved the Store away from it.
+  subdomainSlugHistory: {
+    type: [{
+      fromSlug: { type: String, required: true, lowercase: true, trim: true },
+      toSlug: { type: String, required: true, lowercase: true, trim: true },
+      actorType: {
+        type: String,
+        enum: ['seller', 'admin', 'ai', 'system'],
+        required: true,
+      },
+      actorId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+      reason: { type: String, default: '', maxlength: 240 },
+      purchasedOwnershipForfeited: { type: Boolean, default: false },
+      changedAt: { type: Date, required: true },
+    }],
+    default: [],
+  },
   // Subdomain purchase / ownership
   subdomainPurchase: {
     isPurchased: {
@@ -297,9 +335,34 @@ const storeSchema = new mongoose.Schema({
       type: [String],
       default: []
     },
+    // A financial dispute temporarily freezes renewal/transfer while keeping
+    // the slug reserved. Terminal refund/loss recalculates ownership from the
+    // surviving payment contributions.
+    paymentRiskState: {
+      type: String,
+      enum: ['none', 'open', 'lost'],
+      default: 'none'
+    },
+    paymentRiskUpdatedAt: {
+      type: Date,
+      default: null
+    },
     // Track removal schedule for blocked (non-purchased) accounts
     removalScheduledAt: {
       type: Date  // blockedAt + 7 days; null if purchased or not blocked
+    },
+    // Recovery markers for lifecycle notices. The event identity is frozen
+    // before/with the state transition, then the durable outbox is retried
+    // until it is safely enqueued.
+    expiryNotice: {
+      slug: { type: String, lowercase: true, trim: true, maxlength: 120, default: '' },
+      expiresAt: { type: Date, default: null },
+      notificationEnqueuedAt: { type: Date, default: null }
+    },
+    removalNotice: {
+      previousSlug: { type: String, lowercase: true, trim: true, maxlength: 120, default: '' },
+      removedAt: { type: Date, default: null },
+      notificationEnqueuedAt: { type: Date, default: null }
     }
   },
   verification: {

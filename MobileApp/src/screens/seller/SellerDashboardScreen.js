@@ -1,11 +1,11 @@
 /**
  * SellerDashboardScreen — Professional Liquid Glass Design
  * Matched to the website's SellerHome: welcome hub, accurate stats
- * (paid-only revenue, conversion), stock alerts, order summary bar,
+ * (recognized online/delivered-COD revenue, conversion), stock alerts, order summary bar,
  * quick-action tiles, and recent orders.
  */
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, RefreshControl, TouchableOpacity, Modal, Platform,
 } from 'react-native';
@@ -31,8 +31,17 @@ import {
   SellerSectionHeader,
 } from '../../components/seller/SellerUI';
 import { fetchCompleteSellerCatalog } from '../../utils/sellerCatalog';
+import {
+  calculateSellerStats,
+  readNonNegativePresentationCount,
+  selectAuthoritativeSellerMetrics,
+  selectAuthoritativeSellerRevenue,
+  sellerInventorySnapshotIsValid,
+  sellerOrdersSnapshotIsValid,
+} from '../../utils/sellerDashboardStats';
 
 export { fetchCompleteSellerCatalog } from '../../utils/sellerCatalog';
+export { calculateSellerStats } from '../../utils/sellerDashboardStats';
 
 export const SELLER_TOOL_GROUPS = [
   {
@@ -96,82 +105,103 @@ export const calculateStoreSetup = (store) => {
   return { completed, total: checks.length, percent: Math.round((completed / checks.length) * 100) };
 };
 
-// Mirrors the website's SellerHome math exactly:
-// revenue counts PAID orders only (converted per-order currency),
-// pending/processing/delivered match orderStatus, conversion = delivered/total.
-export const calculateSellerStats = (products, orders, convertAmount = (amount) => Number(amount || 0), targetCurrency = 'USD') => {
-  const totalProducts = products?.length || 0;
-  const totalOrders = orders?.length || 0;
-  const statusOf = (o) => o.orderStatus || o.status;
-  const pendingOrders = orders?.filter(o => statusOf(o) === 'pending').length || 0;
-  const processingOrders = orders?.filter(o => statusOf(o) === 'processing').length || 0;
-  const deliveredOrders = orders?.filter(o => statusOf(o) === 'delivered').length || 0;
-  const outOfStock = products?.filter(p => p.stock === 0).length || 0;
-  const lowStock = products?.filter(p => p.stock <= 10 && p.stock > 0).length || 0;
-  const revenue = orders?.reduce((sum, order) => (
-    order.isPaid
-      ? sum + convertAmount(order.orderSummary?.totalAmount || 0, order.currency || 'USD', targetCurrency)
-      : sum
-  ), 0) || 0;
-  const conversion = totalOrders > 0 ? Math.round((deliveredOrders / totalOrders) * 100) : 0;
-  return { totalProducts, totalOrders, pendingOrders, processingOrders, deliveredOrders, outOfStock, lowStock, revenue, conversion };
-};
-
 export const getGreeting = (hour = new Date().getHours()) => {
   if (hour < 12) return 'Good morning';
   if (hour < 18) return 'Good afternoon';
   return 'Good evening';
 };
 
+const founderPromotionIsPresentable = (promotion) => (
+  promotion
+  && typeof promotion === 'object'
+  && typeof promotion.available === 'boolean'
+  && typeof promotion.sellerEligible === 'boolean'
+  && typeof promotion.entitlementActive === 'boolean'
+  && typeof promotion.sellerHasReservation === 'boolean'
+  && typeof promotion.code === 'string'
+  && promotion.code.trim().length > 0
+  && typeof promotion.discountPercent === 'number'
+  && Number.isFinite(promotion.discountPercent)
+  && promotion.discountPercent > 0
+  && promotion.discountPercent <= 100
+  && readNonNegativePresentationCount(promotion.remaining) !== null
+  && readNonNegativePresentationCount(promotion.maxRedemptions) !== null
+  && promotion.remaining <= promotion.maxRedemptions
+);
+
 export default function SellerDashboardScreen({ navigation }) {
   const { palette } = useTheme();
-  const { currency, convertAmount, formatAmount } = useCurrency();
+  const { currency, formatAmount } = useCurrency();
   const styles = buildStyles(palette);
 
   const { currentUser } = useAuth();
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [store, setStore] = useState(null);
-  const [products, setProducts] = useState([]);
-  const [orders, setOrders] = useState([]);
+  const [products, setProducts] = useState(null);
+  const [orders, setOrders] = useState(null);
+  const [moneyMetrics, setMoneyMetrics] = useState(null);
   const [showAI, setShowAI] = useState(false);
   const [subscription, setSubscription] = useState(null);
   const [showFounderOffer, setShowFounderOffer] = useState(false);
   const [loadError, setLoadError] = useState('');
-  const [unreadCount, setUnreadCount] = useState(0);
+  const [unreadCount, setUnreadCount] = useState(null);
+  const dashboardRequestRef = useRef(0);
 
   const sellerKey = currentUser?._id || currentUser?.id || currentUser?.email || 'seller';
 
   const fetchDashboardData = useCallback(async () => {
+    const requestId = dashboardRequestRef.current + 1;
+    dashboardRequestRef.current = requestId;
+    setMoneyMetrics(null);
+    setLoadError('');
+    setShowFounderOffer(false);
     const requests = await Promise.allSettled([
       api.get('/api/stores/my-store'),
       fetchCompleteSellerCatalog(),
       api.get('/api/order/get'),
       api.get('/api/subscription/status'),
       api.get('/api/notifications/me'),
+      api.get(`/api/stores/analytics?currency=${encodeURIComponent(currency)}`),
     ]);
-    const [storeResult, productsResult, ordersResult, subscriptionResult, notificationsResult] = requests;
+    if (dashboardRequestRef.current !== requestId) return;
+    const [storeResult, productsResult, ordersResult, subscriptionResult, notificationsResult, metricsResult] = requests;
     const coreFailures = [];
 
     if (storeResult.status === 'fulfilled') {
-      setStore(storeResult.value.data?.store || storeResult.value.data || null);
+      const nextStore = storeResult.value.data?.store || storeResult.value.data || null;
+      if (nextStore && typeof nextStore === 'object' && !Array.isArray(nextStore)) setStore(nextStore);
+      else {
+        setStore(null);
+        coreFailures.push('store');
+      }
     } else if (storeResult.reason?.response?.status === 404) {
       setStore(null);
     } else {
+      setStore(null);
       coreFailures.push('store');
     }
 
-    if (productsResult.status === 'fulfilled') {
+    if (
+      productsResult.status === 'fulfilled'
+      && sellerInventorySnapshotIsValid(productsResult.value)
+    ) {
       const nextProducts = productsResult.value;
-      setProducts(Array.isArray(nextProducts) ? nextProducts : []);
+      setProducts(nextProducts);
     } else {
+      setProducts(null);
       coreFailures.push('products');
     }
 
     if (ordersResult.status === 'fulfilled') {
       const nextOrders = ordersResult.value.data?.orders || ordersResult.value.data || [];
-      setOrders(Array.isArray(nextOrders) ? nextOrders : []);
+      if (sellerOrdersSnapshotIsValid(nextOrders)) setOrders(nextOrders);
+      else {
+        setOrders(null);
+        coreFailures.push('orders');
+      }
     } else {
+      setOrders(null);
       coreFailures.push('orders');
     }
 
@@ -179,20 +209,46 @@ export default function SellerDashboardScreen({ navigation }) {
     if (subscriptionResult.status === 'fulfilled') {
       nextSubscription = subscriptionResult.value.data?.subscription || null;
       setSubscription(nextSubscription);
+    } else {
+      setSubscription(null);
+      coreFailures.push('subscription');
     }
 
     if (notificationsResult.status === 'fulfilled') {
-      setUnreadCount(Number(notificationsResult.value.data?.unread || 0));
+      const nextUnreadCount = readNonNegativePresentationCount(notificationsResult.value.data?.unread);
+      setUnreadCount(nextUnreadCount);
+      if (nextUnreadCount === null) coreFailures.push('notification count');
+    } else {
+      setUnreadCount(null);
+      coreFailures.push('notification count');
+    }
+
+    if (metricsResult.status === 'fulfilled') {
+      const nextMetrics = metricsResult.value.data?.analytics || null;
+      if (selectAuthoritativeSellerMetrics(nextMetrics, currency) !== null) {
+        setMoneyMetrics(nextMetrics);
+      } else {
+        setMoneyMetrics(null);
+        coreFailures.push('revenue');
+      }
+    } else {
+      setMoneyMetrics(null);
+      coreFailures.push('revenue');
     }
 
     if (coreFailures.length) {
-      setLoadError(`Live ${coreFailures.join(', ')} data could not be refreshed. Existing information is shown where available.`);
+      setLoadError(`Live ${coreFailures.join(', ')} data could not be verified. Unavailable values stay hidden until a successful refresh.`);
     } else {
       setLoadError('');
     }
 
     const promotion = nextSubscription?.founderPromotion;
-    if (promotion?.available && promotion?.sellerEligible && !promotion?.entitlementActive) {
+    if (
+      founderPromotionIsPresentable(promotion)
+      && promotion.available === true
+      && promotion.sellerEligible === true
+      && promotion.entitlementActive === false
+    ) {
       try {
         const storageKey = `rozare-founder-promotion-last-shown:${sellerKey}`;
         const lastShown = Number(await AsyncStorage.getItem(storageKey) || 0);
@@ -208,27 +264,30 @@ export default function SellerDashboardScreen({ navigation }) {
 
     setIsLoading(false);
     setRefreshing(false);
-  }, [sellerKey]);
+  }, [currency, sellerKey]);
 
   useEffect(() => { fetchDashboardData(); }, [fetchDashboardData]);
+  useEffect(() => () => { dashboardRequestRef.current += 1; }, []);
 
   const stats = useMemo(
-    () => calculateSellerStats(products, orders, convertAmount, currency),
-    [products, orders, convertAmount, currency]
+    () => (products && orders ? calculateSellerStats(products, orders) : null),
+    [products, orders]
   );
+  const authoritativeRevenue = selectAuthoritativeSellerRevenue(moneyMetrics, currency);
   const onRefresh = useCallback(() => { setRefreshing(true); fetchDashboardData(); }, [fetchDashboardData]);
   // Newest first — sort explicitly so we don't depend on API ordering
-  const recentOrders = [...orders]
-    .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
-    .slice(0, 5);
+  const recentOrders = orders ? [...orders]
+    .sort((a, b) => {
+      const left = new Date(a.createdAt).getTime();
+      const right = new Date(b.createdAt).getTime();
+      if (!Number.isFinite(left) && !Number.isFinite(right)) return 0;
+      if (!Number.isFinite(left)) return 1;
+      if (!Number.isFinite(right)) return -1;
+      return right - left;
+    })
+    .slice(0, 5) : [];
 
-  const formatCompactPrice = (amount) => {
-    const value = Number(amount) || 0;
-    const symbol = String(formatAmount(0)).replace(/[0-9.,\s]/g, '');
-    if (value >= 1000000) return `${symbol}${(value / 1000000).toFixed(1)}M`;
-    if (value >= 10000) return `${symbol}${(value / 1000).toFixed(1)}K`;
-    return formatAmount(value);
-  };
+  const formatDashboardRevenue = (amount) => formatAmount(amount, { targetCurrency: currency });
 
   if (isLoading) {
     return (
@@ -243,25 +302,29 @@ export default function SellerDashboardScreen({ navigation }) {
     );
   }
 
-  const isTrialExpiring = subscription?.isTrialExpiringSoon;
+  const isTrialExpiring = subscription?.isTrialExpiringSoon === true
+    && readNonNegativePresentationCount(subscription?.trialDaysRemaining) !== null;
   const isBlocked = subscription?.status === 'blocked';
   const isPastDue = subscription?.status === 'past_due';
   const storeName = store?.storeName || store?.name;
   const storeSetup = calculateStoreSetup(store);
-  const isStoreLive = Boolean(store?._id) && store?.isActive !== false && !store?.isBlocked && !isBlocked;
+  const isStoreLive = Boolean(store?._id)
+    && store?.isActive === true
+    && store?.blockedAt === null
+    && !isBlocked;
 
   const heroStats = [
-    { label: 'Total Revenue', value: formatCompactPrice(stats.revenue), icon: 'cash-outline', color: '#10b981', bg: 'rgba(16,185,129,0.12)' },
-    { label: 'Total Orders', value: stats.totalOrders, icon: 'bag-handle-outline', color: '#6366f1', bg: 'rgba(99,102,241,0.12)', onPress: () => navigation.navigate('SellerOrderManagement') },
-    { label: 'Total Products', value: stats.totalProducts, icon: 'cube-outline', color: '#0ea5e9', bg: 'rgba(14,165,233,0.12)', onPress: () => navigation.navigate('SellerProductManagement') },
-    { label: 'Conversion', value: `${stats.conversion}%`, icon: 'trending-up-outline', color: '#8b5cf6', bg: 'rgba(139,92,246,0.12)' },
+    { label: 'Total Revenue', value: authoritativeRevenue === null ? 'Unavailable' : formatDashboardRevenue(authoritativeRevenue), icon: 'cash-outline', color: '#10b981', bg: 'rgba(16,185,129,0.12)' },
+    { label: 'Total Orders', value: stats?.totalOrders ?? 'Unavailable', icon: 'bag-handle-outline', color: '#6366f1', bg: 'rgba(99,102,241,0.12)', onPress: () => navigation.navigate('SellerOrderManagement') },
+    { label: 'Total Products', value: stats?.totalProducts ?? 'Unavailable', icon: 'cube-outline', color: '#0ea5e9', bg: 'rgba(14,165,233,0.12)', onPress: () => navigation.navigate('SellerProductManagement') },
+    { label: 'Conversion', value: stats === null ? 'Unavailable' : `${stats.conversion}%`, icon: 'trending-up-outline', color: '#8b5cf6', bg: 'rgba(139,92,246,0.12)' },
   ];
 
   const orderSummary = [
-    { label: 'Pending', count: stats.pendingOrders, color: '#f97316', bg: 'rgba(249,115,22,0.12)' },
-    { label: 'Processing', count: stats.processingOrders, color: '#6366f1', bg: 'rgba(99,102,241,0.12)' },
-    { label: 'Delivered', count: stats.deliveredOrders, color: '#10b981', bg: 'rgba(16,185,129,0.12)' },
-    { label: 'Low Stock', count: stats.lowStock + stats.outOfStock, color: '#ef4444', bg: 'rgba(239,68,68,0.12)' },
+    { label: 'Pending', count: stats?.pendingOrders ?? '—', color: '#f97316', bg: 'rgba(249,115,22,0.12)' },
+    { label: 'Processing', count: stats?.processingOrders ?? '—', color: '#6366f1', bg: 'rgba(99,102,241,0.12)' },
+    { label: 'Delivered', count: stats?.deliveredOrders ?? '—', color: '#10b981', bg: 'rgba(16,185,129,0.12)' },
+    { label: 'Low Stock', count: stats === null ? '—' : stats.lowStock + stats.outOfStock, color: '#ef4444', bg: 'rgba(239,68,68,0.12)' },
   ];
 
   const navigateBack = () => {
@@ -287,7 +350,7 @@ export default function SellerDashboardScreen({ navigation }) {
         icon="storefront-outline"
         onBack={navigateBack}
         rightIcon="notifications-outline"
-        rightBadge={unreadCount}
+        rightBadge={unreadCount ?? undefined}
         onRightPress={() => navigation.navigate('SellerNotifications')}
       />
       <ScrollView
@@ -344,10 +407,10 @@ export default function SellerDashboardScreen({ navigation }) {
                 <View style={{ flex: 1, minWidth: 0 }}>
                   <Text style={styles.storeName} numberOfLines={1}>{storeName}</Text>
                   <View style={styles.storePills}>
-                    <View style={[styles.storePill, { backgroundColor: store?.verification?.isVerified ? palette.colors.successSubtle : palette.colors.warningSubtle }]}>
-                      <Ionicons name={store?.verification?.isVerified ? 'checkmark-circle' : 'shield-outline'} size={11} color={store?.verification?.isVerified ? palette.colors.success : palette.colors.warning} />
-                      <Text style={[styles.storePillText, { color: store?.verification?.isVerified ? palette.colors.success : palette.colors.warning }]}>
-                        {store?.verification?.isVerified ? 'Verified' : 'Not verified'}
+                    <View style={[styles.storePill, { backgroundColor: store?.verification?.isVerified === true ? palette.colors.successSubtle : palette.colors.warningSubtle }]}>
+                      <Ionicons name={store?.verification?.isVerified === true ? 'checkmark-circle' : 'shield-outline'} size={11} color={store?.verification?.isVerified === true ? palette.colors.success : palette.colors.warning} />
+                      <Text style={[styles.storePillText, { color: store?.verification?.isVerified === true ? palette.colors.success : palette.colors.warning }]}>
+                        {store?.verification?.isVerified === true ? 'Verified' : 'Not verified'}
                       </Text>
                     </View>
                     <View style={[styles.storePill, { backgroundColor: isStoreLive ? palette.colors.successSubtle : palette.colors.errorSubtle }]}>
@@ -423,7 +486,7 @@ export default function SellerDashboardScreen({ navigation }) {
         </View>
 
         {/* ── Stock Alerts (matches website) ── */}
-        {(stats.outOfStock > 0 || stats.lowStock > 0) && (
+        {stats !== null && (stats.outOfStock > 0 || stats.lowStock > 0) && (
           <View style={styles.alertsSection}>
             {stats.outOfStock > 0 && (
               <TouchableOpacity onPress={() => navigation.navigate('SellerProductManagement')} activeOpacity={0.8}>
@@ -482,12 +545,12 @@ export default function SellerDashboardScreen({ navigation }) {
               <View style={styles.toolsGrid}>
                 {group.tools.map((tool) => {
                   const badge = tool.id === 'products'
-                    ? stats.lowStock + stats.outOfStock
+                    ? (stats === null ? null : stats.lowStock + stats.outOfStock)
                     : tool.id === 'orders'
-                      ? stats.pendingOrders
+                      ? (stats === null ? null : stats.pendingOrders)
                       : tool.id === 'notifications'
                         ? unreadCount
-                        : 0;
+                        : null;
                   return (
                     <TouchableOpacity
                       key={tool.id}
@@ -524,8 +587,8 @@ export default function SellerDashboardScreen({ navigation }) {
             title="Recent orders"
             subtitle="Your five newest customer orders"
             icon="time-outline"
-            actionLabel={orders.length > 0 ? 'View all' : undefined}
-            onAction={orders.length > 0 ? () => navigation.navigate('SellerOrderManagement') : undefined}
+            actionLabel={orders?.length > 0 ? 'View all' : undefined}
+            onAction={orders?.length > 0 ? () => navigation.navigate('SellerOrderManagement') : undefined}
           />
           {recentOrders.length > 0 ? (
             <View style={styles.ordersContainer}>
@@ -535,6 +598,8 @@ export default function SellerDashboardScreen({ navigation }) {
                   showCustomer={true} />
               ))}
             </View>
+          ) : orders === null ? (
+            <Text style={styles.unavailableText}>Recent orders are unavailable until a verified refresh succeeds.</Text>
           ) : (
             <EmptyOrders onBrowse={null} />
           )}
@@ -562,11 +627,11 @@ export default function SellerDashboardScreen({ navigation }) {
               <Ionicons name="pricetag" size={23} color={palette.colors.primary} />
             </View>
             <Text style={styles.founderEyebrow}>FIRST 100 SELLERS</Text>
-            <Text style={styles.founderModalTitle}>Lock in an extra 40% off</Text>
-            <Text style={styles.founderModalText}>Use FIRST100 for Starter at $5.99/month or Elite at $12.99/month.</Text>
+            <Text style={styles.founderModalTitle}>Lock in an extra {subscription?.founderPromotion?.discountPercent}% off</Text>
+            <Text style={styles.founderModalText}>Apply the verified founder offer to an eligible plan from the subscription screen.</Text>
             <View style={styles.founderRemaining}>
               <Text style={styles.founderRemainingText}>
-                {subscription?.founderPromotion?.sellerHasReservation
+                {subscription?.founderPromotion?.sellerHasReservation === true
                   ? 'A founder spot is currently reserved for your account'
                   : `${subscription?.founderPromotion?.remaining} of ${subscription?.founderPromotion?.maxRedemptions} founder spots remaining`}
               </Text>
@@ -576,7 +641,7 @@ export default function SellerDashboardScreen({ navigation }) {
               style={styles.founderCta}
               onPress={() => {
                 setShowFounderOffer(false);
-                navigation.navigate('SellerSubscription', { couponCode: subscription?.founderPromotion?.code || 'FIRST100' });
+                navigation.navigate('SellerSubscription', { couponCode: subscription.founderPromotion.code });
               }}
             >
               <Text style={styles.founderCtaText}>View Plans</Text>
@@ -598,6 +663,7 @@ export default function SellerDashboardScreen({ navigation }) {
 
 const buildStyles = (p) => StyleSheet.create({
   scroll: { width: '100%', maxWidth: 680, alignSelf: 'center', paddingBottom: 96 },
+  unavailableText: { paddingVertical: spacing.lg, textAlign: 'center', fontSize: fontSize.sm, color: p.colors.textSecondary },
 
   founderBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center', padding: spacing.lg },
   founderModal: { width: '100%', maxWidth: 440, padding: spacing.xl, position: 'relative' },

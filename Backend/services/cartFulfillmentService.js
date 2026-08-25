@@ -6,6 +6,24 @@ const Order = require('../models/Order');
 
 const toId = (value) => String(value?._id || value || '');
 
+const cartCleanupDataError = (message) => {
+  const error = new Error(message);
+  error.statusCode = 409;
+  error.code = 'CART_CLEANUP_DATA_INVALID';
+  return error;
+};
+
+const requireCleanupQuantity = (value, label) => {
+  // Pre-default cart rows may genuinely omit qty. Only that nullish legacy
+  // sentinel keeps the historical quantity-one meaning; present corruption
+  // must never be coerced into a plausible decrement.
+  const quantity = value === null || value === undefined ? 1 : value;
+  if (!Number.isSafeInteger(quantity) || quantity < 1) {
+    throw cartCleanupDataError(`The stored ${label} quantity is invalid.`);
+  }
+  return quantity;
+};
+
 const plainOptions = (value) => {
   if (!value) return {};
   if (value instanceof Map) return Object.fromEntries(value);
@@ -36,7 +54,7 @@ const cartVariantKey = (item, productField) => [
  * Replaying the same fulfillmentId is a no-op, including after an ambiguous
  * database response where the first write may already have succeeded.
  */
-const removeFulfilledOrderItemsFromCart = async ({ userId, orderItems, fulfillmentId }) => {
+const removeFulfilledOrderItemsFromCart = async ({ userId, orderItems, fulfillmentId, session = null }) => {
   const fulfillmentKey = String(fulfillmentId || '').trim();
   if (!mongoose.isValidObjectId(fulfillmentKey)) {
     const error = new Error('A valid fulfillmentId is required for safe cart cleanup.');
@@ -44,9 +62,21 @@ const removeFulfilledOrderItemsFromCart = async ({ userId, orderItems, fulfillme
     throw error;
   }
   const fulfillmentObjectId = new mongoose.Types.ObjectId(fulfillmentKey);
+  let completedQuery = Order.exists({
+    _id: fulfillmentObjectId,
+    cartCleanupCompletedAt: { $ne: null },
+  });
+  if (session) completedQuery = completedQuery.session(session);
+  if (await completedQuery) {
+    // The order receipt survives cart deletion/recreation. A Cart-only receipt
+    // would disappear with the old document and a later retry could otherwise
+    // subtract genuinely new quantities from the replacement cart.
+    return { matchedLines: 0, removedQuantity: 0 };
+  }
   const markOrderCleanupCompleted = () => Order.updateOne(
     { _id: fulfillmentObjectId, cartCleanupCompletedAt: null },
     { $set: { cartCleanupCompletedAt: new Date() } },
+    { session },
   );
   if (!userId || !Array.isArray(orderItems) || orderItems.length === 0) {
     await markOrderCleanupCompleted();
@@ -55,13 +85,20 @@ const removeFulfilledOrderItemsFromCart = async ({ userId, orderItems, fulfillme
 
   const remainingByVariant = new Map();
   for (const item of orderItems) {
-    const quantity = Math.max(0, Math.trunc(Number(item?.quantity) || 0));
+    const quantity = requireCleanupQuantity(item?.quantity, 'order item');
     const productId = toId(item?.productId);
-    if (!productId || quantity === 0) continue;
+    if (!productId) throw cartCleanupDataError('A stored order item has no product reference.');
     const key = cartVariantKey(item, 'productId');
-    remainingByVariant.set(key, (remainingByVariant.get(key) || 0) + quantity);
+    const previousQuantity = remainingByVariant.get(key) || 0;
+    const combinedQuantity = previousQuantity + quantity;
+    if (!Number.isSafeInteger(combinedQuantity)) {
+      throw cartCleanupDataError('The fulfilled order quantity is outside the supported range.');
+    }
+    remainingByVariant.set(key, combinedQuantity);
   }
-  const cart = await Cart.findOne({ user: userId }).select('_id cartItems').lean();
+  let cartQuery = Cart.findOne({ user: userId }).select('_id cartItems');
+  if (session) cartQuery = cartQuery.session(session);
+  const cart = await cartQuery.lean();
   if (!cart) {
     await markOrderCleanupCompleted();
     return { matchedLines: 0, removedQuantity: 0 };
@@ -69,10 +106,10 @@ const removeFulfilledOrderItemsFromCart = async ({ userId, orderItems, fulfillme
 
   const decrements = [];
   for (const line of cart.cartItems || []) {
+    const lineQuantity = requireCleanupQuantity(line?.qty, 'cart item');
     const key = cartVariantKey(line, 'product');
     const remaining = remainingByVariant.get(key) || 0;
     if (remaining <= 0) continue;
-    const lineQuantity = Math.max(1, Math.trunc(Number(line.qty) || 1));
     const decrement = Math.min(lineQuantity, remaining);
     decrements.push({ lineId: line._id, quantity: decrement });
     remainingByVariant.set(key, remaining - decrement);
@@ -131,16 +168,18 @@ const removeFulfilledOrderItemsFromCart = async ({ userId, orderItems, fulfillme
         },
       },
     ],
+    { session },
   );
 
   const applied = result.modifiedCount === 1;
   const removedQuantity = applied
     ? decrements.reduce((total, decrement) => total + decrement.quantity, 0)
     : 0;
-  // This second write is intentionally after the cart mutation. If it fails,
-  // the caller retries: the cart receipt makes that retry a no-op, then this
-  // durable order marker is repaired. A missing cart is also permanently
-  // acknowledged so an old webhook cannot affect a newly-created cart later.
+  // This write is after the cart mutation (and normally shares its caller
+  // transaction). If a legacy non-transactional caller retries, the cart
+  // receipt prevents a second decrement and repairs this durable order marker.
+  // A missing cart is permanently acknowledged so a later replacement cart
+  // cannot be mistaken for the cart that produced this order.
   await markOrderCleanupCompleted();
 
   return { matchedLines: applied ? decrements.length : 0, removedQuantity };

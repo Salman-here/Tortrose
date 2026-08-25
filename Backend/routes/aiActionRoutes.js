@@ -3,10 +3,11 @@ const router = express.Router();
 const verifyToken = require('../middleware/authMiddleware');
 const { optionalAuth } = require('../middleware/authMiddleware');
 const ai = require('../controllers/aiActionController');
+const aiRateLimit = require('../controllers/aiRateLimitController');
 
 // Rate Limit
-router.get('/rate-limit', optionalAuth, ai.getRateLimit);
-router.post('/rate-limit/increment', optionalAuth, ai.incrementRateLimit);
+router.get('/rate-limit', optionalAuth, aiRateLimit.getRateLimit);
+router.post('/rate-limit/increment', optionalAuth, aiRateLimit.preflightRateLimit);
 
 // Seller actions (require auth)
 router.post('/add-product', verifyToken, ai.addProduct);

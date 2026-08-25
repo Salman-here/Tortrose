@@ -103,4 +103,39 @@ describe('order inventory reservation', () => {
     expect(await Product.findById(short._id).lean()).toMatchObject({ stock: 1, totalSales: 0 });
     expect((await Order.findById(order._id)).inventoryCommitted).toBe(false);
   });
+
+  test('aggregates duplicate product lines before checking stock', async () => {
+    const product = await Product.create(productData('duplicate', 1));
+    const order = await createOrder([
+      { product, quantity: 1 },
+      { product, quantity: 1 },
+    ]);
+
+    await expect(commitOrderInventory(order._id)).rejects.toMatchObject({
+      code: 'ORDER_STOCK_CHANGED',
+      statusCode: 409,
+    });
+    expect(await Product.findById(product._id).lean()).toMatchObject({ stock: 1, totalSales: 0 });
+    expect((await Order.findById(order._id)).inventoryCommitted).toBe(false);
+  });
+
+  test('allows exactly one concurrent stock=1 reservation and leaves no partial state', async () => {
+    const product = await Product.create(productData('race', 1));
+    const first = await createOrder([{ product, quantity: 1 }]);
+    const second = await createOrder([{ product, quantity: 1 }]);
+
+    const results = await Promise.allSettled([
+      commitOrderInventory(first._id),
+      commitOrderInventory(second._id),
+    ]);
+
+    expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter(result => result.status === 'rejected')).toHaveLength(1);
+    expect(results.find(result => result.status === 'rejected').reason).toMatchObject({
+      code: 'ORDER_STOCK_CHANGED',
+    });
+    expect(await Product.findById(product._id).lean()).toMatchObject({ stock: 0, totalSales: 1 });
+    const orders = await Order.find({ _id: { $in: [first._id, second._id] } }).lean();
+    expect(orders.filter(order => order.inventoryCommitted)).toHaveLength(1);
+  });
 });

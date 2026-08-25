@@ -16,6 +16,14 @@ const sellerPaymentAccountSchema = new mongoose.Schema(
         ibanLast4: { type: String, trim: true, maxlength: 4 },
         swiftCode: { type: String, trim: true, uppercase: true, maxlength: 20, default: '' },
         country: { type: String, trim: true, maxlength: 80, default: '' },
+        countryCode: {
+            type: String,
+            trim: true,
+            uppercase: true,
+            maxlength: 2,
+            match: /^[A-Z]{2}$/,
+            default: undefined,
+        },
         currency: {
             type: String,
             enum: ['USD', 'PKR', 'EUR', 'GBP'],

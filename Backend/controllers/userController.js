@@ -1,12 +1,15 @@
 const crypto = require('crypto')
 const User = require('../models/User')
 const { sendEmail } = require('./mailController')
-const { sellerAccountCreatedEmail } = require('../utils/emailTemplates')
 const { trackCompleteRegistration } = require('../services/tiktokEventsApi')
 const { trackSellerLead } = require('../services/metaConversionsApi')
 const { normalizeSocialLinks } = require('../services/socialLinksService')
-const { notifySeller } = require('../services/whatsapp/sellerNotificationService')
-const sellerTemplates = require('../services/whatsapp/sellerMessageTemplates')
+const {
+    enqueueStoreCreatedNotification,
+    ensureSellerWelcomeNotification,
+} = require('../services/sellerOperationalNotificationService')
+const { runInTransaction } = require('../services/walletService')
+const { productCurrencyForBecomeSeller } = require('../services/sellerOnboardingCurrencyService')
 const SellerSubscription = require('../models/SellerSubscription')
 const Store = require('../models/Store')
 const WhatsAppOTP = require('../models/WhatsAppOTP')
@@ -296,14 +299,13 @@ exports.becomeSeller = async (req, res) => {
 
     try {
         // Check if user exists
-        const user = await User.findById(_id)
+        let user = await User.findById(_id)
         if (!user) return res.status(404).json({ message: 'User not found!' })
 
         // Check if user is already a seller or admin
         if (user.role === 'seller' || user.role === 'admin') {
             return res.status(400).json({ message: 'You are already a seller or admin' })
         }
-
         // Validate required fields
         if (!phoneNumber || phoneNumber.trim().length < 10) {
             return res.status(400).json({ message: 'Please provide a valid phone number (at least 10 digits)' })
@@ -333,51 +335,74 @@ exports.becomeSeller = async (req, res) => {
             return res.status(409).json({ message: 'This store name is already taken. Please choose a different name.' })
         }
 
-        // Verify WhatsApp against server-side OTP record (if a number was provided).
-        // We DO NOT trust a client-sent `whatsappVerified` flag — the client could
-        // simply set it to true without ever going through OTP.
-        let whatsappVerifiedServerSide = false;
-        if (whatsappNumber) {
-            const { consumeVerifiedWhatsAppNumber } = require('./sellerWhatsappController');
-            whatsappVerifiedServerSide = await consumeVerifiedWhatsAppNumber(whatsappNumber, _id);
-        }
-        if (!whatsappVerifiedServerSide) {
+        if (!whatsappNumber) {
             return res.status(400).json({
                 message: 'Please verify your WhatsApp number before activating your seller account.'
             });
         }
 
-        // Update user role to seller and save seller information
-        user.role = 'seller'
-        user.sellerInfo = {
-            phoneNumber: phoneNumber.trim(),
-            whatsappNumber: whatsappVerifiedServerSide ? toE164PhoneNumber(whatsappNumber) : '',
-            whatsappDigits: whatsappVerifiedServerSide ? normalizePhoneDigits(whatsappNumber) : '',
-            whatsappVerified: whatsappVerifiedServerSide,
-            address: address.trim(),
-            city: city.trim(),
-            state: state?.trim() || '',
-            stateCode: stateCode?.trim() || '',
-            country: country.trim(),
-            countryCode: countryCode?.trim() || '',
-            businessName: businessName?.trim() || ''
-        }
-        
-        await user.save()
+        const sellerWelcomeOccurredAt = new Date()
+        let whatsappVerifiedServerSide = false
+        await runInTransaction(async session => {
+            let transactionUserQuery = User.findById(_id)
+            if (session && typeof transactionUserQuery?.session === 'function') {
+                transactionUserQuery = transactionUserQuery.session(session)
+            }
+            const transactionUser = await transactionUserQuery
+            if (!transactionUser) {
+                const error = new Error('User not found!')
+                error.status = 404
+                throw error
+            }
+            if (transactionUser.role !== 'user') {
+                const error = new Error('Your account role changed while seller activation was being prepared. Refresh and retry.')
+                error.status = 409
+                error.code = 'SELLER_ONBOARDING_ROLE_CONFLICT'
+                throw error
+            }
 
-        let createdStoreName = ''
+            const sellerProductCurrency = productCurrencyForBecomeSeller(transactionUser, req.body)
+            const { consumeVerifiedWhatsAppNumber } = require('./sellerWhatsappController')
+            whatsappVerifiedServerSide = await consumeVerifiedWhatsAppNumber(
+                whatsappNumber,
+                _id,
+                { session }
+            )
+            if (!whatsappVerifiedServerSide) {
+                const error = new Error('Please verify your WhatsApp number before activating your seller account.')
+                error.status = 400
+                error.code = 'SELLER_WHATSAPP_VERIFICATION_REQUIRED'
+                throw error
+            }
 
-        // Auto-create store (storeName is now required)
-        try {
+            transactionUser.role = 'seller'
+            transactionUser.sellerInfo = {
+                phoneNumber: phoneNumber.trim(),
+                whatsappNumber: toE164PhoneNumber(whatsappNumber),
+                whatsappDigits: normalizePhoneDigits(whatsappNumber),
+                whatsappVerified: true,
+                address: address.trim(),
+                city: city.trim(),
+                state: state?.trim() || '',
+                stateCode: stateCode?.trim() || '',
+                country: country.trim(),
+                countryCode: countryCode?.trim() || '',
+                businessName: businessName?.trim() || ''
+            }
+            transactionUser.sellerWelcomeNotice = {
+                occurredAt: sellerWelcomeOccurredAt,
+                storeName: storeName.trim(),
+                notificationEnqueuedAt: null,
+            }
+            await transactionUser.save({ session })
+
             const Store = require('../models/Store')
-            const { initializeSubscription } = require('./subscriptionController')
-            
-            // Use the slug we already validated above
-            const newStore = new Store({
-                seller: user._id,
+            const [newStore] = await Store.create([{
+                seller: transactionUser._id,
                 storeName: storeName.trim(),
                 storeSlug: desiredSlug,
                 description: storeDescription.trim(),
+                productCurrency: sellerProductCurrency,
                 socialLinks: normalizeSocialLinks(socialLinks),
                 address: {
                     street: address?.trim() || '',
@@ -387,20 +412,17 @@ exports.becomeSeller = async (req, res) => {
                     country: country?.trim() || '',
                     countryCode: countryCode?.trim() || ''
                 }
-            })
-            await newStore.save()
-            await initializeSubscription(user._id)
-            createdStoreName = newStore.storeName
-        } catch (storeErr) {
-            console.error('Auto-create store error:', storeErr.message)
-            // If store creation fails due to duplicate (race condition), return error
-            if (storeErr.code === 11000) {
-                return res.status(409).json({ message: 'This store name is already taken. Please choose a different name.' })
-            }
-        }
+            }], { session })
+            await enqueueStoreCreatedNotification(newStore, { session })
+            user = transactionUser
+        })
 
-        notifySeller(user._id, 'seller_welcome', sellerTemplates.seller_welcome(createdStoreName)).catch(e =>
-            console.error('Seller WhatsApp welcome failed:', e.message)
+        const { initializeSubscription } = require('./subscriptionController')
+        await initializeSubscription(user._id).catch(error =>
+            console.error('Seller subscription initialization failed; recovery is pending:', error.message)
+        )
+        await ensureSellerWelcomeNotification(user).catch(error =>
+            console.error('Seller welcome outbox handoff failed; recovery is pending:', error.message)
         )
 
         // Generate new JWT token with updated role
@@ -410,14 +432,6 @@ exports.becomeSeller = async (req, res) => {
             process.env.JWT_SECRET,
             { expiresIn: '7d' }
         )
-
-        // Send seller account created email
-        try {
-            const emailData = sellerAccountCreatedEmail(user.username);
-            await sendEmail({ to: user.email, ...emailData });
-        } catch (emailErr) {
-            console.error('Failed to send seller account email:', emailErr.message);
-        }
 
         trackCompleteRegistration({
             req,
@@ -449,6 +463,16 @@ exports.becomeSeller = async (req, res) => {
         })
     } catch (error) {
         console.error('Error in becomeSeller:', error);
+        if (error?.code === 11000) {
+            return res.status(409).json({
+                message: 'This store name or WhatsApp number is already in use. Choose different details and retry.',
+                code: 'SELLER_ONBOARDING_CONFLICT',
+            })
+        }
+        const status = Number(error.statusCode || error.status)
+        if (Number.isInteger(status) && status >= 400 && status < 500) {
+            return res.status(status).json({ message: error.message, code: error.code })
+        }
         res.status(500).json({ message: 'Server error while creating seller account.' })
     }
 }

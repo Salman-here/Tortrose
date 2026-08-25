@@ -44,4 +44,16 @@ describe('subscriptionPricingService', () => {
     expect(catalog.elite.founderAmountCents).toBe(1299);
     expect(catalog.metaAdsAddonCents).toBe(400);
   });
+
+  test.each([
+    ['string Meta ads flag', 'false', false],
+    ['numeric Meta ads flag', 1, false],
+    ['string founder flag', false, 'false'],
+    ['numeric founder flag', false, 1],
+    ['null founder flag', false, null],
+  ])('rejects a %s instead of coercing subscription price eligibility', (_label, metaAds, founder) => {
+    expect(() => buildPlanPricing('elite', metaAds, founder)).toThrow(expect.objectContaining({
+      code: 'INVALID_SUBSCRIPTION_PRICING_FLAGS',
+    }));
+  });
 });

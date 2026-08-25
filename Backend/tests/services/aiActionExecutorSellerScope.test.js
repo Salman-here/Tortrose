@@ -1,10 +1,11 @@
 const mongoose = require('mongoose');
-const { MongoMemoryServer } = require('mongodb-memory-server');
+const { MongoMemoryReplSet } = require('mongodb-memory-server');
 const Order = require('../../models/Order');
 const Product = require('../../models/Product');
 const User = require('../../models/User');
 const Store = require('../../models/Store');
 const SellerBalanceTransaction = require('../../models/SellerBalanceTransaction');
+const { cancelOrderSafely } = require('../../services/orderCancellationService');
 const { __private, executeToolCall } = require('../../services/aiActionExecutor');
 
 const SELLER_A = '111111111111111111111111';
@@ -16,7 +17,9 @@ const PRODUCT_C = 'cccccccccccccccccccccccc';
 let mongoServer;
 
 beforeAll(async () => {
-  mongoServer = await MongoMemoryServer.create();
+  mongoServer = await MongoMemoryReplSet.create({
+    replSet: { count: 1, storageEngine: 'wiredTiger' },
+  });
   await mongoose.connect(mongoServer.getUri());
 }, 60000);
 
@@ -48,7 +51,7 @@ const createOrder = (orderId, item, overrides = {}) => Order.create({
   shippingInfo: {
     fullName: 'Scope Buyer',
     email: 'scope-buyer@example.com',
-    phone: '+15555550100',
+    phone: '+14155552671',
     address: '1 Test Street',
     city: 'Test City',
     state: 'Test State',
@@ -323,6 +326,7 @@ describe('aiActionExecutor seller order attribution', () => {
       ],
       orderSummary: { subtotal: 150, shippingCost: 0, totalAmount: 150 },
       orderStatus: 'pending',
+      inventoryCommitted: true,
     });
     const seller = { id: SELLER_B, role: 'seller', currency: 'USD' };
 
@@ -361,6 +365,69 @@ describe('aiActionExecutor seller order attribution', () => {
     expect(persisted.isPaid).toBe(false);
   });
 
+  test('seller AI reports the exact allocated shipping, tax, discount, and total', async () => {
+    const order = await createOrder('MULTI-SELLER-MONEY', {
+      name: 'unused',
+      seller: SELLER_B,
+      productId: PRODUCT_A,
+    }, {
+      orderItems: [
+        {
+          productId: PRODUCT_A,
+          seller: SELLER_B,
+          name: 'seller B item',
+          image: 'https://example.com/b.jpg',
+          price: 100,
+          quantity: 1,
+        },
+        {
+          productId: PRODUCT_C,
+          seller: SELLER_A,
+          name: 'seller A item',
+          image: 'https://example.com/a.jpg',
+          price: 50,
+          quantity: 1,
+        },
+      ],
+      sellerShipping: [
+        { seller: SELLER_B, shippingMethod: { name: 'B shipping', price: 20, estimatedDays: 3 } },
+        { seller: SELLER_A, shippingMethod: { name: 'A shipping', price: 10, estimatedDays: 4 } },
+      ],
+      orderSummary: {
+        subtotal: 150,
+        shippingCost: 30,
+        tax: 15,
+        couponDiscount: 15,
+        totalAmount: 180,
+      },
+    });
+    const seller = { id: SELLER_B, role: 'seller', currency: 'USD' };
+
+    const sellerOrders = await executeToolCall('get_seller_orders', {}, seller);
+    const sharedOrders = await executeToolCall('get_my_orders', {}, seller);
+    const detail = await executeToolCall('get_order_detail', { orderId: order._id.toString() }, seller);
+
+    const exactMoney = {
+      subtotal: 100,
+      shipping: 20,
+      tax: 10,
+      discount: 10,
+      total: 120,
+    };
+    expect(sellerOrders).toMatchObject({
+      success: true,
+      data: { orders: [{ total: 120, money: exactMoney }] },
+    });
+    expect(sharedOrders).toMatchObject({
+      success: true,
+      data: { orders: [{ total: 120, money: exactMoney }] },
+    });
+    expect(detail).toMatchObject({
+      success: true,
+      data: { summary: exactMoney },
+    });
+  });
+
   test('seller AI cannot cancel a paid seller fulfillment without a verified refund', async () => {
     const order = await createOrder('PAID-SELLER-PORTION', {
       name: 'paid seller item',
@@ -386,7 +453,85 @@ describe('aiActionExecutor seller order attribution', () => {
     expect(persisted.orderStatus).toBe('processing');
   });
 
-  test('seller AI analytics uses seller fulfillment and paid-only revenue', async () => {
+  test('admin AI cannot manufacture payment by delivering an awaiting Stripe order', async () => {
+    const order = await createOrder('AI-UNPAID-STRIPE', {
+      name: 'unpaid Stripe item',
+      seller: SELLER_B,
+      productId: PRODUCT_A,
+    }, {
+      paymentMethod: 'stripe',
+      paymentFlow: 'payment_sheet',
+      paymentSetupState: 'ready',
+      stripePaymentIntentId: 'pi_ai_unpaid_status',
+      awaitingPayment: true,
+      isPaid: false,
+      inventoryCommitted: true,
+      sellerFulfillment: [{ seller: SELLER_B, status: 'pending' }],
+    });
+
+    const result = await executeToolCall('update_order_status', {
+      orderId: order._id.toString(),
+      newStatus: 'delivered',
+    }, { id: 'admin-status-test', role: 'admin', currency: 'USD' });
+    const persisted = await Order.findById(order._id).lean();
+
+    expect(result).toMatchObject({
+      success: false,
+      code: 'ORDER_PAYMENT_NOT_CONFIRMED',
+    });
+    expect(persisted).toMatchObject({
+      orderStatus: 'pending',
+      isPaid: false,
+      awaitingPayment: true,
+      inventoryCommitted: true,
+    });
+  });
+
+  test('AI delivery and safe cancellation cannot resurrect or partially cancel the same order', async () => {
+    const order = await createOrder('AI-STATUS-CANCEL-RACE', {
+      name: 'status cancellation race item',
+      seller: SELLER_B,
+      productId: PRODUCT_A,
+    }, {
+      inventoryCommitted: false,
+      sellerFulfillment: [{ seller: SELLER_B, status: 'pending' }],
+    });
+
+    const [aiResult, cancellationResult] = await Promise.allSettled([
+      executeToolCall('update_order_status', {
+        orderId: order._id.toString(),
+        newStatus: 'delivered',
+      }, { id: 'admin-race-test', role: 'admin', currency: 'USD' }),
+      cancelOrderSafely({
+        orderId: order._id,
+        reason: 'AI status concurrency test.',
+      }),
+    ]);
+    const persisted = await Order.findById(order._id).lean();
+    const aiWon = aiResult.status === 'fulfilled' && aiResult.value.success === true;
+    const cancellationWon = cancellationResult.status === 'fulfilled';
+
+    expect([aiWon, cancellationWon].filter(Boolean)).toHaveLength(1);
+    if (cancellationWon) {
+      expect(persisted).toMatchObject({
+        orderStatus: 'cancelled',
+        isPaid: false,
+        isDelivered: false,
+        inventoryCommitted: false,
+      });
+      expect(persisted.sellerFulfillment[0].status).toBe('cancelled');
+    } else {
+      expect(persisted).toMatchObject({
+        orderStatus: 'delivered',
+        isPaid: true,
+        isDelivered: true,
+        inventoryCommitted: false,
+      });
+      expect(persisted.sellerFulfillment[0].status).toBe('delivered');
+    }
+  });
+
+  test('seller AI analytics uses seller fulfillment and recognized online revenue', async () => {
     await createCurrentProduct(SELLER_B);
     await createOrder('UNPAID-SELLER-ANALYTICS', {
       name: 'unpaid seller item',
@@ -402,6 +547,7 @@ describe('aiActionExecutor seller order attribution', () => {
       seller: SELLER_B,
       productId: PRODUCT_A,
     }, {
+      paymentMethod: 'stripe',
       isPaid: true,
       orderStatus: 'delivered',
       sellerFulfillment: [{ seller: SELLER_B, status: 'pending' }],
@@ -423,5 +569,63 @@ describe('aiActionExecutor seller order attribution', () => {
       },
     });
     expect(result.data.ordersByStatus.delivered).toBeUndefined();
+  });
+
+  test('admin AI analytics excludes hidden/unpaid revenue and allocates partial COD exactly', async () => {
+    const item = (productId, seller, price) => ({
+      productId,
+      seller,
+      name: `Item ${productId}`,
+      image: 'https://example.com/item.jpg',
+      price,
+      quantity: 1,
+    });
+
+    await createOrder('ADMIN-PAID-CENTS', {
+      name: 'unused', seller: SELLER_A, productId: PRODUCT_A,
+    }, {
+      orderItems: [item(PRODUCT_A, SELLER_A, 0.01), item(PRODUCT_B, SELLER_B, 0.01)],
+      orderSummary: { subtotal: 0.02, shippingCost: 0, tax: 0.01, totalAmount: 0.03 },
+      paymentMethod: 'stripe',
+      isPaid: true,
+      orderStatus: 'processing',
+    });
+    await createOrder('ADMIN-PARTIAL-COD', {
+      name: 'unused', seller: SELLER_A, productId: PRODUCT_A,
+    }, {
+      orderItems: [item(PRODUCT_A, SELLER_A, 0.05), item(PRODUCT_B, SELLER_B, 0.07)],
+      orderSummary: { subtotal: 0.12, shippingCost: 0, tax: 0, totalAmount: 0.12 },
+      paymentMethod: 'cash_on_delivery',
+      isPaid: false,
+      orderStatus: 'processing',
+      sellerFulfillment: [
+        { seller: SELLER_A, status: 'delivered' },
+        { seller: SELLER_B, status: 'processing' },
+      ],
+    });
+    await createOrder('ADMIN-UNPAID-ONLINE', {
+      name: 'unpaid', seller: SELLER_A, productId: PRODUCT_A,
+    }, { paymentMethod: 'stripe', isPaid: false, orderStatus: 'processing' });
+    await createOrder('ADMIN-HIDDEN-PAID', {
+      name: 'hidden', seller: SELLER_A, productId: PRODUCT_A,
+    }, { paymentMethod: 'stripe', isPaid: true, awaitingPayment: true, orderStatus: 'pending' });
+    await createOrder('ADMIN-CANCELLED-PAID', {
+      name: 'cancelled', seller: SELLER_A, productId: PRODUCT_A,
+    }, { paymentMethod: 'stripe', isPaid: true, orderStatus: 'cancelled' });
+
+    const result = await executeToolCall('get_admin_analytics', {}, {
+      id: '999999999999999999999999',
+      role: 'admin',
+      currency: 'USD',
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      data: {
+        orders: { total: 4 },
+        revenue: 0.08,
+        currency: 'USD',
+      },
+    });
   });
 });

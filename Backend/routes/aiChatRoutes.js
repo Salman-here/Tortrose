@@ -1,5 +1,6 @@
 const router = require('express').Router();
 const chatUpload = require('../middleware/chatUpload');
+const aiChatDailyLimit = require('../middleware/aiChatDailyLimit');
 const { optionalAuth, protect } = require('../middleware/authMiddleware');
 const {
   streamChat,
@@ -13,8 +14,8 @@ const {
 } = require('../controllers/aiChatController');
 
 // ─── AI Chat (streaming & non-streaming) ───
-router.post('/stream', optionalAuth, chatUpload.array('attachments', 10), streamChat);
-router.post('/once', optionalAuth, chatUpload.array('attachments', 10), chatOnce);
+router.post('/stream', optionalAuth, aiChatDailyLimit, chatUpload.array('attachments', 10), streamChat);
+router.post('/once', optionalAuth, aiChatDailyLimit, chatUpload.array('attachments', 10), chatOnce);
 
 // ─── Conversation Management (requires auth) ───
 router.get('/conversations', protect, getConversations);

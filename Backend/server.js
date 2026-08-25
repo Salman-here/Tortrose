@@ -6,6 +6,18 @@ const rateLimit = require('express-rate-limit')
 const express = require('express')
 const app = express()
 app.set('trust proxy', Number(process.env.TRUST_PROXY_HOPS || 1))
+const {
+  createWhatsAppWebhookIngress,
+  resolveWhatsAppWebhookSecrets,
+} = require('./services/whatsapp/webhookSecurity')
+const whatsappWebhookSecretConfig = resolveWhatsAppWebhookSecrets()
+if (!whatsappWebhookSecretConfig.configured) {
+  console.error('❌ WHATSAPP_WEBHOOK_SECRET is not configured; Evolution webhooks will be rejected')
+} else if (whatsappWebhookSecretConfig.usingLegacyFallback) {
+  console.warn('⚠️  Using legacy EVOLUTION_WEBHOOK_SECRET; migrate it to WHATSAPP_WEBHOOK_SECRET')
+} else if (whatsappWebhookSecretConfig.rotatingFromLegacy) {
+  console.warn('⚠️  WhatsApp webhook secret migration active; both canonical and legacy values are temporarily accepted')
+}
 
 // ── Stripe Configuration with Live/Test Mode Support ──
 const { stripe, STRIPE_MODE, STRIPE_WEBHOOK_SECRET } = require('./config/stripe');
@@ -18,14 +30,19 @@ if (stripe) {
 
 const mongoose = require('mongoose')
 const Order = require('./models/Order')
-const Product = require('./models/Product')
 const { trackOrderEvent } = require('./services/tiktokEventsApi')
-const { configKeyFor } = require('./services/whatsapp/gatewayMode')
-const { restoreOrderInventory } = require('./services/orderInventoryService')
+const { deleteUnpaidOrderAndReleaseCoupons } = require('./services/couponUsageService')
+const { resolveStripeOrderForEvent } = require('./services/stripeOrderLookupService')
+const { trustedRequestIp } = require('./services/requestIdentityService')
+const {
+  enqueuePaidOrderBuyerNotifications,
+  enqueuePaidOrderSellerNotifications,
+} = require('./services/financialNotificationOutboxService')
 const {
   fulfillStripeOrder,
   fulfillStripeOrderPaymentIntent,
   recordStripeOrderPaymentFailure,
+  attachStripeOrderReference,
 } = require('./services/stripeOrderPaymentService')
 
 
@@ -51,7 +68,8 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
 
   // Handle subscription webhook events
   const { handleWebhook: handleSubscriptionWebhook } = require('./controllers/subscriptionController');
-  if (['checkout.session.completed', 'checkout.session.expired', 'customer.subscription.deleted', 'invoice.payment_failed', 'invoice.payment_succeeded'].includes(event.type)) {
+  const { routesToSubscriptionWebhook } = require('./services/subscriptionWebhookRoutingService');
+  if (routesToSubscriptionWebhook(event.type)) {
     try {
       await handleSubscriptionWebhook(event);
     } catch (subscriptionWebhookError) {
@@ -61,8 +79,25 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
   }
 
   if (event.type === 'checkout.session.completed' || event.type === 'payment_intent.succeeded') {
-    const session = event.data.object;
+    let session = event.data.object;
     const isPaymentIntentEvent = event.type === 'payment_intent.succeeded';
+    if (isPaymentIntentEvent) {
+      try {
+        const {
+          resolvePaymentIntentLifecycleRoute,
+        } = require('./services/stripePaymentIntentEventRoutingService');
+        const routing = await resolvePaymentIntentLifecycleRoute(session);
+        if (routing.route === 'hosted_checkout') return res.sendStatus(200);
+        if (routing.route === 'ambiguous') {
+          console.error('[stripe] PaymentIntent success routing is ambiguous:', routing.reason);
+          return res.sendStatus(500);
+        }
+        session = routing.paymentIntent || session;
+      } catch (routingError) {
+        console.error('[stripe] PaymentIntent success routing failed:', routingError.message);
+        return res.sendStatus(500);
+      }
+    }
 
     // Skip subscription checkouts (handled above)
     if (!isPaymentIntentEvent && session.mode === 'subscription') {
@@ -89,6 +124,12 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
         return res.sendStatus(200);
       } catch (walletError) {
         console.error('[wallet] top-up webhook failed:', walletError.message);
+        if (walletError?.code === 'STRIPE_PAYMENT_REVERSED_BEFORE_COMPLETION') {
+          // A refund/dispute webhook won the completion race. The risk marker is
+          // durable and the local top-up was closed without credit, so retrying
+          // this success webhook can never make progress and must be acknowledged.
+          return res.sendStatus(200);
+        }
         return res.sendStatus(500);
       }
     }
@@ -105,7 +146,7 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
         const { notifyReturnSettlementCompleted } = require('./services/returnNotificationService');
         const returnRequest = await completeReturnCardSettlement(session);
         const returnOrder = returnRequest ? await Order.findById(returnRequest.order).lean() : null;
-        if (returnRequest) {
+        if (returnRequest?.settlement?.status === 'completed') {
           await notifyReturnSettlementCompleted(returnRequest, returnOrder);
         }
         console.log(`[returns] completed card settlement ${returnRequest?._id || session.id}`);
@@ -120,15 +161,24 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
     console.log("Session ID:", session.id);
     console.log("Order ID (metadata):", session.metadata?.orderId);
 
-    const orderId = session.metadata?.orderId;
-    let order = await Order.findOne({ orderId });
-    if (!order) {
-      console.error('[stripe] checkout references an unknown order:', orderId);
-      return res.sendStatus(400);
+    let order;
+    try {
+      order = await resolveStripeOrderForEvent({
+        stripeObject: session,
+        paymentFlow: isPaymentIntentEvent ? 'payment_sheet' : 'checkout_session',
+      });
+    } catch (lookupError) {
+      console.error('[stripe] order lookup rejected:', lookupError.code || lookupError.message);
+      return res.sendStatus(lookupError.statusCode >= 500 ? 500 : 400);
     }
 
     let fulfillmentResult;
     try {
+      order = await attachStripeOrderReference({
+        order,
+        stripeObject: session,
+        paymentFlow: isPaymentIntentEvent ? 'payment_sheet' : 'checkout_session',
+      });
       fulfillmentResult = isPaymentIntentEvent
         ? await fulfillStripeOrderPaymentIntent({
           order,
@@ -146,6 +196,16 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
     }
     order = fulfillmentResult.order;
     const wasAwaiting = fulfillmentResult.newlyFulfilled;
+    if (fulfillmentResult.paymentRefunded) {
+      // Keep the buyer's cart intact: this order was never fulfillable and the
+      // captured legacy payment has already been returned through Stripe.
+      return res.sendStatus(200);
+    }
+    if (fulfillmentResult.paymentReversed) {
+      // A refund/dispute webhook won the durable completion race. No buyer or
+      // seller value was granted, so this signed success event is terminal.
+      return res.sendStatus(200);
+    }
     try {
       const { removeFulfilledOrderItemsFromCart } = require('./services/cartFulfillmentService');
       await removeFulfilledOrderItemsFromCart({
@@ -159,9 +219,35 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
       console.error('[cart] fulfilled-order cleanup failed:', cartCleanupError.message);
       return res.sendStatus(500);
     }
+
+    // Enqueue the financial notifications on every successful webhook replay,
+    // not only on the transition winner. If the process committed fulfillment
+    // and then stopped before this point, Stripe's retry repairs the durable
+    // outbox. Event keys make each recipient/channel enqueue idempotent.
+    try {
+      const settlementSellerIds = [...new Set((order.sellerSettlement || [])
+        .map(entry => entry?.seller?.toString?.() || '')
+        .filter(Boolean))];
+      if (settlementSellerIds.length === 0) {
+        const notificationError = new Error(
+          'The paid order has no frozen seller settlement for notification routing.'
+        );
+        notificationError.code = 'PAID_ORDER_NOTIFICATION_SETTLEMENT_MISSING';
+        throw notificationError;
+      }
+      await enqueuePaidOrderBuyerNotifications(order);
+      for (const sellerId of settlementSellerIds) {
+        await enqueuePaidOrderSellerNotifications(order, sellerId);
+      }
+    } catch (notificationError) {
+      console.error(
+        '[notification-outbox] paid-order enqueue failed:',
+        notificationError.code || notificationError.message
+      );
+      return res.sendStatus(500);
+    }
+
     if (!wasAwaiting) return res.sendStatus(200);
-    const email = (isPaymentIntentEvent ? session.receipt_email : session.customer_details?.email)
-      || order.shippingInfo?.email;
 
     if (order) {
       console.log("✅ Order updated & auto-confirmed:", order.orderId);
@@ -174,132 +260,6 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
         tracking: order.tracking || {},
       }).catch(() => {});
 
-      // If this order was awaiting payment, send seller "new order" notifications
-      // now (we deliberately deferred them at place-time so abandoned checkouts
-      // don't spam sellers).
-      let resolvedSellerIds = [];
-      if (wasAwaiting) {
-        try {
-          const { newOrderSellerEmail } = require('./utils/emailTemplates');
-          const { notifySeller } = require('./services/whatsapp/sellerNotificationService');
-          const sellerTemplates = require('./services/whatsapp/sellerMessageTemplates');
-          const sellerIds = [...new Set((order.orderItems || []).map(i => {
-            // orderItems on the saved order don't always carry seller; look it up via product
-            return i.seller?.toString();
-          }).filter(Boolean))];
-          // Fallback: derive sellers from products
-          resolvedSellerIds = sellerIds;
-          if (resolvedSellerIds.length === 0) {
-            const productIds = (order.orderItems || []).map(i => i.productId).filter(Boolean);
-            const products = await Product.find({ _id: { $in: productIds } }).select('seller');
-            resolvedSellerIds = [...new Set(products.map(p => p.seller?.toString()).filter(Boolean))];
-          }
-          for (const sellerId of resolvedSellerIds) {
-            const sellerUser = await User.findById(sellerId);
-            if (sellerUser?.email) {
-              const sellerEmailData = newOrderSellerEmail(order, sellerUser.username);
-              await sendEmail({ to: sellerUser.email, ...sellerEmailData }).catch(e =>
-                console.error('Seller new-order email failed:', e.message)
-              );
-            }
-            notifySeller(sellerId, 'new_order', sellerTemplates.new_order(order)).catch(e =>
-              console.error('[whatsapp] seller new order notification failed:', e.message)
-            );
-          }
-        } catch (notifyErr) {
-          console.error('Failed to send post-payment seller notifications:', notifyErr.message);
-        }
-
-        // ── Buyer WhatsApp info notification (post-payment only) ──
-        // Online-paid orders auto-confirm at payment time, so we send the
-        // buyer an INFO message (no Yes/No poll) listing items + stores +
-        // total. This is a core checkout notification for the buyer — it is
-        // NOT gated by any seller subscription/plan. Only precondition: the
-        // WhatsApp gateway is connected (valid phone is checked in the queue).
-        try {
-          const WhatsAppConfig = require('./models/WhatsAppConfig');
-          const { enqueueOrderPlacedInfo } = require('./services/whatsapp/queue');
-
-          const cfg = await WhatsAppConfig.findOne({ singletonKey: configKeyFor('main') });
-          if (!cfg || cfg.status !== 'connected') {
-            if (order.confirmation) {
-              order.confirmation.whatsappSentAt = new Date();
-              order.confirmation.whatsappSentSuccess = false;
-              order.confirmation.whatsappError = cfg
-                ? `WhatsApp status: ${cfg.status} (not connected)`
-                : 'WhatsApp not configured';
-              await order.save();
-            }
-          } else {
-            await enqueueOrderPlacedInfo(order);
-            console.log(`[whatsapp] info enqueued for paid order ${order.orderId}`);
-          }
-        } catch (waErr) {
-          console.error('Failed to enqueue buyer WhatsApp info:', waErr.message);
-        }
-      }
-
-      if (wasAwaiting) {
-        try {
-          const user = await User.findById(order.user);
-          const { formatOrderMoney } = require('./utils/orderPresentation');
-          const paidAmount = formatOrderMoney(order.orderSummary?.totalAmount || 0, order.currency || 'USD');
-          const html = `
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Order Confirmation</title>
-  <style>
-    body { background-color:#F8F9FA; font-family:'Inter','Segoe UI',sans-serif; color:#1A1A1A; line-height:1.6; margin:0; padding:0; }
-    .email-wrapper { max-width:600px; margin:0 auto; padding:1.5rem; }
-    .card { background:#FFFFFF; border-radius:16px; box-shadow:0 10px 25px rgba(0,0,0,0.05); padding:2rem; }
-    .header { background:#16A34A; color:#fff; padding:1rem 2rem; border-radius:12px 12px 0 0; font-size:1.25rem; font-weight:600; text-align:center; }
-    .button { display:inline-block; margin-top:1.5rem; background:#16A34A; color:white!important; padding:0.75rem 1.5rem; border-radius:8px; text-decoration:none; font-weight:500; }
-    .footer { font-size:14px; text-align:center; color:#6B7280; margin-top:2rem; }
-  </style>
-</head>
-<body>
-  <div class="email-wrapper">
-    <div class="card">
-      <div class="header">🎉 Payment Successful!</div>
-      <div style="padding:1.5rem 0;">
-        <p>Hello ${user?.username || 'Customer'},</p>
-        <p>We have successfully received your payment of <strong>${paidAmount}</strong> for your order <strong>#${order.orderId}</strong>.</p>
-        <p>Your order is now confirmed and will be delivered to you shortly.</p>
-        <p style="text-align:center;">
-          <a href="${process.env.FRONTEND_URL}/user-dashboard/order/detail/${order._id}" class="button">View Your Order</a>
-        </p>
-        <p>Thank you for shopping with <strong>Rozare</strong>.</p>
-        <p>Stay safe,<br/>The Rozare Team</p>
-      </div>
-    </div>
-    <div class="footer">&copy; ${new Date().getFullYear()} Rozare. All rights reserved.</div>
-  </div>
-</body>
-</html>`;
-
-          await sendEmail({
-            to: email,
-            subject: `Your Order #${order.orderId} is Confirmed 🎉`,
-            text: `We've received your payment of ${paidAmount}. Your order will be delivered soon.`,
-            html: html,
-          });
-        } catch (emailErr) {
-          console.error('Failed to send payment confirmation email:', emailErr.message);
-        }
-      }
-
-      if (wasAwaiting && order.user && Array.isArray(order.appliedCoupons)) {
-        const { recordCouponUsage } = require('./controllers/couponController');
-        for (const couponData of order.appliedCoupons) {
-          if (couponData?.couponId) {
-            await recordCouponUsage(couponData.couponId, order.user.toString());
-          }
-        }
-      }
-
     }
   }
 
@@ -308,18 +268,31 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
   // awaiting-payment order entirely. We never want unpaid orders to appear
   // in the buyer/seller dashboards (not even as "cancelled").
   if (event.type === 'payment_intent.payment_failed') {
-    const paymentIntent = event.data.object;
+    let paymentIntent = event.data.object;
     try {
+      const {
+        resolvePaymentIntentLifecycleRoute,
+      } = require('./services/stripePaymentIntentEventRoutingService');
+      const routing = await resolvePaymentIntentLifecycleRoute(paymentIntent);
+      if (routing.route === 'hosted_checkout') return res.sendStatus(200);
+      if (routing.route === 'ambiguous') {
+        console.error('[stripe] PaymentIntent failure routing is ambiguous:', routing.reason);
+        return res.sendStatus(500);
+      }
+      paymentIntent = routing.paymentIntent || paymentIntent;
       if (paymentIntent.metadata?.type === 'wallet_top_up') {
         const { recordWalletTopUpPaymentFailure } = require('./services/walletService');
         await recordWalletTopUpPaymentFailure(paymentIntent, event.id);
       } else if (paymentIntent.metadata?.type === 'order_payment') {
-        const order = await Order.findOne({
-          orderId: paymentIntent.metadata.orderId,
-          stripePaymentIntentId: paymentIntent.id,
+        let order = await resolveStripeOrderForEvent({
+          stripeObject: paymentIntent,
           paymentFlow: 'payment_sheet',
         });
-        if (!order) return res.sendStatus(400);
+        order = await attachStripeOrderReference({
+          order,
+          stripeObject: paymentIntent,
+          paymentFlow: 'payment_sheet',
+        });
         await recordStripeOrderPaymentFailure({ order, paymentIntent });
       }
       return res.sendStatus(200);
@@ -330,8 +303,18 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
   }
 
   if (event.type === 'payment_intent.canceled') {
-    const paymentIntent = event.data.object;
+    let paymentIntent = event.data.object;
     try {
+      const {
+        resolvePaymentIntentLifecycleRoute,
+      } = require('./services/stripePaymentIntentEventRoutingService');
+      const routing = await resolvePaymentIntentLifecycleRoute(paymentIntent);
+      if (routing.route === 'hosted_checkout') return res.sendStatus(200);
+      if (routing.route === 'ambiguous') {
+        console.error('[stripe] PaymentIntent cancellation routing is ambiguous:', routing.reason);
+        return res.sendStatus(500);
+      }
+      paymentIntent = routing.paymentIntent || paymentIntent;
       if (paymentIntent.metadata?.type === 'wallet_top_up') {
         const { cancelWalletTopUpFromPaymentIntent } = require('./services/walletService');
         await cancelWalletTopUpFromPaymentIntent(paymentIntent, {
@@ -341,12 +324,15 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
         });
       } else if (paymentIntent.metadata?.type === 'order_payment') {
         const { closeOrderPaymentIntent } = require('./services/stripePendingPaymentService');
-        const order = await Order.findOne({
-          orderId: paymentIntent.metadata.orderId,
-          stripePaymentIntentId: paymentIntent.id,
+        let order = await resolveStripeOrderForEvent({
+          stripeObject: paymentIntent,
           paymentFlow: 'payment_sheet',
         });
-        if (!order) return res.sendStatus(400);
+        order = await attachStripeOrderReference({
+          order,
+          stripeObject: paymentIntent,
+          paymentFlow: 'payment_sheet',
+        });
         await closeOrderPaymentIntent(order, {
           status: 'cancelled',
           reason: 'Stripe confirmed that the payment was cancelled.',
@@ -373,19 +359,62 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
     }
   }
 
-  if (event.type === 'charge.refunded' || event.type === 'charge.dispute.created') {
+  if ([
+    'charge.refunded',
+    'charge.dispute.created',
+    'charge.dispute.closed',
+    'charge.dispute.funds_withdrawn',
+    'charge.dispute.funds_reinstated',
+  ].includes(event.type)) {
+    let charge = event.data.object;
     try {
-      let charge = event.data.object;
-      if (event.type === 'charge.dispute.created' && charge.charge) {
+      if (event.type.startsWith('charge.dispute.') && charge.charge) {
+        const dispute = charge;
         const chargeId = typeof charge.charge === 'string' ? charge.charge : charge.charge.id;
         const retrievedCharge = await stripe.charges.retrieve(chargeId);
-        charge = { ...retrievedCharge, amount: charge.amount || retrievedCharge.amount };
+        charge = {
+          ...retrievedCharge,
+          disputeId: dispute.id,
+          disputeAmount: dispute.amount,
+          disputeStatus: dispute.status,
+        };
       }
-      const { flagWalletTopUpPaymentRisk } = require('./services/walletPaymentRiskService');
-      await flagWalletTopUpPaymentRisk({ charge, eventId: event.id, eventType: event.type });
+      if (event.type === 'charge.refunded') {
+        const {
+          hydrateStripeChargeRefundEvidence,
+        } = require('./services/stripeRefundEvidenceService');
+        charge = await hydrateStripeChargeRefundEvidence({
+          stripe,
+          charge,
+          eventCreatedAt: event.created,
+        });
+      }
+      const { flagStripePaymentRisk } = require('./services/stripePaymentRiskService');
+      await flagStripePaymentRisk({
+        charge,
+        eventId: event.id,
+        eventType: event.type,
+        eventCreatedAt: event.created,
+      });
       return res.sendStatus(200);
     } catch (error) {
-      console.error('[wallet] Stripe refund/dispute review failed:', error.message);
+      // Acknowledge only after the affected Wallet lock or seller-balance
+      // debit commits. Stripe retries signed events when accounting is down.
+      console.error('[payments] Stripe refund/dispute accounting failed:', error.message);
+      try {
+        const {
+          recordFailedStripePaymentRiskReview,
+        } = require('./services/stripePaymentRiskService');
+        await recordFailedStripePaymentRiskReview({
+          charge,
+          eventId: event.id,
+          eventType: event.type,
+          eventCreatedAt: event.created,
+          error,
+        });
+      } catch (reviewError) {
+        console.error('[payments] Failed to persist Stripe payment-risk manual review:', reviewError.message);
+      }
       return res.sendStatus(500);
     }
   }
@@ -397,10 +426,15 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
     const session = event.data.object;
     if (session.metadata?.type === 'wallet_top_up') {
       const { failWalletTopUp } = require('./services/walletService');
-      await failWalletTopUp(session).catch(error =>
-        console.error('[wallet] failed to mark top-up failed:', error.message)
-      );
-      return res.sendStatus(200);
+      try {
+        await failWalletTopUp(session, 'Stripe checkout expired or failed.', event.id);
+        return res.sendStatus(200);
+      } catch (error) {
+        // Returning 500 is intentional: Stripe must retry if the durable
+        // reference attachment or local close transition did not commit.
+        console.error('[wallet] failed to mark top-up failed:', error.message);
+        return res.sendStatus(500);
+      }
     }
     if (session.metadata?.type === 'return_settlement') {
       const { failReturnCardSettlement } = require('./services/returnService');
@@ -420,23 +454,35 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
         }
       } catch (error) {
         console.error('[returns] failed to reset settlement:', error.message);
+        return res.sendStatus(500);
       }
       return res.sendStatus(200);
     }
     if (session.mode === 'payment' && session.metadata?.orderId) {
       try {
-        const order = await Order.findOne({
-          orderId: session.metadata.orderId,
-          stripeSessionId: session.id,
-          paymentMethod: 'stripe',
+        let order = await resolveStripeOrderForEvent({
+          stripeObject: session,
+          paymentFlow: 'checkout_session',
+        });
+        order = await attachStripeOrderReference({
+          order,
+          stripeObject: session,
+          paymentFlow: 'checkout_session',
         });
         if (order && order.awaitingPayment && !order.isPaid) {
-          if (order.inventoryCommitted) await restoreOrderInventory(order._id);
-          await Order.deleteOne({ _id: order._id, isPaid: false, awaitingPayment: true });
+          await deleteUnpaidOrderAndReleaseCoupons({
+            orderId: order._id,
+            requireAwaitingPayment: true,
+            reason: 'Stripe Checkout expired or failed before payment.',
+          });
           console.log(`🗑️  Deleted abandoned/unpaid checkout order ${order.orderId}`);
         }
       } catch (cleanupErr) {
         console.error('Failed to delete abandoned order:', cleanupErr.message);
+        // Do not acknowledge a failed lifecycle transition. Stripe retries
+        // signed webhook deliveries, giving the atomic inventory/coupon cleanup
+        // another chance instead of leaking a reservation permanently.
+        return res.sendStatus(500);
       }
     }
   }
@@ -573,7 +619,7 @@ const authLimiter = rateLimit({
   legacyHeaders: false,
   message: { msg: 'Too many requests, please try again later.' },
   validate: false,
-  keyGenerator: (req) => req.headers['cf-connecting-ip'] || req.ip || req.socket?.remoteAddress || 'unknown',
+  keyGenerator: trustedRequestIp,
   handler: (req, res, _next, options) => {
     return res.status(options.statusCode).json(options.message);
   },
@@ -582,10 +628,16 @@ const authLimiter = rateLimit({
 // ── Body Parsing ──
 // The Evolution WhatsApp webhook carries inbound media inline as base64 (voice
 // notes, product images, documents) when webhookBase64 is enabled, so its
-// payloads can be several MB. Parse that route with a larger limit BEFORE the
-// global 100kb json parser — body-parser skips re-parsing once req._body is set,
-// so the global parser below is a no-op for this route and unchanged elsewhere.
-app.use('/api/whatsapp/webhook', express.json({ limit: process.env.WHATSAPP_WEBHOOK_BODY_LIMIT || '30mb' }));
+// payloads can be several MB. Rate-limit and authenticate that route before any
+// bytes are JSON-parsed, then apply its larger limit before the global parser.
+// body-parser skips re-parsing once req._body is set, so the global parser below
+// remains a no-op for this route and unchanged elsewhere.
+app.use(
+  '/api/whatsapp/webhook',
+  ...createWhatsAppWebhookIngress({
+    jsonParser: express.json({ limit: process.env.WHATSAPP_WEBHOOK_BODY_LIMIT || '30mb' }),
+  })
+);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -594,12 +646,35 @@ app.use('/api/meta', require('./routes/metaRoutes'));
 
 // ── Database ──
 const ConnectDB = require('./config/db');
-ConnectDB().catch(err => console.error('DB init error:', err.message));
+const {
+  isNotificationOutboxWorkerRunning,
+  startNotificationOutboxWorker,
+  stopNotificationOutboxWorker,
+} = require('./services/notificationOutboxWorker');
+const ensureNotificationOutboxWorkerStarted = () => {
+  if (mongoose.connection.readyState !== 1) return false;
+  const worker = startNotificationOutboxWorker();
+  if (worker.started) {
+    console.log(`[notification-outbox] worker started (${worker.workerId})`);
+  }
+  return isNotificationOutboxWorkerRunning();
+};
+const databaseReady = ConnectDB();
+databaseReady
+  .then(() => {
+    if (mongoose.connection.readyState !== 1) {
+      console.warn('[notification-outbox] worker not started because MongoDB is unavailable');
+      return;
+    }
+    ensureNotificationOutboxWorkerStarted();
+  })
+  .catch(err => console.error('DB init error:', err.message));
 
 // Middleware to ensure DB is connected before processing any API request
 app.use('/api', async (req, res, next) => {
   try {
     await ConnectDB();
+    ensureNotificationOutboxWorkerStarted();
     next();
   } catch (err) {
     console.error('DB middleware connection error:', err.message);
@@ -644,8 +719,6 @@ const sellerWhatsappRoutes = require('./routes/sellerWhatsappRoutes');
 const userWhatsappRoutes = require('./routes/userWhatsappRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
 const sellerAdRoutes = require('./routes/sellerAdRoutes');
-const { sendEmail } = require('./controllers/mailController');
-const User = require('./models/User');
 
 // ── Routes ──
 app.use('/api/products', productRoutes);
@@ -703,12 +776,22 @@ setTimeout(migrateFounderPromotion, 17000); // preserve existing subscriber pric
 // Wallet top-ups cannot remain open indefinitely after an app is closed.
 if (stripe) {
   const { cleanupStaleStripePaymentIntents } = require('./services/stripePendingPaymentService');
+  const {
+    processPendingStripeSubscriptionCleanups,
+  } = require('./services/stripeSubscriptionCleanupService');
   const runStripePaymentCleanup = () => cleanupStaleStripePaymentIntents()
     .catch(error => console.error('[stripe-cleanup] scheduled cleanup failed:', error.message));
   const cleanupTimer = setInterval(runStripePaymentCleanup, 5 * 60 * 1000);
   cleanupTimer.unref?.();
   const initialCleanupTimer = setTimeout(runStripePaymentCleanup, 45000);
   initialCleanupTimer.unref?.();
+
+  const runStripeSubscriptionCleanup = () => processPendingStripeSubscriptionCleanups({ limit: 10 })
+    .catch(error => console.error('[subscription-cleanup] scheduled recovery failed:', error.message));
+  const subscriptionCleanupTimer = setInterval(runStripeSubscriptionCleanup, 5 * 60 * 1000);
+  subscriptionCleanupTimer.unref?.();
+  const initialSubscriptionCleanupTimer = setTimeout(runStripeSubscriptionCleanup, 55000);
+  initialSubscriptionCleanupTimer.unref?.();
 }
 
 // ── Subdomain removal processor (runs every 6 hours) ──
@@ -758,7 +841,8 @@ app.get('/health', (req, res) => {
     env: process.env.NODE_ENV,
     gitCommit: process.env.RAILWAY_GIT_COMMIT_SHA || process.env.VERCEL_GIT_COMMIT_SHA || process.env.GIT_COMMIT || '',
     buildMarker: 'whatsapp-unified-gateway-v1',
-    mongoConnected: mongoose.connection.readyState === 1
+    mongoConnected: mongoose.connection.readyState === 1,
+    notificationOutboxWorkerStarted: isNotificationOutboxWorkerRunning(),
   });
 });
 
@@ -773,8 +857,35 @@ app.get('/', (req, res) => {
 
 // ── Start server ──
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, '0.0.0.0', () => {
+const httpServer = app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server is running on port ${PORT}`);
 });
+
+if (require.main === module) {
+  let shuttingDown = false;
+  const shutdown = async signal => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`[shutdown] ${signal} received; draining server and notification worker`);
+    const forceExitTimer = setTimeout(() => process.exit(1), 10_000);
+    forceExitTimer.unref?.();
+    try {
+      await Promise.all([
+        stopNotificationOutboxWorker(),
+        new Promise(resolve => httpServer.close(resolve)),
+      ]);
+      if (mongoose.connection.readyState !== 0) {
+        await mongoose.connection.close(false);
+      }
+      clearTimeout(forceExitTimer);
+      process.exit(0);
+    } catch (error) {
+      console.error('[shutdown] graceful shutdown failed:', error.message);
+      process.exit(1);
+    }
+  };
+  process.once('SIGTERM', () => shutdown('SIGTERM'));
+  process.once('SIGINT', () => shutdown('SIGINT'));
+}
 
 module.exports = app;

@@ -274,8 +274,9 @@ describe('native Stripe PaymentSheet contracts', () => {
   });
 
   it('treats the backend wallet ledger as the top-up source of truth', async () => {
-    const pending = { data: { wallet: { balances: { USD: 10 } }, transactions: [
+    const pending = { data: { wallet: { balances: { USD: 1000 } }, transactions: [
       { paymentIntentId: 'pi_topup', status: 'pending' },
+      { paymentIntentId: 'pi_unrelated', status: 'completed', amount: 990 },
     ] } };
     const paid = { data: { wallet: { balances: { USD: 25 } }, transactions: [
       { paymentIntentId: 'pi_topup', status: 'completed' },
@@ -283,6 +284,18 @@ describe('native Stripe PaymentSheet contracts', () => {
     expect(normalizeWalletTopUpStatus({
       payload: pending, paymentIntentId: 'pi_topup', currency: 'USD', startingBalance: 10, amount: 15,
     }).status).toBe('pending');
+    expect(normalizeWalletTopUpStatus({
+      payload: { data: { wallet: { balances: { USD: 25 } }, transactions: [
+        { paymentIntentId: 'pi_unrelated', status: 'completed', amount: 15 },
+      ] } },
+      paymentIntentId: 'pi_missing', currency: 'USD', startingBalance: 10, amount: 15,
+    }).status).toBe('pending');
+    expect(normalizeWalletTopUpStatus({
+      payload: { data: { wallet: { balances: { USD: 1000 } }, transactions: [
+        { paymentIntentId: 'pi_topup', status: 'failed' },
+      ] } },
+      paymentIntentId: 'pi_topup', currency: 'USD', startingBalance: 10, amount: 15,
+    }).status).toBe('failed');
 
     const apiClient = { get: jest.fn().mockResolvedValueOnce(pending).mockResolvedValueOnce(paid) };
     const result = await verifyWalletTopUp({

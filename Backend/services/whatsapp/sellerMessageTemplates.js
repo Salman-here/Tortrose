@@ -3,21 +3,21 @@
  * Keep these concise because WhatsApp delivery is more reliable with short text.
  */
 
-const { normalizeCurrency } = require('../currencyService');
 const {
     formatOrderMoney,
+    getOrderCurrency,
     orderItemLineText,
     paymentMethodLabel,
 } = require('../../utils/orderPresentation');
 
-const orderCurrency = (order) => normalizeCurrency(order?.currency || order?.displayCurrency || 'USD');
+const orderCurrency = (order) => getOrderCurrency(order);
 
 const orderNumber = (order) => order?.orderId || order?._id || 'Unknown';
 
 const orderTotal = (order) => {
     const currency = orderCurrency(order);
-    const total = Number(order?.orderSummary?.totalAmount ?? order?.totalAmount ?? order?.total ?? 0);
-    return formatOrderMoney(Number.isFinite(total) ? total : 0, currency);
+    const total = order?.orderSummary?.totalAmount ?? order?.totalAmount ?? order?.total;
+    return formatOrderMoney(total, currency);
 };
 
 const itemLines = (order, limit = 8) => {
@@ -111,10 +111,13 @@ const templates = {
         `Subscription Ending Soon\n\nYour subscription ends in ${daysLeft} day${daysLeft !== 1 ? 's' : ''}.\n\nPlease ensure your payment method is up to date to avoid service interruption.`,
 
     payment_failed: () =>
-        "Payment Failed\n\nWe couldn't process your subscription payment. Your store may be blocked if payment isn't resolved soon.\n\nPlease update your payment method in the dashboard.",
+        "Payment Failed — Subscription Paused\n\nWe couldn't process your subscription payment, so subscription access is temporarily paused.\n\nPlease update your payment method in the dashboard before your store can be made visible through this subscription again.",
 
     payment_recovered: () =>
         'Payment Successful\n\nYour subscription payment has been processed successfully. Your account is now in good standing.',
+
+    plan_change_action_required: () =>
+        'Payment Authentication Required\n\nYour requested plan change has not been activated because Stripe needs payment authentication. Your current plan remains unchanged.\n\nOpen Subscription in your dashboard and retry the same plan change to continue securely.',
 
     trial_expiring: (daysLeft) =>
         `Trial Expiring\n\nYour free trial ends in ${daysLeft} day${daysLeft !== 1 ? 's' : ''}.\n\nSubscribe to keep your store active and visible to customers.`,

@@ -5,6 +5,7 @@ const Notification = require('../../models/Notification');
 const {
   buildScopedNotificationQuery,
   normalizeBroadcastAudience,
+  notificationSurfaceAllowedForRole,
 } = require('../../services/notificationAudienceService');
 
 let mongoServer;
@@ -19,10 +20,11 @@ const createNotification = (title, fields = {}) => Notification.create({
   ...fields,
 });
 
-const visibleTitles = async (role) => {
+const visibleTitles = async (role, surface) => {
   const docs = await Notification.find(buildScopedNotificationQuery({
     userId: accountId,
     role,
+    ...(surface ? { surface } : {}),
   })).sort({ title: 1 }).lean();
   return docs.map(({ title }) => title);
 };
@@ -90,6 +92,31 @@ describe('persistent notification role isolation', () => {
       'seller explicit',
       'shopping both',
     ]);
+  });
+
+  test('splits a seller account into exact buyer and seller-business notification surfaces', async () => {
+    await expect(visibleTitles('seller', 'buyer')).resolves.toEqual([
+      'legacy buyer order',
+      'shopping both',
+    ]);
+    await expect(visibleTitles('seller', 'seller')).resolves.toEqual([
+      'legacy absolute seller route',
+      'legacy seller category',
+      'legacy seller route',
+      'seller broadcast fallback',
+      'seller explicit',
+    ]);
+  });
+
+  test('allows only surfaces that belong to the current account role', async () => {
+    expect(notificationSurfaceAllowedForRole('buyer', 'user')).toBe(true);
+    expect(notificationSurfaceAllowedForRole('buyer', 'seller')).toBe(true);
+    expect(notificationSurfaceAllowedForRole('seller', 'seller')).toBe(true);
+    expect(notificationSurfaceAllowedForRole('admin', 'admin')).toBe(true);
+    expect(notificationSurfaceAllowedForRole('seller', 'user')).toBe(false);
+    expect(notificationSurfaceAllowedForRole('buyer', 'admin')).toBe(false);
+    await expect(visibleTitles('user', 'seller')).resolves.toEqual([]);
+    await expect(visibleTitles('seller', 'admin')).resolves.toEqual([]);
   });
 
   test('a current admin sees only admin snapshots and safe legacy admin/system intent', async () => {

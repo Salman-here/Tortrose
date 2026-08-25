@@ -126,6 +126,7 @@ describe('order payment policy', () => {
     const res = await request(app)
       .post('/api/orders/place')
       .set('Authorization', tokenFor(buyer))
+      .set('Idempotency-Key', `payment-policy-${product._id}`)
       .send(orderPayloadFor(product, 'cash_on_delivery'));
 
     expect(res.status).toBe(400);

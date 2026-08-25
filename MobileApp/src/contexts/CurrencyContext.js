@@ -7,10 +7,20 @@ import React, {
   useState,
 } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { NativeModules, Platform } from 'react-native';
+import { AppState, NativeModules, Platform } from 'react-native';
 import axios from 'axios';
 import api, { API_BASE_URL } from '../config/api';
 import { useAuth } from './AuthContext';
+import {
+  assertSafeCurrencyConversion,
+  canSafelyConvertCurrency,
+  convertCurrencyAmount,
+  convertCurrencyLineAmount,
+  convertCurrencyLineAmounts,
+  normalizeCompleteExchangeRates,
+  roundCurrencyAmount,
+  shouldRefreshExchangeRates,
+} from '../utils/currencySafety';
 
 const CurrencyContext = createContext();
 
@@ -25,8 +35,186 @@ export const useCurrency = () => {
 const CURRENCIES = {
   USD: { symbol: '$', name: 'US Dollar', code: 'USD', position: 'before' },
   PKR: { symbol: 'Rs', name: 'Pakistani Rupee', code: 'PKR', position: 'before' },
-  EUR: { symbol: 'EUR', name: 'Euro', code: 'EUR', position: 'before' },
-  GBP: { symbol: 'GBP', name: 'British Pound', code: 'GBP', position: 'before' },
+  EUR: { symbol: '€', name: 'Euro', code: 'EUR', position: 'before' },
+  GBP: { symbol: '£', name: 'British Pound', code: 'GBP', position: 'before' },
+};
+
+const hasOwn = (value, field) => (
+  Boolean(value)
+  && typeof value === 'object'
+  && Object.prototype.hasOwnProperty.call(value, field)
+);
+
+export const presentationIntegrityError = (
+  label,
+  code = 'CURRENCY_PRESENTATION_DATA_INVALID'
+) => {
+  const error = new Error(`The stored ${label} is invalid.`);
+  error.code = code;
+  error.statusCode = 409;
+  return error;
+};
+
+export const requireExactPresentationMoney = (
+  value,
+  label = 'money amount',
+  code = 'CURRENCY_PRESENTATION_DATA_INVALID'
+) => {
+  if (
+    typeof value !== 'number'
+    || !Number.isFinite(value)
+    || value < 0
+    || roundCurrencyAmount(value) !== value
+  ) {
+    throw presentationIntegrityError(label, code);
+  }
+  return value;
+};
+
+export const requireCanonicalPresentationCurrency = (
+  value,
+  label = 'currency',
+  code = 'CURRENCY_PRESENTATION_DATA_INVALID'
+) => {
+  if (
+    typeof value !== 'string'
+    || value !== value.trim().toUpperCase()
+    || !Object.prototype.hasOwnProperty.call(CURRENCIES, value)
+  ) {
+    throw presentationIntegrityError(label, code);
+  }
+  return value;
+};
+
+const presentationCurrencyOrFallback = (
+  value,
+  fallback,
+  label,
+  code = 'CURRENCY_PRESENTATION_DATA_INVALID'
+) => requireCanonicalPresentationCurrency(
+  value === null || value === undefined ? fallback : value,
+  label,
+  code
+);
+
+const resolveCurrencyFields = (
+  record,
+  fields,
+  fallback,
+  {
+    label = 'currency metadata',
+    code = 'CURRENCY_PRESENTATION_DATA_INVALID',
+    nullIsLegacy = false,
+  } = {}
+) => {
+  const values = fields
+    .filter((field) => hasOwn(record, field))
+    .map((field) => record[field])
+    .filter((value) => value !== undefined && (!nullIsLegacy || value !== null))
+    .map((value) => requireCanonicalPresentationCurrency(value, label, code));
+  const unique = [...new Set(values)];
+  if (unique.length > 1) throw presentationIntegrityError(label, code);
+  return unique[0] || requireCanonicalPresentationCurrency(fallback, label, code);
+};
+
+const resolveOptionalMoneyFields = (record, fields, label, code) => {
+  const values = fields
+    .filter((field) => hasOwn(record, field))
+    .map((field) => record[field])
+    .filter((value) => value !== null && value !== undefined)
+    .map((value) => requireExactPresentationMoney(value, label, code));
+  const unique = [...new Set(values)];
+  if (unique.length > 1) throw presentationIntegrityError(label, code);
+  return unique.length ? unique[0] : null;
+};
+
+export const resolveProductPresentationCurrency = (product) => resolveCurrencyFields(
+  product,
+  ['currency', 'priceCurrency'],
+  'USD',
+  {
+    label: 'product currency metadata',
+    code: 'PRODUCT_CURRENCY_METADATA_INVALID',
+  }
+);
+
+export const resolveProductPresentationMoney = (product, field = 'price') => {
+  const code = 'PRODUCT_PRICE_INVALID';
+  if (!product || typeof product !== 'object') {
+    throw presentationIntegrityError('product price', code);
+  }
+  if (field !== 'price' && field !== 'discountedPrice') {
+    throw presentationIntegrityError('product price field', code);
+  }
+
+  const currentValue = product[field];
+  if (currentValue !== null && currentValue !== undefined) {
+    return requireExactPresentationMoney(currentValue, `product ${field}`, code);
+  }
+
+  const legacyField = field === 'discountedPrice'
+    ? 'discountedPriceOriginal'
+    : 'priceOriginal';
+  const legacyValue = product[legacyField];
+  if (legacyValue !== null && legacyValue !== undefined) {
+    return requireExactPresentationMoney(legacyValue, `legacy product ${field}`, code);
+  }
+
+  if (field === 'discountedPrice') return 0;
+  throw presentationIntegrityError('product price', code);
+};
+
+const resolveOrderItemCurrency = (item, orderCurrency) => resolveCurrencyFields(
+  item,
+  ['currency', 'orderCurrency'],
+  orderCurrency,
+  {
+    label: 'order item currency metadata',
+    code: 'ORDER_PRESENTATION_DATA_INVALID',
+    nullIsLegacy: true,
+  }
+);
+
+export const resolveOrderItemPresentationMoney = (item, orderCurrency = 'USD') => {
+  const code = 'ORDER_PRESENTATION_DATA_INVALID';
+  if (!item || typeof item !== 'object') {
+    throw presentationIntegrityError('order item price', code);
+  }
+  const fallbackCurrency = presentationCurrencyOrFallback(
+    orderCurrency,
+    'USD',
+    'order currency',
+    code
+  );
+
+  if (item.price !== null && item.price !== undefined) {
+    return {
+      amount: requireExactPresentationMoney(item.price, 'order item price', code),
+      sourceCurrency: resolveOrderItemCurrency(item, fallbackCurrency),
+    };
+  }
+
+  const sourceAmount = resolveOptionalMoneyFields(
+    item,
+    ['sourcePrice', 'priceOriginal'],
+    'legacy order item source price',
+    code
+  );
+  if (sourceAmount === null) throw presentationIntegrityError('order item price', code);
+
+  return {
+    amount: sourceAmount,
+    sourceCurrency: resolveCurrencyFields(
+      item,
+      ['sourceCurrency', 'priceCurrency'],
+      fallbackCurrency,
+      {
+        label: 'order item source currency metadata',
+        code,
+        nullIsLegacy: true,
+      }
+    ),
+  };
 };
 
 const DEFAULT_RATES = {
@@ -90,23 +278,59 @@ const normalizeCurrency = (code) => {
   return CURRENCIES[normalized] ? normalized : 'USD';
 };
 
-const roundMoney = (amount) => Math.round((Number(amount) || 0) * 100) / 100;
-
 export const CurrencyProvider = ({ children }) => {
   const { currentUser, token, isLoading: isAuthLoading } = useAuth();
   const [currency, setCurrencyState] = useState('USD');
   const [exchangeRates, setExchangeRates] = useState(DEFAULT_RATES);
+  const [exchangeRateState, setExchangeRateState] = useState({
+    isLoading: true,
+    fallback: true,
+    source: 'initial',
+    lastUpdate: null,
+    error: '',
+  });
   const [isLoading, setIsLoading] = useState(true);
+  const [currencyPreferenceState, setCurrencyPreferenceState] = useState({
+    isSaving: false,
+    error: '',
+  });
   const loadSequenceRef = useRef(0);
+  const currencyPreferenceRequestRef = useRef(0);
+  const currencyPreferenceInFlightRef = useRef(false);
+  const ratesRequestRef = useRef({ id: 0, controller: null });
+  const ratesClockRef = useRef({ lastAttemptAt: 0, lastLiveAt: 0 });
   const accountId = currentUser?._id || currentUser?.id || null;
+  const currencyActorRef = useRef('guest');
+  currencyActorRef.current = token && accountId ? `account:${accountId}` : 'guest';
 
   useEffect(() => {
     fetchExchangeRates();
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (
+        nextState === 'active'
+        && shouldRefreshExchangeRates(ratesClockRef.current)
+      ) fetchExchangeRates();
+    });
+    const refreshTimer = setInterval(() => {
+      if (
+        AppState.currentState === 'active'
+        && shouldRefreshExchangeRates(ratesClockRef.current)
+      ) fetchExchangeRates();
+    }, 60 * 1000);
+    return () => {
+      ratesRequestRef.current.id += 1;
+      ratesRequestRef.current.controller?.abort();
+      subscription.remove();
+      clearInterval(refreshTimer);
+    };
   }, []);
 
   useEffect(() => {
     if (isAuthLoading) return undefined;
 
+    currencyPreferenceRequestRef.current += 1;
+    currencyPreferenceInFlightRef.current = false;
+    setCurrencyPreferenceState({ isSaving: false, error: '' });
     const sequence = ++loadSequenceRef.current;
     setIsLoading(true);
     loadSavedCurrency({
@@ -147,13 +371,11 @@ export const CurrencyProvider = ({ children }) => {
             || serverAccountCurrency;
         } catch (_) {}
 
-        // A bare server-side USD value is the account schema default. Only a
-        // non-default value, or an account-specific cached USD selection, is
-        // proof of an intentional account preference.
-        const intentionalAccountCurrency = serverAccountCurrency
-          && serverAccountCurrency !== 'USD'
-          ? serverAccountCurrency
-          : cachedAccountCurrency;
+        // A signed-in account's server preference is authoritative, including
+        // USD. Otherwise a seller who explicitly selected USD could sign in on
+        // a Pakistan-locale device and have the account (and future product
+        // price currency) silently changed to PKR.
+        const intentionalAccountCurrency = serverAccountCurrency || cachedAccountCurrency;
 
         if (intentionalAccountCurrency) {
           if (loadSequenceRef.current !== sequence) return;
@@ -165,16 +387,13 @@ export const CurrencyProvider = ({ children }) => {
           return;
         }
 
-        if (deviceCurrency) {
-          if (loadSequenceRef.current !== sequence) return;
-          setCurrencyState(deviceCurrency);
-          await AsyncStorage.setItem(
-            accountCurrencyKey(activeAccountId),
-            deviceCurrency
-          );
-          api.patch('/api/currency/update', { currency: deviceCurrency }).catch(() => {});
-          return;
-        }
+        // Never promote the guest/device preference into an authenticated
+        // account. User.currency is server-defaulted to USD; when both the
+        // server lookup and account cache are unavailable, USD is the only
+        // fail-closed display choice until account state refreshes.
+        if (loadSequenceRef.current !== sequence) return;
+        setCurrencyState('USD');
+        return;
       }
 
       // Device currency belongs to the guest/device session. Account choices
@@ -205,13 +424,9 @@ export const CurrencyProvider = ({ children }) => {
         setCurrencyState(detectedCurrency);
         await AsyncStorage.setItem(DEVICE_CURRENCY_KEY, detectedCurrency);
 
-        if (hasToken && activeAccountId) {
-          await AsyncStorage.setItem(
-            accountCurrencyKey(activeAccountId),
-            detectedCurrency
-          );
-          api.patch('/api/currency/update', { currency: detectedCurrency }).catch(() => {});
-        }
+        // Detection is only a display default. Never overwrite an authenticated
+        // account preference after a failed/ambiguous account lookup; only an
+        // explicit selector action is allowed to persist a new account value.
       }
     } catch (error) {
       console.error('Error loading saved currency:', error);
@@ -223,44 +438,155 @@ export const CurrencyProvider = ({ children }) => {
   };
 
   const fetchExchangeRates = async () => {
+    ratesClockRef.current.lastAttemptAt = Date.now();
+    const requestId = ratesRequestRef.current.id + 1;
+    ratesRequestRef.current.controller?.abort();
+    const controller = new AbortController();
+    ratesRequestRef.current = { id: requestId, controller };
+    setExchangeRateState((previous) => ({ ...previous, isLoading: true, error: '' }));
+
     try {
-      const res = await api.get('/api/currency/rates');
-      if (res.data.success && res.data.rates) {
-        setExchangeRates({ ...DEFAULT_RATES, ...res.data.rates });
+      const res = await api.get('/api/currency/rates', { signal: controller.signal });
+      if (ratesRequestRef.current.id !== requestId) return;
+      const nextRates = res.data?.success === true
+        ? normalizeCompleteExchangeRates(res.data?.rates)
+        : null;
+      if (!nextRates) {
+        throw new Error('Exchange-rate response was incomplete.');
       }
-    } catch (_) {
-      setExchangeRates(DEFAULT_RATES);
+
+      setExchangeRates({ ...DEFAULT_RATES, ...nextRates });
+      ratesClockRef.current.lastLiveAt = res.data.fallback === false ? Date.now() : 0;
+      setExchangeRateState({
+        isLoading: false,
+        fallback: res.data.fallback !== false,
+        source: res.data.source || (res.data.fallback === false ? 'live' : 'fallback'),
+        lastUpdate: res.data.lastUpdate || null,
+        error: res.data.fallback === false ? '' : 'Live exchange rates are temporarily unavailable.',
+      });
+    } catch (error) {
+      if (error.code === 'ERR_CANCELED' || error.name === 'CanceledError') return;
+      if (ratesRequestRef.current.id !== requestId) return;
+      ratesClockRef.current.lastLiveAt = 0;
+      setExchangeRateState((previous) => ({
+        ...previous,
+        isLoading: false,
+        fallback: true,
+        source: 'unavailable',
+        error: error.response?.data?.msg || error.message || 'Live exchange rates are temporarily unavailable.',
+      }));
     }
   };
 
   const setCurrency = async (newCurrency) => {
-    const targetCurrency = normalizeCurrency(newCurrency);
+    const targetCurrency = supportedCurrency(newCurrency);
+    if (!targetCurrency) return false;
+    if (targetCurrency === currency) return true;
+    if (currencyPreferenceInFlightRef.current) return false;
+
+    currencyPreferenceInFlightRef.current = true;
+    const requestId = currencyPreferenceRequestRef.current + 1;
+    currencyPreferenceRequestRef.current = requestId;
+    const actorKey = currencyActorRef.current;
+    const activeAccountId = accountId;
     loadSequenceRef.current += 1;
     setIsLoading(false);
-    setCurrencyState(targetCurrency);
-
-    if (token && accountId) {
-      await AsyncStorage.setItem(accountCurrencyKey(accountId), targetCurrency);
-      try {
+    setCurrencyPreferenceState({ isSaving: true, error: '' });
+    try {
+      // Keep the signed-in account authoritative across web and mobile. A
+      // failed write must not create an optimistic device-only preference.
+      if (token && activeAccountId) {
         await api.patch('/api/currency/update', { currency: targetCurrency });
-      } catch (_) {}
-      return;
+        if (
+          currencyPreferenceRequestRef.current !== requestId
+          || currencyActorRef.current !== actorKey
+        ) return false;
+        try {
+          await AsyncStorage.setItem(accountCurrencyKey(activeAccountId), targetCurrency);
+        } catch (_) {}
+      } else {
+        await AsyncStorage.setItem(DEVICE_CURRENCY_KEY, targetCurrency);
+      }
+      if (
+        currencyPreferenceRequestRef.current !== requestId
+        || currencyActorRef.current !== actorKey
+      ) return false;
+      setCurrencyState(targetCurrency);
+      currencyPreferenceInFlightRef.current = false;
+      setCurrencyPreferenceState({ isSaving: false, error: '' });
+      return true;
+    } catch (error) {
+      const message = error.response?.data?.msg || 'Currency preference could not be saved.';
+      if (
+        currencyPreferenceRequestRef.current === requestId
+        && currencyActorRef.current === actorKey
+      ) {
+        currencyPreferenceInFlightRef.current = false;
+        setCurrencyPreferenceState({ isSaving: false, error: message });
+      }
+      return false;
     }
-
-    await AsyncStorage.setItem(DEVICE_CURRENCY_KEY, targetCurrency);
   };
 
   const convertAmount = (amount, sourceCurrency = 'USD', targetCurrency = currency) => {
-    const value = Number(amount || 0);
-    if (!Number.isFinite(value)) return 0;
+    const value = requireExactPresentationMoney(amount);
+    const from = presentationCurrencyOrFallback(sourceCurrency, 'USD', 'source currency');
+    const to = presentationCurrencyOrFallback(targetCurrency, currency, 'target currency');
+    return convertCurrencyAmount(value, from, to, exchangeRates);
+  };
 
-    const from = normalizeCurrency(sourceCurrency);
-    const to = normalizeCurrency(targetCurrency);
-    if (from === to) return roundMoney(value);
+  const convertLineAmount = (
+    unitAmount,
+    quantity,
+    sourceCurrency = 'USD',
+    targetCurrency = currency
+  ) => {
+    const value = requireExactPresentationMoney(unitAmount, 'line unit amount');
+    if (!Number.isSafeInteger(quantity) || quantity < 0) {
+      throw presentationIntegrityError('line quantity');
+    }
+    return convertCurrencyLineAmount(
+      value,
+      quantity,
+      presentationCurrencyOrFallback(sourceCurrency, 'USD', 'line source currency'),
+      presentationCurrencyOrFallback(targetCurrency, currency, 'line target currency'),
+      exchangeRates
+    );
+  };
 
-    const fromRate = Number(exchangeRates[from]) || 1;
-    const toRate = Number(exchangeRates[to]) || 1;
-    return roundMoney((value / fromRate) * toRate);
+  const convertLineAmounts = (lines, targetCurrency = currency) => {
+    if (!Array.isArray(lines)) throw presentationIntegrityError('currency lines');
+    const target = presentationCurrencyOrFallback(
+      targetCurrency,
+      currency,
+      'line target currency'
+    );
+    const strictLines = lines.map((line) => {
+      if (!line || typeof line !== 'object') throw presentationIntegrityError('currency line');
+      if (!Number.isSafeInteger(line.quantity) || line.quantity < 0) {
+        throw presentationIntegrityError('line quantity');
+      }
+      return {
+        ...line,
+        unitAmount: requireExactPresentationMoney(line.unitAmount, 'line unit amount'),
+        sourceCurrency: presentationCurrencyOrFallback(
+          line.sourceCurrency,
+          'USD',
+          'line source currency'
+        ),
+      };
+    });
+    return convertCurrencyLineAmounts(strictLines, target, exchangeRates);
+  };
+
+  const convertAmountForMoneyAction = (amount, sourceCurrency = 'USD', targetCurrency = currency) => {
+    const source = presentationCurrencyOrFallback(sourceCurrency, 'USD', 'source currency');
+    const target = presentationCurrencyOrFallback(targetCurrency, currency, 'target currency');
+    assertSafeCurrencyConversion(source, target, {
+      ratesFallback: exchangeRateState.fallback,
+      ratesLoading: exchangeRateState.isLoading,
+    });
+    return convertAmount(amount, source, target);
   };
 
   const convertPrice = (price, sourceCurrency = 'USD') => {
@@ -275,8 +601,8 @@ export const CurrencyProvider = ({ children }) => {
       targetCurrency = currency,
     } = options;
 
-    const target = normalizeCurrency(targetCurrency);
-    const value = Number(amount || 0);
+    const target = presentationCurrencyOrFallback(targetCurrency, currency, 'target currency');
+    const value = requireExactPresentationMoney(amount);
     const formattedNumber = value.toLocaleString('en-US', {
       minimumFractionDigits: decimals,
       maximumFractionDigits: decimals,
@@ -294,9 +620,13 @@ export const CurrencyProvider = ({ children }) => {
       ...formatOptions
     } = options;
 
-    const target = normalizeCurrency(targetCurrency);
-    const convertedPrice = convertAmount(price, sourceCurrency, target);
-    return formatAmount(convertedPrice, { ...formatOptions, targetCurrency: target });
+    const source = presentationCurrencyOrFallback(sourceCurrency, 'USD', 'source currency');
+    const target = presentationCurrencyOrFallback(targetCurrency, currency, 'target currency');
+    const convertedPrice = convertAmount(price, source, target);
+    const formatted = formatAmount(convertedPrice, { ...formatOptions, targetCurrency: target });
+    const isApproximate = source !== target
+      && (exchangeRateState.isLoading || exchangeRateState.fallback);
+    return `${isApproximate ? '≈' : ''}${formatted}`;
   };
 
   const convertToUSD = (priceInCurrentCurrency) => {
@@ -307,58 +637,82 @@ export const CurrencyProvider = ({ children }) => {
     return convertAmount(amount, fromCurrency, currency);
   };
 
-  const getProductCurrency = (product) => normalizeCurrency(product?.currency || product?.priceCurrency || 'USD');
+  const canConvertCurrency = (sourceCurrency, targetCurrency = currency) => {
+    try {
+      const source = presentationCurrencyOrFallback(sourceCurrency, 'USD', 'source currency');
+      const target = presentationCurrencyOrFallback(targetCurrency, currency, 'target currency');
+      return canSafelyConvertCurrency(source, target, {
+        ratesFallback: exchangeRateState.fallback,
+        ratesLoading: exchangeRateState.isLoading,
+      });
+    } catch (_) {
+      return false;
+    }
+  };
+
+  const getProductCurrency = (product) => resolveProductPresentationCurrency(product);
 
   const getProductPriceNumber = (product, field = 'price') => {
-    if (!product) return 0;
-    const productCurrency = getProductCurrency(product);
-    const rawValue = Number(product[field]);
-    if (Number.isFinite(rawValue)) return convertAmount(rawValue, productCurrency, currency);
-
-    const legacyField = field === 'discountedPrice' ? 'discountedPriceOriginal' : 'priceOriginal';
-    const legacyValue = Number(product[legacyField]);
-    return Number.isFinite(legacyValue)
-      ? convertAmount(legacyValue, productCurrency, currency)
-      : 0;
+    return convertAmount(
+      resolveProductPresentationMoney(product, field),
+      getProductCurrency(product),
+      currency
+    );
   };
 
   const formatProductPrice = (product, amountOrOptions = undefined, maybeOptions = {}) => {
-    const hasExplicitAmount = typeof amountOrOptions === 'number' || typeof amountOrOptions === 'string';
+    const hasExplicitAmount = amountOrOptions !== undefined
+      && amountOrOptions !== null
+      && typeof amountOrOptions !== 'object';
     const options = hasExplicitAmount ? maybeOptions : (amountOrOptions || {});
     const field = options.field || 'price';
-    const value = hasExplicitAmount
-      ? convertAmount(amountOrOptions, getProductCurrency(product), currency)
-      : getProductPriceNumber(product, field);
-    return formatAmount(value, options);
+    const sourceAmount = hasExplicitAmount
+      ? amountOrOptions
+      : resolveProductPresentationMoney(product, field);
+    return formatPrice(sourceAmount, {
+      ...options,
+      sourceCurrency: getProductCurrency(product),
+    });
   };
-
-  const getOrderItemCurrency = (item, orderCurrency = 'USD') =>
-    normalizeCurrency(item?.currency || item?.orderCurrency || orderCurrency);
 
   const getOrderItemPriceNumber = (item, orderCurrency = 'USD') => {
-    if (!item) return 0;
-    const amount = Number(item.price);
-    if (Number.isFinite(amount)) {
-      return convertAmount(amount, getOrderItemCurrency(item, orderCurrency), currency);
-    }
-
-    const sourceAmount = Number(item.sourcePrice ?? item.priceOriginal);
-    const sourceCurrency = item.sourceCurrency || item.priceCurrency || orderCurrency;
-    return Number.isFinite(sourceAmount) ? convertAmount(sourceAmount, sourceCurrency, currency) : 0;
+    const { amount, sourceCurrency } = resolveOrderItemPresentationMoney(item, orderCurrency);
+    return convertAmount(amount, sourceCurrency, currency);
   };
 
-  const formatOrderItemPrice = (item, options = {}) =>
-    formatAmount(getOrderItemPriceNumber(item, options.orderCurrency), options);
+  const formatOrderItemPrice = (item, options = {}) => {
+    const { amount, sourceCurrency } = resolveOrderItemPresentationMoney(
+      item,
+      options.orderCurrency
+    );
+    return formatPrice(amount, {
+      ...options,
+      sourceCurrency,
+    });
+  };
 
   const value = useMemo(() => ({
     currency,
     currencies: CURRENCIES,
     exchangeRates,
+    exchangeRatesLoading: exchangeRateState.isLoading,
+    exchangeRatesFallback: exchangeRateState.fallback,
+    exchangeRatesSource: exchangeRateState.source,
+    exchangeRatesLastUpdate: exchangeRateState.lastUpdate,
+    exchangeRatesError: exchangeRateState.error,
+    currencyPreferenceSaving: currencyPreferenceState.isSaving,
+    currencyPreferenceError: currencyPreferenceState.error,
+    hasTrustedExchangeRates: !exchangeRateState.fallback && !exchangeRateState.isLoading,
+    canConvertCurrency,
+    refreshExchangeRates: fetchExchangeRates,
     isLoading,
     setCurrency,
     changeCurrency: setCurrency,
     normalizeCurrency,
     convertAmount,
+    convertLineAmount,
+    convertLineAmounts,
+    convertAmountForMoneyAction,
     convertPrice,
     formatPrice,
     formatAmount,
@@ -371,7 +725,7 @@ export const CurrencyProvider = ({ children }) => {
     convertFromCurrency,
     getCurrencySymbol: () => CURRENCIES[currency]?.symbol || '$',
     getCurrencyName: () => CURRENCIES[currency]?.name || 'US Dollar',
-  }), [currency, exchangeRates, isLoading]);
+  }), [currency, currencyPreferenceState, exchangeRates, exchangeRateState, isLoading]);
 
   return (
     <CurrencyContext.Provider value={value}>

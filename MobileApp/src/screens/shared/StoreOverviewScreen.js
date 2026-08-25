@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Platform,
   RefreshControl,
@@ -27,35 +27,40 @@ import { fetchCompleteSellerCatalog, getProductImage } from '../../utils/sellerC
 import { useCurrency } from '../../contexts/CurrencyContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import { getStorefrontHost } from '../../utils/storefrontUrl';
+import {
+  isRecognizedSellerOrder,
+  readNonNegativePresentationCount,
+  readSellerProductRating,
+  selectAuthoritativeSellerMetrics,
+  sellerOrdersSnapshotIsValid,
+  sellerStoreInventorySnapshotIsValid,
+} from '../../utils/sellerDashboardStats';
+import { roundCurrencyAmount } from '../../utils/currencySafety';
 import { borderRadius, fontSize, fontWeight, spacing } from '../../styles/theme';
 
-const orderStatus = (order) => order?.orderStatus || order?.status || 'pending';
+const orderStatus = (order) => order?.orderStatus ?? order?.status;
 
 export const calculateStoreOverview = (
-  products = [],
-  orders = [],
-  convertAmount = (amount) => Number(amount || 0),
-  targetCurrency = 'USD'
+  products,
+  orders
 ) => {
-  const paidOrders = orders.filter((order) => order?.isPaid);
-  const revenue = paidOrders.reduce((sum, order) => (
-    sum + convertAmount(order?.orderSummary?.totalAmount || 0, order?.currency || 'USD', targetCurrency)
-  ), 0);
+  if (!sellerStoreInventorySnapshotIsValid(products) || !sellerOrdersSnapshotIsValid(orders)) return null;
+  const recognizedOrders = orders.filter(isRecognizedSellerOrder);
   const delivered = orders.filter((order) => orderStatus(order) === 'delivered').length;
-  const outOfStock = products.filter((product) => Number(product?.stock || 0) <= 0).length;
-  const lowStock = products.filter((product) => Number(product?.stock || 0) > 0 && Number(product.stock) <= 10).length;
-  const featured = products.filter((product) => product?.isFeatured).length;
+  const outOfStock = products.filter((product) => product.stock === 0).length;
+  const lowStock = products.filter((product) => product.stock > 0 && product.stock <= 10).length;
+  const featured = products.filter((product) => product.isFeatured === true).length;
   const categoryMap = products.reduce((map, product) => {
-    const category = String(product?.category || 'Uncategorized').trim() || 'Uncategorized';
-    map[category] = (map[category] || 0) + 1;
+    const category = product.category.trim();
+    map[category] = (map[category] ?? 0) + 1;
     return map;
   }, {});
   const categories = Object.entries(categoryMap)
     .map(([name, count]) => ({ name, count }))
     .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
   const topRated = [...products]
-    .filter((product) => Number(product?.rating || product?.averageRating || 0) > 0)
-    .sort((a, b) => Number(b?.rating || b?.averageRating || 0) - Number(a?.rating || a?.averageRating || 0))
+    .filter((product) => readSellerProductRating(product) > 0)
+    .sort((a, b) => readSellerProductRating(b) - readSellerProductRating(a))
     .slice(0, 4);
 
   return {
@@ -64,71 +69,122 @@ export const calculateStoreOverview = (
     lowStock,
     featured,
     totalOrders: orders.length,
-    paidOrders: paidOrders.length,
+    recognizedOrders: recognizedOrders.length,
     delivered,
-    revenue,
-    averageOrderValue: paidOrders.length ? revenue / paidOrders.length : 0,
     fulfillmentRate: orders.length ? Math.round((delivered / orders.length) * 100) : 0,
     categories,
     topRated,
   };
 };
 
-export const formatCurrency = (amount, currency = 'USD') => {
-  try {
-    return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(Number(amount || 0));
-  } catch (_) {
-    return `${currency} ${Number(amount || 0).toFixed(2)}`;
-  }
-};
-
 export default function StoreOverviewScreen({ navigation }) {
   const { palette } = useTheme();
   const styles = buildStyles(palette);
-  const { currency, convertAmount, formatAmount } = useCurrency();
+  const { currency, formatAmount } = useCurrency();
   const [store, setStore] = useState(null);
-  const [products, setProducts] = useState([]);
-  const [orders, setOrders] = useState([]);
+  const [products, setProducts] = useState(null);
+  const [orders, setOrders] = useState(null);
+  const [moneyMetrics, setMoneyMetrics] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState('');
+  const overviewRequestRef = useRef(0);
 
   const loadOverview = useCallback(async () => {
+    const requestId = overviewRequestRef.current + 1;
+    overviewRequestRef.current = requestId;
+    setMoneyMetrics(null);
+    setLoadError('');
     const results = await Promise.allSettled([
       api.get('/api/stores/my-store'),
       fetchCompleteSellerCatalog(),
       api.get('/api/order/get'),
+      api.get(`/api/stores/analytics?currency=${encodeURIComponent(currency)}`),
     ]);
-    const [storeResult, productResult, orderResult] = results;
+    if (overviewRequestRef.current !== requestId) return;
+    const [storeResult, productResult, orderResult, metricsResult] = results;
     const failed = [];
+    const storeMissing = storeResult.status === 'rejected'
+      && storeResult.reason?.response?.status === 404;
 
     if (storeResult.status === 'fulfilled') {
-      setStore(storeResult.value.data?.store || storeResult.value.data || null);
-    } else if (storeResult.reason?.response?.status === 404) {
+      const nextStore = storeResult.value.data?.store || storeResult.value.data || null;
+      if (nextStore && typeof nextStore === 'object' && !Array.isArray(nextStore)) setStore(nextStore);
+      else {
+        setStore(null);
+        failed.push('store profile');
+      }
+    } else if (storeMissing) {
       setStore(null);
-    } else failed.push('store profile');
+    } else {
+      setStore(null);
+      failed.push('store profile');
+    }
 
-    if (productResult.status === 'fulfilled') setProducts(productResult.value);
-    else failed.push('inventory');
+    if (
+      productResult.status === 'fulfilled'
+      && sellerStoreInventorySnapshotIsValid(productResult.value)
+    ) setProducts(productResult.value);
+    else {
+      setProducts(null);
+      failed.push('inventory');
+    }
 
     if (orderResult.status === 'fulfilled') {
       const nextOrders = orderResult.value.data?.orders || orderResult.value.data || [];
-      setOrders(Array.isArray(nextOrders) ? nextOrders : []);
-    } else failed.push('orders');
+      if (sellerOrdersSnapshotIsValid(nextOrders)) setOrders(nextOrders);
+      else {
+        setOrders(null);
+        failed.push('orders');
+      }
+    } else {
+      setOrders(null);
+      failed.push('orders');
+    }
 
-    setLoadError(failed.length ? `Could not refresh ${failed.join(', ')}. Existing information is shown where available.` : '');
+    if (!storeMissing && metricsResult.status === 'fulfilled') {
+      const nextMetrics = metricsResult.value.data?.analytics || null;
+      if (selectAuthoritativeSellerMetrics(nextMetrics, currency) !== null) {
+        setMoneyMetrics(nextMetrics);
+      } else {
+        setMoneyMetrics(null);
+        failed.push('revenue');
+      }
+    } else {
+      setMoneyMetrics(null);
+      if (!storeMissing) failed.push('revenue');
+    }
+
+    setLoadError(failed.length ? `Could not refresh ${failed.join(', ')}. Unavailable values are hidden until a successful retry.` : '');
     setLoading(false);
     setRefreshing(false);
-  }, []);
+  }, [currency]);
 
-  useEffect(() => { loadOverview(); }, [loadOverview]);
+  useEffect(() => {
+    loadOverview();
+    return () => { overviewRequestRef.current += 1; };
+  }, [loadOverview]);
 
   const overview = useMemo(
-    () => calculateStoreOverview(products, orders, convertAmount, currency),
-    [products, orders, convertAmount, currency]
+    () => (products && orders ? calculateStoreOverview(products, orders) : null),
+    [products, orders]
   );
+  const authoritativeMetrics = selectAuthoritativeSellerMetrics(moneyMetrics, currency);
+  const authoritativeRevenue = authoritativeMetrics?.totalSales ?? null;
+  const authoritativeAverage = authoritativeMetrics === null
+    ? null
+    : authoritativeMetrics.totalOrders === 0
+      ? 0
+      : roundCurrencyAmount(authoritativeMetrics.totalSales / authoritativeMetrics.totalOrders);
   const recentProducts = useMemo(
-    () => [...products].sort((a, b) => new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0)).slice(0, 6),
+    () => (products ? [...products].sort((a, b) => {
+      const left = new Date(a.updatedAt || a.createdAt).getTime();
+      const right = new Date(b.updatedAt || b.createdAt).getTime();
+      if (!Number.isFinite(left) && !Number.isFinite(right)) return 0;
+      if (!Number.isFinite(left)) return 1;
+      if (!Number.isFinite(right)) return -1;
+      return right - left;
+    }).slice(0, 6) : []),
     [products]
   );
 
@@ -180,15 +236,21 @@ export default function StoreOverviewScreen({ navigation }) {
   }
 
   const storeName = store?.storeName || store?.name || 'Your store';
-  const isVerified = Boolean(store?.verification?.isVerified);
-  const inventoryHealthy = overview.outOfStock === 0 && overview.lowStock === 0;
-  const maxCategoryCount = Math.max(1, ...overview.categories.map((item) => item.count));
+  const isVerified = store?.verification?.isVerified === true;
+  const storeIsLive = store?.isActive === true && store?.blockedAt === null;
+  const inventoryHealthy = overview === null
+    ? null
+    : overview.outOfStock === 0 && overview.lowStock === 0;
+  const maxCategoryCount = overview?.categories.length
+    ? Math.max(...overview.categories.map((item) => item.count))
+    : null;
+  const trustCount = readNonNegativePresentationCount(store?.trustCount);
 
   const metrics = [
-    { label: 'Revenue', value: formatAmount(overview.revenue), icon: 'cash-outline', color: '#10B981', tint: 'rgba(16,185,129,0.12)' },
-    { label: 'Orders', value: overview.totalOrders, icon: 'receipt-outline', color: '#6366F1', tint: 'rgba(99,102,241,0.12)' },
-    { label: 'Products', value: overview.totalProducts, icon: 'cube-outline', color: '#0EA5E9', tint: 'rgba(14,165,233,0.12)' },
-    { label: 'Fulfilment', value: `${overview.fulfillmentRate}%`, icon: 'checkmark-done-outline', color: '#8B5CF6', tint: 'rgba(139,92,246,0.12)' },
+    { label: 'Recognized revenue', value: authoritativeRevenue === null ? 'Unavailable' : formatAmount(authoritativeRevenue, { targetCurrency: moneyMetrics.currency }), icon: 'cash-outline', color: '#10B981', tint: 'rgba(16,185,129,0.12)' },
+    { label: 'Recognized orders', value: authoritativeMetrics?.totalOrders ?? 'Unavailable', icon: 'receipt-outline', color: '#6366F1', tint: 'rgba(99,102,241,0.12)' },
+    { label: 'Products', value: overview?.totalProducts ?? 'Unavailable', icon: 'cube-outline', color: '#0EA5E9', tint: 'rgba(14,165,233,0.12)' },
+    { label: 'Fulfilment', value: overview === null ? 'Unavailable' : `${overview.fulfillmentRate}%`, icon: 'checkmark-done-outline', color: '#8B5CF6', tint: 'rgba(139,92,246,0.12)' },
   ];
 
   return (
@@ -234,12 +296,12 @@ export default function StoreOverviewScreen({ navigation }) {
                 </Text>
                 <View style={styles.trustRow}>
                   <Ionicons name="people-outline" size={13} color={palette.colors.primary} />
-                  <Text style={styles.trustText}>{Number(store?.trustCount || 0).toLocaleString()} people trust this store</Text>
+                  <Text style={styles.trustText}>{trustCount === null ? 'Trust count unavailable' : `${trustCount.toLocaleString()} people trust this store`}</Text>
                 </View>
               </View>
             </View>
             <View style={styles.heroActions}>
-              <TouchableOpacity style={styles.primaryAction} onPress={() => navigation.navigate('Store', { storeSlug: store?.storeSlug })} disabled={!store?.storeSlug} activeOpacity={0.78}>
+              <TouchableOpacity style={styles.primaryAction} onPress={() => navigation.navigate('Store', { storeSlug: store.storeSlug })} disabled={!store?.storeSlug || !storeIsLive} activeOpacity={0.78}>
                 <Ionicons name="open-outline" size={16} color="#fff" />
                 <Text style={styles.primaryActionText}>View live store</Text>
               </TouchableOpacity>
@@ -264,15 +326,19 @@ export default function StoreOverviewScreen({ navigation }) {
 
           <GlassPanel variant="card" style={styles.sectionCard}>
             <SellerSectionHeader title="Inventory health" subtitle="Stock readiness across your full catalog" icon="pulse-outline" actionLabel="Manage" onAction={() => navigation.navigate('SellerProductManagement')} />
-            <View style={[styles.healthBanner, { backgroundColor: inventoryHealthy ? palette.colors.successSubtle : palette.colors.warningSubtle }]}>
-              <Ionicons name={inventoryHealthy ? 'checkmark-circle' : 'warning'} size={21} color={inventoryHealthy ? palette.colors.success : palette.colors.warning} />
-              <View style={{ flex: 1 }}>
-                <Text style={styles.healthTitle}>{inventoryHealthy ? 'Inventory looks healthy' : 'Inventory needs attention'}</Text>
-                <Text style={styles.healthText}>{overview.outOfStock} out of stock · {overview.lowStock} low stock · {overview.featured} featured</Text>
+            {overview === null ? (
+              <Text style={styles.mutedText}>Inventory counts are unavailable until a verified refresh succeeds.</Text>
+            ) : (
+              <View style={[styles.healthBanner, { backgroundColor: inventoryHealthy ? palette.colors.successSubtle : palette.colors.warningSubtle }]}>
+                <Ionicons name={inventoryHealthy ? 'checkmark-circle' : 'warning'} size={21} color={inventoryHealthy ? palette.colors.success : palette.colors.warning} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.healthTitle}>{inventoryHealthy ? 'Inventory looks healthy' : 'Inventory needs attention'}</Text>
+                  <Text style={styles.healthText}>{overview.outOfStock} out of stock · {overview.lowStock} low stock · {overview.featured} featured</Text>
+                </View>
               </View>
-            </View>
-            {recentProducts.length ? recentProducts.map((product) => {
-              const stock = Number(product?.stock || 0);
+            )}
+            {overview !== null && (recentProducts.length ? recentProducts.map((product) => {
+              const stock = product.stock;
               const stockColor = stock <= 0 ? palette.colors.error : stock <= 10 ? palette.colors.warning : palette.colors.success;
               return (
                 <TouchableOpacity key={product._id} style={styles.productRow} onPress={() => navigation.navigate('ProductForm', { product, isAdmin: false })} activeOpacity={0.75}>
@@ -288,23 +354,23 @@ export default function StoreOverviewScreen({ navigation }) {
               );
             }) : (
               <SellerEmptyState icon="cube-outline" title="No products yet" message="Add your first product to start measuring inventory health." actionLabel="Add product" onAction={() => navigation.navigate('ProductForm', { isAdmin: false })} />
-            )}
+            ))}
           </GlassPanel>
 
           <GlassPanel variant="card" style={styles.sectionCard}>
-            <SellerSectionHeader title="Sales performance" subtitle="Paid-order value and fulfilment" icon="trending-up-outline" actionLabel="Orders" onAction={() => navigation.navigate('SellerOrderManagement')} />
+            <SellerSectionHeader title="Sales performance" subtitle="Recognized revenue and fulfilment" icon="trending-up-outline" actionLabel="Orders" onAction={() => navigation.navigate('SellerOrderManagement')} />
             <View style={styles.performanceGrid}>
-              <View style={styles.performanceItem}><Text style={styles.performanceValue}>{formatAmount(overview.averageOrderValue)}</Text><Text style={styles.performanceLabel}>Avg. paid order</Text></View>
+              <View style={styles.performanceItem}><Text style={styles.performanceValue}>{authoritativeAverage === null ? 'Unavailable' : formatAmount(authoritativeAverage, { targetCurrency: moneyMetrics.currency })}</Text><Text style={styles.performanceLabel}>Avg. recognized order</Text></View>
               <View style={styles.performanceDivider} />
-              <View style={styles.performanceItem}><Text style={styles.performanceValue}>{overview.paidOrders}</Text><Text style={styles.performanceLabel}>Paid orders</Text></View>
+              <View style={styles.performanceItem}><Text style={styles.performanceValue}>{authoritativeMetrics?.totalOrders ?? 'Unavailable'}</Text><Text style={styles.performanceLabel}>Recognized orders</Text></View>
               <View style={styles.performanceDivider} />
-              <View style={styles.performanceItem}><Text style={styles.performanceValue}>{overview.delivered}</Text><Text style={styles.performanceLabel}>Delivered</Text></View>
+              <View style={styles.performanceItem}><Text style={styles.performanceValue}>{overview?.delivered ?? 'Unavailable'}</Text><Text style={styles.performanceLabel}>Delivered</Text></View>
             </View>
           </GlassPanel>
 
           <GlassPanel variant="card" style={styles.sectionCard}>
             <SellerSectionHeader title="Catalog mix" subtitle="Products by category" icon="pie-chart-outline" />
-            {overview.categories.length ? overview.categories.slice(0, 8).map((item) => (
+            {overview === null ? <Text style={styles.mutedText}>Catalog counts are unavailable until a verified refresh succeeds.</Text> : overview.categories.length ? overview.categories.slice(0, 8).map((item) => (
               <View key={item.name} style={styles.categoryRow}>
                 <View style={styles.categoryCopy}><Text style={styles.categoryName} numberOfLines={1}>{item.name}</Text><Text style={styles.categoryCount}>{item.count}</Text></View>
                 <View style={styles.categoryTrack}><LinearGradient colors={palette.gradients.cta} style={[styles.categoryFill, { width: `${Math.max(8, (item.count / maxCategoryCount) * 100)}%` }]} /></View>
@@ -312,13 +378,13 @@ export default function StoreOverviewScreen({ navigation }) {
             )) : <Text style={styles.mutedText}>Categories appear after products are added.</Text>}
           </GlassPanel>
 
-          {overview.topRated.length > 0 && (
+          {overview?.topRated.length > 0 && (
             <GlassPanel variant="card" style={styles.sectionCard}>
               <SellerSectionHeader title="Top rated" subtitle="Products customers love" icon="star-outline" />
               {overview.topRated.map((product) => (
                 <View key={product._id} style={styles.ratingRow}>
                   <Text style={styles.productName} numberOfLines={1}>{product.name}</Text>
-                  <View style={styles.ratingPill}><Ionicons name="star" size={12} color="#F59E0B" /><Text style={styles.ratingText}>{Number(product.rating || product.averageRating || 0).toFixed(1)}</Text></View>
+                  <View style={styles.ratingPill}><Ionicons name="star" size={12} color="#F59E0B" /><Text style={styles.ratingText}>{readSellerProductRating(product).toFixed(1)}</Text></View>
                 </View>
               ))}
             </GlassPanel>

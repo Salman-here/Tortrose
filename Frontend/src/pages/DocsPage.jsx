@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
-import { Link } from 'react-router-dom';
 
 // On the docs subdomain, internal app links must hop to the main domain.
 const mainHref = (path) => {
@@ -13,12 +12,12 @@ const mainHref = (path) => {
 };
 import {
   Book, ShoppingBag, Store, Bot, Smartphone, CreditCard, Shield, Truck,
-  Users, BarChart3, MessageCircle, Sparkles, ChevronRight, Search,
-  Star, Zap, Globe, Lock, Heart, ArrowRight, ExternalLink, Hash,
-  Package, Settings, Bell, Ticket, Eye, CheckCircle, XCircle,
-  HelpCircle, Palette, TrendingUp, Award, Megaphone, FileText,
+  BarChart3, Sparkles, ChevronRight, Search,
+  Zap, Globe, Heart, ArrowRight, Hash,
+  Package, Settings, Bell, Ticket, CheckCircle,
+  HelpCircle, Award,
   Lightbulb, Info, AlertTriangle, Wand2, Tag, Image as ImageIcon,
-  RefreshCw, Layers, Gem
+  RefreshCw, Layers
 } from 'lucide-react';
 import { Helmet } from 'react-helmet-async';
 
@@ -306,7 +305,7 @@ function DocsPage() {
                 <ul>
                   <li><strong>Username</strong> — How you appear on the platform.</li>
                   <li><strong>Default shipping address</strong> — Saved once, auto-filled at every checkout.</li>
-                  <li><strong>Currency preference</strong> — Choose USD, EUR, PKR, GBP and more — prices convert automatically.</li>
+                  <li><strong>Currency preference</strong> — Choose USD, EUR, PKR, or GBP — prices convert automatically.</li>
                   <li><strong>Saved addresses</strong> — Add multiple addresses (home, office, family) for fast checkout.</li>
                 </ul>
 
@@ -450,7 +449,7 @@ function DocsPage() {
                   'Fill in: product name, brand, category, price, stock, and at least one image.',
                   'Pick a category from the preset list or click "Other" to add a custom category.',
                   'Write a description (up to 2000 characters). When you are done, tap "Improve with AI" to polish it — and "Revert" to undo.',
-                  'Add up to 15 tags manually, or tap "Generate Tags with AI" to auto-create them based on your product name and description.',
+                  'Add relevant tags manually, or tap "Generate Tags with AI" to create them from your product name and description.',
                   'Optional: add an offer price, color/size variants, additional images, and mark as featured.',
                   'Save. The product is live instantly in the marketplace.',
                 ]} />
@@ -458,7 +457,7 @@ function DocsPage() {
                 <h3>AI helpers in the product form</h3>
                 <FeatureGrid features={[
                   { icon: Wand2, title: 'Improve with AI', desc: 'Rewrites your description into clean, persuasive marketplace copy. Use Revert to restore the original.' },
-                  { icon: Tag, title: 'Generate Tags with AI', desc: 'Creates relevant search tags from your product name and description. Disabled once the 15-tag limit is reached.' },
+                  { icon: Tag, title: 'Generate Tags with AI', desc: 'Creates relevant search tags from your product name and description.' },
                   { icon: Layers, title: 'Smart Categories', desc: 'Type to filter the preset list, or pick "Other" to add a custom one — used by the marketplace filter sidebar too.' },
                   { icon: ImageIcon, title: 'Image Upload', desc: 'Upload from your device or paste an image URL. Powered by Cloudinary for fast, optimized delivery.' },
                 ]} />
@@ -812,7 +811,7 @@ function DocsPage() {
               {/* CURRENCY & LANGUAGE */}
               <DocSection id="currency-multilingual" title="Currency & Languages" icon={Globe}>
                 <ul>
-                  <li><strong>Multi-currency</strong> — Pick your display currency from the navbar (USD, EUR, GBP, PKR and more). Prices convert automatically across the site.</li>
+                  <li><strong>Multi-currency</strong> — Pick USD, EUR, GBP, or PKR as your display currency from the navbar. Prices convert automatically across the site.</li>
                   <li><strong>Conversational AI in your language</strong> — The AI understands English, modern Roman Urdu, and common product slang.</li>
                   <li><strong>Local checkout</strong> — Prices are shown in your selected currency, while secure card payments are processed through Rozare's Stripe checkout.</li>
                 </ul>
@@ -825,7 +824,7 @@ function DocsPage() {
                   <li><strong>"I can't add a product"</strong> — Check that you have an active store, that your trial or subscription is active, and that all required fields are filled.</li>
                   <li><strong>"My order isn't showing up"</strong> — Refresh, check the Orders tab, or ask the AI: "Show my recent orders". Make sure you're logged in as the right user.</li>
                   <li><strong>"I can't submit an ads request"</strong> — Ads require Rozare Elite, at least one active featured product, and no other pending ads request. Meta ads also require the $4/month Meta add-on.</li>
-                  <li><strong>"I can't add more tags"</strong> — Each product is limited to 15 tags. Remove some to add new ones.</li>
+                  <li><strong>"I can't add more tags"</strong> — Remove less useful tags, then try again. The manual form and AI tools may apply different safeguards.</li>
                   <li><strong>"WhatsApp didn't send the OTP"</strong> — Wait 60 seconds, then resend. Confirm your number includes the country code.</li>
                   <li><strong>"My description was changed by the AI"</strong> — Use the "Revert" button to restore your original text.</li>
                 </ul>
@@ -848,7 +847,7 @@ function DocsPage() {
                 <FAQItem q="What's the difference between Starter and Elite?" a="Both plans include unlimited listings, unlimited seller AI chat, a custom subdomain, WhatsApp store management, new-order WhatsApp notifications, and the core marketplace features. Elite adds customizable store themes, the smart description generator with AI, advanced analytics, smart tag AI, coupon and bulk tools permanently, priority support, 12 featured products (vs 6), and Rozare-run TikTok ads. Meta ads can be added to Elite for $4/month." />
                 <FAQItem q="What happens after my 15-day free trial ends?" a="If you don't subscribe, your store and products are temporarily hidden until you subscribe — your data is preserved. Subscribe to Starter or Elite to instantly reactivate everything, with the plan's free intro period applied when eligible." />
                 <FAQItem q="Can I cancel anytime?" a="Yes. Cancel from Seller Dashboard → Subscription. Your store stays active until the end of your current billing period." />
-                <FAQItem q="What's the maximum number of tags per product?" a="15 tags per product. Both manual entry and AI generation respect this limit." />
+                <FAQItem q="What's the maximum number of tags per product?" a="The product form shows its current limit. AI-assisted tools may apply a stricter safeguard, so keep only the most useful search tags." />
                 <FAQItem q="How long can my product description be?" a="Up to 2000 characters. A live counter is shown in the form." />
                 <FAQItem q="Can I sell physical and digital products?" a="Today, Rozare focuses on physical products with shipping. Digital product support may expand in the future." />
                 <FAQItem q="What makes Rozare different from other marketplaces?" a="Rozare combines marketplace shopping with seller dashboard tools, AI chat, and WhatsApp workflows, so buyers can get help faster and sellers can manage supported store tasks conversationally." />

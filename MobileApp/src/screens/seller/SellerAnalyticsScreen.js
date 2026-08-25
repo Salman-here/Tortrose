@@ -3,7 +3,7 @@
  * Revenue trend, order volume, order status, top products, category breakdown
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, RefreshControl, TouchableOpacity, Platform,
 } from 'react-native';
@@ -16,6 +16,7 @@ import { SellerInlineError, SellerScreenHeader, SellerScreenSkeleton } from '../
 import { spacing, fontSize, fontWeight, borderRadius, typography } from '../../styles/theme';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useCurrency } from '../../contexts/CurrencyContext';
+import { sellerAnalyticsMoneyIsValid } from '../../utils/currencySafety';
 
 const RANGES = [
   { label: '7 Days', value: '7' },
@@ -23,13 +24,20 @@ const RANGES = [
   { label: '90 Days', value: '90' },
 ];
 
-const getStatusColors = (palette) => [palette.colors.warning, palette.colors.info, palette.colors.primary, palette.colors.success, palette.colors.error, '#f43f5e'];
+const STATUS_ORDER = ['pending', 'confirmed', 'processing', 'shipped', 'delivered', 'cancelled'];
+const getStatusColor = (status, palette) => ({
+  pending: palette.colors.warning,
+  confirmed: '#8B5CF6',
+  processing: palette.colors.info,
+  shipped: palette.colors.primary,
+  delivered: palette.colors.success,
+  cancelled: palette.colors.error,
+}[status] || palette.colors.textSecondary);
 const CAT_COLORS = ['#6366f1', '#10b981', '#0ea5e9', '#8b5cf6', '#f97316', '#ec4899'];
 
 export default function SellerAnalyticsScreen({ navigation }) {
   const { palette } = useTheme();
   const styles = buildStyles(palette);
-  const STATUS_COLORS = getStatusColors(palette);
   const { currency, formatAmount } = useCurrency();
 
   const [loading, setLoading] = useState(true);
@@ -37,23 +45,40 @@ export default function SellerAnalyticsScreen({ navigation }) {
   const [timeRange, setTimeRange] = useState('30');
   const [analytics, setAnalytics] = useState(null);
   const [error, setError] = useState(null);
+  const analyticsRequestRef = useRef(0);
 
   const fetchAnalytics = useCallback(async () => {
+    const requestId = analyticsRequestRef.current + 1;
+    analyticsRequestRef.current = requestId;
     setLoading(true); setError(null);
     try {
       const res = await api.get(`/api/analytics/seller?days=${timeRange}&currency=${currency}`);
-      setAnalytics(res.data.analytics);
+      if (analyticsRequestRef.current !== requestId) return;
+      const nextAnalytics = res.data.analytics;
+      if (!sellerAnalyticsMoneyIsValid(nextAnalytics, currency)) {
+        throw new Error('Analytics returned incomplete or invalid money totals. Please retry.');
+      }
+      setAnalytics(nextAnalytics);
     } catch (e) {
+      if (analyticsRequestRef.current !== requestId) return;
       const status = e.response?.status;
       setAnalytics(null);
       setError(status === 403
         ? 'Advanced Analytics is not included in your current seller entitlement. Open Subscription to compare plans and unlock live performance reporting.'
-        : e.response?.data?.msg || 'Live analytics could not be loaded. Check your connection and try again.');
-    } finally { setLoading(false); setRefreshing(false); }
+        : e.response?.data?.msg || e.message || 'Live analytics could not be loaded. Check your connection and try again.');
+    } finally {
+      if (analyticsRequestRef.current === requestId) {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    }
   }, [currency, timeRange]);
 
-  useEffect(() => { fetchAnalytics(); }, [timeRange, currency]);
-  const onRefresh = useCallback(() => { setRefreshing(true); fetchAnalytics(); }, [timeRange, currency]);
+  useEffect(() => {
+    fetchAnalytics();
+    return () => { analyticsRequestRef.current += 1; };
+  }, [fetchAnalytics]);
+  const onRefresh = useCallback(() => { setRefreshing(true); fetchAnalytics(); }, [fetchAnalytics]);
 
   if (loading) return <SellerScreenSkeleton navigation={navigation} title="Store Analytics" subtitle="Loading verified performance data" icon="bar-chart-outline" variant="dashboard" />;
 
@@ -76,16 +101,20 @@ export default function SellerAnalyticsScreen({ navigation }) {
   const s = analytics.summary;
 
   const summaryStats = [
-    { label: 'Total Revenue', value: formatAmount(s.totalRevenue || 0), icon: 'cash-outline', color: palette.colors.success, bg: 'rgba(16,185,129,0.12)' },
-    { label: 'Paid Orders', value: s.paidOrders || 0, icon: 'receipt-outline', color: palette.colors.info, bg: 'rgba(99,102,241,0.12)' },
-    { label: 'Avg Order Value', value: formatAmount(s.avgOrderValue || 0), icon: 'trending-up-outline', color: '#0ea5e9', bg: 'rgba(14,165,233,0.12)' },
-    { label: 'Units Sold', value: s.totalUnitsSold || 0, icon: 'cube-outline', color: '#8b5cf6', bg: 'rgba(139,92,246,0.12)' },
+    { label: 'Total Revenue', value: formatAmount(s.totalRevenue, { targetCurrency: analytics.currency }), icon: 'cash-outline', color: palette.colors.success, bg: 'rgba(16,185,129,0.12)' },
+    { label: 'Recognized Orders', value: s.paidOrders, icon: 'receipt-outline', color: palette.colors.info, bg: 'rgba(99,102,241,0.12)' },
+    { label: 'Avg Order Value', value: formatAmount(s.avgOrderValue, { targetCurrency: analytics.currency }), icon: 'trending-up-outline', color: '#0ea5e9', bg: 'rgba(14,165,233,0.12)' },
+    { label: 'Units Sold', value: s.totalUnitsSold, icon: 'cube-outline', color: '#8b5cf6', bg: 'rgba(139,92,246,0.12)' },
   ];
 
   const maxRevenue = Math.max(...(analytics.revenueByDay || []).map(d => d.revenue), 1);
   const maxOrders = Math.max(...(analytics.revenueByDay || []).map(d => d.orders), 1);
 
-  const statusBreakdown = analytics.statusBreakdown || [];
+  const statusBreakdown = [...(analytics.statusBreakdown || [])].sort((left, right) => {
+    const leftIndex = STATUS_ORDER.indexOf(left.name);
+    const rightIndex = STATUS_ORDER.indexOf(right.name);
+    return (leftIndex === -1 ? STATUS_ORDER.length : leftIndex) - (rightIndex === -1 ? STATUS_ORDER.length : rightIndex);
+  });
   const totalStatusCount = statusBreakdown.reduce((sum, s) => sum + s.value, 0);
 
   return (
@@ -179,7 +208,7 @@ export default function SellerAnalyticsScreen({ navigation }) {
                   return (
                     <View key={st.name} style={[styles.pieSegment, { 
                       width: `${pct}%`, 
-                      backgroundColor: STATUS_COLORS[i % STATUS_COLORS.length],
+                      backgroundColor: getStatusColor(st.name, palette),
                       borderTopLeftRadius: i === 0 ? 6 : 0,
                       borderBottomLeftRadius: i === 0 ? 6 : 0,
                       borderTopRightRadius: i === statusBreakdown.filter(s=>s.value>0).length - 1 ? 6 : 0,
@@ -190,9 +219,9 @@ export default function SellerAnalyticsScreen({ navigation }) {
               </View>
             </View>
             <View style={styles.statusLegend}>
-              {statusBreakdown.map((st, i) => st.value > 0 && (
+              {statusBreakdown.map((st) => st.value > 0 && (
                 <View key={st.name} style={styles.legendItem}>
-                  <View style={[styles.legendDot, { backgroundColor: STATUS_COLORS[i % STATUS_COLORS.length] }]} />
+                  <View style={[styles.legendDot, { backgroundColor: getStatusColor(st.name, palette) }]} />
                   <Text style={styles.legendName}>{st.name}</Text>
                   <Text style={styles.legendValue}>{st.value}</Text>
                 </View>
@@ -218,7 +247,7 @@ export default function SellerAnalyticsScreen({ navigation }) {
                 <Text style={styles.topRank}>#{i + 1}</Text>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.topName} numberOfLines={1}>{p.name}</Text>
-                  <Text style={styles.topMeta}>{formatAmount(p.revenue || 0)} - {p.sold} sold</Text>
+                  <Text style={styles.topMeta}>{formatAmount(p.revenue, { targetCurrency: analytics.currency })} - {p.sold} sold</Text>
                 </View>
               </View>
             ))}

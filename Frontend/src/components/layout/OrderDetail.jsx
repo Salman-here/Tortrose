@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "react-toastify";
@@ -8,7 +8,14 @@ import Loader from "../common/Loader";
 import { useAuth } from "../../contexts/AuthContext";
 import { useCurrency } from "../../contexts/CurrencyContext";
 import { getAuthToken } from "../../utils/cookieHelper";
-import { getOrderItemOptionPairs } from "../../utils/orderItems";
+import {
+    getOrderCurrency,
+    getOrderItemLineSubtotal,
+    getOrderItemOptionPairs,
+    getOrderSellerShippingBreakdown,
+    getOrderSummaryAmount,
+    getOrderTotal,
+} from "../../utils/orderItems";
 
 const timeAgo = (dateStr) => {
     if (!dateStr) return '';
@@ -28,7 +35,7 @@ const OrderDetail = () => {
     const { currentUser } = useAuth();
     const { formatPrice } = useCurrency();
     const [order, setOrder] = useState(null);
-    const orderMoney = (amount) => formatPrice(amount, { sourceCurrency: order?.currency || 'USD' });
+    const orderMoney = (amount) => formatPrice(amount, { sourceCurrency: getOrderCurrency(order) });
     const [isUpdating, setIsUpdating] = useState(false);
     const [newStatus, setNewStatus] = useState(null);
     const [showCancelConfirm, setShowCancelConfirm] = useState(false);
@@ -44,12 +51,12 @@ const OrderDetail = () => {
         return styles[status] || { bg: 'rgba(255,255,255,0.08)', color: 'hsl(var(--muted-foreground))' };
     };
 
-    const fetchOrderDetail = async () => {
+    const fetchOrderDetail = useCallback(async () => {
         const token = getAuthToken();
         try { const res = await axios.get(`${import.meta.env.VITE_API_URL}api/order/detail/${id}`, { headers: { Authorization: `Bearer ${token}` } }); setOrder(res.data.order); setNewStatus(res.data.order?.orderStatus || 'pending'); }
         catch (error) { toast.error(error.response?.data?.msg || 'Server error'); }
-    };
-    useEffect(() => { fetchOrderDetail(); }, []);
+    }, [id]);
+    useEffect(() => { fetchOrderDetail(); }, [fetchOrderDetail]);
 
     const handleStatusUpdate = async () => {
         try { const token = getAuthToken(); const res = await axios.patch(`${import.meta.env.VITE_API_URL}api/order/update-status/${order?._id}`, { newStatus }, { headers: { Authorization: `Bearer ${token}` } }); toast.success(res.data.msg || 'Updated'); fetchOrderDetail(); }
@@ -66,6 +73,19 @@ const OrderDetail = () => {
     if (!order) return <div className="flex justify-center items-center min-h-[400px]"><Loader /></div>;
 
     const ss = getStatusStyle(order?.orderStatus);
+    const summarySubtotal = getOrderSummaryAmount(order, ['subtotal'], 'order subtotal');
+    const summaryTax = getOrderSummaryAmount(order, ['tax', 'taxAmount'], 'order tax');
+    const summaryCouponDiscount = getOrderSummaryAmount(
+        order,
+        ['couponDiscount', 'discountAmount'],
+        'order coupon discount',
+    );
+    const reconciliationAdjustment = getOrderSummaryAmount(
+        order,
+        ['reconciliationAdjustment'],
+        'order reconciliation adjustment',
+        { signed: true },
+    );
 
     return (
         <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="p-4 sm:p-6">
@@ -314,11 +334,12 @@ const OrderDetail = () => {
                                         )}
                                         <div className="mt-2 sm:hidden">
                                             <p className="text-sm font-semibold" style={{ color: 'hsl(var(--foreground))' }}>{orderMoney(item.price)}</p>
+                                            <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>Subtotal: {orderMoney(getOrderItemLineSubtotal(item))}</p>
                                         </div>
                                     </div>
                                     <div className="text-right hidden sm:block flex-shrink-0">
                                         <p className="text-sm sm:text-base font-medium" style={{ color: 'hsl(var(--foreground))' }}>{orderMoney(item.price)}</p>
-                                        <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>Subtotal: {orderMoney(item.price * item.quantity)}</p>
+                                        <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>Subtotal: {orderMoney(getOrderItemLineSubtotal(item))}</p>
                                     </div>
                                 </motion.div>
                             ))}
@@ -329,25 +350,22 @@ const OrderDetail = () => {
                     <div className="mt-6 glass-inner rounded-xl p-4">
                         <h2 className="text-lg font-semibold mb-4" style={{ color: 'hsl(var(--foreground))' }}>Order Summary</h2>
                         <div className="space-y-2">
-                            <div className="flex justify-between"><span className="text-sm" style={{ color: 'hsl(var(--muted-foreground))' }}>Subtotal</span><span className="text-sm font-medium" style={{ color: 'hsl(var(--foreground))' }}>{orderMoney(order?.orderSummary.subtotal)}</span></div>
+                            <div className="flex justify-between"><span className="text-sm" style={{ color: 'hsl(var(--muted-foreground))' }}>Subtotal</span><span className="text-sm font-medium" style={{ color: 'hsl(var(--foreground))' }}>{orderMoney(summarySubtotal)}</span></div>
                             {(() => {
-                                let displayShippingCost = order?.orderSummary.shippingCost || 0;
-                                let filteredShipping = order?.sellerShipping || [];
-                                if (order?.sellerShipping && order.sellerShipping.length > 0) {
-                                    if (currentUser?.role === 'seller') {
-                                        filteredShipping = order.sellerShipping.filter(ss => ss.seller === currentUser.id || ss.seller === currentUser._id);
-                                        displayShippingCost = filteredShipping.reduce((sum, ss) => sum + (ss.shippingMethod.price || 0), 0);
-                                    } else { filteredShipping = order.sellerShipping; displayShippingCost = order.sellerShipping.reduce((sum, ss) => sum + (ss.shippingMethod.price || 0), 0); }
-                                }
-                                return displayShippingCost > 0 || filteredShipping.length > 0 ? (
+                                const sellerId = currentUser?.role === 'seller'
+                                    ? String(currentUser.id || currentUser._id)
+                                    : null;
+                                const shipping = getOrderSellerShippingBreakdown(order, sellerId);
+                                return shipping.total > 0 || shipping.entries.length > 0 ? (
                                     <div className="space-y-1">
-                                        <div className="flex justify-between"><span className="text-sm font-medium" style={{ color: 'hsl(var(--muted-foreground))' }}>Shipping</span><span className="text-sm font-medium" style={{ color: 'hsl(var(--foreground))' }}>{orderMoney(displayShippingCost)}</span></div>
-                                        {filteredShipping.length > 0 && <div className="pl-4 space-y-1">{filteredShipping.map((ss, i) => (<div key={i} className="flex justify-between text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}><span>{ss.shippingMethod.name} ({ss.shippingMethod.estimatedDays} days)</span><span>{orderMoney(ss.shippingMethod.price)}</span></div>))}</div>}
+                                        <div className="flex justify-between"><span className="text-sm font-medium" style={{ color: 'hsl(var(--muted-foreground))' }}>Shipping</span><span className="text-sm font-medium" style={{ color: 'hsl(var(--foreground))' }}>{orderMoney(shipping.total)}</span></div>
+                                        {shipping.entries.length > 0 && <div className="pl-4 space-y-1">{shipping.entries.map((ss, i) => (<div key={i} className="flex justify-between text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}><span>{ss.shippingMethod.name} ({ss.shippingMethod.estimatedDays} days)</span><span>{orderMoney(ss.shippingMethod.price)}</span></div>))}</div>}
                                     </div>
                                 ) : null;
                             })()}
-                            {order?.orderSummary.tax > 0 && <div className="flex justify-between"><span className="text-sm" style={{ color: 'hsl(var(--muted-foreground))' }}>Tax</span><span className="text-sm font-medium" style={{ color: 'hsl(var(--foreground))' }}>{orderMoney(order?.orderSummary.tax)}</span></div>}
-                            {order?.orderSummary.couponDiscount > 0 && <div className="flex justify-between"><span className="text-sm" style={{ color: 'hsl(150, 60%, 45%)' }}>Coupon Discount</span><span className="text-sm font-medium" style={{ color: 'hsl(150, 60%, 45%)' }}>-{orderMoney(order?.orderSummary.couponDiscount)}</span></div>}
+                            {summaryTax > 0 && <div className="flex justify-between"><span className="text-sm" style={{ color: 'hsl(var(--muted-foreground))' }}>Tax</span><span className="text-sm font-medium" style={{ color: 'hsl(var(--foreground))' }}>{orderMoney(summaryTax)}</span></div>}
+                            {summaryCouponDiscount > 0 && <div className="flex justify-between"><span className="text-sm" style={{ color: 'hsl(150, 60%, 45%)' }}>Coupon Discount</span><span className="text-sm font-medium" style={{ color: 'hsl(150, 60%, 45%)' }}>-{orderMoney(summaryCouponDiscount)}</span></div>}
+                            {reconciliationAdjustment !== 0 && <div className="flex justify-between"><span className="text-sm" style={{ color: 'hsl(var(--muted-foreground))' }}>Rounding adjustment</span><span className="text-sm font-medium" style={{ color: 'hsl(var(--foreground))' }}>{reconciliationAdjustment > 0 ? '+' : '-'}{orderMoney(Math.abs(reconciliationAdjustment))}</span></div>}
                             {order?.appliedCoupons?.length > 0 && (
                                 <div className="flex flex-wrap gap-1 mt-1">
                                     {order.appliedCoupons.map((c, i) => (
@@ -358,17 +376,7 @@ const OrderDetail = () => {
                             <div className="flex justify-between pt-2" style={{ borderTop: '1px solid var(--glass-border)' }}>
                                 <span className="text-lg font-semibold" style={{ color: 'hsl(var(--foreground))' }}>Total Amount</span>
                                 <span className="text-lg font-extrabold" style={{ color: 'hsl(var(--foreground))' }}>
-                                    {(() => {
-                                        const subtotal = order?.orderSummary.subtotal || 0;
-                                        const tax = order?.orderSummary.tax || 0;
-                                        const couponDiscount = order?.orderSummary.couponDiscount || 0;
-                                        let actualShipping = order?.orderSummary.shippingCost || 0;
-                                        if (order?.sellerShipping && order.sellerShipping.length > 0) {
-                                            if (currentUser?.role === 'seller') { const ss = order.sellerShipping.find(s => s.seller === currentUser.id || s.seller === currentUser._id); actualShipping = ss ? ss.shippingMethod.price : 0; }
-                                            else { actualShipping = order.sellerShipping.reduce((sum, s) => sum + (s.shippingMethod.price || 0), 0); }
-                                        }
-                                        return orderMoney(subtotal + tax + actualShipping - couponDiscount);
-                                    })()}
+                                    {orderMoney(getOrderTotal(order))}
                                 </span>
                             </div>
                         </div>

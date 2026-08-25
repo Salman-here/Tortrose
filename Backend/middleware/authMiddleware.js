@@ -11,6 +11,11 @@ const sendInvalidSession = res => res.status(401).json({
     code: 'AUTH_SESSION_INVALID',
 })
 
+const sendBlockedAccount = res => res.status(403).json({
+    msg: 'Your account is blocked. For further details contact support.',
+    code: 'ACCOUNT_BLOCKED',
+})
+
 const verifyToken = async (req, res, next) => {
     const authHeader = req.header('Authorization')
     const token = authHeader?.split(' ')[1]
@@ -29,8 +34,9 @@ const verifyToken = async (req, res, next) => {
     if (!userId) return sendInvalidSession(res)
 
     try {
-        const user = await User.findById(userId).select('_id username email role avatar');
+        const user = await User.findById(userId).select('_id username email role status avatar');
         if (!user) return sendInvalidSession(res)
+        if (user.status === 'blocked') return sendBlockedAccount(res)
 
         req.user = {
             ...decoded,
@@ -39,6 +45,7 @@ const verifyToken = async (req, res, next) => {
             username: user.username,
             email: user.email,
             role: user.role,
+            status: user.status || 'active',
             avatar: user.avatar,
         }
         return next()
@@ -57,7 +64,7 @@ const protect = verifyToken
 // Admin middleware
 const admin = async (req, res, next) => {
     try {
-        const userId = req.user._id || req.user.id;
+        const userId = req.user?._id || req.user?.id;
         
         if (!userId) {
             return res.status(401).json({ 
@@ -66,7 +73,7 @@ const admin = async (req, res, next) => {
             })
         }
         
-        const user = await User.findById(userId)
+        const user = await User.findById(userId).select('role status')
         
         if (!user) {
             return res.status(404).json({ 
@@ -75,6 +82,8 @@ const admin = async (req, res, next) => {
             })
         }
         
+        if (user.status === 'blocked') return sendBlockedAccount(res)
+
         if (user.role !== 'admin') {
             return res.status(403).json({ 
                 success: false,
@@ -82,6 +91,8 @@ const admin = async (req, res, next) => {
             })
         }
         
+        req.user.role = user.role
+        req.user.status = user.status || 'active'
         next()
     } catch (error) {
         console.error('Admin middleware error:', error)
@@ -95,7 +106,7 @@ const admin = async (req, res, next) => {
 // Seller middleware
 const seller = async (req, res, next) => {
     try {
-        const userId = req.user._id || req.user.id;
+        const userId = req.user?._id || req.user?.id;
         
         if (!userId) {
             return res.status(401).json({ 
@@ -104,7 +115,7 @@ const seller = async (req, res, next) => {
             })
         }
         
-        const user = await User.findById(userId)
+        const user = await User.findById(userId).select('role status')
         
         if (!user) {
             return res.status(404).json({ 
@@ -113,6 +124,8 @@ const seller = async (req, res, next) => {
             })
         }
         
+        if (user.status === 'blocked') return sendBlockedAccount(res)
+
         if (user.role !== 'seller') {
             return res.status(403).json({ 
                 success: false,
@@ -120,6 +133,8 @@ const seller = async (req, res, next) => {
             })
         }
         
+        req.user.role = user.role
+        req.user.status = user.status || 'active'
         next()
     } catch (error) {
         console.error('Seller middleware error:', error)
@@ -138,13 +153,21 @@ const optionalAuth = async (req, res, next) => {
     const authHeader = req.header('Authorization');
     const token = authHeader?.split(' ')[1];
     if (!token) return next();
+    let decoded;
     try {
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        const userId = decoded.id || decoded._id;
-        if (!userId) return next();
+        decoded = jwt.verify(token, process.env.JWT_SECRET);
+    } catch {
+        // Invalid/expired token — proceed without req.user rather than rejecting.
+        return next();
+    }
 
-        const user = await User.findById(userId).select('_id username email role avatar');
-        if (!user) return next();
+    const userId = decoded.id || decoded._id;
+    if (!userId) return sendInvalidSession(res);
+
+    try {
+        const user = await User.findById(userId).select('_id username email role status avatar');
+        if (!user) return sendInvalidSession(res);
+        if (user.status === 'blocked') return sendBlockedAccount(res);
 
         req.user = {
             ...decoded,
@@ -153,12 +176,14 @@ const optionalAuth = async (req, res, next) => {
             username: user.username,
             email: user.email,
             role: user.role,
+            status: user.status || 'active',
             avatar: user.avatar,
         };
-    } catch {
-        // Invalid/expired token — proceed without req.user rather than rejecting.
+        return next();
+    } catch (error) {
+        console.error('Optional session user lookup error:', error.message);
+        return res.status(500).json({ msg: 'Unable to verify session' });
     }
-    next();
 };
 
 module.exports = verifyToken
@@ -166,3 +191,4 @@ module.exports.protect = protect
 module.exports.admin = admin
 module.exports.seller = seller
 module.exports.optionalAuth = optionalAuth
+module.exports.sendBlockedAccount = sendBlockedAccount

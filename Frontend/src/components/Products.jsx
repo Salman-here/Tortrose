@@ -8,7 +8,6 @@ import ProductCard from './common/ProductCard'
 import StoreSearch from './common/StoreSearch'
 import { PackageX, RefreshCw, Filter, X, ChevronLeft, ChevronRight, Search } from 'lucide-react'
 import PersonalizedSections from './common/PersonalizedSections'
-import { useAuth } from '../contexts/AuthContext'
 import CurrencySelector from './common/CurrencySelector'
 import { useCurrency } from '../contexts/CurrencyContext'
 import { useBuyerLocation } from '../contexts/BuyerLocationContext'
@@ -20,6 +19,29 @@ import BuyerLocationSelector from './common/BuyerLocationSelector'
 const PRODUCTS_PER_PAGE = 24
 const PRODUCTS_CACHE_KEY = 'rozare:last-products-response'
 const DEFAULT_OTHER_BRANDS_FILTER = '__other_brands__'
+const PRICE_FILTER_MAX = Object.freeze({
+  USD: 5000,
+  PKR: 1500000,
+  EUR: 5000,
+  GBP: 5000,
+})
+
+const getPriceFilterMax = (currency) => PRICE_FILTER_MAX[currency] || PRICE_FILTER_MAX.USD
+
+const parseQueryParams = (search, activeCurrency) => {
+  const params = new URLSearchParams(search)
+  const queryCurrency = String(params.get('currency') || '').trim().toUpperCase()
+  const priceFilterMax = getPriceFilterMax(activeCurrency)
+  const savedRangeBelongsToCurrency = !queryCurrency || queryCurrency === activeCurrency
+  return {
+    categories: params.getAll('categories'),
+    brands: params.getAll('brands'),
+    search: params.get('search') || '',
+    priceRange: params.get('priceRange') && savedRangeBelongsToCurrency
+      ? params.get('priceRange').split(',')
+      : ['0', String(priceFilterMax)]
+  }
+}
 
 const readProductsCache = () => {
   try {
@@ -51,12 +73,12 @@ function Products() {
   const priceRangeRef = useRef(null)
   const navigate = useNavigate()
   const location = useLocation()
-  const { currentUser } = useAuth()
-  const { formatPrice } = useCurrency()
+  const { currency, getCurrencySymbol } = useCurrency()
   const { appendLocationParams, locationQueryString } = useBuyerLocation()
+  const priceFilterMax = getPriceFilterMax(currency)
 
   const { register, reset, watch, setValue } = useForm({
-    defaultValues: { categories: [], brands: [], priceRange: ["0", "5000"] }
+    defaultValues: { categories: [], brands: [], priceRange: ['0', String(priceFilterMax)] }
   })
 
   const filters = watch()
@@ -70,12 +92,9 @@ function Products() {
   const currentPageRef = useRef(currentPage)
   const sortByRef = useRef(sortBy)
   const sortOrderRef = useRef(sortOrder)
+  const currencyRef = useRef(currency)
+  const fetchProductsRef = useRef(null)
   const initialFetchDone = useRef(false)
-
-  useEffect(() => {
-    searchRef.current = search
-    if (initialFetchDone.current && search === '') fetchProducts()
-  }, [search])
 
   const serializeFilters = useCallback(() => {
     const f = filtersRef.current
@@ -85,8 +104,8 @@ function Products() {
       if (Array.isArray(value)) {
         if (key === 'priceRange') {
           const min = String(value[0] ?? '0')
-          const max = String(value[1] ?? '5000')
-          if (min !== '0' || max !== '5000') params.append(key, `${min},${max}`)
+          const max = String(value[1] ?? priceFilterMax)
+          if (min !== '0' || max !== String(priceFilterMax)) params.append(key, `${min},${max}`)
         }
         else value.forEach(item => params.append(key, item))
       }
@@ -96,9 +115,10 @@ function Products() {
     params.append('limit', PRODUCTS_PER_PAGE)
     params.append('sortBy', sortByRef.current)
     params.append('sortOrder', sortOrderRef.current)
+    params.append('currency', currency)
     appendLocationParams(params)
     return params.toString()
-  }, [appendLocationParams])
+  }, [appendLocationParams, currency, priceFilterMax])
 
   const fetchProducts = useCallback(async () => {
     setLoading(true); setError(null)
@@ -132,6 +152,7 @@ function Products() {
     }
     finally { setLoading(false) }
   }, [serializeFilters, navigate, location.pathname])
+  fetchProductsRef.current = fetchProducts
 
   const fetchFilters = useCallback(async () => {
     try {
@@ -147,13 +168,20 @@ function Products() {
   }, [appendLocationParams])
 
   useEffect(() => {
+    searchRef.current = search
+    if (initialFetchDone.current && search === '') fetchProductsRef.current?.()
+  }, [search])
+
+  const serializedFilters = JSON.stringify(filters || {})
+  useEffect(() => {
     const prev = JSON.stringify(filtersRef.current)
-    filtersRef.current = filters
-    if (initialFetchDone.current && prev !== JSON.stringify(filters)) {
+    const nextFilters = JSON.parse(serializedFilters)
+    filtersRef.current = nextFilters
+    if (initialFetchDone.current && prev !== serializedFilters) {
       setCurrentPage(1) // Reset to page 1 when filters change
-      fetchProducts()
+      fetchProductsRef.current?.()
     }
-  }, [JSON.stringify(filters)])
+  }, [serializedFilters])
   
   // Fetch products when page, sort, or sortOrder changes
   useEffect(() => {
@@ -161,13 +189,13 @@ function Products() {
     sortByRef.current = sortBy
     sortOrderRef.current = sortOrder
     if (initialFetchDone.current) {
-      fetchProducts()
+      fetchProductsRef.current?.()
     }
   }, [currentPage, sortBy, sortOrder])
 
   useEffect(() => {
     fetchFilters()
-    const parsedFilters = parseQueryParams(location.search)
+    const parsedFilters = parseQueryParams(location.search, currency)
     const params = new URLSearchParams(location.search)
     const parsedPage = Math.max(1, parseInt(params.get('page'), 10) || 1)
     const parsedSortBy = params.get('sortBy') || 'relevance'
@@ -184,6 +212,9 @@ function Products() {
     setSortOrder(parsedSortOrder)
     initialFetchDone.current = true
     fetchProducts()
+    // Initial URL hydration is deliberately mount-only. Location, buyer
+    // location, and currency changes have dedicated synchronized effects.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
@@ -192,17 +223,25 @@ function Products() {
     currentPageRef.current = 1
     fetchFilters()
     fetchProducts()
+    // Fetch callbacks also change with currency; the currency effect below
+    // owns that transition so a location update is not double-requested.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [locationQueryString])
 
-  const parseQueryParams = (search) => {
-    const params = new URLSearchParams(search)
-    return {
-      categories: params.getAll('categories'),
-      brands: params.getAll('brands'),
-      search: params.get('search') || '',
-      priceRange: params.get('priceRange') ? params.get('priceRange').split(',') : ["0", "5000"]
+  useEffect(() => {
+    if (!initialFetchDone.current || currencyRef.current === currency) return
+    currencyRef.current = currency
+    const nextFilters = {
+      ...filtersRef.current,
+      priceRange: ['0', String(priceFilterMax)],
     }
-  }
+    filtersRef.current = nextFilters
+    setValue('priceRange', nextFilters.priceRange, { shouldDirty: false })
+    if (priceRangeRef.current) priceRangeRef.current.value = 0
+    setCurrentPage(1)
+    currentPageRef.current = 1
+    fetchProducts()
+  }, [currency, fetchProducts, priceFilterMax, setValue])
 
   const goToPage = (page) => {
     setCurrentPage(page)
@@ -241,10 +280,10 @@ function Products() {
 
   const filterCategories = filters.categories || []
   const filterBrands = filters.brands || []
-  const filterPriceRange = filters.priceRange || ['0', '5000']
+  const filterPriceRange = filters.priceRange || ['0', String(priceFilterMax)]
 
   const activeFilterCount = filterCategories.length + filterBrands.length +
-    (filterPriceRange[0] !== '0' || filterPriceRange[1] !== '5000' ? 1 : 0)
+    (filterPriceRange[0] !== '0' || String(filterPriceRange[1]) !== String(priceFilterMax) ? 1 : 0)
 
   const FilterSidebarContent = ({ onClose }) => (
     <div className='flex flex-col gap-6 p-6'>
@@ -382,15 +421,15 @@ function Products() {
       {/* Price Range */}
       <div>
         <label className='block text-xs font-semibold uppercase tracking-wider mb-3' style={{ color: 'hsl(var(--muted-foreground))' }}>Price Range</label>
-        <input type='range' min={0} max={5000} defaultValue={0}
+        <input type='range' min={0} max={priceFilterMax} defaultValue={0}
           {...register('priceRange')} ref={priceRangeRef}
-          onChange={(e) => setValue('priceRange', [e.target.value, 5000])}
+          onChange={(e) => setValue('priceRange', [e.target.value, String(priceFilterMax)])}
           className='w-full h-2 rounded-full appearance-none cursor-pointer accent-indigo-600'
           style={{ background: 'rgba(255,255,255,0.15)' }}
         />
         <div className='flex justify-between mt-2'>
-          <span className='tag-pill text-xs font-semibold'>${filterPriceRange[0]}</span>
-          <span className='tag-pill text-xs font-semibold'>${filterPriceRange[1]}</span>
+          <span className='tag-pill text-xs font-semibold'>{getCurrencySymbol()}{filterPriceRange[0]} {currency}</span>
+          <span className='tag-pill text-xs font-semibold'>{getCurrencySymbol()}{filterPriceRange[1]} {currency}</span>
         </div>
       </div>
 
@@ -409,7 +448,7 @@ function Products() {
       {/* Reset Button */}
       <button
         onClick={() => {
-          reset({ categories: [], brands: [], search: '', priceRange: ['0', '5000'] })
+          reset({ categories: [], brands: [], search: '', priceRange: ['0', String(priceFilterMax)] })
           setSearch('')
           setCurrentPage(1)
           if (priceRangeRef.current) priceRangeRef.current.value = 0

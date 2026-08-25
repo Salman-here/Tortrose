@@ -7,31 +7,40 @@ const { stripe, STRIPE_MODE } = require('../config/stripe');
 const TaxConfig = require('../models/TaxConfig');
 const Store = require('../models/Store');
 const { calculateTax } = require('./taxController');
-const { recordCouponUsage } = require('./couponController');
-const { sendEmail } = require('./mailController');
-const { orderConfirmationEmail, orderStatusUpdateEmail, newOrderSellerEmail, buyerOrderConfirmationRequestEmail } = require('../utils/emailTemplates');
 const { generateConfirmationToken } = require('./orderConfirmationController');
-const { enqueueOrderConfirmation, enqueueOrderPlacedInfo, enqueueTextNotification } = require('../services/whatsapp/queue');
-const { buildOrderStatusUpdateMessage } = require('../services/whatsapp/messageBuilder');
-const WhatsAppConfig = require('../models/WhatsAppConfig');
-const { configKeyFor } = require('../services/whatsapp/gatewayMode');
 const User = require('../models/User');
-const { notifySeller } = require('../services/whatsapp/sellerNotificationService');
-const sellerTemplates = require('../services/whatsapp/sellerMessageTemplates');
 const { trackOrderEvent } = require('../services/tiktokEventsApi');
 const { publicProductFilter } = require('../services/productModerationService');
-const { CURRENCIES, normalizeCurrency, convertAmount } = require('../services/currencyService');
-const { getProductCurrency, getProductEffectivePrice } = require('../services/productPricingService');
+const {
+    CURRENCIES,
+    normalizeCurrency,
+    isSupportedCurrency,
+    getExchangeRateSnapshot,
+    convertAmountWithRates,
+} = require('../services/currencyService');
+const {
+    requireStoredProductCurrency,
+    requireStoredProductDiscountCurrency,
+    requireStoredProductEffectivePrice,
+} = require('../services/productPricingService');
 const { isStoreVisibleToBuyer, normalizeBuyerLocation } = require('../services/storeVisibilityService');
 const { storeAllowsCashOnDelivery } = require('../services/storePaymentPolicyService');
 const { normalizeReturnPolicy } = require('../services/returnPolicyService');
 const { payOrderWithWallet } = require('../services/walletService');
-const { commitOrderInventory, restoreOrderInventory } = require('../services/orderInventoryService');
 const {
-    toStripeMinorUnits,
-    getExpectedStripeTotalMinor,
+    commitOrderInventory,
+    commitOrderInventoryAndCoupons,
+} = require('../services/orderInventoryService');
+const { cancelOrderSafely } = require('../services/orderCancellationService');
+const { transitionOrderFulfillment } = require('../services/orderStatusTransitionService');
+const {
+    attachStripeOrderReference,
     validateStripeOrderSession,
     validateStripeOrderPaymentIntent,
+    getExpectedStripeTotalMinor,
+    getStripeOrderChargeAmountMinor,
+    fulfillStripeOrder,
+    fulfillStripeOrderPaymentIntent,
     isPaymentFulfilled,
 } = require('../services/stripeOrderPaymentService');
 const {
@@ -44,27 +53,69 @@ const {
     closeOrderPaymentIntent,
 } = require('../services/stripePendingPaymentService');
 const {
-    buildCustomerInitiatedPaymentIntentParams,
     isDefinitiveStripeCreationError,
+    isAuthoritativeStripeIdempotentReplayRejection,
+    isStripeIdempotentReplayWithinAuthorityWindow,
 } = require('../services/stripePaymentIntentFactory');
+const {
+    buildOrderCheckoutReturnUrls,
+    createHostedOrderCheckoutSession,
+    createNativeOrderPaymentIntent,
+} = require('../services/stripeOrderSetupService');
+const {
+    completeNoChargeOrder,
+    isNoChargeOnlineOrder,
+} = require('../services/orderNoChargeService');
+const {
+    isAuthoritativeStripeAmountTooSmallError,
+    isAuthoritativeStripeResourceMissingError,
+} = require('../services/stripeCheckoutErrorService');
 const { checkoutRequestFingerprint } = require('../services/checkoutIdempotencyService');
+const { canonicalizeShippingPhone } = require('../services/orderBuyerContactService');
 const { removeFulfilledOrderItemsFromCart } = require('../services/cartFulfillmentService');
+const {
+    parsePositiveSafeInteger,
+    parseStrictFiniteNumber,
+} = require('../services/numericInputService');
 const {
     validateAndPriceCoupons,
     validateAndPriceShipping,
 } = require('../services/checkoutPricingService');
-const { discountForOrderItems } = require('../services/orderDiscountService');
+const {
+    SELLER_SETTLEMENT_VERSION,
+    buildOrderSellerSettlement,
+    getAccountingOrderCurrency,
+    sellerOrderSummaryForItems,
+} = require('../services/orderMoneyService');
+const {
+    getOrderItemLineSubtotal,
+    priceOrderItemLines,
+} = require('../services/orderLinePricingService');
+const {
+    fromMinorUnits,
+    roundMoney,
+    sumMoney,
+    toMinorUnits,
+} = require('../services/moneyMath');
+const {
+    reserveOrderCoupons,
+    consumeOrderCoupons,
+    deleteUnpaidOrderAndReleaseCoupons,
+} = require('../services/couponUsageService');
 const {
     ensureOrderSellerFulfillment,
-    getBuyerCancellationBlock,
     sellerFulfillmentFor,
-    setAllSellerFulfillmentStatus,
-    setSellerFulfillmentStatus,
-    syncAggregateDeliveryState,
 } = require('../services/orderFulfillmentService');
+const {
+    enqueueCodOrderBuyerConfirmationNotification,
+    enqueueCodOrderSellerNotifications,
+} = require('../services/financialNotificationOutboxService');
+const { resolveOrderReference } = require('../services/orderReferenceService');
 const {
     formatItemOptionsText,
     formatOrderMoney,
+    formatOrderItemUnitMoney,
+    orderItemLineSubtotal,
     orderItemName,
     orderItemOptionsHtml,
     paymentMethodLabel,
@@ -73,6 +124,43 @@ const {
 } = require('../utils/orderPresentation');
 
 const toId = (value) => value?.toString?.() || String(value || '');
+const checkoutFingerprintMatches = ({
+    existingOrder,
+    requestFingerprint,
+    legacyRequestFingerprint,
+    resolvedCurrency,
+}) => {
+    const storedFingerprint = existingOrder?.checkoutRequestFingerprint;
+    if (!storedFingerprint || storedFingerprint === requestFingerprint) return true;
+    if (!legacyRequestFingerprint || storedFingerprint !== legacyRequestFingerprint) return false;
+    try {
+        return getAccountingOrderCurrency(existingOrder) === resolvedCurrency;
+    } catch (_) {
+        return false;
+    }
+};
+const invalidTaxConfigError = (message = 'The active tax configuration is invalid. Ask an administrator to correct it.') => {
+    const error = new Error(message);
+    error.statusCode = 503;
+    error.code = 'TAX_CONFIG_INVALID';
+    return error;
+};
+const checkoutStoredProductPricing = (product) => {
+    // Raw currency-less legacy rows are canonical USD. Any metadata that is
+    // actually present must be supported and internally consistent, and raw
+    // persisted prices must already be exact cents. Display helpers are
+    // intentionally tolerant and therefore must never sit on this charge path.
+    const sourceCurrency = requireStoredProductCurrency(product, 'USD');
+    const discountCurrency = requireStoredProductDiscountCurrency(product, sourceCurrency);
+    const sourcePrice = requireStoredProductEffectivePrice(product);
+    if (product.discountedPrice > 0 && discountCurrency !== sourceCurrency) {
+        const error = new Error(`The stored price currencies for "${product?.name || 'a product'}" do not agree.`);
+        error.statusCode = 409;
+        error.code = 'PRODUCT_CURRENCY_METADATA_INVALID';
+        throw error;
+    }
+    return { sourceCurrency, sourcePrice };
+};
 const optionsKey = (opts) => {
     const plain = toPlainOptions(opts);
     return Object.keys(plain)
@@ -95,124 +183,230 @@ const normalizeCheckoutIdempotencyKey = (value) => {
     if (key.length > 160 || !/^[A-Za-z0-9:_\-.]+$/.test(key)) return null;
     return key;
 };
-const orderResponseSummary = (order) => ({
-    _id: order._id,
+const normalizeGuestCheckoutEmail = value => String(value || '').trim().toLowerCase();
+const guestCheckoutIdempotencyKey = (email, clientKey) => (
+    `guest:${crypto.createHash('sha256').update(email).digest('hex')}:${clientKey}`
+);
+const orderResponseSummary = (order) => {
+    const totalAmount = order?.orderSummary?.totalAmount;
+    if (
+        typeof totalAmount !== 'number'
+        || !Number.isFinite(totalAmount)
+        || totalAmount < 0
+        || roundMoney(totalAmount) !== totalAmount
+    ) {
+        const error = new Error('The stored order total is invalid and cannot be returned safely.');
+        error.code = 'ORDER_MONEY_INVALID';
+        error.statusCode = 409;
+        throw error;
+    }
+    return {
+        _id: order._id,
+        orderId: order.orderId,
+        totalAmount,
+        currency: getAccountingOrderCurrency(order),
+        email: order.shippingInfo?.email,
+    };
+};
+const deleteUnpaidCheckoutOrder = (filter, reason = 'Checkout closed before payment.') => {
+    const { _id: orderId, isPaid: _ignoredIsPaid, ...match } = filter || {};
+    // A concurrent cancellation is a completed lifecycle transition and must
+    // remain durable. Creator/recovery cleanup may delete only an order that is
+    // still active; transaction conflicts protect a cancellation that begins
+    // after this predicate is read.
+    return deleteUnpaidOrderAndReleaseCoupons({
+        orderId,
+        reason,
+        match: {
+            orderStatus: { $ne: 'cancelled' },
+            ...match,
+        },
+    });
+};
+
+const noChargeCheckoutResponse = (order, { idempotentReplay = false } = {}) => ({
+    msg: idempotentReplay
+        ? 'No payment was required; this order is already complete.'
+        : 'Order completed successfully. No payment was required.',
+    idempotentReplay,
+    isPaid: true,
+    completed: true,
+    noPaymentRequired: true,
+    paymentMethod: order.paymentMethod,
+    paymentFlow: order.paymentFlow,
     orderId: order.orderId,
-    totalAmount: order.orderSummary?.totalAmount || 0,
-    currency: order.currency,
-    email: order.shippingInfo?.email,
+    order: orderResponseSummary(order),
 });
 
-const createNativeOrderPaymentIntent = (order) => {
-    const expectedAmountMinor = getExpectedStripeTotalMinor(order);
-    return stripe.paymentIntents.create(
-        buildCustomerInitiatedPaymentIntentParams({
-            amountMinor: expectedAmountMinor,
-            currency: order.currency,
-            customerId: order.stripeCustomerId,
-            receiptEmail: order.shippingInfo?.email,
-            metadata: {
-                type: 'order_payment',
-                paymentFlow: 'payment_sheet',
-                orderId: order.orderId,
-                mongoOrderId: String(order._id),
-                userId: String(order.user),
-                amountMinor: String(expectedAmountMinor),
-                currency: order.currency,
-                stripeMode: order.stripeMode || STRIPE_MODE,
-                tiktokPurchaseEventId: order.tracking?.tiktokPurchaseEventId || '',
-            },
-        }),
-        { idempotencyKey: `rozare-order-pi:${order.stripeMode || STRIPE_MODE}:${order._id}` },
-    );
-};
-
-const hostedOrderLineItems = (order) => {
-    const currency = order.currency.toLowerCase();
-    return [
-        ...(order.orderItems || []).map(item => ({
-            price_data: {
-                currency,
-                product_data: { name: item.name, images: item.image ? [item.image] : undefined },
-                unit_amount: toStripeMinorUnits(item.price, order.currency),
-            },
-            quantity: item.quantity,
-        })),
-        {
-            price_data: {
-                currency,
-                product_data: {
-                    name: (order.sellerShipping || []).length > 1
-                        ? `Shipping (${order.sellerShipping.length} sellers)`
-                        : `${order.shippingMethod.name} Shipping`,
-                },
-                unit_amount: toStripeMinorUnits(order.orderSummary.shippingCost, order.currency),
-            },
-            quantity: 1,
-        },
-        ...(Number(order.orderSummary.tax) > 0 ? [{
-            price_data: {
-                currency,
-                product_data: { name: 'Tax' },
-                unit_amount: toStripeMinorUnits(order.orderSummary.tax, order.currency),
-            },
-            quantity: 1,
-        }] : []),
-    ];
-};
-
-const createHostedOrderCheckoutSession = async (order) => {
-    const stripeCurrency = order.currency.toLowerCase();
-    let discounts;
-    const discountAmount = Number(order.orderSummary?.couponDiscount) || 0;
-    if (discountAmount > 0) {
-        const amountOff = toStripeMinorUnits(discountAmount, order.currency);
-        if (amountOff > 0) {
-            const coupon = await stripe.coupons.create({
-                amount_off: amountOff,
-                currency: stripeCurrency,
-                duration: 'once',
-                name: 'Coupon discount',
-            }, {
-                idempotencyKey: `rozare-order-coupon:${order.stripeMode || STRIPE_MODE}:${order._id}`,
-            });
-            discounts = [{ coupon: coupon.id }];
-        }
+const cleanupRejectedStripeCheckout = async (
+    order,
+    {
+        reason,
+        paymentSetupState = 'creating',
+    } = {},
+) => {
+    let cleanup;
+    try {
+        cleanup = await deleteUnpaidCheckoutOrder({
+            _id: order._id,
+            awaitingPayment: true,
+            paymentSetupState,
+            stripePaymentIntentId: null,
+            stripeSessionId: null,
+        }, reason || 'Stripe definitively rejected the payment setup.');
+    } catch (cleanupError) {
+        const error = new Error(
+            'The card payment was rejected, but checkout cleanup is still being confirmed. Retry this same checkout attempt.'
+        );
+        error.statusCode = 503;
+        error.code = 'PAYMENT_ATTEMPT_RECOVERY_PENDING';
+        error.cause = cleanupError;
+        throw error;
     }
-    const isMobile = order.clientSurface === 'mobile';
-    const frontendUrl = process.env.FRONTEND_URL || 'https://rozare.com';
-    return stripe.checkout.sessions.create({
-        payment_method_types: ['card'],
-        mode: 'payment',
-        customer: order.stripeCustomerId,
-        saved_payment_method_options: {
-            payment_method_save: 'enabled',
-            payment_method_remove: 'disabled',
-        },
-        ...(isMobile ? { origin_context: 'mobile_app' } : {}),
-        line_items: hostedOrderLineItems(order),
-        ...(discounts ? { discounts } : {}),
-        success_url: isMobile
-            ? `rozare://payment-success?session_id={CHECKOUT_SESSION_ID}&orderId=${order.orderId}`
-            : `${frontendUrl}/success?session_id={CHECKOUT_SESSION_ID}&orderId=${order.orderId}`,
-        cancel_url: isMobile
-            ? `rozare://payment-cancel?orderId=${order.orderId}`
-            : `${frontendUrl}/checkout`,
-        expires_at: Math.floor(new Date(order.paymentExpiresAt).getTime() / 1000),
-        metadata: {
-            type: 'order_payment',
-            paymentFlow: 'checkout_session',
-            orderId: order.orderId,
-            mongoOrderId: String(order._id),
-            userId: String(order.user),
-            amountMinor: String(getExpectedStripeTotalMinor(order)),
-            currency: order.currency,
-            stripeMode: order.stripeMode || STRIPE_MODE,
-            tiktokPurchaseEventId: order.tracking?.tiktokPurchaseEventId || '',
-        },
-    }, {
-        idempotencyKey: `rozare-order-checkout:${order.stripeMode || STRIPE_MODE}:${order._id}`,
+
+    if (cleanup?.deleted) return;
+    const current = await Order.findById(order._id);
+    if (!current) return;
+    if (
+        current.orderStatus === 'cancelled'
+        && current.inventoryCommitted === false
+        && current.paymentSetupState === 'closed'
+    ) return;
+
+    const error = new Error(
+        'The card payment was rejected, but checkout cleanup is still being confirmed. Retry this same checkout attempt.'
+    );
+    error.statusCode = 503;
+    error.code = 'PAYMENT_ATTEMPT_RECOVERY_PENDING';
+    throw error;
+};
+
+const respondToAmountTooSmall = async (res, order) => {
+    await cleanupRejectedStripeCheckout(order, {
+        reason: 'Stripe rejected the positive order total as below the account minimum.',
     });
+    return res.status(400).json({
+        msg: 'This positive card total is below Stripe\'s current minimum for this account and currency. Add another item, reduce the coupon discount, or choose another payment method.',
+        code: 'PAYMENT_AMOUNT_TOO_SMALL',
+        paymentMethod: 'stripe',
+        orderId: order.orderId,
+        currency: order.currency,
+        totalAmount: order.orderSummary?.totalAmount,
+    });
+};
+
+const rejectDefinitiveStripeSetup = async (order, creationError, message) => {
+    await cleanupRejectedStripeCheckout(order, {
+        reason: 'Stripe definitively rejected the payment setup.',
+    });
+    const error = new Error(message);
+    error.statusCode = 502;
+    error.code = 'PAYMENT_ATTEMPT_REJECTED';
+    error.cause = creationError;
+    throw error;
+};
+
+const handleExistingStripeCreationError = async ({
+    res,
+    order,
+    creationError,
+    recoveryMessage,
+    rejectionMessage,
+}) => {
+    // An existing `creating` row can be the result of an earlier ambiguous
+    // request. Only an InvalidRequest response from the same deterministic key
+    // while Stripe still guarantees that key's result can prove that no prior
+    // external object exists. Authentication, permission, connection, API,
+    // idempotency, and stale-key errors must retain the local reservation.
+    const authoritativeRejection = isAuthoritativeStripeIdempotentReplayRejection(
+        creationError,
+        { createdAt: order.paymentSetupStartedAt },
+    );
+    if (!authoritativeRejection) {
+        return res.status(502).json({
+            msg: recoveryMessage,
+            code: 'PAYMENT_ATTEMPT_RECOVERY_PENDING',
+            orderId: order.orderId,
+        });
+    }
+    if (isAmountTooSmallForPositiveStripeOrder(creationError, order)) {
+        return respondToAmountTooSmall(res, order);
+    }
+    await cleanupRejectedStripeCheckout(order, {
+        reason: 'Stripe definitively rejected the payment setup.',
+    });
+    return res.status(502).json({
+        msg: rejectionMessage,
+        code: 'PAYMENT_ATTEMPT_REJECTED',
+        orderId: order.orderId,
+    });
+};
+
+const isAmountTooSmallForPositiveStripeOrder = (error, order) => (
+    order?.paymentMethod === 'stripe'
+    && getExpectedStripeTotalMinor(order) > 0
+    && isAuthoritativeStripeAmountTooSmallError(error)
+);
+
+// Atomically cross the local -> Stripe creation boundary. Cancellation may
+// safely win while state is `not_started`; once this guarded write wins,
+// cancellation fails closed until the deterministic create response (or a
+// signed webhook) attaches the exact external reference.
+const claimStripeSetupCreation = async (order, { allowCreatingReplay = false } = {}) => {
+    const paymentFlow = order.paymentFlow;
+    const referenceField = paymentFlow === 'payment_sheet'
+        ? 'stripePaymentIntentId'
+        : 'stripeSessionId';
+    if (
+        order.paymentSetupState === 'creating'
+        && !isStripeIdempotentReplayWithinAuthorityWindow({
+            createdAt: order.paymentSetupStartedAt,
+        })
+    ) {
+        const error = new Error(
+            'This secure payment setup is too old for safe automatic replay and requires reconciliation.'
+        );
+        error.statusCode = 503;
+        error.code = 'PAYMENT_SETUP_RECOVERY_REQUIRED';
+        throw error;
+    }
+    const paymentSetupStartedAt = order.paymentSetupStartedAt || new Date();
+    const claimed = await Order.findOneAndUpdate(
+        {
+            _id: order._id,
+            paymentMethod: 'stripe',
+            paymentFlow,
+            isPaid: false,
+            awaitingPayment: true,
+            inventoryCommitted: true,
+            orderStatus: { $ne: 'cancelled' },
+            paymentSetupState: allowCreatingReplay
+                ? { $in: ['not_started', 'creating'] }
+                : 'not_started',
+            $or: [
+                { [referenceField]: null },
+                { [referenceField]: '' },
+                { [referenceField]: { $exists: false } },
+            ],
+        },
+        { $set: { paymentSetupState: 'creating', paymentSetupStartedAt } },
+        { new: true, runValidators: true, context: 'query' },
+    );
+    if (claimed) return claimed;
+
+    const current = await Order.findById(order._id);
+    const error = new Error(
+        !current || current.orderStatus === 'cancelled' || current.paymentSetupState === 'closed'
+            ? 'This secure payment attempt was cancelled before Stripe setup began.'
+            : 'Secure payment setup is being recovered. Retry this same checkout attempt.'
+    );
+    error.statusCode = !current || current.orderStatus === 'cancelled' || current.paymentSetupState === 'closed'
+        ? 409
+        : 503;
+    error.code = error.statusCode === 409
+        ? 'CHECKOUT_ATTEMPT_EXPIRED'
+        : 'PAYMENT_ATTEMPT_RECOVERY_PENDING';
+    throw error;
 };
 
 const paymentIntentResponse = async (order, paymentIntent, { idempotentReplay = false } = {}) => {
@@ -237,32 +431,86 @@ const paymentIntentResponse = async (order, paymentIntent, { idempotentReplay = 
 };
 
 const respondWithExistingCheckout = async (res, existingOrder) => {
+    if (
+        existingOrder.isPaid
+        && existingOrder.awaitingPayment === false
+        && isNoChargeOnlineOrder(existingOrder)
+    ) {
+        // The money/inventory transaction may have committed immediately
+        // before the original HTTP request lost its response. Re-run only the
+        // idempotent local cleanup so a same-key replay also repairs the cart.
+        await consumeOrderCoupons({ orderId: existingOrder._id });
+        await removeFulfilledOrderItemsFromCart({
+            userId: existingOrder.user,
+            orderItems: existingOrder.orderItems,
+            fulfillmentId: existingOrder._id,
+        });
+        return res.status(200).json(noChargeCheckoutResponse(existingOrder, {
+            idempotentReplay: true,
+        }));
+    }
     if (existingOrder.paymentMethod === 'stripe') {
         if (existingOrder.isPaid && !existingOrder.awaitingPayment) {
             return res.status(200).json({
                 msg: 'Payment already completed.',
                 idempotentReplay: true,
                 isPaid: true,
+                completed: true,
+                noPaymentRequired: false,
+                paymentMethod: 'stripe',
                 paymentFlow: existingOrder.paymentFlow || 'checkout_session',
                 id: existingOrder.stripeSessionId || existingOrder.stripePaymentIntentId,
                 orderId: existingOrder.orderId,
                 order: orderResponseSummary(existingOrder),
             });
         }
-        if (existingOrder.paymentFlow === 'payment_sheet') {
-            if (!existingOrder.stripeCustomerId) {
-                return res.status(409).json({
-                    msg: 'Secure mobile payment is still being prepared. Please retry in a moment.',
-                    code: 'CHECKOUT_IN_PROGRESS',
+        if (existingOrder.paymentSetupState === 'closed' || existingOrder.orderStatus === 'cancelled') {
+            return res.status(409).json({
+                msg: 'This secure payment attempt is closed. Please start payment again.',
+                code: 'CHECKOUT_ATTEMPT_EXPIRED',
+                orderId: existingOrder.orderId,
+            });
+        }
+        if (!stripe) {
+            return res.status(503).json({
+                msg: 'Online payments are not configured. Please contact support.',
+                code: 'STRIPE_NOT_CONFIGURED',
+                orderId: existingOrder.orderId,
+            });
+        }
+        if (!existingOrder.stripeCustomerId) {
+            try {
+                const { customer } = await ensureStripeCustomerForUser(existingOrder.user);
+                existingOrder.stripeCustomerId = customer.id;
+                existingOrder.stripeMode = existingOrder.stripeMode || STRIPE_MODE;
+                existingOrder.paymentExpiresAt = existingOrder.paymentExpiresAt || (
+                    existingOrder.paymentFlow === 'payment_sheet'
+                        ? createPaymentExpiry()
+                        : new Date(Date.now() + 35 * 60 * 1000)
+                );
+                await existingOrder.save();
+            } catch (customerError) {
+                return res.status(502).json({
+                    msg: 'Secure payment setup is still being recovered. Retry this same checkout attempt.',
+                    code: 'PAYMENT_ATTEMPT_RECOVERY_PENDING',
                     orderId: existingOrder.orderId,
                 });
             }
-            if (existingOrder.paymentExpiresAt && existingOrder.paymentExpiresAt <= new Date()) {
-                if (!existingOrder.stripePaymentIntentId) {
-                    if (existingOrder.inventoryCommitted) {
-                        await restoreOrderInventory(existingOrder._id).catch(() => {});
-                    }
-                    await Order.deleteOne({ _id: existingOrder._id, isPaid: false }).catch(() => {});
+        }
+        if (existingOrder.paymentFlow === 'payment_sheet') {
+            if (
+                existingOrder.paymentExpiresAt
+                && existingOrder.paymentExpiresAt <= new Date()
+                && (
+                    existingOrder.stripePaymentIntentId
+                    || existingOrder.paymentSetupState === 'not_started'
+                )
+            ) {
+                if (
+                    !existingOrder.stripePaymentIntentId
+                    && existingOrder.paymentSetupState === 'not_started'
+                ) {
+                    await deleteUnpaidCheckoutOrder({ _id: existingOrder._id, isPaid: false }).catch(() => {});
                     return res.status(409).json({
                         msg: 'This secure mobile payment attempt expired. Please start payment again.',
                         code: 'CHECKOUT_ATTEMPT_EXPIRED',
@@ -290,22 +538,35 @@ const respondWithExistingCheckout = async (res, existingOrder) => {
                             await commitOrderInventory(existingOrder._id);
                             existingOrder.inventoryCommitted = true;
                         } catch (inventoryError) {
-                            await Order.deleteOne({ _id: existingOrder._id, isPaid: false }).catch(() => {});
+                            await deleteUnpaidCheckoutOrder({ _id: existingOrder._id, isPaid: false }).catch(() => {});
                             throw inventoryError;
                         }
                     }
-                    paymentIntent = await createNativeOrderPaymentIntent(existingOrder);
-                    existingOrder.stripePaymentIntentId = paymentIntent.id;
-                    await existingOrder.save();
+                    existingOrder = await claimStripeSetupCreation(existingOrder, {
+                        allowCreatingReplay: true,
+                    });
+                    try {
+                        paymentIntent = await createNativeOrderPaymentIntent(existingOrder);
+                    } catch (creationError) {
+                        return handleExistingStripeCreationError({
+                            res,
+                            order: existingOrder,
+                            creationError,
+                            recoveryMessage: 'Secure mobile payment is still being recovered. Retry this same checkout attempt.',
+                            rejectionMessage: 'Stripe could not prepare this secure payment. Please start payment again.',
+                        });
+                    }
+                    existingOrder = await attachStripeOrderReference({
+                        order: existingOrder,
+                        stripeObject: paymentIntent,
+                        paymentFlow: 'payment_sheet',
+                    });
                 } else {
                     try {
                         paymentIntent = await stripe.paymentIntents.retrieve(existingOrder.stripePaymentIntentId);
                     } catch (retrieveError) {
-                        if (retrieveError?.code === 'resource_missing') {
-                            if (existingOrder.inventoryCommitted) {
-                                await restoreOrderInventory(existingOrder._id);
-                            }
-                            await Order.deleteOne({
+                        if (isAuthoritativeStripeResourceMissingError(retrieveError)) {
+                            await deleteUnpaidCheckoutOrder({
                                 _id: existingOrder._id,
                                 isPaid: false,
                                 awaitingPayment: true,
@@ -328,19 +589,73 @@ const respondWithExistingCheckout = async (res, existingOrder) => {
                         await commitOrderInventory(existingOrder._id);
                         existingOrder.inventoryCommitted = true;
                     } catch (inventoryError) {
-                        await stripe.paymentIntents.cancel(paymentIntent.id, {
-                            cancellation_reason: 'abandoned',
-                        }).catch(() => {});
-                        await Order.deleteOne({ _id: existingOrder._id, isPaid: false }).catch(() => {});
+                        let closed;
+                        try {
+                            closed = await closeOrderPaymentIntent(existingOrder, {
+                                status: 'cancelled',
+                                reason: 'Inventory changed before the secure mobile payment could open.',
+                            });
+                        } catch (_) {
+                            return res.status(502).json({
+                                msg: 'Secure mobile payment cleanup is still being confirmed. Retry this same checkout attempt.',
+                                code: 'PAYMENT_ATTEMPT_RECOVERY_PENDING',
+                                orderId: existingOrder.orderId,
+                            });
+                        }
+                        if (closed?.status === 'payment_succeeded') {
+                            const fulfillment = await fulfillStripeOrderPaymentIntent({
+                                order: existingOrder,
+                                paymentIntent: closed.paymentIntent,
+                                eventId: `inventory-recovery:${closed.paymentIntent.id}`,
+                            });
+                            if (fulfillment?.paymentRefunded) {
+                                return res.status(409).json({
+                                    msg: 'Inventory changed after Stripe received the payment. The payment has been refunded.',
+                                    code: 'ORDER_STOCK_CHANGED_AFTER_CAPTURE',
+                                    paymentRefunded: true,
+                                    orderId: existingOrder.orderId,
+                                });
+                            }
+                            return res.status(202).json({
+                                msg: 'Stripe received the payment. Final confirmation is processing.',
+                                stripePaymentReceived: true,
+                                paymentIntentId: closed.paymentIntent.id,
+                                orderId: existingOrder.orderId,
+                            });
+                        }
                         throw inventoryError;
                     }
                 }
                 validateStripeOrderPaymentIntent(existingOrder, paymentIntent);
-                if (paymentIntent.status === 'canceled') {
-                    if (existingOrder.inventoryCommitted) {
-                        await restoreOrderInventory(existingOrder._id);
+                if (
+                    !['succeeded', 'canceled'].includes(paymentIntent.status)
+                    && existingOrder.paymentExpiresAt
+                    && existingOrder.paymentExpiresAt <= new Date()
+                ) {
+                    const closed = await closeOrderPaymentIntent(existingOrder, {
+                        status: 'expired',
+                        reason: 'The secure mobile payment window expired.',
+                        requireExpired: true,
+                    });
+                    if (closed?.status === 'payment_succeeded') {
+                        return res.status(202).json({
+                            msg: 'Stripe received the payment. Final confirmation is processing.',
+                            idempotentReplay: true,
+                            paymentFlow: 'payment_sheet',
+                            stripePaymentReceived: true,
+                            paymentIntentId: paymentIntent.id,
+                            orderId: existingOrder.orderId,
+                            order: orderResponseSummary(existingOrder),
+                        });
                     }
-                    await Order.deleteOne({
+                    return res.status(409).json({
+                        msg: 'This secure mobile payment attempt expired. Please start payment again.',
+                        code: 'CHECKOUT_ATTEMPT_EXPIRED',
+                        orderId: existingOrder.orderId,
+                    });
+                }
+                if (paymentIntent.status === 'canceled') {
+                    await deleteUnpaidCheckoutOrder({
                         _id: existingOrder._id,
                         isPaid: false,
                         awaitingPayment: true,
@@ -366,6 +681,13 @@ const respondWithExistingCheckout = async (res, existingOrder) => {
                     idempotentReplay: true,
                 }));
             } catch (error) {
+                if (error?.code === 'PAYMENT_SETUP_RECOVERY_REQUIRED') {
+                    return res.status(503).json({
+                        msg: error.message,
+                        code: error.code,
+                        orderId: existingOrder.orderId,
+                    });
+                }
                 if (error?.statusCode) throw error;
                 return res.status(502).json({
                     msg: 'Secure mobile payment is still being recovered. Retry this same checkout attempt.',
@@ -375,11 +697,12 @@ const respondWithExistingCheckout = async (res, existingOrder) => {
             }
         }
         if (!existingOrder.stripeSessionId) {
-            if (existingOrder.paymentExpiresAt && existingOrder.paymentExpiresAt <= new Date()) {
-                if (existingOrder.inventoryCommitted) {
-                    await restoreOrderInventory(existingOrder._id).catch(() => {});
-                }
-                await Order.deleteOne({ _id: existingOrder._id, isPaid: false }).catch(() => {});
+            if (
+                existingOrder.paymentExpiresAt
+                && existingOrder.paymentExpiresAt <= new Date()
+                && existingOrder.paymentSetupState === 'not_started'
+            ) {
+                await deleteUnpaidCheckoutOrder({ _id: existingOrder._id, isPaid: false }).catch(() => {});
                 return res.status(409).json({
                     msg: 'This secure checkout attempt expired. Please start payment again.',
                     code: 'CHECKOUT_ATTEMPT_EXPIRED',
@@ -392,14 +715,38 @@ const respondWithExistingCheckout = async (res, existingOrder) => {
                         await commitOrderInventory(existingOrder._id);
                         existingOrder.inventoryCommitted = true;
                     } catch (inventoryError) {
-                        await Order.deleteOne({ _id: existingOrder._id, isPaid: false }).catch(() => {});
+                        await deleteUnpaidCheckoutOrder({ _id: existingOrder._id, isPaid: false }).catch(() => {});
                         throw inventoryError;
                     }
                 }
-                const recoveredSession = await createHostedOrderCheckoutSession(existingOrder);
-                existingOrder.stripeSessionId = recoveredSession.id;
-                await existingOrder.save();
+                existingOrder = await claimStripeSetupCreation(existingOrder, {
+                    allowCreatingReplay: true,
+                });
+                let recoveredSession;
+                try {
+                    recoveredSession = await createHostedOrderCheckoutSession(existingOrder);
+                } catch (creationError) {
+                    return handleExistingStripeCreationError({
+                        res,
+                        order: existingOrder,
+                        creationError,
+                        recoveryMessage: 'Secure checkout is still being recovered. Retry this same checkout attempt.',
+                        rejectionMessage: 'Stripe could not prepare secure checkout. Please start payment again.',
+                    });
+                }
+                existingOrder = await attachStripeOrderReference({
+                    order: existingOrder,
+                    stripeObject: recoveredSession,
+                    paymentFlow: 'checkout_session',
+                });
             } catch (error) {
+                if (error?.code === 'PAYMENT_SETUP_RECOVERY_REQUIRED') {
+                    return res.status(503).json({
+                        msg: error.message,
+                        code: error.code,
+                        orderId: existingOrder.orderId,
+                    });
+                }
                 if (error?.statusCode) throw error;
                 return res.status(502).json({
                     msg: 'Secure checkout is still being recovered. Retry this same checkout attempt.',
@@ -413,8 +760,82 @@ const respondWithExistingCheckout = async (res, existingOrder) => {
                 await commitOrderInventory(existingOrder._id);
                 existingOrder.inventoryCommitted = true;
             } catch (inventoryError) {
-                await stripe.checkout.sessions.expire(existingOrder.stripeSessionId).catch(() => {});
-                await Order.deleteOne({ _id: existingOrder._id, isPaid: false }).catch(() => {});
+                let checkoutSession;
+                try {
+                    checkoutSession = await stripe.checkout.sessions.retrieve(existingOrder.stripeSessionId);
+                    validateStripeOrderSession(existingOrder, checkoutSession);
+                    if (checkoutSession.payment_status === 'paid') {
+                        const fulfillment = await fulfillStripeOrder({
+                            order: existingOrder,
+                            stripeSession: checkoutSession,
+                            eventId: `inventory-recovery:${checkoutSession.id}`,
+                        });
+                        if (fulfillment?.paymentRefunded) {
+                            return res.status(409).json({
+                                msg: 'Inventory changed after Stripe received the payment. The payment has been refunded.',
+                                code: 'ORDER_STOCK_CHANGED_AFTER_CAPTURE',
+                                paymentRefunded: true,
+                                orderId: existingOrder.orderId,
+                            });
+                        }
+                        return res.status(202).json({
+                            msg: 'Stripe received the payment. Final confirmation is processing.',
+                            stripePaymentReceived: true,
+                            id: checkoutSession.id,
+                            orderId: existingOrder.orderId,
+                        });
+                    }
+                    if (checkoutSession.status === 'open') {
+                        try {
+                            checkoutSession = await stripe.checkout.sessions.expire(checkoutSession.id);
+                        } catch (_) {
+                            checkoutSession = await stripe.checkout.sessions.retrieve(existingOrder.stripeSessionId);
+                        }
+                        validateStripeOrderSession(existingOrder, checkoutSession);
+                    }
+                } catch (_) {
+                    return res.status(502).json({
+                        msg: 'Secure checkout cleanup is still being confirmed. Retry this same checkout attempt.',
+                        code: 'PAYMENT_ATTEMPT_RECOVERY_PENDING',
+                        orderId: existingOrder.orderId,
+                    });
+                }
+                if (checkoutSession.payment_status === 'paid') {
+                    const fulfillment = await fulfillStripeOrder({
+                        order: existingOrder,
+                        stripeSession: checkoutSession,
+                        eventId: `inventory-recovery:${checkoutSession.id}`,
+                    });
+                    if (fulfillment?.paymentRefunded) {
+                        return res.status(409).json({
+                            msg: 'Inventory changed after Stripe received the payment. The payment has been refunded.',
+                            code: 'ORDER_STOCK_CHANGED_AFTER_CAPTURE',
+                            paymentRefunded: true,
+                            orderId: existingOrder.orderId,
+                        });
+                    }
+                    return res.status(202).json({
+                        msg: 'Stripe received the payment. Final confirmation is processing.',
+                        stripePaymentReceived: true,
+                        id: checkoutSession.id,
+                        orderId: existingOrder.orderId,
+                    });
+                }
+                if (
+                    checkoutSession.status !== 'expired'
+                    && !(checkoutSession.status === 'complete' && checkoutSession.payment_status !== 'paid')
+                ) {
+                    return res.status(502).json({
+                        msg: 'Secure checkout cleanup is still being confirmed. Retry this same checkout attempt.',
+                        code: 'PAYMENT_ATTEMPT_RECOVERY_PENDING',
+                        orderId: existingOrder.orderId,
+                    });
+                }
+                await deleteUnpaidCheckoutOrder({
+                    _id: existingOrder._id,
+                    isPaid: false,
+                    awaitingPayment: true,
+                });
                 throw inventoryError;
             }
         }
@@ -422,10 +843,7 @@ const respondWithExistingCheckout = async (res, existingOrder) => {
             const session = await stripe.checkout.sessions.retrieve(existingOrder.stripeSessionId);
             validateStripeOrderSession(existingOrder, session);
             if (session?.status === 'expired') {
-                if (existingOrder.inventoryCommitted) {
-                    await restoreOrderInventory(existingOrder._id).catch(() => {});
-                }
-                await Order.deleteOne({ _id: existingOrder._id, isPaid: false }).catch(() => {});
+                await deleteUnpaidCheckoutOrder({ _id: existingOrder._id, isPaid: false }).catch(() => {});
                 return res.status(409).json({
                     msg: 'This secure checkout attempt expired. Please start payment again.',
                     code: 'CHECKOUT_ATTEMPT_EXPIRED',
@@ -444,10 +862,7 @@ const respondWithExistingCheckout = async (res, existingOrder) => {
                 });
             }
             if (session?.status === 'complete') {
-                if (existingOrder.inventoryCommitted) {
-                    await restoreOrderInventory(existingOrder._id);
-                }
-                await Order.deleteOne({
+                await deleteUnpaidCheckoutOrder({
                     _id: existingOrder._id,
                     isPaid: false,
                     awaitingPayment: true,
@@ -474,11 +889,8 @@ const respondWithExistingCheckout = async (res, existingOrder) => {
                 order: orderResponseSummary(existingOrder),
             });
         } catch (error) {
-            if (error?.code === 'resource_missing') {
-                if (existingOrder.inventoryCommitted) {
-                    await restoreOrderInventory(existingOrder._id);
-                }
-                await Order.deleteOne({
+            if (isAuthoritativeStripeResourceMissingError(error)) {
+                await deleteUnpaidCheckoutOrder({
                     _id: existingOrder._id,
                     isPaid: false,
                     awaitingPayment: true,
@@ -507,6 +919,7 @@ const respondWithExistingCheckout = async (res, existingOrder) => {
             orderId: existingOrder.orderId,
         });
     }
+    await consumeOrderCoupons({ orderId: existingOrder._id });
     await removeFulfilledOrderItemsFromCart({
         userId: existingOrder.user,
         orderItems: existingOrder.orderItems,
@@ -518,6 +931,8 @@ const respondWithExistingCheckout = async (res, existingOrder) => {
             : 'Order already placed successfully.',
         idempotentReplay: true,
         isPaid: existingOrder.isPaid,
+        completed: existingOrder.isPaid === true,
+        noPaymentRequired: isNoChargeOnlineOrder(existingOrder),
         paymentMethod: existingOrder.paymentMethod,
         orderId: existingOrder.orderId,
         order: orderResponseSummary(existingOrder),
@@ -531,13 +946,6 @@ if (process.env.NODE_ENV === 'test') {
 const getSellerProductIds = async (sellerId) => {
     const ids = await Product.find({ seller: sellerId }).distinct('_id');
     return ids.map(toId);
-};
-
-const recordOrderCoupons = async (savedOrder, userId) => {
-    if (!userId || !Array.isArray(savedOrder?.appliedCoupons)) return;
-    for (const couponData of savedOrder.appliedCoupons) {
-        if (couponData?.couponId) await recordCouponUsage(couponData.couponId, userId);
-    }
 };
 
 // True if any orderItem belongs to this seller (snapshot first, fallback to live product list).
@@ -561,25 +969,12 @@ const buildSellerOrderView = (order, sellerProductIds, sellerId) => {
         itemBelongsToSeller(item, sellerId, sellerProductIds)
     );
 
-    const sellerSubtotal = sellerOrderItems.reduce((sum, item) =>
-        sum + ((Number(item.price) || 0) * (Number(item.quantity) || 0)), 0
-    );
-
     const sellerShippingInfo = (order.sellerShipping || []).find(
         ss => toId(ss.seller) === toId(sellerId)
     );
-    const sellerShipping = Number(sellerShippingInfo?.shippingMethod?.price) || 0;
+    const sellerMoney = sellerOrderSummaryForItems(order, sellerId, sellerOrderItems);
 
-    const summary = order.orderSummary || {};
-    const totalOrderValue = Number(summary.subtotal) || 0;
-    const sellerProportion = totalOrderValue > 0 ? sellerSubtotal / totalOrderValue : 0;
-    const sellerTax = (Number(summary.tax) || 0) * sellerProportion;
-
-    // Coupon discount allocated to ONLY this seller's items (by product id).
-    const sellerCouponDiscount = discountForOrderItems(order, sellerOrderItems);
-    const sellerTotal = sellerSubtotal + sellerShipping + sellerTax - sellerCouponDiscount;
-
-    const obj = order.toObject();
+    const obj = order.toObject ? order.toObject() : { ...order };
     const sellerFulfillment = sellerFulfillmentFor(order, sellerId);
     const sellerPolicy = (order.sellerPolicies || []).find(
         entry => toId(entry.seller) === toId(sellerId)
@@ -598,17 +993,17 @@ const buildSellerOrderView = (order, sellerProductIds, sellerId) => {
         sellerFulfillment: sellerFulfillment ? [sellerFulfillment] : [],
         sellerPolicies: sellerPolicy ? [sellerPolicy] : [],
         orderSummary: {
-            subtotal: Math.round(sellerSubtotal * 100) / 100,
-            shippingCost: Math.round(sellerShipping * 100) / 100,
-            tax: Math.round(sellerTax * 100) / 100,
-            couponDiscount: Math.round(sellerCouponDiscount * 100) / 100,
-            totalAmount: Math.round(sellerTotal * 100) / 100,
-            _originalTotal: summary.totalAmount
+            subtotal: sellerMoney.subtotal,
+            shippingCost: sellerMoney.shippingCost,
+            tax: sellerMoney.tax,
+            couponDiscount: sellerMoney.couponDiscount,
+            reconciliationAdjustment: sellerMoney.adjustment,
+            totalAmount: sellerMoney.totalAmount,
         }
     };
 };
 
-const getSellerScopedOrders = async (query, sellerId, sort = null) => {
+const getSellerScopedOrders = async (query, sellerId, sort = null, { lean = false } = {}) => {
     const sellerProductIds = await getSellerProductIds(sellerId);
 
     // Match either by snapshot seller (new orders) OR by current product ownership (legacy).
@@ -643,108 +1038,9 @@ const getSellerScopedOrders = async (query, sellerId, sort = null) => {
     const dbQuery = { $and: conditions };
     const finder = Order.find(dbQuery);
     if (sort) finder.sort(sort);
-    const orders = await finder;
+    const orders = lean ? await finder.lean() : await finder;
     return orders.map(order => buildSellerOrderView(order, sellerProductIds, sellerId));
 };
-
-// Enqueue the buyer's WhatsApp order confirmation.
-//
-// The buyer order-confirmation message is a core checkout feature — every buyer
-// who places a COD order should receive it. It is NOT gated by any seller
-// subscription/plan. The only preconditions are that the WhatsApp gateway is
-// connected and the buyer has a valid phone number (validated in the queue).
-// WhatsApp status update to the buyer when the order moves to a new status
-// (confirmed / processing / shipped / delivered / cancelled). Deduped per
-// order+status so repeated saves or parallel paths can never double-send.
-// Fire-and-forget: the durable queue handles retries and the
-// gateway-connected check, and failures never block the API response.
-const notifyBuyerStatusOnWhatsApp = (order, status) => {
-    try {
-        const message = buildOrderStatusUpdateMessage(order, status);
-        if (!message) return;
-        enqueueTextNotification({
-            order,
-            phone: order.shippingInfo?.phone,
-            message,
-            dedupeKey: `order-status:${order._id}:${status}`,
-        }).catch(err => {
-            console.error(`[order] WhatsApp status update enqueue failed for ${order?.orderId}:`, err.message);
-        });
-    } catch (err) {
-        console.error(`[order] WhatsApp status update build failed for ${order?.orderId}:`, err.message);
-    }
-};
-
-const maybeEnqueueWhatsAppConfirmation = async (order, _productItems) => {
-    try {
-        if (!order?.confirmation?.token) {
-            console.warn(`[order] WhatsApp skip for ${order?.orderId}: no confirmation token`);
-            return;
-        }
-        const cfg = await WhatsAppConfig.findOne({ singletonKey: configKeyFor('main') });
-        if (!cfg || cfg.status !== 'connected') {
-            // WhatsApp not connected — track it on the order
-            await Order.updateOne({ _id: order._id }, {
-                $set: {
-                    'confirmation.whatsappSentAt': new Date(),
-                    'confirmation.whatsappSentSuccess': false,
-                    'confirmation.whatsappError': cfg ? `WhatsApp status: ${cfg.status} (not connected)` : 'WhatsApp not configured',
-                }
-            });
-            console.warn(`[order] WhatsApp skip for ${order.orderId}: not connected (status: ${cfg?.status || 'no config'})`);
-            return;
-        }
-
-        const result = await enqueueOrderConfirmation(order);
-        if (!result) {
-            await Order.updateOne({ _id: order._id }, {
-                $set: {
-                    'confirmation.whatsappSentAt': new Date(),
-                    'confirmation.whatsappSentSuccess': false,
-                    'confirmation.whatsappError': 'Failed to enqueue — possibly invalid phone number',
-                }
-            });
-            console.warn(`[order] WhatsApp enqueue returned null for ${order.orderId}`);
-            return;
-        }
-        console.log(`[order] WhatsApp confirmation enqueued for ${order.orderId}`);
-    } catch (err) {
-        console.error('maybeEnqueueWhatsAppConfirmation:', err.message);
-        // Track the error on the order
-        try {
-            await Order.updateOne({ _id: order._id }, {
-                $set: {
-                    'confirmation.whatsappSentAt': new Date(),
-                    'confirmation.whatsappSentSuccess': false,
-                    'confirmation.whatsappError': `Enqueue error: ${err.message}`,
-                }
-            });
-        } catch (trackErr) {
-            console.error('Failed to track WA enqueue error:', trackErr.message);
-        }
-    }
-};
-
-const notifyNewOrderSellers = async (order, productItems) => {
-    const sellerIds = [...new Set((productItems || []).map(product => toId(product.seller)).filter(Boolean))];
-    for (const sellerId of sellerIds) {
-        const seller = await User.findById(sellerId);
-        const sellerProductIds = (productItems || [])
-            .filter(product => toId(product.seller) === toId(sellerId))
-            .map(product => toId(product._id));
-        const scopedOrder = buildSellerOrderView(order, sellerProductIds, sellerId);
-        if (seller?.email) {
-            const sellerEmailData = newOrderSellerEmail(scopedOrder, seller.username);
-            await sendEmail({ to: seller.email, ...sellerEmailData }).catch(error =>
-                console.error('Seller new-order email failed:', error.message)
-            );
-        }
-        notifySeller(sellerId, 'new_order', sellerTemplates.new_order(scopedOrder)).catch(error =>
-            console.error('[whatsapp] seller new order notification failed:', error.message)
-        );
-    }
-};
-
 
 exports.placeOrder = async (req, res) => {
     const { order } = req.body;
@@ -754,18 +1050,41 @@ exports.placeOrder = async (req, res) => {
     const rawIdempotencyKey = req.headers['idempotency-key']
         || req.headers['x-idempotency-key']
         || order?.idempotencyKey;
-    const checkoutIdempotencyKey = normalizeCheckoutIdempotencyKey(rawIdempotencyKey);
+    const clientCheckoutIdempotencyKey = normalizeCheckoutIdempotencyKey(rawIdempotencyKey);
+    const guestEmail = !userId
+        ? normalizeGuestCheckoutEmail(order?.shippingInfo?.email)
+        : '';
+    // The historical unique index includes null users. Prefixing a guest key
+    // with a one-way email scope keeps different guests from colliding on the
+    // same client-generated key while preserving deterministic retries.
+    const checkoutIdempotencyKey = clientCheckoutIdempotencyKey && !userId
+        ? guestCheckoutIdempotencyKey(guestEmail, clientCheckoutIdempotencyKey)
+        : clientCheckoutIdempotencyKey;
+    const checkoutIdentityFilter = checkoutIdempotencyKey
+        ? (userId
+            ? { user: userId, checkoutIdempotencyKey }
+            : { user: null, guestEmail, checkoutIdempotencyKey })
+        : null;
     const rawPaymentFlow = req.body?.paymentFlow ?? order?.paymentFlow ?? 'checkout_session';
     const rawClientSurface = req.body?.clientSurface
         ?? order?.clientSurface
         ?? (order?.platform === 'mobile' ? 'mobile' : 'web');
-    const requestFingerprint = checkoutRequestFingerprint(order, rawPaymentFlow, rawClientSurface);
+    let requestFingerprint = null;
+    let legacyRequestFingerprint = null;
+    let orderUser = null;
+    let orderCurrency = null;
 
     try {
-        if (rawIdempotencyKey && !checkoutIdempotencyKey) {
+        if (rawIdempotencyKey && !clientCheckoutIdempotencyKey) {
             return res.status(400).json({
                 msg: 'Invalid checkout attempt key.',
                 code: 'INVALID_IDEMPOTENCY_KEY',
+            });
+        }
+        if (!userId && checkoutIdempotencyKey && !guestEmail) {
+            return res.status(400).json({
+                msg: 'A guest checkout email is required to safely retry this order.',
+                code: 'GUEST_CHECKOUT_EMAIL_REQUIRED',
             });
         }
         if (!['checkout_session', 'payment_sheet'].includes(rawPaymentFlow)) {
@@ -774,14 +1093,36 @@ exports.placeOrder = async (req, res) => {
         if (!['web', 'mobile'].includes(rawClientSurface)) {
             return res.status(400).json({ msg: 'Choose a valid client surface.', code: 'INVALID_CLIENT_SURFACE' });
         }
-        if (userId && checkoutIdempotencyKey) {
-            const existingOrder = await Order.findOne({ user: userId, checkoutIdempotencyKey })
+        orderUser = userId ? await User.findById(userId).select('currency').lean() : null;
+        const requestedOrderCurrency = order?.currency ?? orderUser?.currency ?? 'USD';
+        if (!isSupportedCurrency(requestedOrderCurrency)) {
+            return res.status(400).json({
+                msg: 'Choose a supported checkout currency.',
+                code: 'ORDER_CURRENCY_NOT_SUPPORTED',
+            });
+        }
+        orderCurrency = normalizeCurrency(requestedOrderCurrency);
+        requestFingerprint = checkoutRequestFingerprint(
+            order,
+            rawPaymentFlow,
+            rawClientSurface,
+            { resolvedCurrency: orderCurrency },
+        );
+        // Orders created before effective account currency was included in the
+        // fingerprint used USD when the client omitted `order.currency`. Keep
+        // those exact in-flight retries recoverable only when the persisted
+        // order currency proves the same financial intent.
+        legacyRequestFingerprint = checkoutRequestFingerprint(order, rawPaymentFlow, rawClientSurface);
+        if (checkoutIdentityFilter) {
+            const existingOrder = await Order.findOne(checkoutIdentityFilter)
                 .select('+checkoutRequestFingerprint');
             if (existingOrder) {
-                if (
-                    existingOrder.checkoutRequestFingerprint
-                    && existingOrder.checkoutRequestFingerprint !== requestFingerprint
-                ) {
+                if (!checkoutFingerprintMatches({
+                    existingOrder,
+                    requestFingerprint,
+                    legacyRequestFingerprint,
+                    resolvedCurrency: orderCurrency,
+                })) {
                     return res.status(409).json({
                         msg: 'This checkout attempt key was already used with different order details.',
                         code: 'IDEMPOTENCY_CONFLICT',
@@ -807,6 +1148,10 @@ exports.placeOrder = async (req, res) => {
         ) {
             return res.status(400).json({ msg: "Missing required order details" });
         }
+        // Freeze one authoritative international destination at checkout. A
+        // domestic number is resolved only from the selected shipping country;
+        // there is deliberately no Pakistan (or any other) default guess.
+        const shippingPhoneSnapshot = canonicalizeShippingPhone(order.shippingInfo);
         const normalizedPaymentMethod = ['stripe', 'cash_on_delivery', 'wallet'].includes(order.paymentMethod)
             ? order.paymentMethod
             : null;
@@ -826,9 +1171,9 @@ exports.placeOrder = async (req, res) => {
                 code: 'PAYMENT_SHEET_MOBILE_ONLY',
             });
         }
-        if (isNativeStripePayment && !checkoutIdempotencyKey) {
+        if (!checkoutIdempotencyKey) {
             return res.status(400).json({
-                msg: 'A checkout attempt key is required for secure mobile payment.',
+                msg: 'A checkout attempt key is required for every order.',
                 code: 'IDEMPOTENCY_KEY_REQUIRED',
             });
         }
@@ -841,8 +1186,19 @@ exports.placeOrder = async (req, res) => {
 
         // console.log(order.orderItems);
 
-        const orderUser = userId ? await User.findById(userId).select('currency').lean() : null;
-        const orderCurrency = normalizeCurrency(order.currency || orderUser?.currency || 'USD');
+        const exchangeRateSnapshot = await getExchangeRateSnapshot();
+        const checkoutRates = exchangeRateSnapshot.rates;
+        const trustedCheckoutRates = snapshotIsTrustedForConversion(exchangeRateSnapshot);
+        // Seller accounting is USD-denominated even when the buyer and every
+        // product use the same non-USD currency. Freeze that conversion at the
+        // checkout boundary; otherwise a later summary, return, withdrawal, or
+        // reversal could value one PKR/EUR/GBP order using a different day's FX.
+        if (orderCurrency !== 'USD' && !trustedCheckoutRates) {
+            const err = new Error('Live exchange rates are temporarily unavailable. Please retry checkout shortly.');
+            err.statusCode = 503;
+            err.code = 'EXCHANGE_RATES_UNAVAILABLE';
+            throw err;
+        }
 
         const productIds = order.orderItems.map(item => item.id)
         // console.log(productIds);
@@ -858,7 +1214,7 @@ exports.placeOrder = async (req, res) => {
         let storeBySeller = new Map();
         if (sellerIdsInOrder.length > 0) {
             const stores = await Store.find({ seller: { $in: sellerIdsInOrder }, isActive: true })
-                .select('seller storeName visibility paymentPolicy returnPolicy');
+                .select('seller storeName visibility paymentPolicy returnPolicy productCurrency');
             storeBySeller = new Map(stores.map(store => [toId(store.seller), store]));
             const buyerLocation = normalizeBuyerLocation({
                 ...(order.buyerLocation || {}),
@@ -890,19 +1246,25 @@ exports.placeOrder = async (req, res) => {
             }
         }
 
-        const normalizedOrderItems = await Promise.all(order.orderItems.map(async (item) => {
+        const nativeOrderItems = order.orderItems.map((item) => {
             const product = productById.get(toId(item.id));
             if (!product) return null;
-            const quantity = Math.max(1, Number(item.quantity) || 1);
+            const quantity = parsePositiveSafeInteger(item.quantity, { fallback: 1 });
+            if (quantity === null) {
+                const err = new Error(`Choose a whole-number quantity of at least 1 for "${product.name}".`);
+                err.statusCode = 400;
+                err.code = 'ORDER_QUANTITY_INVALID';
+                throw err;
+            }
             if (quantity > product.stock) {
                 const err = new Error(`Only ${product.stock} unit${product.stock !== 1 ? 's' : ''} of "${product.name}" are available.`);
                 err.statusCode = 400;
                 throw err;
             }
-            const sourceCurrency = getProductCurrency(product, orderCurrency);
-            const sourcePrice = getProductEffectivePrice(product);
-            const orderPrice = await convertAmount(sourcePrice, sourceCurrency, orderCurrency);
             const store = storeBySeller.get(toId(product.seller));
+            // A raw legacy product with no currency metadata is canonical USD;
+            // Store.productCurrency only governs newly written native prices.
+            const { sourceCurrency, sourcePrice } = checkoutStoredProductPricing(product);
             const effectiveReturnPolicy = product.returnPolicy?.useStorePolicy === false
                 ? normalizeReturnPolicy(product.returnPolicy)
                 : normalizeReturnPolicy(store?.returnPolicy || {});
@@ -911,7 +1273,6 @@ exports.placeOrder = async (req, res) => {
                 seller: product.seller || null,
                 name: product.name,
                 image: product.image,
-                price: orderPrice,
                 sourcePrice,
                 sourceCurrency,
                 priceOriginal: sourcePrice,
@@ -922,12 +1283,17 @@ exports.placeOrder = async (req, res) => {
                 returnPolicySnapshotVersion: 1,
                 returnPolicy: effectiveReturnPolicy,
             };
-        }));
+        });
+        const normalizedOrderItems = priceOrderItemLines({
+            items: nativeOrderItems,
+            targetCurrency: orderCurrency,
+            exchangeRates: checkoutRates,
+            exchangeRatesFallback: !trustedCheckoutRates,
+        });
 
-        // Calculate subtotal from current product records in the order currency.
-        const subtotal = normalizedOrderItems.reduce((acc, item) => {
-            return acc + item.price * item.quantity
-        }, 0)
+        // Native line totals are converted and rounded once per source-currency
+        // bucket, then allocated exactly across its items.
+        const subtotal = sumMoney(normalizedOrderItems.map(getOrderItemLineSubtotal));
 
         // Reload shipping methods and coupons from MongoDB. Browser/mobile
         // amounts are display hints only and never determine the charged total.
@@ -936,13 +1302,21 @@ exports.placeOrder = async (req, res) => {
                 requestedSellerShipping: order.sellerShipping,
                 fallbackShippingMethod: order.shippingMethod,
                 sellerIds: sellerIdsInOrder,
+                sellerCurrencies: new Map(sellerIdsInOrder.map(sellerId => [
+                    sellerId,
+                    storeBySeller.get(sellerId)?.productCurrency || 'USD',
+                ])),
                 orderCurrency,
+                exchangeRates: checkoutRates,
+                exchangeRatesFallback: !trustedCheckoutRates,
             }),
             validateAndPriceCoupons({
                 requestedCoupons: order.appliedCoupons,
                 orderItems: normalizedOrderItems,
                 userId,
                 orderCurrency,
+                exchangeRates: checkoutRates,
+                exchangeRatesFallback: !trustedCheckoutRates,
             }),
         ]);
         const shippingCost = shippingPricing.shippingCost;
@@ -951,21 +1325,142 @@ exports.placeOrder = async (req, res) => {
         let tax = 0;
         const taxConfig = await TaxConfig.findOne({ isActive: true });
         if (taxConfig) {
-            // The admin-configured fixed tax is denominated in USD, matching the
-            // website display. Percentage tax is naturally currency independent.
-            tax = taxConfig.type === 'fixed'
-                ? await convertAmount(taxConfig.value, 'USD', orderCurrency)
+            const taxType = taxConfig.type;
+            const rawTaxValue = taxConfig.value;
+            const taxCurrencyIsSchemaDefault = typeof taxConfig.$isDefault === 'function'
+                && taxConfig.$isDefault('currency');
+            const plainTaxConfig = taxConfig.toObject ? taxConfig.toObject() : taxConfig;
+            const hasStoredTaxCurrency = !taxCurrencyIsSchemaDefault
+                && Object.prototype.hasOwnProperty.call(plainTaxConfig, 'currency')
+                && plainTaxConfig.currency !== undefined;
+            const rawTaxCurrency = hasStoredTaxCurrency ? taxConfig.currency : 'USD';
+            if (!['none', 'percentage', 'fixed'].includes(taxType)) {
+                throw invalidTaxConfigError();
+            }
+            if (
+                typeof rawTaxValue !== 'number'
+                || !Number.isFinite(rawTaxValue)
+                || rawTaxValue < 0
+                || (taxType === 'none' && rawTaxValue !== 0)
+                || (taxType === 'percentage' && rawTaxValue > 100)
+                || typeof rawTaxCurrency !== 'string'
+                || !rawTaxCurrency.trim()
+                || !isSupportedCurrency(rawTaxCurrency)
+                || rawTaxCurrency !== rawTaxCurrency.trim().toUpperCase()
+            ) {
+                throw invalidTaxConfigError();
+            }
+            try {
+                if (taxType === 'fixed' && roundMoney(rawTaxValue) !== rawTaxValue) {
+                    throw invalidTaxConfigError();
+                }
+                // Percentage rates may use up to six decimals; fixed values
+                // are exact cents. Both must stay inside safe accounting range.
+                toMinorUnits(rawTaxValue, taxType === 'percentage' ? 6 : 2);
+            } catch (error) {
+                if (error?.code === 'TAX_CONFIG_INVALID') throw error;
+                throw invalidTaxConfigError();
+            }
+            const taxCurrency = normalizeCurrency(rawTaxCurrency);
+            // A fixed value is native money, so decide whether it exists at
+            // its own minor-unit boundary. Exact zero must not make an
+            // otherwise all-USD checkout depend on FX. Conversely, a real
+            // source cent still requires trusted FX even when conversion
+            // happens to round below one buyer-currency cent.
+            const fixedTaxSourceMinor = taxType === 'fixed'
+                ? toMinorUnits(rawTaxValue)
+                : 0;
+            if (
+                taxType === 'fixed'
+                && fixedTaxSourceMinor > 0
+                && !trustedCheckoutRates
+                && taxCurrency !== orderCurrency
+            ) {
+                const err = new Error('Live exchange rates are temporarily unavailable. Please retry checkout shortly.');
+                err.statusCode = 503;
+                err.code = 'EXCHANGE_RATES_UNAVAILABLE';
+                throw err;
+            }
+            tax = taxType === 'fixed'
+                ? (fixedTaxSourceMinor === 0
+                    ? 0
+                    : convertAmountWithRates(
+                        fromMinorUnits(fixedTaxSourceMinor),
+                        taxCurrency,
+                        orderCurrency,
+                        checkoutRates
+                    ))
                 : calculateTax(subtotal, taxConfig);
         }
 
         const couponDiscount = couponPricing.couponDiscount;
 
         // Final total
-        const subtotalRounded = Math.round(subtotal * 100) / 100;
-        const shippingCostRounded = Math.round(shippingCost * 100) / 100;
-        const taxRounded = Math.round(tax * 100) / 100;
-        const couponDiscountRounded = Math.round(Number(couponDiscount || 0) * 100) / 100;
-        const totalAmount = Math.max(0, Math.round((subtotalRounded + shippingCostRounded + taxRounded - couponDiscountRounded) * 100) / 100);
+        const subtotalRounded = roundMoney(subtotal);
+        const shippingCostRounded = roundMoney(shippingCost);
+        const taxRounded = roundMoney(tax);
+        const couponDiscountRounded = roundMoney(couponDiscount);
+        if (couponDiscountRounded > subtotalRounded) {
+            const error = new Error('The calculated coupon discount exceeds the product subtotal.');
+            error.statusCode = 409;
+            error.code = 'ORDER_TOTAL_MISMATCH';
+            throw error;
+        }
+        const totalAmount = sumMoney([
+            subtotalRounded,
+            shippingCostRounded,
+            taxRounded,
+            -couponDiscountRounded,
+        ]);
+        if (totalAmount < 0) {
+            const error = new Error('The calculated order total is invalid.');
+            error.statusCode = 409;
+            error.code = 'ORDER_TOTAL_MISMATCH';
+            throw error;
+        }
+        const authoritativeOrderSummary = {
+            subtotal: subtotalRounded,
+            shippingCost: shippingCostRounded,
+            tax: taxRounded,
+            couponDiscount: couponDiscountRounded,
+            totalAmount,
+        };
+        // `orderSummary` is the exact amount the buyer reviewed. Product,
+        // delivery, coupon, tax, or FX state can change between render and the
+        // click. Never debit Wallet, commit COD, reserve stock/coupons, or
+        // create a Stripe payment for different cents. Return the fresh quote
+        // without mutating anything and require another explicit confirmation.
+        const summaryFields = Object.keys(authoritativeOrderSummary);
+        const expectedSummaryMinor = {};
+        for (const field of summaryFields) {
+            const parsed = parseStrictFiniteNumber(order.orderSummary?.[field]);
+            if (parsed === null || parsed < 0) {
+                return res.status(400).json({
+                    msg: 'The checkout total shown by the client is invalid. Refresh checkout and try again.',
+                    code: 'CHECKOUT_EXPECTED_TOTAL_INVALID',
+                });
+            }
+            try {
+                expectedSummaryMinor[field] = toMinorUnits(parsed);
+            } catch (_) {
+                return res.status(400).json({
+                    msg: 'The checkout total shown by the client is outside the supported money range.',
+                    code: 'CHECKOUT_EXPECTED_TOTAL_INVALID',
+                });
+            }
+        }
+        const changedSummaryFields = summaryFields.filter(field => (
+            expectedSummaryMinor[field] !== toMinorUnits(authoritativeOrderSummary[field])
+        ));
+        if (changedSummaryFields.length) {
+            return res.status(409).json({
+                msg: 'Your checkout total changed before the order was placed. Review the refreshed total and confirm again.',
+                code: 'CHECKOUT_REPRICE_REQUIRED',
+                currency: orderCurrency,
+                orderSummary: authoritativeOrderSummary,
+                changedFields: changedSummaryFields,
+            });
+        }
         // console.log("cartItems::::", cartItems);
 
 
@@ -973,22 +1468,34 @@ exports.placeOrder = async (req, res) => {
             ...(userId ? { user: userId } : {}),
             ...(checkoutIdempotencyKey ? { checkoutIdempotencyKey } : {}),
             ...(checkoutIdempotencyKey ? { checkoutRequestFingerprint: requestFingerprint } : {}),
-            guestEmail: !userId ? order.shippingInfo.email : null,
+            guestEmail: !userId ? guestEmail : null,
             currency: orderCurrency,
-            orderId: `ORD-${Date.now()}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`,
+            ...(trustedCheckoutRates ? { exchangeRateSnapshot: {
+                base: 'USD',
+                rates: checkoutRates,
+                capturedAt: new Date(exchangeRateSnapshot.capturedAt),
+                source: exchangeRateSnapshot.source,
+                fallback: exchangeRateSnapshot.fallback,
+            } } : {}),
+            // Ten random bytes plus the database uniqueness guard make the
+            // human-facing id collision-resistant. Provider routing still
+            // uses this order's immutable Mongo _id as the authority.
+            orderId: `ORD-${Date.now()}-${crypto.randomBytes(10).toString('hex').toUpperCase()}`,
+            orderIdVersion: 2,
 
             orderItems: normalizedOrderItems,
 
             shippingInfo: {
                 fullName: order.shippingInfo.fullName,
                 email: order.shippingInfo.email,
-                phone: order.shippingInfo.phone,
+                phone: shippingPhoneSnapshot.e164,
+                phoneE164: shippingPhoneSnapshot.e164,
                 address: order.shippingInfo.address,
                 city: order.shippingInfo.city,
                 state: order.shippingInfo.state,
                 postalCode: order.shippingInfo.postalCode,
                 country: order.shippingInfo.country,
-                countryCode: String(order.shippingInfo.countryCode || '').trim().toUpperCase(),
+                countryCode: shippingPhoneSnapshot.countryCode,
             },
 
             shippingMethod: {
@@ -1000,13 +1507,7 @@ exports.placeOrder = async (req, res) => {
 
             sellerShipping: shippingPricing.sellerShipping,
 
-            orderSummary: {
-                subtotal: subtotalRounded,
-                shippingCost: shippingCostRounded,
-                tax: taxRounded,
-                couponDiscount: couponDiscountRounded,
-                totalAmount: totalAmount,
-            },
+            orderSummary: authoritativeOrderSummary,
 
             sellerFulfillment: sellerIdsInOrder.map(sellerId => ({
                 seller: sellerId,
@@ -1041,7 +1542,30 @@ exports.placeOrder = async (req, res) => {
             paymentMethod: normalizedPaymentMethod,
             paymentFlow: isNativeStripePayment ? 'payment_sheet' : 'checkout_session',
             clientSurface: rawClientSurface,
+            paymentSetupState: normalizedPaymentMethod === 'stripe' ? 'not_started' : 'closed',
+            ...(normalizedPaymentMethod === 'stripe' ? {
+                stripeMode: STRIPE_MODE,
+                paymentExpiresAt: isNativeStripePayment
+                    ? createPaymentExpiry()
+                    : new Date(Date.now() + 35 * 60 * 1000),
+            } : {}),
         });
+        newOrder.sellerSettlementVersion = SELLER_SETTLEMENT_VERSION;
+        newOrder.sellerSettlement = buildOrderSellerSettlement(newOrder, {
+            requireOrderTotal: true,
+        });
+        // Enforce Stripe's documented eight-digit charge ceiling before this
+        // order, coupon reservation, inventory reservation, Stripe customer,
+        // or payment object can be created. Zero remains valid here because it
+        // is completed by the local no-charge path below.
+        if (newOrder.paymentMethod === 'stripe') {
+            getStripeOrderChargeAmountMinor(newOrder, { allowZero: true });
+            if (newOrder.paymentFlow === 'checkout_session') {
+                const returnUrls = buildOrderCheckoutReturnUrls(newOrder);
+                newOrder.stripeCheckoutSuccessUrl = returnUrls.successUrl;
+                newOrder.stripeCheckoutCancelUrl = returnUrls.cancelUrl;
+            }
+        }
         if (order.instructions && order.instructions !== '') newOrder.instructions = order.instructions
 
         // Always attach a confirmation token so WhatsApp/email auto-verify can use it.
@@ -1060,82 +1584,119 @@ exports.placeOrder = async (req, res) => {
             newOrder.awaitingPayment = true;
         }
 
-        await newOrder.save();
-
-        // Reserve COD inventory before any buyer/seller notification is sent.
-        // The transaction guarantees that either every line is reserved or none
-        // is, so an order can never be announced with partially reduced stock.
-        if (isCOD) {
-            try {
-                await commitOrderInventory(newOrder._id);
-                newOrder.inventoryCommitted = true;
-            } catch (inventoryError) {
-                await Order.deleteOne({ _id: newOrder._id, inventoryCommitted: false }).catch(() => {});
-                throw inventoryError;
+        const noPaymentRequired = !isCOD && isNoChargeOnlineOrder(newOrder);
+        let paidOrder = null;
+        let noChargeOrder = null;
+        try {
+            // No inserted intermediate order is visible: pricing snapshots,
+            // coupon capacity, and every local immediate-payment mutation
+            // commit or roll back together.
+            await mongoose.connection.transaction(async session => {
+                await newOrder.save({ session });
+                if (newOrder.appliedCoupons.length > 0) {
+                    await reserveOrderCoupons({ orderId: newOrder._id, userId, session });
+                }
+                if (isCOD) {
+                    await commitOrderInventoryAndCoupons(newOrder._id, { session });
+                } else if (noPaymentRequired) {
+                    const completion = await completeNoChargeOrder({
+                        orderId: newOrder._id,
+                        session,
+                    });
+                    noChargeOrder = completion.order;
+                } else if (newOrder.paymentMethod === 'wallet') {
+                    paidOrder = await payOrderWithWallet({ orderId: newOrder._id, userId, session });
+                }
+                const immediateFulfilledOrder = isCOD
+                    ? newOrder
+                    : (noChargeOrder || paidOrder);
+                if (immediateFulfilledOrder) {
+                    await removeFulfilledOrderItemsFromCart({
+                        userId,
+                        orderItems: immediateFulfilledOrder.orderItems,
+                        fulfillmentId: immediateFulfilledOrder._id,
+                        session,
+                    });
+                }
+                if (isCOD) {
+                    const persistedCodOrder = await Order.findById(newOrder._id).session(session);
+                    await enqueueCodOrderBuyerConfirmationNotification(persistedCodOrder, { session });
+                    for (const sellerId of [...new Set(
+                        (persistedCodOrder?.sellerSettlement || [])
+                            .map(entry => toId(entry?.seller))
+                            .filter(Boolean)
+                    )]) {
+                        await enqueueCodOrderSellerNotifications(
+                            persistedCodOrder,
+                            sellerId,
+                            { session }
+                        );
+                    }
+                }
+            }, {
+                readConcern: { level: 'snapshot' },
+                writeConcern: { w: 'majority' },
+            });
+        } catch (checkoutCommitError) {
+            // Let the outer idempotency handler resolve a concurrent winner.
+            // Returning a Wallet error here would turn a safe same-key race
+            // into a false 500 even though the original order committed.
+            if (checkoutCommitError?.code === 11000 && checkoutIdempotencyKey) {
+                throw checkoutCommitError;
             }
+            if (newOrder.paymentMethod === 'wallet') {
+                return res.status(checkoutCommitError.statusCode || 500).json({
+                    msg: checkoutCommitError.message || 'Rozare Wallet payment failed.',
+                    code: checkoutCommitError.code,
+                    availableBalance: checkoutCommitError.availableBalance,
+                    currency: checkoutCommitError.currency,
+                });
+            }
+            throw checkoutCommitError;
+        }
+        if (noChargeOrder) {
+            // Buyer and seller receipts were inserted into the durable outbox
+            // in the same transaction that completed this zero-total order.
+
+            // Idempotent recovery fallback for an older order/transaction that
+            // committed before cart cleanup became part of the same transaction.
+            await removeFulfilledOrderItemsFromCart({
+                userId,
+                orderItems: noChargeOrder.orderItems,
+                fulfillmentId: noChargeOrder._id,
+            });
+            trackOrderEvent({
+                event: 'PlaceAnOrder',
+                req,
+                order: noChargeOrder,
+                eventId: noChargeOrder.tracking?.tiktokPlaceOrderEventId,
+                tracking: noChargeOrder.tracking || {},
+            }).catch(() => {});
+            trackOrderEvent({
+                event: 'Purchase',
+                req,
+                order: noChargeOrder,
+                eventId: noChargeOrder.tracking?.tiktokPurchaseEventId,
+                tracking: noChargeOrder.tracking || {},
+            }).catch(() => {});
+
+            return res.status(200).json(noChargeCheckoutResponse(noChargeOrder));
         }
 
-        // Send order confirmation email to buyer — ONLY for COD here.
-        // For Stripe orders, the buyer + seller emails are sent from the Stripe
-        // webhook (server.js) after payment is actually confirmed.
-        if (isCOD) {
-            try {
-                const confirmUrl = `${process.env.FRONTEND_URL || 'https://rozare.com'}/orders/confirm/${newOrder.confirmation.token}`;
-                const emailData = buyerOrderConfirmationRequestEmail(newOrder, confirmUrl);
-                await sendEmail({ to: newOrder.shippingInfo.email, ...emailData });
-                newOrder.confirmation.emailSentAt = new Date();
-                newOrder.confirmation.emailSentSuccess = true;
-                await newOrder.save();
-            } catch (emailErr) {
-                console.error('Failed to send order confirmation email:', emailErr.message);
-                newOrder.confirmation.emailSentAt = new Date();
-                newOrder.confirmation.emailSentSuccess = false;
-                newOrder.confirmation.emailError = emailErr.message || 'Unknown email error';
-                await newOrder.save();
-            }
-
-            // Send new order notification to each seller (COD only — for Stripe this happens in webhook)
-            try {
-                await notifyNewOrderSellers(newOrder, orderItems);
-            } catch (emailErr) {
-                console.error('Failed to send seller notification email:', emailErr.message);
-            }
-
-            // 🟢 Enqueue WhatsApp confirmation poll ONLY for COD orders.
-            await maybeEnqueueWhatsAppConfirmation(newOrder, orderItems);
-        }
+        // COD buyer email/interactive WhatsApp and every role-scoped seller
+        // channel were inserted atomically with the order transaction.
 
         // const domainURL = process.env.FRONTEND_URL || 'http://localhost:5173'
 
         if (newOrder.paymentMethod === 'wallet') {
-            let paidOrder;
-            try {
-                paidOrder = await payOrderWithWallet({ orderId: newOrder._id, userId });
-            } catch (walletError) {
-                await Order.deleteOne({ _id: newOrder._id, awaitingPayment: true }).catch(() => {});
-                return res.status(walletError.statusCode || 500).json({
-                    msg: walletError.message || 'Rozare Wallet payment failed.',
-                    code: walletError.code,
-                    availableBalance: walletError.availableBalance,
-                    currency: walletError.currency,
-                });
-            }
-
-            try {
-                const buyerEmailData = orderConfirmationEmail(paidOrder);
-                await sendEmail({ to: paidOrder.shippingInfo.email, ...buyerEmailData });
-                await notifyNewOrderSellers(paidOrder, orderItems);
-                await enqueueOrderPlacedInfo(paidOrder);
-            } catch (notificationError) {
-                console.error('Wallet order notification failed:', notificationError.message);
-            }
+            // Wallet debit, paid-order state, and role-scoped notification
+            // outbox rows committed atomically in payOrderWithWallet().
 
             await removeFulfilledOrderItemsFromCart({
                 userId,
                 orderItems: paidOrder.orderItems,
                 fulfillmentId: paidOrder._id,
             });
-            await recordOrderCoupons(paidOrder, userId);
             trackOrderEvent({
                 event: 'PlaceAnOrder',
                 req,
@@ -1165,7 +1726,6 @@ exports.placeOrder = async (req, res) => {
         }
 
         if (newOrder.paymentMethod === 'cash_on_delivery') {
-            await recordOrderCoupons(newOrder, userId);
             await removeFulfilledOrderItemsFromCart({
                 userId,
                 orderItems: newOrder.orderItems,
@@ -1193,7 +1753,7 @@ exports.placeOrder = async (req, res) => {
         }
 
         if (!STRIPE_SUPPORTED_CURRENCIES.has(newOrder.currency)) {
-            await Order.deleteOne({ _id: newOrder._id });
+            await deleteUnpaidCheckoutOrder({ _id: newOrder._id });
             return res.status(400).json({
                 msg: codRestrictedSellerNames.length > 0
                     ? `Card payments are not available in ${newOrder.currency} yet, and this cart contains sellers who accept online payment only. Please switch checkout currency or remove those items.`
@@ -1201,7 +1761,7 @@ exports.placeOrder = async (req, res) => {
             });
         }
         if (!stripe) {
-            await Order.deleteOne({ _id: newOrder._id, awaitingPayment: true });
+            await deleteUnpaidCheckoutOrder({ _id: newOrder._id, awaitingPayment: true });
             return res.status(503).json({
                 msg: 'Online payments are not configured. Please contact support.',
                 code: 'STRIPE_NOT_CONFIGURED',
@@ -1212,13 +1772,9 @@ exports.placeOrder = async (req, res) => {
         try {
             ({ customer: stripeCustomer } = await ensureStripeCustomerForUser(userId));
             newOrder.stripeCustomerId = stripeCustomer.id;
-            newOrder.stripeMode = STRIPE_MODE;
-            newOrder.paymentExpiresAt = isNativeStripePayment
-                ? createPaymentExpiry()
-                : new Date(Date.now() + 35 * 60 * 1000);
             await newOrder.save();
         } catch (customerError) {
-            await Order.deleteOne({ _id: newOrder._id, awaitingPayment: true }).catch(() => {});
+            await deleteUnpaidCheckoutOrder({ _id: newOrder._id, awaitingPayment: true }).catch(() => {});
             throw customerError;
         }
 
@@ -1229,15 +1785,19 @@ exports.placeOrder = async (req, res) => {
             await commitOrderInventory(newOrder._id);
             newOrder.inventoryCommitted = true;
         } catch (inventoryError) {
-            await Order.deleteOne({ _id: newOrder._id, isPaid: false }).catch(() => {});
+            await deleteUnpaidCheckoutOrder({ _id: newOrder._id, isPaid: false }).catch(() => {});
             throw inventoryError;
         }
 
         if (isNativeStripePayment) {
             let paymentIntent;
+            let stripeOrder = await claimStripeSetupCreation(newOrder);
             try {
-                paymentIntent = await createNativeOrderPaymentIntent(newOrder);
+                paymentIntent = await createNativeOrderPaymentIntent(stripeOrder);
             } catch (creationError) {
+                if (isAmountTooSmallForPositiveStripeOrder(creationError, stripeOrder)) {
+                    return respondToAmountTooSmall(res, stripeOrder);
+                }
                 if (!isDefinitiveStripeCreationError(creationError)) {
                     const recoveryError = new Error(
                         'Secure mobile payment is being recovered. Retry this same checkout attempt.'
@@ -1247,18 +1807,19 @@ exports.placeOrder = async (req, res) => {
                     recoveryError.cause = creationError;
                     throw recoveryError;
                 }
-                await restoreOrderInventory(newOrder._id).catch(() => {});
-                await Order.deleteOne({ _id: newOrder._id, isPaid: false }).catch(() => {});
-                const rejectedError = new Error('Stripe could not prepare this secure payment. Please try again.');
-                rejectedError.statusCode = 502;
-                rejectedError.code = 'PAYMENT_ATTEMPT_REJECTED';
-                rejectedError.cause = creationError;
-                throw rejectedError;
+                await rejectDefinitiveStripeSetup(
+                    stripeOrder,
+                    creationError,
+                    'Stripe could not prepare this secure payment. Please try again.',
+                );
             }
 
-            newOrder.stripePaymentIntentId = paymentIntent.id;
             try {
-                await newOrder.save();
+                stripeOrder = await attachStripeOrderReference({
+                    order: stripeOrder,
+                    stripeObject: paymentIntent,
+                    paymentFlow: 'payment_sheet',
+                });
             } catch (persistenceError) {
                 const recoveryError = new Error(
                     'Secure mobile payment is being recovered. Retry this same checkout attempt.'
@@ -1271,11 +1832,11 @@ exports.placeOrder = async (req, res) => {
 
             let nativePaymentResponse;
             try {
-                nativePaymentResponse = await paymentIntentResponse(newOrder, paymentIntent);
+                nativePaymentResponse = await paymentIntentResponse(stripeOrder, paymentIntent);
             } catch (customerSessionError) {
                 let closed;
                 try {
-                    closed = await closeOrderPaymentIntent(newOrder, {
+                    closed = await closeOrderPaymentIntent(stripeOrder, {
                         status: 'cancelled',
                         reason: 'Stripe CustomerSession preparation failed before PaymentSheet opened.',
                     });
@@ -1294,8 +1855,8 @@ exports.placeOrder = async (req, res) => {
                         paymentFlow: 'payment_sheet',
                         stripePaymentReceived: true,
                         paymentIntentId: paymentIntent.id,
-                        orderId: newOrder.orderId,
-                        order: orderResponseSummary(newOrder),
+                        orderId: stripeOrder.orderId,
+                        order: orderResponseSummary(stripeOrder),
                     });
                 }
                 const preparationError = new Error(
@@ -1310,9 +1871,9 @@ exports.placeOrder = async (req, res) => {
             trackOrderEvent({
                 event: 'PlaceAnOrder',
                 req,
-                order: newOrder,
-                eventId: newOrder.tracking?.tiktokPlaceOrderEventId,
-                tracking: newOrder.tracking || {},
+                order: stripeOrder,
+                eventId: stripeOrder.tracking?.tiktokPlaceOrderEventId,
+                tracking: stripeOrder.tracking || {},
             }).catch(() => {});
 
             res.set('Cache-Control', 'no-store, private, max-age=0');
@@ -1320,9 +1881,13 @@ exports.placeOrder = async (req, res) => {
         }
 
         let session;
+        let stripeOrder = await claimStripeSetupCreation(newOrder);
         try {
-            session = await createHostedOrderCheckoutSession(newOrder);
+            session = await createHostedOrderCheckoutSession(stripeOrder);
         } catch (creationError) {
+            if (isAmountTooSmallForPositiveStripeOrder(creationError, stripeOrder)) {
+                return respondToAmountTooSmall(res, stripeOrder);
+            }
             if (!isDefinitiveStripeCreationError(creationError)) {
                 const recoveryError = new Error(
                     'Secure checkout is being recovered. Retry this same checkout attempt.'
@@ -1332,20 +1897,21 @@ exports.placeOrder = async (req, res) => {
                 recoveryError.cause = creationError;
                 throw recoveryError;
             }
-            await restoreOrderInventory(newOrder._id).catch(() => {});
-            await Order.deleteOne({ _id: newOrder._id, awaitingPayment: true }).catch(() => {});
-            const rejectedError = new Error('Stripe could not prepare secure checkout. Please try again.');
-            rejectedError.statusCode = 502;
-            rejectedError.code = 'PAYMENT_ATTEMPT_REJECTED';
-            rejectedError.cause = creationError;
-            throw rejectedError;
+            await rejectDefinitiveStripeSetup(
+                stripeOrder,
+                creationError,
+                'Stripe could not prepare secure checkout. Please try again.',
+            );
         }
 
-        // Persist the Stripe session id so webhook handlers can locate this order
-        // when the buyer abandons / the session expires.
-        newOrder.stripeSessionId = session.id;
+        // Persist the Stripe session ID through the same guarded attachment
+        // used by signed webhook recovery.
         try {
-            await newOrder.save();
+            stripeOrder = await attachStripeOrderReference({
+                order: stripeOrder,
+                stripeObject: session,
+                paymentFlow: 'checkout_session',
+            });
         } catch (persistenceError) {
             const recoveryError = new Error(
                 'Secure checkout is being recovered. Retry this same checkout attempt.'
@@ -1359,30 +1925,32 @@ exports.placeOrder = async (req, res) => {
         trackOrderEvent({
             event: 'PlaceAnOrder',
             req,
-            order: newOrder,
-            eventId: newOrder.tracking?.tiktokPlaceOrderEventId,
-            tracking: newOrder.tracking || {},
+            order: stripeOrder,
+            eventId: stripeOrder.tracking?.tiktokPlaceOrderEventId,
+            tracking: stripeOrder.tracking || {},
         }).catch(() => {});
 
         return res.status(201).json({
             id: session.id,
             url: session.url,
             order: {
-                orderId: newOrder.orderId,
-                totalAmount: newOrder.orderSummary.totalAmount,
-                currency: newOrder.currency,
+                orderId: stripeOrder.orderId,
+                totalAmount: stripeOrder.orderSummary.totalAmount,
+                currency: stripeOrder.currency,
             },
         });
     } catch (error) {
-        if (error?.code === 11000 && userId && checkoutIdempotencyKey) {
-            const existingOrder = await Order.findOne({ user: userId, checkoutIdempotencyKey })
+        if (error?.code === 11000 && checkoutIdentityFilter) {
+            const existingOrder = await Order.findOne(checkoutIdentityFilter)
                 .select('+checkoutRequestFingerprint')
                 .catch(() => null);
             if (existingOrder) {
-                if (
-                    existingOrder.checkoutRequestFingerprint
-                    && existingOrder.checkoutRequestFingerprint !== requestFingerprint
-                ) {
+                if (!checkoutFingerprintMatches({
+                    existingOrder,
+                    requestFingerprint,
+                    legacyRequestFingerprint,
+                    resolvedCurrency: orderCurrency,
+                })) {
                     return res.status(409).json({
                         msg: 'This checkout attempt key was already used with different order details.',
                         code: 'IDEMPOTENCY_CONFLICT',
@@ -1410,9 +1978,7 @@ exports.getPaymentStatus = async (req, res) => {
     const { id: userId, role } = req.user;
 
     try {
-        const selectors = [{ orderId: reference }];
-        if (mongoose.Types.ObjectId.isValid(reference)) selectors.push({ _id: reference });
-        const order = await Order.findOne({ $or: selectors });
+        const order = await resolveOrderReference({ reference });
         if (!order) return res.status(404).json({ msg: 'Order not found.' });
 
         if (role !== 'admin' && toId(order.user) !== toId(userId)) {
@@ -1491,9 +2057,8 @@ exports.getPaymentStatus = async (req, res) => {
             try {
                 paymentIntent = await stripe.paymentIntents.retrieve(order.stripePaymentIntentId);
             } catch (error) {
-                if (error?.code === 'resource_missing') {
-                    if (order.inventoryCommitted) await restoreOrderInventory(order._id);
-                    await Order.deleteOne({
+                if (isAuthoritativeStripeResourceMissingError(error)) {
+                    await deleteUnpaidCheckoutOrder({
                         _id: order._id,
                         isPaid: false,
                         awaitingPayment: true,
@@ -1564,9 +2129,8 @@ exports.getPaymentStatus = async (req, res) => {
         try {
             session = await stripe.checkout.sessions.retrieve(order.stripeSessionId);
         } catch (error) {
-            if (error?.code === 'resource_missing') {
-                if (order.inventoryCommitted) await restoreOrderInventory(order._id);
-                await Order.deleteOne({
+            if (isAuthoritativeStripeResourceMissingError(error)) {
+                await deleteUnpaidCheckoutOrder({
                     _id: order._id,
                     isPaid: false,
                     awaitingPayment: true,
@@ -1588,8 +2152,7 @@ exports.getPaymentStatus = async (req, res) => {
         validateStripeOrderSession(order, session);
 
         if (session.status === 'expired') {
-            if (order.inventoryCommitted) await restoreOrderInventory(order._id);
-            await Order.deleteOne({
+            await deleteUnpaidCheckoutOrder({
                 _id: order._id,
                 isPaid: false,
                 awaitingPayment: true,
@@ -1615,9 +2178,10 @@ exports.getPaymentStatus = async (req, res) => {
 exports.cancelStripePaymentAttempt = async (req, res) => {
     const reference = String(req.params.orderId || '').trim();
     try {
-        const selectors = [{ orderId: reference }];
-        if (mongoose.Types.ObjectId.isValid(reference)) selectors.push({ _id: reference });
-        const order = await Order.findOne({ user: req.user.id, $or: selectors });
+        const order = await resolveOrderReference({ reference });
+        if (order && toId(order.user) !== toId(req.user.id)) {
+            return res.status(404).json({ msg: 'Order payment attempt not found.' });
+        }
         if (!order) return res.status(404).json({ msg: 'Order payment attempt not found.' });
         if (order.paymentMethod !== 'stripe' || order.paymentFlow !== 'payment_sheet') {
             return res.status(400).json({
@@ -1712,6 +2276,178 @@ exports.getOrders = async (req, res) => {
     }
 }
 
+const exportMoneyError = (message, code, statusCode) => {
+    const error = new Error(message);
+    error.code = code;
+    error.statusCode = statusCode;
+    return error;
+};
+
+const normalizedExportAmount = (value, fieldName) => {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+        throw exportMoneyError(
+            `Order ${fieldName} is not a valid monetary amount.`,
+            'ORDER_EXPORT_MONEY_INVALID',
+            422,
+        );
+    }
+    try {
+        if (roundMoney(value) !== value) {
+            throw exportMoneyError(
+                `Order ${fieldName} is not exact to cents.`,
+                'ORDER_EXPORT_MONEY_INVALID',
+                422,
+            );
+        }
+        toMinorUnits(value);
+    } catch (error) {
+        if (error?.code === 'ORDER_EXPORT_MONEY_INVALID') throw error;
+        throw exportMoneyError(
+            `Order ${fieldName} is outside the safe monetary range.`,
+            'ORDER_EXPORT_MONEY_INVALID',
+            422,
+        );
+    }
+    return value;
+};
+
+function snapshotIsTrustedForConversion(snapshot) {
+    return (
+    Boolean(snapshot && typeof snapshot === 'object')
+    && snapshot.fallback === false
+    && snapshot.base === 'USD'
+    && typeof snapshot.source === 'string'
+    && Boolean(snapshot.source.trim())
+    && !['fallback', 'stale'].includes(snapshot.source.trim().toLowerCase())
+    && snapshot.rates?.USD === 1
+    && Object.keys(CURRENCIES).every((currency) => {
+        const rate = snapshot.rates?.[currency];
+        return typeof rate === 'number' && Number.isFinite(rate) && rate > 0;
+    })
+    );
+}
+
+const requireCanonicalStoredOrderCurrency = (value, {
+    code = 'ORDER_EXPORT_CURRENCY_INVALID',
+    statusCode = 422,
+} = {}) => {
+    // Currency-less legacy orders were canonically USD. Any present value must
+    // already be a canonical persisted code; exports/invoices must not clean up
+    // corrupt storage while presenting it as trustworthy accounting data.
+    const raw = value === null || value === undefined ? 'USD' : value;
+    if (
+        typeof raw !== 'string'
+        || !raw.trim()
+        || raw !== raw.trim().toUpperCase()
+        || !isSupportedCurrency(raw)
+    ) {
+        throw exportMoneyError(
+            'An order has an invalid stored currency.',
+            code,
+            statusCode,
+        );
+    }
+    return raw;
+};
+
+const requireStoredOrderItemQuantity = (value, {
+    code = 'ORDER_EXPORT_ITEM_INVALID',
+    statusCode = 422,
+} = {}) => {
+    if (!Number.isSafeInteger(value) || value < 1) {
+        throw exportMoneyError(
+            'An order has an invalid stored item quantity.',
+            code,
+            statusCode,
+        );
+    }
+    return value;
+};
+
+const buildOrderExportMoney = ({ summary = {}, sourceCurrency, reportCurrency, rateSnapshot }) => {
+    const source = requireCanonicalStoredOrderCurrency(sourceCurrency);
+    if (
+        typeof reportCurrency !== 'string'
+        || !reportCurrency.trim()
+        || !isSupportedCurrency(reportCurrency)
+    ) {
+        throw exportMoneyError(
+            'Choose a supported report currency.',
+            'ORDER_EXPORT_CURRENCY_NOT_SUPPORTED',
+            400,
+        );
+    }
+
+    const target = normalizeCurrency(reportCurrency);
+    if (source !== target && !snapshotIsTrustedForConversion(rateSnapshot)) {
+        throw exportMoneyError(
+            'Live exchange rates are temporarily unavailable. Please retry the export shortly.',
+            'EXCHANGE_RATES_UNAVAILABLE',
+            503,
+        );
+    }
+
+    const convertToMinor = (value, fieldName) => toMinorUnits(convertAmountWithRates(
+        normalizedExportAmount(value, fieldName),
+        source,
+        target,
+        rateSnapshot?.rates,
+    ));
+
+    const subtotalMinor = convertToMinor(summary.subtotal, 'subtotal');
+    const shippingMinor = convertToMinor(summary.shippingCost, 'shipping');
+    const taxMinor = convertToMinor(summary.tax, 'tax');
+    const couponDiscountMinor = convertToMinor(summary.couponDiscount, 'coupon discount');
+    const totalMinor = convertToMinor(summary.totalAmount, 'total');
+
+    // Derive this after converting and rounding every displayed component so
+    // every row reconciles exactly in the requested report currency.
+    const reconciliationAdjustmentMinor = totalMinor
+        - subtotalMinor
+        - shippingMinor
+        - taxMinor
+        + couponDiscountMinor;
+
+    return {
+        subtotalMinor,
+        shippingMinor,
+        taxMinor,
+        couponDiscountMinor,
+        reconciliationAdjustmentMinor,
+        totalMinor,
+    };
+};
+
+const sumExportMinorUnits = (rows, key) => {
+    const total = rows.reduce((sum, row) => {
+        if (!Number.isSafeInteger(row?.[key])) {
+            throw exportMoneyError(
+                'The report contains an invalid minor-unit amount.',
+                'ORDER_EXPORT_TOTAL_OUT_OF_RANGE',
+                422,
+            );
+        }
+        return sum + BigInt(row[key]);
+    }, 0n);
+    const numeric = Number(total);
+    if (!Number.isSafeInteger(numeric)) {
+        throw exportMoneyError(
+            'The report total is too large to calculate safely.',
+            'ORDER_EXPORT_TOTAL_OUT_OF_RANGE',
+            422,
+        );
+    }
+    return numeric;
+};
+
+const formatExportMinorUnits = (minorUnits) => fromMinorUnits(minorUnits).toFixed(2);
+
+if (process.env.NODE_ENV === 'test') {
+    exports._buildOrderExportMoney = buildOrderExportMoney;
+    exports._sumExportMinorUnits = sumExportMinorUnits;
+    exports._snapshotIsTrustedForConversion = snapshotIsTrustedForConversion;
+}
+
 /**
  * GET /api/order/export — download orders in CSV, PDF, or Excel format.
  * Query params: search, paymentStatus, status, startDate, endDate, format (csv|pdf|excel)
@@ -1722,7 +2458,16 @@ exports.exportOrders = async (req, res) => {
     const { search, paymentStatus, status, startDate, endDate, format = 'csv', currency: requestedCurrency } = req.query;
     const Store = require('../models/Store');
     const User = require('../models/User');
-    const reportCurrency = normalizeCurrency(requestedCurrency || 'USD');
+    const rawReportCurrency = requestedCurrency === null || requestedCurrency === undefined
+        ? 'USD'
+        : requestedCurrency;
+    if (typeof rawReportCurrency !== 'string' || !rawReportCurrency.trim() || !isSupportedCurrency(rawReportCurrency)) {
+        return res.status(400).json({
+            msg: 'Choose a supported report currency.',
+            code: 'ORDER_EXPORT_CURRENCY_NOT_SUPPORTED',
+        });
+    }
+    const reportCurrency = normalizeCurrency(rawReportCurrency);
 
     // Hide awaiting-payment Stripe orders from exports.
     let query = { awaitingPayment: { $ne: true } };
@@ -1763,22 +2508,49 @@ exports.exportOrders = async (req, res) => {
 
         let orders;
         if (role === 'seller') {
-            orders = await getSellerScopedOrders(query, userId, { createdAt: -1 });
+            orders = await getSellerScopedOrders(query, userId, { createdAt: -1 }, { lean: true });
         } else {
-            orders = await Order.find(query).sort({ createdAt: -1 });
+            // Lean preserves raw BSON primitives. Hydration can otherwise cast
+            // a corrupt boolean/string quantity into a plausible number.
+            orders = await Order.find(query).sort({ createdAt: -1 }).lean();
         }
+
+        // Freeze one rate table for the complete report. A multi-currency
+        // export must never mix rates fetched at different moments.
+        const rateSnapshot = await getExchangeRateSnapshot();
 
         // Normalize orders to plain objects
         const rows = [];
         for (const order of orders) {
             const o = order.toObject ? order.toObject() : order;
-            const sourceCurrency = normalizeCurrency(o.currency || 'USD');
-            // Resolve conversions sequentially so a cold exchange-rate cache cannot
-            // fan out several identical network requests during a large export.
-            const subtotal = await convertAmount(Number(o.orderSummary?.subtotal) || 0, sourceCurrency, reportCurrency);
-            const shipping = await convertAmount(Number(o.orderSummary?.shippingCost) || 0, sourceCurrency, reportCurrency);
-            const tax = await convertAmount(Number(o.orderSummary?.tax) || 0, sourceCurrency, reportCurrency);
-            const total = await convertAmount(Number(o.orderSummary?.totalAmount) || 0, sourceCurrency, reportCurrency);
+            const sourceCurrency = requireCanonicalStoredOrderCurrency(o.currency);
+            const exportMoney = buildOrderExportMoney({
+                summary: o.orderSummary,
+                sourceCurrency,
+                reportCurrency,
+                rateSnapshot,
+            });
+            if (!Array.isArray(o.orderItems)) {
+                throw exportMoneyError(
+                    'An order has invalid stored items.',
+                    'ORDER_EXPORT_ITEM_INVALID',
+                    422,
+                );
+            }
+            let itemCount = 0;
+            const items = o.orderItems.map(i => {
+                const quantity = requireStoredOrderItemQuantity(i?.quantity);
+                itemCount += quantity;
+                if (!Number.isSafeInteger(itemCount)) {
+                    throw exportMoneyError(
+                        'An order item count is too large to export safely.',
+                        'ORDER_EXPORT_ITEM_INVALID',
+                        422,
+                    );
+                }
+                const options = formatItemOptionsText(i);
+                return `${orderItemName(i)}${options ? ` (${options})` : ''} x${quantity}`;
+            }).join(', ');
             rows.push({
                 orderId: o.orderId || '',
                 date: new Date(o.createdAt).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }),
@@ -1790,15 +2562,15 @@ exports.exportOrders = async (req, res) => {
                 status: (o.orderStatus || '').charAt(0).toUpperCase() + (o.orderStatus || '').slice(1),
                 payment: o.isPaid ? 'Paid' : 'Unpaid',
                 paymentMethod: paymentMethodLabel(o.paymentMethod),
-                items: (o.orderItems || []).map(i => {
-                    const options = formatItemOptionsText(i);
-                    return `${orderItemName(i)}${options ? ` (${options})` : ''} x${i.quantity}`;
-                }).join(', '),
-                itemCount: (o.orderItems || []).reduce((sum, i) => sum + i.quantity, 0),
-                subtotal: Number(subtotal || 0).toFixed(2),
-                shipping: Number(shipping || 0).toFixed(2),
-                tax: Number(tax || 0).toFixed(2),
-                total: Number(total || 0).toFixed(2),
+                items,
+                itemCount,
+                ...exportMoney,
+                subtotal: formatExportMinorUnits(exportMoney.subtotalMinor),
+                shipping: formatExportMinorUnits(exportMoney.shippingMinor),
+                tax: formatExportMinorUnits(exportMoney.taxMinor),
+                couponDiscount: formatExportMinorUnits(exportMoney.couponDiscountMinor),
+                reconciliationAdjustment: formatExportMinorUnits(exportMoney.reconciliationAdjustmentMinor),
+                total: formatExportMinorUnits(exportMoney.totalMinor),
                 currency: reportCurrency,
             });
         }
@@ -1823,11 +2595,23 @@ exports.exportOrders = async (req, res) => {
         ].filter(Boolean).join(' | ') || 'All Orders';
 
         // Totals
-        const totalSubtotal = rows.reduce((s, r) => s + parseFloat(r.subtotal), 0).toFixed(2);
-        const totalShipping = rows.reduce((s, r) => s + parseFloat(r.shipping), 0).toFixed(2);
-        const totalTax = rows.reduce((s, r) => s + parseFloat(r.tax), 0).toFixed(2);
-        const grandTotal = rows.reduce((s, r) => s + parseFloat(r.total), 0).toFixed(2);
-        const totalItems = rows.reduce((s, r) => s + r.itemCount, 0);
+        const totalSubtotal = formatExportMinorUnits(sumExportMinorUnits(rows, 'subtotalMinor'));
+        const totalShipping = formatExportMinorUnits(sumExportMinorUnits(rows, 'shippingMinor'));
+        const totalTax = formatExportMinorUnits(sumExportMinorUnits(rows, 'taxMinor'));
+        const totalCouponDiscount = formatExportMinorUnits(sumExportMinorUnits(rows, 'couponDiscountMinor'));
+        const totalReconciliationAdjustment = formatExportMinorUnits(sumExportMinorUnits(rows, 'reconciliationAdjustmentMinor'));
+        const grandTotal = formatExportMinorUnits(sumExportMinorUnits(rows, 'totalMinor'));
+        const totalItems = rows.reduce((sum, row) => {
+            const next = sum + row.itemCount;
+            if (!Number.isSafeInteger(next)) {
+                throw exportMoneyError(
+                    'The report item total is too large to calculate safely.',
+                    'ORDER_EXPORT_ITEM_INVALID',
+                    422,
+                );
+            }
+            return next;
+        }, 0);
 
         // ── CSV Format ──
         if (format === 'csv') {
@@ -1839,12 +2623,12 @@ exports.exportOrders = async (req, res) => {
             lines.push(`"Filter: ${filterDesc}"`);
             lines.push(`"Total Orders: ${rows.length} | Total Items: ${totalItems} | Grand Total: ${reportCurrency} ${grandTotal}"`);
             lines.push('');
-            lines.push(`Order ID,Date,Customer,Email,Phone,City,Country,Status,Payment,Method,Items,Qty,Subtotal (${reportCurrency}),Shipping (${reportCurrency}),Tax (${reportCurrency}),Total (${reportCurrency})`);
+            lines.push(`Order ID,Date,Customer,Email,Phone,City,Country,Status,Payment,Method,Items,Qty,Subtotal (${reportCurrency}),Shipping (${reportCurrency}),Tax (${reportCurrency}),Coupon Discount (${reportCurrency}),Reconciliation Adjustment (${reportCurrency}),Total (${reportCurrency})`);
             rows.forEach(r => {
-                lines.push([esc(r.orderId), esc(r.date), esc(r.customer), esc(r.email), esc(r.phone), esc(r.city), esc(r.country), esc(r.status), esc(r.payment), esc(r.paymentMethod), esc(r.items), r.itemCount, r.subtotal, r.shipping, r.tax, r.total].join(','));
+                lines.push([esc(r.orderId), esc(r.date), esc(r.customer), esc(r.email), esc(r.phone), esc(r.city), esc(r.country), esc(r.status), esc(r.payment), esc(r.paymentMethod), esc(r.items), r.itemCount, r.subtotal, r.shipping, r.tax, r.couponDiscount, r.reconciliationAdjustment, r.total].join(','));
             });
             lines.push('');
-            lines.push(`,,,,,,,,,,TOTALS,${totalItems},${totalSubtotal},${totalShipping},${totalTax},${grandTotal}`);
+            lines.push(`,,,,,,,,,,TOTALS,${totalItems},${totalSubtotal},${totalShipping},${totalTax},${totalCouponDiscount},${totalReconciliationAdjustment},${grandTotal}`);
             lines.push('');
             lines.push(`"Powered by Rozare - www.rozare.com"`);
 
@@ -1862,7 +2646,7 @@ exports.exportOrders = async (req, res) => {
             const sheet = workbook.addWorksheet('Orders');
 
             // ─── Title section ───
-            sheet.mergeCells('A1:P1');
+            sheet.mergeCells('A1:R1');
             const titleCell = sheet.getCell('A1');
             titleCell.value = neutralizeSpreadsheetText(`${brandName} - Order Report`);
             titleCell.font = { bold: true, size: 16, color: { argb: 'FF6366F1' } };
@@ -1870,7 +2654,7 @@ exports.exportOrders = async (req, res) => {
             sheet.getRow(1).height = 30;
 
             if (storeName && role === 'seller') {
-                sheet.mergeCells('A2:P2');
+                sheet.mergeCells('A2:R2');
                 const storeCell = sheet.getCell('A2');
                 storeCell.value = neutralizeSpreadsheetText(`Store: ${storeName}`);
                 storeCell.font = { size: 11, color: { argb: 'FF64748B' } };
@@ -1878,7 +2662,7 @@ exports.exportOrders = async (req, res) => {
             }
 
             const infoRow = role === 'seller' && storeName ? 3 : 2;
-            sheet.mergeCells(`A${infoRow}:P${infoRow}`);
+            sheet.mergeCells(`A${infoRow}:R${infoRow}`);
             const infoCell = sheet.getCell(`A${infoRow}`);
             infoCell.value = `Generated: ${generatedDate} | ${filterDesc} | ${rows.length} orders | Grand Total: ${reportCurrency} ${grandTotal}`;
             infoCell.font = { size: 10, italic: true, color: { argb: 'FF94A3B8' } };
@@ -1904,12 +2688,14 @@ exports.exportOrders = async (req, res) => {
                 { header: 'Subtotal', key: 'subtotal', width: 12 },
                 { header: 'Shipping', key: 'shipping', width: 12 },
                 { header: 'Tax', key: 'tax', width: 10 },
+                { header: 'Coupon Discount', key: 'couponDiscount', width: 16 },
+                { header: 'Adjustment', key: 'reconciliationAdjustment', width: 13 },
                 { header: 'Total', key: 'total', width: 12 },
             ];
 
             // Move header row to correct position
             const headerRow = sheet.getRow(dataStartRow);
-            headerRow.values = ['Order ID', 'Date', 'Customer', 'Email', 'Phone', 'City', 'Country', 'Status', 'Payment', 'Method', 'Items', 'Qty', `Subtotal (${reportCurrency})`, `Shipping (${reportCurrency})`, `Tax (${reportCurrency})`, `Total (${reportCurrency})`];
+            headerRow.values = ['Order ID', 'Date', 'Customer', 'Email', 'Phone', 'City', 'Country', 'Status', 'Payment', 'Method', 'Items', 'Qty', `Subtotal (${reportCurrency})`, `Shipping (${reportCurrency})`, `Tax (${reportCurrency})`, `Coupon Discount (${reportCurrency})`, `Adjustment (${reportCurrency})`, `Total (${reportCurrency})`];
             headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 11 };
             headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF6366F1' } };
             headerRow.alignment = { vertical: 'middle', horizontal: 'center' };
@@ -1923,7 +2709,8 @@ exports.exportOrders = async (req, res) => {
                     r.orderId, r.date, r.customer, r.email, r.phone, r.city,
                     r.country, r.status, r.payment, r.paymentMethod, r.items,
                 ].map(neutralizeSpreadsheetText).concat([
-                    r.itemCount, r.subtotal, r.shipping, r.tax, r.total,
+                    r.itemCount, r.subtotal, r.shipping, r.tax,
+                    r.couponDiscount, r.reconciliationAdjustment, r.total,
                 ]);
                 row.alignment = { vertical: 'middle' };
                 if (i % 2 === 0) {
@@ -1941,14 +2728,14 @@ exports.exportOrders = async (req, res) => {
             // Summary row
             const sumRowNum = dataStartRow + 1 + rows.length + 1;
             const summaryRow = sheet.getRow(sumRowNum);
-            summaryRow.values = ['', '', '', '', '', '', '', '', '', '', `TOTAL (${rows.length} orders)`, totalItems, totalSubtotal, totalShipping, totalTax, grandTotal];
+            summaryRow.values = ['', '', '', '', '', '', '', '', '', '', `TOTAL (${rows.length} orders)`, totalItems, totalSubtotal, totalShipping, totalTax, totalCouponDiscount, totalReconciliationAdjustment, grandTotal];
             summaryRow.font = { bold: true, size: 11 };
-            summaryRow.getCell(16).font = { bold: true, size: 12, color: { argb: 'FF6366F1' } };
+            summaryRow.getCell(18).font = { bold: true, size: 12, color: { argb: 'FF6366F1' } };
             summaryRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEDE9FE' } };
 
             // Footer
             const footerRow = sheet.getRow(sumRowNum + 2);
-            sheet.mergeCells(`A${sumRowNum + 2}:P${sumRowNum + 2}`);
+            sheet.mergeCells(`A${sumRowNum + 2}:R${sumRowNum + 2}`);
             const footerCell = sheet.getCell(`A${sumRowNum + 2}`);
             footerCell.value = 'Powered by Rozare - www.rozare.com';
             footerCell.font = { size: 9, italic: true, color: { argb: 'FF94A3B8' } };
@@ -1980,15 +2767,17 @@ exports.exportOrders = async (req, res) => {
             // Table config
             const cols = [
                 { label: '#', width: 24 },
-                { label: 'Order ID', width: 90 },
-                { label: 'Date', width: 64 },
-                { label: 'Customer', width: 88 },
-                { label: 'Phone', width: 70 },
-                { label: 'City', width: 54 },
-                { label: 'Status', width: 58 },
-                { label: 'Payment', width: 48 },
-                { label: 'Method', width: 38 },
-                { label: 'Items', width: 150 },
+                { label: 'Order ID', width: 80 },
+                { label: 'Date', width: 58 },
+                { label: 'Customer', width: 72 },
+                { label: 'Phone', width: 62 },
+                { label: 'City', width: 45 },
+                { label: 'Status', width: 50 },
+                { label: 'Payment', width: 45 },
+                { label: 'Method', width: 36 },
+                { label: 'Items', width: 124 },
+                { label: 'Coupon', width: 48 },
+                { label: 'Adjust.', width: 47 },
                 { label: `Total ${reportCurrency}`, width: 58 },
             ];
             const tableWidth = cols.reduce((s, c) => s + c.width, 0);
@@ -2043,7 +2832,7 @@ exports.exportOrders = async (req, res) => {
                 doc.rect(margin, y, tableWidth, rowH).lineWidth(0.2).strokeColor('#e2e8f0').stroke();
 
                 // Row values
-                const values = [String(i + 1), r.orderId, r.date, r.customer, r.phone, r.city, r.status, r.payment, r.paymentMethod, r.items, r.total];
+                const values = [String(i + 1), r.orderId, r.date, r.customer, r.phone, r.city, r.status, r.payment, r.paymentMethod, r.items, r.couponDiscount, r.reconciliationAdjustment, r.total];
                 let x = margin;
                 values.forEach((val, ci) => {
                     let color = '#334155';
@@ -2054,7 +2843,7 @@ exports.exportOrders = async (req, res) => {
                         font = 'Helvetica-Bold';
                     }
                     if (ci === 7) { color = val === 'Paid' ? '#16a34a' : '#dc2626'; font = 'Helvetica-Bold'; }
-                    if (ci === 10) { color = '#1e293b'; font = 'Helvetica-Bold'; }
+                    if (ci === 12) { color = '#1e293b'; font = 'Helvetica-Bold'; }
                     doc.font(font).fontSize(dataFontSize).fillColor(color);
                     doc.text(String(val || ''), x + 4, y + 6, { width: cols[ci].width - 8, lineBreak: false });
                     x += cols[ci].width;
@@ -2073,7 +2862,7 @@ exports.exportOrders = async (req, res) => {
                 doc.rect(margin, y, tableWidth, 22).fill('#ede9fe');
                 doc.font('Helvetica-Bold').fontSize(8.5).fillColor('#4f46e5');
                 doc.text(
-                    `TOTALS: ${rows.length} orders | Subtotal: ${reportCurrency} ${totalSubtotal} | Shipping: ${reportCurrency} ${totalShipping} | Tax: ${reportCurrency} ${totalTax} | Grand Total: ${reportCurrency} ${grandTotal}`,
+                    `TOTALS: ${rows.length} orders | Subtotal: ${reportCurrency} ${totalSubtotal} | Shipping: ${reportCurrency} ${totalShipping} | Tax: ${reportCurrency} ${totalTax} | Coupon: ${reportCurrency} ${totalCouponDiscount} | Adjustment: ${reportCurrency} ${totalReconciliationAdjustment} | Grand Total: ${reportCurrency} ${grandTotal}`,
                     margin + 10, y + 6, { width: tableWidth - 20, lineBreak: false }
                 );
                 y += 30;
@@ -2091,7 +2880,10 @@ exports.exportOrders = async (req, res) => {
         return res.status(400).json({ msg: 'Invalid format. Supported: csv, pdf, excel' });
     } catch (error) {
         console.error("Error exporting orders:", error);
-        return res.status(500).json({ msg: "Server error while exporting orders" });
+        return res.status(error.statusCode || 500).json({
+            msg: error.statusCode ? error.message : 'Server error while exporting orders',
+            ...(error.code ? { code: error.code } : {}),
+        });
     }
 }
 
@@ -2145,7 +2937,7 @@ exports.updateStatus = async (req, res) => {
             return res.status(403).json({ msg: 'Only sellers and admins can update order status' })
         }
 
-        const existingOrder = await Order.findOne({
+        let existingOrder = await Order.findOne({
             _id,
             // Awaiting-payment rows are abandoned/incomplete Checkout state,
             // not fulfillable seller orders. Keep admin recovery intentional.
@@ -2157,21 +2949,8 @@ exports.updateStatus = async (req, res) => {
         }
 
         const orderSellerIds = await ensureOrderSellerFulfillment(existingOrder);
-        // Snapshot the aggregate status so we notify the buyer only when the
-        // OVERALL order state changes (a seller updating just their portion of
-        // a multi-seller order may not move the aggregate).
-        const prevAggregateStatus = existingOrder.orderStatus;
-
-        if (newStatus === 'cancelled' && existingOrder.isPaid) {
-            return res.status(409).json({
-                msg: role === 'seller'
-                    ? 'Paid seller portions require a verified refund before cancellation.'
-                    : 'Paid orders require a verified refund before cancellation.',
-                code: 'PAID_ORDER_REQUIRES_REFUND',
-            });
-        }
-
         // If seller, check if order contains their products (snapshot or live).
+        let sellerFulfillment = null;
         if (role === 'seller') {
             const sellerProducts = await Product.find({ seller: userId }).select('_id')
             const sellerProductIds = sellerProducts.map(p => p._id.toString())
@@ -2184,65 +2963,84 @@ exports.updateStatus = async (req, res) => {
                 return res.status(403).json({ msg: 'You can only update orders containing your products' })
             }
 
-            const sellerFulfillment = sellerFulfillmentFor(existingOrder, userId);
+            sellerFulfillment = sellerFulfillmentFor(existingOrder, userId);
             if (!sellerFulfillment) {
                 return res.status(403).json({ msg: 'Seller fulfillment record was not found for this order.' });
             }
+        }
 
-            // A seller can only change their own portion of a multi-seller order.
-            if (newStatus === 'cancelled' && ['shipped', 'delivered'].includes(sellerFulfillment.status)) {
-                return res.status(403).json({ msg: 'Cannot cancel an order that is already shipped or delivered.' })
+        // Cancellation is a money/inventory boundary, not a normal status
+        // assignment. A single inventoryCommitted flag cannot represent a
+        // partially cancelled multi-seller order, so fail closed instead of
+        // releasing the wrong seller's stock or coupon capacity.
+        if (newStatus === 'cancelled') {
+            if (role === 'seller' && orderSellerIds.length > 1) {
+                return res.status(409).json({
+                    msg: 'A seller cannot safely cancel only one portion of a multi-seller order yet. Contact support so stock and payment accounting remain correct.',
+                    code: 'PARTIAL_ORDER_CANCELLATION_UNSUPPORTED',
+                    currentStatus: sellerFulfillment?.status || existingOrder.orderStatus,
+                });
+            }
+            const cancellationStatuses = role === 'seller'
+                ? [sellerFulfillment?.status || existingOrder.orderStatus]
+                : existingOrder.sellerFulfillment.length
+                    ? existingOrder.sellerFulfillment.map(entry => entry.status)
+                    : [existingOrder.orderStatus];
+            const startedStatus = cancellationStatuses.find(status => ['shipped', 'delivered'].includes(status));
+            if (startedStatus) {
+                return res.status(409).json({
+                    msg: 'This order has already shipped or been delivered and cannot be cancelled through fulfillment status updates.',
+                    code: 'ORDER_FULFILLMENT_STARTED',
+                    currentStatus: role === 'seller'
+                        ? sellerFulfillment?.status || existingOrder.orderStatus
+                        : existingOrder.orderStatus,
+                });
             }
 
-            setSellerFulfillmentStatus(existingOrder, userId, newStatus);
-        } else if (existingOrder.sellerFulfillment.length) {
-            setAllSellerFulfillmentStatus(existingOrder, newStatus);
+            const cancellationAt = new Date();
+            const buyerAlreadyDecided = !!(
+                existingOrder.confirmation?.confirmedAt
+                || existingOrder.confirmation?.declinedAt
+            );
+            const confirmationFields = buyerAlreadyDecided ? {} : {
+                declinedAt: cancellationAt,
+                confirmedVia: role === 'admin' ? 'admin' : 'manual',
+                decidedAt: cancellationAt,
+                decidedVia: role === 'admin' ? 'admin' : 'manual',
+            };
+            const cancellation = await cancelOrderSafely({
+                orderId: existingOrder._id,
+                reason: role === 'admin'
+                    ? 'Order cancelled by an administrator before payment or shipment.'
+                    : 'Single-seller order cancelled by its seller before shipment.',
+                confirmationFields,
+                cancellationActorRole: role,
+                at: cancellationAt,
+            });
+            if (cancellation.status === 'payment_succeeded') {
+                return res.status(409).json({
+                    msg: 'Stripe already received this payment. Waiting for secure webhook confirmation.',
+                    code: 'PAYMENT_ALREADY_SUCCEEDED',
+                    currentStatus: existingOrder.orderStatus,
+                });
+            }
+            const cancelledOrder = cancellation.order;
+
+            return res.status(200).json({
+                msg: 'Updated status successfully',
+                orderStatus: 'cancelled',
+                aggregateOrderStatus: cancelledOrder.orderStatus,
+            });
         }
 
-        // Track confirmation fields when seller/admin explicitly sets confirmed/cancelled
-        // Only if the BUYER hasn't already made a decision
-        const buyerAlreadyDecided = !!(existingOrder.confirmation?.confirmedAt || existingOrder.confirmation?.declinedAt);
-
-        const updatesWholeOrderDecision = role === 'admin' || orderSellerIds.length <= 1;
-        if (updatesWholeOrderDecision && newStatus === 'confirmed' && !buyerAlreadyDecided) {
-            existingOrder.confirmation = existingOrder.confirmation || {};
-            existingOrder.confirmation.confirmedAt = new Date();
-            existingOrder.confirmation.confirmedVia = role === 'admin' ? 'admin' : 'manual';
-            existingOrder.confirmation.decidedAt = new Date();
-            existingOrder.confirmation.decidedVia = role === 'admin' ? 'admin' : 'manual';
-        } else if (updatesWholeOrderDecision && newStatus === 'cancelled' && !buyerAlreadyDecided) {
-            existingOrder.confirmation = existingOrder.confirmation || {};
-            existingOrder.confirmation.declinedAt = new Date();
-            existingOrder.confirmation.confirmedVia = role === 'admin' ? 'admin' : 'manual'; // tracks who initiated the decision
-            existingOrder.confirmation.decidedAt = new Date();
-            existingOrder.confirmation.decidedVia = role === 'admin' ? 'admin' : 'manual';
-        }
-
-        if (role === 'admin' && !existingOrder.sellerFulfillment.length) {
-            existingOrder.orderStatus = newStatus;
-            existingOrder.isDelivered = newStatus === 'delivered';
-            if (newStatus === 'delivered' && !existingOrder.deliveredAt) existingOrder.deliveredAt = new Date();
-        } else {
-            syncAggregateDeliveryState(existingOrder);
-        }
-        if (existingOrder.orderStatus === 'delivered') {
-            existingOrder.isPaid = true;
-        }
-        await existingOrder.save();
-
-        // Send status update email
-        try {
-            const emailData = orderStatusUpdateEmail(existingOrder, newStatus);
-            await sendEmail({ to: existingOrder.shippingInfo.email, ...emailData });
-        } catch (emailErr) {
-            console.error('Failed to send status update email:', emailErr.message);
-        }
-
-        // WhatsApp status update to the buyer — only when the overall order
-        // status actually moved (deduped per order+status in the queue).
-        if (existingOrder.orderStatus !== prevAggregateStatus) {
-            notifyBuyerStatusOnWhatsApp(existingOrder, existingOrder.orderStatus);
-        }
+        const fulfillmentResult = await transitionOrderFulfillment({
+            orderId: existingOrder._id,
+            actorRole: role,
+            actorId: userId,
+            sellerIds: orderSellerIds,
+            newStatus,
+        });
+        existingOrder = fulfillmentResult.order;
 
         res.status(200).json({
             msg: 'Updated status successfully',
@@ -2253,7 +3051,11 @@ exports.updateStatus = async (req, res) => {
         })
     } catch (error) {
         console.error(error.message);
-        res.status(500).json({ msg: 'Server error while updating status' })
+        res.status(error.statusCode || 500).json({
+            msg: error.statusCode ? error.message : 'Server error while updating status',
+            ...(error.code ? { code: error.code } : {}),
+            ...(error.currentStatus !== undefined ? { currentStatus: error.currentStatus } : {}),
+        })
     }
 }
 
@@ -2305,9 +3107,11 @@ exports.trackGuestOrder = async (req, res) => {
     }
 
     try {
-        const order = await Order.findOne({
-            orderId: orderId,
-            'shippingInfo.email': email.toLowerCase().trim()
+        const order = await resolveOrderReference({
+            reference: String(orderId),
+            scope: {
+                'shippingInfo.email': email.toLowerCase().trim(),
+            },
         });
 
         if (!order) {
@@ -2317,7 +3121,10 @@ exports.trackGuestOrder = async (req, res) => {
         res.status(200).json({ msg: 'Order found', order });
     } catch (error) {
         console.error('Error tracking guest order:', error);
-        res.status(500).json({ msg: 'Server error while tracking order' });
+        res.status(error.statusCode || 500).json({
+            msg: error.statusCode ? error.message : 'Server error while tracking order',
+            ...(error.code ? { code: error.code } : {}),
+        });
     }
 };
 
@@ -2339,21 +3146,6 @@ exports.cancelOrder = async (req, res) => {
             return res.status(403).json({ msg: 'You can only cancel your own orders' })
         }
 
-        if (role !== 'admin') {
-            const cancellationBlock = getBuyerCancellationBlock(order);
-            if (cancellationBlock) {
-                return res.status(409).json({
-                    msg: cancellationBlock.message,
-                    code: cancellationBlock.code,
-                });
-            }
-        } else if (order.isPaid) {
-            return res.status(409).json({
-                msg: 'Paid orders require a verified refund before cancellation.',
-                code: 'PAID_ORDER_REQUIRES_REFUND',
-            });
-        }
-
         // Track whether the buyer is overriding a prior WhatsApp confirmation.
         // This helps the seller see a clear note:
         //   "Order was confirmed via WhatsApp but buyer changed their mind
@@ -2363,16 +3155,12 @@ exports.cancelOrder = async (req, res) => {
             order.confirmation?.confirmedVia === 'whatsapp'
         );
 
-        order.orderStatus = 'cancelled';
-        for (const fulfillment of order.sellerFulfillment || []) {
-            fulfillment.status = 'cancelled';
-            fulfillment.updatedAt = new Date();
-        }
-
+        const cancellationAt = new Date();
+        const confirmationFields = {};
         if (wasConfirmedViaWhatsApp) {
             // Mark that the buyer retracted their WhatsApp confirmation
-            order.confirmation.cancelledFromDashboardAt = new Date();
-            order.confirmation.cancelledFromDashboardNote =
+            confirmationFields.cancelledFromDashboardAt = cancellationAt;
+            confirmationFields.cancelledFromDashboardNote =
                 'Order was confirmed by buyer via Rozare WhatsApp automation, but buyer changed their mind and cancelled from their account dashboard.';
         }
 
@@ -2382,52 +3170,46 @@ exports.cancelOrder = async (req, res) => {
             order.confirmation?.confirmedVia === 'email'
         );
         if (wasConfirmedViaEmail) {
-            order.confirmation.cancelledFromDashboardAt = new Date();
-            order.confirmation.cancelledFromDashboardNote =
+            confirmationFields.cancelledFromDashboardAt = cancellationAt;
+            confirmationFields.cancelledFromDashboardNote =
                 'Buyer confirmed via email, then cancelled from their account.';
         }
 
         // If order wasn't confirmed by anyone yet, just mark the cancellation
         if (!wasConfirmedViaWhatsApp && !wasConfirmedViaEmail) {
-            order.confirmation = order.confirmation || {};
-            order.confirmation.declinedAt = new Date();
-            order.confirmation.decidedAt = new Date();
-            order.confirmation.decidedVia = 'dashboard';
-            order.confirmation.confirmedVia = order.confirmation.confirmedVia || 'dashboard';
+            confirmationFields.declinedAt = cancellationAt;
+            confirmationFields.decidedAt = cancellationAt;
+            confirmationFields.decidedVia = role === 'admin' ? 'admin' : 'dashboard';
+            confirmationFields.confirmedVia = order.confirmation?.confirmedVia
+                || (role === 'admin' ? 'admin' : 'dashboard');
         }
-
-        const shouldRestoreInventory = order.paymentMethod === 'cash_on_delivery'
-            && !order.isPaid
-            && order.inventoryCommitted === true;
-        if (shouldRestoreInventory) {
-            await restoreOrderInventory(order._id);
-            order.inventoryCommitted = false;
+        const cancellation = await cancelOrderSafely({
+            orderId: order._id,
+            reason: role === 'admin'
+                ? 'Order cancelled by an administrator before payment or shipment.'
+                : 'Order cancelled by the buyer before payment or shipment.',
+            confirmationFields,
+            cancellationActorRole: role === 'admin' ? 'admin' : 'buyer',
+            at: cancellationAt,
+        });
+        if (cancellation.status === 'payment_succeeded') {
+            return res.status(409).json({
+                msg: 'Stripe already received this payment. Waiting for secure webhook confirmation.',
+                code: 'PAYMENT_ALREADY_SUCCEEDED',
+            });
         }
+        const cancelledOrder = cancellation.order;
 
-        try {
-            await order.save();
-        } catch (saveError) {
-            // Compensate if cancellation persistence fails after releasing stock.
-            if (shouldRestoreInventory) await commitOrderInventory(order._id).catch(() => {});
-            throw saveError;
-        }
-
-        // Send cancellation email
-        try {
-            const emailData = orderStatusUpdateEmail(order, 'cancelled');
-            await sendEmail({ to: order.shippingInfo.email, ...emailData });
-        } catch (emailErr) {
-            console.error('Failed to send cancellation email:', emailErr.message);
-        }
-
-        // WhatsApp cancellation notice to the buyer (deduped per order+status,
-        // so this cannot double-send if another path also cancelled).
-        notifyBuyerStatusOnWhatsApp(order, 'cancelled');
-
-        res.status(200).json({ msg: 'Order cancelled successfully.', order })
+        res.status(200).json({
+            msg: cancellation.alreadyCancelled ? 'Order was already cancelled.' : 'Order cancelled successfully.',
+            order: cancelledOrder,
+        })
     } catch (error) {
         console.error(error);
-        res.status(500).json({ msg: 'Server error while cancelling order' })
+        res.status(error.statusCode || 500).json({
+            msg: error.statusCode ? error.message : 'Server error while cancelling order',
+            ...(error.code ? { code: error.code } : {}),
+        })
     }
 }
 
@@ -2438,21 +3220,77 @@ exports.reorder = async (req, res) => {
     const { id: orderId } = req.params;
     const { id: userId } = req.user;
     try {
-        const order = await Order.findById(orderId);
-        if (!order) return res.status(404).json({ msg: 'Order not found' });
-        if (!order.user || order.user.toString() !== userId.toString()) {
+        const hydratedOrder = await Order.findById(orderId);
+        if (!hydratedOrder) return res.status(404).json({ msg: 'Order not found' });
+        if (!hydratedOrder.user || hydratedOrder.user.toString() !== userId.toString()) {
             return res.status(403).json({ msg: 'Not your order' });
         }
 
+        // Authorize using the model, then inspect the raw persisted values.
+        // Hydration can cast `true`, numeric strings, or fractional legacy data
+        // into plausible quantities which must never become a new cart line.
+        const order = await Order.collection.findOne({ _id: hydratedOrder._id });
+        if (!order) return res.status(404).json({ msg: 'Order not found' });
+        if (!Array.isArray(order.orderItems)) {
+            throw exportMoneyError(
+                'The original order has invalid stored items and cannot be reordered.',
+                'ORDER_REORDER_ITEM_INVALID',
+                409,
+            );
+        }
+
         let cart = await Cart.findOne({ user: userId });
-        if (!cart) cart = new Cart({ user: userId, cartItems: [] });
+        if (cart) {
+            const rawCart = await Cart.collection.findOne(
+                { _id: cart._id },
+                { projection: { cartItems: 1 } },
+            );
+            if (!rawCart || !Array.isArray(rawCart.cartItems)) {
+                throw exportMoneyError(
+                    'The cart has invalid stored items and cannot be updated.',
+                    'CART_REORDER_QUANTITY_INVALID',
+                    409,
+                );
+            }
+            for (const rawItem of rawCart.cartItems) {
+                // A genuinely missing legacy quantity retains the historical
+                // default of one. Any present value must already be canonical.
+                if (rawItem?.qty !== null && rawItem?.qty !== undefined) {
+                    requireStoredOrderItemQuantity(rawItem.qty, {
+                        code: 'CART_REORDER_QUANTITY_INVALID',
+                        statusCode: 409,
+                    });
+                }
+            }
+        } else {
+            cart = new Cart({ user: userId, cartItems: [] });
+        }
 
         let added = 0;
         let unavailable = 0;
         for (const item of order.orderItems) {
-            const product = await Product.findOne(publicProductFilter({ _id: item.productId }));
-            if (!product || product.stock <= 0) { unavailable++; continue; }
-            const qty = Math.min(item.quantity || 1, product.stock);
+            if (!(item?.productId instanceof mongoose.Types.ObjectId)) {
+                throw exportMoneyError(
+                    'The original order has an invalid stored product reference and cannot be reordered.',
+                    'ORDER_REORDER_ITEM_INVALID',
+                    409,
+                );
+            }
+            const orderedQuantity = requireStoredOrderItemQuantity(item.quantity, {
+                code: 'ORDER_REORDER_QUANTITY_INVALID',
+                statusCode: 409,
+            });
+            const product = await Product.findOne(publicProductFilter({ _id: item.productId })).lean();
+            if (!product) { unavailable++; continue; }
+            if (!Number.isSafeInteger(product.stock) || product.stock < 0) {
+                throw exportMoneyError(
+                    'A product has invalid stored stock and cannot be reordered.',
+                    'PRODUCT_REORDER_STOCK_INVALID',
+                    409,
+                );
+            }
+            if (product.stock === 0) { unavailable++; continue; }
+            const qty = Math.min(orderedQuantity, product.stock);
             const selectedOptions = toPlainOptions(item.selectedOptions);
             const itemOptionsKey = optionsKey(selectedOptions);
             const existing = cart.cartItems.find(
@@ -2461,7 +3299,21 @@ exports.reorder = async (req, res) => {
                        optionsKey(p.selectedOptions) === itemOptionsKey
             );
             if (existing) {
-                existing.qty = Math.min((existing.qty || 1) + qty, product.stock);
+                const existingQuantity = existing.qty === null || existing.qty === undefined
+                    ? 1
+                    : requireStoredOrderItemQuantity(existing.qty, {
+                        code: 'CART_REORDER_QUANTITY_INVALID',
+                        statusCode: 409,
+                    });
+                const combinedQuantity = existingQuantity + qty;
+                if (!Number.isSafeInteger(combinedQuantity)) {
+                    throw exportMoneyError(
+                        'The cart quantity is outside the supported range.',
+                        'CART_REORDER_QUANTITY_INVALID',
+                        409,
+                    );
+                }
+                existing.qty = Math.min(combinedQuantity, product.stock);
             } else {
                 cart.cartItems.push({
                     product: item.productId,
@@ -2481,7 +3333,10 @@ exports.reorder = async (req, res) => {
         });
     } catch (error) {
         console.error('Reorder error:', error);
-        res.status(500).json({ msg: 'Server error while re-ordering' });
+        res.status(error.statusCode || 500).json({
+            msg: error.statusCode ? error.message : 'Server error while re-ordering',
+            ...(error.code ? { code: error.code } : {}),
+        });
     }
 };
 
@@ -2492,23 +3347,62 @@ exports.getInvoice = async (req, res) => {
     const { id } = req.params;
     const { role, id: userId } = req.user;
     try {
-        const order = await Order.findById(id);
-        if (!order) return res.status(404).json({ msg: 'Order not found' });
+        const hydratedOrder = await Order.findById(id);
+        if (!hydratedOrder) return res.status(404).json({ msg: 'Order not found' });
 
-        if (role !== 'admin' && (!order.user || order.user.toString() !== userId.toString())) {
+        if (role !== 'admin' && (!hydratedOrder.user || hydratedOrder.user.toString() !== userId.toString())) {
             return res.status(403).json({ msg: 'Forbidden' });
         }
 
+        // Read raw BSON only after authorization. Hydration can cast corrupt
+        // booleans/strings into plausible money or quantities before display.
+        const order = await Order.collection.findOne({ _id: hydratedOrder._id });
+        if (!order) return res.status(404).json({ msg: 'Order not found' });
+        const invoiceCurrency = requireCanonicalStoredOrderCurrency(order.currency, {
+            code: 'ORDER_INVOICE_CURRENCY_INVALID',
+            statusCode: 409,
+        });
+        if (!Array.isArray(order.orderItems)) {
+            throw exportMoneyError(
+                'The invoice has invalid stored items.',
+                'ORDER_INVOICE_ITEM_INVALID',
+                409,
+            );
+        }
+        const summary = order.orderSummary;
+        if (!summary || typeof summary !== 'object') {
+            throw exportMoneyError(
+                'The invoice has invalid stored totals.',
+                'ORDER_INVOICE_MONEY_INVALID',
+                409,
+            );
+        }
+        for (const [field, label] of [
+            ['subtotal', 'subtotal'],
+            ['shippingCost', 'shipping'],
+            ['tax', 'tax'],
+            ['couponDiscount', 'coupon discount'],
+            ['totalAmount', 'total'],
+        ]) {
+            try {
+                normalizedExportAmount(summary[field], label);
+            } catch (_) {
+                throw exportMoneyError(
+                    `The invoice ${label} is invalid.`,
+                    'ORDER_INVOICE_MONEY_INVALID',
+                    409,
+                );
+            }
+        }
         const fmt = (n) => escapeHtml(formatOrderMoney(n, order));
         const rows = order.orderItems.map((it) => `
             <tr>
               <td style="padding:10px;border-bottom:1px solid #e5e7eb;">${escapeHtml(orderItemName(it))}${orderItemOptionsHtml(it)}</td>
-              <td style="padding:10px;border-bottom:1px solid #e5e7eb;text-align:center;">${escapeHtml(Math.max(1, Number(it.quantity) || 1))}</td>
-              <td style="padding:10px;border-bottom:1px solid #e5e7eb;text-align:right;">${fmt(it.price)}</td>
-              <td style="padding:10px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:600;">${fmt(it.price * it.quantity)}</td>
+              <td style="padding:10px;border-bottom:1px solid #e5e7eb;text-align:center;">${escapeHtml(requireStoredOrderItemQuantity(it?.quantity, { code: 'ORDER_INVOICE_ITEM_INVALID', statusCode: 409 }))}</td>
+              <td style="padding:10px;border-bottom:1px solid #e5e7eb;text-align:right;">${escapeHtml(formatOrderItemUnitMoney(it, order))}</td>
+              <td style="padding:10px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:600;">${fmt(orderItemLineSubtotal(it))}</td>
             </tr>`).join('');
 
-        const summary = order.orderSummary || {};
         const safeOrderId = escapeHtml(order.orderId);
         const safeStatus = escapeHtml(String(order.orderStatus || 'pending').toUpperCase());
         const html = `<!doctype html><html><head><meta charset="utf-8"/><title>Invoice ${safeOrderId}</title>
@@ -2555,7 +3449,7 @@ exports.getInvoice = async (req, res) => {
     </div>
   </div>
   <table>
-    <thead><tr><th>Item</th><th>Qty</th><th>Price</th><th>Total</th></tr></thead>
+    <thead><tr><th>Item</th><th>Qty</th><th>Unit price</th><th>Total (${escapeHtml(invoiceCurrency)})</th></tr></thead>
     <tbody>${rows}</tbody>
   </table>
   <div class="totals">
@@ -2571,6 +3465,9 @@ exports.getInvoice = async (req, res) => {
         res.status(200).json({ msg: 'Invoice generated', html, orderId: order.orderId });
     } catch (error) {
         console.error('Invoice error:', error);
-        res.status(500).json({ msg: 'Server error while generating invoice' });
+        res.status(error.statusCode || 500).json({
+            msg: error.statusCode ? error.message : 'Server error while generating invoice',
+            ...(error.code ? { code: error.code } : {}),
+        });
     }
 };

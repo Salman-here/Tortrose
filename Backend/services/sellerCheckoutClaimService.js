@@ -59,6 +59,10 @@ const claimSellerCheckout = async ({
                     token,
                     sessionId: '',
                     sessionUrl: '',
+                    creationState: 'creating',
+                    founderReservationToken: '',
+                    lastCreationError: '',
+                    lastCreationErrorAt: null,
                     expiresAt,
                 },
             },
@@ -78,6 +82,34 @@ const claimSellerCheckout = async ({
         // the now-empty slot rather than exposing a spurious server error.
         return claimSellerCheckout({ sellerId, flow, requestFingerprint, durationMinutes });
     }
+    if (
+        claim.requestFingerprint === requestFingerprint
+        && !claim.sessionId
+        && claim.creationState === 'recoverable'
+        && new Date(claim.expiresAt).getTime() > now.getTime()
+    ) {
+        const recoveredClaim = await SellerCheckoutClaim.findOneAndUpdate(
+            {
+                _id: claim._id,
+                token: claim.token,
+                requestFingerprint,
+                creationState: 'recoverable',
+                sessionId: '',
+                expiresAt: { $gt: now },
+            },
+            {
+                $set: {
+                    creationState: 'creating',
+                    lastCreationError: '',
+                    lastCreationErrorAt: null,
+                },
+            },
+            { new: true }
+        );
+        if (recoveredClaim) {
+            return { acquired: true, recovered: true, claim: recoveredClaim };
+        }
+    }
     return { acquired: false, claim };
 };
 
@@ -95,7 +127,15 @@ const attachSellerCheckoutSession = async ({
             token,
             expiresAt: { $gt: new Date() },
         },
-        { $set: { sessionId, sessionUrl } },
+        {
+            $set: {
+                sessionId,
+                sessionUrl,
+                creationState: 'attached',
+                lastCreationError: '',
+                lastCreationErrorAt: null,
+            },
+        },
         { new: true }
     );
 
@@ -105,6 +145,56 @@ const attachSellerCheckoutSession = async ({
         throw error;
     }
     return claim;
+};
+
+const setSellerCheckoutClaimContext = async ({
+    sellerId,
+    flow,
+    token,
+    founderReservationToken,
+}) => {
+    const claim = await SellerCheckoutClaim.findOneAndUpdate(
+        {
+            seller: sellerId,
+            flow,
+            token,
+            expiresAt: { $gt: new Date() },
+        },
+        {
+            $set: {
+                ...(founderReservationToken !== undefined
+                    ? { founderReservationToken: String(founderReservationToken || '') }
+                    : {}),
+            },
+        },
+        { new: true }
+    );
+    if (!claim) {
+        const error = new Error('The Checkout creation lease expired before its recovery context could be saved.');
+        error.code = 'CHECKOUT_CLAIM_LOST';
+        throw error;
+    }
+    return claim;
+};
+
+const markSellerCheckoutClaimRecoverable = async ({ sellerId, flow, token, error }) => {
+    if (!sellerId || !flow || !token) return null;
+    return SellerCheckoutClaim.findOneAndUpdate(
+        {
+            seller: sellerId,
+            flow,
+            token,
+            expiresAt: { $gt: new Date() },
+        },
+        {
+            $set: {
+                creationState: 'recoverable',
+                lastCreationError: String(error?.code || error?.type || error?.message || 'ambiguous_checkout_error').slice(0, 500),
+                lastCreationErrorAt: new Date(),
+            },
+        },
+        { new: true }
+    );
 };
 
 const releaseSellerCheckoutClaim = async ({ sellerId, flow, token, sessionId }) => {
@@ -129,6 +219,8 @@ module.exports = {
     fingerprintCheckoutRequest,
     claimSellerCheckout,
     attachSellerCheckoutSession,
+    setSellerCheckoutClaimContext,
+    markSellerCheckoutClaimRecoverable,
     releaseSellerCheckoutClaim,
     checkoutClaimRetryAfterSeconds,
 };

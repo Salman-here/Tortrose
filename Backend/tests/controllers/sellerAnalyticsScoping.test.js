@@ -30,7 +30,15 @@ const createProduct = (seller, suffix) => Product.create({
   seller,
 });
 
-const createOrder = ({ orderId, items, sellerFulfillment = [], orderStatus = 'pending', awaitingPayment = false }) => {
+const createOrder = ({
+  orderId,
+  items,
+  sellerFulfillment = [],
+  orderStatus = 'pending',
+  awaitingPayment = false,
+  sellerSettlementVersion = 0,
+  sellerSettlement = [],
+}) => {
   const subtotal = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
   return Order.create({
     user: new mongoose.Types.ObjectId(),
@@ -48,9 +56,11 @@ const createOrder = ({ orderId, items, sellerFulfillment = [], orderStatus = 'pe
     },
     shippingMethod: { name: 'Standard', price: 0, estimatedDays: 3 },
     sellerFulfillment,
+    sellerSettlementVersion,
+    sellerSettlement,
     orderSummary: { subtotal, shippingCost: 0, tax: 0, totalAmount: subtotal },
     orderStatus,
-    paymentMethod: 'cash_on_delivery',
+    paymentMethod: 'stripe',
     currency: 'USD',
     isPaid: true,
     paidAt: new Date(),
@@ -203,6 +213,10 @@ describe('seller analytics order isolation', () => {
     }, response);
 
     expect(response.status).toHaveBeenCalledWith(200);
+    expect(response.json.mock.calls[0][0]).toMatchObject({
+      sellerId: sellerId.toString(),
+      audienceRole: 'seller',
+    });
     const titles = response.json.mock.calls[0][0].notifications.map((item) => item.title);
     expect(titles).toContain('New order NOTICE-MINE');
     expect(titles).not.toContain('New order NOTICE-OTHER');
@@ -220,5 +234,78 @@ describe('seller analytics order isolation', () => {
     const repeatedStockAlert = repeatedResponse.json.mock.calls[0][0].notifications
       .find(item => item.id === `low-${liveProduct._id}`);
     expect(new Date(repeatedStockAlert.time).getTime()).toBe(new Date(stockAlert.time).getTime());
+  });
+
+  test('omits a paid receipt when a legacy order has no frozen seller settlement', async () => {
+    const sellerId = new mongoose.Types.ObjectId();
+    const product = await createProduct(sellerId, 'legacy-paid-notice');
+    const order = await createOrder({
+      orderId: 'NOTICE-LEGACY-NO-SETTLEMENT',
+      items: [{
+        productId: product._id,
+        seller: sellerId,
+        name: product.name,
+        image: product.image,
+        price: 5,
+        quantity: 1,
+      }],
+      sellerFulfillment: [{ seller: sellerId, status: 'confirmed' }],
+      orderStatus: 'confirmed',
+    });
+
+    const response = responseMock();
+    await getSellerNotifications({
+      user: { id: sellerId.toString(), role: 'seller' },
+      query: {},
+    }, response);
+
+    expect(response.status).toHaveBeenCalledWith(200);
+    expect(response.json.mock.calls[0][0].notifications)
+      .not.toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: `paid-${order._id}` }),
+      ]));
+  });
+
+  test('paid notification fallback uses the frozen seller settlement instead of mutable line reconstruction', async () => {
+    const sellerId = new mongoose.Types.ObjectId();
+    const product = await createProduct(sellerId, 'frozen-notice');
+    const order = await createOrder({
+      orderId: 'NOTICE-FROZEN',
+      items: [{
+        productId: product._id,
+        seller: sellerId,
+        name: product.name,
+        image: product.image,
+        price: 5,
+        quantity: 1,
+      }],
+      sellerFulfillment: [{ seller: sellerId, status: 'confirmed' }],
+      orderStatus: 'confirmed',
+      sellerSettlementVersion: 1,
+      sellerSettlement: [{
+        seller: sellerId,
+        sourceCurrency: 'USD',
+        sourceAmountMinor: 500,
+        amountUSDMinor: 500,
+      }],
+    });
+    // Bypass model safeguards to simulate historical storage corruption. The
+    // immutable settlement and persisted order total remain authoritative.
+    await Order.collection.updateOne(
+      { _id: order._id },
+      { $set: { 'orderItems.0.price': 999 } },
+    );
+
+    const response = responseMock();
+    await getSellerNotifications({
+      user: { id: sellerId.toString(), role: 'seller' },
+      query: {},
+    }, response);
+
+    expect(response.status).toHaveBeenCalledWith(200);
+    const paid = response.json.mock.calls[0][0].notifications
+      .find(item => item.id === `paid-${order._id}`);
+    expect(paid).toEqual(expect.objectContaining({ description: '$5.00' }));
+    expect(paid.description).not.toContain('999');
   });
 });

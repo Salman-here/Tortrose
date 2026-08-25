@@ -30,6 +30,8 @@ import {
   returnResolutionLabel,
   returnStatusColor,
 } from '../utils/returns';
+import { inspectReturnPresentationSnapshot } from '../utils/returnPresentationSafety';
+import { isExactNonNegativeJsonMoney } from '../utils/sellerMoneySafety';
 
 const STATUS_FILTERS = [
   ['all', 'All'],
@@ -88,22 +90,31 @@ const SELLER_ACTION_STATUSES = new Set([
   'accepted_pending_payment',
 ]);
 
-const getApiError = (error, fallback) => (
-  error?.response?.data?.msg || error?.response?.data?.message || error?.message || fallback
+const displayText = (value, fallback) => (
+  typeof value === 'string' && value.trim() ? value.trim() : fallback
+);
+const getApiError = (error, fallback) => displayText(
+  error?.response?.data?.msg,
+  displayText(error?.response?.data?.message, displayText(error?.message, fallback)),
 );
 
 export const summarizeSellerReturns = (requests = []) => requests.reduce((summary, request) => {
   summary.total += 1;
-  if (SELLER_ACTION_STATUSES.has(request?.status)) summary.actionable += 1;
-  if (request?.status === 'accepted_pending_payment') summary.paymentDue += 1;
+  const actionableSnapshot = inspectReturnPresentationSnapshot(request).valid;
+  if (actionableSnapshot && SELLER_ACTION_STATUSES.has(request?.status)) summary.actionable += 1;
+  if (actionableSnapshot && request?.status === 'accepted_pending_payment') summary.paymentDue += 1;
   return summary;
 }, { total: 0, actionable: 0, paymentDue: 0 });
 
 const formatDateTime = (value) => {
   if (!value) return '';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '';
-  return date.toLocaleString();
+  try {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+    return date.toLocaleString();
+  } catch {
+    return '';
+  }
 };
 
 function ReturnFiltersSkeleton({ styles }) {
@@ -191,10 +202,12 @@ export default function SellerReturnsPanel({ header, route, navigation }) {
   const [submitting, setSubmitting] = useState(false);
   const [submittingRequestId, setSubmittingRequestId] = useState('');
 
-  const load = useCallback(async ({ quiet = false } = {}) => {
+  const load = useCallback(async () => {
     const requestId = ++requestSequence.current;
-    if (!quiet) setLoading(true);
+    setLoading(true);
     setLoadError('');
+    setDialog(null);
+    setNote('');
     try {
       const response = await api.get('/api/returns/seller', {
         params: {
@@ -238,13 +251,13 @@ export default function SellerReturnsPanel({ header, route, navigation }) {
         ? 'The return will complete after Stripe confirms the payment.'
         : 'The return remains open and its payment can be resumed later.',
     });
-    load({ quiet: true });
+    load();
     navigation?.setParams?.({ return_payment: undefined, returnId: undefined });
   }, [load, navigation, route?.params?.return_payment]);
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
-    load({ quiet: true });
+    load();
   }, [load]);
 
   const clearFilters = useCallback(() => {
@@ -254,6 +267,16 @@ export default function SellerReturnsPanel({ header, route, navigation }) {
 
   const updateStatus = async () => {
     if (!dialog?.request || !dialog?.status) return;
+    if (!inspectReturnPresentationSnapshot(dialog.request).valid) {
+      Feedback.show({ type: 'error', text1: 'Return unavailable', text2: 'Refresh this return before updating its status.' });
+      setDialog(null);
+      return;
+    }
+    if (!(RETURN_STATUS_TRANSITIONS[dialog.request.status] || []).includes(dialog.status)) {
+      Feedback.show({ type: 'error', text1: 'Status unavailable', text2: 'Refresh this return before trying again.' });
+      setDialog(null);
+      return;
+    }
     if (dialog.status === 'rejected' && note.trim().length < 5) {
       Feedback.show({ type: 'error', text1: 'Add a clear rejection reason' });
       return;
@@ -268,7 +291,7 @@ export default function SellerReturnsPanel({ header, route, navigation }) {
       Feedback.show({ type: 'success', text1: 'Return updated', text2: 'The buyer was notified on Rozare and WhatsApp.' });
       setDialog(null);
       setNote('');
-      await load({ quiet: true });
+      await load();
     } catch (error) {
       Feedback.show({ type: 'error', text1: 'Update failed', text2: getApiError(error, 'Could not update this return.') });
     } finally {
@@ -278,6 +301,24 @@ export default function SellerReturnsPanel({ header, route, navigation }) {
   };
 
   const accept = async (request, fundingSource) => {
+    const snapshot = inspectReturnPresentationSnapshot(request);
+    if (!snapshot.valid) {
+      Feedback.show({ type: 'error', text1: 'Return unavailable', text2: 'Refresh this return before accepting it.' });
+      setDialog(null);
+      return;
+    }
+    const replacementOnly = request.policySnapshot.refundType === 'replacement_only';
+    const actionValid = request.status === 'accepted_pending_payment'
+      ? !replacementOnly && fundingSource === 'card'
+      : request.status === 'under_review' && (
+        (replacementOnly && fundingSource === undefined)
+        || (!replacementOnly && ['seller_balance', 'card'].includes(fundingSource))
+      );
+    if (!actionValid) {
+      Feedback.show({ type: 'error', text1: 'Refund action unavailable', text2: 'Refresh this return before trying again.' });
+      setDialog(null);
+      return;
+    }
     setSubmitting(true);
     setSubmittingRequestId(String(request._id));
     try {
@@ -292,18 +333,21 @@ export default function SellerReturnsPanel({ header, route, navigation }) {
           dismissButtonStyle: 'cancel',
           presentationStyle: WebBrowser.WebBrowserPresentationStyle.FULL_SCREEN,
         });
-        await load({ quiet: true });
+        await load();
         return;
       }
       Feedback.show({ type: 'success', text1: response.data?.msg || 'Return completed' });
       setDialog(null);
-      await load({ quiet: true });
+      await load();
     } catch (error) {
       const available = error.response?.data?.availableBalanceUSD;
+      const availableText = isExactNonNegativeJsonMoney(available)
+        ? ` Available balance: ${formatAmount(available, { targetCurrency: 'USD', showCode: true })}.`
+        : '';
       Feedback.show({
         type: 'error',
         text1: 'Could not accept return',
-        text2: `${getApiError(error, 'Try again.')}${Number.isFinite(available) ? ` Available balance: $${available.toFixed(2)}.` : ''}`,
+        text2: `${getApiError(error, 'Try again.')}${availableText}`,
       });
     } finally {
       setSubmitting(false);
@@ -312,6 +356,11 @@ export default function SellerReturnsPanel({ header, route, navigation }) {
   };
 
   const chooseFunding = (request) => {
+    const snapshot = inspectReturnPresentationSnapshot(request);
+    if (!snapshot.valid) {
+      Feedback.show({ type: 'error', text1: 'Return unavailable', text2: 'Refresh this return before choosing refund funding.' });
+      return;
+    }
     if (request.policySnapshot?.refundType === 'replacement_only') {
       Alert.alert('Approve replacement', 'Confirm that you reviewed the returned item and approve a replacement.', [
         { text: 'Cancel', style: 'cancel' },
@@ -321,7 +370,7 @@ export default function SellerReturnsPanel({ header, route, navigation }) {
     }
     Alert.alert(
       'Fund buyer wallet refund',
-      `Choose how to fund ${formatAmount(request.refund?.totalAmount || 0, { targetCurrency: request.currency })}. The return completes only after the buyer wallet is credited.`,
+      `Choose how to fund ${formatAmount(snapshot.refund.totalAmount, { targetCurrency: snapshot.currency })}. The return completes only after the buyer wallet is credited.`,
       [
         { text: 'Cancel', style: 'cancel' },
         { text: 'Seller Balance', onPress: () => accept(request, 'seller_balance') },
@@ -330,34 +379,53 @@ export default function SellerReturnsPanel({ header, route, navigation }) {
     );
   };
 
-  const renderRequest = ({ item: request }) => {
+  const renderRequest = ({ item: rawRequest }) => {
+    const request = rawRequest && typeof rawRequest === 'object' && !Array.isArray(rawRequest) ? rawRequest : {};
+    const snapshot = inspectReturnPresentationSnapshot(request);
     const color = returnStatusColor(request.status, palette);
-    const transitions = RETURN_STATUS_TRANSITIONS[request.status] || [];
-    const buyerName = request.buyer?.username || request.buyer?.email || 'Buyer';
+    const transitions = snapshot.valid ? (RETURN_STATUS_TRANSITIONS[request.status] || []) : [];
+    const buyerName = displayText(request.buyer?.username, displayText(request.buyer?.email, 'Buyer'));
     const requestedAt = formatDateTime(request.requestedAt || request.createdAt);
     const deadline = formatDateTime(request.eligibilityDeadline);
-    const itemCount = (request.items || []).reduce((total, item) => total + Number(item.quantity || 0), 0);
+    const itemCount = snapshot.itemCount;
     const requestBusy = submitting && submittingRequestId === String(request._id);
     const resolution = returnResolutionLabel(request.policySnapshot?.refundType);
+    const requestItems = Array.isArray(request.items) ? request.items : [];
+    const statusHistory = Array.isArray(request.statusHistory) ? request.statusHistory : [];
+    const returnNumber = displayText(request.returnNumber, 'Unavailable');
+    const orderId = displayText(request.orderId, 'Unavailable');
+    const statusLabel = RETURN_STATUS_LABELS[request.status] || displayText(request.status, 'Unknown status');
 
     return (
       <GlassPanel variant="card" style={styles.card}>
+        {!snapshot.valid && (
+          <View style={styles.snapshotError} accessibilityRole="alert">
+            <Ionicons name="alert-circle-outline" size={18} color={palette.colors.error} />
+            <View style={styles.snapshotErrorCopy}>
+              <Text style={styles.snapshotErrorTitle}>Financial snapshot unavailable</Text>
+              <Text style={styles.snapshotErrorText}>Amounts and seller actions are disabled until a fresh, internally consistent return is loaded.</Text>
+            </View>
+            <TouchableOpacity style={styles.snapshotRetry} onPress={() => load()} accessibilityRole="button" accessibilityLabel="Retry loading returns">
+              <Ionicons name="refresh-outline" size={15} color={palette.colors.error} />
+            </TouchableOpacity>
+          </View>
+        )}
         <View style={styles.cardHeader}>
           <View style={styles.returnIcon}>
             <Ionicons name="return-down-back-outline" size={21} color={palette.colors.primary} />
           </View>
           <View style={styles.cardTitleCopy}>
-            <Text style={styles.returnNumber}>Return #{request.returnNumber}</Text>
+            <Text style={styles.returnNumber}>Return #{returnNumber}</Text>
             {!!requestedAt && <Text style={styles.meta}>Requested {requestedAt}</Text>}
           </View>
           <View style={[styles.badge, { backgroundColor: `${color}18`, borderColor: `${color}45` }]}>
             <View style={[styles.badgeDot, { backgroundColor: color }]} />
-            <Text style={[styles.badgeText, { color }]}>{RETURN_STATUS_LABELS[request.status] || request.status}</Text>
+            <Text style={[styles.badgeText, { color }]}>{statusLabel}</Text>
           </View>
         </View>
 
         <View style={styles.metaPills}>
-          <MetaPill icon="receipt-outline" styles={styles} palette={palette}>Order #{request.orderId}</MetaPill>
+          <MetaPill icon="receipt-outline" styles={styles} palette={palette}>Order #{orderId}</MetaPill>
           <MetaPill icon="person-outline" styles={styles} palette={palette}>{buyerName}</MetaPill>
           {!!deadline && <MetaPill icon="calendar-outline" styles={styles} palette={palette}>Eligible until {deadline}</MetaPill>}
         </View>
@@ -372,24 +440,26 @@ export default function SellerReturnsPanel({ header, route, navigation }) {
               <Text style={styles.reasonCategory}>{REASON_LABELS[request.reasonCategory] || 'Return details'}</Text>
             </View>
           </View>
-          <Text style={styles.reasonBody}>{request.reasonDetails}</Text>
+          <Text style={styles.reasonBody}>{displayText(request.reasonDetails, 'Reason unavailable')}</Text>
         </View>
 
         <View style={styles.sectionHeading}>
           <Text style={styles.sectionTitle}>Items to return</Text>
-          <Text style={styles.sectionCount}>{itemCount} {itemCount === 1 ? 'item' : 'items'}</Text>
+          <Text style={styles.sectionCount}>{itemCount === null ? 'Quantity unavailable' : `${itemCount} ${itemCount === 1 ? 'item' : 'items'}`}</Text>
         </View>
         <View style={styles.itemsBox}>
-          {(request.items || []).map((item, index) => (
+          {requestItems.map((item, index) => (
             <View
-              key={String(item.orderItemId)}
+              key={typeof item?.orderItemId === 'string' && item.orderItemId ? item.orderItemId : `invalid-item-${index}`}
               style={[styles.itemRow, index > 0 && styles.itemRowDivider]}
             >
               <View style={styles.quantityBadge}>
-                <Text style={styles.quantityText}>{item.quantity}x</Text>
+                <Text style={styles.quantityText}>{snapshot.items[index]?.quantity === null ? '?' : `${snapshot.items[index]?.quantity}x`}</Text>
               </View>
-              <Text style={styles.itemName} numberOfLines={2}>{item.name}</Text>
-              <Text style={styles.itemPrice}>{formatAmount(item.lineSubtotal || 0, { targetCurrency: request.currency })}</Text>
+              <Text style={styles.itemName} numberOfLines={2}>{displayText(item?.name, 'Item unavailable')}</Text>
+              <Text style={[styles.itemPrice, !snapshot.valid && styles.unavailableMoney]}>{snapshot.valid
+                ? formatAmount(snapshot.items[index].lineSubtotal, { targetCurrency: snapshot.currency })
+                : 'Unavailable'}</Text>
             </View>
           ))}
         </View>
@@ -406,10 +476,12 @@ export default function SellerReturnsPanel({ header, route, navigation }) {
             <Text style={styles.refundLabel}>Resolution</Text>
             <Text style={styles.refundResolution}>{resolution}</Text>
             {request.policySnapshot?.refundType !== 'replacement_only' && (
-              <Text style={styles.refundValue}>{formatAmount(request.refund?.totalAmount || 0, { targetCurrency: request.currency })}</Text>
+              <Text style={[styles.refundValue, !snapshot.valid && styles.unavailableMoney]}>{snapshot.valid
+                ? formatAmount(snapshot.refund.totalAmount, { targetCurrency: snapshot.currency })
+                : 'Amount unavailable'}</Text>
             )}
           </View>
-          {request.status === 'under_review' && (
+          {snapshot.valid && request.status === 'under_review' && (
             <TouchableOpacity
               style={[styles.acceptButton, submitting && styles.disabled]}
               onPress={() => chooseFunding(request)}
@@ -426,7 +498,7 @@ export default function SellerReturnsPanel({ header, route, navigation }) {
               <Text style={styles.acceptText}>{request.policySnapshot?.refundType === 'replacement_only' ? 'Approve replacement' : 'Accept return'}</Text>
             </TouchableOpacity>
           )}
-          {request.status === 'accepted_pending_payment' && (
+          {snapshot.valid && request.status === 'accepted_pending_payment' && (
             <TouchableOpacity
               style={[styles.acceptButton, styles.paymentButton, submitting && styles.disabled]}
               onPress={() => accept(request, 'card')}
@@ -466,7 +538,7 @@ export default function SellerReturnsPanel({ header, route, navigation }) {
                     activeOpacity={0.76}
                     accessibilityRole="button"
                     accessibilityLabel={label}
-                    accessibilityHint={`Updates return ${request.returnNumber} after confirmation`}
+                    accessibilityHint={`Updates return ${returnNumber} after confirmation`}
                     accessibilityState={{ disabled: submitting }}
                   >
                     <Ionicons
@@ -482,27 +554,30 @@ export default function SellerReturnsPanel({ header, route, navigation }) {
           </View>
         )}
 
-        {request.statusHistory?.length > 0 && (
+        {statusHistory.length > 0 && (
           <View style={styles.history}>
             <View style={styles.historyHeader}>
               <View style={styles.historyHeading}>
                 <Ionicons name="time-outline" size={15} color={palette.colors.textSecondary} />
                 <Text style={styles.historyLabel}>Activity</Text>
               </View>
-              <Text style={styles.historyCount}>{request.statusHistory.length} updates</Text>
+              <Text style={styles.historyCount}>{statusHistory.length} updates</Text>
             </View>
-            {request.statusHistory.map((entry, index) => {
+            {statusHistory.map((rawEntry, index) => {
+              const entry = rawEntry && typeof rawEntry === 'object' && !Array.isArray(rawEntry) ? rawEntry : {};
               const changedAt = formatDateTime(entry.changedAt);
+              const entryStatus = RETURN_STATUS_LABELS[entry.status] || displayText(entry.status, 'Unknown status');
+              const entryNote = displayText(entry.note, '');
               return (
-                <View key={`${entry.status}-${entry.changedAt}-${index}`} style={styles.historyRow}>
+                <View key={`${displayText(entry.status, 'unknown')}-${displayText(entry.changedAt, 'unknown')}-${index}`} style={styles.historyRow}>
                   <View style={styles.timelineRail}>
-                    <View style={[styles.dot, { backgroundColor: returnStatusColor(entry.status, palette) }]} />
-                    {index < request.statusHistory.length - 1 && <View style={styles.timelineLine} />}
+                    <View style={[styles.dot, { backgroundColor: returnStatusColor(entry?.status, palette) }]} />
+                    {index < statusHistory.length - 1 && <View style={styles.timelineLine} />}
                   </View>
                   <View style={styles.historyCopy}>
-                    <Text style={styles.historyTitle}>{RETURN_STATUS_LABELS[entry.status] || entry.status}</Text>
+                    <Text style={styles.historyTitle}>{entryStatus}</Text>
                     {!!changedAt && <Text style={styles.historyText}>{changedAt}</Text>}
-                    {!!entry.note && <Text style={styles.historyNote}>{entry.note}</Text>}
+                    {!!entryNote && <Text style={styles.historyNote}>{entryNote}</Text>}
                   </View>
                 </View>
               );
@@ -533,10 +608,10 @@ export default function SellerReturnsPanel({ header, route, navigation }) {
               <Text style={styles.filterEyebrow}>RETURN OPERATIONS</Text>
               <Text style={styles.filterTitle}>Return requests</Text>
               <Text style={styles.filterSubtitle}>
-                {loadError ? 'Last successful results remain below.' : `${activeFilterLabel} returns in this view`}
+                {loadError ? 'Results are hidden until a fresh load succeeds.' : `${activeFilterLabel} returns in this view`}
               </Text>
             </View>
-            {hasLoaded && !loading && (
+            {hasLoaded && !loading && !loadError && (
               <View style={styles.resultCount} accessible accessibilityLabel={`${summary.total} returns shown`}>
                 <Text style={styles.resultCountValue}>{summary.total}</Text>
                 <Text style={styles.resultCountLabel}>shown</Text>
@@ -544,7 +619,7 @@ export default function SellerReturnsPanel({ header, route, navigation }) {
             )}
           </View>
 
-          {hasLoaded && !loading && (summary.actionable > 0 || summary.paymentDue > 0) && (
+          {hasLoaded && !loading && !loadError && (summary.actionable > 0 || summary.paymentDue > 0) && (
             <View style={styles.summaryPills}>
               {summary.actionable > 0 && (
                 <View style={[styles.summaryPill, styles.actionablePill]}>
@@ -639,7 +714,7 @@ export default function SellerReturnsPanel({ header, route, navigation }) {
         <SellerInlineError
           compact
           title="Returns did not refresh"
-          message={`${loadError} Showing the last successfully loaded results.`}
+          message={`${loadError} Results and seller actions are hidden until retry succeeds.`}
           onRetry={onRefresh}
         />
       )}
@@ -674,15 +749,17 @@ export default function SellerReturnsPanel({ header, route, navigation }) {
     );
   })();
 
-  const visibleRequests = loading && hasLoaded ? [] : requests;
+  const visibleRequests = (loading && hasLoaded) || loadError ? [] : requests;
   const rejectionNoteInvalid = dialog?.status === 'rejected' && note.trim().length < 5;
-  const confirmDisabled = submitting || rejectionNoteInvalid;
+  const dialogSnapshotInvalid = Boolean(dialog?.request)
+    && !inspectReturnPresentationSnapshot(dialog.request).valid;
+  const confirmDisabled = submitting || rejectionNoteInvalid || dialogSnapshotInvalid;
 
   return (
     <>
       <FlatList
         data={visibleRequests}
-        keyExtractor={item => String(item._id)}
+        keyExtractor={(item, index) => (typeof item?._id === 'string' && item._id ? item._id : `invalid-return-${index}`)}
         renderItem={renderRequest}
         ListHeaderComponent={filterHeader}
         ListEmptyComponent={emptyContent}
@@ -836,6 +913,11 @@ const buildStyles = (p) => StyleSheet.create({
   updatingResults: { marginTop: spacing.md },
   updatingText: { marginTop: 5, color: p.colors.textSecondary, fontSize: 10, textAlign: 'center' },
   card: { padding: spacing.lg, marginBottom: spacing.lg, borderRadius: borderRadius.xxl },
+  snapshotError: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm, marginBottom: spacing.lg, padding: spacing.md, borderRadius: 14, backgroundColor: p.colors.errorSubtle, borderWidth: 1, borderColor: p.colors.errorLighter },
+  snapshotErrorCopy: { flex: 1, minWidth: 0 },
+  snapshotErrorTitle: { color: p.colors.error, fontSize: fontSize.xs, fontWeight: fontWeight.bold },
+  snapshotErrorText: { marginTop: 2, color: p.colors.textSecondary, fontSize: 10, lineHeight: 15 },
+  snapshotRetry: { width: 34, height: 34, alignItems: 'center', justifyContent: 'center', borderRadius: 11, backgroundColor: p.glass.bgSubtle, borderWidth: 1, borderColor: p.colors.errorLighter },
   cardHeader: { flexDirection: 'row', alignItems: 'flex-start', flexWrap: 'wrap', gap: spacing.sm, marginBottom: spacing.md },
   returnIcon: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center', borderRadius: 15, backgroundColor: p.colors.primarySubtle, borderWidth: 1, borderColor: p.colors.primaryLighter },
   cardTitleCopy: { flex: 1, minWidth: 132, paddingTop: 2 },
@@ -864,6 +946,7 @@ const buildStyles = (p) => StyleSheet.create({
   quantityText: { color: p.colors.primary, fontSize: 10, fontWeight: fontWeight.extrabold },
   itemName: { flex: 1, color: p.colors.text, fontSize: fontSize.sm, lineHeight: 18 },
   itemPrice: { color: p.colors.text, fontSize: fontSize.sm, fontWeight: fontWeight.bold },
+  unavailableMoney: { color: p.colors.error },
   refundBox: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: spacing.md, marginTop: spacing.lg, padding: spacing.md, borderRadius: 17, backgroundColor: p.colors.successSubtle, borderWidth: 1, borderColor: p.colors.successLighter },
   refundIcon: { width: 42, height: 42, alignItems: 'center', justifyContent: 'center', borderRadius: 14, backgroundColor: p.glass.bgSubtle },
   refundCopy: { flex: 1, minWidth: 135 },

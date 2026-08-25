@@ -60,7 +60,7 @@ const isChangingVerifiedWhatsAppNumber = (user, digits) => {
  * This is how the backend PROVES the phone was actually verified via OTP,
  * without trusting a client-sent `whatsappVerified` boolean.
  */
-exports.consumeVerifiedWhatsAppNumber = async (whatsappNumber, sellerId = null) => {
+exports.consumeVerifiedWhatsAppNumber = async (whatsappNumber, sellerId = null, { session = null } = {}) => {
     if (!whatsappNumber) return false;
     const digits = cleanNumber(whatsappNumber);
     if (!digits) return false;
@@ -68,19 +68,27 @@ exports.consumeVerifiedWhatsAppNumber = async (whatsappNumber, sellerId = null) 
     const identityConflict = await findWhatsAppIdentityConflict(digits, {
         channel: 'seller',
         userId: sellerId,
+        session,
     });
     if (identityConflict) {
-        await WhatsAppOTP.deleteMany({ number: digits, sellerId: sellerId || null });
+        await WhatsAppOTP.deleteMany(
+            { number: digits, sellerId: sellerId || null },
+            session ? { session } : undefined
+        );
         return false;
     }
 
     const cutoff = new Date(Date.now() - VERIFIED_EXPIRY_MINUTES * 60 * 1000);
-    const record = await WhatsAppOTP.findOneAndDelete({
+    let deleteQuery = WhatsAppOTP.findOneAndDelete({
         number: digits,
         sellerId: sellerId || null,
         verified: true,
         verifiedAt: { $gte: cutoff },
     }).sort({ verifiedAt: -1 });
+    if (session && typeof deleteQuery.session === 'function') {
+        deleteQuery = deleteQuery.session(session);
+    }
+    const record = await deleteQuery;
 
     return !!record;
 };

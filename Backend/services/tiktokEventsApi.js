@@ -3,6 +3,8 @@ const crypto = require('crypto');
 const TIKTOK_EVENTS_ENDPOINT = 'https://business-api.tiktok.com/open_api/v1.3/event/track/';
 const DEFAULT_PIXEL_ID = 'D85EEDJC77U42GL90IK0';
 const DEFAULT_CURRENCY = 'USD';
+const { isSupportedCurrency } = require('./currencyService');
+const { roundMoney } = require('./moneyMath');
 
 const normalizeForHash = (value) => String(value || '').trim().toLowerCase();
 
@@ -48,14 +50,84 @@ const cleanObject = (input = {}) => {
     }, {});
 };
 
-const buildContentsFromOrder = (order) => {
-    return (order?.orderItems || []).map((item) => cleanObject({
+const resolveOrderEventCurrency = (rawCurrency, currencyPresent = rawCurrency !== undefined) => {
+    if (!currencyPresent || rawCurrency === null) {
+        return { currency: DEFAULT_CURRENCY, defaultedLegacyCurrency: true };
+    }
+    if (typeof rawCurrency !== 'string' || !isSupportedCurrency(rawCurrency)) return null;
+    return {
+        currency: String(rawCurrency).trim().toUpperCase(),
+        defaultedLegacyCurrency: false,
+    };
+};
+
+const strictNonNegativeMoney = (value) => {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return null;
+    return value;
+};
+
+const strictExactNonNegativeMoney = (value) => {
+    const amount = strictNonNegativeMoney(value);
+    if (amount === null) return null;
+    try {
+        return roundMoney(amount) === amount ? amount : null;
+    } catch {
+        return null;
+    }
+};
+
+const orderItemEventPrice = (item, quantity, currencyResolution) => {
+    if (!Number.isSafeInteger(quantity) || quantity < 1) return undefined;
+
+    // New orders persist this exact allocation in the order currency. It is
+    // the only safe source for a foreign line whose rounded unit price may not
+    // reproduce the allocated line total.
+    const lineSubtotalPresent = Object.prototype.hasOwnProperty.call(item || {}, 'lineSubtotal')
+        && item?.lineSubtotal !== null;
+    if (lineSubtotalPresent) {
+        const lineSubtotal = strictExactNonNegativeMoney(item.lineSubtotal);
+        return lineSubtotal === null ? undefined : lineSubtotal / quantity;
+    }
+
+    const sourceCurrencyPresent = Object.prototype.hasOwnProperty.call(item || {}, 'sourceCurrency');
+    const rawSourceCurrency = item?.sourceCurrency;
+    const sourceCurrencyMissing = !sourceCurrencyPresent || rawSourceCurrency === null;
+    if (!sourceCurrencyMissing) {
+        if (typeof rawSourceCurrency !== 'string' || !isSupportedCurrency(rawSourceCurrency)) return undefined;
+        if (String(rawSourceCurrency).trim().toUpperCase() !== currencyResolution.currency) {
+            // A legacy/malformed mixed-currency line has no authoritative
+            // order-currency allocation. Never relabel its native price.
+            return undefined;
+        }
+    } else if (!currencyResolution.defaultedLegacyCurrency) {
+        // With an explicit order currency but no line/source currency, the
+        // historical price denomination cannot be proven.
+        return undefined;
+    }
+
+    const price = strictExactNonNegativeMoney(item?.price);
+    return price === null ? undefined : price;
+};
+
+const buildContentsFromOrder = (
+    order,
+    currencyResolution = resolveOrderEventCurrency(
+        order?.currency,
+        Object.prototype.hasOwnProperty.call(order || {}, 'currency')
+    )
+) => {
+    if (!currencyResolution) return [];
+    return (order?.orderItems || []).map((item) => {
+      const rawQuantity = item?.quantity;
+      if (!Number.isSafeInteger(rawQuantity) || rawQuantity < 1) return null;
+      return cleanObject({
         content_id: item.productId?.toString?.() || item.productId,
         content_type: 'product',
         content_name: item.name,
-        price: toNumber(item.price),
-        quantity: toNumber(item.quantity, 1),
-    })).filter((content) => content.content_id);
+        price: orderItemEventPrice(item, rawQuantity, currencyResolution),
+        quantity: rawQuantity,
+      });
+    }).filter((content) => content?.content_id);
 };
 
 const buildUserPayload = ({ req, user, email, phone, externalId, tracking = {} } = {}) => {
@@ -180,8 +252,24 @@ const trackCompleteRegistration = ({ req, user, storeName, phone, eventId, track
 };
 
 const trackOrderEvent = ({ event, req, order, user, eventId, tracking = {} } = {}) => {
-    const contents = buildContentsFromOrder(order);
-    const value = toNumber(order?.orderSummary?.totalAmount);
+    const currencyResolution = resolveOrderEventCurrency(
+        order?.currency,
+        Object.prototype.hasOwnProperty.call(order || {}, 'currency')
+    );
+    if (!currencyResolution) {
+        return Promise.resolve({
+            skipped: true,
+            reason: 'Order currency is invalid for TikTok event money',
+        });
+    }
+    const contents = buildContentsFromOrder(order, currencyResolution);
+    const value = strictExactNonNegativeMoney(order?.orderSummary?.totalAmount);
+    if (value === null) {
+        return Promise.resolve({
+            skipped: true,
+            reason: 'Order total is invalid for TikTok event money',
+        });
+    }
     return sendTikTokEvent({
         event,
         eventId: eventId || createEventId(event.toLowerCase(), order?.orderId),
@@ -197,7 +285,7 @@ const trackOrderEvent = ({ event, req, order, user, eventId, tracking = {} } = {
             content_ids: contents.map((content) => content.content_id),
             order_id: order?.orderId,
             value,
-            currency: DEFAULT_CURRENCY,
+            currency: currencyResolution.currency,
         },
     });
 };

@@ -3,7 +3,7 @@
  */
 
 import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, Modal, StyleSheet, FlatList } from 'react-native';
+import { View, Text, TouchableOpacity, Modal, StyleSheet, FlatList, Alert, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useCurrency } from '../contexts/CurrencyContext';
 import { useTheme } from '../contexts/ThemeContext';
@@ -11,7 +11,7 @@ import GlassPanel from './common/GlassPanel';
 import { spacing, fontSize, borderRadius, fontWeight } from '../styles/theme';
 
 export default function CurrencySelector() {
-  const { currency, setCurrency, currencies } = useCurrency();
+  const { currency, setCurrency, currencies, currencyPreferenceSaving } = useCurrency();
   const { palette } = useTheme();
   const colors = palette.colors;
   const glass = palette.glass;
@@ -21,16 +21,22 @@ export default function CurrencySelector() {
   const currencyList = Object.values(currencies);
   const currentCurrency = currencies[currency] || currencyList[0];
 
-  const handleSelect = (code) => {
-    setCurrency(code);
+  const handleSelect = async (code) => {
+    const saved = await setCurrency(code);
+    if (!saved) {
+      Alert.alert('Currency not changed', 'Your preference could not be saved. Your previous currency is still active.');
+      return;
+    }
     setModalVisible(false);
   };
 
   return (
     <>
-      <TouchableOpacity style={styles.selector} onPress={() => setModalVisible(true)} activeOpacity={0.8}>
+      <TouchableOpacity style={styles.selector} onPress={() => setModalVisible(true)} activeOpacity={0.8} disabled={currencyPreferenceSaving}>
         <Text style={styles.selectorText}>{currentCurrency.symbol} {currentCurrency.code}</Text>
-        <Ionicons name="chevron-down" size={14} color={colors.textSecondary} />
+        {currencyPreferenceSaving
+          ? <ActivityIndicator size="small" color={colors.textSecondary} />
+          : <Ionicons name="chevron-down" size={14} color={colors.textSecondary} />}
       </TouchableOpacity>
 
       <Modal visible={modalVisible} animationType="slide" transparent onRequestClose={() => setModalVisible(false)}>
@@ -50,6 +56,7 @@ export default function CurrencySelector() {
                 <TouchableOpacity
                   style={[styles.currencyItem, item.code === currency && styles.currencyItemSelected]}
                   onPress={() => handleSelect(item.code)}
+                  disabled={currencyPreferenceSaving}
                   activeOpacity={0.75}
                 >
                   <View style={styles.currencyInfo}>

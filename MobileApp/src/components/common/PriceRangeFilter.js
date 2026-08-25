@@ -21,7 +21,13 @@ export default function PriceRangeFilter({ min, max, onChange }) {
   const { palette } = useTheme();
   const colors = palette.colors;
   const styles = makeStyles(palette);
-  const { currency, convertAmount, formatAmount } = useCurrency();
+  const {
+    currency,
+    convertAmount,
+    exchangeRatesFallback,
+    exchangeRatesLoading,
+    formatAmount,
+  } = useCurrency();
   const [minStr, setMinStr] = useState(min ? String(min) : '');
   const [maxStr, setMaxStr] = useState(max ? String(max) : '');
   const presets = useMemo(() => USD_PRESETS.map(preset => ({
@@ -29,6 +35,8 @@ export default function PriceRangeFilter({ min, max, onChange }) {
     min: convertAmount(preset.minUsd, 'USD', currency),
     max: preset.maxUsd == null ? null : convertAmount(preset.maxUsd, 'USD', currency),
   })), [convertAmount, currency]);
+  const presetIsApproximate = currency !== 'USD'
+    && (exchangeRatesLoading || exchangeRatesFallback);
 
   useEffect(() => {
     setMinStr(min ? String(min) : '');
@@ -65,11 +73,12 @@ export default function PriceRangeFilter({ min, max, onChange }) {
         {presets.map((p) => {
           const active = Number(min || 0) === Number(p.min || 0)
             && (p.max == null ? max == null : Number(max) === Number(p.max));
-          const label = p.kind === 'under'
+          const convertedLabel = p.kind === 'under'
             ? `Under ${formatAmount(p.max, { decimals: 0, targetCurrency: currency })}`
             : p.kind === 'over'
               ? `Over ${formatAmount(p.min, { decimals: 0, targetCurrency: currency })}`
               : `${formatAmount(p.min, { decimals: 0, targetCurrency: currency })} - ${formatAmount(p.max, { decimals: 0, targetCurrency: currency })}`;
+          const label = `${presetIsApproximate ? '≈' : ''}${convertedLabel}`;
           return (
             <TouchableOpacity key={`${p.minUsd}-${p.maxUsd ?? 'up'}`} style={[styles.presetChip, active && styles.presetChipActive]} onPress={() => applyPreset(p)} accessibilityLabel={label}>
               <Text style={[styles.presetText, active && styles.presetTextActive]}>{label}</Text>

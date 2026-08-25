@@ -5,9 +5,28 @@ const SELLER_TYPES = new Set([
   'return_requested',
   'low_stock',
   'new_review',
+  'product_blocked',
+  'seller_account_created',
+  'store_created',
   'store_verified',
+  'store_verification_approved',
+  'store_verification_rejected',
+  'store_verification_removed',
+  'payout_account_updated',
   'subscription_expiring',
   'payout_received',
+  'paid_order_received',
+  'no_charge_order_received',
+  'cod_order_received',
+  'cod_order_confirmed',
+  'cod_order_reconfirmed',
+  'cod_order_cancelled',
+  'withdrawal_requested',
+  'withdrawal_status_changed',
+  'subscription_payment_received',
+  'subscription_payment_recovered',
+  'subscription_activated',
+  'subscription_cancelled',
 ]);
 
 const BUYER_TYPES = new Set([
@@ -23,6 +42,11 @@ const BUYER_TYPES = new Set([
   'coupon_available',
   'cart_reminder',
   'return_status_update',
+  'order_paid',
+  'order_no_charge_confirmed',
+  'order_confirmation_requested',
+  'return_settled',
+  'wallet_transaction_completed',
 ]);
 
 const CATEGORY_OPTIONS = {
@@ -31,6 +55,7 @@ const CATEGORY_OPTIONS = {
     { key: 'order', label: 'Orders', icon: 'receipt-outline' },
     { key: 'delivery', label: 'Delivery', icon: 'bicycle-outline' },
     { key: 'promo', label: 'Promos', icon: 'pricetag-outline' },
+    { key: 'payment', label: 'Payments', icon: 'wallet-outline' },
     { key: 'system', label: 'System', icon: 'information-circle-outline' },
   ],
   seller: [
@@ -38,11 +63,13 @@ const CATEGORY_OPTIONS = {
     { key: 'order', label: 'Orders', icon: 'receipt-outline' },
     { key: 'delivery', label: 'Delivery', icon: 'bicycle-outline' },
     { key: 'promo', label: 'Promos', icon: 'pricetag-outline' },
+    { key: 'payment', label: 'Payments', icon: 'wallet-outline' },
     { key: 'seller', label: 'Seller', icon: 'storefront-outline' },
     { key: 'system', label: 'System', icon: 'information-circle-outline' },
   ],
   admin: [
     { key: 'all', label: 'All', icon: 'apps-outline' },
+    { key: 'payment', label: 'Payments', icon: 'wallet-outline' },
     { key: 'system', label: 'System', icon: 'information-circle-outline' },
   ],
 };
@@ -76,11 +103,27 @@ function normalizeAudience(value) {
   return null;
 }
 
+function normalizeRecipientAudienceRole(value) {
+  const audienceRole = String(value || '').trim().toLowerCase();
+  // A seller can shop as a buyer, matching the backend recipient authority
+  // rule. Seller/admin audiences remain private to their current role.
+  if (audienceRole === 'buyer') return ['user', 'seller'];
+  if (audienceRole === 'seller') return ['seller'];
+  if (audienceRole === 'admin') return ['admin'];
+  return null;
+}
+
 export function inferNotificationRoles(notification = {}) {
   const data = notification?.data || {};
   // Server-issued audience metadata is authoritative. Evaluate it before
   // legacy type/category heuristics so a stale or malformed category can
   // never widen a seller-only notification into the buyer inbox.
+  const recipientAudience = [
+    data.audienceRole,
+    notification.audienceRole,
+  ].map(normalizeRecipientAudienceRole).find(Boolean);
+  if (recipientAudience) return recipientAudience;
+
   const explicit = [
     data.targetRole,
     data.recipientRole,
@@ -143,13 +186,14 @@ export function displayNotificationCategory(notification, roleOrUser) {
   const intendedRoles = inferNotificationRoles(notification);
 
   const sellerOnly = intendedRoles?.includes('seller') && !intendedRoles.includes('user');
+  if (category === 'payment' || category === 'payments') return 'payment';
   if (role === 'seller' && (sellerOnly || ['seller', 'subscription'].includes(category))) {
     return 'seller';
   }
   if (role === 'admin') return 'system';
   if (role === 'user' && ['seller', 'subscription', 'admin'].includes(category)) return 'system';
   if (category === 'alert') return 'order';
-  if (['order', 'delivery', 'promo', 'seller', 'system'].includes(category)) return category;
+  if (['order', 'delivery', 'promo', 'seller', 'system', 'payment'].includes(category)) return category;
   return 'system';
 }
 

@@ -9,14 +9,13 @@ const {
   escapeHtml,
   formatOrderMoney,
   getOrderCurrency,
+  orderItemLineSubtotal,
   orderItemName,
   orderItemOptionsHtml,
   paymentMethodLabel,
 } = require('./orderPresentation');
 
 const frontendUrl = () => process.env.FRONTEND_URL || 'https://rozare.com';
-
-const itemLineTotal = (item) => (Number(item?.price) || 0) * (Number(item?.quantity) || 0);
 
 const wrapper = (content) => `
 <!DOCTYPE html>
@@ -44,26 +43,42 @@ const orderMoneyForEmail = (order) => {
 
 const renderEmailItemRows = (order) => {
   const money = orderMoneyForEmail(order);
-  return (order.orderItems || []).map(item => `
+  return (order.orderItems || []).map(item => {
+    if (!Number.isSafeInteger(item?.quantity) || item.quantity < 1) {
+      const error = new Error('The stored order item quantity is invalid.');
+      error.code = 'ORDER_PRESENTATION_DATA_INVALID';
+      error.statusCode = 409;
+      throw error;
+    }
+    return `
     <tr>
       <td style="padding:9px 0;border-bottom:1px solid #f1f5f9;">
         <strong style="color:#1e293b;">${escapeHtml(orderItemName(item))}</strong>${orderItemOptionsHtml(item)}<br/>
-        <span style="color:#94a3b8;font-size:13px;">Qty: ${Number(item.quantity) || 1} x ${money(item.price)}</span>
+        <span style="color:#94a3b8;font-size:13px;">Qty: ${item.quantity}</span>
       </td>
-      <td style="padding:9px 0;border-bottom:1px solid #f1f5f9;text-align:right;color:#1e293b;font-weight:600;">${money(itemLineTotal(item))}</td>
+      <td style="padding:9px 0;border-bottom:1px solid #f1f5f9;text-align:right;color:#1e293b;font-weight:600;">${money(orderItemLineSubtotal(item))}</td>
     </tr>
-  `).join('');
+  `;
+  }).join('');
 };
 
 const renderOrderSummaryRows = (order, { includeDiscount = true } = {}) => {
   const money = orderMoneyForEmail(order);
   const summary = order.orderSummary || {};
+  // Format every persisted component even when it is zero. Otherwise a blank,
+  // non-finite, or sub-cent tax/discount could disappear from the message
+  // while a superficially valid total is still sent to the buyer or seller.
+  const subtotalText = money(summary.subtotal);
+  const shippingText = money(summary.shippingCost);
+  const taxText = money(summary.tax);
+  const discountText = money(summary.couponDiscount);
+  const totalText = money(summary.totalAmount);
   return `
-    <tr><td style="padding:4px 0;color:#64748b;">Subtotal</td><td style="text-align:right;color:#1e293b;">${money(summary.subtotal)}</td></tr>
-    <tr><td style="padding:4px 0;color:#64748b;">Shipping</td><td style="text-align:right;color:#1e293b;">${money(summary.shippingCost)}</td></tr>
-    ${Number(summary.tax) > 0 ? `<tr><td style="padding:4px 0;color:#64748b;">Tax</td><td style="text-align:right;color:#1e293b;">${money(summary.tax)}</td></tr>` : ''}
-    ${includeDiscount && Number(summary.couponDiscount) > 0 ? `<tr><td style="padding:4px 0;color:#22c55e;">Discount</td><td style="text-align:right;color:#22c55e;">-${money(summary.couponDiscount)}</td></tr>` : ''}
-    <tr><td style="padding:8px 0 0;font-weight:700;color:#1e293b;border-top:2px solid #e2e8f0;">Total</td><td style="text-align:right;padding:8px 0 0;font-weight:700;color:${brandColor};font-size:18px;border-top:2px solid #e2e8f0;">${money(summary.totalAmount)}</td></tr>
+    <tr><td style="padding:4px 0;color:#64748b;">Subtotal</td><td style="text-align:right;color:#1e293b;">${subtotalText}</td></tr>
+    <tr><td style="padding:4px 0;color:#64748b;">Shipping</td><td style="text-align:right;color:#1e293b;">${shippingText}</td></tr>
+    ${summary.tax > 0 ? `<tr><td style="padding:4px 0;color:#64748b;">Tax</td><td style="text-align:right;color:#1e293b;">${taxText}</td></tr>` : ''}
+    ${includeDiscount && summary.couponDiscount > 0 ? `<tr><td style="padding:4px 0;color:#22c55e;">Discount</td><td style="text-align:right;color:#22c55e;">-${discountText}</td></tr>` : ''}
+    <tr><td style="padding:8px 0 0;font-weight:700;color:#1e293b;border-top:2px solid #e2e8f0;">Total</td><td style="text-align:right;padding:8px 0 0;font-weight:700;color:${brandColor};font-size:18px;border-top:2px solid #e2e8f0;">${totalText}</td></tr>
   `;
 };
 

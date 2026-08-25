@@ -1,10 +1,9 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { motion } from 'framer-motion';
 import {
     TrendingUp, DollarSign, ShoppingBag, Package, BarChart3,
     Calendar, ArrowUp, ArrowDown, Sparkles, Star, AlertTriangle
 } from 'lucide-react';
-import { useOutletContext } from 'react-router-dom';
 import { useCurrency } from '../../contexts/CurrencyContext';
 import Loader from '../common/Loader';
 import axios from 'axios';
@@ -13,104 +12,67 @@ import {
     AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid,
     Tooltip, ResponsiveContainer, PieChart, Pie, Cell
 } from 'recharts';
+import {
+    roundCurrencyAmount,
+    sellerAnalyticsMoneyIsValid,
+} from '../../utils/currencySafety';
+
+const STATUS_ORDER = ['pending', 'confirmed', 'processing', 'shipped', 'delivered', 'cancelled'];
+const STATUS_COLORS = {
+    pending: 'hsl(30,90%,50%)',
+    confirmed: 'hsl(280,60%,55%)',
+    processing: 'hsl(200,80%,50%)',
+    shipped: 'hsl(220,70%,55%)',
+    delivered: 'hsl(150,60%,45%)',
+    cancelled: 'hsl(0,72%,55%)',
+};
+const statusColor = (status) => STATUS_COLORS[status] || 'hsl(var(--muted-foreground))';
 
 const SellerAnalytics = () => {
-    const { products: localProducts, orders: localOrders } = useOutletContext();
-    const { formatPrice, currency, convertAmount } = useCurrency();
+    const { formatPrice, currency } = useCurrency();
     const [timeRange, setTimeRange] = useState('30');
     const [loading, setLoading] = useState(true);
     const [analytics, setAnalytics] = useState(null);
+    const [loadError, setLoadError] = useState('');
+    const analyticsRequestRef = useRef({ id: 0, controller: null });
 
-    const fetchAnalytics = async () => {
+    const fetchAnalytics = useCallback(async () => {
+        const requestId = analyticsRequestRef.current.id + 1;
+        analyticsRequestRef.current.controller?.abort();
+        const controller = new AbortController();
+        analyticsRequestRef.current = { id: requestId, controller };
         setLoading(true);
         const token = getAuthToken();
         try {
             const res = await axios.get(`${import.meta.env.VITE_API_URL}api/analytics/seller?days=${timeRange}&currency=${currency}`, {
-                headers: { Authorization: `Bearer ${token}` }
+                headers: { Authorization: `Bearer ${token}` },
+                signal: controller.signal,
             });
-            setAnalytics(res.data.analytics);
+            if (analyticsRequestRef.current.id !== requestId) return;
+            const nextAnalytics = res.data.analytics;
+            if (!sellerAnalyticsMoneyIsValid(nextAnalytics, currency)) {
+                throw new Error('Analytics returned incomplete or invalid money totals. Please retry.');
+            }
+            setAnalytics(nextAnalytics);
+            setLoadError('');
         } catch (err) {
-            if ([401, 403].includes(err.response?.status)) {
-                setAnalytics({
-                    revenueByDay: [],
-                    topProducts: [],
-                    categoryBreakdown: [],
-                    summary: { totalRevenue: 0, paidOrders: 0, avgOrderValue: 0, totalUnitsSold: 0, conversionRate: 0 }
-                });
-                return;
-            }
-
-            // Fallback only for temporary network/server failures, never for auth failures.
-            console.error('Seller analytics API unavailable, using local seller-scoped data:', err);
-            buildLocalAnalytics();
+            if (err.code === 'ERR_CANCELED' || err.name === 'CanceledError') return;
+            if (analyticsRequestRef.current.id !== requestId) return;
+            setAnalytics(null);
+            setLoadError(err.response?.data?.msg || err.message || 'Live seller analytics are unavailable. Please retry.');
         } finally {
-            setLoading(false);
+            if (analyticsRequestRef.current.id === requestId) setLoading(false);
         }
-    };
+    }, [currency, timeRange]);
 
-    const buildLocalAnalytics = () => {
-        const days = parseInt(timeRange);
-        const now = new Date();
-        const startDate = new Date(now); startDate.setDate(startDate.getDate() - days);
-        const orders = localOrders.filter(o => new Date(o.createdAt) >= startDate);
+    useEffect(() => {
+        fetchAnalytics();
+        return () => {
+            analyticsRequestRef.current.id += 1;
+            analyticsRequestRef.current.controller?.abort();
+        };
+    }, [fetchAnalytics]);
 
-        const dayBuckets = {};
-        for (let i = days - 1; i >= 0; i--) {
-            const d = new Date(now); d.setDate(d.getDate() - i);
-            const key = d.toISOString().slice(0, 10);
-            dayBuckets[key] = { date: key, revenue: 0, orders: 0 };
-        }
-        orders.forEach(o => {
-            const key = new Date(o.createdAt).toISOString().slice(0, 10);
-            if (dayBuckets[key]) {
-                dayBuckets[key].orders++;
-                if (o.isPaid) {
-                    dayBuckets[key].revenue += convertAmount(o.orderSummary?.totalAmount || 0, o.currency || 'USD', currency);
-                }
-            }
-        });
-
-        const productMap = {};
-        orders.forEach(o => {
-            if (!o.isPaid) return;
-            o.orderItems?.forEach(item => {
-                const id = item.productId;
-                if (!productMap[id]) productMap[id] = { name: item.name, image: item.image, revenue: 0, sold: 0 };
-                productMap[id].revenue += convertAmount(item.price * item.quantity, o.currency || 'USD', currency);
-                productMap[id].sold += item.quantity;
-            });
-        });
-
-        const catMap = {};
-        localProducts.forEach(p => {
-            if (!catMap[p.category]) catMap[p.category] = { name: p.category, count: 0 };
-            catMap[p.category].count++;
-        });
-
-        const totalRevenue = orders.reduce((s, o) => (
-            o.isPaid ? s + convertAmount(o.orderSummary?.totalAmount || 0, o.currency || 'USD', currency) : s
-        ), 0);
-        const paidOrders = orders.filter(o => o.isPaid).length;
-        const totalUnitsSold = orders.reduce((s, o) => o.isPaid ? s + o.orderItems.reduce((a, i) => a + i.quantity, 0) : s, 0);
-
-        setAnalytics({
-            currency,
-            revenueByDay: Object.values(dayBuckets),
-            topProducts: Object.values(productMap).sort((a, b) => b.revenue - a.revenue).slice(0, 10),
-            categoryBreakdown: Object.values(catMap).sort((a, b) => b.count - a.count),
-            summary: {
-                totalRevenue: Math.round(totalRevenue * 100) / 100,
-                paidOrders,
-                avgOrderValue: paidOrders > 0 ? Math.round((totalRevenue / paidOrders) * 100) / 100 : 0,
-                totalUnitsSold,
-                conversionRate: orders.length > 0 ? Math.round((paidOrders / orders.length) * 100) : 0,
-            }
-        });
-    };
-
-    useEffect(() => { fetchAnalytics(); }, [timeRange, currency]);
-
-    const STATUS_COLORS = ['hsl(30,90%,50%)', 'hsl(220,70%,55%)', 'hsl(200,80%,50%)', 'hsl(150,60%,45%)', 'hsl(0,72%,55%)'];
     const CAT_COLORS = ['hsl(220,70%,55%)', 'hsl(150,60%,45%)', 'hsl(200,80%,50%)', 'hsl(280,60%,55%)', 'hsl(30,90%,50%)', 'hsl(340,65%,55%)'];
 
     const revenueData = useMemo(() => {
@@ -118,15 +80,17 @@ const SellerAnalytics = () => {
         return analytics.revenueByDay.map(b => ({
             ...b,
             label: new Date(b.date).toLocaleDateString('en', { month: 'short', day: 'numeric' }),
-            revenue: Math.round(b.revenue * 100) / 100,
+            revenue: roundCurrencyAmount(b.revenue),
         }));
     }, [analytics]);
 
     const statusData = useMemo(() => {
-        const counts = { pending: 0, processing: 0, shipped: 0, delivered: 0, cancelled: 0 };
-        localOrders.forEach(o => { if (counts[o.orderStatus] !== undefined) counts[o.orderStatus]++; });
-        return Object.entries(counts).map(([name, value]) => ({ name, value }));
-    }, [localOrders]);
+        return [...(analytics?.statusBreakdown || [])].sort((left, right) => {
+            const leftIndex = STATUS_ORDER.indexOf(left.name);
+            const rightIndex = STATUS_ORDER.indexOf(right.name);
+            return (leftIndex === -1 ? STATUS_ORDER.length : leftIndex) - (rightIndex === -1 ? STATUS_ORDER.length : rightIndex);
+        });
+    }, [analytics?.statusBreakdown]);
 
     const CustomTooltip = ({ active, payload, label }) => {
         if (!active || !payload?.length) return null;
@@ -135,7 +99,7 @@ const SellerAnalytics = () => {
                 <p className="text-xs font-semibold mb-1" style={{ color: 'hsl(var(--foreground))' }}>{label}</p>
                 {payload.map((p, i) => (
                     <p key={i} className="text-xs" style={{ color: p.color }}>
-                        {p.name}: {p.name === 'revenue' ? formatPrice(p.value, { sourceCurrency: analytics?.currency || currency }) : p.value}
+                        {p.name}: {p.name === 'revenue' ? formatPrice(p.value, { sourceCurrency: analytics?.currency || currency, targetCurrency: analytics?.currency || currency }) : p.value}
                     </p>
                 ))}
             </div>
@@ -156,15 +120,26 @@ const SellerAnalytics = () => {
         );
     }
 
-    if (!analytics) return null;
+    if (!analytics) {
+        return (
+            <div className="p-6 max-w-xl mx-auto text-center glass-panel space-y-4">
+                <AlertTriangle size={30} className="mx-auto" style={{ color: 'hsl(30,90%,50%)' }} />
+                <p className="text-sm" style={{ color: 'hsl(var(--foreground))' }}>{loadError}</p>
+                <button type="button" onClick={fetchAnalytics} className="px-4 py-2 rounded-xl glass-inner text-sm font-semibold">Retry</button>
+            </div>
+        );
+    }
 
     const s = analytics.summary;
-    const analyticsCurrency = analytics.currency || currency;
-    const money = (amount) => formatPrice(amount || 0, { sourceCurrency: analyticsCurrency });
+    const analyticsCurrency = analytics.currency;
+    const money = (amount) => formatPrice(amount, {
+        sourceCurrency: analyticsCurrency,
+        targetCurrency: analyticsCurrency,
+    });
 
     const summaryStats = [
         { label: 'Total Revenue', value: money(s.totalRevenue), icon: <DollarSign size={20} />, color: 'hsl(150,60%,45%)', bg: 'rgba(16,185,129,0.12)' },
-        { label: 'Paid Orders', value: s.paidOrders, icon: <ShoppingBag size={20} />, color: 'hsl(220,70%,55%)', bg: 'rgba(99,102,241,0.12)' },
+        { label: 'Recognized Orders', value: s.paidOrders, icon: <ShoppingBag size={20} />, color: 'hsl(220,70%,55%)', bg: 'rgba(99,102,241,0.12)' },
         { label: 'Avg Order Value', value: money(s.avgOrderValue), icon: <TrendingUp size={20} />, color: 'hsl(200,80%,50%)', bg: 'rgba(14,165,233,0.12)' },
         { label: 'Units Sold', value: s.totalUnitsSold, icon: <Package size={20} />, color: 'hsl(280,60%,55%)', bg: 'rgba(139,92,246,0.12)' },
     ];
@@ -235,7 +210,7 @@ const SellerAnalytics = () => {
                             </defs>
                             <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
                             <XAxis dataKey="label" tick={{ fontSize: 11, fill: 'hsl(220,10%,50%)' }} axisLine={false} tickLine={false} interval="preserveStartEnd" />
-                            <YAxis tick={{ fontSize: 11, fill: 'hsl(220,10%,50%)' }} axisLine={false} tickLine={false} tickFormatter={v => formatPrice(v, { sourceCurrency: analyticsCurrency, decimals: 0 })} />
+                            <YAxis tick={{ fontSize: 11, fill: 'hsl(220,10%,50%)' }} axisLine={false} tickLine={false} tickFormatter={v => formatPrice(v, { sourceCurrency: analyticsCurrency, targetCurrency: analyticsCurrency, decimals: 0 })} />
                             <Tooltip content={<CustomTooltip />} />
                             <Area type="monotone" dataKey="revenue" stroke="hsl(150,60%,45%)" strokeWidth={2.5} fill="url(#revGrad)" />
                         </AreaChart>
@@ -282,16 +257,16 @@ const SellerAnalytics = () => {
                             <ResponsiveContainer width="100%" height="100%">
                                 <PieChart>
                                     <Pie data={statusData} cx="50%" cy="50%" innerRadius={50} outerRadius={75} paddingAngle={3} dataKey="value">
-                                        {statusData.map((_, i) => <Cell key={i} fill={STATUS_COLORS[i]} />)}
+                                        {statusData.map((status) => <Cell key={status.name} fill={statusColor(status.name)} />)}
                                     </Pie>
                                     <Tooltip content={<CustomTooltip />} />
                                 </PieChart>
                             </ResponsiveContainer>
                         </div>
                         <div className="flex-1 space-y-2">
-                            {statusData.map((s, i) => s.value > 0 && (
+                            {statusData.map((s) => s.value > 0 && (
                                 <div key={s.name} className="flex items-center gap-2">
-                                    <div className="w-2.5 h-2.5 rounded-full" style={{ background: STATUS_COLORS[i] }} />
+                                    <div className="w-2.5 h-2.5 rounded-full" style={{ background: statusColor(s.name) }} />
                                     <span className="text-xs capitalize flex-1" style={{ color: 'hsl(var(--muted-foreground))' }}>{s.name}</span>
                                     <span className="text-xs font-semibold" style={{ color: 'hsl(var(--foreground))' }}>{s.value}</span>
                                 </div>

@@ -12,6 +12,7 @@ const {
   hashPushToken,
   isValidExpoToken,
   sendExpoPush,
+  sendExpoPushStrict,
   sendPushToUser,
 } = require('../../utils/expoPush');
 
@@ -124,5 +125,54 @@ describe('Expo push audience ownership', () => {
     expect(isValidExpoToken('ExponentPushToken[device_123]')).toBe(true);
     expect(isValidExpoToken('ExpoPushToken[')).toBe(false);
     expect(isValidExpoToken('ExpoPushToken[device] trailing')).toBe(false);
+  });
+
+  test('strict delivery surfaces transport failures so the durable outbox can retry', async () => {
+    const token = 'ExpoPushToken[strict-retry-device]';
+    ExpoPushTokenRegistration.find.mockReturnValue({
+      select: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue([{
+          tokenHash: hashPushToken(token),
+          user: 'strict-owner',
+        }]),
+      }),
+    });
+    global.fetch.mockRejectedValueOnce(new Error('network unavailable'));
+
+    await expect(sendExpoPushStrict(
+      [token],
+      { title: 'Retry me', body: 'Provider transport failed.' },
+      { recipientUserId: 'strict-owner' }
+    )).rejects.toMatchObject({
+      code: 'EXPO_PUSH_DELIVERY_FAILED',
+      retryable: true,
+    });
+  });
+
+  test('does not treat application push credentials as an invalid user token', async () => {
+    const token = 'ExpoPushToken[valid-device-bad-app-credentials]';
+    ExpoPushTokenRegistration.find.mockReturnValue({
+      select: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue([{
+          tokenHash: hashPushToken(token),
+          user: 'credential-owner',
+        }]),
+      }),
+    });
+    global.fetch.mockResolvedValueOnce({
+      json: jest.fn().mockResolvedValue({
+        data: [{
+          status: 'error',
+          message: 'Unable to retrieve the FCM server key',
+          details: { error: 'InvalidCredentials' },
+        }],
+      }),
+    });
+
+    await expect(sendExpoPushStrict(
+      [token],
+      { title: 'Credential problem', body: 'Do not revoke this installation.' },
+      { recipientUserId: 'credential-owner' }
+    )).rejects.toMatchObject({ code: 'EXPO_PUSH_DELIVERY_FAILED' });
   });
 });

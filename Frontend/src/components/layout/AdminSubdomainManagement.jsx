@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Globe, Search, Eye, ShoppingBag, DollarSign, CheckCircle, Lock, Clock, Loader2, Edit3, Save, X, ExternalLink, Users, BarChart3, AlertTriangle, Filter } from 'lucide-react';
 import axios from 'axios';
@@ -7,48 +7,92 @@ import { useCurrency } from '../../contexts/CurrencyContext';
 import Loader from '../common/Loader';
 import { getStoreSubdomainUrl } from '../../utils/subdomainHelper';
 import { getAuthToken } from "../../utils/cookieHelper";
+import { normalizeCurrencyCode } from '../../utils/currencySafety';
+import { inspectAdminSubdomainResponse } from '../../utils/subdomainAnalyticsSafety';
 
 const AdminSubdomainManagement = () => {
     const { formatPrice, currency } = useCurrency();
     const [loading, setLoading] = useState(true);
     const [stores, setStores] = useState([]);
-    const [summary, setSummary] = useState({});
-    const [pagination, setPagination] = useState({});
+    const [summary, setSummary] = useState(null);
+    const [pagination, setPagination] = useState(null);
+    const [responseCurrency, setResponseCurrency] = useState(null);
+    const [loadError, setLoadError] = useState('');
     const [search, setSearch] = useState('');
     const [statusFilter, setStatusFilter] = useState('all');
     const [page, setPage] = useState(1);
     const [editingStore, setEditingStore] = useState(null);
     const [editSlug, setEditSlug] = useState('');
     const [savingSlug, setSavingSlug] = useState(false);
+    const requestRef = useRef({ id: 0, controller: null });
 
-    const fetchData = async () => {
+    const clearData = useCallback(() => {
+        setStores([]);
+        setSummary(null);
+        setPagination(null);
+        setResponseCurrency(null);
+    }, []);
+
+    const fetchData = useCallback(async () => {
+        requestRef.current.controller?.abort();
+        const controller = new AbortController();
+        const requestId = requestRef.current.id + 1;
+        requestRef.current = { id: requestId, controller };
         try {
             setLoading(true);
+            setLoadError('');
+            clearData();
+            const requestedCurrency = normalizeCurrencyCode(currency, '');
+            if (!requestedCurrency) throw new Error('Choose a supported display currency before loading revenue.');
             const token = getAuthToken();
             const params = new URLSearchParams();
             if (search) params.append('search', search);
             if (statusFilter !== 'all') params.append('status', statusFilter);
-            params.append('currency', currency);
+            params.append('currency', requestedCurrency);
             params.append('page', page);
             params.append('limit', 15);
 
             const res = await axios.get(`${import.meta.env.VITE_API_URL}api/subdomain/admin/all?${params}`, {
-                headers: { Authorization: `Bearer ${token}` }
+                headers: { Authorization: `Bearer ${token}` },
+                signal: controller.signal,
             });
-            setStores(res.data.stores || []);
-            setSummary({ ...(res.data.summary || {}), currency: res.data.currency || currency });
-            setPagination(res.data.pagination || {});
+            const inspected = inspectAdminSubdomainResponse(res.data, requestedCurrency, {
+                expectedPage: page,
+                expectedLimit: 15,
+            });
+            if (!inspected.valid) {
+                throw new Error('Subdomain data contains invalid or inconsistent revenue, currency, count, identity, or pagination fields.');
+            }
+            if (requestRef.current.id !== requestId) return;
+            setStores(inspected.stores);
+            setSummary(inspected.summary);
+            setPagination(inspected.pagination);
+            setResponseCurrency(inspected.currency);
         } catch (error) {
-            toast.error('Failed to load subdomain data');
-        } finally { setLoading(false); }
-    };
-
-    useEffect(() => { fetchData(); }, [statusFilter, page, currency]);
+            if (controller.signal.aborted || error?.code === 'ERR_CANCELED' || error?.name === 'CanceledError') return;
+            if (requestRef.current.id !== requestId) return;
+            clearData();
+            const message = error.response?.data?.msg || error.message || 'Failed to load subdomain data';
+            setLoadError(message);
+            toast.error(message);
+        } finally {
+            if (requestRef.current.id === requestId) setLoading(false);
+        }
+    }, [clearData, currency, page, search, statusFilter]);
 
     useEffect(() => {
-        const timer = setTimeout(() => { setPage(1); fetchData(); }, 400);
-        return () => clearTimeout(timer);
-    }, [search]);
+        requestRef.current.controller?.abort();
+        requestRef.current.id += 1;
+        clearData();
+        setLoadError('');
+        setLoading(true);
+        const timer = setTimeout(fetchData, search ? 400 : 0);
+        return () => {
+            clearTimeout(timer);
+            requestRef.current.controller?.abort();
+            requestRef.current.id += 1;
+        };
+    }, [clearData, fetchData, search]);
 
     const handleUpdateSlug = async (storeId) => {
         if (!editSlug || editSlug.length < 3) { toast.error('Subdomain must be at least 3 characters'); return; }
@@ -87,11 +131,11 @@ const AdminSubdomainManagement = () => {
     };
 
     const summaryCards = [
-        { label: 'Total Stores', value: summary.totalStores || 0, icon: <Globe size={18} />, color: 'hsl(220, 70%, 55%)' },
-        { label: 'Live Subdomains', value: summary.activeSubdomains || 0, icon: <CheckCircle size={18} />, color: 'hsl(150, 60%, 45%)' },
-        { label: 'Inactive', value: summary.inactiveSubdomains || 0, icon: <Lock size={18} />, color: 'hsl(45, 80%, 45%)' },
-        { label: 'Pending Verification', value: summary.pendingVerifications || 0, icon: <Clock size={18} />, color: 'hsl(30, 90%, 50%)' },
-        { label: 'Total Views', value: summary.totalViews || 0, icon: <Eye size={18} />, color: 'hsl(280, 60%, 55%)' },
+        { label: 'Total Stores', value: summary ? summary.totalStores : '—', icon: <Globe size={18} />, color: 'hsl(220, 70%, 55%)' },
+        { label: 'Live Subdomains', value: summary ? summary.activeSubdomains : '—', icon: <CheckCircle size={18} />, color: 'hsl(150, 60%, 45%)' },
+        { label: 'Inactive', value: summary ? summary.inactiveSubdomains : '—', icon: <Lock size={18} />, color: 'hsl(45, 80%, 45%)' },
+        { label: 'Pending Verification', value: summary ? summary.pendingVerifications : '—', icon: <Clock size={18} />, color: 'hsl(30, 90%, 50%)' },
+        { label: 'Total Views', value: summary ? summary.totalViews : '—', icon: <Eye size={18} />, color: 'hsl(280, 60%, 55%)' },
     ];
 
     const statusTabs = [
@@ -142,7 +186,7 @@ const AdminSubdomainManagement = () => {
                     {/* Search */}
                     <div className="flex-1 relative">
                         <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'hsl(var(--muted-foreground))' }} />
-                        <input type="text" value={search} onChange={(e) => setSearch(e.target.value)}
+                        <input type="text" value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }}
                             className="glass-input pl-10" placeholder="Search by store name or subdomain..." />
                     </div>
                     {/* Status tabs */}
@@ -163,6 +207,15 @@ const AdminSubdomainManagement = () => {
             {/* Stores Table */}
             {loading ? (
                 <div className="flex justify-center py-16"><Loader /></div>
+            ) : loadError ? (
+                <div className="glass-panel p-10 text-center">
+                    <AlertTriangle size={36} style={{ color: 'hsl(0, 72%, 55%)' }} className="mx-auto mb-3" />
+                    <p className="text-sm font-semibold" style={{ color: 'hsl(var(--foreground))' }}>Subdomain data is unavailable</p>
+                    <p className="text-xs mt-2" style={{ color: 'hsl(var(--muted-foreground))' }}>{loadError}</p>
+                    <button type="button" onClick={fetchData} className="mt-4 px-4 py-2 rounded-xl glass-inner text-xs font-semibold">
+                        Retry
+                    </button>
+                </div>
             ) : stores.length === 0 ? (
                 <div className="glass-panel p-12 text-center">
                     <Globe size={40} style={{ color: 'hsl(var(--muted-foreground))' }} className="mx-auto mb-3 opacity-40" />
@@ -233,7 +286,7 @@ const AdminSubdomainManagement = () => {
                                     </div>
                                     <div className="text-center">
                                         <p className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>Revenue</p>
-                                        <p className="text-sm font-bold" style={{ color: 'hsl(var(--foreground))' }}>{formatPrice(store.totalRevenue, { sourceCurrency: summary.currency || currency })}</p>
+                                        <p className="text-sm font-bold" style={{ color: 'hsl(var(--foreground))' }}>{formatPrice(store.totalRevenue, { sourceCurrency: responseCurrency })}</p>
                                     </div>
                                     <div className="text-center">
                                         <p className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>Trust</p>
@@ -261,7 +314,7 @@ const AdminSubdomainManagement = () => {
             )}
 
             {/* Pagination */}
-            {pagination.pages > 1 && (
+            {pagination?.pages > 1 && (
                 <div className="flex justify-center gap-2 mt-6">
                     {Array.from({ length: pagination.pages }, (_, i) => (
                         <button key={i} onClick={() => setPage(i + 1)}

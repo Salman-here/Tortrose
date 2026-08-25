@@ -108,7 +108,7 @@
     "logo": "https://rozare.com/rozare-logo.svg",
     "image": "https://rozare.com/og-image.png?v=4",
     "description": "Rozare is an AI-powered marketplace where shoppers discover products from independent sellers and brands while sellers manage storefronts with dashboard tools, AI chat, and WhatsApp.",
-    "foundingDate": "2024",
+    "foundingDate": "2025",
     "sameAs": [],
     "contactPoint": {
       "@type": "ContactPoint",
@@ -148,70 +148,12 @@
   }
   </script>
 
-  <!-- GSM Cashback Tracking Script -->
-  <script>
-  (function() {
-    window.GSM = {
-      brandId: '697b9599afb2ae3c366b6753',
-      apiUrl: 'https://gsm-v2-api-5ffdf926b962.herokuapp.com',
-      init: function() {
-        var urlParams = new URLSearchParams(window.location.search);
-        var trackingCode = urlParams.get('gsm_tracking');
-        if (trackingCode) {
-          localStorage.setItem('gsm_tracking_code', trackingCode);
-          localStorage.setItem('gsm_tracking_expires', Date.now() + 7*24*60*60*1000);
-        }
-      },
-      trackPurchase: function(data) {
-        var trackingCode = localStorage.getItem('gsm_tracking_code');
-        var expires = localStorage.getItem('gsm_tracking_expires');
-        if (!trackingCode) return Promise.resolve({ success: false, message: 'No tracking code' });
-        if (Date.now() > parseInt(expires)) {
-          localStorage.removeItem('gsm_tracking_code');
-          localStorage.removeItem('gsm_tracking_expires');
-          return Promise.resolve({ success: false, message: 'Tracking code expired' });
-        }
-        return fetch(this.apiUrl + '/purchases/webhook/purchase', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            trackingCode: trackingCode,
-            orderId: data.orderId,
-            amount: data.amount,
-            currency: data.currency || 'USD',
-            customerEmail: data.customerEmail || '',
-            purchaseDate: new Date().toISOString(),
-            status: 'completed'
-          })
-        })
-        .then(function(response) { return response.json(); })
-        .then(function(result) {
-          if (result.success) {
-            localStorage.removeItem('gsm_tracking_code');
-            localStorage.removeItem('gsm_tracking_expires');
-          }
-          return result;
-        })
-        .catch(function(err) {
-          return { success: false, error: err.message };
-        });
-      }
-    };
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', function() { window.GSM.init(); });
-    } else {
-      window.GSM.init();
-    }
-  })();
-  </script>
 
   <!-- Fonts (trimmed to essential families) -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Lato:wght@300;400;700;900&family=Montserrat:wght@400;500;600;700;800;900&family=Orbitron:wght@400..900&family=Outfit:wght@300;400;500;600;700&family=Poppins:wght@300;400;500;600;700&family=Quicksand:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-  <!-- DNS Prefetch for API -->
-  <link rel="dns-prefetch" href="https://gsm-v2-api-5ffdf926b962.herokuapp.com">
 
   <!-- TikTok Pixel Code Start -->
   <script>

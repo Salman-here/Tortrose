@@ -33,6 +33,14 @@ import {
   isOrderConfirmedByBuyer,
   openWhatsAppVerify,
 } from '../../utils/whatsapp';
+import {
+  getOrderCurrency,
+  getOrderItemQuantity,
+  getOrderItemLineSubtotal,
+  getOrderSummaryAmount,
+  getOrderTotal,
+} from '../../utils/orderPresentation';
+import { addCurrencyAmounts } from '../../utils/currencySafety';
 
 const getStatusConfig = (palette) => ({
   pending: { color: palette.colors.warning, icon: 'time-outline', label: 'Pending' },
@@ -167,12 +175,40 @@ export default function OrderDetailManagementScreen({ route, navigation }) {
   const statusConfig = STATUS_CONFIG[orderStatus] || STATUS_CONFIG.pending;
   const orderItems = order.orderItems || order.items || [];
   const shippingInfo = order.shippingInfo || order.shippingAddress || {};
-  const summary = order.orderSummary || {};
-  const orderCurrency = order.currency || 'USD';
-  const money = (amount) => formatPrice(amount || 0, { sourceCurrency: orderCurrency });
-  const shippingCost = summary.shippingCost ?? order.shippingCost ?? order.shippingMethod?.price ?? 0;
-  const totalAmount = summary.totalAmount ?? order.totalAmount ?? order.total ?? 0;
-  const subtotal = summary.subtotal ?? Math.max(0, totalAmount - shippingCost - (summary.tax || 0) + (summary.couponDiscount || 0));
+  const orderCurrency = getOrderCurrency(order);
+  const money = (amount) => formatPrice(amount, { sourceCurrency: orderCurrency });
+  const shippingCost = getOrderSummaryAmount(
+    order,
+    ['shippingCost', 'shippingFee'],
+    'order shipping',
+    { fallback: order.shippingCost ?? order.shippingMethod?.price ?? 0 },
+  );
+  const totalAmount = getOrderTotal(order);
+  const tax = getOrderSummaryAmount(order, ['tax', 'taxAmount'], 'order tax');
+  const couponDiscount = getOrderSummaryAmount(
+    order,
+    ['couponDiscount', 'discountAmount'],
+    'order coupon discount',
+  );
+  const reconciliationAdjustment = getOrderSummaryAmount(
+    order,
+    ['reconciliationAdjustment'],
+    'order reconciliation adjustment',
+    { signed: true },
+  );
+  const derivedSubtotal = Math.max(0, addCurrencyAmounts(
+    totalAmount,
+    -shippingCost,
+    -tax,
+    couponDiscount,
+    -reconciliationAdjustment,
+  ));
+  const subtotal = getOrderSummaryAmount(
+    order,
+    ['subtotal'],
+    'order subtotal',
+    { fallback: derivedSubtotal },
+  );
   const customerEmail = order.user?.email || shippingInfo.email || 'N/A';
   const confirmationLabel = getConfirmationSourceLabel(order);
   const confirmation = order.confirmation || {};
@@ -331,7 +367,7 @@ export default function OrderDetailManagementScreen({ route, navigation }) {
           <Text style={styles.sectionTitle}>Items ({orderItems.length})</Text>
           {orderItems.map((item, index) => {
             const itemImage = getItemImage(item);
-            const quantity = item.quantity || item.qty || 1;
+            const quantity = getOrderItemQuantity(item);
             const selectedOptions = getSelectedOptions(item);
             return (
               <View key={`${item._id || item.productId?._id || item.productId || index}`} style={styles.itemCard}>
@@ -350,7 +386,7 @@ export default function OrderDetailManagementScreen({ route, navigation }) {
                     <Text key={name} style={styles.itemOption}>{name}: {value}</Text>
                   ))}
                 </View>
-                <Text style={styles.itemTotal}>{money(quantity * (Number(item.price) || 0))}</Text>
+                <Text style={styles.itemTotal}>{money(getOrderItemLineSubtotal(item))}</Text>
               </View>
             );
           })}
@@ -360,8 +396,9 @@ export default function OrderDetailManagementScreen({ route, navigation }) {
           <Text style={styles.sectionTitle}>Summary</Text>
           <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Subtotal</Text><Text style={styles.summaryValue}>{money(subtotal)}</Text></View>
           <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Shipping</Text><Text style={styles.summaryValue}>{shippingCost === 0 ? 'Free' : money(shippingCost)}</Text></View>
-          {summary.tax > 0 && <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Tax</Text><Text style={styles.summaryValue}>{money(summary.tax)}</Text></View>}
-          {summary.couponDiscount > 0 && <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Coupon Discount</Text><Text style={[styles.summaryValue, { color: palette.colors.success }]}>-{money(summary.couponDiscount)}</Text></View>}
+          {tax > 0 && <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Tax</Text><Text style={styles.summaryValue}>{money(tax)}</Text></View>}
+          {couponDiscount > 0 && <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Coupon Discount</Text><Text style={[styles.summaryValue, { color: palette.colors.success }]}>-{money(couponDiscount)}</Text></View>}
+          {reconciliationAdjustment !== 0 && <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Rounding adjustment</Text><Text style={styles.summaryValue}>{reconciliationAdjustment > 0 ? '+' : '-'}{money(Math.abs(reconciliationAdjustment))}</Text></View>}
           <View style={[styles.summaryRow, styles.summaryTotal]}><Text style={styles.totalLabel}>Total</Text><Text style={styles.totalValue}>{money(totalAmount)}</Text></View>
         </GlassPanel>
 

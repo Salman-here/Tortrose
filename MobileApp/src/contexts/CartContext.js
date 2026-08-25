@@ -15,7 +15,7 @@ import { impact as hapticImpact } from '../utils/haptics';
 import api from '../config/api';
 import { useAuth } from './AuthContext';
 import {
-  calculateGuestCartTotal,
+  calculateGuestCartSummary,
   cartLineIdentity,
   clearGuestCart,
   decrementGuestCartLine,
@@ -27,19 +27,16 @@ import {
   removeGuestCartLine,
   writeGuestCart,
 } from '../utils/guestCart';
+import { normalizeServerCartPayload } from '../utils/cartPresentation';
 
 const CartContext = createContext();
-const EMPTY_CART = { totalCartPrice: 0, cart: [] };
+const EMPTY_CART = { totalCartPrice: 0, totalCartCurrency: null, cart: [] };
 
-const normalizeServerCart = (payload) => ({
-  cart: Array.isArray(payload?.cart) ? payload.cart : [],
-  totalCartPrice: Number(payload?.totalCartPrice) || 0,
-  ...(payload?.totalCartCurrency ? { totalCartCurrency: payload.totalCartCurrency } : {}),
-});
+const normalizeServerCart = normalizeServerCartPayload;
 
 const guestCartState = (cart) => ({
   cart,
-  totalCartPrice: calculateGuestCartTotal(cart),
+  ...calculateGuestCartSummary(cart),
 });
 
 const productIdOf = (item) => String(item?.product?._id || item?.product || '');
@@ -51,14 +48,33 @@ const lineMatches = (item, productId, selectedColor, selectedOptions) => (
 );
 
 export const CartProvider = ({ children }) => {
-  const { currentUser } = useAuth();
+  const { currentUser, isLoading: isAuthLoading } = useAuth();
   const currentUserId = currentUser?._id || currentUser?.id || null;
+  const cartOwner = String(currentUserId || 'guest');
   const [cartItems, setCartItems] = useState(EMPTY_CART);
   const [isCartLoading, setIsCartLoading] = useState(true);
+  const [cartHydrationStatus, setCartHydrationStatus] = useState('hydrating');
+  const [cartHydrationError, setCartHydrationError] = useState(null);
+  const [hydratedCartOwner, setHydratedCartOwner] = useState(null);
   const [loadingProductId, setLoadingProductId] = useState(null);
   const [qtyUpdateId, setQtyUpdateId] = useState(null);
   const cartItemsRef = useRef(EMPTY_CART);
   const guestMutationQueueRef = useRef(Promise.resolve());
+  const cartOwnerRef = useRef(cartOwner);
+  const authLoadingRef = useRef(isAuthLoading);
+  const cartReadRequestRef = useRef(0);
+  const cartHydrationRequestRef = useRef(0);
+  const cartHydrationOwnerRef = useRef(null);
+  const cartHydrationPromiseRef = useRef(null);
+  const cartHydrationStatusRef = useRef(cartHydrationStatus);
+  const hydratedCartOwnerRef = useRef(hydratedCartOwner);
+  cartOwnerRef.current = cartOwner;
+  authLoadingRef.current = isAuthLoading;
+  cartHydrationStatusRef.current = cartHydrationStatus;
+  hydratedCartOwnerRef.current = hydratedCartOwner;
+  const isCartReady = !isAuthLoading
+    && cartHydrationStatus === 'ready'
+    && hydratedCartOwner === cartOwner;
 
   const replaceCart = useCallback((nextCart) => {
     cartItemsRef.current = nextCart;
@@ -91,84 +107,133 @@ export const CartProvider = ({ children }) => {
     }
   }, []);
 
-  const loadGuestCart = useCallback(async () => {
-    const guestCart = await readSettledGuestCart();
-    replaceCart(guestCartState(guestCart));
-    return guestCart;
-  }, [readSettledGuestCart, replaceCart]);
-
-  const fetchCart = useCallback(async () => {
+  const fetchAuthoritativeCart = useCallback(async (owner, reportError = true) => {
+    const requestId = ++cartReadRequestRef.current;
     setIsCartLoading(true);
     try {
-      if (!currentUserId) {
-        await loadGuestCart();
-        return;
+      if (owner === 'guest') {
+        const guestCart = await readSettledGuestCart();
+        if (
+          requestId === cartReadRequestRef.current
+          && cartOwnerRef.current === owner
+          && !authLoadingRef.current
+        ) {
+          replaceCart(guestCartState(guestCart));
+        }
+        return guestCartState(guestCart);
       }
 
       const response = await api.get('/api/cart/get');
-      replaceCart(normalizeServerCart(response.data));
+      const nextCart = normalizeServerCart(response.data);
+      if (requestId === cartReadRequestRef.current && cartOwnerRef.current === owner) {
+        replaceCart(nextCart);
+      }
+      return nextCart;
     } catch (error) {
-      if (error.response?.status !== 403) {
+      if (reportError && error.response?.status !== 403) {
         Feedback.show({
           type: 'error',
           text1: 'Could not refresh your bag',
           text2: error.response?.data?.msg || 'Please try again in a moment',
         });
       }
+      throw error;
     } finally {
-      setIsCartLoading(false);
+      if (requestId === cartReadRequestRef.current) setIsCartLoading(false);
     }
-  }, [currentUserId, loadGuestCart, replaceCart]);
+  }, [readSettledGuestCart, replaceCart]);
 
-  useEffect(() => {
-    let active = true;
+  const synchronizeCart = useCallback(async () => {
+    if (authLoadingRef.current) return null;
+    const owner = cartOwnerRef.current;
+    const hydrationId = ++cartHydrationRequestRef.current;
+    cartHydrationOwnerRef.current = owner;
+    cartHydrationStatusRef.current = 'hydrating';
+    setCartHydrationStatus('hydrating');
+    setCartHydrationError(null);
+    setIsCartLoading(true);
 
-    const synchronizeCart = async () => {
-      setIsCartLoading(true);
-      try {
-        if (!currentUserId) {
-          const guestCart = await readSettledGuestCart();
-          if (active) replaceCart(guestCartState(guestCart));
-          return;
-        }
-
+    try {
+      if (owner === 'guest') {
+        await fetchAuthoritativeCart(owner, false);
+      } else {
         const guestCart = await readSettledGuestCart();
         if (guestCart.length > 0) {
-          try {
-            const response = await api.post('/api/cart/merge', {
-              items: guestCartPayload(guestCart),
-            });
-            await clearGuestCart();
-            if (active) replaceCart(normalizeServerCart(response.data));
-            return;
-          } catch (error) {
-            // Keep the local bag intact so a later app launch can safely retry.
-            Feedback.show({
-              type: 'info',
-              text1: 'Your local bag is safe',
-              text2: error.response?.data?.msg || 'We will try syncing it again shortly',
-            });
-          }
-        }
-
-        const response = await api.get('/api/cart/get');
-        if (active) replaceCart(normalizeServerCart(response.data));
-      } catch (error) {
-        if (error.response?.status !== 403) {
-          Feedback.show({
-            type: 'error',
-            text1: 'Could not load your bag',
-            text2: error.response?.data?.msg || 'Please pull down to retry',
+          await api.post('/api/cart/merge', {
+            items: guestCartPayload(guestCart),
           });
+          // The local bag is cleared only after a successful merge. Checkout
+          // remains blocked until the separate authoritative GET below also
+          // completes, so these items cannot be merged again after purchase.
+          await clearGuestCart();
         }
-      } finally {
-        if (active) setIsCartLoading(false);
+        await fetchAuthoritativeCart(owner, false);
+      }
+
+      if (hydrationId !== cartHydrationRequestRef.current || cartOwnerRef.current !== owner) return null;
+      hydratedCartOwnerRef.current = owner;
+      cartHydrationStatusRef.current = 'ready';
+      setHydratedCartOwner(owner);
+      setCartHydrationStatus('ready');
+      return true;
+    } catch (error) {
+      if (hydrationId !== cartHydrationRequestRef.current || cartOwnerRef.current !== owner) return null;
+      const message = error.response?.data?.msg || error.message || 'Your cart could not be synchronized.';
+      cartHydrationStatusRef.current = 'error';
+      setCartHydrationError(message);
+      setCartHydrationStatus('error');
+      Feedback.show({
+        type: 'info',
+        text1: 'Your local bag is safe',
+        text2: `${message} Retry synchronization before checkout.`,
+      });
+      return false;
+    } finally {
+      if (hydrationId === cartHydrationRequestRef.current) setIsCartLoading(false);
+    }
+  }, [fetchAuthoritativeCart, readSettledGuestCart]);
+
+  const retryCartHydration = useCallback(() => {
+    const owner = cartOwnerRef.current;
+    if (
+      cartHydrationStatusRef.current === 'hydrating'
+      && cartHydrationOwnerRef.current === owner
+      && cartHydrationPromiseRef.current
+    ) return cartHydrationPromiseRef.current;
+    const operation = synchronizeCart();
+    cartHydrationPromiseRef.current = operation;
+    return operation;
+  }, [synchronizeCart]);
+
+  const fetchCart = useCallback(async () => {
+    const owner = cartOwnerRef.current;
+    if (
+      authLoadingRef.current
+      || cartHydrationStatusRef.current !== 'ready'
+      || hydratedCartOwnerRef.current !== owner
+    ) {
+      return retryCartHydration();
+    }
+    try {
+      return await fetchAuthoritativeCart(owner);
+    } catch {
+      return null;
+    }
+  }, [fetchAuthoritativeCart, retryCartHydration]);
+
+  useEffect(() => {
+    if (isAuthLoading) {
+      cartHydrationStatusRef.current = 'hydrating';
+      setCartHydrationStatus('hydrating');
+      return undefined;
+    }
+    const operation = retryCartHydration();
+    return () => {
+      if (cartHydrationPromiseRef.current === operation) {
+        ++cartHydrationRequestRef.current;
       }
     };
-
-    synchronizeCart();
-    return () => { active = false; };
-  }, [currentUserId, readSettledGuestCart, replaceCart]);
+  }, [cartOwner, isAuthLoading, retryCartHydration]);
 
   const handleRemoveCartItem = useCallback(async (lineId) => {
     if (!lineId) return;
@@ -270,8 +335,10 @@ export const CartProvider = ({ children }) => {
         replaceCart({
           ...previousCart,
           cart: [...previousCart.cart, optimisticLine],
-          totalCartPrice: previousCart.totalCartPrice
-            + Number(productHint.discountedPrice || productHint.price || 0),
+          // A product hint is native-currency data while an authenticated cart
+          // total is in the account currency. Wait for the server snapshot.
+          totalCartPrice: null,
+          totalCartCurrency: null,
         });
       }
 
@@ -335,7 +402,7 @@ export const CartProvider = ({ children }) => {
   const handleQtyDec = useCallback(async (lineId) => {
     if (!lineId) return;
     const currentLine = cartItemsRef.current.cart.find((item) => String(item._id) === String(lineId));
-    if (currentLine && Number(currentLine.qty) <= 1) {
+    if (currentLine && currentLine.qty <= 1) {
       await handleRemoveCartItem(lineId);
       return;
     }
@@ -369,6 +436,10 @@ export const CartProvider = ({ children }) => {
       handleQtyDec,
       handleRemoveCartItem,
       isCartLoading,
+      isCartReady,
+      cartHydrationStatus,
+      cartHydrationError,
+      retryCartHydration,
       loadingProductId,
       qtyUpdateId,
     }}>

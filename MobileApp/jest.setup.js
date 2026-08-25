@@ -33,7 +33,15 @@ jest.mock('expo-notifications', () => ({
 
 jest.mock('expo-crypto', () => {
   let sequence = 0;
+  const { createHash } = require('crypto');
   return {
+    CryptoDigestAlgorithm: { SHA256: 'SHA-256', SHA512: 'SHA-512' },
+    CryptoEncoding: { HEX: 'hex' },
+    digestStringAsync: jest.fn(async (algorithm, value) => (
+      createHash(String(algorithm).replace('-', '').toLowerCase())
+        .update(String(value), 'utf8')
+        .digest('hex')
+    )),
     getRandomBytesAsync: jest.fn(async length => {
       sequence += 1;
       return Uint8Array.from(

@@ -2,7 +2,16 @@ const ShippingMethod = require('../models/ShippingMethod');
 const Product = require('../models/Product');
 const User = require('../models/User');
 const Store = require('../models/Store');
-const { normalizeCurrency, convertAmount } = require('../services/currencyService');
+const {
+  isSupportedCurrency,
+  normalizeCurrency,
+  convertAmountUsingTrustedRates,
+} = require('../services/currencyService');
+const { roundMoney } = require('../services/moneyMath');
+const {
+  parsePositiveSafeInteger,
+  parseStrictFiniteNumber,
+} = require('../services/numericInputService');
 const { publicProductFilter } = require('../services/productModerationService');
 const {
   normalizeStorePaymentPolicy,
@@ -10,42 +19,170 @@ const {
   PAYMENT_POLICY_LABELS,
 } = require('../services/storePaymentPolicyService');
 
-const roundMoney = (value) => {
-  const amount = Number(value || 0);
-  if (!Number.isFinite(amount)) return 0;
-  return Math.round(amount * 100) / 100;
+const shippingDataError = (message, code = 'SHIPPING_DATA_INVALID') => {
+  const error = new Error(message);
+  error.status = 409;
+  error.statusCode = 409;
+  error.code = code;
+  return error;
+};
+
+const requireCanonicalCurrency = (value, { input = false, label = 'Currency' } = {}) => {
+  if (input) {
+    if (typeof value !== 'string' || !value.trim() || !isSupportedCurrency(value)) {
+      throw shippingInputError(`${label} must be USD, PKR, EUR, or GBP`);
+    }
+    return normalizeCurrency(value);
+  }
+  if (
+    typeof value !== 'string'
+    || !value.trim()
+    || value !== value.trim().toUpperCase()
+    || !isSupportedCurrency(value)
+  ) {
+    if (input) throw shippingInputError(`${label} must be USD, PKR, EUR, or GBP`);
+    throw shippingDataError(`${label} contains invalid stored currency metadata.`, 'SHIPPING_CURRENCY_METADATA_INVALID');
+  }
+  return normalizeCurrency(value);
 };
 
 const getSellerCurrency = async (sellerId, fallbackCurrency = 'USD') => {
-  const seller = sellerId
-    ? await User.findById(sellerId).select('currency').lean()
-    : null;
-  return normalizeCurrency(seller?.currency || fallbackCurrency);
+  const [store, seller] = sellerId
+    ? await Promise.all([
+      Store.findOne({ seller: sellerId }).select('productCurrency').lean(),
+      User.findById(sellerId).select('currency').lean(),
+    ])
+    : [null, null];
+  const rawCurrency = store?.productCurrency ?? seller?.currency ?? fallbackCurrency;
+  return requireCanonicalCurrency(rawCurrency, { label: 'Seller currency' });
+};
+
+const shippingInputError = (message) => {
+  const error = new Error(message);
+  error.statusCode = 400;
+  error.code = 'SHIPPING_INPUT_INVALID';
+  return error;
+};
+
+const normalizeShippingCostInput = (method = {}) => {
+  const rawCost = method.cost;
+  if (method.type === 'free') {
+    if (rawCost === undefined || rawCost === null || rawCost === '') return 0;
+    if (
+      typeof rawCost === 'boolean'
+      || (typeof rawCost === 'string' && !rawCost.trim())
+      || parseStrictFiniteNumber(rawCost) !== 0
+    ) {
+      throw shippingInputError('Free shipping must have 0 cost');
+    }
+    return 0;
+  }
+
+  if (
+    rawCost === undefined
+    || rawCost === null
+    || typeof rawCost === 'boolean'
+    || (typeof rawCost === 'string' && !rawCost.trim())
+    || parseStrictFiniteNumber(rawCost) === null
+  ) {
+    throw shippingInputError('Paid shipping cost must be a positive number');
+  }
+  try {
+    const parsedCost = parseStrictFiniteNumber(rawCost);
+    const cost = roundMoney(parsedCost);
+    if (cost !== parsedCost) {
+      throw shippingInputError('Paid shipping cost must use exact cents');
+    }
+    if (cost <= 0) throw shippingInputError('Paid shipping methods must have cost > 0');
+    return cost;
+  } catch (error) {
+    if (String(error?.code || '').startsWith('MONEY_')) {
+      throw shippingInputError('Shipping cost is too large');
+    }
+    throw error;
+  }
+};
+
+const normalizeDeliveryDaysInput = (rawDays) => {
+  if (
+    rawDays === undefined
+    || rawDays === null
+    || typeof rawDays === 'boolean'
+    || (typeof rawDays === 'string' && !rawDays.trim())
+  ) {
+    throw shippingInputError('Delivery days must be a whole number of at least 1');
+  }
+  const deliveryDays = parsePositiveSafeInteger(rawDays);
+  if (deliveryDays === null) {
+    throw shippingInputError('Delivery days must be a whole number of at least 1');
+  }
+  return deliveryDays;
 };
 
 const serializeShippingMethod = (method, fallbackCurrency = 'USD') => {
   const raw = method?.toObject ? method.toObject() : { ...(method || {}) };
-  const currency = normalizeCurrency(raw.currency || raw.costCurrency || fallbackCurrency);
-  const cost = roundMoney(raw.cost);
+  const storedCurrencies = [raw.currency, raw.costCurrency]
+    .filter(value => value !== null && value !== undefined)
+    .map(value => requireCanonicalCurrency(value, { label: 'Shipping method' }));
+  const currencies = [...new Set(storedCurrencies)];
+  if (currencies.length > 1) {
+    throw shippingDataError(
+      'Shipping method contains conflicting stored currency metadata.',
+      'SHIPPING_CURRENCY_METADATA_INVALID',
+    );
+  }
+  const currency = currencies[0]
+    || requireCanonicalCurrency(fallbackCurrency, { label: 'Shipping fallback currency' });
+
+  let cost;
+  let costInputAmount;
+  try {
+    cost = roundMoney(raw.cost);
+    costInputAmount = raw.costInputAmount == null ? cost : roundMoney(raw.costInputAmount);
+  } catch (_) {
+    throw shippingDataError('Shipping method contains an invalid stored cost.', 'SHIPPING_COST_INVALID');
+  }
+  if (
+    !['free', 'standard', 'fast'].includes(raw.type)
+    || typeof raw.cost !== 'number'
+    || cost !== raw.cost
+    || (raw.type === 'free' ? cost !== 0 : cost <= 0)
+    || (raw.costInputAmount != null && (
+      typeof raw.costInputAmount !== 'number'
+      || costInputAmount !== raw.costInputAmount
+      || (raw.type === 'free' ? costInputAmount !== 0 : costInputAmount <= 0)
+    ))
+  ) {
+    throw shippingDataError('Shipping method contains an invalid stored cost.', 'SHIPPING_COST_INVALID');
+  }
+  if (!Number.isSafeInteger(raw.deliveryDays) || raw.deliveryDays < 1) {
+    throw shippingDataError('Shipping method contains invalid stored delivery days.');
+  }
   return {
     ...raw,
     cost,
     currency,
     costCurrency: currency,
-    costInputAmount: raw.costInputAmount != null ? roundMoney(raw.costInputAmount) : cost,
+    costInputAmount,
   };
 };
 
 const normalizeShippingMethodInput = async (method, fallbackCurrency = 'USD') => {
-  const currency = normalizeCurrency(method.currency || method.costCurrency || fallbackCurrency);
-  const sourceCurrency = normalizeCurrency(method.costCurrency || method.currency || currency);
-  const rawCost = method.type === 'free' ? 0 : roundMoney(method.cost);
-  const deliveryDays = Number(method.deliveryDays);
+  const currency = requireCanonicalCurrency(
+    method.currency ?? method.costCurrency ?? fallbackCurrency,
+    { input: true, label: 'Shipping currency' },
+  );
+  const sourceCurrency = requireCanonicalCurrency(
+    method.costCurrency ?? method.currency ?? currency,
+    { input: true, label: 'Shipping cost currency' },
+  );
+  const rawCost = normalizeShippingCostInput(method);
+  const deliveryDays = normalizeDeliveryDaysInput(method.deliveryDays);
   const cost = method.type === 'free'
     ? 0
     : sourceCurrency === currency
       ? rawCost
-      : await convertAmount(rawCost, sourceCurrency, currency);
+      : await convertAmountUsingTrustedRates(rawCost, sourceCurrency, currency);
 
   return {
     type: method.type,
@@ -53,7 +190,7 @@ const normalizeShippingMethodInput = async (method, fallbackCurrency = 'USD') =>
     currency,
     costCurrency: currency,
     costInputAmount: cost,
-    deliveryDays: Number.isFinite(deliveryDays) ? deliveryDays : 1,
+    deliveryDays,
     isActive: method.isActive !== false,
   };
 };
@@ -63,7 +200,6 @@ const getSellerShippingMethods = async (req, res) => {
   try {
     const { sellerId } = req.params;
     
-    const sellerCurrency = await getSellerCurrency(sellerId);
     let shippingMethods = await ShippingMethod.findOne({ seller: sellerId });
     
     // If seller has no shipping methods, return default structure
@@ -78,17 +214,19 @@ const getSellerShippingMethods = async (req, res) => {
     }
 
     const response = shippingMethods.toObject();
-    response.methods = (response.methods || []).map(method => serializeShippingMethod(method, sellerCurrency));
+    response.methods = (response.methods || []).map(method => serializeShippingMethod(method, 'USD'));
     
     res.status(200).json({
       success: true,
       shippingMethods: response
     });
   } catch (error) {
-    console.error('Error fetching seller shipping methods:', error);
-    res.status(500).json({
+    const statusCode = error.statusCode || error.status || 500;
+    if (statusCode >= 500) console.error('Error fetching seller shipping methods:', error);
+    res.status(statusCode).json({
       success: false,
-      msg: 'Failed to fetch shipping methods'
+      msg: statusCode < 500 ? error.message : 'Failed to fetch shipping methods',
+      code: error.code,
     });
   }
 };
@@ -99,7 +237,7 @@ const updateShippingMethods = async (req, res) => {
     const { methods, currency } = req.body;
     const sellerId = req.user._id || req.user.id;
     const sellerCurrency = await getSellerCurrency(sellerId, req.user.currency || currency || 'USD');
-    const inputCurrency = normalizeCurrency(currency || req.user.currency || sellerCurrency);
+    const inputCurrency = requireCanonicalCurrency(currency ?? sellerCurrency, { input: true });
     
     // Validation
     if (!methods || !Array.isArray(methods)) {
@@ -108,18 +246,52 @@ const updateShippingMethods = async (req, res) => {
         msg: 'Methods must be an array'
       });
     }
+    if (methods.length < 1 || methods.length > 3) {
+      return res.status(400).json({
+        success: false,
+        msg: 'Provide between one and three shipping methods',
+      });
+    }
+    if (currency !== undefined && currency !== null) {
+      try {
+        requireCanonicalCurrency(currency, { input: true });
+      } catch (error) {
+        return res.status(error.statusCode).json({ success: false, msg: error.message, code: error.code });
+      }
+    }
     
     // Validate each method
     const normalizedMethods = [];
+    const seenMethodTypes = new Set();
     for (const method of methods) {
+      for (const field of ['currency', 'costCurrency']) {
+        if (method[field] !== undefined && method[field] !== null) {
+          try {
+            requireCanonicalCurrency(method[field], { input: true, label: field });
+          } catch (error) {
+            return res.status(error.statusCode).json({ success: false, msg: error.message, code: error.code });
+          }
+        }
+      }
       if (!['free', 'standard', 'fast'].includes(method.type)) {
         return res.status(400).json({
           success: false,
           msg: 'Invalid shipping method type'
         });
       }
+      if (seenMethodTypes.has(method.type)) {
+        return res.status(400).json({
+          success: false,
+          msg: 'Each shipping method type can be configured only once',
+        });
+      }
+      seenMethodTypes.add(method.type);
       const normalizedMethod = await normalizeShippingMethodInput(
-        { ...method, currency: method.currency || inputCurrency, costCurrency: method.costCurrency || method.currency || inputCurrency },
+        {
+          ...method,
+          currency: method.currency ?? inputCurrency,
+          costCurrency: method.costCurrency ?? method.currency ?? inputCurrency,
+        },
         inputCurrency
       );
       
@@ -137,10 +309,10 @@ const updateShippingMethods = async (req, res) => {
         });
       }
       
-      if (normalizedMethod.deliveryDays < 1) {
+      if (!Number.isInteger(normalizedMethod.deliveryDays) || normalizedMethod.deliveryDays < 1) {
         return res.status(400).json({
           success: false,
-          msg: 'Delivery days must be at least 1'
+          msg: 'Delivery days must be a whole number of at least 1'
         });
       }
       normalizedMethods.push(normalizedMethod);
@@ -174,10 +346,12 @@ const updateShippingMethods = async (req, res) => {
       shippingMethods
     });
   } catch (error) {
-    console.error('Error updating shipping methods:', error);
-    res.status(500).json({
+    const statusCode = error.statusCode || error.status || 500;
+    if (statusCode >= 500) console.error('Error updating shipping methods:', error);
+    res.status(statusCode).json({
       success: false,
-      msg: 'Failed to update shipping methods'
+      msg: error.statusCode || error.status ? error.message : 'Failed to update shipping methods',
+      code: error.code,
     });
   }
 };
@@ -205,7 +379,7 @@ const getShippingMethodsForCart = async (req, res) => {
       ShippingMethod.find({
         seller: { $in: sellerIds }
       }).populate('seller', 'username currency'),
-      Store.find({ seller: { $in: sellerIds } }).select('seller storeName storeSlug paymentPolicy').lean(),
+      Store.find({ seller: { $in: sellerIds } }).select('seller storeName storeSlug paymentPolicy productCurrency').lean(),
     ]);
     const storeBySeller = new Map(stores.map(store => [store.seller.toString(), store]));
     
@@ -226,13 +400,12 @@ const getShippingMethodsForCart = async (req, res) => {
       };
       
       if (sellerShipping) {
-        const sellerCurrency = normalizeCurrency(sellerShipping.seller?.currency || 'USD');
         sellerShippingMap[sellerId] = {
           seller: sellerShipping.seller,
           ...paymentInfo,
           methods: sellerShipping.methods
             .filter(m => m.isActive)
-            .map(method => serializeShippingMethod(method, sellerCurrency))
+            .map(method => serializeShippingMethod(method, 'USD'))
         };
       } else {
         const sellerCurrency = await getSellerCurrency(sellerId);
@@ -252,10 +425,12 @@ const getShippingMethodsForCart = async (req, res) => {
       shippingMethods: sellerShippingMap
     });
   } catch (error) {
-    console.error('Error fetching cart shipping methods:', error);
-    res.status(500).json({
+    const statusCode = error.statusCode || error.status || 500;
+    if (statusCode >= 500) console.error('Error fetching cart shipping methods:', error);
+    res.status(statusCode).json({
       success: false,
-      msg: 'Failed to fetch shipping methods for cart'
+      msg: statusCode < 500 ? error.message : 'Failed to fetch shipping methods for cart',
+      code: error.code,
     });
   }
 };

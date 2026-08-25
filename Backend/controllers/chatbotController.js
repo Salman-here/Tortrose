@@ -6,6 +6,10 @@ const Fuse = require('fuse.js');
 const { publicProductFilter } = require('../services/productModerationService');
 const { convertAmountSync } = require('../services/currencyService');
 const { getProductCurrency, getProductEffectivePrice } = require('../services/productPricingService');
+const {
+    getAccountingOrderCurrency,
+    requireStoredOrderMoney,
+} = require('../services/orderMoneyService');
 
 const comparablePriceUSD = (product) =>
     convertAmountSync(getProductEffectivePrice(product), getProductCurrency(product), 'USD');
@@ -79,7 +83,8 @@ exports.getUserContext = async (req, res) => {
         const orderData = recentOrders.map(o => ({
             orderId: o.orderId,
             status: o.orderStatus,
-            total: o.orderSummary?.totalAmount || 0,
+            total: requireStoredOrderMoney(o.orderSummary?.totalAmount, 'order total'),
+            currency: getAccountingOrderCurrency(o),
             items: o.orderItems?.map(item => item.productId?.name).filter(Boolean),
             date: o.createdAt,
         }));
@@ -185,7 +190,8 @@ exports.chat = async (req, res) => {
                         reply: `Here are your recent orders:`,
                         orders: recentOrders.map(o => ({
                             orderId: o.orderId, status: o.orderStatus,
-                            total: o.orderSummary?.totalAmount,
+                            total: requireStoredOrderMoney(o.orderSummary?.totalAmount, 'order total'),
+                            currency: getAccountingOrderCurrency(o),
                             date: o.createdAt, isPaid: o.isPaid
                         })),
                         intent: 'order_tracking'

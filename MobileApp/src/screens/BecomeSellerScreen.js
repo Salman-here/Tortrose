@@ -6,7 +6,7 @@
  * required store setup + name availability -> WhatsApp OTP -> activation.
  */
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   StatusBar,
@@ -21,6 +21,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import Feedback from '../utils/feedback';
 import api from '../config/api';
 import { useAuth } from '../contexts/AuthContext';
+import { useCurrency } from '../contexts/CurrencyContext';
 import { useTheme } from '../contexts/ThemeContext';
 import { getStorefrontHost } from '../utils/storefrontUrl';
 import { secureSet } from '../utils/secureStorage';
@@ -42,6 +43,12 @@ const SELLER_STEPS = [
   { key: 'whatsapp', label: 'Verify' },
 ];
 
+const SELLER_PRODUCT_CURRENCY_CODES = ['USD', 'PKR', 'EUR', 'GBP'];
+const normalizeSellerProductCurrency = value => {
+  const code = String(value || '').trim().toUpperCase();
+  return SELLER_PRODUCT_CURRENCY_CODES.includes(code) ? code : 'USD';
+};
+
 const generateSlug = (value) => String(value || '')
   .toLowerCase()
   .trim()
@@ -59,6 +66,7 @@ export default function BecomeSellerScreen({ navigation }) {
     googleSignIn,
     fetchAndUpdateCurrentUser,
   } = useAuth();
+  const { currency: accountCurrency, currencies } = useCurrency();
 
   const [flowStep, setFlowStep] = useState('landing');
   const [loading, setLoading] = useState(false);
@@ -80,9 +88,11 @@ export default function BecomeSellerScreen({ navigation }) {
     countryCode: '',
     businessName: '',
   });
+  const productCurrencyTouchedRef = useRef(false);
   const [storeData, setStoreData] = useState({
     storeName: '',
     storeDescription: '',
+    productCurrency: normalizeSellerProductCurrency(currentUser?.currency || accountCurrency),
     website: '',
     instagram: '',
     facebook: '',
@@ -113,6 +123,19 @@ export default function BecomeSellerScreen({ navigation }) {
       navigation.replace('MainTabs');
     }
   }, [currentUser, navigation]);
+
+  // Account currency can arrive after the profile refresh. Track it as the
+  // visible default only until the seller explicitly chooses the store's
+  // native listing currency.
+  useEffect(() => {
+    if (productCurrencyTouchedRef.current) return;
+    const productCurrency = normalizeSellerProductCurrency(currentUser?.currency || accountCurrency);
+    setStoreData(previous => (
+      previous.productCurrency === productCurrency
+        ? previous
+        : { ...previous, productCurrency }
+    ));
+  }, [accountCurrency, currentUser?.currency]);
 
   useEffect(() => {
     let active = true;
@@ -275,6 +298,10 @@ export default function BecomeSellerScreen({ navigation }) {
       setFormError('Store description is required and must be at least 10 characters.');
       return;
     }
+    if (!SELLER_PRODUCT_CURRENCY_CODES.includes(storeData.productCurrency)) {
+      setFormError('Choose USD, PKR, EUR, or GBP for your product prices.');
+      return;
+    }
     if (storeNameChecking) {
       setFormError('Please wait while we check your store name.');
       return;
@@ -365,6 +392,7 @@ export default function BecomeSellerScreen({ navigation }) {
         businessName: formData.businessName.trim(),
         storeName: storeData.storeName.trim(),
         storeDescription: storeData.storeDescription.trim(),
+        productCurrency: storeData.productCurrency,
         socialLinks: Object.keys(socialLinks).length ? socialLinks : undefined,
       };
 
@@ -762,6 +790,35 @@ export default function BecomeSellerScreen({ navigation }) {
           placeholder: 'Describe what you sell and what makes your store special',
           multiline: true,
         })}
+        <Text style={styles.groupLabel}>PRODUCT LISTING CURRENCY *</Text>
+        <Text style={styles.currencyHelp}>
+          Product prices are saved in this currency. Buyers can view and pay in another supported currency using checkout conversion.
+        </Text>
+        <View style={styles.currencyGrid}>
+          {SELLER_PRODUCT_CURRENCY_CODES.map(code => {
+            const active = storeData.productCurrency === code;
+            return (
+              <TouchableOpacity
+                key={code}
+                testID={`become-seller-product-currency-${code}`}
+                accessibilityRole="radio"
+                accessibilityState={{ selected: active }}
+                onPress={() => {
+                  productCurrencyTouchedRef.current = true;
+                  setStoreData(previous => ({ ...previous, productCurrency: code }));
+                  setFormError('');
+                }}
+                activeOpacity={0.8}
+                style={[styles.currencyOption, active && styles.currencyOptionActive]}
+              >
+                <Text style={[styles.currencyCode, active && styles.currencyCodeActive]}>{code}</Text>
+                <Text style={[styles.currencyName, active && styles.currencyNameActive]} numberOfLines={1}>
+                  {currencies?.[code]?.name || code}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
         <Text style={styles.groupLabel}>SOCIAL LINKS · OPTIONAL</Text>
         {socialInputs.map(([key, icon, label, placeholder]) => renderInput({
           label,
@@ -1125,6 +1182,24 @@ const buildStyles = (p) => StyleSheet.create({
   availableRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: spacing.sm },
   availableText: { fontSize: fontSize.xs, color: p.colors.success, fontWeight: fontWeight.semibold },
   groupLabel: { marginTop: spacing.sm, marginBottom: spacing.md, fontSize: 9, letterSpacing: 1, color: p.colors.textSecondary, fontWeight: fontWeight.bold },
+  currencyHelp: { marginTop: -spacing.sm, marginBottom: spacing.sm, fontSize: fontSize.xs, lineHeight: 17, color: p.colors.textSecondary },
+  currencyGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginBottom: spacing.md },
+  currencyOption: {
+    width: '48%',
+    minHeight: 58,
+    justifyContent: 'center',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: 14,
+    backgroundColor: p.glass.bgSubtle,
+    borderWidth: 1,
+    borderColor: p.glass.border,
+  },
+  currencyOptionActive: { backgroundColor: `${p.colors.primary}18`, borderColor: p.colors.primary },
+  currencyCode: { fontSize: fontSize.sm, color: p.colors.text, fontWeight: fontWeight.bold },
+  currencyCodeActive: { color: p.colors.primary },
+  currencyName: { marginTop: 2, fontSize: 10, color: p.colors.textSecondary },
+  currencyNameActive: { color: p.colors.primary },
   phoneCard: {
     padding: spacing.md,
     marginBottom: spacing.lg,

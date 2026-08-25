@@ -13,7 +13,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import * as Crypto from 'expo-crypto';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useStripe } from '@stripe/stripe-react-native';
 import api from '../config/api';
 import GlassBackground from '../components/common/GlassBackground';
@@ -34,8 +34,24 @@ import {
   verifyWalletTopUp,
 } from '../utils/stripePaymentSheet';
 import { trackError, trackPaymentEvent } from '../utils/breadcrumbs';
+import {
+  canTopUpWalletCurrency,
+  findWalletTransaction,
+  getTopUpCompletionBreakdown,
+  getWalletCurrencyRisk,
+  isWalletRiskSettlementTopUp,
+  shouldRetainWalletTopUpAttempt,
+} from '../utils/walletPaymentRisk';
+import { roundCurrencyAmount } from '../utils/currencySafety';
+import {
+  clearPersistedMutationAttemptFromLedger,
+  createScopedMutationStorageKey,
+  getOrCreatePersistedMutationAttemptInLedger,
+} from '../utils/persistedMutationAttempt';
+import { inspectWalletSummaryPresentation } from '../utils/walletPresentationSafety';
 
 const WALLET_CURRENCIES = ['USD', 'PKR', 'EUR', 'GBP'];
+const TOP_UP_ATTEMPT_STORAGE_KEY = 'rozare_wallet_topup_attempt_v1';
 const CURRENCY_META = {
   USD: { symbol: '$', color: '#2563EB', tint: 'rgba(37,99,235,0.12)' },
   PKR: { symbol: 'Rs', color: '#16A34A', tint: 'rgba(22,163,74,0.12)' },
@@ -86,10 +102,49 @@ const paymentSheetFailureMessage = (error) => (
   || 'Stripe could not open the secure card sheet. Please try again.'
 );
 
+const getTopUpCompletionNotice = (transaction, formatAmount) => {
+  const breakdown = getTopUpCompletionBreakdown(transaction);
+  if (!breakdown) {
+    return {
+      title: 'Top-up verified',
+      message: 'Your current available balance and payment-risk liability have been refreshed.',
+    };
+  }
+  const format = value => formatAmount(value, { targetCurrency: breakdown.currency });
+  return {
+    title: breakdown.appliedToLiability > 0 ? 'Top-up applied safely' : 'Balance added',
+    message: [
+      `Available balance credited: ${format(breakdown.creditedAmount)}.`,
+      `Applied to payment-risk liability: ${format(breakdown.appliedToLiability)}.`,
+      `Remaining liability: ${format(breakdown.remainingLiability)}.`,
+    ].join(' '),
+  };
+};
+
+const activityTimestamp = (value) => {
+  const timestamp = new Date(value).getTime();
+  return Number.isFinite(timestamp) ? timestamp : null;
+};
+
+const parseTopUpAmount = (raw) => {
+  if (typeof raw !== 'string' || !/^\d+(?:\.\d{1,2})?$/.test(raw.trim())) return null;
+  const value = Number(raw);
+  if (
+    !Number.isFinite(value)
+    || value <= 0
+    || roundCurrencyAmount(value) !== value
+  ) return null;
+  return value;
+};
+
 export default function WalletScreen({ navigation, route }) {
   const { palette, isDark } = useTheme();
   const styles = buildStyles(palette);
   const { currentUser } = useAuth();
+  const topUpAttemptStorageKey = createScopedMutationStorageKey(
+    TOP_UP_ATTEMPT_STORAGE_KEY,
+    currentUser?._id || currentUser?.id || 'guest'
+  );
   const { initPaymentSheet, presentPaymentSheet } = useStripe();
   const { ensureReady: ensureStripeReady } = useStripeConfig();
   const { currency, formatAmount } = useCurrency();
@@ -105,92 +160,215 @@ export default function WalletScreen({ navigation, route }) {
   );
   const [amount, setAmount] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const topUpAttemptKeyRef = useRef(null);
+  const topUpSubmissionRef = useRef(false);
+  const activeTopUpAttemptRef = useRef(null);
+  const walletRequestRef = useRef(0);
+
+  const clearTopUpAttempt = useCallback(async (correlation) => {
+    if (!correlation?.storageKey || !correlation?.fingerprint || !correlation?.attemptKey) {
+      return false;
+    }
+    const cleared = await clearPersistedMutationAttemptFromLedger(
+      AsyncStorage,
+      correlation.storageKey,
+      correlation.fingerprint,
+      correlation.attemptKey,
+    );
+    if (
+      cleared
+      && activeTopUpAttemptRef.current?.attemptKey === correlation.attemptKey
+    ) {
+      activeTopUpAttemptRef.current = null;
+    }
+    return cleared;
+  }, []);
 
   const loadWallet = useCallback(async ({ quiet = false } = {}) => {
+    const requestId = walletRequestRef.current + 1;
+    walletRequestRef.current = requestId;
     if (!quiet) setLoading(true);
     try {
       const response = await api.get('/api/wallet/me?limit=100');
-      setWallet(response.data?.wallet || null);
-      setTransactions(response.data?.transactions || []);
-      setLoadError('');
-      return response.data;
+      const snapshot = inspectWalletSummaryPresentation(response.data);
+      if (!snapshot) {
+        const integrityError = new Error('The Wallet response could not be verified. Refresh before using Wallet funds or starting a top-up.');
+        integrityError.code = 'WALLET_PRESENTATION_DATA_INVALID';
+        throw integrityError;
+      }
+      if (walletRequestRef.current === requestId) {
+        setWallet(snapshot.wallet);
+        setTransactions(snapshot.transactions);
+        setLoadError('');
+      }
+      return snapshot;
     } catch (error) {
-      setLoadError(error.response?.data?.msg || 'Your Rozare Wallet could not be loaded.');
+      if (walletRequestRef.current === requestId) {
+        setWallet(null);
+        setTransactions([]);
+        setLoadError(
+          error.code === 'WALLET_PRESENTATION_DATA_INVALID'
+            ? error.message
+            : (error.response?.data?.msg || 'Your Rozare Wallet could not be loaded.'),
+        );
+      }
       return null;
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (walletRequestRef.current === requestId) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   }, []);
 
   useEffect(() => {
     loadWallet();
     const unsubscribe = navigation.addListener('focus', () => loadWallet({ quiet: true }));
-    return unsubscribe;
+    return () => {
+      walletRequestRef.current += 1;
+      unsubscribe?.();
+    };
   }, [loadWallet, navigation]);
 
   useEffect(() => {
     if (!route.params?.top_up) return undefined;
-    if (route.params.top_up === 'success') {
-      setNotice({
-        type: 'success',
-        title: 'Payment received',
-        message: 'Your balance will update as soon as Stripe confirms the payment.',
-      });
-      let cancelled = false;
-      const poll = async () => {
-        for (let attempt = 0; attempt < 10 && !cancelled; attempt += 1) {
-          await loadWallet({ quiet: true });
-          await new Promise((resolve) => setTimeout(resolve, 1500));
-        }
-        if (!cancelled) navigation.setParams({ top_up: undefined, session_id: undefined });
-      };
-      poll();
-      return () => { cancelled = true; };
-    }
     setNotice({
-      type: 'info',
-      title: 'Top-up cancelled',
-      message: 'No balance was added to your wallet.',
+      type: 'pending',
+      title: 'Checking top-up status',
+      message: route.params.top_up === 'success'
+        ? 'Stripe returned successfully. Rozare is verifying the exact Wallet transaction.'
+        : 'Stripe checkout was closed. Rozare is checking the exact Wallet transaction before showing a final result.',
     });
-    navigation.setParams({ top_up: undefined });
-    return undefined;
-  }, [loadWallet, navigation, route.params?.top_up]);
+    let cancelled = false;
+    const transactionId = String(route.params?.transactionId || '');
+    const returnCorrelation = {
+      storageKey: route.params?.topUpAttemptStorageKey || '',
+      fingerprint: route.params?.topUpAttemptFingerprint || '',
+      attemptKey: route.params?.topUpAttemptKey || '',
+    };
+    const clearReturnParams = () => navigation.setParams({
+      top_up: undefined,
+      session_id: undefined,
+      transactionId: undefined,
+      topUpAttemptStorageKey: undefined,
+      topUpAttemptFingerprint: undefined,
+      topUpAttemptKey: undefined,
+    });
+    const poll = async () => {
+      if (!transactionId) {
+        if (!cancelled) {
+          setNotice({
+            type: 'error',
+            title: 'Top-up reference missing',
+            message: 'No Wallet credit or retry key was changed. Refresh activity before starting another top-up.',
+          });
+          clearReturnParams();
+        }
+        return;
+      }
+      for (let attempt = 0; attempt < 10 && !cancelled; attempt += 1) {
+        const payload = await loadWallet({ quiet: true });
+        const transaction = findWalletTransaction(payload, transactionId);
+        const status = String(transaction?.status || '').toLowerCase();
+        if (status === 'completed') {
+          await clearTopUpAttempt(returnCorrelation);
+          if (!cancelled) {
+            setNotice({
+              type: 'success',
+              ...getTopUpCompletionNotice(transaction, formatAmount),
+            });
+            clearReturnParams();
+          }
+          return;
+        }
+        if (['failed', 'cancelled', 'canceled', 'expired', 'reversed'].includes(status)) {
+          await clearTopUpAttempt(returnCorrelation);
+          if (!cancelled) {
+            const explicitlyCancelled = ['cancelled', 'canceled'].includes(status);
+            setNotice({
+              type: explicitlyCancelled ? 'info' : 'error',
+              title: explicitlyCancelled ? 'Top-up cancelled' : status === 'expired' ? 'Top-up expired' : 'Top-up failed',
+              message: `Rozare verified that this Wallet top-up is ${status}. No success has been assumed.`,
+            });
+            clearReturnParams();
+          }
+          return;
+        }
+        if (attempt < 9) await new Promise((resolve) => setTimeout(resolve, 1500));
+      }
+      if (!cancelled) {
+        setNotice({
+          type: 'pending',
+          title: 'Top-up confirmation timed out',
+          message: 'The exact transaction is still not terminal. No Wallet credit was assumed and its retry key is preserved.',
+        });
+        clearReturnParams();
+      }
+    };
+    poll();
+    return () => { cancelled = true; };
+  }, [clearTopUpAttempt, formatAmount, loadWallet, navigation, route.params?.top_up, route.params?.transactionId, route.params?.topUpAttemptFingerprint, route.params?.topUpAttemptKey, route.params?.topUpAttemptStorageKey]);
 
-  const selectedBalance = wallet?.balances?.[topUpCurrency] || 0;
+  const selectedBalance = wallet?.balances?.[topUpCurrency] ?? null;
   const selectedMeta = CURRENCY_META[topUpCurrency];
+  const selectedRisk = getWalletCurrencyRisk(wallet, topUpCurrency);
+  const canTopUpSelectedCurrency = !loading
+    && !refreshing
+    && wallet !== null
+    && selectedBalance !== null
+    && canTopUpWalletCurrency(wallet, topUpCurrency);
+  const isRiskSettlement = isWalletRiskSettlementTopUp(wallet, topUpCurrency);
   const recentTransactions = useMemo(
-    () => [...transactions].sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0)),
+    () => [...transactions].sort((a, b) => {
+      const left = activityTimestamp(a.createdAt);
+      const right = activityTimestamp(b.createdAt);
+      if (left === null && right === null) return 0;
+      if (left === null) return 1;
+      if (right === null) return -1;
+      return right - left;
+    }),
     [transactions]
   );
 
   const topUp = async () => {
-    const value = Number(amount);
-    if (!Number.isFinite(value) || value <= 0) {
-      setAmountError('Enter an amount greater than zero.');
+    if (topUpSubmissionRef.current || submitting) return;
+    const normalizedAmount = parseTopUpAmount(amount);
+    if (normalizedAmount === null) {
+      setAmountError('Enter a positive amount with no more than two decimal places.');
       return;
     }
-    if (wallet?.status === 'locked') {
-      setAmountError(wallet.lockedReason || 'This wallet is currently locked.');
+    if (!canTopUpSelectedCurrency) {
+      setAmountError(wallet?.lockedReason || 'This wallet cannot accept a top-up right now.');
       return;
     }
-
     setAmountError('');
     setNotice(null);
+    topUpSubmissionRef.current = true;
     setSubmitting(true);
     let topUpReference = null;
     let paymentCleanupAttempted = false;
+    let attemptCorrelation = null;
     try {
       const stripeConfig = await ensureStripeReady();
       trackPaymentEvent('wallet_top_up_started', {
         currency: topUpCurrency,
         googlePayEnabled: !!stripeConfig.googlePayEnabled,
       });
-      if (!topUpAttemptKeyRef.current) topUpAttemptKeyRef.current = Crypto.randomUUID();
-      const requestKey = topUpAttemptKeyRef.current;
+      const fingerprint = `${currentUser?._id || currentUser?.id || 'guest'}:${String(topUpCurrency).toUpperCase()}:${normalizedAmount.toFixed(2)}`;
+      const attempt = await getOrCreatePersistedMutationAttemptInLedger({
+        storage: AsyncStorage,
+        storageKey: topUpAttemptStorageKey,
+        fingerprint,
+        keyPrefix: 'mobile-wallet',
+      });
+      attemptCorrelation = {
+        storageKey: topUpAttemptStorageKey,
+        fingerprint,
+        attemptKey: attempt.key,
+      };
+      activeTopUpAttemptRef.current = attemptCorrelation;
+      const requestKey = attempt.key;
       const response = await api.post('/api/wallet/top-ups', {
-        amount: value,
+        amount: normalizedAmount,
         currency: topUpCurrency,
         platform: 'mobile',
         paymentFlow: 'payment_sheet',
@@ -200,13 +378,17 @@ export default function WalletScreen({ navigation, route }) {
         headers: { 'X-Idempotency-Key': requestKey },
       });
       if (response.data?.completed) {
-        await loadWallet({ quiet: true });
-        topUpAttemptKeyRef.current = null;
+        const refreshedWallet = await loadWallet({ quiet: true });
+        if (!refreshedWallet) {
+          const integrityError = new Error('The completed top-up could not be reconciled with a verified Wallet balance. Refresh before retrying.');
+          integrityError.code = 'WALLET_PRESENTATION_DATA_INVALID';
+          throw integrityError;
+        }
+        await clearTopUpAttempt(attemptCorrelation);
         setAmount('');
         setNotice({
           type: 'success',
-          title: 'Balance added',
-          message: `${formatAmount(value, { targetCurrency: topUpCurrency })} is ready to use.`,
+          ...getTopUpCompletionNotice(response.data?.transaction, formatAmount),
         });
         return;
       }
@@ -248,22 +430,27 @@ export default function WalletScreen({ navigation, route }) {
         paymentIntentId: reference.paymentIntentId,
         currency: topUpCurrency,
         startingBalance: selectedBalance,
-        amount: value,
+        amount: normalizedAmount,
         attempts: sheetResult.status === 'presented' || cancellationError?.response?.data?.code === 'PAYMENT_ALREADY_SUCCEEDED' ? 8 : 2,
         delayMs: 900,
       });
       if (verification.status === 'paid') {
-        await loadWallet({ quiet: true });
-        topUpAttemptKeyRef.current = null;
+        const refreshedWallet = await loadWallet({ quiet: true });
+        if (!refreshedWallet) {
+          const integrityError = new Error('Stripe confirmed the payment, but the verified Wallet balance is not available yet. Refresh before retrying.');
+          integrityError.code = 'WALLET_PRESENTATION_DATA_INVALID';
+          throw integrityError;
+        }
+        await clearTopUpAttempt(attemptCorrelation);
         setAmount('');
+        const completedTransaction = findWalletTransaction(verification.payload, reference.topUpId);
         setNotice({
           type: 'success',
-          title: 'Balance added',
-          message: `${formatAmount(value, { targetCurrency: topUpCurrency })} is ready to use.`,
+          ...getTopUpCompletionNotice(completedTransaction, formatAmount),
         });
       } else if (verification.status === 'failed') {
         await loadWallet({ quiet: true });
-        topUpAttemptKeyRef.current = null;
+        await clearTopUpAttempt(attemptCorrelation);
         setNotice({
           type: 'error',
           title: 'Top-up was not completed',
@@ -271,7 +458,7 @@ export default function WalletScreen({ navigation, route }) {
         });
       } else if (verification.status === 'cancelled') {
         await loadWallet({ quiet: true });
-        topUpAttemptKeyRef.current = null;
+        await clearTopUpAttempt(attemptCorrelation);
         setNotice({
           type: sheetResult.status === 'failed' ? 'error' : 'info',
           title: sheetResult.status === 'failed' ? 'Secure payment could not open' : 'Top-up cancelled',
@@ -313,7 +500,7 @@ export default function WalletScreen({ navigation, route }) {
             paymentIntentId: topUpReference.paymentIntentId,
             closeReason: 'payment_sheet_preparation_failed',
           });
-          topUpAttemptKeyRef.current = null;
+          await clearTopUpAttempt(attemptCorrelation);
         } catch (nextError) {
           cleanupError = nextError;
         }
@@ -327,12 +514,16 @@ export default function WalletScreen({ navigation, route }) {
         });
         return;
       }
+      if (!topUpReference?.topUpId && !shouldRetainWalletTopUpAttempt(error)) {
+        await clearTopUpAttempt(attemptCorrelation);
+      }
       setNotice({
         type: 'error',
         title: 'Top-up could not be completed',
         message: error.response?.data?.msg || error.message || 'Please try again in a moment.',
       });
     } finally {
+      topUpSubmissionRef.current = false;
       setSubmitting(false);
     }
   };
@@ -425,16 +616,19 @@ export default function WalletScreen({ navigation, route }) {
                   </View>
                 )}
 
-                {(!loadError || wallet) && (
+                {wallet && !loadError && (
                   <>
-                {wallet?.status === 'locked' && (
+                {wallet && wallet.status !== 'active' && (
                   <View style={styles.lockedBanner}>
                     <View style={styles.lockedIcon}>
                       <Ionicons name="lock-closed-outline" size={19} color={palette.colors.error} />
                     </View>
                     <View style={styles.lockedCopy}>
-                      <Text style={styles.lockedTitle}>Wallet temporarily locked</Text>
+                      <Text style={styles.lockedTitle}>Wallet access locked</Text>
                       <Text style={styles.lockedText}>{wallet.lockedReason || 'Contact support for help.'}</Text>
+                      {wallet.paymentRisk?.canTopUpForSettlement === true && (
+                        <Text style={styles.lockedText}>Checkout remains blocked. Each verified payment reduces the selected-currency liability first. The Wallet stays locked while debt remains, and only surplus after full clearance becomes available.</Text>
+                      )}
                     </View>
                   </View>
                 )}
@@ -503,6 +697,7 @@ export default function WalletScreen({ navigation, route }) {
                   >
                     {WALLET_CURRENCIES.map((code) => {
                       const meta = CURRENCY_META[code];
+                      const risk = getWalletCurrencyRisk(wallet, code);
                       return (
                         <TouchableOpacity
                           key={code}
@@ -516,10 +711,20 @@ export default function WalletScreen({ navigation, route }) {
                             <View style={[styles.smallCurrencyMark, { backgroundColor: meta.tint }]}>
                               <Text style={[styles.smallCurrencyMarkText, { color: meta.color }]}>{meta.symbol}</Text>
                             </View>
-                            <Text style={styles.balanceCode}>{code}</Text>
+                            <Text style={styles.balanceCode}>{code} AVAILABLE</Text>
                             <Text style={styles.balanceValue} numberOfLines={1} adjustsFontSizeToFit>
-                              {formatAmount(wallet?.balances?.[code] || 0, { targetCurrency: code })}
+                              {formatAmount(wallet.balances[code], { targetCurrency: code })}
                             </Text>
+                            {(risk.held !== null || risk.outstanding !== null) && (
+                              <View style={styles.riskAmounts}>
+                                {risk.held !== null && (
+                                  <Text style={styles.riskAmountText}>Held {formatAmount(risk.held, { targetCurrency: code })}</Text>
+                                )}
+                                {risk.outstanding !== null && (
+                                  <Text style={styles.riskAmountText}>Liability {formatAmount(risk.outstanding, { targetCurrency: code })}</Text>
+                                )}
+                              </View>
+                            )}
                           </GlassPanel>
                         </TouchableOpacity>
                       );
@@ -533,8 +738,10 @@ export default function WalletScreen({ navigation, route }) {
                       <Ionicons name="add" size={20} color={palette.colors.primary} />
                     </View>
                     <View style={styles.topUpCopy}>
-                      <Text style={styles.topUpTitle}>Add {topUpCurrency} balance</Text>
-                      <Text style={styles.topUpSubtitle}>Complete a secure Stripe card payment.</Text>
+                      <Text style={styles.topUpTitle}>{isRiskSettlement ? `Settle ${topUpCurrency} liability` : `Add ${topUpCurrency} balance`}</Text>
+                      <Text style={styles.topUpSubtitle}>{isRiskSettlement
+                        ? `${formatAmount(selectedRisk.outstanding, { targetCurrency: topUpCurrency })} is outstanding. Any valid top-up reduces it first; a partial payment leaves the Wallet locked, while surplus after full clearance becomes available.`
+                        : 'Complete a secure Stripe card payment.'}</Text>
                     </View>
                     <Ionicons name="card-outline" size={20} color={palette.colors.textSecondary} />
                   </View>
@@ -562,11 +769,17 @@ export default function WalletScreen({ navigation, route }) {
                       <Text style={styles.amountErrorText}>{amountError}</Text>
                     </View>
                   )}
+                  {!canTopUpSelectedCurrency && wallet?.status !== 'active' && !amountError && (
+                    <View style={styles.amountErrorRow}>
+                      <Ionicons name="information-circle-outline" size={15} color={palette.colors.error} />
+                      <Text style={styles.amountErrorText}>Top-up is unavailable for {topUpCurrency}. Select a currency with an outstanding liability, or contact support if this is not a payment-risk lock.</Text>
+                    </View>
+                  )}
 
                   <TouchableOpacity
-                    style={[styles.topUpButton, (submitting || wallet?.status === 'locked') && styles.disabled]}
+                    style={[styles.topUpButton, (submitting || !canTopUpSelectedCurrency) && styles.disabled]}
                     onPress={topUp}
-                    disabled={submitting || wallet?.status === 'locked'}
+                    disabled={submitting || !canTopUpSelectedCurrency}
                     accessibilityRole="button"
                   >
                     <LinearGradient colors={palette.gradients.cta} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
@@ -575,7 +788,7 @@ export default function WalletScreen({ navigation, route }) {
                       : (
                         <>
                           <Ionicons name="lock-closed-outline" size={17} color="#fff" />
-                          <Text style={styles.topUpButtonText}>Continue securely</Text>
+                          <Text style={styles.topUpButtonText}>{isRiskSettlement ? 'Pay liability securely' : 'Continue securely'}</Text>
                           <Ionicons name="arrow-forward" size={17} color="#fff" />
                         </>
                       )}
@@ -616,6 +829,10 @@ export default function WalletScreen({ navigation, route }) {
                     const amountColor = isCompleted
                       ? (isCredit ? palette.colors.success : palette.colors.text)
                       : meta.color;
+                    const topUpBreakdown = transaction.type === 'top_up'
+                      ? getTopUpCompletionBreakdown(transaction)
+                      : null;
+                    const displayedAmount = topUpBreakdown?.creditedAmount ?? transaction.amount;
                     return (
                       <GlassPanel key={transaction._id} variant="card" style={styles.transactionCard}>
                         <View style={[styles.transactionIcon, { backgroundColor: meta.tint }]}>
@@ -628,9 +845,14 @@ export default function WalletScreen({ navigation, route }) {
                             <View style={styles.metaDot} />
                             <Text style={[styles.transactionStatus, { color: meta.color }]}>{meta.label}</Text>
                           </View>
+                          {topUpBreakdown && (
+                            <Text style={styles.transactionRiskDetail}>
+                              Available +{formatAmount(topUpBreakdown.creditedAmount, { targetCurrency: topUpBreakdown.currency })} · Liability {formatAmount(topUpBreakdown.appliedToLiability, { targetCurrency: topUpBreakdown.currency })} · Remaining {formatAmount(topUpBreakdown.remainingLiability, { targetCurrency: topUpBreakdown.currency })}
+                            </Text>
+                          )}
                         </View>
                         <Text style={[styles.transactionAmount, { color: amountColor }]}>
-                          {amountPrefix}{formatAmount(transaction.amount || 0, { targetCurrency: transaction.currency })}
+                          {amountPrefix}{formatAmount(displayedAmount, { targetCurrency: transaction.currency })}
                         </Text>
                       </GlassPanel>
                     );
@@ -736,12 +958,14 @@ const buildStyles = (p) => StyleSheet.create({
   sectionTitle: { marginTop: 3, fontSize: fontSize.lg, fontWeight: fontWeight.extrabold, color: p.colors.text },
   sectionMeta: { fontSize: 10, color: p.colors.textSecondary },
   balanceStrip: { gap: spacing.sm, paddingRight: spacing.md },
-  balanceCard: { width: 142, minHeight: 112, padding: spacing.md, borderRadius: 18 },
+  balanceCard: { width: 158, minHeight: 112, padding: spacing.md, borderRadius: 18 },
   balanceCardActive: { borderColor: p.colors.primaryLighter, backgroundColor: p.colors.primarySubtle },
   smallCurrencyMark: { width: 32, height: 32, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
   smallCurrencyMarkText: { fontSize: fontSize.sm, fontWeight: fontWeight.extrabold },
   balanceCode: { marginTop: spacing.sm, fontSize: 9, fontWeight: fontWeight.bold, color: p.colors.textSecondary },
   balanceValue: { marginTop: 2, fontSize: fontSize.md, fontWeight: fontWeight.extrabold, color: p.colors.text },
+  riskAmounts: { marginTop: spacing.sm, paddingTop: spacing.sm, borderTopWidth: 1, borderTopColor: p.glass.borderSubtle, gap: 3 },
+  riskAmountText: { fontSize: 9, lineHeight: 13, color: p.colors.textSecondary },
   topUpSection: { padding: spacing.lg, marginBottom: spacing.xl },
   topUpHeading: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginBottom: spacing.lg },
   topUpIcon: { width: 42, height: 42, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: p.colors.primarySubtle, borderWidth: 1, borderColor: p.colors.primaryLighter },
@@ -776,5 +1000,6 @@ const buildStyles = (p) => StyleSheet.create({
   transactionDate: { fontSize: 9, color: p.colors.textSecondary },
   metaDot: { width: 3, height: 3, borderRadius: 2, backgroundColor: p.colors.textLight },
   transactionStatus: { fontSize: 9, fontWeight: fontWeight.bold },
+  transactionRiskDetail: { marginTop: 5, fontSize: 9, lineHeight: 13, color: p.colors.textSecondary },
   transactionAmount: { maxWidth: 112, textAlign: 'right', fontSize: fontSize.sm, fontWeight: fontWeight.extrabold },
 });

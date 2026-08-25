@@ -11,7 +11,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../contexts/AuthContext';
 import { useGlobal } from '../contexts/GlobalContext';
-import { useCurrency } from '../contexts/CurrencyContext';
+import { resolveProductPresentationMoney, useCurrency } from '../contexts/CurrencyContext';
 import { useNavigation } from '@react-navigation/native';
 import { colors, spacing, fontSize, borderRadius, shadows, fontWeight, glass } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
@@ -70,14 +70,18 @@ function ProductCard({ product, index = 0, onPress, compact = false }) {
 
   if (!product) return null;
 
-  const { _id, name, image, images, category, price, discountedPrice, stock, rating, numReviews, isFeatured } = product;
+  const { _id, name, image, images, category, stock, rating, isFeatured } = product;
   const isInWishlist = wishlistItems?.some((item) => item?._id === _id);
   const cartItem = cartItems?.cart?.find((item) => item?.product?._id === _id);
   const isInCart = !!cartItem;
   const isOutOfStock = stock === 0;
-  const displayPrice = discountedPrice || price;
-  const originalDisplayPrice = discountedPrice ? price : null;
-  const discountPercentage = originalDisplayPrice && displayPrice < originalDisplayPrice ? Math.round(((originalDisplayPrice - displayPrice) / originalDisplayPrice) * 100) : 0;
+  const storedPrice = resolveProductPresentationMoney(product, 'price');
+  const storedDiscountedPrice = resolveProductPresentationMoney(product, 'discountedPrice');
+  const hasDiscount = storedDiscountedPrice > 0 && storedDiscountedPrice < storedPrice;
+  const originalDisplayPrice = hasDiscount ? storedPrice : null;
+  const discountPercentage = hasDiscount
+    ? Math.round(((storedPrice - storedDiscountedPrice) / storedPrice) * 100)
+    : 0;
 
   const handleWishlistToggle = () => {
     if (!currentUser) { navigation.navigate('Login'); return; }
@@ -160,7 +164,7 @@ function ProductCard({ product, index = 0, onPress, compact = false }) {
           <Text style={[styles.name, { color: c.text }]} numberOfLines={3}>{name}</Text>
           <View style={styles.ratingContainer}><View style={{ flexDirection: 'row', marginRight: 4 }}>{renderStars()}</View><Text style={[styles.ratingText, { color: c.textSecondary }]}>({rating?.toFixed(1) || '0.0'})</Text></View>
           <View style={styles.priceContainer}>
-            <Text style={[styles.price, { color: c.text }]}>{formatProductPrice(product, { field: discountedPrice ? 'discountedPrice' : 'price' })}</Text>
+            <Text style={[styles.price, { color: c.text }]}>{formatProductPrice(product, { field: hasDiscount ? 'discountedPrice' : 'price' })}</Text>
             {originalDisplayPrice && <Text style={[styles.originalPrice, { color: c.textSecondary }]}>{formatProductPrice(product, { field: 'price' })}</Text>}
           </View>
           {isInCart && cartItem ? (
@@ -220,7 +224,10 @@ export function CompactProductCard({ product, onPress }) {
   const { formatProductPrice } = useCurrency();
   const [imageLoading, setImageLoading] = useState(true);
   if (!product) return null;
-  const { name, image, images, discountedPrice, rating } = product;
+  const { name, image, images, rating } = product;
+  const price = resolveProductPresentationMoney(product, 'price');
+  const discountedPrice = resolveProductPresentationMoney(product, 'discountedPrice');
+  const hasDiscount = discountedPrice > 0 && discountedPrice < price;
   const imageSource = (typeof images?.[0] === 'string' ? images[0] : images?.[0]?.url) || image;
   return (
     <TouchableOpacity style={styles.compactContainer} onPress={onPress} activeOpacity={0.9}>
@@ -231,7 +238,7 @@ export function CompactProductCard({ product, onPress }) {
       </View>
       <Text style={styles.compactName} numberOfLines={2}>{name}</Text>
       <View style={styles.compactRating}><Ionicons name="star" size={10} color={colors.star} /><Text style={{ fontSize: fontSize.xs, color: colors.textSecondary }}>{rating?.toFixed(1) || '0.0'}</Text></View>
-      <Text style={styles.compactPrice}>{formatProductPrice(product, { field: discountedPrice ? 'discountedPrice' : 'price' })}</Text>
+      <Text style={styles.compactPrice}>{formatProductPrice(product, { field: hasDiscount ? 'discountedPrice' : 'price' })}</Text>
     </TouchableOpacity>
   );
 }

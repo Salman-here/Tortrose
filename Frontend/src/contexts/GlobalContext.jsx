@@ -1,10 +1,23 @@
-import { createContext, useContext, useEffect, useRef, useState, useCallback, useMemo } from "react";
+import { createContext, useContext, useEffect, useRef, useState, useCallback } from "react";
 import axios from "axios";
 import { toast } from "react-toastify";
 import { useAuth } from "./AuthContext";
 import { useBuyerLocation } from "./BuyerLocationContext";
-import { setCrossDomainCookie, getCookie, deleteCookie, migrateLocalStorageToCookie, getAuthToken } from "../utils/cookieHelper";
+import { setCrossDomainCookie, getCookie, deleteCookie, getAuthToken } from "../utils/cookieHelper";
 import { trackAddToCart, trackAddToWishlist } from "../utils/tiktokPixel";
+import {
+    guestCartPresentationTotal,
+    normalizeServerCartPayload,
+} from "../utils/cartPresentation";
+import {
+    decrementGuestCartLine,
+    guestCartPayload,
+    incrementGuestCartLine,
+    normalizeGuestCart,
+    optionsKeyOf,
+    parseStoredGuestCart,
+    serializeGuestCart,
+} from "../utils/guestCart";
 
 const GlobalContext = createContext();
 
@@ -20,38 +33,37 @@ const isTransientReadError = (error) => (
 
 // Helper functions for guest cart - now using cookies for cross-subdomain support
 const getGuestCart = () => { 
-    try {
-        // Try cookie first (new method)
-        const cookieData = getCookie(GUEST_CART_COOKIE);
-        if (cookieData) {
-            return JSON.parse(cookieData);
+    const cookieData = getCookie(GUEST_CART_COOKIE);
+    let cookieError = null;
+    if (cookieData) {
+        try {
+            return parseStoredGuestCart(cookieData);
+        } catch (error) {
+            cookieError = error;
         }
-        
-        // Fallback to localStorage (old method) and migrate
-        const localData = localStorage.getItem(GUEST_CART_KEY);
-        if (localData) {
-            const cart = JSON.parse(localData);
-            // Migrate to cookie
-            saveGuestCart(cart);
-            return cart;
-        }
-        
-        return [];
-    } catch { 
-        return []; 
-    } 
+    }
+
+    const localData = localStorage.getItem(GUEST_CART_KEY);
+    if (localData) {
+        const cart = parseStoredGuestCart(localData);
+        saveGuestCart(cart);
+        return cart;
+    }
+    if (cookieError) throw cookieError;
+    return [];
 };
 
 const saveGuestCart = (cart) => {
-    try {
-        const cartData = JSON.stringify(cart);
-        // Save to cookie (primary storage)
-        setCrossDomainCookie(GUEST_CART_COOKIE, cartData, 30);
-        // Also save to localStorage as backup
-        localStorage.setItem(GUEST_CART_KEY, cartData);
-    } catch (error) {
-        console.error('Error saving guest cart:', error);
+    const normalized = normalizeGuestCart(cart);
+    const cartData = serializeGuestCart(normalized);
+    setCrossDomainCookie(GUEST_CART_COOKIE, cartData, 30);
+    localStorage.setItem(GUEST_CART_KEY, cartData);
+    if (localStorage.getItem(GUEST_CART_KEY) !== cartData) {
+        const error = new Error('The guest cart could not be persisted safely.');
+        error.code = 'CART_PRESENTATION_DATA_INVALID';
+        throw error;
     }
+    return normalized;
 };
 
 const clearGuestCart = () => {
@@ -59,13 +71,7 @@ const clearGuestCart = () => {
     localStorage.removeItem(GUEST_CART_KEY);
 };
 
-const effectiveProductPrice = (product) => {
-    const price = Number(product?.price || 0);
-    const discountedPrice = Number(product?.discountedPrice || 0);
-    return discountedPrice > 0 && discountedPrice < price ? discountedPrice : price;
-};
-
-const calcGuestTotal = (cart) => cart.reduce((s, i) => s + (effectiveProductPrice(i.product) * i.qty), 0);
+const guestCartState = (cart) => ({ cart, ...guestCartPresentationTotal(cart) });
 
 
 
@@ -83,47 +89,9 @@ export const GlobalProvider = ({ children }) => {
     // const [isCartFetched, setIsCartFetched] = useState(false)
     const [cartItems, setCartItems] = useState({
         totalCartPrice: 0,
+        totalCartCurrency: null,
         cart: []
     })
-
-    useEffect(() => {
-        if (!currentUser) {
-            const gc = getGuestCart();
-            setCartItems({ cart: gc, totalCartPrice: calcGuestTotal(gc) });
-            setWishlistItems([]);
-        }
-    }, [currentUser])
-
-    useEffect(() => {
-        if (currentUser) {
-            (async () => {
-                const gc = getGuestCart();
-                if (gc.length > 0) {
-                    try {
-                        const token = getAuthToken();
-                        const res = await axios.post(
-                            `${import.meta.env.VITE_API_URL}api/cart/merge`,
-                            {
-                                items: gc.map((item) => ({
-                                    productId: item.product?._id,
-                                    qty: item.qty,
-                                    selectedColor: item.selectedColor || null,
-                                    selectedOptions: item.selectedOptions || undefined,
-                                })),
-                            },
-                            { headers: { Authorization: `Bearer ${token}` } }
-                        );
-                        clearGuestCart();
-                        setCartItems({
-                            cart: res.data.cart || [],
-                            totalCartPrice: res.data.totalCartPrice || 0,
-                        });
-                    } catch (e) { console.error('Guest cart sync failed:', e); }
-                }
-                fetchCart();
-            })();
-        }
-    }, [currentUser])
 
     const fetchWishlist = async () => {
 
@@ -183,6 +151,21 @@ export const GlobalProvider = ({ children }) => {
     }
     const [isCartLoading, setIsCartLoading] = useState(false)
     const [qtyUpdateId, setQtyUpdateId] = useState(null)
+    const [cartHydrationStatus, setCartHydrationStatus] = useState('hydrating')
+    const [cartHydrationError, setCartHydrationError] = useState(null)
+    const [hydratedCartOwner, setHydratedCartOwner] = useState(null)
+    const cartOwner = String(currentUser?._id || currentUser?.id || 'guest')
+    const cartOwnerRef = useRef(cartOwner)
+    const cartReadRequestRef = useRef(0)
+    const cartHydrationRequestRef = useRef(0)
+    const cartHydrationOwnerRef = useRef(null)
+    const cartHydrationPromiseRef = useRef(null)
+    const cartHydrationStatusRef = useRef(cartHydrationStatus)
+    const hydratedCartOwnerRef = useRef(hydratedCartOwner)
+    cartOwnerRef.current = cartOwner
+    cartHydrationStatusRef.current = cartHydrationStatus
+    hydratedCartOwnerRef.current = hydratedCartOwner
+    const isCartReady = cartHydrationStatus === 'ready' && hydratedCartOwner === cartOwner
 
 
     // ===================================
@@ -190,22 +173,20 @@ export const GlobalProvider = ({ children }) => {
     // ===================================
     const [loadingProductId, setLoadingProductId] = useState(null)
     
-    const optionsKeyOf = (opts) => opts ? Object.keys(opts).filter(k => opts[k]).sort().map(k => `${k}:${opts[k]}`).join('|') : '';
-
     const handleAddToCart = async (id, selectedColor = null, selectedOptions = null) => {
         try {
             setIsCartLoading(true)
             setLoadingProductId(id)
             const myKey = optionsKeyOf(selectedOptions);
 
-            const isInCart = cartItems?.cart?.some(item =>
+            const existingCartItem = cartItems?.cart?.find(item =>
                 item?.product?._id === id &&
                 item?.selectedColor === selectedColor &&
                 optionsKeyOf(item?.selectedOptions) === myKey
-            ) || false;
+            ) || null;
 
-            if (isInCart) {
-                await handleRemoveCartItem(id, selectedColor);
+            if (existingCartItem) {
+                await handleRemoveCartItem(existingCartItem._id);
                 setIsCartLoading(false);
                 setLoadingProductId(null);
                 return;
@@ -218,13 +199,18 @@ export const GlobalProvider = ({ children }) => {
                     const suffix = params.toString();
                     const pRes = await axios.get(`${import.meta.env.VITE_API_URL}api/products/get-single-product/${id}${suffix ? `?${suffix}` : ''}`);
                     const pData = pRes.data.product || pRes.data;
+                    if (!Number.isSafeInteger(pData?.stock) || pData.stock < 1) {
+                        throw new Error('This product is currently out of stock.');
+                    }
                     const gc = getGuestCart();
-                    gc.push({ product: pData, qty: 1, selectedColor, selectedOptions: selectedOptions || undefined, _id: `guest_${Date.now()}` });
-                    saveGuestCart(gc);
-                    setCartItems({ cart: gc, totalCartPrice: calcGuestTotal(gc) });
+                    const nextCart = saveGuestCart([
+                        ...gc,
+                        { product: pData, qty: 1, selectedColor, selectedOptions: selectedOptions || undefined },
+                    ]);
+                    setCartItems(guestCartState(nextCart));
                     trackAddToCart(pData, 1);
                     toast.success('Added to cart');
-                } catch { toast.error('Failed to add to cart'); }
+                } catch (error) { toast.error(error?.message || 'Failed to add to cart'); }
                 setIsCartLoading(false);
                 setLoadingProductId(null);
                 return;
@@ -245,7 +231,7 @@ export const GlobalProvider = ({ children }) => {
 
             // Update cart items with fresh data from backend
             // Update cart items with fresh data from backend
-            setCartItems((prev) => ({ ...prev, cart: res.data.cart, totalCartPrice: res.data.totalCartPrice }))
+            setCartItems(normalizeServerCartPayload(res.data))
 
         } catch (error) {
             console.error(error);
@@ -257,14 +243,21 @@ export const GlobalProvider = ({ children }) => {
         }
     }
 
-    const fetchCart = async () => {
+    const fetchAuthoritativeCart = useCallback(async (owner, reportError = true) => {
+        const requestId = ++cartReadRequestRef.current
         try {
             setIsCartLoading(true)
+            if (owner === 'guest') {
+                const guestCart = getGuestCart()
+                if (requestId === cartReadRequestRef.current && cartOwnerRef.current === owner) {
+                    setCartItems(guestCartState(guestCart))
+                }
+                return guestCartState(guestCart)
+            }
+
             const token = getAuthToken()
             if (!token) {
-                // No token, user not logged in - this is normal
-                setIsCartLoading(false)
-                return;
+                throw new Error('Your authenticated cart session is unavailable.')
             }
             const res = await axios.get(`${import.meta.env.VITE_API_URL}api/cart/get`,
                 {
@@ -272,21 +265,111 @@ export const GlobalProvider = ({ children }) => {
                         Authorization: `Bearer ${token}`
                     }
                 })
-            // toast.success(res.data.msg)
-            setCartItems((prev) => ({ ...prev, cart: res.data.cart, totalCartPrice: res.data.totalCartPrice }))
+            const nextCart = normalizeServerCartPayload(res.data)
+            if (requestId === cartReadRequestRef.current && cartOwnerRef.current === owner) {
+                setCartItems(nextCart)
+            }
+            return nextCart
         } catch (error) {
-            // Only log error if it's not a 403 (unauthorized)
-            if (error.response?.status !== 403) {
+            if (reportError && error.response?.status !== 403) {
                 console.error(error);
                 if (!isTransientReadError(error)) {
                     toast.error(error.response?.data?.msg || 'Failed to fetch cart')
                 }
             }
+            throw error
         }
         finally {
-            setIsCartLoading(false)
+            if (requestId === cartReadRequestRef.current) setIsCartLoading(false)
         }
-    }
+    }, [])
+
+    const synchronizeCart = useCallback(async () => {
+        const owner = cartOwnerRef.current
+        const hydrationId = ++cartHydrationRequestRef.current
+        cartHydrationOwnerRef.current = owner
+        cartHydrationStatusRef.current = 'hydrating'
+        setCartHydrationStatus('hydrating')
+        setCartHydrationError(null)
+        setIsCartLoading(true)
+
+        try {
+            if (owner === 'guest') {
+                // Invalidate an authenticated read that may have started before logout.
+                ++cartReadRequestRef.current
+                const guestCart = getGuestCart()
+                if (hydrationId !== cartHydrationRequestRef.current || cartOwnerRef.current !== owner) return null
+                setWishlistItems([])
+                setCartItems(guestCartState(guestCart))
+            } else {
+                const guestCart = getGuestCart()
+                if (guestCart.length > 0) {
+                    const token = getAuthToken()
+                    if (!token) throw new Error('Your authenticated cart session is unavailable.')
+                    await axios.post(
+                        `${import.meta.env.VITE_API_URL}api/cart/merge`,
+                        {
+                            items: guestCartPayload(guestCart),
+                        },
+                        { headers: { Authorization: `Bearer ${token}` } }
+                    )
+                    // Clear only after the server accepted the full persisted bag.
+                    // The subsequent GET is still required: merge output is not used
+                    // as the checkout-authoritative cart snapshot.
+                    clearGuestCart()
+                }
+                await fetchAuthoritativeCart(owner, false)
+            }
+
+            if (hydrationId !== cartHydrationRequestRef.current || cartOwnerRef.current !== owner) return null
+            hydratedCartOwnerRef.current = owner
+            cartHydrationStatusRef.current = 'ready'
+            setHydratedCartOwner(owner)
+            setCartHydrationStatus('ready')
+            return true
+        } catch (error) {
+            if (hydrationId !== cartHydrationRequestRef.current || cartOwnerRef.current !== owner) return null
+            const message = error.response?.data?.msg || error.message || 'Your cart could not be synchronized.'
+            console.error('Guest cart synchronization failed:', error)
+            cartHydrationStatusRef.current = 'error'
+            setCartHydrationError(message)
+            setCartHydrationStatus('error')
+            return false
+        } finally {
+            if (hydrationId === cartHydrationRequestRef.current) setIsCartLoading(false)
+        }
+    }, [fetchAuthoritativeCart])
+
+    const retryCartHydration = useCallback(() => {
+        const owner = cartOwnerRef.current
+        if (
+            cartHydrationStatusRef.current === 'hydrating'
+            && cartHydrationOwnerRef.current === owner
+            && cartHydrationPromiseRef.current
+        ) return cartHydrationPromiseRef.current
+        const operation = synchronizeCart()
+        cartHydrationPromiseRef.current = operation
+        return operation
+    }, [synchronizeCart])
+
+    const fetchCart = useCallback(() => {
+        const owner = cartOwnerRef.current
+        if (
+            cartHydrationStatusRef.current !== 'ready'
+            || hydratedCartOwnerRef.current !== owner
+        ) {
+            // A settled hydration promise may belong to the guest or another
+            // signed-in account. Route every non-ready refresh through the
+            // owner-aware coalescer so it cannot resolve until this owner's
+            // merge and authoritative fetch have completed.
+            return retryCartHydration()
+        }
+        return fetchAuthoritativeCart(owner)
+    }, [fetchAuthoritativeCart, retryCartHydration])
+
+    useEffect(() => {
+        retryCartHydration()
+    }, [cartOwner, retryCartHydration])
 
     const handleQtyInc = async (id) => {
         try {
@@ -296,16 +379,13 @@ export const GlobalProvider = ({ children }) => {
                 const gc = getGuestCart();
                 const item = gc.find(cartItem => cartItem._id === id);
                 if (!item) return;
-
-                const stock = Number(item.product?.stock || 0);
-                if (stock > 0 && item.qty >= stock) {
+                const result = incrementGuestCartLine(gc, id);
+                if (result.reachedStockLimit) {
                     toast.error('You have reached stock limit');
                     return;
                 }
-
-                item.qty = (Number(item.qty) || 1) + 1;
-                saveGuestCart(gc);
-                setCartItems({ cart: gc, totalCartPrice: calcGuestTotal(gc) });
+                const nextCart = saveGuestCart(result.cart);
+                setCartItems(guestCartState(nextCart));
                 return;
             }
 
@@ -318,7 +398,7 @@ export const GlobalProvider = ({ children }) => {
                     }
                 }
             )
-            setCartItems((prev) => ({ ...prev, cart: res.data.cart, totalCartPrice: res.data.totalCartPrice }))
+            setCartItems(normalizeServerCartPayload(res.data))
         } catch (error) {
             console.error(error?.response?.data?.msg || 'Failed to increase quantity');
             toast.error(error?.response?.data?.msg || 'Failed to increase quantity');
@@ -336,7 +416,12 @@ export const GlobalProvider = ({ children }) => {
             const cartItem = cartItems?.cart?.find(item => item._id === id);
             if (!cartItem) return;
 
-            if (Number(cartItem.qty) <= 1) {
+            if (!Number.isSafeInteger(cartItem.qty) || cartItem.qty < 1) {
+                const error = new Error('The cart quantity could not be verified.');
+                error.code = 'CART_PRESENTATION_DATA_INVALID';
+                throw error;
+            }
+            if (cartItem.qty <= 1) {
                 await handleRemoveCartItem(id);
                 return;
             }
@@ -345,10 +430,8 @@ export const GlobalProvider = ({ children }) => {
                 const gc = getGuestCart();
                 const item = gc.find(guestItem => guestItem._id === id);
                 if (!item) return;
-
-                item.qty = Math.max(1, (Number(item.qty) || 1) - 1);
-                saveGuestCart(gc);
-                setCartItems({ cart: gc, totalCartPrice: calcGuestTotal(gc) });
+                const nextCart = saveGuestCart(decrementGuestCartLine(gc, id));
+                setCartItems(guestCartState(nextCart));
                 return;
             }
 
@@ -361,7 +444,7 @@ export const GlobalProvider = ({ children }) => {
                     }
                 }
             )
-            setCartItems((prev) => ({ ...prev, cart: res.data.cart, totalCartPrice: res.data.totalCartPrice }))
+            setCartItems(normalizeServerCartPayload(res.data))
         } catch (error) {
             console.error(error?.response?.data?.msg || 'Failed to decrease quantity');
             toast.error(error?.response?.data?.msg || 'Failed to decrease quantity');
@@ -376,12 +459,12 @@ export const GlobalProvider = ({ children }) => {
             setQtyUpdateId(id)
 
             if (!currentUser) {
-                const gc = getGuestCart().filter(item => {
+                const gc = normalizeGuestCart(getGuestCart()).filter(item => {
                     if (item._id === id) return false;
                     return !(item.product?._id === id && item.selectedColor === selectedColor);
                 });
-                saveGuestCart(gc);
-                setCartItems({ cart: gc, totalCartPrice: calcGuestTotal(gc) });
+                const nextCart = saveGuestCart(gc);
+                setCartItems(guestCartState(nextCart));
                 toast.info('Item removed from your cart');
                 setQtyUpdateId(null);
                 return;
@@ -397,7 +480,7 @@ export const GlobalProvider = ({ children }) => {
             )
             
 
-            setCartItems((prev) => ({ ...prev, cart: res.data.cart, totalCartPrice: res.data.totalCartPrice }))
+            setCartItems(normalizeServerCartPayload(res.data))
             toast.info(res.data?.msg || 'Item removed from your cart')
         } catch (error) {
             console.error(error);
@@ -418,8 +501,10 @@ export const GlobalProvider = ({ children }) => {
 
     const [isOverlayOpen, setIsOverlayOpen] = useState(false)
     
-    // Memoize context value to prevent unnecessary re-renders
-    const contextValue = useMemo(() => ({
+    // Action functions close over the latest cart/auth state. Building the
+    // value directly avoids retaining an old function through incomplete memo
+    // dependencies during account or cart transitions.
+    const contextValue = {
         isWishlistOpen,
         setIsWishlistOpen,
         fetchWishlist,
@@ -443,19 +528,14 @@ export const GlobalProvider = ({ children }) => {
         setIsOverlayOpen,
         cartBtn,
         isCartLoading,
+        isCartReady,
+        cartHydrationStatus,
+        cartHydrationError,
+        retryCartHydration,
         loadingProductId,
 
         qtyUpdateId
-    }), [
-        isWishlistOpen,
-        wishlistItems,
-        cartItems,
-        isOpen,
-        isOverlayOpen,
-        isCartLoading,
-        loadingProductId,
-        qtyUpdateId
-    ]);
+    };
     
     return (
         <GlobalContext.Provider value={contextValue}>

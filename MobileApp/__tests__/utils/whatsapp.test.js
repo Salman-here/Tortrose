@@ -14,7 +14,7 @@ describe('seller WhatsApp helpers', () => {
   });
 
   it('formats order values in the order currency instead of hardcoded dollars', () => {
-    const formatter = jest.fn((amount, { sourceCurrency }) => `${sourceCurrency} ${amount.toFixed(2)}`);
+    const formatter = jest.fn((amount, { sourceCurrency, targetCurrency }) => `${targetCurrency} ${amount.toFixed(2)}`);
     const message = buildVerifyMessage({
       orderId: 'ORD-1',
       currency: 'GBP',
@@ -24,6 +24,38 @@ describe('seller WhatsApp helpers', () => {
     }, formatter);
     expect(message).toContain('GBP 10.00');
     expect(message).not.toContain('$10.00');
+    expect(formatter).toHaveBeenCalledWith(10, expect.objectContaining({
+      sourceCurrency: 'GBP',
+      targetCurrency: 'GBP',
+      showCode: true,
+    }));
+  });
+
+  it('fails closed instead of relabeling corrupt order money or currency', () => {
+    const base = {
+      orderId: 'ORD-1',
+      currency: 'PKR',
+      shippingInfo: { fullName: 'A Buyer' },
+      orderItems: [{ name: 'Bag', quantity: 1, price: 5 }],
+      orderSummary: { totalAmount: 5 },
+    };
+    expect(() => buildVerifyMessage({ ...base, currency: 'CAD' })).toThrow(
+      expect.objectContaining({ code: 'ORDER_PRESENTATION_DATA_INVALID' }),
+    );
+    expect(() => buildVerifyMessage({
+      ...base,
+      orderSummary: { totalAmount: 70368744177664.02 },
+    })).toThrow(expect.objectContaining({ code: 'ORDER_PRESENTATION_DATA_INVALID' }));
+    [
+      { ...base, currency: '' },
+      { ...base, currency: 'PKR', orderCurrency: 'USD' },
+      { ...base, orderItems: [{ name: 'Bag', quantity: 0, price: 5 }] },
+      { ...base, orderItems: [{ name: 'Bag', quantity: 1, qty: 2, price: 5 }] },
+    ].forEach((order) => {
+      expect(() => buildVerifyMessage(order)).toThrow(
+        expect.objectContaining({ code: 'ORDER_PRESENTATION_DATA_INVALID' }),
+      );
+    });
   });
 
   it('describes buyer decision sources', () => {

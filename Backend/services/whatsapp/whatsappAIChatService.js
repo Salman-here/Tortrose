@@ -572,7 +572,13 @@ async function processIncomingWhatsAppMessageNow(phone, messageText, instanceTyp
         // 6. Process through AI pipeline
         const userObj = { _id: user._id, id: user._id.toString(), role };
 
-        const aiOptions = { mode: 'whatsapp' };
+        // Evolution's inbound message id remains stable across durable retries,
+        // so server-side tools (especially COD order creation) can be replayed
+        // safely without creating a second order or decrementing stock twice.
+        const aiOptions = {
+            mode: 'whatsapp',
+            requestKey: options.messageId || null,
+        };
         const aiStartedAt = Date.now();
         const result = await processAIChatMessage(userObj, messages, aiOptions);
         const aiFinishedAt = Date.now();

@@ -118,7 +118,11 @@ export async function executeAIToolCall(name, args, ctx = {}) {
     case 'get_available_coupons':
       return GET('/available-coupons', { storeId: args.storeId, productId: args.productId });
     case 'validate_coupon':
-      return POST('/validate-coupon', { code: args.code, cartTotal: args.cartTotal });
+      return POST('/validate-coupon', {
+        code: args.code,
+        sellerId: args.sellerId,
+        productId: args.productId,
+      });
 
     // ─── Seller tools ───
     case 'add_product':

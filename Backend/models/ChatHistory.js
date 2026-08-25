@@ -55,6 +55,4 @@ chatHistorySchema.pre('save', function (next) {
   next();
 });
 
-chatHistorySchema.index({ user: 1 });
-
 module.exports = mongoose.model('ChatHistory', chatHistorySchema);

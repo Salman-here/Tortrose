@@ -2,12 +2,13 @@ const request = require('supertest');
 const express = require('express');
 const mongoose = require('mongoose');
 const jwt = require('jsonwebtoken');
-const { MongoMemoryServer } = require('mongodb-memory-server');
+const { MongoMemoryReplSet } = require('mongodb-memory-server');
 
 const productRoutes = require('../../routes/productRoutes');
 const storeRoutes = require('../../routes/storeRoutes');
 const storeReviewRoutes = require('../../routes/storeReviewRoutes');
 const Notification = require('../../models/Notification');
+const NotificationOutbox = require('../../models/NotificationOutbox');
 const Order = require('../../models/Order');
 const Product = require('../../models/Product');
 const Store = require('../../models/Store');
@@ -119,7 +120,7 @@ const createOrder = ({ buyer, storeA, storeB, productA, productB, statusA = 'pro
 
 beforeAll(async () => {
   process.env.JWT_SECRET = process.env.JWT_SECRET || 'store-review-test-secret';
-  mongoServer = await MongoMemoryServer.create();
+  mongoServer = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
   await mongoose.connect(mongoServer.getUri());
 
   app = express();
@@ -132,6 +133,7 @@ beforeAll(async () => {
 afterEach(async () => {
   await Promise.all([
     Notification.deleteMany({}),
+    NotificationOutbox.deleteMany({}),
     Order.deleteMany({}),
     Product.deleteMany({}),
     Store.deleteMany({}),
@@ -294,6 +296,20 @@ describe('store reviews and verified purchase eligibility', () => {
     expect(second.status).toBe(200);
     expect(second.body.summary).toMatchObject({ average: 5, count: 1 });
     expect(await StoreReview.countDocuments({ store: store._id, user: buyer._id })).toBe(1);
-    expect(await Notification.countDocuments({ user: seller._id, title: 'New store rating' })).toBe(1);
+    expect(await Notification.countDocuments({ user: seller._id, title: 'New store rating' })).toBe(0);
+    const sellerRows = await NotificationOutbox.find({
+      eventType: 'store.review_created',
+      'recipient.user': seller._id,
+      'recipient.audienceRole': 'seller',
+    }).sort({ channel: 1 }).lean();
+    expect(sellerRows).toHaveLength(4);
+    expect(sellerRows.map(row => row.channel).sort()).toEqual(['email', 'inapp', 'push', 'whatsapp']);
+    expect(new Set(sellerRows.map(row => row.eventKey)).size).toBe(1);
+    expect(sellerRows.find(row => row.channel === 'push').payload).toMatchObject({
+      linkTo: `/store/${store.storeSlug}#store-reviews`,
+      channelId: 'seller',
+      data: expect.objectContaining({ type: 'new_review', audienceRole: 'seller' }),
+    });
+    expect(sellerRows.every(row => row.payload.data.rating === 3)).toBe(true);
   });
 });

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import {
     TrendingUp, DollarSign, ShoppingBag, Package, BarChart3,
@@ -10,6 +10,11 @@ import Loader from '../common/Loader';
 import axios from 'axios';
 import { getAuthToken } from "../../utils/cookieHelper";
 import {
+    normalizeCurrencyCode,
+    roundCurrencyAmount,
+} from '../../utils/currencySafety';
+import { adminAnalyticsResponseIsValid } from '../../utils/adminAnalyticsSafety';
+import {
     AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid,
     Tooltip, ResponsiveContainer, PieChart, Pie, Cell
 } from 'recharts';
@@ -20,27 +25,46 @@ const AdminAnalytics = () => {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
     const [analytics, setAnalytics] = useState(null);
+    const analyticsRequestRef = useRef({ id: 0, controller: null });
 
-    const fetchAnalytics = async () => {
+    const fetchAnalytics = useCallback(async () => {
+        const requestedDays = String(timeRange);
+        const requestedCurrency = normalizeCurrencyCode(currency, '');
+        analyticsRequestRef.current.controller?.abort();
+        const controller = new AbortController();
+        const requestId = analyticsRequestRef.current.id + 1;
+        analyticsRequestRef.current = { id: requestId, controller };
         setLoading(true);
         setError(null);
+        setAnalytics(null);
         const token = getAuthToken();
         try {
-            const res = await axios.get(`${import.meta.env.VITE_API_URL}api/analytics/admin?days=${timeRange}&currency=${currency}`, {
-                headers: { Authorization: `Bearer ${token}` }
+            const res = await axios.get(`${import.meta.env.VITE_API_URL}api/analytics/admin?days=${requestedDays}&currency=${requestedCurrency}`, {
+                headers: { Authorization: `Bearer ${token}` },
+                signal: controller.signal,
             });
-            setAnalytics(res.data.analytics);
+            const nextAnalytics = res.data?.analytics;
+            if (!adminAnalyticsResponseIsValid(nextAnalytics, requestedCurrency)) {
+                throw new Error('Admin analytics returned incomplete or internally inconsistent data.');
+            }
+            if (analyticsRequestRef.current.id === requestId) setAnalytics(nextAnalytics);
         } catch (err) {
+            if (controller.signal.aborted || err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError') return;
+            if (analyticsRequestRef.current.id !== requestId) return;
             console.error('Failed to fetch admin analytics:', err);
+            setAnalytics(null);
             setError(err.response?.status === 404 
                 ? 'Analytics API not available. Please redeploy your backend with the latest code.'
                 : 'Failed to load analytics data. Please try again.');
         } finally {
-            setLoading(false);
+            if (analyticsRequestRef.current.id === requestId) setLoading(false);
         }
-    };
+    }, [currency, timeRange]);
 
-    useEffect(() => { fetchAnalytics(); }, [timeRange, currency]);
+    useEffect(() => {
+        fetchAnalytics();
+        return () => analyticsRequestRef.current.controller?.abort();
+    }, [fetchAnalytics]);
 
     const ROLE_COLORS = ['hsl(220,70%,55%)', 'hsl(150,60%,45%)', 'hsl(280,60%,55%)'];
     const STATUS_COLORS = ['hsl(30,90%,50%)', 'hsl(220,70%,55%)', 'hsl(200,80%,50%)', 'hsl(150,60%,45%)', 'hsl(0,72%,55%)', 'hsl(340,65%,55%)'];
@@ -51,7 +75,7 @@ const AdminAnalytics = () => {
         return analytics.revenueByDay.map(b => ({
             ...b,
             label: new Date(b.date).toLocaleDateString('en', { month: 'short', day: 'numeric' }),
-            revenue: Math.round(b.revenue * 100) / 100,
+            revenue: roundCurrencyAmount(b.revenue),
         }));
     }, [analytics]);
 
@@ -62,7 +86,7 @@ const AdminAnalytics = () => {
                 <p className="text-xs font-semibold mb-1" style={{ color: 'hsl(var(--foreground))' }}>{label}</p>
                 {payload.map((p, i) => (
                     <p key={i} className="text-xs" style={{ color: p.color }}>
-                        {p.name}: {p.name === 'revenue' ? formatPrice(p.value, { sourceCurrency: analytics?.currency || currency }) : p.value}
+                        {p.name}: {p.name === 'revenue' ? formatPrice(p.value, { sourceCurrency: analytics?.currency }) : p.value}
                     </p>
                 ))}
             </div>
@@ -105,8 +129,8 @@ const AdminAnalytics = () => {
     if (!analytics) return null;
 
     const s = analytics.summary;
-    const analyticsCurrency = analytics.currency || currency;
-    const money = (amount) => formatPrice(amount || 0, { sourceCurrency: analyticsCurrency });
+    const analyticsCurrency = analytics.currency;
+    const money = (amount) => formatPrice(amount, { sourceCurrency: analyticsCurrency });
 
     const summaryStats = [
         { label: 'Total Revenue', value: money(s.totalRevenue), icon: <DollarSign size={20} />, color: 'hsl(150,60%,45%)', bg: 'rgba(16,185,129,0.12)', change: `${s.revenueChange >= 0 ? '+' : ''}${s.revenueChange}%`, up: s.revenueChange >= 0 },
@@ -294,8 +318,8 @@ const AdminAnalytics = () => {
                         </div>
                     </div>
                     {(() => {
-                        const brand = s.brandCount || 0;
-                        const store = s.storeCount || 0;
+                        const brand = s.brandCount;
+                        const store = s.storeCount;
                         const total = brand + store || 1;
                         const brandPct = Math.round((brand / total) * 100);
                         const storePct = 100 - brandPct;
@@ -311,7 +335,7 @@ const AdminAnalytics = () => {
                                         </div>
                                         <p className="text-2xl font-extrabold" style={{ color: 'hsl(var(--foreground))', letterSpacing: '-0.03em' }}>{brand}</p>
                                         <p className="text-[11px] mt-0.5" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                                            {brandPct}% of marketplace · +{s.newBrandsInPeriod || 0} new
+                                            {brandPct}% of marketplace · +{s.newBrandsInPeriod} new
                                         </p>
                                     </div>
                                     <div className="glass-inner p-4 rounded-xl">
@@ -323,7 +347,7 @@ const AdminAnalytics = () => {
                                         </div>
                                         <p className="text-2xl font-extrabold" style={{ color: 'hsl(var(--foreground))', letterSpacing: '-0.03em' }}>{store}</p>
                                         <p className="text-[11px] mt-0.5" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                                            {storePct}% of marketplace · +{s.newStoresOnlyInPeriod || 0} new
+                                            {storePct}% of marketplace · +{s.newStoresOnlyInPeriod} new
                                         </p>
                                     </div>
                                 </div>

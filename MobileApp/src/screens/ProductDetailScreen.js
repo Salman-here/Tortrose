@@ -17,7 +17,7 @@ import Feedback from '../utils/feedback';
 import api from '../config/api';
 import { useAuth } from '../contexts/AuthContext';
 import { useGlobal } from '../contexts/GlobalContext';
-import { useCurrency } from '../contexts/CurrencyContext';
+import { resolveProductPresentationMoney, useCurrency } from '../contexts/CurrencyContext';
 import { Loader, InlineLoader } from '../components/common';
 import VerifiedBadge from '../components/VerifiedBadge';
 import ProductCard from '../components/ProductCard';
@@ -34,6 +34,7 @@ import {
 } from '../utils/productGallery';
 import { spacing, fontSize, borderRadius, shadows, fontWeight } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
+import { getCartPresentationItemCount } from '../utils/cartPresentation';
 
 const PRODUCT_TOPBAR_SHEEN = [
   'rgba(14,165,233,0.12)',
@@ -96,7 +97,7 @@ export default function ProductDetailScreen({ route, navigation }) {
   );
   const isInCart = !!cartLineItem;
   const cartCount = Array.isArray(cartItems?.cart)
-    ? cartItems.cart.reduce((total, item) => total + (item.qty || 1), 0)
+    ? getCartPresentationItemCount(cartItems.cart)
     : 0;
 
   const handleBack = useCallback(() => {
@@ -119,7 +120,7 @@ export default function ProductDetailScreen({ route, navigation }) {
 
   const handleShare = async () => {
     if (!product) return;
-    try { await Share.share({ message: `Check out ${product.name} on Rozare! ${formatProductPrice(product, { field: product.discountedPrice ? 'discountedPrice' : 'price' })}`, title: product.name }); } catch {}
+    try { await Share.share({ message: `Check out ${product.name} on Rozare! ${formatProductPrice(product, { field: productPriceField })}`, title: product.name }); } catch {}
   };
 
   const fetchProduct = async () => {
@@ -213,7 +214,13 @@ export default function ProductDetailScreen({ route, navigation }) {
     fetchProduct();
   }, [productId]);
 
-  const discountPercentage = product?.discountedPrice && product.discountedPrice < product.price ? Math.round(((product.price - product.discountedPrice) / product.price) * 100) : 0;
+  const storedProductPrice = product ? resolveProductPresentationMoney(product, 'price') : 0;
+  const storedDiscountedPrice = product ? resolveProductPresentationMoney(product, 'discountedPrice') : 0;
+  const hasProductDiscount = storedDiscountedPrice > 0 && storedDiscountedPrice < storedProductPrice;
+  const productPriceField = hasProductDiscount ? 'discountedPrice' : 'price';
+  const discountPercentage = hasProductDiscount
+    ? Math.round(((storedProductPrice - storedDiscountedPrice) / storedProductPrice) * 100)
+    : 0;
 
   const handleWishlistToggle = () => { if (!currentUser) { navigation.navigate('Login'); return; } isInWishlist ? handleDeleteFromWishlist(product._id) : handleAddToWishlist(product._id); };
   const handleAddToCartClick = () => {
@@ -224,7 +231,7 @@ export default function ProductDetailScreen({ route, navigation }) {
   const handleAskAI = () => {
     if (!product) return;
     const price = formatProductPrice(product, {
-      field: product.discountedPrice ? 'discountedPrice' : 'price',
+      field: productPriceField,
     });
     const storeName = storeData?.storeName ? ` from ${storeData.storeName}` : '';
     const optionNames = product.optionGroups?.map((group) => group.name).filter(Boolean) || [];
@@ -508,7 +515,7 @@ export default function ProductDetailScreen({ route, navigation }) {
             <View style={styles.priceRow}>
               <View>
                 <Text style={styles.priceLabel}>YOUR PRICE</Text>
-                <Text style={styles.price}>{formatProductPrice(product, { field: product.discountedPrice ? 'discountedPrice' : 'price' })}</Text>
+                <Text style={styles.price}>{formatProductPrice(product, { field: productPriceField })}</Text>
               </View>
               {discountPercentage > 0 && (
                 <View style={styles.priceSavings}>

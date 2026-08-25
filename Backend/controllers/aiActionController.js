@@ -5,17 +5,15 @@ const User = require('../models/User');
 const Complaint = require('../models/Complaint');
 const TaxConfig = require('../models/TaxConfig');
 const ShippingMethod = require('../models/ShippingMethod');
-const AIRateLimit = require('../models/AIRateLimit');
 const {
     buildModerationFields,
     isProductBlocked,
     notifyProductBlocked,
     publicProductFilter,
 } = require('../services/productModerationService');
-const { convertAmountSync, convertAmount, normalizeCurrency, formatMoney } = require('../services/currencyService');
-const { getProductCurrency, getProductEffectivePrice, normalizeNativeProductPricing } = require('../services/productPricingService');
-const { assertProductCreationAllowed } = require('../services/storeProductCurrencyService');
-const { sanitizeProductPayload } = require('../services/productTextService');
+const { convertAmountSync, convertAmount, isSupportedCurrency, normalizeCurrency, formatMoney } = require('../services/currencyService');
+const { roundMoney: roundMoneyExact } = require('../services/moneyMath');
+const { getProductCurrency, getProductEffectivePrice } = require('../services/productPricingService');
 const {
     applyActiveSellerProductFilter,
     getActiveSellerIds,
@@ -27,6 +25,9 @@ const {
     convertOrderTotal,
     lineTotal,
     roundMoney,
+    sellerOrderSummaryForItems,
+    getAccountingOrderCurrency,
+    requireStoredOrderMoney,
 } = require('../services/orderMoneyService');
 const {
     ensureOrderSellerFulfillment,
@@ -36,9 +37,17 @@ const {
     syncAggregateDeliveryState,
 } = require('../services/orderFulfillmentService');
 const { deleteAccountCascade } = require('../services/accountDeletionService');
+const productController = require('./productController');
+const couponController = require('./couponController');
+const taxController = require('./taxController');
 
-// Helper: get today's date string
-const getToday = () => new Date().toISOString().split('T')[0];
+const productRouteRequest = (req, { id, product } = {}) => {
+    const adapted = Object.create(req);
+    adapted.params = { ...(req.params || {}), ...(id ? { id } : {}) };
+    adapted.body = { ...(req.body || {}), ...(product !== undefined ? { product } : {}) };
+    return adapted;
+};
+
 const toId = (value) => value?.toString?.() || String(value || '');
 const comparablePriceUSD = (product) =>
     convertAmountSync(getProductEffectivePrice(product), getProductCurrency(product), 'USD');
@@ -104,23 +113,15 @@ const buildSellerStatusScope = (sellerId, status) => {
 const sellerOrderStatus = (order, sellerId) =>
     sellerFulfillmentFor(order, sellerId)?.status || order.orderStatus;
 
-const sellerOrderTotal = (items) =>
-    items.reduce((sum, item) => sum + ((Number(item.price) || 0) * (Number(item.quantity) || 0)), 0);
-
 const buildSellerOrderSummary = (order, sellerItems, sellerId) => {
-    const subtotal = sellerOrderTotal(sellerItems);
-    const orderSubtotal = Number(order.orderSummary?.subtotal) || 0;
-    const sellerProportion = orderSubtotal > 0 ? subtotal / orderSubtotal : 0;
-    const tax = (Number(order.orderSummary?.tax) || 0) * sellerProportion;
-    const shipping = Number((order.sellerShipping || []).find(
-        ss => toId(ss.seller) === toId(sellerId)
-    )?.shippingMethod?.price) || 0;
-
+    const summary = sellerOrderSummaryForItems(order, sellerId, sellerItems);
     return {
-        subtotal: Math.round(subtotal * 100) / 100,
-        shippingCost: Math.round(shipping * 100) / 100,
-        tax: Math.round(tax * 100) / 100,
-        totalAmount: Math.round((subtotal + shipping + tax) * 100) / 100,
+        subtotal: summary.subtotal,
+        shippingCost: summary.shippingCost,
+        tax: summary.tax,
+        couponDiscount: summary.couponDiscount,
+        reconciliationAdjustment: summary.adjustment,
+        totalAmount: summary.totalAmount,
     };
 };
 
@@ -128,230 +129,44 @@ const summarizeOrderForRole = (order, role, sellerProductIds = [], sellerId = nu
     const items = role === 'seller' ? getSellerOrderItems(order, sellerProductIds, sellerId) : (order.orderItems || []);
     const total = role === 'seller'
         ? buildSellerOrderSummary(order, items, sellerId).totalAmount
-        : (order.orderSummary?.totalAmount || 0);
+        : requireStoredOrderMoney(order.orderSummary?.totalAmount, 'order total');
 
     return {
         orderId: order.orderId,
         _id: order._id,
         status: role === 'seller' ? sellerOrderStatus(order, sellerId) : order.orderStatus,
         isPaid: order.isPaid,
-        total: Math.round(total * 100) / 100,
+        total: roundMoneyExact(total),
+        currency: getAccountingOrderCurrency(order),
         date: order.createdAt,
         customer: role === 'admin' ? order.shippingInfo?.fullName : undefined,
         itemCount: items.length,
     };
 };
 
-// Rate limits per role. Seller AI chat is unlimited; guest/user caps remain
-// as abuse protection for public shopping chat.
-const RATE_LIMITS = {
-    guest: 5,
-    user: 20,
-    seller: Infinity,
-    seller_sub: Infinity,
-    admin: Infinity,
-};
-
-// Helper to get effective rate limit for seller
-const getSellerRateLimit = async (userId) => {
-    return RATE_LIMITS.seller;
-};
-
-// ─── Rate Limit ───
-exports.getRateLimit = async (req, res) => {
-    try {
-        const userId = req.user?.id;
-        const role = req.user?.role || 'guest';
-        const ip = req.headers['cf-connecting-ip'] || req.ip || req.socket?.remoteAddress || 'unknown';
-        const today = getToday();
-
-        const query = userId ? { userId, date: today } : { ip, date: today, userId: null };
-        const record = await AIRateLimit.findOne(query);
-        const used = record?.messageCount || 0;
-        const limit = role === 'seller' ? await getSellerRateLimit(userId) : (RATE_LIMITS[role] || RATE_LIMITS.guest);
-
-        res.json({
-            used,
-            limit: limit === Infinity ? -1 : limit, // -1 means unlimited
-            remaining: limit === Infinity ? -1 : Math.max(0, limit - used),
-            role,
-        });
-    } catch (error) {
-        console.error('Get rate limit error:', error);
-        res.status(500).json({ msg: 'Server error' });
-    }
-};
-
-exports.incrementRateLimit = async (req, res) => {
-    try {
-        const userId = req.user?.id;
-        const role = req.user?.role || 'guest';
-        const ip = req.headers['cf-connecting-ip'] || req.ip || req.socket?.remoteAddress || 'unknown';
-        const today = getToday();
-        const limit = role === 'seller' ? await getSellerRateLimit(userId) : (RATE_LIMITS[role] || RATE_LIMITS.guest);
-
-        const query = userId ? { userId, date: today } : { ip, date: today, userId: null };
-
-        // Check current count
-        let record = await AIRateLimit.findOne(query);
-        const currentCount = record?.messageCount || 0;
-
-        if (limit !== Infinity && currentCount >= limit) {
-            return res.status(429).json({
-                msg: 'Daily message limit reached. Resets at midnight.',
-                used: currentCount,
-                limit,
-                remaining: 0,
-            });
-        }
-
-        // Increment
-        record = await AIRateLimit.findOneAndUpdate(
-            query,
-            { $inc: { messageCount: 1 }, $setOnInsert: { userId: userId || null, ip: userId ? null : ip, date: today } },
-            { upsert: true, new: true }
-        );
-
-        res.json({
-            used: record.messageCount,
-            limit: limit === Infinity ? -1 : limit,
-            remaining: limit === Infinity ? -1 : Math.max(0, limit - record.messageCount),
-        });
-    } catch (error) {
-        console.error('Increment rate limit error:', error);
-        res.status(500).json({ msg: 'Server error' });
-    }
-};
-
 // ─── SELLER ACTIONS ───
 
-exports.addProduct = async (req, res) => {
-    const { product } = req.body;
-    const { role, id: userId } = req.user;
-    try {
-        if (role !== 'seller' && role !== 'admin') return res.status(403).json({ msg: 'Unauthorized' });
-
-        const sanitizedProduct = sanitizeProductPayload({
+// AI product writes use the same persistence boundary as the website/mobile
+// product APIs: exact money parsing, native store currency, FX fail-closed,
+// product-currency write locks, validation, and subscription limits.
+exports.addProduct = (req, res) => {
+    const product = req.body?.product || {};
+    return productController.addProduct(productRouteRequest(req, {
+        product: {
             ...product,
-            description: product?.description || product?.name || '',
-        });
-
-        // Validate required fields
-        const missing = [];
-        if (!sanitizedProduct?.name) missing.push('name');
-        if (!sanitizedProduct?.description) missing.push('description');
-        if (!sanitizedProduct?.price && sanitizedProduct?.price !== 0) missing.push('price');
-        if (!sanitizedProduct?.category) missing.push('category');
-        if (!sanitizedProduct?.brand) missing.push('brand');
-        if (sanitizedProduct?.stock === undefined) missing.push('stock');
-
-        if (missing.length > 0) {
-            return res.status(400).json({ msg: `Missing required fields: ${missing.join(', ')}`, missingFields: missing });
-        }
-
-        const account = role === 'seller'
-            ? await User.findById(userId).select('currency').lean()
-            : null;
-        const productCurrencyState = role === 'seller'
-            ? await assertProductCreationAllowed(userId)
-            : null;
-        const sellerCurrency = normalizeCurrency(productCurrencyState?.activeCurrency || account?.currency || req.user?.currency || 'USD');
-        const requestedCurrency = normalizeCurrency(sanitizedProduct?.currency || sanitizedProduct?.priceCurrency || sellerCurrency);
-        const currencyWasExplicit = sanitizedProduct?.currencyExplicit === true
-            || sanitizedProduct?.priceCurrencyExplicit === true
-            || sanitizedProduct?.currencySource === 'explicit';
-        const inputCurrency = !currencyWasExplicit && requestedCurrency === 'USD' && sellerCurrency !== 'USD'
-            ? sellerCurrency
-            : requestedCurrency;
-        const productData = normalizeNativeProductPricing({
-            ...sanitizedProduct,
-            currency: sellerCurrency,
-            priceCurrency: inputCurrency,
-            discountedPriceCurrency: sanitizedProduct?.discountedPriceCurrency || sanitizedProduct?.discountedCurrency || inputCurrency,
-            seller: role === 'seller' ? userId : null,
-        }, sellerCurrency);
-        const { fields: moderationFields } = buildModerationFields(productData);
-        const newProduct = new Product({ ...productData, ...moderationFields });
-        await newProduct.save();
-        if (isProductBlocked(newProduct)) {
-            await notifyProductBlocked({ sellerId: newProduct.seller, product: newProduct });
-        }
-        const convertedPriceNotice = inputCurrency !== sellerCurrency
-            ? ` Your selected product currency is ${sellerCurrency}, so I converted the ${inputCurrency} price to ${sellerCurrency} before saving.`
-            : '';
-        res.json({
-            msg: isProductBlocked(newProduct)
-                ? `Product added, but it was blocked because ${newProduct.blockedReason || newProduct.moderationReason}.`
-                : `Product added successfully.${convertedPriceNotice}`,
-            blocked: isProductBlocked(newProduct),
-            product: { _id: newProduct._id, name: newProduct.name, price: newProduct.price, currency: newProduct.currency, priceCurrency: newProduct.priceCurrency, blocked: isProductBlocked(newProduct), moderationReason: newProduct.moderationReason },
-        });
-    } catch (error) {
-        console.error('AI add product error:', error);
-        res.status(error.status || 500).json({
-            msg: error.status ? error.message : 'Server error while adding product',
-            productCurrency: error.productCurrencyState,
-        });
-    }
+            description: product.description || product.name || '',
+        },
+    }), res);
 };
 
-exports.editProduct = async (req, res) => {
-    const { productId, updates } = req.body;
-    const { role, id: userId } = req.user;
-    try {
-        if (role !== 'seller' && role !== 'admin') return res.status(403).json({ msg: 'Unauthorized' });
+exports.editProduct = (req, res) => productController.editProduct(productRouteRequest(req, {
+    id: req.body?.productId,
+    product: req.body?.updates,
+}), res);
 
-        const product = await Product.findById(productId);
-        if (!product) return res.status(404).json({ msg: 'Product not found' });
-        if (role === 'seller' && product.seller?.toString() !== userId) return res.status(403).json({ msg: 'You can only edit your own products' });
-
-        const sanitizedUpdates = sanitizeProductPayload({ ...updates });
-        if (Object.prototype.hasOwnProperty.call(sanitizedUpdates, 'name') && !sanitizedUpdates.name) {
-            return res.status(400).json({ msg: 'Product name is required.' });
-        }
-        if (Object.prototype.hasOwnProperty.call(sanitizedUpdates, 'description') && !sanitizedUpdates.description) {
-            return res.status(400).json({ msg: 'Product description is required.' });
-        }
-
-        const wasBlocked = isProductBlocked(product);
-        Object.assign(product, sanitizedUpdates);
-        const { fields: moderationFields } = buildModerationFields(product.toObject());
-        Object.assign(product, moderationFields);
-        await product.save();
-        if (isProductBlocked(product) && !wasBlocked) {
-            notifyProductBlocked({ sellerId: product.seller, product }).catch(err =>
-                console.error('[aiActionController] product blocked notification failed:', err.message)
-            );
-        }
-        res.json({
-            msg: isProductBlocked(product)
-                ? `Product "${product.name}" updated, but it is blocked because ${product.blockedReason || product.moderationReason}.`
-                : `Product "${product.name}" updated successfully`,
-            blocked: isProductBlocked(product),
-        });
-    } catch (error) {
-        console.error('AI edit product error:', error);
-        res.status(500).json({ msg: 'Server error' });
-    }
-};
-
-exports.deleteProduct = async (req, res) => {
-    const { productId } = req.body;
-    const { role, id: userId } = req.user;
-    try {
-        if (role !== 'seller' && role !== 'admin') return res.status(403).json({ msg: 'Unauthorized' });
-
-        const product = await Product.findById(productId);
-        if (!product) return res.status(404).json({ msg: 'Product not found' });
-        if (role === 'seller' && product.seller?.toString() !== userId) return res.status(403).json({ msg: 'You can only delete your own products' });
-
-        await Product.findByIdAndDelete(productId);
-        res.json({ msg: `Product "${product.name}" deleted successfully` });
-    } catch (error) {
-        console.error('AI delete product error:', error);
-        res.status(500).json({ msg: 'Server error' });
-    }
-};
+exports.deleteProduct = (req, res) => productController.deleteProduct(productRouteRequest(req, {
+    id: req.body?.productId,
+}), res);
 
 exports.listMyProducts = async (req, res) => {
     const { role, id: userId } = req.user;
@@ -379,79 +194,11 @@ exports.listMyProducts = async (req, res) => {
     }
 };
 
-exports.bulkDiscount = async (req, res) => {
-    const { productIds, discountType, discountValue } = req.body;
-    const { role, id: userId } = req.user;
-    try {
-        if (role !== 'seller' && role !== 'admin') return res.status(403).json({ msg: 'Unauthorized' });
+exports.bulkDiscount = (req, res) => productController.bulkDiscount(req, res);
 
-        const query = { _id: { $in: productIds } };
-        if (role === 'seller') query.seller = userId;
+exports.bulkPriceUpdate = (req, res) => productController.bulkPriceUpdate(req, res);
 
-        const products = await Product.find(query);
-        if (products.length === 0) return res.status(404).json({ msg: 'No products found' });
-
-        for (const product of products) {
-            if (discountType === 'percentage') {
-                product.discountedPrice = Math.max(0, product.price - (product.price * discountValue / 100));
-            } else {
-                product.discountedPrice = Math.max(0, product.price - discountValue);
-            }
-            product.discountedPrice = Math.round(product.discountedPrice * 100) / 100;
-            await product.save();
-        }
-
-        res.json({ msg: `Discount applied to ${products.length} product(s)`, updatedCount: products.length });
-    } catch (error) {
-        console.error('AI bulk discount error:', error);
-        res.status(500).json({ msg: 'Server error' });
-    }
-};
-
-exports.bulkPriceUpdate = async (req, res) => {
-    const { productIds, updateType, value } = req.body;
-    const { role, id: userId } = req.user;
-    try {
-        if (role !== 'seller' && role !== 'admin') return res.status(403).json({ msg: 'Unauthorized' });
-
-        const query = { _id: { $in: productIds } };
-        if (role === 'seller') query.seller = userId;
-
-        const products = await Product.find(query);
-        if (products.length === 0) return res.status(404).json({ msg: 'No products found' });
-
-        for (const product of products) {
-            if (updateType === 'percentage') product.price = Math.max(0, product.price + (product.price * value / 100));
-            else if (updateType === 'fixed') product.price = Math.max(0, product.price + value);
-            else product.price = Math.max(0, value);
-            product.price = Math.round(product.price * 100) / 100;
-            if (product.discountedPrice >= product.price) product.discountedPrice = 0;
-            await product.save();
-        }
-
-        res.json({ msg: `Prices updated for ${products.length} product(s)`, updatedCount: products.length });
-    } catch (error) {
-        console.error('AI bulk price update error:', error);
-        res.status(500).json({ msg: 'Server error' });
-    }
-};
-
-exports.removeDiscount = async (req, res) => {
-    const { productIds } = req.body;
-    const { role, id: userId } = req.user;
-    try {
-        if (role !== 'seller' && role !== 'admin') return res.status(403).json({ msg: 'Unauthorized' });
-
-        const query = { _id: { $in: productIds } };
-        if (role === 'seller') query.seller = userId;
-
-        const result = await Product.updateMany(query, { $set: { discountedPrice: 0 } });
-        res.json({ msg: `Discounts removed from ${result.modifiedCount} product(s)` });
-    } catch (error) {
-        console.error('AI remove discount error:', error);
-        res.status(500).json({ msg: 'Server error' });
-    }
-};
+exports.removeDiscount = (req, res) => productController.removeDiscount(req, res);
 
 exports.getSellerAnalytics = async (req, res) => {
     const { role, id: userId } = req.user;
@@ -1076,30 +823,16 @@ exports.getAllStores = async (req, res) => {
 };
 
 exports.updateTaxConfig = async (req, res) => {
-    const { type, value, isActive } = req.body;
-    const { role } = req.user;
-    try {
-        if (role !== 'admin') return res.status(403).json({ msg: 'Admin access only' });
-
-        let config = await TaxConfig.findOne();
-        if (!config) config = new TaxConfig();
-
-        if (type) config.type = type;
-        if (value !== undefined) config.value = value;
-        if (isActive !== undefined) config.isActive = isActive;
-        await config.save();
-
-        res.json({ msg: `Tax config updated: ${config.type} ${config.value}${config.type === 'percentage' ? '%' : ' USD'}` });
-    } catch (error) {
-        console.error('AI update tax error:', error);
-        res.status(500).json({ msg: 'Server error' });
+    if (req.user?.role !== 'admin') {
+        return res.status(403).json({ msg: 'Admin access only' });
     }
+    return taxController.updateTaxConfig(req, res);
 };
 
 exports.getTaxConfig = async (req, res) => {
     try {
         const config = await TaxConfig.findOne();
-        res.json({ config: config || { type: 'percentage', value: 0, isActive: false } });
+        res.json({ config: config || { type: 'none', value: 0, currency: 'USD', isActive: true } });
     } catch (error) {
         console.error('AI get tax error:', error);
         res.status(500).json({ msg: 'Server error' });
@@ -1358,7 +1091,7 @@ exports.validateCoupon = async (req, res) => {
 
         res.json({
             valid: true,
-            discount: Math.round(discount * 100) / 100,
+            discount: roundMoneyExact(discount),
             currency: couponCurrency,
             code: coupon.code,
             msg: `Coupon "${coupon.code}" saves you ${await formatMoney(discount, couponCurrency, { sourceCurrency: couponCurrency })}!`,
@@ -1374,38 +1107,21 @@ exports.validateCoupon = async (req, res) => {
 exports.createCoupon = async (req, res) => {
     const { role, id: userId } = req.user;
     const { coupon } = req.body;
-    try {
-        if (role !== 'seller' && role !== 'admin') return res.status(403).json({ msg: 'Unauthorized' });
-
-        const Coupon = require('../models/Coupon');
-
-        if (!coupon || !coupon.code || !coupon.discountType || coupon.discountValue === undefined) {
-            return res.status(400).json({ msg: 'Missing required fields: code, discountType, discountValue' });
-        }
-
-        // Check if code already exists
-        const existing = await Coupon.findOne({ code: coupon.code.toUpperCase(), seller: userId });
-        if (existing) return res.status(400).json({ msg: `Coupon code "${coupon.code}" already exists` });
-        const couponCurrency = normalizeCurrency(coupon.currency || req.body.currency || req.query.currency || 'USD');
-
-        const newCoupon = new Coupon({
-            ...coupon,
-            code: coupon.code.toUpperCase(),
-            currency: couponCurrency,
-            seller: userId,
-            isActive: true
-        });
-        await newCoupon.save();
-
-        res.json({
-            msg: `Coupon "${newCoupon.code}" created! ${coupon.discountType === 'percentage'
-                ? coupon.discountValue + '% off'
-                : `${await formatMoney(coupon.discountValue, couponCurrency, { sourceCurrency: couponCurrency })} off`}`,
-        });
-    } catch (error) {
-        console.error('AI create coupon error:', error);
-        res.status(500).json({ msg: 'Server error' });
+    if (role !== 'seller' && role !== 'admin') {
+        return res.status(403).json({ msg: 'Unauthorized' });
     }
+    if (!coupon || typeof coupon !== 'object' || Array.isArray(coupon)) {
+        return res.status(400).json({ msg: 'Coupon details are required.' });
+    }
+    const adapted = Object.create(req);
+    adapted.body = {
+        ...coupon,
+        ...(coupon.currency === undefined && req.body.currency !== undefined
+            ? { currency: req.body.currency }
+            : {}),
+    };
+    adapted.user = { ...req.user, id: userId };
+    return couponController.createCoupon(adapted, res);
 };
 
 exports.getMyCoupons = async (req, res) => {
@@ -1420,7 +1136,9 @@ exports.getMyCoupons = async (req, res) => {
             coupons: coupons.map(c => ({
                 _id: c._id, code: c.code, discountType: c.discountType,
                 discountValue: c.discountValue, isActive: c.isActive,
+                currency: c.currency || 'USD',
                 minOrderAmount: c.minOrderAmount, maxUses: c.maxUses,
+                maxDiscountAmount: c.maxDiscountAmount,
                 usedCount: c.usedCount, expiryDate: c.expiryDate
             })),
             totalCoupons: coupons.length,
@@ -1435,22 +1153,25 @@ exports.getMyCoupons = async (req, res) => {
 exports.updateCoupon = async (req, res) => {
     const { role, id: userId } = req.user;
     const { couponId, updates } = req.body;
-    try {
-        if (role !== 'seller' && role !== 'admin') return res.status(403).json({ msg: 'Unauthorized' });
-
-        const Coupon = require('../models/Coupon');
-        const coupon = await Coupon.findOne({ _id: couponId, seller: userId });
-        if (!coupon) return res.status(404).json({ msg: 'Coupon not found' });
-
-        const allowed = ['discountType', 'discountValue', 'minOrderAmount', 'maxUses', 'expiryDate', 'maxDiscount'];
-        allowed.forEach(key => { if (updates[key] !== undefined) coupon[key] = updates[key]; });
-        await coupon.save();
-
-        res.json({ msg: `Coupon "${coupon.code}" updated successfully` });
-    } catch (error) {
-        console.error('AI update coupon error:', error);
-        res.status(500).json({ msg: 'Server error' });
+    if (role !== 'seller' && role !== 'admin') {
+        return res.status(403).json({ msg: 'Unauthorized' });
     }
+    if (!updates || typeof updates !== 'object' || Array.isArray(updates)) {
+        return res.status(400).json({ msg: 'Coupon updates are required.' });
+    }
+    const adaptedUpdates = { ...updates };
+    if (
+        adaptedUpdates.maxDiscountAmount === undefined
+        && adaptedUpdates.maxDiscount !== undefined
+    ) {
+        adaptedUpdates.maxDiscountAmount = adaptedUpdates.maxDiscount;
+    }
+    delete adaptedUpdates.maxDiscount;
+    const adapted = Object.create(req);
+    adapted.params = { ...(req.params || {}), id: couponId };
+    adapted.body = adaptedUpdates;
+    adapted.user = { ...req.user, id: userId };
+    return couponController.updateCoupon(adapted, res);
 };
 
 exports.deleteCoupon = async (req, res) => {
@@ -1459,35 +1180,31 @@ exports.deleteCoupon = async (req, res) => {
     try {
         if (role !== 'seller' && role !== 'admin') return res.status(403).json({ msg: 'Unauthorized' });
 
-        const Coupon = require('../models/Coupon');
-        const coupon = await Coupon.findOneAndDelete({ _id: couponId, seller: userId });
-        if (!coupon) return res.status(404).json({ msg: 'Coupon not found' });
+        const { deleteCouponIfUnreserved } = require('../services/couponUsageService');
+        const result = await deleteCouponIfUnreserved({ couponId, sellerId: userId });
+        const coupon = result.coupon;
+        if (!result.deleted) return res.status(404).json({ msg: 'Coupon not found' });
 
         res.json({ msg: `Coupon "${coupon.code}" deleted` });
     } catch (error) {
         console.error('AI delete coupon error:', error);
-        res.status(500).json({ msg: 'Server error' });
+        res.status(error.statusCode || 500).json({
+            msg: error.statusCode ? error.message : 'Server error',
+            ...(error.code ? { code: error.code } : {}),
+        });
     }
 };
 
 exports.toggleCoupon = async (req, res) => {
     const { role, id: userId } = req.user;
     const { couponId } = req.body;
-    try {
-        if (role !== 'seller' && role !== 'admin') return res.status(403).json({ msg: 'Unauthorized' });
-
-        const Coupon = require('../models/Coupon');
-        const coupon = await Coupon.findOne({ _id: couponId, seller: userId });
-        if (!coupon) return res.status(404).json({ msg: 'Coupon not found' });
-
-        coupon.isActive = !coupon.isActive;
-        await coupon.save();
-
-        res.json({ msg: `Coupon "${coupon.code}" is now ${coupon.isActive ? 'active' : 'inactive'}` });
-    } catch (error) {
-        console.error('AI toggle coupon error:', error);
-        res.status(500).json({ msg: 'Server error' });
+    if (role !== 'seller' && role !== 'admin') {
+        return res.status(403).json({ msg: 'Unauthorized' });
     }
+    const adapted = Object.create(req);
+    adapted.params = { ...(req.params || {}), id: couponId };
+    adapted.user = { ...req.user, id: userId };
+    return couponController.toggleCoupon(adapted, res);
 };
 
 exports.getSubscriptionStatus = async (req, res) => {
@@ -1781,9 +1498,25 @@ function aiActionToolRoute(toolName, source = 'body', transform) {
             : source === 'query'
                 ? req.query
                 : req.body;
-        const result = await executeUnifiedToolCall(toolName, args || {}, req.user || { role: 'guest' });
+        const rawIdempotencyKey = String(
+            req.get?.('Idempotency-Key')
+            || req.get?.('X-Idempotency-Key')
+            || ''
+        ).trim();
+        const executorArgs = {
+            ...(args || {}),
+            _chatRequestKey: rawIdempotencyKey ? `http-action:${rawIdempotencyKey}` : '',
+            _chatToolOrdinal: 0,
+        };
+        const result = await executeUnifiedToolCall(toolName, executorArgs, req.user || { role: 'guest' });
+        const failureStatuses = {
+            PAID_ORDER_REQUIRES_REFUND: 409,
+            EXCHANGE_RATES_UNAVAILABLE: 503,
+            AI_ACTION_IDEMPOTENCY_CONFLICT: 409,
+            AI_ACTION_PENDING: 409,
+        };
         const status = result?.success === false
-            ? (result?.code === 'PAID_ORDER_REQUIRES_REFUND' ? 409 : 400)
+            ? (failureStatuses[result?.code] || 400)
             : 200;
         return res.status(status).json(normalizeToolHttpResult(result));
     };

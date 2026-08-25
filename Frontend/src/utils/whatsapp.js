@@ -1,4 +1,11 @@
-import { formatOrderItemOptions } from './orderItems';
+import {
+  formatOrderItemOptions,
+  getOrderCurrency,
+  getOrderItemLineSubtotal,
+  getOrderItemQuantity,
+  getOrderTotal,
+} from './orderItems.js';
+import { currencyCodeIsSupported, roundCurrencyAmount } from './currencySafety.js';
 
 /**
  * WhatsApp order verification helper.
@@ -7,38 +14,67 @@ import { formatOrderItemOptions } from './orderItems';
  * Accepts any of:
  *   "+923028588506" (E.164 from PhoneField)
  *   "923028588506"  (already international digits)
- *   "03028588506"   (domestic — leading 0 stripped, default CC prepended)
- *   "3028588506"    (domestic, no leading 0)
+ *   "03028588506"   (domestic — requires the order's country calling code)
+ *   "3028588506"    (domestic, no leading 0 — also requires a calling code)
  * Always returns a wa.me-safe digit string with country code, or '' if invalid.
  */
 
-const DEFAULT_COUNTRY_CODE = '92'; // Pakistan — matches backend WHATSAPP_DEFAULT_COUNTRY_CODE fallback
+const digitsOnly = (value) => String(value || '').replace(/\D/g, '');
 
-export const sanitizePhone = (rawPhone) => {
+export const sanitizePhone = (rawPhone, countryCallingCode = '') => {
   if (!rawPhone) return '';
   const raw = String(rawPhone).trim();
-
-  const hadPlus = raw.startsWith('+');
-  const hadDoubleZero = /^00\d/.test(raw);
-
-  let digits = raw.replace(/\D/g, '');
+  const explicitInternational = raw.startsWith('+') || /^00\d/.test(raw);
+  let digits = digitsOnly(raw);
   if (!digits) return '';
 
-  if (hadPlus) return digits;                 // already E.164
-  if (hadDoubleZero) return digits.replace(/^00/, '');
+  if (/^00\d/.test(raw)) digits = digits.replace(/^00/, '');
+  if (explicitInternational) return digits.length >= 8 && digits.length <= 15 ? digits : '';
 
-  digits = digits.replace(/^0+/, '');
-  if (digits.length > 0 && digits.length <= 10) {
-    digits = DEFAULT_COUNTRY_CODE + digits;
+  // A number longer than an ordinary domestic subscriber number is assumed
+  // to already contain its country code. Never silently prepend Pakistan's
+  // code to an international buyer just because a seller is in Pakistan.
+  if (!raw.startsWith('0') && digits.length > 10) {
+    return digits.length <= 15 ? digits : '';
   }
-  return digits;
+
+  const callingCode = digitsOnly(countryCallingCode);
+  const local = digits.replace(/^0+/, '');
+  if (!callingCode || !local) return '';
+  const international = `${callingCode}${local}`;
+  return international.length >= 8 && international.length <= 15 ? international : '';
 };
 
-const formatMoney = (n, formatPrice, sourceCurrency = 'USD') => {
-  const amount = Number(n || 0);
-  const currency = sourceCurrency || 'USD';
+const orderCallingCode = (order) => (
+  order?.shippingInfo?.phonecode
+  || order?.shippingInfo?.phoneCode
+  || order?.buyerLocation?.phonecode
+  || order?.buyerLocation?.phoneCode
+  || ''
+);
+
+const formatMoney = (n, formatPrice, sourceCurrency) => {
+  const amount = n;
+  const currency = sourceCurrency;
+  if (
+    typeof amount !== 'number'
+    || !Number.isFinite(amount)
+    || amount < 0
+    || roundCurrencyAmount(amount) !== amount
+    || typeof currency !== 'string'
+    || currency !== currency.trim().toUpperCase()
+    || !currencyCodeIsSupported(currency)
+  ) {
+    const error = new Error('The stored order money cannot be represented safely.');
+    error.code = 'ORDER_PRESENTATION_DATA_INVALID';
+    throw error;
+  }
   if (typeof formatPrice === 'function') {
-    try { return formatPrice(amount, { sourceCurrency: currency }); } catch { /* noop */ }
+    return formatPrice(amount, {
+      sourceCurrency: currency,
+      targetCurrency: currency,
+      showCode: true,
+    });
   }
   try {
     return new Intl.NumberFormat(undefined, {
@@ -53,6 +89,7 @@ const formatMoney = (n, formatPrice, sourceCurrency = 'USD') => {
 };
 
 export const buildVerifyMessage = (order, formatPrice) => {
+  const currency = getOrderCurrency(order);
   const fullName = order?.shippingInfo?.fullName || 'Customer';
   const storeName =
     order?.orderItems?.[0]?.product?.store?.storeName ||
@@ -62,22 +99,13 @@ export const buildVerifyMessage = (order, formatPrice) => {
 
   const lines = (order?.orderItems || []).map((it) => {
     const name = it?.product?.name || it?.name || 'Item';
-    const qty = it?.qty || it?.quantity || 1;
-    const price = formatMoney((it?.price || 0) * qty, formatPrice, order?.currency || 'USD');
+    const qty = getOrderItemQuantity(it);
+    const price = formatMoney(getOrderItemLineSubtotal(it), formatPrice, currency);
     const options = formatOrderItemOptions(it);
     return `- ${name}${options ? ` (${options})` : ''} x${qty} - ${price}`;
   });
 
-  const subtotal = order?.orderSummary?.subtotal || 0;
-  const tax = order?.orderSummary?.tax || 0;
-  let shipping = order?.orderSummary?.shippingCost || 0;
-  if (order?.sellerShipping?.length > 0) {
-    shipping = order.sellerShipping.reduce(
-      (sum, s) => sum + (s?.shippingMethod?.price || 0),
-      0
-    );
-  }
-  const total = order?.orderSummary?.totalAmount || subtotal + tax + shipping;
+  const total = getOrderTotal(order);
 
   return [
     `Hello ${fullName}, this is ${storeName} on Rozare.`,
@@ -85,23 +113,29 @@ export const buildVerifyMessage = (order, formatPrice) => {
     `We're verifying your order #${orderId}:`,
     ...lines,
     '',
-    `Total: ${formatMoney(total, formatPrice, order?.currency || 'USD')}`,
+    `Total: ${formatMoney(total, formatPrice, currency)}`,
     '',
     'Please reply YES to confirm, or let us know if anything needs to change. Thank you!',
   ].join('\n');
 };
 
 export const openWhatsAppVerify = (order, formatPrice) => {
-  const phone = sanitizePhone(order?.shippingInfo?.phone);
+  const phone = sanitizePhone(order?.shippingInfo?.phone, orderCallingCode(order));
   if (!phone) return false;
-  const text = encodeURIComponent(buildVerifyMessage(order, formatPrice));
+  let text;
+  try {
+    text = encodeURIComponent(buildVerifyMessage(order, formatPrice));
+  } catch (error) {
+    console.error('Cannot build WhatsApp verification from invalid order money:', error);
+    return false;
+  }
   const url = `https://wa.me/${phone}?text=${text}`;
   window.open(url, '_blank', 'noopener,noreferrer');
   return true;
 };
 
 export const hasWhatsAppPhone = (order) =>
-  Boolean(sanitizePhone(order?.shippingInfo?.phone));
+  Boolean(sanitizePhone(order?.shippingInfo?.phone, orderCallingCode(order)));
 
 // True if buyer already self-confirmed the order by any channel — means
 // the manual "Verify on WhatsApp" button is no longer needed.

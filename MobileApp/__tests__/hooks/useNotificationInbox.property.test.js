@@ -58,6 +58,23 @@ describe('useNotificationInbox helpers', () => {
       ['order_cancelled_by_buyer', 'seller'],
       ['return_requested', 'seller'],
       ['return_status_update', 'order'],
+      ['order_paid', 'order'],
+      ['order_no_charge_confirmed', 'order'],
+      ['order_confirmation_requested', 'order'],
+      ['paid_order_received', 'seller'],
+      ['no_charge_order_received', 'seller'],
+      ['cod_order_received', 'seller'],
+      ['cod_order_confirmed', 'seller'],
+      ['cod_order_reconfirmed', 'seller'],
+      ['cod_order_cancelled', 'seller'],
+      ['return_settled', 'order'],
+      ['withdrawal_requested', 'payment'],
+      ['withdrawal_status_changed', 'payment'],
+      ['wallet_transaction_completed', 'payment'],
+      ['subscription_payment_received', 'subscription'],
+      ['subscription_payment_recovered', 'subscription'],
+      ['subscription_activated', 'subscription'],
+      ['subscription_cancelled', 'subscription'],
       ['low_stock', 'seller'],
       ['store_verified', 'seller'],
       ['price_drop', 'promo'],
@@ -69,6 +86,24 @@ describe('useNotificationInbox helpers', () => {
       [null, 'system'],
     ])('categorizes %s as %s', (input, expected) => {
       expect(categorizeNotification(input)).toBe(expected);
+    });
+
+    it('promotes an outbox order aggregate for grouping and native detail routing', () => {
+      expect(normalizePersistentInboxNotification({
+        _id: 'outbox-order-1',
+        aggregateType: 'Order',
+        aggregateId: 'order-object-id',
+        eventType: 'order.paid',
+        category: 'order',
+      })).toEqual(expect.objectContaining({
+        orderId: 'order-object-id',
+        category: 'order',
+      }));
+    });
+
+    it('prefers a supported server category over a legacy type heuristic', () => {
+      expect(categorizeNotification('unknown_queued_type', 'payment')).toBe('payment');
+      expect(categorizeNotification('order_paid', 'announcement')).toBe('system');
     });
   });
 
@@ -103,23 +138,110 @@ describe('useNotificationInbox helpers', () => {
       expect(buildNotificationsFromOrders([])).toEqual([]);
     });
 
-    test('emits "Order Confirmed" for every order', () => {
-      const orders = [{ _id: 'abc123def456', orderStatus: 'pending', createdAt: new Date().toISOString() }];
-      const out = buildNotificationsFromOrders(orders);
-      expect(out.some(n => n.title === 'Order Confirmed')).toBe(true);
+    test('does not call a pending unconfirmed COD order confirmed or processing', () => {
+      const out = buildNotificationsFromOrders([{
+        _id: 'pending-cod-order',
+        orderId: 'RZ-COD-1',
+        orderStatus: 'pending',
+        paymentMethod: 'cash_on_delivery',
+        isPaid: false,
+        createdAt: '2026-08-24T08:00:00.000Z',
+        confirmation: {
+          confirmedAt: null,
+          emailSentAt: '2026-08-24T08:01:00.000Z',
+        },
+      }]);
+      expect(out).toEqual([]);
     });
 
-    test('emits delivery + delivered notifications for delivered orders', () => {
-      const orders = [{ _id: 'order_delivered_id', orderStatus: 'delivered', createdAt: new Date().toISOString() }];
-      const out = buildNotificationsFromOrders(orders);
-      expect(out.find(n => n.title === 'Order Shipped')).toBeTruthy();
-      expect(out.find(n => n.title === 'Order Delivered')).toBeTruthy();
+    test('uses the persisted cancellation decision and never retains a prior confirmation claim', () => {
+      const out = buildNotificationsFromOrders([{
+        _id: 'cancelled-order',
+        orderId: 'RZ-CANCELLED-1',
+        orderStatus: 'cancelled',
+        isPaid: false,
+        confirmation: {
+          confirmedAt: '2026-08-24T08:00:00.000Z',
+          cancelledFromDashboardAt: '2026-08-24T09:00:00.000Z',
+        },
+      }]);
+      expect(out).toEqual([expect.objectContaining({
+        title: 'Order Cancelled',
+        category: 'order',
+        createdAt: '2026-08-24T09:00:00.000Z',
+      })]);
+      expect(out.some(({ title }) => title === 'Order Confirmed' || title === 'Payment Confirmed')).toBe(false);
     });
 
-    test('emits cancellation alert for cancelled orders', () => {
-      const orders = [{ _id: 'cancelled_order', orderStatus: 'cancelled', createdAt: new Date().toISOString() }];
-      const out = buildNotificationsFromOrders(orders);
-      expect(out.find(n => n.category === 'alert')).toBeTruthy();
+    test('does not invent a cancellation time from createdAt or updatedAt', () => {
+      expect(buildNotificationsFromOrders([{
+        _id: 'cancelled-without-event-time',
+        orderStatus: 'cancelled',
+        createdAt: '2026-08-24T08:00:00.000Z',
+        updatedAt: '2026-08-24T09:00:00.000Z',
+      }])).toEqual([]);
+    });
+
+    test('emits a confirmed COD fallback only from confirmation.confirmedAt', () => {
+      const out = buildNotificationsFromOrders([{
+        _id: 'confirmed-cod-order',
+        orderId: 'RZ-COD-2',
+        orderStatus: 'confirmed',
+        paymentMethod: 'cash_on_delivery',
+        isPaid: false,
+        confirmation: { confirmedAt: '2026-08-24T10:00:00.000Z' },
+      }]);
+      expect(out).toEqual([expect.objectContaining({
+        title: 'Order Confirmed',
+        category: 'order',
+        createdAt: '2026-08-24T10:00:00.000Z',
+      })]);
+    });
+
+    test('emits a paid fallback only from isPaid plus paidAt, without generic confirmation copy', () => {
+      const out = buildNotificationsFromOrders([{
+        _id: 'paid-order',
+        orderId: 'RZ-PAID-1',
+        orderStatus: 'confirmed',
+        isPaid: true,
+        paidAt: '2026-08-24T11:00:00.000Z',
+        confirmation: { confirmedAt: '2026-08-24T11:00:00.000Z' },
+      }]);
+      expect(out).toEqual([expect.objectContaining({
+        title: 'Payment Confirmed',
+        category: 'payment',
+        createdAt: '2026-08-24T11:00:00.000Z',
+      })]);
+      expect(out.some(({ title }) => title === 'Order Confirmed')).toBe(false);
+    });
+
+    test('requires actual shipped/delivered timestamps instead of inferring a timeline from final status', () => {
+      expect(buildNotificationsFromOrders([{
+        _id: 'delivered-without-times',
+        orderStatus: 'delivered',
+      }])).toEqual([]);
+
+      const out = buildNotificationsFromOrders([{
+        _id: 'delivered-with-times',
+        orderStatus: 'delivered',
+        shippedAt: '2026-08-24T12:00:00.000Z',
+        deliveredAt: '2026-08-24T13:00:00.000Z',
+      }]);
+      expect(out.map(({ title }) => title)).toEqual(['Order Shipped', 'Order Delivered']);
+    });
+
+    test('suppresses local order snapshots when a durable push or inbox event exists for the order', () => {
+      const order = {
+        _id: 'durable-order-id',
+        orderStatus: 'confirmed',
+        isPaid: true,
+        paidAt: '2026-08-24T11:00:00.000Z',
+      };
+      expect(buildNotificationsFromOrders([order], {
+        durableNotifications: [{
+          data: { aggregateType: 'Order', aggregateId: 'durable-order-id' },
+        }],
+      })).toEqual([]);
     });
   });
 

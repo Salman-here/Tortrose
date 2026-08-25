@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Store, Package, Eye, Share2, Home, Globe, MapPin, Users, Sparkles, Star } from 'lucide-react';
 
@@ -28,7 +28,6 @@ import { getAuthToken } from "../utils/cookieHelper";
 import StoreReviews from '../components/common/StoreReviews';
 
 const SubdomainStorePage = () => {
-    const navigate = useNavigate();
     const subdomain = getSubdomain();
     const [store, setStore] = useState(null);
     const [products, setProducts] = useState([]);
@@ -49,12 +48,17 @@ const SubdomainStorePage = () => {
         
         fetchStore();
         fetchProducts();
+        // Subdomain identity owns initial loading; render-created fetch
+        // functions must not cause a request loop.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [subdomain]);
 
     useEffect(() => {
         if (store?._id) {
             fetchTrustStatus();
         }
+        // Trust state follows the persisted store id only.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [store?._id]);
 
     const fetchStore = async () => {

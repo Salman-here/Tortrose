@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createPortal } from 'react-dom';
 import {
@@ -18,8 +18,14 @@ import { Link, Navigate, Outlet, useLocation } from 'react-router-dom';
 import GlassBackground from '../common/GlassBackground';
 import Loader from '../common/Loader';
 import { useCurrency } from '../../contexts/CurrencyContext';
+import {
+    inspectProductFormSubmission,
+    normalizeProductForEdit,
+    resolveProductFormCurrency,
+} from '../../utils/productFormCurrency';
 import ChatBotComponent from '../common/ChatBot';
 import { getAuthToken } from "../../utils/cookieHelper";
+import { useNotificationBellInbox } from '../../hooks/useNotificationBellInbox';
 
 // Shared menu items
 const getAdminMenuItems = ({ pendingOrders = 0, lowStockProducts = 0 } = {}) => ([
@@ -46,6 +52,15 @@ const DASHBOARD_PRODUCTS_PER_PAGE = 12;
 
 const AdminDashboard = () => {
     const { currentUser } = useAuth();
+    const { currency } = useCurrency();
+    const {
+        accountKey: notificationAccountKey,
+        notifications,
+        notificationBadgeCount,
+        notificationsError,
+        notificationsLoading,
+        reloadNotifications,
+    } = useNotificationBellInbox({ currentUser, role: 'admin' });
     const [isMobile, setIsMobile] = useState(false);
     const [aiChatOpen, setAiChatOpen] = useState(false);
 
@@ -77,8 +92,6 @@ const AdminDashboard = () => {
     const [uploadingImages, setUploadingImages] = useState(false);
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
     const [notificationsOpen, setNotificationsOpen] = useState(false);
-    const [notifications, setNotifications] = useState([]);
-    const [notificationsLoading, setNotificationsLoading] = useState(false);
     const notifTriggerRef = useRef(null);
     const notifMenuRef = useRef(null);
     const [notifPos, setNotifPos] = useState({ top: 0, right: 0 });
@@ -138,7 +151,13 @@ const AdminDashboard = () => {
     };
 
     useEffect(() => { setProductPage(1); }, [searchTerm, selectedCategory]);
-    useEffect(() => { fetchProducts(); fetchOrders(); }, [searchTerm, selectedCategory, productPage]);
+    useEffect(() => {
+        fetchProducts();
+        fetchOrders();
+        // Fetchers intentionally follow the filter/page state above. Adding
+        // their render-created identities would issue a request every render.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [searchTerm, selectedCategory, productPage]);
 
     const handleCreateProduct = () => {
         setEditingProduct({
@@ -149,42 +168,77 @@ const AdminDashboard = () => {
         setIsFormOpen(true);
     };
 
-    const handleEditProduct = (product) => { setEditingProduct({ ...product }); setIsFormOpen(true); };
+    const handleEditProduct = (product) => {
+        try {
+            setEditingProduct(normalizeProductForEdit(product));
+            setIsFormOpen(true);
+        } catch (error) {
+            toast.error(error.message || 'This product cannot be edited until its stored currency data is corrected.');
+        }
+    };
 
     const handleSaveProduct = async () => {
+        const pricing = inspectProductFormSubmission(editingProduct, currency);
+        if (!pricing.valid) {
+            toast.error('Enter a non-negative exact price, an optional lower sale price, and a whole stock quantity. Free products may use 0.00.');
+            return;
+        }
+
         setUploadingImages(true);
+        let productForSave = {
+            ...editingProduct,
+            price: pricing.price,
+            discountedPrice: pricing.discountedPrice,
+            stock: pricing.stock,
+            currency: pricing.currency,
+            priceCurrency: pricing.currency,
+            priceInputAmount: pricing.price,
+            discountedPriceCurrency: pricing.currency,
+            discountedPriceInputAmount: pricing.discountedPrice,
+        };
         try {
-            if (editingProduct.imageFile) {
-                const imageUrl = await uploadImageToCloudinary(editingProduct.imageFile);
-                editingProduct.image = imageUrl;
-                delete editingProduct.imageFile;
+            if (productForSave.imageFile) {
+                const imageUrl = await uploadImageToCloudinary(productForSave.imageFile);
+                productForSave = { ...productForSave, image: imageUrl };
+                delete productForSave.imageFile;
             }
-            if (editingProduct.imageFiles && editingProduct.imageFiles.length > 0) {
-                const uploadedUrls = await Promise.all(editingProduct.imageFiles.map(file => uploadImageToCloudinary(file)));
-                const existingImages = editingProduct.images.filter(img => !img.isFile);
+            if (productForSave.imageFiles && productForSave.imageFiles.length > 0) {
+                const uploadedUrls = await Promise.all(productForSave.imageFiles.map(file => uploadImageToCloudinary(file)));
+                const existingImages = productForSave.images.filter(img => !img.isFile);
                 const newImages = uploadedUrls.map(url => ({ url }));
-                editingProduct.images = [...existingImages, ...newImages];
-                delete editingProduct.imageFiles;
+                productForSave = { ...productForSave, images: [...existingImages, ...newImages] };
+                delete productForSave.imageFiles;
             }
-            if (editingProduct.images) {
-                editingProduct.images = editingProduct.images.map(img => ({ url: img.url }));
+            if (productForSave.images) {
+                productForSave = {
+                    ...productForSave,
+                    images: productForSave.images.map(img => ({ url: img.url })),
+                };
             }
         } catch (error) { setUploadingImages(false); toast.error(error.message || 'Failed to upload images'); return; }
 
-        if (editingProduct._id) {
+        if (productForSave._id) {
             try {
                 const token = getAuthToken();
-                const res = await axios.put(`${import.meta.env.VITE_API_URL}api/products/edit/${editingProduct._id}`,
-                    { product: editingProduct }, { headers: { Authorization: `Bearer ${token}` } });
+                const res = await axios.put(`${import.meta.env.VITE_API_URL}api/products/edit/${productForSave._id}`,
+                    { product: productForSave }, { headers: { Authorization: `Bearer ${token}` } });
                 toast.success(res.data.msg); fetchProducts(); fetchFilters();
-            } catch (error) { toast.error(error.response?.data?.msg || 'Failed'); }
+            } catch (error) {
+                toast.error(error.response?.data?.msg || 'Failed');
+                setUploadingImages(false);
+                return;
+            }
         } else {
             try {
                 const token = getAuthToken();
                 const res = await axios.post(`${import.meta.env.VITE_API_URL}api/products/add`,
-                    { product: editingProduct }, { headers: { Authorization: `Bearer ${token}` } });
+                    { product: productForSave }, { headers: { Authorization: `Bearer ${token}` } });
                 toast.success(res.data.msg); fetchProducts(); fetchFilters();
-            } catch (error) { toast.error(error.response?.data?.msg || 'Failed'); }
+            } catch (error) {
+                toast.error(error.response?.data?.msg || 'Failed');
+                setUploadingImages(false);
+                return;
+            }
         }
         setUploadingImages(false); setIsFormOpen(false); setEditingProduct(null);
     };
@@ -237,7 +291,7 @@ const AdminDashboard = () => {
     const lowStockProducts = products.filter(p => p.stock <= 10 && p.stock > 0).length;
     const outOfStockProducts = products.filter(p => p.stock === 0).length;
 
-    const outletContext = useMemo(() => ({
+    const outletContext = {
         dashboardRole: 'admin',
         products, orders, categories, searchTerm, setSearchTerm,
         selectedCategory, setSelectedCategory, deleteConfirm, setDeleteConfirm,
@@ -248,7 +302,7 @@ const AdminDashboard = () => {
         totalProducts: productPagination.totalProducts,
         pageSize: productPagination.limit,
         setProductPage,
-    }), [products, orders, categories, searchTerm, selectedCategory, deleteConfirm, loading, productPagination]);
+    };
 
     const location = useLocation();
 
@@ -270,32 +324,14 @@ const AdminDashboard = () => {
         return 'Admin Dashboard';
     };
 
-    // Fetch notifications from backend API
-    const fetchNotifications = async () => {
-        setNotificationsLoading(true);
-        const token = getAuthToken();
-        try {
-            const res = await axios.get(`${import.meta.env.VITE_API_URL}api/analytics/admin/notifications`, {
-                headers: { Authorization: `Bearer ${token}` }
-            });
-            setNotifications(res.data.notifications || []);
-        } catch {
-            // Fallback to local data
-            const notifs = [];
-            products.filter(p => p.stock === 0).forEach(p => {
-                notifs.push({ id: `s-${p._id}`, type: 'critical', title: `${p.name} is out of stock`, description: 'Update inventory', time: new Date().toISOString() });
-            });
-            orders.filter(o => o.orderStatus === 'pending').slice(0, 5).forEach(o => {
-                notifs.push({ id: `o-${o._id}`, type: 'info', title: `Pending order #${o.orderId}`, description: o.shippingInfo?.fullName || '', time: o.createdAt });
-            });
-            setNotifications(notifs);
-        } finally { setNotificationsLoading(false); }
-    };
-
     const handleBellClick = () => {
-        if (!notificationsOpen) fetchNotifications();
+        if (!notificationsOpen) reloadNotifications();
         setNotificationsOpen(!notificationsOpen);
     };
+
+    useEffect(() => {
+        setNotificationsOpen(false);
+    }, [notificationAccountKey]);
 
     useEffect(() => {
         const handler = (e) => {
@@ -338,6 +374,11 @@ const AdminDashboard = () => {
                         </span>
                     </div>
                     <div className="overflow-y-auto" style={{ maxHeight: 'calc(70vh - 60px)' }}>
+                        {notificationsError && !notificationsLoading && (
+                            <div role="alert" className="px-4 py-2 text-[11px]" style={{ color: 'hsl(0,72%,55%)', borderBottom: '1px solid var(--glass-border)' }}>
+                                {notificationsError}
+                            </div>
+                        )}
                         {notificationsLoading ? (
                                 <div className="flex items-center justify-center py-8">
                                 <Loader2 size={20} className="animate-spin" style={{ color: 'hsl(var(--muted-foreground))' }} />
@@ -345,7 +386,9 @@ const AdminDashboard = () => {
                         ) : notifications.length === 0 ? (
                             <div className="text-center py-8 px-4">
                                 <Bell size={28} style={{ color: 'hsl(var(--muted-foreground))' }} className="mx-auto mb-2 opacity-50" />
-                                <p className="text-sm" style={{ color: 'hsl(var(--muted-foreground))' }}>All caught up!</p>
+                                <p className="text-sm" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                                    {notificationsError ? 'No verified notifications are available.' : 'All caught up!'}
+                                </p>
                             </div>
                         ) : (
                             <div className="p-2 space-y-1">
@@ -358,10 +401,11 @@ const AdminDashboard = () => {
                                         success: { bg: 'rgba(16,185,129,0.12)', color: 'hsl(150,60%,45%)' },
                                     };
                                     const cs = colorMap[n.type] || colorMap.info;
-                                    return (
-                                        <motion.div key={n.id || i}
+                                    const row = (
+                                        <motion.div
                                             initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.03 }}
-                                            className="flex items-start gap-3 p-3 rounded-xl transition-all hover:bg-white/5">
+                                            onClick={() => setNotificationsOpen(false)}
+                                            className="flex items-start gap-3 p-3 rounded-xl transition-all hover:bg-white/5 cursor-pointer">
                                             <div className="p-1.5 rounded-lg mt-0.5 shrink-0" style={{ background: cs.bg, color: cs.color }}>{iconMap[n.type]}</div>
                                             <div className="flex-1 min-w-0">
                                                 <p className="text-xs font-semibold truncate" style={{ color: 'hsl(var(--foreground))' }}>{n.title}</p>
@@ -372,6 +416,9 @@ const AdminDashboard = () => {
                                             </div>
                                         </motion.div>
                                     );
+                                    return n.linkTo
+                                        ? <Link key={n.id} to={n.linkTo}>{row}</Link>
+                                        : <div key={n.id}>{row}</div>;
                                 })}
                             </div>
                         )}
@@ -438,10 +485,10 @@ const AdminDashboard = () => {
                                     style={{ color: 'hsl(var(--foreground))' }}
                                 >
                                     <Bell size={18} />
-                                    {(pendingOrders + lowStockProducts + outOfStockProducts) > 0 && (
+                                    {notificationBadgeCount > 0 && (
                                         <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] flex items-center justify-center rounded-full text-[10px] font-bold text-white px-1"
                                             style={{ background: 'hsl(0, 72%, 55%)' }}>
-                                            {pendingOrders + lowStockProducts + outOfStockProducts}
+                                            {notificationBadgeCount > 99 ? '99+' : notificationBadgeCount}
                                         </span>
                                     )}
                                 </motion.button>
@@ -581,7 +628,6 @@ const AdminDashboard = () => {
 // Admin Sidebar Component
 // ============================
 const AdminSidebar = ({ activeTab, setActiveTab, isSidebarOpen, setIsSidebarOpen, isMobile, pendingOrders, lowStockProducts, onAiChat }) => {
-    const { currentUser } = useAuth();
     const location = useLocation();
 
     const menuItems = [
@@ -606,6 +652,9 @@ const AdminSidebar = ({ activeTab, setActiveTab, isSidebarOpen, setIsSidebarOpen
 
     useEffect(() => {
         menuItems.forEach(item => { if (item.link && location.pathname.includes(item.link.split('/').pop())) setActiveTab(item.id); });
+        // menuItems is rebuilt for current badges; active-tab selection only
+        // follows the route and stable parent setter.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [location]);
 
     const handleTabClick = (tabId, item) => {
@@ -722,7 +771,7 @@ const AdminSidebar = ({ activeTab, setActiveTab, isSidebarOpen, setIsSidebarOpen
 // Product Form (Glass Design)
 // ============================
 const ProductForm = ({ product, setProduct, onSave, onClose, uploadingImages }) => {
-    const { currency, convertAmount, getCurrencySymbol } = useCurrency();
+    const { currency, currencies } = useCurrency();
     const [newTag, setNewTag] = useState("");
     const [newImage, setNewImage] = useState("");
 
@@ -742,8 +791,25 @@ const ProductForm = ({ product, setProduct, onSave, onClose, uploadingImages }) 
     const handleRemoveImage = (indexToRemove) => setProduct({ ...product, images: product.images.filter((_, index) => index !== indexToRemove) });
     const handleSetMainImage = (url) => setProduct({ ...product, image: url });
     const handleSubmit = (e) => { e.preventDefault(); onSave(); };
-    const editingCurrency = product.currency || product.priceCurrency || currency;
-    const displayAmount = (amount) => amount ? convertAmount(amount, editingCurrency, currency).toFixed(2) : '';
+    const editingCurrency = resolveProductFormCurrency(product, currency);
+    const editingCurrencySymbol = currencies[editingCurrency]?.symbol || editingCurrency;
+    const displayAmount = (amount) => {
+        if (amount === '' || amount === null || amount === undefined) return '';
+        return typeof amount === 'number' || typeof amount === 'string' ? String(amount) : '';
+    };
+    const updatePriceField = (field, rawValue) => {
+        setProduct({
+            ...product,
+            [field]: rawValue,
+            currency: editingCurrency,
+            priceCurrency: editingCurrency,
+            ...(field === 'price' ? { priceInputAmount: rawValue === '' ? null : rawValue } : {}),
+            ...(field === 'discountedPrice' ? {
+                discountedPriceCurrency: editingCurrency,
+                discountedPriceInputAmount: rawValue === '' ? null : rawValue,
+            } : {}),
+        });
+    };
 
     const inputClass = "glass-input w-full";
     const labelClass = "block text-xs font-semibold uppercase tracking-wider mb-2";
@@ -796,49 +862,30 @@ const ProductForm = ({ product, setProduct, onSave, onClose, uploadingImages }) 
                         <div>
                             <label className={labelClass} style={{ color: 'hsl(var(--muted-foreground))' }}>Stock *</label>
                             <input type="number" min={0} required disabled={uploadingImages} value={product.stock}
-                                onChange={(e) => setProduct({ ...product, stock: Math.round(e.target.value) || 0 })}
+                                onChange={(e) => setProduct({ ...product, stock: e.target.value })}
                                 className={inputClass} placeholder="Enter stock quantity" />
                         </div>
                         <div>
                             <label className={labelClass} style={{ color: 'hsl(var(--muted-foreground))' }}>
-                                Price ({getCurrencySymbol()}) * <span className="normal-case font-normal">in {currency}</span>
+                                Price ({editingCurrencySymbol}) * <span className="normal-case font-normal">in native {editingCurrency}</span>
                             </label>
                             <div className="relative">
-                                <span className="absolute left-3 top-1/2 -translate-y-1/2 font-medium" style={{ color: 'hsl(var(--muted-foreground))' }}>{getCurrencySymbol()}</span>
+                                <span className="absolute left-3 top-1/2 -translate-y-1/2 font-medium" style={{ color: 'hsl(var(--muted-foreground))' }}>{editingCurrencySymbol}</span>
                                 <input type="number" min="0" step="0.01" required disabled={uploadingImages}
                                     value={displayAmount(product.price)}
-                                    onChange={(e) => {
-                                        const inputAmount = e.target.value === '' ? '' : parseFloat(e.target.value) || 0;
-                                        setProduct({
-                                            ...product,
-                                            price: inputAmount,
-                                            currency,
-                                            priceCurrency: currency,
-                                            priceInputAmount: inputAmount === '' ? null : inputAmount,
-                                        });
-                                    }}
-                                    className={`${inputClass} pl-10`} placeholder={`Enter price in ${currency}`} />
+                                    onChange={(e) => updatePriceField('price', e.target.value)}
+                                    className={`${inputClass} pl-10`} placeholder={`Enter price in ${editingCurrency}`} />
                             </div>
                         </div>
                         <div>
                             <label className={labelClass} style={{ color: 'hsl(var(--muted-foreground))' }}>
-                                Discounted Price ({getCurrencySymbol()}) <span className="normal-case font-normal">in {currency}</span>
+                                Discounted Price ({editingCurrencySymbol}) <span className="normal-case font-normal">in native {editingCurrency}</span>
                             </label>
                             <div className="relative">
-                                <span className="absolute left-3 top-1/2 -translate-y-1/2 font-medium" style={{ color: 'hsl(var(--muted-foreground))' }}>{getCurrencySymbol()}</span>
+                                <span className="absolute left-3 top-1/2 -translate-y-1/2 font-medium" style={{ color: 'hsl(var(--muted-foreground))' }}>{editingCurrencySymbol}</span>
                                 <input type="number" min="0" step="0.01" disabled={uploadingImages}
                                     value={displayAmount(product.discountedPrice)}
-                                    onChange={(e) => {
-                                        const inputAmount = parseFloat(e.target.value) || 0;
-                                        setProduct({
-                                            ...product,
-                                            currency,
-                                            priceCurrency: currency,
-                                            discountedPrice: inputAmount,
-                                            discountedPriceCurrency: currency,
-                                            discountedPriceInputAmount: inputAmount,
-                                        });
-                                    }}
+                                    onChange={(e) => updatePriceField('discountedPrice', e.target.value)}
                                     className={`${inputClass} pl-10`} placeholder={`Discounted price (optional)`} />
                             </div>
                         </div>

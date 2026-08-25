@@ -12,7 +12,7 @@ const notificationSchema = new mongoose.Schema(
         // Free-form bucket — used by the bell, mobile inbox, and the admin broadcaster.
         category: {
             type: String,
-            enum: ['announcement', 'promo', 'order', 'system', 'seller', 'subscription'],
+            enum: ['announcement', 'promo', 'order', 'payment', 'system', 'seller', 'subscription'],
             default: 'announcement',
             index: true,
         },
@@ -49,6 +49,13 @@ const notificationSchema = new mongoose.Schema(
         readAt: { type: Date },
         // Optional event idempotency key for retry-safe system notifications.
         dedupeKey: { type: String, trim: true, select: false },
+        // Durable event identity shared with push/email/WhatsApp outbox rows.
+        // Clients use this to merge the in-app copy with an already-received
+        // push instead of showing the same financial event twice.
+        eventKey: { type: String, default: '', maxlength: 300, index: true },
+        eventType: { type: String, default: '', maxlength: 100, index: true },
+        aggregateType: { type: String, default: '', maxlength: 80 },
+        aggregateId: { type: String, default: '', maxlength: 200, index: true },
     },
     { timestamps: true }
 );

@@ -34,26 +34,40 @@ import {
   normalizeProductResponse,
   validateBulkActionSelection,
 } from '../../utils/productManagement';
+import { exactCurrencyCode } from '../../utils/sellerMoneySafety';
+import {
+  inspectManagedProduct,
+  inspectProductBulkSelection,
+  parseBulkPercentageInput,
+  parseSignedBulkMoneyInput,
+} from '../../utils/productBulkSafety';
 
 const PAGE_LIMIT = 24;
+const CURRENCY_SYMBOLS = { USD: '$', PKR: 'Rs', EUR: '€', GBP: '£' };
+const normalizeCurrency = value => exactCurrencyCode(value);
 
 export { filterProductsByQuery, isProductHiddenByModeration };
 
-const getStockStatus = (stock, palette) => {
-  const amount = Number(stock || 0);
-  if (amount <= 0) return { label: 'Out of Stock', color: palette.colors.error };
-  if (amount <= 10) return { label: 'Low Stock', color: palette.colors.warning };
+const getStockStatus = (presentation, palette) => {
+  if (!presentation.stockValid) return { label: 'Stock unavailable', color: palette.colors.error };
+  if (presentation.stock === 0) return { label: 'Out of Stock', color: palette.colors.error };
+  if (presentation.stock <= 10) return { label: 'Low Stock', color: palette.colors.warning };
   return { label: 'In Stock', color: palette.colors.success };
 };
 
 export default function ProductManagementScreen({ navigation, route }) {
   const { palette } = useTheme();
   const styles = buildStyles(palette);
-  const { currency, formatProductPrice, getCurrencySymbol } = useCurrency();
+  const {
+    currency,
+    exchangeRatesFallback,
+    exchangeRatesLoading,
+    formatProductPrice,
+  } = useCurrency();
 
   const { isAdmin } = route.params || {};
   const [products, setProducts] = useState([]);
-  const [pagination, setPagination] = useState({ page: 1, limit: PAGE_LIMIT, totalProducts: 0, totalPages: 1, hasMore: false });
+  const [pagination, setPagination] = useState(null);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [searching, setSearching] = useState(false);
@@ -75,13 +89,18 @@ export default function ProductManagementScreen({ navigation, route }) {
   const [hasStore, setHasStore] = useState(isAdmin ? true : null);
   const [loadError, setLoadError] = useState('');
   const [storeCheckError, setStoreCheckError] = useState('');
+  const [storeCurrency, setStoreCurrency] = useState(null);
+  const [storeCurrencyLoading, setStoreCurrencyLoading] = useState(!isAdmin);
+  const [storeCurrencyError, setStoreCurrencyError] = useState('');
   const hasLoadedRef = useRef(false);
   const fetchProductsRef = useRef(null);
   const checkStoreRef = useRef(null);
+  const fetchProductCurrencyRef = useRef(null);
   const fetchRequestRef = useRef(0);
 
   const endpoint = isAdmin ? API_ENDPOINTS.PRODUCTS.GET_ADMIN : API_ENDPOINTS.PRODUCTS.GET_SELLER;
-  const moneySymbol = getCurrencySymbol();
+  const bulkInputCurrency = isAdmin ? normalizeCurrency(currency) : storeCurrency;
+  const moneySymbol = CURRENCY_SYMBOLS[bulkInputCurrency] || bulkInputCurrency || '—';
 
   const handleBack = useCallback(() => {
     if (navigation.canGoBack?.()) navigation.goBack();
@@ -91,6 +110,13 @@ export default function ProductManagementScreen({ navigation, route }) {
   const openProductForm = useCallback((product) => {
     if (!isAdmin && hasStore === false) {
       navigation.navigate('SellerStoreSettings');
+      return;
+    }
+    if (product && !inspectManagedProduct(product).valid) {
+      Alert.alert(
+        'Product data unavailable',
+        'Refresh this product before editing it. Its stored price, currency, stock, or identifier is invalid.'
+      );
       return;
     }
     navigation.navigate('ProductForm', { ...(product ? { product } : {}), isAdmin });
@@ -114,7 +140,13 @@ export default function ProductManagementScreen({ navigation, route }) {
         }),
       });
       if (requestId !== fetchRequestRef.current) return;
-      const normalized = normalizeProductResponse(res.data);
+      const normalized = normalizeProductResponse(res.data, {
+        expectedPage: page,
+        expectedLimit: PAGE_LIMIT,
+      });
+      if (!normalized.pagination && (append || page !== 1)) {
+        throw new Error('Legacy product lists cannot be safely paginated.');
+      }
       setProducts(prev => append ? mergeProducts(prev, normalized.products) : normalized.products);
       setCategories((previous) => normalizeProductCategories(previous, normalized.products));
       setPagination(normalized.pagination || {
@@ -126,9 +158,17 @@ export default function ProductManagementScreen({ navigation, route }) {
       });
     } catch (e) {
       if (requestId !== fetchRequestRef.current) return;
-      const message = e.response?.data?.msg || 'We could not load your products. Check your connection and try again.';
+      const message = e.response?.data?.msg || e.message || 'We could not load your products. Check your connection and try again.';
       setLoadError(message);
-      if (append) Alert.alert('Could not load more products', message);
+      if (append) {
+        Alert.alert('Could not load more products', message);
+      } else {
+        setProducts([]);
+        setPagination(null);
+        setSelectedProducts([]);
+        setBulkModalVisible(false);
+        setSelectMode(false);
+      }
     } finally {
       if (requestId !== fetchRequestRef.current) return;
       setLoading(false);
@@ -167,10 +207,28 @@ export default function ProductManagementScreen({ navigation, route }) {
     }
   }, [isAdmin]);
 
+  const fetchProductCurrency = useCallback(async () => {
+    if (isAdmin) return;
+    setStoreCurrencyLoading(true);
+    setStoreCurrencyError('');
+    setStoreCurrency(null);
+    try {
+      const response = await api.get(API_ENDPOINTS.STORES.PRODUCT_CURRENCY);
+      const activeCurrency = normalizeCurrency(response.data?.productCurrency?.activeCurrency);
+      if (!activeCurrency) throw new Error('Your store product currency is unavailable.');
+      setStoreCurrency(activeCurrency);
+    } catch (error) {
+      setStoreCurrencyError(error.response?.data?.msg || error.message || 'Your store product currency could not be verified.');
+    } finally {
+      setStoreCurrencyLoading(false);
+    }
+  }, [isAdmin]);
+
   useEffect(() => {
     checkStore();
     fetchCategories();
-  }, [checkStore, fetchCategories]);
+    fetchProductCurrency();
+  }, [checkStore, fetchCategories, fetchProductCurrency]);
 
   useEffect(() => {
     const timer = setTimeout(() => fetchProducts({ page: 1 }), searchQuery ? 350 : 0);
@@ -185,12 +243,14 @@ export default function ProductManagementScreen({ navigation, route }) {
   useEffect(() => {
     fetchProductsRef.current = fetchProducts;
     checkStoreRef.current = checkStore;
-  }, [checkStore, fetchProducts]);
+    fetchProductCurrencyRef.current = fetchProductCurrency;
+  }, [checkStore, fetchProductCurrency, fetchProducts]);
 
   useEffect(() => navigation.addListener('focus', () => {
     if (!hasLoadedRef.current) return;
     fetchProductsRef.current?.({ page: 1, silent: true });
     checkStoreRef.current?.();
+    fetchProductCurrencyRef.current?.();
     fetchCategories();
   }), [fetchCategories, navigation]);
 
@@ -199,16 +259,21 @@ export default function ProductManagementScreen({ navigation, route }) {
     await Promise.all([
       fetchProducts({ page: 1, silent: true }),
       checkStore(),
+      fetchProductCurrency(),
       fetchCategories(),
     ]);
-  }, [checkStore, fetchCategories, fetchProducts]);
+  }, [checkStore, fetchCategories, fetchProductCurrency, fetchProducts]);
 
   const loadMore = () => {
     if (loading || loadingMore || !pagination?.hasMore) return;
-    fetchProducts({ page: (pagination.page || 1) + 1, append: true, silent: true });
+    fetchProducts({ page: pagination.page + 1, append: true, silent: true });
   };
 
   const deleteProduct = useCallback((id, name) => {
+    if (!inspectManagedProduct({ _id: id }).managementSafe) {
+      Alert.alert('Product unavailable', 'Refresh before deleting this product because its identifier is invalid.');
+      return;
+    }
     Alert.alert('Delete product?', `Delete "${name || 'this product'}"?`, [
       { text: 'Cancel', style: 'cancel' },
       {
@@ -220,10 +285,7 @@ export default function ProductManagementScreen({ navigation, route }) {
             await api.delete(`${API_ENDPOINTS.PRODUCTS.DELETE}/${id}`);
             setProducts(prev => prev.filter(p => p._id !== id));
             setSelectedProducts(prev => prev.filter(p => p._id !== id));
-            setPagination((previous) => ({
-              ...previous,
-              totalProducts: Math.max(0, Number(previous?.totalProducts || 0) - 1),
-            }));
+            await fetchProducts({ page: 1, silent: true });
           } catch (e) {
             Alert.alert('Error', e.response?.data?.msg || 'Failed to delete product');
           } finally {
@@ -232,19 +294,21 @@ export default function ProductManagementScreen({ navigation, route }) {
         },
       },
     ]);
-  }, []);
+  }, [fetchProducts]);
 
   const handleSelectProduct = useCallback((product) => {
+    if (!inspectManagedProduct(product).managementSafe) return;
     setSelectedProducts(prev => prev.find(p => p._id === product._id)
       ? prev.filter(p => p._id !== product._id)
       : [...prev, product]);
   }, []);
 
+  const selectableProducts = products.filter(product => inspectManagedProduct(product).managementSafe);
   const toggleSelectAllLoaded = () => {
-    if (selectedProducts.length === products.length) {
+    if (selectedProducts.length === selectableProducts.length) {
       setSelectedProducts([]);
     } else {
-      setSelectedProducts(products);
+      setSelectedProducts(selectableProducts);
     }
   };
 
@@ -256,7 +320,43 @@ export default function ProductManagementScreen({ navigation, route }) {
     setBulkPriceValue('');
   };
 
-  const selectedIds = [...new Set(selectedProducts.map((product) => product?._id).filter(Boolean))];
+  const selectedIds = [...new Set(selectedProducts
+    .filter(product => inspectManagedProduct(product).managementSafe)
+    .map(product => product._id))];
+  const selectedMoney = inspectProductBulkSelection(selectedProducts);
+  const selectedNeedsConversion = selectedMoney.valid
+    && selectedMoney.currencies.some(productCurrency => productCurrency !== bulkInputCurrency);
+  const trustedRatesUnavailable = selectedNeedsConversion
+    && (exchangeRatesFallback || exchangeRatesLoading);
+
+  const requireBulkCurrency = (usesCurrencyAmount) => {
+    if (!selectedMoney.valid) {
+      Alert.alert(
+        'Product data unavailable',
+        'Refresh products with unavailable price, currency, stock, or identifiers before changing their money.'
+      );
+      return false;
+    }
+    if (!bulkInputCurrency) {
+      Alert.alert(
+        'Currency unavailable',
+        isAdmin
+          ? 'Choose a supported currency before changing product money.'
+          : 'Your active store currency must be verified before changing product money.'
+      );
+      return false;
+    }
+    if (!isAdmin && selectedNeedsConversion) {
+      Alert.alert(
+        'Store currency mismatch',
+        `Selected products are not all stored in your active ${bulkInputCurrency} store currency. Finish or cancel the store currency change, then refresh products.`
+      );
+      return false;
+    }
+    if (!usesCurrencyAmount || !trustedRatesUnavailable) return true;
+    Alert.alert('Live rates required', 'Refresh live exchange rates before changing prices across currencies.');
+    return false;
+  };
 
   const requireSelection = (max) => {
     const validation = validateBulkActionSelection(selectedIds, { max });
@@ -266,24 +366,32 @@ export default function ProductManagementScreen({ navigation, route }) {
   };
 
   const handleBulkDiscount = async () => {
-    const productIds = requireSelection();
+    const productIds = requireSelection(250);
     if (!productIds) return;
-    const discountValue = Number(bulkDiscountValue);
-    if (!Number.isFinite(discountValue) || discountValue <= 0) {
-      Alert.alert('Invalid discount', 'Enter a discount greater than zero.');
+    const discountValue = bulkDiscountType === 'fixed'
+      ? parseSignedBulkMoneyInput(bulkDiscountValue)
+      : parseBulkPercentageInput(bulkDiscountValue, {
+        minimum: 0.000001,
+        maximum: 100,
+        maximumExclusive: true,
+      });
+    if (discountValue === null) {
+      Alert.alert(
+        'Invalid discount',
+        bulkDiscountType === 'fixed'
+          ? 'Enter a positive amount with no more than two decimal places.'
+          : 'Enter a percentage above 0 and below 100 with at most six decimals.'
+      );
       return;
     }
-    if (bulkDiscountType === 'percentage' && discountValue >= 100) {
-      Alert.alert('Invalid discount', 'Percentage discounts must be less than 100%.');
-      return;
-    }
+    if (!requireBulkCurrency(bulkDiscountType === 'fixed')) return;
     setBulkLoading(true);
     try {
       const response = await api.post(API_ENDPOINTS.PRODUCTS.BULK_DISCOUNT, {
         productIds,
         discountType: bulkDiscountType,
         discountValue,
-        currency,
+        currency: bulkInputCurrency,
       });
       exitBulkMode();
       fetchProducts({ page: 1, silent: true });
@@ -296,24 +404,33 @@ export default function ProductManagementScreen({ navigation, route }) {
   };
 
   const handleBulkPriceUpdate = async () => {
-    const productIds = requireSelection();
+    const productIds = requireSelection(250);
     if (!productIds) return;
-    const priceValue = Number(bulkPriceValue);
-    if (!Number.isFinite(priceValue) || (bulkPriceType === 'set' ? priceValue <= 0 : priceValue === 0)) {
-      Alert.alert('Invalid price change', bulkPriceType === 'set' ? 'The new price must be greater than zero.' : 'Enter a non-zero price change.');
+    const priceValue = bulkPriceType === 'percentage'
+      ? parseBulkPercentageInput(bulkPriceValue, { minimum: -100 })
+      : parseSignedBulkMoneyInput(bulkPriceValue, {
+        allowNegative: bulkPriceType === 'fixed',
+        allowZero: bulkPriceType === 'set',
+      });
+    if (priceValue === null) {
+      Alert.alert(
+        'Invalid price change',
+        bulkPriceType === 'percentage'
+          ? 'Enter a non-zero percentage of at least -100 with at most six decimals.'
+          : bulkPriceType === 'set'
+            ? 'Enter a non-negative price with no more than two decimal places.'
+            : 'Enter a valid non-zero amount with no more than two decimal places.'
+      );
       return;
     }
-    if (bulkPriceType === 'percentage' && priceValue <= -100) {
-      Alert.alert('Invalid price change', 'A percentage decrease must be less than 100%.');
-      return;
-    }
+    if (!requireBulkCurrency(bulkPriceType !== 'percentage')) return;
     setBulkLoading(true);
     try {
       const response = await api.post(API_ENDPOINTS.PRODUCTS.BULK_PRICE_UPDATE, {
         productIds,
         updateType: bulkPriceType,
         value: priceValue,
-        currency,
+        currency: bulkInputCurrency,
       });
       exitBulkMode();
       fetchProducts({ page: 1, silent: true });
@@ -326,8 +443,9 @@ export default function ProductManagementScreen({ navigation, route }) {
   };
 
   const handleRemoveDiscount = async () => {
-    const productIds = requireSelection();
+    const productIds = requireSelection(250);
     if (!productIds) return;
+    if (!requireBulkCurrency(false)) return;
     setBulkLoading(true);
     try {
       const response = await api.post(API_ENDPOINTS.PRODUCTS.REMOVE_DISCOUNT, { productIds });
@@ -371,11 +489,12 @@ export default function ProductManagementScreen({ navigation, route }) {
   };
 
   const renderProduct = useCallback(({ item }) => {
-    const stockStatus = getStockStatus(item.stock, palette);
+    const presentation = inspectManagedProduct(item);
+    const stockStatus = getStockStatus(presentation, palette);
     const isDeleting = deletingId === item._id;
     const isSelected = selectedProducts.some(p => p._id === item._id);
     const imageUri = getManagedProductImage(item);
-    const hasDiscount = Number(item.discountedPrice || 0) > 0 && Number(item.discountedPrice) < Number(item.price);
+    const hasDiscount = presentation.hasDiscount;
     const isHidden = isProductHiddenByModeration(item);
     const hiddenReason = getProductModerationReason(item);
 
@@ -391,7 +510,7 @@ export default function ProductManagementScreen({ navigation, route }) {
             openProductForm(item);
           }}
           onLongPress={() => {
-            if (!selectMode) {
+            if (!selectMode && presentation.managementSafe) {
               setSelectMode(true);
               handleSelectProduct(item);
             }
@@ -427,19 +546,25 @@ export default function ProductManagementScreen({ navigation, route }) {
               </View>
             )}
             <View style={styles.priceRow}>
-              <Text style={styles.productPrice}>{formatProductPrice(item, { field: hasDiscount ? 'discountedPrice' : 'price' })}</Text>
-              {hasDiscount && <Text style={styles.originalPrice}>{formatProductPrice(item, { field: 'price' })}</Text>}
+              <Text style={styles.productPrice}>
+                {presentation.moneyValid
+                  ? formatProductPrice(item, { field: hasDiscount ? 'discountedPrice' : 'price' })
+                  : 'Price unavailable'}
+              </Text>
+              {hasDiscount && presentation.moneyValid && <Text style={styles.originalPrice}>{formatProductPrice(item, { field: 'price' })}</Text>}
             </View>
             <View style={[styles.stockBadge, { backgroundColor: `${stockStatus.color}20` }]}>
-              <Text style={[styles.stockText, { color: stockStatus.color }]}>{stockStatus.label} - {Number(item.stock || 0)} left</Text>
+              <Text style={[styles.stockText, { color: stockStatus.color }]}>
+                {presentation.stockValid ? `${stockStatus.label} - ${presentation.stock} left` : stockStatus.label}
+              </Text>
             </View>
             {isHidden && <Text style={styles.hiddenReason} numberOfLines={2}>{hiddenReason}</Text>}
           </View>
           <View style={styles.actions}>
-            <TouchableOpacity style={styles.actionButton} onPress={() => openProductForm(item)} accessibilityRole="button" accessibilityLabel={`Edit ${item.name || 'product'}`}>
+            <TouchableOpacity style={styles.actionButton} onPress={() => openProductForm(item)} disabled={!presentation.valid} accessibilityRole="button" accessibilityLabel={`Edit ${item.name || 'product'}`} accessibilityState={{ disabled: !presentation.valid }}>
               <Ionicons name="create-outline" size={22} color={palette.colors.primary} />
             </TouchableOpacity>
-            <TouchableOpacity style={styles.actionButton} onPress={() => deleteProduct(item._id, item.name)} disabled={isDeleting} accessibilityRole="button" accessibilityLabel={`Delete ${item.name || 'product'}`} accessibilityState={{ disabled: isDeleting, busy: isDeleting }}>
+            <TouchableOpacity style={styles.actionButton} onPress={() => deleteProduct(item._id, item.name)} disabled={isDeleting || !presentation.managementSafe} accessibilityRole="button" accessibilityLabel={`Delete ${item.name || 'product'}`} accessibilityState={{ disabled: isDeleting || !presentation.managementSafe, busy: isDeleting }}>
               <Ionicons name="trash-outline" size={22} color={isDeleting ? palette.colors.textSecondary : palette.colors.error} />
             </TouchableOpacity>
           </View>
@@ -472,8 +597,8 @@ export default function ProductManagementScreen({ navigation, route }) {
             <Ionicons name="close" size={20} color={palette.colors.text} />
           </TouchableOpacity>
           <Text style={styles.bulkCountText}>{selectedProducts.length} selected</Text>
-          <TouchableOpacity onPress={toggleSelectAllLoaded} accessibilityRole="button" accessibilityLabel={selectedProducts.length === products.length ? 'Clear selected products' : 'Select all loaded products'}>
-            <Text style={styles.selectAllText}>{selectedProducts.length === products.length ? 'Clear' : 'Select loaded'}</Text>
+          <TouchableOpacity onPress={toggleSelectAllLoaded} accessibilityRole="button" accessibilityLabel={selectedProducts.length === selectableProducts.length ? 'Clear selected products' : 'Select all loaded products'}>
+            <Text style={styles.selectAllText}>{selectedProducts.length === selectableProducts.length ? 'Clear' : 'Select loaded'}</Text>
           </TouchableOpacity>
           {selectedProducts.length > 0 && (
             <TouchableOpacity style={styles.bulkActionsBtn} onPress={() => setBulkModalVisible(true)} accessibilityRole="button" accessibilityLabel={`Open bulk actions for ${selectedProducts.length} products`}>
@@ -530,17 +655,19 @@ export default function ProductManagementScreen({ navigation, route }) {
           </ScrollView>
           <View style={styles.resultsRow}>
             <Text style={styles.resultsText}>
-              <Text style={styles.resultsCount}>{pagination?.totalProducts ?? products.length}</Text> products
+              {pagination
+                ? <><Text style={styles.resultsCount}>{pagination.totalProducts}</Text> products</>
+                : 'Product count unavailable'}
             </Text>
-            <TouchableOpacity style={styles.selectModeBtn} onPress={() => setSelectMode(true)} disabled={products.length === 0} accessibilityRole="button" accessibilityLabel="Select products for bulk actions" accessibilityState={{ disabled: products.length === 0 }}>
-              <Ionicons name="checkmark-circle-outline" size={16} color={products.length ? palette.colors.primary : palette.colors.textSecondary} />
-              <Text style={[styles.selectModeBtnText, products.length === 0 && { color: palette.colors.textSecondary }]}>Select</Text>
+            <TouchableOpacity style={styles.selectModeBtn} onPress={() => setSelectMode(true)} disabled={selectableProducts.length === 0} accessibilityRole="button" accessibilityLabel="Select products for bulk actions" accessibilityState={{ disabled: selectableProducts.length === 0 }}>
+              <Ionicons name="checkmark-circle-outline" size={16} color={selectableProducts.length ? palette.colors.primary : palette.colors.textSecondary} />
+              <Text style={[styles.selectModeBtnText, selectableProducts.length === 0 && { color: palette.colors.textSecondary }]}>Select</Text>
             </TouchableOpacity>
           </View>
         </>
       )}
     </View>
-  ), [categories, checkStore, fetchProducts, filtersLoading, loadError, pagination?.totalProducts, palette, products.length, searchQuery, searching, selectedCategory, selectedProducts.length, selectMode, storeCheckError, styles]);
+  ), [categories, checkStore, fetchProducts, filtersLoading, loadError, pagination, palette, products, searchQuery, searching, selectableProducts.length, selectedCategory, selectedProducts.length, selectMode, storeCheckError, styles]);
 
   const renderFooter = () => {
     if (loadingMore) {
@@ -581,7 +708,9 @@ export default function ProductManagementScreen({ navigation, route }) {
       <SellerScreenHeader
         navigation={navigation}
         title="Products"
-        subtitle={`${pagination?.totalProducts ?? products.length} listings | inventory, pricing and visibility`}
+        subtitle={pagination
+          ? `${pagination.totalProducts} listings | inventory, pricing and visibility`
+          : 'Listings unavailable | inventory, pricing and visibility'}
         icon="cube-outline"
         onBack={handleBack}
         rightIcon={hasStore === false && !isAdmin ? 'storefront-outline' : 'add'}
@@ -604,7 +733,7 @@ export default function ProductManagementScreen({ navigation, route }) {
       <FlatList
         data={products}
         renderItem={renderProduct}
-        keyExtractor={i => i._id}
+        keyExtractor={(item, index) => typeof item?._id === 'string' ? item._id : `invalid-product-${index}`}
         contentContainerStyle={styles.list}
         ListHeaderComponent={renderHeader()}
         ListFooterComponent={renderFooter()}
@@ -664,6 +793,26 @@ export default function ProductManagementScreen({ navigation, route }) {
             ))}
           </View>
           <KeyboardAwareFormScrollView bottomOffset={32}>
+            {!isAdmin && (storeCurrencyLoading || storeCurrencyError) && (
+              <View style={styles.bulkCurrencyNotice}>
+                {storeCurrencyLoading ? (
+                  <ActivityIndicator color={palette.colors.primary} />
+                ) : (
+                  <Ionicons name="alert-circle-outline" size={18} color={palette.colors.error} />
+                )}
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.bulkCurrencyNoticeTitle}>
+                    {storeCurrencyLoading ? 'Verifying active store currency…' : 'Product money changes are paused.'}
+                  </Text>
+                  {!!storeCurrencyError && <Text style={styles.bulkCurrencyNoticeText}>{storeCurrencyError}</Text>}
+                </View>
+                {!!storeCurrencyError && (
+                  <TouchableOpacity onPress={fetchProductCurrency} accessibilityRole="button" accessibilityLabel="Retry store currency check">
+                    <Text style={styles.bulkCurrencyRetry}>Retry</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            )}
             {bulkTab === 'discount' && (
               <View style={styles.bulkContent}>
                 <Text style={styles.label}>Discount Type</Text>
@@ -674,7 +823,7 @@ export default function ProductManagementScreen({ navigation, route }) {
                     </TouchableOpacity>
                   ))}
                 </View>
-                <Text style={styles.label}>Discount Value</Text>
+                <Text style={styles.label}>Discount Value {bulkDiscountType === 'fixed' ? `(${bulkInputCurrency || '—'})` : '(%)'}</Text>
                 <TextInput
                   style={styles.input}
                   value={bulkDiscountValue}
@@ -683,7 +832,7 @@ export default function ProductManagementScreen({ navigation, route }) {
                   placeholder={bulkDiscountType === 'percentage' ? 'e.g. 20' : 'e.g. 10.00'}
                   placeholderTextColor={palette.colors.textSecondary}
                 />
-                <TouchableOpacity style={[styles.submitButton, bulkLoading && { opacity: 0.6 }]} onPress={handleBulkDiscount} disabled={bulkLoading}>
+                <TouchableOpacity style={[styles.submitButton, (bulkLoading || !bulkInputCurrency || !selectedMoney.valid) && { opacity: 0.6 }]} onPress={handleBulkDiscount} disabled={bulkLoading || !bulkInputCurrency || !selectedMoney.valid}>
                   {bulkLoading ? <ActivityIndicator color="white" /> : <Text style={styles.submitButtonText}>Apply Discount</Text>}
                 </TouchableOpacity>
               </View>
@@ -698,7 +847,7 @@ export default function ProductManagementScreen({ navigation, route }) {
                     </TouchableOpacity>
                   ))}
                 </View>
-                <Text style={styles.label}>{bulkPriceType === 'set' ? `New Price (${currency})` : 'Change Value'}</Text>
+                <Text style={styles.label}>{bulkPriceType === 'percentage' ? 'Change Value (%)' : bulkPriceType === 'set' ? `New Price (${bulkInputCurrency || '—'})` : `Change Value (${bulkInputCurrency || '—'})`}</Text>
                 <TextInput
                   style={styles.input}
                   value={bulkPriceValue}
@@ -707,7 +856,7 @@ export default function ProductManagementScreen({ navigation, route }) {
                   placeholder={bulkPriceType === 'percentage' ? 'e.g. 10 or -10' : bulkPriceType === 'fixed' ? 'e.g. 5 or -5' : 'e.g. 99.99'}
                   placeholderTextColor={palette.colors.textSecondary}
                 />
-                <TouchableOpacity style={[styles.submitButton, bulkLoading && { opacity: 0.6 }]} onPress={handleBulkPriceUpdate} disabled={bulkLoading}>
+                <TouchableOpacity style={[styles.submitButton, (bulkLoading || !bulkInputCurrency || !selectedMoney.valid) && { opacity: 0.6 }]} onPress={handleBulkPriceUpdate} disabled={bulkLoading || !bulkInputCurrency || !selectedMoney.valid}>
                   {bulkLoading ? <ActivityIndicator color="white" /> : <Text style={styles.submitButtonText}>Update Prices</Text>}
                 </TouchableOpacity>
               </View>
@@ -717,7 +866,7 @@ export default function ProductManagementScreen({ navigation, route }) {
                 <Ionicons name="close-circle-outline" size={34} color={palette.colors.warning} style={{ marginBottom: spacing.md }} />
                 <Text style={[styles.label, { textAlign: 'center' }]}>Remove Discounts</Text>
                 <Text style={styles.bulkHelp}>This removes discounts from selected products and keeps their original prices.</Text>
-                <TouchableOpacity style={[styles.submitButton, { backgroundColor: palette.colors.warning }, bulkLoading && { opacity: 0.6 }]} onPress={handleRemoveDiscount} disabled={bulkLoading}>
+                <TouchableOpacity style={[styles.submitButton, { backgroundColor: palette.colors.warning }, (bulkLoading || !bulkInputCurrency || !selectedMoney.valid) && { opacity: 0.6 }]} onPress={handleRemoveDiscount} disabled={bulkLoading || !bulkInputCurrency || !selectedMoney.valid}>
                   {bulkLoading ? <ActivityIndicator color="white" /> : <Text style={styles.submitButtonText}>Remove Discounts</Text>}
                 </TouchableOpacity>
               </View>
@@ -805,6 +954,10 @@ const buildStyles = (p) => StyleSheet.create({
   bulkContent: { padding: spacing.lg },
   bulkContentCentered: { padding: spacing.lg, alignItems: 'center' },
   bulkHelp: { ...typography.bodySmall, color: p.colors.textSecondary, textAlign: 'center', marginBottom: spacing.lg },
+  bulkCurrencyNotice: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginHorizontal: spacing.lg, marginTop: spacing.sm, padding: spacing.md, borderRadius: borderRadius.lg, backgroundColor: 'rgba(245,158,11,0.10)' },
+  bulkCurrencyNoticeTitle: { ...typography.bodySmall, color: p.colors.text, fontWeight: fontWeight.semibold },
+  bulkCurrencyNoticeText: { ...typography.caption, color: p.colors.textSecondary, marginTop: 2 },
+  bulkCurrencyRetry: { ...typography.bodySmall, color: p.colors.primary, fontWeight: fontWeight.bold },
   label: { ...typography.bodySemibold, color: p.colors.text, marginBottom: spacing.sm },
   input: { backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: borderRadius.lg, padding: spacing.md, fontSize: fontSize.md, color: p.colors.text, borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)', marginBottom: spacing.md },
   submitButton: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', backgroundColor: p.colors.primary, borderRadius: borderRadius.xl, paddingVertical: spacing.md, alignSelf: 'stretch' },

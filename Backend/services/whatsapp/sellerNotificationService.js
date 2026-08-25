@@ -14,17 +14,26 @@ const NOTIFICATION_CATEGORIES = {
     return_request:         { prefKey: 'orderUpdates',        critical: false },
     return_update:          { prefKey: 'orderUpdates',        critical: false },
     subscription_activated: { prefKey: 'subscriptionAlerts',  critical: false },
+    subdomain_payment:      { prefKey: 'subscriptionAlerts',  critical: false },
     subscription_ending:    { prefKey: 'subscriptionAlerts',  critical: false },
     payment_failed:         { prefKey: null,                  critical: true  }, // CRITICAL
     payment_recovered:      { prefKey: 'subscriptionAlerts',  critical: false },
+    payment_risk:           { prefKey: null,                  critical: true  },
+    plan_change_action_required: { prefKey: null,              critical: true  },
     trial_expiring:         { prefKey: null,                  critical: true  }, // CRITICAL
     account_blocked:        { prefKey: null,                  critical: true  }, // CRITICAL
     product_blocked:        { prefKey: null,                  critical: true  }, // CRITICAL
     seller_welcome:         { prefKey: null,                  critical: true  }, // CRITICAL
+    payout_account_updated: { prefKey: null,                  critical: true  }, // SECURITY-SENSITIVE
     withdrawal_update:      { prefKey: null,                  critical: false },
     bonus_expiring:         { prefKey: 'bonusAlerts',         critical: false },
     bonus_expired:          { prefKey: 'bonusAlerts',         critical: false },
     store_verified:         { prefKey: 'storeAlerts',         critical: false },
+    store_created:          { prefKey: 'storeAlerts',         critical: false },
+    store_verification_approved: { prefKey: 'storeAlerts',    critical: false },
+    store_verification_rejected: { prefKey: 'storeAlerts',    critical: false },
+    store_verification_removed: { prefKey: 'storeAlerts',     critical: false },
+    store_review:           { prefKey: 'storeAlerts',         critical: false },
     downgrade_scheduled:    { prefKey: 'subscriptionAlerts',  critical: false },
     upgrade_completed:      { prefKey: 'subscriptionAlerts',  critical: false },
 };
@@ -36,12 +45,17 @@ const NOTIFICATION_CATEGORIES = {
 //   2. A sequential in-process queue so parallel order/webhook storms don't hit
 //      WhatsApp all at once. There is no artificial send delay.
 //
-// This is a simpler cousin of services/whatsapp/queue.js (which uses DB-backed
-// messages for buyer verification). Seller notifications are fire-and-forget
-// and don't need persistence — if the server restarts mid-queue, callers
-// already handled the failure via .catch() and the notification is just dropped.
+// This sender is a simpler cousin of services/whatsapp/queue.js. Transactional
+// seller events are persisted by NotificationOutbox before reaching this
+// process-local serialization step; direct legacy callers do not gain that
+// durability merely by calling this service.
 
-const HOURLY_CAP = Number(process.env.SELLER_WA_HOURLY_CAP || 60);
+const configuredHourlyCap = Number(process.env.SELLER_WA_HOURLY_CAP || 60);
+const HOURLY_CAP = Number.isSafeInteger(configuredHourlyCap)
+    && configuredHourlyCap >= 1
+    && configuredHourlyCap <= 10_000
+    ? configuredHourlyCap
+    : 60;
 
 let chain = Promise.resolve(); // serial queue
 
@@ -54,23 +68,44 @@ async function tryReserveHourlySlot() {
     const now = new Date();
     const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
 
-    const cfg = await WhatsAppConfig.findOne({ singletonKey: 'seller' });
-    if (!cfg) return { allowed: false, reason: 'no_seller_config' };
+    // Reserve the first slot while rolling an expired window in one atomic
+    // write. If another replica wins that reset, this query no longer matches
+    // and the loser proceeds to the current-window reservation below.
+    const resetReservation = await WhatsAppConfig.findOneAndUpdate({
+        singletonKey: 'seller',
+        $or: [
+            { sentWindowStartedAt: null },
+            { sentWindowStartedAt: { $lt: oneHourAgo } },
+        ],
+    }, {
+        $set: {
+            sentWindowStartedAt: now,
+            sentInLastHour: 1,
+            lastSeen: now,
+        },
+    }, { new: true });
+    if (resetReservation) return { allowed: true };
 
-    // Roll over the window if it's older than an hour (or never set)
-    if (!cfg.sentWindowStartedAt || cfg.sentWindowStartedAt < oneHourAgo) {
-        cfg.sentWindowStartedAt = now;
-        cfg.sentInLastHour = 0;
-    }
+    // `$expr` handles a legacy missing counter as zero. The update pipeline
+    // then increments that normalized value atomically across all replicas.
+    const currentReservation = await WhatsAppConfig.findOneAndUpdate({
+        singletonKey: 'seller',
+        sentWindowStartedAt: { $gte: oneHourAgo },
+        $expr: {
+            $lt: [{ $ifNull: ['$sentInLastHour', 0] }, HOURLY_CAP],
+        },
+    }, [{
+        $set: {
+            sentInLastHour: { $add: [{ $ifNull: ['$sentInLastHour', 0] }, 1] },
+            lastSeen: now,
+        },
+    }], { new: true });
+    if (currentReservation) return { allowed: true };
 
-    if ((cfg.sentInLastHour || 0) >= HOURLY_CAP) {
-        return { allowed: false, reason: 'hourly_cap_reached' };
-    }
-
-    cfg.sentInLastHour = (cfg.sentInLastHour || 0) + 1;
-    cfg.lastSeen = now;
-    await cfg.save();
-    return { allowed: true };
+    const configured = await WhatsAppConfig.exists({ singletonKey: 'seller' });
+    return configured
+        ? { allowed: false, reason: 'hourly_cap_reached' }
+        : { allowed: false, reason: 'no_seller_config' };
 }
 
 /**
@@ -136,9 +171,9 @@ async function sendNow(sellerId, category, message) {
     // 6. Send
     try {
         const recipient = await resolveOutboundRecipient(digits, digits, { instanceType: 'seller' });
-        await sellerEvolution.sendText(recipient, message);
+        const providerResult = await sellerEvolution.sendText(recipient, message);
         await logNotification(sellerId, category, message, 'sent', '', '', seller.sellerInfo, digits);
-        return { sent: true };
+        return { sent: true, messageId: String(providerResult?.messageId || '') };
     } catch (err) {
         console.error(`[sellerNotification] sendText failed for ${category} to ${sellerId}:`, err.message);
         await logNotification(sellerId, category, message, 'failed', 'send_error', err.message, seller.sellerInfo, digits);
@@ -213,4 +248,9 @@ async function isSellerWhatsAppAvailable(sellerId) {
     }
 }
 
-module.exports = { notifySeller, isSellerWhatsAppAvailable, NOTIFICATION_CATEGORIES };
+module.exports = {
+    notifySeller,
+    isSellerWhatsAppAvailable,
+    NOTIFICATION_CATEGORIES,
+    _tryReserveHourlySlot: tryReserveHourlySlot,
+};

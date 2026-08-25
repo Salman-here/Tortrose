@@ -36,7 +36,7 @@ async function ensureFounderPromotion() {
                     reservations: [],
                 },
             },
-            { upsert: true, new: true, setDefaultsOnInsert: true }
+            { upsert: true, new: true, setDefaultsOnInsert: true, runValidators: true }
         );
     } catch (error) {
         if (error?.code === 11000) {
@@ -101,6 +101,7 @@ async function getFounderPromotionStatus(subscription = null) {
         code: FOUNDER_PROMOTION.code,
         name: FOUNDER_PROMOTION.name,
         discountPercent: FOUNDER_PROMOTION.discountPercent,
+        checkoutReservationMinutes: FOUNDER_PROMOTION.checkoutReservationMinutes,
         ...counts,
         available: counts.remaining > 0 || Boolean(sellerReservation),
         sellerEligible,
@@ -148,7 +149,7 @@ async function reserveFounderSlot(sellerId) {
                 },
             },
         },
-        { new: true }
+        { new: true, runValidators: true }
     );
 
     if (!promotion) {
@@ -196,7 +197,8 @@ async function attachCheckoutSessionToReservation(sellerId, token, checkoutSessi
                 'reservations.$.checkoutSessionId': checkoutSessionId,
                 'reservations.$.expiresAt': webhookSafetyExpiry,
             },
-        }
+        },
+        { runValidators: true }
     );
     if (result.matchedCount !== 1) {
         const error = new Error('The founder reservation could not be attached to Checkout.');
@@ -274,7 +276,7 @@ async function claimFounderReservation({ sellerId, token, checkoutSessionId }) {
                 },
             },
         },
-        { new: true }
+        { new: true, runValidators: true }
     );
 
     if (!promotion) {
@@ -330,7 +332,7 @@ async function grantLegacyFounderEntitlement(subscription) {
                     },
                 },
             },
-            { new: true }
+            { new: true, runValidators: true }
         );
     }
 
@@ -371,7 +373,8 @@ async function migrateLegacyFounderSubscribers() {
             code: FOUNDER_PROMOTION.code,
             legacyMigrationCompletedAt: null,
         },
-        { $set: { legacyMigrationCompletedAt: new Date() } }
+        { $set: { legacyMigrationCompletedAt: new Date() } },
+        { runValidators: true }
     );
 
     return { migrated, alreadyCompleted: false };

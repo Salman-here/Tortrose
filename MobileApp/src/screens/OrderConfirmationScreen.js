@@ -18,6 +18,13 @@ import GlassPanel from '../components/common/GlassPanel';
 import { borderRadius, fontSize, fontWeight, shadows, spacing } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 import { useCurrency } from '../contexts/CurrencyContext';
+import {
+  getOrderCurrency,
+  getOrderItemQuantity,
+  getOrderItemLineSubtotal,
+  getOrderSummaryAmount,
+  getOrderTotal,
+} from '../utils/orderPresentation';
 
 const getSelectedOptions = (item = {}) => {
   if (!item.selectedOptions || typeof item.selectedOptions !== 'object') return [];
@@ -44,7 +51,14 @@ export default function OrderConfirmationScreen({ navigation, route }) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
-  const money = useCallback((amount) => formatPrice(amount, { sourceCurrency: order?.currency || 'USD' }), [formatPrice, order?.currency]);
+  const money = useCallback((amount) => {
+    const orderCurrency = getOrderCurrency(order);
+    return formatPrice(amount, {
+      sourceCurrency: orderCurrency,
+      targetCurrency: orderCurrency,
+      showCode: true,
+    });
+  }, [formatPrice, order]);
 
   const fetchOrder = useCallback(async (silent = false) => {
     if (!token) {
@@ -100,7 +114,20 @@ export default function OrderConfirmationScreen({ navigation, route }) {
 
   const meta = statusMeta(order);
   const toneColor = palette.colors[meta.tone] || palette.colors.primary;
-  const summary = order?.orderSummary || {};
+  const subtotal = getOrderSummaryAmount(order, ['subtotal'], 'order subtotal');
+  const shipping = getOrderSummaryAmount(order, ['shippingCost', 'shippingFee'], 'order shipping');
+  const tax = getOrderSummaryAmount(order, ['tax', 'taxAmount'], 'order tax');
+  const discount = getOrderSummaryAmount(
+    order,
+    ['couponDiscount', 'discountAmount'],
+    'order coupon discount',
+  );
+  const reconciliationAdjustment = getOrderSummaryAmount(
+    order,
+    ['reconciliationAdjustment'],
+    'order reconciliation adjustment',
+    { signed: true },
+  );
 
   return (
     <GlassBackground>
@@ -148,12 +175,13 @@ export default function OrderConfirmationScreen({ navigation, route }) {
               <Text style={styles.sectionTitle}>Items</Text>
               {(order.orderItems || []).map((item, index) => {
                 const selectedOptions = getSelectedOptions(item);
+                const quantity = getOrderItemQuantity(item);
                 return (
                   <View key={`${item.name}-${index}`} style={styles.itemRow}>
                     <Image source={{ uri: item.image || 'https://rozare.com/favicon-512.png' }} style={styles.itemImage} />
                     <View style={{ flex: 1 }}>
                       <Text style={styles.itemName} numberOfLines={2}>{item.name}</Text>
-                      <Text style={styles.itemMeta}>Qty {item.quantity || 1} • {money(item.price || 0)}</Text>
+                      <Text style={styles.itemMeta}>Qty {quantity} • Line total {money(getOrderItemLineSubtotal(item))}</Text>
                       {!!item.selectedColor && <Text style={styles.itemOption}>Color: {item.selectedColor}</Text>}
                       {selectedOptions.map(([name, value]) => (
                         <Text key={name} style={styles.itemOption}>{name}: {String(value)}</Text>
@@ -173,11 +201,12 @@ export default function OrderConfirmationScreen({ navigation, route }) {
 
             <GlassPanel variant="card" style={styles.card}>
               <Text style={styles.sectionTitle}>Summary</Text>
-              <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Subtotal</Text><Text style={styles.summaryValue}>{money(summary.subtotal || 0)}</Text></View>
-              <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Shipping</Text><Text style={styles.summaryValue}>{money(summary.shippingFee || summary.shippingCost || 0)}</Text></View>
-              <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Tax</Text><Text style={styles.summaryValue}>{money(summary.taxAmount || 0)}</Text></View>
-              {!!summary.discountAmount && <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Discount</Text><Text style={styles.summaryValue}>-{money(summary.discountAmount)}</Text></View>}
-              <View style={styles.totalRow}><Text style={styles.totalLabel}>Total</Text><Text style={styles.totalValue}>{money(summary.totalAmount || summary.total || 0)}</Text></View>
+              <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Subtotal</Text><Text style={styles.summaryValue}>{money(subtotal)}</Text></View>
+              <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Shipping</Text><Text style={styles.summaryValue}>{money(shipping)}</Text></View>
+              <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Tax</Text><Text style={styles.summaryValue}>{money(tax)}</Text></View>
+              {discount > 0 && <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Discount</Text><Text style={styles.summaryValue}>-{money(discount)}</Text></View>}
+              {reconciliationAdjustment !== 0 && <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Rounding adjustment</Text><Text style={styles.summaryValue}>{reconciliationAdjustment > 0 ? '+' : '-'}{money(Math.abs(reconciliationAdjustment))}</Text></View>}
+              <View style={styles.totalRow}><Text style={styles.totalLabel}>Total</Text><Text style={styles.totalValue}>{money(getOrderTotal(order))}</Text></View>
               <Text style={styles.paymentText}>
                 {order.paymentMethod === 'wallet'
                   ? 'Rozare Wallet'

@@ -3,8 +3,7 @@ const SellerAdRequest = require('../models/SellerAdRequest');
 const SellerSubscription = require('../models/SellerSubscription');
 const Product = require('../models/Product');
 const Store = require('../models/Store');
-
-const META_ADS_ADDON_CENTS = 400;
+const { META_ADS_ADDON_CENTS } = require('../services/subscriptionPricingService');
 
 const featuredProductSelect = 'name image images category price discountedPrice currency priceCurrency isFeatured seller';
 
@@ -16,12 +15,36 @@ function toId(value) {
     return value?._id?.toString?.() || value?.toString?.() || '';
 }
 
-function cleanProductIds(productIds = []) {
-    return [...new Set(
-        (Array.isArray(productIds) ? productIds : [])
-            .map((id) => String(id || '').trim())
-            .filter((id) => mongoose.Types.ObjectId.isValid(id))
-    )];
+function parseProductIds(productIds, { required = false } = {}) {
+    if (productIds === undefined) {
+        return required
+            ? { error: 'Select at least one featured product for ads.' }
+            : { value: [] };
+    }
+    if (!Array.isArray(productIds)) {
+        return { error: 'Product ids must be an array.' };
+    }
+
+    const normalized = [];
+    for (const rawId of productIds) {
+        if (typeof rawId !== 'string') {
+            return { error: 'Every product id must be a valid product id.' };
+        }
+        const id = rawId.trim();
+        if (
+            !mongoose.Types.ObjectId.isValid(id)
+            || String(new mongoose.Types.ObjectId(id)) !== id.toLowerCase()
+        ) {
+            return { error: 'Every product id must be a valid product id.' };
+        }
+        normalized.push(id.toLowerCase());
+    }
+
+    const value = [...new Set(normalized)];
+    if (required && value.length === 0) {
+        return { error: 'Select at least one featured product for ads.' };
+    }
+    return { value };
 }
 
 function serializeRequest(request) {
@@ -100,6 +123,30 @@ exports.submitSellerAdRequest = async (req, res) => {
         }
 
         const sellerId = req.user.id;
+        const rawRequestType = req.body?.requestType;
+        if (rawRequestType !== undefined && !['start', 'update', 'stop'].includes(rawRequestType)) {
+            return res.status(400).json({ msg: 'Request type must be start, update, or stop.' });
+        }
+        const requestType = rawRequestType === undefined ? 'start' : rawRequestType;
+
+        const rawIncludeMeta = req.body?.includeMeta;
+        if (rawIncludeMeta !== undefined && typeof rawIncludeMeta !== 'boolean') {
+            return res.status(400).json({ msg: 'Include Meta must be true or false.' });
+        }
+        const includeMeta = rawIncludeMeta === true;
+
+        if (req.body?.sellerNote !== undefined && typeof req.body.sellerNote !== 'string') {
+            return res.status(400).json({ msg: 'Seller note must be text.' });
+        }
+        const sellerNote = (req.body?.sellerNote || '').trim().slice(0, 500);
+        const parsedProductIds = parseProductIds(req.body?.productIds, {
+            required: requestType !== 'stop',
+        });
+        if (parsedProductIds.error) {
+            return res.status(400).json({ msg: parsedProductIds.error });
+        }
+        const productIds = parsedProductIds.value;
+
         const subscription = await SellerSubscription.findOne({ seller: sellerId }).lean();
         if (!isEliteSubscription(subscription)) {
             return res.status(403).json({
@@ -113,21 +160,11 @@ exports.submitSellerAdRequest = async (req, res) => {
             return res.status(409).json({ msg: 'You already have an ads request waiting for admin approval.' });
         }
 
-        const requestType = ['start', 'update', 'stop'].includes(req.body?.requestType)
-            ? req.body.requestType
-            : 'start';
-        const includeMeta = Boolean(req.body?.includeMeta);
         if (includeMeta && !subscription?.metaAdsIncluded) {
             return res.status(400).json({
                 msg: 'Add Meta ads to your Elite subscription before requesting Meta campaigns.',
                 requiresMetaAddon: true,
             });
-        }
-        const sellerNote = String(req.body?.sellerNote || '').trim().slice(0, 500);
-        const productIds = cleanProductIds(req.body?.productIds);
-
-        if (requestType !== 'stop' && productIds.length === 0) {
-            return res.status(400).json({ msg: 'Select at least one featured product for ads.' });
         }
 
         if (requestType === 'stop') {

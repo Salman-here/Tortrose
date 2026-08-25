@@ -8,15 +8,16 @@ const { convertAmountSync } = require('../services/currencyService');
 const { getProductCurrency, getProductEffectivePrice } = require('../services/productPricingService');
 const {
     resolveRequestedCurrency,
-    convertOrderAmount,
-    lineTotal,
-    roundMoney,
+    sellerOrderSummaryForItems,
+    isSellerRevenueRecognized,
+    sumOrderAmountsInCurrency,
 } = require('../services/orderMoneyService');
 const {
     buyerLocationFromRequest,
     isStoreVisibleToBuyer,
 } = require('../services/storeVisibilityService');
 const { attachStoreReviewSummaries } = require('../services/storeReviewService');
+const { changeStoreSlug } = require('../services/subdomainSlugMutationService');
 
 const comparablePriceUSD = (product) =>
     convertAmountSync(getProductEffectivePrice(product), getProductCurrency(product), 'USD');
@@ -176,18 +177,17 @@ exports.getSellerSubdomainAnalytics = async (req, res) => {
         const orders = await Order.find({
             ...sellerOrderScope(sellerId, productIds),
             awaitingPayment: { $ne: true },
-            isPaid: true,
         });
 
         const targetCurrency = await resolveRequestedCurrency(req, User);
-        let totalRevenue = 0;
-        for (const order of orders) {
-            const sellerSubtotal = sellerItemsForOrder(order, sellerId, productIds)
-                .reduce((sum, item) => sum + lineTotal(item), 0);
-            totalRevenue += await convertOrderAmount(order, sellerSubtotal, targetCurrency);
-        }
-        totalRevenue = roundMoney(totalRevenue);
-        const totalOrders = orders.length;
+        const recognizedOrders = orders.filter(order => isSellerRevenueRecognized(order, sellerId));
+        const revenueEntries = recognizedOrders.map(order => {
+            const sellerItems = sellerItemsForOrder(order, sellerId, productIds);
+            const sellerMoney = sellerOrderSummaryForItems(order, sellerId, sellerItems);
+            return { order, amount: sellerMoney.totalAmount };
+        });
+        const totalRevenue = await sumOrderAmountsInCurrency(revenueEntries, targetCurrency);
+        const totalOrders = recognizedOrders.length;
 
         // Store views are currently retained only as a lifetime counter. Do not
         // fabricate a monthly series: consumers can render the real total and an
@@ -236,7 +236,10 @@ exports.getSellerSubdomainAnalytics = async (req, res) => {
         });
     } catch (error) {
         console.error('Seller subdomain analytics error:', error);
-        res.status(500).json({ msg: 'Server error fetching subdomain analytics' });
+        res.status(error.statusCode || 500).json({
+            msg: error.statusCode ? error.message : 'Server error fetching subdomain analytics',
+            code: error.code,
+        });
     }
 };
 
@@ -290,16 +293,15 @@ exports.getAllSubdomains = async (req, res) => {
             const orders = await Order.find({
                 ...sellerOrderScope(sellerId, productIds),
                 awaitingPayment: { $ne: true },
-                isPaid: true,
             });
 
-            let totalRevenue = 0;
-            for (const order of orders) {
-                const sellerSubtotal = sellerItemsForOrder(order, sellerId, productIds)
-                    .reduce((sum, item) => sum + lineTotal(item), 0);
-                totalRevenue += await convertOrderAmount(order, sellerSubtotal, targetCurrency);
-            }
-            totalRevenue = roundMoney(totalRevenue);
+            const recognizedOrders = orders.filter(order => isSellerRevenueRecognized(order, sellerId));
+            const revenueEntries = recognizedOrders.map(order => {
+                const sellerItems = sellerItemsForOrder(order, sellerId, productIds);
+                const sellerMoney = sellerOrderSummaryForItems(order, sellerId, sellerItems);
+                return { order, amount: sellerMoney.totalAmount };
+            });
+            const totalRevenue = await sumOrderAmountsInCurrency(revenueEntries, targetCurrency);
 
             return {
                 _id: store._id,
@@ -315,7 +317,7 @@ exports.getAllSubdomains = async (req, res) => {
                 subdomainUrl: `${store.storeSlug}.rozare.com`,
                 isSubdomainActive: store.isActive !== false,
                 productCount: products.length,
-                totalOrders: orders.length,
+                totalOrders: recognizedOrders.length,
                 totalRevenue,
             };
         }));
@@ -347,7 +349,10 @@ exports.getAllSubdomains = async (req, res) => {
         });
     } catch (error) {
         console.error('Admin get all subdomains error:', error);
-        res.status(500).json({ msg: 'Server error fetching subdomains' });
+        res.status(error.statusCode || 500).json({
+            msg: error.statusCode ? error.message : 'Server error fetching subdomains',
+            code: error.code,
+        });
     }
 };
 
@@ -361,35 +366,41 @@ exports.adminUpdateSubdomain = async (req, res) => {
 
     try {
         const { storeId } = req.params;
-        const { newSlug } = req.body;
-
-        if (!newSlug || newSlug.trim().length < 3) {
-            return res.status(400).json({ msg: 'Subdomain must be at least 3 characters' });
-        }
-
-        const sanitized = newSlug.toLowerCase().replace(/[^a-z0-9-]/g, '').replace(/^-+|-+$/g, '').replace(/-{2,}/g, '-');
-
-        const reserved = ['www', 'api', 'admin', 'app', 'mail', 'ftp', 'shop', 'store', 'blog', 'docs', 'help', 'cdn', 'static', 'support'];
-        if (reserved.includes(sanitized)) {
-            return res.status(400).json({ msg: 'This subdomain is reserved' });
-        }
-
-        const existing = await Store.findOne({ storeSlug: sanitized, _id: { $ne: storeId } });
-        if (existing) {
-            return res.status(409).json({ msg: 'This subdomain is already taken' });
-        }
+        const { newSlug, confirmPurchasedForfeit } = req.body;
 
         const store = await Store.findById(storeId);
         if (!store) {
             return res.status(404).json({ msg: 'Store not found' });
         }
 
-        store.storeSlug = sanitized;
-        await store.save();
+        const result = await changeStoreSlug({
+            storeId: store._id,
+            sellerId: store.seller,
+            expectedSlug: store.storeSlug,
+            newSlug,
+            confirmPurchasedForfeit: confirmPurchasedForfeit === true,
+            actor: {
+                type: 'admin',
+                id: req.user.id || req.user._id,
+                reason: req.body.reason || 'Administrative subdomain reassignment',
+            },
+        });
 
-        res.status(200).json({ msg: 'Subdomain updated successfully', store });
+        res.status(200).json({
+            msg: result.changed ? 'Subdomain updated successfully' : 'Subdomain was already up to date',
+            store: result.store,
+            purchasedOwnershipForfeited: result.forfeitedPurchasedOwnership,
+        });
     } catch (error) {
         console.error('Admin update subdomain error:', error);
-        res.status(500).json({ msg: 'Server error updating subdomain' });
+        res.status(error.statusCode || 500).json({
+            msg: error.statusCode ? error.message : 'Server error updating subdomain',
+            ...(error.code ? { code: error.code } : {}),
+            ...(error.requiresConfirmation ? {
+                requiresConfirmation: true,
+                currentSubdomain: error.currentSubdomain,
+                newSubdomain: error.newSubdomain,
+            } : {}),
+        });
     }
 };

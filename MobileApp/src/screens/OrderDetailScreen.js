@@ -31,11 +31,16 @@ import { shareInvoice } from '../utils/invoiceUtils';
 import { useTheme } from '../contexts/ThemeContext';
 import {
   ORDER_STAGES,
+  assertOrderDetailPresentation,
   canCancelOrder,
   formatOrderItemOptions,
   getEstimatedDeliveryDate,
+  getOrderCurrency,
   getOrderDisplayId,
   getOrderItemCount,
+  getOrderItemLineSubtotal,
+  getOrderItemQuantity,
+  getOrderSummaryAmount,
   getOrderTotal,
   normalizeOrderStatus,
 } from '../utils/orderPresentation';
@@ -100,6 +105,14 @@ const getConfirmationNotice = (order) => {
   return null;
 };
 
+const couponPresentationText = (coupon, formatMoney) => {
+  if (coupon.appliedDiscountAmount !== null && coupon.appliedDiscountAmount !== undefined) {
+    return `${formatMoney(coupon.appliedDiscountAmount)} saved`;
+  }
+  if (coupon.discountType === 'percentage') return `${coupon.discountValue}% discount`;
+  return 'Discount included in the order total';
+};
+
 export { canCancelOrder };
 
 export default function OrderDetailScreen({ route, navigation }) {
@@ -107,7 +120,7 @@ export default function OrderDetailScreen({ route, navigation }) {
   const styles = useMemo(() => buildStyles(palette), [palette]);
   const insets = useSafeAreaInsets();
   const { orderId } = route.params;
-  const { formatPrice } = useCurrency();
+  const { currency, formatPrice } = useCurrency();
   const { fetchCart } = useGlobal();
   const [order, setOrder] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -118,17 +131,24 @@ export default function OrderDetailScreen({ route, navigation }) {
   const [sharingInvoice, setSharingInvoice] = useState(false);
 
   const orderMoney = useCallback(
-    (amount) => formatPrice(Number(amount || 0), { sourceCurrency: order?.currency || 'USD' }),
-    [formatPrice, order?.currency],
+    (amount) => formatPrice(amount, { sourceCurrency: getOrderCurrency(order) }),
+    [formatPrice, order],
   );
 
   const fetchOrderDetail = useCallback(async () => {
     try {
       setError(null);
       const res = await api.get(`/api/order/detail/${orderId}`);
-      setOrder(res.data?.order || null);
+      const nextOrder = res.data?.order;
+      assertOrderDetailPresentation(nextOrder);
+      setOrder(nextOrder);
     } catch (err) {
-      setError(err.response?.data?.msg || err.response?.data?.message || 'Failed to load order details');
+      setOrder(null);
+      setError(
+        err.code === 'ORDER_PRESENTATION_DATA_INVALID'
+          ? 'This order contains information that could not be verified. Refresh before using any order action.'
+          : (err.response?.data?.msg || err.response?.data?.message || 'Failed to load order details'),
+      );
     } finally {
       setIsLoading(false);
       setRefreshing(false);
@@ -155,10 +175,18 @@ export default function OrderDetailScreen({ route, navigation }) {
             try {
               setCancelling(true);
               const res = await api.patch(`/api/order/cancel/${orderId}`, {});
-              if (res.data?.order) setOrder(res.data.order);
-              else await fetchOrderDetail();
+              if (res.data?.order) {
+                assertOrderDetailPresentation(res.data.order);
+                setOrder(res.data.order);
+              } else {
+                await fetchOrderDetail();
+              }
               Alert.alert('Order cancelled', 'The order has been cancelled successfully.');
             } catch (err) {
+              if (!err.response || err.code === 'ORDER_PRESENTATION_DATA_INVALID') {
+                setOrder(null);
+                setError('The latest order state could not be verified. Refresh before using another order action.');
+              }
               Alert.alert('Could not cancel', err.response?.data?.msg || err.response?.data?.message || 'Please try again.');
             } finally {
               setCancelling(false);
@@ -173,8 +201,14 @@ export default function OrderDetailScreen({ route, navigation }) {
     try {
       setReordering(true);
       const res = await api.post(`/api/order/reorder/${orderId}`);
-      const added = Number(res.data?.added ?? res.data?.addedCount ?? 0);
-      const unavailable = Number(res.data?.unavailable ?? res.data?.skippedItems?.length ?? 0);
+      const added = res.data?.added;
+      const unavailable = res.data?.unavailable;
+      if (
+        !Number.isSafeInteger(added)
+        || added < 0
+        || !Number.isSafeInteger(unavailable)
+        || unavailable < 0
+      ) throw new Error('Rozare returned an invalid re-order result. Refresh your cart before trying again.');
       await fetchCart();
       Alert.alert(
         added ? 'Added to your cart' : 'Products unavailable',
@@ -221,7 +255,7 @@ export default function OrderDetailScreen({ route, navigation }) {
         updatedAt: entry.updatedAt,
         deliveredAt: entry.deliveredAt,
         shippingMethod: shipping.get(sellerId),
-        itemCount: sellerItems.reduce((total, item) => total + Number(item.quantity || 1), 0),
+        itemCount: sellerItems.reduce((total, item) => total + getOrderItemQuantity(item), 0),
       };
     });
   }, [order]);
@@ -246,11 +280,22 @@ export default function OrderDetailScreen({ route, navigation }) {
   const confirmationNotice = getConfirmationNotice(order);
   const itemCount = getOrderItemCount(order);
   const total = getOrderTotal(order);
-  const subtotal = Number(order.orderSummary?.subtotal || 0);
-  const tax = Number(order.orderSummary?.tax || 0);
-  const shipping = Number(order.orderSummary?.shippingCost || 0);
-  const discount = Number(order.orderSummary?.couponDiscount || 0);
-  const cancellable = canCancelOrder(order);
+  const orderCurrency = getOrderCurrency(order);
+  const subtotal = getOrderSummaryAmount(order, ['subtotal'], 'order subtotal');
+  const tax = getOrderSummaryAmount(order, ['tax', 'taxAmount'], 'order tax');
+  const shipping = getOrderSummaryAmount(order, ['shippingCost', 'shippingFee'], 'order shipping');
+  const discount = getOrderSummaryAmount(
+    order,
+    ['couponDiscount', 'discountAmount'],
+    'order coupon discount',
+  );
+  const reconciliationAdjustment = getOrderSummaryAmount(
+    order,
+    ['reconciliationAdjustment'],
+    'order reconciliation adjustment',
+    { signed: true },
+  );
+  const cancellable = !refreshing && canCancelOrder(order);
 
   return (
     <GlassBackground>
@@ -368,7 +413,7 @@ export default function OrderDetailScreen({ route, navigation }) {
                     <View style={styles.storeCopy}>
                       <Text style={styles.storeName} numberOfLines={1}>{group.name}</Text>
                       <Text style={styles.storeMeta}>
-                        {group.itemCount || 1} item{group.itemCount === 1 ? '' : 's'}
+                        {group.itemCount} item{group.itemCount === 1 ? '' : 's'}
                         {group.shippingMethod?.name ? `  •  ${group.shippingMethod.name}` : ''}
                         {group.shippingMethod?.estimatedDays ? `  •  ${group.shippingMethod.estimatedDays} days` : ''}
                       </Text>
@@ -400,8 +445,8 @@ export default function OrderDetailScreen({ route, navigation }) {
                     <Text style={styles.productName} numberOfLines={2}>{item.name || 'Product'}</Text>
                     {!!options && <Text style={styles.productOptions} numberOfLines={2}>{options}</Text>}
                     <View style={styles.productBottom}>
-                      <Text style={styles.productQty}>Qty {Number(item.quantity || item.qty || 1)}</Text>
-                      <Text style={styles.productPrice}>{orderMoney(Number(item.price || 0) * Number(item.quantity || item.qty || 1))}</Text>
+                      <Text style={styles.productQty}>Qty {getOrderItemQuantity(item)}</Text>
+                      <Text style={styles.productPrice}>{orderMoney(getOrderItemLineSubtotal(item))}</Text>
                     </View>
                   </View>
                 </View>
@@ -452,11 +497,7 @@ export default function OrderDetailScreen({ route, navigation }) {
                   <View style={{ flex: 1 }}>
                     <Text style={styles.couponCode}>{coupon.code || 'Coupon applied'}</Text>
                     <Text style={styles.couponValue}>
-                      {coupon.appliedDiscountAmount != null
-                        ? `${orderMoney(coupon.appliedDiscountAmount)} saved`
-                        : coupon.discountType === 'percentage'
-                          ? `${coupon.discountValue}% discount`
-                          : `${orderMoney(coupon.discountValue)} discount`}
+                      {couponPresentationText(coupon, orderMoney)}
                     </Text>
                   </View>
                 </View>
@@ -478,11 +519,16 @@ export default function OrderDetailScreen({ route, navigation }) {
             <SummaryRow label="Shipping" value={shipping > 0 ? orderMoney(shipping) : 'Free'} styles={styles} />
             <SummaryRow label="Tax" value={orderMoney(tax)} styles={styles} />
             {discount > 0 && <SummaryRow label="Coupon savings" value={`-${orderMoney(discount)}`} positive styles={styles} palette={palette} />}
+            {reconciliationAdjustment !== 0 && <SummaryRow label="Rounding adjustment" value={`${reconciliationAdjustment > 0 ? '+' : '-'}${orderMoney(Math.abs(reconciliationAdjustment))}`} styles={styles} />}
             <View style={styles.summaryDivider} />
             <View style={styles.totalRow}>
               <View>
                 <Text style={styles.totalLabel}>Total</Text>
-                <Text style={styles.totalCurrency}>{order.currency || 'USD'} checkout total</Text>
+                <Text style={styles.totalCurrency}>
+                  {currency === orderCurrency
+                    ? `${orderCurrency} checkout total`
+                    : `${currency} display · placed in ${orderCurrency}`}
+                </Text>
               </View>
               <Text style={styles.totalValue}>{orderMoney(total)}</Text>
             </View>
@@ -501,11 +547,11 @@ export default function OrderDetailScreen({ route, navigation }) {
         </ScrollView>
 
         <GlassPanel variant="floating" style={[styles.actionDock, { bottom: Math.max(spacing.sm, insets.bottom + spacing.xs) }]}>
-          <TouchableOpacity style={styles.invoiceButton} onPress={handleShareInvoice} disabled={sharingInvoice} activeOpacity={0.8}>
+          <TouchableOpacity style={styles.invoiceButton} onPress={handleShareInvoice} disabled={sharingInvoice || refreshing} activeOpacity={0.8}>
             {sharingInvoice ? <Loader size="small" color={palette.colors.primary} /> : <Ionicons name="share-outline" size={19} color={palette.colors.primary} />}
             <Text style={styles.invoiceText}>{sharingInvoice ? 'Preparing' : 'Invoice'}</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.reorderButton} onPress={handleReorder} disabled={reordering} activeOpacity={0.86}>
+          <TouchableOpacity style={styles.reorderButton} onPress={handleReorder} disabled={reordering || refreshing} activeOpacity={0.86}>
             <LinearGradient colors={palette.gradients.cta} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
             {reordering ? <Loader size="small" color="#fff" /> : <Ionicons name="repeat-outline" size={20} color="#fff" />}
             <Text style={styles.reorderText}>{reordering ? 'Adding…' : 'Buy Again'}</Text>

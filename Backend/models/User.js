@@ -36,6 +36,16 @@ const userSchema = mongoose.Schema({
         lastEmailChange: { type: Date }             // Last time email was changed (30-day cooldown)
     },
 
+    // A seller role transition is committed before external delivery. If the
+    // process stops before the durable outbox rows are inserted, the outbox
+    // worker can recover this frozen welcome event without guessing from the
+    // user's mutable profile or sending welcomes to legacy sellers.
+    sellerWelcomeNotice: {
+        occurredAt: { type: Date, default: null },
+        storeName: { type: String, trim: true, maxlength: 120, default: '' },
+        notificationEnqueuedAt: { type: Date, default: null },
+    },
+
     // Seller WhatsApp notification preferences
     // Controls which notification categories get sent via WhatsApp
     // Critical notifications (account blocked, subscription warnings) are ALWAYS sent regardless
@@ -168,6 +178,19 @@ userSchema.index(
 userSchema.index(
     { 'stripeCustomers.live': 1 },
     { unique: true, partialFilterExpression: { 'stripeCustomers.live': { $type: 'string' } } }
+);
+userSchema.index(
+    {
+        role: 1,
+        'sellerWelcomeNotice.notificationEnqueuedAt': 1,
+        'sellerWelcomeNotice.occurredAt': 1,
+    },
+    {
+        partialFilterExpression: {
+            role: 'seller',
+            'sellerWelcomeNotice.occurredAt': { $type: 'date' },
+        },
+    }
 );
 
 // Ensure virtuals are included when converting to JSON

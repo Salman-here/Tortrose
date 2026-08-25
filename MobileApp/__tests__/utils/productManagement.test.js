@@ -3,6 +3,7 @@ import {
   filterProductsByQuery,
   getManagedProductImage,
   getProductModerationReason,
+  inspectProductPagination,
   isProductHiddenByModeration,
   mergeProducts,
   normalizeProductCategories,
@@ -45,9 +46,28 @@ describe('seller product management contracts', () => {
     expect(params.categories).toBeUndefined();
   });
 
-  it('normalizes paginated and legacy product responses', () => {
-    expect(normalizeProductResponse({ products, pagination: { page: 1 } })).toEqual({ products, pagination: { page: 1 } });
+  it('normalizes strictly paginated and legacy product responses', () => {
+    const pagination = { page: 1, limit: 24, totalProducts: 2, totalPages: 1, hasMore: false };
+    expect(normalizeProductResponse({ products, pagination }, { expectedPage: 1, expectedLimit: 24 }))
+      .toEqual({ products, pagination: { valid: true, ...pagination } });
     expect(normalizeProductResponse(products)).toEqual({ products, pagination: null });
+  });
+
+  it('rejects corrupt or inconsistent product pagination instead of fabricating counts', () => {
+    const pagination = { page: 2, limit: 2, totalProducts: 3, totalPages: 2, hasMore: false };
+    expect(inspectProductPagination(pagination, { productCount: 1, expectedPage: 2, expectedLimit: 2 }))
+      .toEqual({ valid: true, ...pagination });
+    for (const invalid of [
+      { ...pagination, page: '2' },
+      { ...pagination, totalProducts: 0 },
+      { ...pagination, totalPages: 3 },
+      { ...pagination, hasMore: true },
+    ]) {
+      expect(() => normalizeProductResponse({ products: [products[0]], pagination: invalid }, {
+        expectedPage: 2,
+        expectedLimit: 2,
+      })).toThrow('Product pagination data is unavailable.');
+    }
   });
 
   it('merges paginated products without duplicate IDs', () => {
@@ -71,9 +91,16 @@ describe('seller product management contracts', () => {
     expect(getProductModerationReason(blocked)).toBe('Replace placeholder details.');
   });
 
-  it('deduplicates bulk IDs and enforces the backend delete limit', () => {
-    expect(validateBulkActionSelection(['1', '1', '2'])).toEqual({ isValid: true, ids: ['1', '2'], message: '' });
-    const tooMany = validateBulkActionSelection(Array.from({ length: 251 }, (_, index) => `${index}`), { max: 250 });
+  it('accepts only canonical product IDs, deduplicates them, and enforces the backend delete limit', () => {
+    const idA = '64b000000000000000000001';
+    const idB = '64b000000000000000000002';
+    expect(validateBulkActionSelection([idA, idA, idB])).toEqual({ isValid: true, ids: [idA, idB], message: '' });
+    expect(validateBulkActionSelection([idA, '1', true])).toEqual({
+      isValid: false,
+      ids: [],
+      message: expect.stringContaining('identifiers'),
+    });
+    const tooMany = validateBulkActionSelection(Array.from({ length: 251 }, (_, index) => index.toString(16).padStart(24, '0')), { max: 250 });
     expect(tooMany.isValid).toBe(false);
     expect(tooMany.message).toContain('250');
   });

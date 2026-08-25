@@ -15,10 +15,7 @@ if (process.env.clientID && process.env.clientSecret && process.env.GOOGLE_CALLB
     async (accessToken, refreshToken, profile, done) => {
       try {
         // Check if user already exists
-        console.log(profile); 
-        
         let user = await User.findOne({ email: profile.emails[0].value });
-        console.log(user,"userrrrr");
         
         if (!user) {
           // If not, create one (password null because Google handles it)
@@ -30,6 +27,11 @@ if (process.env.clientID && process.env.clientSecret && process.env.GOOGLE_CALLB
             password: null,
             isVerified: true,
           });
+        } else if (user.status === 'blocked') {
+          // Return the live account without mutating it. googleCallback reloads
+          // status immediately before token issuance and redirects blocked
+          // accounts without ever creating a JWT.
+          return done(null, user);
         } else if (!user.avatar && user.profilePicture) {
           // Update existing user's avatar if they don't have one
           user.avatar = user.profilePicture;

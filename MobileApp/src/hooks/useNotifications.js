@@ -2,7 +2,7 @@
  * Manages push registration, durable logout cleanup, listeners, and tap routes.
  */
 
-import { useEffect } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { AppState } from 'react-native';
 import NetInfo from '@react-native-community/netinfo';
 import { useNavigation } from '@react-navigation/native';
@@ -15,16 +15,58 @@ import {
   savePushTokenToServer,
   setActiveNotificationIdentity,
   waitForPushTokenRegistrations,
-  NotificationTypes,
 } from '../services/notifications';
-import { isNotificationAllowedForRole } from '../utils/notificationScope';
+import {
+  getNotificationIdentity,
+  isNotificationAllowedForRole,
+  normalizeNotificationRole,
+} from '../utils/notificationScope';
+import { getPushNotificationInboxId } from '../utils/notificationDedupe';
+import { resolveNotificationTarget } from '../utils/notificationRouting';
 
 const Notifications = getNotificationsModule();
 const RETRY_DELAYS_MS = [2000, 5000, 15000, 30000, 60000];
+const consumedResponseKeys = new Set();
+const consumedResponseOrder = [];
+
+export function getNotificationResponseKey(response) {
+  const notification = response?.notification;
+  return getPushNotificationInboxId(notification, '');
+}
+
+function rememberConsumedResponse(key) {
+  if (!key || consumedResponseKeys.has(key)) return false;
+  consumedResponseKeys.add(key);
+  consumedResponseOrder.push(key);
+  if (consumedResponseOrder.length > 500) {
+    consumedResponseKeys.delete(consumedResponseOrder.shift());
+  }
+  return true;
+}
 
 export default function useNotifications() {
   const { currentUser } = useAuth();
   const navigation = useNavigation();
+  const identity = getNotificationIdentity(currentUser);
+  const activeIdentityRef = useRef(identity);
+  activeIdentityRef.current = identity;
+
+  const handleNotificationTap = useCallback((data) => {
+    if (!data || typeof data !== 'object') return;
+    if (!isNotificationAllowedForRole({ data, category: data.category }, currentUser)) return;
+
+    const target = resolveNotificationTarget(data, currentUser);
+    if (target) navigation.navigate(target.screen, target.params);
+    else navigation.navigate('Notifications');
+    return true;
+  }, [currentUser, navigation]);
+
+  const handleNotificationResponse = useCallback((response) => {
+    const key = getNotificationResponseKey(response);
+    if (!key || !rememberConsumedResponse(key)) return false;
+    const data = response?.notification?.request?.content?.data;
+    return handleNotificationTap(data);
+  }, [handleNotificationTap]);
 
   useEffect(() => {
     let active = true;
@@ -33,6 +75,7 @@ export default function useNotifications() {
     let generation = 0;
     let retryAttempt = 0;
     let retryTimer = null;
+    const listenerIdentity = identity;
 
     const clearRetryTimer = () => {
       if (retryTimer) clearTimeout(retryTimer);
@@ -111,9 +154,32 @@ export default function useNotifications() {
     });
     const receivedSubscription = Notifications?.addNotificationReceivedListener?.(() => {});
     const responseSubscription = Notifications?.addNotificationResponseReceivedListener?.((response) => {
-      handleNotificationTap(response.notification.request.content.data);
+      if (activeIdentityRef.current !== listenerIdentity) return;
+      handleNotificationResponse(response);
     });
     const pushTokenSubscription = Notifications?.addPushTokenListener?.(() => runMaintenance());
+
+    // Expo retains the response that launched a previously-killed app. Consume
+    // it only after a concrete account is active, validate it through the same
+    // role/recipient router as live responses, then clear the native snapshot.
+    if (
+      Notifications?.getLastNotificationResponseAsync
+      && currentUser
+      && normalizeNotificationRole(currentUser) !== 'guest'
+    ) {
+      Promise.resolve(Notifications.getLastNotificationResponseAsync())
+        .then(async (response) => {
+          if (
+            !active
+            || activeIdentityRef.current !== listenerIdentity
+            || !response
+          ) return;
+          handleNotificationResponse(response);
+          if (!active || activeIdentityRef.current !== listenerIdentity) return;
+          await Notifications.clearLastNotificationResponseAsync?.();
+        })
+        .catch(() => {});
+    }
 
     return () => {
       active = false;
@@ -124,70 +190,5 @@ export default function useNotifications() {
       responseSubscription?.remove?.();
       pushTokenSubscription?.remove?.();
     };
-  }, [currentUser]);
-
-  const handleNotificationTap = (data) => {
-    if (!data?.type) return;
-    if (!isNotificationAllowedForRole({ data, category: data.category }, currentUser)) return;
-
-    switch (data.type) {
-      case NotificationTypes.ORDER_PLACED:
-      case NotificationTypes.ORDER_CONFIRMED:
-      case NotificationTypes.ORDER_SHIPPED:
-      case NotificationTypes.ORDER_DELIVERED:
-      case NotificationTypes.ORDER_CANCELLED:
-        if (data.orderId) navigation.navigate('OrderDetail', { orderId: data.orderId });
-        else navigation.navigate('Orders');
-        break;
-
-      case NotificationTypes.NEW_ORDER_RECEIVED:
-      case NotificationTypes.ORDER_CANCELLED_BY_BUYER:
-        if (data.orderObjectId) {
-          navigation.navigate('OrderDetailManagement', { orderId: data.orderObjectId, isAdmin: false });
-        } else navigation.navigate('SellerOrderManagement');
-        break;
-
-      case NotificationTypes.RETURN_REQUESTED:
-        navigation.navigate('SellerOrderManagement', {
-          initialTab: 'returns',
-          returnRequestId: data.returnRequestId,
-        });
-        break;
-
-      case NotificationTypes.RETURN_STATUS_UPDATE:
-        if (data.orderId) navigation.navigate('OrderDetail', { orderId: data.orderId });
-        else navigation.navigate('Orders');
-        break;
-
-      case NotificationTypes.ORDER_CONFIRMED_BY_BUYER:
-        if (data.orderObjectId) {
-          navigation.navigate('OrderDetailManagement', { orderId: data.orderObjectId, isAdmin: false });
-        } else navigation.navigate('SellerOrderManagement');
-        break;
-
-      case NotificationTypes.LOW_STOCK:
-        navigation.navigate('SellerProductManagement');
-        break;
-      case NotificationTypes.STORE_VERIFIED:
-        navigation.navigate('SellerStoreSettings');
-        break;
-
-      case NotificationTypes.PRICE_DROP:
-      case NotificationTypes.BACK_IN_STOCK:
-      case NotificationTypes.WISHLIST_SALE:
-        if (data.productId) navigation.navigate('ProductDetail', { productId: data.productId });
-        else navigation.navigate('MainTabs', { screen: 'Wishlist' });
-        break;
-
-      case NotificationTypes.CART_REMINDER:
-        navigation.navigate('MainTabs', { screen: 'Cart' });
-        break;
-      case NotificationTypes.COUPON_AVAILABLE:
-        navigation.navigate('MainTabs', { screen: 'Home' });
-        break;
-      default:
-        navigation.navigate('Notifications');
-        break;
-    }
-  };
+  }, [currentUser, handleNotificationResponse, identity]);
 }

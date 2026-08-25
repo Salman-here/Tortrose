@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
     Ticket, Plus, Trash2, Edit3, ToggleLeft, ToggleRight, Search, 
@@ -10,6 +10,41 @@ import axios from 'axios';
 import { toast } from 'react-toastify';
 import { useCurrency } from '../../contexts/CurrencyContext';
 import { getAuthToken } from "../../utils/cookieHelper";
+import {
+    normalizeCurrencyCode,
+} from '../../utils/currencySafety';
+import {
+    couponAnalyticsResponseIsValid,
+    inspectCouponPresentation,
+    isExactCouponMoneyInput,
+    isExactCouponPercentageInput,
+    isPositiveCouponCountInput,
+} from '../../utils/couponSafety';
+import { inspectProductPagination, inspectSellerProductPresentation } from '../../utils/productCardSafety';
+import { inspectSellerProductCurrencyState } from '../../utils/productFormCurrency';
+
+const SUPPORTED_STORE_CURRENCIES = new Set(['USD', 'PKR', 'EUR', 'GBP']);
+
+const normalizeStoreCurrency = (value) => {
+    const normalized = String(value || '').trim().toUpperCase();
+    return SUPPORTED_STORE_CURRENCIES.has(normalized) ? normalized : null;
+};
+
+const createCouponForm = (currency) => ({
+    code: '',
+    discountType: 'percentage',
+    discountValue: '',
+    applicableTo: 'all',
+    applicableProducts: [],
+    maxUses: '',
+    maxUsesPerUser: '1',
+    minOrderAmount: '',
+    maxDiscountAmount: '',
+    currency,
+    startDate: new Date().toISOString().split('T')[0],
+    expiryDate: '',
+    description: '',
+});
 
 const CouponManagement = () => {
     const { formatPrice, currency } = useCurrency();
@@ -24,50 +59,56 @@ const CouponManagement = () => {
     const [activeTab, setActiveTab] = useState('manage'); // 'manage' or 'analytics'
     const [analyticsData, setAnalyticsData] = useState(null);
     const [analyticsLoading, setAnalyticsLoading] = useState(false);
-
-    const [form, setForm] = useState({
-        code: '',
-        discountType: 'percentage',
-        discountValue: '',
-        applicableTo: 'all',
-        applicableProducts: [],
-        maxUses: '',
-        maxUsesPerUser: '1',
-        minOrderAmount: '',
-        maxDiscountAmount: '',
-        currency,
-        startDate: new Date().toISOString().split('T')[0],
-        expiryDate: '',
-        description: '',
-    });
+    const [analyticsError, setAnalyticsError] = useState('');
+    const [storeCurrency, setStoreCurrency] = useState(null);
+    const [productCurrencyError, setProductCurrencyError] = useState('');
+    const [form, setForm] = useState(() => createCouponForm(null));
 
     const [formErrors, setFormErrors] = useState({});
     const [saving, setSaving] = useState(false);
     const [showProductPicker, setShowProductPicker] = useState(false);
+    const analyticsRequestRef = useRef({ id: 0, controller: null });
 
     useEffect(() => {
         fetchCoupons();
         fetchProducts();
+        fetchProductCurrency();
     }, []);
+
+    const fetchAnalytics = useCallback(async () => {
+        const requestedCurrency = normalizeCurrencyCode(currency, '');
+        analyticsRequestRef.current.controller?.abort();
+        const controller = new AbortController();
+        const requestId = analyticsRequestRef.current.id + 1;
+        analyticsRequestRef.current = { id: requestId, controller };
+        setAnalyticsLoading(true);
+        setAnalyticsData(null);
+        setAnalyticsError('');
+        try {
+            const token = getAuthToken();
+            const res = await axios.get(`${import.meta.env.VITE_API_URL}api/coupons/analytics?currency=${requestedCurrency}`, {
+                headers: { Authorization: `Bearer ${token}` },
+                signal: controller.signal,
+            });
+            if (!couponAnalyticsResponseIsValid(res.data, requestedCurrency)) {
+                throw new Error('Coupon analytics returned invalid or inconsistent money data.');
+            }
+            if (analyticsRequestRef.current.id === requestId) setAnalyticsData(res.data);
+        } catch (err) {
+            if (controller.signal.aborted || err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError') return;
+            if (analyticsRequestRef.current.id !== requestId) return;
+            console.error('Failed to load coupon analytics:', err);
+            setAnalyticsData(null);
+            setAnalyticsError(err.response?.data?.msg || err.message || 'Coupon analytics are unavailable right now.');
+        } finally {
+            if (analyticsRequestRef.current.id === requestId) setAnalyticsLoading(false);
+        }
+    }, [currency]);
 
     useEffect(() => {
         fetchAnalytics();
-    }, [currency]);
-
-    const fetchAnalytics = async () => {
-        setAnalyticsLoading(true);
-        try {
-            const token = getAuthToken();
-            const res = await axios.get(`${import.meta.env.VITE_API_URL}api/coupons/analytics?currency=${currency}`, {
-                headers: { Authorization: `Bearer ${token}` }
-            });
-            setAnalyticsData(res.data);
-        } catch (err) {
-            console.error('Failed to load coupon analytics:', err);
-        } finally {
-            setAnalyticsLoading(false);
-        }
-    };
+        return () => analyticsRequestRef.current.controller?.abort();
+    }, [fetchAnalytics]);
 
     const fetchCoupons = async () => {
         try {
@@ -75,9 +116,14 @@ const CouponManagement = () => {
             const res = await axios.get(`${import.meta.env.VITE_API_URL}api/coupons/seller`, {
                 headers: { Authorization: `Bearer ${token}` }
             });
-            setCoupons(res.data.coupons || []);
+            if (!Array.isArray(res.data?.coupons)) throw new Error('Coupon data is unavailable.');
+            if (!res.data.coupons.every(coupon => inspectCouponPresentation(coupon).valid)) {
+                throw new Error('Coupon data contains invalid money, currency, usage, or scheduling fields.');
+            }
+            setCoupons(res.data.coupons);
         } catch (err) {
-            toast.error('Failed to load coupons');
+            setCoupons([]);
+            toast.error(err.message || 'Failed to load coupons');
         } finally {
             setLoading(false);
         }
@@ -86,41 +132,88 @@ const CouponManagement = () => {
     const fetchProducts = async () => {
         try {
             const token = getAuthToken();
-            const res = await axios.get(`${import.meta.env.VITE_API_URL}api/products/get-seller-products`, {
-                headers: { Authorization: `Bearer ${token}` }
-            });
-            setProducts(res.data.products || []);
+            const limit = 100;
+            const requestPage = async (page) => {
+                const response = await axios.get(`${import.meta.env.VITE_API_URL}api/products/get-seller-products`, {
+                    headers: { Authorization: `Bearer ${token}` },
+                    params: { page, limit, sortBy: 'newest', sortOrder: 'desc' },
+                });
+                if (!Array.isArray(response.data?.products)) throw new Error('Product data is unavailable.');
+                const pagination = inspectProductPagination(response.data?.pagination, {
+                    productCount: response.data.products.length,
+                    expectedPage: page,
+                    expectedLimit: limit,
+                });
+                if (!pagination.valid) throw new Error('Product pagination data is unavailable.');
+                return { products: response.data.products, pagination };
+            };
+            const first = await requestPage(1);
+            const remaining = first.pagination.totalPages > 1
+                ? await Promise.all(Array.from(
+                    { length: first.pagination.totalPages - 1 },
+                    (_, index) => requestPage(index + 2),
+                ))
+                : [];
+            const allProducts = [first, ...remaining].flatMap(page => page.products);
+            const ids = allProducts.map(product => product?._id);
+            if (
+                allProducts.length !== first.pagination.totalProducts
+                || new Set(ids).size !== ids.length
+                || !allProducts.every(product => inspectSellerProductPresentation(product).valid)
+            ) {
+                throw new Error('Product pricing or inventory data is unavailable.');
+            }
+            setProducts(allProducts);
         } catch (err) {
             console.error('Failed to load products:', err);
+            setProducts([]);
+        }
+    };
+
+    const fetchProductCurrency = async () => {
+        try {
+            const token = getAuthToken();
+            const res = await axios.get(`${import.meta.env.VITE_API_URL}api/stores/product-currency`, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+            const state = inspectSellerProductCurrencyState(res.data?.productCurrency);
+            if (!state.valid || state.canAddProduct !== true) {
+                throw new Error(state.valid && state.status === 'pending_conversion'
+                    ? 'Finish or cancel the pending product currency change before creating coupons.'
+                    : 'Your store product currency is unavailable.');
+            }
+            setStoreCurrency(state.activeCurrency);
+            setProductCurrencyError('');
+            setForm(current => current.currency ? current : createCouponForm(state.activeCurrency));
+        } catch (err) {
+            setStoreCurrency(null);
+            setProductCurrencyError(err.response?.data?.msg || err.message || 'Your store product currency could not be loaded.');
         }
     };
 
     const resetForm = () => {
-        setForm({
-            code: '',
-            discountType: 'percentage',
-            discountValue: '',
-            applicableTo: 'all',
-            applicableProducts: [],
-            maxUses: '',
-            maxUsesPerUser: '1',
-            minOrderAmount: '',
-            maxDiscountAmount: '',
-            currency,
-            startDate: new Date().toISOString().split('T')[0],
-            expiryDate: '',
-            description: '',
-        });
+        setForm(createCouponForm(storeCurrency));
         setFormErrors({});
         setEditingCoupon(null);
     };
 
     const openCreate = () => {
+        if (!storeCurrency || productCurrencyError) {
+            toast.error('Your store product currency must be loaded before creating a coupon.');
+            fetchProductCurrency();
+            return;
+        }
         resetForm();
         setShowForm(true);
     };
 
     const openEdit = (coupon) => {
+        const presentation = inspectCouponPresentation(coupon);
+        if (!presentation.valid) {
+            toast.error('This coupon has invalid money, currency, usage, or scheduling data. Refresh before editing it.');
+            return;
+        }
+        const couponNativeCurrency = presentation.currency;
         setEditingCoupon(coupon);
         setForm({
             code: coupon.code,
@@ -132,7 +225,7 @@ const CouponManagement = () => {
             maxUsesPerUser: coupon.maxUsesPerUser?.toString() || '1',
             minOrderAmount: coupon.minOrderAmount?.toString() || '',
             maxDiscountAmount: coupon.maxDiscountAmount?.toString() || '',
-            currency: coupon.currency || currency,
+            currency: couponNativeCurrency,
             startDate: coupon.startDate ? new Date(coupon.startDate).toISOString().split('T')[0] : '',
             expiryDate: coupon.expiryDate ? new Date(coupon.expiryDate).toISOString().split('T')[0] : '',
             description: coupon.description || '',
@@ -143,14 +236,26 @@ const CouponManagement = () => {
 
     const validateForm = () => {
         const errors = {};
+        const formCurrency = normalizeStoreCurrency(form.currency);
+        if (!formCurrency) errors.currency = 'Coupon currency is unavailable';
+        if (!editingCoupon && formCurrency !== storeCurrency) errors.currency = 'New coupons must use your store product currency';
         const normalizedCode = form.code.trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '');
         if (normalizedCode.length < 3 || normalizedCode.length > 32) errors.code = 'Use 3-32 letters or numbers';
-        if (!form.discountValue || Number(form.discountValue) <= 0) errors.discountValue = 'Discount value must be > 0';
-        if (form.discountType === 'percentage' && Number(form.discountValue) > 100) errors.discountValue = 'Max 100%';
-        if (form.maxUses && Number(form.maxUses) <= 0) errors.maxUses = 'Must be greater than 0';
-        if (form.maxUsesPerUser && Number(form.maxUsesPerUser) <= 0) errors.maxUsesPerUser = 'Must be greater than 0';
-        if (form.minOrderAmount && Number(form.minOrderAmount) < 0) errors.minOrderAmount = 'Cannot be negative';
-        if (form.maxDiscountAmount && Number(form.maxDiscountAmount) <= 0) errors.maxDiscountAmount = 'Must be greater than 0';
+        if (form.discountType === 'percentage') {
+            if (!isExactCouponPercentageInput(form.discountValue)) {
+                errors.discountValue = 'Use a percentage from 0.01 to 100 with at most 6 decimals';
+            }
+        } else if (!isExactCouponMoneyInput(form.discountValue)) {
+            errors.discountValue = 'Use an amount of at least 0.01 with at most 2 decimals';
+        }
+        if (!isPositiveCouponCountInput(form.maxUses, { allowEmpty: true })) errors.maxUses = 'Use a whole number greater than 0';
+        if (!isPositiveCouponCountInput(form.maxUsesPerUser)) errors.maxUsesPerUser = 'Use a whole number greater than 0';
+        if (!isExactCouponMoneyInput(form.minOrderAmount, { allowZero: true, allowEmpty: true })) {
+            errors.minOrderAmount = 'Use zero or a positive amount with at most 2 decimals';
+        }
+        if (!isExactCouponMoneyInput(form.maxDiscountAmount, { allowEmpty: true })) {
+            errors.maxDiscountAmount = 'Use an amount of at least 0.01 with at most 2 decimals';
+        }
         if (!form.expiryDate) errors.expiryDate = 'Expiry date is required';
         if (new Date(form.expiryDate) <= new Date()) errors.expiryDate = 'Must be in the future';
         if (form.startDate && form.expiryDate && new Date(form.startDate) >= new Date(form.expiryDate)) errors.expiryDate = 'Must be after start date';
@@ -163,6 +268,14 @@ const CouponManagement = () => {
 
     const handleSave = async () => {
         if (!validateForm()) return;
+        if (!editingCoupon && (!storeCurrency || productCurrencyError)) {
+            toast.error('Your store product currency must be verified before creating a coupon.');
+            return;
+        }
+        if (editingCoupon && !inspectCouponPresentation(editingCoupon).valid) {
+            toast.error('This coupon changed or became unavailable. Refresh it before saving.');
+            return;
+        }
         setSaving(true);
         try {
             const token = getAuthToken();
@@ -174,7 +287,7 @@ const CouponManagement = () => {
                 maxUsesPerUser: form.maxUsesPerUser ? Number(form.maxUsesPerUser) : 1,
                 minOrderAmount: form.minOrderAmount ? Number(form.minOrderAmount) : 0,
                 maxDiscountAmount: form.maxDiscountAmount ? Number(form.maxDiscountAmount) : null,
-                currency: form.currency || currency,
+                currency: normalizeStoreCurrency(form.currency),
             };
 
             if (editingCoupon) {
@@ -200,6 +313,12 @@ const CouponManagement = () => {
     };
 
     const handleDelete = async (id) => {
+        const coupon = coupons.find(item => item?._id === id);
+        if (!inspectCouponPresentation(coupon).valid) {
+            toast.error('Refresh coupons before deleting because this coupon snapshot is invalid.');
+            setDeleteConfirm(null);
+            return;
+        }
         try {
             const token = getAuthToken();
             await axios.delete(`${import.meta.env.VITE_API_URL}api/coupons/delete/${id}`, {
@@ -214,6 +333,11 @@ const CouponManagement = () => {
     };
 
     const handleToggle = async (id) => {
+        const coupon = coupons.find(item => item?._id === id);
+        if (!inspectCouponPresentation(coupon).valid) {
+            toast.error('Refresh coupons before changing this coupon because its snapshot is invalid.');
+            return;
+        }
         try {
             const token = getAuthToken();
             const res = await axios.patch(`${import.meta.env.VITE_API_URL}api/coupons/toggle/${id}`, {}, {
@@ -273,14 +397,23 @@ const CouponManagement = () => {
         );
     }
 
-    const analyticsCurrency = analyticsData?.summary?.currency || currency;
-    const couponCurrency = (coupon) => coupon?.currency || 'USD';
-    const formatCouponMoney = (coupon, amount = coupon?.discountValue) =>
-        formatPrice(amount || 0, { sourceCurrency: couponCurrency(coupon) });
+    const analyticsCurrency = analyticsData?.summary?.currency;
+    const formatCouponMoney = (coupon, amount = coupon?.discountValue) => {
+        const presentation = inspectCouponPresentation(coupon);
+        return presentation.valid
+            ? formatPrice(amount, { sourceCurrency: presentation.currency })
+            : 'Money unavailable';
+    };
+    const formatAnalyticsCouponMoney = (coupon) =>
+        formatPrice(coupon.discountValue, { sourceCurrency: coupon.currency });
     const formatAnalyticsMoney = (amount) =>
-        formatPrice(amount || 0, { sourceCurrency: analyticsCurrency });
-    const formatProductMoney = (product) =>
-        formatPrice(product?.price || 0, { sourceCurrency: product?.currency || product?.priceCurrency || 'USD' });
+        formatPrice(amount, { sourceCurrency: analyticsCurrency });
+    const formatProductMoney = (product) => {
+        const presentation = inspectSellerProductPresentation(product);
+        return presentation.valid
+            ? formatPrice(presentation.price, { sourceCurrency: presentation.currency })
+            : 'Price unavailable';
+    };
 
     return (
         <div className="p-4 sm:p-6 max-w-6xl mx-auto">
@@ -300,11 +433,22 @@ const CouponManagement = () => {
 
                 <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
                     onClick={openCreate}
-                    className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-white"
+                    disabled={!storeCurrency || !!productCurrencyError}
+                    className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-white disabled:opacity-50 disabled:cursor-not-allowed"
                     style={{ background: 'linear-gradient(135deg, hsl(280, 60%, 55%), hsl(320, 50%, 55%))', boxShadow: '0 4px 15px -3px hsla(280, 60%, 55%, 0.3)' }}>
                     <Plus size={16} /> Create Coupon
                 </motion.button>
             </div>
+
+            {productCurrencyError && (
+                <div className="glass-inner rounded-xl p-4 mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-3" style={{ borderLeft: '3px solid hsl(0, 72%, 55%)' }}>
+                    <div>
+                        <p className="text-sm font-semibold" style={{ color: 'hsl(0, 72%, 55%)' }}>New coupons are paused until your store currency can be verified.</p>
+                        <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>{productCurrencyError}</p>
+                    </div>
+                    <button type="button" onClick={fetchProductCurrency} className="px-3 py-2 rounded-xl glass-inner text-xs font-semibold" style={{ color: 'hsl(280, 60%, 55%)' }}>Retry</button>
+                </div>
+            )}
 
             {/* Tabs */}
             <div className="flex gap-2 mb-6">
@@ -330,6 +474,13 @@ const CouponManagement = () => {
                     <div className="flex items-center justify-center py-20">
                         <Loader2 className="w-8 h-8 animate-spin" style={{ color: 'hsl(280, 60%, 55%)' }} />
                     </div>
+                ) : analyticsError ? (
+                    <div className="glass-panel p-12 text-center">
+                        <AlertTriangle size={48} className="mx-auto mb-4" style={{ color: 'hsl(0, 72%, 55%)' }} />
+                        <h3 className="text-lg font-semibold mb-2" style={{ color: 'hsl(var(--foreground))' }}>Analytics unavailable</h3>
+                        <p className="text-sm mb-4" style={{ color: 'hsl(var(--muted-foreground))' }}>{analyticsError}</p>
+                        <button type="button" onClick={fetchAnalytics} className="px-4 py-2 rounded-xl glass-inner text-sm font-semibold">Retry</button>
+                    </div>
                 ) : !analyticsData || analyticsData.analytics?.length === 0 ? (
                     <div className="glass-panel p-12 text-center">
                         <BarChart3 size={48} className="mx-auto mb-4 opacity-30" style={{ color: 'hsl(var(--muted-foreground))' }} />
@@ -344,7 +495,7 @@ const CouponManagement = () => {
                                 { label: 'Total Coupons', value: analyticsData.summary.totalCoupons, icon: <Ticket size={16} />, color: 'hsl(280, 60%, 55%)' },
                                 { label: 'Active', value: analyticsData.summary.activeCoupons, icon: <Check size={16} />, color: 'hsl(150, 60%, 45%)' },
                                 { label: 'Total Uses', value: analyticsData.summary.totalUses, icon: <Users size={16} />, color: 'hsl(220, 70%, 55%)' },
-                                { label: 'Revenue Generated', value: formatAnalyticsMoney(analyticsData.summary.totalRevenueFromCoupons), icon: <TrendingUp size={16} />, color: 'hsl(45, 80%, 45%)' },
+                                { label: 'Attributed Sales', value: formatAnalyticsMoney(analyticsData.summary.totalRevenueFromCoupons), icon: <TrendingUp size={16} />, color: 'hsl(45, 80%, 45%)' },
                                 { label: 'Total Discounts', value: formatAnalyticsMoney(analyticsData.summary.totalDiscountGiven), icon: <ArrowDownRight size={16} />, color: 'hsl(0, 72%, 55%)' },
                                 { label: 'Top Coupon', value: analyticsData.summary.topCouponCode || 'N/A', icon: <Award size={16} />, color: 'hsl(320, 50%, 55%)' },
                             ].map((stat, i) => (
@@ -366,18 +517,21 @@ const CouponManagement = () => {
                                     <BarChart3 size={18} style={{ color: 'hsl(280, 60%, 55%)' }} />
                                     Coupon Performance
                                 </h3>
+                                <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                                    Attributed sales are the recognized eligible-product subtotal before the coupon discount; shipping and tax are excluded.
+                                </p>
                             </div>
                             <div className="overflow-x-auto">
                                 <table className="w-full text-sm">
                                     <thead>
                                         <tr style={{ background: 'rgba(255,255,255,0.03)' }}>
-                                            {['Coupon', 'Type', 'Uses', 'Orders', 'Revenue', 'Discount Given', 'Avg Order', 'Unique Users', 'Conversion', 'Status'].map(h => (
+                                            {['Coupon', 'Type', 'Uses', 'Orders', 'Attributed Sales', 'Discount Given', 'Avg Eligible Subtotal', 'Unique Users', 'Conversion', 'Status'].map(h => (
                                                 <th key={h} className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider" style={{ color: 'hsl(var(--muted-foreground))' }}>{h}</th>
                                             ))}
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        {analyticsData.analytics.map((c, i) => {
+                                        {analyticsData.analytics.map((c) => {
                                             const now = new Date();
                                             const isExpired = now > new Date(c.expiryDate);
                                             const isExhausted = c.maxUses && c.usedCount >= c.maxUses;
@@ -394,7 +548,7 @@ const CouponManagement = () => {
                                                         {c.description && <p className="text-[10px] mt-0.5 truncate max-w-[120px]" style={{ color: 'hsl(var(--muted-foreground))' }}>{c.description}</p>}
                                                     </td>
                                                     <td className="px-4 py-3 text-xs">
-                                                        {c.discountType === 'percentage' ? `${c.discountValue}%` : formatCouponMoney(c)}
+                                                        {c.discountType === 'percentage' ? `${c.discountValue}%` : formatAnalyticsCouponMoney(c)}
                                                     </td>
                                                     <td className="px-4 py-3 font-semibold">{c.usedCount}{c.maxUses ? `/${c.maxUses}` : ''}</td>
                                                     <td className="px-4 py-3">{c.ordersGenerated}</td>
@@ -446,7 +600,7 @@ const CouponManagement = () => {
                                             </div>
                                             <div className="grid grid-cols-2 gap-2 text-xs">
                                                 <div>
-                                                    <span style={{ color: 'hsl(var(--muted-foreground))' }}>Revenue</span>
+                                                    <span style={{ color: 'hsl(var(--muted-foreground))' }}>Attributed sales</span>
                                                     <p className="font-semibold" style={{ color: 'hsl(var(--foreground))' }}>{formatAnalyticsMoney(c.totalRevenue)}</p>
                                                 </div>
                                                 <div>
@@ -671,14 +825,15 @@ const CouponManagement = () => {
                                         <select value={form.discountType} onChange={(e) => setForm(f => ({ ...f, discountType: e.target.value }))}
                                             className="glass-input w-full text-sm">
                                             <option value="percentage">Percentage (%)</option>
-                                            <option value="fixed">Fixed Amount ({form.currency || currency})</option>
+                                            <option value="fixed">Fixed Amount ({form.currency})</option>
                                         </select>
                                     </div>
                                     <div>
                                         <label className="block text-xs font-semibold mb-1.5" style={{ color: 'hsl(var(--foreground))' }}>
-                                            Discount Value * {form.discountType === 'percentage' ? '(%)' : `(${form.currency || currency})`}
+                                            Discount Value * {form.discountType === 'percentage' ? '(%)' : `(${form.currency})`}
                                         </label>
-                                        <input type="number" min="0" max={form.discountType === 'percentage' ? 100 : undefined}
+                                        <input type="number" min={form.discountType === 'percentage' ? '0.01' : '0.01'} max={form.discountType === 'percentage' ? 100 : undefined}
+                                            step={form.discountType === 'percentage' ? '0.000001' : '0.01'}
                                             value={form.discountValue} onChange={(e) => setForm(f => ({ ...f, discountValue: e.target.value }))}
                                             placeholder={form.discountType === 'percentage' ? '10' : '5.00'}
                                             className="glass-input w-full text-sm" />
@@ -754,7 +909,7 @@ const CouponManagement = () => {
                                         <label className="block text-xs font-semibold mb-1.5" style={{ color: 'hsl(var(--foreground))' }}>
                                             Total Uses Limit
                                         </label>
-                                        <input type="number" min="1" value={form.maxUses}
+                                        <input type="number" min="1" step="1" value={form.maxUses}
                                             onChange={(e) => setForm(f => ({ ...f, maxUses: e.target.value }))}
                                             placeholder="Unlimited" className="glass-input w-full text-sm" />
                                         {formErrors.maxUses && <p className="text-xs mt-1" style={{ color: 'hsl(0, 72%, 55%)' }}>{formErrors.maxUses}</p>}
@@ -763,7 +918,7 @@ const CouponManagement = () => {
                                         <label className="block text-xs font-semibold mb-1.5" style={{ color: 'hsl(var(--foreground))' }}>
                                             Uses Per User
                                         </label>
-                                        <input type="number" min="1" value={form.maxUsesPerUser}
+                                        <input type="number" min="1" step="1" value={form.maxUsesPerUser}
                                             onChange={(e) => setForm(f => ({ ...f, maxUsesPerUser: e.target.value }))}
                                             placeholder="1" className="glass-input w-full text-sm" />
                                         {formErrors.maxUsesPerUser && <p className="text-xs mt-1" style={{ color: 'hsl(0, 72%, 55%)' }}>{formErrors.maxUsesPerUser}</p>}
@@ -774,18 +929,18 @@ const CouponManagement = () => {
                                 <div className="grid grid-cols-2 gap-3">
                                     <div>
                                         <label className="block text-xs font-semibold mb-1.5" style={{ color: 'hsl(var(--foreground))' }}>
-                                            Min. Order Amount ({form.currency || currency})
+                                            Min. Order Amount ({form.currency})
                                         </label>
-                                        <input type="number" min="0" value={form.minOrderAmount}
+                                        <input type="number" min="0" step="0.01" value={form.minOrderAmount}
                                             onChange={(e) => setForm(f => ({ ...f, minOrderAmount: e.target.value }))}
                                             placeholder="No minimum" className="glass-input w-full text-sm" />
                                         {formErrors.minOrderAmount && <p className="text-xs mt-1" style={{ color: 'hsl(0, 72%, 55%)' }}>{formErrors.minOrderAmount}</p>}
                                     </div>
                                     <div>
                                         <label className="block text-xs font-semibold mb-1.5" style={{ color: 'hsl(var(--foreground))' }}>
-                                            Max Discount Cap ({form.currency || currency})
+                                            Max Discount Cap ({form.currency})
                                         </label>
-                                        <input type="number" min="0" value={form.maxDiscountAmount}
+                                        <input type="number" min="0.01" step="0.01" value={form.maxDiscountAmount}
                                             onChange={(e) => setForm(f => ({ ...f, maxDiscountAmount: e.target.value }))}
                                             placeholder="No cap" className="glass-input w-full text-sm" />
                                         {formErrors.maxDiscountAmount && <p className="text-xs mt-1" style={{ color: 'hsl(0, 72%, 55%)' }}>{formErrors.maxDiscountAmount}</p>}
@@ -818,8 +973,15 @@ const CouponManagement = () => {
                                         className="glass-input w-full text-sm h-20 resize-none" />
                                 </div>
 
+                                <div className="glass-inner rounded-xl p-3" style={{ borderLeft: '3px solid hsl(220, 70%, 55%)' }}>
+                                    <p className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                                        Fixed values stay stored in {form.currency}. New coupons use your store product currency; changing display currency never rewrites them.
+                                    </p>
+                                    {formErrors.currency && <p className="text-xs mt-1" style={{ color: 'hsl(0, 72%, 55%)' }}>{formErrors.currency}</p>}
+                                </div>
+
                                 {/* Save Button */}
-                                <motion.button whileTap={{ scale: 0.97 }} onClick={handleSave} disabled={saving}
+                                <motion.button whileTap={{ scale: 0.97 }} onClick={handleSave} disabled={saving || !normalizeStoreCurrency(form.currency)}
                                     className="w-full py-3 rounded-xl text-white font-semibold text-sm flex items-center justify-center gap-2 disabled:opacity-50"
                                     style={{ background: 'linear-gradient(135deg, hsl(280, 60%, 55%), hsl(320, 50%, 55%))', boxShadow: '0 4px 15px -3px hsla(280, 60%, 55%, 0.3)' }}>
                                     {saving ? <><Loader2 size={16} className="animate-spin" /> Saving...</> 

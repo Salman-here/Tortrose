@@ -1,3 +1,11 @@
+import {
+  addCurrencyAmounts,
+  currencyCodeIsSupported,
+  multiplyCurrencyAmount,
+  normalizeCurrencyCode,
+  roundCurrencyAmount,
+} from './currencySafety.js';
+
 const DEFAULT_CURRENCY = 'USD';
 
 const hasTikTokPixel = () =>
@@ -93,8 +101,22 @@ export const captureTikTokClickId = () => {
   }
 };
 
-const buildProductContent = (product, quantity = 1) => {
-  const price = getProductEventPrice(product);
+const strictExactNonNegativeMoney = (value) => {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return null;
+  return roundCurrencyAmount(value) === value ? value : null;
+};
+
+const getProductEventCurrency = (product = {}) => {
+  const fields = ['currency', 'priceCurrency']
+    .filter((field) => Object.prototype.hasOwnProperty.call(product, field))
+    .map((field) => product[field]);
+  if (fields.length === 0) return DEFAULT_CURRENCY;
+  if (fields.some((value) => typeof value !== 'string' || !normalizeEventCurrency(value))) return null;
+  const currencies = [...new Set(fields.map((value) => normalizeEventCurrency(value)))];
+  return currencies.length === 1 ? currencies[0] : null;
+};
+
+const buildProductContent = (product, quantity = 1, price = getProductEventPrice(product)) => {
 
   return cleanPayload({
     content_id: product?._id || product?.id,
@@ -102,15 +124,89 @@ const buildProductContent = (product, quantity = 1) => {
     content_name: product?.name,
     content_category: product?.category,
     brand: product?.brand,
-    price: price > 0 ? price : undefined,
+    price,
     quantity,
   });
 };
 
 const getProductEventPrice = (product) => {
-  const productPrice = Number(product?.price || 0);
-  const discountedPrice = Number(product?.discountedPrice || 0);
+  const productPrice = strictExactNonNegativeMoney(product?.price);
+  const discountedPrice = product?.discountedPrice === null || product?.discountedPrice === undefined
+    ? 0
+    : strictExactNonNegativeMoney(product.discountedPrice);
+  if (productPrice === null || discountedPrice === null) return null;
   return discountedPrice > 0 && discountedPrice < productPrice ? discountedPrice : productPrice;
+};
+
+const normalizeEventCurrency = (currency) => {
+  if (typeof currency !== 'string') return null;
+  const normalized = normalizeCurrencyCode(currency, '');
+  return currencyCodeIsSupported(normalized) ? normalized : null;
+};
+
+const getCheckoutEventQuantity = (item) => {
+  const quantity = item?.qty ?? item?.quantity ?? 1;
+  return Number.isSafeInteger(quantity) && quantity > 0 ? quantity : null;
+};
+
+const getCheckoutEventLineSubtotal = (item, lineTotals, index) => {
+  const candidate = Array.isArray(lineTotals) && index < lineTotals.length
+    ? lineTotals[index]
+    : item?.lineSubtotal;
+  return candidate === undefined || candidate === null
+    ? null
+    : strictExactNonNegativeMoney(candidate);
+};
+
+/**
+ * Build checkout commerce contents from the exact line allocations already
+ * shown by checkout. Native product prices cannot be labelled as the selected
+ * checkout currency in a mixed cart, so a missing authoritative line amount
+ * deliberately omits price instead of reporting false money.
+ */
+export const buildCheckoutEventPayload = (options = {}) => {
+  const safeOptions = options && typeof options === 'object' && !Array.isArray(options)
+    ? options
+    : {};
+  const {
+    orderId,
+    cartItems = [],
+    lineTotals = [],
+    totalAmount = 0,
+    currency,
+  } = safeOptions;
+  const eventCurrency = Object.prototype.hasOwnProperty.call(safeOptions, 'currency')
+    ? normalizeEventCurrency(currency)
+    : DEFAULT_CURRENCY;
+  if (!eventCurrency) return null;
+  const contents = (cartItems || [])
+    .map((item, index) => {
+      const product = item?.product || item;
+      const quantity = getCheckoutEventQuantity(item);
+      if (quantity === null) return null;
+      const lineSubtotal = getCheckoutEventLineSubtotal(item, lineTotals, index);
+      return cleanPayload({
+        content_id: product?._id || product?.id || item?.productId,
+        content_type: 'product',
+        content_name: product?.name || item?.name,
+        content_category: product?.category || item?.category,
+        brand: product?.brand || item?.brand,
+        price: lineSubtotal === null ? undefined : lineSubtotal / quantity,
+        quantity,
+      });
+    })
+    .filter((content) => content?.content_id);
+
+  const numericTotal = strictExactNonNegativeMoney(totalAmount);
+  if (numericTotal === null) return null;
+  return cleanPayload({
+    contents,
+    content_type: contents.length > 0 ? 'product' : undefined,
+    content_ids: contents.map((content) => content.content_id),
+    order_id: orderId,
+    value: numericTotal,
+    currency: eventCurrency,
+  });
 };
 
 const buildSellerSignupPayload = ({
@@ -267,114 +363,122 @@ export const trackSellerRegistrationCompleted = async ({ user, storeName, email,
 };
 
 export const trackProductView = (product) => {
+  const currency = getProductEventCurrency(product);
   const price = getProductEventPrice(product);
-  const content = buildProductContent(product);
+  if (!currency || price === null) return false;
+  const content = buildProductContent(product, 1, price);
 
-  trackTikTokEvent('ViewContent', {
+  return trackTikTokEvent('ViewContent', {
     contents: [content],
     content_type: 'product',
     content_ids: [content.content_id],
-    value: price > 0 ? price : undefined,
-    currency: DEFAULT_CURRENCY,
+    value: price,
+    currency,
   });
 };
 
 export const trackSearch = ({ searchString, products = [] } = {}) => {
-  const contents = (products || [])
+  const eventProducts = (products || [])
     .slice(0, 10)
-    .map((product) => buildProductContent(product))
+    .map((product) => ({
+      product,
+      currency: getProductEventCurrency(product),
+      price: getProductEventPrice(product),
+    }));
+  const currencies = [...new Set(eventProducts.map((entry) => entry.currency).filter(Boolean))];
+  const oneCurrency = currencies.length === 1 && eventProducts.every((entry) => (
+    entry.currency === currencies[0] && entry.price !== null
+  ));
+  const contents = eventProducts
+    .map(({ product, price }) => buildProductContent(product, 1, oneCurrency ? price : null))
     .filter((content) => content.content_id);
+  const value = oneCurrency
+    ? addCurrencyAmounts(...eventProducts.map((entry) => entry.price))
+    : undefined;
 
-  trackTikTokEvent('Search', {
+  return trackTikTokEvent('Search', {
     contents,
     content_type: contents.length > 0 ? 'product' : undefined,
     content_ids: contents.map((content) => content.content_id),
-    value: contents.length > 0 ? contents.length : 1,
-    currency: DEFAULT_CURRENCY,
+    value,
+    currency: oneCurrency ? currencies[0] : undefined,
     search_string: searchString,
   });
 };
 
 export const trackAddToCart = (product, quantity = 1) => {
+  const currency = getProductEventCurrency(product);
   const price = getProductEventPrice(product);
-  const content = buildProductContent(product, quantity);
+  if (!currency || price === null || !Number.isSafeInteger(quantity) || quantity < 1) return false;
+  const content = buildProductContent(product, quantity, price);
 
-  trackTikTokEvent('AddToCart', {
+  return trackTikTokEvent('AddToCart', {
     contents: [content],
     content_type: 'product',
     content_ids: [content.content_id],
-    value: price > 0 ? price * quantity : undefined,
-    currency: DEFAULT_CURRENCY,
+    value: multiplyCurrencyAmount(price, quantity),
+    currency,
   });
 };
 
 export const trackAddToWishlist = (product) => {
+  const currency = getProductEventCurrency(product);
   const price = getProductEventPrice(product);
-  const content = buildProductContent(product);
+  if (!currency || price === null) return false;
+  const content = buildProductContent(product, 1, price);
 
-  trackTikTokEvent('AddToWishlist', {
+  return trackTikTokEvent('AddToWishlist', {
     contents: content.content_id ? [content] : [],
     content_type: content.content_id ? 'product' : undefined,
     content_ids: content.content_id ? [content.content_id] : undefined,
-    value: price > 0 ? price : undefined,
-    currency: DEFAULT_CURRENCY,
+    value: price,
+    currency,
   });
 };
 
-export const trackInitiateCheckout = (cartItems = [], totalAmount = 0) => {
-  const contents = cartItems
-    .map((item) => buildProductContent(item.product, item.qty || item.quantity || 1))
-    .filter((content) => content.content_id);
-
-  trackTikTokEvent('InitiateCheckout', {
-    contents,
-    content_type: 'product',
-    content_ids: contents.map((content) => content.content_id),
-    value: Number(totalAmount) > 0 ? Number(totalAmount) : undefined,
-    currency: DEFAULT_CURRENCY,
+export const trackInitiateCheckout = (
+  cartItems = [],
+  totalAmount = 0,
+  currency = DEFAULT_CURRENCY,
+  lineTotals = [],
+) => {
+  const payload = buildCheckoutEventPayload({
+    cartItems,
+    lineTotals,
+    totalAmount,
+    currency,
   });
+  return payload ? trackTikTokEvent('InitiateCheckout', payload) : false;
 };
 
-export const trackAddPaymentInfo = ({ cartItems = [], totalAmount = 0, currency = DEFAULT_CURRENCY, eventId } = {}) => {
-  const contents = cartItems
-    .map((item) => buildProductContent(item.product || item, item.qty || item.quantity || 1))
-    .filter((content) => content.content_id);
-
-  trackTikTokEvent('AddPaymentInfo', {
-    contents,
-    content_type: contents.length > 0 ? 'product' : undefined,
-    content_ids: contents.map((content) => content.content_id),
-    value: Number(totalAmount) > 0 ? Number(totalAmount) : undefined,
+export const trackAddPaymentInfo = ({ cartItems = [], lineTotals = [], totalAmount = 0, currency = DEFAULT_CURRENCY, eventId } = {}) => {
+  const payload = buildCheckoutEventPayload({
+    cartItems,
+    lineTotals,
+    totalAmount,
     currency,
-  }, eventId ? { event_id: eventId } : {});
+  });
+  return payload ? trackTikTokEvent('AddPaymentInfo', payload, eventId ? { event_id: eventId } : {}) : false;
 };
 
-export const trackPlaceAnOrder = ({ orderId, cartItems = [], totalAmount = 0, currency = DEFAULT_CURRENCY, eventId } = {}) => {
-  const contents = cartItems
-    .map((item) => buildProductContent(item.product || item, item.qty || item.quantity || 1))
-    .filter((content) => content.content_id);
-
-  trackTikTokEvent('PlaceAnOrder', {
-    contents,
-    content_type: contents.length > 0 ? 'product' : undefined,
-    content_ids: contents.map((content) => content.content_id),
-    order_id: orderId,
-    value: Number(totalAmount) > 0 ? Number(totalAmount) : undefined,
+export const trackPlaceAnOrder = ({ orderId, cartItems = [], lineTotals = [], totalAmount = 0, currency = DEFAULT_CURRENCY, eventId } = {}) => {
+  const payload = buildCheckoutEventPayload({
+    orderId,
+    cartItems,
+    lineTotals,
+    totalAmount,
     currency,
-  }, eventId ? { event_id: eventId } : {});
+  });
+  return payload ? trackTikTokEvent('PlaceAnOrder', payload, eventId ? { event_id: eventId } : {}) : false;
 };
 
-export const trackPurchase = ({ orderId, cartItems = [], totalAmount = 0, currency = DEFAULT_CURRENCY, eventId } = {}) => {
-  const contents = cartItems
-    .map((item) => buildProductContent(item.product || item, item.qty || item.quantity || 1))
-    .filter((content) => content.content_id);
-
-  trackTikTokEvent('Purchase', {
-    contents,
-    content_type: contents.length > 0 ? 'product' : undefined,
-    content_ids: contents.map((content) => content.content_id),
-    order_id: orderId,
-    value: Number(totalAmount) > 0 ? Number(totalAmount) : undefined,
+export const trackPurchase = ({ orderId, cartItems = [], lineTotals = [], totalAmount = 0, currency = DEFAULT_CURRENCY, eventId } = {}) => {
+  const payload = buildCheckoutEventPayload({
+    orderId,
+    cartItems,
+    lineTotals,
+    totalAmount,
     currency,
-  }, eventId ? { event_id: eventId } : {});
+  });
+  return payload ? trackTikTokEvent('Purchase', payload, eventId ? { event_id: eventId } : {}) : false;
 };

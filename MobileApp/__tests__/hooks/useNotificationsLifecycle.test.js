@@ -10,6 +10,9 @@ const mockRegisterToken = jest.fn();
 const mockSaveToken = jest.fn();
 const mockSetIdentity = jest.fn();
 const mockWaitRegistrations = jest.fn();
+const mockNavigate = jest.fn();
+const mockGetLastResponse = jest.fn();
+const mockClearLastResponse = jest.fn();
 let mockCurrentUser = null;
 
 jest.mock('../../src/contexts/AuthContext', () => ({
@@ -17,7 +20,7 @@ jest.mock('../../src/contexts/AuthContext', () => ({
 }));
 
 jest.mock('@react-navigation/native', () => ({
-  useNavigation: () => ({ navigate: jest.fn() }),
+  useNavigation: () => ({ navigate: mockNavigate }),
 }));
 
 jest.mock('../../src/services/notifications', () => ({
@@ -31,6 +34,7 @@ jest.mock('../../src/services/notifications', () => ({
 }));
 
 const mockNotificationSubscriptions = [];
+const mockResponseListeners = [];
 jest.mock('../../src/utils/notificationRuntime', () => ({
   getNotificationsModule: () => ({
     addNotificationReceivedListener: jest.fn(() => {
@@ -38,9 +42,10 @@ jest.mock('../../src/utils/notificationRuntime', () => ({
       mockNotificationSubscriptions.push(subscription);
       return subscription;
     }),
-    addNotificationResponseReceivedListener: jest.fn(() => {
+    addNotificationResponseReceivedListener: jest.fn((listener) => {
       const subscription = { remove: jest.fn() };
       mockNotificationSubscriptions.push(subscription);
+      mockResponseListeners.push(listener);
       return subscription;
     }),
     addPushTokenListener: jest.fn(() => {
@@ -48,6 +53,8 @@ jest.mock('../../src/utils/notificationRuntime', () => ({
       mockNotificationSubscriptions.push(subscription);
       return subscription;
     }),
+    getLastNotificationResponseAsync: (...args) => mockGetLastResponse(...args),
+    clearLastNotificationResponseAsync: (...args) => mockClearLastResponse(...args),
   }),
 }));
 
@@ -69,6 +76,7 @@ describe('useNotifications durable maintenance lifecycle', () => {
     jest.useFakeTimers();
     jest.clearAllMocks();
     mockNotificationSubscriptions.length = 0;
+    mockResponseListeners.length = 0;
     mockCurrentUser = null;
     mockSetIdentity.mockResolvedValue(1);
     mockWaitRegistrations.mockResolvedValue(undefined);
@@ -76,6 +84,8 @@ describe('useNotifications durable maintenance lifecycle', () => {
     mockGetStagedToken.mockResolvedValue(null);
     mockRegisterToken.mockResolvedValue(null);
     mockSaveToken.mockResolvedValue(true);
+    mockGetLastResponse.mockResolvedValue(null);
+    mockClearLastResponse.mockResolvedValue(undefined);
     NetInfo.addEventListener.mockImplementation((listener) => {
       networkListener = listener;
       return jest.fn();
@@ -189,5 +199,73 @@ describe('useNotifications durable maintenance lifecycle', () => {
       'ExpoPushToken[native-retry]',
       expect.objectContaining({ user: mockCurrentUser })
     );
+  });
+
+  it('consumes a killed-app financial push exactly once through the validated live router', async () => {
+    mockCurrentUser = { _id: 'seller-cold-start', role: 'seller' };
+    const response = {
+      actionIdentifier: 'expo.modules.notifications.actions.DEFAULT',
+      notification: {
+        request: {
+          identifier: 'cold-start-order-paid',
+          content: {
+            data: {
+              notificationEventKey: 'order:cold-start:paid:buyer:v1',
+              recipientUserId: 'seller-cold-start',
+              targetRole: 'both',
+              audienceRole: 'buyer',
+              type: 'order_paid',
+              category: 'order',
+              orderId: 'buyer-order-object-id',
+            },
+          },
+        },
+      },
+    };
+    mockGetLastResponse.mockResolvedValue(response);
+
+    await act(async () => {
+      root = TestRenderer.create(<Probe />);
+      await flushPromises();
+    });
+
+    expect(mockNavigate).toHaveBeenCalledTimes(1);
+    expect(mockNavigate).toHaveBeenCalledWith('OrderDetail', { orderId: 'buyer-order-object-id' });
+    expect(mockClearLastResponse).toHaveBeenCalledTimes(1);
+    expect(mockResponseListeners).toHaveLength(1);
+
+    await act(async () => {
+      mockResponseListeners[0](response);
+      await flushPromises();
+    });
+    expect(mockNavigate).toHaveBeenCalledTimes(1);
+  });
+
+  it('clears but never routes a cold-start response for another account', async () => {
+    mockCurrentUser = { _id: 'active-user', role: 'user' };
+    mockGetLastResponse.mockResolvedValue({
+      notification: {
+        request: {
+          identifier: 'wrong-account-wallet-credit',
+          content: {
+            data: {
+              notificationEventKey: 'wallet:wrong-account:credit:v1',
+              recipientUserId: 'different-user',
+              targetRole: 'user',
+              type: 'wallet_transaction_completed',
+              category: 'payment',
+            },
+          },
+        },
+      },
+    });
+
+    await act(async () => {
+      root = TestRenderer.create(<Probe />);
+      await flushPromises();
+    });
+
+    expect(mockNavigate).not.toHaveBeenCalled();
+    expect(mockClearLastResponse).toHaveBeenCalledTimes(1);
   });
 });

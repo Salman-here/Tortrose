@@ -4,8 +4,75 @@ const Cart = require('../models/Cart');
 const Product = require('../models/Product');
 const mongoose = require('mongoose');
 const { isProductBlocked, publicProductFilter } = require('../services/productModerationService');
-const { normalizeCurrency, convertAmount } = require('../services/currencyService');
+const { isSupportedCurrency, getExchangeRateSnapshot } = require('../services/currencyService');
 const { getProductCurrency, getProductEffectivePrice } = require('../services/productPricingService');
+const { sumMoney } = require('../services/moneyMath');
+const { priceOrderItemLines } = require('../services/orderLinePricingService');
+const { parsePositiveSafeInteger } = require('../services/numericInputService');
+
+const cartDataIntegrityError = (message, code = 'CART_DATA_INVALID') => {
+    const error = new Error(message);
+    error.code = code;
+    error.status = 409;
+    error.statusCode = 409;
+    return error;
+};
+
+const requireCanonicalCurrency = (value, code) => {
+    if (
+        typeof value !== 'string'
+        || !value
+        || value !== value.trim().toUpperCase()
+        || !isSupportedCurrency(value)
+    ) {
+        throw cartDataIntegrityError('The stored account currency is invalid.', code);
+    }
+    return value;
+};
+
+const requireStoredCartQuantity = (value) => {
+    if (value === null || value === undefined) return 1;
+    if (!Number.isSafeInteger(value) || value < 1) {
+        throw cartDataIntegrityError(
+            'The cart has an invalid stored quantity. Remove the affected item and add it again.',
+            'CART_QUANTITY_INVALID',
+        );
+    }
+    return value;
+};
+
+const requireStoredProductStock = (value) => {
+    if (!Number.isSafeInteger(value) || value < 0) {
+        throw cartDataIntegrityError(
+            'A product has invalid stored stock and cannot be added to the cart.',
+            'PRODUCT_STOCK_INVALID',
+        );
+    }
+    return value;
+};
+
+const assertPersistedCartQuantities = async (cart, { ignoreIdentifiers = [] } = {}) => {
+    if (!cart?._id) return;
+    const rawCart = await Cart.collection.findOne(
+        { _id: cart._id },
+        { projection: { cartItems: 1 } },
+    );
+    if (!rawCart || !Array.isArray(rawCart.cartItems)) {
+        throw cartDataIntegrityError('The cart has invalid stored items.');
+    }
+    const ignored = new Set(ignoreIdentifiers.map(value => String(value)));
+    rawCart.cartItems.forEach((item) => {
+        if (ignored.has(String(item?._id)) || ignored.has(String(item?.product))) return;
+        requireStoredCartQuantity(item?.qty);
+    });
+};
+
+const sendCartError = (res, error, fallbackMessage) => res
+    .status(error?.statusCode || 500)
+    .json({
+        msg: error?.statusCode ? error.message : fallbackMessage,
+        ...(error?.code ? { code: error.code } : {}),
+    });
 
 // Stable string key for an option set, used to dedupe cart lines per variant combo
 const optionsKey = (opts) => {
@@ -16,29 +83,43 @@ const optionsKey = (opts) => {
 
 async function getUserCurrency(userId, fallback = 'USD') {
     const user = await users.findById(userId).select('currency').lean();
-    return normalizeCurrency(user?.currency || fallback);
+    const rawCurrency = user?.currency === null || user?.currency === undefined
+        ? fallback
+        : user.currency;
+    return requireCanonicalCurrency(rawCurrency, 'USER_CURRENCY_INVALID');
 }
 
 async function buildCartPayload(cart, userId, msg) {
-    const currency = await getUserCurrency(userId);
-    const items = cart?.cartItems || [];
-    let totalCartPrice = 0;
-
-    for (const item of items) {
-        const product = item.product;
-        if (!product) continue;
-        const itemTotal = await convertAmount(
-            getProductEffectivePrice(product) * (Number(item.qty) || 1),
-            getProductCurrency(product, currency),
-            currency
-        );
-        totalCartPrice += itemTotal;
+    const items = cart?.cartItems;
+    if (!Array.isArray(items)) {
+        throw cartDataIntegrityError('The cart has invalid stored items.');
     }
+    const currency = await getUserCurrency(userId);
+    const nativeLines = items.flatMap((item) => {
+        const product = item.product;
+        if (!product) return [];
+        return [{
+            sourcePrice: getProductEffectivePrice(product),
+            // Pre-native-currency products were stored canonically in USD.
+            sourceCurrency: getProductCurrency(product, 'USD'),
+            quantity: requireStoredCartQuantity(item.qty),
+        }];
+    });
+    const rateSnapshot = await getExchangeRateSnapshot();
+    const pricedLines = priceOrderItemLines({
+        items: nativeLines,
+        targetCurrency: currency,
+        exchangeRates: rateSnapshot.rates,
+        // Cart totals are presentation snapshots. Checkout separately requires
+        // trusted live rates for every cross-currency monetary write.
+        exchangeRatesFallback: false,
+    });
+    const totalCartPrice = sumMoney(pricedLines.map(line => line.lineSubtotal));
 
     return {
         msg,
         cart: items,
-        totalCartPrice: Math.round(totalCartPrice * 100) / 100,
+        totalCartPrice,
         totalCartCurrency: currency,
     };
 }
@@ -54,13 +135,14 @@ exports.addToCart = async (req, res) => {
         if (!product) {
             return res.status(404).json({ msg: 'Product is not available' });
         }
-        if (Number(product.stock) < 1) {
+        if (requireStoredProductStock(product.stock) < 1) {
             return res.status(409).json({ msg: 'Product is out of stock' });
         }
 
         const existingCart = await Cart.findOne({ user: userId })
 
         if (existingCart) {
+            await assertPersistedCartQuantities(existingCart);
             const item = existingCart.cartItems.find(item =>
                 item.product.equals(id) &&
                 item.selectedColor === (selectedColor || null) &&
@@ -98,7 +180,7 @@ exports.addToCart = async (req, res) => {
         res.status(200).json(await buildCartPayload(newCart, userId, 'Item added to cart'))
     } catch (error) {
         console.error('Error adding to cart:', error.message);
-        res.status(500).json({ msg: 'Server error while adding to cart' });
+        sendCartError(res, error, 'Server error while adding to cart');
     }
 }
 
@@ -117,14 +199,22 @@ exports.mergeGuestCart = async (req, res) => {
                     totalCartCurrency: await getUserCurrency(userId),
                 });
             }
+            await assertPersistedCartQuantities(existingCart);
             await existingCart.populate('cartItems.product');
             return res.status(200).json(await buildCartPayload(existingCart, userId, 'Cart is up to date'));
+        }
+
+        const invalidQuantity = incomingItems.find(item => (
+            parsePositiveSafeInteger(item?.qty, { fallback: 1 }) === null
+        ));
+        if (invalidQuantity) {
+            return res.status(400).json({ msg: 'Cart quantity must be a positive safe whole number.' });
         }
 
         const normalized = incomingItems
             .map((item) => ({
                 productId: String(item?.productId || item?.product?._id || '').trim(),
-                qty: Math.max(1, Math.min(99, Math.floor(Number(item?.qty) || 1))),
+                qty: Math.min(99, parsePositiveSafeInteger(item?.qty, { fallback: 1 })),
                 selectedColor: item?.selectedColor ? String(item.selectedColor).slice(0, 100) : null,
                 selectedOptions: item?.selectedOptions && typeof item.selectedOptions === 'object'
                     ? Object.fromEntries(
@@ -141,14 +231,19 @@ exports.mergeGuestCart = async (req, res) => {
         const products = await Product.find(publicProductFilter({ _id: { $in: productIds } }))
             .select('_id stock')
             .lean();
+        products.forEach(product => requireStoredProductStock(product.stock));
         const productsById = new Map(products.map((product) => [String(product._id), product]));
 
         let cart = await Cart.findOne({ user: userId });
-        if (!cart) cart = new Cart({ user: userId, cartItems: [] });
+        if (cart) {
+            await assertPersistedCartQuantities(cart);
+        } else {
+            cart = new Cart({ user: userId, cartItems: [] });
+        }
 
         for (const item of normalized) {
             const product = productsById.get(item.productId);
-            if (!product || Number(product.stock) < 1) continue;
+            if (!product || product.stock < 1) continue;
 
             const itemKey = optionsKey(item.selectedOptions);
             const existingItem = cart.cartItems.find((cartItem) =>
@@ -156,10 +251,18 @@ exports.mergeGuestCart = async (req, res) => {
                 (cartItem.selectedColor || null) === item.selectedColor &&
                 optionsKey(cartItem.selectedOptions) === itemKey
             );
-            const stock = Math.max(1, Number(product.stock) || 1);
+            const stock = product.stock;
 
             if (existingItem) {
-                existingItem.qty = Math.min(stock, (Number(existingItem.qty) || 1) + item.qty);
+                const existingQuantity = requireStoredCartQuantity(existingItem.qty);
+                const combinedQuantity = existingQuantity + item.qty;
+                if (!Number.isSafeInteger(combinedQuantity)) {
+                    throw cartDataIntegrityError(
+                        'The cart quantity is outside the supported range.',
+                        'CART_QUANTITY_INVALID',
+                    );
+                }
+                existingItem.qty = Math.min(stock, combinedQuantity);
             } else {
                 cart.cartItems.push({
                     product: product._id,
@@ -175,7 +278,7 @@ exports.mergeGuestCart = async (req, res) => {
         return res.status(200).json(await buildCartPayload(cart, userId, 'Guest cart merged'));
     } catch (error) {
         console.error('Error merging guest cart:', error.message);
-        return res.status(500).json({ msg: 'Failed to merge guest cart' });
+        return sendCartError(res, error, 'Failed to merge guest cart');
     }
 };
 
@@ -187,6 +290,7 @@ exports.getCart = async (req, res) => {
         const userCart = await Cart.findOne({ user: userId })
         if (!userCart) return res.status(200).json({ msg: 'No cart found', cart: [], totalCartPrice: 0, totalCartCurrency: await getUserCurrency(userId) })
 
+        await assertPersistedCartQuantities(userCart)
         await userCart.populate('cartItems.product')
 
         // Filter out items with null/deleted/blocked products
@@ -201,7 +305,7 @@ exports.getCart = async (req, res) => {
         res.status(200).json(await buildCartPayload(userCart, userId, 'cart fetched successfully'))
     } catch (error) {
         console.error('error while fetching cart:::', error);
-        res.status(500).json({ msg: 'Failed to fetch user cart' })
+        sendCartError(res, error, 'Failed to fetch user cart')
     }
 }
 
@@ -218,6 +322,7 @@ exports.qtyIncrement = async (req, res) => {
             return res.status(404).json({ msg: 'cart not found' })
         }
 
+        await assertPersistedCartQuantities(userCart)
         await userCart.populate('cartItems.product')
 
         // console.log('user cart:::', userCart);
@@ -229,17 +334,19 @@ exports.qtyIncrement = async (req, res) => {
             return res.status(404).json({ msg: 'Product is not available' })
         }
         // console.log('cart to increase qty', cartItem);
-        if (Number(cartItem.product.stock) < 1) return res.status(409).json({ msg: 'Product is out of stock' })
-        if (cartItem.qty >= cartItem.product.stock) return res.status(409).json({ msg: 'You have reached stock limit' })
+        const stock = requireStoredProductStock(cartItem.product.stock)
+        const quantity = requireStoredCartQuantity(cartItem.qty)
+        if (stock < 1) return res.status(409).json({ msg: 'Product is out of stock' })
+        if (quantity >= stock) return res.status(409).json({ msg: 'You have reached stock limit' })
 
-        cartItem.qty += 1
+        cartItem.qty = quantity + 1
         // console.log(userCart);
 
         await userCart.save()
         res.status(200).json(await buildCartPayload(userCart, userId, 'quantity increased'))
     } catch (error) {
         console.error('Error increasing quantity:', error.message);
-        res.status(500).json({ msg: 'Failed to increase quantity' });
+        sendCartError(res, error, 'Failed to increase quantity');
     }
 }
 
@@ -256,6 +363,7 @@ exports.qtyDecrement = async (req, res) => {
             return res.status(404).json({ msg: 'cart not found' })
         }
 
+        await assertPersistedCartQuantities(userCart)
         // console.log('user cart:::', userCart);
         const cartItem = userCart.cartItems.find(item => item._id.equals(id))
         if (!cartItem) {
@@ -263,8 +371,9 @@ exports.qtyDecrement = async (req, res) => {
         }
         // console.log('cart to increase qty', cartItem);
 
-        if (cartItem.qty <= 1) return res.status(409).json({ msg: 'Quantity cannot be less than 1' })
-        cartItem.qty -= 1
+        const quantity = requireStoredCartQuantity(cartItem.qty)
+        if (quantity <= 1) return res.status(409).json({ msg: 'Quantity cannot be less than 1' })
+        cartItem.qty = quantity - 1
         // console.log(userCart);
         await userCart.populate('cartItems.product')
 
@@ -272,7 +381,7 @@ exports.qtyDecrement = async (req, res) => {
         res.status(200).json(await buildCartPayload(userCart, userId, 'quantity decreased'))
     } catch (error) {
         console.error('Error decreasing quantity:', error.message);
-        res.status(500).json({ msg: 'Failed to decrease quantity' });
+        sendCartError(res, error, 'Failed to decrease quantity');
 
     }
 }
@@ -287,6 +396,10 @@ exports.removeCartItem = async (req, res) => {
         if (!userCart) {
             return res.status(404).json({ msg: 'cart not found' })
         }
+        // Removing the affected line is a safe recovery path for a corrupt
+        // quantity. Every other persisted line must still validate so this
+        // operation cannot silently repair unrelated data through hydration.
+        await assertPersistedCartQuantities(userCart, { ignoreIdentifiers: [id] })
         const matchingItem = userCart.cartItems.find(item => {
             const isCartLine = item._id?.equals?.(id);
             const isProduct = item.product?.equals?.(id);
@@ -307,7 +420,7 @@ exports.removeCartItem = async (req, res) => {
         res.status(200).json(await buildCartPayload(userCart, userId, 'Item removed from cart'))
     } catch (error) {
         console.error('Error removing cart item:', error.message);
-        res.status(500).json({ msg: 'Failed remove cart item' });
+        sendCartError(res, error, 'Failed remove cart item');
     }
 }
 
@@ -326,6 +439,13 @@ exports.clearCart = async (req, res) => {
         res.status(200).json(await buildCartPayload(userCart, userId, 'cart cleared'))
     } catch (error) {
         console.error('Error clearing cart:', error.message);
-        res.status(500).json({ msg: ' Failed to clear cart' });
+        sendCartError(res, error, 'Failed to clear cart');
     }
 }
+
+exports.__private = {
+    buildCartPayload,
+    getUserCurrency,
+    requireStoredCartQuantity,
+    requireStoredProductStock,
+};

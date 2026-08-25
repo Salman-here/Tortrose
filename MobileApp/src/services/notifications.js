@@ -528,6 +528,9 @@ export const NotificationTypes = {
   ORDER_SHIPPED: 'order_shipped',
   ORDER_DELIVERED: 'order_delivered',
   ORDER_CANCELLED: 'order_cancelled',
+  ORDER_PAID: 'order_paid',
+  ORDER_NO_CHARGE_CONFIRMED: 'order_no_charge_confirmed',
+  ORDER_CONFIRMATION_REQUESTED: 'order_confirmation_requested',
 
   // Seller alerts
   NEW_ORDER_RECEIVED: 'new_order_received',
@@ -540,6 +543,20 @@ export const NotificationTypes = {
   STORE_VERIFIED: 'store_verified',
   SUBSCRIPTION_EXPIRING: 'subscription_expiring',
   PAYOUT_RECEIVED: 'payout_received',
+  PAID_ORDER_RECEIVED: 'paid_order_received',
+  NO_CHARGE_ORDER_RECEIVED: 'no_charge_order_received',
+  COD_ORDER_RECEIVED: 'cod_order_received',
+  COD_ORDER_CONFIRMED: 'cod_order_confirmed',
+  COD_ORDER_RECONFIRMED: 'cod_order_reconfirmed',
+  COD_ORDER_CANCELLED: 'cod_order_cancelled',
+  RETURN_SETTLED: 'return_settled',
+  WITHDRAWAL_REQUESTED: 'withdrawal_requested',
+  WITHDRAWAL_STATUS_CHANGED: 'withdrawal_status_changed',
+  WALLET_TRANSACTION_COMPLETED: 'wallet_transaction_completed',
+  SUBSCRIPTION_PAYMENT_RECEIVED: 'subscription_payment_received',
+  SUBSCRIPTION_PAYMENT_RECOVERED: 'subscription_payment_recovered',
+  SUBSCRIPTION_ACTIVATED: 'subscription_activated',
+  SUBSCRIPTION_CANCELLED: 'subscription_cancelled',
 
   // User engagement
   PRICE_DROP: 'price_drop',

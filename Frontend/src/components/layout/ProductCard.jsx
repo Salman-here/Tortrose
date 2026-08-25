@@ -2,28 +2,34 @@ import React from "react";
 import { motion } from "framer-motion";
 import { Bot, Edit, Trash2, Star, Package, TrendingDown, ShieldAlert } from "lucide-react";
 import { useCurrency } from "../../contexts/CurrencyContext";
+import { inspectSellerProductPresentation } from '../../utils/productCardSafety';
+
+const displayText = (value, fallback) => (
+    typeof value === 'string' && value.trim() ? value.trim() : fallback
+);
 
 const ProductCard = ({ product, index, onEditProduct, setDeleteConfirm }) => {
     const { formatPrice } = useCurrency();
-    const safeProduct = product || {};
-    const price = Number.isFinite(Number(safeProduct.price)) ? Number(safeProduct.price) : 0;
-    const discountedPrice = Number.isFinite(Number(safeProduct.discountedPrice)) ? Number(safeProduct.discountedPrice) : 0;
-    const stock = Number.isFinite(Number(safeProduct.stock)) ? Number(safeProduct.stock) : 0;
-    const rating = Number.isFinite(Number(safeProduct.rating)) ? Number(safeProduct.rating) : 0;
-    const hasDiscount = discountedPrice > 0 && discountedPrice < price;
-    const productCurrency = safeProduct.currency || safeProduct.priceCurrency || 'USD';
-    const discountPercent = hasDiscount && price > 0 ? Math.round(((price - discountedPrice) / price) * 100) : 0;
-    const isBlocked = safeProduct.isBlocked || safeProduct.moderationStatus === "blocked";
+    const safeProduct = product && typeof product === 'object' && !Array.isArray(product) ? product : {};
+    const presentation = inspectSellerProductPresentation(safeProduct);
+    const { price, discountedPrice, stock, rating } = presentation;
+    const hasDiscount = presentation.hasDiscount;
+    const productCurrency = presentation.currency;
+    const discountPercent = presentation.discountPercent;
+    const canEdit = presentation.managementSafe && presentation.valid && typeof onEditProduct === 'function';
+    const canDelete = presentation.managementSafe && typeof setDeleteConfirm === 'function';
+    const animationIndex = Number.isSafeInteger(index) && index >= 0 ? index : 0;
+    const isBlocked = safeProduct.isBlocked === true || safeProduct.moderationStatus === "blocked";
     const addedByAi = safeProduct.createdVia === "ai";
-    const blockedReason = safeProduct.blockedReason || safeProduct.moderationReason || "This looks like test or placeholder product details.";
-    const image = safeProduct.image || safeProduct.images?.[0]?.url || '';
-    const name = safeProduct.name || 'Untitled product';
+    const blockedReason = displayText(safeProduct.blockedReason, displayText(safeProduct.moderationReason, "This looks like test or placeholder product details."));
+    const image = displayText(safeProduct.image, displayText(safeProduct.images?.[0]?.url, ''));
+    const name = displayText(safeProduct.name, 'Untitled product');
 
     return (
         <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.4, delay: index * 0.05 }}
+            transition={{ duration: 0.4, delay: animationIndex * 0.05 }}
             className={`glass-card water-shimmer overflow-hidden flex flex-col group ${isBlocked ? "opacity-90" : ""}`}
         >
             {/* Image */}
@@ -39,7 +45,7 @@ const ProductCard = ({ product, index, onEditProduct, setDeleteConfirm }) => {
                         -{discountPercent}%
                     </span>
                 )}
-                {stock === 0 && (
+                {presentation.stockValid && stock === 0 && (
                     <div className="absolute inset-0 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.5)' }}>
                         <span className="px-3 py-1.5 rounded-full text-xs font-bold text-white"
                             style={{ background: 'hsl(0, 72%, 55%)' }}>
@@ -60,14 +66,20 @@ const ProductCard = ({ product, index, onEditProduct, setDeleteConfirm }) => {
                 {/* Hover Actions */}
                 <div className="absolute top-3 left-3 flex flex-col gap-2 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-300">
                     <motion.button whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}
-                        onClick={() => onEditProduct(safeProduct)}
-                        className="p-2 rounded-xl shadow-lg"
+                        type="button"
+                        onClick={() => canEdit && onEditProduct(safeProduct)}
+                        disabled={!canEdit}
+                        aria-label="Edit product"
+                        className="p-2 rounded-xl shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
                         style={{ background: 'var(--glass-bg-strong)', border: '1px solid var(--glass-border)', color: 'hsl(var(--primary))' }}>
                         <Edit size={16} />
                     </motion.button>
                     <motion.button whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}
-                        onClick={() => setDeleteConfirm(safeProduct._id)}
-                        className="p-2 rounded-xl shadow-lg"
+                        type="button"
+                        onClick={() => canDelete && setDeleteConfirm(safeProduct._id)}
+                        disabled={!canDelete}
+                        aria-label="Delete product"
+                        className="p-2 rounded-xl shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
                         style={{ background: 'var(--glass-bg-strong)', border: '1px solid var(--glass-border)', color: 'hsl(0, 72%, 55%)' }}>
                         <Trash2 size={16} />
                     </motion.button>
@@ -101,9 +113,9 @@ const ProductCard = ({ product, index, onEditProduct, setDeleteConfirm }) => {
                         )}
                     </div>
                     <div className="flex items-center gap-2 mt-0.5">
-                        <span className="text-xs font-medium" style={{ color: 'hsl(var(--muted-foreground))' }}>{safeProduct.brand || 'No brand'}</span>
+                        <span className="text-xs font-medium" style={{ color: 'hsl(var(--muted-foreground))' }}>{displayText(safeProduct.brand, 'No brand')}</span>
                         <span className="w-1 h-1 rounded-full" style={{ background: 'hsl(var(--muted-foreground))' }} />
-                        <span className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>{safeProduct.category || 'Uncategorized'}</span>
+                        <span className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>{displayText(safeProduct.category, 'Uncategorized')}</span>
                     </div>
                 </div>
                 {isBlocked && (
@@ -115,7 +127,11 @@ const ProductCard = ({ product, index, onEditProduct, setDeleteConfirm }) => {
 
                 {/* Price */}
                 <div className="flex items-baseline gap-2">
-                    {hasDiscount ? (
+                    {!presentation.moneyValid ? (
+                        <span className="text-sm font-bold inline-flex items-center gap-1.5" role="status" style={{ color: 'hsl(0, 72%, 55%)' }}>
+                            <ShieldAlert size={14} /> Price unavailable
+                        </span>
+                    ) : hasDiscount ? (
                         <>
                             <span className="text-lg font-extrabold" style={{ color: 'hsl(var(--foreground))', letterSpacing: '-0.03em' }}>
                                 {formatPrice(discountedPrice, { sourceCurrency: productCurrency })}
@@ -134,7 +150,12 @@ const ProductCard = ({ product, index, onEditProduct, setDeleteConfirm }) => {
                 {/* Stock & Rating Row */}
                 <div className="flex items-center justify-between mt-auto pt-2" style={{ borderTop: '1px solid var(--glass-border-subtle)' }}>
                     <div className="flex items-center gap-1.5">
-                        {stock > 0 ? (
+                        {!presentation.stockValid ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold"
+                                style={{ background: 'rgba(239, 68, 68, 0.12)', color: 'hsl(0, 72%, 55%)' }}>
+                                <ShieldAlert size={10} /> Stock unavailable
+                            </span>
+                        ) : stock > 0 ? (
                             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold"
                                 style={stock <= 10
                                     ? { background: 'rgba(245, 158, 11, 0.12)', color: 'hsl(45, 80%, 40%)' }
@@ -152,15 +173,17 @@ const ProductCard = ({ product, index, onEditProduct, setDeleteConfirm }) => {
                     </div>
 
                     <div className="flex items-center gap-1">
-                        {[1, 2, 3, 4, 5].map(star => (
-                            <Star key={star} size={12}
-                                style={{
-                                    color: star <= rating ? 'hsl(45, 93%, 47%)' : 'hsl(var(--muted-foreground))',
-                                    fill: star <= rating ? 'hsl(45, 93%, 47%)' : 'none'
-                                }} />
-                        ))}
-                        <span className="text-[10px] ml-0.5" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                            ({safeProduct.numReviews || 0})
+                        {presentation.ratingValid ? [1, 2, 3, 4, 5].map(star => (
+                                <Star key={star} size={12}
+                                    style={{
+                                        color: star <= rating ? 'hsl(45, 93%, 47%)' : 'hsl(var(--muted-foreground))',
+                                        fill: star <= rating ? 'hsl(45, 93%, 47%)' : 'none'
+                                    }} />
+                            )) : (
+                                <span className="text-[10px]" style={{ color: 'hsl(0, 72%, 55%)' }}>Rating unavailable</span>
+                            )}
+                        <span className="text-[10px] ml-0.5" style={{ color: presentation.reviewCountValid ? 'hsl(var(--muted-foreground))' : 'hsl(0, 72%, 55%)' }}>
+                            {presentation.reviewCountValid ? `(${presentation.reviewCount})` : '(Reviews unavailable)'}
                         </span>
                     </div>
                 </div>

@@ -33,8 +33,13 @@ function getPlanDefinition(plan) {
 
 function buildPlanPricing(plan, includeMetaAds = false, founderRate = false) {
     const definition = getPlanDefinition(plan);
+    if (typeof includeMetaAds !== 'boolean' || typeof founderRate !== 'boolean') {
+        throw Object.assign(new Error('Subscription pricing flags must be explicit booleans.'), {
+            code: 'INVALID_SUBSCRIPTION_PRICING_FLAGS',
+        });
+    }
     const isElite = plan === 'elite';
-    const includeMeta = Boolean(isElite && includeMetaAds);
+    const includeMeta = isElite && includeMetaAds;
     const baseAmount = founderRate
         ? definition.founderAmountCents
         : definition.standardAmountCents;
@@ -43,7 +48,7 @@ function buildPlanPricing(plan, includeMetaAds = false, founderRate = false) {
     return {
         ...definition,
         isElite,
-        founderRate: Boolean(founderRate),
+        founderRate,
         includeMetaAds: includeMeta,
         baseAmountCents: baseAmount,
         unitAmount: baseAmount + metaAddOn,
@@ -56,6 +61,8 @@ function buildPlanPricing(plan, includeMetaAds = false, founderRate = false) {
 
 function getPricingCatalog() {
     return {
+        schemaVersion: 1,
+        currency: 'USD',
         starter: { ...PLAN_PRICING.starter },
         elite: { ...PLAN_PRICING.elite },
         metaAdsAddonCents: META_ADS_ADDON_CENTS,

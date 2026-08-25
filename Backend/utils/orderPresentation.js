@@ -1,4 +1,31 @@
-const { formatMoneySync, normalizeCurrency } = require('../services/currencyService');
+const { formatMoneySync, isSupportedCurrency, normalizeCurrency } = require('../services/currencyService');
+const { getOrderItemLineSubtotal } = require('../services/orderLinePricingService');
+const { roundMoney } = require('../services/moneyMath');
+
+const presentationIntegrityError = label => {
+  const error = new Error('The stored ' + label + ' is invalid.');
+  error.statusCode = 409;
+  error.code = 'ORDER_PRESENTATION_DATA_INVALID';
+  return error;
+};
+
+const requirePresentationCurrency = (value, label = 'order currency') => {
+  if (!isSupportedCurrency(value)) throw presentationIntegrityError(label);
+  return normalizeCurrency(value);
+};
+
+const requirePresentationMoney = (value, label) => {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    throw presentationIntegrityError(label);
+  }
+  try {
+    if (roundMoney(value) !== value) throw presentationIntegrityError(label);
+  } catch (error) {
+    if (error?.code === 'ORDER_PRESENTATION_DATA_INVALID') throw error;
+    throw presentationIntegrityError(label);
+  }
+  return value;
+};
 
 const toPlainOptions = (value) => {
   if (!value) return {};
@@ -10,14 +37,53 @@ const toPlainOptions = (value) => {
 
 const clean = (value) => String(value ?? '').trim();
 
-const getOrderCurrency = (order, fallback = 'USD') =>
-  normalizeCurrency(order?.currency || order?.displayCurrency || order?.orderCurrency || fallback);
+const getOrderCurrency = (order, fallback = 'USD') => requirePresentationCurrency(
+  order?.currency ?? order?.displayCurrency ?? order?.orderCurrency ?? fallback,
+);
 
 const formatOrderMoney = (amount, orderOrCurrency = 'USD') => {
   const currency = typeof orderOrCurrency === 'string'
-    ? normalizeCurrency(orderOrCurrency)
+    ? requirePresentationCurrency(orderOrCurrency)
     : getOrderCurrency(orderOrCurrency);
-  return formatMoneySync(Number(amount) || 0, currency, { sourceCurrency: currency });
+  return formatMoneySync(
+    requirePresentationMoney(amount, 'order money amount'),
+    currency,
+    { sourceCurrency: currency },
+  );
+};
+
+// Payment notifications must render the exact persisted accounting total and
+// currency. In particular, do not use `||` here: zero is valid, while a stored
+// blank value is corruption that the strict formatter must surface.
+const formatPaidOrderNotificationTotal = order => {
+  const currency = requirePresentationCurrency(order?.currency, 'order currency');
+  return formatOrderMoney(order?.orderSummary?.totalAmount, currency);
+};
+
+const formatOrderItemUnitMoney = (item = {}, orderOrCurrency = 'USD') => {
+  const orderCurrency = typeof orderOrCurrency === 'string'
+    ? requirePresentationCurrency(orderOrCurrency)
+    : getOrderCurrency(orderOrCurrency);
+  const rawSourcePrice = item.sourcePrice ?? item.priceOriginal;
+  const sourcePrice = rawSourcePrice === null || rawSourcePrice === undefined
+    ? null
+    : requirePresentationMoney(rawSourcePrice, 'seller source price');
+  // Null/absent metadata is legacy and may inherit the order currency. A
+  // present blank/unsupported value is stored corruption and must not be
+  // hidden by `||` fallback semantics.
+  const rawSourceCurrency = item.sourceCurrency ?? item.priceCurrency;
+  const sourceCurrency = rawSourceCurrency !== null && rawSourceCurrency !== undefined
+    ? requirePresentationCurrency(rawSourceCurrency, 'seller source currency')
+    : orderCurrency;
+  if (
+    rawSourcePrice !== null
+    && rawSourcePrice !== undefined
+    && sourcePrice !== null
+    && sourceCurrency !== orderCurrency
+  ) {
+    return `${formatMoneySync(sourcePrice, sourceCurrency, { sourceCurrency })} seller price`;
+  }
+  return formatOrderMoney(item.price, orderCurrency);
 };
 
 const orderItemVariantPairs = (item = {}) => {
@@ -48,8 +114,18 @@ const orderItemName = (item = {}) =>
   clean(item.name || item.productId?.name || item.product?.name || 'Item') || 'Item';
 
 const orderItemLineText = (item = {}, orderOrCurrency = 'USD') => {
-  const qty = Number(item.quantity || item.qty || 1) || 1;
-  const total = (Number(item.price) || 0) * qty;
+  const qty = item.quantity;
+  if (!Number.isSafeInteger(qty) || qty < 1) {
+    throw presentationIntegrityError('order item quantity');
+  }
+  // Spreading a Mongoose subdocument copies its internal fields, not its
+  // schema getters. Pass the accounting fields explicitly so notifications
+  // retain the persisted authoritative subtotal.
+  const total = getOrderItemLineSubtotal({
+    price: item.price,
+    lineSubtotal: item.lineSubtotal,
+    quantity: qty,
+  });
   const variants = formatItemOptionsText(item);
   return `${orderItemName(item)}${variants ? ` (${variants})` : ''} x${qty} - ${formatOrderMoney(total, orderOrCurrency)}`;
 };
@@ -77,10 +153,14 @@ const paymentMethodLabel = (method) => {
 module.exports = {
   toPlainOptions,
   getOrderCurrency,
+  requirePresentationMoney,
   formatOrderMoney,
+  formatPaidOrderNotificationTotal,
+  formatOrderItemUnitMoney,
   orderItemVariantPairs,
   formatItemOptionsText,
   orderItemName,
+  orderItemLineSubtotal: getOrderItemLineSubtotal,
   orderItemLineText,
   orderItemOptionsHtml,
   escapeHtml,

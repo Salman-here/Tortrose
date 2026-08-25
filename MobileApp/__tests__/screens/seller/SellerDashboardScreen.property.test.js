@@ -8,33 +8,23 @@
  */
 
 import * as fc from 'fast-check';
+import {
+  calculateSellerStats,
+  isRecognizedSellerOrder,
+  selectAuthoritativeSellerMetrics,
+  selectAuthoritativeSellerRevenue,
+} from '../../../src/utils/sellerDashboardStats';
 
 /**
  * Calculate seller dashboard statistics — mirrors the screen's implementation,
- * which matches the WEBSITE SellerHome math:
- *  - revenue counts PAID orders only (order.isPaid)
+ * The imported production helper owns only non-money dashboard counts. Revenue
+ * is accepted separately from the server-authoritative analytics response.
  *  - pending/processing/delivered are exact orderStatus matches
  *  - conversion = delivered / total (rounded %)
  *  - outOfStock (stock === 0) and lowStock (0 < stock <= 10) product counts
  * Property 16: Seller Dashboard Statistics
  * Validates: Requirements 17.1, 17.2
  */
-const calculateSellerStats = (products, orders) => {
-  const totalProducts = products?.length || 0;
-  const totalOrders = orders?.length || 0;
-  const statusOf = (o) => o.orderStatus || o.status;
-  const pendingOrders = orders?.filter(o => statusOf(o) === 'pending').length || 0;
-  const processingOrders = orders?.filter(o => statusOf(o) === 'processing').length || 0;
-  const deliveredOrders = orders?.filter(o => statusOf(o) === 'delivered').length || 0;
-  const outOfStock = products?.filter(p => p.stock === 0).length || 0;
-  const lowStock = products?.filter(p => p.stock <= 10 && p.stock > 0).length || 0;
-  const revenue = orders?.reduce((sum, order) => (
-    order.isPaid ? sum + (order.orderSummary?.totalAmount || 0) : sum
-  ), 0) || 0;
-  const conversion = totalOrders > 0 ? Math.round((deliveredOrders / totalOrders) * 100) : 0;
-  return { totalProducts, totalOrders, pendingOrders, processingOrders, deliveredOrders, outOfStock, lowStock, revenue, conversion };
-};
-
 // Product generator
 const productArbitrary = fc.record({
   _id: fc.uuid(),
@@ -47,6 +37,7 @@ const productArbitrary = fc.record({
 const orderArbitrary = fc.record({
   _id: fc.uuid(),
   orderStatus: fc.constantFrom('pending', 'processing', 'shipped', 'delivered', 'cancelled'),
+  paymentMethod: fc.constantFrom('stripe', 'wallet', 'cash_on_delivery'),
   isPaid: fc.boolean(),
   orderSummary: fc.record({ totalAmount: fc.integer({ min: 100, max: 1000000 }).map(n => n / 100) }),
   createdAt: fc.date({ min: new Date('2020-01-01'), max: new Date('2025-12-31') }).map(d => d.toISOString()),
@@ -56,8 +47,8 @@ describe('SellerDashboardScreen Property Tests', () => {
   /**
    * Property 16: Seller Dashboard Statistics
    * For any seller with products and orders, the dashboard SHALL display 
-   * accurate statistics including total products, total orders, pending orders, 
-   * and revenue (excluding cancelled orders).
+   * accurate non-money statistics including total products, total orders, and
+   * pending orders.
    * 
    * Validates: Requirements 17.1, 17.2
    */
@@ -109,24 +100,26 @@ describe('SellerDashboardScreen Property Tests', () => {
       );
     });
 
-    it('should calculate revenue from PAID orders only (website parity)', () => {
-      fc.assert(
-        fc.property(
-          fc.array(productArbitrary, { minLength: 0, maxLength: 20 }),
-          fc.array(orderArbitrary, { minLength: 0, maxLength: 50 }),
-          (products, orders) => {
-            const stats = calculateSellerStats(products, orders);
-            const expectedRevenue = orders
-              .filter(o => o.isPaid)
-              .reduce((sum, o) => sum + (o.orderSummary?.totalAmount || 0), 0);
+    it('should reject cancelled and unsupported payment-method revenue', () => {
+      expect(isRecognizedSellerOrder({ paymentMethod: 'stripe', isPaid: true, orderStatus: 'cancelled' })).toBe(false);
+      expect(isRecognizedSellerOrder({ paymentMethod: 'bank_transfer', isPaid: true, orderStatus: 'delivered' })).toBe(false);
+      expect(isRecognizedSellerOrder({ paymentMethod: 'wallet', isPaid: true, orderStatus: 'processing' })).toBe(true);
+      expect(isRecognizedSellerOrder({ paymentMethod: 'cash_on_delivery', isPaid: false, status: 'delivered' })).toBe(true);
+    });
 
-            // Use approximate comparison for floating point
-            expect(Math.abs(stats.revenue - expectedRevenue)).toBeLessThan(0.01);
-            return true;
-          }
-        ),
-        { numRuns: 100 }
-      );
+    it('uses only server-authoritative revenue returned in the requested currency', () => {
+      expect(selectAuthoritativeSellerRevenue({ currency: 'PKR', totalSales: 1250.75, totalOrders: 2 }, 'PKR')).toBe(1250.75);
+      expect(selectAuthoritativeSellerRevenue({ currency: 'USD', totalSales: 10, totalOrders: 1 }, 'PKR')).toBeNull();
+      expect(selectAuthoritativeSellerRevenue({ currency: 'JPY', totalSales: 10, totalOrders: 1 }, 'JPY')).toBeNull();
+      expect(selectAuthoritativeSellerRevenue({ currency: 'PKR', totalSales: 'invalid', totalOrders: 1 }, 'PKR')).toBeNull();
+      expect(selectAuthoritativeSellerRevenue({ currency: 'PKR', totalSales: '1250.75', totalOrders: 2 }, 'PKR')).toBeNull();
+      expect(selectAuthoritativeSellerRevenue({ currency: 'PKR', totalSales: null, totalOrders: 0 }, 'PKR')).toBeNull();
+      expect(selectAuthoritativeSellerRevenue({ currency: 'PKR', totalSales: -0.01, totalOrders: 1 }, 'PKR')).toBeNull();
+      expect(selectAuthoritativeSellerRevenue({ currency: 'PKR', totalSales: 0, totalOrders: 0 }, 'PKR')).toBe(0);
+      expect(selectAuthoritativeSellerMetrics({ currency: 'PKR', totalSales: 1, totalOrders: 0 }, 'PKR')).toBeNull();
+      expect(selectAuthoritativeSellerMetrics({ currency: 'PKR', totalSales: 0, totalOrders: 0.5 }, 'PKR')).toBeNull();
+      expect(selectAuthoritativeSellerMetrics({ currency: 'PKR', totalSales: 1.001, totalOrders: 1 }, 'PKR')).toBeNull();
+      expect(selectAuthoritativeSellerRevenue(null, 'USD')).toBeNull();
     });
 
     it('should compute stock alerts and conversion consistently', () => {
@@ -153,17 +146,15 @@ describe('SellerDashboardScreen Property Tests', () => {
       expect(stats.totalProducts).toBe(0);
       expect(stats.totalOrders).toBe(0);
       expect(stats.pendingOrders).toBe(0);
-      expect(stats.revenue).toBe(0);
     });
 
-    it('should handle null/undefined inputs gracefully', () => {
-      const stats1 = calculateSellerStats(null, null);
-      expect(stats1.totalProducts).toBe(0);
-      expect(stats1.totalOrders).toBe(0);
-
-      const stats2 = calculateSellerStats(undefined, undefined);
-      expect(stats2.totalProducts).toBe(0);
-      expect(stats2.totalOrders).toBe(0);
+    it('should keep unavailable snapshots distinct from verified empty arrays', () => {
+      expect(calculateSellerStats(null, null)).toBeNull();
+      expect(calculateSellerStats(undefined, undefined)).toBeNull();
+      expect(calculateSellerStats([], [])).toEqual(expect.objectContaining({
+        totalProducts: 0,
+        totalOrders: 0,
+      }));
     });
 
     it('should have non-negative values for all stats', () => {
@@ -176,7 +167,6 @@ describe('SellerDashboardScreen Property Tests', () => {
             expect(stats.totalProducts).toBeGreaterThanOrEqual(0);
             expect(stats.totalOrders).toBeGreaterThanOrEqual(0);
             expect(stats.pendingOrders).toBeGreaterThanOrEqual(0);
-            expect(stats.revenue).toBeGreaterThanOrEqual(0);
             return true;
           }
         ),

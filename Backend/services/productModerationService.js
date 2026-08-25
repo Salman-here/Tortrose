@@ -1,8 +1,8 @@
 'use strict';
 
-const Notification = require('../models/Notification');
-const { notifySeller } = require('./whatsapp/sellerNotificationService');
-const sellerTemplates = require('./whatsapp/sellerMessageTemplates');
+const {
+  ensureProductBlockedNotification,
+} = require('./sellerOperationalNotificationService');
 
 const PLACEHOLDER_PHRASES = new Set([
   'test',
@@ -215,9 +215,26 @@ function moderateProductAuthenticity(product = {}) {
   };
 }
 
-function buildModerationFields(product = {}) {
+function buildModerationFields(product = {}, { previouslyBlocked = false } = {}) {
   const result = moderateProductAuthenticity(product);
   const reviewedAt = new Date();
+
+  let moderationNotice;
+  if (result.blocked && !previouslyBlocked) {
+    moderationNotice = {
+      reviewedAt,
+      productName: String(product?.name || 'Your product').trim().slice(0, 200),
+      reason: String(result.reason || 'it looks like test or placeholder content').trim().slice(0, 600),
+      notificationEnqueuedAt: null,
+    };
+  } else if (!result.blocked) {
+    moderationNotice = {
+      reviewedAt: null,
+      productName: '',
+      reason: '',
+      notificationEnqueuedAt: reviewedAt,
+    };
+  }
 
   return {
     result,
@@ -229,6 +246,7 @@ function buildModerationFields(product = {}) {
       moderationReason: result.reason,
       moderationSignals: result.signals,
       moderationReviewedAt: reviewedAt,
+      ...(moderationNotice ? { moderationNotice } : {}),
     },
   };
 }
@@ -247,29 +265,7 @@ function isProductBlocked(product = {}) {
 
 async function notifyProductBlocked({ sellerId, product }) {
   if (!sellerId || !product || !isProductBlocked(product)) return;
-
-  const reason = product.blockedReason || product.moderationReason || 'it looks like test or placeholder content';
-  const title = 'Product blocked';
-  const body = `"${product.name || 'Your product'}" was blocked because ${reason}. It is saved in Products, but customers cannot see it until you edit it with real product details.`;
-
-  try {
-    await Notification.create({
-      user: sellerId,
-      title,
-      body,
-      category: 'seller',
-      linkTo: '/seller-dashboard/product-management',
-      source: 'system',
-      targetRole: 'seller',
-      audience: 'specific',
-    });
-  } catch (err) {
-    console.error('[productModeration] dashboard notification failed:', err.message);
-  }
-
-  notifySeller(sellerId, 'product_blocked', sellerTemplates.product_blocked(product.name, reason)).catch(err =>
-    console.error('[productModeration] WhatsApp notification failed:', err.message)
-  );
+  return ensureProductBlockedNotification(product, { stageIfMissing: true });
 }
 
 module.exports = {

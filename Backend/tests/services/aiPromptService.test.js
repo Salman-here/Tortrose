@@ -40,7 +40,24 @@ describe('defaults and overrides', () => {
     expect(prompt).toContain(defaults.SELLER_PROMPT.slice(0, 60));
     expect(prompt).toContain('## Language and Urdu style');
     expect(prompt).toContain('## Internal tool memory');
+    expect(prompt).toContain('## Immutable live financial truth');
     expect(prompt).not.toContain('chatting via WhatsApp');
+  });
+
+  test('subscription defaults contain no remembered founder prices and the immutable live-price rule follows overrides', async () => {
+    expect(defaults.USER_PROMPT).not.toMatch(/\$5\.99|\$12\.99|\$16\.99/);
+    expect(defaults.SELLER_PROMPT).not.toMatch(/\$5\.99|\$12\.99|\$16\.99/);
+    await aiPromptService.updatePrompt(
+      'chat.base.seller',
+      { content: 'Legacy override says Starter is $5.99 forever.' },
+      { username: 'legacy-admin' },
+    );
+
+    const prompt = await aiPromptService.getSystemPromptForRole('seller');
+    expect(prompt).toContain('Legacy override says Starter is $5.99 forever.');
+    expect(prompt.lastIndexOf('## Immutable live financial truth'))
+      .toBeGreaterThan(prompt.indexOf('Legacy override says Starter'));
+    expect(prompt).toContain('Never guess.');
   });
 
   test('whatsapp channel appends the WhatsApp addendum', async () => {

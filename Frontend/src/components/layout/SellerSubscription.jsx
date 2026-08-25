@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     Crown, Check, Zap, Shield, Clock, AlertTriangle,
@@ -6,14 +6,62 @@ import {
     Users, Award, Star, MessageCircle, Gem, Bell, Palette, Megaphone, Tag
 } from 'lucide-react';
 import axios from 'axios';
+import { loadStripe } from '@stripe/stripe-js';
 import { toast } from 'react-toastify';
 import { useSearchParams } from 'react-router-dom';
 import { getAuthToken } from "../../utils/cookieHelper";
 import { formatUsdCents, getSubscriptionPricing } from '../../utils/subscriptionPricing';
+import {
+    calendarMonthsRemaining,
+    canRetryPlanChangeAfterStripeAction,
+    getPlanChangeActionClientSecret,
+    isPlanChangeActionRequired,
+    isStripePublishableKey,
+    subscriptionStatusConfirmsEntitlement,
+} from '../../utils/subscriptionPlanChange';
+
+const resolvePlanChangePaymentAction = async (error, token) => {
+    const clientSecret = getPlanChangeActionClientSecret(error);
+    if (!clientSecret) {
+        throw new Error('Stripe returned an invalid payment-authentication reference. No plan features were changed.');
+    }
+
+    const configResponse = await axios.get(
+        `${import.meta.env.VITE_API_URL}api/payment-methods/config`,
+        { headers: { Authorization: `Bearer ${token}` } }
+    );
+    const publishableKey = configResponse.data?.config?.publishableKey
+        || configResponse.data?.publishableKey;
+    if (!isStripePublishableKey(publishableKey)) {
+        throw new Error('Stripe payment authentication is temporarily unavailable. No plan features were changed.');
+    }
+
+    const stripe = await loadStripe(publishableKey);
+    if (!stripe) {
+        throw new Error('Stripe payment authentication could not be loaded. No plan features were changed.');
+    }
+
+    let result = await stripe.handleNextAction({ clientSecret });
+    if (!result?.error && result?.paymentIntent?.status === 'requires_confirmation') {
+        result = await stripe.confirmPayment({
+            clientSecret,
+            redirect: 'if_required',
+            confirmParams: { return_url: window.location.href },
+        });
+    }
+    if (!canRetryPlanChangeAfterStripeAction(result)) {
+        throw new Error(
+            result?.error?.message
+            || 'Stripe did not confirm the plan-change payment. No plan features were changed.'
+        );
+    }
+};
 
 const SellerSubscription = () => {
     const [subscription, setSubscription] = useState(null);
     const [loading, setLoading] = useState(true);
+    const [loadError, setLoadError] = useState('');
+    const subscriptionRequestRef = useRef({ id: 0, controller: null });
     const [checkoutLoading, setCheckoutLoading] = useState(null); // 'starter' | 'elite' | null
     const [cancelLoading, setCancelLoading] = useState(false);
     const [resumeLoading, setResumeLoading] = useState(false);
@@ -26,29 +74,32 @@ const SellerSubscription = () => {
     const [eliteMetaAds, setEliteMetaAds] = useState(false);
     const [couponCode, setCouponCode] = useState('');
     const [founderCouponApplied, setFounderCouponApplied] = useState(false);
+    const [checkoutReturnStatus, setCheckoutReturnStatus] = useState(null);
     const [searchParams] = useSearchParams();
+    const returnedFromCheckout = searchParams.get('success') === 'true';
+    const checkoutWasCancelled = searchParams.get('cancelled') === 'true';
+    const requestedCouponParam = String(searchParams.get('coupon') || '').trim().toUpperCase();
 
-    useEffect(() => {
-        fetchSubscription();
-        if (searchParams.get('success') === 'true') {
-            toast.success('Subscription activated! Your store is now live.');
-        }
-        if (searchParams.get('cancelled') === 'true') {
-            toast.info('Checkout was cancelled. You can subscribe anytime.');
-        }
-    }, []);
-
-    const fetchSubscription = async () => {
+    const fetchSubscription = useCallback(async () => {
+        subscriptionRequestRef.current.controller?.abort();
+        const controller = new AbortController();
+        const requestId = subscriptionRequestRef.current.id + 1;
+        subscriptionRequestRef.current = { id: requestId, controller };
+        setLoading(true);
+        setSubscription(null);
+        setLoadError('');
         try {
             const token = getAuthToken();
             const res = await axios.get(`${import.meta.env.VITE_API_URL}api/subscription/status`, {
-                headers: { Authorization: `Bearer ${token}` }
+                headers: { Authorization: `Bearer ${token}` },
+                signal: controller.signal,
             });
             const nextSubscription = res.data.subscription;
+            if (subscriptionRequestRef.current.id !== requestId) return null;
             setSubscription(nextSubscription);
             setEliteMetaAds(Boolean(nextSubscription?.metaAdsIncluded));
 
-            const requestedCoupon = String(searchParams.get('coupon') || '').trim().toUpperCase();
+            const requestedCoupon = requestedCouponParam;
             if (
                 requestedCoupon
                 && requestedCoupon === nextSubscription?.founderPromotion?.code
@@ -58,12 +109,18 @@ const SellerSubscription = () => {
                 setCouponCode(requestedCoupon);
                 setFounderCouponApplied(true);
             }
+            return nextSubscription;
         } catch (err) {
+            if (controller.signal.aborted || err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError') return null;
+            if (subscriptionRequestRef.current.id !== requestId) return null;
             console.error(err);
+            setSubscription(null);
+            setLoadError(err.response?.data?.msg || 'Live subscription status could not be loaded. Billing actions are disabled until you retry.');
+            return null;
         } finally {
-            setLoading(false);
+            if (subscriptionRequestRef.current.id === requestId) setLoading(false);
         }
-    };
+    }, [requestedCouponParam]);
 
     const handleSubscribe = async (plan = 'starter') => {
         setCheckoutLoading(plan);
@@ -101,16 +158,34 @@ const SellerSubscription = () => {
 
     const handleUpgrade = async () => {
         setUpgradeLoading(true);
+        let paymentActionStarted = false;
         try {
             const token = getAuthToken();
-            const res = await axios.post(`${import.meta.env.VITE_API_URL}api/subscription/upgrade-to-elite`, { includeMetaAds: eliteMetaAds }, {
-                headers: { Authorization: `Bearer ${token}` }
-            });
+            const payload = { includeMetaAds: eliteMetaAds };
+            const submitPlanChange = () => axios.post(
+                `${import.meta.env.VITE_API_URL}api/subscription/upgrade-to-elite`,
+                payload,
+                { headers: { Authorization: `Bearer ${token}` } }
+            );
+            let res;
+            try {
+                res = await submitPlanChange();
+            } catch (error) {
+                if (!isPlanChangeActionRequired(error)) throw error;
+                paymentActionStarted = true;
+                toast.info('Complete Stripe authentication to continue. No plan features are active yet.');
+                await resolvePlanChangePaymentAction(error, token);
+                // Identical endpoint and payload resume the server-owned
+                // planChangeAttempt. Only this authoritative retry may grant
+                // Elite or Meta Ads after Stripe confirms payment.
+                res = await submitPlanChange();
+            }
             toast.success(res.data.msg || 'Upgraded to Rozare Elite!');
             setShowUpgradeConfirm(false);
-            fetchSubscription();
+            await fetchSubscription();
         } catch (err) {
-            toast.error(err.response?.data?.msg || 'Failed to update subscription');
+            if (paymentActionStarted) await fetchSubscription();
+            toast.error(err.response?.data?.msg || err.message || 'Failed to update subscription');
         } finally {
             setUpgradeLoading(false);
         }
@@ -148,6 +223,42 @@ const SellerSubscription = () => {
             setCancelDowngradeLoading(false);
         }
     };
+
+    const recheckCheckoutReturn = useCallback(async () => {
+        setCheckoutReturnStatus('verifying');
+        const nextSubscription = await fetchSubscription();
+        if (subscriptionStatusConfirmsEntitlement(nextSubscription)) {
+            setCheckoutReturnStatus('confirmed');
+            toast.success('Your authenticated subscription status is active.');
+        } else {
+            setCheckoutReturnStatus('pending');
+        }
+    }, [fetchSubscription]);
+
+    useEffect(() => {
+        let active = true;
+        const verifyCheckoutReturn = async () => {
+            if (returnedFromCheckout) {
+                setCheckoutReturnStatus('verifying');
+                toast.info('Stripe checkout returned. Rozare is verifying your subscription before enabling access.');
+            } else if (checkoutWasCancelled) {
+                toast.info('Checkout was cancelled. You can subscribe anytime.');
+            }
+
+            const nextSubscription = await fetchSubscription();
+            if (!active || !returnedFromCheckout) return;
+            if (subscriptionStatusConfirmsEntitlement(nextSubscription)) {
+                setCheckoutReturnStatus('confirmed');
+                toast.success('Your authenticated subscription status is active.');
+            } else {
+                setCheckoutReturnStatus('pending');
+            }
+        };
+        verifyCheckoutReturn();
+        return () => { active = false; };
+    }, [checkoutWasCancelled, fetchSubscription, returnedFromCheckout]);
+
+    useEffect(() => () => subscriptionRequestRef.current.controller?.abort(), []);
 
     const handleResume = async () => {
         setResumeLoading(true);
@@ -206,7 +317,7 @@ const SellerSubscription = () => {
         }
         const map = {
             trial: { label: 'Free Trial', color: 'hsl(220, 70%, 55%)', bg: 'rgba(99,102,241,0.12)', icon: <Clock size={12} /> },
-            free_period: { label: subscription?.plan === 'elite' ? '45-Day Free' : '30-Day Free', color: 'hsl(150, 60%, 45%)', bg: 'rgba(16,185,129,0.12)', icon: <Sparkles size={12} /> },
+            free_period: { label: 'Introductory Period', color: 'hsl(150, 60%, 45%)', bg: 'rgba(16,185,129,0.12)', icon: <Sparkles size={12} /> },
             active: { label: 'Active', color: 'hsl(150, 60%, 45%)', bg: 'rgba(16,185,129,0.12)', icon: <Check size={12} /> },
             past_due: { label: 'Past Due', color: 'hsl(30, 90%, 50%)', bg: 'rgba(249,115,22,0.12)', icon: <AlertTriangle size={12} /> },
             blocked: { label: 'Blocked', color: 'hsl(0, 72%, 55%)', bg: 'rgba(239,68,68,0.12)', icon: <Lock size={12} /> },
@@ -229,12 +340,35 @@ const SellerSubscription = () => {
         );
     }
 
+    const pricing = getSubscriptionPricing(subscription);
+    if (!subscription || !pricing) {
+        return (
+            <div className="glass-panel-strong p-6 max-w-xl mx-auto mt-8 text-center">
+                <AlertTriangle size={28} className="mx-auto mb-3" style={{ color: 'hsl(38, 92%, 50%)' }} />
+                <h2 className="text-lg font-bold" style={{ color: 'hsl(var(--foreground))' }}>Subscription pricing unavailable</h2>
+                <p className="text-sm mt-2" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                    {loadError || 'Live plan prices could not be verified. Billing actions are disabled so an outdated price is never shown or charged.'}
+                </p>
+                <button
+                    type="button"
+                    onClick={() => {
+                        setLoading(true);
+                        fetchSubscription();
+                    }}
+                    className="mt-4 px-5 py-2.5 rounded-xl text-sm font-bold text-white"
+                    style={{ background: 'hsl(var(--primary))' }}
+                >
+                    Retry
+                </button>
+            </div>
+        );
+    }
+
     const isBlocked = subscription?.status === 'blocked';
     const isTrial = subscription?.status === 'trial';
     const isPastDue = subscription?.status === 'past_due';
     const isSubscribed = ['active', 'free_period'].includes(subscription?.status);
     const isElite = subscription?.plan === 'elite';
-    const showSubscribeButton = !isSubscribed && !isPastDue;
     const bonusExpiredPermanently = subscription?.bonusFeaturesExpiredPermanently && !isElite;
     const hasGracePeriod = isBlocked && subscription?.bonusGraceDeadline && subscription?.bonusGraceDaysRemaining > 0 && !bonusExpiredPermanently;
     const bonusAboutToExpire = isSubscribed && subscription?.plan === 'starter' && subscription?.bonusFeaturesActive && subscription?.bonusExpiryDate && (() => {
@@ -242,15 +376,22 @@ const SellerSubscription = () => {
         return daysLeft <= 7 && daysLeft > 0;
     })();
     const bonusDaysUntilExpiry = subscription?.bonusExpiryDate ? Math.max(0, Math.ceil((new Date(subscription.bonusExpiryDate) - new Date()) / (1000 * 60 * 60 * 24))) : 0;
-    const bonusMonthsRemaining = subscription?.bonusExpiryDate ? Math.max(0, Math.ceil(bonusDaysUntilExpiry / 30)) : 6;
+    const bonusMonthsRemaining = subscription?.bonusExpiryDate
+        ? calendarMonthsRemaining(subscription.bonusExpiryDate)
+        : 6;
     const isStarterSubscribed = isSubscribed && !isElite;
-    const pricing = getSubscriptionPricing(subscription);
     const founderPromotion = subscription?.founderPromotion;
+    const founderReservationMinutes = Number.isSafeInteger(founderPromotion?.checkoutReservationMinutes)
+        && founderPromotion.checkoutReservationMinutes > 0
+        ? founderPromotion.checkoutReservationMinutes
+        : null;
     const founderRateActive = Boolean(subscription?.founderOffer?.active);
     const useFounderRate = founderRateActive || founderCouponApplied;
     const getsIntroductoryFreePeriod = !subscription?.hasUsedFreePeriod;
     const metaAdsAddonCents = pricing.metaAdsAddonCents;
-    const metaAdsAddonPrice = `$${(metaAdsAddonCents / 100).toFixed(2)}`;
+    const metaAdsAddonPrice = formatUsdCents(metaAdsAddonCents);
+    const starterFounderPriceLabel = formatUsdCents(pricing.starter.founderAmountCents);
+    const eliteFounderPriceLabel = formatUsdCents(pricing.elite.founderAmountCents);
     const starterMonthlyPrice = useFounderRate
         ? pricing.starter.founderAmountCents
         : pricing.starter.standardAmountCents;
@@ -259,12 +400,12 @@ const SellerSubscription = () => {
         ? pricing.elite.founderAmountCents
         : pricing.elite.standardAmountCents;
     const eliteMonthlyPrice = eliteBaseMonthlyPrice + (eliteMetaAds && metaAdsAddonCents > 0 ? metaAdsAddonCents : 0);
-    const eliteMonthlyPriceLabel = `$${(eliteMonthlyPrice / 100).toFixed(2)}`;
+    const eliteMonthlyPriceLabel = formatUsdCents(eliteMonthlyPrice);
     const activeEliteBasePrice = founderRateActive
         ? pricing.elite.founderAmountCents
         : pricing.elite.standardAmountCents;
     const activeEliteMonthlyPrice = activeEliteBasePrice + (subscription?.metaAdsIncluded && metaAdsAddonCents > 0 ? metaAdsAddonCents : 0);
-    const activeEliteMonthlyPriceLabel = `$${(activeEliteMonthlyPrice / 100).toFixed(2)}`;
+    const activeEliteMonthlyPriceLabel = formatUsdCents(activeEliteMonthlyPrice);
     const eliteMetaSelectionChanged = isElite && isSubscribed && Boolean(subscription?.metaAdsIncluded) !== eliteMetaAds;
     const toggleMetaAds = () => {
         setEliteMetaAds((value) => !value);
@@ -308,6 +449,33 @@ const SellerSubscription = () => {
 
     return (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="p-4 sm:p-6 max-w-4xl mx-auto">
+
+            {checkoutReturnStatus && checkoutReturnStatus !== 'confirmed' && (
+                <motion.div
+                    initial={{ opacity: 0, y: -10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="mb-6 p-5 rounded-2xl border"
+                    role="status"
+                    style={{ background: 'rgba(14, 165, 233, 0.08)', borderColor: 'rgba(14, 165, 233, 0.24)' }}
+                >
+                    <div className="flex items-start gap-3">
+                        <div className="p-2 rounded-xl" style={{ background: 'rgba(14, 165, 233, 0.14)' }}>
+                            <Clock size={20} style={{ color: 'hsl(200, 80%, 50%)' }} />
+                        </div>
+                        <div>
+                            <h3 className="text-sm font-bold" style={{ color: 'hsl(200, 80%, 45%)' }}>
+                                {checkoutReturnStatus === 'verifying' ? 'Verifying subscription' : 'Subscription confirmation pending'}
+                            </h3>
+                            <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                                Stripe checkout has returned, but Rozare has not yet confirmed an active entitlement. Your store access will update only after the authenticated subscription status confirms payment.
+                            </p>
+                            <button type="button" onClick={recheckCheckoutReturn} disabled={checkoutReturnStatus === 'verifying'} className="text-xs font-semibold mt-2 disabled:opacity-60" style={{ color: 'hsl(200, 80%, 45%)' }}>
+                                Check status again
+                            </button>
+                        </div>
+                    </div>
+                </motion.div>
+            )}
 
             {/* Blocked Banner */}
             {isBlocked && (
@@ -795,8 +963,8 @@ const SellerSubscription = () => {
                                 </h3>
                                 <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
                                     {founderRateActive
-                                        ? 'Your extra 40% discount stays active across Starter and Elite plan changes while this subscription remains uninterrupted.'
-                                        : 'Use FIRST100 for an extra 40% off: Starter becomes $5.99/month and Elite becomes $12.99/month.'}
+                                        ? 'Your locked FIRST100 founder rate stays active across Starter and Elite plan changes while this subscription remains uninterrupted.'
+                                        : `Use ${founderPromotion.code} for an extra ${founderPromotion.discountPercent}% off: Starter becomes ${starterFounderPriceLabel}/month and Elite becomes ${eliteFounderPriceLabel}/month.`}
                                 </p>
                                 {!founderRateActive && founderPromotion.available && (
                                     <p className="text-[11px] font-semibold mt-2" style={{ color: 'hsl(220, 70%, 55%)' }}>
@@ -848,7 +1016,9 @@ const SellerSubscription = () => {
                     </div>
                     {founderCouponApplied && !founderRateActive && (
                         <p className="text-[10px] mt-3" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                            Your slot is reserved for 35 minutes after you continue to Stripe and is permanently claimed when Checkout completes.
+                            {founderReservationMinutes
+                                ? `Your slot is reserved for ${founderReservationMinutes} minutes after you continue to Stripe and is permanently claimed when Checkout completes.`
+                                : 'Your slot is reserved after you continue to Stripe and is permanently claimed when Checkout completes.'}
                         </p>
                     )}
                 </div>
@@ -869,7 +1039,7 @@ const SellerSubscription = () => {
                                 {getsIntroductoryFreePeriod && (
                                     <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold"
                                         style={{ background: 'rgba(16, 185, 129, 0.12)', color: 'hsl(150, 60%, 45%)' }}>
-                                        <Sparkles size={12} /> 30 DAYS FREE
+                                        <Sparkles size={12} /> {pricing.starter.freePeriodDays} DAYS FREE
                                     </span>
                                 )}
                                 <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold"
@@ -892,11 +1062,11 @@ const SellerSubscription = () => {
                                 {starterMonthlyPriceLabel}<span className="text-sm font-normal" style={{ color: 'hsl(var(--muted-foreground))' }}>/mo</span>
                             </p>
                             <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                                {getsIntroductoryFreePeriod ? 'First 30 days free, then ' : ''}{starterMonthlyPriceLabel}/month - Cancel anytime
+                                {getsIntroductoryFreePeriod ? `First ${pricing.starter.freePeriodDays} days free, then ` : ''}{starterMonthlyPriceLabel}/month - Cancel anytime
                             </p>
                             {useFounderRate && (
                                 <p className="text-[11px] font-semibold mt-1" style={{ color: 'hsl(150, 60%, 42%)' }}>
-                                    Includes the extra 40% FIRST100 founder discount
+                                    Includes the locked FIRST100 founder rate
                                 </p>
                             )}
                         </div>
@@ -976,7 +1146,7 @@ const SellerSubscription = () => {
                                 <>
                                     <CreditCard size={15} />
                                     {getsIntroductoryFreePeriod
-                                        ? 'Subscribe - 30 Days Free'
+                                        ? `Subscribe - ${pricing.starter.freePeriodDays} Days Free`
                                         : `Subscribe - ${starterMonthlyPriceLabel}/month`}
                                     <ArrowRight size={15} />
                                 </>
@@ -1004,7 +1174,7 @@ const SellerSubscription = () => {
                                 {getsIntroductoryFreePeriod && (
                                     <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold"
                                         style={{ background: 'rgba(139, 92, 246, 0.12)', color: 'hsl(270, 60%, 55%)' }}>
-                                        <Gem size={12} /> 45 DAYS FREE
+                                        <Gem size={12} /> {pricing.elite.freePeriodDays} DAYS FREE
                                     </span>
                                 )}
                                 <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold"
@@ -1027,11 +1197,11 @@ const SellerSubscription = () => {
                                 {eliteMonthlyPriceLabel}<span className="text-sm font-normal" style={{ color: 'hsl(var(--muted-foreground))' }}>/mo</span>
                             </p>
                             <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                                {getsIntroductoryFreePeriod ? 'First 45 days free, then ' : ''}{eliteMonthlyPriceLabel}/month - Cancel anytime
+                                {getsIntroductoryFreePeriod ? `First ${pricing.elite.freePeriodDays} days free, then ` : ''}{eliteMonthlyPriceLabel}/month - Cancel anytime
                             </p>
                             {useFounderRate && (
                                 <p className="text-[11px] font-semibold mt-1" style={{ color: 'hsl(150, 60%, 42%)' }}>
-                                    Includes the extra 40% FIRST100 founder discount; Meta ads remain {metaAdsAddonPrice}/month
+                                    Includes the locked FIRST100 founder rate; Meta ads remain {metaAdsAddonPrice}/month
                                 </p>
                             )}
                         </div>
@@ -1124,7 +1294,7 @@ const SellerSubscription = () => {
                                 <>
                                     <Gem size={15} />
                                     {getsIntroductoryFreePeriod
-                                        ? 'Subscribe Elite - 45 Days Free'
+                                        ? `Subscribe Elite - ${pricing.elite.freePeriodDays} Days Free`
                                         : `Subscribe Elite - ${eliteMonthlyPriceLabel}/month`}
                                     <ArrowRight size={15} />
                                 </>
@@ -1141,7 +1311,7 @@ const SellerSubscription = () => {
                     {[
                         { step: '1', title: 'Free Trial', desc: '15 days to set up your store, add products, and start selling', active: isTrial, done: !isTrial && (isSubscribed || isBlocked || isPastDue) },
                         { step: '2', title: 'Subscribe', desc: `Choose Rozare Starter (${starterMonthlyPriceLabel}/mo) or Rozare Elite (${eliteMonthlyPriceLabel}/mo with your current options)`, active: false, done: isSubscribed || isPastDue },
-                        { step: '3', title: 'Free Period', desc: isElite ? '45 days of full access at no cost' : '30 days of full access at no cost to grow your business', active: subscription?.status === 'free_period', done: subscription?.status === 'active' || (isSubscribed && subscription?.hasUsedFreePeriod && subscription?.status !== 'free_period') },
+                        { step: '3', title: 'Free Period', desc: `${pricing[isElite ? 'elite' : 'starter'].freePeriodDays} days of full access at no cost${isElite ? '' : ' to grow your business'}`, active: subscription?.status === 'free_period', done: subscription?.status === 'active' || (isSubscribed && subscription?.hasUsedFreePeriod && subscription?.status !== 'free_period') },
                         { step: '4', title: 'Monthly Billing', desc: isElite ? `${activeEliteMonthlyPriceLabel}/month. Cancel anytime.` : `${starterMonthlyPriceLabel}/month after the free period. Cancel anytime.`, active: subscription?.status === 'active', done: false },
                         { step: '5', title: 'Bonus Features', desc: isElite ? 'Permanently included with your Elite plan.' : 'After 6 months, bonus features expire. Upgrade to Elite to keep them.', active: false, done: isElite && isSubscribed },
                     ].map((s, i) => {
@@ -1286,7 +1456,7 @@ const SellerSubscription = () => {
                                         'Customizable store themes',
                                         'Coupon & discount management',
                                         'Rozare-run TikTok ads for featured products',
-                                        eliteMetaAds ? 'Meta ads add-on selected' : 'Optional Meta ads add-on (+$4/month)',
+                                        eliteMetaAds ? 'Meta ads add-on selected' : `Optional Meta ads add-on (+${metaAdsAddonPrice}/month)`,
                                     ].map((f, i) => (
                                         <div key={i} className="flex items-center gap-2">
                                             <Check size={11} style={{ color: 'hsl(270, 60%, 55%)' }} />

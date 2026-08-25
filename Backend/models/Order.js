@@ -1,11 +1,119 @@
 const mongoose = require("mongoose");
+const { roundMoney } = require('../services/moneyMath');
+const { parseStrictFiniteNumber } = require('../services/numericInputService');
+const { canonicalizeShippingPhone } = require('../services/orderBuyerContactService');
+
+const strictNumberSetter = value => {
+    if (value === null || value === undefined) return value;
+    const parsed = parseStrictFiniteNumber(value);
+    return parsed === null ? Number.NaN : parsed;
+};
+
+const isExactNonNegativeMoney = value => {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return false;
+    try {
+        return roundMoney(value) === value;
+    } catch (_) {
+        return false;
+    }
+};
+
+const isNullableExactNonNegativeMoney = value => (
+    value === null || value === undefined || isExactNonNegativeMoney(value)
+);
+
+const isFiniteNonNegativeNumber = value => (
+    typeof value === 'number'
+    && Number.isFinite(value)
+    && value >= 0
+    && value <= Number.MAX_SAFE_INTEGER / 1_000_000
+);
+
+const finiteNonNegativeField = ({ required = false, default: defaultValue } = {}) => ({
+    type: Number,
+    ...(required ? { required: true } : {}),
+    ...(defaultValue !== undefined ? { default: defaultValue } : {}),
+    min: 0,
+    set: strictNumberSetter,
+    validate: {
+        validator: value => (
+            (!required && (value === null || value === undefined))
+            || isFiniteNonNegativeNumber(value)
+        ),
+        message: 'Stored informational order amount must be finite, safe, and non-negative',
+    },
+});
+
+const isPositiveFiniteRate = value => (
+    value === null
+    || value === undefined
+    || (typeof value === 'number' && Number.isFinite(value) && value > 0)
+);
+
+const exactMoneyField = ({ required = false, default: defaultValue } = {}) => ({
+    type: Number,
+    ...(required ? { required: true } : {}),
+    ...(defaultValue !== undefined ? { default: defaultValue } : {}),
+    min: 0,
+    set: strictNumberSetter,
+    validate: {
+        validator: required ? isExactNonNegativeMoney : isNullableExactNonNegativeMoney,
+        message: 'Stored order money must be finite, safe, non-negative, and exact to cents',
+    },
+});
+
+const nullableRateField = defaultValue => ({
+    type: Number,
+    default: defaultValue,
+    set: strictNumberSetter,
+    validate: {
+        validator: isPositiveFiniteRate,
+        message: 'Stored exchange rates must be finite positive numbers',
+    },
+});
 
 const orderSchema = mongoose.Schema(
     {
         user: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
         guestEmail: { type: String, default: null },
         currency: { type: String, enum: ["USD", "PKR", "EUR", "GBP"], default: "USD" },
+        // Immutable checkout-time USD rate table. Transaction accounting uses
+        // this snapshot so historical revenue and a later full refund cancel
+        // exactly even when live FX rates have changed. Catalog/display
+        // conversion remains live and is intentionally separate.
+        exchangeRateSnapshot: {
+            _id: false,
+            base: { type: String, enum: ["USD"], default: "USD" },
+            rates: {
+                _id: false,
+                USD: {
+                    ...nullableRateField(1),
+                    validate: {
+                        validator: value => value === 1,
+                        message: 'The USD snapshot rate must equal 1',
+                    },
+                },
+                PKR: nullableRateField(null),
+                EUR: nullableRateField(null),
+                GBP: nullableRateField(null),
+            },
+            capturedAt: { type: Date, default: null },
+            source: { type: String, default: "", maxlength: 80 },
+            fallback: { type: Boolean, default: false },
+        },
         orderId: { type: String, required: true },
+        // Version 2 public ids are created only by code that also carries the
+        // immutable Mongo _id through payment/provider metadata. Historical
+        // rows deliberately remain unversioned until a read-only duplicate
+        // preflight proves that they are safe to promote. This lets the
+        // database reject every new duplicate without pretending that legacy
+        // display ids are already globally unique.
+        orderIdVersion: {
+            type: Number,
+            enum: [2],
+            default: null,
+            immutable: true,
+        },
         // A client-generated key makes retries/double taps return the original
         // checkout instead of creating a second order or charging stock twice.
         checkoutIdempotencyKey: { type: String, default: null, trim: true },
@@ -19,15 +127,29 @@ const orderSchema = mongoose.Schema(
                 seller: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null, index: true },
                 name: { type: String, default: '' },
                 image: { type: String },
-                price: { type: Number, required: true },
-                sourcePrice: { type: Number, default: null },
+                // Converted display unit price can be fractional when an exact
+                // buyer-currency line subtotal is divided across many units.
+                // `lineSubtotal` is the authoritative exact-cent charge.
+                price: finiteNonNegativeField({ required: true }),
+                // Authoritative item total in the order currency. FX is applied
+                // to the native line (price x quantity) before cent rounding;
+                // `price` remains a display-oriented converted unit snapshot.
+                lineSubtotal: exactMoneyField({ default: null }),
+                sourcePrice: exactMoneyField({ default: null }),
                 sourceCurrency: { type: String, enum: ["USD", "PKR", "EUR", "GBP"], default: null },
+                sourceLineSubtotal: exactMoneyField({ default: null }),
                 // Verbatim seller-entered price + its currency at order time.
                 // Used by dashboards so display in matching currency is exact
                 // (avoids USD round-trip rounding drift like 1000 → 1001.36).
-                priceOriginal: { type: Number, default: null },
+                priceOriginal: exactMoneyField({ default: null }),
                 priceCurrency: { type: String, enum: ["USD", "PKR", "EUR", "GBP"], default: null },
-                quantity: { type: Number, required: true },
+                quantity: {
+                    type: Number,
+                    required: true,
+                    min: 1,
+                    set: strictNumberSetter,
+                    validate: { validator: value => Number.isSafeInteger(value) && value > 0, message: 'Order quantity must be a positive safe whole number' },
+                },
                 selectedColor: { type: String, default: null },
                 selectedOptions: { type: Map, of: String, default: undefined },
                 returnPolicySnapshotVersion: { type: Number, default: 0 },
@@ -51,18 +173,31 @@ const orderSchema = mongoose.Schema(
             fullName: { type: String, required: true },
             email: { type: String, required: true },
             phone: { type: String, required: true },
+            phoneE164: {
+                type: String,
+                validate: {
+                    validator: value => value === undefined || /^\+[1-9]\d{7,14}$/.test(value),
+                    message: 'Shipping phoneE164 must be a valid international phone number'
+                }
+            },
             address: { type: String, required: true },
             city: { type: String, required: true },
             state: { type: String, required: true },
             postalCode: { type: String, required: true },
-            country: { type: String, required: true, default: "Pakistan" },
+            country: { type: String, required: true },
             countryCode: { type: String, default: '' }
         },
 
         shippingMethod: {
             name: { type: String, required: true },
-            price: { type: Number, required: true },
-            estimatedDays: { type: Number, required: true },
+            price: exactMoneyField({ required: true }),
+            estimatedDays: {
+                type: Number,
+                required: true,
+                min: 1,
+                set: strictNumberSetter,
+                validate: { validator: value => Number.isSafeInteger(value) && value > 0, message: 'Shipping days must be a positive safe whole number' },
+            },
             seller: { type: mongoose.Schema.Types.ObjectId, ref: "User" }
         },
 
@@ -71,8 +206,23 @@ const orderSchema = mongoose.Schema(
                 seller: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
                 shippingMethod: {
                     name: { type: String, required: true },
-                    price: { type: Number, required: true },
-                    estimatedDays: { type: Number, required: true }
+                    price: exactMoneyField({ required: true }),
+                    estimatedDays: {
+                        type: Number,
+                        required: true,
+                        min: 1,
+                        set: strictNumberSetter,
+                        validate: { validator: value => Number.isSafeInteger(value) && value > 0, message: 'Seller shipping days must be a positive safe whole number' },
+                    },
+                    // Preserve the seller-configured native shipping amount.
+                    // `price` is the exact cent allocation charged in the
+                    // buyer's order currency.
+                    sourceCost: exactMoneyField({ default: null }),
+                    sourceCurrency: {
+                        type: String,
+                        enum: ["USD", "PKR", "EUR", "GBP"],
+                        default: null,
+                    }
                 }
             }
         ],
@@ -122,26 +272,123 @@ const orderSchema = mongoose.Schema(
         ],
 
         orderSummary: {
-            subtotal: { type: Number, required: true },
-            shippingCost: { type: Number, required: true },
-            tax: { type: Number, default: 0.00 },
-            couponDiscount: { type: Number, default: 0 },
-            totalAmount: { type: Number, required: true }
+            subtotal: exactMoneyField({ required: true }),
+            shippingCost: exactMoneyField({ required: true }),
+            tax: exactMoneyField({ default: 0 }),
+            couponDiscount: exactMoneyField({ default: 0 }),
+            totalAmount: exactMoneyField({ required: true })
         },
+
+        // Versioned, immutable-in-practice seller ownership of the exact order
+        // total. `amountUSDMinor` is allocated across the whole order in one
+        // conversion, so independent seller rounding can never create or lose
+        // a USD cent. Revenue, returns, and payment reversals all consume this
+        // same frozen snapshot.
+        sellerSettlementVersion: {
+            type: Number,
+            default: 0,
+            min: 0,
+            immutable: true,
+            set: strictNumberSetter,
+            validate: {
+                validator: value => Number.isSafeInteger(value) && value >= 0,
+                message: 'Seller settlement version must be a non-negative safe integer',
+            },
+        },
+        sellerSettlement: [
+            {
+                _id: false,
+                seller: {
+                    type: mongoose.Schema.Types.ObjectId,
+                    ref: "User",
+                    required: true,
+                    immutable: true,
+                },
+                sourceCurrency: {
+                    type: String,
+                    enum: ["USD", "PKR", "EUR", "GBP"],
+                    required: true,
+                    immutable: true,
+                },
+                sourceAmountMinor: {
+                    type: Number,
+                    required: true,
+                    min: 0,
+                    immutable: true,
+                    set: strictNumberSetter,
+                    validate: {
+                        validator: Number.isSafeInteger,
+                        message: 'Seller settlement source amount must be safe minor units',
+                    },
+                },
+                amountUSDMinor: {
+                    type: Number,
+                    required: true,
+                    min: 0,
+                    immutable: true,
+                    set: strictNumberSetter,
+                    validate: {
+                        validator: Number.isSafeInteger,
+                        message: 'Seller settlement USD amount must be safe minor units',
+                    },
+                },
+            }
+        ],
 
         appliedCoupons: [
             {
                 couponId: { type: mongoose.Schema.Types.ObjectId, ref: "Coupon" },
+                // Immutable coupon owner at checkout. Version-1 coupon scopes
+                // must stay inside this seller's snapshotted order lines.
+                seller: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
                 code: { type: String },
                 discountType: { type: String, enum: ["percentage", "fixed"] },
-                discountValue: { type: Number },
-                appliedDiscountAmount: { type: Number, default: null },
-                currency: { type: String, uppercase: true, trim: true },
-                sourceDiscountValue: { type: Number },
-                sourceCurrency: { type: String, uppercase: true, trim: true },
+                discountValue: {
+                    type: Number,
+                    min: 0,
+                    set: strictNumberSetter,
+                    validate: {
+                        validator(value) {
+                            if (!isFiniteNonNegativeNumber(value)) return false;
+                            return this.discountType === 'percentage'
+                                ? value <= 100
+                                : isExactNonNegativeMoney(value);
+                        },
+                        message: 'Stored coupon value must be a valid percentage or exact fixed-money amount',
+                    },
+                },
+                appliedDiscountAmount: exactMoneyField({ default: null }),
+                currency: { type: String, enum: ["USD", "PKR", "EUR", "GBP"], uppercase: true, trim: true },
+                sourceDiscountValue: {
+                    type: Number,
+                    min: 0,
+                    set: strictNumberSetter,
+                    validate: {
+                        validator(value) {
+                            if (!isFiniteNonNegativeNumber(value)) return false;
+                            return this.discountType === 'percentage'
+                                ? value <= 100
+                                : isExactNonNegativeMoney(value);
+                        },
+                        message: 'Stored source coupon value must be a valid percentage or exact fixed-money amount',
+                    },
+                },
+                sourceCurrency: { type: String, enum: ["USD", "PKR", "EUR", "GBP"], uppercase: true, trim: true },
                 applicableProductIds: [{ type: mongoose.Schema.Types.ObjectId, ref: "Product" }],
+                couponTermsFingerprint: { type: String, minlength: 64, maxlength: 64 },
             }
         ],
+
+        // Version 1 means coupon capacity was reserved atomically before the
+        // payment attempt. It distinguishes new safe checkouts from legacy
+        // orders created before the reservation lifecycle existed.
+        couponUsageVersion: {
+            type: Number,
+            default: 0,
+            min: 0,
+            set: strictNumberSetter,
+            validate: { validator: value => Number.isSafeInteger(value) && value >= 0, message: 'Coupon usage version must be a non-negative safe integer' },
+        },
 
         tracking: {
             tiktokPlaceOrderEventId: { type: String, default: null },
@@ -169,6 +416,34 @@ const orderSchema = mongoose.Schema(
             paymentIntentId: String,
             emailAddress: String,
             walletTransactionId: { type: mongoose.Schema.Types.ObjectId, ref: 'WalletTransaction' },
+            // A captured legacy payment whose stock can no longer be committed
+            // is refunded through a deterministic Stripe request. Persist the
+            // external reference before any local cancellation so webhook
+            // retries can only recover the refund, never fulfill the order.
+            stockRefundId: { type: String, default: null },
+            stockRefundStatus: { type: String, default: '' },
+            stockRefundAmountMinor: {
+                type: Number,
+                default: null,
+                min: 0,
+                set: strictNumberSetter,
+                validate: {
+                    validator: value => (
+                        value === null
+                        || value === undefined
+                        || (Number.isSafeInteger(value) && value >= 0)
+                    ),
+                    message: 'Stripe stock refund amount must be safe minor units',
+                },
+            },
+            stockRefundCurrency: {
+                type: String,
+                enum: ["USD", "PKR", "EUR", "GBP", null],
+                uppercase: true,
+                trim: true,
+                default: null,
+            },
+            stockRefundAt: { type: Date, default: null },
             failureCode: { type: String, default: '' },
             failureMessage: { type: String, default: '' },
             failureAt: { type: Date, default: null },
@@ -180,6 +455,18 @@ const orderSchema = mongoose.Schema(
             default: 'checkout_session',
             index: true,
         },
+        // Durable boundary around Stripe object creation. `creating` means the
+        // deterministic Stripe request may already have succeeded even when its
+        // ID was not persisted yet, so cancellation must fail closed and replay
+        // must recover that same request.
+        paymentSetupState: {
+            type: String,
+            enum: ['unknown', 'not_started', 'creating', 'ready', 'refunding', 'closed', 'complete'],
+            default: 'unknown',
+            index: true,
+        },
+        paymentSetupStartedAt: { type: Date, default: null },
+        paymentSetupCompletedAt: { type: Date, default: null },
         clientSurface: {
             type: String,
             enum: ['web', 'mobile', 'unknown'],
@@ -188,6 +475,10 @@ const orderSchema = mongoose.Schema(
         stripeMode: { type: String, enum: ['test', 'live'], default: null },
         stripeCustomerId: { type: String, default: null, index: true },
         stripePaymentIntentId: { type: String, default: null },
+        // Freeze every hosted-create parameter that can otherwise change
+        // between an ambiguous request and its deterministic replay.
+        stripeCheckoutSuccessUrl: { type: String, default: null, maxlength: 2048 },
+        stripeCheckoutCancelUrl: { type: String, default: null, maxlength: 2048 },
         paymentExpiresAt: { type: Date, default: null, index: true },
         paymentCancelledAt: { type: Date, default: null },
         checkoutRequestFingerprint: { type: String, default: null, select: false },
@@ -260,6 +551,50 @@ const orderSchema = mongoose.Schema(
     { timestamps: true, toJSON: { virtuals: true }, toObject: { virtuals: true } }
 );
 
+// The whole array is immutable after insertion as well as each monetary field.
+// Legacy backfill is the only exception and opts in explicitly through the
+// compare-and-set helper in orderMoneyService.
+orderSchema.path('sellerSettlement').immutable(true);
+
+// Every newly persisted order owns an immutable, unambiguous international
+// buyer destination. This protects future writers that bypass the two current
+// checkout controllers and prevents the schema's historical Pakistan default
+// from changing a buyer's country silently.
+orderSchema.pre('validate', function freezeBuyerPhoneDestination(next) {
+    if (!this.isNew) return next();
+    try {
+        const snapshot = canonicalizeShippingPhone(this.shippingInfo);
+        if (this.shippingInfo.phoneE164 && this.shippingInfo.phoneE164 !== snapshot.e164) {
+            const error = new Error('Shipping phone and phoneE164 destinations do not match.');
+            error.statusCode = 400;
+            error.code = 'SHIPPING_PHONE_MISMATCH';
+            return next(error);
+        }
+        this.shippingInfo.phone = snapshot.e164;
+        this.shippingInfo.phoneE164 = snapshot.e164;
+        this.shippingInfo.countryCode = snapshot.countryCode;
+        return next();
+    } catch (error) {
+        return next(error);
+    }
+});
+
+orderSchema.pre('save', function rejectFrozenSettlementMutation(next) {
+    if (
+        !this.isNew
+        && Number(this.sellerSettlementVersion || 0) > 0
+        && (
+            this.isModified('sellerSettlement')
+            || this.isModified('sellerSettlementVersion')
+        )
+    ) {
+        const error = new Error('The frozen seller settlement cannot be changed.');
+        error.code = 'SELLER_SETTLEMENT_IMMUTABLE';
+        return next(error);
+    }
+    return next();
+});
+
 // Human-friendly label for the admin/seller UI. Example:
 //   "Confirmed by buyer via Rozare WhatsApp automation"
 //   "Cancelled by buyer via Rozare WhatsApp automation"
@@ -293,6 +628,18 @@ orderSchema.virtual('confirmationSourceLabel').get(function () {
 orderSchema.index({ awaitingPayment: 1, orderStatus: 1, 'orderItems.seller': 1, createdAt: -1 });
 orderSchema.index({ awaitingPayment: 1, orderStatus: 1, 'orderItems.productId': 1, createdAt: -1 });
 orderSchema.index({ 'sellerFulfillment.seller': 1, 'sellerFulfillment.status': 1, createdAt: -1 });
+orderSchema.index(
+    { orderId: 1 },
+    { name: 'idx_order_public_id_lookup' }
+);
+orderSchema.index(
+    { orderId: 1, orderIdVersion: 1 },
+    {
+        unique: true,
+        partialFilterExpression: { orderIdVersion: 2 },
+        name: 'uniq_modern_order_public_id',
+    }
+);
 orderSchema.index(
     { stripeSessionId: 1 },
     {

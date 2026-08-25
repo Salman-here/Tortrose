@@ -24,6 +24,12 @@ import GlassPanel from '../components/common/GlassPanel';
 import KeyboardAwareFormScrollView from '../components/common/KeyboardAwareFormScrollView';
 import PremiumBackHeader from '../components/common/PremiumBackHeader';
 import { fontSize, fontWeight, shadows, spacing, typography } from '../styles/theme';
+import {
+  getOrderCurrency,
+  getOrderItemLineSubtotal,
+  getOrderTotal,
+  hasExactOrderItemUnitEquation,
+} from '../utils/orderPresentation';
 
 const STATUS_STEPS = ['pending', 'confirmed', 'processing', 'shipped', 'delivered'];
 const ACTIVE_STATUSES = new Set(['pending', 'confirmed', 'processing', 'shipped']);
@@ -114,7 +120,7 @@ export default function TrackOrderScreen({ navigation }) {
   }, [currentUser?.email, email]);
 
   const orderMoney = useCallback(
-    (amount, targetOrder = order) => formatPrice(amount || 0, { sourceCurrency: targetOrder?.currency || 'USD' }),
+    (amount, targetOrder = order) => formatPrice(amount, { sourceCurrency: getOrderCurrency(targetOrder) }),
     [formatPrice, order]
   );
 
@@ -503,7 +509,7 @@ export default function TrackOrderScreen({ navigation }) {
                     <View style={[styles.summaryBlock, styles.summaryBlockRight]}>
                       <Text style={styles.summaryLabel}>TOTAL</Text>
                       <Text style={styles.summaryValue} numberOfLines={1} adjustsFontSizeToFit>
-                        {orderMoney(order.orderSummary?.totalAmount)}
+                        {orderMoney(getOrderTotal(order))}
                       </Text>
                     </View>
                   </View>
@@ -620,13 +626,17 @@ export default function TrackOrderScreen({ navigation }) {
                       )}
                       <View style={styles.orderItemCopy}>
                         <Text style={styles.orderItemName} numberOfLines={2}>{item.name}</Text>
-                        <Text style={styles.orderItemMeta}>Qty {item.quantity} · {orderMoney(item.price)}</Text>
+                        <Text style={styles.orderItemMeta}>
+                          {hasExactOrderItemUnitEquation(item)
+                            ? `Qty ${item.quantity} · ${orderMoney(item.price)}`
+                            : `Qty ${item.quantity} · Complete line price`}
+                        </Text>
                         {!!item.selectedColor && <Text style={styles.orderItemOption}>Color: {item.selectedColor}</Text>}
                         {getSelectedOptions(item).map(([name, value]) => (
                           <Text key={name} style={styles.orderItemOption}>{name}: {value}</Text>
                         ))}
                       </View>
-                      <Text style={styles.orderItemTotal}>{orderMoney(item.price * item.quantity)}</Text>
+                      <Text style={styles.orderItemTotal}>{orderMoney(getOrderItemLineSubtotal(item))}</Text>
                     </View>
                   ))}
 

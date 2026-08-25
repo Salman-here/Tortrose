@@ -5,7 +5,13 @@ import axios from "axios";
 import { toast } from "react-toastify";
 import { useCurrency } from "../contexts/CurrencyContext";
 import SEOHead from "../components/common/SEOHead";
-import { formatOrderItemOptions } from "../utils/orderItems";
+import {
+  formatOrderItemOptions,
+  getOrderCurrency,
+  getOrderItemLineSubtotal,
+  getOrderTotal,
+  hasExactOrderItemUnitEquation,
+} from "../utils/orderItems";
 
 const statusSteps = ["pending", "confirmed", "processing", "shipped", "delivered"];
 const statusConfig = {
@@ -18,7 +24,6 @@ const statusConfig = {
 };
 
 export default function TrackOrderPage() {
-  const [email, setEmail] = useState("");
   return (
     <>
       <SEOHead
@@ -40,7 +45,7 @@ function TrackOrderContent() {
   const [searched, setSearched] = useState(false);
   const [showItems, setShowItems] = useState(false);
   const { formatPrice } = useCurrency();
-  const orderMoney = (amount) => formatPrice(amount, { sourceCurrency: order?.currency || 'USD' });
+  const orderMoney = (amount) => formatPrice(amount, { sourceCurrency: getOrderCurrency(order) });
 
   const handleTrack = async (e) => {
     e.preventDefault();
@@ -143,7 +148,7 @@ function TrackOrderContent() {
                   <div className="text-right">
                     <p className="text-xs" style={{ color: "hsl(var(--muted-foreground))" }}>Total</p>
                     <p className="text-lg font-bold" style={{ color: "hsl(var(--foreground))" }}>
-                      {orderMoney(order.orderSummary.totalAmount)}
+                      {orderMoney(getOrderTotal(order))}
                     </p>
                   </div>
                 </div>
@@ -233,11 +238,13 @@ function TrackOrderContent() {
                                 <p className="text-xs leading-snug" style={{ color: "hsl(var(--muted-foreground))" }}>{formatOrderItemOptions(item)}</p>
                               )}
                               <p className="text-xs" style={{ color: "hsl(var(--muted-foreground))" }}>
-                                Qty: {item.quantity} × {orderMoney(item.price)}
+                                {hasExactOrderItemUnitEquation(item)
+                                  ? <>Qty: {item.quantity} × {orderMoney(item.price)}</>
+                                  : <>Qty: {item.quantity} · Complete line price</>}
                               </p>
                             </div>
                             <p className="text-sm font-semibold" style={{ color: "hsl(var(--foreground))" }}>
-                              {orderMoney(item.price * item.quantity)}
+                              {orderMoney(getOrderItemLineSubtotal(item))}
                             </p>
                           </div>
                         ))}

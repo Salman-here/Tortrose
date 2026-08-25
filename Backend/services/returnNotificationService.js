@@ -1,16 +1,23 @@
 'use strict';
 
-const Notification = require('../models/Notification');
 const ReturnRequest = require('../models/ReturnRequest');
-const User = require('../models/User');
-const { notifySeller } = require('./whatsapp/sellerNotificationService');
 const sellerTemplates = require('./whatsapp/sellerMessageTemplates');
-const { enqueueTextNotification } = require('./whatsapp/queue');
-const { sendPushToUser } = require('../utils/expoPush');
-const { formatMoneySync, normalizeCurrency } = require('./currencyService');
+const { formatMoneySync, isSupportedCurrency } = require('./currencyService');
+const { roundMoney } = require('./moneyMath');
 const { RETURN_STATUS_LABELS } = require('./returnPolicyService');
+const {
+  enqueueReturnSettlementNotifications,
+} = require('./financialNotificationOutboxService');
+const { enqueueNotificationEvent } = require('./notificationOutboxService');
+const { tryOrderBuyerPhoneE164 } = require('./orderBuyerContactService');
 
 const notificationBody = value => String(value || '').trim().slice(0, 1000);
+const escapeHtml = value => String(value || '')
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&#039;');
 
 const buyerReturnLink = (returnRequest) =>
   `/user-dashboard/order/detail/${returnRequest.order}?returnId=${returnRequest._id}`;
@@ -18,214 +25,370 @@ const buyerReturnLink = (returnRequest) =>
 const sellerReturnLink = (returnRequest) =>
   `/seller-dashboard/order-management?tab=returns&returnId=${returnRequest._id}`;
 
-const formatReturnAmount = (returnRequest) => formatMoneySync(
-  returnRequest?.refund?.totalAmount || 0,
-  normalizeCurrency(returnRequest?.currency || 'USD'),
-  { sourceCurrency: normalizeCurrency(returnRequest?.currency || 'USD') }
-);
+const requireStoredReturnCurrency = (returnRequest) => {
+  const rawCurrency = returnRequest?.currency;
+  if (
+    typeof rawCurrency !== 'string'
+    || rawCurrency !== rawCurrency.trim()
+    || rawCurrency !== rawCurrency.toUpperCase()
+    || !isSupportedCurrency(rawCurrency)
+  ) {
+    const error = new Error('Stored return currency is invalid.');
+    error.code = 'RETURN_FINANCIAL_DATA_INVALID';
+    throw error;
+  }
+  return rawCurrency;
+};
 
-const statusNotificationKey = (returnRequest) => {
+const requireStoredReturnTotal = (returnRequest) => {
+  const amount = returnRequest?.refund?.totalAmount;
+  if (
+    typeof amount !== 'number'
+    || !Number.isFinite(amount)
+    || amount < 0
+    || roundMoney(amount) !== amount
+  ) {
+    const error = new Error('Stored return total is invalid.');
+    error.code = 'RETURN_FINANCIAL_DATA_INVALID';
+    throw error;
+  }
+  return amount;
+};
+
+const formatReturnAmount = (returnRequest) => {
+  const currency = requireStoredReturnCurrency(returnRequest);
+  return formatMoneySync(
+    requireStoredReturnTotal(returnRequest),
+    currency,
+    { sourceCurrency: currency }
+  );
+};
+
+const statusNotificationOccurrence = (returnRequest) => {
   const history = returnRequest?.statusHistory || [];
   const matchingEntry = [...history].reverse().find(entry => entry.status === returnRequest.status);
-  const timestamp = matchingEntry?.changedAt || returnRequest?.updatedAt || returnRequest?.createdAt || new Date(0);
-  return `buyer-status:${returnRequest.status}:${new Date(timestamp).getTime()}`;
-};
-
-const notificationAttemptSucceeded = (result, requiresSentFlag = false) => (
-  result?.status === 'fulfilled' && (!requiresSentFlag || result.value?.sent === true)
-);
-
-const sendBuyerWhatsApp = async (order, message, dedupeKey) => {
-  const digits = String(order?.shippingInfo?.phone || '').replace(/\D/g, '');
-  if (digits.length < 8) return { sent: false, reason: 'invalid_phone' };
-  const queued = await enqueueTextNotification({ order, phone: digits, message, dedupeKey });
-  return queued ? { sent: true, queued: true } : { sent: false, reason: 'enqueue_failed' };
-};
-
-const sendSellerReturnWhatsApp = async (returnRequest, order) => {
-  const seller = await User.findById(returnRequest?.seller)
-    .select('sellerInfo.whatsappNumber sellerInfo.whatsappVerified')
-    .lean();
-  const digits = String(seller?.sellerInfo?.whatsappNumber || '').replace(/\D/g, '');
-  if (!seller?.sellerInfo?.whatsappVerified || digits.length < 8) {
-    return { sent: false, reason: 'seller_whatsapp_not_verified' };
+  const timestamp = matchingEntry?.changedAt || returnRequest?.createdAt || new Date(0);
+  const occurredAt = new Date(timestamp);
+  if (!Number.isFinite(occurredAt.getTime())) {
+    const error = new Error('Stored return notification occurrence time is invalid.');
+    error.code = 'RETURN_NOTIFICATION_DATA_INVALID';
+    throw error;
   }
-  const queued = await enqueueTextNotification({
-    order,
-    phone: digits,
-    message: sellerTemplates.return_requested(returnRequest),
-    dedupeKey: `return-request:${returnRequest._id}:seller`,
-  });
-  return queued ? { sent: true, queued: true } : { sent: false, reason: 'enqueue_failed' };
+  return {
+    occurredAt,
+    key: `${returnRequest.status}:${occurredAt.getTime()}`,
+    note: matchingEntry?.note,
+  };
 };
 
-const notifySellerReturnRequested = async (returnRequest, order) => {
-  const claimed = await ReturnRequest.findOneAndUpdate(
-    { _id: returnRequest?._id, requestedNotificationSentAt: null },
-    { $set: { requestedNotificationSentAt: new Date() } },
-    { new: true }
-  );
-  const current = claimed || returnRequest;
-  if (!current) return false;
+const snapshotPhone = order => tryOrderBuyerPhoneE164(order);
 
+const snapshotEmail = order => {
+  const email = String(order?.shippingInfo?.email || '').trim().toLowerCase();
+  return email.length <= 320 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : '';
+};
+
+const notifySellerReturnRequested = async (returnRequest, order, { session = null } = {}) => {
+  if (!returnRequest?._id || !returnRequest?.seller || !returnRequest?.order) return false;
+  const occurredAt = returnRequest.requestedAt || returnRequest.createdAt;
   const buyerName = order?.shippingInfo?.fullName || 'A buyer';
-  const body = `${buyerName} requested a return for order #${current.orderId}. Reason: ${current.reasonDetails}`;
-
-  const appResults = claimed ? await Promise.allSettled([
-    Notification.create({
-      user: current.seller,
-      title: 'New return request',
-      body: notificationBody(body),
+  const body = notificationBody(
+    `${buyerName} requested a return for order #${returnRequest.orderId}. Reason: ${returnRequest.reasonDetails}`
+  );
+  const eventKey = `return:${returnRequest._id}:requested:seller:${returnRequest.seller}`;
+  const records = await enqueueNotificationEvent({
+    eventKey,
+    eventType: 'return.requested',
+    aggregateType: 'ReturnRequest',
+    aggregateId: String(returnRequest._id),
+    occurredAt,
+    recipient: {
+      kind: 'user',
+      audienceRole: 'seller',
+      user: returnRequest.seller,
+      destinationPolicy: 'current_user',
+    },
+    channels: ['inapp', 'push', 'email', 'whatsapp'],
+    templates: {
+      inapp: { title: 'New return request', body },
+      push: { title: 'New return request', body },
+      email: {
+        subject: `New return request for order #${returnRequest.orderId}`,
+        text: `${body}\n\nSign in to Rozare to review and respond to this request.`,
+        html: `<p>${escapeHtml(body)}</p><p>Sign in to Rozare to review and respond to this request.</p>`,
+      },
+      whatsapp: { message: sellerTemplates.return_requested(returnRequest) },
+    },
+    metadata: {
       category: 'order',
-      linkTo: sellerReturnLink(current),
-      source: 'system',
-      targetRole: 'seller',
-      audience: 'specific',
-    }),
-    sendPushToUser(current.seller, {
-      title: 'New return request',
-      body: notificationBody(body),
       channelId: 'seller',
+      whatsappCategory: 'return_request',
+      linkTo: sellerReturnLink(returnRequest),
       data: {
         type: 'return_requested',
-        returnRequestId: String(current._id),
-        orderId: String(current.order),
+        returnRequestId: String(returnRequest._id),
+        orderId: String(returnRequest.order),
       },
-    }),
-  ]) : [];
-  const appSent = !claimed || appResults.some(result => notificationAttemptSucceeded(result));
-  if (claimed && !appSent) {
-    await ReturnRequest.updateOne(
-      { _id: claimed._id, requestedNotificationSentAt: claimed.requestedNotificationSentAt },
-      { $set: { requestedNotificationSentAt: null } }
-    ).catch(() => {});
-  }
-  const whatsapp = await sendSellerReturnWhatsApp(current, order);
-  return appSent && whatsapp?.sent === true;
+    },
+    session,
+  });
+  return records.length === 4;
 };
 
-const notifyBuyerReturnStatus = async (returnRequest, order, note = '') => {
-  const notificationKey = statusNotificationKey(returnRequest);
-  const claimed = await ReturnRequest.findOneAndUpdate(
-    { _id: returnRequest?._id, notificationKeys: { $ne: notificationKey } },
-    { $addToSet: { notificationKeys: notificationKey } },
-    { new: true }
+const enqueueReturnCancellationNotifications = async (
+  returnRequest,
+  order,
+  { session = null } = {}
+) => {
+  if (
+    !returnRequest?._id
+    || !returnRequest?.buyer
+    || !returnRequest?.seller
+    || !returnRequest?.order
+    || returnRequest.status !== 'cancelled_by_buyer'
+  ) {
+    const error = new Error('A completed buyer cancellation is required for notifications.');
+    error.code = 'RETURN_NOTIFICATION_DATA_INVALID';
+    throw error;
+  }
+  const occurrence = statusNotificationOccurrence(returnRequest);
+  const cleanNote = String(occurrence.note || '').trim().slice(0, 500);
+  const noteLine = cleanNote ? ` Note: ${cleanNote}` : '';
+  const buyerBody = notificationBody(
+    `Your return #${returnRequest.returnNumber} for order #${returnRequest.orderId} was cancelled.${noteLine}`
   );
-  const current = claimed || returnRequest;
-  if (!current) return false;
+  const sellerBody = notificationBody(
+    `Buyer cancelled return #${returnRequest.returnNumber} for order #${returnRequest.orderId}.${noteLine}`
+  );
+  const eventRoot = `return:${returnRequest._id}:cancelled:${occurrence.occurredAt.getTime()}`;
+  const aggregate = {
+    eventType: 'return.cancelled',
+    aggregateType: 'ReturnRequest',
+    aggregateId: String(returnRequest._id),
+    occurredAt: occurrence.occurredAt,
+    session,
+  };
+  const data = {
+    type: 'return_cancelled',
+    returnRequestId: String(returnRequest._id),
+    orderId: String(returnRequest.order),
+    status: 'cancelled_by_buyer',
+  };
 
-  const label = RETURN_STATUS_LABELS[current.status] || current.status;
-  const amountText = formatReturnAmount(current);
-  const refundLine = current.status === 'returned'
-    ? ` ${amountText} has been credited to your Rozare Wallet.`
-    : '';
-  const noteLine = note ? ` Note: ${note}` : '';
-  const body = `Return #${current.returnNumber} for order #${current.orderId} is now ${label.toLowerCase()}.${refundLine}${noteLine}`;
-
-  const appResults = claimed ? await Promise.allSettled([
-    Notification.create({
-      user: current.buyer,
-      title: label,
-      body: notificationBody(body),
+  const seller = await enqueueNotificationEvent({
+    ...aggregate,
+    eventKey: `${eventRoot}:seller:${returnRequest.seller}`,
+    recipient: {
+      kind: 'user',
+      audienceRole: 'seller',
+      user: returnRequest.seller,
+      destinationPolicy: 'current_user',
+    },
+    channels: ['inapp', 'push', 'email', 'whatsapp'],
+    templates: {
+      inapp: { title: 'Return request cancelled', body: sellerBody },
+      push: { title: 'Return request cancelled', body: sellerBody },
+      email: {
+        subject: `Return #${returnRequest.returnNumber} was cancelled`,
+        text: `${sellerBody}\n\nSign in to Rozare to view the return record.`,
+        html: `<p>${escapeHtml(sellerBody)}</p><p>Sign in to Rozare to view the return record.</p>`,
+      },
+      whatsapp: {
+        message: [
+          'Rozare Return Update',
+          '',
+          `Return: #${returnRequest.returnNumber}`,
+          `Order: #${returnRequest.orderId}`,
+          'Status: Cancelled by buyer',
+          cleanNote ? `Note: ${cleanNote}` : '',
+          '',
+          'Open Seller Dashboard > Orders > Return Orders for details.',
+        ].filter(Boolean).join('\n'),
+      },
+    },
+    metadata: {
       category: 'order',
-      linkTo: buyerReturnLink(current),
-      source: 'system',
-      // Sellers can also purchase as buyers, so buyer transaction updates are
-      // intentionally valid for both shopping-capable roles.
-      targetRole: 'both',
-      audience: 'specific',
-    }),
-    sendPushToUser(current.buyer, {
-      title: label,
-      body: notificationBody(body),
+      channelId: 'seller',
+      whatsappCategory: 'return_update',
+      linkTo: sellerReturnLink(returnRequest),
+      relatedOrder: returnRequest.order,
+      data,
+    },
+  });
+
+  const email = snapshotEmail(order);
+  const phone = snapshotPhone(order);
+  const buyerChannels = ['inapp', 'push'];
+  if (email) buyerChannels.push('email');
+  if (phone) buyerChannels.push('whatsapp');
+  const buyerTemplates = {
+    inapp: { title: 'Return cancelled', body: buyerBody },
+    push: { title: 'Return cancelled', body: buyerBody },
+  };
+  if (email) {
+    buyerTemplates.email = {
+      subject: `Return #${returnRequest.returnNumber} cancelled`,
+      text: `${buyerBody}\n\nSign in to Rozare to view the return details.`,
+      html: `<p>${escapeHtml(buyerBody)}</p><p>Sign in to Rozare to view the return details.</p>`,
+    };
+  }
+  if (phone) {
+    buyerTemplates.whatsapp = {
+      message: [
+        'Rozare Return Update',
+        '',
+        `Return: #${returnRequest.returnNumber}`,
+        `Order: #${returnRequest.orderId}`,
+        'Status: Cancelled',
+        cleanNote ? `Note: ${cleanNote}` : '',
+        '',
+        'Your cancellation has been recorded.',
+      ].filter(Boolean).join('\n'),
+    };
+  }
+  const buyer = await enqueueNotificationEvent({
+    ...aggregate,
+    eventKey: `${eventRoot}:buyer:${returnRequest.buyer}`,
+    recipient: {
+      kind: 'user',
+      audienceRole: 'buyer',
+      user: returnRequest.buyer,
+      destinationPolicy: 'event_snapshot',
+      email,
+      phone,
+    },
+    channels: buyerChannels,
+    templates: buyerTemplates,
+    metadata: {
+      category: 'order',
       channelId: 'orders',
+      linkTo: buyerReturnLink(returnRequest),
+      relatedOrder: returnRequest.order,
+      data,
+    },
+  });
+  return { buyer, seller };
+};
+
+const notifyBuyerReturnStatus = async (
+  returnRequest,
+  order,
+  note = '',
+  { session = null } = {}
+) => {
+  if (returnRequest?.status === 'returned') {
+    if (returnRequest?.settlement?.status !== 'completed') {
+      // Never tell a buyer that Wallet money was credited until the durable
+      // settlement ledger says it completed.
+      return false;
+    }
+    // The settlement event owns all completed-refund channels and its exact
+    // frozen amount. This replay-safe call repairs legacy/controller retries
+    // without creating a second direct status/refund notification.
+    await enqueueReturnSettlementNotifications(returnRequest, order, { session });
+    return true;
+  }
+  const current = returnRequest;
+  if (!current?._id || !current?.buyer || !current?.order) return false;
+  const occurrence = statusNotificationOccurrence(current);
+  const cleanNote = String(occurrence.note ?? note ?? '').trim().slice(0, 500);
+  const label = RETURN_STATUS_LABELS[current.status] || current.status;
+  const noteLine = cleanNote ? ` Note: ${cleanNote}` : '';
+  const body = notificationBody(
+    `Return #${current.returnNumber} for order #${current.orderId} is now ${label.toLowerCase()}.${noteLine}`
+  );
+  const whatsappMessage = [
+      'Rozare Return Update',
+      '',
+      `Return: #${current.returnNumber}`,
+      `Order: #${current.orderId}`,
+      `Status: ${label}`,
+      cleanNote ? `Note: ${cleanNote}` : '',
+      '',
+      'Open your Rozare account for details.',
+    ].filter(Boolean).join('\n');
+  const phone = snapshotPhone(order);
+  const email = snapshotEmail(order);
+  const channels = ['inapp', 'push'];
+  if (email) channels.push('email');
+  if (phone) channels.push('whatsapp');
+  const templates = {
+    inapp: { title: label, body },
+    push: { title: label, body },
+  };
+  if (email) {
+    templates.email = {
+      subject: `${label}: return #${current.returnNumber}`,
+      text: `${body}\n\nSign in to Rozare to view the return details.`,
+      html: `<p>${escapeHtml(body)}</p><p>Sign in to Rozare to view the return details.</p>`,
+    };
+  }
+  if (phone) templates.whatsapp = { message: whatsappMessage };
+
+  const records = await enqueueNotificationEvent({
+    eventKey: `return:${current._id}:status:buyer:${occurrence.key}`,
+    eventType: 'return.status_updated',
+    aggregateType: 'ReturnRequest',
+    aggregateId: String(current._id),
+    occurredAt: occurrence.occurredAt,
+    recipient: {
+      kind: 'user',
+      audienceRole: 'buyer',
+      user: current.buyer,
+      destinationPolicy: 'event_snapshot',
+      email,
+      phone,
+    },
+    channels,
+    templates,
+    metadata: {
+      category: 'order',
+      channelId: 'orders',
+      linkTo: buyerReturnLink(current),
+      relatedOrder: current.order,
       data: {
         type: 'return_status_update',
         returnRequestId: String(current._id),
         orderId: String(current.order),
         status: current.status,
       },
-    }),
-  ]) : [];
-  const appSent = !claimed || appResults.some(result => notificationAttemptSucceeded(result));
-  if (claimed && !appSent) {
-    await ReturnRequest.updateOne(
-      { _id: current._id },
-      { $pull: { notificationKeys: notificationKey } }
-    ).catch(() => {});
-  }
-
-  // WhatsApp has its own durable dedupe key. Always attempt the enqueue even
-  // when the in-app notification was already claimed on an earlier call.
-  const whatsappResult = await sendBuyerWhatsApp(order, [
-      'Rozare Return Update',
-      '',
-      `Return: #${current.returnNumber}`,
-      `Order: #${current.orderId}`,
-      `Status: ${label}`,
-      current.status === 'returned' ? `Wallet credit: ${amountText}` : '',
-      note ? `Note: ${note}` : '',
-      '',
-      'Open your Rozare account for details.',
-    ].filter(Boolean).join('\n'), `return:${current._id}:${notificationKey}`);
-
-  return appSent && whatsappResult?.sent === true;
+    },
+    session,
+  });
+  return records.length === channels.length;
 };
 
-const notifySellerReturnSettled = async (returnRequest) => {
-  const amountText = formatReturnAmount(returnRequest);
-  await Promise.allSettled([
-    Notification.create({
-      user: returnRequest.seller,
-      title: 'Return refund completed',
-      body: `${amountText} was credited to the buyer wallet for return #${returnRequest.returnNumber}.`,
-      category: 'seller',
-      linkTo: sellerReturnLink(returnRequest),
-      source: 'system',
-      targetRole: 'seller',
-      audience: 'specific',
-    }),
-    notifySeller(
-      returnRequest.seller,
-      'return_update',
-      sellerTemplates.return_settled(returnRequest, amountText)
-    ),
-  ]);
+const notifySellerReturnSettled = async (returnRequest, order) => {
+  const result = await enqueueReturnSettlementNotifications(returnRequest, order, {
+    buyerChannels: [],
+  });
+  return result.seller;
 };
 
 const notifyReturnSettlementCompleted = async (returnRequest, order) => {
-  const claimed = await ReturnRequest.findOneAndUpdate(
-    {
-      _id: returnRequest?._id,
-      status: 'returned',
-      'settlement.status': 'completed',
-      'settlement.notificationSentAt': null,
-    },
-    { $set: { 'settlement.notificationSentAt': new Date() } },
-    { new: true }
+  const current = await ReturnRequest.findOne({
+    _id: returnRequest?._id,
+    status: 'returned',
+    'settlement.status': 'completed',
+  });
+  if (!current) return false;
+
+  // Settlement services enqueue this event inside the money transaction. This
+  // idempotent compatibility call also repairs completed legacy rows/webhook
+  // replays without sending any channel directly.
+  await enqueueReturnSettlementNotifications(current, order);
+  await ReturnRequest.updateOne(
+    { _id: current._id, 'settlement.notificationSentAt': null },
+    { $set: { 'settlement.notificationSentAt': new Date() } }
   );
-  if (!claimed) return false;
-  try {
-    await Promise.all([
-      notifyBuyerReturnStatus(claimed, order),
-      notifySellerReturnSettled(claimed),
-    ]);
-    return true;
-  } catch (error) {
-    await ReturnRequest.updateOne(
-      { _id: claimed._id, 'settlement.notificationSentAt': claimed.settlement?.notificationSentAt },
-      { $set: { 'settlement.notificationSentAt': null } }
-    ).catch(() => {});
-    throw error;
-  }
+  return true;
 };
 
 module.exports = {
   buyerReturnLink,
   sellerReturnLink,
   formatReturnAmount,
-  sendBuyerWhatsApp,
-  sendSellerReturnWhatsApp,
+  enqueueReturnCancellationNotifications,
   notifySellerReturnRequested,
   notifyBuyerReturnStatus,
   notifySellerReturnSettled,

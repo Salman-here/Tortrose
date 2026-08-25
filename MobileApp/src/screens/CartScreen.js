@@ -8,6 +8,7 @@ import React, {
   useState,
 } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   FlatList,
   Platform,
@@ -27,6 +28,15 @@ import { useAuth } from '../contexts/AuthContext';
 import { useGlobal } from '../contexts/GlobalContext';
 import { useCurrency } from '../contexts/CurrencyContext';
 import {
+  addCurrencyAmounts,
+  checkoutHasUnsupportedCurrency,
+  checkoutRequiresCurrencyConversion,
+  checkoutRequiresTrustedRates,
+  getEffectiveProductSourcePrice,
+  getProductSourceAmount,
+  hasCurrencyAmount,
+} from '../utils/currencySafety';
+import {
   CartItemSkeleton,
   EmptyCart,
   InlineLoader,
@@ -42,6 +52,10 @@ import {
   spacing,
 } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
+import {
+  getCartPresentationItemCount,
+  getCartPresentationQuantity,
+} from '../utils/cartPresentation';
 
 const INITIAL_DOCK_HEIGHT = 148;
 
@@ -59,12 +73,21 @@ export default function CartScreen({ navigation }) {
     handleQtyInc,
     handleQtyDec,
     isCartLoading,
+    isCartReady,
+    cartHydrationStatus,
+    cartHydrationError,
+    retryCartHydration,
     qtyUpdateId,
   } = useGlobal();
   const {
+    currency,
+    convertAmount,
+    convertLineAmounts,
     formatAmount,
-    formatProductPrice,
-    getProductPriceNumber,
+    getProductCurrency,
+    exchangeRatesLoading,
+    exchangeRatesFallback,
+    refreshExchangeRates,
   } = useCurrency();
 
   const [refreshing, setRefreshing] = useState(false);
@@ -72,37 +95,44 @@ export default function CartScreen({ navigation }) {
 
   const cart = Array.isArray(cartItems?.cart) ? cartItems.cart : [];
   const lineItemCount = cart.length;
-  const itemCount = cart.reduce(
-    (total, item) => total + Math.max(1, Number(item?.qty) || 1),
-    0
-  );
+  const itemCount = getCartPresentationItemCount(cart);
   const hasCartItems = lineItemCount > 0;
-
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      await fetchCart();
+      await Promise.all([fetchCart(), refreshExchangeRates()]);
     } finally {
       setRefreshing(false);
     }
-  }, [fetchCart]);
+  }, [fetchCart, refreshExchangeRates]);
 
-  const getEffectivePriceField = useCallback((product) => (
-    Number(product?.discountedPrice || 0) > 0
-      && Number(product?.discountedPrice) < Number(product?.price)
-      ? 'discountedPrice'
-      : 'price'
-  ), []);
+  const cartSourceCurrencies = cart.map((item) => (
+    hasCurrencyAmount(getEffectiveProductSourcePrice(item?.product))
+      ? getProductCurrency(item?.product)
+      : null
+  ));
+  const cartHasUnsupportedCurrency = checkoutHasUnsupportedCurrency(cartSourceCurrencies);
+  const cartDisplayNeedsExchangeRates = checkoutRequiresCurrencyConversion(cartSourceCurrencies, currency);
+  const cartNeedsExchangeRates = checkoutRequiresTrustedRates(cartSourceCurrencies, currency);
+  const cartRatesUnavailable = cartHasUnsupportedCurrency
+    || (cartNeedsExchangeRates && (exchangeRatesLoading || exchangeRatesFallback));
+  const cartDisplayRatesUnavailable = cartHasUnsupportedCurrency
+    || (cartDisplayNeedsExchangeRates && (exchangeRatesLoading || exchangeRatesFallback));
 
-  const subtotal = cart.reduce((total, item) => {
-    if (!item?.product) return total;
-    const quantity = Math.max(1, Number(item.qty) || 1);
-    const itemPrice = getProductPriceNumber(
-      item.product,
-      getEffectivePriceField(item.product)
-    );
-    return total + (itemPrice * quantity);
-  }, 0);
+  const cartLineTotals = convertLineAmounts(cart.map((item) => ({
+    unitAmount: getEffectiveProductSourcePrice(item?.product),
+    quantity: getCartPresentationQuantity(item),
+    sourceCurrency: getProductCurrency(item?.product),
+  })), currency);
+  const subtotal = addCurrencyAmounts(...cartLineTotals);
+  const cartMoney = (amount, sourceCurrency = null) => {
+    const sourceRatesUnavailable = sourceCurrency
+      ? checkoutHasUnsupportedCurrency([sourceCurrency])
+        || (checkoutRequiresCurrencyConversion([sourceCurrency], currency)
+          && (exchangeRatesLoading || exchangeRatesFallback))
+      : cartDisplayRatesUnavailable;
+    return `${sourceRatesUnavailable ? '≈' : ''}${formatAmount(amount)}`;
+  };
 
   // The tab bar is an absolute 66px pill with its own safe-area offset.
   // Keep the checkout dock above both the bar and its bottom margin.
@@ -129,8 +159,36 @@ export default function CartScreen({ navigation }) {
   }, [navigation]);
 
   const handleCheckout = useCallback(() => {
+    if (!isCartReady) {
+      Alert.alert(
+        cartHydrationStatus === 'error' ? 'Cart sync required' : 'Preparing your cart',
+        cartHydrationError || 'Saved guest items must be merged and verified before checkout.',
+        cartHydrationStatus === 'error'
+          ? [
+              { text: 'Not now', style: 'cancel' },
+              { text: 'Retry sync', onPress: retryCartHydration },
+            ]
+          : [{ text: 'OK' }]
+      );
+      return;
+    }
     if (!hasCartItems) {
       Alert.alert('Empty Cart', 'Please add items to your cart before checkout');
+      return;
+    }
+    if (cartRatesUnavailable) {
+      Alert.alert(
+        'Live rates required',
+        cartHasUnsupportedCurrency
+          ? 'A cart item has an unsupported currency. Refresh the cart or contact support.'
+          : cartDisplayRatesUnavailable
+            ? 'Converted cart values are estimates. Refresh live exchange rates before checkout.'
+            : `Your ${currency} prices are unchanged, but a live rate is required to lock checkout settlement amounts.`,
+        [
+          { text: 'Not now', style: 'cancel' },
+          { text: 'Retry rates', onPress: refreshExchangeRates },
+        ]
+      );
       return;
     }
     if (!currentUser) {
@@ -138,7 +196,7 @@ export default function CartScreen({ navigation }) {
       return;
     }
     navigation.navigate('Checkout');
-  }, [currentUser, hasCartItems, navigation]);
+  }, [cartDisplayRatesUnavailable, cartHasUnsupportedCurrency, cartHydrationError, cartHydrationStatus, cartRatesUnavailable, currency, currentUser, hasCartItems, isCartReady, navigation, refreshExchangeRates, retryCartHydration]);
 
   const handleCheckoutDockLayout = useCallback((event) => {
     const measuredHeight = Math.ceil(event.nativeEvent.layout.height);
@@ -156,6 +214,12 @@ export default function CartScreen({ navigation }) {
       : hasCartItems
         ? `${itemCount} ${itemCount === 1 ? 'item' : 'items'} ready to review`
         : 'Ready for your next discovery';
+  const cartSyncRetryAvailable = !isCartReady
+    && cartHydrationStatus === 'error'
+    && !isCartLoading;
+  const checkoutActionDisabled = isCartLoading
+    || cartRatesUnavailable
+    || (!isCartReady && !cartSyncRetryAvailable);
 
   const topBar = (
     <PremiumTopBar
@@ -248,16 +312,16 @@ export default function CartScreen({ navigation }) {
     );
   }
 
-  const renderCartItem = ({ item }) => {
+  const renderCartItem = ({ item, index }) => {
     const { product, _id: itemId } = item;
     if (!product) return null;
 
-    const quantity = Math.max(1, Number(item.qty) || 1);
-    const priceField = getEffectivePriceField(product);
-    const unitPrice = getProductPriceNumber(product, priceField);
-    const lineTotal = unitPrice * quantity;
+    const quantity = getCartPresentationQuantity(item);
+    const sourcePrice = getEffectiveProductSourcePrice(product);
+    const unitPrice = convertAmount(sourcePrice, getProductCurrency(product), currency);
+    const lineTotal = cartLineTotals[index] || 0;
     const isUpdating = qtyUpdateId === itemId;
-    const isDiscounted = priceField === 'discountedPrice';
+    const isDiscounted = sourcePrice < getProductSourceAmount(product, 'price');
     const selectedOptions = item.selectedOptions
       && typeof item.selectedOptions === 'object'
       ? Object.entries(item.selectedOptions).filter(([, value]) => value)
@@ -352,15 +416,13 @@ export default function CartScreen({ navigation }) {
 
             <View style={styles.priceRow}>
               <Text style={styles.itemPrice}>
-                {formatProductPrice(product, { field: priceField })}
+                {cartMoney(unitPrice, getProductCurrency(product))}
               </Text>
               <Text style={styles.priceQualifier}>each</Text>
             </View>
-            {quantity > 1 && (
-              <Text style={styles.lineTotalText}>
-                {formatAmount(lineTotal)} item total
-              </Text>
-            )}
+            <Text style={styles.lineTotalText}>
+              {cartMoney(lineTotal, getProductCurrency(product))} line total
+            </Text>
           </View>
         </View>
 
@@ -526,10 +588,31 @@ export default function CartScreen({ navigation }) {
         </View>
       </View>
 
+      {cartRatesUnavailable && (
+        <View style={styles.rateWarningCard} accessibilityRole="alert">
+          <Ionicons name="swap-horizontal-outline" size={19} color={palette.colors.warning} />
+          <View style={styles.rateWarningCopy}>
+            <Text style={styles.rateWarningTitle}>{cartHasUnsupportedCurrency ? 'Unsupported item currency' : 'Converted prices are estimates'}</Text>
+            <Text style={styles.rateWarningText}>
+              {cartHasUnsupportedCurrency
+                ? 'Checkout is paused because this item cannot be priced safely.'
+                : exchangeRatesLoading
+                ? 'Refreshing live exchange rates. Checkout will resume when they are ready.'
+                : 'Only fallback rates are available. Retry before continuing to checkout.'}
+            </Text>
+          </View>
+          <TouchableOpacity onPress={refreshExchangeRates} disabled={exchangeRatesLoading || cartHasUnsupportedCurrency} style={styles.rateRetryButton}>
+            {exchangeRatesLoading
+              ? <ActivityIndicator size="small" color={palette.colors.primary} />
+              : <Text style={styles.rateRetryText}>{cartHasUnsupportedCurrency ? 'Blocked' : 'Retry'}</Text>}
+          </TouchableOpacity>
+        </View>
+      )}
+
       <View style={styles.summaryRows}>
         <View style={styles.summaryRow}>
           <Text style={styles.summaryLabel}>Items subtotal</Text>
-          <Text style={styles.summaryValue}>{formatAmount(subtotal)}</Text>
+          <Text style={styles.summaryValue}>{cartMoney(subtotal)}</Text>
         </View>
         <View style={styles.summaryRow}>
           <Text style={styles.summaryLabel}>Delivery</Text>
@@ -547,7 +630,7 @@ export default function CartScreen({ navigation }) {
           <Text style={styles.summaryTotalHint}>Before delivery and tax</Text>
         </View>
         <Text style={styles.summaryTotalValue} numberOfLines={1}>
-          {formatAmount(subtotal)}
+          {cartMoney(subtotal)}
         </Text>
       </View>
 
@@ -627,22 +710,24 @@ export default function CartScreen({ navigation }) {
                 <Text style={styles.dockHint}>Delivery & tax calculated next</Text>
               </View>
               <Text style={styles.dockValue} numberOfLines={1}>
-                {formatAmount(subtotal)}
+                {cartMoney(subtotal)}
               </Text>
             </View>
 
             <TouchableOpacity
               style={[
                 styles.checkoutButton,
-                isCartLoading && styles.checkoutButtonDisabled,
+                (!isCartReady || isCartLoading || cartRatesUnavailable) && styles.checkoutButtonDisabled,
               ]}
               onPress={handleCheckout}
-              disabled={isCartLoading}
+              disabled={checkoutActionDisabled}
               activeOpacity={0.85}
               accessibilityRole="button"
-              accessibilityLabel={`Secure checkout, current subtotal ${formatAmount(subtotal)}`}
+              accessibilityLabel={!isCartReady
+                ? cartSyncRetryAvailable ? 'Retry cart synchronization' : 'Secure checkout unavailable while the cart synchronizes'
+                : cartRatesUnavailable ? 'Secure checkout unavailable until live exchange rates refresh' : `Secure checkout, current subtotal ${formatAmount(subtotal)}`}
               accessibilityHint="Opens delivery and payment details"
-              accessibilityState={{ disabled: isCartLoading }}
+              accessibilityState={{ disabled: checkoutActionDisabled }}
             >
               <LinearGradient
                 colors={palette.gradients.cta}
@@ -652,7 +737,9 @@ export default function CartScreen({ navigation }) {
               />
               <Ionicons name="lock-closed-outline" size={18} color="#fff" />
               <Text style={styles.checkoutButtonText}>
-                {currentUser ? 'Continue to Secure Checkout' : 'Sign in to Secure Checkout'}
+                {!isCartReady
+                  ? cartSyncRetryAvailable ? 'Retry Cart Sync' : 'Preparing Saved Cart...'
+                  : currentUser ? 'Continue to Secure Checkout' : 'Sign in to Secure Checkout'}
               </Text>
               <Ionicons name="arrow-forward" size={18} color="#fff" />
             </TouchableOpacity>
@@ -1269,6 +1356,46 @@ const buildStyles = (p, isDark) => StyleSheet.create({
   summaryRows: {
     gap: spacing.sm,
     paddingBottom: spacing.md,
+  },
+  rateWarningCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginBottom: spacing.md,
+    padding: spacing.md,
+    borderRadius: 16,
+    backgroundColor: 'rgba(245,158,11,0.10)',
+    borderWidth: 1,
+    borderColor: 'rgba(245,158,11,0.24)',
+  },
+  rateWarningCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  rateWarningTitle: {
+    color: p.colors.text,
+    fontSize: fontSize.xs,
+    fontWeight: fontWeight.bold,
+    marginBottom: 2,
+  },
+  rateWarningText: {
+    color: p.colors.textSecondary,
+    fontSize: 10,
+    lineHeight: 14,
+  },
+  rateRetryButton: {
+    minWidth: 48,
+    minHeight: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: spacing.sm,
+    borderRadius: 12,
+    backgroundColor: p.colors.primarySubtle,
+  },
+  rateRetryText: {
+    color: p.colors.primary,
+    fontSize: fontSize.xs,
+    fontWeight: fontWeight.bold,
   },
   summaryRow: {
     minHeight: 24,

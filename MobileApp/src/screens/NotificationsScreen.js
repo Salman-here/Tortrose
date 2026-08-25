@@ -22,8 +22,8 @@ import NotificationCard from '../components/notifications/NotificationCard';
 import useNotificationInbox, { groupNotifications } from '../hooks/useNotificationInbox';
 import {
   getNotificationCategoriesForRole,
-  normalizeNotificationRole,
 } from '../utils/notificationScope';
+import { resolveNotificationTarget } from '../utils/notificationRouting';
 import { spacing, fontSize, fontWeight, borderRadius } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 
@@ -46,7 +46,6 @@ export default function NotificationsScreen({ navigation }) {
   const styles = buildStyles(palette);
 
   const { currentUser } = useAuth();
-  const role = normalizeNotificationRole(currentUser);
   const categories = useMemo(() => getNotificationCategoriesForRole(currentUser), [currentUser?.role]);
   const { refreshUnreadCount } = useGlobal();
   const [activeCategory, setActiveCategory] = useState('all');
@@ -57,6 +56,7 @@ export default function NotificationsScreen({ navigation }) {
 
   const {
     notifications, isLoading, refreshing, readIds,
+    loadError, actionError,
     refresh, markRead, markAllRead, clearAll, dismiss, dismissGroup,
   } = useNotificationInbox({ currentUser, onCountChange: refreshUnreadCount });
 
@@ -71,21 +71,9 @@ export default function NotificationsScreen({ navigation }) {
 
   const handlePress = useCallback((item) => {
     markRead(item.id);
-    if (role === 'seller' && ['new_order_received', 'order_confirmed_by_buyer', 'order_cancelled_by_buyer'].includes(item.data?.type)) {
-      if (item.data?.orderObjectId) {
-        navigation.navigate('OrderDetailManagement', { orderId: item.data.orderObjectId, isAdmin: false });
-      } else navigation.navigate('SellerOrderManagement');
-    }
-    else if (role === 'seller' && item.data?.type === 'return_requested') {
-      navigation.navigate('SellerOrderManagement', {
-        initialTab: 'returns',
-        returnRequestId: item.data?.returnRequestId,
-      });
-    }
-    else if (role === 'seller' && item.data?.type === 'low_stock') navigation.navigate('SellerProductManagement');
-    else if (item.orderId) navigation.navigate('OrderDetail', { orderId: item.orderId });
-    else if (item.data?.productId) navigation.navigate('ProductDetail', { productId: item.data.productId });
-  }, [navigation, markRead, role]);
+    const target = resolveNotificationTarget(item, currentUser);
+    if (target) navigation.navigate(target.screen, target.params);
+  }, [currentUser, navigation, markRead]);
 
   const renderRightActions = useCallback((progress, dragX) => {
     const scale = dragX.interpolate({ inputRange: [-100, 0], outputRange: [1, 0.5], extrapolate: 'clamp' });
@@ -201,18 +189,28 @@ export default function NotificationsScreen({ navigation }) {
               contentContainerStyle={[styles.listContent, grouped.length === 0 && styles.listContentEmpty]}
               showsVerticalScrollIndicator={false}
               ListHeaderComponent={
-                grouped.length > 0 ? (
-                  <View style={styles.swipeHint}>
-                    <Ionicons name="swap-horizontal-outline" size={12} color={palette.colors.textLight} />
-                    <Text style={styles.swipeHintText}>Swipe left on a notification to dismiss</Text>
+                grouped.length > 0 || loadError || actionError ? (
+                  <View>
+                    {(loadError || actionError) ? (
+                      <View style={styles.errorBanner} accessibilityRole="alert">
+                        <Ionicons name="alert-circle-outline" size={16} color={palette.colors.error} />
+                        <Text style={styles.errorBannerText}>{actionError || loadError}</Text>
+                      </View>
+                    ) : null}
+                    {grouped.length > 0 ? (
+                      <View style={styles.swipeHint}>
+                        <Ionicons name="swap-horizontal-outline" size={12} color={palette.colors.textLight} />
+                        <Text style={styles.swipeHintText}>Swipe left on a notification to dismiss</Text>
+                      </View>
+                    ) : null}
                   </View>
                 ) : null
               }
               ListEmptyComponent={
                 <View style={styles.emptyContainer}>
                   <View style={styles.emptyIconWrap}><Ionicons name="notifications-off-outline" size={56} color={palette.colors.primaryLight} /></View>
-                  <Text style={styles.emptyTitle}>{activeCategory === 'all' ? 'No notifications yet' : `No ${activeCategory} notifications`}</Text>
-                  <Text style={styles.emptySubtitle}>We'll notify you about orders, deals, and more</Text>
+                  <Text style={styles.emptyTitle}>{loadError ? 'Notifications unavailable' : (activeCategory === 'all' ? 'No notifications yet' : `No ${activeCategory} notifications`)}</Text>
+                  <Text style={styles.emptySubtitle}>{loadError || "We'll notify you about orders, deals, and more"}</Text>
                 </View>
               }
               refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} colors={[palette.colors.primary]} tintColor={palette.colors.primary} />}
@@ -257,4 +255,6 @@ const buildStyles = (p) => StyleSheet.create({
   swipeActionText: { color: p.colors.white, fontSize: fontSize.xs, fontWeight: fontWeight.semibold, marginTop: 2 },
   swipeHint: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: spacing.sm, opacity: 0.7 },
   swipeHintText: { fontSize: fontSize.xs, color: p.colors.textLight, fontStyle: 'italic' },
+  errorBanner: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, padding: spacing.sm, marginBottom: spacing.sm, borderRadius: borderRadius.md, backgroundColor: p.colors.errorSubtle },
+  errorBannerText: { flex: 1, color: p.colors.error, fontSize: fontSize.sm, fontWeight: fontWeight.medium },
 });

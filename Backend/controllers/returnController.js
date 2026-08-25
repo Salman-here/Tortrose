@@ -1,7 +1,6 @@
+const mongoose = require('mongoose');
 const Order = require('../models/Order');
 const ReturnRequest = require('../models/ReturnRequest');
-const Notification = require('../models/Notification');
-const { notifySeller } = require('../services/whatsapp/sellerNotificationService');
 const {
     buildOrderReturnEligibility,
     createReturnRequest,
@@ -13,10 +12,8 @@ const {
     createReturnSettlementCheckout,
 } = require('../services/returnService');
 const {
-    notifySellerReturnRequested,
     notifyBuyerReturnStatus,
     notifyReturnSettlementCompleted,
-    sellerReturnLink,
 } = require('../services/returnNotificationService');
 
 const toId = (value) => value?._id?.toString?.() || value?.toString?.() || '';
@@ -39,6 +36,18 @@ exports.getOrderReturnEligibility = async (req, res) => {
 
 exports.createReturn = async (req, res) => {
     try {
+        const headerRequestKey = req.get?.('Idempotency-Key');
+        const bodyRequestKey = req.body?.requestKey;
+        if (
+            headerRequestKey
+            && bodyRequestKey
+            && String(headerRequestKey) !== String(bodyRequestKey)
+        ) {
+            return res.status(400).json({
+                msg: 'Idempotency-Key header and request body key must match.',
+                code: 'RETURN_IDEMPOTENCY_KEY_MISMATCH',
+            });
+        }
         const returnRequest = await createReturnRequest({
             orderId: req.body?.orderId,
             buyerId: req.user.id,
@@ -46,11 +55,17 @@ exports.createReturn = async (req, res) => {
             items: req.body?.items,
             reasonCategory: req.body?.reasonCategory,
             reasonDetails: req.body?.reasonDetails,
-            requestKey: req.body?.requestKey,
+            requestKey: headerRequestKey || bodyRequestKey,
         });
-        const order = await Order.findById(returnRequest.order).lean();
-        await notifySellerReturnRequested(returnRequest, order);
-        return res.status(201).json({ success: true, msg: 'Return request sent to the seller.', returnRequest });
+        const replayed = returnRequest.$locals?.idempotencyReplay === true;
+        return res.status(replayed ? 200 : 201).json({
+            success: true,
+            replayed,
+            msg: replayed
+                ? 'This return request was already received.'
+                : 'Return request sent to the seller.',
+            returnRequest,
+        });
     } catch (error) {
         console.error('[returns] create error:', error);
         return res.status(error.statusCode || 500).json({
@@ -63,14 +78,45 @@ exports.createReturn = async (req, res) => {
 exports.listMyReturns = async (req, res) => {
     try {
         const query = { buyer: req.user.id };
-        if (req.query.orderId) query.order = req.query.orderId;
-        const requests = await ReturnRequest.find(query)
-            .populate('seller', 'username avatar')
-            .populate('store', 'storeName storeSlug')
-            .sort({ createdAt: -1 })
-            .limit(100)
-            .lean();
-        return res.status(200).json({ success: true, returns: requests });
+        if (req.query.orderId) {
+            if (!mongoose.Types.ObjectId.isValid(req.query.orderId)) {
+                return res.status(400).json({ msg: 'A valid order is required.', code: 'RETURN_ORDER_INVALID' });
+            }
+            query.order = req.query.orderId;
+        }
+        const parsePageValue = (raw, fallback, maximum) => {
+            if (raw === undefined) return fallback;
+            if (typeof raw !== 'string' || !/^[1-9]\d*$/u.test(raw)) return null;
+            const value = Number(raw);
+            return Number.isSafeInteger(value) && value <= maximum ? value : null;
+        };
+        const page = parsePageValue(req.query.page, 1, 1_000_000);
+        const limit = parsePageValue(req.query.limit, 100, 100);
+        if (page === null || limit === null) {
+            return res.status(400).json({ msg: 'Return pagination is invalid.', code: 'RETURN_PAGINATION_INVALID' });
+        }
+        const totalReturns = await ReturnRequest.countDocuments(query);
+        const totalPages = Math.max(1, Math.ceil(totalReturns / limit));
+        const requests = page > totalPages
+            ? []
+            : await ReturnRequest.find(query)
+                .populate('seller', 'username avatar')
+                .populate('store', 'storeName storeSlug')
+                .sort({ createdAt: -1, _id: -1 })
+                .skip((page - 1) * limit)
+                .limit(limit)
+                .lean();
+        return res.status(200).json({
+            success: true,
+            returns: requests,
+            pagination: {
+                page,
+                limit,
+                totalReturns,
+                totalPages,
+                hasMore: page < totalPages,
+            },
+        });
     } catch (error) {
         console.error('[returns] buyer list error:', error);
         return res.status(500).json({ msg: 'Failed to load return requests' });
@@ -124,8 +170,6 @@ exports.updateStatus = async (req, res) => {
             nextStatus: req.body?.status,
             note: req.body?.note,
         });
-        const order = await Order.findById(returnRequest.order).lean();
-        await notifyBuyerReturnStatus(returnRequest, order, req.body?.note || '');
         return res.status(200).json({ success: true, msg: 'Return status updated.', returnRequest });
     } catch (error) {
         console.error('[returns] status update error:', error);
@@ -140,20 +184,6 @@ exports.cancelReturn = async (req, res) => {
             buyerId: req.user.id,
             note: req.body?.note,
         });
-        const body = `Buyer cancelled return #${returnRequest.returnNumber} for order #${returnRequest.orderId}.`;
-        await Promise.allSettled([
-            Notification.create({
-                user: returnRequest.seller,
-                title: 'Return request cancelled',
-                body,
-                category: 'order',
-                linkTo: sellerReturnLink(returnRequest),
-                source: 'system',
-                targetRole: 'seller',
-                audience: 'specific',
-            }),
-            notifySeller(returnRequest.seller, 'return_update', body),
-        ]);
         return res.status(200).json({ success: true, msg: 'Return request cancelled.', returnRequest });
     } catch (error) {
         return res.status(error.statusCode || 500).json({ msg: error.message || 'Failed to cancel return request' });
@@ -168,8 +198,6 @@ exports.acceptReturn = async (req, res) => {
 
         if (existing.policySnapshot?.refundType === 'replacement_only') {
             const returnRequest = await approveReplacement({ returnRequestId: existing._id, sellerId: req.user.id });
-            const order = await Order.findById(returnRequest.order).lean();
-            await notifyBuyerReturnStatus(returnRequest, order);
             return res.status(200).json({ success: true, msg: 'Replacement approved.', returnRequest });
         }
 
@@ -190,8 +218,6 @@ exports.acceptReturn = async (req, res) => {
                 sellerId: req.user.id,
                 platform: req.body?.platform === 'mobile' ? 'mobile' : 'web',
             });
-            const order = await Order.findById(result.returnRequest.order).lean();
-            await notifyBuyerReturnStatus(result.returnRequest, order);
             return res.status(200).json({
                 success: true,
                 requiresPayment: true,

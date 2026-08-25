@@ -22,62 +22,121 @@ import {
 } from "../../utils/tiktokPixel";
 import { formatOrderItemOptions } from "../../utils/orderItems";
 import { rememberPostAuthRedirect } from "../../utils/postAuthRedirect";
+import {
+  addCurrencyAmounts,
+  checkoutHasUnsupportedCurrency,
+  checkoutRequiresCurrencyConversion,
+  checkoutRequiresTrustedRates,
+  couponHasCurrencyAmount,
+  getEffectiveProductSourcePrice,
+  hasCurrencyAmount,
+  percentageCurrencyAmount,
+  shouldRetainIdempotencyKey,
+  toCurrencyMinorUnits,
+} from "../../utils/currencySafety";
+import {
+  createCheckoutFingerprint,
+} from "../../utils/checkoutIdempotency";
+import {
+  calculateCheckoutCouponPricing,
+  createCheckoutMoneyCartSignature,
+  isCheckoutRepriceRequired,
+  isPositiveSourceAmountRoundedToZero,
+  parseCheckoutCouponAvailabilityResponse,
+  parseCheckoutShippingMethodsResponse,
+  parseCheckoutTaxConfigResponse,
+  parseValidatedCheckoutCouponResponse,
+  reconcileAppliedCheckoutCoupons,
+  selectCheckoutShippingMethods,
+} from "../../utils/checkoutPricing";
+import {
+  clearPersistedMutationAttemptFromLedger,
+  createScopedMutationStorageKey,
+  getOrCreatePersistedMutationAttemptInLedger,
+} from "../../utils/persistedMutationAttempt";
+import { requireWalletSummaryResponse } from '../../utils/walletPaymentRisk';
+import { getCartPresentationProductCurrency } from '../../utils/cartPresentation';
 
 const CHECKOUT_ATTEMPT_STORAGE_KEY = 'rozare_checkout_attempt_v1';
 const ORDER_SUCCESS_STORAGE_KEY = 'rozare_order_success_v1';
 const STRIPE_RETURN_STORAGE_KEY = 'rozare_stripe_return_v1';
-const CHECKOUT_ATTEMPT_MAX_AGE_MS = 60 * 60 * 1000;
 
-const createCheckoutAttemptKey = () => {
-  const entropy = globalThis.crypto?.randomUUID?.()
-    || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  return `web-checkout:${entropy}`;
-};
+const cartLineKey = (item) => String(
+  item?._id
+  || `${item?.product?._id || 'product'}:${item?.selectedColor || ''}:${JSON.stringify(item?.selectedOptions || item?.options || {})}`
+);
 
-const checkoutFingerprint = (order) => JSON.stringify({
-  items: (order.orderItems || []).map(item => ({
-    id: item.id,
-    quantity: item.quantity,
-    selectedColor: item.selectedColor || null,
-    selectedOptions: item.selectedOptions || item.options || null,
-  })),
-  shippingInfo: order.shippingInfo,
-  buyerLocation: order.buyerLocation,
-  shippingMethod: order.shippingMethod,
-  sellerShipping: order.sellerShipping,
-  currency: order.currency,
-  appliedCoupons: (order.appliedCoupons || []).map(coupon => ({
-    couponId: coupon.couponId,
-    code: coupon.code,
-    applicableProductIds: coupon.applicableProductIds,
-  })),
-  paymentMethod: order.paymentMethod,
-  instructions: order.instructions || '',
-});
-
-const rememberConfirmedOrder = (orderId, paymentMethod) => {
-  if (!orderId || !['cash_on_delivery', 'wallet'].includes(paymentMethod)) return;
+const rememberConfirmedOrder = (orderId, paymentMethod, {
+  noPaymentRequired = false,
+  attemptStorageKey = '',
+  attemptFingerprint = '',
+  attemptKey = '',
+} = {}) => {
+  const locallyConfirmed = ['cash_on_delivery', 'wallet'].includes(paymentMethod)
+    || (paymentMethod === 'stripe' && noPaymentRequired === true);
+  if (
+    !orderId
+    || !locallyConfirmed
+    || !attemptStorageKey
+    || !attemptFingerprint
+    || !attemptKey
+  ) return false;
   try {
-    sessionStorage.setItem(ORDER_SUCCESS_STORAGE_KEY, JSON.stringify({
+    const record = {
       orderId,
       paymentMethod,
+      noPaymentRequired: noPaymentRequired === true,
+      attemptStorageKey,
+      attemptFingerprint,
+      attemptKey,
       receivedAt: Date.now(),
-    }));
-  } catch (_) {}
+    };
+    sessionStorage.setItem(ORDER_SUCCESS_STORAGE_KEY, JSON.stringify(record));
+    const confirmed = JSON.parse(sessionStorage.getItem(ORDER_SUCCESS_STORAGE_KEY) || 'null');
+    return confirmed?.orderId === record.orderId
+      && confirmed?.paymentMethod === record.paymentMethod
+      && confirmed?.noPaymentRequired === record.noPaymentRequired
+      && confirmed?.attemptStorageKey === record.attemptStorageKey
+      && confirmed?.attemptFingerprint === record.attemptFingerprint
+      && confirmed?.attemptKey === record.attemptKey
+      && confirmed?.receivedAt === record.receivedAt;
+  } catch (_) {
+    return false;
+  }
 };
 
-const rememberStripeCheckoutReturn = (orderId, sessionId) => {
-  if (!orderId || !sessionId) return false;
+const rememberStripeCheckoutReturn = (
+  orderId,
+  sessionId,
+  attemptStorageKey,
+  attemptFingerprint,
+  attemptKey,
+) => {
+  if (!orderId || !sessionId || !attemptStorageKey || !attemptFingerprint || !attemptKey) {
+    return false;
+  }
   try {
     const saved = JSON.parse(sessionStorage.getItem(STRIPE_RETURN_STORAGE_KEY) || '{}');
-    saved.checkoutSession = {
+    const checkoutSession = {
       id: sessionId,
       orderId,
       path: '/success',
+      attemptStorageKey,
+      attemptFingerprint,
+      attemptKey,
       receivedAt: Date.now(),
     };
+    saved.checkoutSession = checkoutSession;
     sessionStorage.setItem(STRIPE_RETURN_STORAGE_KEY, JSON.stringify(saved));
-    return true;
+    const confirmed = JSON.parse(sessionStorage.getItem(STRIPE_RETURN_STORAGE_KEY) || '{}')
+      ?.checkoutSession;
+    return confirmed?.id === checkoutSession.id
+      && confirmed?.orderId === checkoutSession.orderId
+      && confirmed?.path === checkoutSession.path
+      && confirmed?.attemptStorageKey === checkoutSession.attemptStorageKey
+      && confirmed?.attemptFingerprint === checkoutSession.attemptFingerprint
+      && confirmed?.attemptKey === checkoutSession.attemptKey
+      && confirmed?.receivedAt === checkoutSession.receivedAt;
   } catch (_) {
     return false;
   }
@@ -99,15 +158,22 @@ export default function Checkout() {
   });
 
   const [isProcessing, setIsProcessing] = useState(false);
-  const checkoutAttemptRef = useRef(null);
   const navigate = useNavigate();
   const { currentUser } = useAuth();
+  const checkoutAttemptStorageKey = createScopedMutationStorageKey(
+    CHECKOUT_ATTEMPT_STORAGE_KEY,
+    currentUser?._id || currentUser?.id || 'guest'
+  );
   const { buyerLocation } = useBuyerLocation();
 
   // Tax and Shipping state
   const [taxConfig, setTaxConfig] = useState(null);
+  const [taxStatus, setTaxStatus] = useState('loading');
+  const [taxError, setTaxError] = useState('');
   const [sellerShippingMethods, setSellerShippingMethods] = useState({});
   const [selectedShippingPerSeller, setSelectedShippingPerSeller] = useState({});
+  const [shippingStatus, setShippingStatus] = useState('loading');
+  const [shippingError, setShippingError] = useState('');
   const [expandedSellers, setExpandedSellers] = useState({});
 
   // Saved shipping info for auto-fill
@@ -119,86 +185,177 @@ export default function Checkout() {
   const [sellerCoupons, setSellerCoupons] = useState({}); // { sellerId: [coupon, ...] }
   const [couponInputs, setCouponInputs] = useState({}); // { key: 'CODE' }
   const [appliedCoupons, setAppliedCoupons] = useState({}); // { key: { coupon, applicableProductIds } }
+  const restoredCouponCandidatesRef = useRef((() => {
+    try {
+      const saved = JSON.parse(sessionStorage.getItem(CHECKOUT_STORAGE_KEY) || 'null');
+      return saved?.appliedCoupons && typeof saved.appliedCoupons === 'object' && !Array.isArray(saved.appliedCoupons)
+        ? saved.appliedCoupons
+        : null;
+    } catch (_) {
+      return null;
+    }
+  })());
   const [couponLoading, setCouponLoading] = useState({});
   const [wallet, setWallet] = useState(null);
   const [walletLoading, setWalletLoading] = useState(false);
+  const taxRequestRef = useRef(0);
+  const couponRequestRef = useRef(0);
+  const shippingRequestRef = useRef(0);
+  const walletRequestRef = useRef(0);
 
 
-  const { currency, formatPrice, convertAmount } = useCurrency();
+  const {
+    currency,
+    formatPrice,
+    convertAmount,
+    convertLineAmounts,
+    convertAmountForMoneyAction,
+    exchangeRates,
+    exchangeRatesLoading,
+    exchangeRatesFallback,
+    refreshExchangeRates,
+  } = useCurrency();
 
   const { cartItems, handleQtyInc, handleQtyDec, handleRemoveCartItem, isCartLoading,
+    isCartReady, cartHydrationStatus, cartHydrationError, retryCartHydration,
     qtyUpdateId, fetchCart
   } = useGlobal();
+  const cartMoneySignature = createCheckoutMoneyCartSignature(cartItems?.cart || []);
+  const checkoutUserId = currentUser?._id || currentUser?.id || '';
 
-  const productCurrency = (product) => product?.currency || product?.priceCurrency || 'USD';
-  const couponCurrency = (coupon) => coupon?.currency || 'USD';
+  const productCurrency = getCartPresentationProductCurrency;
+  const couponCurrency = (coupon) => coupon?.currency || '';
   const currentMoney = (amount, options = {}) => formatPrice(amount, { ...options, sourceCurrency: currency });
   const productPriceInCheckoutCurrency = (product, amount = undefined) => {
-    const productPrice = Number(product?.price || 0);
-    const discountedPrice = Number(product?.discountedPrice || 0);
     const value = amount === undefined
-      ? (discountedPrice > 0 && discountedPrice < productPrice ? discountedPrice : productPrice)
+      ? getEffectiveProductSourcePrice(product)
       : amount;
     return convertAmount(value, productCurrency(product), currency);
   };
-  const shippingMethodCurrency = (method, sellerInfo = null) => method?.currency || method?.costCurrency || sellerInfo?.seller?.currency || currency;
+  const cartLineTotals = convertLineAmounts((cartItems?.cart || []).map((item) => ({
+    unitAmount: getEffectiveProductSourcePrice(item?.product),
+    quantity: item?.qty,
+    sourceCurrency: productCurrency(item?.product),
+  })), currency);
+  const cartLineTotalsByItem = new Map((cartItems?.cart || []).map((item, index) => (
+    [item, cartLineTotals[index]]
+  )));
+  const getCartLineTotal = (item) => cartLineTotalsByItem.get(item);
+  const shippingMethodCurrency = (method, sellerInfo = null) => (
+    method?.currency
+    || sellerInfo?.methods?.find((candidate) => candidate?.type === method?.type)?.currency
+    || ''
+  );
   const shippingCostInCheckoutCurrency = (method, sellerInfo = null) =>
-    convertAmount(method?.cost || 0, shippingMethodCurrency(method, sellerInfo), currency);
+    convertAmount(method?.cost, shippingMethodCurrency(method, sellerInfo), currency);
   const getShippingMethodTitle = (method) => ({
     free: 'Free Shipping',
     standard: 'Standard Shipping',
     fast: 'Fast Shipping',
   }[method?.type] || `${method?.type || 'Shipping'} Shipping`);
-  const couponAmountInCheckoutCurrency = (amount, coupon = null) => convertAmount(amount || 0, couponCurrency(coupon), currency);
-  const formatCouponAmount = (amount, coupon = null) => currentMoney(couponAmountInCheckoutCurrency(amount, coupon));
+  const couponAmountInCheckoutCurrency = (amount, coupon = null) => convertAmount(amount, couponCurrency(coupon), currency);
+  const formatCouponAmount = (amount, coupon = null) => {
+    const conversionUnavailable = checkoutRequiresCurrencyConversion([couponCurrency(coupon)], currency)
+      && (exchangeRatesLoading || exchangeRatesFallback);
+    return `${conversionUnavailable ? '≈' : ''}${currentMoney(couponAmountInCheckoutCurrency(amount, coupon))}`;
+  };
 
   // Fetch tax configuration on mount
   useEffect(() => {
     fetchTaxConfig();
     fetchSavedShippingInfo();
+    return () => {
+      taxRequestRef.current += 1;
+      couponRequestRef.current += 1;
+      shippingRequestRef.current += 1;
+    };
   }, []);
 
   useEffect(() => {
+    const requestId = walletRequestRef.current + 1;
+    walletRequestRef.current = requestId;
     const token = getAuthToken();
-    if (!token || !currentUser) {
+    if (!token || !checkoutUserId) {
       setWallet(null);
+      setWalletLoading(false);
       return;
     }
+    setWallet(null);
     setWalletLoading(true);
     axios.get(`${import.meta.env.VITE_API_URL}api/wallet/me`, {
       headers: { Authorization: `Bearer ${token}` },
     })
-      .then(response => setWallet(response.data?.wallet || null))
-      .catch(error => console.error('Failed to load wallet:', error))
-      .finally(() => setWalletLoading(false));
-  }, [currentUser?._id]);
+      .then((response) => {
+        const inspected = requireWalletSummaryResponse(response.data);
+        if (walletRequestRef.current === requestId) setWallet(inspected.wallet);
+      })
+      .catch((error) => {
+        if (walletRequestRef.current === requestId) {
+          setWallet(null);
+          console.error('Failed to load wallet:', error);
+        }
+      })
+      .finally(() => {
+        if (walletRequestRef.current === requestId) setWalletLoading(false);
+      });
+    return () => {
+      if (walletRequestRef.current === requestId) walletRequestRef.current += 1;
+    };
+  }, [checkoutUserId]);
 
-  // Fetch coupons when cart items change
+  // Product and seller identity drive both endpoints. Object replacement,
+  // quantity updates, and list reordering do not create redundant requests.
   useEffect(() => {
     if (cartItems?.cart && cartItems.cart.length > 0) {
-      fetchAvailableCoupons();
+      const couponCandidates = restoredCouponCandidatesRef.current || appliedCoupons;
+      restoredCouponCandidatesRef.current = null;
+      setAppliedCoupons({});
+      fetchAvailableCoupons(cartItems.cart, couponCandidates);
     } else {
+      couponRequestRef.current += 1;
       setSellerCoupons({});
       setAppliedCoupons({});
       setCouponInputs({});
     }
-  }, [cartItems?.cart?.length]);
+    // Product/seller identity is deliberately the sole cart dependency here;
+    // quantity and object-identity changes cannot affect coupon availability.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cartMoneySignature, checkoutUserId]);
 
-  // Fetch shipping methods when cart changes
   useEffect(() => {
     if (cartItems?.cart && cartItems.cart.length > 0) {
-      fetchShippingMethods();
+      fetchShippingMethods(cartItems.cart);
+    } else {
+      shippingRequestRef.current += 1;
+      setSellerShippingMethods({});
+      setSelectedShippingPerSeller({});
+      setShippingStatus('idle');
+      setShippingError('');
     }
-  }, [cartItems?.cart?.length]);
+    // Shipping methods are seller/product scoped. Depending on cart object
+    // identity would race redundant requests on every quantity/context update.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cartMoneySignature]);
 
   const fetchTaxConfig = async () => {
+    const requestId = taxRequestRef.current + 1;
+    taxRequestRef.current = requestId;
+    setTaxStatus('loading');
+    setTaxError('');
     try {
       const res = await axios.get(`${import.meta.env.VITE_API_URL}api/tax/config`);
-      if (res.data.success) {
-        setTaxConfig(res.data.taxConfig);
-      }
+      if (taxRequestRef.current !== requestId) return false;
+      const confirmedConfig = parseCheckoutTaxConfigResponse(res.data);
+      setTaxConfig(confirmedConfig);
+      setTaxStatus('ready');
+      return true;
     } catch (error) {
+      if (taxRequestRef.current !== requestId) return false;
       console.error('Error fetching tax config:', error);
+      setTaxConfig(null);
+      setTaxStatus('error');
+      setTaxError(error?.response?.data?.msg || error.message || 'Tax could not be confirmed.');
+      return false;
     }
   };
 
@@ -218,18 +375,46 @@ export default function Checkout() {
     }
   };
 
-  const fetchAvailableCoupons = async () => {
+  const fetchAvailableCoupons = async (
+    cartSnapshot = cartItems?.cart || [],
+    couponCandidates = appliedCoupons,
+  ) => {
+    const requestId = couponRequestRef.current + 1;
+    couponRequestRef.current = requestId;
+    const isStale = () => couponRequestRef.current !== requestId;
+    setSellerCoupons({});
+    setAppliedCoupons({});
     try {
       const token = getAuthToken();
-      if (!token) return;
-      const sellerIds = [...new Set(cartItems.cart.map(item => item.product.seller))];
+      if (!token) {
+        if (isStale()) return false;
+        setSellerCoupons({});
+        setAppliedCoupons({});
+        return false;
+      }
+      const sellerIds = [...new Set(cartSnapshot.map((item) => String(
+        item?.product?.seller?._id || item?.product?.seller || ''
+      )).filter(Boolean))];
+      const productIds = [...new Set(cartSnapshot.map((item) => String(item?.product?._id || '')).filter(Boolean))];
       const res = await axios.post(`${import.meta.env.VITE_API_URL}api/coupons/checkout-coupons`,
-        { sellerIds },
+        { sellerIds, productIds },
         { headers: { Authorization: `Bearer ${token}` } }
       );
-      setSellerCoupons(res.data.sellerCoupons || {});
+      if (isStale()) return false;
+      const availableCoupons = parseCheckoutCouponAvailabilityResponse(res.data, sellerIds);
+      setSellerCoupons(availableCoupons);
+      setAppliedCoupons(reconcileAppliedCheckoutCoupons(
+        couponCandidates,
+        cartSnapshot,
+        availableCoupons,
+      ));
+      return true;
     } catch (error) {
+      if (isStale()) return false;
       console.error('Error fetching coupons:', error);
+      setSellerCoupons({});
+      setAppliedCoupons({});
+      return false;
     }
   };
 
@@ -267,7 +452,13 @@ export default function Checkout() {
     return { type: 'group', sellerId };
   };
 
-  const applyCoupon = async (inputKey, productIds) => {
+  const applyCoupon = async (inputKey, productIds, sellerId) => {
+    if (checkoutDisplayRatesUnavailable) {
+      toast.info(checkoutHasUnsupportedMoney
+        ? 'Checkout contains an unsupported currency and cannot apply coupons safely.'
+        : 'Refresh live exchange rates before applying coupons to this cross-currency checkout.');
+      return;
+    }
     const code = couponInputs[inputKey]?.trim();
     if (!code) {
       toast.error('Please enter a coupon code');
@@ -277,19 +468,43 @@ export default function Checkout() {
     try {
       const token = getAuthToken();
       const res = await axios.post(`${import.meta.env.VITE_API_URL}api/coupons/validate`,
-        { code, productIds },
+        { code, productIds, sellerId },
         { headers: { Authorization: `Bearer ${token}` } }
       );
+      if (res.data?.valid !== true) throw new Error('Coupon terms could not be confirmed.');
       if (res.data.valid) {
-        const coupon = res.data.coupon;
+        const coupon = parseValidatedCheckoutCouponResponse(res.data, {
+          expectedSellerIds: [String(sellerId)],
+          expectedProductIds: [...new Set(productIds.map(String))],
+        });
+        const couponNeedsRates = couponHasCurrencyAmount(coupon)
+          && checkoutRequiresCurrencyConversion([couponCurrency(coupon)], currency);
+        if (couponNeedsRates && (exchangeRatesLoading || exchangeRatesFallback)) {
+          toast.info('This coupon uses another currency. Refresh live exchange rates before applying it.');
+          return;
+        }
+        const claimedProductIds = new Set(
+          Object.entries(appliedCoupons)
+            .filter(([key]) => key !== inputKey)
+            .flatMap(([, appliedCoupon]) => appliedCoupon?.applicableProductIds || [])
+            .map(String)
+        );
+        const overlappingProductIds = (coupon.applicableProductIds || [])
+          .map(String)
+          .filter((productId) => claimedProductIds.has(productId));
+        if (overlappingProductIds.length > 0) {
+          toast.error('A product can only receive one coupon per order. Remove the overlapping coupon first.');
+          return;
+        }
         // Check min order amount for applicable products
-        const applicableItems = cartItems.cart.filter(item => coupon.applicableProductIds.includes(item.product._id));
-        const applicableSubtotal = applicableItems.reduce((sum, item) => {
-          return sum + (productPriceInCheckoutCurrency(item.product) * item.qty);
-        }, 0);
-        const minOrderAmount = couponAmountInCheckoutCurrency(coupon.minOrderAmount || 0, coupon);
+        const applicableProductIds = new Set((coupon.applicableProductIds || []).map(String));
+        const applicableItems = cartItems.cart.filter((item) => applicableProductIds.has(String(item.product?._id)));
+        const applicableSubtotal = addCurrencyAmounts(...applicableItems.map((item) => (
+          getCartLineTotal(item)
+        )));
+        const minOrderAmount = couponAmountInCheckoutCurrency(coupon.minOrderAmount, coupon);
 
-        if (minOrderAmount > 0 && applicableSubtotal < minOrderAmount) {
+        if (minOrderAmount > 0 && toCurrencyMinorUnits(applicableSubtotal) < toCurrencyMinorUnits(minOrderAmount)) {
           toast.error(`Minimum order amount of ${currentMoney(minOrderAmount)} required for this coupon`);
           return;
         }
@@ -314,46 +529,21 @@ export default function Checkout() {
     toast.info('Coupon removed');
   };
 
-  // Calculate coupon discount for a specific product
-  const getProductCouponDiscount = (productId, itemPrice, qty) => {
-    let totalDiscount = 0;
-    Object.values(appliedCoupons).forEach(coupon => {
-      if (coupon.applicableProductIds.includes(productId)) {
-        const applicableItems = cartItems.cart.filter(item => coupon.applicableProductIds.includes(item.product._id));
-        const applicableSubtotal = applicableItems.reduce((sum, item) => {
-          return sum + (productPriceInCheckoutCurrency(item.product) * item.qty);
-        }, 0);
-        if (applicableSubtotal <= 0) return;
+  const couponPricing = calculateCheckoutCouponPricing({
+    appliedCoupons,
+    cartItems: cartItems?.cart || [],
+    getItemLineTotal: (item) => getCartLineTotal(item),
+    getItemKey: (item) => cartLineKey(item),
+    convertCouponAmount: couponAmountInCheckoutCurrency,
+    getCouponCurrency: couponCurrency,
+    targetCurrency: currency,
+    exchangeRates,
+  });
 
-        const lineSubtotal = itemPrice * qty;
-        let couponDiscount = 0;
-        if (coupon.discountType === 'percentage') {
-          couponDiscount = (applicableSubtotal * coupon.discountValue) / 100;
-        } else {
-          couponDiscount = couponAmountInCheckoutCurrency(coupon.discountValue, coupon);
-        }
-        const maxDiscountAmount = coupon.maxDiscountAmount
-          ? couponAmountInCheckoutCurrency(coupon.maxDiscountAmount, coupon)
-          : 0;
-        if (maxDiscountAmount && couponDiscount > maxDiscountAmount) {
-          couponDiscount = maxDiscountAmount;
-        }
-        totalDiscount += couponDiscount * (lineSubtotal / applicableSubtotal);
-      }
-    });
-    return totalDiscount;
-  };
-
-  // Total coupon discount
-  const totalCouponDiscount = useMemo(() => {
-    if (!cartItems?.cart || Object.keys(appliedCoupons).length === 0) return 0;
-    let total = 0;
-    cartItems.cart.forEach(item => {
-      const price = productPriceInCheckoutCurrency(item.product);
-      total += getProductCouponDiscount(item.product._id, price, item.qty);
-    });
-    return total;
-  }, [cartItems, appliedCoupons, currency, convertAmount]);
+  const getProductCouponDiscount = (item) => (
+    couponPricing.lineDiscounts.get(cartLineKey(item)) || 0
+  );
+  const totalCouponDiscount = couponPricing.totalDiscount;
 
   const handleAutoFill = () => {
     if (!savedShippingInfo) return;
@@ -370,9 +560,22 @@ export default function Checkout() {
     toast.success('Shipping info auto-filled!');
   };
 
-  const fetchShippingMethods = async () => {
+  const fetchShippingMethods = async (cartSnapshot = cartItems?.cart || []) => {
+    const requestId = shippingRequestRef.current + 1;
+    shippingRequestRef.current = requestId;
+    const isStale = () => shippingRequestRef.current !== requestId;
+    setShippingStatus('loading');
+    setShippingError('');
     try {
-      const cartItemsData = cartItems.cart.map(item => ({
+      const expectedSellerIds = [...new Set(cartSnapshot.map((item) => {
+        const seller = item?.product?.seller;
+        return typeof seller?._id === 'string'
+          ? seller._id
+          : typeof seller === 'string'
+            ? seller
+            : '';
+      }).filter(Boolean))];
+      const cartItemsData = cartSnapshot.map(item => ({
         productId: item.product._id
       }));
 
@@ -380,25 +583,23 @@ export default function Checkout() {
         `${import.meta.env.VITE_API_URL}api/shipping/cart`,
         { cartItems: cartItemsData }
       );
-
-      if (res.data.success) {
-        const shippingData = res.data.shippingMethods;
-        setSellerShippingMethods(shippingData);
-
-        // Set default shipping method for each seller - prefer free shipping
-        const defaultSelections = {};
-        Object.keys(shippingData).forEach(sellerId => {
-          const methods = shippingData[sellerId].methods;
-          if (methods.length > 0) {
-            const freeShipping = methods.find(m => m.type === 'free');
-            defaultSelections[sellerId] = freeShipping || methods[0];
-          }
-        });
-        setSelectedShippingPerSeller(defaultSelections);
-      }
+      if (isStale()) return false;
+      const shippingData = parseCheckoutShippingMethodsResponse(res.data, expectedSellerIds);
+      setSellerShippingMethods(shippingData);
+      setSelectedShippingPerSeller((previous) => (
+        selectCheckoutShippingMethods(shippingData, previous)
+      ));
+      setShippingStatus('ready');
+      return true;
     } catch (error) {
+      if (isStale()) return false;
       console.error('Error fetching shipping methods:', error);
+      setSellerShippingMethods({});
+      setSelectedShippingPerSeller({});
+      setShippingStatus('error');
+      setShippingError(error?.response?.data?.msg || error.message || 'Delivery methods could not be confirmed.');
       toast.error('Failed to load shipping methods');
+      return false;
     }
   };
 
@@ -407,11 +608,11 @@ export default function Checkout() {
     if (!taxConfig || taxConfig.type === 'none') return 0;
 
     if (taxConfig.type === 'percentage') {
-      return (subtotal * taxConfig.value) / 100;
+      return percentageCurrencyAmount(subtotal, taxConfig.value);
     }
 
     if (taxConfig.type === 'fixed') {
-      return convertAmount(taxConfig.value, 'USD', currency);
+      return convertAmount(taxConfig.value, taxConfig.currency, currency);
     }
 
     return 0;
@@ -424,7 +625,6 @@ export default function Checkout() {
     watch,
     trigger,
     setValue,
-    getValues,
     control,
     formState: { errors, isSubmitting },
   } = useForm({
@@ -459,7 +659,6 @@ export default function Checkout() {
   });
 
   const paymentMethod = watch("paymentMethod");
-  const selectedShipping = watch("shippingMethod");
   const billingSameAsShipping = watch("billingSameAsShipping");
   const allFormValues = watch();
 
@@ -476,9 +675,8 @@ export default function Checkout() {
       if (parsed.selectedShippingPerSeller) {
         setSelectedShippingPerSeller(parsed.selectedShippingPerSeller);
       }
-      if (parsed.appliedCoupons) {
-        setAppliedCoupons(parsed.appliedCoupons);
-      }
+      // Persisted coupons remain only as inert candidates. The cart-identity
+      // effect activates them after the availability endpoint confirms terms.
     } catch (_) {}
   }, [setValue]);
 
@@ -497,47 +695,130 @@ export default function Checkout() {
   }, [currentStep, allFormValues, selectedShippingPerSeller, appliedCoupons]);
 
   // Subtotal
-  const subtotal = useMemo(() => {
-    if (!cartItems?.cart) return 0;
-    return cartItems.cart.reduce((total, item) => {
-      const itemPrice = productPriceInCheckoutCurrency(item.product);
-      return total + (itemPrice * item.qty);
-    }, 0);
-  }, [cartItems, currency, convertAmount]);
+  const subtotal = cartItems?.cart
+    ? addCurrencyAmounts(...cartLineTotals)
+    : 0;
 
-  // Calculate tax and shipping
-  const tax = useMemo(() => calculateTax(subtotal), [subtotal, taxConfig]);
-
-  // Calculate total shipping cost from all sellers
-  const shippingCost = useMemo(() => {
-    return Object.values(selectedShippingPerSeller).reduce((total, method) => {
-      return total + shippingCostInCheckoutCurrency(method);
-    }, 0);
-  }, [selectedShippingPerSeller, currency, convertAmount]);
-
-  const totalAmount = subtotal + tax + shippingCost - totalCouponDiscount;
-  const walletBalance = Number(wallet?.balances?.[currency] || 0);
-  const canPayWithWallet = Boolean(currentUser && wallet?.status === 'active' && walletBalance + 0.0001 >= totalAmount);
-  const walletDisabledReason = !currentUser
-    ? 'Log in to use Rozare Wallet.'
-    : wallet?.status && wallet.status !== 'active'
-      ? 'Your Rozare Wallet is locked.'
-      : `Balance: ${currentMoney(walletBalance)}. Add funds from your Wallet page.`;
-
-  // Group cart items by seller
+  // Keep seller order aligned with the cart/server. This order is also the
+  // deterministic tie-breaker when a globally converted shipping total has a
+  // remainder cent to allocate.
   const cartItemsBySeller = useMemo(() => {
     if (!cartItems?.cart) return {};
-
     const grouped = {};
-    cartItems.cart.forEach(item => {
-      const sellerId = item.product.seller;
-      if (!grouped[sellerId]) {
-        grouped[sellerId] = [];
-      }
+    cartItems.cart.forEach((item) => {
+      const rawSeller = item?.product?.seller;
+      const sellerId = String(rawSeller?._id || rawSeller || '');
+      if (!sellerId) return;
+      if (!grouped[sellerId]) grouped[sellerId] = [];
       grouped[sellerId].push(item);
     });
     return grouped;
   }, [cartItems]);
+
+  // Calculate tax and shipping
+  const tax = calculateTax(subtotal);
+
+  // The backend converts all foreign shipping fees as one exact amount and
+  // then allocates target cents to sellers. Mirroring that allocation avoids
+  // losing tiny fees (for example two PKR 1 fees that jointly become USD .01).
+  const cartSellerIds = Object.keys(cartItemsBySeller);
+  const selectedShippingEntries = cartSellerIds
+    .map((sellerId) => {
+      const selectedType = selectedShippingPerSeller[sellerId]?.type
+        || selectedShippingPerSeller[sellerId]?.name;
+      const method = sellerShippingMethods[sellerId]?.methods?.find((candidate) => (
+        candidate.type === selectedType
+      ));
+      return method ? { sellerId, method } : null;
+    })
+    .filter(Boolean);
+  const shippingLineAmounts = convertLineAmounts(selectedShippingEntries.map(({ sellerId, method }) => ({
+    unitAmount: method.cost,
+    quantity: 1,
+    sourceCurrency: shippingMethodCurrency(method, sellerShippingMethods[sellerId]),
+  })), currency);
+  const shippingAmountBySeller = new Map(selectedShippingEntries.map((entry, index) => (
+    [entry.sellerId, shippingLineAmounts[index]]
+  )));
+  const shippingCost = addCurrencyAmounts(...shippingLineAmounts);
+
+  const totalAmount = Math.max(0, addCurrencyAmounts(subtotal, tax, shippingCost, -totalCouponDiscount));
+  const checkoutSourceCurrencies = [
+    ...(cartItems?.cart || []).map((item) => (
+      hasCurrencyAmount(getEffectiveProductSourcePrice(item?.product))
+        ? productCurrency(item?.product)
+        : null
+    )),
+    ...selectedShippingEntries.map(({ method }) => (
+      hasCurrencyAmount(method?.cost)
+        ? shippingMethodCurrency(method)
+        : null
+    )),
+    taxConfig?.type === 'fixed' && hasCurrencyAmount(taxConfig.value)
+      ? taxConfig.currency
+      : null,
+    ...Object.values(appliedCoupons).map((coupon) => (
+      couponHasCurrencyAmount(coupon) ? couponCurrency(coupon) : null
+    )),
+  ];
+  const checkoutHasUnsupportedMoney = checkoutHasUnsupportedCurrency(checkoutSourceCurrencies);
+  const checkoutDisplayNeedsExchangeRates = checkoutRequiresCurrencyConversion(checkoutSourceCurrencies, currency);
+  const checkoutNeedsExchangeRates = checkoutRequiresTrustedRates(checkoutSourceCurrencies, currency);
+  const checkoutRatesUnavailable = checkoutHasUnsupportedMoney
+    || (checkoutNeedsExchangeRates && (exchangeRatesLoading || exchangeRatesFallback));
+  const checkoutDisplayRatesUnavailable = checkoutHasUnsupportedMoney
+    || (checkoutDisplayNeedsExchangeRates && (exchangeRatesLoading || exchangeRatesFallback));
+  const checkoutMoney = (amount, options = {}) => {
+    const { sourceCurrency = null, ...formatOptions } = options;
+    const sourceRatesUnavailable = sourceCurrency
+      ? checkoutHasUnsupportedCurrency([sourceCurrency])
+        || (checkoutRequiresCurrencyConversion([sourceCurrency], currency)
+          && (exchangeRatesLoading || exchangeRatesFallback))
+      : checkoutDisplayRatesUnavailable;
+    return `${sourceRatesUnavailable ? '≈' : ''}${currentMoney(amount, formatOptions)}`;
+  };
+  const taxUnavailable = taxStatus !== 'ready';
+  const shippingReady = shippingStatus === 'ready'
+    && cartSellerIds.length > 0
+    && selectedShippingEntries.length === cartSellerIds.length;
+  const checkoutBlocked = !isCartReady || taxUnavailable || !shippingReady || checkoutRatesUnavailable;
+  const formatShippingOptionPrice = (method, sellerInfo = null) => {
+    const sourceAmount = method.cost;
+    const sourceCurrency = shippingMethodCurrency(method, sellerInfo);
+    const targetAmount = shippingCostInCheckoutCurrency(method, sellerInfo);
+    if (
+      !checkoutHasUnsupportedCurrency([sourceCurrency])
+      && isPositiveSourceAmountRoundedToZero(sourceAmount, targetAmount)
+    ) {
+      const nativeAmount = formatPrice(sourceAmount, {
+        sourceCurrency,
+        targetCurrency: sourceCurrency,
+        showCode: true,
+      });
+      return `${nativeAmount} (<${currentMoney(0.01, { showCode: true })})`;
+    }
+    return checkoutMoney(targetAmount, { sourceCurrency });
+  };
+  const rawWalletBalance = wallet?.balances?.[currency];
+  const walletBalance = typeof rawWalletBalance === 'number'
+    && Number.isFinite(rawWalletBalance)
+    && rawWalletBalance >= 0
+    && toCurrencyMinorUnits(rawWalletBalance) / 100 === rawWalletBalance
+    ? rawWalletBalance
+    : null;
+  const canPayWithWallet = Boolean(
+    currentUser
+    && wallet?.status === 'active'
+    && walletBalance !== null
+    && toCurrencyMinorUnits(walletBalance) >= toCurrencyMinorUnits(totalAmount)
+  );
+  const walletDisabledReason = !currentUser
+    ? 'Log in to use Rozare Wallet.'
+    : wallet?.status && wallet.status !== 'active'
+      ? 'Your Rozare Wallet is locked.'
+      : walletBalance === null
+        ? 'Your wallet balance could not be verified. Refresh it before paying.'
+        : `Balance: ${currentMoney(walletBalance)}. Add funds from your Wallet page.`;
 
   const codRestrictedSellers = useMemo(() => (
     Object.entries(sellerShippingMethods)
@@ -561,17 +842,30 @@ export default function Checkout() {
     }
   }, [canPayWithWallet, paymentMethod, setValue]);
 
-  // Prevent Enter key from submitting the form
-  const handleKeyDown = (e) => {
-    if (e.key === "Enter") {
-      if (currentStep !== steps.length - 1) {
-        e.preventDefault();
-      }
-    }
-  };
-
   // Next step with validation
   const nextStep = async () => {
+    if (!isCartReady) {
+      toast.info(cartHydrationStatus === 'error'
+        ? 'Retry cart synchronization before continuing.'
+        : 'Wait while your saved cart is synchronized.');
+      return;
+    }
+    if (couponPricing.error) {
+      toast.error(couponPricing.error);
+      return;
+    }
+    if (taxUnavailable) {
+      toast.error(taxStatus === 'loading'
+        ? 'Wait while tax is confirmed.'
+        : 'Tax could not be confirmed. Retry tax before continuing.');
+      return;
+    }
+    if (checkoutRatesUnavailable) {
+      toast.error(checkoutHasUnsupportedMoney
+        ? 'Checkout contains an unsupported currency. Refresh the cart or contact support.'
+        : 'Live exchange rates are required to lock checkout settlement amounts.');
+      return;
+    }
     // CART step: ensure there's at least one item
     if (currentStep === 0) {
       if (!cartItems?.cart || cartItems.cart.length === 0) {
@@ -598,15 +892,14 @@ export default function Checkout() {
       if (!valid) return;
 
       // Validate shipping method is selected for all sellers
-      const sellerIds = Object.keys(sellerShippingMethods);
-      const hasAllShippingSelected = sellerIds.every(sellerId => selectedShippingPerSeller[sellerId]);
+      const hasAllShippingSelected = shippingReady;
 
       if (!hasAllShippingSelected) {
         toast.error("Please select a shipping method for all sellers");
         return;
       }
 
-      trackInitiateCheckout(cartItems?.cart || [], totalAmount);
+      trackInitiateCheckout(cartItems?.cart || [], totalAmount, currency, cartLineTotals);
       setCurrentStep((p) => p + 1);
       return;
     }
@@ -620,6 +913,12 @@ export default function Checkout() {
 
   // Final form submit
   const onPlaceOrder = async (data) => {
+    if (!isCartReady) {
+      toast.error(cartHydrationStatus === 'error'
+        ? 'Your cart could not be verified. Retry synchronization before placing the order.'
+        : 'Your saved cart is still being synchronized. Please wait.');
+      return;
+    }
     const token = getAuthToken();
     if (!currentUser || !token) {
       try {
@@ -639,6 +938,40 @@ export default function Checkout() {
       return;
     }
 
+    if (couponPricing.error) {
+      toast.error(couponPricing.error);
+      return;
+    }
+
+    if (taxUnavailable) {
+      toast.error(taxStatus === 'loading'
+        ? 'Wait while tax is confirmed.'
+        : 'Tax could not be confirmed. Retry tax before placing the order.');
+      return;
+    }
+
+    if (checkoutRatesUnavailable) {
+      toast.error(checkoutHasUnsupportedMoney
+        ? 'Checkout contains an unsupported currency and cannot be priced safely.'
+        : 'Live exchange rates are required to lock the order and its USD settlement snapshot.');
+      return;
+    }
+
+    // Rendered totals may use the retained rate table so the checkout can show
+    // an honest estimate during an outage. Re-assert the trusted-rate contract
+    // at the money-action boundary before any order payload is constructed.
+    try {
+      if (String(currency).toUpperCase() !== 'USD') {
+        convertAmountForMoneyAction(0, currency, 'USD');
+      }
+      checkoutSourceCurrencies
+        .filter(Boolean)
+        .forEach((sourceCurrency) => convertAmountForMoneyAction(0, sourceCurrency, currency));
+    } catch {
+      toast.error('Live exchange rates changed while checkout was open. Refresh rates and try again.');
+      return;
+    }
+
     if (data.paymentMethod === 'cash_on_delivery' && !isCashOnDeliveryAvailable) {
       toast.error(`${codRestrictionText} Please pay by card or Rozare Wallet, or remove those items.`);
       return;
@@ -648,8 +981,7 @@ export default function Checkout() {
       return;
     }
     // Validate shipping method is selected for all sellers
-    const sellerIds = Object.keys(sellerShippingMethods);
-    const hasAllShippingSelected = sellerIds.every(sellerId => selectedShippingPerSeller[sellerId]);
+    const hasAllShippingSelected = shippingReady;
 
     if (!hasAllShippingSelected) {
       toast.error("Please select a shipping method for all sellers");
@@ -660,30 +992,24 @@ export default function Checkout() {
     setIsProcessing(true);
 
     // Build seller shipping array
-    const sellerShipping = Object.entries(selectedShippingPerSeller).map(([sellerId, method]) => ({
+    const sellerShipping = selectedShippingEntries.map(({ sellerId, method }, index) => ({
       seller: sellerId,
       shippingMethod: {
         name: method.type,
-        price: shippingCostInCheckoutCurrency(method, sellerShippingMethods[sellerId]),
+        price: shippingLineAmounts[index],
         estimatedDays: method.deliveryDays
       }
     }));
 
     // Use first seller's shipping as primary (for backward compatibility)
-    const primaryShipping = sellerShipping[0]?.shippingMethod || {
-      name: 'standard',
-      price: 0,
-      estimatedDays: 5
-    };
+    const primaryShipping = sellerShipping[0].shippingMethod;
 
     const tiktokPlaceOrderEventId = createTikTokEventId('place_order');
     const tiktokPurchaseEventId = createTikTokEventId('purchase');
 
     const order = {
       orderItems: cartItems.cart.map((item) => {
-        const productPrice = Number(item.product.price || 0);
-        const discountedPrice = Number(item.product.discountedPrice || 0);
-        const sourcePrice = discountedPrice > 0 && discountedPrice < productPrice ? discountedPrice : productPrice;
+        const sourcePrice = getEffectiveProductSourcePrice(item.product);
         const itemPrice = productPriceInCheckoutCurrency(item.product, sourcePrice);
 
         return {
@@ -772,26 +1098,19 @@ export default function Checkout() {
 
     if (data.instructions !== '') order.instructions = data.instructions
 
+    let fingerprint = '';
+    let attemptKey = '';
     try {
-      const fingerprint = checkoutFingerprint(order);
-      let attempt = checkoutAttemptRef.current;
-      if (!attempt) {
-        try {
-          const stored = JSON.parse(sessionStorage.getItem(CHECKOUT_ATTEMPT_STORAGE_KEY) || 'null');
-          const isFresh = Number(stored?.createdAt) > Date.now() - CHECKOUT_ATTEMPT_MAX_AGE_MS;
-          if (stored?.key && stored?.fingerprint === fingerprint && isFresh) {
-            attempt = stored;
-          } else if (stored) {
-            sessionStorage.removeItem(CHECKOUT_ATTEMPT_STORAGE_KEY);
-          }
-        } catch (_) {}
-      }
-      const attemptIsFresh = Number(attempt?.createdAt) > Date.now() - CHECKOUT_ATTEMPT_MAX_AGE_MS;
-      if (!attempt || attempt.fingerprint !== fingerprint || !attemptIsFresh) {
-        attempt = { key: createCheckoutAttemptKey(), fingerprint, createdAt: Date.now() };
-        try { sessionStorage.setItem(CHECKOUT_ATTEMPT_STORAGE_KEY, JSON.stringify(attempt)); } catch (_) {}
-      }
-      checkoutAttemptRef.current = attempt;
+      const intentFingerprint = createCheckoutFingerprint(order, 'checkout_session', 'web');
+      const actorId = String(currentUser?._id || currentUser?.id || 'guest');
+      fingerprint = `${actorId}:${intentFingerprint}`;
+      const attempt = await getOrCreatePersistedMutationAttemptInLedger({
+        storage: localStorage,
+        storageKey: checkoutAttemptStorageKey,
+        fingerprint,
+        keyPrefix: 'web-checkout',
+      });
+      attemptKey = attempt.key;
       order.idempotencyKey = attempt.key;
 
       const headers = {
@@ -803,6 +1122,8 @@ export default function Checkout() {
         { order, paymentFlow: 'checkout_session', clientSurface: 'web' },
         { headers }
       );
+      const authoritativeEventCurrency = res.data?.order?.currency || currency;
+      const authoritativeEventTotal = res.data?.order?.totalAmount ?? totalAmount;
 
       toast.success(res.data.msg)
 
@@ -824,51 +1145,99 @@ export default function Checkout() {
           );
           setSavedShippingInfo(currentShipping);
         } catch (e) { console.error(e); }
-      } else if (hasChanged && currentUser) {
-        setPendingOrderData({ order, data: res.data, currentShipping });
-        setShowUpdatePrompt(true);
       }
 
       if (['cash_on_delivery', 'wallet'].includes(order.paymentMethod)) {
-        rememberConfirmedOrder(res.data.orderId || res.data.order?.orderId, order.paymentMethod);
-        checkoutAttemptRef.current = null;
-        try { sessionStorage.removeItem(CHECKOUT_ATTEMPT_STORAGE_KEY); } catch (_) {}
+        const confirmedOrderId = res.data.orderId || res.data.order?.orderId;
+        const successAuthenticated = rememberConfirmedOrder(
+          confirmedOrderId,
+          order.paymentMethod,
+          {
+            noPaymentRequired: res.data?.noPaymentRequired === true,
+            attemptStorageKey: checkoutAttemptStorageKey,
+            attemptFingerprint: fingerprint,
+            attemptKey,
+          },
+        );
         setIsProcessing(false);
         trackPlaceAnOrder({
           orderId: res.data.order?.orderId || res.data.order?._id,
           cartItems: cartItems?.cart || [],
-          totalAmount,
+          lineTotals: cartLineTotals,
+          totalAmount: authoritativeEventTotal,
+          currency: authoritativeEventCurrency,
           eventId: tiktokPlaceOrderEventId,
         });
 
-        // If update prompt is showing, don't navigate yet - modal handles it
-        if (hasChanged && currentUser) return;
+        if (!successAuthenticated) {
+          // The order already reached the server, so its durable retry key must
+          // remain replayable. Never trust query parameters as proof of COD or
+          // Wallet success when the same-tab confirmation record was not
+          // durably written and read back.
+          toast.warning(
+            'Your order was placed, but this tab could not save its secure confirmation. Open My Orders to view it safely.',
+            { autoClose: 9000 },
+          );
+          if (token) await fetchCart().catch(error => console.error('Error refreshing cart:', error));
+          navigate('/user-dashboard/orders', { replace: true });
+          return;
+        }
+
+        if (hasChanged && currentUser) {
+          setPendingOrderData({ order, data: res.data, currentShipping });
+          setShowUpdatePrompt(true);
+          return;
+        }
 
         setTimeout(async () => {
           if (token) await fetchCart().catch(error => console.error('Error refreshing cart:', error));
           try { sessionStorage.removeItem(CHECKOUT_STORAGE_KEY); } catch (_) {}
-          navigate(`/success?payment=${order.paymentMethod}&orderId=${encodeURIComponent(res.data.orderId || res.data.order?.orderId || '')}`);
+          navigate(`/success?payment=${order.paymentMethod}&orderId=${encodeURIComponent(confirmedOrderId || '')}`);
         }, 1500);
         return;
       }
 
-      trackAddPaymentInfo({
-        cartItems: cartItems?.cart || [],
-        totalAmount,
-      });
+      if (res.data?.noPaymentRequired !== true) {
+        trackAddPaymentInfo({
+          cartItems: cartItems?.cart || [],
+          lineTotals: cartLineTotals,
+          totalAmount: authoritativeEventTotal,
+          currency: authoritativeEventCurrency,
+        });
+      }
       trackPlaceAnOrder({
         orderId: res.data.order?.orderId,
         cartItems: cartItems?.cart || [],
-        totalAmount,
+        lineTotals: cartLineTotals,
+        totalAmount: authoritativeEventTotal,
+        currency: authoritativeEventCurrency,
         eventId: tiktokPlaceOrderEventId,
       });
 
       if (res.data?.isPaid === true && res.data?.orderId) {
-        checkoutAttemptRef.current = null;
-        try { sessionStorage.removeItem(CHECKOUT_ATTEMPT_STORAGE_KEY); } catch (_) {}
-        if (rememberStripeCheckoutReturn(res.data.orderId, res.data.id)) {
+        if (
+          res.data.noPaymentRequired === true
+          && rememberConfirmedOrder(res.data.orderId, 'stripe', {
+            noPaymentRequired: true,
+            attemptStorageKey: checkoutAttemptStorageKey,
+            attemptFingerprint: fingerprint,
+            attemptKey,
+          })
+        ) {
+          navigate(`/success?payment=stripe&orderId=${encodeURIComponent(res.data.orderId)}`, { replace: true });
+        } else if (rememberStripeCheckoutReturn(
+          res.data.orderId,
+          res.data.id,
+          checkoutAttemptStorageKey,
+          fingerprint,
+          attemptKey,
+        )) {
           navigate(`/success?orderId=${encodeURIComponent(res.data.orderId)}`, { replace: true });
         } else {
+          toast.warning(
+            'Payment is complete, but this tab could not save its secure confirmation. Open My Orders to view it safely.',
+            { autoClose: 9000 },
+          );
           navigate('/user-dashboard/orders', { replace: true });
         }
         return;
@@ -877,13 +1246,62 @@ export default function Checkout() {
       if (!res.data?.url) {
         throw new Error('Stripe did not return a secure checkout URL. Please try again.');
       }
+      const stripeOrderId = res.data.orderId || res.data.order?.orderId;
+      if (!rememberStripeCheckoutReturn(
+        stripeOrderId,
+        res.data.id,
+        checkoutAttemptStorageKey,
+        fingerprint,
+        attemptKey,
+      )) {
+        // The Stripe session is recoverable with this same backend key. Do not
+        // open it unless the return page can authenticate the exact order and
+        // clear only this exact durable attempt after signed verification.
+        setIsProcessing(false);
+        toast.error(
+          'Secure payment could not start because this tab cannot save its payment return. Enable site storage, then try again.',
+          { autoClose: 9000 },
+        );
+        return;
+      }
       window.location.assign(res.data.url);
 
 
     } catch (error) {
-      if (['IDEMPOTENCY_CONFLICT', 'CHECKOUT_ATTEMPT_EXPIRED'].includes(error.response?.data?.code)) {
-        checkoutAttemptRef.current = null;
-        try { sessionStorage.removeItem(CHECKOUT_ATTEMPT_STORAGE_KEY); } catch (_) {}
+      if (isCheckoutRepriceRequired(error)) {
+        if (fingerprint && attemptKey) {
+          await clearPersistedMutationAttemptFromLedger(
+            localStorage,
+            checkoutAttemptStorageKey,
+            fingerprint,
+            attemptKey,
+          );
+        }
+        await Promise.allSettled([
+          Promise.resolve().then(() => fetchCart()),
+          Promise.resolve().then(() => fetchTaxConfig()),
+          Promise.resolve().then(() => refreshExchangeRates()),
+          Promise.resolve().then(() => fetchShippingMethods()),
+          Promise.resolve().then(() => fetchAvailableCoupons()),
+        ]);
+        setIsProcessing(false);
+        toast.warning(
+          error.response?.data?.msg
+            ? `${error.response.data.msg} We refreshed checkout details. Review the new total and press the payment button again.`
+            : 'Checkout pricing changed. We refreshed checkout details. Review the new total and press the payment button again.',
+          { autoClose: 9000 },
+        );
+        return;
+      }
+      if (!shouldRetainIdempotencyKey(error.response?.status)) {
+        if (fingerprint && attemptKey) {
+          await clearPersistedMutationAttemptFromLedger(
+            localStorage,
+            checkoutAttemptStorageKey,
+            fingerprint,
+            attemptKey,
+          );
+        }
       }
       if (error.response?.status === 401 || error.response?.status === 403) {
         try {
@@ -962,6 +1380,75 @@ export default function Checkout() {
           <form
             className="lg:col-span-2 glass-panel p-4 sm:p-6"
           >
+
+            {!isCartReady && (
+              <div className="mb-6 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center gap-3" role="alert" aria-live="polite"
+                style={{ background: 'rgba(245,158,11,0.10)', border: '1px solid rgba(245,158,11,0.24)' }}>
+                <div className="flex-1">
+                  <p className="text-sm font-bold" style={{ color: 'hsl(var(--foreground))' }}>
+                    {cartHydrationStatus === 'error' ? 'Cart synchronization required' : 'Preparing your saved cart'}
+                  </p>
+                  <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                    {cartHydrationError || 'Rozare is merging saved guest items and fetching the authoritative cart before checkout.'}
+                  </p>
+                </div>
+                <button type="button" onClick={retryCartHydration} disabled={isCartLoading}
+                  className="px-3 py-2 rounded-xl glass-inner text-xs font-semibold inline-flex items-center justify-center gap-2 disabled:opacity-60">
+                  <Loader2 size={14} className={isCartLoading ? 'animate-spin' : ''} /> Retry cart sync
+                </button>
+              </div>
+            )}
+
+            {checkoutRatesUnavailable && (
+              <div className="mb-6 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center gap-3" role="alert" aria-live="polite"
+                style={{ background: 'rgba(245,158,11,0.10)', border: '1px solid rgba(245,158,11,0.24)' }}>
+                <div className="flex-1">
+                  <p className="text-sm font-bold" style={{ color: 'hsl(var(--foreground))' }}>{checkoutHasUnsupportedMoney ? 'Unsupported checkout currency' : 'Live exchange rates required'}</p>
+                  <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                    {checkoutHasUnsupportedMoney
+                      ? 'One or more cart, delivery, tax, or coupon amounts use a currency this checkout does not support.'
+                      : checkoutDisplayRatesUnavailable
+                        ? exchangeRatesLoading
+                          ? 'Refreshing rates. Converted values marked with ≈ are estimates and checkout is paused.'
+                          : 'Only fallback rates are available. Converted values marked with ≈ are estimates; retry before paying.'
+                        : `Amounts already in ${currency} remain exact. Checkout is paused until a live rate can freeze the USD settlement snapshot.`}
+                  </p>
+                </div>
+                <button type="button" onClick={refreshExchangeRates} disabled={exchangeRatesLoading || checkoutHasUnsupportedMoney}
+                  className="px-3 py-2 rounded-xl glass-inner text-xs font-semibold inline-flex items-center justify-center gap-2 disabled:opacity-60">
+                  <Loader2 size={14} className={exchangeRatesLoading ? 'animate-spin' : ''} /> Retry rates
+                </button>
+              </div>
+            )}
+            {taxUnavailable && (
+              <div className="mb-6 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center gap-3" role="alert" aria-live="polite"
+                style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.22)' }}>
+                <div className="flex-1">
+                  <p className="text-sm font-bold" style={{ color: 'hsl(var(--foreground))' }}>
+                    {taxStatus === 'loading' ? 'Confirming tax' : 'Tax unavailable'}
+                  </p>
+                  <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                    {taxStatus === 'loading'
+                      ? 'Checkout is paused until the current tax configuration is confirmed.'
+                      : `${taxError || 'Tax could not be confirmed.'} Retry before placing the order.`}
+                  </p>
+                </div>
+                <button type="button" onClick={fetchTaxConfig} disabled={taxStatus === 'loading'}
+                  className="px-3 py-2 rounded-xl glass-inner text-xs font-semibold inline-flex items-center justify-center gap-2 disabled:opacity-60">
+                  <Loader2 size={14} className={taxStatus === 'loading' ? 'animate-spin' : ''} /> Retry tax
+                </button>
+              </div>
+            )}
+
+            {!!couponPricing.error && (
+              <div className="mb-6 rounded-2xl p-4" role="alert" aria-live="polite"
+                style={{ background: 'rgba(239,68,68,0.09)', border: '1px solid rgba(239,68,68,0.24)' }}>
+                <p className="text-sm font-bold" style={{ color: 'hsl(var(--foreground))' }}>Coupon needs attention</p>
+                <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                  {couponPricing.error} Remove or replace the coupon to continue.
+                </p>
+              </div>
+            )}
 
             {/* Progress Steps */}
             <div className="mb-8 sm:mb-12">
@@ -1045,7 +1532,7 @@ export default function Checkout() {
                                   const { _id, name, image } = product;
                                   const itemSourceCurrency = productCurrency(product);
                                   const itemPrice = productPriceInCheckoutCurrency(product);
-                                  const productCouponDiscount = getProductCouponDiscount(_id, itemPrice, qty);
+                                  const productCouponDiscount = getProductCouponDiscount(item);
                                   const productKey = `product-${_id}`;
                                   const showPerProductInput = couponConfig?.type === 'per-product' && couponConfig.productIds.includes(_id);
 
@@ -1071,10 +1558,10 @@ export default function Checkout() {
                                           <div>
                                             <h4 className="font-medium text-sm sm:text-base" style={{ color: 'hsl(var(--foreground))' }}>{name}</h4>
                                             <p>
-                                              <span className="font-bold text-sm" style={{ color: 'hsl(var(--muted-foreground))' }}>{formatPrice(itemPrice, { sourceCurrency: currency })}</span>
+                                              <span className="font-bold text-sm" style={{ color: 'hsl(var(--muted-foreground))' }}>{checkoutMoney(itemPrice, { sourceCurrency: itemSourceCurrency })}</span>
                                               {productCouponDiscount > 0 && (
                                                 <span className="ml-2 text-xs font-semibold" style={{ color: 'hsl(150, 60%, 45%)' }}>
-                                                  -{currentMoney(productCouponDiscount)} coupon
+                                                  -{checkoutMoney(productCouponDiscount)} coupon
                                                 </span>
                                               )}
                                             </p>
@@ -1098,7 +1585,7 @@ export default function Checkout() {
                                           setCouponInputs={setCouponInputs}
                                           appliedCoupons={appliedCoupons}
                                           couponLoading={couponLoading}
-                                          onApply={() => applyCoupon(productKey, [_id])}
+                                          onApply={() => applyCoupon(productKey, [_id], sellerId)}
                                           onRemove={() => removeCoupon(productKey)}
                                           formatPrice={formatCouponAmount}
                                         />
@@ -1115,7 +1602,7 @@ export default function Checkout() {
                                     setCouponInputs={setCouponInputs}
                                     appliedCoupons={appliedCoupons}
                                     couponLoading={couponLoading}
-                                    onApply={() => applyCoupon(groupKey, sellerItems.map(i => i.product._id))}
+                                    onApply={() => applyCoupon(groupKey, sellerItems.map(i => i.product._id), sellerId)}
                                     onRemove={() => removeCoupon(groupKey)}
                                     formatPrice={formatCouponAmount}
                                     isGroup
@@ -1277,7 +1764,19 @@ export default function Checkout() {
                               </div>
                             </label>
 
-                            {Object.keys(sellerShippingMethods).length === 0 ? (
+                            {shippingStatus === 'error' ? (
+                              <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+                                <p>{shippingError || 'Delivery methods could not be confirmed.'}</p>
+                                <button
+                                  type="button"
+                                  onClick={() => fetchShippingMethods(cartItems?.cart || [])}
+                                  className="mt-3 rounded-md bg-red-600 px-3 py-2 font-medium text-white disabled:opacity-50"
+                                  disabled={shippingStatus === 'loading'}
+                                >
+                                  Retry delivery options
+                                </button>
+                              </div>
+                            ) : Object.keys(sellerShippingMethods).length === 0 ? (
                               <p className="text-gray-500 text-sm">Loading shipping options...</p>
                             ) : (
                               <>
@@ -1307,7 +1806,6 @@ export default function Checkout() {
                                 {Object.entries(sellerShippingMethods).map(([sellerId, { seller, methods }]) => {
                                   const sellerProducts = cartItemsBySeller[sellerId] || [];
                                   const isExpanded = expandedSellers[sellerId] === true; // Default to collapsed
-                                  const hasMultipleProducts = sellerProducts.length > 1;
 
                                   return (
                                     <div key={sellerId} className="border border-gray-200 rounded-lg p-4 bg-gray-50">
@@ -1344,9 +1842,9 @@ export default function Checkout() {
                                                       </p>
                                                     )}
                                                     <p className="text-xs text-gray-500">
-                                                      Total: {currentMoney(sellerProducts.reduce((sum, item) =>
-                                                        sum + (productPriceInCheckoutCurrency(item.product) * item.qty), 0
-                                                      ))}
+                                                      Total: {checkoutMoney(addCurrencyAmounts(...sellerProducts.map((item) => (
+                                                        getCartLineTotal(item)
+                                                      ))))}
                                                     </p>
                                                   </div>
                                                 </div>
@@ -1377,7 +1875,6 @@ export default function Checkout() {
                                                   className="space-y-2"
                                                 >
                                                   {sellerProducts.map((item) => {
-                                                    const itemPrice = productPriceInCheckoutCurrency(item.product);
                                                     // const hasSpinDiscount = false; // SPIN WHEEL DISABLED
 
                                                     return (
@@ -1395,7 +1892,7 @@ export default function Checkout() {
                                                           <p className="text-xs text-gray-500">Qty: {item.qty}</p>
                                                         </div>
                                                         <div className="text-right">
-                                                          <span className="font-semibold text-sm">{currentMoney(itemPrice * item.qty)}</span>
+                                                          <span className="font-semibold text-sm">{checkoutMoney(getCartLineTotal(item), { sourceCurrency: productCurrency(item.product) })}</span>
                                                           {/* SPIN WHEEL DISABLED - spin discount strikethrough removed */}
                                                           {/* {hasSpinDiscount && (<p className="text-xs text-gray-500 line-through">{formatPrice(originalPrice * item.qty)}</p>)} */}
                                                         </div>
@@ -1489,7 +1986,7 @@ export default function Checkout() {
                                               </div>
                                             </div>
                                             <span className="font-semibold">
-                                              {currentMoney(shippingCostInCheckoutCurrency(method, { seller }))}
+                                              {formatShippingOptionPrice(method, { seller })}
                                             </span>
                                           </div>
                                         </motion.div>
@@ -1552,7 +2049,11 @@ export default function Checkout() {
                       <PaymentOption
                         value="wallet"
                         title="Rozare Wallet"
-                        description={walletLoading ? 'Checking balance...' : `Balance ${currentMoney(walletBalance)}`}
+                        description={walletLoading
+                          ? 'Checking balance...'
+                          : walletBalance === null
+                            ? 'Balance unavailable'
+                            : `Balance ${currentMoney(walletBalance)}`}
                         icon={<WalletCards className="w-6 h-6" />}
                         selected={paymentMethod === "wallet"}
                         disabled={!canPayWithWallet}
@@ -1604,7 +2105,7 @@ export default function Checkout() {
                     {paymentMethod === 'wallet' && (
                       <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} className="glass-inner p-4 rounded-xl mb-6">
                         <p className="text-sm font-semibold" style={{ color: 'hsl(150, 60%, 38%)' }}>Your wallet will be debited immediately after stock is verified.</p>
-                        <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>This order uses {currentMoney(totalAmount)} from your {currency} wallet balance.</p>
+                        <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>This order uses {checkoutMoney(totalAmount)} from your {currency} wallet balance.</p>
                       </motion.div>
                     )}
 
@@ -1748,7 +2249,7 @@ export default function Checkout() {
                   <button
                     type="button"
                     onClick={handleSubmit(onPlaceOrder)}
-                    disabled={isSubmitting || isProcessing || !cartItems?.cart || cartItems.cart.length == 0}
+                    disabled={isSubmitting || isProcessing || checkoutBlocked || !!couponPricing.error || !cartItems?.cart || cartItems.cart.length == 0}
                     className="px-4 sm:px-6 py-2.5 sm:py-3 rounded-xl font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-all hover:-translate-y-0.5 flex items-center gap-2 text-sm sm:text-base glow-soft"
                     style={{ background: 'linear-gradient(135deg, hsl(220, 70%, 55%), hsl(260, 60%, 60%))', color: 'white' }}
                   >
@@ -1783,14 +2284,14 @@ export default function Checkout() {
                   <button
                     type="button"
                     onClick={nextStep}
-                    disabled={!cartItems?.cart || cartItems.cart.length == 0}
-                    className={`px-4 sm:px-6 py-2.5 sm:py-3 rounded-xl font-medium flex items-center gap-2 text-sm sm:text-base transition-all ${!cartItems?.cart || cartItems.cart.length === 0
+                    disabled={checkoutBlocked || !!couponPricing.error || !cartItems?.cart || cartItems.cart.length == 0}
+                    className={`px-4 sm:px-6 py-2.5 sm:py-3 rounded-xl font-medium flex items-center gap-2 text-sm sm:text-base transition-all ${checkoutBlocked || !!couponPricing.error || !cartItems?.cart || cartItems.cart.length === 0
                       ? "opacity-40 cursor-not-allowed"
                       : "hover:-translate-y-0.5 glow-soft"
                       }`}
                     style={{
-                      background: !cartItems?.cart || cartItems.cart.length === 0 ? 'hsl(var(--muted))' : 'linear-gradient(135deg, hsl(220, 70%, 55%), hsl(260, 60%, 60%))',
-                      color: !cartItems?.cart || cartItems.cart.length === 0 ? 'hsl(var(--muted-foreground))' : 'white',
+                      background: checkoutBlocked || !!couponPricing.error || !cartItems?.cart || cartItems.cart.length === 0 ? 'hsl(var(--muted))' : 'linear-gradient(135deg, hsl(220, 70%, 55%), hsl(260, 60%, 60%))',
+                      color: checkoutBlocked || !!couponPricing.error || !cartItems?.cart || cartItems.cart.length === 0 ? 'hsl(var(--muted-foreground))' : 'white',
                     }}
                   >
                     Next
@@ -1808,7 +2309,6 @@ export default function Checkout() {
 
               <div className="max-h-80 overflow-y-auto mb-4">
                 {cartItems.cart.map((item) => {
-                  const itemPrice = productPriceInCheckoutCurrency(item.product);
                   // const hasSpinDiscount = false; // SPIN WHEEL DISABLED
 
                   return (
@@ -1830,7 +2330,7 @@ export default function Checkout() {
                         </div>
                       </div>
                       <div className="text-right">
-                        <span className="font-semibold">{currentMoney(itemPrice * item.qty)}</span>
+                        <span className="font-semibold">{checkoutMoney(getCartLineTotal(item), { sourceCurrency: productCurrency(item.product) })}</span>
                         {/* SPIN WHEEL DISABLED - spin discount strikethrough removed */}
                         {/* {hasSpinDiscount && (<p className="text-xs text-gray-500 line-through">{formatPrice(originalPrice * item.qty)}</p>)} */}
                       </div>
@@ -1842,21 +2342,21 @@ export default function Checkout() {
               <div className="space-y-3 pt-2">
                 <div className="flex justify-between text-sm" style={{ color: 'hsl(var(--muted-foreground))' }}>
                   <span>Subtotal</span>
-                  <span className="font-medium" style={{ color: 'hsl(var(--foreground))' }}>{currentMoney(subtotal)}</span>
+                  <span className="font-medium" style={{ color: 'hsl(var(--foreground))' }}>{checkoutMoney(subtotal)}</span>
                 </div>
 
                 {Object.keys(selectedShippingPerSeller).length > 0 && (
                   <div className="space-y-1">
                     <div className="flex justify-between text-sm font-medium" style={{ color: 'hsl(var(--muted-foreground))' }}>
                       <span>Shipping</span>
-                      <span style={{ color: 'hsl(var(--foreground))' }}>{currentMoney(shippingCost)}</span>
+                      <span style={{ color: 'hsl(var(--foreground))' }}>{checkoutMoney(shippingCost)}</span>
                     </div>
-                    {Object.entries(selectedShippingPerSeller).map(([sellerId, method]) => {
+                    {selectedShippingEntries.map(({ sellerId, method }) => {
                       const sellerInfo = sellerShippingMethods[sellerId];
                       return (
                         <div key={sellerId} className="flex justify-between text-xs pl-4" style={{ color: 'hsl(var(--muted-foreground))' }}>
                           <span>{getShippingMethodTitle(method)}</span>
-                          <span>{currentMoney(shippingCostInCheckoutCurrency(method, sellerInfo))}</span>
+                          <span>{checkoutMoney(shippingAmountBySeller.get(sellerId), { sourceCurrency: shippingMethodCurrency(method, sellerInfo) })}</span>
                         </div>
                       );
                     })}
@@ -1866,20 +2366,20 @@ export default function Checkout() {
                 {tax > 0 && (
                   <div className="flex justify-between text-sm" style={{ color: 'hsl(var(--muted-foreground))' }}>
                     <span>Tax {taxConfig?.type === 'percentage' && `(${taxConfig.value}%)`}</span>
-                    <span className="font-medium" style={{ color: 'hsl(var(--foreground))' }}>{currentMoney(tax)}</span>
+                    <span className="font-medium" style={{ color: 'hsl(var(--foreground))' }}>{checkoutMoney(tax)}</span>
                   </div>
                 )}
 
                 {totalCouponDiscount > 0 && (
                   <div className="flex justify-between text-sm" style={{ color: 'hsl(150, 60%, 45%)' }}>
                     <span className="flex items-center gap-1"><Ticket size={14} /> Coupon Discount</span>
-                    <span className="font-semibold">-{currentMoney(totalCouponDiscount)}</span>
+                    <span className="font-semibold">-{checkoutMoney(totalCouponDiscount)}</span>
                   </div>
                 )}
 
                 <div className="flex justify-between text-base sm:text-lg font-semibold pt-3" style={{ borderTop: '1px solid hsl(var(--border))', color: 'hsl(var(--foreground))' }}>
                   <span>Total</span>
-                  <span style={{ color: 'hsl(220, 70%, 55%)' }}>{currentMoney(totalAmount)}</span>
+                  <span style={{ color: 'hsl(220, 70%, 55%)' }}>{checkoutMoney(totalAmount)}</span>
                 </div>
               </div>
             </div>
@@ -2004,7 +2504,7 @@ function QuantitySelector({ qty, onIncrement, onDecrement }) {
   );
 }
 
-const ShippingOption = React.forwardRef(({ value, title, price, days, selected, formatPrice: formatShippingPrice = (amount) => `$${Number(amount || 0).toFixed(2)}`, ...props }, ref) => (
+const ShippingOption = React.forwardRef(({ value, title, price, days, selected, formatPrice: formatShippingPrice = () => 'Currency unavailable', ...props }, ref) => (
   <label className={`border rounded-lg p-4 cursor-pointer transition-all ${selected ? "border-blue-600 bg-blue-50 ring-2 ring-blue-100" : "border-gray-300 hover:border-gray-400"}`}>
     <input
       type="radio"

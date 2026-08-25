@@ -8,10 +8,10 @@ import {
   StyleSheet, Modal, ActivityIndicator,
 } from 'react-native';
 import { Image } from 'expo-image';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import Feedback from '../utils/feedback';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import * as Crypto from 'expo-crypto';
 import { useStripe } from '@stripe/stripe-react-native';
 import api, { API_ENDPOINTS } from '../config/api';
 import { useAuth } from '../contexts/AuthContext';
@@ -33,11 +33,21 @@ import {
   buildSellerShipping,
   cancelOrderPaymentAttempt,
   calculateCouponPricing,
-  createCheckoutAttemptKey,
+  clearCheckoutAttempt,
+  createCheckoutFingerprint,
   findCouponOverlap,
+  getOrCreateCheckoutAttempt,
   getCartItemQuantity,
   getCartItemSellerId,
   getSellerDisplayName,
+  isCheckoutRepriceRequired,
+  isPositiveSourceAmountRoundedToZero,
+  parseCheckoutCouponAvailabilityResponse,
+  parseCheckoutShippingMethodsResponse,
+  parseCheckoutTaxConfigResponse,
+  parseValidatedCheckoutCouponResponse,
+  prepareStripeAfterOrderResponse,
+  reconcileAppliedCheckoutCoupons,
   runOrderPaymentSheetAttempt,
   selectDefaultShippingMethods,
   verifyOrderPayment,
@@ -47,6 +57,22 @@ import {
   buildPaymentSheetOptions,
   normalizePaymentSheetPayload,
 } from '../utils/stripePaymentSheet';
+import {
+  addCurrencyAmounts,
+  checkoutHasUnsupportedCurrency,
+  checkoutRequiresCurrencyConversion,
+  checkoutRequiresTrustedRates,
+  couponHasCurrencyAmount,
+  getEffectiveProductSourcePrice,
+  hasCurrencyAmount,
+  percentageCurrencyAmount,
+  shouldRetainIdempotencyKey,
+  toCurrencyMinorUnits,
+} from '../utils/currencySafety';
+import { createScopedMutationStorageKey } from '../utils/persistedMutationAttempt';
+import { inspectWalletSummaryPresentation } from '../utils/walletPresentationSafety';
+
+const CHECKOUT_ATTEMPT_STORAGE_KEY = 'rozare_checkout_attempt_v1';
 
 export default function CheckoutScreen({ navigation }) {
   const { palette, isDark } = useTheme();
@@ -55,14 +81,29 @@ export default function CheckoutScreen({ navigation }) {
   const { ensureReady: ensureStripeReady } = useStripeConfig();
 
   const { currentUser } = useAuth();
-  const { cartItems, fetchCart } = useGlobal();
+  const checkoutAttemptStorageKey = createScopedMutationStorageKey(
+    CHECKOUT_ATTEMPT_STORAGE_KEY,
+    currentUser?._id || currentUser?.id || 'guest'
+  );
+  const {
+    cartItems,
+    fetchCart,
+    isCartReady,
+    cartHydrationStatus,
+    cartHydrationError,
+    retryCartHydration,
+  } = useGlobal();
   const {
     currency,
     convertAmount,
+    convertLineAmounts,
+    convertAmountForMoneyAction,
     formatAmount,
-    formatProductPrice,
     getProductCurrency,
-    getProductPriceNumber,
+    exchangeRates,
+    exchangeRatesLoading,
+    exchangeRatesFallback,
+    refreshExchangeRates,
   } = useCurrency();
 
   const [isProcessing, setIsProcessing] = useState(false);
@@ -80,14 +121,20 @@ export default function CheckoutScreen({ navigation }) {
   const [selectedShippingPerSeller, setSelectedShippingPerSeller] = useState({});
   const [shippingError, setShippingError] = useState('');
   const [tax, setTax] = useState(0);
+  const [taxStatus, setTaxStatus] = useState('loading');
+  const [taxError, setTaxError] = useState('');
+  const [taxCurrency, setTaxCurrency] = useState(null);
+  const [taxSourceAmount, setTaxSourceAmount] = useState(0);
   const [taxLabel, setTaxLabel] = useState('Tax');
   const [summaryLoading, setSummaryLoading] = useState(true);
   const [wallet, setWallet] = useState(null);
   const [walletLoading, setWalletLoading] = useState(false);
   const [instructions, setInstructions] = useState('');
   const [paymentNotice, setPaymentNotice] = useState(null);
-  const checkoutAttemptKeyRef = useRef(null);
   const submittingRef = useRef(false);
+  const activeCheckoutAttemptRef = useRef(null);
+  const summaryRequestRef = useRef({ id: 0, controller: null });
+  const walletRequestRef = useRef(0);
 
   // Coupon state
   const [couponCode, setCouponCode] = useState('');
@@ -95,31 +142,26 @@ export default function CheckoutScreen({ navigation }) {
   const [sellerCoupons, setSellerCoupons] = useState({});
   const [couponLoading, setCouponLoading] = useState(false);
 
-  const getEffectivePriceField = (product) => (
-    Number(product?.discountedPrice || 0) > 0 && Number(product?.discountedPrice) < Number(product?.price)
-      ? 'discountedPrice'
-      : 'price'
-  );
-
-  const getSourcePrice = (product) => {
-    const price = Number(product?.price || 0);
-    const discountedPrice = Number(product?.discountedPrice || 0);
-    return discountedPrice > 0 && discountedPrice < price ? discountedPrice : price;
-  };
-
   const productPriceInCheckoutCurrency = (product, amount = undefined) => {
     if (!product) return 0;
-    if (amount !== undefined) return convertAmount(amount, getProductCurrency(product), currency);
-    return getProductPriceNumber(product, getEffectivePriceField(product));
+    return convertAmount(
+      amount === undefined ? getEffectiveProductSourcePrice(product) : amount,
+      getProductCurrency(product),
+      currency
+    );
   };
 
-  const shippingMethodCurrency = (method, sellerInfo = null) => method?.currency || method?.costCurrency || sellerInfo?.seller?.currency || currency;
+  const shippingMethodCurrency = (method, sellerInfo = null) => (
+    method?.currency
+    || sellerInfo?.methods?.find((candidate) => candidate?.type === method?.type)?.currency
+    || ''
+  );
   const shippingCostInCheckoutCurrency = (method, sellerInfo = null) =>
-    convertAmount(method?.cost || 0, shippingMethodCurrency(method, sellerInfo), currency);
+    convertAmount(method?.cost, shippingMethodCurrency(method, sellerInfo), currency);
 
-  const couponCurrency = (coupon) => coupon?.currency || currency;
+  const couponCurrency = (coupon) => coupon?.currency ?? 'USD';
   const couponAmountInCheckoutCurrency = (amount, coupon = null) =>
-    convertAmount(amount || 0, couponCurrency(coupon), currency);
+    convertAmount(amount ?? 0, couponCurrency(coupon), currency);
 
   const getShippingMethodTitle = (method) => ({
     free: 'Free Shipping',
@@ -127,9 +169,12 @@ export default function CheckoutScreen({ navigation }) {
     fast: 'Fast Shipping',
   }[method?.type] || `${method?.type || 'Shipping'} Shipping`);
 
-  const subtotal = cartItems?.cart?.reduce((total, item) => {
-    return total + (productPriceInCheckoutCurrency(item.product) * getCartItemQuantity(item));
-  }, 0) || 0;
+  const checkoutLineTotals = convertLineAmounts((cartItems?.cart || []).map((item) => ({
+    unitAmount: getEffectiveProductSourcePrice(item?.product),
+    quantity: getCartItemQuantity(item),
+    sourceCurrency: getProductCurrency(item?.product),
+  })), currency);
+  const subtotal = addCurrencyAmounts(...checkoutLineTotals);
 
   const cartItemsBySeller = useMemo(() => {
     const grouped = {};
@@ -145,10 +190,24 @@ export default function CheckoutScreen({ navigation }) {
   const shippingPricing = buildSellerShipping({
     sellerMap: sellerShippingMethods,
     selections: selectedShippingPerSeller,
+    sellerIds: Object.keys(cartItemsBySeller),
     convertShippingCost: shippingCostInCheckoutCurrency,
+    convertShippingCosts: (entries) => convertLineAmounts(entries.map(({ method, sellerData }) => ({
+      unitAmount: method?.cost ?? 0,
+      quantity: 1,
+      sourceCurrency: shippingMethodCurrency(method, sellerData),
+    })), currency),
   });
   const shippingCost = shippingPricing.shippingCost;
   const sellerShipping = shippingPricing.sellerShipping;
+  const selectedAuthoritativeShippingMethods = Object.keys(cartItemsBySeller).map((sellerId) => {
+    const selectedType = selectedShippingPerSeller[sellerId]?.type
+      || selectedShippingPerSeller[sellerId]?.name;
+    return sellerShippingMethods[sellerId]?.methods?.find((method) => method.type === selectedType) || null;
+  }).filter(Boolean);
+  const selectedShippingHasPaidSource = selectedAuthoritativeShippingMethods.some((method) => (
+    method.type !== 'free' && method.cost > 0
+  ));
   const shippingLabel = Object.keys(sellerShippingMethods).length > 1
     ? `Shipping (${Object.keys(sellerShippingMethods).length} sellers)`
     : 'Shipping';
@@ -160,13 +219,76 @@ export default function CheckoutScreen({ navigation }) {
   const couponPricing = calculateCouponPricing({
     appliedCoupons,
     cartItems: cartItems?.cart || [],
-    getItemPrice: (item) => productPriceInCheckoutCurrency(item.product),
+    getItemLineTotal: (_item, index) => checkoutLineTotals[index] || 0,
     convertCouponAmount: couponAmountInCheckoutCurrency,
+    getCouponCurrency: couponCurrency,
+    targetCurrency: currency,
+    exchangeRates,
   });
   const couponDiscount = couponPricing.totalDiscount;
-  const totalAmount = subtotal + shippingCost + tax - couponDiscount;
-  const walletBalance = Number(wallet?.balances?.[currency] || 0);
-  const walletAvailable = !!currentUser && wallet?.status === 'active' && walletBalance + 0.001 >= totalAmount;
+  const totalAmount = Math.max(0, addCurrencyAmounts(subtotal, shippingCost, tax, -couponDiscount));
+  const checkoutSourceCurrencies = [
+    ...(cartItems?.cart || []).map((item) => (
+      hasCurrencyAmount(getEffectiveProductSourcePrice(item?.product))
+        ? getProductCurrency(item?.product)
+        : null
+    )),
+    ...selectedAuthoritativeShippingMethods.map((method) => (
+      hasCurrencyAmount(method?.cost)
+        ? shippingMethodCurrency(method)
+        : null
+    )),
+    taxCurrency && hasCurrencyAmount(taxSourceAmount) ? taxCurrency : null,
+    ...appliedCoupons.map((coupon) => (
+      couponHasCurrencyAmount(coupon) ? couponCurrency(coupon) : null
+    )),
+  ];
+  const checkoutHasUnsupportedMoney = checkoutHasUnsupportedCurrency(checkoutSourceCurrencies);
+  const checkoutDisplayNeedsExchangeRates = checkoutRequiresCurrencyConversion(checkoutSourceCurrencies, currency);
+  const checkoutNeedsExchangeRates = checkoutRequiresTrustedRates(checkoutSourceCurrencies, currency);
+  const checkoutRatesUnavailable = checkoutHasUnsupportedMoney
+    || (checkoutNeedsExchangeRates && (exchangeRatesLoading || exchangeRatesFallback));
+  const checkoutDisplayRatesUnavailable = checkoutHasUnsupportedMoney
+    || (checkoutDisplayNeedsExchangeRates && (exchangeRatesLoading || exchangeRatesFallback));
+  const checkoutMoney = (amount, sourceCurrency = null) => {
+    const sourceRatesUnavailable = sourceCurrency
+      ? checkoutHasUnsupportedCurrency([sourceCurrency])
+        || (checkoutRequiresCurrencyConversion([sourceCurrency], currency)
+          && (exchangeRatesLoading || exchangeRatesFallback))
+      : checkoutDisplayRatesUnavailable;
+    return `${sourceRatesUnavailable ? '≈' : ''}${formatAmount(amount)}`;
+  };
+  const taxUnavailable = taxStatus !== 'ready';
+  const checkoutBlocked = !isCartReady || taxUnavailable || checkoutRatesUnavailable;
+  const formatShippingOptionPrice = (method, sellerInfo = null) => {
+    if (method?.type === 'free') return 'Free';
+    const sourceAmount = method?.cost ?? 0;
+    const sourceCurrency = shippingMethodCurrency(method, sellerInfo);
+    const targetAmount = shippingCostInCheckoutCurrency(method, sellerInfo);
+    if (
+      !checkoutHasUnsupportedCurrency([sourceCurrency])
+      && isPositiveSourceAmountRoundedToZero(sourceAmount, targetAmount)
+    ) {
+      const nativeAmount = formatAmount(sourceAmount, {
+        targetCurrency: sourceCurrency,
+        showCode: true,
+      });
+      const targetMinor = formatAmount(0.01, { targetCurrency: currency, showCode: true });
+      return `${nativeAmount} (<${targetMinor})`;
+    }
+    return checkoutMoney(targetAmount, sourceCurrency);
+  };
+  const rawWalletBalance = wallet?.balances?.[currency];
+  const walletBalance = typeof rawWalletBalance === 'number'
+    && Number.isFinite(rawWalletBalance)
+    && rawWalletBalance >= 0
+    && toCurrencyMinorUnits(rawWalletBalance) / 100 === rawWalletBalance
+    ? rawWalletBalance
+    : null;
+  const walletAvailable = !!currentUser
+    && wallet?.status === 'active'
+    && walletBalance !== null
+    && toCurrencyMinorUnits(walletBalance) >= toCurrencyMinorUnits(totalAmount);
 
   // Fetch saved shipping info
   useEffect(() => {
@@ -210,66 +332,91 @@ export default function CheckoutScreen({ navigation }) {
   useEffect(() => {
     if (!cartItems?.cart?.length) return;
     fetchSummary();
-  }, [cartItems?.cart, subtotal, currency]);
+    return () => {
+      summaryRequestRef.current.id += 1;
+      summaryRequestRef.current.controller?.abort();
+    };
+  }, [cartItems?.cart, subtotal, currency, convertAmount]);
 
   useEffect(() => {
     const fetchWallet = async () => {
+      const requestId = walletRequestRef.current + 1;
+      walletRequestRef.current = requestId;
       if (!currentUser) {
         setWallet(null);
+        setWalletLoading(false);
         return;
       }
+      setWallet(null);
       setWalletLoading(true);
       try {
         const response = await api.get('/api/wallet/me?limit=1');
-        setWallet(response.data?.wallet || null);
+        const inspected = inspectWalletSummaryPresentation(response.data);
+        if (!inspected) throw new Error('Wallet data could not be verified.');
+        if (walletRequestRef.current === requestId) setWallet(inspected.wallet);
       } catch {
-        setWallet(null);
+        if (walletRequestRef.current === requestId) setWallet(null);
       } finally {
-        setWalletLoading(false);
+        if (walletRequestRef.current === requestId) setWalletLoading(false);
       }
     };
     fetchWallet();
     const unsubscribe = navigation.addListener('focus', fetchWallet);
-    return unsubscribe;
+    return () => {
+      walletRequestRef.current += 1;
+      unsubscribe();
+    };
   }, [currentUser, currency, navigation]);
 
-  useEffect(() => {
-    const cartProductIds = new Set((cartItems?.cart || []).map((item) => String(item.product?._id || '')));
-    setAppliedCoupons((previous) => previous
-      .map((coupon) => ({
-        ...coupon,
-        applicableProductIds: (coupon.applicableProductIds || []).filter((id) => cartProductIds.has(String(id))),
-      }))
-      .filter((coupon) => coupon.applicableProductIds.length > 0));
-  }, [cartItems?.cart]);
-
   const fetchSummary = async () => {
+    const couponCandidates = appliedCoupons;
+    const requestId = summaryRequestRef.current.id + 1;
+    summaryRequestRef.current.controller?.abort();
+    const controller = new AbortController();
+    summaryRequestRef.current = { id: requestId, controller };
+    const isStale = () => summaryRequestRef.current.id !== requestId || controller.signal.aborted;
     setSummaryLoading(true);
     setShippingError('');
+    setTaxStatus('loading');
+    setTaxError('');
+    setSellerCoupons({});
+    setAppliedCoupons([]);
     try {
-      const taxRes = await api.get('/api/tax/config');
-      const taxConfig = taxRes.data.taxConfig;
-      if (taxConfig && taxConfig.type !== 'none') {
+      const taxRes = await api.get('/api/tax/config', { signal: controller.signal });
+      if (isStale()) return;
+      const taxConfig = parseCheckoutTaxConfigResponse(taxRes.data);
+      if (taxConfig.type !== 'none') {
         const computedTax = taxConfig.type === 'percentage'
-          ? subtotal * (taxConfig.value / 100)
-          : convertAmount(Number(taxConfig.value || 0), taxConfig.currency || 'USD', currency);
+          ? percentageCurrencyAmount(subtotal, taxConfig.value)
+          : convertAmount(taxConfig.value, taxConfig.currency, currency);
         setTax(computedTax);
+        setTaxCurrency(taxConfig.type === 'fixed' ? taxConfig.currency : null);
+        setTaxSourceAmount(taxConfig.type === 'fixed' ? taxConfig.value : 0);
         setTaxLabel(taxConfig.type === 'percentage' ? `Tax (${taxConfig.value}%)` : `Tax (Fixed)`);
-      } else { setTax(0); setTaxLabel('Tax'); }
-    } catch { setTax(0); setTaxLabel('Tax'); }
+      } else { setTax(0); setTaxCurrency(null); setTaxSourceAmount(0); setTaxLabel('Tax'); }
+      setTaxStatus('ready');
+    } catch (error) {
+      if (isStale() || error.code === 'ERR_CANCELED' || error.name === 'CanceledError') return;
+      setTax(0); setTaxCurrency(null); setTaxSourceAmount(0); setTaxLabel('Tax');
+      setTaxStatus('error');
+      setTaxError(error?.response?.data?.msg || error.message || 'Tax could not be confirmed.');
+    }
 
     try {
-      const cartPayload = cartItems.cart.map(item => ({ productId: item.product?._id, qty: item.qty || item.quantity || 1 }));
-      const shipRes = await api.post(API_ENDPOINTS.SHIPPING.CART, { cartItems: cartPayload });
-      const sellerMap = shipRes.data.shippingMethods || {};
-      if (!Object.keys(sellerMap).length) throw new Error('No delivery methods were returned for this cart.');
-      const unavailableSeller = Object.values(sellerMap).find((sellerData) => !(sellerData?.methods || []).some((method) => method?.isActive !== false));
-      if (unavailableSeller) throw new Error(`${getSellerDisplayName(unavailableSeller)} has no delivery method available.`);
+      const cartPayload = cartItems.cart.map(item => ({
+        productId: item.product?._id,
+        qty: getCartItemQuantity(item),
+      }));
+      const shipRes = await api.post(API_ENDPOINTS.SHIPPING.CART, { cartItems: cartPayload }, { signal: controller.signal });
+      if (isStale()) return;
+      const expectedSellerIds = [...new Set(cartItems.cart.map(getCartItemSellerId).filter(Boolean))];
+      const sellerMap = parseCheckoutShippingMethodsResponse(shipRes.data, expectedSellerIds);
       setSellerShippingMethods(sellerMap);
       setSelectedShippingPerSeller((previous) => selectDefaultShippingMethods(sellerMap, previous));
       const restricted = Object.values(sellerMap).some((sellerData) => sellerData?.allowsCashOnDelivery === false);
       if (restricted && paymentMethod === 'cash_on_delivery') setPaymentMethod('card');
     } catch (error) {
+      if (isStale() || error.code === 'ERR_CANCELED' || error.name === 'CanceledError') return;
       setSellerShippingMethods({});
       setSelectedShippingPerSeller({});
       setShippingError(error?.response?.data?.msg || error.message || 'Delivery options could not be loaded.');
@@ -278,13 +425,26 @@ export default function CheckoutScreen({ navigation }) {
     try {
       if (currentUser) {
         const sellerIds = [...new Set((cartItems?.cart || []).map(getCartItemSellerId).filter(Boolean))];
-        const couponResponse = await api.post(API_ENDPOINTS.COUPONS.CHECKOUT, { sellerIds });
-        setSellerCoupons(couponResponse.data?.sellerCoupons || {});
+        const productIds = [...new Set((cartItems?.cart || []).map(item => item.product?._id).filter(Boolean))];
+        const couponResponse = await api.post(API_ENDPOINTS.COUPONS.CHECKOUT, { sellerIds, productIds }, { signal: controller.signal });
+        if (isStale()) return;
+        const availableCoupons = parseCheckoutCouponAvailabilityResponse(couponResponse.data, sellerIds);
+        setSellerCoupons(availableCoupons);
+        setAppliedCoupons(reconcileAppliedCheckoutCoupons(
+          couponCandidates,
+          cartItems?.cart || [],
+          availableCoupons,
+        ));
+      } else {
+        setSellerCoupons({});
+        setAppliedCoupons([]);
       }
-    } catch {
+    } catch (error) {
+      if (isStale() || error.code === 'ERR_CANCELED' || error.name === 'CanceledError') return;
       setSellerCoupons({});
+      setAppliedCoupons([]);
     }
-    setSummaryLoading(false);
+    if (!isStale()) setSummaryLoading(false);
   };
 
   const handleInputChange = (field, value) => {
@@ -333,32 +493,71 @@ export default function CheckoutScreen({ navigation }) {
     return Object.keys(formData).some(key => (formData[key] || '') !== (savedShippingInfo[key] || ''));
   };
 
-  const handleApplyCoupon = async (suggestedCode = '') => {
+  const handleApplyCoupon = async (suggestedCoupon = null) => {
+    if (summaryLoading) {
+      Feedback.show({ type: 'info', text1: 'Confirming coupons', text2: 'Wait for current coupon availability to finish loading.' });
+      return;
+    }
+    if (checkoutDisplayRatesUnavailable) {
+      Feedback.show({
+        type: 'info',
+        text1: checkoutHasUnsupportedMoney ? 'Unsupported currency' : 'Live rates required',
+        text2: checkoutHasUnsupportedMoney
+          ? 'Checkout contains an unsupported currency and cannot apply coupons safely.'
+          : 'Refresh exchange rates before applying a coupon to this cross-currency checkout.',
+      });
+      return;
+    }
+
+    const suggestedCode = typeof suggestedCoupon === 'object' ? suggestedCoupon?.code : suggestedCoupon;
+    const suggestedCouponId = typeof suggestedCoupon === 'object' ? suggestedCoupon?._id : null;
     const requestedCode = String(suggestedCode || couponCode).trim();
     if (!requestedCode) { Feedback.show({ type: 'error', text1: 'Enter a coupon code' }); return; }
-    if (appliedCoupons.some((coupon) => coupon.code === requestedCode.toUpperCase())) {
+    const alreadyApplied = suggestedCouponId
+      ? appliedCoupons.some((coupon) => String(coupon._id) === String(suggestedCouponId))
+      : appliedCoupons.some((coupon) => coupon.code === requestedCode.toUpperCase());
+    if (alreadyApplied) {
       Feedback.show({ type: 'info', text1: 'Coupon already applied' });
       return;
     }
     setCouponLoading(true);
     try {
       const productIds = cartItems.cart.map(item => item.product._id);
-      const res = await api.post(API_ENDPOINTS.COUPONS.VALIDATE, { code: requestedCode, productIds, currency });
+      const res = await api.post(API_ENDPOINTS.COUPONS.VALIDATE, {
+        code: requestedCode,
+        productIds,
+        couponId: suggestedCouponId || undefined,
+        currency,
+      });
+      if (res.data?.valid !== true) throw new Error('Coupon terms could not be confirmed.');
       if (res.data.valid) {
-        const coupon = res.data.coupon;
+        const coupon = parseValidatedCheckoutCouponResponse(res.data, {
+          expectedSellerIds: [...new Set(cartItems.cart.map(getCartItemSellerId).filter(Boolean))],
+          expectedProductIds: [...new Set(productIds.map(String))],
+        });
+        const couponNeedsRates = couponHasCurrencyAmount(coupon)
+          && checkoutRequiresCurrencyConversion([couponCurrency(coupon)], currency);
+        if (couponNeedsRates && (exchangeRatesLoading || exchangeRatesFallback)) {
+          Feedback.show({
+            type: 'info',
+            text1: 'Live rates required',
+            text2: 'This coupon uses another currency. Refresh exchange rates before applying it.',
+          });
+          return;
+        }
         const overlap = findCouponOverlap(coupon, appliedCoupons);
         if (overlap.length) {
           Feedback.show({ type: 'error', text1: 'Coupon overlaps', text2: 'A product can only receive one coupon per order.' });
           return;
         }
         const applicableIds = new Set((coupon.applicableProductIds || []).map(String));
-        const applicableSubtotal = cartItems.cart.reduce((sum, item) => (
+        const applicableSubtotal = addCurrencyAmounts(...cartItems.cart.map((item, index) => (
           applicableIds.has(String(item.product?._id))
-            ? sum + productPriceInCheckoutCurrency(item.product) * getCartItemQuantity(item)
-            : sum
-        ), 0);
-        const minimum = couponAmountInCheckoutCurrency(coupon.minOrderAmount || 0, coupon);
-        if (minimum > 0 && applicableSubtotal + 0.0001 < minimum) {
+            ? (checkoutLineTotals[index] || 0)
+            : 0
+        )));
+        const minimum = couponAmountInCheckoutCurrency(coupon.minOrderAmount ?? 0, coupon);
+        if (minimum > 0 && toCurrencyMinorUnits(applicableSubtotal) < toCurrencyMinorUnits(minimum)) {
           Feedback.show({ type: 'error', text1: 'Minimum not reached', text2: `Spend ${formatAmount(minimum)} on eligible products to use this coupon.` });
           return;
         }
@@ -376,6 +575,30 @@ export default function CheckoutScreen({ navigation }) {
     Feedback.show({ type: 'info', text1: 'Coupon removed' });
   };
 
+  const resetCheckoutAttempt = async (correlation = activeCheckoutAttemptRef.current) => {
+    if (!correlation?.fingerprint || !correlation?.attemptKey || !correlation?.storageKey) {
+      return false;
+    }
+    try {
+      const cleared = await clearCheckoutAttempt(
+        AsyncStorage,
+        correlation.storageKey,
+        correlation.fingerprint,
+        correlation.attemptKey,
+      );
+      if (
+        cleared
+        && activeCheckoutAttemptRef.current?.attemptKey === correlation.attemptKey
+      ) {
+        activeCheckoutAttemptRef.current = null;
+      }
+      return cleared;
+    } catch (error) {
+      trackError('checkout', error, { step: 'clear_idempotency_attempt' });
+      return false;
+    }
+  };
+
   const buildOrder = (idempotencyKey) => {
     const primaryShipping = sellerShipping[0]?.shippingMethod || {
       name: shippingCost === 0 ? 'free' : 'standard',
@@ -385,7 +608,7 @@ export default function CheckoutScreen({ navigation }) {
 
     return {
       orderItems: cartItems.cart.map(item => {
-        const sourcePrice = getSourcePrice(item.product);
+        const sourcePrice = getEffectiveProductSourcePrice(item.product);
         return {
           id: item.product._id,
           name: item.product.name,
@@ -393,7 +616,7 @@ export default function CheckoutScreen({ navigation }) {
           price: productPriceInCheckoutCurrency(item.product, sourcePrice),
           sourcePrice,
           sourceCurrency: getProductCurrency(item.product),
-          quantity: item.qty || item.quantity || 1,
+          quantity: getCartItemQuantity(item),
           selectedColor: item.selectedColor || null,
           selectedOptions: item.selectedOptions || undefined,
         };
@@ -440,20 +663,25 @@ export default function CheckoutScreen({ navigation }) {
     };
   };
 
-  const completeOrder = async (order, shouldSaveInfo) => {
+  const completeOrder = async (order, shouldSaveInfo, resultData = null) => {
     if (shouldSaveInfo) {
       try { await api.patch('/api/user/shipping-info', { shippingInfo: formData }); setSavedShippingInfo(formData); } catch {}
     }
     if (paymentMethod !== 'card') {
+      const noPaymentRequired = resultData?.noPaymentRequired === true;
       Feedback.show({
         type: 'success',
-        text1: paymentMethod === 'wallet' ? 'Payment Successful!' : 'Order Placed!',
-        text2: paymentMethod === 'wallet'
+        text1: noPaymentRequired
+          ? 'Order Confirmed!'
+          : paymentMethod === 'wallet' ? 'Payment Successful!' : 'Order Placed!',
+        text2: noPaymentRequired
+          ? 'The final total was zero, so no Wallet payment was required.'
+          : paymentMethod === 'wallet'
           ? 'Your Rozare Wallet payment is complete.'
           : 'Your order has been placed successfully',
       });
       await fetchCart();
-      checkoutAttemptKeyRef.current = null;
+      await resetCheckoutAttempt();
       setTimeout(() => { navigation.reset({ index: 1, routes: [{ name: 'MainTabs' }, { name: 'Orders' }] }); }, 700);
     }
   };
@@ -462,6 +690,14 @@ export default function CheckoutScreen({ navigation }) {
     if (submittingRef.current || isProcessing) return;
     trackCheckoutStep('place_order_clicked', { paymentMethod, items: cartItems?.cart?.length, total: totalAmount });
     setPaymentNotice(null);
+    if (!isCartReady) {
+      Feedback.show({
+        type: 'info',
+        text1: cartHydrationStatus === 'error' ? 'Cart sync required' : 'Preparing your cart',
+        text2: cartHydrationError || 'Saved guest items must be merged and verified before placing an order.',
+      });
+      return;
+    }
     if (!currentUser) {
       Feedback.show({ type: 'info', text1: 'Sign in to checkout', text2: 'Your cart will be kept while you sign in.' });
       navigation.navigate('Login', { returnTo: 'Cart', intent: 'checkout' });
@@ -469,6 +705,52 @@ export default function CheckoutScreen({ navigation }) {
     }
     if (summaryLoading) {
       Feedback.show({ type: 'info', text1: 'Preparing checkout', text2: 'Please wait while delivery and tax are confirmed.' });
+      return;
+    }
+    if (couponPricing.error) {
+      Feedback.show({
+        type: 'error',
+        text1: 'Coupon needs attention',
+        text2: couponPricing.error,
+      });
+      return;
+    }
+    if (taxUnavailable) {
+      Feedback.show({
+        type: 'error',
+        text1: taxStatus === 'loading' ? 'Confirming tax' : 'Tax unavailable',
+        text2: taxStatus === 'loading'
+          ? 'Wait while the current tax configuration is confirmed.'
+          : 'Retry tax before placing the order.',
+      });
+      return;
+    }
+    if (checkoutRatesUnavailable) {
+      Feedback.show({
+        type: 'error',
+        text1: checkoutHasUnsupportedMoney ? 'Unsupported currency' : 'Live rates required',
+        text2: checkoutHasUnsupportedMoney
+          ? 'Checkout contains an unsupported currency and cannot be priced safely.'
+          : 'Live exchange rates are required to lock the order and its USD settlement snapshot.',
+      });
+      return;
+    }
+
+    // Keep fallback values renderable as clearly marked estimates, but assert
+    // trusted rates again at the order action boundary before building data.
+    try {
+      if (String(currency).toUpperCase() !== 'USD') {
+        convertAmountForMoneyAction(0, currency, 'USD');
+      }
+      checkoutSourceCurrencies
+        .filter(Boolean)
+        .forEach((sourceCurrency) => convertAmountForMoneyAction(0, sourceCurrency, currency));
+    } catch {
+      Feedback.show({
+        type: 'error',
+        text1: 'Rates changed',
+        text2: 'Live exchange rates changed while checkout was open. Refresh rates and try again.',
+      });
       return;
     }
     if (shippingError || !shippingPricing.valid) {
@@ -494,7 +776,9 @@ export default function CheckoutScreen({ navigation }) {
         text1: wallet?.status === 'locked' ? 'Wallet locked' : 'Insufficient wallet balance',
         text2: wallet?.status === 'locked'
           ? (wallet.lockedReason || 'Contact support to unlock your wallet.')
-          : `Available: ${formatAmount(walletBalance)}. Add balance before paying.`,
+          : walletBalance === null
+            ? 'Your wallet balance could not be verified. Refresh it before paying.'
+            : `Available: ${formatAmount(walletBalance)}. Add balance before paying.`,
       });
       return;
     }
@@ -507,13 +791,23 @@ export default function CheckoutScreen({ navigation }) {
     let paymentAttempt = null;
     let paymentCleanupAttempted = false;
     try {
-      if (!checkoutAttemptKeyRef.current) {
-        checkoutAttemptKeyRef.current = createCheckoutAttemptKey(Crypto.randomUUID);
-      }
-      const idempotencyKey = checkoutAttemptKeyRef.current;
-      const order = buildOrder(idempotencyKey);
+      const draftOrder = buildOrder('');
+      const actorId = String(currentUser?._id || currentUser?.id || 'guest');
+      const fingerprint = `${actorId}:${createCheckoutFingerprint(draftOrder)}`;
+      const checkoutAttempt = await getOrCreateCheckoutAttempt({
+        storage: AsyncStorage,
+        storageKey: checkoutAttemptStorageKey,
+        fingerprint,
+      });
+      const idempotencyKey = checkoutAttempt.key;
+      const attemptCorrelation = {
+        storageKey: checkoutAttemptStorageKey,
+        fingerprint,
+        attemptKey: checkoutAttempt.key,
+      };
+      activeCheckoutAttemptRef.current = attemptCorrelation;
+      const order = { ...draftOrder, idempotencyKey };
       trackCheckoutStep('order_built', { itemCount: order.orderItems.length });
-      const stripeConfig = paymentMethod === 'card' ? await ensureStripeReady() : null;
       const res = await api.post('/api/order/place', {
         order,
         ...(paymentMethod === 'card' ? { paymentFlow: 'payment_sheet', clientSurface: 'mobile' } : {}),
@@ -527,11 +821,24 @@ export default function CheckoutScreen({ navigation }) {
         paymentAttempt = {
           orderId,
           paymentIntentId: payment.paymentIntentId,
+          ...attemptCorrelation,
         };
-        if (res.data?.isPaid === true || payment.completed) {
-          navigation.replace('PaymentSuccess', { orderId, payment_intent: payment.paymentIntentId });
+        const stripePreparation = await prepareStripeAfterOrderResponse({
+          response: res,
+          normalizedPayment: payment,
+          ensureStripeReady,
+        });
+        if (!stripePreparation.paymentRequired) {
+          navigation.replace('PaymentSuccess', {
+            orderId,
+            noPaymentRequired: true,
+            checkoutAttemptStorageKey,
+            checkoutAttemptFingerprint: fingerprint,
+            checkoutAttemptKey: checkoutAttempt.key,
+          });
           return;
         }
+        const stripeConfig = stripePreparation.stripeConfig;
         if (!orderId) throw new Error('Secure checkout did not return an order reference.');
         const verifiedPayment = assertPaymentSheetPayload(res, 'payment');
         trackPaymentEvent('payment_sheet_initialized', { orderId });
@@ -575,11 +882,17 @@ export default function CheckoutScreen({ navigation }) {
         if (sheetResult.status === 'cancelled' || sheetResult.status === 'failed') {
           const cancellation = sheetResult.cancellation;
           if (cancellation.status === 'payment_received') {
-            navigation.replace('PaymentSuccess', { orderId, payment_intent: verifiedPayment.paymentIntentId });
+            navigation.replace('PaymentSuccess', {
+              orderId,
+              payment_intent: verifiedPayment.paymentIntentId,
+              checkoutAttemptStorageKey,
+              checkoutAttemptFingerprint: fingerprint,
+              checkoutAttemptKey: checkoutAttempt.key,
+            });
             return;
           }
           if (cancellation.status === 'cancelled') {
-            checkoutAttemptKeyRef.current = null;
+            await resetCheckoutAttempt();
             setPaymentNotice({
               type: sheetResult.status === 'failed' ? 'error' : 'cancelled',
               title: sheetResult.status === 'failed'
@@ -587,6 +900,9 @@ export default function CheckoutScreen({ navigation }) {
                 : 'Payment cancelled safely',
               orderId,
               paymentIntentId: verifiedPayment.paymentIntentId,
+              checkoutAttemptStorageKey,
+              checkoutAttemptFingerprint: fingerprint,
+              checkoutAttemptKey: checkoutAttempt.key,
               text: sheetResult.status === 'failed'
                 ? 'Rozare closed the failed payment immediately and released the reserved stock. Your cart is unchanged.'
                 : 'Rozare confirmed the payment attempt is closed. Your cart is safe, and Retry will start a fresh secure payment.',
@@ -598,6 +914,9 @@ export default function CheckoutScreen({ navigation }) {
             title: 'Checking payment status',
             orderId,
             paymentIntentId: verifiedPayment.paymentIntentId,
+            checkoutAttemptStorageKey,
+            checkoutAttemptFingerprint: fingerprint,
+            checkoutAttemptKey: checkoutAttempt.key,
             text: 'Rozare could not confirm cleanup yet. Use Check before retrying so another payable payment is not created.',
           });
           return;
@@ -611,12 +930,25 @@ export default function CheckoutScreen({ navigation }) {
           delayMs: 650,
         });
         if (verification.status === 'paid') {
-          navigation.replace('PaymentSuccess', { orderId, payment_intent: verifiedPayment.paymentIntentId });
+          await resetCheckoutAttempt();
+          navigation.replace('PaymentSuccess', {
+            orderId,
+            payment_intent: verifiedPayment.paymentIntentId,
+            checkoutAttemptStorageKey,
+            checkoutAttemptFingerprint: fingerprint,
+            checkoutAttemptKey: checkoutAttempt.key,
+          });
           return;
         }
         if (sheetResult.status === 'presented') {
           trackPaymentEvent('payment_sheet_presented', { orderId });
-          navigation.replace('PaymentSuccess', { orderId, payment_intent: verifiedPayment.paymentIntentId });
+          navigation.replace('PaymentSuccess', {
+            orderId,
+            payment_intent: verifiedPayment.paymentIntentId,
+            checkoutAttemptStorageKey,
+            checkoutAttemptFingerprint: fingerprint,
+            checkoutAttemptKey: checkoutAttempt.key,
+          });
           return;
         }
       } else {
@@ -626,11 +958,32 @@ export default function CheckoutScreen({ navigation }) {
           setShowUpdatePrompt(true);
         } else {
           // First time or no change - auto-save
-          await completeOrder(order, !savedShippingInfo?.fullName);
+          await completeOrder(order, !savedShippingInfo?.fullName, res.data);
         }
       }
     } catch (error) {
       trackError('checkout', error, { step: 'place_order', paymentMethod });
+      if (isCheckoutRepriceRequired(error)) {
+        await resetCheckoutAttempt();
+        setPaymentNotice({
+          type: 'error',
+          title: 'Checkout total changed',
+          text: 'Pricing details were refreshed. Review the new total, then press the payment button again to submit a fresh order attempt.',
+        });
+        await Promise.allSettled([
+          Promise.resolve().then(() => fetchCart()),
+          Promise.resolve().then(() => refreshExchangeRates()),
+          Promise.resolve().then(() => fetchSummary()),
+        ]);
+        Feedback.show({
+          type: 'info',
+          text1: 'Checkout total changed',
+          text2: error.response?.data?.msg
+            ? `${error.response.data.msg} Review the refreshed total and submit again.`
+            : 'Review the refreshed total and submit again.',
+        });
+        return;
+      }
       if (paymentMethod === 'card' && paymentAttempt?.orderId && !paymentCleanupAttempted) {
         const cancellation = await cancelOrderPaymentAttempt({
           apiClient: api,
@@ -642,16 +995,22 @@ export default function CheckoutScreen({ navigation }) {
           navigation.replace('PaymentSuccess', {
             orderId: paymentAttempt.orderId,
             payment_intent: paymentAttempt.paymentIntentId,
+            checkoutAttemptStorageKey: paymentAttempt.storageKey,
+            checkoutAttemptFingerprint: paymentAttempt.fingerprint,
+            checkoutAttemptKey: paymentAttempt.attemptKey,
           });
           return;
         }
         if (cancellation.status === 'cancelled') {
-          checkoutAttemptKeyRef.current = null;
+          await resetCheckoutAttempt();
           setPaymentNotice({
             type: 'error',
             title: 'Secure payment could not open',
             orderId: paymentAttempt.orderId,
             paymentIntentId: paymentAttempt.paymentIntentId,
+            checkoutAttemptStorageKey: paymentAttempt.storageKey,
+            checkoutAttemptFingerprint: paymentAttempt.fingerprint,
+            checkoutAttemptKey: paymentAttempt.attemptKey,
             text: 'Rozare closed the failed payment immediately and released the reserved stock. Your cart is unchanged.',
           });
           return;
@@ -661,6 +1020,9 @@ export default function CheckoutScreen({ navigation }) {
           title: 'Closing the failed payment',
           orderId: paymentAttempt.orderId,
           paymentIntentId: paymentAttempt.paymentIntentId,
+          checkoutAttemptStorageKey: paymentAttempt.storageKey,
+          checkoutAttemptFingerprint: paymentAttempt.fingerprint,
+          checkoutAttemptKey: paymentAttempt.attemptKey,
           text: 'Rozare could not confirm cleanup yet. Use Check before retrying so another payable payment is not created.',
         });
         return;
@@ -673,8 +1035,7 @@ export default function CheckoutScreen({ navigation }) {
       if (error.response?.status === 401 || error.response?.status === 403) {
         navigation.navigate('Login', { returnTo: 'Cart', intent: 'checkout' });
       }
-      const isRetryable = !error.response || error.response?.status >= 500 || error.response?.status === 408;
-      if (!isRetryable) checkoutAttemptKeyRef.current = null;
+      if (!shouldRetainIdempotencyKey(error.response?.status)) await resetCheckoutAttempt();
       Feedback.show({ type: 'error', text1: 'Order not completed', text2: error.response?.data?.msg || error.message || 'Please check your connection and try again.' });
     } finally {
       submittingRef.current = false;
@@ -726,7 +1087,7 @@ export default function CheckoutScreen({ navigation }) {
           </TouchableOpacity>
           <View style={{ flex: 1 }}>
             <Text style={styles.headerTitle}>Checkout</Text>
-            <Text style={styles.headerSubtitle}>{cartItems.cart.length} items - {formatAmount(totalAmount)}</Text>
+            <Text style={styles.headerSubtitle}>{cartItems.cart.length} items - {checkoutMoney(totalAmount)}</Text>
           </View>
           <View style={styles.lockIcon}>
             <Ionicons name="lock-closed" size={18} color={palette.colors.primary} />
@@ -734,6 +1095,66 @@ export default function CheckoutScreen({ navigation }) {
         </GlassPanel>
 
         <KeyboardAwareFormScrollView contentContainerStyle={{ paddingHorizontal: spacing.md, paddingBottom: 120, paddingTop: spacing.md }} bottomOffset={32}>
+          {!isCartReady && (
+            <View style={styles.shippingErrorCard} accessibilityRole="alert">
+              <View style={styles.shippingErrorCopy}>
+                <Ionicons name={cartHydrationStatus === 'error' ? 'alert-circle-outline' : 'sync-outline'} size={20} color={palette.colors.warning} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.shippingErrorTitle}>{cartHydrationStatus === 'error' ? 'Cart synchronization required' : 'Preparing your saved cart'}</Text>
+                  <Text style={styles.shippingErrorText}>
+                    {cartHydrationError || 'Rozare is merging saved guest items and fetching the authoritative cart before checkout.'}
+                  </Text>
+                </View>
+              </View>
+              <TouchableOpacity style={styles.retryButton} onPress={retryCartHydration} disabled={cartHydrationStatus === 'hydrating'}>
+                {cartHydrationStatus === 'hydrating'
+                  ? <ActivityIndicator size="small" color="#fff" />
+                  : <><Ionicons name="refresh" size={15} color="#fff" /><Text style={styles.retryButtonText}>Retry cart sync</Text></>}
+              </TouchableOpacity>
+            </View>
+          )}
+          {taxUnavailable && (
+            <View style={styles.shippingErrorCard} accessibilityRole="alert">
+              <View style={styles.shippingErrorCopy}>
+                <Ionicons name={taxStatus === 'loading' ? 'time-outline' : 'alert-circle-outline'} size={20} color={palette.colors.error} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.shippingErrorTitle}>{taxStatus === 'loading' ? 'Confirming tax' : 'Tax unavailable'}</Text>
+                  <Text style={styles.shippingErrorText}>
+                    {taxStatus === 'loading'
+                      ? 'Checkout is paused until the current tax configuration is confirmed.'
+                      : `${taxError || 'Tax could not be confirmed.'} Retry before placing the order.`}
+                  </Text>
+                </View>
+              </View>
+              <TouchableOpacity style={styles.retryButton} onPress={fetchSummary} disabled={summaryLoading || taxStatus === 'loading'}>
+                {taxStatus === 'loading'
+                  ? <ActivityIndicator size="small" color={palette.colors.primary} />
+                  : <><Ionicons name="refresh" size={15} color="#fff" /><Text style={styles.retryButtonText}>Retry tax</Text></>}
+              </TouchableOpacity>
+            </View>
+          )}
+          {checkoutRatesUnavailable && (
+            <View style={styles.shippingErrorCard} accessibilityRole="alert">
+              <View style={styles.shippingErrorCopy}>
+                <Ionicons name="swap-horizontal-outline" size={20} color={palette.colors.warning} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.shippingErrorTitle}>{checkoutHasUnsupportedMoney ? 'Unsupported checkout currency' : 'Live exchange rates required'}</Text>
+                  <Text style={styles.shippingErrorText}>
+                    {checkoutHasUnsupportedMoney
+                      ? 'One or more cart, delivery, tax, or coupon amounts use a currency this checkout does not support.'
+                      : checkoutDisplayRatesUnavailable
+                        ? exchangeRatesLoading
+                          ? 'Refreshing rates. Converted values are estimates and checkout is paused.'
+                          : 'Converted values are estimates because only fallback rates are available. Retry before paying.'
+                        : `Amounts already in ${currency} remain exact. Checkout is paused until a live rate can freeze the USD settlement snapshot.`}
+                  </Text>
+                </View>
+              </View>
+              <TouchableOpacity style={styles.retryButton} onPress={refreshExchangeRates} disabled={exchangeRatesLoading || checkoutHasUnsupportedMoney}>
+                {exchangeRatesLoading ? <ActivityIndicator size="small" color={palette.colors.primary} /> : <Text style={styles.retryButtonText}>Retry rates</Text>}
+              </TouchableOpacity>
+            </View>
+          )}
           {/* Order Items */}
           <GlassPanel variant="card" style={styles.section}>
             <View style={styles.sectionHeader}>
@@ -742,7 +1163,6 @@ export default function CheckoutScreen({ navigation }) {
               <View style={styles.badge}><Text style={styles.badgeText}>{cartItems.cart.length}</Text></View>
             </View>
             {cartItems.cart.map((item, index) => {
-              const priceField = getEffectivePriceField(item.product);
               const selectedOptions = item.selectedOptions && typeof item.selectedOptions === 'object'
                 ? Object.entries(item.selectedOptions).filter(([, value]) => value)
                 : [];
@@ -763,9 +1183,12 @@ export default function CheckoutScreen({ navigation }) {
                         <Text style={{ fontSize: 11, color: palette.colors.primary }}>{name}: {value}</Text>
                       </View>
                     ))}
-                    <Text style={styles.cartItemQty}>Qty: {item.qty || item.quantity || 1}</Text>
+                    <Text style={styles.cartItemQty}>Qty: {getCartItemQuantity(item)}</Text>
                   </View>
-                  <Text style={styles.cartItemPrice}>{formatProductPrice(item.product, { field: priceField })}</Text>
+                  <View style={{ alignItems: 'flex-end' }}>
+                    <Text style={styles.cartItemPrice}>{checkoutMoney(checkoutLineTotals[index] || 0, getProductCurrency(item.product))}</Text>
+                    <Text style={styles.cartItemQty}>Line total</Text>
+                  </View>
                 </View>
               );
             })}
@@ -918,7 +1341,6 @@ export default function CheckoutScreen({ navigation }) {
                   </View>
                   {(sellerData.methods || []).filter((method) => method?.isActive !== false).map((method) => {
                     const selected = selectedShippingPerSeller[sellerId]?.type === method.type;
-                    const methodCost = shippingCostInCheckoutCurrency(method, sellerData);
                     return (
                       <TouchableOpacity
                         key={method.type}
@@ -935,9 +1357,9 @@ export default function CheckoutScreen({ navigation }) {
                             <Text style={styles.shippingOptionTitle}>{getShippingMethodTitle(method)}</Text>
                             {method.type === 'free' && <Text style={styles.recommendedBadge}>Recommended</Text>}
                           </View>
-                          <Text style={styles.shippingOptionSub}>Estimated {Math.max(1, Number(method.deliveryDays) || 5)} {Number(method.deliveryDays) === 1 ? 'day' : 'days'}</Text>
+                          <Text style={styles.shippingOptionSub}>Estimated {method.deliveryDays} {method.deliveryDays === 1 ? 'day' : 'days'}</Text>
                         </View>
-                        <Text style={[styles.shippingOptionPrice, methodCost === 0 && { color: palette.colors.success }]}>{methodCost === 0 ? 'Free' : formatAmount(methodCost)}</Text>
+                        <Text style={[styles.shippingOptionPrice, method.type === 'free' && { color: palette.colors.success }]}>{formatShippingOptionPrice(method, sellerData)}</Text>
                       </TouchableOpacity>
                     );
                   })}
@@ -974,12 +1396,23 @@ export default function CheckoutScreen({ navigation }) {
                   <Ionicons name="checkmark-circle" size={20} color={palette.colors.success} />
                   <View style={{ flex: 1 }}>
                     <Text style={styles.appliedCouponCode}>{coupon.code}</Text>
-                    <Text style={styles.appliedCouponText}>Saving {formatAmount(pricing?.discount || 0)} on eligible items</Text>
+                    <Text style={styles.appliedCouponText}>Saving {checkoutMoney(pricing?.discount || 0)} on eligible items</Text>
                   </View>
                   <TouchableOpacity onPress={() => handleRemoveCoupon(coupon._id)} hitSlop={8}><Ionicons name="close-circle" size={22} color={palette.colors.error} /></TouchableOpacity>
                 </View>
               );
             })}
+            {!!couponPricing.error && (
+              <View style={styles.shippingErrorCard}>
+                <View style={styles.shippingErrorCopy}>
+                  <Ionicons name="alert-circle-outline" size={20} color={palette.colors.error} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.shippingErrorTitle}>Coupon needs attention</Text>
+                    <Text style={styles.shippingErrorText}>{couponPricing.error} Remove or replace the coupon to continue.</Text>
+                  </View>
+                </View>
+              </View>
+            )}
             <View style={styles.couponInputRow}>
               <View style={[styles.inputContainer, { flex: 1 }]}>
                 <Ionicons name="pricetag-outline" size={16} color={palette.colors.textSecondary} style={styles.inputIcon} />
@@ -994,7 +1427,7 @@ export default function CheckoutScreen({ navigation }) {
                 <Text style={styles.availableCouponsLabel}>Available for this cart</Text>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.availableCouponRow}>
                   {Object.values(sellerCoupons).flat().map((coupon) => (
-                    <TouchableOpacity key={String(coupon._id)} style={styles.availableCouponChip} onPress={() => handleApplyCoupon(coupon.code)} disabled={couponLoading}>
+                    <TouchableOpacity key={String(coupon._id)} style={styles.availableCouponChip} onPress={() => handleApplyCoupon(coupon)} disabled={couponLoading}>
                       <Ionicons name="ticket-outline" size={14} color={palette.colors.primary} />
                       <Text style={styles.availableCouponCode}>{coupon.code}</Text>
                     </TouchableOpacity>
@@ -1017,15 +1450,20 @@ export default function CheckoutScreen({ navigation }) {
                   <Text style={styles.paymentNoticeTitle}>{paymentNotice.title || 'Payment status needs confirmation'}</Text>
                   <Text style={styles.paymentNoticeText}>{paymentNotice.text}</Text>
                 </View>
-                <TouchableOpacity
-                  style={styles.verifyPaymentButton}
-                  onPress={() => navigation.navigate('PaymentSuccess', {
-                    orderId: paymentNotice.orderId,
-                    payment_intent: paymentNotice.paymentIntentId,
-                  })}
-                >
-                  <Text style={styles.verifyPaymentButtonText}>Check</Text>
-                </TouchableOpacity>
+                {!!paymentNotice.orderId && (
+                  <TouchableOpacity
+                    style={styles.verifyPaymentButton}
+                    onPress={() => navigation.navigate('PaymentSuccess', {
+                      orderId: paymentNotice.orderId,
+                      payment_intent: paymentNotice.paymentIntentId,
+                      checkoutAttemptStorageKey: paymentNotice.checkoutAttemptStorageKey,
+                      checkoutAttemptFingerprint: paymentNotice.checkoutAttemptFingerprint,
+                      checkoutAttemptKey: paymentNotice.checkoutAttemptKey,
+                    })}
+                  >
+                    <Text style={styles.verifyPaymentButtonText}>Check</Text>
+                  </TouchableOpacity>
+                )}
               </View>
             )}
             {codRestrictedSellers.length > 0 && (
@@ -1097,7 +1535,11 @@ export default function CheckoutScreen({ navigation }) {
               <View style={{ flex: 1 }}>
                 <Text style={styles.paymentTitle}>Rozare Wallet</Text>
                 <Text style={styles.paymentSub}>
-                  {walletLoading ? 'Checking balance...' : `Available: ${formatAmount(walletBalance)}`}
+                  {walletLoading
+                    ? 'Checking balance...'
+                    : walletBalance === null
+                      ? 'Balance unavailable'
+                      : `Available: ${formatAmount(walletBalance)}`}
                 </Text>
               </View>
               {walletLoading ? (
@@ -1119,12 +1561,12 @@ export default function CheckoutScreen({ navigation }) {
               <Text style={styles.sectionTitle}>Order Summary</Text>
               {summaryLoading && <Loader size="small" />}
             </View>
-            <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Subtotal</Text><Text style={styles.summaryValue}>{formatAmount(subtotal)}</Text></View>
-            <View style={styles.summaryRow}><Text style={styles.summaryLabel}>{shippingLabel}</Text><Text style={[styles.summaryValue, shippingCost === 0 && { color: palette.colors.success }]}>{shippingCost === 0 ? 'Free' : formatAmount(shippingCost)}</Text></View>
-            {tax > 0 && <View style={styles.summaryRow}><Text style={styles.summaryLabel}>{taxLabel}</Text><Text style={styles.summaryValue}>{formatAmount(tax)}</Text></View>}
-            {couponDiscount > 0 && <View style={styles.summaryRow}><Text style={[styles.summaryLabel, { color: palette.colors.success }]}>Coupon Discount</Text><Text style={[styles.summaryValue, { color: palette.colors.success }]}>-{formatAmount(couponDiscount)}</Text></View>}
+            <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Subtotal</Text><Text style={styles.summaryValue}>{checkoutMoney(subtotal)}</Text></View>
+            <View style={styles.summaryRow}><Text style={styles.summaryLabel}>{shippingLabel}</Text><Text style={[styles.summaryValue, shippingCost === 0 && !selectedShippingHasPaidSource && { color: palette.colors.success }]}>{shippingCost === 0 && !selectedShippingHasPaidSource ? 'Free' : checkoutMoney(shippingCost)}</Text></View>
+            {tax > 0 && <View style={styles.summaryRow}><Text style={styles.summaryLabel}>{taxLabel}</Text><Text style={styles.summaryValue}>{checkoutMoney(tax)}</Text></View>}
+            {couponDiscount > 0 && <View style={styles.summaryRow}><Text style={[styles.summaryLabel, { color: palette.colors.success }]}>Coupon Discount</Text><Text style={[styles.summaryValue, { color: palette.colors.success }]}>-{checkoutMoney(couponDiscount)}</Text></View>}
             <View style={styles.divider} />
-            <View style={styles.summaryRow}><Text style={styles.totalLabel}>Total</Text><Text style={styles.totalValue}>{formatAmount(totalAmount)}</Text></View>
+            <View style={styles.summaryRow}><Text style={styles.totalLabel}>Total</Text><Text style={styles.totalValue}>{checkoutMoney(totalAmount)}</Text></View>
           </GlassPanel>
         </KeyboardAwareFormScrollView>
 
@@ -1132,12 +1574,12 @@ export default function CheckoutScreen({ navigation }) {
         <GlassPanel variant="floating" style={styles.footer}>
           <View style={{ flex: 1 }}>
             <Text style={styles.footerLabel}>Total</Text>
-            <Text style={styles.footerValue}>{formatAmount(totalAmount)}</Text>
+            <Text style={styles.footerValue}>{checkoutMoney(totalAmount)}</Text>
           </View>
           <TouchableOpacity
-            style={[styles.placeOrderBtn, (isProcessing || summaryLoading || !!shippingError || !shippingPricing.valid) && { opacity: 0.55 }]}
+            style={[styles.placeOrderBtn, (isProcessing || summaryLoading || !!shippingError || !shippingPricing.valid || checkoutBlocked || !!couponPricing.error) && { opacity: 0.55 }]}
             onPress={handlePlaceOrder}
-            disabled={isProcessing || summaryLoading || !!shippingError || !shippingPricing.valid}
+            disabled={isProcessing || summaryLoading || !!shippingError || !shippingPricing.valid || checkoutBlocked || !!couponPricing.error}
           >
             <LinearGradient colors={['#14B8A6', '#0EA5E9', '#6366F1']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
             {isProcessing ? <InlineLoader size="small" color="#fff" /> : (
@@ -1157,7 +1599,7 @@ export default function CheckoutScreen({ navigation }) {
         animationType="fade"
         onRequestClose={async () => {
           setShowUpdatePrompt(false);
-          await completeOrder(pendingOrderData?.order, false);
+          await completeOrder(pendingOrderData?.order, false, pendingOrderData?.data);
         }}
       >
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: spacing.lg }}>
@@ -1171,11 +1613,11 @@ export default function CheckoutScreen({ navigation }) {
             </View>
             <View style={{ flexDirection: 'row', gap: spacing.md }}>
               <TouchableOpacity style={{ flex: 1, paddingVertical: 12, borderRadius: 14, backgroundColor: palette.glass.bgSubtle, alignItems: 'center', borderWidth: 1, borderColor: palette.glass.borderSubtle }}
-                onPress={async () => { setShowUpdatePrompt(false); await completeOrder(pendingOrderData?.order, false); }}>
+                onPress={async () => { setShowUpdatePrompt(false); await completeOrder(pendingOrderData?.order, false, pendingOrderData?.data); }}>
                 <Text style={{ fontSize: fontSize.sm, fontWeight: fontWeight.semibold, color: palette.colors.text }}>No, Keep</Text>
               </TouchableOpacity>
               <TouchableOpacity style={{ flex: 1, paddingVertical: 12, borderRadius: 14, backgroundColor: palette.colors.primary, alignItems: 'center' }}
-                onPress={async () => { setShowUpdatePrompt(false); await completeOrder(pendingOrderData?.order, true); }}>
+                onPress={async () => { setShowUpdatePrompt(false); await completeOrder(pendingOrderData?.order, true, pendingOrderData?.data); }}>
                 <Text style={{ fontSize: fontSize.sm, fontWeight: fontWeight.bold, color: '#fff' }}>Yes, Update</Text>
               </TouchableOpacity>
             </View>

@@ -22,6 +22,10 @@ describe('notification account and role isolation', () => {
     [{ data: { type: 'low_stock' } }, buyer],
     [{ data: { type: 'return_requested' } }, buyer],
     [{ data: { type: 'order_cancelled_by_buyer' } }, buyer],
+    [{ data: { type: 'paid_order_received' } }, buyer],
+    [{ data: { type: 'cod_order_received' } }, buyer],
+    [{ data: { type: 'withdrawal_status_changed' } }, buyer],
+    [{ data: { type: 'subscription_payment_received' } }, buyer],
     [{ category: 'seller' }, buyer],
     [{ data: { linkTo: '/seller-dashboard/orders' } }, buyer],
     [{ data: { linkTo: '/seller/orders/abc' } }, buyer],
@@ -34,6 +38,20 @@ describe('notification account and role isolation', () => {
     expect(isNotificationAllowedForRole({ data: { type: 'order_shipped' } }, seller)).toBe(true);
     expect(isNotificationAllowedForRole({ data: { type: 'price_drop' } }, seller)).toBe(true);
     expect(isNotificationAllowedForRole({ data: { type: 'new_order_received' } }, seller)).toBe(true);
+    expect(isNotificationAllowedForRole({ data: { type: 'wallet_transaction_completed' } }, seller)).toBe(true);
+    expect(isNotificationAllowedForRole({ data: { type: 'withdrawal_status_changed' } }, seller)).toBe(true);
+  });
+
+  it('keeps the shared return event and ambiguous withdrawal event scoped by server metadata', () => {
+    const buyerReturn = { data: { type: 'return_settled', targetRole: 'user' } };
+    const sellerReturn = { data: { type: 'return_settled', targetRole: 'seller' } };
+    const adminWithdrawal = { data: { type: 'withdrawal_requested', targetRole: 'admin', category: 'payment' } };
+    expect(isNotificationAllowedForRole(buyerReturn, buyer)).toBe(true);
+    expect(isNotificationAllowedForRole(buyerReturn, seller)).toBe(false);
+    expect(isNotificationAllowedForRole(sellerReturn, buyer)).toBe(false);
+    expect(isNotificationAllowedForRole(sellerReturn, seller)).toBe(true);
+    expect(isNotificationAllowedForRole(adminWithdrawal, admin)).toBe(true);
+    expect(isNotificationAllowedForRole(adminWithdrawal, seller)).toBe(false);
   });
 
   it('treats server role metadata as authoritative over misleading legacy categories and types', () => {
@@ -52,6 +70,20 @@ describe('notification account and role isolation', () => {
     expect(isNotificationAllowedForRole(buyerSnapshotWithSellerType, buyer)).toBe(true);
     expect(isNotificationAllowedForRole(buyerSnapshotWithSellerType, seller)).toBe(false);
     expect(displayNotificationCategory(buyerSnapshotWithSellerType, buyer)).toBe('system');
+
+    const outboxSellerAudience = {
+      category: 'system',
+      data: { type: 'seller_account_created', audienceRole: 'seller' },
+    };
+    expect(isNotificationAllowedForRole(outboxSellerAudience, buyer)).toBe(false);
+    expect(isNotificationAllowedForRole(outboxSellerAudience, seller)).toBe(true);
+
+    const outboxBuyerAudience = {
+      category: 'order',
+      data: { type: 'order_delivered', audienceRole: 'buyer' },
+    };
+    expect(isNotificationAllowedForRole(outboxBuyerAudience, buyer)).toBe(true);
+    expect(isNotificationAllowedForRole(outboxBuyerAudience, seller)).toBe(true);
   });
 
   it('supports explicit both-role shopping intent and role-scoped broadcast audiences', () => {
@@ -98,8 +130,9 @@ describe('notification account and role isolation', () => {
     const sellerKeys = getNotificationCategoriesForRole(seller).map(({ key }) => key);
     const adminKeys = getNotificationCategoriesForRole(admin).map(({ key }) => key);
     expect(buyerKeys).not.toContain('seller');
-    expect(sellerKeys).toEqual(expect.arrayContaining(['order', 'delivery', 'promo', 'seller', 'system']));
-    expect(adminKeys).toEqual(['all', 'system']);
+    expect(buyerKeys).toContain('payment');
+    expect(sellerKeys).toEqual(expect.arrayContaining(['order', 'delivery', 'promo', 'payment', 'seller', 'system']));
+    expect(adminKeys).toEqual(['all', 'payment', 'system']);
   });
 
   it('filters a mixed inbox and preserves the correct visible categories', () => {

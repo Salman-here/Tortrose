@@ -7,11 +7,18 @@
  */
 
 require('dotenv').config();
+const {
+  readPayoutEncryptionConfiguration,
+} = require('./services/payoutEncryptionConfig');
+const {
+  resolveWhatsAppWebhookSecrets,
+} = require('./services/whatsapp/webhookSecurity');
 
 const requiredVars = [
   'NODE_ENV',
   'MONGO_URI',
   'JWT_SECRET',
+  'PAYOUT_ACCOUNT_ENCRYPTION_KEY',
   'FRONTEND_URL',
   'CLOUDINARY_CLOUD_NAME',
   'CLOUDINARY_API_KEY',
@@ -58,7 +65,9 @@ const optionalVars = [
   'META_CAPI_LEAD_EVENT_SOURCE',
   'META_CAPI_SELLER_LEAD_EVENT_NAME',
   'META_CAPI_STORE_VERIFICATION_EVENT_NAME',
-  'META_CAPI_TEST_EVENT_CODE'
+  'META_CAPI_TEST_EVENT_CODE',
+  'PAYOUT_ACCOUNT_ENCRYPTION_KEY_ID',
+  'PAYOUT_ACCOUNT_ENCRYPTION_PREVIOUS_KEYS_JSON'
 ];
 
 console.log('🔍 Verifying Environment Variables...\n');
@@ -129,6 +138,21 @@ if (
   && !/^[A-Z]{2}$/.test(process.env.STRIPE_MERCHANT_COUNTRY_CODE.trim().toUpperCase())
 ) {
   invalidConfiguration.push('STRIPE_MERCHANT_COUNTRY_CODE must be a two-letter ISO country code');
+}
+
+invalidConfiguration.push(...readPayoutEncryptionConfiguration().errors);
+
+const whatsappWebhookSecrets = resolveWhatsAppWebhookSecrets();
+if (!whatsappWebhookSecrets.configured) {
+  invalidConfiguration.push(
+    'WHATSAPP_WEBHOOK_SECRET is required (EVOLUTION_WEBHOOK_SECRET is accepted only as a temporary migration fallback)'
+  );
+} else if (whatsappWebhookSecrets.usingLegacyFallback) {
+  console.log('⚠️  WhatsApp webhook auth: legacy EVOLUTION_WEBHOOK_SECRET fallback is active; migrate to WHATSAPP_WEBHOOK_SECRET');
+} else if (whatsappWebhookSecrets.rotatingFromLegacy) {
+  console.log('⚠️  WhatsApp webhook auth: canonical and legacy secrets are both accepted during migration');
+} else {
+  console.log('✅ WhatsApp webhook auth: canonical secret configured');
 }
 
 console.log('\n--- Optional Variables ---\n');

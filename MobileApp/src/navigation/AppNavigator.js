@@ -584,7 +584,14 @@ export default function AppNavigator() {
       <Stack.Screen
         name="ProductDetail"
         component={ProductDetailScreen}
-        options={{ headerShown: false }}
+        options={{
+          headerShown: false,
+          // The product gallery owns horizontal swipes. Disabling the stack's
+          // back-swipe here prevents it from stealing a gallery drag that
+          // begins near the screen edge. The visible back button and Android
+          // system back action remain available.
+          gestureEnabled: false,
+        }}
       />
       <Stack.Screen
         name="Store"

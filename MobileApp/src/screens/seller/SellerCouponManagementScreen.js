@@ -18,7 +18,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import Feedback from '../../utils/feedback';
-import api from '../../config/api';
+import api, { API_ENDPOINTS } from '../../config/api';
 import { fetchCompleteSellerCatalog } from '../../utils/sellerCatalog';
 import { useCurrency } from '../../contexts/CurrencyContext';
 import { useTheme } from '../../contexts/ThemeContext';
@@ -34,8 +34,24 @@ import {
   SellerSectionHeader,
 } from '../../components/seller/SellerUI';
 import { borderRadius, fontSize, fontWeight, shadows, spacing, typography } from '../../styles/theme';
+import {
+  couponAnalyticsResponseIsValid,
+  canonicalCouponObjectId,
+  fetchCompleteSellerCoupons,
+  inspectCouponPresentation,
+  inspectCouponProductCurrencyState,
+  isExactCouponMoneyInput,
+  isExactCouponPercentageInput,
+  isPositiveCouponCountInput,
+} from '../../utils/couponSafety';
 
 const FILTERS = ['all', 'active', 'scheduled', 'paused', 'expired'];
+const SUPPORTED_STORE_CURRENCIES = new Set(['USD', 'PKR', 'EUR', 'GBP']);
+
+export const normalizeCouponCurrency = (value) => {
+  const normalized = String(value || '').trim().toUpperCase();
+  return SUPPORTED_STORE_CURRENCIES.has(normalized) ? normalized : null;
+};
 
 const toDateInput = (value = new Date()) => {
   const date = value instanceof Date ? value : new Date(value);
@@ -50,11 +66,19 @@ const parseDateInput = (value) => {
 
 export const normalizeCouponProductIds = (values) => (
   Array.isArray(values)
-    ? [...new Set(values.map((value) => String(value?._id || value || '').trim()).filter(Boolean))]
+    ? [...new Set(values
+      .map(value => (typeof value === 'string' ? value : value?._id))
+      .filter(canonicalCouponObjectId))]
     : []
 );
 
-export const createCouponForm = (currency = 'USD') => ({
+const rawCouponProductIds = values => (
+  Array.isArray(values)
+    ? values.map(value => (typeof value === 'string' ? value : value?._id))
+    : []
+);
+
+export const createCouponForm = (currency = null) => ({
   code: '',
   discountType: 'percentage',
   discountValue: '',
@@ -70,30 +94,52 @@ export const createCouponForm = (currency = 'USD') => ({
   description: '',
 });
 
-export const validateCouponForm = (form, now = new Date()) => {
+export const validateCouponForm = (form, now = new Date(), { availableProductIds = null } = {}) => {
   const errors = {};
-  const normalizedCode = String(form.code || '').trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '');
-  const discount = Number(form.discountValue);
-  const maxUses = form.maxUses === '' ? null : Number(form.maxUses);
-  const perUser = Number(form.maxUsesPerUser);
-  const minimum = form.minOrderAmount === '' ? 0 : Number(form.minOrderAmount);
-  const maximumDiscount = form.maxDiscountAmount === '' ? null : Number(form.maxDiscountAmount);
+  const rawCode = String(form.code || '').trim().toUpperCase();
+  const normalizedCode = rawCode.replace(/[^A-Z0-9_-]/g, '');
   const startsAt = parseDateInput(form.startDate);
   const expiresAt = parseDateInput(form.expiryDate);
+  const formCurrency = normalizeCouponCurrency(form.currency);
 
-  if (normalizedCode.length < 3 || normalizedCode.length > 32) errors.code = 'Use 3-32 letters or numbers.';
-  if (!Number.isFinite(discount) || discount <= 0) errors.discountValue = 'Enter a discount greater than zero.';
-  if (form.discountType === 'percentage' && discount > 100) errors.discountValue = 'Percentage discounts cannot exceed 100%.';
-  if (maxUses !== null && (!Number.isInteger(maxUses) || maxUses <= 0)) errors.maxUses = 'Use a whole number greater than zero.';
-  if (!Number.isInteger(perUser) || perUser <= 0) errors.maxUsesPerUser = 'Use a whole number greater than zero.';
-  if (!Number.isFinite(minimum) || minimum < 0) errors.minOrderAmount = 'Minimum order cannot be negative.';
-  if (maximumDiscount !== null && (!Number.isFinite(maximumDiscount) || maximumDiscount <= 0)) errors.maxDiscountAmount = 'Enter an amount greater than zero.';
+  if (
+    normalizedCode.length < 3
+    || normalizedCode.length > 32
+    || normalizedCode !== rawCode
+  ) errors.code = 'Use 3-32 letters or numbers.';
+  if (!formCurrency || form.currency !== formCurrency) errors.currency = 'Coupon currency is unavailable.';
+  if (!['percentage', 'fixed'].includes(form.discountType)) {
+    errors.discountType = 'Choose a percentage or fixed discount.';
+  } else if (form.discountType === 'percentage') {
+    if (!isExactCouponPercentageInput(form.discountValue)) {
+      errors.discountValue = 'Percentage discounts must be at least 0.01%, at most 100%, and use no more than 6 decimal places.';
+    }
+  } else if (!isExactCouponMoneyInput(form.discountValue)) {
+    errors.discountValue = 'Use an amount of at least 0.01 with at most 2 decimal places.';
+  }
+  if (!isPositiveCouponCountInput(form.maxUses, { allowEmpty: true })) errors.maxUses = 'Use a whole number greater than zero.';
+  if (!isPositiveCouponCountInput(form.maxUsesPerUser)) errors.maxUsesPerUser = 'Use a whole number greater than zero.';
+  if (!isExactCouponMoneyInput(form.minOrderAmount, { allowZero: true, allowEmpty: true })) {
+    errors.minOrderAmount = 'Use zero or a positive amount with at most 2 decimal places.';
+  }
+  if (!isExactCouponMoneyInput(form.maxDiscountAmount, { allowEmpty: true })) {
+    errors.maxDiscountAmount = 'Use an amount of at least 0.01 with at most 2 decimal places.';
+  }
   if (!startsAt) errors.startDate = 'Use YYYY-MM-DD.';
   if (!expiresAt) errors.expiryDate = 'Use YYYY-MM-DD.';
   if (expiresAt && expiresAt.getTime() <= now.getTime()) errors.expiryDate = 'Expiry must be in the future.';
   if (startsAt && expiresAt && startsAt.getTime() >= expiresAt.getTime()) errors.expiryDate = 'Expiry must be after the start date.';
-  if (form.applicableTo === 'selected' && normalizeCouponProductIds(form.applicableProducts).length === 0) {
-    errors.applicableProducts = 'Choose at least one product.';
+  if (!['all', 'selected'].includes(form.applicableTo)) {
+    errors.applicableTo = 'Choose all products or selected products.';
+  } else if (form.applicableTo === 'selected') {
+    const rawProductIds = rawCouponProductIds(form.applicableProducts);
+    const productIds = normalizeCouponProductIds(form.applicableProducts);
+    const available = availableProductIds === null ? null : new Set(availableProductIds);
+    if (
+      productIds.length === 0
+      || rawProductIds.length !== productIds.length
+      || (available && productIds.some(id => !available.has(id)))
+    ) errors.applicableProducts = 'Choose only verified products from your complete catalog.';
   }
   return errors;
 };
@@ -117,9 +163,36 @@ export const buildCouponPayload = (form) => ({
 });
 
 export const getCouponStatus = (coupon, now = new Date()) => {
-  if (coupon?.expiryDate && now > new Date(coupon.expiryDate)) return 'expired';
-  if (coupon?.startDate && now < new Date(coupon.startDate)) return 'scheduled';
-  return coupon?.isActive ? 'active' : 'paused';
+  const startDate = new Date(coupon?.startDate);
+  const expiryDate = new Date(coupon?.expiryDate);
+  if (
+    typeof coupon?.isActive !== 'boolean'
+    || typeof coupon?.startDate !== 'string'
+    || typeof coupon?.expiryDate !== 'string'
+    || !(now instanceof Date)
+    || !Number.isFinite(now.getTime())
+    || !Number.isFinite(startDate.getTime())
+    || !Number.isFinite(expiryDate.getTime())
+    || expiryDate <= startDate
+  ) return null;
+  if (now > expiryDate) return 'expired';
+  if (now < startDate) return 'scheduled';
+  return coupon.isActive ? 'active' : 'paused';
+};
+
+export const loadVerifiedCouponProductState = async (apiClient = api) => {
+  const [products, response] = await Promise.all([
+    fetchCompleteSellerCatalog(apiClient),
+    apiClient.get(API_ENDPOINTS.STORES.PRODUCT_CURRENCY),
+  ]);
+  const inspected = inspectCouponProductCurrencyState(response?.data?.productCurrency, products);
+  if (!inspected.valid) {
+    const pending = response?.data?.productCurrency?.status === 'pending_conversion';
+    throw new Error(pending
+      ? 'Finish or cancel the pending product currency change before managing coupons.'
+      : 'Your store product currency and complete product catalog could not be verified.');
+  }
+  return inspected;
 };
 
 const statusPresentation = (status, palette) => ({
@@ -134,6 +207,7 @@ export default function SellerCouponManagementScreen({ navigation }) {
   const styles = buildStyles(palette);
   const { currency, formatPrice } = useCurrency();
   const hasLoaded = useRef(false);
+  const fetchRequestRef = useRef(0);
 
   const [coupons, setCoupons] = useState([]);
   const [products, setProducts] = useState([]);
@@ -143,6 +217,9 @@ export default function SellerCouponManagementScreen({ navigation }) {
   const [loadError, setLoadError] = useState('');
   const [accessRestricted, setAccessRestricted] = useState(false);
   const [productError, setProductError] = useState('');
+  const [storeCurrency, setStoreCurrency] = useState(null);
+  const [verifiedProductCurrencyState, setVerifiedProductCurrencyState] = useState(null);
+  const [productCurrencyError, setProductCurrencyError] = useState('');
   const [analyticsError, setAnalyticsError] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [editingCoupon, setEditingCoupon] = useState(null);
@@ -150,58 +227,121 @@ export default function SellerCouponManagementScreen({ navigation }) {
   const [activeTab, setActiveTab] = useState('manage');
   const [filter, setFilter] = useState('all');
   const [search, setSearch] = useState('');
-  const [form, setForm] = useState(() => createCouponForm(currency));
+  const [form, setForm] = useState(() => createCouponForm(null));
   const [formErrors, setFormErrors] = useState({});
 
   const fetchAll = useCallback(async ({ refresh = false } = {}) => {
+    const requestId = fetchRequestRef.current + 1;
+    fetchRequestRef.current = requestId;
     if (refresh) setRefreshing(true);
     else if (!hasLoaded.current) setInitialLoading(true);
+    setAnalyticsData(null);
+    setAnalyticsError('');
 
-    const [couponResult, productResult, analyticsResult] = await Promise.allSettled([
-      api.get('/api/coupons/seller'),
+    const [couponResult, productResult, analyticsResult, productCurrencyResult] = await Promise.allSettled([
+      fetchCompleteSellerCoupons(api),
       fetchCompleteSellerCatalog(api),
       api.get(`/api/coupons/analytics?currency=${encodeURIComponent(currency)}`),
+      api.get(API_ENDPOINTS.STORES.PRODUCT_CURRENCY),
     ]);
+    if (fetchRequestRef.current !== requestId) return;
 
+    let verifiedCoupons = null;
     if (couponResult.status === 'fulfilled') {
-      setCoupons(couponResult.value.data?.coupons || []);
+      verifiedCoupons = couponResult.value;
+      setCoupons(verifiedCoupons);
       setLoadError('');
       setAccessRestricted(false);
     } else {
+      setCoupons([]);
       setAccessRestricted(couponResult.reason?.response?.status === 403);
-      setLoadError(couponResult.reason?.response?.data?.msg || 'We could not load your coupons.');
+      setLoadError(couponResult.reason?.response?.data?.msg || couponResult.reason?.message || 'We could not load your coupons.');
+      setShowForm(false);
+      setEditingCoupon(null);
+      setFormErrors({});
     }
 
-    if (productResult.status === 'fulfilled') {
-      setProducts(productResult.value || []);
+    let verifiedCurrencyState = null;
+    if (productResult.status === 'fulfilled' && productCurrencyResult.status === 'fulfilled') {
+      const inspected = inspectCouponProductCurrencyState(
+        productCurrencyResult.value.data?.productCurrency,
+        productResult.value,
+      );
+      if (inspected.valid) verifiedCurrencyState = inspected;
+    }
+
+    if (verifiedCurrencyState) {
+      setProducts(verifiedCurrencyState.products);
       setProductError('');
+      setStoreCurrency(verifiedCurrencyState.activeCurrency);
+      setVerifiedProductCurrencyState(verifiedCurrencyState);
+      setProductCurrencyError('');
+      setForm(current => current.currency ? current : createCouponForm(verifiedCurrencyState.activeCurrency));
     } else {
-      setProductError(productResult.reason?.response?.data?.msg || 'Products are unavailable right now.');
+      setProducts([]);
+      setStoreCurrency(null);
+      setVerifiedProductCurrencyState(null);
+      setShowForm(false);
+      setEditingCoupon(null);
+      setForm(createCouponForm(null));
+      setFormErrors({});
+      setProductError(
+        productResult.status === 'rejected'
+          ? productResult.reason?.response?.data?.msg || productResult.reason?.message || 'Products are unavailable right now.'
+          : 'The complete product catalog could not be verified.',
+      );
+      const pending = productCurrencyResult.status === 'fulfilled'
+        && productCurrencyResult.value.data?.productCurrency?.status === 'pending_conversion';
+      setProductCurrencyError(
+        productCurrencyResult.status === 'rejected'
+          ? productCurrencyResult.reason?.response?.data?.msg || productCurrencyResult.reason?.message || 'Your store product currency could not be loaded.'
+          : pending
+            ? 'Finish or cancel the pending product currency change before managing coupons.'
+            : 'Your store product currency or product-price breakdown is invalid or inconsistent.',
+      );
     }
 
-    if (analyticsResult.status === 'fulfilled') {
-      setAnalyticsData(analyticsResult.value.data || null);
+    if (
+      analyticsResult.status === 'fulfilled'
+      && couponAnalyticsResponseIsValid(analyticsResult.value.data, currency)
+    ) {
+      setAnalyticsData(analyticsResult.value.data);
       setAnalyticsError('');
     } else {
-      setAnalyticsError(analyticsResult.reason?.response?.data?.msg || 'Coupon analytics are unavailable right now.');
+      setAnalyticsData(null);
+      setAnalyticsError(
+        analyticsResult.status === 'rejected'
+          ? analyticsResult.reason?.response?.data?.msg || 'Coupon analytics are unavailable right now.'
+          : 'Coupon analytics returned invalid or inconsistent money data.'
+      );
     }
 
     hasLoaded.current = true;
     setInitialLoading(false);
     setRefreshing(false);
+    return {
+      coupons: verifiedCoupons,
+      productCurrencyState: verifiedCurrencyState,
+    };
   }, [currency]);
 
   useEffect(() => {
     fetchAll();
+    return () => { fetchRequestRef.current += 1; };
   }, [fetchAll]);
 
   const resetForm = useCallback(() => {
-    setForm(createCouponForm(currency));
+    setForm(createCouponForm(storeCurrency));
     setFormErrors({});
     setEditingCoupon(null);
-  }, [currency]);
+  }, [storeCurrency]);
 
   const openCreate = () => {
+    if (!storeCurrency || productCurrencyError || !verifiedProductCurrencyState?.valid) {
+      Feedback.show({ type: 'error', text1: 'Currency unavailable', text2: 'Your store product currency must be loaded before creating a coupon.' });
+      fetchAll({ refresh: true });
+      return;
+    }
     resetForm();
     setShowForm(true);
   };
@@ -212,20 +352,35 @@ export default function SellerCouponManagementScreen({ navigation }) {
   };
 
   const handleEdit = (coupon) => {
+    const presentation = inspectCouponPresentation(coupon);
+    const availableProductIds = new Set(products.map(product => product._id));
+    if (
+      !presentation.valid
+      || !verifiedProductCurrencyState?.valid
+      || presentation.productIds.some(id => !availableProductIds.has(id))
+    ) {
+      Feedback.show({
+        type: 'error',
+        text1: 'Coupon unavailable',
+        text2: 'This coupon or its complete product catalog cannot be verified. Refresh before editing it.',
+      });
+      fetchAll({ refresh: true });
+      return;
+    }
     setForm({
-      code: coupon.code || '',
-      discountType: coupon.discountType || 'percentage',
-      discountValue: String(coupon.discountValue ?? ''),
-      currency: coupon.currency || currency,
-      applicableTo: coupon.applicableTo || 'all',
-      applicableProducts: normalizeCouponProductIds(coupon.applicableProducts),
-      maxUses: coupon.maxUses == null ? '' : String(coupon.maxUses),
-      maxUsesPerUser: String(coupon.maxUsesPerUser || 1),
-      minOrderAmount: coupon.minOrderAmount ? String(coupon.minOrderAmount) : '',
-      maxDiscountAmount: coupon.maxDiscountAmount == null ? '' : String(coupon.maxDiscountAmount),
-      startDate: coupon.startDate ? toDateInput(coupon.startDate) : toDateInput(),
-      expiryDate: coupon.expiryDate ? toDateInput(coupon.expiryDate) : '',
-      description: coupon.description || '',
+      code: presentation.code,
+      discountType: presentation.discountType,
+      discountValue: String(presentation.discountValue),
+      currency: presentation.currency,
+      applicableTo: presentation.applicableTo,
+      applicableProducts: presentation.productIds,
+      maxUses: presentation.maxUses === null ? '' : String(presentation.maxUses),
+      maxUsesPerUser: String(coupon.maxUsesPerUser),
+      minOrderAmount: String(coupon.minOrderAmount),
+      maxDiscountAmount: coupon.maxDiscountAmount === null ? '' : String(coupon.maxDiscountAmount),
+      startDate: toDateInput(presentation.startDate),
+      expiryDate: toDateInput(presentation.expiryDate),
+      description: coupon.description,
     });
     setFormErrors({});
     setEditingCoupon(coupon);
@@ -238,7 +393,18 @@ export default function SellerCouponManagementScreen({ navigation }) {
   };
 
   const handleSave = async () => {
-    const errors = validateCouponForm(form);
+    const formCurrency = normalizeCouponCurrency(form.currency);
+    if (
+      !formCurrency
+      || !verifiedProductCurrencyState?.valid
+      || productCurrencyError
+      || (!editingCoupon && formCurrency !== storeCurrency)
+    ) {
+      Feedback.show({ type: 'error', text1: 'Currency unavailable', text2: 'New coupons must use your verified store product currency.' });
+      return;
+    }
+    const availableProductIds = products.map(product => product._id);
+    const errors = validateCouponForm(form, new Date(), { availableProductIds });
     setFormErrors(errors);
     if (Object.keys(errors).length) {
       Feedback.show({ type: 'error', text1: 'Check coupon details', text2: Object.values(errors)[0] });
@@ -246,12 +412,104 @@ export default function SellerCouponManagementScreen({ navigation }) {
     }
 
     setSaving(true);
+    let productStateVerifiedThisAttempt = false;
     try {
-      const payload = buildCouponPayload(form);
+      const latestProductState = await loadVerifiedCouponProductState(api);
+      productStateVerifiedThisAttempt = true;
+      setVerifiedProductCurrencyState(latestProductState);
+      setProducts(latestProductState.products);
+      setStoreCurrency(latestProductState.activeCurrency);
+      setProductError('');
+      setProductCurrencyError('');
+      if (!editingCoupon && formCurrency !== latestProductState.activeCurrency) {
+        Feedback.show({
+          type: 'error',
+          text1: 'Store currency changed',
+          text2: `Your store now saves products in ${latestProductState.activeCurrency}. Review the coupon before creating it.`,
+        });
+        setForm(current => ({ ...current, currency: latestProductState.activeCurrency }));
+        return;
+      }
+      const latestProductIds = new Set(latestProductState.products.map(product => product._id));
+      const selectedProductIds = normalizeCouponProductIds(form.applicableProducts);
+      if (
+        form.applicableTo === 'selected'
+        && selectedProductIds.some(id => !latestProductIds.has(id))
+      ) {
+        setFormErrors(current => ({
+          ...current,
+          applicableProducts: 'Choose only verified products from your complete catalog.',
+        }));
+        Feedback.show({ type: 'error', text1: 'Products changed', text2: 'Refresh and choose the products again.' });
+        return;
+      }
+      const editingPresentation = editingCoupon ? inspectCouponPresentation(editingCoupon) : null;
+      if (
+        editingCoupon
+        && (
+          !editingPresentation.valid
+          || !coupons.some(item => item === editingCoupon && item._id === editingPresentation.id)
+        )
+      ) {
+        Feedback.show({ type: 'error', text1: 'Coupon changed', text2: 'Refresh this coupon before saving it.' });
+        return;
+      }
+      const payload = buildCouponPayload({ ...form, currency: formCurrency });
+      let response;
       if (editingCoupon) {
-        await api.put(`/api/coupons/update/${editingCoupon._id}`, payload);
+        response = await api.put(`/api/coupons/update/${editingPresentation.id}`, payload);
       } else {
-        await api.post('/api/coupons/create', payload);
+        response = await api.post('/api/coupons/create', payload);
+      }
+      const saved = response?.data?.coupon;
+      const savedPresentation = inspectCouponPresentation(saved);
+      const expectedId = editingPresentation?.id || savedPresentation.id;
+      const savedProductIds = [...savedPresentation.productIds].sort();
+      const payloadProductIds = [...payload.applicableProducts].sort();
+      if (
+        !savedPresentation.valid
+        || savedPresentation.id !== expectedId
+        || savedPresentation.code !== payload.code
+        || savedPresentation.currency !== payload.currency
+        || savedPresentation.discountType !== payload.discountType
+        || savedPresentation.discountValue !== payload.discountValue
+        || savedPresentation.applicableTo !== payload.applicableTo
+        || savedProductIds.length !== payloadProductIds.length
+        || savedProductIds.some((id, index) => id !== payloadProductIds[index])
+        || savedPresentation.maxUses !== payload.maxUses
+        || saved.maxUsesPerUser !== payload.maxUsesPerUser
+        || saved.minOrderAmount !== payload.minOrderAmount
+        || saved.maxDiscountAmount !== payload.maxDiscountAmount
+        || toDateInput(savedPresentation.startDate) !== payload.startDate
+        || toDateInput(savedPresentation.expiryDate) !== payload.expiryDate
+        || saved.description !== payload.description
+      ) {
+        closeForm();
+        await fetchAll({ refresh: true });
+        Feedback.show({
+          type: 'error',
+          text1: 'Coupon saved but not verified',
+          text2: 'The server accepted the change, but its stored coupon response was inconsistent. Review the refreshed list before retrying.',
+        });
+        return;
+      }
+      const refreshed = await fetchAll();
+      const refreshedCoupon = refreshed?.coupons?.find(coupon => coupon._id === savedPresentation.id);
+      const refreshedPresentation = inspectCouponPresentation(refreshedCoupon);
+      if (
+        !refreshedPresentation.valid
+        || refreshedPresentation.code !== payload.code
+        || refreshedPresentation.currency !== payload.currency
+        || refreshedPresentation.discountType !== payload.discountType
+        || refreshedPresentation.discountValue !== payload.discountValue
+      ) {
+        closeForm();
+        Feedback.show({
+          type: 'error',
+          text1: 'Coupon saved; refresh required',
+          text2: 'The change was accepted, but the authoritative coupon list could not be verified.',
+        });
+        return;
       }
       Feedback.show({
         type: 'success',
@@ -259,17 +517,27 @@ export default function SellerCouponManagementScreen({ navigation }) {
         text2: `${payload.code} is ready in your campaign workspace.`,
       });
       closeForm();
-      await fetchAll();
     } catch (error) {
-      Feedback.show({ type: 'error', text1: 'Coupon not saved', text2: error.response?.data?.msg || 'Please try again.' });
+      if (!productStateVerifiedThisAttempt) {
+        setVerifiedProductCurrencyState(null);
+        setStoreCurrency(null);
+        setProductCurrencyError(error.response?.data?.msg || error.message || 'Your store product currency could not be verified.');
+      }
+      Feedback.show({ type: 'error', text1: 'Coupon not saved', text2: error.response?.data?.msg || error.message || 'Please try again.' });
     } finally {
       setSaving(false);
     }
   };
 
   const handleDelete = (coupon) => {
+    const presentation = inspectCouponPresentation(coupon);
+    if (!presentation.valid || !coupons.some(item => item === coupon)) {
+      Feedback.show({ type: 'error', text1: 'Coupon unavailable', text2: 'Refresh coupons before deleting this item.' });
+      fetchAll({ refresh: true });
+      return;
+    }
     Alert.alert(
-      `Delete ${coupon.code}?`,
+      `Delete ${presentation.code}?`,
       'This permanently removes the coupon. Existing order records will not be changed.',
       [
         { text: 'Keep coupon', style: 'cancel' },
@@ -278,8 +546,16 @@ export default function SellerCouponManagementScreen({ navigation }) {
           style: 'destructive',
           onPress: async () => {
             try {
-              await api.delete(`/api/coupons/delete/${coupon._id}`);
-              setCoupons((current) => current.filter((item) => item._id !== coupon._id));
+              await api.delete(`/api/coupons/delete/${presentation.id}`);
+              const refreshed = await fetchAll({ refresh: true });
+              if (!Array.isArray(refreshed?.coupons) || refreshed.coupons.some(item => item._id === presentation.id)) {
+                Feedback.show({
+                  type: 'error',
+                  text1: 'Deletion needs verification',
+                  text2: 'The request was accepted, but the refreshed coupon list could not confirm deletion.',
+                });
+                return;
+              }
               Feedback.show({ type: 'success', text1: 'Coupon deleted' });
             } catch (error) {
               Feedback.show({ type: 'error', text1: 'Could not delete coupon', text2: error.response?.data?.msg || 'Please try again.' });
@@ -291,15 +567,42 @@ export default function SellerCouponManagementScreen({ navigation }) {
   };
 
   const handleToggle = async (coupon) => {
+    const presentation = inspectCouponPresentation(coupon);
+    if (!presentation.valid || !coupons.some(item => item === coupon)) {
+      Feedback.show({ type: 'error', text1: 'Coupon unavailable', text2: 'Refresh coupons before changing this status.' });
+      fetchAll({ refresh: true });
+      return;
+    }
     try {
-      const response = await api.patch(`/api/coupons/toggle/${coupon._id}`);
+      if (!presentation.isActive) {
+        const latestProductState = await loadVerifiedCouponProductState(api);
+        setVerifiedProductCurrencyState(latestProductState);
+        setProducts(latestProductState.products);
+        setStoreCurrency(latestProductState.activeCurrency);
+        setProductError('');
+        setProductCurrencyError('');
+      }
+      const response = await api.patch(`/api/coupons/toggle/${presentation.id}`);
       const saved = response.data?.coupon;
-      setCoupons((current) => current.map((item) => (
-        item._id === coupon._id ? { ...item, isActive: saved?.isActive ?? !item.isActive } : item
-      )));
-      fetchAll();
+      const savedPresentation = inspectCouponPresentation(saved);
+      if (
+        !savedPresentation.valid
+        || savedPresentation.id !== presentation.id
+        || savedPresentation.isActive !== !presentation.isActive
+      ) throw new Error('The server returned an inconsistent coupon status.');
+      const refreshed = await fetchAll({ refresh: true });
+      const authoritative = refreshed?.coupons?.find(item => item._id === presentation.id);
+      if (
+        !inspectCouponPresentation(authoritative).valid
+        || authoritative.isActive !== savedPresentation.isActive
+      ) throw new Error('The refreshed coupon status could not be verified.');
     } catch (error) {
-      Feedback.show({ type: 'error', text1: 'Status not changed', text2: error.response?.data?.msg || 'Please try again.' });
+      if (!presentation.isActive) {
+        setVerifiedProductCurrencyState(null);
+        setStoreCurrency(null);
+        setProductCurrencyError('Your store product currency must be refreshed before enabling coupons.');
+      }
+      Feedback.show({ type: 'error', text1: 'Status not verified', text2: error.response?.data?.msg || error.message || 'Please try again.' });
     }
   };
 
@@ -319,11 +622,24 @@ export default function SellerCouponManagementScreen({ navigation }) {
     [key]: key === 'all' ? coupons.length : coupons.filter((coupon) => getCouponStatus(coupon) === key).length,
   }), {}), [coupons]);
 
-  const analyticsCurrency = analyticsData?.summary?.currency || currency;
-  const formatAnalyticsMoney = (amount) => formatPrice(amount || 0, { sourceCurrency: analyticsCurrency });
-  const formatCouponMoney = (amount, coupon) => formatPrice(amount || 0, { sourceCurrency: coupon?.currency || 'USD' });
+  const analyticsCurrency = analyticsData?.summary?.currency || null;
+  const formatAnalyticsMoney = (amount) => (
+    analyticsCurrency && typeof amount === 'number'
+      ? formatPrice(amount, { sourceCurrency: analyticsCurrency })
+      : 'Unavailable'
+  );
+  const formatCouponMoney = (amount, coupon) => {
+    const sourceCurrency = coupon?.currency;
+    if (
+      normalizeCouponCurrency(sourceCurrency) !== sourceCurrency
+      || !isExactCouponMoneyInput(amount, { allowZero: true })
+    ) return 'Unavailable';
+    return formatPrice(amount, { sourceCurrency });
+  };
 
   const renderCoupon = ({ item }) => {
+    const inspected = inspectCouponPresentation(item);
+    if (!inspected.valid) return null;
     const status = getCouponStatus(item);
     const presentation = statusPresentation(status, palette);
     return (
@@ -354,15 +670,15 @@ export default function SellerCouponManagementScreen({ navigation }) {
         </View>
 
         <Text style={styles.discountText}>
-          {item.discountType === 'percentage' ? `${item.discountValue}% off` : `${formatCouponMoney(item.discountValue, item)} off`}
+          {inspected.discountType === 'percentage' ? `${inspected.discountValue}% off` : `${formatCouponMoney(inspected.discountValue, item)} off`}
         </Text>
         {!!item.description && <Text style={styles.description} numberOfLines={2}>{item.description}</Text>}
 
         <View style={styles.detailGrid}>
-          <CouponDetail icon="cube-outline" label="Applies to" value={item.applicableTo === 'all' ? 'All products' : `${item.applicableProducts?.length || 0} selected`} color={palette.colors.primary} styles={styles} />
-          <CouponDetail icon="people-outline" label="Usage" value={`${item.usedCount || 0}${item.maxUses ? ` / ${item.maxUses}` : ' / Unlimited'}`} color={palette.colors.primary} styles={styles} />
-          <CouponDetail icon="calendar-outline" label="Starts" value={item.startDate ? new Date(item.startDate).toLocaleDateString() : 'Now'} color={palette.colors.primary} styles={styles} />
-          <CouponDetail icon="time-outline" label="Expires" value={item.expiryDate ? new Date(item.expiryDate).toLocaleDateString() : 'Not set'} color={palette.colors.primary} styles={styles} />
+          <CouponDetail icon="cube-outline" label="Applies to" value={inspected.applicableTo === 'all' ? 'All products' : `${inspected.productIds.length} selected`} color={palette.colors.primary} styles={styles} />
+          <CouponDetail icon="people-outline" label="Usage" value={`${inspected.usedCount}${inspected.maxUses === null ? ' / Unlimited' : ` / ${inspected.maxUses}`}`} color={palette.colors.primary} styles={styles} />
+          <CouponDetail icon="calendar-outline" label="Starts" value={inspected.startDate.toLocaleDateString()} color={palette.colors.primary} styles={styles} />
+          <CouponDetail icon="time-outline" label="Expires" value={inspected.expiryDate.toLocaleDateString()} color={palette.colors.primary} styles={styles} />
         </View>
 
         <View style={styles.couponFooter}>
@@ -371,14 +687,14 @@ export default function SellerCouponManagementScreen({ navigation }) {
             <Text style={[styles.statusText, { color: presentation.color }]}>{presentation.label}</Text>
           </View>
           <View style={styles.switchRow}>
-            <Text style={styles.switchLabel}>{item.isActive ? 'Enabled' : 'Disabled'}</Text>
+            <Text style={styles.switchLabel}>{inspected.isActive ? 'Enabled' : 'Disabled'}</Text>
             <Switch
-              value={!!item.isActive}
+              value={inspected.isActive}
               onValueChange={() => handleToggle(item)}
               disabled={status === 'expired'}
-              accessibilityLabel={`${item.isActive ? 'Disable' : 'Enable'} coupon ${item.code}`}
+              accessibilityLabel={`${inspected.isActive ? 'Disable' : 'Enable'} coupon ${inspected.code}`}
               trackColor={{ false: palette.glass.bgStrong, true: palette.colors.primaryLight }}
-              thumbColor={item.isActive ? palette.colors.primary : palette.colors.textLight}
+              thumbColor={inspected.isActive ? palette.colors.primary : palette.colors.textLight}
             />
           </View>
         </View>
@@ -421,7 +737,7 @@ export default function SellerCouponManagementScreen({ navigation }) {
         <SellerScreenHeader
           navigation={navigation}
           title="Coupons"
-          subtitle={`${coupons.length} campaign${coupons.length === 1 ? '' : 's'} · ${counts.active || 0} active`}
+          subtitle={`${coupons.length} campaign${coupons.length === 1 ? '' : 's'} · ${counts.active} active`}
           icon="ticket-outline"
           rightIcon="add"
           rightLabel="New"
@@ -458,6 +774,7 @@ export default function SellerCouponManagementScreen({ navigation }) {
             ListHeaderComponent={(
               <>
                 {!!loadError && <SellerInlineError compact title="Coupons unavailable" message={loadError} onRetry={fetchAll} />}
+                {!!productCurrencyError && <SellerInlineError compact title="Store currency unavailable" message={`${productCurrencyError} New coupons are paused until it can be verified.`} onRetry={() => fetchAll({ refresh: true })} />}
                 <GlassPanel variant="card" style={styles.filterCard}>
                   <View style={styles.searchShell}>
                     <Ionicons name="search" size={18} color={palette.colors.textSecondary} />
@@ -487,7 +804,7 @@ export default function SellerCouponManagementScreen({ navigation }) {
                       >
                         <Text style={[styles.filterText, filter === value && styles.filterTextActive]}>{value[0].toUpperCase() + value.slice(1)}</Text>
                         <View style={[styles.countBadge, filter === value && styles.countBadgeActive]}>
-                          <Text style={[styles.countText, filter === value && styles.countTextActive]}>{counts[value] || 0}</Text>
+                          <Text style={[styles.countText, filter === value && styles.countTextActive]}>{counts[value]}</Text>
                         </View>
                       </TouchableOpacity>
                     ))}
@@ -512,13 +829,19 @@ export default function SellerCouponManagementScreen({ navigation }) {
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => fetchAll({ refresh: true })} tintColor={palette.colors.primary} />}
           >
             {!!analyticsError && <SellerInlineError compact title="Analytics unavailable" message={analyticsError} onRetry={fetchAll} />}
-            <SellerSectionHeader title="Campaign performance" subtitle={`All monetary results shown in ${analyticsCurrency}`} icon="sparkles-outline" />
+            <SellerSectionHeader
+              title="Campaign performance"
+              subtitle={analyticsCurrency
+                ? `Attributed sales are recognized eligible-product subtotals before discounts in ${analyticsCurrency}; shipping and tax are excluded.`
+                : 'Live monetary analytics are unavailable.'}
+              icon="sparkles-outline"
+            />
             <View style={styles.statsGrid}>
               {[
-                { label: 'Total', value: analyticsData?.summary?.totalCoupons ?? coupons.length, icon: 'ticket', color: palette.colors.primary },
-                { label: 'Active', value: counts.active || 0, icon: 'checkmark-circle', color: palette.colors.success },
-                { label: 'Uses', value: analyticsData?.summary?.totalUses ?? 0, icon: 'people', color: palette.colors.info },
-                { label: 'Revenue', value: formatAnalyticsMoney(analyticsData?.summary?.totalRevenueFromCoupons), icon: 'trending-up', color: palette.colors.warning },
+                { label: 'Total', value: analyticsData?.summary?.totalCoupons ?? 'Unavailable', icon: 'ticket', color: palette.colors.primary },
+                { label: 'Active', value: analyticsData?.summary?.activeCoupons ?? 'Unavailable', icon: 'checkmark-circle', color: palette.colors.success },
+                { label: 'Uses', value: analyticsData?.summary?.totalUses ?? 'Unavailable', icon: 'people', color: palette.colors.info },
+                { label: 'Attributed sales', value: formatAnalyticsMoney(analyticsData?.summary?.totalRevenueFromCoupons), icon: 'trending-up', color: palette.colors.warning },
               ].map((stat) => (
                 <GlassPanel key={stat.label} variant="card" style={styles.statCard}>
                   <View style={[styles.statIcon, { backgroundColor: `${stat.color}16` }]}>
@@ -540,7 +863,7 @@ export default function SellerCouponManagementScreen({ navigation }) {
               </View>
             </GlassPanel>
 
-            <SellerSectionHeader title="Coupon breakdown" subtitle="Orders, buyers, usage, and revenue" icon="analytics-outline" />
+            <SellerSectionHeader title="Coupon breakdown" subtitle="Orders, buyers, usage, attributed sales, and discounts" icon="analytics-outline" />
             {analyticsError && !analyticsData ? null : !analyticsData?.analytics?.length ? (
               <SellerEmptyState icon="bar-chart-outline" title="No performance data yet" message="Results appear here after a customer uses one of your coupons." />
             ) : analyticsData.analytics.map((item) => {
@@ -558,18 +881,18 @@ export default function SellerCouponManagementScreen({ navigation }) {
                     </View>
                   </View>
                   <MetricRow palette={palette} items={[
-                    { label: 'Uses', value: `${item.usedCount || 0}${item.maxUses ? `/${item.maxUses}` : ''}` },
-                    { label: 'Orders', value: item.ordersGenerated || 0 },
-                    { label: 'Buyers', value: item.uniqueUsers || 0 },
+                    { label: 'Uses', value: `${item.usedCount}${item.maxUses === null ? '' : `/${item.maxUses}`}` },
+                    { label: 'Orders', value: item.ordersGenerated },
+                    { label: 'Buyers', value: item.uniqueUsers },
                     { label: 'Conversion', value: item.conversionRate == null ? '—' : `${item.conversionRate}%` },
                   ]} />
                   <View style={styles.moneyRow}>
-                    <MoneyMetric label="Revenue" value={formatAnalyticsMoney(item.totalRevenue)} color={palette.colors.success} styles={styles} />
+                    <MoneyMetric label="Attributed sales" value={formatAnalyticsMoney(item.totalRevenue)} color={palette.colors.success} styles={styles} />
                     <MoneyMetric label="Discounts" value={formatAnalyticsMoney(item.totalDiscount)} color={palette.colors.warning} styles={styles} />
                     <MoneyMetric label="Avg. order" value={formatAnalyticsMoney(item.avgOrderValue)} color={palette.colors.text} styles={styles} />
                   </View>
                   <CouponBarChart
-                    data={[item.usedCount || 0, item.ordersGenerated || 0, item.uniqueUsers || 0]}
+                    data={[item.usedCount, item.ordersGenerated, item.uniqueUsers]}
                     labels={['Uses', 'Orders', 'Buyers']}
                     height={84}
                     color={palette.colors.primary}

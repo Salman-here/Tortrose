@@ -60,9 +60,16 @@ const chunk = (arr, size) => {
  * @param {{ title: string, body: string, data?: object, channelId?: string, sound?: 'default'|null, badge?: number }} payload
  * @returns {Promise<{ invalidTokens: string[] }>}
  */
-async function sendExpoPush(tokens, payload, ownershipScope = {}) {
+const expoDeliveryError = (message, code = 'EXPO_PUSH_DELIVERY_FAILED') => {
+    const error = new Error(message);
+    error.code = code;
+    error.retryable = true;
+    return error;
+};
+
+async function deliverExpoPush(tokens, payload, ownershipScope = {}, { strict = false } = {}) {
     const valid = await filterAuthoritativeTokens(tokens, ownershipScope);
-    if (!valid.length) return { invalidTokens: [], sentCount: 0 };
+    if (!valid.length) return { invalidTokens: [], sentCount: 0, ticketIds: [] };
 
     const recipientUserId = String(ownershipScope.recipientUserId);
     const scopedData = {
@@ -83,6 +90,9 @@ async function sendExpoPush(tokens, payload, ownershipScope = {}) {
     }));
 
     const invalidTokens = [];
+    const ticketIds = [];
+    let acceptedCount = 0;
+    const retryableErrors = [];
 
     for (const batch of chunk(messages, CHUNK_SIZE)) {
         try {
@@ -95,23 +105,68 @@ async function sendExpoPush(tokens, payload, ownershipScope = {}) {
                 },
                 body: JSON.stringify(batch),
             });
+            if (res?.ok === false) {
+                throw expoDeliveryError(`Expo push returned HTTP ${res.status || 'error'}.`);
+            }
             const json = await res.json().catch(() => ({}));
             const tickets = Array.isArray(json?.data) ? json.data : [];
+            if (tickets.length !== batch.length) {
+                retryableErrors.push('Expo returned an incomplete push-ticket batch.');
+            }
             tickets.forEach((ticket, i) => {
                 if (ticket?.status === 'error') {
                     const errCode = ticket?.details?.error;
-                    if (errCode === 'DeviceNotRegistered' || errCode === 'InvalidCredentials') {
+                    // InvalidCredentials describes the application's APNs/FCM
+                    // credentials, not ownership of this installation token.
+                    // Pruning that token would destroy a valid destination.
+                    if (errCode === 'DeviceNotRegistered') {
                         invalidTokens.push(batch[i].to);
+                    } else {
+                        retryableErrors.push(ticket?.message || errCode || 'Expo rejected a push ticket.');
                     }
                     console.warn('[expoPush] error ticket:', ticket?.message, errCode);
+                } else if (ticket?.status === 'ok') {
+                    acceptedCount += 1;
+                    if (ticket.id) ticketIds.push(String(ticket.id));
+                } else {
+                    retryableErrors.push('Expo returned an invalid push ticket.');
                 }
             });
         } catch (err) {
+            if (strict) {
+                const normalized = err?.code
+                    ? err
+                    : expoDeliveryError(err?.message || 'Expo push request failed.');
+                // A previous batch may already have been accepted. Returning
+                // success prevents retrying those devices; the caller can log
+                // the partial result and rely on a later user event for the
+                // remaining installation rather than causing duplicates.
+                if (acceptedCount === 0) throw normalized;
+                retryableErrors.push(normalized.message);
+                break;
+            }
             console.error('[expoPush] batch send failed:', err.message);
         }
     }
 
-    return { invalidTokens, sentCount: valid.length };
+    if (strict && acceptedCount === 0 && retryableErrors.length) {
+        throw expoDeliveryError(retryableErrors.join('; ').slice(0, 500));
+    }
+    return {
+        invalidTokens,
+        sentCount: strict ? acceptedCount : valid.length,
+        ticketIds,
+        partialErrors: retryableErrors,
+    };
+}
+
+async function sendExpoPush(tokens, payload, ownershipScope = {}) {
+    const result = await deliverExpoPush(tokens, payload, ownershipScope, { strict: false });
+    return { invalidTokens: result.invalidTokens, sentCount: result.sentCount };
+}
+
+async function sendExpoPushStrict(tokens, payload, ownershipScope = {}) {
+    return deliverExpoPush(tokens, payload, ownershipScope, { strict: true });
 }
 
 /**
@@ -150,5 +205,6 @@ module.exports = {
     hashPushToken,
     isValidExpoToken,
     sendExpoPush,
+    sendExpoPushStrict,
     sendPushToUser,
 };

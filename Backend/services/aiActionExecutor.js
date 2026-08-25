@@ -13,6 +13,7 @@
 
 'use strict';
 
+const crypto = require('crypto');
 const mongoose = require('mongoose');
 const Fuse = require('fuse.js');
 const User = require('../models/User');
@@ -20,6 +21,7 @@ const Order = require('../models/Order');
 const Product = require('../models/Product');
 const Store = require('../models/Store');
 const Coupon = require('../models/Coupon');
+const { deleteCouponIfUnreserved } = require('./couponUsageService');
 const Complaint = require('../models/Complaint');
 const ShippingMethod = require('../models/ShippingMethod');
 const Notification = require('../models/Notification');
@@ -27,18 +29,12 @@ const TaxConfig = require('../models/TaxConfig');
 const BroadcastJob = require('../models/BroadcastJob');
 const SellerSubscription = require('../models/SellerSubscription');
 const SellerAdRequest = require('../models/SellerAdRequest');
+const AIActionReceipt = require('../models/AIActionReceipt');
 const StoreTrust = require('../models/StoreTrust');
 const Cart = require('../models/Cart');
 const StoreReview = require('../models/StoreReview');
-const WhatsAppConfig = require('../models/WhatsAppConfig');
 const { buildSellerPaymentSummary } = require('../controllers/PaymentController');
-const { sendEmail } = require('../controllers/mailController');
-const { buyerOrderConfirmationRequestEmail, newOrderSellerEmail } = require('../utils/emailTemplates');
 const { generateConfirmationToken } = require('../controllers/orderConfirmationController');
-const { enqueueOrderConfirmation } = require('./whatsapp/queue');
-const { notifySeller } = require('./whatsapp/sellerNotificationService');
-const { configKeyFor } = require('./whatsapp/gatewayMode');
-const sellerTemplates = require('./whatsapp/sellerMessageTemplates');
 const { getFounderPromotionStatus } = require('./founderPromotionService');
 const { buildPlanPricing, getPricingCatalog } = require('./subscriptionPricingService');
 const {
@@ -47,14 +43,63 @@ const {
   notifyProductBlocked,
   publicProductFilter,
 } = require('./productModerationService');
-const { normalizeCurrency, convertAmount, convertAmountSync, formatMoney } = require('./currencyService');
+const {
+  isSupportedCurrency,
+  normalizeCurrency,
+  convertAmount,
+  convertAmountUsingTrustedRates,
+  convertAmountSync,
+  convertAmountWithRates,
+  getExchangeRateSnapshot,
+  normalizeRates,
+  exchangeRatesUnavailableError,
+  formatMoney,
+} = require('./currencyService');
+const {
+  buildOrderItemMoneyAllocations,
+  orderItemKey,
+  sellerOrderSummaryForItems,
+  isSellerRevenueRecognized,
+  sumOrderAmountsInCurrency,
+  SELLER_SETTLEMENT_VERSION,
+  buildOrderSellerSettlement,
+  getAccountingOrderCurrency,
+  requireStoredOrderMoney,
+} = require('./orderMoneyService');
+const {
+  getOrderItemLineSubtotal,
+  priceOrderItemLines,
+} = require('./orderLinePricingService');
+const {
+  allocateCheckoutAmountsBySource,
+  assertStoredCouponTerms,
+  requireSupportedCheckoutCurrency,
+  validateAndPriceCoupons,
+} = require('./checkoutPricingService');
 const {
   roundMoney,
-  getProductCurrency,
-  getProductEffectivePrice,
+  applyProductPricePercentage,
+  assertEffectiveProductDiscount,
+  assertRepresentablePositiveProductAmount,
+  assertRepresentableProductAdjustment,
+  requireStoredProductEffectivePrice,
+  requireStoredProductCurrency,
+  requireStoredProductDiscountCurrency,
+  requireStoredProductDiscountPrice,
 } = require('./productPricingService');
 const { normalizeSocialLinks } = require('./socialLinksService');
-const { assertProductCreationAllowed } = require('./storeProductCurrencyService');
+const {
+  assertProductCreationAllowed,
+  getSellerProductCurrencyState,
+  withProductCurrencyWriteLock,
+} = require('./storeProductCurrencyService');
+const {
+  getSellerProductCreationQuota,
+  getSellerFeaturedProductQuota,
+  assertSellerCanCreateProducts,
+  assertSellerCanFeatureProduct,
+} = require('./sellerProductQuotaService');
+const { runInTransaction } = require('./walletService');
 const {
   sanitizeProductName,
   sanitizeProductDescription,
@@ -66,17 +111,36 @@ const {
   isProductSellerPubliclyActive,
 } = require('./publicCatalogService');
 const { storeAllowsCashOnDelivery } = require('./storePaymentPolicyService');
+const { multiplyMoney, percentageOfMoney, sumMoney, toMinorUnits } = require('./moneyMath');
+const { commitOrderInventory } = require('./orderInventoryService');
+const { cancelOrderSafely } = require('./orderCancellationService');
+const { transitionOrderFulfillment } = require('./orderStatusTransitionService');
 const { deleteAccountCascade } = require('./accountDeletionService');
 const { buildScopedNotificationQuery } = require('./notificationAudienceService');
+const {
+  cancelScheduledBroadcast,
+  createBroadcastJob,
+} = require('./broadcastJobService');
+const { resolveOrderReference } = require('./orderReferenceService');
+const { canonicalizeShippingPhone } = require('./orderBuyerContactService');
 const { normalizeReturnPolicy, normalizeProductReturnPolicy } = require('./returnPolicyService');
 const {
+  parseMoneyLikeNumber,
+  parseNonNegativeSafeInteger,
+  parsePositiveSafeInteger,
+  parseStrictFiniteNumber,
+} = require('./numericInputService');
+const {
   ensureOrderSellerFulfillment,
-  getBuyerCancellationBlock,
   getSellerFulfillment,
-  setAllSellerFulfillmentStatus,
-  setSellerFulfillmentStatus,
-  syncAggregateDeliveryState,
 } = require('./orderFulfillmentService');
+const { removeFulfilledOrderItemsFromCart } = require('./cartFulfillmentService');
+const { changeStoreSlug } = require('./subdomainSlugMutationService');
+const {
+  enqueueCodOrderBuyerConfirmationNotification,
+  enqueueCodOrderSellerNotifications,
+} = require('./financialNotificationOutboxService');
+const { META_ADS_ADDON_CENTS } = require('./subscriptionPricingService');
 
 // ─── Client-side tools: rendered by frontend, not executed here ───
 const CLIENT_SIDE_TOOLS = new Set([
@@ -84,8 +148,53 @@ const CLIENT_SIDE_TOOLS = new Set([
   'show_style_advice',
   'suggest_outfit',
 ]);
+// These tools change durable server state and therefore need a deterministic
+// per-chat execution slot. place_order and the two bulk money operations own
+// stronger transaction-coupled idempotency contracts and are intentionally
+// handled inside their implementations instead.
+const AI_MUTATING_TOOLS_WITH_OUTER_RECEIPT = new Set([
+  'cancel_order',
+  'submit_complaint',
+  'add_to_wishlist',
+  'remove_from_wishlist',
+  'add_address',
+  'update_profile',
+  'mark_notifications_read',
+  'add_to_cart',
+  'remove_from_cart',
+  'clear_cart',
+  'add_product',
+  'bulk_add_products',
+  'edit_product',
+  'delete_product',
+  'feature_product',
+  'remove_discount',
+  'update_order_status',
+  'update_store',
+  'apply_for_verification',
+  'update_shipping',
+  'create_coupon',
+  'update_coupon',
+  'delete_coupon',
+  'toggle_coupon',
+  'submit_seller_ads_request',
+  'delete_user',
+  'block_user',
+  'change_user_role',
+  'update_complaint',
+  'approve_verification',
+  'reject_verification',
+  'remove_verification',
+  'update_tax_config',
+  'send_broadcast',
+  'cancel_broadcast',
+]);
+const AI_DURABLE_MUTATING_TOOLS = new Set([
+  ...AI_MUTATING_TOOLS_WITH_OUTER_RECEIPT,
+  'bulk_discount',
+  'bulk_price_update',
+]);
 const DEFAULT_PRODUCT_IMAGE_URL = 'https://rozare.com/favicon-512.png';
-const META_ADS_ADDON_CENTS = 400;
 const AD_PRODUCT_SELECT = 'name image images category price discountedPrice currency priceCurrency isFeatured seller';
 
 function isClientSideTool(name) {
@@ -263,6 +372,7 @@ function resolveAIPriceCurrency({
   preferredCurrency = 'USD',
   lastUserText = '',
   fallbackCurrency = null,
+  trustRequestedCurrency = false,
 } = {}) {
   const valueCurrency = detectExplicitCurrencyInText(value);
   if (valueCurrency) return valueCurrency;
@@ -274,6 +384,7 @@ function resolveAIPriceCurrency({
   if (!requestedCurrency) return preferred;
 
   const requestedAlias = detectExplicitCurrencyInText(requestedCurrency);
+  if (trustRequestedCurrency && requestedAlias) return requestedAlias;
   if (requestedAlias && !(requestedAlias === 'USD' && preferred !== 'USD')) return requestedAlias;
 
   const requested = normalizeCurrency(requestedCurrency);
@@ -289,13 +400,59 @@ function resolveAIPriceCurrency({
 
 function parseMoneyInput(value, fallbackCurrency = 'USD') {
   const currency = inferCurrencyFromText(value, fallbackCurrency);
-  if (typeof value === 'number') return { amount: value, currency };
-  const raw = String(value ?? '').replace(/,/g, '');
-  const match = raw.match(/-?\d+(?:\.\d+)?/);
   return {
-    amount: match ? Number(match[0]) : Number(value),
+    amount: parseMoneyLikeNumber(value),
     currency,
   };
+}
+
+function normalizeMoneyAmount(value, { allowCurrencyText = false, nonNegative = false } = {}) {
+  const parsed = allowCurrencyText
+    ? parseMoneyLikeNumber(value)
+    : parseStrictFiniteNumber(value);
+  if (parsed === null || (nonNegative && parsed < 0)) return null;
+  try {
+    const rounded = roundMoney(parsed);
+    return rounded !== parsed ? null : rounded;
+  } catch (_) {
+    return null;
+  }
+}
+
+const normalizeNonNegativeMoneyAmount = (value, options = {}) => (
+  normalizeMoneyAmount(value, { ...options, nonNegative: true })
+);
+
+function requireAIDerivedMoney(value, label = 'financial amount', { allowMissing = true } = {}) {
+  // Aggregate reporting buckets may explicitly define missing as zero. Order
+  // construction disables that compatibility mode because each shipping line
+  // must exist. Any present value must already be exact, non-negative cents.
+  const isMissing = value === null || value === undefined;
+  const amount = isMissing && allowMissing ? 0 : value;
+  if (typeof amount !== 'number' || !Number.isFinite(amount) || amount < 0) {
+    const error = new Error(`The derived ${label} is invalid.`);
+    error.code = 'AI_FINANCIAL_DATA_INVALID';
+    error.status = 409;
+    error.statusCode = 409;
+    throw error;
+  }
+  try {
+    if (roundMoney(amount) !== amount) {
+      const error = new Error(`The derived ${label} is not exact to cents.`);
+      error.code = 'AI_FINANCIAL_DATA_INVALID';
+      error.status = 409;
+      error.statusCode = 409;
+      throw error;
+    }
+  } catch (error) {
+    if (error?.code === 'AI_FINANCIAL_DATA_INVALID') throw error;
+    const invalid = new Error(`The derived ${label} is outside the safe money range.`);
+    invalid.code = 'AI_FINANCIAL_DATA_INVALID';
+    invalid.status = 409;
+    invalid.statusCode = 409;
+    throw invalid;
+  }
+  return amount;
 }
 
 async function formatMoneyWithCode(amount, currency) {
@@ -462,65 +619,20 @@ function buildProductImageFields(productInput) {
   };
 }
 
-const FEATURED_LIMITS = { free_trial: 6, starter: 6, elite: 12 };
-const TRIAL_PRODUCT_LIMIT = 15;
-
 async function sellerCanCreateProducts(userId, requestedCount = 1) {
   try {
-    const sub = await SellerSubscription.findOne({ seller: userId }).select('status').lean();
-    if (!sub || sub.status !== 'trial') {
-      return { allowed: true, current: 0, max: null, remaining: null };
-    }
-
-    const current = await Product.countDocuments({ seller: userId });
-    const remaining = Math.max(0, TRIAL_PRODUCT_LIMIT - current);
-    return {
-      allowed: requestedCount <= remaining,
-      current,
-      max: TRIAL_PRODUCT_LIMIT,
-      remaining,
-      reason: requestedCount <= remaining ? null : 'trial_limit_reached',
-    };
+    return getSellerProductCreationQuota(userId, { requestedCount });
   } catch (e) {
     console.error('sellerCanCreateProducts error:', e);
-    return { allowed: false, current: 0, max: TRIAL_PRODUCT_LIMIT, remaining: 0, reason: 'error' };
+    return { allowed: false, current: 0, max: 15, remaining: 0, reason: 'error' };
   }
 }
 
 async function sellerCanFeatureProduct(userId, excludeProductId = null) {
   try {
-    const sub = await SellerSubscription.findOne({ seller: userId }).lean();
-    let plan = 'free_trial';
-    let entitled = false;
-
-    if (!sub) {
-      entitled = true;
-    } else if (sub.status === 'trial') {
-      plan = 'free_trial';
-      entitled = true;
-    } else if (sub.plan === 'elite' && ['active', 'free_period'].includes(sub.status)) {
-      plan = 'elite';
-      entitled = true;
-    } else if (['active', 'free_period'].includes(sub.status)) {
-      plan = sub.plan || 'starter';
-      entitled = true;
-    } else if (sub.bonusFeaturesActive && (!sub.bonusExpiryDate || new Date() < sub.bonusExpiryDate)) {
-      plan = sub.plan || 'starter';
-      entitled = true;
-    } else {
-      plan = sub.plan || 'free_trial';
-    }
-
-    if (!entitled) return { allowed: false, current: 0, max: 0, plan, reason: 'not_entitled' };
-
-    const max = FEATURED_LIMITS[plan] || FEATURED_LIMITS.free_trial;
-    const query = { seller: userId, isFeatured: true };
-    const safeExcludeId = toId(excludeProductId);
-    if (safeExcludeId) query._id = { $ne: safeExcludeId };
-    const current = await Product.countDocuments(query);
-
-    if (current >= max) return { allowed: false, current, max, plan, reason: 'limit_reached' };
-    return { allowed: true, current, max, plan };
+    return getSellerFeaturedProductQuota(userId, {
+      excludeProductId: toId(excludeProductId),
+    });
   } catch (e) {
     console.error('sellerCanFeatureProduct error:', e);
     return { allowed: false, current: 0, max: 0, plan: 'free_trial', reason: 'error' };
@@ -610,7 +722,7 @@ async function getSellerAdsState(userId) {
       image: product.image || product.images?.[0]?.url || '',
       price: product.price,
       discountedPrice: product.discountedPrice,
-      currency: getProductCurrency(product),
+      currency: requireStoredProductCurrency(product, 'USD'),
     })),
     activeRequest: serializeAdRequest(activeRequest),
     pendingRequests: pendingRequests.map(serializeAdRequest),
@@ -718,7 +830,7 @@ function formatProductCandidate(product) {
     name: product.name,
     brand: product.brand,
     price: product.price,
-    currency: getProductCurrency(product),
+    currency: requireStoredProductCurrency(product, 'USD'),
     priceCurrency: product.priceCurrency,
     stock: product.stock,
     category: product.category,
@@ -733,7 +845,7 @@ async function attachAIComparablePrices(products = [], targetCurrency = 'USD') {
   const currency = normalizeCurrency(targetCurrency);
   return Promise.all((products || []).map(async product => ({
     ...product,
-    _comparablePrice: await convertAmount(getProductEffectivePrice(product), getProductCurrency(product), currency),
+    _comparablePrice: await convertAmount(requireStoredProductEffectivePrice(product), requireStoredProductCurrency(product, 'USD'), currency),
   })));
 }
 
@@ -742,8 +854,8 @@ function sortAIProductsByPrice(products = [], sortBy = '', targetCurrency = 'USD
   const direction = sortBy === 'price_low' ? 1 : -1;
   const currency = normalizeCurrency(targetCurrency);
   return products.sort((a, b) => {
-    const priceA = a._comparablePrice ?? convertAmountSync(getProductEffectivePrice(a), getProductCurrency(a), currency);
-    const priceB = b._comparablePrice ?? convertAmountSync(getProductEffectivePrice(b), getProductCurrency(b), currency);
+    const priceA = a._comparablePrice ?? convertAmountSync(requireStoredProductEffectivePrice(a), requireStoredProductCurrency(a, 'USD'), currency);
+    const priceB = b._comparablePrice ?? convertAmountSync(requireStoredProductEffectivePrice(b), requireStoredProductCurrency(b, 'USD'), currency);
     return (priceA - priceB) * direction;
   });
 }
@@ -1130,8 +1242,218 @@ function summarizeSelectionRequest(product, selection) {
 }
 
 function parseQuantity(value, fallback = 1) {
-  const n = Number.parseInt(value ?? fallback, 10);
-  return Number.isFinite(n) && n > 0 ? n : null;
+  return parsePositiveSafeInteger(value, { fallback });
+}
+
+function requireStoredAIOrderQuantity(value) {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1) {
+    const error = new Error('A stored order item has an invalid quantity.');
+    error.status = 409;
+    error.statusCode = 409;
+    error.code = 'ORDER_QUANTITY_INVALID';
+    throw error;
+  }
+  return value;
+}
+
+function requireStoredAIProductStock(value) {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+    const error = new Error('A stored product has invalid stock.');
+    error.status = 409;
+    error.statusCode = 409;
+    error.code = 'PRODUCT_STOCK_INVALID';
+    throw error;
+  }
+  return value;
+}
+
+function requireStoredAIShippingDeliveryDays(value, fallback = 5) {
+  // Pre-deliveryDays shipping rows used the checkout's historical five-day
+  // estimate. Only a truly missing/null legacy field may use that sentinel;
+  // every value that is present must already be a positive safe integer.
+  const deliveryDays = value === null || value === undefined ? fallback : value;
+  if (
+    typeof deliveryDays !== 'number'
+    || !Number.isSafeInteger(deliveryDays)
+    || deliveryDays < 1
+  ) {
+    const error = new Error('A stored shipping method has invalid delivery days.');
+    error.status = 409;
+    error.statusCode = 409;
+    error.code = 'SHIPPING_DELIVERY_DAYS_INVALID';
+    throw error;
+  }
+  return deliveryDays;
+}
+
+async function sellerNativeCurrencyMap(products = []) {
+  const sellerIds = [...new Set((products || [])
+    .map(product => normalizeObjectIdString(product?.seller))
+    .filter(Boolean))];
+  if (!sellerIds.length) return new Map();
+
+  const stores = await Store.find({ seller: { $in: sellerIds } })
+    .select('seller productCurrency')
+    .lean();
+  const currencies = new Map();
+  for (const store of stores || []) {
+    if (store.productCurrency == null || String(store.productCurrency).trim() === '') continue;
+    if (typeof store.productCurrency !== 'string' || !store.productCurrency.trim() || !isSupportedCurrency(store.productCurrency)) {
+      const error = new Error('A store has invalid product currency metadata.');
+      error.status = 409;
+      error.statusCode = 409;
+      error.code = 'PRODUCT_CURRENCY_METADATA_INVALID';
+      throw error;
+    }
+    currencies.set(
+      normalizeObjectIdString(store.seller),
+      normalizeCurrency(store.productCurrency),
+    );
+  }
+  return currencies;
+}
+
+const stableAIProductCurrency = product => requireStoredProductCurrency(product, 'USD');
+const aiProductWriteCurrency = (product, sellerCurrencies = new Map()) => normalizeCurrency(
+  sellerCurrencies.get(normalizeObjectIdString(product?.seller))
+  || requireStoredProductCurrency(product, 'USD'),
+);
+
+function requireStoredAIShippingCurrency(method, fallbackCurrency = 'USD') {
+  if (!method || typeof method !== 'object') return normalizeCurrency(fallbackCurrency);
+  const plain = method?.toObject ? method.toObject() : method;
+  const explicit = ['currency', 'costCurrency']
+    .filter(field => !(
+      typeof method.$isDefault === 'function' && method.$isDefault(field)
+    ))
+    .filter(field => Object.prototype.hasOwnProperty.call(plain, field))
+    .map(field => plain[field]);
+  if (explicit.some(value => (
+    typeof value !== 'string'
+    || !value
+    || value !== value.trim().toUpperCase()
+    || !isSupportedCurrency(value)
+  ))) {
+    const error = new Error('A stored shipping method uses an unsupported currency.');
+    error.status = 409;
+    error.statusCode = 409;
+    error.code = 'SHIPPING_CURRENCY_METADATA_INVALID';
+    throw error;
+  }
+  const currencies = [...new Set(explicit.map(normalizeCurrency))];
+  if (currencies.length > 1) {
+    const error = new Error('A stored shipping method has conflicting currency metadata.');
+    error.status = 409;
+    error.statusCode = 409;
+    error.code = 'SHIPPING_CURRENCY_METADATA_INVALID';
+    throw error;
+  }
+  if (currencies.length === 1) return currencies[0];
+  if (
+    typeof fallbackCurrency !== 'string'
+    || !fallbackCurrency
+    || fallbackCurrency !== fallbackCurrency.trim().toUpperCase()
+    || !isSupportedCurrency(fallbackCurrency)
+  ) {
+    const error = new Error('The shipping fallback currency is unsupported.');
+    error.status = 409;
+    error.statusCode = 409;
+    error.code = 'SHIPPING_CURRENCY_METADATA_INVALID';
+    throw error;
+  }
+  return normalizeCurrency(fallbackCurrency);
+}
+
+function requireStoredAIShippingMethod(method, fallbackCurrency = 'USD') {
+  const currency = requireStoredAIShippingCurrency(method, fallbackCurrency);
+  const cost = method?.cost;
+  if (
+    !['free', 'standard', 'fast'].includes(method?.type)
+    || typeof cost !== 'number'
+    || !Number.isFinite(cost)
+    || cost < 0
+  ) {
+    const error = new Error('A stored shipping method has an invalid cost.');
+    error.status = 409;
+    error.statusCode = 409;
+    error.code = 'SHIPPING_COST_INVALID';
+    throw error;
+  }
+  let normalizedCost;
+  try {
+    normalizedCost = roundMoney(cost);
+  } catch (_) {
+    normalizedCost = null;
+  }
+  if (
+    normalizedCost === null
+    || normalizedCost !== cost
+    || (method.type === 'free' ? cost !== 0 : cost <= 0)
+  ) {
+    const error = new Error('A stored shipping method has an invalid cost.');
+    error.status = 409;
+    error.statusCode = 409;
+    error.code = 'SHIPPING_COST_INVALID';
+    throw error;
+  }
+  if (method.costInputAmount != null) {
+    const inputAmount = method.costInputAmount;
+    let normalizedInputAmount = null;
+    try {
+      normalizedInputAmount = roundMoney(inputAmount);
+    } catch (_) {}
+    if (
+      typeof inputAmount !== 'number'
+      || !Number.isFinite(inputAmount)
+      || inputAmount < 0
+      || normalizedInputAmount !== inputAmount
+    ) {
+      const error = new Error('A stored shipping method has an invalid input amount.');
+      error.status = 409;
+      error.statusCode = 409;
+      error.code = 'SHIPPING_COST_INVALID';
+      throw error;
+    }
+  }
+  return { currency, cost: normalizedCost };
+}
+
+function requireStoredAITaxConfig(config) {
+  if (!config) return null;
+  const invalid = () => {
+    const error = new Error('The active tax configuration is invalid.');
+    error.status = 503;
+    error.statusCode = 503;
+    error.code = 'TAX_CONFIG_INVALID';
+    return error;
+  };
+  const type = config.type;
+  const value = config.value;
+  const currencyIsDefault = typeof config.$isDefault === 'function' && config.$isDefault('currency');
+  const hasStoredCurrency = !currencyIsDefault
+    && Object.prototype.hasOwnProperty.call(config, 'currency');
+  const rawCurrency = hasStoredCurrency ? config.currency : 'USD';
+  if (
+    !['none', 'percentage', 'fixed'].includes(type)
+    || typeof value !== 'number'
+    || !Number.isFinite(value)
+    || value < 0
+    || (type === 'none' && value !== 0)
+    || (type === 'percentage' && value > 100)
+    || typeof rawCurrency !== 'string'
+    || !rawCurrency
+    || rawCurrency !== rawCurrency.trim().toUpperCase()
+    || !isSupportedCurrency(rawCurrency)
+  ) throw invalid();
+  try {
+    if (type === 'fixed' && roundMoney(value) !== value) throw invalid();
+    if (type === 'percentage' && roundMoney(value, 6) !== value) throw invalid();
+    toMinorUnits(value, type === 'percentage' ? 6 : 2);
+  } catch (error) {
+    if (error?.code === 'TAX_CONFIG_INVALID') throw error;
+    throw invalid();
+  }
+  return { type, value, currency: normalizeCurrency(rawCurrency) };
 }
 
 function shippingMissingFields(shipping = {}) {
@@ -1217,57 +1539,45 @@ async function resolveStoreScope(args = {}, activeSellerIds = null) {
   return { ambiguous: true, matches };
 }
 
-async function notifyCodOrder(newOrder, productItems = []) {
-  try {
-    const confirmUrl = `${process.env.FRONTEND_URL || 'https://rozare.com'}/orders/confirm/${newOrder.confirmation.token}`;
-    const emailData = buyerOrderConfirmationRequestEmail(newOrder, confirmUrl);
-    await sendEmail({ to: newOrder.shippingInfo.email, ...emailData });
-    newOrder.confirmation.emailSentAt = new Date();
-    newOrder.confirmation.emailSentSuccess = true;
-    await newOrder.save();
-  } catch (emailErr) {
-    console.error('[aiActionExecutor] buyer order email failed:', emailErr.message);
-    newOrder.confirmation.emailSentAt = new Date();
-    newOrder.confirmation.emailSentSuccess = false;
-    newOrder.confirmation.emailError = emailErr.message || 'Unknown email error';
-    await newOrder.save().catch(() => null);
+async function commitAIOrderForVisibility({
+  orderId,
+  userId,
+  orderItems,
+  removeFromCart,
+  session,
+}) {
+  await commitOrderInventory(orderId, { session });
+  if (removeFromCart) {
+    await removeFulfilledOrderItemsFromCart({
+      userId,
+      orderItems,
+      fulfillmentId: orderId,
+      session,
+    });
   }
-
-  const sellerIds = [...new Set(productItems.map(p => normalizeObjectIdString(p.seller)).filter(Boolean))];
-  for (const sellerId of sellerIds) {
-    try {
-      const seller = await User.findById(sellerId).select('username email').lean();
-      if (seller?.email) {
-        const sellerEmailData = newOrderSellerEmail(newOrder, seller.username);
-        await sendEmail({ to: seller.email, ...sellerEmailData });
-      }
-      notifySeller(sellerId, 'new_order', sellerTemplates.new_order(newOrder)).catch(e =>
-        console.error('[aiActionExecutor] seller WhatsApp order notification failed:', e.message)
-      );
-    } catch (err) {
-      console.error('[aiActionExecutor] seller order notification failed:', err.message);
-    }
+  const visible = await Order.updateOne(
+    { _id: orderId, inventoryCommitted: true },
+    { $set: { awaitingPayment: false } },
+    { session },
+  );
+  if (Number(visible?.matchedCount ?? visible?.n ?? 0) !== 1) {
+    const error = new Error('The order could not be finalized after inventory was reserved.');
+    error.code = 'AI_ORDER_FINALIZATION_CONFLICT';
+    throw error;
   }
-
-  try {
-    // Buyer order confirmation is a core checkout feature — always send it when
-    // the WhatsApp gateway is connected, regardless of any seller subscription.
-    const cfg = await WhatsAppConfig.findOne({ singletonKey: configKeyFor('main') }).lean();
-    if (cfg?.status === 'connected') {
-      enqueueOrderConfirmation(newOrder).catch(err =>
-        console.error('[aiActionExecutor] WhatsApp order confirmation enqueue failed:', err.message)
-      );
-    } else {
-      await Order.updateOne({ _id: newOrder._id }, {
-        $set: {
-          'confirmation.whatsappSentAt': new Date(),
-          'confirmation.whatsappSentSuccess': false,
-          'confirmation.whatsappError': cfg ? `WhatsApp status: ${cfg.status} (not connected)` : 'WhatsApp not configured',
-        },
-      });
-    }
-  } catch (err) {
-    console.error('[aiActionExecutor] WhatsApp confirmation check failed:', err.message);
+  const order = await Order.findById(orderId).session(session);
+  if (!order) {
+    const error = new Error('The order disappeared before notification enqueue.');
+    error.code = 'AI_ORDER_NOTIFICATION_SOURCE_MISSING';
+    throw error;
+  }
+  await enqueueCodOrderBuyerConfirmationNotification(order, { session });
+  for (const sellerId of [...new Set(
+    (order.sellerSettlement || [])
+      .map(entry => normalizeObjectIdString(entry?.seller))
+      .filter(Boolean)
+  )]) {
+    await enqueueCodOrderSellerNotifications(order, sellerId, { session });
   }
 }
 
@@ -1275,7 +1585,7 @@ async function notifyCodOrder(newOrder, productItems = []) {
 //  MAIN DISPATCHER
 // ═══════════════════════════════════════════════════════════════════
 
-async function executeToolCall(toolName, args = {}, user) {
+async function executeToolCallUnprotected(toolName, args = {}, user, { propagateErrors = false } = {}) {
   const userId = user?._id || user?.id || null;
   const role = user?.role || 'guest';
 
@@ -1287,9 +1597,9 @@ async function executeToolCall(toolName, args = {}, user) {
     }
     const userMoney = (amount, sourceCurrency = 'USD') => formatMoney(amount, preferredCurrency, { sourceCurrency });
     const productMoney = (product, amount = null) => formatMoney(
-      amount == null ? getProductEffectivePrice(product) : amount,
+      amount == null ? requireStoredProductEffectivePrice(product) : amount,
       preferredCurrency,
-      { sourceCurrency: getProductCurrency(product, preferredCurrency) }
+      { sourceCurrency: requireStoredProductCurrency(product, 'USD') }
     );
 
     switch (toolName) {
@@ -1459,11 +1769,12 @@ async function executeToolCall(toolName, args = {}, user) {
           // CRITICAL: Filter order items to only show THIS seller's products + recalculate seller-specific total
           orders = orders.map(o => {
             const sellerItems = filterSellerOrderItems(o, userId, productIds);
-            const sellerTotal = sellerItems.reduce((sum, i) => sum + (i.price || 0) * (i.quantity || 1), 0);
+            const sellerMoney = sellerOrderSummaryForItems(o, userId, sellerItems);
             return {
               ...o,
               orderItems: sellerItems,
-              _sellerTotal: sellerTotal,
+              _sellerTotal: sellerMoney.total,
+              _sellerMoney: sellerMoney,
               _sellerStatus: sellerOrderStatus(o, userId),
             };
           }).filter(o => o.orderItems.length > 0);
@@ -1488,11 +1799,17 @@ async function executeToolCall(toolName, args = {}, user) {
               _id: o._id,
               orderId: o.orderId,
               status: role === 'seller' ? o._sellerStatus : o.orderStatus,
-              total: role === 'seller' ? (o._sellerTotal || 0) : (o.orderSummary?.totalAmount || 0),
+              total: requireStoredOrderMoney(
+                role === 'seller' ? o._sellerTotal : o.orderSummary?.totalAmount,
+                role === 'seller' ? 'seller order total' : 'order total',
+              ),
+              currency: getAccountingOrderCurrency(o),
+              money: role === 'seller' ? o._sellerMoney : undefined,
               buyer: role === 'seller' ? (o.user?.username || 'Guest') : undefined,
               items: (o.orderItems || []).map(i => ({
                 name: i.name || i.productId?.name,
                 price: i.price,
+                lineSubtotal: getOrderItemLineSubtotal(i),
                 quantity: i.quantity,
                 image: i.image || i.productId?.image,
               })),
@@ -1511,40 +1828,35 @@ async function executeToolCall(toolName, args = {}, user) {
         const { orderId } = args;
         if (!orderId) return { success: false, error: 'Please provide an order ID.' };
 
-        let order;
+        let order = await resolveOrderReference({ reference: String(orderId) });
         let sellerProductIds = [];
         if (role === 'seller') {
           // Sellers can view orders containing THEIR products
           const myProducts = await Product.find({ seller: userId }).select('_id').lean();
           sellerProductIds = myProducts.map(p => p._id);
-          order = await Order.findOne({
-            $and: [
-              { $or: [{ _id: toId(orderId) }, { orderId: orderId }] },
-              { awaitingPayment: { $ne: true } },
-              buildSellerOrderScope(userId, sellerProductIds),
-            ],
-          })
-            .populate('orderItems.productId', 'name image price currency priceCurrency category seller')
-            .populate('user', 'username email')
-            .lean();
+          if (
+            order?.awaitingPayment === true
+            || filterSellerOrderItems(order, userId, sellerProductIds).length === 0
+          ) order = null;
+          if (order) {
+            await order.populate('orderItems.productId', 'name image price currency priceCurrency category seller');
+            await order.populate('user', 'username email');
+            order = order.toObject();
+          }
         } else if (role === 'admin') {
           // Admins can view any order
-          order = await Order.findOne({
-            $or: [{ _id: toId(orderId) }, { orderId: orderId }],
-          })
-            .populate('orderItems.productId', 'name image price currency priceCurrency category')
-            .populate('user', 'username email')
-            .lean();
+          if (order) {
+            await order.populate('orderItems.productId', 'name image price currency priceCurrency category');
+            await order.populate('user', 'username email');
+            order = order.toObject();
+          }
         } else {
           // Users can only view their own orders
-          order = await Order.findOne({
-            $or: [
-              { _id: toId(orderId), user: userId },
-              { orderId: orderId, user: userId },
-            ],
-          })
-            .populate('orderItems.productId', 'name image price currency priceCurrency category')
-            .lean();
+          if (order && toId(order.user) !== toId(userId)) order = null;
+          if (order) {
+            await order.populate('orderItems.productId', 'name image price currency priceCurrency category');
+            order = order.toObject();
+          }
         }
 
         if (!order) return { success: false, error: 'Order not found or access denied.' };
@@ -1555,8 +1867,8 @@ async function executeToolCall(toolName, args = {}, user) {
         if (role === 'seller') {
           items = filterSellerOrderItems(order, userId, sellerProductIds);
           if (!items.length) return { success: false, error: 'Order not found or access denied.' };
-          const sellerSubtotal = items.reduce((sum, i) => sum + (i.price || 0) * (i.quantity || 1), 0);
-          summary = { subtotal: sellerSubtotal, totalAmount: sellerSubtotal, note: 'Shows only your products from this order' };
+          const sellerMoney = sellerOrderSummaryForItems(order, userId, items);
+          summary = { ...sellerMoney, note: 'Shows only your exact allocated share of this order' };
         }
 
         return {
@@ -1568,6 +1880,7 @@ async function executeToolCall(toolName, args = {}, user) {
             items: items.map(i => ({
               name: i.name || i.productId?.name,
               price: i.price,
+              lineSubtotal: getOrderItemLineSubtotal(i),
               quantity: i.quantity,
               image: i.image || i.productId?.image,
             })),
@@ -1587,29 +1900,42 @@ async function executeToolCall(toolName, args = {}, user) {
         const { orderId, reason } = args;
         if (!orderId) return { success: false, error: 'Please provide an order ID to cancel.' };
 
-        const order = await Order.findOne({
-          $or: [
-            { _id: toId(orderId), user: userId },
-            { orderId: orderId, user: userId },
-          ],
-        });
+        const order = await resolveOrderReference({ reference: String(orderId) });
 
-        if (!order) return { success: false, error: 'Order not found or access denied.' };
+        if (!order || toId(order.user) !== toId(userId)) {
+          return { success: false, error: 'Order not found or access denied.' };
+        }
         if (['delivered', 'cancelled'].includes(order.orderStatus)) {
           return { success: false, error: `Cannot cancel — order is already ${order.orderStatus}.` };
         }
 
-        const cancellationBlock = getBuyerCancellationBlock(order);
-        if (cancellationBlock) {
-          return { success: false, error: cancellationBlock.message, code: cancellationBlock.code };
+        const cancelledAt = new Date();
+        let cancellation;
+        try {
+          cancellation = await cancelOrderSafely({
+            orderId: order._id,
+            reason: reason
+              ? `Buyer cancelled through Rozare AI: ${String(reason).slice(0, 300)}`
+              : 'Buyer cancelled through Rozare AI before payment or shipment.',
+            confirmationFields: {
+              declinedAt: cancelledAt,
+              decidedAt: cancelledAt,
+              decidedVia: 'dashboard',
+              confirmedVia: order.confirmation?.confirmedVia || 'dashboard',
+            },
+            cancellationActorRole: 'buyer',
+            at: cancelledAt,
+          });
+        } catch (error) {
+          return { success: false, error: error.message, code: error.code };
         }
-
-        order.orderStatus = 'cancelled';
-        await ensureOrderSellerFulfillment(order);
-        setAllSellerFulfillmentStatus(order, 'cancelled');
-        syncAggregateDeliveryState(order);
-        if (reason) order.instructions = (order.instructions || '') + ` [Cancelled: ${reason}]`;
-        await order.save();
+        if (cancellation.status === 'payment_succeeded') {
+          return {
+            success: false,
+            code: 'PAYMENT_ALREADY_SUCCEEDED',
+            error: 'Stripe already received this payment. Waiting for secure confirmation.',
+          };
+        }
 
         return { success: true, message: `Order #${order.orderId} has been cancelled successfully.` };
       }
@@ -1805,37 +2131,116 @@ async function executeToolCall(toolName, args = {}, user) {
       case 'get_available_coupons': {
         const { storeId, productId } = args;
         const now = new Date();
+        const activeSellerIds = await getActiveSellerIds();
+        const activeSellerSet = new Set(activeSellerIds.map(normalizeObjectIdString));
+        if (!activeSellerIds.length) {
+          return { success: true, data: { coupons: [], count: 0 }, message: 'No coupons available right now.' };
+        }
+
+        let scopedSellerId = null;
+        if (storeId != null) {
+          const requestedStoreId = toId(String(storeId));
+          if (!requestedStoreId) return { success: false, error: 'Please choose a valid store.' };
+
+          if (activeSellerSet.has(requestedStoreId)) {
+            scopedSellerId = requestedStoreId;
+          } else {
+            const store = await Store.findOne(activeStoreQuery({ _id: requestedStoreId }))
+              .select('seller')
+              .lean();
+            const storeSellerId = normalizeObjectIdString(store?.seller);
+            if (!storeSellerId || !activeSellerSet.has(storeSellerId)) {
+              return { success: false, error: 'That store is not currently available.' };
+            }
+            scopedSellerId = storeSellerId;
+          }
+        }
+
+        let scopedProductId = null;
+        if (productId != null) {
+          scopedProductId = toId(String(productId));
+          if (!scopedProductId) return { success: false, error: 'Please choose a valid product.' };
+          const product = await Product.findOne(applyActiveSellerProductFilter(
+            publicProductFilter({ _id: scopedProductId }),
+            activeSellerIds,
+          )).select('_id seller').lean();
+          const productSellerId = normalizeObjectIdString(product?.seller);
+          if (!product || !productSellerId || !activeSellerSet.has(productSellerId)) {
+            return { success: false, error: 'That product is not currently available.' };
+          }
+          if (scopedSellerId && scopedSellerId !== productSellerId) {
+            return { success: false, error: 'That product does not belong to the selected store.' };
+          }
+          scopedSellerId = productSellerId;
+        }
+
         const filter = {
+          seller: scopedSellerId || { $in: activeSellerIds },
           isActive: true,
           expiryDate: { $gt: now },
           startDate: { $lte: now },
           $or: [{ maxUses: null }, { $expr: { $lt: ['$usedCount', '$maxUses'] } }],
         };
-        if (storeId) filter.seller = toId(storeId);
 
         let coupons = await Coupon.find(filter)
           .limit(20)
           .populate('seller', 'username')
           .lean();
 
-        if (productId) {
+        if (scopedProductId) {
           coupons = coupons.filter(c =>
             c.applicableTo === 'all' ||
-            (c.applicableProducts || []).some(p => p.toString() === productId)
+            (c.applicableProducts || []).some(p => normalizeObjectIdString(p) === scopedProductId)
           );
         }
+        if (userId) {
+          coupons = coupons.filter((coupon) => {
+            const userUsageCount = (coupon.usedBy || [])
+              .filter(entry => normalizeObjectIdString(entry.user) === normalizeObjectIdString(userId))
+              .reduce((total, entry) => total + Math.max(0, Number(entry.count || 0)), 0);
+            return userUsageCount < Number(coupon.maxUsesPerUser || 1);
+          });
+        }
+
+        // Coupon discovery is a financial presentation boundary. Never turn a
+        // malformed stored currency or amount into a plausible USD offer.
+        // Checkout enforces this same contract again before charging.
+        coupons = coupons.filter((coupon) => {
+          try {
+            assertStoredCouponTerms(coupon);
+            requireSupportedCheckoutCurrency(
+              coupon.currency,
+              'USD',
+              'COUPON_CURRENCY_NOT_SUPPORTED',
+              { requireCanonical: true, statusCode: 409 },
+            );
+            return true;
+          } catch (_) {
+            return false;
+          }
+        });
 
         return {
           success: true,
           data: {
             coupons: coupons.map(c => ({
+              couponId: c._id,
               code: c.code,
               type: c.discountType,
               value: c.discountValue,
+              currency: requireSupportedCheckoutCurrency(
+                c.currency,
+                'USD',
+                'COUPON_CURRENCY_NOT_SUPPORTED',
+                { requireCanonical: true, statusCode: 409 },
+              ),
               minOrder: c.minOrderAmount,
               maxDiscount: c.maxDiscountAmount,
               expires: c.expiryDate,
               seller: c.seller?.username || 'Unknown',
+              sellerId: c.seller?._id || c.seller,
+              applicableTo: c.applicableTo,
+              applicableProductIds: (c.applicableProducts || []).map(normalizeObjectIdString).filter(Boolean),
               description: c.description,
             })),
             count: coupons.length,
@@ -1868,7 +2273,7 @@ async function executeToolCall(toolName, args = {}, user) {
             description: product.description,
             price: product.price,
             discountedPrice: product.discountedPrice,
-            currency: getProductCurrency(product),
+            currency: requireStoredProductCurrency(product, 'USD'),
             priceCurrency: product.priceCurrency,
             category: product.category,
             brand: product.brand,
@@ -1914,7 +2319,7 @@ async function executeToolCall(toolName, args = {}, user) {
             imageUrl,
             caption: caption || product.name,
             price: product.discountedPrice || product.price,
-            currency: getProductCurrency(product),
+            currency: requireStoredProductCurrency(product, 'USD'),
             priceCurrency: product.priceCurrency,
             stock: product.stock,
           },
@@ -1959,8 +2364,9 @@ async function executeToolCall(toolName, args = {}, user) {
         if (!(await isProductSellerPubliclyActive(product.seller))) {
           return { success: false, error: 'Product not found.' };
         }
-        if (product.stock <= 0) return { success: false, error: `"${product.name}" is out of stock.` };
-        if (quantity > product.stock) return { success: false, error: `Only ${product.stock} unit${product.stock !== 1 ? 's' : ''} of "${product.name}" are available.` };
+        const availableStock = requireStoredAIProductStock(product.stock);
+        if (availableStock <= 0) return { success: false, error: `"${product.name}" is out of stock.` };
+        if (quantity > availableStock) return { success: false, error: `Only ${availableStock} unit${availableStock !== 1 ? 's' : ''} of "${product.name}" are available.` };
 
         const selection = validateProductSelection(product, { selectedColor, selectedOptions });
         if (!selection.ok) {
@@ -1994,11 +2400,13 @@ async function executeToolCall(toolName, args = {}, user) {
           (item.selectedOptions ? Object.keys(item.selectedOptions.toJSON?.() || item.selectedOptions).sort().map(k => `${k}:${(item.selectedOptions.toJSON?.() || item.selectedOptions)[k]}`).join('|') : '') === optKey
         );
         if (existing) {
-          const nextQty = (existing.qty || 1) + quantity;
-          if (nextQty > product.stock) {
-            return { success: false, error: `You already have ${existing.qty || 1} in your cart. Only ${product.stock} unit${product.stock !== 1 ? 's' : ''} are available.` };
+          const existingQuantity = requireStoredAIOrderQuantity(
+            existing.qty === null || existing.qty === undefined ? 1 : existing.qty,
+          );
+          if (quantity > availableStock - existingQuantity) {
+            return { success: false, error: `You already have ${existingQuantity} in your cart. Only ${availableStock} unit${availableStock !== 1 ? 's' : ''} are available.` };
           }
-          existing.qty = nextQty;
+          existing.qty = existingQuantity + quantity;
         } else {
           cart.cartItems.push({
             product: productId,
@@ -2013,7 +2421,10 @@ async function executeToolCall(toolName, args = {}, user) {
         return {
           success: true,
           data: { cartItemCount: cart.cartItems.length, totalCartPrice: cart.totalCartPrice, totalCartCurrency: cart.totalCartCurrency, productId: product._id, name: product.name, quantity },
-          message: `"${product.name}" added to cart! 🛒 Cart total: ${await userMoney(cart.totalCartPrice || 0, cart.totalCartCurrency || preferredCurrency)} (${cart.cartItems.length} item${cart.cartItems.length !== 1 ? 's' : ''})`,
+          message: `"${product.name}" added to cart! 🛒 Cart total: ${await userMoney(
+            requireStoredOrderMoney(cart.totalCartPrice, 'cart total'),
+            getAccountingOrderCurrency({ currency: cart.totalCartCurrency }),
+          )} (${cart.cartItems.length} item${cart.cartItems.length !== 1 ? 's' : ''})`,
         };
       }
 
@@ -2025,33 +2436,43 @@ async function executeToolCall(toolName, args = {}, user) {
         }
 
         const activeSellerSet = new Set((await getActiveSellerIds()).map(normalizeObjectIdString));
-        const items = await Promise.all(cart.cartItems.filter(i => (
+        const visibleCartItems = cart.cartItems.filter(i => (
           i.product
           && !isProductBlocked(i.product)
           && (!normalizeObjectIdString(i.product.seller) || activeSellerSet.has(normalizeObjectIdString(i.product.seller)))
-        )).map(async item => {
+        ));
+        const nativeItems = visibleCartItems.map(item => {
           const p = item.product;
-          const sourceCurrency = getProductCurrency(p, preferredCurrency);
-          const sourcePrice = getProductEffectivePrice(p);
-          const price = await convertAmount(sourcePrice, sourceCurrency, preferredCurrency);
+          const sourceCurrency = stableAIProductCurrency(p);
+          const sourcePrice = requireStoredProductEffectivePrice(p);
           return {
             _id: item._id,
             productId: p._id,
             name: p.name,
-            price,
-            currency: preferredCurrency,
             sourcePrice,
             sourceCurrency,
             originalPrice: p.price,
-            quantity: item.qty || 1,
+            quantity: requireStoredAIOrderQuantity(
+              item.qty === null || item.qty === undefined ? 1 : item.qty,
+            ),
             image: p.image,
             selectedColor: item.selectedColor,
             selectedOptions: plainOptions(item.selectedOptions),
-            subtotal: price * (item.qty || 1),
           };
+        });
+        const cartRateSnapshot = await getExchangeRateSnapshot();
+        const items = priceOrderItemLines({
+          items: nativeItems,
+          targetCurrency: preferredCurrency,
+          exchangeRates: cartRateSnapshot.rates,
+          exchangeRatesFallback: false,
+        }).map(item => ({
+          ...item,
+          currency: preferredCurrency,
+          subtotal: item.lineSubtotal,
         }));
 
-        const visibleCartTotal = items.reduce((sum, item) => sum + item.subtotal, 0);
+        const visibleCartTotal = sumMoney(items.map(item => item.subtotal));
         const itemSummary = [];
         for (const item of items.slice(0, 8)) {
           itemSummary.push(`${item.name} (${await userMoney(item.price, preferredCurrency)})`);
@@ -2083,7 +2504,10 @@ async function executeToolCall(toolName, args = {}, user) {
         return {
           success: true,
           data: { cartItemCount: cart.cartItems.length, totalCartPrice: cart.totalCartPrice, totalCartCurrency: cart.totalCartCurrency },
-          message: `Item removed from cart. ${cart.cartItems.length} item${cart.cartItems.length !== 1 ? 's' : ''} remaining — ${await userMoney(cart.totalCartPrice || 0, cart.totalCartCurrency || preferredCurrency)}`,
+          message: `Item removed from cart. ${cart.cartItems.length} item${cart.cartItems.length !== 1 ? 's' : ''} remaining — ${await userMoney(
+            requireStoredOrderMoney(cart.totalCartPrice, 'cart total'),
+            getAccountingOrderCurrency({ currency: cart.totalCartCurrency }),
+          )}`,
         };
       }
 
@@ -2113,6 +2537,114 @@ async function executeToolCall(toolName, args = {}, user) {
           };
         }
 
+        // AI tool loops and WhatsApp/web delivery can be retried after a lost
+        // response. Refuse unsafe order creation without a durable logical-send
+        // key, then reuse the original order whenever that key is replayed.
+        const rawChatRequestKey = String(args._chatRequestKey || '').trim();
+        if (!rawChatRequestKey) {
+          return {
+            success: false,
+            code: 'AI_ORDER_IDEMPOTENCY_REQUIRED',
+            error: 'This order could not be placed safely. Please send the confirmation again.',
+          };
+        }
+        const aiCheckoutIdempotencyKey = `ai-${crypto.createHash('sha256')
+          .update(`${userId}\0${rawChatRequestKey}`)
+          .digest('hex')}`;
+        const aiRequestFingerprint = aiOrderRequestFingerprint(args);
+
+        const orderSuccessResult = async (placedOrder, reused = false) => {
+          const orderCurrency = getAccountingOrderCurrency(placedOrder);
+          const total = requireStoredOrderMoney(placedOrder.orderSummary?.totalAmount, 'order total');
+          const itemCount = (placedOrder.orderItems || []).length;
+          const estimatedDays = placedOrder.shippingMethod?.estimatedDays || 5;
+          return {
+            success: true,
+            reused,
+            data: {
+              orderId: placedOrder.orderId,
+              total,
+              currency: orderCurrency,
+              items: itemCount,
+              paymentMethod: placedOrder.paymentMethod,
+              estimatedDelivery: `${estimatedDays} days`,
+              reused,
+            },
+            message: `Order ${reused ? 'already ' : ''}placed successfully! Order #${placedOrder.orderId} — ${await formatMoney(total, orderCurrency, { sourceCurrency: orderCurrency })} — ${itemCount} item${itemCount !== 1 ? 's' : ''} — Cash on Delivery — Est. delivery: ${estimatedDays} days`,
+          };
+        };
+
+        const existingAIOrder = await Order.findOne({
+          user: userId,
+          checkoutIdempotencyKey: aiCheckoutIdempotencyKey,
+        }).select('+checkoutRequestFingerprint');
+        if (existingAIOrder) {
+          if (
+            existingAIOrder.checkoutRequestFingerprint
+            && existingAIOrder.checkoutRequestFingerprint !== aiRequestFingerprint
+          ) {
+            return {
+              success: false,
+              code: 'IDEMPOTENCY_KEY_REUSED',
+              error: 'This chat request key was already used for different order details. Please confirm the order again.',
+            };
+          }
+          if (
+            !existingAIOrder.inventoryCommitted
+            || existingAIOrder.awaitingPayment
+            || (!productId && !existingAIOrder.cartCleanupCompletedAt)
+          ) {
+            try {
+              // Recover legacy/saved-but-uncommitted rows through the same
+              // atomic visibility boundary as a fresh AI COD checkout. Stock,
+              // authenticated-cart decrement, its fulfillment receipt, and the
+              // order cleanup marker either all commit or all roll back.
+              await runInTransaction(session => commitAIOrderForVisibility({
+                orderId: existingAIOrder._id,
+                userId,
+                orderItems: existingAIOrder.orderItems,
+                removeFromCart: !productId,
+                session,
+              }));
+              existingAIOrder.inventoryCommitted = true;
+              existingAIOrder.awaitingPayment = false;
+            } catch (inventoryError) {
+              await Order.deleteOne({ _id: existingAIOrder._id, inventoryCommitted: false });
+              return {
+                success: false,
+                code: inventoryError.code || 'ORDER_STOCK_CHANGED',
+                error: inventoryError.message,
+              };
+            }
+          }
+          return orderSuccessResult(existingAIOrder, true);
+        }
+
+        const orderExchangeRateSnapshot = await getExchangeRateSnapshot();
+        const orderRates = normalizeRates(orderExchangeRateSnapshot?.rates);
+        const hasTrustedOrderRates = Boolean(
+          orderRates
+          && orderExchangeRateSnapshot?.fallback !== true
+        );
+        // Even a same-currency non-USD checkout needs a trusted USD conversion
+        // snapshot: seller settlement, returns, reversals, and withdrawals are
+        // all USD-denominated. Without this guard the amount can be revalued at
+        // a future exchange rate instead of the rate accepted at checkout.
+        if (preferredCurrency !== 'USD' && !hasTrustedOrderRates) {
+          throw exchangeRatesUnavailableError();
+        }
+        if (!orderRates) throw exchangeRatesUnavailableError();
+        const convertForOrder = (amount, fromCurrency, toCurrency) => {
+          const from = normalizeCurrency(fromCurrency);
+          const to = normalizeCurrency(toCurrency);
+          if (orderExchangeRateSnapshot.fallback && from !== to) {
+            const error = new Error('Live exchange rates are temporarily unavailable. Please retry the order shortly.');
+            error.code = 'EXCHANGE_RATES_UNAVAILABLE';
+            throw error;
+          }
+          return convertAmountWithRates(amount, from, to, orderRates);
+        };
+
         // Get user's saved address if shipping info not provided
         let shipping = shippingInfo;
         if (!shipping || !shipping.fullName) {
@@ -2131,6 +2663,7 @@ async function executeToolCall(toolName, args = {}, user) {
               state: addr.state || '',
               postalCode: addr.postalCode || '',
               country: addr.country || 'Pakistan',
+              countryCode: addr.countryCode || '',
             };
           }
         }
@@ -2145,6 +2678,18 @@ async function executeToolCall(toolName, args = {}, user) {
             data: { missingShippingFields: missingShipping },
           };
         }
+        let shippingPhoneSnapshot;
+        try {
+          shippingPhoneSnapshot = canonicalizeShippingPhone(shipping);
+        } catch (phoneError) {
+          return {
+            success: false,
+            code: phoneError.code || 'SHIPPING_PHONE_INVALID',
+            error: phoneError.message,
+            needsShippingInfo: true,
+            data: { invalidShippingFields: ['phone'] },
+          };
+        }
 
         // Get product(s) to order
         let orderItems = [];
@@ -2156,11 +2701,12 @@ async function executeToolCall(toolName, args = {}, user) {
           if (!(await isProductSellerPubliclyActive(product.seller))) {
             return { success: false, error: 'Product not found.' };
           }
-          if (product.stock <= 0) return { success: false, error: `"${product.name}" is out of stock.` };
+          const availableStock = requireStoredAIProductStock(product.stock);
+          if (availableStock <= 0) return { success: false, error: `"${product.name}" is out of stock.` };
           productItems = [product];
           const quantity = parseQuantity(args.quantity, 1);
           if (!quantity) return { success: false, error: 'Please provide a valid quantity of at least 1.' };
-          if (quantity > product.stock) return { success: false, error: `Only ${product.stock} unit${product.stock !== 1 ? 's' : ''} of "${product.name}" are available.` };
+          if (quantity > availableStock) return { success: false, error: `Only ${availableStock} unit${availableStock !== 1 ? 's' : ''} of "${product.name}" are available.` };
 
           const selection = validateProductSelection(product, { selectedColor, selectedOptions });
           if (!selection.ok) {
@@ -2179,15 +2725,13 @@ async function executeToolCall(toolName, args = {}, user) {
             };
           }
 
-          const sourceCurrency = getProductCurrency(product, preferredCurrency);
-          const sourcePrice = getProductEffectivePrice(product);
-          const effectivePrice = await convertAmount(sourcePrice, sourceCurrency, preferredCurrency);
+          const sourceCurrency = requireStoredProductCurrency(product, 'USD');
+          const sourcePrice = requireStoredProductEffectivePrice(product);
           orderItems = [{
             productId: product._id,
             id: product._id,
             name: product.name,
             image: product.image,
-            price: effectivePrice,
             sourcePrice,
             sourceCurrency,
             quantity,
@@ -2212,18 +2756,19 @@ async function executeToolCall(toolName, args = {}, user) {
           productItems = cart.cartItems.filter(i => i.product).map(item => item.product);
           orderItems = await Promise.all(cart.cartItems.filter(i => i.product).map(async item => {
             const p = item.product;
-            const sourceCurrency = getProductCurrency(p, preferredCurrency);
-            const sourcePrice = getProductEffectivePrice(p);
-            const price = await convertAmount(sourcePrice, sourceCurrency, preferredCurrency);
+            const sourceCurrency = requireStoredProductCurrency(p, 'USD');
+            const sourcePrice = requireStoredProductEffectivePrice(p);
             return {
               productId: p._id,
               id: p._id,
               name: p.name,
               image: p.image,
-              price,
               sourcePrice,
               sourceCurrency,
-              quantity: item.qty || 1,
+              // Legacy cart rows could omit qty before the schema default was
+              // persisted. Preserve only that nullish sentinel; present
+              // corruption must reach the strict stored-quantity check below.
+              quantity: item.qty === null || item.qty === undefined ? 1 : item.qty,
               selectedColor: item.selectedColor,
               selectedOptions: item.selectedOptions,
             };
@@ -2233,9 +2778,16 @@ async function executeToolCall(toolName, args = {}, user) {
         if (orderItems.length === 0) return { success: false, error: 'No items to order.' };
         const sellerIds = [...new Set(productItems.map(p => normalizeObjectIdString(p.seller)).filter(Boolean))];
         const sellerStores = await Store.find({ seller: { $in: sellerIds }, isActive: true })
-          .select('seller storeName paymentPolicy returnPolicy')
+          .select('seller storeName paymentPolicy returnPolicy productCurrency')
           .lean();
         const sellerStoreById = new Map(sellerStores.map(store => [normalizeObjectIdString(store.seller), store]));
+        for (const item of orderItems) {
+          const product = productItems.find(
+            candidate => normalizeObjectIdString(candidate._id) === normalizeObjectIdString(item.productId),
+          );
+          const sellerId = normalizeObjectIdString(product?.seller);
+          item.sourceCurrency = requireStoredProductCurrency(product, 'USD');
+        }
         const codRestrictedStores = sellerIds
           .map(sellerId => sellerStoreById.get(sellerId))
           .filter(store => store && !storeAllowsCashOnDelivery(store));
@@ -2253,8 +2805,11 @@ async function executeToolCall(toolName, args = {}, user) {
         for (const item of orderItems) {
           const product = productItems.find(p => normalizeObjectIdString(p._id) === normalizeObjectIdString(item.productId));
           if (!product) return { success: false, error: `"${item.name}" is no longer available.` };
-          if ((item.quantity || 1) > product.stock) {
-            return { success: false, error: `Only ${product.stock} unit${product.stock !== 1 ? 's' : ''} of "${product.name}" are available.` };
+          const quantity = requireStoredAIOrderQuantity(item.quantity);
+          const availableStock = requireStoredAIProductStock(product.stock);
+          item.quantity = quantity;
+          if (quantity > availableStock) {
+            return { success: false, error: `Only ${availableStock} unit${availableStock !== 1 ? 's' : ''} of "${product.name}" are available.` };
           }
           const selection = validateProductSelection(product, {
             selectedColor: item.selectedColor,
@@ -2279,45 +2834,114 @@ async function executeToolCall(toolName, args = {}, user) {
           item.selectedOptions = selection.selectedOptions;
         }
 
-        const subtotal = orderItems.reduce((sum, i) => sum + i.price * i.quantity, 0);
+        orderItems = priceOrderItemLines({
+          items: orderItems,
+          targetCurrency: preferredCurrency,
+          exchangeRates: orderRates,
+          exchangeRatesFallback: orderExchangeRateSnapshot.fallback,
+        });
+        const subtotal = sumMoney(orderItems.map(getOrderItemLineSubtotal));
 
         // Get tax
         let tax = 0;
-        const taxConfig = await TaxConfig.findOne({ isActive: true }).lean();
+        const taxConfig = requireStoredAITaxConfig(
+          await TaxConfig.findOne({ isActive: true }).lean()
+        );
         if (taxConfig && taxConfig.type !== 'none') {
           tax = taxConfig.type === 'percentage'
-            ? subtotal * taxConfig.value / 100
-            : await convertAmount(taxConfig.value, 'USD', preferredCurrency);
+            ? percentageOfMoney(subtotal, taxConfig.value)
+            : (() => {
+              const fixedSourceTax = taxConfig.value;
+              // A true zero has no FX source. Any positive source cent still
+              // requires a trusted snapshot even when it would round to zero
+              // after conversion into the buyer's currency.
+              return fixedSourceTax > 0
+                ? convertForOrder(
+                  fixedSourceTax,
+                  taxConfig.currency,
+                  preferredCurrency
+                )
+                : 0;
+            })();
         }
 
         // Get shipping method per seller. Cart checkout can contain multiple stores.
-        const sellerShipping = [];
-        let shippingCost = 0;
+        const nativeSellerShipping = [];
         for (const sellerId of sellerIds) {
-          let method = { name: 'Standard', price: 0, estimatedDays: 5 };
+          let method = {
+            key: sellerId,
+            seller: sellerId,
+            name: 'Standard',
+            estimatedDays: 5,
+            sourceAmount: 0,
+            sourceCurrency: preferredCurrency,
+          };
           const sellerConfig = await ShippingMethod.findOne({ seller: sellerId }).lean();
-          const active = sellerConfig?.methods?.find(m => m.isActive);
+          if (sellerConfig && !Array.isArray(sellerConfig.methods)) {
+            const error = new Error('A stored shipping configuration is invalid.');
+            error.status = 409;
+            error.statusCode = 409;
+            error.code = 'SHIPPING_METHOD_INVALID';
+            throw error;
+          }
+          if ((sellerConfig?.methods || []).some(method => (
+            method?.isActive !== null
+            && method?.isActive !== undefined
+            && typeof method.isActive !== 'boolean'
+          ))) {
+            const error = new Error('A stored shipping method has an invalid active status.');
+            error.status = 409;
+            error.statusCode = 409;
+            error.code = 'SHIPPING_METHOD_INVALID';
+            throw error;
+          }
+          const active = sellerConfig?.methods?.find(method => method.isActive === true);
           if (active) {
-            const sellerAccount = active.currency || active.costCurrency
-              ? null
-              : await User.findById(sellerId).select('currency').lean();
-            const shippingCurrency = normalizeCurrency(active.currency || active.costCurrency || sellerAccount?.currency || preferredCurrency);
+            // Existing currency-less ShippingMethod rows predate native
+            // shipping metadata and stored canonical USD amounts. Any present
+            // unsupported/conflicting metadata is corrupt and must fail closed.
+            const storedShipping = requireStoredAIShippingMethod(active, 'USD');
             method = {
+              key: sellerId,
+              seller: sellerId,
               name: active.type,
-              price: await convertAmount(active.cost || 0, shippingCurrency, preferredCurrency),
-              estimatedDays: active.deliveryDays || 5,
+              sourceAmount: storedShipping.cost,
+              sourceCurrency: storedShipping.currency,
+              estimatedDays: requireStoredAIShippingDeliveryDays(active.deliveryDays),
             };
           }
-          sellerShipping.push({ seller: sellerId, shippingMethod: method });
-          shippingCost += Number(method.price || 0);
+          nativeSellerShipping.push(method);
         }
+        const allocatedSellerShipping = await allocateCheckoutAmountsBySource({
+          entries: nativeSellerShipping,
+          orderCurrency: preferredCurrency,
+          exchangeRates: orderRates,
+          exchangeRatesFallback: orderExchangeRateSnapshot.fallback,
+        });
+        const sellerShipping = allocatedSellerShipping.map(entry => ({
+          seller: entry.seller,
+          shippingMethod: {
+            name: entry.name,
+            price: entry.targetAmount,
+            estimatedDays: entry.estimatedDays,
+            sourceCost: entry.sourceAmount,
+            sourceCurrency: entry.sourceCurrency,
+          },
+        }));
+        const shippingCost = sumMoney(sellerShipping.map((entry, index) => (
+          requireAIDerivedMoney(
+            entry.shippingMethod?.price,
+            `seller shipping line ${index + 1}`,
+            { allowMissing: false },
+          )
+        )));
         const shippingMethod = sellerShipping[0]?.shippingMethod || { name: 'Standard', price: 0, estimatedDays: 5 };
         if (sellerIds[0]) shippingMethod.seller = sellerIds[0];
 
-        const subtotalRounded = Math.round(subtotal * 100) / 100;
-        const shippingCostRounded = Math.round(shippingCost * 100) / 100;
-        const taxRounded = Math.round(tax * 100) / 100;
-        const totalAmount = Math.round((subtotalRounded + shippingCostRounded + taxRounded) * 100) / 100;
+        const subtotalRounded = roundMoney(subtotal);
+        const shippingCostRounded = roundMoney(shippingCost);
+        const taxRounded = roundMoney(tax);
+        const totalAmount = sumMoney([subtotalRounded, shippingCostRounded, taxRounded]);
         const persistedOrderItems = orderItems.map(item => {
           const product = productItems.find(
             candidate => normalizeObjectIdString(candidate._id) === normalizeObjectIdString(item.productId || item.id)
@@ -2334,8 +2958,12 @@ async function executeToolCall(toolName, args = {}, user) {
             name: item.name,
             image: item.image,
             price: item.price,
+            lineSubtotal: item.lineSubtotal,
             sourcePrice: item.sourcePrice,
             sourceCurrency: item.sourceCurrency,
+            sourceLineSubtotal: item.sourceLineSubtotal,
+            priceOriginal: item.sourcePrice,
+            priceCurrency: item.sourceCurrency,
             quantity: item.quantity,
             selectedColor: item.selectedColor || null,
             selectedOptions: item.selectedOptions || undefined,
@@ -2347,17 +2975,33 @@ async function executeToolCall(toolName, args = {}, user) {
         const newOrder = new Order({
           user: userId,
           currency: preferredCurrency,
-          orderId: `ORD-${Date.now()}`,
+          // Keep even a defensively persisted partial COD attempt hidden from
+          // buyers, sellers, fulfillment, and analytics until inventory and
+          // authenticated-cart cleanup have committed together.
+          awaitingPayment: true,
+          ...(hasTrustedOrderRates ? { exchangeRateSnapshot: {
+            base: 'USD',
+            rates: orderRates,
+            capturedAt: new Date(orderExchangeRateSnapshot.capturedAt),
+            source: orderExchangeRateSnapshot.source,
+            fallback: orderExchangeRateSnapshot.fallback,
+          } } : {}),
+          checkoutIdempotencyKey: aiCheckoutIdempotencyKey,
+          checkoutRequestFingerprint: aiRequestFingerprint,
+          orderId: `ORD-${Date.now()}-${crypto.randomBytes(10).toString('hex').toUpperCase()}`,
+          orderIdVersion: 2,
           orderItems: persistedOrderItems,
           shippingInfo: {
             fullName: shipping.fullName,
             email: shipping.email,
-            phone: shipping.phone || '',
+            phone: shippingPhoneSnapshot.e164,
+            phoneE164: shippingPhoneSnapshot.e164,
             address: shipping.address,
             city: shipping.city,
             state: shipping.state || '',
             postalCode: shipping.postalCode || '',
-            country: shipping.country || 'Pakistan',
+            country: shipping.country,
+            countryCode: shippingPhoneSnapshot.countryCode,
           },
           shippingMethod,
           sellerShipping,
@@ -2387,6 +3031,14 @@ async function executeToolCall(toolName, args = {}, user) {
           paymentMethod: normalizedPaymentMethod,
         });
 
+        // Freeze the exact seller USD conservation plan before the order ever
+        // becomes visible. Later FX changes and rounding cannot alter how this
+        // mixed-currency checkout settles across sellers.
+        newOrder.sellerSettlementVersion = SELLER_SETTLEMENT_VERSION;
+        newOrder.sellerSettlement = buildOrderSellerSettlement(newOrder, {
+          requireOrderTotal: true,
+        });
+
         newOrder.confirmation = {
           ...generateConfirmationToken(),
           confirmedAt: null,
@@ -2394,47 +3046,83 @@ async function executeToolCall(toolName, args = {}, user) {
           declinedAt: null,
         };
 
-        await newOrder.save();
-
-        // Decrement stock with a final guard so concurrent orders cannot oversell.
-        const decremented = [];
-        for (const item of orderItems) {
-          const productIdToUpdate = item.productId || item.id;
-          const updated = await Product.findOneAndUpdate(
-            publicProductFilter({ _id: productIdToUpdate, stock: { $gte: item.quantity } }),
-            { $inc: { stock: -item.quantity, totalSales: item.quantity } },
-            { new: true }
-          );
-          if (!updated) {
-            for (const prior of decremented) {
-              await Product.findByIdAndUpdate(prior.productId, { $inc: { stock: prior.quantity, totalSales: -prior.quantity } });
+        try {
+          // The order insert and stock reservation are one visibility boundary.
+          // A crash or transaction abort can therefore never expose a normal
+          // COD order whose inventory was not committed.
+          await mongoose.connection.transaction(async session => {
+            await newOrder.save({ session });
+            await commitAIOrderForVisibility({
+              orderId: newOrder._id,
+              userId,
+              orderItems: persistedOrderItems,
+              removeFromCart: !productId,
+              session,
+            });
+          }, {
+            readConcern: { level: 'snapshot' },
+            writeConcern: { w: 'majority' },
+          });
+          newOrder.inventoryCommitted = true;
+          newOrder.awaitingPayment = false;
+        } catch (commitError) {
+          if (commitError?.code === 11000) {
+            const racedOrder = await Order.findOne({
+              user: userId,
+              checkoutIdempotencyKey: aiCheckoutIdempotencyKey,
+            }).select('+checkoutRequestFingerprint');
+            if (racedOrder) {
+              if (
+                racedOrder.checkoutRequestFingerprint
+                && racedOrder.checkoutRequestFingerprint !== aiRequestFingerprint
+              ) {
+                return {
+                  success: false,
+                  code: 'IDEMPOTENCY_KEY_REUSED',
+                  error: 'This chat request key was already used for different order details. Please confirm the order again.',
+                };
+              }
+              if (
+                !racedOrder.inventoryCommitted
+                || racedOrder.awaitingPayment
+                || (!productId && !racedOrder.cartCleanupCompletedAt)
+              ) {
+                try {
+                  await runInTransaction(session => commitAIOrderForVisibility({
+                    orderId: racedOrder._id,
+                    userId,
+                    orderItems: racedOrder.orderItems,
+                    removeFromCart: !productId,
+                    session,
+                  }));
+                  racedOrder.inventoryCommitted = true;
+                  racedOrder.awaitingPayment = false;
+                } catch (inventoryError) {
+                  await Order.deleteOne({ _id: racedOrder._id, inventoryCommitted: false });
+                  return {
+                    success: false,
+                    code: inventoryError.code || 'ORDER_STOCK_CHANGED',
+                    error: inventoryError.message,
+                  };
+                }
+              }
+              return orderSuccessResult(racedOrder, true);
             }
-            await Order.deleteOne({ _id: newOrder._id });
-            return { success: false, error: `"${item.name}" is no longer available in the requested quantity. Please refresh the product and try again.` };
           }
-          decremented.push({ productId: productIdToUpdate, quantity: item.quantity });
+          if (!['ORDER_STOCK_CHANGED', 'ORDER_PRODUCT_INVALID', 'ORDER_QUANTITY_INVALID'].includes(commitError?.code)) {
+            throw commitError;
+          }
+          // Defensive cleanup for deployments that temporarily run without
+          // transaction support. In a replica-set transaction the insert has
+          // already rolled back and this is a no-op.
+          await Order.deleteOne({ _id: newOrder._id, inventoryCommitted: false });
+          return {
+            success: false,
+            code: commitError.code || 'ORDER_STOCK_CHANGED',
+            error: commitError.message,
+          };
         }
-        newOrder.inventoryCommitted = true;
-        await newOrder.save();
-        await notifyCodOrder(newOrder, productItems);
-
-        // Clear cart if ordering from cart
-        if (!productId) {
-          await Cart.findOneAndUpdate({ user: userId }, { $set: { cartItems: [] } });
-        }
-
-        return {
-          success: true,
-          data: {
-            orderId: newOrder.orderId,
-            total: totalAmount,
-            currency: preferredCurrency,
-            items: orderItems.length,
-            paymentMethod: newOrder.paymentMethod,
-            estimatedDelivery: `${shippingMethod.estimatedDays} days`,
-          },
-          message: `🎉 Order placed successfully! Order #${newOrder.orderId} — ${await userMoney(totalAmount)} — ${orderItems.length} item${orderItems.length !== 1 ? 's' : ''} — ${newOrder.paymentMethod === 'cash_on_delivery' ? 'Cash on Delivery' : 'Stripe'} — Est. delivery: ${shippingMethod.estimatedDays} days`,
-        };
+        return orderSuccessResult(newOrder);
       }
 
       case 'get_verification_status': {
@@ -2461,41 +3149,166 @@ async function executeToolCall(toolName, args = {}, user) {
       }
 
       case 'validate_coupon': {
-        const { code, cartTotal } = args;
-        if (!code) return { success: false, error: 'Please provide a coupon code.' };
+        if (!userId) {
+          return { success: false, code: 'COUPON_LOGIN_REQUIRED', error: 'Log in before validating a coupon against your cart.' };
+        }
 
-        const now = new Date();
-        const coupon = await Coupon.findOne({
-          code: code.toUpperCase().trim(),
-          isActive: true,
-          expiryDate: { $gt: now },
-          startDate: { $lte: now },
+        const normalizedCode = String(args.code || '').trim().toUpperCase();
+        if (!/^[A-Z0-9_-]{3,32}$/.test(normalizedCode)) {
+          return { success: false, code: 'COUPON_CODE_INVALID', error: 'Please provide a valid coupon code.' };
+        }
+
+        const requestedSellerId = args.sellerId == null ? null : toId(String(args.sellerId));
+        const requestedProductId = args.productId == null ? null : toId(String(args.productId));
+        if (args.sellerId != null && !requestedSellerId) {
+          return { success: false, code: 'COUPON_SELLER_INVALID', error: 'Please choose a valid seller for this coupon.' };
+        }
+        if (args.productId != null && !requestedProductId) {
+          return { success: false, code: 'COUPON_PRODUCT_INVALID', error: 'Please choose a valid cart product for this coupon.' };
+        }
+
+        // The browser/LLM cartTotal is deliberately ignored. Coupon previews use
+        // the authenticated server cart and the exact same validator as checkout.
+        const cart = await Cart.findOne({ user: userId }).populate('cartItems.product').lean();
+        if (!cart?.cartItems?.length) {
+          return { success: false, code: 'CART_EMPTY', error: 'Your cart is empty. Add products before validating a coupon.' };
+        }
+
+        const activeSellerSet = new Set((await getActiveSellerIds()).map(normalizeObjectIdString));
+        const unavailableItems = cart.cartItems.filter(item => (
+          !item.product
+          || isProductBlocked(item.product)
+          || !activeSellerSet.has(normalizeObjectIdString(item.product.seller))
+        ));
+        if (unavailableItems.length) {
+          return {
+            success: false,
+            code: 'CART_ITEM_UNAVAILABLE',
+            error: 'Some items in your cart are no longer available. Refresh your cart before validating coupons.',
+          };
+        }
+
+        const nativeItems = cart.cartItems.map((item) => {
+          const product = item.product;
+          return {
+            _id: item._id,
+            productId: product._id,
+            seller: product.seller,
+            name: product.name,
+            sourcePrice: requireStoredProductEffectivePrice(product),
+            sourceCurrency: stableAIProductCurrency(product),
+            quantity: requireStoredAIOrderQuantity(
+              item.qty === null || item.qty === undefined ? 1 : item.qty,
+            ),
+            selectedColor: item.selectedColor,
+            selectedOptions: plainOptions(item.selectedOptions),
+          };
+        });
+        const cartSellerIds = [...new Set(nativeItems.map(item => normalizeObjectIdString(item.seller)).filter(Boolean))];
+        const selectedProduct = requestedProductId
+          ? nativeItems.find(item => normalizeObjectIdString(item.productId) === requestedProductId)
+          : null;
+        if (requestedProductId && !selectedProduct) {
+          return { success: false, code: 'COUPON_PRODUCT_NOT_IN_CART', error: 'The selected product is not in your current cart.' };
+        }
+        const selectedSellerId = selectedProduct
+          ? normalizeObjectIdString(selectedProduct.seller)
+          : requestedSellerId;
+        if (requestedSellerId && selectedProduct && normalizeObjectIdString(selectedProduct.seller) !== requestedSellerId) {
+          return { success: false, code: 'COUPON_CONTEXT_MISMATCH', error: 'The selected product does not belong to the selected seller.' };
+        }
+        if (selectedSellerId && !cartSellerIds.includes(selectedSellerId)) {
+          return { success: false, code: 'COUPON_SELLER_NOT_IN_CART', error: 'Your cart has no products from the selected seller.' };
+        }
+
+        const candidateCoupons = await Coupon.find({
+          code: normalizedCode,
+          seller: selectedSellerId || { $in: cartSellerIds },
         }).lean();
-
-        if (!coupon) return { success: false, error: `Coupon "${code}" is invalid or expired.` };
-        if (coupon.maxUses && coupon.usedCount >= coupon.maxUses) {
-          return { success: false, error: 'This coupon has reached its usage limit.' };
-        }
-        const couponCurrency = normalizeCurrency(coupon.currency || 'USD');
-        const cartTotalInCouponCurrency = cartTotal
-          ? await convertAmount(Number(cartTotal), preferredCurrency, couponCurrency)
-          : 0;
-        if (cartTotal && coupon.minOrderAmount > cartTotalInCouponCurrency) {
-          return { success: false, error: `Minimum order amount is ${await userMoney(coupon.minOrderAmount, couponCurrency)}.` };
+        if (!candidateCoupons.length) {
+          return { success: false, code: 'COUPON_NOT_FOUND', error: `Coupon "${normalizedCode}" is not available for your current cart.` };
         }
 
-        let discountInCouponCurrency = coupon.discountType === 'percentage'
-          ? (cartTotal ? cartTotalInCouponCurrency * coupon.discountValue / 100 : coupon.discountValue)
-          : coupon.discountValue;
-        if (coupon.maxDiscountAmount && discountInCouponCurrency > coupon.maxDiscountAmount) {
-          discountInCouponCurrency = coupon.maxDiscountAmount;
-        }
-        const discount = await convertAmount(discountInCouponCurrency, couponCurrency, preferredCurrency);
+        const rateSnapshot = await trustedSnapshotForCurrencyPairs([
+          ...nativeItems.map(item => [item.sourceCurrency, preferredCurrency]),
+          ...candidateCoupons.map(coupon => [requireSupportedCheckoutCurrency(
+            coupon.currency,
+            'USD',
+            'COUPON_CURRENCY_NOT_SUPPORTED',
+            { requireCanonical: true, statusCode: 409 },
+          ), preferredCurrency]),
+        ]);
+        const orderItems = priceOrderItemLines({
+          items: nativeItems,
+          targetCurrency: preferredCurrency,
+          exchangeRates: rateSnapshot?.rates || null,
+          exchangeRatesFallback: Boolean(rateSnapshot?.fallback),
+        });
 
+        const eligible = [];
+        const rejected = [];
+        for (const coupon of candidateCoupons) {
+          try {
+            const pricing = await validateAndPriceCoupons({
+              requestedCoupons: [{
+                couponId: coupon._id,
+                ...(requestedProductId ? { applicableProductIds: [requestedProductId] } : {}),
+              }],
+              orderItems,
+              userId,
+              orderCurrency: preferredCurrency,
+              exchangeRates: rateSnapshot?.rates || null,
+              exchangeRatesFallback: Boolean(rateSnapshot?.fallback),
+            });
+            eligible.push({ coupon, pricing });
+          } catch (error) {
+            rejected.push({ coupon, error });
+          }
+        }
+
+        if (eligible.length > 1) {
+          return {
+            success: false,
+            code: 'COUPON_AMBIGUOUS',
+            error: `More than one seller in your cart has coupon "${normalizedCode}". Choose a seller or product before validating it.`,
+          };
+        }
+        if (!eligible.length) {
+          if (candidateCoupons.length === 1 && rejected[0]?.error) {
+            return {
+              success: false,
+              code: rejected[0].error.code || 'COUPON_NOT_ELIGIBLE',
+              error: rejected[0].error.message,
+            };
+          }
+          return {
+            success: false,
+            code: 'COUPON_NOT_ELIGIBLE',
+            error: `Coupon "${normalizedCode}" is not eligible for your current cart. Choose the seller or product to check a specific coupon.`,
+          };
+        }
+
+        const { coupon, pricing } = eligible[0];
+        const applied = pricing.appliedCoupons[0];
+        const discount = applied.appliedDiscountAmount;
         return {
           success: true,
-          data: { code: coupon.code, discount, currency: preferredCurrency, type: coupon.discountType, value: coupon.discountValue, couponCurrency },
-          message: `Coupon "${coupon.code}" is valid! ${coupon.discountType === 'percentage' ? `${coupon.discountValue}% off` : `${await userMoney(coupon.discountValue, couponCurrency)} off`}`,
+          data: {
+            couponId: coupon._id,
+            code: coupon.code,
+            discount,
+            currency: preferredCurrency,
+            type: coupon.discountType,
+            value: coupon.discountValue,
+            couponCurrency: requireSupportedCheckoutCurrency(
+              coupon.currency,
+              'USD',
+              'COUPON_CURRENCY_NOT_SUPPORTED',
+              { requireCanonical: true, statusCode: 409 },
+            ),
+            applicableProductIds: applied.applicableProductIds,
+          },
+          message: `Coupon "${coupon.code}" is valid for your current cart and saves ${await userMoney(discount, preferredCurrency)}.`,
         };
       }
 
@@ -2528,6 +3341,16 @@ async function executeToolCall(toolName, args = {}, user) {
         }
 
         const p = args.product || args;
+        const invalidCurrency = [
+          p.priceCurrency,
+          p.currency,
+          p.discountedPriceCurrency,
+          p.discountedCurrency,
+          args.currency,
+        ].find(value => !isRecognizedAIPriceCurrency(value));
+        if (invalidCurrency !== undefined) {
+          return { success: false, error: 'Product currency must be USD, PKR, EUR, or GBP.' };
+        }
         const name = sanitizeProductName(cleanAIField(p.name, { maxLength: 140 }));
         const category = cleanAIField(p.category, { maxLength: 80 });
         const brand = cleanAIField(p.brand, { maxLength: 80 });
@@ -2544,31 +3367,69 @@ async function executeToolCall(toolName, args = {}, user) {
         const lastUserText = cleanString(args._lastUserText);
         const inputCurrency = resolveAIPriceCurrency({
           value: p.price,
-          requestedCurrency: p.currency || args.currency,
+          requestedCurrency: p.priceCurrency || p.currency || args.currency,
           preferredCurrency: productEntryCurrency,
           lastUserText,
+          trustRequestedCurrency: true,
         });
         const priceInput = parseMoneyInput(p.price, inputCurrency);
-        const rawPrice = priceInput.amount;
-        const stock = p.stock != null ? Number(p.stock) : 0;
+        const rawPrice = normalizeNonNegativeMoneyAmount(priceInput.amount);
+        const stock = p.stock != null ? parseNonNegativeSafeInteger(p.stock) : 0;
         const discountedCurrency = resolveAIPriceCurrency({
           value: p.discountedPrice,
-          requestedCurrency: p.discountedCurrency || p.currency || args.currency,
+          requestedCurrency: p.discountedPriceCurrency || p.discountedCurrency || p.currency || args.currency,
           preferredCurrency: productEntryCurrency,
           fallbackCurrency: inputCurrency,
           lastUserText,
+          trustRequestedCurrency: true,
         });
-        const discountInput = p.discountedPrice
+        const discountInput = p.discountedPrice !== undefined && p.discountedPrice !== null
           ? parseMoneyInput(p.discountedPrice, discountedCurrency)
           : { amount: 0, currency: inputCurrency };
-        const rawDiscountedPrice = discountInput.amount;
-        if (!Number.isFinite(rawPrice) || rawPrice < 0) return { success: false, error: 'Product price must be a non-negative number.' };
-        if (!Number.isFinite(stock) || stock < 0) return { success: false, error: 'Product stock must be a non-negative number.' };
-        if (!Number.isFinite(rawDiscountedPrice) || rawDiscountedPrice < 0) return { success: false, error: 'Discounted price must be a non-negative number.' };
-        const price = await convertAmount(rawPrice, priceInput.currency, productEntryCurrency);
-        const discountedPrice = rawDiscountedPrice > 0
-          ? await convertAmount(rawDiscountedPrice, discountInput.currency, productEntryCurrency)
+        const rawDiscountedPrice = normalizeNonNegativeMoneyAmount(discountInput.amount);
+        if (rawPrice === null) return { success: false, error: 'Product price must be a non-negative monetary amount.' };
+        if (stock === null) return { success: false, error: 'Product stock must be a non-negative safe whole number.' };
+        if (rawDiscountedPrice === null) return { success: false, error: 'Discounted price must be a non-negative monetary amount.' };
+        const conversionSnapshot = await trustedSnapshotForCurrencyPairs([
+          [priceInput.currency, productEntryCurrency],
+          ...(rawDiscountedPrice > 0 ? [[discountInput.currency, productEntryCurrency]] : []),
+        ]);
+        const convertedPrice = await convertAmountUsingTrustedRates(
+          rawPrice,
+          priceInput.currency,
+          productEntryCurrency,
+          conversionSnapshot
+        );
+        const convertedDiscountedPrice = rawDiscountedPrice > 0
+          ? await convertAmountUsingTrustedRates(
+            rawDiscountedPrice,
+            discountInput.currency,
+            productEntryCurrency,
+            conversionSnapshot
+          )
           : 0;
+        let price;
+        let discountedPrice;
+        try {
+          price = assertRepresentablePositiveProductAmount({
+            sourceAmount: rawPrice,
+            convertedAmount: convertedPrice,
+            sourceCurrency: priceInput.currency,
+            targetCurrency: productEntryCurrency,
+            productLabel: name || 'A product',
+            field: 'price',
+          });
+          discountedPrice = assertRepresentablePositiveProductAmount({
+            sourceAmount: rawDiscountedPrice,
+            convertedAmount: convertedDiscountedPrice,
+            sourceCurrency: discountInput.currency,
+            targetCurrency: productEntryCurrency,
+            productLabel: name || 'A product',
+            field: 'discountedPrice',
+          });
+        } catch (error) {
+          return { success: false, code: error.code, error: error.message };
+        }
         if (discountedPrice > 0 && discountedPrice >= price) return { success: false, error: 'Discounted price must be lower than the product price.' };
 
         const confirmDuplicate = args.confirmDuplicate === true || p.confirmDuplicate === true;
@@ -2591,7 +3452,9 @@ async function executeToolCall(toolName, args = {}, user) {
                 name: duplicate.name,
                 brand: duplicate.brand,
                 price: duplicate.price,
-                currency: getProductCurrency(duplicate, productEntryCurrency),
+                // Raw legacy products were persisted as canonical USD. The
+                // active Store currency is only the target for new writes.
+                currency: requireStoredProductCurrency(duplicate, 'USD'),
                 stock: duplicate.stock,
                 category: duplicate.category,
                 createdAt: duplicate.createdAt,
@@ -2659,10 +3522,23 @@ async function executeToolCall(toolName, args = {}, user) {
           seller: targetSellerId,
         };
         const { fields: moderationFields } = buildModerationFields(productData);
-        const product = await Product.create({
-          ...productData,
-          ...moderationFields,
-        });
+        const product = await withProductCurrencyWriteLock(
+          targetSellerId,
+          productEntryCurrency,
+          async session => {
+            if (role === 'seller') {
+              await assertSellerCanCreateProducts(targetSellerId, { session });
+              if (productData.isFeatured) {
+                await assertSellerCanFeatureProduct(targetSellerId, { session });
+              }
+            }
+            const [created] = await Product.create([{
+              ...productData,
+              ...moderationFields,
+            }], { session });
+            return created;
+          }
+        );
         if (isProductBlocked(product)) {
           await notifyProductBlocked({ sellerId: targetSellerId, product });
         }
@@ -2743,14 +3619,16 @@ async function executeToolCall(toolName, args = {}, user) {
         const results = [];
         for (let index = 0; index < productsToAdd.length; index += 1) {
           const item = productsToAdd[index];
-          const result = await executeToolCall('add_product', {
+          // The parent bulk import owns one outer receipt. Running each row
+          // through a second copy of that same slot would conflict with it.
+          const result = await executeToolCallUnprotected('add_product', {
             ...item,
             sellerId: targetSellerId,
             currency: item.currency || args.currency,
             _lastUserText: args._lastUserText,
             createdVia: 'import',
             confirmDuplicate: item.confirmDuplicate === true || args.confirmDuplicate === true,
-          }, user);
+          }, user, { propagateErrors: true });
           results.push({
             index,
             success: result.success === true,
@@ -2787,20 +3665,42 @@ async function executeToolCall(toolName, args = {}, user) {
         const productId = args.productId;
         const productName = cleanAIField(args.productName, { maxLength: 140 });
         const incomingUpdates = Object.keys(pickObject(args.updates)).length ? args.updates : args;
-        const allowedProductFields = ['name', 'description', 'price', 'discountedPrice', 'currency', 'priceCurrency', 'category', 'brand', 'stock', 'image', 'imageUrl', 'images', 'tags', 'colors', 'optionGroups', 'returnPolicy', 'isFeatured'];
+        const allowedProductFields = ['name', 'description', 'price', 'discountedPrice', 'currency', 'priceCurrency', 'discountedPriceCurrency', 'category', 'brand', 'stock', 'image', 'imageUrl', 'images', 'tags', 'colors', 'optionGroups', 'returnPolicy', 'isFeatured'];
         const updates = {};
         for (const field of allowedProductFields) {
           if (incomingUpdates[field] !== undefined) updates[field] = incomingUpdates[field];
+        }
+        const invalidCurrency = [
+          incomingUpdates.currency,
+          incomingUpdates.priceCurrency,
+          incomingUpdates.discountedPriceCurrency,
+          args.currency,
+        ].find(value => !isRecognizedAIPriceCurrency(value));
+        if (invalidCurrency !== undefined) {
+          return { success: false, error: 'Product currency must be USD, PKR, EUR, or GBP.' };
         }
         const explicitDiscountUpdate = updates.discountedPrice !== undefined;
         if (!productId && !productName) return { success: false, error: 'Please specify which product to edit (productId or productName).' };
         if (Object.keys(updates).length === 0) return { success: false, error: 'No valid product fields were provided to update.' };
         const lastUserText = cleanString(args._lastUserText);
+        const rawPriceInput = updates.price;
+        const rawDiscountedPriceInput = updates.discountedPrice;
+        const defaultCurrencyOwnerId = role === 'seller'
+          ? userId
+          : toId(args.sellerId || args.seller);
+        const defaultCurrencyState = defaultCurrencyOwnerId
+          ? await getSellerProductCurrencyState(defaultCurrencyOwnerId)
+          : null;
+        const defaultProductCurrency = defaultCurrencyState?.hasStore
+          ? defaultCurrencyState.activeCurrency
+          : preferredCurrency;
         const inputCurrency = resolveAIPriceCurrency({
           value: updates.price ?? updates.discountedPrice,
           requestedCurrency: args.currency || incomingUpdates.currency,
-          preferredCurrency,
+          preferredCurrency: defaultProductCurrency,
+          fallbackCurrency: defaultProductCurrency,
           lastUserText,
+          trustRequestedCurrency: true,
         });
         for (const textField of ['name', 'category', 'brand']) {
           if (updates[textField] !== undefined) {
@@ -2825,18 +3725,19 @@ async function executeToolCall(toolName, args = {}, user) {
                 preferredCurrency: inputCurrency,
                 fallbackCurrency: inputCurrency,
                 lastUserText,
+                trustRequestedCurrency: true,
               })
               : inputCurrency;
             const parsedMoney = ['price', 'discountedPrice'].includes(numericField)
               ? parseMoneyInput(updates[numericField], fieldCurrency)
               : null;
-            const numericValue = parsedMoney ? parsedMoney.amount : Number(updates[numericField]);
-            if (!Number.isFinite(numericValue) || numericValue < 0) {
-              return { success: false, error: `${numericField} must be a non-negative number.` };
+            const numericValue = parsedMoney
+              ? normalizeNonNegativeMoneyAmount(parsedMoney.amount)
+              : parseNonNegativeSafeInteger(updates[numericField]);
+            if (numericValue === null) {
+              return { success: false, error: `${numericField} must be a non-negative ${numericField === 'stock' ? 'whole ' : ''}number.` };
             }
-            updates[numericField] = ['price', 'discountedPrice'].includes(numericField)
-              ? roundMoney(numericValue)
-              : numericValue;
+            updates[numericField] = numericValue;
             if (numericField === 'price') {
               updates.priceCurrency = parsedMoney.currency;
               updates.currency = parsedMoney.currency;
@@ -2933,21 +3834,92 @@ async function executeToolCall(toolName, args = {}, user) {
           .sort({ updatedAt: -1, createdAt: -1 })
           .lean();
         if (!existingForModeration) return { success: false, error: 'Product not found or you don\'t own it.' };
-        const existingCurrency = getProductCurrency(existingForModeration, preferredCurrency);
-        const nextCurrency = normalizeCurrency(updates.currency || updates.priceCurrency || existingCurrency);
+        const ownerCurrencyState = existingForModeration.seller
+          ? await getSellerProductCurrencyState(existingForModeration.seller)
+          : null;
+        // Raw currency-less legacy Product.price is canonical USD. The Store
+        // currency is the write target, not the source interpretation.
+        const existingCurrency = requireStoredProductCurrency(existingForModeration, 'USD');
+        const nextCurrency = ownerCurrencyState?.hasStore
+          ? ownerCurrencyState.activeCurrency
+          : existingCurrency;
+        // Re-resolve plain numeric inputs against the actual product owner's
+        // active store currency. This also covers an admin editing a product by
+        // id without supplying sellerId, which cannot be known before lookup.
+        if (updates.price !== undefined) {
+          const resolvedPriceCurrency = resolveAIPriceCurrency({
+            value: rawPriceInput,
+            requestedCurrency: incomingUpdates.priceCurrency || args.currency || incomingUpdates.currency,
+            preferredCurrency: nextCurrency,
+            fallbackCurrency: nextCurrency,
+            lastUserText,
+            trustRequestedCurrency: true,
+          });
+          updates.currency = resolvedPriceCurrency;
+          updates.priceCurrency = resolvedPriceCurrency;
+        }
+        if (updates.discountedPrice !== undefined) {
+          updates.discountedPriceCurrency = resolveAIPriceCurrency({
+            value: rawDiscountedPriceInput,
+            requestedCurrency: incomingUpdates.discountedPriceCurrency || args.currency || incomingUpdates.currency,
+            preferredCurrency: nextCurrency,
+            fallbackCurrency: nextCurrency,
+            lastUserText,
+            trustRequestedCurrency: true,
+          });
+        }
+        const requestedUpdateCurrency = updates.currency || updates.priceCurrency;
 
-        if ((updates.currency !== undefined || updates.priceCurrency !== undefined) && updates.price === undefined) {
-          updates.price = await convertAmount(existingForModeration.price, existingCurrency, nextCurrency);
-          updates.priceInputAmount = updates.price;
-          if (existingForModeration.discountedPrice > 0 && updates.discountedPrice === undefined) {
-            updates.discountedPrice = await convertAmount(existingForModeration.discountedPrice, existingCurrency, nextCurrency);
-            updates.discountedPriceInputAmount = updates.discountedPrice;
-          }
+        if (
+          updates.price === undefined
+          && (
+            existingCurrency !== nextCurrency
+            || (requestedUpdateCurrency && normalizeCurrency(requestedUpdateCurrency) !== nextCurrency)
+          )
+        ) {
+          return {
+            success: false,
+            error: `This store saves products in ${nextCurrency}. Include a price to convert, or use Product Currency settings to change every listing safely.`,
+          };
         }
 
+        const priceSourceCurrency = normalizeCurrency(updates.priceCurrency || updates.currency || nextCurrency);
+        const discountSourceCurrency = normalizeCurrency(
+          updates.discountedPriceCurrency || updates.currency || nextCurrency
+        );
+        const existingDiscountCurrency = requireStoredProductDiscountCurrency(
+          existingForModeration,
+          existingCurrency,
+        );
+        const sourcePriceAmount = updates.price;
+        const sourceDiscountAmount = updates.discountedPrice;
+        const conversionSnapshot = await trustedSnapshotForCurrencyPairs([
+          ...(updates.price !== undefined ? [[priceSourceCurrency, nextCurrency]] : []),
+          ...(updates.discountedPrice !== undefined
+            ? [[discountSourceCurrency, nextCurrency]]
+            : updates.price !== undefined && existingForModeration.discountedPrice > 0
+              ? [[existingDiscountCurrency, nextCurrency]]
+              : []),
+        ]);
         if (updates.price !== undefined) {
-          const sourceCurrency = normalizeCurrency(updates.priceCurrency || updates.currency || nextCurrency);
-          updates.price = await convertAmount(updates.price, sourceCurrency, nextCurrency);
+          const convertedPrice = await convertAmountUsingTrustedRates(
+            updates.price,
+            priceSourceCurrency,
+            nextCurrency,
+            conversionSnapshot
+          );
+          try {
+            updates.price = assertRepresentablePositiveProductAmount({
+              sourceAmount: sourcePriceAmount,
+              convertedAmount: convertedPrice,
+              sourceCurrency: priceSourceCurrency,
+              targetCurrency: nextCurrency,
+              productLabel: existingForModeration.name || 'A product',
+              field: 'price',
+            });
+          } catch (error) {
+            return { success: false, code: error.code, error: error.message };
+          }
           updates.currency = nextCurrency;
           updates.priceCurrency = nextCurrency;
           updates.priceInputAmount = updates.price;
@@ -2955,20 +3927,59 @@ async function executeToolCall(toolName, args = {}, user) {
         }
 
         if (updates.discountedPrice !== undefined) {
-          const sourceCurrency = normalizeCurrency(updates.discountedPriceCurrency || updates.currency || nextCurrency);
-          updates.discountedPrice = updates.discountedPrice > 0
-            ? await convertAmount(updates.discountedPrice, sourceCurrency, nextCurrency)
+          const convertedDiscount = updates.discountedPrice > 0
+            ? await convertAmountUsingTrustedRates(
+              updates.discountedPrice,
+              discountSourceCurrency,
+              nextCurrency,
+              conversionSnapshot
+            )
             : 0;
+          try {
+            updates.discountedPrice = assertRepresentablePositiveProductAmount({
+              sourceAmount: sourceDiscountAmount,
+              convertedAmount: convertedDiscount,
+              sourceCurrency: discountSourceCurrency,
+              targetCurrency: nextCurrency,
+              productLabel: existingForModeration.name || 'A product',
+              field: 'discountedPrice',
+            });
+          } catch (error) {
+            return { success: false, code: error.code, error: error.message };
+          }
           updates.discountedPriceCurrency = nextCurrency;
           updates.discountedPriceInputAmount = updates.discountedPrice;
           updates.priceVersion = 2;
         } else if (updates.price !== undefined && existingForModeration.discountedPrice > 0) {
-          const existingDiscount = await convertAmount(existingForModeration.discountedPrice, existingCurrency, nextCurrency);
+          const convertedExistingDiscount = await convertAmountUsingTrustedRates(
+            existingForModeration.discountedPrice,
+            existingDiscountCurrency,
+            nextCurrency,
+            conversionSnapshot
+          );
+          let existingDiscount;
+          try {
+            existingDiscount = assertRepresentablePositiveProductAmount({
+              sourceAmount: existingForModeration.discountedPrice,
+              convertedAmount: convertedExistingDiscount,
+              sourceCurrency: existingDiscountCurrency,
+              targetCurrency: nextCurrency,
+              productLabel: existingForModeration.name || 'A product',
+              field: 'discountedPrice',
+            });
+          } catch (error) {
+            return { success: false, code: error.code, error: error.message };
+          }
           if (existingDiscount >= updates.price) {
             updates.discountedPrice = 0;
             updates.discountedPriceCurrency = nextCurrency;
             updates.discountedPriceInputAmount = 0;
+          } else {
+            updates.discountedPrice = existingDiscount;
+            updates.discountedPriceCurrency = nextCurrency;
+            updates.discountedPriceInputAmount = existingDiscount;
           }
+          updates.priceVersion = 2;
         }
 
         const finalPrice = updates.price !== undefined ? updates.price : existingForModeration.price;
@@ -2977,21 +3988,61 @@ async function executeToolCall(toolName, args = {}, user) {
           updates.discountedPrice = 0;
           updates.discountedPriceInputAmount = 0;
         }
+        if (
+          Object.prototype.hasOwnProperty.call(updates, 'discountedPrice')
+          && !Object.prototype.hasOwnProperty.call(updates, 'price')
+        ) {
+          // Keep the optimistic atomic write and include the already validated
+          // final sibling value so the Product query validator can prove the
+          // positive discount invariant in the same database operation.
+          updates.price = finalPrice;
+        }
 
         const wasBlocked = isProductBlocked(existingForModeration);
         const { fields: moderationFields } = buildModerationFields({
           ...existingForModeration,
           ...updates,
+        }, {
+          previouslyBlocked: wasBlocked,
         });
         Object.assign(updates, moderationFields);
 
-        const product = await Product.findOneAndUpdate(
-          filter,
-          { $set: updates },
-          { new: true, runValidators: true, sort: { updatedAt: -1, createdAt: -1 } }
-        ).select('name price discountedPrice currency priceCurrency priceInputAmount discountedPriceCurrency discountedPriceInputAmount stock category brand image images tags colors optionGroups returnPolicy isFeatured seller isBlocked blockedReason moderationStatus moderationReason').lean();
+        const updateProduct = async session => {
+          if (
+            role === 'seller'
+            && updates.isFeatured === true
+            && existingForModeration.isFeatured !== true
+          ) {
+            await assertSellerCanFeatureProduct(userId, {
+              excludeProductId: existingForModeration._id,
+              session,
+            });
+          }
+          return Product.findOneAndUpdate(
+            {
+              ...filter,
+              ...(existingForModeration.updatedAt ? { updatedAt: existingForModeration.updatedAt } : {}),
+            },
+            { $set: updates },
+            {
+              new: true,
+              runValidators: true,
+              sort: { updatedAt: -1, createdAt: -1 },
+              ...(session ? { session } : {}),
+            }
+          ).select('name price discountedPrice currency priceCurrency priceInputAmount discountedPriceCurrency discountedPriceInputAmount stock category brand image images tags colors optionGroups returnPolicy isFeatured seller isBlocked blockedReason moderationStatus moderationReason').lean();
+        };
+        const product = existingForModeration.seller && ownerCurrencyState?.hasStore
+          ? await withProductCurrencyWriteLock(existingForModeration.seller, nextCurrency, updateProduct)
+          : await updateProduct(null);
 
-        if (!product) return { success: false, error: 'Product not found or you don\'t own it.' };
+        if (!product) {
+          return {
+            success: false,
+            code: 'PRODUCT_UPDATE_CONFLICT',
+            error: 'This product changed while your edit was being prepared. Refresh it and try again.',
+          };
+        }
         if (isProductBlocked(product) && !wasBlocked) {
           notifyProductBlocked({ sellerId: product.seller, product }).catch(err =>
             console.error('[aiActionExecutor] product blocked notification failed:', err.message)
@@ -3094,11 +4145,26 @@ async function executeToolCall(toolName, args = {}, user) {
 
         const filter = productLookupBaseFilter(role, userId, args);
         filter._id = product._id;
-        const updated = await Product.findOneAndUpdate(
-          filter,
-          { $set: { isFeatured: featured } },
-          { new: true, runValidators: true }
-        ).select('name brand price currency priceCurrency stock category isFeatured createdAt').lean();
+        const updateFeatured = async session => {
+          if (featured && role === 'seller' && !product.isFeatured) {
+            await assertSellerCanFeatureProduct(userId, {
+              excludeProductId: product._id,
+              session,
+            });
+          }
+          return Product.findOneAndUpdate(
+            filter,
+            { $set: { isFeatured: featured } },
+            { new: true, runValidators: true, ...(session ? { session } : {}) }
+          ).select('name brand price currency priceCurrency stock category isFeatured createdAt').lean();
+        };
+        const updated = role === 'seller'
+          ? await withProductCurrencyWriteLock(
+            userId,
+            (await getSellerProductCurrencyState(userId)).activeCurrency,
+            updateFeatured,
+          )
+          : await updateFeatured(null);
 
         if (!updated) return { success: false, error: 'Product not found or you don\'t own it.' };
         return {
@@ -3143,100 +4209,339 @@ async function executeToolCall(toolName, args = {}, user) {
         if (!userId) return { success: false, error: 'Authentication required.' };
         const { productIds, category: cat } = args;
         const discountType = args.discountType || (args.discountPercent != null ? 'percentage' : 'percentage');
-        const discountValue = args.discountValue != null ? Number(args.discountValue) : Number(args.discountPercent);
-        if (!Number.isFinite(discountValue) || discountValue <= 0) return { success: false, error: 'Please specify a positive discount value.' };
+        const rawBulkDiscount = args.discountValue != null ? args.discountValue : args.discountPercent;
+        const parsedBulkDiscount = parseStrictFiniteNumber(rawBulkDiscount);
+        const discountValue = discountType === 'fixed'
+          ? normalizeNonNegativeMoneyAmount(parsedBulkDiscount)
+          : parsedBulkDiscount;
+        if (discountValue === null || discountValue <= 0) return { success: false, error: 'Please specify a positive discount value.' };
         if (!['percentage', 'fixed'].includes(discountType)) return { success: false, error: 'Discount type must be percentage or fixed.' };
-        if (discountType === 'percentage' && discountValue > 100) return { success: false, error: 'Percentage discounts cannot exceed 100%.' };
-        const inputCurrency = normalizeCurrency(args.currency || preferredCurrency);
-
+        if (discountType === 'percentage' && discountValue >= 100) return { success: false, error: 'Percentage product discounts must be below 100%.' };
+        if (discountType === 'fixed' && !isRecognizedAIPriceCurrency(args.currency)) {
+          return { success: false, error: 'Currency must be USD, PKR, EUR, or GBP.' };
+        }
+        const mutationReceipt = aiActionMutationReceipt('bulk_discount', args, userId);
         const filter = role === 'admin' ? {} : { seller: userId };
         if (productIds?.length) filter._id = { $in: productIds.map(toId).filter(Boolean) };
         else if (cat) filter.category = { $regex: cat, $options: 'i' };
 
-        const products = await Product.find(filter).select('price currency priceCurrency').lean();
+        const products = await Product.find(filter).select('price currency priceCurrency seller updatedAt').lean();
         if (!products.length) return { success: false, error: 'No matching products found.' };
+        const sellerCurrencyState = role === 'seller'
+          ? await getSellerProductCurrencyState(userId)
+          : null;
+        const bulkSellerCurrencies = sellerCurrencyState?.hasStore
+          ? new Map([[normalizeObjectIdString(userId), sellerCurrencyState.activeCurrency]])
+          : await sellerNativeCurrencyMap(products);
+        const productCurrencyForBulk = product => aiProductWriteCurrency(product, bulkSellerCurrencies);
+        const defaultBulkCurrency = sellerCurrencyState?.hasStore
+          ? sellerCurrencyState.activeCurrency
+          : preferredCurrency;
+        const inputCurrency = resolveAIPriceCurrency({
+          value: rawBulkDiscount,
+          requestedCurrency: args.currency,
+          preferredCurrency: defaultBulkCurrency,
+          fallbackCurrency: defaultBulkCurrency,
+          lastUserText: args._lastUserText,
+          trustRequestedCurrency: true,
+        });
+        const sourceCurrencyForProduct = product => resolveAIPriceCurrency({
+          value: rawBulkDiscount,
+          requestedCurrency: args.currency,
+          preferredCurrency: sellerCurrencyState?.hasStore
+            ? sellerCurrencyState.activeCurrency
+            : productCurrencyForBulk(product),
+          fallbackCurrency: sellerCurrencyState?.hasStore
+            ? sellerCurrencyState.activeCurrency
+            : productCurrencyForBulk(product),
+          lastUserText: args._lastUserText,
+          trustRequestedCurrency: true,
+        });
+        const conversionSnapshot = await trustedSnapshotForCurrencyPairs(products.flatMap(product => {
+          const targetCurrency = productCurrencyForBulk(product);
+          return [
+            [requireStoredProductCurrency(product, 'USD'), targetCurrency],
+            ...(discountType === 'fixed'
+              ? [[sourceCurrencyForProduct(product), targetCurrency]]
+              : []),
+          ];
+        }));
 
-        const bulkOps = await Promise.all(products.map(async p => {
-          const productCurrency = getProductCurrency(p, inputCurrency);
-          const fixedDiscount = discountType === 'fixed'
-            ? await convertAmount(discountValue, inputCurrency, productCurrency)
-            : 0;
-          const discountedPrice = discountType === 'percentage'
-            ? Math.round(p.price * (1 - discountValue / 100) * 100) / 100
-            : Math.max(0, Math.round((p.price - fixedDiscount) * 100) / 100);
-          return {
-            updateOne: {
-              filter: { _id: p._id },
-              update: {
-                $set: {
-                  discountedPrice,
-                  discountedPriceCurrency: productCurrency,
-                  discountedPriceInputAmount: discountedPrice,
-                  priceVersion: 2,
+        let bulkOps;
+        try {
+          bulkOps = await Promise.all(products.map(async p => {
+            const productCurrency = productCurrencyForBulk(p);
+            const existingCurrency = requireStoredProductCurrency(p, 'USD');
+            const normalizedBasePrice = await convertAmountUsingTrustedRates(
+              p.price,
+              existingCurrency,
+              productCurrency,
+              conversionSnapshot
+            );
+            const basePrice = assertRepresentablePositiveProductAmount({
+              sourceAmount: p.price,
+              convertedAmount: normalizedBasePrice,
+              sourceCurrency: existingCurrency,
+              targetCurrency: productCurrency,
+              productLabel: p.name || `Product ${p._id}`,
+              field: 'price',
+            });
+            const fixedDiscount = discountType === 'fixed'
+              ? assertRepresentableProductAdjustment({
+                sourceAmount: discountValue,
+                convertedAmount: await convertAmountUsingTrustedRates(
+                  discountValue,
+                  sourceCurrencyForProduct(p),
+                  productCurrency,
+                  conversionSnapshot
+                ),
+                sourceCurrency: sourceCurrencyForProduct(p),
+                targetCurrency: productCurrency,
+                productLabel: p.name || `Product ${p._id}`,
+              })
+              : 0;
+            const candidateDiscountedPrice = discountType === 'percentage'
+              ? roundMoney(basePrice - percentageOfMoney(basePrice, discountValue))
+              : Math.max(0, roundMoney(basePrice - fixedDiscount));
+            const discountedPrice = assertEffectiveProductDiscount({
+              regularPrice: basePrice,
+              discountedPrice: candidateDiscountedPrice,
+              productLabel: p.name || `Product ${p._id}`,
+            });
+            return {
+              updateOne: {
+                filter: {
+                  _id: p._id,
+                  ...(role === 'seller' ? { seller: userId } : {}),
+                  ...(p.updatedAt ? { updatedAt: p.updatedAt } : {}),
+                },
+                update: {
+                  $set: {
+                    price: basePrice,
+                    currency: productCurrency,
+                    priceCurrency: productCurrency,
+                    priceInputAmount: basePrice,
+                    discountedPrice,
+                    discountedPriceCurrency: productCurrency,
+                    discountedPriceInputAmount: discountedPrice,
+                    priceVersion: 2,
+                  },
                 },
               },
-            },
-          };
-        }));
-        await Product.bulkWrite(bulkOps);
-
-        return {
+            };
+          }));
+        } catch (error) {
+          if (String(error?.code || '').startsWith('PRODUCT_')) {
+            return { success: false, code: error.code, error: error.message };
+          }
+          throw error;
+        }
+        const actionResult = {
           success: true,
           message: `Applied ${discountType === 'percentage' ? `${discountValue}%` : await formatMoney(discountValue, inputCurrency, { sourceCurrency: inputCurrency })} discount to ${products.length} product${products.length !== 1 ? 's' : ''}!`,
         };
+        const writeResult = await writeAIProductUpdatesAtomically(bulkOps, {
+          sellerId: role === 'seller' ? userId : null,
+          expectedCurrency: sellerCurrencyState?.activeCurrency,
+          receipt: mutationReceipt ? { ...mutationReceipt, result: actionResult } : null,
+        });
+
+        return writeResult?.actionResult || actionResult;
       }
 
       case 'bulk_price_update': {
         if (!userId) return { success: false, error: 'Authentication required.' };
         const { productIds, category: cat } = args;
         const updateType = args.updateType || (args.isPercent ? 'percentage' : 'fixed');
-        const value = args.value != null ? Number(args.value) : Number(args.priceChange);
-        if (!Number.isFinite(value)) return { success: false, error: 'Please specify a valid price update value.' };
+        const rawBulkValue = args.value != null ? args.value : args.priceChange;
+        const parsedBulkValue = parseStrictFiniteNumber(rawBulkValue);
+        const value = updateType === 'percentage'
+          ? parsedBulkValue
+          : normalizeMoneyAmount(parsedBulkValue, { nonNegative: updateType === 'set' });
+        if (value === null) return { success: false, error: 'Please specify a valid price update value.' };
         if (!['percentage', 'fixed', 'set'].includes(updateType)) return { success: false, error: 'Price update type must be percentage, fixed, or set.' };
-        const inputCurrency = normalizeCurrency(args.currency || preferredCurrency);
-
+        if (updateType === 'percentage') {
+          try {
+            applyProductPricePercentage(0, value);
+          } catch (error) {
+            return { success: false, code: error.code, error: error.message };
+          }
+        }
+        if (updateType !== 'percentage' && !isRecognizedAIPriceCurrency(args.currency)) {
+          return { success: false, error: 'Currency must be USD, PKR, EUR, or GBP.' };
+        }
+        const mutationReceipt = aiActionMutationReceipt('bulk_price_update', args, userId, {
+          required: updateType === 'fixed' || updateType === 'percentage',
+        });
         const filter = role === 'admin' ? {} : { seller: userId };
         if (productIds?.length) filter._id = { $in: productIds.map(toId).filter(Boolean) };
         else if (cat) filter.category = { $regex: cat, $options: 'i' };
 
-        const products = await Product.find(filter).select('price discountedPrice currency priceCurrency').lean();
+        const products = await Product.find(filter)
+          .select('price discountedPrice currency priceCurrency discountedPriceCurrency seller updatedAt')
+          .lean();
         if (!products.length) return { success: false, error: 'No matching products found.' };
-
-        const bulkOps = await Promise.all(products.map(async p => {
-          const productCurrency = getProductCurrency(p, inputCurrency);
-          const convertedValue = updateType === 'percentage'
-            ? value
-            : await convertAmount(value, inputCurrency, productCurrency);
-          let newPrice;
-          if (updateType === 'set') newPrice = convertedValue;
-          else if (updateType === 'percentage') newPrice = p.price + (p.price * value / 100);
-          else newPrice = p.price + convertedValue;
-          newPrice = Math.max(0, Math.round(newPrice * 100) / 100);
-          const update = {
-            price: newPrice,
-            currency: productCurrency,
-            priceCurrency: productCurrency,
-            priceInputAmount: newPrice,
-            priceVersion: 2,
-          };
-          if (p.discountedPrice > 0 && p.discountedPrice >= newPrice) {
-            update.discountedPrice = 0;
-            update.discountedPriceInputAmount = 0;
-            update.discountedPriceCurrency = productCurrency;
-          }
-          return {
-            updateOne: {
-              filter: { _id: p._id },
-              update: { $set: update },
-            },
-          };
+        const sellerCurrencyState = role === 'seller'
+          ? await getSellerProductCurrencyState(userId)
+          : null;
+        const bulkSellerCurrencies = sellerCurrencyState?.hasStore
+          ? new Map([[normalizeObjectIdString(userId), sellerCurrencyState.activeCurrency]])
+          : await sellerNativeCurrencyMap(products);
+        const productCurrencyForBulk = product => aiProductWriteCurrency(product, bulkSellerCurrencies);
+        const defaultBulkCurrency = sellerCurrencyState?.hasStore
+          ? sellerCurrencyState.activeCurrency
+          : preferredCurrency;
+        const inputCurrency = resolveAIPriceCurrency({
+          value: rawBulkValue,
+          requestedCurrency: args.currency,
+          preferredCurrency: defaultBulkCurrency,
+          fallbackCurrency: defaultBulkCurrency,
+          lastUserText: args._lastUserText,
+          trustRequestedCurrency: true,
+        });
+        const sourceCurrencyForProduct = product => resolveAIPriceCurrency({
+          value: rawBulkValue,
+          requestedCurrency: args.currency,
+          preferredCurrency: sellerCurrencyState?.hasStore
+            ? sellerCurrencyState.activeCurrency
+            : productCurrencyForBulk(product),
+          fallbackCurrency: sellerCurrencyState?.hasStore
+            ? sellerCurrencyState.activeCurrency
+            : productCurrencyForBulk(product),
+          lastUserText: args._lastUserText,
+          trustRequestedCurrency: true,
+        });
+        const conversionSnapshot = await trustedSnapshotForCurrencyPairs(products.flatMap(product => {
+          const targetCurrency = productCurrencyForBulk(product);
+          const existingCurrency = requireStoredProductCurrency(product, 'USD');
+          return [
+            [existingCurrency, targetCurrency],
+            ...(requireStoredProductDiscountPrice(product) > 0
+              ? [[requireStoredProductDiscountCurrency(product, existingCurrency), targetCurrency]]
+              : []),
+            ...(updateType !== 'percentage'
+              ? [[sourceCurrencyForProduct(product), targetCurrency]]
+              : []),
+          ];
         }));
-        await Product.bulkWrite(bulkOps);
 
-        return {
+        let bulkOps;
+        try {
+          bulkOps = await Promise.all(products.map(async p => {
+            const productCurrency = productCurrencyForBulk(p);
+            const existingCurrency = requireStoredProductCurrency(p, 'USD');
+            const normalizedBasePrice = await convertAmountUsingTrustedRates(
+              p.price,
+              existingCurrency,
+              productCurrency,
+              conversionSnapshot
+            );
+            const basePrice = assertRepresentablePositiveProductAmount({
+              sourceAmount: p.price,
+              convertedAmount: normalizedBasePrice,
+              sourceCurrency: existingCurrency,
+              targetCurrency: productCurrency,
+              productLabel: p.name || `Product ${p._id}`,
+              field: 'price',
+            });
+            const existingDiscountCurrency = requireStoredProductDiscountCurrency(p, existingCurrency);
+            const retainedDiscount = requireStoredProductDiscountPrice(p) > 0
+              ? assertRepresentablePositiveProductAmount({
+                sourceAmount: p.discountedPrice,
+                convertedAmount: await convertAmountUsingTrustedRates(
+                  p.discountedPrice,
+                  existingDiscountCurrency,
+                  productCurrency,
+                  conversionSnapshot
+                ),
+                sourceCurrency: existingDiscountCurrency,
+                targetCurrency: productCurrency,
+                productLabel: p.name || `Product ${p._id}`,
+                field: 'discountedPrice',
+              })
+              : 0;
+            const sourceValueCurrency = sourceCurrencyForProduct(p);
+            const rawConvertedValue = updateType === 'percentage'
+              ? value
+              : await convertAmountUsingTrustedRates(
+                value,
+                sourceValueCurrency,
+                productCurrency,
+                conversionSnapshot
+              );
+            const convertedValue = updateType === 'set'
+              ? assertRepresentablePositiveProductAmount({
+                sourceAmount: value,
+                convertedAmount: rawConvertedValue,
+                sourceCurrency: sourceValueCurrency,
+                targetCurrency: productCurrency,
+                productLabel: p.name || `Product ${p._id}`,
+                field: 'price',
+              })
+              : updateType === 'fixed'
+                ? assertRepresentableProductAdjustment({
+                  sourceAmount: value,
+                  convertedAmount: rawConvertedValue,
+                  sourceCurrency: sourceValueCurrency,
+                  targetCurrency: productCurrency,
+                  productLabel: p.name || `Product ${p._id}`,
+                })
+                : rawConvertedValue;
+            let newPrice;
+            if (updateType === 'set') newPrice = convertedValue;
+            else if (updateType === 'percentage') {
+              newPrice = applyProductPricePercentage(basePrice, value);
+              assertRepresentableProductAdjustment({
+                sourceAmount: value,
+                convertedAmount: newPrice - basePrice,
+                sourceCurrency: productCurrency,
+                targetCurrency: productCurrency,
+                productLabel: p.name || `Product ${p._id}`,
+              });
+            } else newPrice = basePrice + convertedValue;
+            newPrice = Math.max(0, roundMoney(newPrice));
+            const update = {
+              price: newPrice,
+              currency: productCurrency,
+              priceCurrency: productCurrency,
+              priceInputAmount: newPrice,
+              priceVersion: 2,
+              discountedPrice: retainedDiscount > 0 && retainedDiscount < newPrice
+                ? retainedDiscount
+                : 0,
+              discountedPriceInputAmount: retainedDiscount > 0 && retainedDiscount < newPrice
+                ? retainedDiscount
+                : 0,
+              discountedPriceCurrency: productCurrency,
+            };
+            return {
+              updateOne: {
+                filter: {
+                  _id: p._id,
+                  ...(role === 'seller' ? { seller: userId } : {}),
+                  ...(p.updatedAt ? { updatedAt: p.updatedAt } : {}),
+                },
+                update: { $set: update },
+              },
+            };
+          }));
+        } catch (error) {
+          if (String(error?.code || '').startsWith('PRODUCT_')) {
+            return { success: false, code: error.code, error: error.message };
+          }
+          throw error;
+        }
+        const actionResult = {
           success: true,
           message: `Updated prices for ${products.length} product${products.length !== 1 ? 's' : ''} (${updateType}: ${value}).`,
         };
+        const writeResult = await writeAIProductUpdatesAtomically(bulkOps, {
+          sellerId: role === 'seller' ? userId : null,
+          expectedCurrency: sellerCurrencyState?.activeCurrency,
+          receipt: mutationReceipt ? { ...mutationReceipt, result: actionResult } : null,
+        });
+
+        return writeResult?.actionResult || actionResult;
       }
 
       case 'remove_discount': {
@@ -3246,7 +4551,11 @@ async function executeToolCall(toolName, args = {}, user) {
         if (productIds?.length) filter._id = { $in: productIds.map(toId).filter(Boolean) };
         else if (cat) filter.category = { $regex: cat, $options: 'i' };
 
-        const result = await Product.updateMany(filter, { $set: { discountedPrice: 0 } });
+        const result = await Product.updateMany(
+          filter,
+          { $set: { discountedPrice: 0, discountedPriceInputAmount: 0 } },
+          { runValidators: true },
+        );
         return {
           success: true,
           message: `Removed discounts from ${result.modifiedCount} product${result.modifiedCount !== 1 ? 's' : ''}.`,
@@ -3266,7 +4575,7 @@ async function executeToolCall(toolName, args = {}, user) {
             { awaitingPayment: { $ne: true } },
           ],
         })
-          .select('orderSummary orderStatus sellerFulfillment isPaid createdAt orderItems currency')
+          .select('orderSummary appliedCoupons orderStatus sellerFulfillment isPaid isDelivered paymentMethod createdAt orderItems sellerShipping shippingMethod currency')
           .lean();
         const sellerOrders = orders
           .map(order => ({
@@ -3276,15 +4585,14 @@ async function executeToolCall(toolName, args = {}, user) {
           }))
           .filter(entry => entry.items.length > 0);
 
-        // Revenue follows the seller dashboard contract: paid seller-owned
-        // lines only, excluding this seller's cancelled fulfillment.
-        let totalRevenue = 0;
-        const paidSellerOrders = sellerOrders.filter(({ order, status }) => order.isPaid && status !== 'cancelled');
-        for (const { order, items } of paidSellerOrders) {
-          const sellerItemsRevenue = items
-            .reduce((sum, item) => sum + (item.price || 0) * (item.quantity || 1), 0);
-          totalRevenue += await convertAmount(sellerItemsRevenue, order.currency || preferredCurrency, preferredCurrency);
-        }
+        // Revenue follows the same exact allocation contract as seller
+        // Payments: confirmed card/Wallet sales and delivered COD portions.
+        const paidSellerOrders = sellerOrders.filter(({ order }) => isSellerRevenueRecognized(order, userId));
+        const revenueEntries = paidSellerOrders.map(({ order, items }) => {
+          const sellerMoney = sellerOrderSummaryForItems(order, userId, items);
+          return { order, amount: sellerMoney.totalAmount };
+        });
+        const totalRevenue = await sumOrderAmountsInCurrency(revenueEntries, preferredCurrency);
 
         const statusCounts = {};
         sellerOrders.forEach(({ status }) => {
@@ -3316,7 +4624,7 @@ async function executeToolCall(toolName, args = {}, user) {
             storeName: store?.storeName,
             totalProducts: myProducts.length,
             totalOrders: sellerOrders.length,
-            totalRevenue: Math.round(totalRevenue * 100) / 100,
+            totalRevenue: roundMoney(totalRevenue),
             currency: preferredCurrency,
             storeViews: store?.views || 0,
             trustCount: store?.trustCount || 0,
@@ -3333,8 +4641,12 @@ async function executeToolCall(toolName, args = {}, user) {
         const targetSellerId = role === 'admin' && args.sellerId ? toId(args.sellerId) : userId;
         if (!targetSellerId) return { success: false, error: 'Seller not found.' };
 
-        const paymentSummary = await buildSellerPaymentSummary(targetSellerId);
+        const paymentSummary = await buildSellerPaymentSummary(targetSellerId, { displayCurrency: preferredCurrency });
         const revenue = paymentSummary.revenue || {};
+        const withdrawableBalance = requireAIDerivedMoney(revenue.withdrawableBalance, 'withdrawable balance');
+        const codDeliveredRevenue = requireAIDerivedMoney(revenue.codDeliveredRevenue, 'delivered COD revenue');
+        const totalDeliveredRevenue = requireAIDerivedMoney(revenue.totalDeliveredRevenue, 'total delivered revenue');
+        const estimatedRevenue = requireAIDerivedMoney(revenue.estimatedRevenue, 'estimated revenue');
         return {
           success: true,
           data: {
@@ -3348,7 +4660,7 @@ async function executeToolCall(toolName, args = {}, user) {
               adminNote: w.adminNote || '',
             })),
           },
-          message: `Payments summary: withdrawable Stripe balance ${await formatMoney(revenue.withdrawableBalance || 0, preferredCurrency)}, delivered COD revenue ${await formatMoney(revenue.codDeliveredRevenue || 0, preferredCurrency)}, total delivered revenue ${await formatMoney(revenue.totalDeliveredRevenue || 0, preferredCurrency)}, estimated revenue ${await formatMoney(revenue.estimatedRevenue || 0, preferredCurrency)}.`,
+          message: `Payments summary: withdrawable online balance ${await formatMoney(withdrawableBalance, preferredCurrency)}, delivered COD revenue ${await formatMoney(codDeliveredRevenue, preferredCurrency)}, total delivered revenue ${await formatMoney(totalDeliveredRevenue, preferredCurrency)}, estimated revenue ${await formatMoney(estimatedRevenue, preferredCurrency)}.`,
         };
       }
 
@@ -3378,14 +4690,15 @@ async function executeToolCall(toolName, args = {}, user) {
         // Filter items & compute seller-specific totals per order
         const sellerOrders = orders.map(o => {
           const sellerItems = filterSellerOrderItems(o, userId, productIds);
-          const sellerTotal = sellerItems.reduce((sum, i) => sum + (i.price || 0) * (i.quantity || 1), 0);
+          const sellerMoney = sellerOrderSummaryForItems(o, userId, sellerItems);
           const fulfillment = getSellerFulfillment(o, userId);
           return {
             orderId: o.orderId,
             status: fulfillment?.status || o.orderStatus,
             buyer: o.user?.username || o.guestEmail || 'Guest',
-            total: sellerTotal,
-            itemCount: sellerItems.length,
+            total: sellerMoney.total,
+            itemCount: sellerMoney.itemCount,
+            money: sellerMoney,
             date: o.createdAt,
             paymentMethod: o.paymentMethod,
             isPaid: o.isPaid,
@@ -3418,17 +4731,15 @@ async function executeToolCall(toolName, args = {}, user) {
           ? []
           : (await Product.find({ seller: userId }).select('_id').lean()).map(p => p._id.toString());
 
-        const orderIdentity = { $or: [{ _id: toId(orderId) }, { orderId: orderId }] };
-        const orderFilter = role === 'admin'
-          ? orderIdentity
-          : {
-            $and: [
-              orderIdentity,
-              { awaitingPayment: { $ne: true } },
-              buildSellerOrderScope(userId, productIds),
-            ],
-          };
-        const order = await Order.findOne(orderFilter);
+        let order = await resolveOrderReference({ reference: String(orderId) });
+        if (
+          order
+          && role !== 'admin'
+          && (
+            order.awaitingPayment === true
+            || filterSellerOrderItems(order, userId, productIds).length === 0
+          )
+        ) order = null;
         if (!order) {
           return role === 'admin'
             ? { success: false, error: 'Order not found.' }
@@ -3439,62 +4750,67 @@ async function executeToolCall(toolName, args = {}, user) {
         if (!ownsItems) return { success: false, error: 'This order doesn\'t contain your products.' };
 
         const sellerIds = await ensureOrderSellerFulfillment(order);
-        if (newStatus === 'cancelled' && order.isPaid) {
+        if (newStatus === 'cancelled') {
+          if (role === 'seller' && sellerIds.length > 1) {
+            return {
+              success: false,
+              error: 'A seller cannot safely cancel only one portion of a multi-seller order yet. Contact support so stock and payment accounting remain correct.',
+              code: 'PARTIAL_ORDER_CANCELLATION_UNSUPPORTED',
+            };
+          }
+          const cancellationAt = new Date();
+          const buyerAlreadyDecided = !!(
+            order.confirmation?.confirmedAt
+            || order.confirmation?.declinedAt
+          );
+          const confirmationFields = buyerAlreadyDecided ? {} : {
+            declinedAt: cancellationAt,
+            confirmedVia: role === 'admin' ? 'admin' : 'manual',
+            decidedAt: cancellationAt,
+            decidedVia: role === 'admin' ? 'admin' : 'manual',
+          };
+          const cancellation = await cancelOrderSafely({
+            orderId: order._id,
+            reason: role === 'admin'
+              ? 'Order cancelled by an administrator through Rozare AI before payment or shipment.'
+              : 'Single-seller order cancelled by its seller through Rozare AI before shipment.',
+            confirmationFields,
+            cancellationActorRole: role,
+            at: cancellationAt,
+          });
+          if (cancellation.status === 'payment_succeeded') {
+            return {
+              success: false,
+              error: 'Stripe already received this payment. Waiting for secure webhook confirmation.',
+              code: 'PAYMENT_ALREADY_SUCCEEDED',
+            };
+          }
+          const cancelledOrder = cancellation.order;
           return {
-            success: false,
-            error: role === 'seller'
-              ? 'Paid seller portions require a verified refund before cancellation.'
-              : 'Paid orders require a verified refund before cancellation.',
-            code: 'PAID_ORDER_REQUIRES_REFUND',
+            success: true,
+            data: {
+              status: 'cancelled',
+              aggregateOrderStatus: cancelledOrder.orderStatus,
+            },
+            message: `Order #${cancelledOrder.orderId} status updated to "cancelled"`,
           };
         }
 
-        if (role === 'admin' && order.sellerFulfillment.length) {
-          setAllSellerFulfillmentStatus(order, newStatus);
-        } else if (role === 'seller') {
-          const fulfillment = getSellerFulfillment(order, userId);
-          if (!fulfillment) {
-            return { success: false, error: 'Seller fulfillment record was not found for this order.' };
-          }
-          if (newStatus === 'cancelled' && ['shipped', 'delivered'].includes(fulfillment.status)) {
-            return { success: false, error: 'Cannot cancel an order that is already shipped or delivered.' };
-          }
-          setSellerFulfillmentStatus(order, userId, newStatus);
-        }
-
-        const buyerAlreadyDecided = !!(order.confirmation?.confirmedAt || order.confirmation?.declinedAt);
-        const updatesWholeOrderDecision = role === 'admin' || sellerIds.length <= 1;
-        if (updatesWholeOrderDecision && newStatus === 'confirmed' && !buyerAlreadyDecided) {
-          order.confirmation = order.confirmation || {};
-          order.confirmation.confirmedAt = new Date();
-          order.confirmation.confirmedVia = role === 'admin' ? 'admin' : 'manual';
-          order.confirmation.decidedAt = new Date();
-          order.confirmation.decidedVia = role === 'admin' ? 'admin' : 'manual';
-        } else if (updatesWholeOrderDecision && newStatus === 'cancelled' && !buyerAlreadyDecided) {
-          order.confirmation = order.confirmation || {};
-          order.confirmation.declinedAt = new Date();
-          order.confirmation.confirmedVia = role === 'admin' ? 'admin' : 'manual';
-          order.confirmation.decidedAt = new Date();
-          order.confirmation.decidedVia = role === 'admin' ? 'admin' : 'manual';
-        }
-
-        if (role === 'admin' && !order.sellerFulfillment.length) {
-          order.orderStatus = newStatus;
-          order.isDelivered = newStatus === 'delivered';
-          if (newStatus === 'delivered' && !order.deliveredAt) order.deliveredAt = new Date();
-        } else {
-          syncAggregateDeliveryState(order);
-        }
-        if (order.orderStatus === 'delivered') order.isPaid = true;
-        await order.save();
+        const { order: transitionedOrder } = await transitionOrderFulfillment({
+          orderId: order._id,
+          actorRole: role,
+          actorId: userId,
+          sellerIds,
+          newStatus,
+        });
 
         return {
           success: true,
           data: {
-            status: role === 'seller' ? sellerOrderStatus(order, userId) : order.orderStatus,
-            aggregateOrderStatus: order.orderStatus,
+            status: role === 'seller' ? sellerOrderStatus(transitionedOrder, userId) : transitionedOrder.orderStatus,
+            aggregateOrderStatus: transitionedOrder.orderStatus,
           },
-          message: `Order #${order.orderId} status updated to "${newStatus}"`,
+          message: `Order #${transitionedOrder.orderId} status updated to "${newStatus}"`,
         };
       }
 
@@ -3535,6 +4851,7 @@ async function executeToolCall(toolName, args = {}, user) {
         const normalizedRaw = Object.keys(pickObject(args.updates)).length ? { ...args.updates } : { ...args };
         const allowedStoreFields = ['storeName', 'storeSlug', 'description', 'logo', 'banner', 'socialLinks', 'address', 'returnPolicy', 'sellerType', 'paymentPolicy'];
         const normalizedUpdates = {};
+        let pendingSlugChange = null;
         for (const field of allowedStoreFields) {
           if (normalizedRaw[field] !== undefined) normalizedUpdates[field] = normalizedRaw[field];
         }
@@ -3592,6 +4909,13 @@ async function executeToolCall(toolName, args = {}, user) {
         }
 
         if (normalizedUpdates.storeSlug !== undefined) {
+          if (existingStore.subdomainPurchase?.paymentRiskState === 'open') {
+            return {
+              success: false,
+              error: 'Your purchased subdomain has an unresolved Stripe payment dispute. It cannot be changed until the dispute is resolved.',
+              code: 'SUBDOMAIN_PAYMENT_RISK_OPEN',
+            };
+          }
           const slug = sanitizeSubdomain(normalizedUpdates.storeSlug);
           if (isPlaceholderValue(slug)) {
             return { success: false, error: 'No subdomain was provided. Ask the seller what new subdomain they want before updating.' };
@@ -3630,17 +4954,16 @@ async function executeToolCall(toolName, args = {}, user) {
 
             const duplicate = await Store.findOne({ storeSlug: slug, _id: { $ne: existingStore._id } }).select('_id').lean();
             if (duplicate) return { success: false, error: 'This subdomain is already taken by another store.' };
-            normalizedUpdates.storeSlug = slug;
-            normalizedUpdates.lastSlugChangeAt = new Date();
-            if (hasPurchasedSubdomain) {
-              normalizedUpdates.subdomainPurchase = {
-                isPurchased: false,
-                purchasedAt: null,
-                expiresAt: null,
-                stripePaymentId: '',
-                removalScheduledAt: null,
-              };
-            }
+            // The actual write is delegated to the canonical locked CAS
+            // boundary below. It re-checks paid ownership/risk after taking the
+            // same resource lock used by Stripe Checkout and materializes an
+            // immutable old-slug ledger before any confirmed forfeiture.
+            pendingSlugChange = {
+              expectedSlug: existingStore.storeSlug,
+              newSlug: slug,
+              confirmPurchasedForfeit: normalizedRaw.confirmSubdomainChange === true,
+            };
+            delete normalizedUpdates.storeSlug;
           }
         }
 
@@ -3679,15 +5002,40 @@ async function executeToolCall(toolName, args = {}, user) {
           normalizedUpdates.socialLinks = normalizeSocialLinks(normalizedUpdates.socialLinks);
         }
 
-        if (Object.keys(normalizedUpdates).length === 0) {
+        if (Object.keys(normalizedUpdates).length === 0 && !pendingSlugChange) {
           return { success: false, error: 'No changes to apply.' };
         }
 
-        const updatedStore = await Store.findOneAndUpdate(
-          { seller: userId },
-          { $set: normalizedUpdates },
-          { new: true, runValidators: true }
-        ).select('storeName storeSlug description paymentPolicy lastNameChangeAt lastSlugChangeAt lastTypeChangeAt').lean();
+        let updatedStore;
+        let forfeitedPurchasedOwnership = false;
+        if (pendingSlugChange) {
+          const result = await changeStoreSlug({
+            storeId: existingStore._id,
+            sellerId: userId,
+            expectedSlug: pendingSlugChange.expectedSlug,
+            newSlug: pendingSlugChange.newSlug,
+            confirmPurchasedForfeit: pendingSlugChange.confirmPurchasedForfeit,
+            additionalSet: normalizedUpdates,
+            actor: {
+              type: 'ai',
+              id: userId,
+              reason: 'Seller-confirmed subdomain change through Rozare AI',
+            },
+          });
+          updatedStore = result.store.toObject();
+          forfeitedPurchasedOwnership = result.forfeitedPurchasedOwnership;
+        } else {
+          updatedStore = await Store.findOneAndUpdate(
+            { seller: userId },
+            { $set: normalizedUpdates },
+            { new: true, runValidators: true }
+          ).select('storeName storeSlug description paymentPolicy lastNameChangeAt lastSlugChangeAt lastTypeChangeAt').lean();
+        }
+
+        const updatedFields = [
+          ...Object.keys(normalizedUpdates).filter(k => !k.startsWith('last')),
+          ...(pendingSlugChange ? ['storeSlug'] : []),
+        ];
 
         return {
           success: true,
@@ -3696,7 +5044,8 @@ async function executeToolCall(toolName, args = {}, user) {
             storeName: updatedStore.storeName,
             slug: updatedStore.storeSlug,
             paymentPolicy: updatedStore.paymentPolicy || 'online_and_cod',
-            updatedFields: Object.keys(normalizedUpdates).filter(k => !k.startsWith('last')),
+            updatedFields,
+            ...(forfeitedPurchasedOwnership ? { purchasedOwnershipForfeited: true } : {}),
             changeLimits: storeChangeLimits(updatedStore),
           },
         };
@@ -3704,7 +5053,7 @@ async function executeToolCall(toolName, args = {}, user) {
 
       case 'get_store_analytics': {
         // Alias — same as get_seller_analytics
-        return executeToolCall('get_seller_analytics', args, user);
+        return executeToolCallUnprotected('get_seller_analytics', args, user);
       }
 
       case 'apply_for_verification': {
@@ -3731,11 +5080,23 @@ async function executeToolCall(toolName, args = {}, user) {
       case 'get_shipping_methods': {
         if (!userId) return { success: false, error: 'Authentication required.' };
         const shipping = await ShippingMethod.findOne({ seller: userId }).lean();
+        const methods = (shipping?.methods || []).map(entry => {
+          const { currency, cost } = requireStoredAIShippingMethod(entry, 'USD');
+          return {
+            ...entry,
+            cost,
+            currency,
+            costCurrency: currency,
+            costInputAmount: entry.costInputAmount == null
+              ? cost
+              : roundMoney(entry.costInputAmount),
+          };
+        });
         return {
           success: true,
-          data: { methods: shipping?.methods || [] },
-          message: shipping?.methods?.length
-            ? `You have ${shipping.methods.length} shipping method(s) configured.`
+          data: { methods },
+          message: methods.length
+            ? `You have ${methods.length} shipping method(s) configured.`
             : 'No shipping methods configured yet.',
         };
       }
@@ -3748,33 +5109,96 @@ async function executeToolCall(toolName, args = {}, user) {
         if (!method) return { success: false, error: 'Please specify a shipping method type (free, standard, fast).' };
         if (!['free', 'standard', 'fast'].includes(method)) return { success: false, error: 'Shipping method must be free, standard, or fast.' };
 
+        const requestedShippingCurrency = shippingUpdates.currency ?? args.currency;
+        if (requestedShippingCurrency != null && !isSupportedCurrency(requestedShippingCurrency)) {
+          return { success: false, error: 'Shipping currency must be USD, PKR, EUR, or GBP.' };
+        }
+        let shippingCost = null;
+        if (cost !== undefined && cost !== null) {
+          shippingCost = normalizeNonNegativeMoneyAmount(cost);
+          if (shippingCost === null) {
+            return { success: false, error: 'Shipping cost must be a non-negative number.' };
+          }
+        }
+        if (method === 'free' && shippingCost != null && shippingCost !== 0) {
+          return { success: false, error: 'Free shipping must have a cost of 0.' };
+        }
+        if (method !== 'free' && shippingCost !== null && shippingCost <= 0) {
+          return { success: false, error: 'Paid shipping must cost at least 0.01.' };
+        }
+        if (deliveryDays != null) {
+          const numericDays = parsePositiveSafeInteger(deliveryDays);
+          if (numericDays === null) {
+            return { success: false, error: 'Delivery days must be a whole number of at least 1.' };
+          }
+          deliveryDays = numericDays;
+        }
+        if (isActive != null && typeof isActive !== 'boolean') {
+          return { success: false, error: 'Shipping active status must be true or false.' };
+        }
+
         let shipping = await ShippingMethod.findOne({ seller: userId });
         if (!shipping) {
           shipping = new ShippingMethod({ seller: userId, methods: [] });
         }
 
         const existing = shipping.methods.find(m => m.type === method);
-        const shippingCurrency = normalizeCurrency(args.currency || preferredCurrency);
-        const shippingCost = cost != null ? roundMoney(cost) : null;
+        const existingStoredMethod = existing
+          ? requireStoredAIShippingMethod(existing, 'USD')
+          : null;
+        const existingCurrency = existingStoredMethod?.currency || null;
+        const sellerCurrencyState = await getSellerProductCurrencyState(userId);
+        const shippingCurrency = normalizeCurrency(
+          requestedShippingCurrency
+          || existingCurrency
+          || (sellerCurrencyState?.hasStore ? sellerCurrencyState.activeCurrency : null)
+          || preferredCurrency
+        );
+        if (
+          existing
+          && method !== 'free'
+          && requestedShippingCurrency != null
+          && shippingCost == null
+          && existingCurrency !== shippingCurrency
+        ) {
+          return { success: false, error: 'Provide the shipping cost together with its new currency.' };
+        }
+        if (method !== 'free' && !existing && !(shippingCost > 0)) {
+          return { success: false, error: 'A paid shipping method requires a cost greater than 0.' };
+        }
+        if (method !== 'free' && shippingCost != null && shippingCost <= 0) {
+          return { success: false, error: 'A paid shipping method requires a cost of at least 0.01.' };
+        }
         if (existing) {
-          if (shippingCost != null) {
+          if (method === 'free') {
+            existing.cost = 0;
+            existing.currency = shippingCurrency;
+            existing.costCurrency = shippingCurrency;
+            existing.costInputAmount = 0;
+          } else if (shippingCost != null) {
             existing.cost = shippingCost;
             existing.currency = shippingCurrency;
             existing.costCurrency = shippingCurrency;
             existing.costInputAmount = shippingCost;
           }
-          if (deliveryDays != null) existing.deliveryDays = Number(deliveryDays);
+          if (deliveryDays != null) existing.deliveryDays = deliveryDays;
           if (isActive != null) existing.isActive = isActive;
         } else {
+          if (method !== 'free' && shippingCost === null) {
+            return { success: false, error: 'Provide a positive cost for paid shipping.' };
+          }
           shipping.methods.push({
             type: method,
-            cost: shippingCost != null ? shippingCost : 0,
+            cost: method === 'free' ? 0 : shippingCost,
             currency: shippingCurrency,
             costCurrency: shippingCurrency,
-            costInputAmount: shippingCost != null ? shippingCost : 0,
-            deliveryDays: Number(deliveryDays) || 3,
+            costInputAmount: method === 'free' ? 0 : shippingCost,
+            deliveryDays: deliveryDays ?? 3,
             isActive: isActive !== false,
           });
+        }
+        if (!shipping.methods.some(entry => entry.isActive !== false)) {
+          return { success: false, error: 'At least one shipping method must remain active.' };
         }
         await shipping.save();
 
@@ -3786,37 +5210,64 @@ async function executeToolCall(toolName, args = {}, user) {
         const c = args.coupon || args;
         const inferredDiscountType = c.discountType || (c.discountPercent != null ? 'percentage' : 'fixed');
         const rawDiscountValue = c.discountValue ?? c.discountPercent ?? c.fixedAmount ?? c.amount;
-        if (!rawDiscountValue) {
+        if (rawDiscountValue === undefined || rawDiscountValue === null || rawDiscountValue === '') {
           return { success: false, error: 'Please provide the coupon discount value, such as 10% or 500 off.' };
         }
         if (!['percentage', 'fixed'].includes(inferredDiscountType)) {
           return { success: false, error: 'Coupon discountType must be percentage or fixed.' };
         }
-        const inputCurrency = normalizeCurrency(c.currency || args.currency || preferredCurrency);
-        const rawNumericDiscountValue = Number(rawDiscountValue);
-        if (!Number.isFinite(rawNumericDiscountValue) || rawNumericDiscountValue <= 0) {
+        const requestedCouponCurrency = c.currency ?? args.currency;
+        if (requestedCouponCurrency != null && !isSupportedCurrency(requestedCouponCurrency)) {
+          return { success: false, error: 'Coupon currency must be USD, PKR, EUR, or GBP.' };
+        }
+        // Validate the money shape before any database lookup. Currency does
+        // not alter the numeric input, and malformed AI tool calls must fail
+        // without waiting on Store persistence.
+        const parsedDiscountValue = parseMoneyInput(
+          rawDiscountValue,
+          requestedCouponCurrency || preferredCurrency,
+        ).amount;
+        const unroundedDiscountValue = parseStrictFiniteNumber(parsedDiscountValue);
+        if (unroundedDiscountValue === null || unroundedDiscountValue <= 0) {
           return { success: false, error: 'Coupon discountValue must be a positive number.' };
         }
-        if (inferredDiscountType === 'percentage' && rawNumericDiscountValue > 100) {
-          return { success: false, error: 'Percentage coupon discounts cannot exceed 100%.' };
+        let discountValue = inferredDiscountType === 'fixed'
+          ? normalizeNonNegativeMoneyAmount(unroundedDiscountValue)
+          : unroundedDiscountValue;
+        if (inferredDiscountType === 'fixed' && (!discountValue || discountValue < 0.01)) {
+          return { success: false, error: 'A fixed coupon amount must be at least 0.01.' };
         }
-        const discountValue = rawNumericDiscountValue;
+        if (inferredDiscountType === 'percentage' && (discountValue < 0.01 || discountValue > 100)) {
+          return { success: false, error: 'Percentage coupon discounts must be between 0.01% and 100%.' };
+        }
+        const startDate = c.startDate ? new Date(c.startDate) : new Date();
         const expiryDate = c.expiryDate ? new Date(c.expiryDate) : addDays(new Date(), 30);
+        if (Number.isNaN(startDate.getTime())) return { success: false, error: 'Coupon startDate is invalid.' };
         if (Number.isNaN(expiryDate.getTime())) return { success: false, error: 'Coupon expiryDate is invalid.' };
         if (expiryDate <= new Date()) return { success: false, error: 'Coupon expiryDate must be in the future.' };
-        const maxUses = c.maxUses == null || c.maxUses === '' ? null : Number(c.maxUses);
-        const maxUsesPerUser = c.maxUsesPerUser == null || c.maxUsesPerUser === '' ? 1 : Number(c.maxUsesPerUser);
-        const rawMinOrderAmount = c.minOrderAmount == null || c.minOrderAmount === '' ? 0 : Number(c.minOrderAmount);
-        const rawMaxDiscountAmount = c.maxDiscountAmount ?? c.maxDiscount;
-        const rawMaxDiscountAmountNumber = rawMaxDiscountAmount == null || rawMaxDiscountAmount === '' ? null : Number(rawMaxDiscountAmount);
-        if (maxUses !== null && (!Number.isFinite(maxUses) || maxUses <= 0)) return { success: false, error: 'maxUses must be a positive number.' };
-        if (!Number.isFinite(maxUsesPerUser) || maxUsesPerUser <= 0) return { success: false, error: 'maxUsesPerUser must be a positive number.' };
-        if (!Number.isFinite(rawMinOrderAmount) || rawMinOrderAmount < 0) return { success: false, error: 'minOrderAmount must be zero or higher.' };
-        if (rawMaxDiscountAmountNumber !== null && (!Number.isFinite(rawMaxDiscountAmountNumber) || rawMaxDiscountAmountNumber <= 0)) return { success: false, error: 'maxDiscountAmount must be a positive number.' };
-        const minOrderAmount = rawMinOrderAmount;
-        const maxDiscountAmount = rawMaxDiscountAmountNumber == null
+        if (startDate >= expiryDate) return { success: false, error: 'Coupon expiryDate must be after startDate.' };
+        const maxUses = c.maxUses == null ? null : parsePositiveSafeInteger(c.maxUses);
+        const maxUsesPerUser = c.maxUsesPerUser == null ? 1 : parsePositiveSafeInteger(c.maxUsesPerUser);
+        const rawMinOrderAmount = c.minOrderAmount == null
+          ? 0
+          : parseStrictFiniteNumber(c.minOrderAmount);
+        let minOrderAmount = rawMinOrderAmount === null
           ? null
-          : rawMaxDiscountAmountNumber;
+          : normalizeNonNegativeMoneyAmount(rawMinOrderAmount);
+        const rawMaxDiscountAmount = c.maxDiscountAmount ?? c.maxDiscount;
+        let maxDiscountAmount = rawMaxDiscountAmount == null
+          ? null
+          : normalizeNonNegativeMoneyAmount(rawMaxDiscountAmount);
+        if (c.maxUses != null && maxUses === null) return { success: false, error: 'maxUses must be a positive safe whole number.' };
+        if (maxUsesPerUser === null) return { success: false, error: 'maxUsesPerUser must be a positive safe whole number.' };
+        if (rawMinOrderAmount > 0 && minOrderAmount === null) {
+          return { success: false, error: 'minOrderAmount must be zero or large enough to represent at least 0.01.' };
+        }
+        if (minOrderAmount === null) return { success: false, error: 'minOrderAmount must be zero or higher.' };
+        if (rawMaxDiscountAmount != null && (maxDiscountAmount === null || maxDiscountAmount <= 0)) return { success: false, error: 'maxDiscountAmount must be a positive number.' };
+        if (maxDiscountAmount !== null && maxDiscountAmount <= 0) {
+          return { success: false, error: 'maxDiscountAmount must be at least 0.01.' };
+        }
         const applicableTo = c.applicableTo === 'selected' ? 'selected' : 'all';
         const applicableProducts = Array.isArray(c.applicableProducts)
           ? c.applicableProducts.map(toId).filter(Boolean)
@@ -3826,6 +5277,39 @@ async function executeToolCall(toolName, args = {}, user) {
           const ownedCount = await Product.countDocuments({ _id: { $in: applicableProducts }, seller: userId });
           if (ownedCount !== applicableProducts.length) return { success: false, error: 'Some selected products were not found in your store.' };
         }
+        const couponCurrencyState = await assertProductCreationAllowed(userId);
+        const defaultCouponCurrency = couponCurrencyState.activeCurrency;
+        const inputCurrency = resolveAIPriceCurrency({
+          value: rawDiscountValue,
+          requestedCurrency: requestedCouponCurrency,
+          preferredCurrency: defaultCouponCurrency,
+          fallbackCurrency: defaultCouponCurrency,
+          lastUserText: args._lastUserText,
+          trustRequestedCurrency: true,
+        });
+        const storedCouponCurrency = couponCurrencyState.activeCurrency;
+        const convertedCreateMoney = await convertAICouponMoneyEntries([
+          ...(inferredDiscountType === 'fixed' ? [{
+            field: 'discountValue',
+            value: discountValue,
+            sourceCurrency: inputCurrency,
+          }] : []),
+          {
+            field: 'minOrderAmount',
+            value: minOrderAmount,
+            sourceCurrency: inputCurrency,
+          },
+          ...(maxDiscountAmount === null ? [] : [{
+            field: 'maxDiscountAmount',
+            value: maxDiscountAmount,
+            sourceCurrency: inputCurrency,
+          }]),
+        ], storedCouponCurrency, {
+          tooSmallMessage: 'A coupon amount is too small to represent in your store product currency.',
+        });
+        if (inferredDiscountType === 'fixed') discountValue = convertedCreateMoney.discountValue;
+        minOrderAmount = convertedCreateMoney.minOrderAmount;
+        if (maxDiscountAmount !== null) maxDiscountAmount = convertedCreateMoney.maxDiscountAmount;
         const code = await uniqueCouponCode(userId, { ...c, discountType: inferredDiscountType, discountValue });
 
         const coupon = await Coupon.create({
@@ -3833,13 +5317,14 @@ async function executeToolCall(toolName, args = {}, user) {
           code,
           discountType: inferredDiscountType,
           discountValue,
-          currency: inputCurrency,
+          currency: storedCouponCurrency,
           applicableTo,
           applicableProducts: applicableTo === 'selected' ? applicableProducts : [],
           maxUses,
           maxUsesPerUser,
           minOrderAmount,
           maxDiscountAmount,
+          startDate,
           expiryDate,
           description: c.description || '',
         });
@@ -3847,13 +5332,14 @@ async function executeToolCall(toolName, args = {}, user) {
         return {
           success: true,
           data: { couponId: coupon._id, code: coupon.code, expiryDate: coupon.expiryDate },
-          message: `Coupon "${coupon.code}" created - ${coupon.discountType === 'percentage' ? coupon.discountValue + '%' : await formatMoney(coupon.discountValue, inputCurrency, { sourceCurrency: inputCurrency })} off, expiring ${coupon.expiryDate.toISOString().slice(0, 10)}.`,
+          message: `Coupon "${coupon.code}" created - ${coupon.discountType === 'percentage' ? coupon.discountValue + '%' : await formatMoney(coupon.discountValue, storedCouponCurrency, { sourceCurrency: storedCouponCurrency })} off, expiring ${coupon.expiryDate.toISOString().slice(0, 10)}.`,
         };
       }
 
       case 'get_my_coupons': {
         if (!userId) return { success: false, error: 'Authentication required.' };
         const coupons = await Coupon.find({ seller: userId }).sort({ createdAt: -1 }).lean();
+        coupons.forEach(assertStoredCouponTerms);
 
         return {
           success: true,
@@ -3863,7 +5349,12 @@ async function executeToolCall(toolName, args = {}, user) {
               code: c.code,
               type: c.discountType,
               value: c.discountValue,
-              currency: c.currency || 'USD',
+              currency: requireSupportedCheckoutCurrency(
+                c.currency,
+                'USD',
+                'COUPON_CURRENCY_NOT_SUPPORTED',
+                { requireCanonical: true, statusCode: 409 },
+              ),
               isActive: c.isActive,
               usedCount: c.usedCount,
               maxUses: c.maxUses,
@@ -3883,43 +5374,228 @@ async function executeToolCall(toolName, args = {}, user) {
         for (const field of allowedCouponFields) {
           if (incomingUpdates[field] !== undefined) updates[field] = incomingUpdates[field];
         }
+        if (updates.currency === undefined && args.currency !== undefined) {
+          updates.currency = args.currency;
+        }
         const coupon = await resolveSellerCoupon(userId, args);
         if (!coupon) return { success: false, error: 'Please specify a valid coupon code or choose a coupon from your coupon list.' };
         if (Object.keys(updates).length === 0) return { success: false, error: 'No valid coupon fields were provided to update.' };
-        if (updates.currency !== undefined || incomingUpdates.currency !== undefined || args.currency !== undefined) {
-          updates.currency = normalizeCurrency(updates.currency || incomingUpdates.currency || args.currency || coupon.currency || preferredCurrency);
+        assertStoredCouponTerms(coupon);
+        const originalCurrency = requireSupportedCheckoutCurrency(
+          coupon.currency,
+          'USD',
+          'COUPON_CURRENCY_NOT_SUPPORTED',
+          { requireCanonical: true, statusCode: 409 },
+        );
+        const originalDiscountType = coupon.discountType;
+        const originalMoney = {
+          discountValue: coupon.discountValue,
+          minOrderAmount: coupon.minOrderAmount,
+          maxDiscountAmount: coupon.maxDiscountAmount,
+        };
+        const hasDiscountValueUpdate = Object.prototype.hasOwnProperty.call(updates, 'discountValue');
+        const hasMinOrderAmountUpdate = Object.prototype.hasOwnProperty.call(updates, 'minOrderAmount');
+        const hasMaxDiscountAmountUpdate = Object.prototype.hasOwnProperty.call(updates, 'maxDiscountAmount');
+        if (updates.currency !== undefined) {
+          const requestedCurrency = updates.currency;
+          if (!isSupportedCurrency(requestedCurrency)) {
+            return { success: false, error: 'Coupon currency must be USD, PKR, EUR, or GBP.' };
+          }
+          updates.currency = normalizeCurrency(requestedCurrency);
+        }
+        const targetCurrency = requireSupportedCheckoutCurrency(
+          updates.currency === undefined ? originalCurrency : updates.currency,
+          originalCurrency,
+          'COUPON_CURRENCY_NOT_SUPPORTED',
+          { requireCanonical: true, statusCode: 409 },
+        );
+        if (targetCurrency !== originalCurrency) {
+          const productCurrencyState = await assertProductCreationAllowed(userId);
+          if (targetCurrency !== productCurrencyState.activeCurrency) {
+            return {
+              success: false,
+              code: 'COUPON_CURRENCY_STORE_MISMATCH',
+              error: `Coupon currency can only be converted to your active store product currency (${productCurrencyState.activeCurrency}).`,
+            };
+          }
         }
         if (updates.discountType && !['percentage', 'fixed'].includes(updates.discountType)) {
           return { success: false, error: 'Coupon discountType must be percentage or fixed.' };
         }
-        for (const numericField of ['discountValue', 'maxUses', 'maxUsesPerUser', 'maxDiscountAmount']) {
-          if (updates[numericField] !== undefined && updates[numericField] !== null) {
-            const numericValue = Number(updates[numericField]);
-            if (!Number.isFinite(numericValue) || numericValue <= 0) {
-              return { success: false, error: `${numericField} must be a positive number.` };
-            }
-            updates[numericField] = numericValue;
-          }
-        }
-        for (const numericField of ['minOrderAmount']) {
-          if (updates[numericField] !== undefined && updates[numericField] !== null) {
-            const numericValue = Number(updates[numericField]);
-            if (!Number.isFinite(numericValue) || numericValue < 0) {
-              return { success: false, error: `${numericField} must be zero or higher.` };
-            }
-            updates[numericField] = numericValue;
-          }
-        }
         const finalDiscountType = updates.discountType || coupon.discountType;
+        if (finalDiscountType !== originalDiscountType && !hasDiscountValueUpdate) {
+          return { success: false, error: 'Provide a new discountValue when changing the coupon discountType.' };
+        }
+        let explicitDiscountValueCurrency = targetCurrency;
+        let explicitMinOrderCurrency = targetCurrency;
+        let explicitMaxDiscountCurrency = targetCurrency;
+        if (updates.discountValue !== undefined) {
+          const parsedValue = parseMoneyInput(
+            updates.discountValue,
+            targetCurrency,
+          );
+          explicitDiscountValueCurrency = parsedValue.currency;
+          const numericValue = finalDiscountType === 'fixed'
+            ? normalizeNonNegativeMoneyAmount(parsedValue.amount)
+            : parseStrictFiniteNumber(parsedValue.amount);
+          if (numericValue === null || numericValue <= 0) {
+            return { success: false, error: 'discountValue must be a positive number.' };
+          }
+          updates.discountValue = numericValue;
+        }
+        if (updates.maxUses !== undefined && updates.maxUses !== null) {
+          const numericValue = parsePositiveSafeInteger(updates.maxUses);
+          if (numericValue === null) {
+            return { success: false, error: 'maxUses must be a positive whole number or null.' };
+          }
+          updates.maxUses = numericValue;
+        }
+        if (updates.maxUsesPerUser !== undefined) {
+          const numericValue = parsePositiveSafeInteger(updates.maxUsesPerUser);
+          if (numericValue === null) {
+            return { success: false, error: 'maxUsesPerUser must be a positive whole number.' };
+          }
+          updates.maxUsesPerUser = numericValue;
+        }
+        if (updates.maxDiscountAmount !== undefined && updates.maxDiscountAmount !== null) {
+          const parsedValue = parseMoneyInput(updates.maxDiscountAmount, targetCurrency);
+          explicitMaxDiscountCurrency = parsedValue.currency;
+          const numericValue = normalizeNonNegativeMoneyAmount(parsedValue.amount);
+          if (numericValue === null || numericValue <= 0) {
+            return { success: false, error: 'maxDiscountAmount must be a positive number or null.' };
+          }
+          updates.maxDiscountAmount = numericValue;
+          if (updates.maxDiscountAmount <= 0) {
+            return { success: false, error: 'maxDiscountAmount must be at least 0.01.' };
+          }
+        }
+        if (updates.minOrderAmount !== undefined && updates.minOrderAmount !== null) {
+          const parsedValue = parseMoneyInput(updates.minOrderAmount, targetCurrency);
+          explicitMinOrderCurrency = parsedValue.currency;
+          const unroundedValue = parseStrictFiniteNumber(parsedValue.amount);
+          const numericValue = normalizeNonNegativeMoneyAmount(unroundedValue);
+          if (unroundedValue > 0 && numericValue === null) {
+            return { success: false, error: 'minOrderAmount must be zero or large enough to represent at least 0.01.' };
+          }
+          if (numericValue === null) {
+            return { success: false, error: 'minOrderAmount must be zero or higher.' };
+          }
+          updates.minOrderAmount = numericValue;
+        }
+        if (finalDiscountType === 'fixed') {
+          const roundedFixedValue = normalizeNonNegativeMoneyAmount(updates.discountValue ?? coupon.discountValue);
+          if (roundedFixedValue === null || roundedFixedValue <= 0) {
+            return { success: false, error: 'A fixed coupon amount must be at least 0.01.' };
+          }
+          if (hasDiscountValueUpdate) updates.discountValue = roundedFixedValue;
+        }
+
+        const moneyConversions = [];
+        if (finalDiscountType === 'fixed' && hasDiscountValueUpdate) {
+          moneyConversions.push({
+            field: 'discountValue',
+            value: updates.discountValue,
+            sourceCurrency: explicitDiscountValueCurrency,
+          });
+        }
+        if (hasMinOrderAmountUpdate && updates.minOrderAmount != null) {
+          moneyConversions.push({
+            field: 'minOrderAmount',
+            value: updates.minOrderAmount,
+            sourceCurrency: explicitMinOrderCurrency,
+          });
+        }
+        if (hasMaxDiscountAmountUpdate && updates.maxDiscountAmount != null) {
+          moneyConversions.push({
+            field: 'maxDiscountAmount',
+            value: updates.maxDiscountAmount,
+            sourceCurrency: explicitMaxDiscountCurrency,
+          });
+        }
+        if (targetCurrency !== originalCurrency) {
+          if (
+            finalDiscountType === 'fixed'
+            && originalDiscountType === 'fixed'
+            && !hasDiscountValueUpdate
+          ) {
+            moneyConversions.push({
+              field: 'discountValue',
+              value: originalMoney.discountValue,
+              sourceCurrency: originalCurrency,
+            });
+          }
+          if (!hasMinOrderAmountUpdate) {
+            moneyConversions.push({
+              field: 'minOrderAmount',
+              value: originalMoney.minOrderAmount,
+              sourceCurrency: originalCurrency,
+            });
+          }
+          if (!hasMaxDiscountAmountUpdate && originalMoney.maxDiscountAmount != null) {
+            moneyConversions.push({
+              field: 'maxDiscountAmount',
+              value: originalMoney.maxDiscountAmount,
+              sourceCurrency: originalCurrency,
+            });
+          }
+        }
+
+        const conversionsRequiringRates = moneyConversions.filter(entry => (
+          Number(entry.value) !== 0
+          && normalizeCurrency(entry.sourceCurrency) !== targetCurrency
+        ));
+        if (conversionsRequiringRates.length) {
+          // Explicit source currencies and retained terms share one snapshot,
+          // preventing a single coupon update from mixing FX tables.
+          const exchangeRateSnapshot = await getExchangeRateSnapshot();
+          for (const entry of conversionsRequiringRates) {
+            const convertedValue = await convertAmountUsingTrustedRates(
+              entry.value,
+              entry.sourceCurrency,
+              targetCurrency,
+              exchangeRateSnapshot,
+            );
+            if (Number(entry.value) > 0 && convertedValue <= 0) {
+              const error = new Error(
+                'A coupon amount is too small to represent in the requested currency. Provide a larger amount explicitly.',
+              );
+              error.code = 'COUPON_AMOUNT_TOO_SMALL_AFTER_CONVERSION';
+              throw error;
+            }
+            updates[entry.field] = convertedValue;
+          }
+        }
+        if (finalDiscountType === 'fixed' && !(updates.discountValue ?? coupon.discountValue)) {
+          return { success: false, error: 'A fixed coupon amount must be at least 0.01.' };
+        }
+        if (updates.maxDiscountAmount != null && updates.maxDiscountAmount <= 0) {
+          return { success: false, error: 'maxDiscountAmount must be at least 0.01.' };
+        }
         const finalDiscountValue = updates.discountValue ?? coupon.discountValue;
-        if (finalDiscountType === 'percentage' && finalDiscountValue > 100) {
-          return { success: false, error: 'Percentage coupon discounts cannot exceed 100%.' };
+        if (finalDiscountType === 'percentage' && (finalDiscountValue < 0.01 || finalDiscountValue > 100)) {
+          return { success: false, error: 'Percentage coupon discounts must be between 0.01% and 100%.' };
+        }
+        if (updates.startDate !== undefined) {
+          const startDate = new Date(updates.startDate);
+          if (Number.isNaN(startDate.getTime())) return { success: false, error: 'Coupon startDate is invalid.' };
+          updates.startDate = startDate;
         }
         if (updates.expiryDate !== undefined) {
           const expiryDate = new Date(updates.expiryDate);
           if (Number.isNaN(expiryDate.getTime())) return { success: false, error: 'Coupon expiryDate is invalid.' };
           if (expiryDate <= new Date()) return { success: false, error: 'Coupon expiryDate must be in the future.' };
           updates.expiryDate = expiryDate;
+        }
+        const finalStartDate = new Date(updates.startDate || coupon.startDate);
+        const finalExpiryDate = new Date(updates.expiryDate || coupon.expiryDate);
+        if (finalStartDate >= finalExpiryDate) {
+          return { success: false, error: 'Coupon expiryDate must be after startDate.' };
+        }
+        if (updates.isActive !== undefined && typeof updates.isActive !== 'boolean') {
+          return { success: false, error: 'Coupon active status must be true or false.' };
+        }
+        if (updates.applicableTo !== undefined && !['all', 'selected'].includes(updates.applicableTo)) {
+          return { success: false, error: 'Coupon applicableTo must be all or selected.' };
         }
         const finalApplicableTo = updates.applicableTo || coupon.applicableTo;
         if (finalApplicableTo === 'selected' && (updates.applicableProducts !== undefined || updates.applicableTo === 'selected')) {
@@ -3933,7 +5609,18 @@ async function executeToolCall(toolName, args = {}, user) {
         if (updates.applicableTo === 'all') updates.applicableProducts = [];
 
         Object.assign(coupon, updates);
-        await coupon.save();
+        try {
+          await coupon.save();
+        } catch (error) {
+          if (error?.name === 'VersionError') {
+            return {
+              success: false,
+              code: 'COUPON_UPDATE_CONFLICT',
+              error: 'This coupon changed while your update was being saved. Refresh it and retry.',
+            };
+          }
+          throw error;
+        }
         return { success: true, message: `Coupon "${coupon.code}" updated.` };
       }
 
@@ -3941,7 +5628,14 @@ async function executeToolCall(toolName, args = {}, user) {
         if (!userId) return { success: false, error: 'Authentication required.' };
         const coupon = await resolveSellerCoupon(userId, args);
         if (!coupon) return { success: false, error: 'Please specify a valid coupon code or choose a coupon from your coupon list.' };
-        await coupon.deleteOne();
+        try {
+          await deleteCouponIfUnreserved({ couponId: coupon._id, sellerId: userId });
+        } catch (error) {
+          if (error.code === 'COUPON_HAS_ACTIVE_RESERVATIONS') {
+            return { success: false, code: error.code, error: error.message };
+          }
+          throw error;
+        }
         return { success: true, message: `Coupon "${coupon.code}" deleted.` };
       }
 
@@ -3954,7 +5648,18 @@ async function executeToolCall(toolName, args = {}, user) {
         }
 
         coupon.isActive = !coupon.isActive;
-        await coupon.save();
+        try {
+          await coupon.save();
+        } catch (error) {
+          if (error?.name === 'VersionError') {
+            return {
+              success: false,
+              code: 'COUPON_UPDATE_CONFLICT',
+              error: 'This coupon changed while its status was being saved. Refresh it and retry.',
+            };
+          }
+          throw error;
+        }
         return { success: true, message: `Coupon "${coupon.code}" is now ${coupon.isActive ? 'active' : 'inactive'}.` };
       }
 
@@ -4199,28 +5904,69 @@ async function executeToolCall(toolName, args = {}, user) {
           User.countDocuments({ role: 'user' }),
           User.countDocuments({ role: 'seller' }),
           User.countDocuments({ role: 'admin' }),
-          Order.countDocuments(),
+          Order.countDocuments({ awaitingPayment: { $ne: true } }),
           Product.countDocuments(),
           Store.countDocuments(),
           Store.countDocuments({ 'verification.status': 'pending' }),
           Complaint.countDocuments({ status: { $in: ['open', 'in_progress'] } }),
-          dateFilter.createdAt ? Order.countDocuments(dateFilter) : Promise.resolve(null),
+          dateFilter.createdAt
+            ? Order.countDocuments({ ...dateFilter, awaitingPayment: { $ne: true } })
+            : Promise.resolve(null),
         ]);
 
-        const revenueOrders = await Order.find({ orderStatus: { $ne: 'cancelled' } })
-          .select('orderSummary currency')
+        const revenueOrders = await Order.find({
+          awaitingPayment: { $ne: true },
+          orderStatus: { $ne: 'cancelled' },
+        })
+          .select('orderItems orderSummary appliedCoupons sellerShipping shippingMethod sellerFulfillment paymentMethod isPaid isDelivered orderStatus currency')
           .lean();
-        let totalRevenue = 0;
+        const legacyProductIds = [...new Set(revenueOrders.flatMap(order => (
+          (order.orderItems || [])
+            .filter(item => !item?.seller)
+            .map(item => normalizeObjectIdString(item?.productId))
+            .filter(Boolean)
+        )))];
+        const legacyProducts = legacyProductIds.length
+          ? await Product.find({ _id: { $in: legacyProductIds } }).select('_id seller').lean()
+          : [];
+        const productSellerById = new Map(legacyProducts.map(product => [
+          normalizeObjectIdString(product._id),
+          normalizeObjectIdString(product.seller),
+        ]));
+        const revenueEntries = [];
         for (const order of revenueOrders) {
-          totalRevenue += await convertAmount(order.orderSummary?.totalAmount || 0, order.currency || preferredCurrency, preferredCurrency);
+          const allocations = buildOrderItemMoneyAllocations(order);
+          (order.orderItems || []).forEach((item, index) => {
+            const sellerId = normalizeObjectIdString(item?.seller)
+              || productSellerById.get(normalizeObjectIdString(item?.productId))
+              || '';
+            const method = order.paymentMethod || 'cash_on_delivery';
+            const globallyRecognized = method === 'cash_on_delivery'
+              ? (order.orderStatus === 'delivered' || order.isDelivered === true)
+              : (['stripe', 'wallet'].includes(method) && order.isPaid === true);
+            if (!(sellerId ? isSellerRevenueRecognized(order, sellerId) : globallyRecognized)) return;
+            const allocationKey = orderItemKey(item, index, allocations.itemKeys);
+            if (!allocations.total.has(allocationKey)) {
+              throw actionError(
+                'A stored order line has no deterministic money allocation.',
+                'ORDER_MONEY_INVALID',
+                409,
+              );
+            }
+            revenueEntries.push({
+              order,
+              amount: allocations.total.get(allocationKey),
+            });
+          });
         }
+        const totalRevenue = await sumOrderAmountsInCurrency(revenueEntries, preferredCurrency);
 
         return {
           success: true,
           data: {
             users: { total: totalUsers + totalSellers + totalAdmins, customers: totalUsers, sellers: totalSellers, admins: totalAdmins },
             orders: { total: totalOrders, ...(periodOrders != null ? { inPeriod: periodOrders } : {}) },
-            revenue: Math.round(totalRevenue * 100) / 100,
+            revenue: roundMoney(totalRevenue),
             currency: preferredCurrency,
             products: totalProducts,
             stores: totalStores,
@@ -4251,7 +5997,8 @@ async function executeToolCall(toolName, args = {}, user) {
               orderId: o.orderId,
               status: o.orderStatus,
               buyer: o.user?.username || o.guestEmail || 'Guest',
-              total: o.orderSummary?.totalAmount || 0,
+              total: requireStoredOrderMoney(o.orderSummary?.totalAmount, 'order total'),
+              currency: getAccountingOrderCurrency(o),
               items: o.orderItems?.length || 0,
               date: o.createdAt,
               isPaid: o.isPaid,
@@ -4431,63 +6178,111 @@ async function executeToolCall(toolName, args = {}, user) {
       }
 
       case 'update_tax_config': {
-        const { type, value, isActive } = args;
-        const update = {};
-        if (type) {
-          if (!['none', 'percentage', 'fixed'].includes(type)) {
-            return { success: false, error: 'Tax type must be none, percentage, or fixed.' };
-          }
-          update.type = type;
+        const current = await TaxConfig.findOne({ isActive: true }).lean();
+        const storedCurrent = requireStoredAITaxConfig(current);
+        const requestedType = Object.prototype.hasOwnProperty.call(args, 'type')
+          ? String(args.type || '').trim()
+          : (current?.type || 'none');
+        const hasExplicitTaxValue = Object.prototype.hasOwnProperty.call(args, 'value');
+        if (
+          current
+          && requestedType !== 'none'
+          && requestedType !== current.type
+          && !hasExplicitTaxValue
+        ) {
+          return {
+            success: false,
+            code: 'TAX_VALUE_REQUIRED_FOR_TYPE_CHANGE',
+            error: 'Provide a new tax value when changing the tax type.',
+          };
         }
-        if (value != null) {
-          const numericValue = Number(value);
-          if (!Number.isFinite(numericValue) || numericValue < 0) {
-            return { success: false, error: 'Tax value must be a non-negative number.' };
-          }
-          if (type === 'percentage' && numericValue > 100) {
-            return { success: false, error: 'Percentage tax cannot exceed 100%.' };
-          }
-          update.value = numericValue;
-        }
-        if (type === 'none') update.value = 0;
-        if (isActive != null) update.isActive = isActive;
+        const update = normalizeTaxConfigUpdate(args, current, preferredCurrency);
         update.updatedBy = userId;
 
-        let config = await TaxConfig.findOneAndUpdate(
-          { isActive: true },
-          { $set: update },
-          { new: true, upsert: true }
-        ).lean();
+        if (
+          current?.type === 'fixed'
+          && update.type === 'fixed'
+          && !hasExplicitTaxValue
+          && storedCurrent.currency !== update.currency
+        ) {
+          const retainedSourceValue = storedCurrent.value;
+          if (retainedSourceValue > 0) {
+            const exchangeRateSnapshot = await getExchangeRateSnapshot();
+            update.value = await convertAmountUsingTrustedRates(
+              retainedSourceValue,
+              storedCurrent.currency,
+              update.currency,
+              exchangeRateSnapshot,
+            );
+            if (update.value <= 0) {
+              const error = new Error(
+                'The retained fixed tax is too small to represent in the new currency. Provide the new value explicitly.',
+              );
+              error.code = 'TAX_AMOUNT_TOO_SMALL_AFTER_CONVERSION';
+              throw error;
+            }
+          } else {
+            update.value = 0;
+          }
+        }
+
+        let config;
+        if (current) {
+          const versionFilter = current.__v === null || current.__v === undefined
+            ? { $or: [{ __v: { $exists: false } }, { __v: 0 }] }
+            : { __v: current.__v };
+          config = await TaxConfig.findOneAndUpdate(
+            { _id: current._id, isActive: true, ...versionFilter },
+            { $set: update, $inc: { __v: 1 } },
+            { new: true, runValidators: true }
+          ).lean();
+          if (!config) {
+            return {
+              success: false,
+              code: 'TAX_CONFIG_UPDATE_CONFLICT',
+              error: 'The tax configuration changed while your update was being saved. Refresh it and retry.',
+            };
+          }
+        } else {
+          try {
+            config = await TaxConfig.create(update);
+          } catch (error) {
+            if (error?.code === 11000) {
+              return {
+                success: false,
+                code: 'TAX_CONFIG_UPDATE_CONFLICT',
+                error: 'The tax configuration changed while your update was being saved. Refresh it and retry.',
+              };
+            }
+            throw error;
+          }
+        }
+
+        const safeConfig = requireStoredAITaxConfig(
+          typeof config?.toObject === 'function' ? config.toObject() : config,
+        );
 
         return {
           success: true,
           data: config,
-          message: `Tax config updated: ${config.type === 'none' ? 'taxes disabled' : `${config.type} — ${config.type === 'percentage' ? config.value + '%' : '$' + config.value}`}.`,
+          message: `Tax config updated: ${safeConfig.type === 'none' ? 'taxes disabled' : `${safeConfig.type} — ${safeConfig.type === 'percentage' ? safeConfig.value + '%' : `${safeConfig.currency} ${safeConfig.value}`}`}.`,
         };
       }
 
       case 'get_tax_config': {
         const config = await TaxConfig.findOne({ isActive: true }).lean();
-        if (!config) return { success: true, data: { type: 'none', value: 0 }, message: 'No tax configured.' };
+        if (!config) return { success: true, data: { type: 'none', value: 0, currency: 'USD' }, message: 'No tax configured.' };
+        const safeConfig = requireStoredAITaxConfig(config);
 
         return {
           success: true,
-          data: { type: config.type, value: config.value, isActive: config.isActive },
-          message: `Tax: ${config.type === 'none' ? 'disabled' : `${config.type} — ${config.type === 'percentage' ? config.value + '%' : '$' + config.value}`}.`,
+          data: { ...safeConfig, isActive: config.isActive },
+          message: `Tax: ${safeConfig.type === 'none' ? 'disabled' : `${safeConfig.type} — ${safeConfig.type === 'percentage' ? safeConfig.value + '%' : `${safeConfig.currency} ${safeConfig.value}`}`}.`,
         };
       }
 
       case 'send_broadcast': {
         if (!userId) return { success: false, error: 'Authentication required.' };
-        const { title, category, channels, linkTo, recurrence, endsAt } = args;
-        const body = args.body || args.message;
-        if (!title || !body) return { success: false, error: 'Please provide title and body for the broadcast.' };
-        const normalizedCategory = category || 'announcement';
-        if (!['announcement', 'promo', 'order', 'system', 'seller'].includes(normalizedCategory)) {
-          return { success: false, error: 'Broadcast category must be announcement, promo, order, system, or seller.' };
-        }
-
-        const validAudiences = ['all_users', 'all_sellers', 'both', 'specific'];
         const audienceInput = args.audience;
         const audienceTarget = typeof audienceInput === 'object' && audienceInput !== null
           ? audienceInput.target
@@ -4504,49 +6299,31 @@ async function executeToolCall(toolName, args = {}, user) {
           : Array.isArray(audienceInput?.userIds)
             ? audienceInput.userIds
             : [];
-        if (!validAudiences.includes(audience)) {
-          return { success: false, error: 'Audience must be all_users, all_sellers, both, or specific.' };
-        }
-        if (audience === 'specific' && userIds.length === 0) {
-          return { success: false, error: 'Please provide userIds when sending a broadcast to a specific audience.' };
-        }
-
-        const validChannels = ['inapp', 'push', 'email', 'whatsapp'];
-        const normalizedChannels = Array.isArray(channels) && channels.length ? channels : ['inapp', 'push'];
-        if (normalizedChannels.some(ch => !validChannels.includes(ch))) {
-          return { success: false, error: `Invalid broadcast channel. Valid channels: ${validChannels.join(', ')}.` };
-        }
-
-        let scheduleType = args.scheduleType || (args.scheduledAt ? 'one_time' : 'immediate');
-        if (!['immediate', 'one_time', 'recurring'].includes(scheduleType)) {
-          return { success: false, error: 'Schedule type must be immediate, one_time, or recurring.' };
-        }
-        let nextRunAt = new Date();
-        if (scheduleType === 'one_time' || scheduleType === 'recurring') {
-          if (!args.scheduledAt) return { success: false, error: 'scheduledAt is required for scheduled broadcasts.' };
-          nextRunAt = new Date(args.scheduledAt);
-          if (Number.isNaN(nextRunAt.getTime())) return { success: false, error: 'Invalid scheduledAt date.' };
-        }
-
-        const broadcast = await BroadcastJob.create({
-          title,
-          body,
-          category: normalizedCategory,
-          audience,
-          userIds: audience === 'specific' ? userIds.map(toId).filter(Boolean) : [],
-          channels: normalizedChannels,
-          scheduleType,
-          recurrence: scheduleType === 'recurring' ? (recurrence || 'daily') : 'none',
-          nextRunAt,
-          endsAt: endsAt ? new Date(endsAt) : null,
-          linkTo: linkTo || '',
+        const scheduleType = args.scheduleType || (args.scheduledAt ? 'one_time' : 'immediate');
+        const { job: broadcast } = await createBroadcastJob({
+          input: {
+            title: args.title,
+            body: args.body || args.message,
+            category: args.category,
+            audience,
+            userIds,
+            channels: args.channels,
+            scheduleType,
+            scheduledAt: args.scheduledAt,
+            recurrence: args.recurrence,
+            endsAt: args.endsAt,
+            linkTo: args.linkTo,
+          },
           createdBy: userId,
+          // The AI tool queues immediate jobs for the atomic scheduler. It does
+          // not dispatch in this request, so it must not claim a delivery lease.
+          claimImmediate: false,
         });
 
         return {
           success: true,
           data: { broadcastId: broadcast._id },
-          message: `Broadcast "${title}" created and ${scheduleType === 'immediate' ? 'will be sent now' : 'scheduled'}! 📣`,
+          message: `Broadcast "${broadcast.title}" created and ${scheduleType === 'immediate' ? 'will be sent now' : 'scheduled'}! 📣`,
         };
       }
 
@@ -4578,14 +6355,17 @@ async function executeToolCall(toolName, args = {}, user) {
         const { broadcastId } = args;
         if (!broadcastId) return { success: false, error: 'Please provide broadcastId.' };
 
-        const broadcast = await BroadcastJob.findByIdAndUpdate(
-          toId(broadcastId),
-          { $set: { status: 'cancelled' } },
-          { new: true }
-        ).lean();
-
-        if (!broadcast) return { success: false, error: 'Broadcast not found.' };
-        return { success: true, message: `Broadcast "${broadcast.title}" cancelled.` };
+        const cancellation = await cancelScheduledBroadcast(broadcastId);
+        if (cancellation.outcome === 'not_found') {
+          return { success: false, error: 'Broadcast not found.' };
+        }
+        if (cancellation.outcome === 'sending') {
+          return { success: false, error: 'Broadcast delivery has already started and can no longer be cancelled.' };
+        }
+        if (cancellation.outcome !== 'cancelled') {
+          return { success: false, error: 'Broadcast is already finalized and can no longer be cancelled.' };
+        }
+        return { success: true, message: `Broadcast "${cancellation.job.title}" cancelled.` };
       }
 
       case 'get_all_subscriptions': {
@@ -4787,14 +6567,464 @@ async function executeToolCall(toolName, args = {}, user) {
         return { success: false, error: `Unknown tool: ${toolName}` };
     }
   } catch (err) {
+    if (propagateErrors) throw err;
     console.error(`[aiActionExecutor] Error executing ${toolName}:`, err.message);
-    return { success: false, error: `Failed to execute ${toolName}: ${err.message}` };
+    return {
+      success: false,
+      error: `Failed to execute ${toolName}: ${err.message}`,
+      ...(err.code ? { code: err.code } : {}),
+    };
+  }
+}
+
+function normalizeTaxConfigUpdate(args = {}, current = null, preferredCurrency = 'USD') {
+  if (current) requireStoredAITaxConfig(current);
+  const has = field => Object.prototype.hasOwnProperty.call(args, field);
+  const type = has('type') ? String(args.type || '').trim() : (current?.type || 'none');
+  if (!['none', 'percentage', 'fixed'].includes(type)) {
+    const error = new Error('Tax type must be none, percentage, or fixed.');
+    error.code = 'TAX_TYPE_INVALID';
+    throw error;
+  }
+
+  const rawValue = has('value') ? args.value : (current?.value ?? 0);
+  const numericValue = parseStrictFiniteNumber(rawValue);
+  if (numericValue === null || numericValue < 0) {
+    const error = new Error('Tax value must be a non-negative number.');
+    error.code = 'TAX_VALUE_INVALID';
+    throw error;
+  }
+  if (type === 'percentage' && numericValue > 100) {
+    const error = new Error('Percentage tax cannot exceed 100%.');
+    error.code = 'TAX_VALUE_INVALID';
+    throw error;
+  }
+  try {
+    const scale = type === 'percentage' ? 6 : 2;
+    if (type !== 'none' && roundMoney(numericValue, scale) !== numericValue) {
+      const error = new Error(
+        type === 'percentage'
+          ? 'Percentage tax supports at most 6 decimal places.'
+          : 'Fixed tax must be an exact amount to cents.',
+      );
+      error.code = 'TAX_VALUE_PRECISION_INVALID';
+      throw error;
+    }
+  } catch (error) {
+    if (error?.code === 'TAX_VALUE_PRECISION_INVALID') throw error;
+    const invalid = new Error('Tax value is outside the supported numeric range.');
+    invalid.code = 'TAX_VALUE_INVALID';
+    throw invalid;
+  }
+
+  let currency = 'USD';
+  if (type === 'fixed') {
+    const requestedCurrency = has('currency')
+      ? args.currency
+      : (current?.type === 'fixed' ? current.currency : preferredCurrency);
+    if (!isSupportedCurrency(requestedCurrency)) {
+      const error = new Error('A fixed tax requires a supported currency: USD, PKR, EUR, or GBP.');
+      error.code = 'TAX_CURRENCY_INVALID';
+      throw error;
+    }
+    currency = normalizeCurrency(requestedCurrency);
+  } else if (has('currency') && args.currency != null && !isSupportedCurrency(args.currency)) {
+    const error = new Error('Tax currency must be USD, PKR, EUR, or GBP.');
+    error.code = 'TAX_CURRENCY_INVALID';
+    throw error;
+  }
+
+  if (has('isActive') && typeof args.isActive !== 'boolean') {
+    const error = new Error('Tax active status must be true or false.');
+    error.code = 'TAX_ACTIVE_INVALID';
+    throw error;
+  }
+
+  const storedValue = type === 'none'
+    ? 0
+    : numericValue;
+  if (type === 'fixed' && numericValue > 0 && storedValue <= 0) {
+    const error = new Error('Fixed tax must be zero or large enough to represent at least 0.01.');
+    error.code = 'TAX_VALUE_TOO_SMALL';
+    throw error;
+  }
+
+  return {
+    type,
+    value: storedValue,
+    currency,
+    isActive: has('isActive') ? args.isActive : (current?.isActive !== false),
+  };
+}
+
+function canonicalizeForHash(value) {
+  if (Array.isArray(value)) return value.map(canonicalizeForHash);
+  if (value && typeof value === 'object') {
+    return Object.keys(value).sort().reduce((result, key) => {
+      if (!key.startsWith('_') && value[key] !== undefined) {
+        result[key] = canonicalizeForHash(value[key]);
+      }
+      return result;
+    }, {});
+  }
+  return typeof value === 'string' ? value.trim() : value;
+}
+
+function canonicalizeAIActionArgsForHash(value) {
+  if (Array.isArray(value)) return value.map(canonicalizeAIActionArgsForHash);
+  if (value && typeof value === 'object') {
+    return Object.keys(value).sort().reduce((result, key) => {
+      // Transport identity selects the receipt row and must not also change
+      // its intent hash. Other underscore fields, especially _lastUserText,
+      // are retained because they can affect currency inference.
+      if (
+        !['_chatRequestKey', '_chatToolOrdinal'].includes(key)
+        && value[key] !== undefined
+      ) {
+        result[key] = canonicalizeAIActionArgsForHash(value[key]);
+      }
+      return result;
+    }, {});
+  }
+  return typeof value === 'string' ? value.trim() : value;
+}
+
+function isDurableMutatingAITool(toolName) {
+  return AI_DURABLE_MUTATING_TOOLS.has(String(toolName || ''));
+}
+
+function getDurableAIActionIntentKey(toolName, args = {}) {
+  if (!isDurableMutatingAITool(toolName)) return null;
+  return crypto.createHash('sha256')
+    .update(JSON.stringify({
+      tool: String(toolName),
+      args: canonicalizeAIActionArgsForHash(args),
+    }))
+    .digest('hex');
+}
+
+function aiOrderRequestFingerprint(args) {
+  // Bind the key only to the client/model's explicit order request. Account
+  // preferences can legitimately change after the first response is lost; a
+  // retry must still return the already-created order and its frozen currency.
+  return crypto.createHash('sha256')
+    .update(JSON.stringify(canonicalizeForHash(args)))
+    .digest('hex');
+}
+
+function aiActionMutationReceipt(toolName, args, userId, { required = false } = {}) {
+  const requestKey = String(args?._chatRequestKey || '').trim();
+  if (!requestKey) {
+    if (!required) return null;
+    const error = new Error('This AI mutation requires an Idempotency-Key. Retry with the same key for the same logical request.');
+    error.status = 400;
+    error.statusCode = 400;
+    error.code = 'AI_ACTION_IDEMPOTENCY_REQUIRED';
+    throw error;
+  }
+  if (requestKey.length > 240 || /[\u0000-\u001f\u007f]/.test(requestKey)) {
+    const error = new Error('The AI action Idempotency-Key is invalid.');
+    error.status = 400;
+    error.statusCode = 400;
+    error.code = 'AI_ACTION_IDEMPOTENCY_KEY_INVALID';
+    throw error;
+  }
+  const rawOrdinal = args?._chatToolOrdinal ?? 0;
+  const toolOrdinal = Number(rawOrdinal);
+  if (!Number.isSafeInteger(toolOrdinal) || toolOrdinal < 0) {
+    const error = new Error('The AI tool execution slot is invalid.');
+    error.status = 400;
+    error.statusCode = 400;
+    error.code = 'AI_ACTION_IDEMPOTENCY_SLOT_INVALID';
+    throw error;
+  }
+  const requestFingerprint = crypto.createHash('sha256')
+    .update(JSON.stringify({
+      tool: String(toolName),
+      args: canonicalizeAIActionArgsForHash(args || {}),
+    }))
+    .digest('hex');
+  return {
+    user: userId,
+    action: String(toolName),
+    requestKey,
+    toolOrdinal,
+    requestFingerprint,
+  };
+}
+
+function isRecognizedAIPriceCurrency(value) {
+  if (value === undefined || value === null || String(value).trim() === '') return true;
+  return isSupportedCurrency(value) || Boolean(detectExplicitCurrencyInText(value));
+}
+
+async function trustedSnapshotForCurrencyPairs(pairs = []) {
+  const needsConversion = pairs.some(([fromCurrency, toCurrency]) => (
+    normalizeCurrency(fromCurrency) !== normalizeCurrency(toCurrency)
+  ));
+  return needsConversion ? getExchangeRateSnapshot() : null;
+}
+
+async function convertAICouponMoneyEntries(
+  entries,
+  targetCurrency,
+  { tooSmallMessage = 'A coupon amount is too small to represent in the requested currency.' } = {},
+) {
+  const converted = Object.fromEntries(entries.map(entry => [entry.field, entry.value]));
+  const requiringRates = entries.filter(entry => (
+    entry.value > 0 && normalizeCurrency(entry.sourceCurrency) !== targetCurrency
+  ));
+  if (!requiringRates.length) return converted;
+
+  // One coupon mutation is one financial decision, so every converted term
+  // must use the exact same trusted rate table.
+  const exchangeRateSnapshot = await getExchangeRateSnapshot();
+  for (const entry of requiringRates) {
+    const value = await convertAmountUsingTrustedRates(
+      entry.value,
+      entry.sourceCurrency,
+      targetCurrency,
+      exchangeRateSnapshot,
+    );
+    if (entry.value > 0 && value <= 0) {
+      const error = new Error(tooSmallMessage);
+      error.code = 'COUPON_AMOUNT_TOO_SMALL_AFTER_CONVERSION';
+      error.status = 400;
+      error.statusCode = 400;
+      throw error;
+    }
+    converted[entry.field] = value;
+  }
+  return converted;
+}
+
+const matchedBulkCount = result => Number(
+  result?.matchedCount ?? result?.nMatched ?? result?.result?.nMatched ?? 0
+);
+
+async function writeAIProductUpdatesAtomically(
+  operations = [],
+  { sellerId = null, expectedCurrency = null, receipt = null } = {}
+) {
+  if (receipt) await AIActionReceipt.init();
+  const write = async session => {
+    if (receipt) {
+      await AIActionReceipt.create([{
+        user: receipt.user,
+        action: receipt.action,
+        requestKey: receipt.requestKey,
+        toolOrdinal: receipt.toolOrdinal,
+        requestFingerprint: receipt.requestFingerprint,
+        status: 'processing',
+      }], { session });
+    }
+    const result = await Product.bulkWrite(operations, { session });
+    if (matchedBulkCount(result) !== operations.length) {
+      const error = new Error('One or more products changed while this update was being prepared. No prices were changed; refresh and retry.');
+      error.status = 409;
+      error.code = 'PRODUCT_PRICE_UPDATE_CONFLICT';
+      throw error;
+    }
+    if (receipt) {
+      const completed = await AIActionReceipt.updateOne(
+        {
+          user: receipt.user,
+          requestKey: receipt.requestKey,
+          toolOrdinal: receipt.toolOrdinal,
+          requestFingerprint: receipt.requestFingerprint,
+          status: 'processing',
+        },
+        {
+          $set: {
+            status: 'completed',
+            result: receipt.result,
+          },
+        },
+        { session }
+      );
+      if (Number(completed.matchedCount) !== 1) {
+        const error = new Error('The AI action receipt changed during execution. No prices were changed.');
+        error.status = 409;
+        error.code = 'AI_ACTION_IDEMPOTENCY_CONFLICT';
+        throw error;
+      }
+    }
+    return { result, actionResult: receipt?.result || null, replayed: false };
+  };
+  try {
+    return await (sellerId
+      ? withProductCurrencyWriteLock(sellerId, expectedCurrency, write)
+      : runInTransaction(write));
+  } catch (error) {
+    if (!receipt || ![11000, 11001].includes(Number(error?.code))) throw error;
+    const existing = await AIActionReceipt.findOne({
+      user: receipt.user,
+      requestKey: receipt.requestKey,
+      toolOrdinal: receipt.toolOrdinal,
+    }).lean();
+    if (!existing) throw error;
+    if (
+      existing.action !== receipt.action
+      || existing.requestFingerprint !== receipt.requestFingerprint
+    ) {
+      const conflict = new Error('This AI request execution slot was already used for a different tool or arguments. Start a new request with a new Idempotency-Key.');
+      conflict.status = 409;
+      conflict.statusCode = 409;
+      conflict.code = 'AI_ACTION_IDEMPOTENCY_CONFLICT';
+      throw conflict;
+    }
+    if (existing.status !== 'completed' || !existing.result) {
+      const pending = new Error('This AI action is still being committed. Retry the same request shortly.');
+      pending.status = 409;
+      pending.statusCode = 409;
+      pending.code = 'AI_ACTION_PENDING';
+      throw pending;
+    }
+    return { actionResult: existing.result, replayed: true };
+  }
+}
+
+function aiActionExecutionFailure(toolName, error) {
+  console.error(`[aiActionExecutor] Error executing ${toolName}:`, error?.message || error);
+  return {
+    success: false,
+    error: `Failed to execute ${toolName}: ${error?.message || 'Unknown error'}`,
+    ...(error?.code ? { code: error.code } : {}),
+  };
+}
+
+function jsonSafeAIActionResult(result) {
+  // Receipts must never retain live Mongoose documents/subdocuments (which can
+  // carry parent/database references). The HTTP/SSE boundary is JSON anyway,
+  // so return and persist the same deterministic wire representation.
+  if (result === undefined) return null;
+  return JSON.parse(JSON.stringify(result));
+}
+
+function actionReceiptConflict(existing, receipt) {
+  return existing?.action !== receipt.action
+    || existing?.requestFingerprint !== receipt.requestFingerprint;
+}
+
+function actionReceiptReplayOrThrow(existing, receipt) {
+  if (actionReceiptConflict(existing, receipt)) {
+    const conflict = new Error('This AI request execution slot was already used for a different tool or arguments. Start a new request with a new Idempotency-Key.');
+    conflict.status = 409;
+    conflict.statusCode = 409;
+    conflict.code = 'AI_ACTION_IDEMPOTENCY_CONFLICT';
+    throw conflict;
+  }
+  if (existing?.status === 'completed' && existing.result) {
+    return existing.result;
+  }
+  const pending = new Error('This AI action may still be processing. Retry the same request shortly; a new mutation was not started.');
+  pending.status = 409;
+  pending.statusCode = 409;
+  pending.code = 'AI_ACTION_PENDING';
+  throw pending;
+}
+
+async function claimAIActionExecution(receipt) {
+  await AIActionReceipt.init();
+  try {
+    await AIActionReceipt.create({
+      user: receipt.user,
+      action: receipt.action,
+      requestKey: receipt.requestKey,
+      toolOrdinal: receipt.toolOrdinal,
+      requestFingerprint: receipt.requestFingerprint,
+      status: 'processing',
+    });
+    return { claimed: true, result: null };
+  } catch (error) {
+    if (![11000, 11001].includes(Number(error?.code))) throw error;
+    const existing = await AIActionReceipt.findOne({
+      user: receipt.user,
+      requestKey: receipt.requestKey,
+      toolOrdinal: receipt.toolOrdinal,
+    }).lean();
+    if (!existing) throw error;
+    return { claimed: false, result: actionReceiptReplayOrThrow(existing, receipt) };
+  }
+}
+
+async function executeToolCall(toolName, args = {}, user) {
+  const hasTransportExecutionSlot = Object.prototype.hasOwnProperty.call(
+    args || {},
+    '_chatRequestKey'
+  );
+  if (
+    !AI_MUTATING_TOOLS_WITH_OUTER_RECEIPT.has(toolName)
+    // Legacy in-process callers have no transport context. Every public chat
+    // and /ai-actions adapter supplies this property (an empty value then
+    // fails closed), while unit/internal read paths remain backwards compatible.
+    || !hasTransportExecutionSlot
+  ) {
+    return executeToolCallUnprotected(toolName, args, user);
+  }
+
+  const userId = user?._id || user?.id || null;
+  if (!userId) {
+    return executeToolCallUnprotected(toolName, args, user);
+  }
+
+  let receipt;
+  try {
+    receipt = aiActionMutationReceipt(toolName, args, userId, { required: true });
+  } catch (error) {
+    return aiActionExecutionFailure(toolName, error);
+  }
+
+  let claimed = false;
+  try {
+    const claim = await claimAIActionExecution(receipt);
+    if (!claim.claimed) return claim.result;
+    claimed = true;
+
+    const rawResult = await executeToolCallUnprotected(
+      toolName,
+      args,
+      user,
+      { propagateErrors: true }
+    );
+    const result = jsonSafeAIActionResult(rawResult);
+    const completed = await AIActionReceipt.updateOne(
+      {
+        user: receipt.user,
+        requestKey: receipt.requestKey,
+        toolOrdinal: receipt.toolOrdinal,
+        requestFingerprint: receipt.requestFingerprint,
+        status: 'processing',
+      },
+      { $set: { status: 'completed', result } }
+    );
+    if (Number(completed.matchedCount ?? completed.n ?? 0) !== 1) {
+      const error = new Error('The AI action receipt could not be completed after its mutation.');
+      error.code = 'AI_ACTION_RECEIPT_COMMIT_AMBIGUOUS';
+      throw error;
+    }
+    return result;
+  } catch (error) {
+    if (!claimed) return aiActionExecutionFailure(toolName, error);
+
+    // The mutation and receipt completion are not necessarily in one database
+    // transaction for these heterogeneous tools. Once execution starts, any
+    // exception is ambiguous: retain the processing claim so a retry cannot
+    // execute the mutation again.
+    console.error(`[aiActionExecutor] Ambiguous ${toolName} execution retained for recovery:`, error?.message || error);
+    const pending = new Error('This AI action may have been applied, but its result could not be confirmed. Retry the same request later; it will not be executed again automatically.');
+    pending.status = 409;
+    pending.statusCode = 409;
+    pending.code = 'AI_ACTION_PENDING';
+    return aiActionExecutionFailure(toolName, pending);
   }
 }
 
 module.exports = {
   executeToolCall,
   isClientSideTool,
+  isDurableMutatingAITool,
+  getDurableAIActionIntentKey,
   CLIENT_SIDE_TOOLS,
   storeChangeLimits,
   __private: {
@@ -4804,7 +7034,17 @@ module.exports = {
     sellerOrderStatus,
     sellerOwnsOrderItem,
     detectExplicitCurrencyInText,
+    isRecognizedAIPriceCurrency,
     resolveAIPriceCurrency,
     buildProductCurrencyConversionNotice,
+    normalizeTaxConfigUpdate,
+    normalizeMoneyAmount,
+    requireAIDerivedMoney,
+    parseMoneyInput,
+    parseQuantity,
+    requireStoredAIShippingCurrency,
+    requireStoredAIShippingMethod,
+    requireStoredAITaxConfig,
+    stableAIProductCurrency,
   },
 };

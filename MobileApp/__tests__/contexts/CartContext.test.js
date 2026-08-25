@@ -6,9 +6,10 @@ import api from '../../src/config/api';
 import { GUEST_CART_STORAGE_KEY, writeGuestCart } from '../../src/utils/guestCart';
 
 let mockCurrentUser = null;
+let mockAuthLoading = false;
 
 jest.mock('../../src/contexts/AuthContext', () => ({
-  useAuth: () => ({ currentUser: mockCurrentUser }),
+  useAuth: () => ({ currentUser: mockCurrentUser, isLoading: mockAuthLoading }),
 }));
 
 jest.mock('../../src/config/api', () => ({
@@ -56,6 +57,7 @@ describe('CartContext guest and authenticated ownership', () => {
 
   beforeEach(async () => {
     mockCurrentUser = null;
+    mockAuthLoading = false;
     latestCart = null;
     jest.clearAllMocks();
     await AsyncStorage.clear();
@@ -107,7 +109,8 @@ describe('CartContext guest and authenticated ownership', () => {
     }]);
     mockCurrentUser = { _id: '64b000000000000000000099' };
     const serverLine = { _id: 'server-line', product, qty: 2, selectedColor: 'Black', selectedOptions: { Size: 'Large' } };
-    mockApi.post.mockResolvedValue({ data: { cart: [serverLine], totalCartPrice: 180 } });
+    mockApi.post.mockResolvedValue({ data: { cart: [serverLine], totalCartPrice: 180, totalCartCurrency: 'USD' } });
+    mockApi.get.mockResolvedValue({ data: { cart: [serverLine], totalCartPrice: 180, totalCartCurrency: 'USD' } });
 
     await act(async () => {
       root = TestRenderer.create(<CartProvider><CartProbe /></CartProvider>);
@@ -122,16 +125,18 @@ describe('CartContext guest and authenticated ownership', () => {
         selectedOptions: { Size: 'Large' },
       }],
     });
+    expect(mockApi.get).toHaveBeenCalledWith('/api/cart/get');
     expect(latestCart.cartItems).toMatchObject({ cart: [serverLine], totalCartPrice: 180 });
+    expect(latestCart.isCartReady).toBe(true);
+    expect(latestCart.cartHydrationStatus).toBe('ready');
     expect(await AsyncStorage.getItem(GUEST_CART_STORAGE_KEY)).toBeNull();
-    expect(mockApi.get).not.toHaveBeenCalled();
   });
 
   it('keeps the local bag for a safe retry when authenticated merge fails', async () => {
     await writeGuestCart([{ product, qty: 1, selectedColor: 'Black' }]);
     mockCurrentUser = { _id: '64b000000000000000000099' };
     mockApi.post.mockRejectedValue({ response: { data: { msg: 'Temporary sync failure' } } });
-    mockApi.get.mockResolvedValue({ data: { cart: [], totalCartPrice: 0 } });
+    mockApi.get.mockResolvedValue({ data: { cart: [], totalCartPrice: 0, totalCartCurrency: 'USD' } });
 
     await act(async () => {
       root = TestRenderer.create(<CartProvider><CartProbe /></CartProvider>);
@@ -139,7 +144,55 @@ describe('CartContext guest and authenticated ownership', () => {
     });
 
     expect(mockApi.post).toHaveBeenCalledTimes(1);
-    expect(mockApi.get).toHaveBeenCalledWith('/api/cart/get');
+    expect(mockApi.get).not.toHaveBeenCalled();
+    expect(latestCart.isCartReady).toBe(false);
+    expect(latestCart.cartHydrationStatus).toBe('error');
     expect(await AsyncStorage.getItem(GUEST_CART_STORAGE_KEY)).not.toBeNull();
+  });
+
+  it('coalesces refreshes during hydration so the same guest bag is merged once', async () => {
+    await writeGuestCart([{ product, qty: 1, selectedColor: 'Black' }]);
+    mockCurrentUser = { _id: '64b000000000000000000099' };
+    const serverLine = { _id: 'server-line', product, qty: 1, selectedColor: 'Black' };
+    let resolveMerge;
+    const mergePromise = new Promise((resolve) => { resolveMerge = resolve; });
+    mockApi.post.mockReturnValue(mergePromise);
+    mockApi.get.mockResolvedValue({ data: { cart: [serverLine], totalCartPrice: 90, totalCartCurrency: 'USD' } });
+
+    await act(async () => {
+      root = TestRenderer.create(<CartProvider><CartProbe /></CartProvider>);
+      await flushEffects();
+    });
+
+    let refreshPromise;
+    await act(async () => {
+      refreshPromise = latestCart.fetchCart();
+      await flushEffects();
+    });
+    expect(mockApi.post).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveMerge({ data: { cart: [serverLine], totalCartPrice: 90, totalCartCurrency: 'USD' } });
+      await refreshPromise;
+      await flushEffects();
+    });
+
+    expect(mockApi.post).toHaveBeenCalledTimes(1);
+    expect(mockApi.get).toHaveBeenCalledTimes(1);
+    expect(latestCart.isCartReady).toBe(true);
+  });
+
+  it('does not expose checkout-ready state until auth hydration resolves', async () => {
+    mockAuthLoading = true;
+
+    await act(async () => {
+      root = TestRenderer.create(<CartProvider><CartProbe /></CartProvider>);
+      await flushEffects();
+    });
+
+    expect(latestCart.isCartReady).toBe(false);
+    expect(latestCart.cartHydrationStatus).toBe('hydrating');
+    expect(mockApi.get).not.toHaveBeenCalled();
+    expect(mockApi.post).not.toHaveBeenCalled();
   });
 });

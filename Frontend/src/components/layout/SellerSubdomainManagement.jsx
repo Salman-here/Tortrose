@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { Globe, ExternalLink, Eye, ShoppingBag, DollarSign, TrendingUp, Users, CheckCircle, Lock, AlertTriangle, Loader2, Copy, BarChart3, ArrowUpRight, Info, Edit3, Save, X, Shield, CreditCard, Clock } from 'lucide-react';
 import axios from 'axios';
@@ -8,6 +8,11 @@ import { useCurrency } from '../../contexts/CurrencyContext';
 import Loader from '../common/Loader';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { getAuthToken } from "../../utils/cookieHelper";
+import {
+    resolveSubdomainOwnershipTerms,
+    subdomainOwnershipResponseIsValid,
+} from '../../utils/subdomainOwnership';
+import { subdomainAnalyticsResponseIsValid } from '../../utils/subdomainAnalyticsSafety';
 
 const SellerSubdomainManagement = () => {
     const { formatPrice, currency } = useCurrency();
@@ -21,31 +26,55 @@ const SellerSubdomainManagement = () => {
     const [saving, setSaving] = useState(false);
     const [ownership, setOwnership] = useState(null);
     const [purchaseLoading, setPurchaseLoading] = useState(false);
+    const [loadError, setLoadError] = useState('');
+    const dataRequestRef = useRef({ id: 0, controller: null });
+    const availabilityRequestRef = useRef(0);
     const [searchParams] = useSearchParams();
+    const ownershipTerms = resolveSubdomainOwnershipTerms(ownership);
+    const ownershipPrice = ownershipTerms;
+    const ownershipYears = ownershipTerms?.years || null;
 
-    const fetchData = async () => {
+    const fetchData = useCallback(async () => {
+        dataRequestRef.current.controller?.abort();
+        const controller = new AbortController();
+        const requestId = dataRequestRef.current.id + 1;
+        dataRequestRef.current = { id: requestId, controller };
         try {
             setLoading(true);
+            setData(null);
+            setOwnership(null);
+            setLoadError('');
             const token = getAuthToken();
             const [analyticsRes, ownershipRes] = await Promise.all([
-                axios.get(`${import.meta.env.VITE_API_URL}api/subdomain/analytics/seller?currency=${currency}`, {
-                    headers: { Authorization: `Bearer ${token}` }
+                axios.get(`${import.meta.env.VITE_API_URL}api/subdomain/analytics/seller?currency=${encodeURIComponent(currency)}`, {
+                    headers: { Authorization: `Bearer ${token}` },
+                    signal: controller.signal,
                 }),
                 axios.get(`${import.meta.env.VITE_API_URL}api/subscription/subdomain/ownership`, {
-                    headers: { Authorization: `Bearer ${token}` }
-                }).catch(() => null),
+                    headers: { Authorization: `Bearer ${token}` },
+                    signal: controller.signal,
+                }),
             ]);
+            if (dataRequestRef.current.id !== requestId) return;
+            if (!subdomainAnalyticsResponseIsValid(analyticsRes.data, currency)) {
+                throw new Error('Subdomain analytics returned invalid or inconsistent money data.');
+            }
+            if (!subdomainOwnershipResponseIsValid(ownershipRes.data)) {
+                throw new Error('Subdomain ownership details returned an invalid or inconsistent state.');
+            }
             setData(analyticsRes.data);
             setNewSlug(analyticsRes.data.subdomain?.slug || '');
-            if (ownershipRes?.data) {
-                setOwnership(ownershipRes.data);
-            }
+            setOwnership(ownershipRes.data);
         } catch (error) {
-            toast.error('Failed to load subdomain data');
+            if (controller.signal.aborted || error?.code === 'ERR_CANCELED' || error?.name === 'CanceledError') return;
+            if (dataRequestRef.current.id !== requestId) return;
+            setData(null);
+            setOwnership(null);
+            setLoadError(error.response?.data?.msg || error.message || 'Failed to load subdomain data.');
         } finally {
-            setLoading(false);
+            if (dataRequestRef.current.id === requestId) setLoading(false);
         }
-    };
+    }, [currency]);
 
     useEffect(() => {
         fetchData();
@@ -55,29 +84,40 @@ const SellerSubdomainManagement = () => {
         if (searchParams.get('purchase') === 'cancelled') {
             toast.info('Subdomain purchase was cancelled.');
         }
-    }, [currency]);
+        return () => dataRequestRef.current.controller?.abort();
+    }, [fetchData, searchParams]);
 
     const sanitize = (val) => val.toLowerCase().replace(/[^a-z0-9-]/g, '').replace(/^-+|-+$/g, '').replace(/-{2,}/g, '-');
 
-    const checkAvailability = useCallback(async (slug) => {
+    const checkAvailability = useCallback(async (slug, requestId) => {
         if (!slug || slug.length < 3) { setSlugAvailable(null); setSlugMessage(''); return; }
         try {
             setSlugChecking(true);
             const token = getAuthToken();
-            const res = await axios.get(`${import.meta.env.VITE_API_URL}api/stores/check-subdomain/${slug}`, {
+            const res = await axios.get(`${import.meta.env.VITE_API_URL}api/stores/check-subdomain/${encodeURIComponent(slug)}`, {
                 headers: { Authorization: `Bearer ${token}` }
             });
+            if (availabilityRequestRef.current !== requestId) return;
+            if (typeof res.data?.available !== 'boolean') throw new Error('Availability response is invalid.');
             setSlugAvailable(res.data.available);
-            setSlugMessage(res.data.msg);
+            setSlugMessage(typeof res.data?.msg === 'string' ? res.data.msg : (res.data.available ? 'Available' : 'Unavailable'));
         } catch {
+            if (availabilityRequestRef.current !== requestId) return;
             setSlugAvailable(null);
             setSlugMessage('Could not check availability');
-        } finally { setSlugChecking(false); }
+        } finally {
+            if (availabilityRequestRef.current === requestId) setSlugChecking(false);
+        }
     }, []);
 
     useEffect(() => {
-        if (!editing || !newSlug || newSlug === data?.subdomain?.slug) return;
-        const timer = setTimeout(() => checkAvailability(newSlug), 500);
+        const requestId = availabilityRequestRef.current + 1;
+        availabilityRequestRef.current = requestId;
+        if (!editing || !newSlug || newSlug === data?.subdomain?.slug) {
+            setSlugChecking(false);
+            return undefined;
+        }
+        const timer = setTimeout(() => checkAvailability(newSlug, requestId), 500);
         return () => clearTimeout(timer);
     }, [newSlug, editing, data?.subdomain?.slug, checkAvailability]);
 
@@ -109,6 +149,10 @@ const SellerSubdomainManagement = () => {
     };
 
     const handlePurchaseSubdomain = async () => {
+        if (!ownershipPrice || !ownershipYears) {
+            toast.error('The authoritative ownership price is unavailable. Refresh before opening Checkout.');
+            return;
+        }
         setPurchaseLoading(true);
         try {
             const token = getAuthToken();
@@ -128,7 +172,13 @@ const SellerSubdomainManagement = () => {
     };
 
     if (loading) return <div className="flex justify-center items-center h-64"><Loader /></div>;
-    if (!data) return <div className="p-6 text-center" style={{ color: 'hsl(var(--muted-foreground))' }}>No subdomain data available. Create a store first.</div>;
+    if (!data || !ownership) return (
+        <div className="p-6 text-center glass-panel" style={{ color: 'hsl(var(--muted-foreground))' }}>
+            <AlertTriangle size={28} className="mx-auto mb-3" style={{ color: 'hsl(0, 72%, 55%)' }} />
+            <p>{loadError || 'No subdomain data is available. Create a store first.'}</p>
+            <button type="button" onClick={fetchData} className="mt-4 px-4 py-2 rounded-xl glass-button text-sm font-semibold">Retry</button>
+        </div>
+    );
 
     const { subdomain, analytics } = data;
     const isActive = subdomain.isActive;
@@ -140,7 +190,7 @@ const SellerSubdomainManagement = () => {
     const stats = [
         { label: 'Total Views', value: analytics.totalViews, icon: <Eye size={18} />, color: 'hsl(220, 70%, 55%)' },
         { label: 'Total Orders', value: analytics.totalOrders, icon: <ShoppingBag size={18} />, color: 'hsl(150, 60%, 45%)' },
-        { label: 'Revenue', value: formatPrice(analytics.totalRevenue, { sourceCurrency: analytics.currency || currency }), icon: <DollarSign size={18} />, color: 'hsl(200, 80%, 50%)' },
+        { label: 'Recognized Revenue', value: formatPrice(analytics.totalRevenue, { sourceCurrency: analytics.currency }), icon: <DollarSign size={18} />, color: 'hsl(200, 80%, 50%)' },
         { label: 'Conversion', value: `${analytics.conversionRate}%`, icon: <TrendingUp size={18} />, color: 'hsl(280, 60%, 55%)' },
     ];
 
@@ -297,14 +347,14 @@ const SellerSubdomainManagement = () => {
                                 whileHover={{ scale: 1.02 }}
                                 whileTap={{ scale: 0.98 }}
                                 onClick={handlePurchaseSubdomain}
-                                disabled={purchaseLoading}
+                                disabled={purchaseLoading || !ownershipPrice || !ownershipYears}
                                 className="w-full py-3 rounded-xl font-bold text-sm text-white flex items-center justify-center gap-2 disabled:opacity-60"
                                 style={{ background: 'linear-gradient(135deg, hsl(220, 70%, 55%), hsl(200, 80%, 50%))' }}
                             >
                                 {purchaseLoading ? (
                                     <Loader2 size={16} className="animate-spin" />
                                 ) : (
-                                    <><CreditCard size={15} /> Renew Ownership — ${ownership?.price || 15}</>
+                                    <><CreditCard size={15} /> Renew Ownership — {ownershipPrice?.priceLabel || 'Price unavailable'}</>
                                 )}
                             </motion.button>
                         )}
@@ -321,8 +371,8 @@ const SellerSubdomainManagement = () => {
                                         Secure your subdomain for 3 years
                                     </p>
                                     <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                                        Purchase your subdomain <strong>{subdomain.url}</strong> for a one-time payment of <strong>${ownership?.price || 15}</strong>.
-                                        Your subdomain will be protected for {ownership?.ownershipYears || 3} years, even if your account is blocked.
+                                        Purchase your subdomain <strong>{subdomain.url}</strong> for a one-time payment of <strong>{ownershipPrice?.priceLabel || 'a price shown after refresh'}</strong>.
+                                        Your subdomain will be protected for {ownershipYears || 'the stated number of'} years, even if your account is blocked.
                                     </p>
                                 </div>
                             </div>
@@ -331,9 +381,9 @@ const SellerSubdomainManagement = () => {
                         <div className="space-y-2">
                             {[
                                 { icon: <Shield size={13} />, text: 'Protected even if your account is blocked' },
-                                { icon: <Clock size={13} />, text: '3-year ownership — renewable after expiry' },
+                                { icon: <Clock size={13} />, text: ownershipYears ? `${ownershipYears}-year ownership — renewable after expiry` : 'Ownership duration unavailable — refresh required' },
                                 { icon: <Globe size={13} />, text: 'No one else can claim your subdomain' },
-                                { icon: <CreditCard size={13} />, text: 'One-time payment of $15 (separate from subscription)' },
+                                { icon: <CreditCard size={13} />, text: ownershipPrice ? `One-time payment of ${ownershipPrice.priceLabel} (separate from subscription)` : 'Ownership price unavailable — refresh required' },
                             ].map((f, i) => (
                                 <div key={i} className="flex items-center gap-2.5">
                                     <div className="w-5 h-5 rounded-md flex items-center justify-center shrink-0" style={{ background: 'rgba(99, 102, 241, 0.12)', color: 'hsl(220, 70%, 55%)' }}>
@@ -355,14 +405,14 @@ const SellerSubdomainManagement = () => {
                             whileHover={{ scale: 1.02 }}
                             whileTap={{ scale: 0.98 }}
                             onClick={handlePurchaseSubdomain}
-                            disabled={purchaseLoading}
+                            disabled={purchaseLoading || !ownershipPrice || !ownershipYears}
                             className="w-full py-3.5 rounded-xl font-bold text-sm text-white flex items-center justify-center gap-2 disabled:opacity-60"
                             style={{ background: 'linear-gradient(135deg, hsl(220, 70%, 55%), hsl(200, 80%, 50%))' }}
                         >
                             {purchaseLoading ? (
                                 <Loader2 size={16} className="animate-spin" />
                             ) : (
-                                <><CreditCard size={16} /> Buy Subdomain — ${ownership?.price || 15} (One-time)</>
+                                <><CreditCard size={16} /> Buy Subdomain — {ownershipPrice?.priceLabel || 'Price unavailable'} (One-time)</>
                             )}
                         </motion.button>
                     </div>
@@ -473,11 +523,13 @@ const SellerSubdomainManagement = () => {
                     {[
                         { q: 'What is a subdomain?', a: 'A custom URL like yourstore.rozare.com that customers can use to access your store directly.' },
                         { q: 'When does it become active?', a: 'Your subdomain is live while your store is active. Verification is separate and adds a verified badge, not subdomain activation.' },
-                        { q: 'Can I change it later?', a: 'Yes! You can change your subdomain at any time. The old URL will stop working immediately.' },
+                        { q: 'Can I change it later?', a: 'Yes, after the 30-day change cooldown. The old URL stops working immediately when a change is saved.' },
                         { q: 'What happens if my account is blocked?', a: isOwned
                             ? 'Your subdomain is protected for 3 years from purchase. No one else can claim it even if your account is blocked.'
                             : 'Without purchasing your subdomain, it will be removed after 7 days of your account being blocked. Purchase it to protect it for 3 years.' },
-                        { q: 'What does buying a subdomain mean?', a: 'For a one-time $15 payment, you own your subdomain for 3 years. Even if your account is blocked, no one else can claim it. After 3 years, you can renew the ownership.' },
+                        { q: 'What does buying a subdomain mean?', a: ownershipPrice && ownershipYears
+                            ? `For a one-time ${ownershipPrice.priceLabel} payment, you own your subdomain for ${ownershipYears} years. Even if your account is blocked, no one else can claim it. After ${ownershipYears} years, you can renew the ownership.`
+                            : 'Refresh to load the authoritative one-time price and ownership duration before opening Checkout.' },
                     ].map((item, i) => (
                         <div key={i} className="glass-inner rounded-xl p-4">
                             <p className="text-sm font-semibold mb-1" style={{ color: 'hsl(var(--foreground))' }}>{item.q}</p>

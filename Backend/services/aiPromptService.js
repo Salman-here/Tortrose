@@ -227,7 +227,13 @@ async function getSystemPromptForRole(role, { channel = 'web' } = {}) {
     const { customs } = await loadAll();
     const knowledge = buildKnowledgeBlock(customs, effectiveRole, effectiveChannel);
 
-    return base + language + toolMemory + commercePolicy + whatsapp + knowledge;
+    return base
+        + language
+        + toolMemory
+        + commercePolicy
+        + whatsapp
+        + knowledge
+        + defaults.FINANCIAL_TRUTH_ADDENDUM;
 }
 
 async function getAssistPrompts() {

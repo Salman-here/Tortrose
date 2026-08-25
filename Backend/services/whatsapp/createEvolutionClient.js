@@ -6,6 +6,7 @@
 //   const sellerClient = createEvolutionClient('EVOLUTION_SELLER_INSTANCE_NAME', 'rozare-seller');
 
 const axios = require('axios');
+const { WHATSAPP_WEBHOOK_HEADER } = require('./webhookSecurity');
 const QRCode = require('qrcode');
 const {
     collectAddressHints,
@@ -464,6 +465,12 @@ function createEvolutionClient(instanceEnvVar, defaultName) {
 
     const setWebhook = async (url, secret = '') => {
         if (!isConfigured()) throw new Error('Evolution API not configured');
+        const webhookSecret = typeof secret === 'string' ? secret.trim() : '';
+        if (!webhookSecret) {
+            const error = new Error('A dedicated WhatsApp webhook secret is required');
+            error.code = 'WHATSAPP_WEBHOOK_SECRET_NOT_CONFIGURED';
+            throw error;
+        }
         // Field names differ across Evolution builds: v2.3.x reads `base64` /
         // `byEvents`, older builds read `webhookBase64` / `webhookByEvents`.
         // Send BOTH so inbound media base64 inlining survives a re-register on
@@ -488,7 +495,7 @@ function createEvolutionClient(instanceEnvVar, defaultName) {
                 'LOGOUT_INSTANCE',
                 'REMOVE_INSTANCE',
             ],
-            ...(secret ? { headers: { 'x-rozare-webhook-secret': secret } } : {}),
+            headers: { [WHATSAPP_WEBHOOK_HEADER]: webhookSecret },
         };
         // Evolution v2.3.x validates /webhook/set with a top-level `webhook`
         // object. Keep the flat fallback for older/self-hosted builds that

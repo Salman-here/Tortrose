@@ -5,14 +5,49 @@ import { useLocation, useNavigate } from 'react-router-dom';
 
 const FOUR_HOURS_MS = 4 * 60 * 60 * 1000;
 
+const formatUsdMinor = (amountMinor) => {
+    if (!Number.isSafeInteger(amountMinor) || amountMinor <= 0) return null;
+    const value = BigInt(amountMinor);
+    return `$${value / 100n}.${String(value % 100n).padStart(2, '0')}`;
+};
+
+const isExactPromotionPercent = value => (
+    typeof value === 'number'
+    && Number.isFinite(value)
+    && value > 0
+    && value < 100
+    && /^\d{1,2}(?:\.\d{1,2})?$/.test(String(value))
+);
+
 const FounderPromotionModal = ({ subscription, sellerKey }) => {
     const navigate = useNavigate();
     const location = useLocation();
     const [open, setOpen] = useState(false);
     const promotion = subscription?.founderPromotion;
+    const starterFounderPrice = formatUsdMinor(subscription?.pricing?.starter?.founderAmountCents);
+    const eliteFounderPrice = formatUsdMinor(subscription?.pricing?.elite?.founderAmountCents);
+    const discountPercent = promotion?.discountPercent;
+    const hasAuthoritativeOffer = Boolean(
+        promotion?.available
+        && promotion?.sellerEligible
+        && !promotion?.entitlementActive
+        && typeof promotion?.code === 'string'
+        && promotion.code.trim()
+        && isExactPromotionPercent(discountPercent)
+        && Number.isSafeInteger(promotion?.remaining)
+        && promotion.remaining >= 0
+        && Number.isSafeInteger(promotion?.maxRedemptions)
+        && promotion.maxRedemptions > 0
+        && (promotion.sellerHasReservation || promotion.remaining > 0)
+        && starterFounderPrice
+        && eliteFounderPrice
+    );
 
     useEffect(() => {
-        if (!promotion?.available || !promotion?.sellerEligible || promotion?.entitlementActive) return;
+        if (!hasAuthoritativeOffer) {
+            setOpen(false);
+            return;
+        }
         if (location.pathname.includes('/seller-dashboard/subscription')) return;
 
         const storageKey = `rozare-founder-promotion-last-shown:${sellerKey || 'seller'}`;
@@ -25,7 +60,7 @@ const FounderPromotionModal = ({ subscription, sellerKey }) => {
             // The promotion can still be shown when browser storage is unavailable.
         }
         if (shouldOpen) setOpen(true);
-    }, [location.pathname, promotion?.available, promotion?.entitlementActive, promotion?.sellerEligible, sellerKey]);
+    }, [hasAuthoritativeOffer, location.pathname, sellerKey]);
 
     useEffect(() => {
         if (!open) return undefined;
@@ -43,7 +78,7 @@ const FounderPromotionModal = ({ subscription, sellerKey }) => {
 
     return (
         <AnimatePresence>
-            {open && (
+            {open && hasAuthoritativeOffer && (
                 <Motion.div
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
@@ -83,21 +118,21 @@ const FounderPromotionModal = ({ subscription, sellerKey }) => {
                             First 100 Sellers
                         </p>
                         <h2 id="founder-promotion-title" className="text-xl font-bold mt-1 pr-8" style={{ color: 'hsl(var(--foreground))' }}>
-                            Lock in an extra 40% off
+                            Lock in an extra {discountPercent}% off
                         </h2>
                         <p className="text-sm mt-2" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                            Use <strong style={{ color: 'hsl(var(--foreground))' }}>{promotion.code}</strong> to get Starter for $5.99/month or Elite for $12.99/month.
+                            Use <strong style={{ color: 'hsl(var(--foreground))' }}>{promotion.code}</strong> to get Starter for {starterFounderPrice}/month or Elite for {eliteFounderPrice}/month.
                         </p>
 
                         <div className="grid grid-cols-2 gap-3 mt-5">
                             <div className="glass-inner p-3 text-center">
                                 <p className="text-[10px] uppercase font-semibold" style={{ color: 'hsl(var(--muted-foreground))' }}>Starter</p>
-                                <p className="text-lg font-bold" style={{ color: 'hsl(var(--foreground))' }}>$5.99</p>
+                                <p className="text-lg font-bold" style={{ color: 'hsl(var(--foreground))' }}>{starterFounderPrice}</p>
                                 <p className="text-[10px]" style={{ color: 'hsl(var(--muted-foreground))' }}>/month</p>
                             </div>
                             <div className="glass-inner p-3 text-center">
                                 <p className="text-[10px] uppercase font-semibold" style={{ color: 'hsl(var(--muted-foreground))' }}>Elite</p>
-                                <p className="text-lg font-bold" style={{ color: 'hsl(var(--foreground))' }}>$12.99</p>
+                                <p className="text-lg font-bold" style={{ color: 'hsl(var(--foreground))' }}>{eliteFounderPrice}</p>
                                 <p className="text-[10px]" style={{ color: 'hsl(var(--muted-foreground))' }}>/month</p>
                             </div>
                         </div>

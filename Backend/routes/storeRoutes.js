@@ -27,6 +27,7 @@ const {
     cancelProductCurrencyChange
 } = require('../controllers/storeController');
 const verifyToken = require('../middleware/authMiddleware');
+const { admin } = require('../middleware/authMiddleware');
 const User = require('../models/User');
 
 // Middleware to check if user is a seller (reads live role from DB so a freshly
@@ -84,11 +85,11 @@ router.post('/verification/apply', verifyToken, isSellerAuth, applyForVerificati
 router.get('/verification/status', verifyToken, isSellerAuth, getVerificationStatus);
 
 // Verification Routes (Admin only)
-router.get('/verification/pending', verifyToken, getPendingVerifications);
-router.get('/verification/verified', verifyToken, getVerifiedStores);
-router.put('/verification/:storeId/approve', verifyToken, approveVerification);
-router.put('/verification/:storeId/reject', verifyToken, rejectVerification);
-router.put('/verification/:storeId/remove', verifyToken, removeVerification);
+router.get('/verification/pending', verifyToken, admin, getPendingVerifications);
+router.get('/verification/verified', verifyToken, admin, getVerifiedStores);
+router.put('/verification/:storeId/approve', verifyToken, admin, approveVerification);
+router.put('/verification/:storeId/reject', verifyToken, admin, rejectVerification);
+router.put('/verification/:storeId/remove', verifyToken, admin, removeVerification);
 
 // Public Store Routes - Order matters! Specific routes before dynamic params
 router.get('/search', searchStores);

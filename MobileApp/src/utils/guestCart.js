@@ -1,4 +1,9 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import {
+  effectiveGuestProductPrice,
+  getCartPresentationQuantity,
+  guestCartPresentationTotal,
+} from './cartPresentation';
 
 export const GUEST_CART_STORAGE_KEY = '@rozare/guest-cart/v1';
 
@@ -42,17 +47,13 @@ export const guestLineId = (productId, selectedColor = null, selectedOptions = n
   `guest_${hashIdentity(cartLineIdentity(productId, selectedColor, selectedOptions))}`
 );
 
-export const effectiveProductPrice = (product) => {
-  const price = Number(product?.price || 0);
-  const discountedPrice = Number(product?.discountedPrice || 0);
-  return discountedPrice > 0 && discountedPrice < price ? discountedPrice : price;
-};
+export const effectiveProductPrice = effectiveGuestProductPrice;
 
 export const calculateGuestCartTotal = (items) => (
-  (Array.isArray(items) ? items : []).reduce((total, item) => (
-    total + (effectiveProductPrice(item?.product) * Math.max(1, Number(item?.qty) || 1))
-  ), 0)
+  guestCartPresentationTotal(items).totalCartPrice
 );
+
+export const calculateGuestCartSummary = guestCartPresentationTotal;
 
 export const normalizeGuestCart = (items) => {
   if (!Array.isArray(items)) return [];
@@ -62,18 +63,39 @@ export const normalizeGuestCart = (items) => {
   items.forEach((item) => {
     const product = item?.product;
     const productId = String(item?.productId || product?._id || '').trim();
-    if (!productId || !product || typeof product !== 'object') return;
+    if (!productId || !product || typeof product !== 'object') {
+      const error = new Error('The stored guest cart contains an invalid product.');
+      error.code = 'CART_PRESENTATION_DATA_INVALID';
+      throw error;
+    }
 
     const selectedColor = hasSelectionValue(item?.selectedColor)
       ? String(item.selectedColor).trim()
       : null;
     const selectedOptions = normalizeSelectedOptions(item?.selectedOptions);
     const identity = cartLineIdentity(productId, selectedColor, selectedOptions);
-    const stock = Math.max(0, Number(product.stock) || 0);
-    const requestedQty = Math.max(1, Math.min(99, Math.floor(Number(item?.qty) || 1)));
+    const stock = product.stock;
+    if (!Number.isSafeInteger(stock) || stock < 0) {
+      const error = new Error('The stored guest cart contains invalid product stock.');
+      error.code = 'CART_PRESENTATION_DATA_INVALID';
+      throw error;
+    }
+    const requestedQty = getCartPresentationQuantity(item);
+    if (requestedQty > 99) {
+      const error = new Error('The stored guest cart quantity exceeds the supported limit.');
+      error.code = 'CART_PRESENTATION_DATA_INVALID';
+      throw error;
+    }
     const existing = linesByIdentity.get(identity);
     const combinedQty = (existing?.qty || 0) + requestedQty;
-    const qty = stock > 0 ? Math.min(stock, combinedQty) : combinedQty;
+    if (!Number.isSafeInteger(combinedQty)) {
+      const error = new Error('The stored guest cart quantity is outside the supported range.');
+      error.code = 'CART_PRESENTATION_DATA_INVALID';
+      throw error;
+    }
+    const qty = stock > 0
+      ? Math.min(stock, combinedQty, 99)
+      : Math.min(combinedQty, 99);
 
     linesByIdentity.set(identity, {
       _id: guestLineId(productId, selectedColor, selectedOptions),
@@ -89,12 +111,17 @@ export const normalizeGuestCart = (items) => {
 };
 
 export const readGuestCart = async () => {
+  const rawCart = await AsyncStorage.getItem(GUEST_CART_STORAGE_KEY);
+  if (!rawCart) return [];
+  let parsed;
   try {
-    const rawCart = await AsyncStorage.getItem(GUEST_CART_STORAGE_KEY);
-    return normalizeGuestCart(rawCart ? JSON.parse(rawCart) : []);
-  } catch {
-    return [];
+    parsed = JSON.parse(rawCart);
+  } catch (_) {
+    const error = new Error('The stored guest cart could not be read safely.');
+    error.code = 'CART_PRESENTATION_DATA_INVALID';
+    throw error;
   }
+  return normalizeGuestCart(parsed);
 };
 
 export const writeGuestCart = async (items) => {
@@ -124,11 +151,8 @@ export const incrementGuestCartLine = (items, lineId) => {
   let reachedStockLimit = false;
   const cart = normalizeGuestCart(items).map((item) => {
     if (String(item._id) !== String(lineId)) return item;
-    const productStock = Number(item.product?.stock);
-    const stock = Number.isFinite(productStock) && productStock > 0
-      ? productStock
-      : 99;
-    if (item.qty >= stock) {
+    const stock = item.product.stock;
+    if (stock < 1 || item.qty >= stock || item.qty >= 99) {
       reachedStockLimit = true;
       return item;
     }

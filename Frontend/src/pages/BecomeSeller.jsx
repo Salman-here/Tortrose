@@ -5,6 +5,7 @@ import { Store, ArrowLeft, Sparkles, CheckCircle, CheckCircle2, TrendingUp, Shie
 import { toast } from 'react-toastify';
 import axios from 'axios';
 import { useAuth } from '../contexts/AuthContext';
+import { useCurrency } from '../contexts/CurrencyContext';
 import SEOHead from '../components/common/SEOHead';
 import PhoneField, { isValidPhone } from '../components/common/PhoneField';
 import LocationAutocomplete from '../components/common/LocationAutocomplete';
@@ -17,15 +18,33 @@ import {
   trackSellerRegistrationCompleted
 } from '../utils/tiktokPixel';
 
+const SELLER_PRODUCT_CURRENCY_CODES = ['USD', 'PKR', 'EUR', 'GBP'];
+const normalizeSellerProductCurrency = value => {
+  const code = String(value || '').trim().toUpperCase();
+  return SELLER_PRODUCT_CURRENCY_CODES.includes(code) ? code : 'USD';
+};
+
 export default function BecomeSeller() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { currentUser, setCurrentUser, fetchAndUpdateCurrentUser } = useAuth();
+  const { currency: accountCurrency, currencies } = useCurrency();
   const [loading, setLoading] = useState(false);
   // Steps: 0=landing, 0.5=guest signup, 0.6=OTP verify, 1=seller info, 2=store setup, 3=WhatsApp verify
   const [formStep, setFormStep] = useState(0);
   const [formData, setFormData] = useState({ phoneNumber: '', address: '', city: '', state: '', stateCode: '', country: '', countryCode: '', businessName: '' });
-  const [storeData, setStoreData] = useState({ storeName: '', storeDescription: '', website: '', instagram: '', facebook: '', twitter: '', youtube: '', tiktok: '' });
+  const productCurrencyTouchedRef = useRef(false);
+  const [storeData, setStoreData] = useState({
+    storeName: '',
+    storeDescription: '',
+    productCurrency: normalizeSellerProductCurrency(currentUser?.currency || accountCurrency),
+    website: '',
+    instagram: '',
+    facebook: '',
+    twitter: '',
+    youtube: '',
+    tiktok: '',
+  });
   // Store name availability state
   const [storeSlugPreview, setStoreSlugPreview] = useState('');
   const [storeNameAvailable, setStoreNameAvailable] = useState(null); // null=unchecked, true=available, false=taken
@@ -69,8 +88,28 @@ export default function BecomeSeller() {
     }
   }, [searchParams, currentUser]);
 
+  // CurrencyContext refreshes the authoritative account preference after
+  // login. Keep the visible default aligned until the seller deliberately
+  // chooses a listing currency, then never overwrite that explicit choice.
+  useEffect(() => {
+    if (productCurrencyTouchedRef.current) return;
+    const productCurrency = normalizeSellerProductCurrency(currentUser?.currency || accountCurrency);
+    setStoreData(previous => (
+      previous.productCurrency === productCurrency
+        ? previous
+        : { ...previous, productCurrency }
+    ));
+  }, [accountCurrency, currentUser?.currency]);
+
   const handleInputChange = (e) => { const { name, value } = e.target; setFormData(prev => ({ ...prev, [name]: value })); };
   const handleStoreChange = (e) => { const { name, value } = e.target; setStoreData(prev => ({ ...prev, [name]: value })); };
+  const handleProductCurrencyChange = (e) => {
+    productCurrencyTouchedRef.current = true;
+    setStoreData(prev => ({
+      ...prev,
+      productCurrency: normalizeSellerProductCurrency(e.target.value),
+    }));
+  };
   const handleSignupChange = (e) => { const { name, value } = e.target; setSignupData(prev => ({ ...prev, [name]: value })); };
 
   // Generate slug from store name
@@ -302,6 +341,9 @@ export default function BecomeSeller() {
     if (!storeData.storeDescription || storeData.storeDescription.trim().length < 10) {
       setFormError('Store description is required (at least 10 characters)'); return;
     }
+    if (!SELLER_PRODUCT_CURRENCY_CODES.includes(storeData.productCurrency)) {
+      setFormError('Choose USD, PKR, EUR, or GBP for your product prices.'); return;
+    }
     if (storeNameAvailable === false) {
       setFormError('This store name is already taken. Please choose a different name.'); return;
     }
@@ -339,6 +381,7 @@ export default function BecomeSeller() {
         whatsappVerified: true,
         storeName: storeData.storeName?.trim() || '',
         storeDescription: storeData.storeDescription?.trim() || '',
+        productCurrency: storeData.productCurrency,
         socialLinks: Object.keys(socialLinks).length > 0 ? socialLinks : undefined,
         tracking: {
           ...getTikTokTrackingContext(),
@@ -835,6 +878,29 @@ export default function BecomeSeller() {
                   maxLength={500} rows={3} style={{ resize: 'none' }} required />
                 <p className="text-[11px] mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
                   {storeData.storeDescription.length}/500 characters (minimum 10)
+                </p>
+              </div>
+
+              {/* Product listing currency - persisted as the store's native price currency */}
+              <div>
+                <label className="flex text-xs font-semibold uppercase tracking-wider mb-2 items-center gap-2" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                  <CreditCard size={14} style={{ color: 'hsl(var(--primary))' }} /> Product Listing Currency <span style={{ color: 'hsl(0, 72%, 55%)' }}>*</span>
+                </label>
+                <select
+                  name="productCurrency"
+                  value={storeData.productCurrency}
+                  onChange={handleProductCurrencyChange}
+                  className="glass-input"
+                  required
+                >
+                  {SELLER_PRODUCT_CURRENCY_CODES.map(code => (
+                    <option key={code} value={code}>
+                      {code} · {currencies?.[code]?.name || code}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[11px] mt-1.5 leading-relaxed" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                  Enter and save all product prices in this currency. Buyers can still view and pay in another supported currency using the checkout conversion rate.
                 </p>
               </div>
 

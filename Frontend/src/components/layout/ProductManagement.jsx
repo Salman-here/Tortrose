@@ -9,11 +9,15 @@ import BulkDiscountModal from "./BulkDiscountModal";
 import { ProductForm } from "./SellerDashboard";
 import axios from "axios";
 import { getAuthToken } from "../../utils/cookieHelper";
+import { inspectProductPagination, inspectSellerProductPresentation } from '../../utils/productCardSafety';
 
 const ProductManagement = () => {
     const context = useOutletContext() || {};
-    const { dashboardRole = 'seller', products = [], loading, categories = [], searchTerm = '', setSearchTerm, selectedCategory = 'all', setSelectedCategory, deleteConfirm, setDeleteConfirm, handleEditProduct, handleCreateProduct, handleDeleteProduct, handleBulkDeleteProducts, fetchProducts, isFormOpen, editingProduct, setEditingProduct, handleSaveProduct, uploadingImages, closeForm, canFeature, featuredStats, productCurrencyState, handleConvertProductCurrency, handleCancelProductCurrencyChange, currentPage = 1, totalPages = 1, totalProducts = products.length, pageSize = 12, setProductPage } = context;
+    const { dashboardRole = 'seller', products = [], loading, categories = [], searchTerm = '', setSearchTerm, selectedCategory = 'all', setSelectedCategory, deleteConfirm, setDeleteConfirm, handleEditProduct, handleCreateProduct, handleDeleteProduct, handleBulkDeleteProducts, fetchProducts, isFormOpen, editingProduct, setEditingProduct, handleSaveProduct, uploadingImages, closeForm, canFeature, featuredStats, productCurrencyState, handleConvertProductCurrency, handleCancelProductCurrencyChange, currentPage = null, totalPages = null, totalProducts = null, pageSize = null, setProductPage } = context;
     const safeProducts = Array.isArray(products) ? products : [];
+    const selectableProducts = safeProducts.filter(product => (
+        inspectSellerProductPresentation(product).managementSafe
+    ));
     const safeCategories = Array.isArray(categories) ? categories : [];
     const [selectedProducts, setSelectedProducts] = useState([]);
     const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
@@ -24,10 +28,29 @@ const ProductManagement = () => {
     const navigate = useNavigate();
     const isAdminDashboard = dashboardRole === 'admin';
     const hasPendingCurrencyChange = productCurrencyState?.status === 'pending_conversion';
-    const canAddProduct = (isAdminDashboard || hasStore) && !hasPendingCurrencyChange;
-    const safeTotalPages = Math.max(1, Number(totalPages) || 1);
-    const safeCurrentPage = Math.min(safeTotalPages, Math.max(1, Number(currentPage) || 1));
+    const canAddProduct = isAdminDashboard || (
+        hasStore
+        && productCurrencyState?.valid === true
+        && productCurrencyState.canAddProduct === true
+        && !hasPendingCurrencyChange
+    );
+    const pagination = inspectProductPagination({
+        page: currentPage,
+        limit: pageSize,
+        totalProducts,
+        totalPages,
+        hasMore: Number.isSafeInteger(currentPage) && Number.isSafeInteger(totalPages)
+            ? currentPage < totalPages
+            : null,
+    }, {
+        productCount: safeProducts.length,
+        expectedPage: currentPage,
+        expectedLimit: pageSize,
+    });
+    const safeTotalPages = pagination.valid ? pagination.totalPages : null;
+    const safeCurrentPage = pagination.valid ? pagination.page : null;
     const pageNumbers = useMemo(() => {
+        if (!pagination.valid) return [];
         const pages = [];
         const maxVisible = 5;
         let start = Math.max(1, safeCurrentPage - Math.floor(maxVisible / 2));
@@ -35,9 +58,10 @@ const ProductManagement = () => {
         if (end - start + 1 < maxVisible) start = Math.max(1, end - maxVisible + 1);
         for (let page = start; page <= end; page += 1) pages.push(page);
         return pages;
-    }, [safeCurrentPage, safeTotalPages]);
+    }, [pagination.valid, safeCurrentPage, safeTotalPages]);
 
     const goToPage = (page) => {
+        if (!pagination.valid) return;
         const nextPage = Math.min(safeTotalPages, Math.max(1, page));
         setProductPage?.(nextPage);
         window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -89,8 +113,20 @@ const ProductManagement = () => {
     }, [isAdminDashboard]);
 
     const handleToggleSelectMode = () => { setSelectMode(!selectMode); setSelectedProducts([]); };
-    const handleSelectProduct = (product) => { setSelectedProducts(prev => prev.find(p => p._id === product._id) ? prev.filter(p => p._id !== product._id) : [...prev, product]); };
-    const handleSelectAll = () => { selectedProducts.length === safeProducts.length ? setSelectedProducts([]) : setSelectedProducts([...safeProducts]); };
+    const handleSelectProduct = (product) => {
+        if (!inspectSellerProductPresentation(product).managementSafe) return;
+        setSelectedProducts(prev => prev.find(p => p._id === product._id)
+            ? prev.filter(p => p._id !== product._id)
+            : [...prev, product]);
+    };
+    const handleSelectAll = () => {
+        selectedProducts.length === selectableProducts.length
+            ? setSelectedProducts([])
+            : setSelectedProducts([...selectableProducts]);
+    };
+    const selectedMoneySafe = selectedProducts.length > 0 && selectedProducts.every(product => (
+        inspectSellerProductPresentation(product).valid
+    ));
     const handleBulkOperationSuccess = () => { setSelectedProducts([]); setSelectMode(false); fetchProducts?.(); };
     const confirmBulkDelete = async () => {
         if (!handleBulkDeleteProducts) return;
@@ -171,8 +207,10 @@ const ProductManagement = () => {
                     {selectMode && selectedProducts.length > 0 && (
                         <>
                             <motion.button initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
-                                onClick={() => setIsBulkModalOpen(true)}
-                                className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 rounded-xl text-sm sm:text-base font-semibold text-white"
+                                onClick={() => { if (selectedMoneySafe) setIsBulkModalOpen(true); }}
+                                disabled={!selectedMoneySafe}
+                                title={selectedMoneySafe ? 'Change selected product prices' : 'Refresh products with unavailable money or stock before changing prices'}
+                                className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 rounded-xl text-sm sm:text-base font-semibold text-white disabled:opacity-50 disabled:cursor-not-allowed"
                                 style={{ background: 'hsl(150, 60%, 45%)' }}>
                                 <Tag size={16} className="sm:w-5 sm:h-5" /> <span className="hidden xs:inline">Bulk</span> ({selectedProducts.length})
                             </motion.button>
@@ -214,10 +252,10 @@ const ProductManagement = () => {
                                 {['all', ...safeCategories].map(category => (<option key={category} value={category}>{category.charAt(0).toUpperCase() + category.slice(1)}</option>))}
                             </select>
                         </div>
-                        {selectMode && safeProducts.length > 0 && (
+                        {selectMode && selectableProducts.length > 0 && (
                             <button onClick={handleSelectAll} className="px-3 sm:px-4 py-2 rounded-xl text-sm whitespace-nowrap font-medium"
                                 style={{ background: 'rgba(99, 102, 241, 0.12)', color: 'hsl(220, 70%, 55%)' }}>
-                                {selectedProducts.length === safeProducts.length ? 'Deselect All' : 'Select All'}
+                                {selectedProducts.length === selectableProducts.length ? 'Deselect All' : 'Select All'}
                             </button>
                         )}
                     </div>
@@ -241,6 +279,7 @@ const ProductManagement = () => {
                                     {selectMode && (
                                         <div className="absolute top-2 left-2 z-10">
                                             <motion.button whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }} onClick={() => handleSelectProduct(product)}
+                                                disabled={!inspectSellerProductPresentation(product).managementSafe}
                                                 className="p-2 rounded-xl shadow-lg"
                                                 style={selectedProducts.find(p => p._id === product._id)
                                                     ? { background: 'linear-gradient(135deg, hsl(220, 70%, 55%), hsl(260, 60%, 60%))', color: 'white' }
@@ -258,9 +297,11 @@ const ProductManagement = () => {
                     {safeProducts.length > 0 && (
                         <div className="mt-6 flex flex-col sm:flex-row items-center justify-between gap-3">
                             <p className="text-xs sm:text-sm" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                                Showing {((safeCurrentPage - 1) * pageSize) + 1}-{Math.min(safeCurrentPage * pageSize, totalProducts || safeProducts.length)} of {totalProducts || safeProducts.length} products
+                                {pagination.valid
+                                    ? `Showing ${((safeCurrentPage - 1) * pageSize) + 1}-${Math.min(safeCurrentPage * pageSize, totalProducts)} of ${totalProducts} products`
+                                    : 'Product count unavailable. Refresh before changing pages.'}
                             </p>
-                            <div className="flex items-center gap-1.5">
+                            {pagination.valid && <div className="flex items-center gap-1.5">
                                 <button
                                     type="button"
                                     onClick={() => goToPage(safeCurrentPage - 1)}
@@ -292,7 +333,7 @@ const ProductManagement = () => {
                                 >
                                     <ChevronRight size={16} />
                                 </button>
-                            </div>
+                            </div>}
                         </div>
                     )}
                 </div>
@@ -327,7 +368,7 @@ const ProductManagement = () => {
                 document.body
             )}
 
-            <BulkDiscountModal isOpen={isBulkModalOpen} onClose={() => setIsBulkModalOpen(false)} selectedProducts={selectedProducts} onSuccess={handleBulkOperationSuccess} />
+            <BulkDiscountModal isOpen={isBulkModalOpen} onClose={() => setIsBulkModalOpen(false)} selectedProducts={selectedProducts} onSuccess={handleBulkOperationSuccess} isAdmin={isAdminDashboard} />
             {createPortal(
                 <AnimatePresence>
                     {bulkDeleteConfirm && (

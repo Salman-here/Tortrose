@@ -16,6 +16,7 @@ export const getNotificationMeta = (palette) => {
     order:    { icon: 'receipt-outline', color: c.primary,   bg: c.primarySubtle },
     delivery: { icon: 'bicycle-outline', color: c.success,   bg: c.successSubtle },
     promo:    { icon: 'pricetag-outline', color: c.warning,  bg: c.warningSubtle },
+    payment:  { icon: 'wallet-outline', color: c.success,    bg: c.successSubtle },
     seller:   { icon: 'storefront-outline', color: c.secondary, bg: c.secondarySubtle },
     system:   { icon: 'information-circle-outline', color: c.info, bg: c.infoSubtle },
     alert:    { icon: 'alert-circle-outline', color: c.error, bg: c.errorSubtle },

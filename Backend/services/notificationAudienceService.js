@@ -1,4 +1,5 @@
 const VALID_NOTIFICATION_ROLES = new Set(['user', 'seller', 'admin']);
+const VALID_NOTIFICATION_SURFACES = new Set(['buyer', 'seller', 'admin']);
 const VALID_BROADCAST_AUDIENCES = new Set(['all_users', 'all_sellers', 'both', 'specific']);
 
 const SELLER_LINK_PATTERN = /\/(?:seller-dashboard|seller)(?:\/|$)/i;
@@ -12,6 +13,20 @@ function normalizeNotificationRole(value) {
 function normalizeBroadcastAudience(value) {
   const audience = String(value || '').trim().toLowerCase();
   return VALID_BROADCAST_AUDIENCES.has(audience) ? audience : null;
+}
+
+function normalizeNotificationSurface(value) {
+  const surface = String(value || '').trim().toLowerCase();
+  return VALID_NOTIFICATION_SURFACES.has(surface) ? surface : null;
+}
+
+function notificationSurfaceAllowedForRole(surfaceValue, roleValue) {
+  const surface = normalizeNotificationSurface(surfaceValue);
+  const role = normalizeNotificationRole(roleValue);
+  if (!surface || !role) return false;
+  if (role === 'user') return surface === 'buyer';
+  if (role === 'seller') return surface === 'buyer' || surface === 'seller';
+  return role === 'admin' && surface === 'admin';
 }
 
 function allowedTargetRoles(role) {
@@ -35,6 +50,74 @@ function allowedBroadcastAudiences(role) {
  * mobile client understands. The legacy branch is deliberately fail-closed
  * for seller/admin routes so role changes cannot surface privileged history.
  */
+function buyerLegacyIntent() {
+  return {
+    $and: [
+      { targetRole: null },
+      { $or: [{ audience: null }, { audience: 'specific' }] },
+      { source: { $ne: 'admin_broadcast' } },
+      { category: { $nin: ['seller', 'subscription'] } },
+      { linkTo: { $not: SELLER_LINK_PATTERN } },
+      { linkTo: { $not: ADMIN_LINK_PATTERN } },
+    ],
+  };
+}
+
+function sellerLegacyIntent() {
+  return {
+    $and: [
+      { targetRole: null },
+      { $or: [{ audience: null }, { audience: 'specific' }] },
+      { source: { $ne: 'admin_broadcast' } },
+      { linkTo: { $not: ADMIN_LINK_PATTERN } },
+      {
+        $or: [
+          { category: { $in: ['seller', 'subscription'] } },
+          { linkTo: SELLER_LINK_PATTERN },
+        ],
+      },
+    ],
+  };
+}
+
+function buildNotificationSurfaceFilter(role, surface) {
+  if (!notificationSurfaceAllowedForRole(surface, role)) {
+    return { _id: { $in: [] } };
+  }
+
+  if (surface === 'buyer') {
+    if (role === 'seller') {
+      // Buyer-commerce outbox rows deliberately use `both` so an account that
+      // later becomes a seller can still receive its purchases. Keep those
+      // rows out of the seller-business surface while retaining them here.
+      return {
+        $or: [
+          { targetRole: 'both' },
+          buyerLegacyIntent(),
+        ],
+      };
+    }
+    return buildNotificationRoleFilter(role);
+  }
+
+  if (surface === 'seller') {
+    return {
+      $or: [
+        { targetRole: 'seller' },
+        {
+          $and: [
+            { targetRole: null },
+            { audience: { $in: ['all_sellers', 'both'] } },
+          ],
+        },
+        sellerLegacyIntent(),
+      ],
+    };
+  }
+
+  return buildNotificationRoleFilter(role);
+}
+
 function buildNotificationRoleFilter(value) {
   const role = normalizeNotificationRole(value);
   if (!role) return { _id: { $in: [] } };
@@ -54,19 +137,11 @@ function buildNotificationRoleFilter(value) {
 
   let legacyIntent;
   if (role === 'user') {
-    legacyIntent = {
-      $and: [
-        missingTarget,
-        { $or: [{ audience: null }, { audience: 'specific' }] },
-        // Historical broadcasts have a BroadcastJob reference but no role
-        // snapshot. Their original role cannot be proven from this document,
-        // so hide them rather than guessing after an account role change.
-        { source: { $ne: 'admin_broadcast' } },
-        { category: { $nin: ['seller', 'subscription'] } },
-        { linkTo: { $not: SELLER_LINK_PATTERN } },
-        { linkTo: { $not: ADMIN_LINK_PATTERN } },
-      ],
-    };
+    // Historical broadcasts have a BroadcastJob reference but no role
+    // snapshot. Their original role cannot be proven from this document, so
+    // the shared legacy helper hides them rather than guessing after a role
+    // change.
+    legacyIntent = buyerLegacyIntent();
   } else if (role === 'seller') {
     legacyIntent = {
       $and: [
@@ -93,10 +168,12 @@ function buildNotificationRoleFilter(value) {
   };
 }
 
-function buildScopedNotificationQuery({ userId, role, read } = {}) {
+function buildScopedNotificationQuery({ userId, role, read, surface } = {}) {
   const query = {
     user: userId,
-    ...buildNotificationRoleFilter(role),
+    ...(surface === undefined || surface === null
+      ? buildNotificationRoleFilter(role)
+      : buildNotificationSurfaceFilter(role, surface)),
   };
   if (typeof read === 'boolean') query.read = read;
   return query;
@@ -106,8 +183,12 @@ module.exports = {
   ADMIN_LINK_PATTERN,
   SELLER_LINK_PATTERN,
   VALID_BROADCAST_AUDIENCES,
+  VALID_NOTIFICATION_SURFACES,
   buildNotificationRoleFilter,
+  buildNotificationSurfaceFilter,
   buildScopedNotificationQuery,
   normalizeBroadcastAudience,
   normalizeNotificationRole,
+  normalizeNotificationSurface,
+  notificationSurfaceAllowedForRole,
 };

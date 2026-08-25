@@ -9,6 +9,7 @@ const {
   createTopUpCheckout,
   getTopUpStatus,
   cancelTopUpPayment,
+  reconcilePaymentRiskLiability,
 } = require('../controllers/walletController');
 
 const router = express.Router();
@@ -17,5 +18,6 @@ router.get('/me', verifyToken, getMyWallet);
 router.post('/top-ups', verifyToken, walletTopUpCreationLimiter, createTopUpCheckout);
 router.get('/top-ups/:transactionId/status', verifyToken, paymentStatusPollingLimiter, getTopUpStatus);
 router.post('/top-ups/:transactionId/cancel', verifyToken, cancelTopUpPayment);
+router.post('/admin/:userId/payment-risk/reconcile', verifyToken, reconcilePaymentRiskLiability);
 
 module.exports = router;

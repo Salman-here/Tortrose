@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Search, Truck, CheckCircle, XCircle, Clock, Package, RefreshCw, ShoppingBag, Filter, Sparkles, ArrowRight, MessageCircle, Download, Calendar, FileText, FileSpreadsheet, RotateCcw } from 'lucide-react';
-import { openWhatsAppVerify, hasWhatsAppPhone, isOrderConfirmedByBuyer, isOrderDecidedByBuyer, getConfirmationSourceLabel } from '../../utils/whatsapp';
+import { openWhatsAppVerify, hasWhatsAppPhone, isOrderConfirmedByBuyer, getConfirmationSourceLabel } from '../../utils/whatsapp';
 import axios from 'axios';
 import { toast } from 'react-toastify';
 import { Link, useSearchParams } from 'react-router-dom';
@@ -10,10 +10,12 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useCurrency } from '../../contexts/CurrencyContext';
 import { getAuthToken } from "../../utils/cookieHelper";
 import ReturnOrdersPanel from './ReturnOrdersPanel';
+import { inspectOrderListMoney } from '../../utils/orderItems';
+import { buildOrderExportQuery, orderExportErrorMessage } from '../../utils/orderExport';
 
 const OrderManagement = () => {
     const { currentUser } = useAuth();
-    const { formatPrice } = useCurrency();
+    const { formatPrice, currency } = useCurrency();
     const [orders, setOrders] = useState([]);
     const [searchTerm, setSearchTerm] = useState('');
     const [statusFilter, setStatusFilter] = useState('all');
@@ -32,35 +34,35 @@ const OrderManagement = () => {
         setSearchParams(next, { replace: true });
     };
 
-    const fetchOrders = async () => {
-        const token = getAuthToken();
-        setLoading(true);
-        try {
-            const query = serializeFilters();
-            const res = await axios.get(`${import.meta.env.VITE_API_URL}api/order/get?${query}`, { headers: { Authorization: `Bearer ${token}` } });
-            setOrders(res.data?.orders);
-        } catch (error) { console.error(error); }
-        finally { setLoading(false); }
-    };
-
-    const serializeFilters = () => {
+    const serializeFilters = useCallback(() => {
         let params = new URLSearchParams();
         if (searchTerm) params.append('search', searchTerm);
         if (paymentFilter !== 'all') params.append('paymentStatus', paymentFilter);
         if (statusFilter !== 'all') params.append('status', statusFilter);
         if (dateRange.start && dateRange.end) { params.append('startDate', dateRange.start); params.append('endDate', dateRange.end); }
         return params.toString();
-    };
+    }, [searchTerm, paymentFilter, statusFilter, dateRange]);
 
-    useEffect(() => { fetchOrders(); }, [searchTerm, statusFilter, paymentFilter, dateRange]);
+    const fetchOrders = useCallback(async () => {
+        const token = getAuthToken();
+        setLoading(true);
+        try {
+            const query = serializeFilters();
+            const res = await axios.get(`${import.meta.env.VITE_API_URL}api/order/get?${query}`, { headers: { Authorization: `Bearer ${token}` } });
+            if (!Array.isArray(res.data?.orders)) throw new Error('Order data is unavailable.');
+            setOrders(res.data.orders);
+        } catch (error) { console.error(error); setOrders([]); }
+        finally { setLoading(false); }
+    }, [serializeFilters]);
+
+    useEffect(() => { fetchOrders(); }, [fetchOrders]);
 
     const handleExport = async () => {
         const token = getAuthToken();
         setExporting(true);
         try {
-            const query = serializeFilters();
-            const separator = query ? '&' : '';
-            const res = await axios.get(`${import.meta.env.VITE_API_URL}api/order/export?${query}${separator}format=${exportFormat}`, {
+            const query = buildOrderExportQuery(serializeFilters(), exportFormat, currency);
+            const res = await axios.get(`${import.meta.env.VITE_API_URL}api/order/export?${query}`, {
                 headers: { Authorization: `Bearer ${token}` },
                 responseType: 'blob',
             });
@@ -76,7 +78,7 @@ const OrderManagement = () => {
             toast.success(`Orders exported as ${ext.toUpperCase()}`);
         } catch (error) {
             console.error('Export failed:', error);
-            toast.error('Failed to export orders');
+            toast.error(await orderExportErrorMessage(error.response?.data));
         } finally {
             setExporting(false);
         }
@@ -315,8 +317,9 @@ const OrderManagement = () => {
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {[...orders].reverse().map((order, i) => {
-                                        const ss = getStatusStyle(order.orderStatus);
+                                     {[...orders].reverse().map((order, i) => {
+                                         const ss = getStatusStyle(order.orderStatus);
+                                         const money = inspectOrderListMoney(order);
                                         return (
                                             <motion.tr key={order._id} initial={{ opacity: 0 }} animate={{ opacity: 1 }}
                                                 transition={{ delay: i * 0.02 }}
@@ -337,24 +340,21 @@ const OrderManagement = () => {
                                                     </span>
                                                 </td>
                                                 <td className="px-5 py-4 text-sm font-bold" style={{ color: 'hsl(var(--foreground))', letterSpacing: '-0.03em' }}>
-                                                    {(() => {
-                                                        if (currentUser?.role === 'seller') return formatPrice(order.orderSummary.totalAmount || order.orderSummary.subtotal || 0, { sourceCurrency: order.currency || 'USD' });
-                                                        const subtotal = order.orderSummary.subtotal || 0;
-                                                        const tax = order.orderSummary.tax || 0;
-                                                        let shipping = order.orderSummary.shippingCost || 0;
-                                                        if (order.sellerShipping?.length > 0) shipping = order.sellerShipping.reduce((sum, s) => sum + (s.shippingMethod.price || 0), 0);
-                                                        return formatPrice(subtotal + tax + shipping, { sourceCurrency: order.currency || 'USD' });
-                                                    })()}
+                                                    {money.valid
+                                                        ? formatPrice(money.total, { sourceCurrency: money.currency })
+                                                        : 'Money unavailable'}
                                                 </td>
                                                 <td className="px-5 py-4">
                                                     <div className="flex items-center gap-3 justify-end">
                                                         {(() => {
                                                             const hasPhone = hasWhatsAppPhone(order);
                                                             const confirmed = isOrderConfirmedByBuyer(order);
-                                                            const enabled = hasPhone && !confirmed;
-                                                            const title = confirmed
+                                                            const enabled = hasPhone && !confirmed && money.valid;
+                                                            const title = !money.valid
+                                                                ? 'Order money is unavailable; refresh before contacting the buyer'
+                                                                : confirmed
                                                                 ? `${getConfirmationSourceLabel(order) || 'Confirmed by buyer'}${order.confirmation?.confirmedAt ? ' · ' + new Date(order.confirmation.confirmedAt).toLocaleDateString() : ''}`
-                                                                : (hasPhone ? 'Verify on WhatsApp' : 'No phone number on file');
+                                                                : (hasPhone ? 'Verify on WhatsApp' : 'No valid international WhatsApp destination');
                                                             return (
                                                                 <button
                                                                     type="button"
@@ -403,8 +403,9 @@ const OrderManagement = () => {
 
                         {/* Mobile Cards */}
                         <div className="md:hidden space-y-3 p-4">
-                            {[...orders].reverse().map((order, i) => {
-                                const ss = getStatusStyle(order.orderStatus);
+                             {[...orders].reverse().map((order, i) => {
+                                 const ss = getStatusStyle(order.orderStatus);
+                                 const money = inspectOrderListMoney(order);
                                 return (
                                     <motion.div key={order._id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
                                         transition={{ delay: i * 0.03 }}>
@@ -448,13 +449,13 @@ const OrderManagement = () => {
                                                         {(() => {
                                                             const hasPhone = hasWhatsAppPhone(order);
                                                             const confirmed = isOrderConfirmedByBuyer(order);
-                                                            const enabled = hasPhone && !confirmed;
+                                                            const enabled = hasPhone && !confirmed && money.valid;
                                                             return (
                                                                 <button
                                                                     type="button"
                                                                     onClick={(e) => { e.preventDefault(); e.stopPropagation(); if (enabled) openWhatsAppVerify(order, formatPrice); }}
                                                                     disabled={!enabled}
-                                                                    aria-label={confirmed ? 'Confirmed via email' : (hasPhone ? 'Verify on WhatsApp' : 'No phone number on file')}
+                                                                    aria-label={confirmed ? 'Confirmed via email' : (hasPhone ? 'Verify on WhatsApp' : 'No valid international WhatsApp destination')}
                                                                     className="inline-flex items-center justify-center w-7 h-7 rounded-full"
                                                                     style={{
                                                                         background: confirmed ? 'rgba(16, 185, 129, 0.18)' : (hasPhone ? 'rgba(37, 211, 102, 0.15)' : 'rgba(255,255,255,0.04)'),
@@ -467,7 +468,9 @@ const OrderManagement = () => {
                                                             );
                                                         })()}
                                                         <span className="text-sm font-bold" style={{ color: 'hsl(var(--foreground))' }}>
-                                                            {formatPrice(order.orderSummary?.totalAmount || order.orderSummary?.subtotal || 0, { sourceCurrency: order.currency || 'USD' })}
+                                                            {money.valid
+                                                                ? formatPrice(money.total, { sourceCurrency: money.currency })
+                                                                : 'Money unavailable'}
                                                         </span>
                                                     </div>
                                                 </div>

@@ -15,6 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as WebBrowser from 'expo-web-browser';
+import { useStripe } from '@stripe/stripe-react-native';
 import api from '../../config/api';
 import GlassBackground from '../../components/common/GlassBackground';
 import GlassPanel from '../../components/common/GlassPanel';
@@ -25,8 +26,10 @@ import {
   SellerScreenSkeleton,
   SellerSectionHeader,
 } from '../../components/seller/SellerUI';
+import { useStripeConfig } from '../../contexts/StripeContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import { borderRadius, fontSize, fontWeight, spacing } from '../../styles/theme';
+import { runSubscriptionPlanChange } from '../../utils/subscriptionPlanChange';
 
 const SUBSCRIPTION_RETURN_URL = 'rozare://seller-subscription';
 
@@ -56,7 +59,64 @@ const STATUS_PRESENTATION = {
   cancelled: ['Cancelled', 'close-circle-outline', 'gray'],
 };
 
-const formatUsd = (cents) => `$${(Number(cents || 0) / 100).toFixed(2)}`;
+const isSafeMinor = (value, { positive = true } = {}) => (
+  typeof value === 'number'
+  && Number.isSafeInteger(value)
+  && (positive ? value > 0 : value >= 0)
+);
+const normalizePricingPlan = (plan, expectedPlan) => {
+  if (!plan || typeof plan !== 'object' || Array.isArray(plan)) return null;
+  if (
+    plan.plan !== expectedPlan
+    || typeof plan.planName !== 'string'
+    || !plan.planName.trim()
+    || !isSafeMinor(plan.listAmountCents)
+    || !isSafeMinor(plan.standardAmountCents)
+    || !isSafeMinor(plan.founderAmountCents)
+    || !Number.isSafeInteger(plan.advertisedDiscountPercent)
+    || plan.advertisedDiscountPercent < 0
+    || plan.advertisedDiscountPercent > 100
+    || !Number.isSafeInteger(plan.freePeriodDays)
+    || plan.freePeriodDays < 0
+    || plan.freePeriodDays > 365
+    || plan.listAmountCents < plan.standardAmountCents
+    || plan.standardAmountCents < plan.founderAmountCents
+  ) return null;
+  return {
+    plan: expectedPlan,
+    planName: plan.planName.trim(),
+    listAmountCents: plan.listAmountCents,
+    standardAmountCents: plan.standardAmountCents,
+    founderAmountCents: plan.founderAmountCents,
+    advertisedDiscountPercent: plan.advertisedDiscountPercent,
+    freePeriodDays: plan.freePeriodDays,
+  };
+};
+const normalizeSubscriptionPricing = pricing => {
+  if (
+    !pricing
+    || typeof pricing !== 'object'
+    || Array.isArray(pricing)
+    || pricing.schemaVersion !== 1
+    || pricing.currency !== 'USD'
+    || !isSafeMinor(pricing.metaAdsAddonCents, { positive: false })
+  ) return null;
+  const starter = normalizePricingPlan(pricing.starter, 'starter');
+  const elite = normalizePricingPlan(pricing.elite, 'elite');
+  if (!starter || !elite) return null;
+  return {
+    schemaVersion: 1,
+    currency: 'USD',
+    starter,
+    elite,
+    metaAdsAddonCents: pricing.metaAdsAddonCents,
+  };
+};
+const formatUsd = cents => {
+  if (!isSafeMinor(cents, { positive: false })) return null;
+  const value = BigInt(cents);
+  return `$${value / 100n}.${String(value % 100n).padStart(2, '0')}`;
+};
 const formatDate = (value) => {
   if (!value) return null;
   const date = new Date(value);
@@ -74,29 +134,13 @@ export const getSubscriptionViewModel = (subscription, eliteMetaAds = false) => 
   const isSubscribed = ['active', 'free_period'].includes(safe.status);
   const isElite = safe.plan === 'elite';
   const founderRateActive = Boolean(safe.founderOffer?.active);
-  const pricing = {
-    starter: {
-      listAmountCents: 1175,
-      standardAmountCents: 999,
-      founderAmountCents: 599,
-      advertisedDiscountPercent: 15,
-      ...(safe.pricing?.starter || {}),
-    },
-    elite: {
-      listAmountCents: 3093,
-      standardAmountCents: 2165,
-      founderAmountCents: 1299,
-      advertisedDiscountPercent: 30,
-      ...(safe.pricing?.elite || {}),
-    },
-    metaAdsAddonCents: Number(safe.pricing?.metaAdsAddonCents ?? safe.metaAdsAddonCents ?? 400),
-  };
-  const starterPrice = founderRateActive
+  const pricing = normalizeSubscriptionPricing(safe.pricing);
+  const starterPrice = pricing && founderRateActive
     ? pricing.starter.founderAmountCents
-    : pricing.starter.standardAmountCents;
-  const eliteBasePrice = founderRateActive
+    : pricing?.starter.standardAmountCents ?? null;
+  const eliteBasePrice = pricing && founderRateActive
     ? pricing.elite.founderAmountCents
-    : pricing.elite.standardAmountCents;
+    : pricing?.elite.standardAmountCents ?? null;
 
   return {
     isSubscribed,
@@ -109,11 +153,16 @@ export const getSubscriptionViewModel = (subscription, eliteMetaAds = false) => 
     hasPendingDowngrade: safe.pendingDowngrade === 'starter',
     founderRateActive,
     getsIntroductoryFreePeriod: !safe.hasUsedFreePeriod,
+    pricingAvailable: Boolean(pricing),
     pricing,
     starterPrice,
     eliteBasePrice,
-    selectedElitePrice: eliteBasePrice + (eliteMetaAds ? pricing.metaAdsAddonCents : 0),
-    activeElitePrice: eliteBasePrice + (safe.metaAdsIncluded ? pricing.metaAdsAddonCents : 0),
+    selectedElitePrice: pricing
+      ? eliteBasePrice + (eliteMetaAds ? pricing.metaAdsAddonCents : 0)
+      : null,
+    activeElitePrice: pricing
+      ? eliteBasePrice + (safe.metaAdsIncluded ? pricing.metaAdsAddonCents : 0)
+      : null,
     metaSelectionChanged: isElite && isSubscribed && Boolean(safe.metaAdsIncluded) !== eliteMetaAds,
   };
 };
@@ -168,6 +217,8 @@ function FeatureList({ items, styles, palette, accent }) {
 
 export default function SellerSubscriptionScreen({ navigation, route }) {
   const { palette } = useTheme();
+  const { handleNextAction } = useStripe();
+  const { ensureReady: ensureStripeReady } = useStripeConfig();
   const styles = useMemo(() => buildStyles(palette), [palette]);
   const [subscription, setSubscription] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -182,12 +233,17 @@ export default function SellerSubscriptionScreen({ navigation, route }) {
   const checkoutOpenRef = useRef(false);
   const handledReturnRef = useRef('');
   const checkoutRefreshTimersRef = useRef([]);
+  const subscriptionRequestRef = useRef(0);
 
-  const fetchSubscription = useCallback(async ({ initial = false } = {}) => {
-    if (initial) setLoading(true);
+  const fetchSubscription = useCallback(async () => {
+    const requestId = subscriptionRequestRef.current + 1;
+    subscriptionRequestRef.current = requestId;
+    setLoading(true);
+    setSubscription(null);
     setError('');
     try {
       const response = await api.get('/api/subscription/status');
+      if (subscriptionRequestRef.current !== requestId) return null;
       const next = response.data?.subscription;
       if (!next) throw new Error('Subscription status was not returned.');
       setSubscription(next);
@@ -206,11 +262,17 @@ export default function SellerSubscriptionScreen({ navigation, route }) {
         setCouponCode(requestedCoupon);
         setFounderCouponApplied(true);
       }
+      return next;
     } catch (requestError) {
+      if (subscriptionRequestRef.current !== requestId) return null;
+      setSubscription(null);
       setError(requestError.response?.data?.msg || requestError.message || 'Could not load your subscription.');
+      return null;
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (subscriptionRequestRef.current === requestId) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   }, [couponCode, route?.params?.coupon, route?.params?.couponCode]);
 
@@ -229,6 +291,7 @@ export default function SellerSubscriptionScreen({ navigation, route }) {
 
   useEffect(() => () => {
     checkoutRefreshTimersRef.current.forEach(clearTimeout);
+    subscriptionRequestRef.current += 1;
   }, []);
 
   useEffect(() => {
@@ -255,6 +318,7 @@ export default function SellerSubscriptionScreen({ navigation, route }) {
   }, [navigation, refreshAfterCheckout, route?.params?.checkout]);
 
   const model = getSubscriptionViewModel(subscription, eliteMetaAds);
+  const metaAdsAddonCents = model.pricing?.metaAdsAddonCents ?? null;
   const activeStatus = model.isEnding
     ? ['Ending', 'close-circle-outline', 'error']
     : model.hasPendingDowngrade
@@ -267,10 +331,16 @@ export default function SellerSubscriptionScreen({ navigation, route }) {
     try {
       const response = await request();
       Alert.alert('Done', response.data?.msg || successFallback);
-      await fetchSubscription();
     } catch (requestError) {
-      Alert.alert('Could not update plan', requestError.response?.data?.msg || 'Please try again.');
+      Alert.alert(
+        'Could not update plan',
+        requestError.response?.data?.msg || requestError.message || 'Please try again.'
+      );
     } finally {
+      // Never infer an entitlement from the client-side payment result. Refresh
+      // the server-owned subscription after every mutation outcome, including
+      // a next-action authentication whose reconciliation is still pending.
+      await fetchSubscription();
       setOperation('');
     }
   }, [fetchSubscription]);
@@ -318,7 +388,7 @@ export default function SellerSubscriptionScreen({ navigation, route }) {
 
   const confirmUpgrade = useCallback(() => {
     const metaText = eliteMetaAds
-      ? ` with Meta ads (+${formatUsd(model.pricing.metaAdsAddonCents)}/month)`
+      ? ` with Meta ads (+${formatUsd(metaAdsAddonCents)}/month)`
       : '';
     Alert.alert(
       model.isElite ? 'Update Elite plan?' : 'Upgrade to Elite?',
@@ -331,13 +401,19 @@ export default function SellerSubscriptionScreen({ navigation, route }) {
           text: model.isElite ? 'Apply change' : 'Upgrade',
           onPress: () => runMutation(
             'upgrade',
-            () => api.post('/api/subscription/upgrade-to-elite', { includeMetaAds: eliteMetaAds }),
+            () => runSubscriptionPlanChange({
+              request: () => api.post('/api/subscription/upgrade-to-elite', { includeMetaAds: eliteMetaAds }),
+              handleNextAction: async (clientSecret) => {
+                await ensureStripeReady();
+                return handleNextAction(clientSecret);
+              },
+            }),
             'Your Elite plan is active.',
           ),
         },
       ],
     );
-  }, [eliteMetaAds, model.isElite, model.pricing.metaAdsAddonCents, runMutation]);
+  }, [eliteMetaAds, ensureStripeReady, handleNextAction, metaAdsAddonCents, model.isElite, runMutation]);
 
   const confirmDowngrade = useCallback(() => {
     Alert.alert(
@@ -415,6 +491,31 @@ export default function SellerSubscriptionScreen({ navigation, route }) {
     );
   }
 
+  if (!model.pricingAvailable) {
+    return (
+      <GlassBackground>
+        <SafeAreaView
+          style={styles.safeArea}
+          edges={Platform.OS === 'android' ? [] : ['top']}
+        >
+          <SellerScreenHeader
+            navigation={navigation}
+            title="Subscription"
+            subtitle="Plans, benefits and billing control"
+            icon="diamond-outline"
+          />
+          <View style={styles.fullErrorState}>
+            <SellerInlineError
+              title="Live pricing unavailable"
+              message="Plan prices could not be verified. Billing actions are disabled so an outdated price is never shown or charged."
+              onRetry={() => fetchSubscription({ initial: true })}
+            />
+          </View>
+        </SafeAreaView>
+      </GlassBackground>
+    );
+  }
+
   const planName = model.isSubscribed
     ? subscription?.planName || (model.isElite ? 'Rozare Elite' : 'Rozare Starter')
     : model.isTrial
@@ -424,6 +525,10 @@ export default function SellerSubscriptionScreen({ navigation, route }) {
   const trialEndDate = formatDate(subscription?.trialEndDate);
   const starterBonusDays = daysUntil(subscription?.bonusExpiryDate);
   const founderPromotion = subscription?.founderPromotion;
+  const founderReservationMinutes = Number.isSafeInteger(founderPromotion?.checkoutReservationMinutes)
+    && founderPromotion.checkoutReservationMinutes > 0
+    ? founderPromotion.checkoutReservationMinutes
+    : null;
   const founderPricingSelected = model.founderRateActive || founderCouponApplied;
   const displayedStarterPrice = founderPricingSelected
     ? model.pricing.starter.founderAmountCents
@@ -661,7 +766,9 @@ export default function SellerSubscriptionScreen({ navigation, route }) {
                 </TouchableOpacity>
               </View>
               <Text style={styles.couponNote}>
-                Checkout reserves a place for 35 minutes. The founder price is claimed only after Stripe confirms payment.
+                {founderReservationMinutes
+                  ? `Checkout reserves a place for ${founderReservationMinutes} minutes. The founder price is claimed only after Stripe confirms payment.`
+                  : 'Checkout reserves your place temporarily. The founder price is claimed only after Stripe confirms payment.'}
               </Text>
             </GlassPanel>
           )}
@@ -695,7 +802,7 @@ export default function SellerSubscriptionScreen({ navigation, route }) {
               <Text style={styles.period}>/month</Text>
             </View>
             <Text style={styles.priceNote}>
-              {model.getsIntroductoryFreePeriod ? '30 days free, then ' : ''}{formatUsd(displayedStarterPrice)}/month · cancel anytime
+              {model.getsIntroductoryFreePeriod ? `${model.pricing.starter.freePeriodDays} days free, then ` : ''}{formatUsd(displayedStarterPrice)}/month · cancel anytime
             </Text>
 
             <FeatureList items={CORE_FEATURES} styles={styles} palette={palette} accent={palette.colors.primary} />
@@ -731,7 +838,7 @@ export default function SellerSubscriptionScreen({ navigation, route }) {
               />
             ) : !model.isPastDue ? (
               <ActionButton
-                label={model.getsIntroductoryFreePeriod ? 'Start with 30 days free' : `Choose Starter · ${formatUsd(displayedStarterPrice)}/mo`}
+                label={model.getsIntroductoryFreePeriod ? `Start with ${model.pricing.starter.freePeriodDays} days free` : `Choose Starter · ${formatUsd(displayedStarterPrice)}/mo`}
                 icon="card-outline"
                 loading={operation === 'checkout-starter'}
                 onPress={() => openCheckout('starter')}
@@ -768,7 +875,7 @@ export default function SellerSubscriptionScreen({ navigation, route }) {
               <Text style={styles.period}>/month</Text>
             </View>
             <Text style={styles.priceNote}>
-              {model.getsIntroductoryFreePeriod ? '45 days free, then ' : ''}{formatUsd(displayedElitePrice)}/month · cancel anytime
+              {model.getsIntroductoryFreePeriod ? `${model.pricing.elite.freePeriodDays} days free, then ` : ''}{formatUsd(displayedElitePrice)}/month · cancel anytime
             </Text>
 
             <FeatureList items={ELITE_FEATURES} styles={styles} palette={palette} accent={palette.colors.secondary} />
@@ -847,7 +954,7 @@ export default function SellerSubscriptionScreen({ navigation, route }) {
               />
             ) : !model.isPastDue ? (
               <ActionButton
-                label={model.getsIntroductoryFreePeriod ? 'Start with 45 days free' : `Choose Elite · ${formatUsd(displayedElitePrice)}/mo`}
+                label={model.getsIntroductoryFreePeriod ? `Start with ${model.pricing.elite.freePeriodDays} days free` : `Choose Elite · ${formatUsd(displayedElitePrice)}/mo`}
                 icon="card-outline"
                 loading={operation === 'checkout-elite'}
                 onPress={() => openCheckout('elite')}
@@ -866,7 +973,7 @@ export default function SellerSubscriptionScreen({ navigation, route }) {
             {[
               ['shield-checkmark-outline', 'Checkout and recurring payments are processed by Stripe.'],
               ['calendar-clear-outline', model.getsIntroductoryFreePeriod
-                ? 'The first paid subscription includes one introductory free period: 30 days on Starter or 45 days on Elite.'
+                ? `The first paid subscription includes one introductory free period: ${model.pricing.starter.freePeriodDays} days on Starter or ${model.pricing.elite.freePeriodDays} days on Elite.`
                 : 'Your one-time introductory free period has already been used.'],
               ['swap-horizontal-outline', 'Elite upgrades and Meta changes apply immediately and may be prorated. Elite-to-Starter changes begin after the current period.'],
               ['close-circle-outline', 'Cancellation takes effect at the end of the current period; access remains active until then.'],

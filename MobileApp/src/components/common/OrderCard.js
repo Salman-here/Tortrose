@@ -16,6 +16,7 @@ import {
   ORDER_STAGES,
   formatOrderItemOptions,
   getEstimatedDeliveryDate,
+  getOrderCurrency,
   getOrderDisplayId,
   getOrderItemCount,
   getOrderLeadItem,
@@ -69,9 +70,19 @@ const OrderCard = ({
     : (statusColors[status] || fallbackStatusStyle);
   const leadItem = getOrderLeadItem(order);
   const options = formatOrderItemOptions(leadItem);
-  const itemCount = getOrderItemCount(order);
-  const total = getOrderTotal(order);
-  const currency = order.currency || order.orderCurrency || 'USD';
+  let itemCount = null;
+  let total = null;
+  let currency = null;
+  try {
+    itemCount = getOrderItemCount(order);
+    total = getOrderTotal(order);
+    currency = getOrderCurrency(order);
+  } catch (_) {
+    itemCount = null;
+    total = null;
+    currency = null;
+  }
+  const financialPresentationValid = itemCount !== null && total !== null && currency !== null;
   const progress = getOrderProgress(status);
   const estimate = getEstimatedDeliveryDate(order);
   const customerName = order.user?.name || order.shippingInfo?.fullName;
@@ -214,14 +225,18 @@ const OrderCard = ({
 
           <View style={styles.totalBlock}>
             <Text style={styles.totalCaption}>ORDER TOTAL</Text>
-            <Text style={styles.total}>{formatPrice(total, { sourceCurrency: currency })}</Text>
+            <Text style={styles.total}>{financialPresentationValid
+              ? formatPrice(total, { sourceCurrency: currency })
+              : 'Money unavailable'}</Text>
           </View>
 
           {onWhatsApp ? (
             <TouchableOpacity
               onPress={(event) => { event?.stopPropagation?.(); onWhatsApp(order); }}
-              style={styles.whatsAppButton}
+              style={[styles.whatsAppButton, !financialPresentationValid && { opacity: 0.45 }]}
+              disabled={!financialPresentationValid}
               accessibilityLabel="Order help on WhatsApp"
+              accessibilityState={{ disabled: !financialPresentationValid }}
             >
               <Ionicons name="logo-whatsapp" size={18} color="#16a34a" />
             </TouchableOpacity>
@@ -243,6 +258,12 @@ export const CompactOrderCard = ({ order, onPress }) => {
   if (!order) return null;
   const status = normalizeOrderStatus(order.orderStatus || order.status);
   const color = status === 'confirmed' ? palette.colors.info : (statusColors[status]?.solid || palette.colors.warning);
+  let money = null;
+  try {
+    money = { total: getOrderTotal(order), currency: getOrderCurrency(order) };
+  } catch (_) {
+    money = null;
+  }
   return (
     <TouchableOpacity style={styles.compactContainer} onPress={onPress} activeOpacity={0.8}>
       <View style={[styles.statusDot, { backgroundColor: color }]} />
@@ -250,7 +271,9 @@ export const CompactOrderCard = ({ order, onPress }) => {
         <Text style={styles.compactOrderId}>{getOrderDisplayId(order)}</Text>
         <Text style={styles.compactStatus}>{STATUS_META[status].label}</Text>
       </View>
-      <Text style={styles.compactAmount}>{formatPrice(getOrderTotal(order), { sourceCurrency: order.currency || 'USD' })}</Text>
+      <Text style={styles.compactAmount}>{money
+        ? formatPrice(money.total, { sourceCurrency: money.currency })
+        : 'Money unavailable'}</Text>
       <Ionicons name="chevron-forward" size={16} color={palette.colors.textLight} />
     </TouchableOpacity>
   );

@@ -10,17 +10,36 @@ import {
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
-import { useCurrency } from '../../contexts/CurrencyContext';
+import {
+  requireCanonicalPresentationCurrency,
+  requireExactPresentationMoney,
+  resolveProductPresentationCurrency,
+  resolveProductPresentationMoney,
+  useCurrency,
+} from '../../contexts/CurrencyContext';
 import { toast } from 'react-toastify';
 import ReactMarkdown from 'react-markdown';
 import { getAuthToken } from "../../utils/cookieHelper";
 import { resilientFetch } from '../../utils/httpResilience';
 import { normalizeAIRoute } from '../../utils/aiRouteGuard';
+import { shouldRetainIdempotencyKey } from '../../utils/currencySafety';
+import {
+  clearPersistedMutationAttemptForFingerprint,
+  createChatMutationFingerprint,
+  createScopedMutationStorageKey,
+  getOrCreatePersistedMutationAttemptForFingerprint,
+} from '../../utils/persistedMutationAttempt';
 
 // ─── Endpoint (our own backend — no Supabase) ───
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000/';
 const AI_CHAT_URL = `${API_BASE}api/ai-chat/stream`;
 const PRODUCT_IMAGE_ATTACHMENT_RE = /\n?\[Attached product image: (https?:\/\/[^\]\s]+)\]/gi;
+const CHAT_ATTEMPT_STORAGE_KEY = 'rozare_ai_chat_attempt_v1';
+const UNRESOLVED_AI_ACTION_CODES = new Set([
+  'AI_ACTION_PENDING',
+  'AI_ACTION_IDEMPOTENCY_CONFLICT',
+  'AI_ACTION_RECEIPT_COMMIT_AMBIGUOUS',
+]);
 
 const extractImageAttachments = (content = '', explicit = []) => {
   const seen = new Set();
@@ -326,11 +345,11 @@ const DataListCard = ({ title, items, renderItem, icon: Icon = Package, color = 
 // ─── Product Card (compact, for chat context) ───
 const ProductCardInChat = ({ product, onView, onAddToCart }) => {
   const { formatPrice } = useCurrency();
-  const productPrice = Number(product.price || 0);
-  const discountedPrice = Number(product.discountedPrice || 0);
+  const productPrice = resolveProductPresentationMoney(product, 'price');
+  const discountedPrice = resolveProductPresentationMoney(product, 'discountedPrice');
   const hasDiscount = discountedPrice > 0 && discountedPrice < productPrice;
   const displayPrice = hasDiscount ? discountedPrice : productPrice;
-  const productCurrency = product.currency || product.priceCurrency || 'USD';
+  const productCurrency = resolveProductPresentationCurrency(product);
   const stars = product.rating ? Math.round(product.rating) : 0;
 
   return (
@@ -425,7 +444,11 @@ const ProductCardGrid = ({ products, onViewProduct, onAddToCart, title }) => (
 function ChatBot({ embedded = false, conversationId = null, initialMessages = null, loadingHistory = false, onConversationCreated = null, dashboardRole = null }) {
   const navigate = useNavigate();
   const { currentUser } = useAuth();
-  const { formatPrice } = useCurrency();
+  const chatAttemptStorageKey = createScopedMutationStorageKey(
+    CHAT_ATTEMPT_STORAGE_KEY,
+    currentUser?._id || currentUser?.id || 'guest'
+  );
+  const { formatPrice, currency } = useCurrency();
 
   // State
   const [isOpen, setIsOpen] = useState(embedded);
@@ -444,7 +467,6 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
   const fileInputRef = useRef(null);
-  const abortRef = useRef(null);
   const hasLoadedHistory = useRef(false);
   const pendingProductImagesRef = useRef([]);
   const mediaRecorderRef = useRef(null);
@@ -480,7 +502,7 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
         setShowChips(true);
       }
     }
-  }, [initialMessages, conversationId]);
+  }, [initialMessages, conversationId, role, userName]);
 
   // ─── Track conversationId from parent ───
   useEffect(() => {
@@ -541,7 +563,7 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
       setMessages([{ role: 'assistant', content: greetFn(userName, greeting) }]);
       setShowChips(true);
     }
-  }, [isOpen]);
+  }, [isOpen, messages.length, initialMessages, authToken, role, userName]);
 
   // ─── Auto-scroll ───
   useEffect(() => {
@@ -787,11 +809,33 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
     // Add assistant placeholder for streaming
     setMessages(prev => [...prev, { role: 'assistant', content: '', isStreaming: true, toolEvents: [] }]);
 
+    const requestCurrency = String(currency || 'USD').trim().toUpperCase();
+    const fingerprint = createChatMutationFingerprint({
+      actorId: currentUser?._id || currentUser?.id || 'guest',
+      currency: requestCurrency,
+      text: visibleContent,
+      attachments: pendingAttachments,
+    });
+    let attemptKey = '';
+
     try {
+      // This resolves only after the independent fingerprint record has been
+      // persisted and read back. Never start the network mutation earlier.
+      const attempt = await getOrCreatePersistedMutationAttemptForFingerprint({
+        storage: localStorage,
+        storageKey: chatAttemptStorageKey,
+        fingerprint,
+        keyPrefix: 'chat-send',
+        randomUUID: globalThis.crypto?.randomUUID?.bind(globalThis.crypto),
+      });
+      const requestKey = attempt.key;
+      attemptKey = requestKey;
       const hasFileAttachments = pendingAttachments.some(attachment => attachment?.file);
       const requestBody = hasFileAttachments ? new FormData() : null;
       if (requestBody) {
         requestBody.append('messages', JSON.stringify(apiMessages));
+        requestBody.append('requestKey', requestKey);
+        requestBody.append('currency', requestCurrency);
         if (activeConvoId) requestBody.append('conversationId', activeConvoId);
         pendingAttachments.forEach(attachment => {
           if (attachment?.file) requestBody.append('attachments', attachment.file, attachment.name || attachment.file.name);
@@ -803,19 +847,28 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
         headers: requestBody
           ? {
             Accept: 'text/event-stream',
+            'Idempotency-Key': requestKey,
             ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
           }
           : {
             'Content-Type': 'application/json',
             Accept: 'text/event-stream',
+            'Idempotency-Key': requestKey,
             ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
           },
-        body: requestBody || JSON.stringify({ messages: apiMessages, ...(activeConvoId ? { conversationId: activeConvoId } : {}) }),
+        body: requestBody || JSON.stringify({
+          messages: apiMessages,
+          requestKey,
+          currency: requestCurrency,
+          ...(activeConvoId ? { conversationId: activeConvoId } : {}),
+        }),
       });
 
       if (!resp.ok) {
         const errData = await resp.json().catch(() => ({}));
-        throw new Error(errData.error || `Request failed (${resp.status})`);
+        const requestError = new Error(errData.error || `Request failed (${resp.status})`);
+        requestError.status = resp.status;
+        throw requestError;
       }
 
       if (!resp.body) throw new Error('No response body');
@@ -823,6 +876,8 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
       const reader = resp.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
+      let streamCompleted = false;
+      let streamHadError = false;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -837,13 +892,17 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
           if (!line.startsWith('data: ')) continue;
 
           const jsonStr = line.slice(6).trim();
-          if (jsonStr === '[DONE]') continue;
+          if (jsonStr === '[DONE]') {
+            streamCompleted = true;
+            continue;
+          }
 
           try {
             const parsed = JSON.parse(jsonStr);
 
             // Error event
             if (parsed.error) {
+              streamHadError = true;
               setMessages(prev => {
                 const copy = [...prev];
                 const last = copy[copy.length - 1];
@@ -877,6 +936,12 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
 
             // Tool result event
             if (parsed.type === 'tool_result') {
+              if (UNRESOLVED_AI_ACTION_CODES.has(parsed.result?.code)) {
+                // A 200 SSE connection does not prove the underlying mutation
+                // committed. Retain this logical request key even when an old
+                // backend does not yet emit a request-level retry event.
+                streamHadError = true;
+              }
               setPendingTools(prev =>
                 prev.map(t => t.id === parsed.id ? { ...t, status: 'done', result: parsed.result } : t)
               );
@@ -933,8 +998,24 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
         if (last?.isStreaming) last.isStreaming = false;
         return copy;
       });
+      if (streamCompleted && !streamHadError) {
+        await clearPersistedMutationAttemptForFingerprint(
+          localStorage,
+          chatAttemptStorageKey,
+          fingerprint,
+          attemptKey,
+        );
+      }
 
     } catch (err) {
+      if (!shouldRetainIdempotencyKey(err?.status)) {
+        await clearPersistedMutationAttemptForFingerprint(
+          localStorage,
+          chatAttemptStorageKey,
+          fingerprint,
+          attemptKey,
+        );
+      }
       console.error('Chat error:', err);
       setMessages(prev => {
         const copy = [...prev];
@@ -952,7 +1033,7 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
       setIsLoading(false);
       setPendingTools([]);
     }
-  }, [messages, isLoading, authToken, activeConvoId, handleClientAction]);
+  }, [messages, isLoading, authToken, activeConvoId, handleClientAction, currentUser?._id, currentUser?.id, currency, chatAttemptStorageKey, onConversationCreated]);
 
   // ─── Clear chat (start a brand-new conversation) ───
   const clearChat = async () => {
@@ -1040,10 +1121,10 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
               <ReactMarkdown
                 className="prose prose-sm prose-invert max-w-none [&>p]:mb-1 [&>p:last-child]:mb-0 [&>ul]:mb-1 [&>ol]:mb-1 [&_li]:text-sm"
                 components={{
-                  a: ({ node, ...props }) => (
+                  a: ({ node: _node, ...props }) => (
                     <a {...props} className="text-blue-400 underline" target="_blank" rel="noopener noreferrer" />
                   ),
-                  p: ({ node, ...props }) => <p {...props} className="mb-1" />,
+                  p: ({ node: _node, ...props }) => <p {...props} className="mb-1" />,
                 }}
               >
                 {visibleUserContent || ''}
@@ -1197,7 +1278,15 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
                       image: item.image,
                       stock: 1,
                     }))}
-                    title={`Cart — ${result.data.items.length} items — ${formatPrice(result.data.total || 0, { sourceCurrency: result.data.currency || 'USD' })}`}
+                    title={`Cart — ${result.data.items.length} items — ${formatPrice(
+                      requireExactPresentationMoney(result.data.total, 'AI cart total'),
+                      {
+                        sourceCurrency: requireCanonicalPresentationCurrency(
+                          result.data.currency,
+                          'AI cart currency',
+                        ),
+                      },
+                    )}`}
                     onViewProduct={(id) => navigate(`/single-product/${id}`)}
                   />
                 );

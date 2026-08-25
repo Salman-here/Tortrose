@@ -260,16 +260,6 @@ const WhatsAppVerificationPanel = () => {
         }
     };
 
-    const openQrModal = async () => {
-        setShowQrModal(true);
-        setQrBase64(status?.qrBase64 || '');
-        setQrError('');
-        setQrHint(status?.status === 'connected' ? '' : 'Starting WhatsApp link session…');
-        setQrDiagnostic(status?.lastError || '');
-        setPairingCode('');
-        await requestQr();
-    };
-
     const closeQrModal = () => {
         setShowQrModal(false);
         // If not connected after closing, reset status to disconnected

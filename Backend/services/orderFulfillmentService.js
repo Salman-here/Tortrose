@@ -1,4 +1,3 @@
-const Order = require('../models/Order');
 const Product = require('../models/Product');
 
 const toId = value => value?._id?.toString?.() || value?.toString?.() || '';
@@ -114,23 +113,6 @@ const getBuyerCancellationBlock = (order) => {
     return null;
 };
 
-const syncAllSellerFulfillmentStatus = async (order, status) => {
-    if (!order?._id) {
-        return order;
-    }
-
-    await ensureOrderSellerFulfillment(order);
-    if (order.sellerFulfillment.length) {
-        setAllSellerFulfillmentStatus(order, status);
-        syncAggregateDeliveryState(order);
-        await order.save();
-    } else if (order.orderStatus !== status) {
-        order.orderStatus = status;
-        await order.save();
-    }
-    return order;
-};
-
 module.exports = {
     aggregateOrderStatus,
     ensureOrderSellerFulfillment,
@@ -140,5 +122,4 @@ module.exports = {
     setAllSellerFulfillmentStatus,
     setSellerFulfillmentStatus,
     syncAggregateDeliveryState,
-    syncAllSellerFulfillmentStatus,
 };

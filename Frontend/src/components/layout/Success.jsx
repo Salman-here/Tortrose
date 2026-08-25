@@ -5,6 +5,11 @@ import { AlertCircle, CheckCircle, Clock3, Loader2, RefreshCw, ShoppingBag } fro
 import { Link } from 'react-router-dom';
 import { getAuthToken } from '../../utils/cookieHelper';
 import { useGlobal } from '../../contexts/GlobalContext';
+import { useAuth } from '../../contexts/AuthContext';
+import {
+  clearPersistedMutationAttemptFromLedger,
+  createScopedMutationStorageKey,
+} from '../../utils/persistedMutationAttempt';
 
 const STRIPE_RETURN_KEY = 'rozare_stripe_return_v1';
 const CHECKOUT_ATTEMPT_KEY = 'rozare_checkout_attempt_v1';
@@ -33,7 +38,9 @@ const readConfirmedOrder = () => {
   try {
     const saved = JSON.parse(sessionStorage.getItem(ORDER_SUCCESS_KEY) || 'null');
     const fresh = Number(saved?.receivedAt) > Date.now() - (60 * 60 * 1000);
-    return fresh && ['cash_on_delivery', 'wallet'].includes(saved?.paymentMethod) ? saved : null;
+    const acceptedMethod = ['cash_on_delivery', 'wallet'].includes(saved?.paymentMethod)
+      || (saved?.paymentMethod === 'stripe' && saved?.noPaymentRequired === true);
+    return fresh && acceptedMethod ? saved : null;
   } catch (_) {
     return null;
   }
@@ -41,6 +48,7 @@ const readConfirmedOrder = () => {
 
 export default function Success() {
   const { fetchCart } = useGlobal();
+  const { currentUser } = useAuth();
   const query = new URLSearchParams(window.location.search);
   const [checkoutReturn] = useState(readCheckoutReturn);
   const [confirmedOrder] = useState(readConfirmedOrder);
@@ -48,20 +56,33 @@ export default function Success() {
   const confirmedStripe = checkoutReturn && (!requestedOrderId || checkoutReturn.orderId === requestedOrderId)
     ? checkoutReturn
     : null;
-  const confirmedNonStripe = confirmedOrder && (!requestedOrderId || confirmedOrder.orderId === requestedOrderId)
+  const confirmedLocal = confirmedOrder && (!requestedOrderId || confirmedOrder.orderId === requestedOrderId)
     ? confirmedOrder
     : null;
-  const paymentMethod = confirmedStripe?.id ? 'stripe' : confirmedNonStripe?.paymentMethod || 'unknown';
-  const orderId = confirmedStripe?.orderId || confirmedNonStripe?.orderId || requestedOrderId;
+  const paymentMethod = confirmedStripe?.id ? 'stripe' : confirmedLocal?.paymentMethod || 'unknown';
+  const orderId = confirmedStripe?.orderId || confirmedLocal?.orderId || requestedOrderId;
   const sessionId = confirmedStripe?.id || '';
-  const isStripe = paymentMethod === 'stripe';
-  const isConfirmedNonStripe = ['cash_on_delivery', 'wallet'].includes(paymentMethod);
+  const isStripe = Boolean(confirmedStripe?.id);
+  const isConfirmedLocal = Boolean(confirmedLocal);
+  const noPaymentRequired = confirmedLocal?.noPaymentRequired === true;
+  const checkoutAttemptStorageKey = confirmedStripe?.attemptStorageKey
+    || confirmedLocal?.attemptStorageKey
+    || createScopedMutationStorageKey(
+      CHECKOUT_ATTEMPT_KEY,
+      currentUser?._id || currentUser?.id || 'guest'
+    );
+  const checkoutAttemptFingerprint = confirmedStripe?.attemptFingerprint
+    || confirmedLocal?.attemptFingerprint
+    || '';
+  const checkoutAttemptKey = confirmedStripe?.attemptKey
+    || confirmedLocal?.attemptKey
+    || '';
   const finalizedRef = useRef(false);
   const [verification, setVerification] = useState({
-    status: isStripe ? 'checking' : isConfirmedNonStripe ? 'paid' : 'failed',
+    status: isStripe ? 'checking' : isConfirmedLocal ? 'paid' : 'failed',
     message: isStripe
       ? 'Confirming your payment securely…'
-      : isConfirmedNonStripe
+      : isConfirmedLocal
         ? ''
         : 'No verified order completion was found. Open My Orders before attempting payment again.',
   });
@@ -70,12 +91,26 @@ export default function Success() {
     if (checkoutReturn && !confirmedStripe) forgetCheckoutReturn(checkoutReturn.id);
   }, [checkoutReturn, confirmedStripe]);
 
+  const clearCheckoutAttempt = useCallback(async () => {
+    if (checkoutAttemptFingerprint && checkoutAttemptKey) {
+      return clearPersistedMutationAttemptFromLedger(
+        localStorage,
+        checkoutAttemptStorageKey,
+        checkoutAttemptFingerprint,
+        checkoutAttemptKey,
+      );
+    }
+    // An old or forged return without exact generation correlation may still
+    // be authoritatively displayed, but it must never clear a retry attempt.
+    return false;
+  }, [checkoutAttemptFingerprint, checkoutAttemptKey, checkoutAttemptStorageKey]);
+
   const clearConfirmedCart = useCallback(async () => {
     if (finalizedRef.current) return;
     try {
       sessionStorage.removeItem('checkoutProgress_v1');
-      sessionStorage.removeItem(CHECKOUT_ATTEMPT_KEY);
     } catch (_) {}
+    await clearCheckoutAttempt();
     forgetCheckoutReturn(sessionId);
     // The signed Stripe webhook removes only the purchased item quantities.
     // Never clear the whole cart here: the buyer may have added unrelated
@@ -86,7 +121,7 @@ export default function Success() {
       console.error('Confirmed order cart refresh failed:', error);
     }
     finalizedRef.current = true;
-  }, [fetchCart, sessionId]);
+  }, [clearCheckoutAttempt, fetchCart, sessionId]);
 
   const verifyStripePayment = useCallback(async () => {
     const token = getAuthToken();
@@ -120,7 +155,7 @@ export default function Success() {
             status: 'failed',
             message: result.failureMessage || 'This payment was not completed. Your cart has been kept.',
           });
-          try { sessionStorage.removeItem(CHECKOUT_ATTEMPT_KEY); } catch (_) {}
+          await clearCheckoutAttempt();
           forgetCheckoutReturn(sessionId);
           return;
         }
@@ -140,16 +175,16 @@ export default function Success() {
       if (attempt < 7) await new Promise(resolve => setTimeout(resolve, 1200));
     }
     setVerification({ status: 'pending', message: lastMessage });
-  }, [clearConfirmedCart, orderId, sessionId]);
+  }, [clearCheckoutAttempt, clearConfirmedCart, orderId, sessionId]);
 
   useEffect(() => {
     if (isStripe) {
       verifyStripePayment();
-    } else if (isConfirmedNonStripe) {
+    } else if (isConfirmedLocal) {
       try { sessionStorage.removeItem(ORDER_SUCCESS_KEY); } catch (_) {}
       clearConfirmedCart();
     }
-  }, [clearConfirmedCart, isConfirmedNonStripe, isStripe, verifyStripePayment]);
+  }, [clearConfirmedCart, isConfirmedLocal, isStripe, verifyStripePayment]);
 
   const paid = verification.status === 'paid';
   const checking = verification.status === 'checking';
@@ -163,7 +198,9 @@ export default function Success() {
         ? 'Payment confirmation is taking longer'
         : 'Payment not confirmed';
   const confirmationCopy = paid
-    ? paymentMethod === 'wallet'
+    ? noPaymentRequired
+      ? 'Your order is confirmed. Its final total was zero, so no card or Wallet payment was required.'
+      : paymentMethod === 'wallet'
       ? 'Your Rozare Wallet payment is complete and your order is confirmed.'
       : paymentMethod === 'cash_on_delivery'
         ? 'Your order was placed. Confirm it using the button sent by WhatsApp or email.'

@@ -3,14 +3,15 @@
  * webhook, so the order is checked once before showing a non-success state.
  */
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Animated, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import api from '../config/api';
 import GlassBackground from '../components/common/GlassBackground';
 import GlassPanel from '../components/common/GlassPanel';
 import { trackPaymentEvent } from '../utils/breadcrumbs';
-import { verifyOrderPayment } from '../utils/checkout';
+import { clearCheckoutAttempt, verifyOrderPayment } from '../utils/checkout';
 import { spacing, fontSize, shadows, fontWeight } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 
@@ -20,6 +21,17 @@ export default function PaymentCancelScreen({ navigation, route }) {
   const orderId = route.params?.orderId || '';
   const sessionId = route.params?.session_id || route.params?.sessionId || '';
   const paymentIntentId = route.params?.payment_intent || route.params?.paymentIntentId || '';
+  const checkoutAttemptStorageKey = route.params?.checkoutAttemptStorageKey || '';
+  const checkoutAttemptFingerprint = route.params?.checkoutAttemptFingerprint || '';
+  const checkoutAttemptKey = route.params?.checkoutAttemptKey || '';
+  const hasAttemptCorrelation = Boolean(
+    checkoutAttemptStorageKey && checkoutAttemptFingerprint && checkoutAttemptKey
+  );
+  const attemptRouteParams = useMemo(() => (hasAttemptCorrelation ? {
+    checkoutAttemptStorageKey,
+    checkoutAttemptFingerprint,
+    checkoutAttemptKey,
+  } : {}), [checkoutAttemptFingerprint, checkoutAttemptKey, checkoutAttemptStorageKey, hasAttemptCorrelation]);
   const [status, setStatus] = useState('checking');
   const mountedRef = useRef(true);
   const scaleAnim = useRef(new Animated.Value(0.82)).current;
@@ -35,12 +47,21 @@ export default function PaymentCancelScreen({ navigation, route }) {
         orderId,
         ...(sessionId ? { session_id: sessionId } : {}),
         ...(paymentIntentId ? { payment_intent: paymentIntentId } : {}),
+        ...attemptRouteParams,
       });
       return;
     }
+    if (['failed', 'cancelled'].includes(result.status) && hasAttemptCorrelation) {
+      await clearCheckoutAttempt(
+        AsyncStorage,
+        checkoutAttemptStorageKey,
+        checkoutAttemptFingerprint,
+        checkoutAttemptKey,
+      );
+    }
     setStatus(result.status === 'pending' ? 'pending' : 'not_paid');
     Animated.spring(scaleAnim, { toValue: 1, friction: 6, tension: 65, useNativeDriver: true }).start();
-  }, [navigation, orderId, paymentIntentId, scaleAnim, sessionId]);
+  }, [attemptRouteParams, checkoutAttemptFingerprint, checkoutAttemptKey, checkoutAttemptStorageKey, hasAttemptCorrelation, navigation, orderId, paymentIntentId, scaleAnim, sessionId]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -91,6 +112,7 @@ export default function PaymentCancelScreen({ navigation, route }) {
             orderId,
             ...(sessionId ? { session_id: sessionId } : {}),
             ...(paymentIntentId ? { payment_intent: paymentIntentId } : {}),
+            ...attemptRouteParams,
           })}>
             <Ionicons name="refresh" size={19} color="#fff" /><Text style={styles.primaryBtnText}>Check Status</Text>
           </TouchableOpacity>

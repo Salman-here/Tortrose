@@ -4,6 +4,7 @@ import MainLayoutPage from '../pages/MainLayoutPage'
 import Products from '../components/Products'
 import ProtectedRoute from '../components/common/ProtectedRoute'
 import Loader from '../components/common/Loader'
+import DocsPage from '../pages/DocsPage'
 import { getMainDomainUrl, isStorefrontSubdomainPath } from '../utils/subdomainHelper'
 
 // CRITICAL (eager): home grid + layout shell are above-the-fold for the LCP.
@@ -26,7 +27,6 @@ const AboutPage = lazy(() => import('../pages/AboutPage'))
 const ContactPage = lazy(() => import('../pages/ContactPage'))
 const FAQPage = lazy(() => import('../pages/FAQPage'))
 const TrackOrderPage = lazy(() => import('../pages/TrackOrderPage'))
-const DocsPage = lazy(() => import('../pages/DocsPage'))
 
 // ── Auth standalone
 const Login = lazy(() => import('../components/auth/Login'))
@@ -172,6 +172,7 @@ function AppRoutes({ subdomainSlug = null }) {
                     <Route path='/user-dashboard/orders' element={<ProtectedRoute><UserOrdersManagement /></ProtectedRoute>} />
                     <Route path='/user-dashboard/whatsapp' element={<ProtectedRoute><UserWhatsAppSettings /></ProtectedRoute>} />
                     <Route path='/user-dashboard/wallet' element={<ProtectedRoute><Wallet /></ProtectedRoute>} />
+                    <Route path='/user-dashboard/notifications' element={<ProtectedRoute><NotificationsPage /></ProtectedRoute>} />
                     <Route path='/user-dashboard/payment-methods' element={<ProtectedRoute><PaymentMethods /></ProtectedRoute>} />
                     <Route path='/user-dashboard/order/:id' element={<ProtectedRoute><OrderDetail /></ProtectedRoute>} />
                     <Route path='/user-dashboard/user-management' element={<ProtectedRoute><UserManagement /></ProtectedRoute>} />

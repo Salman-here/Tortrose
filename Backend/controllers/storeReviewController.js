@@ -2,8 +2,11 @@ const asyncHandler = require('express-async-handler');
 const mongoose = require('mongoose');
 const StoreReview = require('../models/StoreReview');
 const Store = require('../models/Store');
-const Notification = require('../models/Notification');
 const { findStoreReviewEligibility } = require('../services/reviewEligibilityService');
+const { runInTransaction } = require('../services/walletService');
+const {
+  enqueueNewStoreReviewNotification,
+} = require('../services/sellerOperationalNotificationService');
 const {
   getStoreReviewSummaries,
   getStoreReviewSummary,
@@ -119,35 +122,53 @@ exports.createOrUpdateReview = asyncHandler(async (req, res) => {
     });
   }
 
-  const existingReview = await StoreReview.findOne({ store: storeId, user: userId }).select('_id').lean();
+  let existingReview;
+  let review;
+  await runInTransaction(async session => {
+    existingReview = await StoreReview.findOne({ store: storeId, user: userId })
+      .select('_id')
+      .session(session)
+      .lean();
+    const currentStore = await Store.findById(storeId)
+      .select('seller storeName storeSlug')
+      .session(session);
+    if (!currentStore) {
+      const error = new Error('Store not found');
+      error.statusCode = 404;
+      throw error;
+    }
 
-  const review = await StoreReview.findOneAndUpdate(
-    { store: storeId, user: userId },
-    {
-      $set: {
-        rating: numRating,
-        title: cleanTitle,
-        comment: cleanComment,
-        order: eligibility.order._id,
-        isVerifiedPurchase: true,
+    review = await StoreReview.findOneAndUpdate(
+      { store: storeId, user: userId },
+      {
+        $set: {
+          rating: numRating,
+          title: cleanTitle,
+          comment: cleanComment,
+          order: eligibility.order._id,
+          isVerifiedPurchase: true,
+        },
       },
-    },
-    { upsert: true, new: true, setDefaultsOnInsert: true }
-  ).populate('user', 'username avatar');
+      {
+        upsert: true,
+        new: true,
+        setDefaultsOnInsert: true,
+        runValidators: true,
+        ...(session ? { session } : {}),
+      }
+    );
 
+    if (!existingReview) {
+      await enqueueNewStoreReviewNotification({
+        review,
+        store: currentStore,
+        buyerName: req.user.username,
+      }, { session });
+    }
+  });
+
+  await review.populate('user', 'username avatar');
   const summary = await getStoreReviewSummary(storeId);
-  if (!existingReview) {
-    await Notification.create({
-      user: store.seller,
-      title: 'New store rating',
-      body: `${req.user.username || 'A buyer'} rated ${store.storeName} ${numRating} out of 5.`,
-      category: 'seller',
-      linkTo: `/store/${store.storeSlug}#store-reviews`,
-      source: 'system',
-      targetRole: 'seller',
-      audience: 'specific',
-    }).catch((error) => console.error('[store-reviews] seller notification failed:', error.message));
-  }
 
   res.status(existingReview ? 200 : 201).json({
     msg: existingReview ? 'Store review updated' : 'Store review added',

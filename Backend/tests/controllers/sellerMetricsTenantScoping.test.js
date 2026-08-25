@@ -36,6 +36,8 @@ const createOrder = ({
   appliedCoupons = [],
   awaitingPayment = false,
   isPaid = true,
+  paymentMethod = 'stripe',
+  orderStatus = 'confirmed',
   user = new mongoose.Types.ObjectId(),
 }) => {
   const subtotal = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
@@ -67,8 +69,8 @@ const createOrder = ({
       totalAmount: Math.max(0, subtotal - couponDiscount),
     },
     appliedCoupons,
-    orderStatus: 'confirmed',
-    paymentMethod: 'cash_on_delivery',
+    orderStatus,
+    paymentMethod,
     currency: 'USD',
     isPaid,
     paidAt: isPaid ? new Date() : null,
@@ -96,7 +98,7 @@ afterAll(async () => {
 });
 
 describe('seller coupon analytics tenant scoping', () => {
-  test('attributes only persisted seller coupon lines and hides awaiting-payment orders', async () => {
+  test('attributes exact persisted seller coupon lines and counts only recognized revenue', async () => {
     const sellerId = new mongoose.Types.ObjectId();
     const otherSellerId = new mongoose.Types.ObjectId();
     const legacySellerProduct = await createProduct(sellerId, 'legacy-current-owner');
@@ -208,6 +210,23 @@ describe('seller coupon analytics tenant scoping', () => {
       }],
       awaitingPayment: true,
     });
+    await createOrder({
+      orderId: 'COUPON-UNDELIVERED-COD',
+      items: [
+        { productId: legacySellerProduct._id, seller: sellerId, name: 'Unrecognized COD line', price: 800, quantity: 1 },
+      ],
+      appliedCoupons: [{
+        couponId: coupon._id,
+        code: coupon.code,
+        discountType: 'percentage',
+        discountValue: 10,
+        appliedDiscountAmount: 80,
+        currency: 'USD',
+        applicableProductIds: [legacySellerProduct._id],
+      }],
+      isPaid: false,
+      paymentMethod: 'cash_on_delivery',
+    });
 
     const response = responseMock();
     await getCouponAnalytics({
@@ -234,6 +253,50 @@ describe('seller coupon analytics tenant scoping', () => {
       totalDiscountGiven: 17,
       topCouponCode: 'TENANT10',
     });
+  });
+
+  test('fails closed when a frozen coupon discount exceeds its eligible subtotal', async () => {
+    const sellerId = new mongoose.Types.ObjectId();
+    const product = await createProduct(sellerId, 'coupon-over-allocation');
+    const coupon = await Coupon.create({
+      seller: sellerId,
+      code: 'OVERALLOC',
+      discountType: 'fixed',
+      discountValue: 20,
+      currency: 'USD',
+      applicableTo: 'all',
+      expiryDate: new Date(Date.now() + 86400000),
+    });
+    await createOrder({
+      orderId: 'COUPON-OVER-ALLOCATED-SNAPSHOT',
+      items: [{
+        productId: product._id,
+        seller: sellerId,
+        name: 'Over-allocated line',
+        price: 10,
+        quantity: 1,
+      }],
+      appliedCoupons: [{
+        couponId: coupon._id,
+        code: coupon.code,
+        discountType: 'fixed',
+        discountValue: 20,
+        appliedDiscountAmount: 20,
+        currency: 'USD',
+        applicableProductIds: [product._id],
+      }],
+    });
+
+    const response = responseMock();
+    await getCouponAnalytics({
+      user: { id: sellerId.toString(), role: 'seller' },
+      query: { currency: 'USD' },
+    }, response);
+
+    expect(response.status).toHaveBeenCalledWith(409);
+    expect(response.json).toHaveBeenCalledWith(expect.objectContaining({
+      code: 'ORDER_COUPON_MONEY_INVALID',
+    }));
   });
 });
 
@@ -301,6 +364,15 @@ describe('store analytics seller snapshot scoping', () => {
       productCount: 2,
       totalOrders: 2,
       totalSales: 250,
+      inventory: {
+        totalProducts: 2,
+        outOfStock: 0,
+        lowStock: 0,
+        featuredProducts: 0,
+        categories: [{ category: 'Analytics', count: 2 }],
+        topRatedProducts: [],
+      },
     });
+    expect(response.json.mock.calls[0][0].analytics.inventory.recentProducts).toHaveLength(2);
   });
 });

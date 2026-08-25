@@ -17,6 +17,15 @@ import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import api from '../../config/api';
 import Feedback from '../../utils/feedback';
+import {
+  formatSellerAdsUsdCents,
+  inspectSellerAdsMutationResponse,
+  inspectSellerAdsOverview,
+  isCanonicalSellerAdsObjectId,
+  selectSellerAdsOverviewOwnership,
+  selectSellerAdsProductMoney,
+  sellerAdsOverviewReflectsMutation,
+} from '../../utils/sellerAdsSafety';
 import GlassBackground from '../../components/common/GlassBackground';
 import GlassPanel from '../../components/common/GlassPanel';
 import KeyboardAwareFormScrollView from '../../components/common/KeyboardAwareFormScrollView';
@@ -40,6 +49,7 @@ export const ADS_REQUEST_LABELS = Object.freeze({
   update: 'Change products',
   stop: 'Stop ads',
 });
+const ADS_REQUEST_TYPES = new Set(Object.keys(ADS_REQUEST_LABELS));
 
 const toId = (value) => String(value?._id || value || '').trim();
 
@@ -88,15 +98,34 @@ export const buildAdsRequestPayload = ({
   includeMeta,
   sellerNote,
 }) => {
-  const safeType = ['start', 'update', 'stop'].includes(requestType)
-    ? requestType
-    : 'start';
+  if (!ADS_REQUEST_TYPES.has(requestType)) {
+    throw new TypeError('Ads request type must be start, update, or stop.');
+  }
+  if (!Array.isArray(selectedIds) || !selectedIds.every(isCanonicalSellerAdsObjectId)) {
+    throw new TypeError('Ads request product IDs must be canonical ObjectId strings.');
+  }
+  if (new Set(selectedIds).size !== selectedIds.length) {
+    throw new TypeError('Ads request product IDs must be unique.');
+  }
+  if (requestType !== 'stop' && selectedIds.length === 0) {
+    throw new TypeError('Ads requests require at least one product.');
+  }
+  if (typeof includeMeta !== 'boolean') {
+    throw new TypeError('Ads Meta channel selection must be a boolean.');
+  }
+  if (typeof sellerNote !== 'string') {
+    throw new TypeError('Ads request note must be a string.');
+  }
+  const trimmedNote = sellerNote.trim();
+  if (trimmedNote.length > NOTE_LIMIT) {
+    throw new TypeError(`Ads request note cannot exceed ${NOTE_LIMIT} characters.`);
+  }
 
   return {
-    requestType: safeType,
-    productIds: safeType === 'stop' ? [] : uniqueIds(selectedIds),
-    includeMeta: Boolean(includeMeta),
-    sellerNote: String(sellerNote || '').trim().slice(0, NOTE_LIMIT),
+    requestType,
+    productIds: requestType === 'stop' ? [] : [...selectedIds],
+    includeMeta: requestType === 'stop' ? false : includeMeta,
+    sellerNote: trimmedNote,
   };
 };
 
@@ -106,11 +135,17 @@ export const validateAdsRequest = ({ overview, requestType, selectedIds, include
 
   if (!overview?.isElite) return { valid: false, code: 'elite_required' };
   if (hasPending) return { valid: false, code: 'pending_request' };
+  if (requestType === 'start' && hasActive) {
+    return { valid: false, code: 'active_campaign' };
+  }
+  if (requestType === 'update' && !hasActive) {
+    return { valid: false, code: 'no_active_campaign' };
+  }
   if (requestType === 'stop' && !hasActive) return { valid: false, code: 'no_active_campaign' };
   if (requestType !== 'stop' && uniqueIds(selectedIds).length === 0) {
     return { valid: false, code: 'products_required' };
   }
-  if (includeMeta && !overview?.subscription?.metaAdsIncluded) {
+  if (requestType !== 'stop' && includeMeta && !overview?.subscription?.metaAdsIncluded) {
     return { valid: false, code: 'meta_addon_required' };
   }
   return { valid: true, code: null };
@@ -133,8 +168,6 @@ const formatDate = (value) => {
     day: 'numeric',
   });
 };
-
-const formatUsdCents = (cents) => `$${(Number(cents || 0) / 100).toFixed(2)}`;
 
 function StatusPill({ status, active = false, styles, palette }) {
   const resolvedStatus = active ? 'active' : (status || 'pending');
@@ -242,6 +275,10 @@ export default function SellerAdsScreen({ navigation }) {
   const { formatPrice } = useCurrency();
   const styles = useMemo(() => makeStyles(palette), [palette]);
   const hasLoadedRef = useRef(false);
+  const mountedRef = useRef(true);
+  const overviewGenerationRef = useRef(0);
+  const mutationGenerationRef = useRef(0);
+  const mutationInFlightRef = useRef(false);
 
   const [overview, setOverview] = useState(null);
   const [selectedIds, setSelectedIds] = useState([]);
@@ -252,29 +289,74 @@ export default function SellerAdsScreen({ navigation }) {
   const [submitting, setSubmitting] = useState('');
   const [loadError, setLoadError] = useState('');
 
-  const fetchOverview = useCallback(async ({ showSkeleton = false, showFailureToast = false } = {}) => {
-    if (showSkeleton) setLoading(true);
+  const clearOverviewPresentation = useCallback(() => {
+    setOverview(null);
+    setSelectedIds([]);
+    setIncludeMeta(false);
+    setSellerNote('');
+  }, []);
+
+  const applyVerifiedOverview = useCallback((nextOverview) => {
+    const draft = getAdsDraftFromOverview(nextOverview);
+    setOverview(nextOverview);
+    setSelectedIds(draft.selectedIds);
+    setIncludeMeta(draft.includeMeta);
+  }, []);
+
+  const requestVerifiedOverview = useCallback(async () => {
+    const response = await api.get(ADS_OVERVIEW_ENDPOINT);
+    const verified = inspectSellerAdsOverview(response.data);
+    if (!verified) {
+      const contractError = new Error('The ads workspace response could not be verified.');
+      contractError.code = 'invalid_ads_overview';
+      throw contractError;
+    }
+    return verified;
+  }, []);
+
+  const fetchOverview = useCallback(async ({ showFailureToast = false } = {}) => {
+    if (mutationInFlightRef.current) {
+      return { status: 'blocked', overview: null };
+    }
+    const generation = ++overviewGenerationRef.current;
+    clearOverviewPresentation();
+    setLoading(true);
     setLoadError('');
     try {
-      const response = await api.get(ADS_OVERVIEW_ENDPOINT);
-      const nextOverview = response.data || {};
-      const draft = getAdsDraftFromOverview(nextOverview);
-      setOverview(nextOverview);
-      setSelectedIds(draft.selectedIds);
-      setIncludeMeta(draft.includeMeta);
-      return nextOverview;
+      const nextOverview = await requestVerifiedOverview();
+      if (!mountedRef.current || generation !== overviewGenerationRef.current) {
+        return { status: 'stale', overview: null };
+      }
+      applyVerifiedOverview(nextOverview);
+      return { status: 'committed', overview: nextOverview };
     } catch (error) {
+      if (!mountedRef.current || generation !== overviewGenerationRef.current) {
+        return { status: 'stale', overview: null };
+      }
       const message = errorMessage(error, 'We could not load your ads workspace.');
+      clearOverviewPresentation();
       setLoadError(message);
       if (showFailureToast) {
         Feedback.show({ type: 'error', text1: 'Ads unavailable', text2: message });
       }
-      return null;
+      return { status: 'failed', overview: null, error };
     } finally {
-      hasLoadedRef.current = true;
-      setLoading(false);
-      setRefreshing(false);
+      if (mountedRef.current && generation === overviewGenerationRef.current) {
+        hasLoadedRef.current = true;
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
+  }, [applyVerifiedOverview, clearOverviewPresentation, requestVerifiedOverview]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      overviewGenerationRef.current += 1;
+      mutationGenerationRef.current += 1;
+      mutationInFlightRef.current = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -283,26 +365,20 @@ export default function SellerAdsScreen({ navigation }) {
 
   useEffect(() => {
     const unsubscribe = navigation?.addListener?.('focus', () => {
-      if (hasLoadedRef.current) fetchOverview();
+      if (hasLoadedRef.current && !mutationInFlightRef.current) fetchOverview();
     });
     return typeof unsubscribe === 'function' ? unsubscribe : undefined;
   }, [fetchOverview, navigation]);
 
-  const featuredProducts = Array.isArray(overview?.featuredProducts)
-    ? overview.featuredProducts
-    : [];
-  const pendingRequests = Array.isArray(overview?.pendingRequests)
-    ? overview.pendingRequests
-    : [];
-  const recentRequests = Array.isArray(overview?.recentRequests)
-    ? overview.recentRequests
-    : [];
+  const featuredProducts = overview?.featuredProducts || [];
+  const pendingRequests = overview?.pendingRequests || [];
+  const recentRequests = overview?.recentRequests || [];
   const hasPending = pendingRequests.length > 0;
   const activeRequest = overview?.activeRequest || null;
   const hasActive = Boolean(activeRequest?.active);
   const requestType = hasActive ? 'update' : 'start';
   const metaAddonIncluded = Boolean(overview?.subscription?.metaAdsIncluded);
-  const metaAddonCents = Number(overview?.metaAdsAddonCents || 400);
+  const metaAddonCents = overview?.metaAdsAddonCents;
   const selectedSet = useMemo(() => new Set(uniqueIds(selectedIds)), [selectedIds]);
   const activeSet = useMemo(() => new Set(requestProductIds(activeRequest)), [activeRequest]);
   const pendingSet = useMemo(
@@ -328,7 +404,7 @@ export default function SellerAdsScreen({ navigation }) {
   const promptMetaAddon = useCallback(() => {
     Alert.alert(
       'Meta add-on required',
-      `Add Meta ads from Subscription first (+${formatUsdCents(metaAddonCents)}/month). TikTok ads remain included with Elite.`,
+      `Add Meta ads from Subscription first (+${formatSellerAdsUsdCents(metaAddonCents)}/month). TikTok ads remain included with Elite.`,
       [
         { text: 'Not now', style: 'cancel' },
         { text: 'Open Subscription', onPress: navigateToSubscription },
@@ -347,14 +423,19 @@ export default function SellerAdsScreen({ navigation }) {
   }, []);
 
   const toggleMeta = useCallback(() => {
+    if (includeMeta) {
+      setIncludeMeta(false);
+      return;
+    }
     if (!metaAddonIncluded) {
       promptMetaAddon();
       return;
     }
-    setIncludeMeta((previous) => !previous);
-  }, [metaAddonIncluded, promptMetaAddon]);
+    setIncludeMeta(true);
+  }, [includeMeta, metaAddonIncluded, promptMetaAddon]);
 
   const submitRequest = useCallback(async (type = requestType) => {
+    if (mutationInFlightRef.current) return;
     const validation = validateAdsRequest({
       overview,
       requestType: type,
@@ -373,7 +454,8 @@ export default function SellerAdsScreen({ navigation }) {
       }
       const messages = {
         pending_request: 'Wait for the Rozare team to review your pending request before sending another change.',
-        no_active_campaign: 'There is no active ads campaign to stop.',
+        active_campaign: 'Use the campaign update action while an approved campaign is active.',
+        no_active_campaign: 'There is no active ads campaign to update or stop.',
         products_required: 'Select at least one featured product for ads.',
       };
       Feedback.show({
@@ -384,45 +466,139 @@ export default function SellerAdsScreen({ navigation }) {
       return;
     }
 
-    setSubmitting(type);
+    let payload;
+    let expectedOwnership;
     try {
-      const payload = buildAdsRequestPayload({
+      expectedOwnership = selectSellerAdsOverviewOwnership(overview);
+      if (!expectedOwnership) throw new TypeError('Ads workspace ownership is unavailable.');
+      payload = buildAdsRequestPayload({
         requestType: type,
         selectedIds,
         includeMeta,
         sellerNote,
       });
+    } catch {
+      clearOverviewPresentation();
+      setLoadError('The campaign draft could not be verified. Refresh before trying again.');
+      Feedback.show({
+        type: 'error',
+        text1: 'Campaign draft unavailable',
+        text2: 'Refresh your ads workspace before submitting this request.',
+      });
+      return;
+    }
+    const mutationGeneration = ++mutationGenerationRef.current;
+    mutationInFlightRef.current = true;
+    overviewGenerationRef.current += 1;
+    clearOverviewPresentation();
+    setSubmitting(type);
+    setLoading(true);
+    setRefreshing(false);
+    setLoadError('');
+
+    let mutation = null;
+    let submissionError = null;
+    let refreshedOverview = null;
+    let refreshError = null;
+
+    try {
       const response = await api.post(ADS_REQUEST_ENDPOINT, payload);
+      mutation = inspectSellerAdsMutationResponse(response.data, {
+        ...payload,
+        ...expectedOwnership,
+      });
+      if (!mutation) {
+        submissionError = new Error('The ads request response could not be verified.');
+        submissionError.code = 'invalid_ads_mutation_response';
+      }
+    } catch (error) {
+      submissionError = error;
+    }
+
+    if (mountedRef.current && mutationGeneration === mutationGenerationRef.current) {
+      try {
+        refreshedOverview = await requestVerifiedOverview();
+      } catch (error) {
+        refreshError = error;
+      }
+    }
+
+    if (!mountedRef.current || mutationGeneration !== mutationGenerationRef.current) return;
+
+    const mutationVerified = Boolean(
+      mutation
+      && refreshedOverview
+      && sellerAdsOverviewReflectsMutation(refreshedOverview, mutation)
+    );
+    const mayRestoreAfterRejectedSubmission = Boolean(
+      submissionError
+      && submissionError.code !== 'invalid_ads_mutation_response'
+      && refreshedOverview
+    );
+
+    if (mutationVerified || mayRestoreAfterRejectedSubmission) {
+      applyVerifiedOverview(refreshedOverview);
+      setLoadError('');
+    } else {
+      clearOverviewPresentation();
+      const verificationMessage = refreshError
+        ? errorMessage(refreshError, 'We could not verify the latest ads workspace.')
+        : submissionError?.code === 'invalid_ads_mutation_response'
+          ? 'The ads request response could not be verified. Refresh and check your requests before trying again.'
+          : 'The submitted request could not be confirmed in a fresh ads workspace.';
+      setLoadError(verificationMessage);
+    }
+
+    if (mutationVerified) {
       Feedback.show({
         type: 'success',
         text1: type === 'stop' ? 'Stop request sent' : 'Ads request sent',
-        text2: response.data?.msg || 'The Rozare team will review your request.',
+        text2: mutation.message,
       });
-      setSellerNote('');
-      await fetchOverview();
-    } catch (error) {
-      const responseData = error?.response?.data || {};
-      if (responseData.requiresElite) {
+    } else if (submissionError) {
+      const responseData = submissionError?.response?.data;
+      if (responseData?.requiresElite === true) {
         promptEliteUpgrade();
-      } else if (responseData.requiresMetaAddon) {
+      } else if (responseData?.requiresMetaAddon === true) {
         promptMetaAddon();
       } else {
+        const responseMissing = !submissionError?.response;
+        const responseContractFailed = submissionError.code === 'invalid_ads_mutation_response';
         Feedback.show({
-          type: error?.response?.status === 409 ? 'warning' : 'error',
-          text1: error?.response?.status === 409 ? 'Request already pending' : 'Request failed',
-          text2: errorMessage(error, 'We could not submit your ads request.'),
+          type: submissionError?.response?.status === 409 ? 'warning' : 'error',
+          text1: submissionError?.response?.status === 409
+            ? 'Request already pending'
+            : responseMissing || responseContractFailed
+              ? 'Request status unverified'
+              : 'Request failed',
+          text2: responseContractFailed
+            ? 'Refresh and check your campaign requests before trying again.'
+            : errorMessage(submissionError, 'We could not confirm your ads request.'),
         });
-        if (error?.response?.status === 409) await fetchOverview();
       }
-    } finally {
-      setSubmitting('');
+    } else {
+      Feedback.show({
+        type: 'error',
+        text1: 'Request saved; verification needed',
+        text2: refreshError
+          ? 'The request was accepted, but the latest campaign state could not be loaded.'
+          : 'The request was accepted, but it was not present in the verified campaign state.',
+      });
     }
+
+    hasLoadedRef.current = true;
+    mutationInFlightRef.current = false;
+    setLoading(false);
+    setRefreshing(false);
+    setSubmitting('');
   }, [
-    fetchOverview,
+    applyVerifiedOverview,
+    clearOverviewPresentation,
     includeMeta,
     overview,
     promptEliteUpgrade,
     promptMetaAddon,
+    requestVerifiedOverview,
     requestType,
     selectedIds,
     sellerNote,
@@ -490,8 +666,7 @@ export default function SellerAdsScreen({ navigation }) {
     || hasPending
     || featuredProducts.length === 0
     || selectedIds.length === 0;
-  const planName = overview.subscription?.planName
-    || (overview.isElite ? 'Rozare Elite' : 'Upgrade to Elite');
+  const planName = overview.subscription.planName;
 
   return (
     <GlassBackground>
@@ -645,9 +820,7 @@ export default function SellerAdsScreen({ navigation }) {
                   const active = activeSet.has(id);
                   const pending = pendingSet.has(id);
                   const imageUrl = getAdProductImage(product);
-                  const displayPrice = Number(product?.discountedPrice) > 0
-                    ? Number(product.discountedPrice)
-                    : Number(product?.price || 0);
+                  const displayMoney = selectSellerAdsProductMoney(product);
 
                   return (
                     <TouchableOpacity
@@ -678,8 +851,8 @@ export default function SellerAdsScreen({ navigation }) {
                         <Text style={styles.productName} numberOfLines={2}>{product?.name || 'Untitled product'}</Text>
                         <Text style={styles.productCategory} numberOfLines={1}>{product?.category || 'Uncategorized'}</Text>
                         <Text style={styles.productPrice}>
-                          {formatPrice(displayPrice, {
-                            sourceCurrency: product?.currency || product?.priceCurrency || 'USD',
+                          {formatPrice(displayMoney.amount, {
+                            sourceCurrency: displayMoney.currency,
                           })}
                         </Text>
                         {(active || pending) && (
@@ -725,10 +898,14 @@ export default function SellerAdsScreen({ navigation }) {
               style={[styles.channelCard, includeMeta && styles.metaChannelSelected]}
               onPress={toggleMeta}
               activeOpacity={0.78}
-              accessibilityRole={metaAddonIncluded ? 'switch' : 'button'}
-              accessibilityState={metaAddonIncluded ? { checked: includeMeta } : undefined}
-              accessibilityLabel={metaAddonIncluded ? 'Include Meta ads' : 'Meta ads add-on required'}
-              accessibilityHint={metaAddonIncluded ? 'Toggles Meta ads for this request' : 'Opens the Meta add-on prompt'}
+              accessibilityRole={includeMeta || metaAddonIncluded ? 'switch' : 'button'}
+              accessibilityState={includeMeta || metaAddonIncluded ? { checked: includeMeta } : undefined}
+              accessibilityLabel={includeMeta
+                ? 'Remove Meta ads from this request'
+                : metaAddonIncluded ? 'Include Meta ads' : 'Meta ads add-on required'}
+              accessibilityHint={includeMeta
+                ? 'Turns Meta ads off so this request can continue without the add-on'
+                : metaAddonIncluded ? 'Turns Meta ads on for this request' : 'Opens the Meta add-on prompt'}
             >
               <View style={[styles.channelIcon, { backgroundColor: palette.colors.infoSubtle }]}>
                 <Ionicons name="logo-facebook" size={20} color={palette.colors.info} />
@@ -739,13 +916,15 @@ export default function SellerAdsScreen({ navigation }) {
                   {!metaAddonIncluded && <Ionicons name="lock-closed" size={12} color={palette.colors.warning} />}
                 </View>
                 <Text style={styles.channelDescription}>
-                  {metaAddonIncluded
-                    ? `Included in your Elite plan (+${formatUsdCents(metaAddonCents)}/month)`
-                    : `Add from Subscription (+${formatUsdCents(metaAddonCents)}/month)`}
+                  {includeMeta && !metaAddonIncluded
+                    ? `Currently selected; turn off to continue without the add-on (+${formatSellerAdsUsdCents(metaAddonCents)}/month)`
+                    : metaAddonIncluded
+                    ? `Included in your Elite plan (+${formatSellerAdsUsdCents(metaAddonCents)}/month)`
+                    : `Add from Subscription (+${formatSellerAdsUsdCents(metaAddonCents)}/month)`}
                 </Text>
               </View>
-              <View style={[styles.switchTrack, includeMeta && metaAddonIncluded && styles.switchTrackOn]}>
-                <View style={[styles.switchThumb, includeMeta && metaAddonIncluded && styles.switchThumbOn]} />
+              <View style={[styles.switchTrack, includeMeta && styles.switchTrackOn]}>
+                <View style={[styles.switchThumb, includeMeta && styles.switchThumbOn]} />
               </View>
             </TouchableOpacity>
           </GlassPanel>

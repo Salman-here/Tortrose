@@ -9,7 +9,11 @@ import SEOHead from '../components/common/SEOHead';
 import ProductCard from '../components/common/ProductCard';
 import { toast } from 'react-toastify';
 import { useGlobal } from '../contexts/GlobalContext';
-import { useCurrency } from '../contexts/CurrencyContext';
+import {
+    resolveProductPresentationCurrency,
+    resolveProductPresentationMoney,
+    useCurrency,
+} from '../contexts/CurrencyContext';
 import { useBuyerLocation } from '../contexts/BuyerLocationContext';
 import { getAuthToken } from "../utils/cookieHelper";
 import { trackProductView } from '../utils/tiktokPixel';
@@ -27,7 +31,6 @@ function ProductDetailPage() {
         handleAddToCart,
         handleQtyInc,
         handleQtyDec,
-        fetchCart,
         isCartLoading,
         loadingProductId,
         qtyUpdateId
@@ -61,12 +64,19 @@ function ProductDetailPage() {
     // Has the buyer picked all required options?
     const allOptionsSelected = !product.optionGroups?.length || product.optionGroups.every(g => selectedOptions[g.name]);
 
-    const productPrice = Number(product.price || 0);
-    const productDiscountedPrice = Number(product.discountedPrice || 0);
+    const hasLoadedProductMoney = Boolean(product?._id);
+    const productPrice = hasLoadedProductMoney
+        ? resolveProductPresentationMoney(product, 'price')
+        : 0;
+    const productDiscountedPrice = hasLoadedProductMoney
+        ? resolveProductPresentationMoney(product, 'discountedPrice')
+        : 0;
     const hasProductDiscount = productDiscountedPrice > 0 && productDiscountedPrice < productPrice;
     const displayPrice = hasProductDiscount ? productDiscountedPrice : productPrice;
     const originalPrice = productPrice;
-    const productCurrency = product.currency || product.priceCurrency || 'USD';
+    const productCurrency = hasLoadedProductMoney
+        ? resolveProductPresentationCurrency(product)
+        : 'USD';
 
     const discountPercentage = hasProductDiscount
         ? Math.round(((productPrice - productDiscountedPrice) / productPrice) * 100)
@@ -157,10 +167,19 @@ function ProductDetailPage() {
         }
     };
 
-    useEffect(() => { fetchProduct(); fetchProductCoupons(); }, [id, locationQueryString]);
+    useEffect(() => {
+        fetchProduct();
+        fetchProductCoupons();
+        // Product identity and buyer location are the authoritative request
+        // keys; render-created fetcher identities must not retrigger requests.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [id, locationQueryString]);
 
     useEffect(() => {
         if (product?._id) trackProductView(product);
+        // Track exactly once per product id, not whenever the product object is
+        // enriched or replaced with the same persisted product.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [product?._id]);
 
     // Related products by category (excludes current product)
@@ -203,7 +222,7 @@ function ProductDetailPage() {
             }
         })();
         return () => { cancelled = true; };
-    }, [product?.category, product?._id, locationQueryString]);
+    }, [product?.category, product?._id, locationQueryString, appendLocationParams]);
 
     const fetchProductCoupons = async () => {
         try {

@@ -10,10 +10,11 @@ jest.mock('../../models/Notification', () => ({
 }));
 jest.mock('../../models/BroadcastJob', () => ({
   updateOne: jest.fn(),
+  findOneAndUpdate: jest.fn(),
   create: jest.fn(),
 }));
 jest.mock('../../utils/expoPush', () => ({
-  sendExpoPush: jest.fn().mockImplementation(async tokens => ({
+  sendExpoPushStrict: jest.fn().mockImplementation(async tokens => ({
     invalidTokens: [],
     sentCount: tokens.length,
   })),
@@ -24,15 +25,19 @@ jest.mock('../../controllers/mailController', () => ({
 jest.mock('../../services/whatsapp/sellerEvolutionClient', () => ({
   sendText: jest.fn(),
 }));
+jest.mock('../../services/whatsapp/evolutionClient', () => ({
+  sendText: jest.fn(),
+}));
 
 const User = require('../../models/User');
 const Notification = require('../../models/Notification');
 const BroadcastJob = require('../../models/BroadcastJob');
-const { sendExpoPush } = require('../../utils/expoPush');
+const { sendExpoPushStrict } = require('../../utils/expoPush');
 const {
   _dispatchBroadcast,
   createBroadcast,
   listMine,
+  markRead,
   markAllRead,
 } = require('../../controllers/notificationController');
 
@@ -45,8 +50,8 @@ describe('notification broadcast audience metadata', () => {
     User.find.mockReturnValue({
       select: jest.fn().mockReturnValue({
         lean: jest.fn().mockResolvedValue([
-          { _id: 'buyer-1', role: 'user', expoPushTokens: ['ExpoPushToken[buyer]'] },
-          { _id: 'seller-1', role: 'seller', expoPushTokens: ['ExpoPushToken[seller]'] },
+          { _id: 'buyer-1', role: 'user', status: 'active', expoPushTokens: ['ExpoPushToken[buyer]'] },
+          { _id: 'seller-1', role: 'seller', status: 'active', expoPushTokens: ['ExpoPushToken[seller]'] },
         ]),
       }),
     });
@@ -62,8 +67,8 @@ describe('notification broadcast audience metadata', () => {
     });
 
     expect(stats).toMatchObject({ recipients: 2, pushSent: 2 });
-    expect(sendExpoPush).toHaveBeenCalledTimes(2);
-    const callsByUser = new Map(sendExpoPush.mock.calls.map(([, payload, scope]) => [
+    expect(sendExpoPushStrict).toHaveBeenCalledTimes(2);
+    const callsByUser = new Map(sendExpoPushStrict.mock.calls.map(([, payload, scope]) => [
       payload.data.recipientUserId,
       { payload, scope },
     ]));
@@ -85,8 +90,8 @@ describe('notification broadcast audience metadata', () => {
     User.find.mockReturnValue({
       select: jest.fn().mockReturnValue({
         lean: jest.fn().mockResolvedValue([
-          { _id: 'buyer-1', role: 'user' },
-          { _id: 'seller-1', role: 'seller' },
+          { _id: 'buyer-1', role: 'user', status: 'active' },
+          { _id: 'seller-1', role: 'seller', status: 'active' },
         ]),
       }),
     });
@@ -114,8 +119,8 @@ describe('notification broadcast audience metadata', () => {
     User.find.mockReturnValue({
       select: jest.fn().mockReturnValue({
         lean: jest.fn().mockResolvedValue([
-          { _id: 'seller-a', role: 'seller', expoPushTokens: ['ExpoPushToken[stale-index]'] },
-          { _id: 'seller-b', role: 'seller', expoPushTokens: ['ExpoPushToken[current-owner]'] },
+          { _id: 'seller-a', role: 'seller', status: 'active', expoPushTokens: ['ExpoPushToken[stale-index]'] },
+          { _id: 'seller-b', role: 'seller', status: 'active', expoPushTokens: ['ExpoPushToken[current-owner]'] },
         ]),
       }),
     });
@@ -130,13 +135,13 @@ describe('notification broadcast audience metadata', () => {
       userIds: ['seller-a', 'seller-b'],
     });
 
-    expect(sendExpoPush).toHaveBeenCalledTimes(2);
-    for (const [, payload, scope] of sendExpoPush.mock.calls) {
+    expect(sendExpoPushStrict).toHaveBeenCalledTimes(2);
+    for (const [, payload, scope] of sendExpoPushStrict.mock.calls) {
       expect(scope).toEqual({ recipientUserId: payload.data.recipientUserId });
       expect(payload.data.targetRole).toBe('seller');
       expect(payload.data.audience).toBe('specific');
     }
-    expect(sendExpoPush.mock.calls.map(([, payload]) => payload.data.recipientUserId).sort())
+    expect(sendExpoPushStrict.mock.calls.map(([, payload]) => payload.data.recipientUserId).sort())
       .toEqual(['seller-a', 'seller-b']);
   });
 
@@ -176,6 +181,16 @@ describe('notification broadcast audience metadata', () => {
     await listMine(req, res);
     await markAllRead(req, res);
 
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      account: { userId: 'account-1', role: 'user' },
+      items: [],
+      unread: 0,
+    }));
+    expect(res.json).toHaveBeenLastCalledWith({
+      ok: true,
+      account: { userId: 'account-1', role: 'user' },
+    });
+
     const listQuery = Notification.find.mock.calls[0][0];
     const unreadQuery = Notification.countDocuments.mock.calls[0][0];
     const markQuery = Notification.updateMany.mock.calls[0][0];
@@ -189,5 +204,75 @@ describe('notification broadcast audience metadata', () => {
     }
     expect(unreadQuery.read).toBe(false);
     expect(markQuery.read).toBe(false);
+  });
+
+  test('binds seller-business list, unread, mark-one, and mark-all operations to the seller surface', async () => {
+    const lean = jest.fn().mockResolvedValue([]);
+    const limit = jest.fn().mockReturnValue({ lean });
+    const sort = jest.fn().mockReturnValue({ limit });
+    Notification.find.mockReturnValue({ sort });
+    Notification.countDocuments.mockResolvedValue(0);
+    const savedNotification = {
+      _id: 'notification-1',
+      user: 'seller-1',
+      targetRole: 'seller',
+      read: true,
+    };
+    Notification.findOneAndUpdate.mockResolvedValue(savedNotification);
+    Notification.updateMany.mockResolvedValue({ modifiedCount: 0 });
+    const req = {
+      user: { id: 'seller-1', role: 'seller' },
+      query: { surface: 'seller' },
+    };
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() };
+
+    await listMine(req, res);
+    await markRead({ ...req, params: { id: 'notification-1' } }, res);
+    await markAllRead(req, res);
+
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      account: { userId: 'seller-1', role: 'seller', surface: 'seller' },
+      items: [],
+      unread: 0,
+    }));
+    expect(res.json).toHaveBeenLastCalledWith({
+      ok: true,
+      account: { userId: 'seller-1', role: 'seller', surface: 'seller' },
+    });
+    expect(res.json).toHaveBeenCalledWith({
+      account: { userId: 'seller-1', role: 'seller', surface: 'seller' },
+      notification: savedNotification,
+    });
+    const listQuery = Notification.find.mock.calls[0][0];
+    const unreadQuery = Notification.countDocuments.mock.calls[0][0];
+    const readOneQuery = Notification.findOneAndUpdate.mock.calls[0][0];
+    const markQuery = Notification.updateMany.mock.calls[0][0];
+    for (const query of [listQuery, unreadQuery, readOneQuery, markQuery]) {
+      expect(query.user).toBe('seller-1');
+      expect(query.$or[0]).toEqual({ targetRole: 'seller' });
+      expect(JSON.stringify(query.$or[0])).not.toContain('both');
+    }
+    expect(readOneQuery._id).toBe('notification-1');
+  });
+
+  test('rejects a notification surface that is not authorized for the current role', async () => {
+    const req = {
+      user: { id: 'buyer-1', role: 'user' },
+      query: { surface: 'seller' },
+    };
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() };
+
+    await listMine(req, res);
+    await markRead({ ...req, params: { id: 'notification-1' } }, res);
+    await markAllRead(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith({
+      msg: 'Notification surface is not available for this account role.',
+      code: 'NOTIFICATION_SURFACE_INVALID',
+    });
+    expect(Notification.find).not.toHaveBeenCalled();
+    expect(Notification.findOneAndUpdate).not.toHaveBeenCalled();
+    expect(Notification.updateMany).not.toHaveBeenCalled();
   });
 });

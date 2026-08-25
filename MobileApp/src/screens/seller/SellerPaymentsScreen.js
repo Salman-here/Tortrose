@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -13,6 +13,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import Feedback from '../../utils/feedback';
 import api, { API_ENDPOINTS } from '../../config/api';
 import GlassBackground from '../../components/common/GlassBackground';
@@ -26,8 +27,27 @@ import {
   SellerSectionHeader,
 } from '../../components/seller/SellerUI';
 import { useCurrency } from '../../contexts/CurrencyContext';
+import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import { borderRadius, fontSize, fontWeight, shadows, spacing, typography } from '../../styles/theme';
+import {
+  toCurrencyMinorUnits,
+} from '../../utils/currencySafety';
+import {
+  clearPersistedMutationAttemptFromLedger,
+  createScopedMutationStorageKey,
+  getOrCreatePersistedMutationAttemptInLedger,
+} from '../../utils/persistedMutationAttempt';
+import {
+  exactCurrencyCode,
+  isExactNonNegativeJsonMoney,
+  parseExactMoneyInput,
+  selectWithdrawalHistoryMoney,
+  shouldRetainWithdrawalAttempt,
+  withdrawalNeedsLiveFx,
+} from '../../utils/sellerMoneySafety';
+
+const WITHDRAWAL_ATTEMPT_STORAGE_KEY = 'rozare_seller_withdrawal_attempt_v1';
 
 const defaultAccountForm = {
   accountHolderName: '',
@@ -39,17 +59,43 @@ const defaultAccountForm = {
   currency: 'USD',
   payoutInstructions: '',
 };
-const MIN_WITHDRAWAL_USD = 5;
+const REQUIRED_DISPLAY_REVENUE_FIELDS = [
+  'withdrawableBalance',
+  'onlineDeliveredRevenue',
+  'codDeliveredRevenue',
+  'totalDeliveredRevenue',
+  'estimatedRevenue',
+  'stripeDeliveredRevenue',
+  'walletDeliveredRevenue',
+  'onlinePendingRevenue',
+  'pendingWithdrawalAmount',
+  'processingWithdrawalAmount',
+  'totalWithdrawn',
+  'returnRefundDebits',
+  'codPendingRevenue',
+];
 
 const statusColor = (status, palette) => {
   switch (status) {
     case 'paid': return palette.colors.success;
     case 'processing': return palette.colors.info;
     case 'approved': return palette.colors.primary;
+    case 'manual_review': return palette.colors.warning;
+    case 'failed':
     case 'rejected':
     case 'cancelled': return palette.colors.error;
     default: return palette.colors.warning;
   }
+};
+
+const statusLabels = {
+  manual_review: 'Manual review',
+  failed: 'Failed',
+};
+
+const statusDescriptions = {
+  manual_review: 'Funds remain reserved while the payout outcome is reviewed.',
+  failed: 'The payout was not sent and the reserved funds were released.',
 };
 
 const StatCard = ({ icon, label, value, description, color, styles }) => (
@@ -66,7 +112,12 @@ const StatCard = ({ icon, label, value, description, color, styles }) => (
 export default function SellerPaymentsScreen({ navigation }) {
   const { palette } = useTheme();
   const styles = makeStyles(palette);
-  const { currency, currencies, convertPrice, convertToUSD, formatPrice } = useCurrency();
+  const { currency, currencies, formatAmount } = useCurrency();
+  const { currentUser } = useAuth();
+  const withdrawalAttemptStorageKey = createScopedMutationStorageKey(
+    WITHDRAWAL_ATTEMPT_STORAGE_KEY,
+    currentUser?._id || currentUser?.id || 'guest'
+  );
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -77,13 +128,80 @@ export default function SellerPaymentsScreen({ navigation }) {
   const [showAccountForm, setShowAccountForm] = useState(false);
   const [accountForm, setAccountForm] = useState(defaultAccountForm);
   const [withdrawAmount, setWithdrawAmount] = useState('');
+  const summaryRef = useRef(null);
+  const summaryRequestRef = useRef({ id: 0, controller: null });
+  const withdrawalSubmissionRef = useRef(false);
+  const activeWithdrawalAttemptRef = useRef(null);
+  const withdrawalAttemptResetRef = useRef(Promise.resolve());
+
+  const retireActiveWithdrawalAttempt = useCallback(() => {
+    const attempt = activeWithdrawalAttemptRef.current;
+    if (!attempt) return withdrawalAttemptResetRef.current;
+    activeWithdrawalAttemptRef.current = null;
+    const reset = withdrawalAttemptResetRef.current
+      .catch(() => undefined)
+      .then(() => clearPersistedMutationAttemptFromLedger(
+        AsyncStorage,
+        attempt.storageKey,
+        attempt.fingerprint,
+        attempt.key,
+      ));
+    withdrawalAttemptResetRef.current = reset;
+    return reset;
+  }, []);
+
+  const updateWithdrawAmount = (value) => {
+    if (value !== withdrawAmount) void retireActiveWithdrawalAttempt();
+    setWithdrawAmount(value);
+  };
+
+  useEffect(() => {
+    void retireActiveWithdrawalAttempt();
+    setWithdrawAmount('');
+  }, [currency, retireActiveWithdrawalAttempt]);
 
   const fetchSummary = useCallback(async () => {
+    const requestCurrency = String(currency || 'USD').toUpperCase();
+    const requestId = summaryRequestRef.current.id + 1;
+    summaryRequestRef.current.controller?.abort();
+    const controller = new AbortController();
+    summaryRequestRef.current = { id: requestId, controller };
+    summaryRef.current = null;
+    setSummary(null);
+    setLoadError('');
+    setLoading(true);
+    setRefreshing(true);
     try {
-      const res = await api.get(API_ENDPOINTS.PAYMENTS.SELLER_SUMMARY);
+      const res = await api.get(
+        `${API_ENDPOINTS.PAYMENTS.SELLER_SUMMARY}?currency=${encodeURIComponent(requestCurrency)}`,
+        { signal: controller.signal }
+      );
+      if (summaryRequestRef.current.id !== requestId) return;
       const next = res.data || {};
+      const responseCurrency = exactCurrencyCode(next.displayCurrency);
+      if (responseCurrency !== requestCurrency) {
+        throw new Error('Payment summary returned in an unexpected currency. Please retry.');
+      }
+      const displayRevenue = next.displayRevenue || {};
+      const limits = next.withdrawalLimits || {};
       const account = next.paymentAccount;
-      setSummary(next);
+      const completeMoneySummary = REQUIRED_DISPLAY_REVENUE_FIELDS.every((field) => (
+        isExactNonNegativeJsonMoney(displayRevenue[field])
+      )) && isExactNonNegativeJsonMoney(limits.availableDisplayAmount)
+        && isExactNonNegativeJsonMoney(limits.minimumDisplayAmount)
+        && isExactNonNegativeJsonMoney(limits.availableUSD)
+        && isExactNonNegativeJsonMoney(limits.minimumUSD)
+        && exactCurrencyCode(limits.displayCurrency) === requestCurrency
+        && exactCurrencyCode(limits.baseCurrency) === 'USD'
+        && typeof next.exchangeRateStatus?.fallback === 'boolean'
+        && Array.isArray(next.withdrawals)
+        && (!account || exactCurrencyCode(account.currency) !== null);
+      if (!completeMoneySummary) {
+        throw new Error('Payment summary did not include complete authoritative money totals.');
+      }
+      const normalizedNext = { ...next, displayCurrency: responseCurrency };
+      summaryRef.current = normalizedNext;
+      setSummary(normalizedNext);
       setLoadError('');
       setAccountForm({
         ...defaultAccountForm,
@@ -91,21 +209,29 @@ export default function SellerPaymentsScreen({ navigation }) {
         bankName: account?.bankName || '',
         swiftCode: account?.swiftCode || '',
         country: account?.country || '',
-        currency: account?.currency || currency || 'USD',
+        currency: account?.currency || requestCurrency,
         payoutInstructions: account?.payoutInstructions || '',
         accountNumber: '',
         iban: '',
       });
     } catch (error) {
-      setLoadError(error.response?.data?.msg || 'We could not load your live payment summary.');
+      if (error.code === 'ERR_CANCELED' || error.name === 'CanceledError') return;
+      if (summaryRequestRef.current.id !== requestId) return;
+      setLoadError(error.response?.data?.msg || error.message || 'We could not load your live payment summary.');
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (summaryRequestRef.current.id === requestId) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   }, [currency]);
 
   useEffect(() => {
     fetchSummary();
+    return () => {
+      summaryRequestRef.current.id += 1;
+      summaryRequestRef.current.controller?.abort();
+    };
   }, [fetchSummary]);
 
   const onRefresh = useCallback(() => {
@@ -113,13 +239,25 @@ export default function SellerPaymentsScreen({ navigation }) {
     fetchSummary();
   }, [fetchSummary]);
 
-  const revenue = summary?.revenue || {};
-  const paymentAccount = summary?.paymentAccount;
-  const withdrawals = summary?.withdrawals || [];
-  const availableInCurrentCurrency = useMemo(
-    () => convertPrice(revenue.withdrawableBalance || 0),
-    [convertPrice, revenue.withdrawableBalance]
-  );
+  const summaryMatchesCurrency = Boolean(summary)
+    && String(summary.displayCurrency || currency).toUpperCase() === String(currency || 'USD').toUpperCase();
+  const activeSummary = summaryMatchesCurrency ? summary : null;
+  const displayRevenue = activeSummary?.displayRevenue || {};
+  const displayValue = (field) => displayRevenue[field];
+  const withdrawalLimits = activeSummary?.withdrawalLimits || {};
+  const paymentAccount = activeSummary?.paymentAccount;
+  const exchangeRatesAreFallback = activeSummary?.exchangeRateStatus?.fallback !== false;
+  const withdrawalRequiresLiveFx = withdrawalNeedsLiveFx(currency, paymentAccount?.currency);
+  const withdrawalBlockedByFallback = exchangeRatesAreFallback && withdrawalRequiresLiveFx;
+  const displayMoneyIsApproximate = exchangeRatesAreFallback && String(currency || 'USD').toUpperCase() !== 'USD';
+  const formatDisplayMoney = (amount) => `${displayMoneyIsApproximate ? '≈' : ''}${formatAmount(amount)}`;
+  const withdrawals = activeSummary?.withdrawals || [];
+  const availableInCurrentCurrency = withdrawalLimits.availableDisplayAmount;
+  const minimumWithdrawalInCurrentCurrency = withdrawalLimits.minimumDisplayAmount;
+  const withdrawalInput = parseExactMoneyInput(withdrawAmount, { allowZero: false });
+  const withdrawalInputError = withdrawAmount && !withdrawalInput
+    ? 'Enter a positive amount with no more than 2 decimal places.'
+    : '';
 
   const updateAccountField = (field, value) => {
     setAccountForm((previous) => ({ ...previous, [field]: value }));
@@ -132,6 +270,10 @@ export default function SellerPaymentsScreen({ navigation }) {
     }
     if (!accountForm.bankName.trim()) {
       Alert.alert('Missing info', 'Bank name is required');
+      return;
+    }
+    if (!accountForm.country.trim()) {
+      Alert.alert('Missing info', 'Payout bank country is required');
       return;
     }
     if (!paymentAccount && !accountForm.accountNumber.trim() && !accountForm.iban.trim()) {
@@ -153,52 +295,82 @@ export default function SellerPaymentsScreen({ navigation }) {
   };
 
   const requestWithdrawal = async () => {
+    if (withdrawalSubmissionRef.current || requesting) return;
+    if (!activeSummary || refreshing) {
+      Alert.alert('Refresh required', 'Refresh the live payment summary before requesting a withdrawal.');
+      return;
+    }
+    if (withdrawalBlockedByFallback) {
+      Alert.alert('Live rates unavailable', 'Refresh and retry before requesting a withdrawal.');
+      return;
+    }
     if (!paymentAccount) {
       Alert.alert('Payment account required', 'Link your payment account before requesting a withdrawal');
       return;
     }
-    if ((revenue.withdrawableBalance || 0) <= 0) {
+    if (toCurrencyMinorUnits(availableInCurrentCurrency) <= 0) {
       Alert.alert('No balance', 'You have zero withdrawable balance right now');
       return;
     }
-    if ((revenue.withdrawableBalance || 0) < MIN_WITHDRAWAL_USD) {
-      Alert.alert('Minimum withdrawal', `Minimum withdrawal amount is ${formatPrice(MIN_WITHDRAWAL_USD)}`);
+    if (toCurrencyMinorUnits(availableInCurrentCurrency) < toCurrencyMinorUnits(minimumWithdrawalInCurrentCurrency)) {
+      Alert.alert('Minimum withdrawal', `Minimum withdrawal amount is ${formatAmount(minimumWithdrawalInCurrentCurrency)}`);
       return;
     }
-    const amount = Number(withdrawAmount);
-    if (!Number.isFinite(amount) || amount <= 0) {
-      Alert.alert('Invalid amount', 'Enter a withdrawal amount greater than zero');
+    if (!withdrawalInput) {
+      Alert.alert('Invalid amount', 'Enter a positive withdrawal amount with no more than 2 decimal places.');
+      return;
+    }
+    const amount = withdrawalInput.amount;
+
+    if (toCurrencyMinorUnits(amount) < toCurrencyMinorUnits(minimumWithdrawalInCurrentCurrency)) {
+      Alert.alert('Minimum withdrawal', `Minimum withdrawal amount is ${formatAmount(minimumWithdrawalInCurrentCurrency)}`);
+      return;
+    }
+    if (toCurrencyMinorUnits(amount) > toCurrencyMinorUnits(availableInCurrentCurrency)) {
+      Alert.alert('Too high', `You can withdraw up to ${formatAmount(availableInCurrentCurrency)}`);
       return;
     }
 
-    const amountUSD = convertToUSD(amount);
-    if (amountUSD < MIN_WITHDRAWAL_USD) {
-      Alert.alert('Minimum withdrawal', `Minimum withdrawal amount is ${formatPrice(MIN_WITHDRAWAL_USD)}`);
-      return;
-    }
-    if (amountUSD > (revenue.withdrawableBalance || 0) + 0.01) {
-      Alert.alert('Too high', `You can withdraw up to ${formatPrice(revenue.withdrawableBalance || 0)}`);
-      return;
-    }
-
+    withdrawalSubmissionRef.current = true;
     setRequesting(true);
+    const fingerprint = `${currentUser?._id || currentUser?.id || 'guest'}:${String(currency || 'USD').toUpperCase()}:${amount.toFixed(2)}`;
+    let attemptKey = '';
     try {
-      await api.post(API_ENDPOINTS.PAYMENTS.SELLER_WITHDRAWALS, {
-        amountUSD,
-        requestedAmount: amount,
-        requestedCurrency: currency,
+      await withdrawalAttemptResetRef.current;
+      const attempt = await getOrCreatePersistedMutationAttemptInLedger({
+        storage: AsyncStorage,
+        storageKey: withdrawalAttemptStorageKey,
+        fingerprint,
+        keyPrefix: 'seller-withdrawal',
       });
+      attemptKey = attempt.key;
+      activeWithdrawalAttemptRef.current = {
+        fingerprint,
+        key: attempt.key,
+        storageKey: withdrawalAttemptStorageKey,
+      };
+      await api.post(API_ENDPOINTS.PAYMENTS.SELLER_WITHDRAWALS, {
+        amount,
+        currency,
+      }, {
+        headers: { 'Idempotency-Key': attempt.key },
+      });
+      await retireActiveWithdrawalAttempt();
       Feedback.show({ type: 'success', text1: 'Withdrawal request submitted' });
       setWithdrawAmount('');
       await fetchSummary();
     } catch (error) {
+      if (!shouldRetainWithdrawalAttempt(error) && attemptKey) {
+        await retireActiveWithdrawalAttempt();
+      }
       Alert.alert('Withdrawal', error.response?.data?.msg || 'Failed to request withdrawal');
     } finally {
+      withdrawalSubmissionRef.current = false;
       setRequesting(false);
     }
   };
 
-  if (loading) {
+  if (loading || (!loadError && summary && !summaryMatchesCurrency)) {
     return <SellerScreenSkeleton navigation={navigation} title="Payments & Revenue" subtitle="Loading balances and payouts" icon="wallet-outline" variant="dashboard" />;
   }
 
@@ -233,8 +405,18 @@ export default function SellerPaymentsScreen({ navigation }) {
           />
         )}
 
-        {!!summary && (
+        {!!activeSummary && (
         <>
+        {exchangeRatesAreFallback && (
+          <View style={styles.warningBox}>
+            <Ionicons name="alert-circle-outline" size={18} color={palette.colors.warning} />
+            <Text style={styles.warningText}>
+              {withdrawalBlockedByFallback
+                ? 'Live FX is temporarily unavailable. Cross-currency totals are estimates and this withdrawal needs a conversion, so it is paused until rates refresh.'
+                : 'Live FX is temporarily unavailable. This USD-to-USD withdrawal does not require conversion and remains available.'}
+            </Text>
+          </View>
+        )}
         <GlassPanel variant="strong" style={styles.hero}>
           <LinearGradient
             colors={['rgba(99,102,241,0.22)', 'rgba(14,165,233,0.10)', 'rgba(16,185,129,0.12)']}
@@ -246,16 +428,16 @@ export default function SellerPaymentsScreen({ navigation }) {
           <View style={styles.heroIcon}><Ionicons name="wallet" size={24} color="#fff" /></View>
           <View style={styles.heroCopy}>
             <Text style={styles.heroEyebrow}>AVAILABLE TO WITHDRAW</Text>
-            <Text style={styles.heroValue} numberOfLines={1} adjustsFontSizeToFit>{formatPrice(revenue.withdrawableBalance || 0)}</Text>
+            <Text style={styles.heroValue} numberOfLines={1} adjustsFontSizeToFit>{formatDisplayMoney(displayValue('withdrawableBalance'))}</Text>
             <Text style={styles.heroText}>Delivered card and Rozare Wallet revenue after payout reservations and return-refund debits.</Text>
           </View>
         </GlassPanel>
 
         <View style={styles.statsGrid}>
-          <StatCard styles={styles} icon="card-outline" label="Online delivered" value={formatPrice((revenue.stripeDeliveredRevenue || 0) + (revenue.walletDeliveredRevenue || 0))} description="Delivered card and Wallet revenue" color={palette.colors.success} />
-          <StatCard styles={styles} icon="cash-outline" label="Delivered COD" value={formatPrice(revenue.codDeliveredRevenue || 0)} description="Collected directly from buyers" color={palette.colors.warning} />
-          <StatCard styles={styles} icon="trending-up-outline" label="Delivered Total" value={formatPrice(revenue.totalDeliveredRevenue || 0)} description="Stripe plus COD delivered revenue" color={palette.colors.primary} />
-          <StatCard styles={styles} icon="time-outline" label="Estimated" value={formatPrice(revenue.estimatedRevenue || 0)} description="Delivered plus pending revenue" color={palette.colors.info} />
+          <StatCard styles={styles} icon="card-outline" label="Online delivered" value={formatDisplayMoney(displayValue('onlineDeliveredRevenue'))} description="Delivered card and Wallet revenue" color={palette.colors.success} />
+          <StatCard styles={styles} icon="cash-outline" label="Delivered COD" value={formatDisplayMoney(displayValue('codDeliveredRevenue'))} description="Collected directly from buyers" color={palette.colors.warning} />
+          <StatCard styles={styles} icon="trending-up-outline" label="Delivered Total" value={formatDisplayMoney(displayValue('totalDeliveredRevenue'))} description="Delivered card, Wallet, and COD revenue" color={palette.colors.primary} />
+          <StatCard styles={styles} icon="time-outline" label="Estimated" value={formatDisplayMoney(displayValue('estimatedRevenue'))} description="Delivered plus pending revenue" color={palette.colors.info} />
         </View>
 
         <GlassPanel variant="card" style={styles.section}>
@@ -290,12 +472,12 @@ export default function SellerPaymentsScreen({ navigation }) {
 
           {showAccountForm && (
             <View style={styles.form}>
-              <Field styles={styles} label="Account holder name" value={accountForm.accountHolderName} onChangeText={(value) => updateAccountField('accountHolderName', value)} accessibilityLabel="Account holder name" />
-              <Field styles={styles} label="Bank name" value={accountForm.bankName} onChangeText={(value) => updateAccountField('bankName', value)} accessibilityLabel="Bank name" />
-              <Field styles={styles} label="Account number" value={accountForm.accountNumber} onChangeText={(value) => updateAccountField('accountNumber', value)} placeholder={paymentAccount?.maskedAccountNumber || 'Enter account number'} keyboardType="number-pad" accessibilityLabel="Bank account number" />
-              <Field styles={styles} label="IBAN" value={accountForm.iban} onChangeText={(value) => updateAccountField('iban', value.toUpperCase())} placeholder={paymentAccount?.maskedIban || 'Optional IBAN'} autoCapitalize="characters" accessibilityLabel="IBAN" />
-              <Field styles={styles} label="SWIFT / BIC" value={accountForm.swiftCode} onChangeText={(value) => updateAccountField('swiftCode', value.toUpperCase())} placeholder="Optional SWIFT code" autoCapitalize="characters" accessibilityLabel="SWIFT or BIC code" />
-              <Field styles={styles} label="Country" value={accountForm.country} onChangeText={(value) => updateAccountField('country', value)} accessibilityLabel="Payout bank country" />
+              <Field styles={styles} label="Account holder name" value={accountForm.accountHolderName} onChangeText={(value) => updateAccountField('accountHolderName', value)} maxLength={120} accessibilityLabel="Account holder name" />
+              <Field styles={styles} label="Bank name" value={accountForm.bankName} onChangeText={(value) => updateAccountField('bankName', value)} maxLength={120} accessibilityLabel="Bank name" />
+              <Field styles={styles} label="Account number" value={accountForm.accountNumber} onChangeText={(value) => updateAccountField('accountNumber', value)} placeholder={paymentAccount?.maskedAccountNumber || 'Enter account number'} maxLength={80} accessibilityLabel="Bank account number" />
+              <Field styles={styles} label="IBAN" value={accountForm.iban} onChangeText={(value) => updateAccountField('iban', value.toUpperCase())} placeholder={paymentAccount?.maskedIban || 'Optional IBAN'} maxLength={80} autoCapitalize="characters" accessibilityLabel="IBAN" />
+              <Field styles={styles} label="SWIFT / BIC" value={accountForm.swiftCode} onChangeText={(value) => updateAccountField('swiftCode', value.toUpperCase())} placeholder="Optional 8 or 11 character code" maxLength={20} autoCapitalize="characters" accessibilityLabel="SWIFT or BIC code" />
+              <Field styles={styles} label="Payout bank country" value={accountForm.country} onChangeText={(value) => updateAccountField('country', value)} placeholder="Pakistan" maxLength={80} accessibilityLabel="Payout bank country" />
               <Text style={styles.inputLabel}>Payout currency</Text>
               <View style={styles.currencyGrid}>
                 {Object.keys(currencies).map((code) => (
@@ -312,7 +494,7 @@ export default function SellerPaymentsScreen({ navigation }) {
                   </TouchableOpacity>
                 ))}
               </View>
-              <Field styles={styles} label="Payout instructions" value={accountForm.payoutInstructions} onChangeText={(value) => updateAccountField('payoutInstructions', value)} placeholder="Optional transfer details" multiline accessibilityLabel="Payout instructions" />
+              <Field styles={styles} label="Payout instructions" value={accountForm.payoutInstructions} onChangeText={(value) => updateAccountField('payoutInstructions', value)} placeholder="Optional transfer details" maxLength={500} multiline accessibilityLabel="Payout instructions" />
               <TouchableOpacity style={[styles.primaryButton, savingAccount && styles.disabledButton]} onPress={saveAccount} disabled={savingAccount} activeOpacity={0.85}>
                 {savingAccount ? <ActivityIndicator size="small" color="#fff" /> : <Ionicons name="checkmark-circle-outline" size={18} color="#fff" />}
                 <Text style={styles.primaryButtonText}>Save payment account</Text>
@@ -325,7 +507,7 @@ export default function SellerPaymentsScreen({ navigation }) {
           <View style={styles.sectionHeader}>
             <View>
               <Text style={styles.sectionTitle}>Request Withdrawal</Text>
-              <Text style={styles.sectionSubtitle}>Available: {formatPrice(revenue.withdrawableBalance || 0)} - Minimum: {formatPrice(MIN_WITHDRAWAL_USD)}</Text>
+              <Text style={styles.sectionSubtitle}>Available: {formatDisplayMoney(availableInCurrentCurrency)} - Minimum: {formatDisplayMoney(minimumWithdrawalInCurrentCurrency)}</Text>
             </View>
             <View style={[styles.statIcon, { backgroundColor: `${palette.colors.success}18` }]}>
               <Ionicons name="card-outline" size={20} color={palette.colors.success} />
@@ -335,20 +517,22 @@ export default function SellerPaymentsScreen({ navigation }) {
             <View style={{ flex: 1 }}>
               <Text style={styles.inputLabel}>Amount in {currency}</Text>
               <TextInput
-                style={styles.input}
+                style={[styles.input, !!withdrawalInputError && styles.inputInvalid]}
                 value={withdrawAmount}
-                onChangeText={setWithdrawAmount}
+                onChangeText={updateWithdrawAmount}
+                editable={!requesting && !withdrawalBlockedByFallback && !refreshing}
                 keyboardType="decimal-pad"
                 placeholder="0.00"
                 placeholderTextColor={palette.colors.textSecondary}
                 accessibilityLabel={`Withdrawal amount in ${currency}`}
               />
+              {!!withdrawalInputError && <Text style={styles.fieldError}>{withdrawalInputError}</Text>}
             </View>
-            <TouchableOpacity style={styles.fullButton} onPress={() => setWithdrawAmount(availableInCurrentCurrency.toFixed(2))} activeOpacity={0.8}>
+            <TouchableOpacity style={[styles.fullButton, (requesting || withdrawalBlockedByFallback || refreshing) && styles.disabledButton]} disabled={requesting || withdrawalBlockedByFallback || refreshing} onPress={() => updateWithdrawAmount(availableInCurrentCurrency.toFixed(2))} activeOpacity={0.8}>
               <Text style={styles.fullButtonText}>Full</Text>
             </TouchableOpacity>
           </View>
-          <TouchableOpacity style={[styles.primaryButton, (requesting || !paymentAccount) && styles.disabledButton]} onPress={requestWithdrawal} disabled={requesting || !paymentAccount} activeOpacity={0.85} accessibilityRole="button">
+          <TouchableOpacity style={[styles.primaryButton, (requesting || !paymentAccount || withdrawalBlockedByFallback || refreshing || !withdrawalInput) && styles.disabledButton]} onPress={requestWithdrawal} disabled={requesting || !paymentAccount || withdrawalBlockedByFallback || refreshing || !withdrawalInput} activeOpacity={0.85} accessibilityRole="button">
             {requesting ? <ActivityIndicator size="small" color="#fff" /> : <Ionicons name="send-outline" size={18} color="#fff" />}
             <Text style={styles.primaryButtonText}>Send withdrawal request</Text>
           </TouchableOpacity>
@@ -357,21 +541,21 @@ export default function SellerPaymentsScreen({ navigation }) {
         <GlassPanel variant="card" style={styles.section}>
           <SellerSectionHeader title="Balance details" subtitle="How your available amount is calculated" icon="calculator-outline" />
           {[
-            ['Card delivered revenue', revenue.stripeDeliveredRevenue || 0, 'card-outline'],
-            ['Wallet delivered revenue', revenue.walletDeliveredRevenue || 0, 'wallet-outline'],
-            ['Pending online estimate', (revenue.stripePendingRevenue || 0) + (revenue.walletPendingRevenue || 0), 'hourglass-outline'],
-            ['Pending withdrawals', revenue.pendingWithdrawalAmount || 0, 'paper-plane-outline'],
-            ['Processing withdrawals', revenue.processingWithdrawalAmount || 0, 'sync-outline'],
-            ['Paid out', revenue.totalWithdrawn || 0, 'checkmark-done-outline'],
-            ['Return-refund reserve', revenue.returnRefundDebits || 0, 'return-down-back-outline'],
-            ['Pending COD estimate', revenue.codPendingRevenue || 0, 'cash-outline'],
+            ['Card delivered revenue', displayValue('stripeDeliveredRevenue'), 'card-outline'],
+            ['Wallet delivered revenue', displayValue('walletDeliveredRevenue'), 'wallet-outline'],
+            ['Pending online estimate', displayValue('onlinePendingRevenue'), 'hourglass-outline'],
+            ['Pending withdrawals', displayValue('pendingWithdrawalAmount'), 'paper-plane-outline'],
+            ['Processing withdrawals', displayValue('processingWithdrawalAmount'), 'sync-outline'],
+            ['Paid out', displayValue('totalWithdrawn'), 'checkmark-done-outline'],
+            ['Return-refund reserve', displayValue('returnRefundDebits'), 'return-down-back-outline'],
+            ['Pending COD estimate', displayValue('codPendingRevenue'), 'cash-outline'],
           ].map(([label, amount, icon], index, rows) => (
             <View key={label} style={[styles.balanceRow, index === rows.length - 1 && styles.lastRow]}>
               <View style={styles.balanceLabelRow}>
                 <Ionicons name={icon} size={16} color={palette.colors.textSecondary} />
                 <Text style={styles.balanceLabel}>{label}</Text>
               </View>
-              <Text style={styles.balanceValue}>{formatPrice(amount)}</Text>
+              <Text style={styles.balanceValue}>{formatDisplayMoney(amount)}</Text>
             </View>
           ))}
         </GlassPanel>
@@ -381,24 +565,42 @@ export default function SellerPaymentsScreen({ navigation }) {
           {withdrawals.length === 0 ? (
             <SellerEmptyState icon="wallet-outline" title="No withdrawals yet" message="Your first request will appear here with live status updates." />
           ) : (
-            withdrawals.map((request) => (
-              <View key={request._id} style={styles.withdrawalRow}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.withdrawalAmount}>{formatPrice(request.amount || 0)}</Text>
-                  <Text style={styles.withdrawalMeta}>
-                    {new Date(request.createdAt).toLocaleDateString()} · {request.paymentAccountSnapshot?.bankName || 'Bank account'}
-                    {request.paymentAccountSnapshot?.accountNumberLast4 ? ` · •••• ${request.paymentAccountSnapshot.accountNumberLast4}` : ''}
-                  </Text>
-                  {!!request.requestedCurrency && request.requestedCurrency !== 'USD' && Number.isFinite(Number(request.requestedAmount)) && (
-                    <Text style={styles.requestedAmount}>Requested as {Number(request.requestedAmount).toLocaleString()} {request.requestedCurrency}</Text>
-                  )}
-                  {!!request.adminNote && <Text style={styles.adminNote}>Admin note: {request.adminNote}</Text>}
+            withdrawals.map((request) => {
+              const money = selectWithdrawalHistoryMoney(request);
+              return (
+                <View key={request._id} style={styles.withdrawalRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.withdrawalAmount}>
+                      {money.requested
+                        ? `Requested: ${formatAmount(money.requested.amount, { targetCurrency: money.requested.currency, showCode: true })}`
+                        : 'Requested amount: Unavailable'}
+                    </Text>
+                    <Text style={styles.withdrawalMeta}>
+                      {new Date(request.createdAt).toLocaleDateString()} · {request.paymentAccountSnapshot?.bankName || 'Bank account'}
+                      {request.paymentAccountSnapshot?.accountNumberLast4 ? ` · •••• ${request.paymentAccountSnapshot.accountNumberLast4}` : ''}
+                    </Text>
+                    {money.status === 'unavailable' && (
+                      <Text style={[styles.requestedAmount, styles.unavailableAmount]}>Expected bank payout: Unavailable</Text>
+                    )}
+                    {money.showPayout && money.payout && (
+                      <Text style={styles.requestedAmount}>
+                        Expected bank payout: {formatAmount(money.payout.amount, { targetCurrency: money.payout.currency, showCode: true })}
+                      </Text>
+                    )}
+                    {money.status === 'legacy' && (
+                      <Text style={styles.requestedAmount}>Legacy request: expected bank payout was not frozen.</Text>
+                    )}
+                    {!!statusDescriptions[request.status] && (
+                      <Text style={styles.withdrawalStatusDescription}>{statusDescriptions[request.status]}</Text>
+                    )}
+                    {!!request.adminNote && <Text style={styles.adminNote}>Admin note: {request.adminNote}</Text>}
+                  </View>
+                  <View style={[styles.statusPill, { backgroundColor: `${statusColor(request.status, palette)}18` }]}>
+                    <Text style={[styles.statusText, { color: statusColor(request.status, palette) }]}>{statusLabels[request.status] || request.status || 'pending'}</Text>
+                  </View>
                 </View>
-                <View style={[styles.statusPill, { backgroundColor: `${statusColor(request.status, palette)}18` }]}>
-                  <Text style={[styles.statusText, { color: statusColor(request.status, palette) }]}>{request.status || 'pending'}</Text>
-                </View>
-              </View>
-            ))
+              );
+            })
           )}
         </GlassPanel>
         </>
@@ -451,6 +653,8 @@ const makeStyles = (p) => StyleSheet.create({
   field: { gap: spacing.xs },
   inputLabel: { ...typography.caption, color: p.colors.textSecondary, fontWeight: fontWeight.semibold, textTransform: 'uppercase' },
   input: { minHeight: 48, borderRadius: borderRadius.lg, backgroundColor: p.glass.bgSubtle, borderWidth: 1, borderColor: p.glass.borderSubtle, paddingHorizontal: spacing.md, color: p.colors.text, fontSize: fontSize.md },
+  inputInvalid: { borderColor: p.colors.error },
+  fieldError: { ...typography.caption, color: p.colors.error, marginTop: spacing.xs },
   textArea: { minHeight: 92, paddingTop: spacing.md, textAlignVertical: 'top' },
   currencyGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
   currencyChip: { paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: borderRadius.full, borderWidth: 1, borderColor: p.glass.borderSubtle, backgroundColor: p.glass.bgSubtle },
@@ -476,6 +680,8 @@ const makeStyles = (p) => StyleSheet.create({
   withdrawalAmount: { ...typography.bodySemibold, color: p.colors.text },
   withdrawalMeta: { ...typography.caption, color: p.colors.textSecondary, marginTop: 2 },
   requestedAmount: { ...typography.caption, color: p.colors.primary, marginTop: 3 },
+  unavailableAmount: { color: p.colors.error },
+  withdrawalStatusDescription: { ...typography.caption, color: p.colors.textSecondary, marginTop: spacing.xs, lineHeight: 17 },
   adminNote: { ...typography.caption, color: p.colors.text, marginTop: spacing.xs },
   statusPill: { paddingHorizontal: spacing.sm, paddingVertical: spacing.xs, borderRadius: borderRadius.full },
   statusText: { ...typography.caption, fontWeight: fontWeight.bold, textTransform: 'capitalize' },

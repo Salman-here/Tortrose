@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Link, useNavigate, useLocation } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { useAuth } from "../../contexts/AuthContext";
 import { motion, AnimatePresence } from "framer-motion";
 import NavDropdown from "../common/Dropdown";
@@ -18,7 +18,6 @@ function Navbar() {
     const { isDark, toggleTheme } = useTheme();
     const [isScrolled, setIsScrolled] = useState(false);
     const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-    const navigate = useNavigate();
     const location = useLocation();
 
     useEffect(() => {
@@ -26,7 +25,7 @@ function Navbar() {
         window.addEventListener('scroll', onScroll);
         fetchCart();
         return () => window.removeEventListener('scroll', onScroll);
-    }, []);
+    }, [fetchCart]);
 
     // Close mobile menu on route change
     useEffect(() => { setMobileMenuOpen(false); }, [location.pathname]);

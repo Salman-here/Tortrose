@@ -4,7 +4,11 @@ import { Link } from 'react-router-dom'
 import { Sparkles, TrendingUp, DollarSign, Clock, Gift, ChevronLeft, ChevronRight, ChevronDown } from 'lucide-react'
 import axios from 'axios'
 import { useAuth } from '../../contexts/AuthContext'
-import { useCurrency } from '../../contexts/CurrencyContext'
+import {
+  resolveProductPresentationCurrency,
+  resolveProductPresentationMoney,
+  useCurrency,
+} from '../../contexts/CurrencyContext'
 import { useBuyerLocation } from '../../contexts/BuyerLocationContext'
 import { getStoreSubdomainUrl } from '../../utils/subdomainHelper'
 import {
@@ -15,11 +19,11 @@ import {
 } from '../../utils/recentlyViewedProducts'
 
 const SliderProductCard = ({ product, formatPrice }) => {
-  const productPrice = Number(product.price || 0)
-  const discountedPrice = Number(product.discountedPrice || 0)
+  const productPrice = resolveProductPresentationMoney(product, 'price')
+  const discountedPrice = resolveProductPresentationMoney(product, 'discountedPrice')
   const hasDiscount = discountedPrice > 0 && discountedPrice < productPrice
   const displayPrice = hasDiscount ? discountedPrice : productPrice
-  const productCurrency = product.currency || product.priceCurrency || 'USD'
+  const productCurrency = resolveProductPresentationCurrency(product)
   const discountPercentage = hasDiscount
     ? Math.round(((productPrice - discountedPrice) / productPrice) * 100)
     : 0

@@ -33,7 +33,7 @@ const createOrder = ({ orderId, items, awaitingPayment = false }) => {
     },
     shippingMethod: { name: 'Standard', price: 0, estimatedDays: 3 },
     orderSummary: { subtotal, shippingCost: 0, tax: 0, totalAmount: subtotal },
-    paymentMethod: 'cash_on_delivery',
+    paymentMethod: 'stripe',
     currency: 'USD',
     isPaid: true,
     paidAt: new Date(),

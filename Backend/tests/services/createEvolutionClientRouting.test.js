@@ -119,6 +119,20 @@ describe('Evolution client recipient routing', () => {
     expect(webhookPayload.webhook.events).not.toContain('SEND_MESSAGE');
   });
 
+  test('refuses to register an unsigned webhook at the client boundary', async () => {
+    const post = jest.fn();
+    axios.create.mockReturnValue({ post });
+    const client = createEvolutionClient('EVOLUTION_SELLER_INSTANCE_NAME', 'rozare-seller');
+
+    await expect(client.setWebhook(
+      'https://rozare.up.railway.app/api/whatsapp/webhook',
+      ''
+    )).rejects.toMatchObject({
+      code: 'WHATSAPP_WEBHOOK_SECRET_NOT_CONFIGURED',
+    });
+    expect(post).not.toHaveBeenCalled();
+  });
+
   test('allows media base64 inlining to be explicitly disabled', async () => {
     process.env.EVOLUTION_WEBHOOK_BASE64 = 'false';
     let webhookPayload;

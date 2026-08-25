@@ -2,6 +2,8 @@ import React from 'react';
 import { Text, TouchableOpacity, View } from 'react-native';
 import { act, fireEvent, render } from '@testing-library/react-native';
 
+const mockFormatAmount = jest.fn(value => `$${Number(value).toFixed(2)}`);
+
 jest.mock('@expo/vector-icons', () => ({ Ionicons: () => null }));
 
 jest.mock('../../src/components/common/KeyboardAwareFormScrollView', () => {
@@ -71,7 +73,7 @@ jest.mock('../../src/components/seller/SellerUI', () => {
 });
 
 jest.mock('../../src/contexts/CurrencyContext', () => ({
-  useCurrency: () => ({ formatAmount: value => `$${Number(value).toFixed(2)}` }),
+  useCurrency: () => ({ formatAmount: mockFormatAmount }),
 }));
 
 jest.mock('../../src/contexts/ThemeContext', () => ({
@@ -92,6 +94,31 @@ jest.mock('../../src/contexts/ThemeContext', () => ({
 const api = require('../../src/config/api').default;
 const SellerReturnsPanel = require('../../src/components/SellerReturnsPanel').default;
 const { summarizeSellerReturns } = require('../../src/components/SellerReturnsPanel');
+
+const validReturn = (overrides = {}) => ({
+  _id: '64b000000000000000000001',
+  returnNumber: 'RET-1001',
+  orderId: 'ORDER-1001',
+  status: 'under_review',
+  currency: 'PKR',
+  buyer: { username: 'Buyer' },
+  reasonCategory: 'defective',
+  reasonDetails: 'The product is defective and cannot be used.',
+  requestedAt: '2026-08-25T10:00:00.000Z',
+  eligibilityDeadline: '2026-09-08T10:00:00.000Z',
+  policySnapshot: { returnsEnabled: true, returnDuration: 14, refundType: 'full_refund' },
+  items: [{
+    orderItemId: '64b000000000000000000002',
+    name: 'Returned item',
+    quantity: 2,
+    purchasedQuantity: 2,
+    unitPrice: 100.005,
+    lineSubtotal: 200,
+  }],
+  refund: { itemSubtotal: 200, taxAmount: 17.5, shippingAmount: 20, discountAmount: 7.5, totalAmount: 230 },
+  statusHistory: [],
+  ...overrides,
+});
 
 describe('SellerReturnsPanel', () => {
   beforeEach(() => {
@@ -136,15 +163,57 @@ describe('SellerReturnsPanel', () => {
 
   it('counts only active workflow states as needing seller action', () => {
     const summary = summarizeSellerReturns([
+      validReturn({ status: 'requested' }),
+      validReturn({ status: 'under_review' }),
+      validReturn({ status: 'accepted_pending_payment' }),
+      validReturn({ status: 'returned' }),
+      validReturn({
+        status: 'replacement_approved',
+        policySnapshot: { returnsEnabled: true, returnDuration: 14, refundType: 'replacement_only' },
+      }),
+      validReturn({ status: 'rejected' }),
+      validReturn({ status: 'cancelled_by_buyer' }),
       { status: 'requested' },
-      { status: 'under_review' },
-      { status: 'accepted_pending_payment' },
-      { status: 'returned' },
-      { status: 'replacement_approved' },
-      { status: 'rejected' },
-      { status: 'cancelled_by_buyer' },
     ]);
 
-    expect(summary).toEqual({ total: 7, actionable: 3, paymentDue: 1 });
+    expect(summary).toEqual({ total: 8, actionable: 3, paymentDue: 1 });
+  });
+
+  it('shows malformed return snapshots as unavailable without invoking money formatters or actions', async () => {
+    api.get.mockResolvedValue({
+      data: {
+        returns: [validReturn({
+          refund: { itemSubtotal: 200, taxAmount: 17.5, shippingAmount: 20, discountAmount: 7.5, totalAmount: 229.99 },
+        })],
+      },
+    });
+
+    const screen = render(<SellerReturnsPanel navigation={{ setParams: jest.fn() }} route={{ params: {} }} />);
+    await act(async () => {
+      jest.runOnlyPendingTimers();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText('Financial snapshot unavailable')).toBeTruthy();
+    expect(screen.getByText('Amount unavailable')).toBeTruthy();
+    expect(screen.getByLabelText('Retry loading returns')).toBeTruthy();
+    expect(screen.queryByLabelText('Accept return')).toBeNull();
+    expect(screen.queryByLabelText('Reject return')).toBeNull();
+    expect(mockFormatAmount).not.toHaveBeenCalled();
+  });
+
+  it('formats and enables actions only after a valid fresh snapshot loads', async () => {
+    api.get.mockResolvedValue({ data: { returns: [validReturn()] } });
+
+    const screen = render(<SellerReturnsPanel navigation={{ setParams: jest.fn() }} route={{ params: {} }} />);
+    await act(async () => {
+      jest.runOnlyPendingTimers();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText('$230.00')).toBeTruthy();
+    expect(screen.getByLabelText('Accept return')).toBeTruthy();
+    expect(screen.queryByText('Financial snapshot unavailable')).toBeNull();
+    expect(mockFormatAmount).toHaveBeenCalledWith(230, { targetCurrency: 'PKR' });
   });
 });

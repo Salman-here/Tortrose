@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { useParams, Link, useNavigate } from 'react-router-dom';
+import { useParams, Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Store, Package, Eye, Share2, ChevronRight, ChevronLeft, Home, Globe, MapPin, Users, Ticket, Copy, Check, Calendar, Percent, DollarSign, Search, Tag, Star } from 'lucide-react';
 import axios from 'axios';
@@ -36,7 +36,6 @@ const StorePage = ({ slugOverride = null }) => {
     const STORE_PRODUCTS_PER_PAGE = 12;
     const { slug: slugFromParams } = useParams();
     const slug = slugOverride || slugFromParams;
-    const navigate = useNavigate();
     const { formatPrice } = useCurrency();
     const { appendLocationParams, locationQueryString } = useBuyerLocation();
     const [store, setStore] = useState(null);
@@ -82,6 +81,9 @@ const StorePage = ({ slugOverride = null }) => {
         }
         fetchStore();
         incrementViewCount();
+        // Slug and buyer location own this request lifecycle; including the
+        // render-created fetch functions would re-run on every render.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [slug, locationQueryString]);
 
     useEffect(() => {
@@ -90,6 +92,8 @@ const StorePage = ({ slugOverride = null }) => {
 
     useEffect(() => {
         fetchProducts();
+        // The explicit query state above is the authoritative request key.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [slug, locationQueryString, productPage, selectedCategory, productSearch]);
 
     useEffect(() => {
@@ -102,6 +106,9 @@ const StorePage = ({ slugOverride = null }) => {
         } else {
             setStoreCoupons([]);
         }
+        // Store identity/seller snapshots own this refresh; function identities
+        // are render-local and would cause a request loop.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [store?._id, store?.seller]);
 
     useEffect(() => {

@@ -86,15 +86,32 @@ describe('guest cart persistence and variant identity', () => {
     expect(await AsyncStorage.getItem(GUEST_CART_STORAGE_KEY)).toBeNull();
   });
 
-  it('never restores malformed persisted data as cart lines', async () => {
+  it('fails closed instead of restoring malformed persisted data as an empty cart', async () => {
     await AsyncStorage.setItem(GUEST_CART_STORAGE_KEY, '{broken-json');
-    expect(await readGuestCart()).toEqual([]);
+    await expect(readGuestCart()).rejects.toMatchObject({ code: 'CART_PRESENTATION_DATA_INVALID' });
 
     await AsyncStorage.setItem(GUEST_CART_STORAGE_KEY, JSON.stringify([
       { qty: 2 },
       { product: { name: 'Missing id' }, qty: 1 },
     ]));
-    expect(await readGuestCart()).toEqual([]);
+    await expect(readGuestCart()).rejects.toMatchObject({ code: 'CART_PRESENTATION_DATA_INVALID' });
+  });
+
+  it.each([0, -1, 1.5, '2', true, Number.POSITIVE_INFINITY, 100])(
+    'rejects malformed persisted quantity %p rather than coercing it',
+    (qty) => {
+      expect(() => normalizeGuestCart([{ product, qty }])).toThrow(
+        expect.objectContaining({ code: 'CART_PRESENTATION_DATA_INVALID' }),
+      );
+    },
+  );
+
+  it('rejects malformed persisted stock rather than treating it as available', () => {
+    [undefined, null, '5', true, -1, 1.5].forEach((stock) => {
+      expect(() => normalizeGuestCart([{ product: { ...product, stock }, qty: 1 }])).toThrow(
+        expect.objectContaining({ code: 'CART_PRESENTATION_DATA_INVALID' }),
+      );
+    });
   });
 
   it('updates guest quantities by line id and removes a line when decrementing one', () => {

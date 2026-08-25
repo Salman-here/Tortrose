@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -24,6 +24,13 @@ import {
   returnResolutionLabel,
   returnStatusColor,
 } from '../utils/returns';
+import {
+  fetchCompleteBuyerReturns,
+  inspectBuyerReturnEligibilityResponse,
+  inspectBuyerReturnMutationResponse,
+  inspectBuyerReturnOrderContext,
+  inspectBuyerReturnsResponse,
+} from '../utils/returnPresentationSafety';
 
 const REASONS = [
   ['damaged', 'Arrived damaged'],
@@ -34,6 +41,19 @@ const REASONS = [
   ['changed_mind', 'Changed mind'],
   ['other', 'Other'],
 ];
+const REASON_VALUES = new Set(REASONS.map(([value]) => value));
+const canonicalRequestKey = value => (
+  typeof value === 'string'
+  && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(value)
+    ? value
+    : null
+);
+const responseMessage = (error, fallback) => {
+  const value = error?.response?.data?.msg;
+  return typeof value === 'string' && value.trim() && value.length <= 500
+    ? value.trim()
+    : fallback;
+};
 
 export default function BuyerReturnsSection({ order, formatMoney }) {
   const { palette } = useTheme();
@@ -41,98 +61,282 @@ export default function BuyerReturnsSection({ order, formatMoney }) {
   const [groups, setGroups] = useState([]);
   const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [selectedGroup, setSelectedGroup] = useState(null);
   const [quantities, setQuantities] = useState({});
   const [reasonCategory, setReasonCategory] = useState('damaged');
   const [reasonDetails, setReasonDetails] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const requestKeyRef = useRef(null);
   const [cancellingId, setCancellingId] = useState(null);
+  const loadGenerationRef = useRef(0);
+  const orderContext = useMemo(() => inspectBuyerReturnOrderContext(order), [order]);
+  const currentOrderIdRef = useRef(null);
+  currentOrderIdRef.current = orderContext.valid ? orderContext.orderId : null;
 
-  const load = useCallback(async () => {
-    if (!order?._id) return;
+  const clearPresentedState = useCallback(({ closeForm = true } = {}) => {
+    setGroups([]);
+    setRequests([]);
+    setCancellingId(null);
+    if (closeForm) {
+      setSelectedGroup(null);
+      setQuantities({});
+    }
+  }, []);
+
+  const load = useCallback(async ({ notify = true } = {}) => {
+    const generation = loadGenerationRef.current + 1;
+    loadGenerationRef.current = generation;
+    clearPresentedState();
+    setLoadError('');
     setLoading(true);
+    if (!orderContext.valid) {
+      const message = 'This order could not be verified, so returns are unavailable.';
+      setLoadError(message);
+      setLoading(false);
+      return { valid: false, requests: [], groups: [] };
+    }
     try {
       const [eligibility, existing] = await Promise.all([
-        api.get(`/api/returns/order/${order._id}/eligibility`),
-        api.get(`/api/returns/mine?orderId=${encodeURIComponent(order._id)}`),
+        api.get(`/api/returns/order/${orderContext.orderId}/eligibility`),
+        fetchCompleteBuyerReturns(async (page, limit) => {
+          const response = await api.get('/api/returns/mine', {
+            params: { orderId: orderContext.orderId, page, limit },
+          });
+          return response.data;
+        }),
       ]);
-      setGroups(eligibility.data?.groups || []);
-      setRequests(existing.data?.returns || []);
+      const eligibilityInspection = inspectBuyerReturnEligibilityResponse(
+        eligibility.data,
+        orderContext,
+      );
+      const returnsInspection = inspectBuyerReturnsResponse(
+        existing,
+        orderContext,
+        eligibilityInspection,
+      );
+      if (!eligibilityInspection.valid || !returnsInspection.valid) {
+        const error = new Error('Unverified return response');
+        error.code = 'RETURN_RESPONSE_UNVERIFIED';
+        throw error;
+      }
+      if (
+        generation !== loadGenerationRef.current
+        || currentOrderIdRef.current !== orderContext.orderId
+      ) {
+        return { valid: false, stale: true, requests: [], groups: [] };
+      }
+      setGroups(eligibilityInspection.groups);
+      setRequests(returnsInspection.requests);
+      return {
+        valid: true,
+        groups: eligibilityInspection.groups,
+        requests: returnsInspection.requests,
+      };
     } catch (error) {
-      Feedback.show({ type: 'error', text1: 'Returns unavailable', text2: error.response?.data?.msg || 'Could not load return options.' });
+      if (
+        generation !== loadGenerationRef.current
+        || currentOrderIdRef.current !== orderContext.orderId
+      ) {
+        return { valid: false, stale: true, requests: [], groups: [] };
+      }
+      clearPresentedState();
+      const message = error?.code === 'RETURN_RESPONSE_UNVERIFIED'
+        ? 'The server response could not be verified.'
+        : responseMessage(error, 'Could not load verified return information.');
+      setLoadError(message);
+      if (notify) Feedback.show({ type: 'error', text1: 'Returns unavailable', text2: message });
+      return { valid: false, requests: [], groups: [] };
     } finally {
-      setLoading(false);
+      if (
+        generation === loadGenerationRef.current
+        && currentOrderIdRef.current === orderContext.orderId
+      ) setLoading(false);
     }
-  }, [order?._id]);
+  }, [clearPresentedState, orderContext]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    void load();
+    return () => { loadGenerationRef.current += 1; };
+  }, [load]);
 
-  const selectedItems = useMemo(() => Object.entries(quantities)
-    .filter(([, quantity]) => Number(quantity) > 0)
-    .map(([orderItemId, quantity]) => ({ orderItemId, quantity: Number(quantity) })), [quantities]);
+  const selection = useMemo(() => {
+    if (!selectedGroup) return { valid: false, items: [] };
+    const selectable = selectedGroup.items.filter(
+      item => item.eligible && item.remainingReturnableQuantity > 0,
+    );
+    const selectableIds = new Set(selectable.map(item => item.orderItemId));
+    if (Object.keys(quantities).some(key => !selectableIds.has(key))) {
+      return { valid: false, items: [] };
+    }
+    const items = [];
+    for (const item of selectable) {
+      const quantity = Object.prototype.hasOwnProperty.call(quantities, item.orderItemId)
+        ? quantities[item.orderItemId]
+        : null;
+      if (
+        !Number.isSafeInteger(quantity)
+        || quantity < 0
+        || quantity > item.remainingReturnableQuantity
+      ) return { valid: false, items: [] };
+      if (quantity > 0) items.push({ orderItemId: item.orderItemId, quantity });
+    }
+    return { valid: true, items };
+  }, [quantities, selectedGroup]);
+
+  const selectedItems = selection.items;
 
   const openRequest = (group) => {
+    const current = groups.find(entry => entry.seller._id === group?.seller?._id);
+    if (!current?.eligible) {
+      Feedback.show({ type: 'error', text1: 'Return option unavailable' });
+      return;
+    }
+    let requestKey = null;
+    try {
+      requestKey = canonicalRequestKey(Crypto.randomUUID());
+    } catch (_) {
+      requestKey = null;
+    }
+    if (!requestKey) {
+      Feedback.show({ type: 'error', text1: 'Could not start a secure return request' });
+      return;
+    }
     const initial = {};
-    group.items.forEach(item => {
-      if (item.eligible && item.remainingReturnableQuantity > 0) initial[String(item.orderItemId)] = 0;
+    current.items.forEach(item => {
+      if (item.eligible && item.remainingReturnableQuantity > 0) initial[item.orderItemId] = 0;
     });
     setQuantities(initial);
     setReasonCategory('damaged');
     setReasonDetails('');
-    setSelectedGroup(group);
+    requestKeyRef.current = requestKey;
+    setSelectedGroup(current);
   };
 
   const adjustQuantity = (item, change) => {
-    const key = String(item.orderItemId);
-    setQuantities(previous => ({
-      ...previous,
-      [key]: Math.max(0, Math.min(item.remainingReturnableQuantity, Number(previous[key] || 0) + change)),
-    }));
+    const key = item.orderItemId;
+    setQuantities((previous) => {
+      const current = previous[key];
+      if (!Number.isSafeInteger(current) || ![-1, 1].includes(change)) return previous;
+      const next = current + change;
+      if (next < 0 || next > item.remainingReturnableQuantity) return previous;
+      return { ...previous, [key]: next };
+    });
   };
 
   const submit = async () => {
-    if (!selectedItems.length) {
+    if (currentOrderIdRef.current !== orderContext.orderId) return;
+    if (!selectedGroup || !selection.valid || !selectedItems.length) {
       Feedback.show({ type: 'error', text1: 'Select at least one item' });
       return;
     }
-    if (reasonDetails.trim().length < 10) {
+    const cleanReason = reasonDetails.trim();
+    if (!REASON_VALUES.has(reasonCategory) || cleanReason.length < 10 || cleanReason.length > 1500) {
       Feedback.show({ type: 'error', text1: 'Add more detail', text2: 'Explain the return reason in at least 10 characters.' });
       return;
     }
+    const requestKey = canonicalRequestKey(requestKeyRef.current);
+    if (!requestKey) {
+      Feedback.show({ type: 'error', text1: 'Return form expired', text2: 'Close it and start again.' });
+      return;
+    }
+    const expectedSellerId = selectedGroup.seller._id;
+    const expectedItems = selectedItems.map(item => ({ ...item }));
     setSubmitting(true);
+    setGroups([]);
+    setRequests([]);
+    setLoadError('');
     try {
-      await api.post('/api/returns', {
-        orderId: order._id,
-        sellerId: selectedGroup.seller._id,
-        items: selectedItems,
+      const response = await api.post('/api/returns', {
+        orderId: orderContext.orderId,
+        sellerId: expectedSellerId,
+        items: expectedItems,
         reasonCategory,
-        reasonDetails: reasonDetails.trim(),
-        requestKey: Crypto.randomUUID(),
+        reasonDetails: cleanReason,
+        requestKey,
+      }, {
+        headers: { 'Idempotency-Key': requestKey },
       });
-      Feedback.show({ type: 'success', text1: 'Return request sent', text2: 'The seller has been notified.' });
-      setSelectedGroup(null);
-      await load();
+      if (currentOrderIdRef.current !== orderContext.orderId) return;
+      const mutation = inspectBuyerReturnMutationResponse(response.data, orderContext, {
+        mode: 'create',
+        expectedSellerId,
+        expectedItems,
+        expectedReasonCategory: reasonCategory,
+        expectedReasonDetails: cleanReason,
+      });
+      const refreshed = await load({ notify: false });
+      if (refreshed.stale || currentOrderIdRef.current !== orderContext.orderId) return;
+      const refetched = mutation.valid
+        ? refreshed.requests.find(request => request._id === mutation.request._id)
+        : null;
+      if (!mutation.valid || !refreshed.valid || !refetched) {
+        clearPresentedState();
+        setLoadError('The saved return state could not be verified. Reload before taking another action.');
+        Feedback.show({ type: 'error', text1: 'Return confirmation unavailable', text2: 'Reload before trying again.' });
+        return;
+      }
+      requestKeyRef.current = null;
+      Feedback.show({
+        type: 'success',
+        text1: response.data.replayed ? 'Return request already received' : 'Return request sent',
+        text2: 'The saved request was verified.',
+      });
     } catch (error) {
-      Feedback.show({ type: 'error', text1: 'Request failed', text2: error.response?.data?.msg || 'Could not submit the return.' });
+      if (currentOrderIdRef.current !== orderContext.orderId) return;
+      setGroups([]);
+      setRequests([]);
+      Feedback.show({ type: 'error', text1: 'Request failed', text2: responseMessage(error, 'You can retry this form safely.') });
     } finally {
       setSubmitting(false);
     }
   };
 
   const cancelRequest = (request) => {
-    Alert.alert('Cancel return request', `Cancel return #${request.returnNumber}?`, [
+    const current = requests.find(candidate => candidate._id === request?._id);
+    if (!current || !BUYER_CANCELLABLE_RETURN_STATUSES.has(current.status)) {
+      Feedback.show({ type: 'error', text1: 'This return can no longer be cancelled' });
+      return;
+    }
+    Alert.alert('Cancel return request', `Cancel return #${current.returnNumber}?`, [
       { text: 'Keep Request', style: 'cancel' },
       {
         text: 'Cancel Return',
         style: 'destructive',
         onPress: async () => {
-          setCancellingId(request._id);
+          if (currentOrderIdRef.current !== orderContext.orderId) return;
+          setCancellingId(current._id);
+          setGroups([]);
+          setRequests([]);
+          setLoadError('');
           try {
-            await api.post(`/api/returns/${request._id}/cancel`, {});
+            const response = await api.post(`/api/returns/${current._id}/cancel`, {});
+            if (currentOrderIdRef.current !== orderContext.orderId) return;
+            const mutation = inspectBuyerReturnMutationResponse(response.data, orderContext, {
+              mode: 'cancel',
+              expectedRequestId: current._id,
+              expectedStatus: 'cancelled_by_buyer',
+            });
+            const refreshed = await load({ notify: false });
+            if (refreshed.stale || currentOrderIdRef.current !== orderContext.orderId) return;
+            const refetched = refreshed.requests.find(candidate => candidate._id === current._id);
+            if (!mutation.valid || !refreshed.valid || refetched?.status !== 'cancelled_by_buyer') {
+              clearPresentedState();
+              setLoadError('The cancellation could not be verified. Reload before taking another action.');
+              Feedback.show({ type: 'error', text1: 'Cancellation confirmation unavailable' });
+              return;
+            }
             Feedback.show({ type: 'success', text1: 'Return request cancelled' });
-            await load();
           } catch (error) {
-            Feedback.show({ type: 'error', text1: 'Could not cancel', text2: error.response?.data?.msg || 'Try again.' });
+            if (currentOrderIdRef.current !== orderContext.orderId) return;
+            const refreshed = await load({ notify: false });
+            if (refreshed.stale || currentOrderIdRef.current !== orderContext.orderId) return;
+            const refetched = refreshed.requests.find(candidate => candidate._id === current._id);
+            if (refreshed.valid && refetched?.status === 'cancelled_by_buyer') {
+              Feedback.show({ type: 'success', text1: 'Return request cancelled' });
+              return;
+            }
+            Feedback.show({ type: 'error', text1: 'Could not cancel', text2: responseMessage(error, 'Try again.') });
           } finally {
             setCancellingId(null);
           }
@@ -140,6 +344,15 @@ export default function BuyerReturnsSection({ order, formatMoney }) {
       },
     ]);
   };
+
+  const moneyLabel = useCallback((amount) => {
+    try {
+      const label = formatMoney(amount);
+      return typeof label === 'string' && label.trim() ? label : 'Money unavailable';
+    } catch (_) {
+      return 'Money unavailable';
+    }
+  }, [formatMoney]);
 
   if (loading) {
     return (
@@ -150,7 +363,7 @@ export default function BuyerReturnsSection({ order, formatMoney }) {
     );
   }
 
-  if (!groups.length && !requests.length) return null;
+  if (!groups.length && !requests.length && !loadError && !selectedGroup) return null;
 
   return (
     <View style={styles.container}>
@@ -162,6 +375,19 @@ export default function BuyerReturnsSection({ order, formatMoney }) {
         </View>
       </View>
 
+      {loadError ? (
+        <GlassPanel variant="card" style={styles.unavailableCard}>
+          <Ionicons name="alert-circle-outline" size={20} color={palette.colors.error} />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.cardTitle}>Return information unavailable</Text>
+            <Text style={styles.mutedText}>{loadError}</Text>
+          </View>
+          <TouchableOpacity style={styles.retryButton} onPress={() => load()} disabled={loading} accessibilityRole="button">
+            <Text style={styles.retryText}>Retry</Text>
+          </TouchableOpacity>
+        </GlassPanel>
+      ) : null}
+
       {requests.map(request => {
         const statusColor = returnStatusColor(request.status, palette);
         return (
@@ -172,20 +398,20 @@ export default function BuyerReturnsSection({ order, formatMoney }) {
                 <Text style={styles.mutedText}>{request.storeName || request.seller?.username || 'Seller'}</Text>
               </View>
               <View style={[styles.statusBadge, { backgroundColor: `${statusColor}18`, borderColor: `${statusColor}45` }]}>
-                <Text style={[styles.statusText, { color: statusColor }]}>{RETURN_STATUS_LABELS[request.status] || request.status}</Text>
+                <Text style={[styles.statusText, { color: statusColor }]}>{RETURN_STATUS_LABELS[request.status]}</Text>
               </View>
             </View>
             {request.items.map(item => (
-              <View key={String(item.orderItemId)} style={styles.returnItemRow}>
+              <View key={item.orderItemId} style={styles.returnItemRow}>
                 <Text style={styles.itemName} numberOfLines={1}>{item.name} x {item.quantity}</Text>
-                <Text style={styles.itemAmount}>{formatMoney(item.lineSubtotal)}</Text>
+                <Text style={styles.itemAmount}>{moneyLabel(item.lineSubtotal)}</Text>
               </View>
             ))}
             <View style={styles.requestFooter}>
               <View style={{ flex: 1 }}>
-                <Text style={styles.mutedText}>{returnResolutionLabel(request.policySnapshot?.refundType)}</Text>
-                {request.policySnapshot?.refundType !== 'replacement_only' && (
-                  <Text style={styles.refundAmount}>{formatMoney(request.refund?.totalAmount || 0)}</Text>
+                <Text style={styles.mutedText}>{returnResolutionLabel(request.policySnapshot.refundType)}</Text>
+                {request.policySnapshot.refundType !== 'replacement_only' && (
+                  <Text style={styles.refundAmount}>{moneyLabel(request.refund.totalAmount)}</Text>
                 )}
               </View>
               {BUYER_CANCELLABLE_RETURN_STATUSES.has(request.status) && (
@@ -197,13 +423,13 @@ export default function BuyerReturnsSection({ order, formatMoney }) {
                 </TouchableOpacity>
               )}
             </View>
-            {request.statusHistory?.length > 0 && (
+            {request.statusHistory.length > 0 && (
               <View style={styles.history}>
                 {request.statusHistory.map((entry, index) => (
                   <View key={`${entry.status}-${entry.changedAt}-${index}`} style={styles.historyRow}>
                     <View style={[styles.historyDot, { backgroundColor: returnStatusColor(entry.status, palette) }]} />
                     <View style={{ flex: 1 }}>
-                      <Text style={styles.historyTitle}>{RETURN_STATUS_LABELS[entry.status] || entry.status}</Text>
+                      <Text style={styles.historyTitle}>{RETURN_STATUS_LABELS[entry.status]}</Text>
                       <Text style={styles.historyText}>{new Date(entry.changedAt).toLocaleString()}{entry.note ? ` - ${entry.note}` : ''}</Text>
                     </View>
                   </View>
@@ -219,7 +445,7 @@ export default function BuyerReturnsSection({ order, formatMoney }) {
           <View style={{ flex: 1 }}>
             <Text style={styles.cardTitle}>{group.store?.storeName || group.seller?.username || 'Seller'}</Text>
             <Text style={styles.policyText}>
-              {group.policy?.returnsEnabled
+              {group.policy.returnsEnabled
                 ? `${group.policy.returnDuration}-day returns - ${returnResolutionLabel(group.policy.refundType)}`
                 : 'Returns are not offered by this seller'}
             </Text>
@@ -248,8 +474,8 @@ export default function BuyerReturnsSection({ order, formatMoney }) {
           </View>
           <KeyboardAwareFormScrollView contentContainerStyle={styles.modalScroll} bottomOffset={32}>
             {selectedGroup?.items.filter(item => item.eligible && item.remainingReturnableQuantity > 0).map(item => {
-              const key = String(item.orderItemId);
-              const quantity = Number(quantities[key] || 0);
+              const key = item.orderItemId;
+              const quantity = quantities[key];
               return (
                 <GlassPanel key={key} variant="card" style={styles.selectItemCard}>
                   <Image source={{ uri: item.image || 'https://rozare.com/favicon-512.png' }} style={styles.productImage} contentFit="cover" />
@@ -297,7 +523,7 @@ export default function BuyerReturnsSection({ order, formatMoney }) {
               placeholderTextColor={palette.colors.textSecondary}
               style={styles.reasonInput}
             />
-            <TouchableOpacity style={[styles.submitButton, submitting && styles.disabled]} onPress={submit} disabled={submitting}>
+            <TouchableOpacity style={[styles.submitButton, (submitting || !selection.valid) && styles.disabled]} onPress={submit} disabled={submitting || !selection.valid}>
               {submitting ? <ActivityIndicator size="small" color="#fff" /> : <Ionicons name="send-outline" size={18} color="#fff" />}
               <Text style={styles.submitText}>{submitting ? 'Sending...' : 'Submit Return Request'}</Text>
             </TouchableOpacity>
@@ -314,6 +540,9 @@ const buildStyles = (p) => StyleSheet.create({
   heading: { fontSize: fontSize.lg, fontWeight: fontWeight.bold, color: p.colors.text },
   mutedText: { fontSize: fontSize.xs, color: p.colors.textSecondary, lineHeight: 17 },
   loadingCard: { minHeight: 72, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.sm, marginBottom: spacing.md },
+  unavailableCard: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, padding: spacing.md, marginBottom: spacing.md },
+  retryButton: { minHeight: 36, justifyContent: 'center', borderRadius: 10, paddingHorizontal: spacing.md, backgroundColor: p.glass.bgSubtle, borderWidth: 1, borderColor: p.glass.borderSubtle },
+  retryText: { fontSize: fontSize.xs, fontWeight: fontWeight.bold, color: p.colors.primary },
   requestCard: { padding: spacing.lg, marginBottom: spacing.md },
   requestHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm, marginBottom: spacing.md },
   cardTitle: { fontSize: fontSize.sm, fontWeight: fontWeight.bold, color: p.colors.text },

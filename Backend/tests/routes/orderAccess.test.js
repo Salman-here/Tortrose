@@ -7,6 +7,7 @@ const orderRoutes = require('../../routes/orderRoutes');
 const Order = require('../../models/Order');
 const Product = require('../../models/Product');
 const User = require('../../models/User');
+const Cart = require('../../models/Cart');
 
 let mongoServer;
 let app;
@@ -108,6 +109,7 @@ beforeEach(async () => {
   await Order.deleteMany({});
   await Product.deleteMany({});
   await User.deleteMany({});
+  await Cart.deleteMany({});
 });
 
 describe('Order access isolation', () => {
@@ -179,6 +181,7 @@ describe('Order access isolation', () => {
     expect(res.body.orders[0].orderSummary.shippingCost).toBe(10);
     expect(res.body.orders[0].orderSummary.tax).toBe(20);
     expect(res.body.orders[0].orderSummary.totalAmount).toBe(230);
+    expect(res.body.orders[0].orderSummary).not.toHaveProperty('_originalTotal');
   });
 
   test('treats an order-item seller snapshot as authoritative over current product ownership', async () => {
@@ -376,5 +379,59 @@ describe('Order access isolation', () => {
     expect(invoiceRes.body.html).toContain('PKR');
     expect(invoiceRes.body.html).not.toContain('$290.00');
     expect(forbiddenInvoice.status).toBe(403);
+  });
+
+  test.each([true, '2', 1.5, 0])(
+    'fails closed before cart mutation for corrupt raw order quantity %p',
+    async quantity => {
+      const seller = await createUser(`seller-reorder-${String(quantity)}`, 'seller');
+      const otherSeller = await createUser(`other-reorder-${String(quantity)}`, 'seller');
+      const buyer = await createUser(`buyer-reorder-${String(quantity)}`, 'user');
+      const sellerProduct = await createProduct(seller, `reorder-${String(quantity)}`, 100);
+      const otherProduct = await createProduct(otherSeller, `other-reorder-${String(quantity)}`, 50);
+      const order = await createOrder({ buyer, sellerProduct, otherProduct });
+      await Order.collection.updateOne(
+        { _id: order._id },
+        { $set: { 'orderItems.0.quantity': quantity } },
+      );
+
+      const res = await request(app)
+        .post(`/api/order/reorder/${order._id}`)
+        .set('Authorization', tokenFor(buyer));
+
+      expect(res.status).toBe(409);
+      expect(res.body.code).toBe('ORDER_REORDER_QUANTITY_INVALID');
+      expect(await Cart.findOne({ user: buyer._id })).toBeNull();
+    },
+  );
+
+  test('fails closed without repairing a corrupt existing cart quantity', async () => {
+    const seller = await createUser('seller-reorder-cart', 'seller');
+    const otherSeller = await createUser('other-reorder-cart', 'seller');
+    const buyer = await createUser('buyer-reorder-cart', 'user');
+    const sellerProduct = await createProduct(seller, 'reorder-cart', 100);
+    const otherProduct = await createProduct(otherSeller, 'other-reorder-cart', 50);
+    const order = await createOrder({ buyer, sellerProduct, otherProduct });
+    const insertedCart = await Cart.collection.insertOne({
+      user: buyer._id,
+      cartItems: [{
+        _id: new mongoose.Types.ObjectId(),
+        product: sellerProduct._id,
+        qty: false,
+        selectedColor: null,
+      }],
+      fulfilledOrderIds: [],
+      totalCartPrice: 0,
+      totalCartCurrency: 'USD',
+    });
+
+    const res = await request(app)
+      .post(`/api/order/reorder/${order._id}`)
+      .set('Authorization', tokenFor(buyer));
+
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('CART_REORDER_QUANTITY_INVALID');
+    const rawCart = await Cart.collection.findOne({ _id: insertedCart.insertedId });
+    expect(rawCart.cartItems[0].qty).toBe(false);
   });
 });

@@ -35,6 +35,7 @@ import {
   getProductFormMode,
   normalizeInitialProductImages,
   normalizeProductImageUri,
+  resolveProductFormCurrency,
   validateProductFormContract,
 } from '../../utils/productFormContract';
 
@@ -66,7 +67,7 @@ export default function ProductFormScreen({ navigation, route }) {
 
   const { product, isAdmin } = route.params || {};
   const isEditMode = getFormMode(product) === 'edit';
-  const initialProductCurrency = normalizeCurrency(product?.currency || product?.priceCurrency || accountCurrency || 'USD');
+  const initialProductCurrency = normalizeCurrency(resolveProductFormCurrency(product, accountCurrency));
 
   const [formData, setFormData] = useState({
     name: product?.name || '', description: product?.description || '',

@@ -5,7 +5,14 @@ import { CheckCircle2, XCircle, Clock, ShieldCheck, Loader2, Package, MapPin, Me
 import axios from 'axios';
 import SEOHead from '../components/common/SEOHead';
 import { useCurrency } from '../contexts/CurrencyContext';
-import { formatOrderItemOptions } from '../utils/orderItems';
+import {
+  formatOrderItemOptions,
+  getOrderCurrency,
+  getOrderItemLineSubtotal,
+  getOrderSummaryAmount,
+  getOrderTotal,
+  hasExactOrderItemUnitEquation,
+} from '../utils/orderItems';
 
 const API = import.meta.env.VITE_API_URL;
 
@@ -28,7 +35,14 @@ export default function OrderConfirmationPage() {
   const { formatPrice } = useCurrency();
   const [loading, setLoading] = useState(true);
   const [order, setOrder] = useState(null);
-  const orderMoney = (amount) => formatPrice(amount, { sourceCurrency: order?.currency || 'USD' });
+  const orderMoney = (amount) => {
+    const orderCurrency = getOrderCurrency(order);
+    return formatPrice(amount, {
+      sourceCurrency: orderCurrency,
+      targetCurrency: orderCurrency,
+      showCode: true,
+    });
+  };
   const [error, setError] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [actionDone, setActionDone] = useState(null); // 'confirmed' | 'declined'
@@ -122,8 +136,21 @@ export default function OrderConfirmationPage() {
   const cancelledFromAccount = (conf?.decidedVia === 'dashboard' || (conf?.cancelledFromDashboardAt && conf?.cancelledFromDashboardNote?.includes('account'))) && order?.orderStatus === 'cancelled';
   // Cancelled from email page after WA/email confirm
   const cancelledFromEmailPage = conf?.cancelledFromDashboardAt && !conf?.cancelledFromDashboardNote?.includes('account') && order?.orderStatus === 'cancelled';
-  const orderCancelled = order?.orderStatus === 'cancelled';
   const notYetDecided = !actionDone && !expired;
+  const summarySubtotal = getOrderSummaryAmount(order, ['subtotal'], 'order subtotal');
+  const summaryShipping = getOrderSummaryAmount(order, ['shippingCost', 'shippingFee'], 'order shipping');
+  const summaryTax = getOrderSummaryAmount(order, ['tax', 'taxAmount'], 'order tax');
+  const couponDiscount = getOrderSummaryAmount(
+    order,
+    ['couponDiscount', 'discountAmount'],
+    'order coupon discount',
+  );
+  const reconciliationAdjustment = getOrderSummaryAmount(
+    order,
+    ['reconciliationAdjustment'],
+    'order reconciliation adjustment',
+    { signed: true },
+  );
 
   return (
     <div className="min-h-screen flex items-center justify-center px-4 py-12" style={{ background: 'hsl(var(--background))' }}>
@@ -320,20 +347,30 @@ export default function OrderConfirmationPage() {
                       {formatOrderItemOptions(it) && (
                         <p className="text-xs leading-snug" style={{ color: 'hsl(var(--muted-foreground))' }}>{formatOrderItemOptions(it)}</p>
                       )}
-                      <p className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>Qty: {it.quantity} x {orderMoney(it.price)}</p>
+                      <p className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                        {hasExactOrderItemUnitEquation(it)
+                          ? <>Qty: {it.quantity} × {orderMoney(it.price)}</>
+                          : <>Qty: {it.quantity} · Complete line price</>}
+                      </p>
                     </div>
-                    <p className="text-sm font-semibold" style={{ color: 'hsl(var(--foreground))' }}>{orderMoney(it.price * it.quantity)}</p>
+                    <p className="text-sm font-semibold" style={{ color: 'hsl(var(--foreground))' }}>{orderMoney(getOrderItemLineSubtotal(it))}</p>
                   </div>
                 ))}
               </div>
               <div className="pt-3 mt-1 space-y-1.5" style={{ borderTop: '1px solid var(--glass-border-subtle)' }}>
-                <div className="flex justify-between text-xs"><span style={{ color: 'hsl(var(--muted-foreground))' }}>Subtotal</span><span style={{ color: 'hsl(var(--foreground))' }}>{orderMoney(order.orderSummary.subtotal)}</span></div>
-                <div className="flex justify-between text-xs"><span style={{ color: 'hsl(var(--muted-foreground))' }}>Shipping</span><span style={{ color: 'hsl(var(--foreground))' }}>{orderMoney(order.orderSummary.shippingCost)}</span></div>
-                {order.orderSummary.tax > 0 && (
-                  <div className="flex justify-between text-xs"><span style={{ color: 'hsl(var(--muted-foreground))' }}>Tax</span><span style={{ color: 'hsl(var(--foreground))' }}>{orderMoney(order.orderSummary.tax)}</span></div>
+                <div className="flex justify-between text-xs"><span style={{ color: 'hsl(var(--muted-foreground))' }}>Subtotal</span><span style={{ color: 'hsl(var(--foreground))' }}>{orderMoney(summarySubtotal)}</span></div>
+                <div className="flex justify-between text-xs"><span style={{ color: 'hsl(var(--muted-foreground))' }}>Shipping</span><span style={{ color: 'hsl(var(--foreground))' }}>{orderMoney(summaryShipping)}</span></div>
+                {summaryTax > 0 && (
+                  <div className="flex justify-between text-xs"><span style={{ color: 'hsl(var(--muted-foreground))' }}>Tax</span><span style={{ color: 'hsl(var(--foreground))' }}>{orderMoney(summaryTax)}</span></div>
+                )}
+                {couponDiscount > 0 && (
+                  <div className="flex justify-between text-xs" style={{ color: 'hsl(150, 60%, 40%)' }}><span>Coupon discount</span><span>-{orderMoney(couponDiscount)}</span></div>
+                )}
+                {reconciliationAdjustment !== 0 && (
+                  <div className="flex justify-between text-xs"><span style={{ color: 'hsl(var(--muted-foreground))' }}>Rounding adjustment</span><span style={{ color: 'hsl(var(--foreground))' }}>{reconciliationAdjustment > 0 ? '+' : '-'}{orderMoney(Math.abs(reconciliationAdjustment))}</span></div>
                 )}
                 <div className="flex justify-between text-sm font-bold pt-1.5" style={{ borderTop: '1px solid var(--glass-border-subtle)', color: 'hsl(var(--foreground))' }}>
-                  <span>Total</span><span style={{ color: 'hsl(var(--primary))' }}>{orderMoney(order.orderSummary.totalAmount)}</span>
+                  <span>Total</span><span style={{ color: 'hsl(var(--primary))' }}>{orderMoney(getOrderTotal(order))}</span>
                 </div>
               </div>
             </div>
@@ -389,12 +426,12 @@ export default function OrderConfirmationPage() {
                             <span className="block truncate" style={{ color: 'hsl(var(--muted-foreground))' }}>{formatOrderItemOptions(it)}</span>
                           )}
                         </span>
-                        <span className="text-xs font-semibold" style={{ color: 'hsl(var(--foreground))' }}>{orderMoney(it.price * it.quantity)}</span>
+                        <span className="text-xs font-semibold" style={{ color: 'hsl(var(--foreground))' }}>{orderMoney(getOrderItemLineSubtotal(it))}</span>
                       </div>
                     ))}
                     <div className="pt-2 flex justify-between text-sm font-bold" style={{ borderTop: '1px solid var(--glass-border-subtle)' }}>
                       <span style={{ color: 'hsl(var(--foreground))' }}>Total</span>
-                      <span style={{ color: 'hsl(var(--primary))' }}>{orderMoney(order.orderSummary.totalAmount)}</span>
+                      <span style={{ color: 'hsl(var(--primary))' }}>{orderMoney(getOrderTotal(order))}</span>
                     </div>
                   </div>
                   <p className="text-sm mb-4" style={{ color: 'hsl(var(--muted-foreground))' }}>

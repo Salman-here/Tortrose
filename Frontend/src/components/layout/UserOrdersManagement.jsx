@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Package, Clock, CheckCircle, Truck, XCircle, CreditCard, Calendar, Eye, Search, Filter } from 'lucide-react';
 import axios from 'axios';
@@ -6,7 +6,7 @@ import Loader from '../common/Loader';
 import { Link } from 'react-router-dom';
 import { useCurrency } from '../../contexts/CurrencyContext';
 import { getAuthToken } from "../../utils/cookieHelper";
-import { formatOrderItemOptions } from "../../utils/orderItems";
+import { formatOrderItemOptions, getOrderCurrency, getOrderTotal } from "../../utils/orderItems";
 
 const containerVariants = { hidden: { opacity: 0 }, visible: { opacity: 1, transition: { staggerChildren: 0.08 } } };
 const itemVariants = { hidden: { y: 20, opacity: 0 }, visible: { y: 0, opacity: 1, transition: { type: "spring", stiffness: 100 } } };
@@ -29,15 +29,15 @@ const UserOrdersManagement = () => {
     const [paymentFilter, setPaymentFilter] = useState('all');
     const [loading, setLoading] = useState(true);
 
-    const serializeFilters = () => {
+    const serializeFilters = useCallback(() => {
         let params = new URLSearchParams();
         if (searchTerm !== '' && searchTerm !== 'all') params.append('search', searchTerm);
         if (statusFilter !== 'all') params.append('status', statusFilter);
         if (paymentFilter !== 'all') params.append('paymentStatus', paymentFilter);
         return params.toString();
-    };
+    }, [searchTerm, statusFilter, paymentFilter]);
 
-    const fetchOrders = async () => {
+    const fetchOrders = useCallback(async () => {
         const token = getAuthToken();
         setLoading(true);
         try {
@@ -46,9 +46,9 @@ const UserOrdersManagement = () => {
             setOrders(res.data?.orders.reverse());
         } catch (error) { console.error(error); }
         finally { setLoading(false); }
-    };
+    }, [serializeFilters]);
 
-    useEffect(() => { fetchOrders(); }, [searchTerm, statusFilter, paymentFilter]);
+    useEffect(() => { fetchOrders(); }, [fetchOrders]);
 
     const formatDate = (dateString) => new Date(dateString).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 
@@ -122,15 +122,7 @@ const UserOrdersManagement = () => {
                                     <StatusBadge status={order.orderStatus} />
                                     <div className="text-left sm:text-right">
                                         <p className="text-base font-extrabold" style={{ color: 'hsl(var(--foreground))' }}>
-                                            {(() => {
-                                                const subtotal = order.orderSummary.subtotal || 0;
-                                                const tax = order.orderSummary.tax || 0;
-                                                let actualShipping = order.orderSummary.shippingCost || 0;
-                                                if (order.sellerShipping && order.sellerShipping.length > 0) {
-                                                    actualShipping = order.sellerShipping.reduce((sum, s) => sum + (s.shippingMethod.price || 0), 0);
-                                                }
-                                                return formatPrice(subtotal + tax + actualShipping, { sourceCurrency: order.currency || 'USD' });
-                                            })()}
+                                            {formatPrice(getOrderTotal(order), { sourceCurrency: getOrderCurrency(order) })}
                                         </p>
                                         <Link to={`/user-dashboard/order/detail/${order._id}`}>
                                             <button className="text-sm font-medium flex items-center mt-1" style={{ color: 'hsl(var(--primary))' }}>

@@ -1,15 +1,16 @@
 const Store = require('../models/Store');
 const User = require('../models/User');
 const crypto = require('crypto');
-const { sendEmail } = require('./mailController');
 const { initializeSubscription } = require('./subscriptionController');
 const { publicProductFilter } = require('../services/productModerationService');
 const { activeStoreQuery } = require('../services/publicCatalogService');
-const { convertAmountSync } = require('../services/currencyService');
+const { convertAmountSync, isSupportedCurrency } = require('../services/currencyService');
 const { getProductCurrency, getProductEffectivePrice } = require('../services/productPricingService');
 const {
     resolveRequestedCurrency,
-    sellerOrderSummaryInCurrency,
+    sellerOrderSummary,
+    isSellerRevenueRecognized,
+    sumOrderAmountsInCurrency,
     roundMoney,
 } = require('../services/orderMoneyService');
 const StoreView = require('../models/StoreView');
@@ -41,19 +42,87 @@ const {
 } = require('../services/storePaymentPolicyService');
 const { normalizeReturnPolicy } = require('../services/returnPolicyService');
 const { attachStoreReviewSummaries } = require('../services/storeReviewService');
+const { getSellerInventoryOverview } = require('../services/sellerInventoryOverviewService');
+const { trustedRequestIp } = require('../services/requestIdentityService');
+const {
+    changeStoreSlug,
+    releaseExpiredStoreSlug,
+} = require('../services/subdomainSlugMutationService');
 const {
     MAX_STORE_SLUG_LENGTH,
     validateStoreSlug,
     slugifyStoreName,
 } = require('../utils/storeSlug');
+const { runInTransaction } = require('../services/walletService');
+const {
+    enqueueStoreCreatedNotification,
+    enqueueStoreVerificationNotification,
+} = require('../services/sellerOperationalNotificationService');
 
 const comparablePriceUSD = (product) =>
     convertAmountSync(getProductEffectivePrice(product), getProductCurrency(product), 'USD');
+const storeAnalyticsDataError = label => {
+    const error = new Error(`Stored store analytics ${label} is invalid. Analytics are unavailable until the source data is corrected.`);
+    error.code = 'STORE_ANALYTICS_DATA_INVALID';
+    error.statusCode = 409;
+    return error;
+};
+const requireStoreAnalyticsCount = (value, label) => {
+    if (value === undefined) return 0;
+    if (!Number.isSafeInteger(value) || value < 0) throw storeAnalyticsDataError(label);
+    return value;
+};
+const requireStoreAnalyticsMoney = (value, label) => {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+        throw storeAnalyticsDataError(label);
+    }
+    try {
+        if (roundMoney(value) !== value) throw storeAnalyticsDataError(label);
+    } catch (error) {
+        if (error?.code === 'STORE_ANALYTICS_DATA_INVALID') throw error;
+        throw storeAnalyticsDataError(label);
+    }
+    return value;
+};
 const isActiveSellerAccount = async sellerId => Boolean(sellerId && await User.exists({
     _id: sellerId,
     role: 'seller',
     status: 'active',
 }));
+const requireActiveAdminActor = (req, res) => {
+    if (!req.user?.id && !req.user?._id) {
+        res.status(401).json({ msg: 'Authentication required', code: 'AUTH_REQUIRED' });
+        return false;
+    }
+    if (req.user.role !== 'admin') {
+        res.status(403).json({ msg: 'Admin access only', code: 'ADMIN_REQUIRED' });
+        return false;
+    }
+    if (req.user.status !== 'active') {
+        res.status(403).json({
+            msg: 'Your account is blocked. For further details contact support.',
+            code: 'ACCOUNT_BLOCKED',
+        });
+        return false;
+    }
+    return true;
+};
+const storeTransitionError = (message, statusCode) => {
+    const error = new Error(message);
+    error.statusCode = statusCode;
+    return error;
+};
+const optionalVerificationReason = (value, fallback) => {
+    if (value === undefined || value === null || value === '') return fallback;
+    if (typeof value !== 'string') {
+        throw storeTransitionError('Verification reason must be text', 400);
+    }
+    const reason = value.trim().replace(/\s+/g, ' ');
+    if (!reason || reason.length > 500) {
+        throw storeTransitionError('Verification reason must be between 1 and 500 characters', 400);
+    }
+    return reason;
+};
 
 const cleanList = (items) => [...new Set(
     (items || [])
@@ -61,42 +130,6 @@ const cleanList = (items) => [...new Set(
         .map(item => String(item).trim())
         .filter(Boolean)
 )].sort((a, b) => a.localeCompare(b));
-
-// Email template helper
-const storeEmailTemplate = (title, bodyHtml, ctaUrl, ctaText) => `
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>${title}</title>
-  <style>
-    body { background-color: #F8F9FA; font-family: 'Inter', 'Segoe UI', Tahoma, sans-serif; color: #1A1A1A; margin: 0; padding: 0; }
-    .email-wrapper { max-width: 600px; margin: 0 auto; padding: 1.5rem; }
-    .card { background: #FFFFFF; border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.05); padding: 2rem; }
-    .header { background: linear-gradient(135deg, #4F46E5, #3B82F6); color: #fff; padding: 1.25rem 2rem; border-radius: 12px 12px 0 0; font-size: 1.2rem; font-weight: 600; text-align: center; }
-    .content { padding: 1.5rem 0; line-height: 1.7; }
-    .content p { margin: 0.75rem 0; }
-    .button { display: inline-block; margin-top: 1.25rem; background: linear-gradient(135deg, #4F46E5, #3B82F6); color: white !important; padding: 0.75rem 1.75rem; border-radius: 10px; text-decoration: none; font-weight: 600; }
-    .footer { font-size: 13px; text-align: center; color: #6B7280; margin-top: 2rem; }
-    .highlight { background: #F0F4FF; border-radius: 10px; padding: 1rem 1.25rem; margin: 1rem 0; border-left: 4px solid #4F46E5; }
-  </style>
-</head>
-<body>
-  <div class="email-wrapper">
-    <div class="card">
-      <div class="header">${title}</div>
-      <div class="content">
-        ${bodyHtml}
-        ${ctaUrl ? `<p style="text-align:center"><a href="${ctaUrl}" class="button">${ctaText || 'View Details'}</a></p>` : ''}
-        <p>Best regards,<br/>The Rozare Team</p>
-      </div>
-    </div>
-    <div class="footer">&copy; ${new Date().getFullYear()} Rozare. All rights reserved.</div>
-  </div>
-</body>
-</html>
-`;
 
 // Helper function to generate unique slug
 const generateUniqueSlug = async (storeName) => {
@@ -142,21 +175,14 @@ function checkCooldown(field, lastAt) {
 // and the 7-day removal window has passed. Returns true if released.
 async function releaseExpiredSlug(store) {
     if (!store) return false;
-    const purchased = store.subdomainPurchase?.isPurchased &&
-        store.subdomainPurchase?.expiresAt &&
-        new Date(store.subdomainPurchase.expiresAt) > new Date();
-    const removeAt = store.subdomainPurchase?.removalScheduledAt;
-    if (!purchased && removeAt && new Date(removeAt) <= new Date() && store.storeSlug) {
-        // Free the slug — keep store record but mark subdomain as released
-        store.storeSlug = `released-${store._id.toString().slice(-8)}-${Date.now()}`;
-        store.subdomainPurchase = {
-            ...(store.subdomainPurchase?.toObject?.() || {}),
-            removalScheduledAt: null,
-        };
-        await store.save();
-        return true;
-    }
-    return false;
+    const result = await releaseExpiredStoreSlug({
+        storeId: store._id,
+        sellerId: store.seller,
+        expectedSlug: store.storeSlug,
+        now: new Date(),
+        reason: 'Lazy release after the inactive-store grace period expired',
+    });
+    return result.released;
 }
 exports._releaseExpiredSlug = releaseExpiredSlug;
 exports.checkSubdomainAvailability = async (req, res) => {
@@ -213,6 +239,20 @@ exports.createStore = async (req, res) => {
         const { storeName, storeSlug, description, logo, banner, socialLinks, address, returnPolicy, sellerType, storeTheme, visibility, paymentPolicy } = req.body;
         const sellerId = req.user.id;
 
+        if (
+            Object.prototype.hasOwnProperty.call(req.body, 'productCurrency')
+            && (
+                typeof req.body.productCurrency !== 'string'
+                || !req.body.productCurrency.trim()
+                || !isSupportedCurrency(req.body.productCurrency)
+            )
+        ) {
+            return res.status(400).json({
+                msg: 'Choose a supported product currency: USD, PKR, EUR, or GBP.',
+                code: 'PRODUCT_CURRENCY_NOT_SUPPORTED',
+            });
+        }
+
         // Check if seller already has a store
         const existingStore = await Store.findOne({ seller: sellerId });
         if (existingStore) {
@@ -268,14 +308,21 @@ exports.createStore = async (req, res) => {
             ? normalizeStoreTheme(storeTheme, { allowCustom: canUseCustomTheme })
             : normalizeStoreTheme();
 
-        // Create store
-        const newStore = new Store({
+        // Construct immutable input outside the transaction, but create a new
+        // Mongoose document on every callback attempt. MongoDB may retry the
+        // callback after a transient conflict; re-saving an aborted document
+        // would otherwise issue an update against a row that never committed.
+        const storeData = {
             seller: sellerId,
             storeName: storeName.trim(),
             storeSlug: finalSlug,
             sellerType: sellerType === 'brand' ? 'brand' : 'store',
             description: description || '',
-            productCurrency: normalizeProductCurrency(req.body.productCurrency || sellerDefaultProductCurrency({ address: initialAddress }, seller)),
+            productCurrency: normalizeProductCurrency(
+                Object.prototype.hasOwnProperty.call(req.body, 'productCurrency')
+                    ? req.body.productCurrency
+                    : sellerDefaultProductCurrency({ address: initialAddress }, seller)
+            ),
             productCurrencyStatus: 'active',
             storeTheme: normalizedStoreTheme,
             paymentPolicy: normalizeStorePaymentPolicy(paymentPolicy),
@@ -289,42 +336,19 @@ exports.createStore = async (req, res) => {
             socialLinks: normalizeSocialLinks(socialLinks),
             address: initialAddress,
             returnPolicy: normalizeReturnPolicy(returnPolicy || {}, { strict: returnPolicy !== undefined })
-        });
+        };
 
-        await newStore.save();
+        let newStore;
+        await runInTransaction(async session => {
+            [newStore] = await Store.create([storeData], { session });
+            await enqueueStoreCreatedNotification(newStore, { session });
+        });
 
         // Initialize seller subscription (15-day free trial)
         try {
             await initializeSubscription(sellerId);
         } catch (subErr) {
             console.error('Initialize subscription error:', subErr.message);
-        }
-
-        // Send store creation email
-        try {
-            const seller = await User.findById(sellerId);
-            if (seller?.email) {
-                const html = storeEmailTemplate(
-                    '🎉 Your Store is Live!',
-                    `<p>Hello ${seller.username || 'Seller'},</p>
-                    <p>Congratulations! Your store <strong>"${newStore.storeName}"</strong> has been successfully created on Rozare.</p>
-                    <div class="highlight">
-                        <strong>Store URL:</strong> ${process.env.FRONTEND_URL}/store/${newStore.storeSlug}<br/>
-                        <strong>Subdomain:</strong> ${newStore.storeSlug}.rozare.com <em>(live while your store is active)</em>
-                    </div>
-                    <p>Next steps:</p>
-                    <ul>
-                        <li>Add products to your store</li>
-                        <li>Customize your store settings & branding</li>
-                        <li>Apply for verification when you want a verified badge and extra customer trust</li>
-                    </ul>`,
-                    `${process.env.FRONTEND_URL}/seller-dashboard/store-settings`,
-                    'Manage Your Store'
-                );
-                await sendEmail({ to: seller.email, subject: `Your Store "${newStore.storeName}" is Live! 🎉`, html });
-            }
-        } catch (emailErr) {
-            console.error('Store creation email failed:', emailErr.message);
         }
 
         res.status(201).json({
@@ -442,12 +466,13 @@ exports.cancelProductCurrencyChange = async (req, res) => {
 
 // Update store
 exports.updateStore = async (req, res) => {
+    const sellerId = req.user.id;
+    let pendingSlugChange = null;
     try {
         const { storeName, storeSlug, description, logo, banner, socialLinks, address, returnPolicy, sellerType, storeTheme, visibility, paymentPolicy } = req.body;
-        const sellerId = req.user.id;
 
         // Find seller's store
-        const store = await Store.findOne({ seller: sellerId });
+        let store = await Store.findOne({ seller: sellerId });
 
         if (!store) {
             return res.status(404).json({ msg: 'Store not found. Please create a store first.' });
@@ -522,6 +547,12 @@ exports.updateStore = async (req, res) => {
 
         // Handle custom slug/subdomain update if provided
         if (wantsSlugChange) {
+            if (store.subdomainPurchase?.paymentRiskState === 'open') {
+                return res.status(423).json({
+                    msg: 'Your purchased subdomain has an unresolved Stripe payment dispute. It cannot be changed until the dispute is resolved.',
+                    code: 'SUBDOMAIN_PAYMENT_RISK_OPEN',
+                });
+            }
             // Warn: changing slug will forfeit the purchased subdomain ownership
             // If seller has purchased the subdomain, require explicit confirmation
             if (store.subdomainPurchase?.isPurchased && store.subdomainPurchase?.expiresAt && new Date(store.subdomainPurchase.expiresAt) > new Date()) {
@@ -533,15 +564,6 @@ exports.updateStore = async (req, res) => {
                         newSubdomain: normalizedRequestedSlug,
                     });
                 }
-
-                // Seller confirmed — clear the purchase since they're abandoning it
-                store.subdomainPurchase = {
-                    isPurchased: false,
-                    purchasedAt: null,
-                    expiresAt: null,
-                    stripePaymentId: '',
-                    removalScheduledAt: null,
-                };
             }
 
             // Check if available (lazy-release stale blocked slugs)
@@ -557,8 +579,11 @@ exports.updateStore = async (req, res) => {
                 return res.status(409).json({ msg: 'This subdomain is already taken by another store' });
             }
 
-            store.storeSlug = normalizedRequestedSlug;
-            store.lastSlugChangeAt = new Date();
+            pendingSlugChange = {
+                expectedSlug: store.storeSlug,
+                newSlug: normalizedRequestedSlug,
+                confirmPurchasedForfeit: req.body.confirmSubdomainChange === true,
+            };
         }
         // Note: we no longer auto-regenerate the slug from the store name —
         // the subdomain is now an independent, cooldown-protected field.
@@ -621,7 +646,42 @@ exports.updateStore = async (req, res) => {
             await ensureStoreVisibilityInitialized(store, seller);
         }
 
-        await store.save();
+        // Validate every non-slug edit before the irreversible public-hostname
+        // CAS. The canonical service then serializes the slug against Stripe
+        // Checkout, snapshots any legacy paid ownership into its immutable
+        // old-slug ledger, and records the actor audit entry.
+        await store.validate();
+        if (pendingSlugChange) {
+            const protectedSlugPaths = new Set([
+                'storeSlug',
+                'lastSlugChangeAt',
+                'subdomainPurchase',
+                'subdomainResourceLock',
+                'subdomainSlugHistory',
+                '_id',
+                '__v',
+            ]);
+            const additionalSet = {};
+            for (const path of new Set(store.modifiedPaths().map(field => field.split('.')[0]))) {
+                if (!protectedSlugPaths.has(path)) additionalSet[path] = store.get(path);
+            }
+            const slugResult = await changeStoreSlug({
+                storeId: store._id,
+                sellerId,
+                expectedSlug: pendingSlugChange.expectedSlug,
+                newSlug: pendingSlugChange.newSlug,
+                confirmPurchasedForfeit: pendingSlugChange.confirmPurchasedForfeit,
+                additionalSet,
+                actor: {
+                    type: 'seller',
+                    id: sellerId,
+                    reason: 'Seller-confirmed store settings change',
+                },
+            });
+            store = slugResult.store;
+        } else {
+            await store.save();
+        }
         console.log('Store saved with socialLinks:', store.socialLinks);
 
         res.status(200).json({
@@ -631,7 +691,15 @@ exports.updateStore = async (req, res) => {
         });
     } catch (error) {
         console.error('Update store error:', error);
-        res.status(error.status || 500).json({ msg: error.message || 'Server error while updating store' });
+        res.status(error.statusCode || error.status || 500).json({
+            msg: error.message || 'Server error while updating store',
+            ...(error.code ? { code: error.code } : {}),
+            ...(error.requiresConfirmation ? {
+                requiresConfirmation: true,
+                currentSubdomain: error.currentSubdomain,
+                newSubdomain: error.newSubdomain,
+            } : {}),
+        });
     }
 };
 
@@ -995,8 +1063,7 @@ exports.incrementStoreView = async (req, res) => {
             return res.status(404).json({ msg: 'Store not found' });
         }
 
-        const forwarded = req.headers['x-forwarded-for']?.split(',')[0]?.trim();
-        const ip = forwarded || req.headers['x-real-ip'] || req.ip || req.socket?.remoteAddress || '';
+        const ip = trustedRequestIp(req);
         const userAgent = req.headers['user-agent'] || '';
         const visitorId = String(req.headers['x-rozare-visitor-id'] || '').trim().slice(0, 120);
         const rawVisitor = visitorId || `${ip}|${userAgent}`;
@@ -1031,7 +1098,7 @@ exports.getStoreAnalytics = async (req, res) => {
     try {
         const sellerId = req.user.id;
 
-        const store = await Store.findOne({ seller: sellerId });
+        const store = await Store.findOne({ seller: sellerId }).lean();
 
         if (!store) {
             return res.status(404).json({ msg: 'Store not found' });
@@ -1039,12 +1106,14 @@ exports.getStoreAnalytics = async (req, res) => {
 
         const targetCurrency = await resolveRequestedCurrency(req, User);
         const Product = require('../models/Product');
-        const sellerProductIds = await Product.find({ seller: sellerId }).distinct('_id');
-        const productCount = sellerProductIds.length;
+        const [sellerProductIds, inventory] = await Promise.all([
+            Product.find({ seller: sellerId }).distinct('_id'),
+            getSellerInventoryOverview(sellerId),
+        ]);
+        const productCount = inventory.totalProducts;
 
         const Order = require('../models/Order');
         const orders = await Order.find({
-            isPaid: true,
             awaitingPayment: { $ne: true },
             $or: [
                 { 'orderItems.seller': sellerId },
@@ -1060,29 +1129,38 @@ exports.getStoreAnalytics = async (req, res) => {
         });
 
         const sellerProductIdSet = new Set(sellerProductIds.map(id => id.toString()));
-        let totalSales = 0;
-        for (const order of orders) {
-            const summary = await sellerOrderSummaryInCurrency(order, sellerProductIdSet, sellerId, targetCurrency);
-            totalSales += summary.totalAmount;
-        }
-        totalSales = roundMoney(totalSales);
+        const recognizedOrders = orders.filter(order => isSellerRevenueRecognized(order, sellerId));
+        const totalSales = await sumOrderAmountsInCurrency(
+            recognizedOrders.map(order => ({
+                order,
+                amount: sellerOrderSummary(order, sellerProductIdSet, sellerId).totalAmount,
+            })),
+            targetCurrency
+        );
+        const views = requireStoreAnalyticsCount(store.views, 'view count');
+        const trustCount = requireStoreAnalyticsCount(store.trustCount, 'trust count');
+        const recognizedSales = requireStoreAnalyticsMoney(totalSales, 'recognized revenue');
 
         res.status(200).json({
             msg: 'Analytics fetched successfully',
             analytics: {
                 currency: targetCurrency,
-                views: store.views || 0,
-                productCount: productCount || 0,
-                totalOrders: orders.length,
-                totalSales: totalSales || 0,
-                trustCount: store.trustCount || 0,
+                views,
+                productCount,
+                totalOrders: recognizedOrders.length,
+                totalSales: recognizedSales,
+                inventory,
+                trustCount,
                 storeName: store.storeName,
                 createdAt: store.createdAt
             }
         });
     } catch (error) {
         console.error('Get store analytics error:', error);
-        res.status(500).json({ msg: 'Server error while fetching analytics' });
+        res.status(error.statusCode || 500).json({
+            msg: error.statusCode ? error.message : 'Server error while fetching analytics',
+            code: error.code,
+        });
     }
 };
 
@@ -1180,6 +1258,7 @@ exports.getVerificationStatus = async (req, res) => {
 
 // Get all pending verification applications (admin only)
 exports.getPendingVerifications = async (req, res) => {
+    if (!requireActiveAdminActor(req, res)) return;
     try {
         const stores = await Store.find({ 'verification.status': 'pending' })
             .populate('seller', 'username email')
@@ -1198,55 +1277,31 @@ exports.getPendingVerifications = async (req, res) => {
 
 // Approve store verification (admin only)
 exports.approveVerification = async (req, res) => {
+    if (!requireActiveAdminActor(req, res)) return;
     try {
         const { storeId } = req.params;
         const adminId = req.user.id;
+        let store;
+        await runInTransaction(async session => {
+            store = await Store.findById(storeId).session(session);
+            if (!store) throw storeTransitionError('Store not found', 404);
 
-        const store = await Store.findById(storeId);
-
-        if (!store) {
-            return res.status(404).json({ msg: 'Store not found' });
-        }
-
-        // Allow verification for both pending applications and direct admin verification
-        if (store.verification.isVerified) {
-            return res.status(400).json({ msg: 'Store is already verified' });
-        }
-
-        store.verification.isVerified = true;
-        store.verification.status = 'approved';
-        store.verification.reviewedAt = new Date();
-        store.verification.reviewedBy = adminId;
-        store.verification.rejectionReason = '';
-
-        // If there was no application, set appliedAt to now
-        if (!store.verification.appliedAt) {
-            store.verification.appliedAt = new Date();
-        }
-
-        await store.save();
-
-        // Send activation email to seller
-        try {
-            const seller = await User.findById(store.seller);
-            if (seller?.email) {
-                const html = storeEmailTemplate(
-                    '✅ Store Verified!',
-                    `<p>Hello ${seller.username || 'Seller'},</p>
-                    <p>Great news! Your store <strong>"${store.storeName}"</strong> has been verified by the Rozare team.</p>
-                    <div class="highlight">
-                        <strong>🌐 Your store link:</strong><br/>
-                        <a href="https://${store.storeSlug}.rozare.com" style="color:#4F46E5;font-weight:600">${store.storeSlug}.rozare.com</a>
-                    </div>
-                    <p>Your store now displays a verified badge. Your custom subdomain remains live as long as your store is active, so keep sharing your link to bring in customers!</p>`,
-                    `${process.env.FRONTEND_URL}/seller-dashboard/subdomain`,
-                    'View Subdomain Dashboard'
-                );
-                await sendEmail({ to: seller.email, subject: `Your Store "${store.storeName}" is Now Verified! ✅`, html });
+            // Allow verification for both pending applications and direct admin verification.
+            if (store.verification.isVerified) {
+                throw storeTransitionError('Store is already verified', 400);
             }
-        } catch (emailErr) {
-            console.error('Verification approval email failed:', emailErr.message);
-        }
+
+            const reviewedAt = new Date();
+            store.verification.isVerified = true;
+            store.verification.status = 'approved';
+            store.verification.reviewedAt = reviewedAt;
+            store.verification.reviewedBy = adminId;
+            store.verification.rejectionReason = '';
+            if (!store.verification.appliedAt) store.verification.appliedAt = reviewedAt;
+
+            await store.save({ session });
+            await enqueueStoreVerificationNotification(store, 'approved', { session });
+        });
 
         res.status(200).json({
             msg: 'Store verification approved successfully',
@@ -1254,55 +1309,41 @@ exports.approveVerification = async (req, res) => {
         });
     } catch (error) {
         console.error('Approve verification error:', error);
-        res.status(500).json({ msg: 'Server error while approving verification' });
+        const status = error.statusCode || 500;
+        res.status(status).json({
+            msg: status < 500 ? error.message : 'Server error while approving verification',
+        });
     }
 };
 
 // Reject store verification (admin only)
 exports.rejectVerification = async (req, res) => {
+    if (!requireActiveAdminActor(req, res)) return;
     try {
         const { storeId } = req.params;
         const { rejectionReason } = req.body;
         const adminId = req.user.id;
 
-        const store = await Store.findById(storeId);
-
-        if (!store) {
-            return res.status(404).json({ msg: 'Store not found' });
-        }
-
-        if (store.verification.status !== 'pending') {
-            return res.status(400).json({ msg: 'No pending verification application for this store' });
-        }
-
-        store.verification.isVerified = false;
-        store.verification.status = 'rejected';
-        store.verification.reviewedAt = new Date();
-        store.verification.reviewedBy = adminId;
-        store.verification.rejectionReason = rejectionReason || 'Application rejected';
-
-        await store.save();
-
-        // Send rejection email to seller
-        try {
-            const seller = await User.findById(store.seller);
-            if (seller?.email) {
-                const html = storeEmailTemplate(
-                    '❌ Verification Application Rejected',
-                    `<p>Hello ${seller.username || 'Seller'},</p>
-                    <p>Unfortunately, the verification application for your store <strong>"${store.storeName}"</strong> has been rejected.</p>
-                    <div class="highlight">
-                        <strong>Reason:</strong> ${rejectionReason || 'Application did not meet the requirements'}
-                    </div>
-                    <p>You can update your store information and reapply for verification. If you need assistance, please contact our support team.</p>`,
-                    `${process.env.FRONTEND_URL}/seller-dashboard/store-settings`,
-                    'Update & Reapply'
-                );
-                await sendEmail({ to: seller.email, subject: `Verification Rejected — ${store.storeName}`, html });
+        let store;
+        await runInTransaction(async session => {
+            store = await Store.findById(storeId).session(session);
+            if (!store) throw storeTransitionError('Store not found', 404);
+            if (store.verification.status !== 'pending') {
+                throw storeTransitionError('No pending verification application for this store', 400);
             }
-        } catch (emailErr) {
-            console.error('Verification rejection email failed:', emailErr.message);
-        }
+
+            store.verification.isVerified = false;
+            store.verification.status = 'rejected';
+            store.verification.reviewedAt = new Date();
+            store.verification.reviewedBy = adminId;
+            store.verification.rejectionReason = optionalVerificationReason(
+                rejectionReason,
+                'Application rejected'
+            );
+
+            await store.save({ session });
+            await enqueueStoreVerificationNotification(store, 'rejected', { session });
+        });
 
         res.status(200).json({
             msg: 'Store verification rejected',
@@ -1310,12 +1351,16 @@ exports.rejectVerification = async (req, res) => {
         });
     } catch (error) {
         console.error('Reject verification error:', error);
-        res.status(500).json({ msg: 'Server error while rejecting verification' });
+        const status = error.statusCode || 500;
+        res.status(status).json({
+            msg: status < 500 ? error.message : 'Server error while rejecting verification',
+        });
     }
 };
 
 // Get all verified stores (admin only)
 exports.getVerifiedStores = async (req, res) => {
+    if (!requireActiveAdminActor(req, res)) return;
     try {
         const stores = await Store.find({
             'verification.isVerified': true,
@@ -1352,53 +1397,32 @@ exports.getVerifiedStores = async (req, res) => {
 
 // Remove verification from a store (admin only)
 exports.removeVerification = async (req, res) => {
+    if (!requireActiveAdminActor(req, res)) return;
     try {
         const { storeId } = req.params;
         const { reason } = req.body;
         const adminId = req.user.id;
 
-        const store = await Store.findById(storeId);
-
-        if (!store) {
-            return res.status(404).json({ msg: 'Store not found' });
-        }
-
-        if (!store.verification.isVerified) {
-            return res.status(400).json({ msg: 'Store is not verified' });
-        }
-
-        store.verification.isVerified = false;
-        store.verification.status = 'none';
-        store.verification.reviewedAt = new Date();
-        store.verification.reviewedBy = adminId;
-        store.verification.rejectionReason = reason || 'Verification removed by admin';
-
-        await store.save();
-
-        // Send deactivation email to seller
-        try {
-            const seller = await User.findById(store.seller);
-            if (seller?.email) {
-                const html = storeEmailTemplate(
-                    '⚠️ Store Verification Removed',
-                    `<p>Hello ${seller.username || 'Seller'},</p>
-                    <p>We're writing to inform you that the verification for your store <strong>"${store.storeName}"</strong> has been removed by an administrator.</p>
-                    <div class="highlight">
-                        <strong>What this means:</strong><br/>
-                        • The verified badge has been removed from your store<br/>
-                        • Your subdomain <strong>${store.storeSlug}.rozare.com</strong> remains available while your store is active<br/>
-                        • Customers can still access your store unless your account or subscription is blocked
-                    </div>
-                    <p><strong>Reason:</strong> ${reason || 'No reason provided'}</p>
-                    <p>If you believe this was a mistake or would like to reapply, please visit your Store Settings or contact our support team.</p>`,
-                    `${process.env.FRONTEND_URL}/seller-dashboard/store-settings`,
-                    'Go to Store Settings'
-                );
-                await sendEmail({ to: seller.email, subject: `Store Verification Removed — ${store.storeName}`, html });
+        let store;
+        await runInTransaction(async session => {
+            store = await Store.findById(storeId).session(session);
+            if (!store) throw storeTransitionError('Store not found', 404);
+            if (!store.verification.isVerified) {
+                throw storeTransitionError('Store is not verified', 400);
             }
-        } catch (emailErr) {
-            console.error('Verification removal email failed:', emailErr.message);
-        }
+
+            store.verification.isVerified = false;
+            store.verification.status = 'none';
+            store.verification.reviewedAt = new Date();
+            store.verification.reviewedBy = adminId;
+            store.verification.rejectionReason = optionalVerificationReason(
+                reason,
+                'Verification removed by admin'
+            );
+
+            await store.save({ session });
+            await enqueueStoreVerificationNotification(store, 'removed', { session });
+        });
 
         res.status(200).json({
             msg: 'Store verification removed successfully',
@@ -1406,6 +1430,9 @@ exports.removeVerification = async (req, res) => {
         });
     } catch (error) {
         console.error('Remove verification error:', error);
-        res.status(500).json({ msg: 'Server error while removing verification' });
+        const status = error.statusCode || 500;
+        res.status(status).json({
+            msg: status < 500 ? error.message : 'Server error while removing verification',
+        });
     }
 };

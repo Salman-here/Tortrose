@@ -1,6 +1,7 @@
 // Middleware to detect and handle subdomain routing
 const Store = require('../models/Store');
 const { findActiveStore } = require('../services/publicCatalogService');
+const { releaseExpiredStoreSlug } = require('../services/subdomainSlugMutationService');
 
 const subdomainDetector = async (req, res, next) => {
     try {
@@ -57,13 +58,20 @@ const subdomainDetector = async (req, res, next) => {
                     new Date(blockedStore.subdomainPurchase.expiresAt) > now;
                 const removeAt = blockedStore.subdomainPurchase?.removalScheduledAt;
                 if (!purchased && removeAt && new Date(removeAt) <= now) {
-                    blockedStore.storeSlug = `released-${blockedStore._id.toString().slice(-8)}-${Date.now()}`;
-                    blockedStore.subdomainPurchase = {
-                        ...(blockedStore.subdomainPurchase?.toObject?.() || {}),
-                        removalScheduledAt: null,
-                    };
-                    await blockedStore.save();
-                    // Slug is now free — fall through as "not found"
+                    const release = await releaseExpiredStoreSlug({
+                        storeId: blockedStore._id,
+                        sellerId: blockedStore.seller,
+                        expectedSlug: blockedStore.storeSlug,
+                        now,
+                        reason: 'Lazy routing release after the inactive-store grace period expired',
+                    });
+                    if (!release.released) {
+                        // A paid Checkout or reactivation won the race. Keep the
+                        // hostname unavailable instead of exposing or releasing
+                        // stale state from the pre-lock read.
+                        req.subdomainStoreBlocked = true;
+                        req.subdomainStoreName = blockedStore.storeName;
+                    }
                 } else {
                     req.subdomainStoreBlocked = true;
                     req.subdomainStoreName = blockedStore.storeName;

@@ -38,7 +38,13 @@ exports.sendEmail = async (data) => {
                 'accept': 'application/json',
                 'content-type': 'application/json',
                 'api-key': mailConfig.BREVO_API_KEY
-            }
+            },
+            // Keep provider calls comfortably inside the notification outbox
+            // lease. An unbounded socket wait could otherwise let another
+            // worker reclaim the row while this request is still in flight.
+            timeout: 20_000,
+            maxBodyLength: 1_000_000,
+            maxContentLength: 1_000_000,
         });
 
         console.log('✅ Email sent successfully via Brevo, messageId:', response.data?.messageId);

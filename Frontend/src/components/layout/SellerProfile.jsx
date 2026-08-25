@@ -9,7 +9,7 @@ import { getAuthToken, setCrossDomainCookie } from "../../utils/cookieHelper";
 const API_URL = import.meta.env.VITE_API_URL;
 
 export default function SellerProfile() {
-  const { currentUser, setCurrentUser, fetchAndUpdateCurrentUser } = useAuth();
+  const { fetchAndUpdateCurrentUser } = useAuth();
   const [loading, setLoading] = useState(true);
   const [userData, setUserData] = useState(null);
   const [successMsg, setSuccessMsg] = useState('');
@@ -58,6 +58,9 @@ export default function SellerProfile() {
   // Fetch user data
   useEffect(() => {
     fetchProfile();
+    // Profile bootstrap is mount-only; successful mutations explicitly refresh
+    // the profile after they commit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const fetchProfile = async () => {
@@ -112,7 +115,7 @@ export default function SellerProfile() {
     setWhatsAppVerifying(true);
     setWhatsAppError('');
     try {
-      const res = await axios.post(`${API_URL}api/user/seller/change-whatsapp/verify`, { newWhatsappNumber: newWhatsApp, otp: whatsAppOtp }, { headers });
+      await axios.post(`${API_URL}api/user/seller/change-whatsapp/verify`, { newWhatsappNumber: newWhatsApp, otp: whatsAppOtp }, { headers });
       setSuccessMsg('WhatsApp number updated successfully.');
       setShowWhatsAppChange(false);
       setWhatsAppOtpSent(false);

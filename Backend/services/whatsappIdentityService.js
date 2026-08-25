@@ -25,55 +25,69 @@ const verifiedBuyerNumberQuery = (digits, excludeUserId = null) => ({
     ...(excludeUserId ? { _id: { $ne: excludeUserId } } : {}),
 });
 
-async function findWhatsAppIdentityConflict(digits, { channel, userId = null, adminNumberId = null } = {}) {
+const useSession = (query, session) => (
+    session && typeof query?.session === 'function' ? query.session(session) : query
+);
+
+async function findWhatsAppIdentityConflict(
+    digits,
+    { channel, userId = null, adminNumberId = null, session = null } = {}
+) {
     const normalized = normalizePhoneDigits(digits);
     if (!normalized) return null;
 
     const checks = [];
+    const addCheck = (kind, query) => {
+        checks.push({ kind, query: useSession(query, session).lean() });
+    };
     if (channel !== 'admin') {
-        checks.push(
-            AdminWhatsAppNumber.findOne({
+        const query = AdminWhatsAppNumber.findOne({
                 number: normalized,
                 isActive: true,
                 ...(adminNumberId ? { _id: { $ne: adminNumberId } } : {}),
-            }).select('_id number addedBy').lean()
-                .then(record => record ? { kind: 'admin', record } : null)
-        );
+            }).select('_id number addedBy');
+        addCheck('admin', query);
     }
     if (channel !== 'seller') {
         // Cross-role reuse is ambiguous even when the same User document owns
         // both fields, so do not exclude userId here.
-        checks.push(
-            User.findOne(verifiedSellerNumberQuery(
+        const query = User.findOne(verifiedSellerNumberQuery(
                 normalized,
                 null,
                 // A demoted seller may retain legacy verified seller fields.
                 // Keep that number ambiguous instead of allowing a different
                 // administrator's authorization record to elevate it.
                 { role: channel === 'admin' ? { $ne: 'admin' } : 'seller' }
-            )).select('_id role').lean()
-                .then(record => record ? { kind: 'seller', record } : null)
-        );
+            )).select('_id role');
+        addCheck('seller', query);
     } else {
-        checks.push(
-            User.findOne(verifiedSellerNumberQuery(normalized, userId)).select('_id role').lean()
-                .then(record => record ? { kind: 'seller', record } : null)
-        );
+        const query = User.findOne(verifiedSellerNumberQuery(normalized, userId)).select('_id role');
+        addCheck('seller', query);
     }
     if (channel !== 'buyer') {
-        checks.push(
-            User.findOne(verifiedBuyerNumberQuery(normalized)).select('_id role').lean()
-                .then(record => record ? { kind: 'buyer', record } : null)
-        );
+        const query = User.findOne(verifiedBuyerNumberQuery(normalized)).select('_id role');
+        addCheck('buyer', query);
     } else {
-        checks.push(
-            User.findOne(verifiedBuyerNumberQuery(normalized, userId)).select('_id role').lean()
-                .then(record => record ? { kind: 'buyer', record } : null)
-        );
+        const query = User.findOne(verifiedBuyerNumberQuery(normalized, userId)).select('_id role');
+        addCheck('buyer', query);
     }
 
-    const conflicts = await Promise.all(checks);
-    return conflicts.find(Boolean) || null;
+    // MongoDB transactions do not support parallel operations on the same
+    // session. Run these authority checks in order when onboarding supplies a
+    // session, otherwise retain the lower-latency parallel read path.
+    if (session) {
+        for (const check of checks) {
+            const record = await check.query;
+            if (record) return { kind: check.kind, record };
+        }
+        return null;
+    }
+
+    const records = await Promise.all(checks.map(check => check.query));
+    const matchIndex = records.findIndex(Boolean);
+    return matchIndex === -1
+        ? null
+        : { kind: checks[matchIndex].kind, record: records[matchIndex] };
 }
 
 const conflictMessage = (conflict) => {

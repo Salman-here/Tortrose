@@ -1,16 +1,25 @@
 const User = require("../models/User");
 const OTP = require("../models/OTP");
+const mongoose = require('mongoose');
 const bcrypt = require('bcrypt')
 const { sendEmail } = require('./mailController')
-const { welcomeEmail, sellerAccountCreatedEmail } = require('../utils/emailTemplates');
+const { welcomeEmail } = require('../utils/emailTemplates');
 const { trackCompleteRegistration } = require('../services/tiktokEventsApi');
 const { trackSellerLead } = require('../services/metaConversionsApi');
 const { normalizeSocialLinks } = require('../services/socialLinksService');
-const { notifySeller } = require('../services/whatsapp/sellerNotificationService');
-const sellerTemplates = require('../services/whatsapp/sellerMessageTemplates');
+const {
+    enqueueStoreCreatedNotification,
+    ensureSellerWelcomeNotification,
+} = require('../services/sellerOperationalNotificationService');
+const { runInTransaction } = require('../services/walletService');
+const {
+    productCurrencyForSellerSignupOtp,
+    productCurrencyFromSellerSignupOtp,
+} = require('../services/sellerOnboardingCurrencyService');
 const { normalizePhoneDigits, toE164PhoneNumber } = require('../utils/phoneNumber');
 const { MAX_STORE_SLUG_LENGTH, slugifyStoreName } = require('../utils/storeSlug');
 const { generateSixDigitOTP, signAuthToken } = require('../utils/authSecurity');
+const { escapeHtml } = require('../utils/orderPresentation');
 
 
 // Step 1: Send OTP to email
@@ -69,7 +78,7 @@ exports.sendOTP = async (req, res) => {
         
         <!-- Body Content -->
         <div style="padding:40px 32px;">
-            <p style="color:#334155;font-size:16px;margin:0 0 20px;">Hi <strong>${username}</strong>,</p>
+            <p style="color:#334155;font-size:16px;margin:0 0 20px;">Hi <strong>${escapeHtml(username)}</strong>,</p>
             
             <p style="color:#475569;font-size:15px;margin:0 0 28px;">
                 Thanks for signing up for Rozare! Please enter the verification code below to confirm your email address and activate your account.
@@ -146,7 +155,7 @@ exports.verifyOTPAndRegister = async (req, res) => {
         // Find OTP document
         const otpDoc = await OTP.findOne({ email, otp });
 
-        if (!otpDoc) {
+        if (!otpDoc || otpDoc.userData?.role !== 'user') {
             return res.status(400).json({ msg: 'Invalid or expired OTP.' });
         }
 
@@ -157,15 +166,10 @@ exports.verifyOTPAndRegister = async (req, res) => {
             return res.status(409).json({ msg: 'E-mail is already taken.' });
         }
 
-        // Create user with data from OTP document
-        console.log('Creating user with userData:', otpDoc.userData);
-        
         // Explicitly set isVerified to true since email was verified via OTP
         const userData = { ...otpDoc.userData, isVerified: true };
         const newUser = new User(userData);
         await newUser.save();
-        
-        console.log('User created with isVerified:', newUser.isVerified);
 
         // Delete OTP document
         await OTP.deleteOne({ _id: otpDoc._id });
@@ -231,7 +235,10 @@ exports.login = async (req, res) => {
         if (!userFound) return res.status(404).json({ msg: 'User not Found!' })
 
         if (userFound.status === 'blocked') {
-            return res.status(403).json({ msg: 'Your account is blocked. For further details contact support.' })
+            return res.status(403).json({
+                msg: 'Your account is blocked. For further details contact support.',
+                code: 'ACCOUNT_BLOCKED',
+            })
         }
 
         // Check if user has a password (not OAuth user)
@@ -261,10 +268,21 @@ exports.login = async (req, res) => {
 
 exports.googleCallback = async (req, res) => {
     try {
-        const user = req.user;
         const state = req.query.state || '';
         const isMobile = state === 'mobile';
         const isSeller = state === 'seller';
+        const passportUserId = req.user?._id || req.user?.id;
+        const user = passportUserId
+            ? await User.findById(passportUserId).select('_id username email role status avatar profilePicture')
+            : null;
+
+        if (!user) throw new Error('Google account no longer exists');
+        if (user.status === 'blocked') {
+            if (isMobile) {
+                return res.redirect('rozare://auth/google/error?code=account_blocked');
+            }
+            return res.redirect(`${process.env.FRONTEND_URL}/login?error=account_blocked`);
+        }
 
         const payload = {
             id: user._id,
@@ -298,6 +316,16 @@ exports.googleCallback = async (req, res) => {
 exports.sendSellerOTP = async (req, res) => {
     const { username, email, password, phoneNumber, address, city, state, stateCode, country, countryCode, businessName } = req.body;
 
+    let sellerProductCurrency;
+    try {
+        sellerProductCurrency = productCurrencyForSellerSignupOtp(req.body);
+    } catch (error) {
+        return res.status(error.statusCode || error.status || 400).json({
+            msg: error.message,
+            code: error.code,
+        });
+    }
+
     try {
         const existingUser = await User.findOne({ email });
         if (existingUser) {
@@ -315,7 +343,8 @@ exports.sendSellerOTP = async (req, res) => {
                 email,
                 password,
                 role: 'seller',
-                isVerified: true
+                isVerified: true,
+                productCurrency: sellerProductCurrency,
             }
         });
         // Store seller info in a separate field via the OTP doc
@@ -347,7 +376,7 @@ exports.sendSellerOTP = async (req, res) => {
         
         <!-- Body Content -->
         <div style="padding:40px 32px;">
-            <p style="color:#334155;font-size:16px;margin:0 0 20px;">Hi <strong>${username}</strong>,</p>
+            <p style="color:#334155;font-size:16px;margin:0 0 20px;">Hi <strong>${escapeHtml(username)}</strong>,</p>
             
             <p style="color:#475569;font-size:15px;margin:0 0 28px;">
                 Thank you for signing up as a seller on Rozare! Enter the verification code below to confirm your email and complete your seller registration.
@@ -407,7 +436,13 @@ exports.verifySellerOTPAndRegister = async (req, res) => {
 
     try {
         const otpDoc = await OTP.findOne({ email, otp });
-        if (!otpDoc) return res.status(400).json({ msg: 'Invalid or expired OTP.' });
+        // A seller code must never be interchangeable with the ordinary buyer
+        // signup code. Otherwise the buyer verifier could create a seller
+        // without the WhatsApp/store transaction, or a buyer code could enter
+        // this seller-only flow.
+        if (!otpDoc || otpDoc.userData?.role !== 'seller') {
+            return res.status(400).json({ msg: 'Invalid or expired OTP.' });
+        }
 
         const existingUser = await User.findOne({ email });
         if (existingUser) {
@@ -415,27 +450,33 @@ exports.verifySellerOTPAndRegister = async (req, res) => {
             return res.status(409).json({ msg: 'E-mail is already taken.' });
         }
 
-        // Verify WhatsApp against server-side OTP record (if a number was provided).
-        // We DO NOT trust a client-sent `whatsappVerified` flag — the client could
-        // simply set it to true without ever going through OTP.
-        let whatsappVerifiedServerSide = false;
-        if (whatsappNumber) {
-            const { consumeVerifiedWhatsAppNumber } = require('./sellerWhatsappController');
-            whatsappVerifiedServerSide = await consumeVerifiedWhatsAppNumber(whatsappNumber);
-        }
-        if (!whatsappVerifiedServerSide) {
+        if (!whatsappNumber) {
             return res.status(400).json({
                 msg: 'Please verify your WhatsApp number before creating your seller account.'
             });
         }
 
-        const userData = { ...otpDoc.userData, isVerified: true };
-        const newUser = new User(userData);
-        newUser.sellerInfo = {
+        const persistedUserData = typeof otpDoc.userData?.toObject === 'function'
+            ? otpDoc.userData.toObject()
+            : { ...(otpDoc.userData || {}) };
+        const sellerProductCurrency = productCurrencyFromSellerSignupOtp(persistedUserData);
+        // productCurrency belongs to Store, not User. Keep it out of the User
+        // document and use the value frozen in the OTP record below.
+        const accountUserData = { ...persistedUserData };
+        delete accountUserData.productCurrency;
+        // Reserve one identity for transaction retries, but instantiate a new
+        // Mongoose document inside each callback attempt. Reusing a document
+        // saved by an aborted transaction can leave `isNew` false and make a
+        // retry update a User row that never committed.
+        const newUserId = new mongoose.Types.ObjectId();
+        const shouldCreateStore = Boolean(storeName && storeName.trim().length >= 3);
+        const requestedStoreName = shouldCreateStore ? storeName.trim() : '';
+        const sellerWelcomeOccurredAt = new Date();
+        const sellerInfo = {
             phoneNumber: phoneNumber?.trim() || '',
-            whatsappNumber: whatsappVerifiedServerSide ? toE164PhoneNumber(whatsappNumber) : '',
-            whatsappDigits: whatsappVerifiedServerSide ? normalizePhoneDigits(whatsappNumber) : '',
-            whatsappVerified: whatsappVerifiedServerSide,
+            whatsappNumber: toE164PhoneNumber(whatsappNumber),
+            whatsappDigits: normalizePhoneDigits(whatsappNumber),
+            whatsappVerified: true,
             address: address?.trim() || '',
             city: city?.trim() || '',
             state: state?.trim() || '',
@@ -444,35 +485,66 @@ exports.verifySellerOTPAndRegister = async (req, res) => {
             countryCode: countryCode?.trim() || '',
             businessName: businessName?.trim() || ''
         };
-        await newUser.save();
-        await OTP.deleteOne({ _id: otpDoc._id });
+        const sellerWelcomeNotice = {
+            occurredAt: sellerWelcomeOccurredAt,
+            storeName: requestedStoreName,
+            notificationEnqueuedAt: null,
+        };
 
-        let createdStoreName = '';
+        const Store = shouldCreateStore ? require('../models/Store') : null;
+        let slug = '';
+        if (shouldCreateStore) {
+            const baseSlug = slugifyStoreName(requestedStoreName)
+                || `store-${newUserId.toString().slice(-8)}`;
+            slug = baseSlug;
+            let existingStore = await Store.findOne({ storeSlug: slug });
+            let counter = 1;
+            while (existingStore) {
+                const suffix = `-${counter}`;
+                slug = `${baseSlug.slice(0, MAX_STORE_SLUG_LENGTH - suffix.length).replace(/-+$/g, '')}${suffix}`;
+                existingStore = await Store.findOne({ storeSlug: slug });
+                counter++;
+            }
+        }
 
-        // Auto-create store if storeName is provided
-        if (storeName && storeName.trim().length >= 3) {
-            try {
-                const Store = require('../models/Store');
-                const { initializeSubscription } = require('./subscriptionController');
-                
-                // Generate unique slug
-                const baseSlug = slugifyStoreName(storeName) || `store-${newUser._id.toString().slice(-8)}`;
-                let slug = baseSlug;
-                let existingStore = await Store.findOne({ storeSlug: slug });
-                let counter = 1;
-                while (existingStore) {
-                    const suffix = `-${counter}`;
-                    slug = `${baseSlug.slice(0, MAX_STORE_SLUG_LENGTH - suffix.length).replace(/-+$/g, '')}${suffix}`;
-                    existingStore = await Store.findOne({ storeSlug: slug });
-                    counter++;
-                }
+        let newUser = null;
+        let newStore = null;
+        await runInTransaction(async session => {
+            const { consumeVerifiedWhatsAppNumber } = require('./sellerWhatsappController');
+            const whatsappVerifiedServerSide = await consumeVerifiedWhatsAppNumber(
+                whatsappNumber,
+                null,
+                { session }
+            );
+            if (!whatsappVerifiedServerSide) {
+                const error = new Error('Please verify your WhatsApp number before creating your seller account.');
+                error.status = 400;
+                error.code = 'SELLER_WHATSAPP_VERIFICATION_REQUIRED';
+                throw error;
+            }
 
-                const newStore = new Store({
-                    seller: newUser._id,
-                    storeName: storeName.trim(),
+            const transactionUser = new User({
+                ...accountUserData,
+                _id: newUserId,
+                isVerified: true,
+                // A direct seller has no pre-existing account currency. Keep
+                // the OTP-frozen supported selection as the authoritative
+                // account default as well, so a legacy no-store registration
+                // cannot later auto-create a USD store after choosing PKR.
+                currency: sellerProductCurrency,
+                sellerInfo,
+                sellerWelcomeNotice,
+            });
+            await transactionUser.save({ session });
+            newUser = transactionUser;
+            if (shouldCreateStore) {
+                [newStore] = await Store.create([{
+                    seller: transactionUser._id,
+                    storeName: requestedStoreName,
                     storeSlug: slug,
                     sellerType: sellerType === 'brand' ? 'brand' : 'store',
                     description: storeDescription?.trim() || '',
+                    productCurrency: sellerProductCurrency,
                     socialLinks: normalizeSocialLinks(socialLinks),
                     address: {
                         street: address?.trim() || '',
@@ -482,30 +554,30 @@ exports.verifySellerOTPAndRegister = async (req, res) => {
                         country: country?.trim() || '',
                         countryCode: countryCode?.trim() || ''
                     }
-                });
-                await newStore.save();
-                await initializeSubscription(newUser._id);
-                createdStoreName = newStore.storeName;
-            } catch (storeErr) {
-                console.error('Auto-create store error:', storeErr.message);
-                // Don't fail registration if store creation fails
+                }], { session });
+                await enqueueStoreCreatedNotification(newStore, { session });
             }
-        }
+        });
 
-        notifySeller(newUser._id, 'seller_welcome', sellerTemplates.seller_welcome(createdStoreName)).catch(e =>
-            console.error('Seller WhatsApp welcome failed:', e.message)
+        // A committed User prevents replay even if this best-effort cleanup is
+        // temporarily unavailable; subsequent verification removes the stale
+        // email OTP through the existing-user branch above.
+        await OTP.deleteOne({ _id: otpDoc._id }).catch(error =>
+            console.error('Seller email OTP cleanup failed after registration:', error.message)
+        );
+
+        if (newStore) {
+            const { initializeSubscription } = require('./subscriptionController');
+            await initializeSubscription(newUser._id).catch(error =>
+                console.error('Seller subscription initialization failed; recovery is pending:', error.message)
+            );
+        }
+        await ensureSellerWelcomeNotification(newUser).catch(error =>
+            console.error('Seller welcome outbox handoff failed; recovery is pending:', error.message)
         );
 
         const payload = { id: newUser._id, username: newUser.username, email: newUser.email, role: newUser.role, avatar: newUser.avatar };
         const token = signAuthToken(payload);
-
-        // Send seller welcome email
-        try {
-            const emailData = sellerAccountCreatedEmail(newUser.username);
-            await sendEmail({ to: newUser.email, ...emailData });
-        } catch (emailErr) {
-            console.error('Failed to send seller welcome email:', emailErr.message);
-        }
 
         trackCompleteRegistration({
             req,
@@ -527,6 +599,16 @@ exports.verifySellerOTPAndRegister = async (req, res) => {
         res.status(200).json({ msg: 'Seller account created successfully!', token, user: payload });
     } catch (error) {
         console.error('Verify seller OTP error:', error);
+        if (error?.code === 11000) {
+            return res.status(409).json({
+                msg: 'The store name or WhatsApp number is already linked to another account. Please choose different details and retry.',
+                code: 'SELLER_ONBOARDING_CONFLICT',
+            });
+        }
+        const status = Number(error.statusCode || error.status);
+        if (Number.isInteger(status) && status >= 400 && status < 500) {
+            return res.status(status).json({ msg: error.message, code: error.code });
+        }
         res.status(500).json({ msg: 'Verification failed. Please try again.' });
     }
 };

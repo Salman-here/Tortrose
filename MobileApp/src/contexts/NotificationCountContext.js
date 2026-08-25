@@ -13,6 +13,17 @@ import {
   normalizeNotificationRole,
   scopeNotificationsForRole,
 } from '../utils/notificationScope';
+import {
+  dedupeInboxNotifications,
+  getNotificationInboxItemId,
+  getPushNotificationInboxId,
+} from '../utils/notificationDedupe';
+import {
+  parseNotificationInboxResponse,
+  parseStoredNotificationReadIds,
+  persistentInboxIds,
+  reconcileNotificationUnreadCount,
+} from '../utils/notificationInboxSafety';
 
 const Notifications = getNotificationsModule();
 
@@ -30,51 +41,88 @@ export const NotificationCountProvider = ({ children }) => {
   );
   const [unreadNotifCount, setUnreadNotifCount] = useState(0);
   const notifListenerRef = useRef(null);
+  const knownInboxIdsRef = useRef(new Set());
+  const refreshGenerationRef = useRef(0);
 
   const refreshUnreadCount = useCallback(async () => {
     const requestIdentity = identity;
+    const requestGeneration = refreshGenerationRef.current + 1;
+    refreshGenerationRef.current = requestGeneration;
+    if (!currentUser || role === 'guest') {
+      if (activeIdentityRef.current === requestIdentity) {
+        knownInboxIdsRef.current = new Set();
+        setUnreadNotifCount(0);
+      }
+      return 0;
+    }
     try {
-      const [storedRaw, readRaw] = await Promise.all([
+      const [storedRaw, readRaw, inboxResponse] = await Promise.all([
         AsyncStorage.getItem(storageKeys.inbox),
         AsyncStorage.getItem(storageKeys.read),
+        api.get('/api/notifications/me'),
       ]);
-      const stored = scopeNotificationsForRole(storedRaw ? JSON.parse(storedRaw) : [], currentUser);
-      const readSet = readRaw ? new Set(JSON.parse(readRaw)) : new Set();
-
-      let orderUnread = 0;
-      if (currentUser && (role === 'user' || role === 'seller')) {
-        try {
-          const res = await api.get('/api/order/user-orders');
-          const orders = res.data?.orders || [];
-          orders.forEach(o => {
-            const status = (o.orderStatus || o.status || '').toLowerCase();
-            if (status === 'delivered' && !readSet.has(`${o._id}_delivered_0`)) orderUnread++;
-            if (status === 'cancelled' && !readSet.has(`${o._id}_cancelled_0`)) orderUnread++;
-          });
-        } catch {}
+      const snapshot = parseNotificationInboxResponse(inboxResponse.data, { currentUser });
+      let cached = [];
+      if (storedRaw) {
+        const parsed = JSON.parse(storedRaw);
+        cached = dedupeInboxNotifications(scopeNotificationsForRole(
+          Array.isArray(parsed) ? parsed : [],
+          currentUser
+        ));
       }
-      const pushUnread = stored.filter(n => !readSet.has(n.id) && !n.read).length;
-      if (activeIdentityRef.current === requestIdentity) {
-        setUnreadNotifCount(pushUnread + orderUnread);
+      const readSet = parseStoredNotificationReadIds(readRaw);
+      const reconciled = reconcileNotificationUnreadCount({
+        snapshot,
+        cachedNotifications: cached,
+        readIds: readSet,
+        currentUser,
+      });
+      if (
+        activeIdentityRef.current === requestIdentity
+        && refreshGenerationRef.current === requestGeneration
+      ) {
+        knownInboxIdsRef.current = new Set([
+          ...persistentInboxIds(snapshot),
+          ...cached.map(getNotificationInboxItemId).filter(Boolean),
+        ]);
+        setUnreadNotifCount(reconciled);
       }
+      return reconciled;
     } catch {
-      if (activeIdentityRef.current === requestIdentity) setUnreadNotifCount(0);
+      if (
+        activeIdentityRef.current === requestIdentity
+        && refreshGenerationRef.current === requestGeneration
+      ) {
+        knownInboxIdsRef.current = new Set();
+        setUnreadNotifCount(0);
+      }
+      return 0;
     }
-  }, [currentUser?._id, currentUser?.id, currentUser?.role, identity, role, storageKeys.inbox, storageKeys.read]);
+  }, [currentUser, identity, role, storageKeys.inbox, storageKeys.read]);
 
   useEffect(() => {
+    refreshGenerationRef.current += 1;
     setUnreadNotifCount(0);
+    knownInboxIdsRef.current = new Set();
     refreshUnreadCount();
     if (!Notifications) return undefined;
-    notifListenerRef.current = Notifications.addNotificationReceivedListener((notification) => {
+    const listenerIdentity = identity;
+    const subscription = Notifications.addNotificationReceivedListener((notification) => {
+      if (activeIdentityRef.current !== listenerIdentity) return;
       const data = notification?.request?.content?.data || {};
       if (!isNotificationAllowedForRole({ data, category: data.category }, currentUser)) return;
+      const inboxId = getPushNotificationInboxId(notification, '');
+      if (inboxId && knownInboxIdsRef.current.has(inboxId)) return;
+      if (inboxId) knownInboxIdsRef.current.add(inboxId);
       setUnreadNotifCount((prev) => prev + 1);
+      refreshUnreadCount();
     });
+    notifListenerRef.current = subscription;
     return () => {
-      if (notifListenerRef.current) notifListenerRef.current.remove();
+      subscription?.remove?.();
+      if (notifListenerRef.current === subscription) notifListenerRef.current = null;
     };
-  }, [currentUser?._id, currentUser?.id, currentUser?.role, refreshUnreadCount]);
+  }, [currentUser, identity, refreshUnreadCount]);
 
   return (
     <NotificationCountContext.Provider value={{ unreadNotifCount, refreshUnreadCount }}>

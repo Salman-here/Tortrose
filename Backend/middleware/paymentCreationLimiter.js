@@ -1,6 +1,7 @@
 'use strict';
 
 const rateLimit = require('express-rate-limit');
+const { authenticatedAccountOrIpKey } = require('../services/requestIdentityService');
 
 const createPaymentLimiter = ({ max, message }) => rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -8,13 +9,7 @@ const createPaymentLimiter = ({ max, message }) => rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   validate: false,
-  keyGenerator: (req) => String(
-    req.user?.id
-    || req.headers['cf-connecting-ip']
-    || req.ip
-    || req.socket?.remoteAddress
-    || 'unknown'
-  ),
+  keyGenerator: authenticatedAccountOrIpKey,
   message: { msg: message, code: 'PAYMENT_RATE_LIMITED' },
 });
 

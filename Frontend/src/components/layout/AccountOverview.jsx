@@ -8,6 +8,8 @@ import Loader from '../common/Loader';
 import CurrencySelector from '../common/CurrencySelector';
 import { Link } from 'react-router-dom';
 import { getAuthToken } from "../../utils/cookieHelper";
+import { addCurrencyAmounts } from '../../utils/currencySafety';
+import { inspectOrderListMoney } from '../../utils/orderItems';
 
 const containerVariants = { hidden: { opacity: 0 }, visible: { opacity: 1, transition: { staggerChildren: 0.1 } } };
 const itemVariants = { hidden: { y: 20, opacity: 0 }, visible: { y: 0, opacity: 1, transition: { type: "spring", stiffness: 100 } } };
@@ -15,7 +17,14 @@ const cardVariants = { hidden: { scale: 0.95, opacity: 0 }, visible: { scale: 1,
 
 const AccountOverview = () => {
     const { currentUser } = useAuth();
-    const { currency, formatPrice } = useCurrency();
+    const {
+        currency,
+        convertLineAmounts,
+        exchangeRatesFallback,
+        exchangeRatesLoading,
+        formatAmount,
+        formatPrice,
+    } = useCurrency();
     const [orders, setOrders] = useState([]);
     const [userData, setUserData] = useState(currentUser);
     const [recentOrders, setRecentOrders] = useState([]);
@@ -33,34 +42,38 @@ const AccountOverview = () => {
 
     const pendingOrders = orders.filter(order => order.orderStatus === 'pending').length;
     const deliveredOrders = orders.filter(order => order.orderStatus === 'delivered').length;
-    const totalAmoutSpent = orders.reduce((acc, order) => {
-        if (order.isPaid) {
-            const subtotal = order.orderSummary.subtotal || 0;
-            const tax = order.orderSummary.tax || 0;
-            let actualShipping = order.orderSummary.shippingCost || 0;
-            if (order.sellerShipping && order.sellerShipping.length > 0) {
-                actualShipping = order.sellerShipping.reduce((sum, s) => sum + (s.shippingMethod.price || 0), 0);
-            }
-            return acc + (subtotal + tax + actualShipping);
+    const paidOrderMoney = orders.filter(order => order.isPaid).map(inspectOrderListMoney);
+    const paidOrderTotalsValid = paidOrderMoney.every(row => row.valid);
+    const paidOrderTotals = paidOrderTotalsValid
+        ? paidOrderMoney.map(row => ({ unitAmount: row.total, quantity: 1, sourceCurrency: row.currency }))
+        : [];
+    const totalSpentNeedsLiveRates = paidOrderTotals.some(line => line.sourceCurrency !== currency)
+        && (exchangeRatesLoading || exchangeRatesFallback);
+    let totalAmountSpent = null;
+    if (paidOrderTotalsValid && !totalSpentNeedsLiveRates) {
+        try {
+            totalAmountSpent = addCurrencyAmounts(...convertLineAmounts(paidOrderTotals, currency));
+        } catch (_) {
+            totalAmountSpent = null;
         }
-        return acc;
-    }, 0);
+    }
 
     const fetchOrders = async () => {
         const token = getAuthToken();
         setLoading(true);
         try {
             const res = await axios.get(`${import.meta.env.VITE_API_URL}api/order/user-orders`, { headers: { Authorization: `Bearer ${token}` } });
-            setOrders(res.data?.orders);
-            setRecentOrders(res.data?.orders.slice().reverse().slice(0, 3));
-        } catch (error) { console.error(error); }
+            if (!Array.isArray(res.data?.orders)) throw new Error('Order history is unavailable.');
+            setOrders(res.data.orders);
+            setRecentOrders(res.data.orders.slice().reverse().slice(0, 3));
+        } catch (error) { console.error(error); setOrders([]); setRecentOrders([]); }
         finally { setLoading(false); }
     };
 
     useEffect(() => { fetchOrders(); }, []);
 
     const formatDate = (dateString) => new Date(dateString).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
-    const formatCurrency = (amount) => formatPrice(amount);
+    const formatCurrency = (amount) => formatAmount(amount, { targetCurrency: currency });
 
     const getStatusDot = (status) => {
         const colors = { delivered: 'hsl(150, 60%, 45%)', shipped: 'hsl(200, 80%, 50%)', processing: 'hsl(45, 93%, 47%)', pending: 'hsl(30, 90%, 50%)' };
@@ -71,7 +84,7 @@ const AccountOverview = () => {
         { label: 'Total Orders', value: orders.length, icon: <ShoppingBag size={18} />, color: 'hsl(220, 70%, 55%)' },
         { label: 'Pending', value: pendingOrders, icon: <Clock size={18} />, color: 'hsl(30, 90%, 50%)' },
         { label: 'Delivered', value: deliveredOrders, icon: <CheckCircle size={18} />, color: 'hsl(150, 60%, 45%)' },
-        { label: 'Total Spent', value: formatCurrency(totalAmoutSpent), icon: <CreditCard size={18} />, color: 'hsl(200, 80%, 50%)' },
+        { label: 'Total Spent', value: totalAmountSpent === null ? 'Unavailable' : formatCurrency(totalAmountSpent), icon: <CreditCard size={18} />, color: 'hsl(200, 80%, 50%)' },
     ];
 
     const quickActions = [
@@ -165,7 +178,9 @@ const AccountOverview = () => {
                                             </motion.button>
                                         </Link>
                                     </div>
-                                ) : recentOrders.map((order, idx) => (
+                                ) : recentOrders.map((order, idx) => {
+                                    const money = inspectOrderListMoney(order);
+                                    return (
                                     <motion.div key={order._id} className="px-6 py-4 transition-colors hover:bg-white/5" style={{ borderBottom: idx < recentOrders.length - 1 ? '1px solid var(--glass-border-subtle)' : 'none' }}>
                                         <div className="flex items-center gap-4">
                                             <img src={order.orderItems[0].image} alt={order.orderItems[0].name} className="w-14 h-14 object-cover rounded-xl shrink-0" style={{ border: '1px solid var(--glass-border)' }} />
@@ -179,20 +194,15 @@ const AccountOverview = () => {
                                             </div>
                                             <div className="text-right shrink-0">
                                                 <p className="text-base font-extrabold" style={{ color: 'hsl(var(--foreground))' }}>
-                                                    {(() => {
-                                                        const subtotal = order.orderSummary.subtotal || 0;
-                                                        const tax = order.orderSummary.tax || 0;
-                                                        let actualShipping = order.orderSummary.shippingCost || 0;
-                                                        if (order.sellerShipping && order.sellerShipping.length > 0) {
-                                                            actualShipping = order.sellerShipping.reduce((sum, s) => sum + (s.shippingMethod.price || 0), 0);
-                                                        }
-                                                        return formatPrice(subtotal + tax + actualShipping, { sourceCurrency: order.currency || 'USD' });
-                                                    })()}
+                                                    {money.valid
+                                                        ? formatPrice(money.total, { sourceCurrency: money.currency })
+                                                        : 'Money unavailable'}
                                                 </p>
                                             </div>
                                         </div>
                                     </motion.div>
-                                ))}
+                                    );
+                                })}
                             </div>
                         </motion.div>
                     </>

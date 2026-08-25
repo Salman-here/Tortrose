@@ -13,6 +13,7 @@ import {
   buildProductPayload,
   buildProductReturnPolicy,
   getProductFormMode as getFormMode,
+  resolveProductFormCurrency,
   normalizeInitialProductImages as normalizeInitialImages,
   validateProductFormContract as validateProductForm,
 } from '../../../src/utils/productFormContract';
@@ -68,6 +69,25 @@ const formDataArbitrary = fc.record({
 });
 
 describe('ProductFormScreen Property Tests', () => {
+  test('currency-less persisted products edit as canonical USD even for a PKR account', () => {
+    expect(resolveProductFormCurrency({ _id: 'legacy-1', price: 10 }, 'PKR')).toBe('USD');
+  });
+
+  test('new products may inherit the current account currency', () => {
+    expect(resolveProductFormCurrency(undefined, 'PKR')).toBe('PKR');
+  });
+
+  test.each([
+    { _id: 'null', currency: null },
+    { _id: 'blank', currency: '' },
+    { _id: 'unsupported', currency: 'CAD' },
+    { _id: 'boolean', currency: false },
+    { _id: 'conflict', currency: 'USD', priceCurrency: 'PKR' },
+  ])('fails closed for present corrupt edit currency metadata: %j', product => {
+    expect(() => resolveProductFormCurrency(product, 'USD')).toThrow(
+      expect.objectContaining({ code: 'PRODUCT_CURRENCY_METADATA_INVALID' })
+    );
+  });
   /**
    * Property 28: Product Form Mode Detection
    * The ProductFormScreen SHALL detect whether it is in "create" mode (no product passed) 
@@ -133,7 +153,7 @@ describe('ProductFormScreen Property Tests', () => {
     });
 
     it('should require valid price', () => {
-      const invalidPrices = ['', '0', '-10', 'abc', null, undefined];
+      const invalidPrices = ['', '-10', 'abc', '1.001', '1e2', null, undefined, true];
       invalidPrices.forEach(price => {
         const result = validateProductForm(validForm({ price }), validOptions());
         expect(result.isValid).toBe(false);
@@ -176,6 +196,15 @@ describe('ProductFormScreen Property Tests', () => {
     it('should allow zero stock', () => {
       const result = validateProductForm(validForm({ stock: '0' }), validOptions());
       expect(result.isValid).toBe(true);
+    });
+
+    it('supports an intentional free product but rejects a sale price on it', () => {
+      expect(validateProductForm(validForm({ price: '0', discountedPrice: '' }), validOptions()).isValid)
+        .toBe(true);
+      expect(validateProductForm(validForm({ price: '0.00', discountedPrice: '0' }), validOptions()).isValid)
+        .toBe(true);
+      expect(validateProductForm(validForm({ price: '0', discountedPrice: '0.01' }), validOptions()).errors.discountedPrice)
+        .toBeDefined();
     });
 
     it('should trim whitespace from name validation', () => {

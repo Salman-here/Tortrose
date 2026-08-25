@@ -52,7 +52,7 @@ const StatCard = ({ title, value, icon, iconColor, iconBgColor, trend, onPress, 
 };
 
 export const RevenueStatCard = ({ value, trend, onPress }) => (
-  <StatCard title="Revenue" value={`$${typeof value === 'number' ? value.toLocaleString() : value}`} icon="cash-outline" iconColor={staticColors.success} trend={trend} onPress={onPress} />
+  <StatCard title="Revenue" value={value} icon="cash-outline" iconColor={staticColors.success} trend={trend} onPress={onPress} />
 );
 export const OrdersStatCard = ({ value, trend, onPress }) => (
   <StatCard title="Total Orders" value={value} icon="receipt-outline" iconColor={staticColors.info} trend={trend} onPress={onPress} />

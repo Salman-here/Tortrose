@@ -18,15 +18,76 @@
 //      interactive messages fail, the queue records a send failure instead of
 //      falling back to a typed-reply flow.
 
-const { normalizeCurrency } = require('../currencyService');
 const {
     formatOrderMoney,
     formatItemOptionsText,
+    getOrderCurrency,
+    orderItemLineSubtotal,
     orderItemName,
+    requirePresentationMoney,
 } = require('../../utils/orderPresentation');
+const { toMinorUnits } = require('../moneyMath');
 
-const orderCurrency = (order) => normalizeCurrency(order?.currency || order?.displayCurrency || 'USD');
-const formatMoney = (n, currency) => formatOrderMoney(n, currency || 'USD');
+const presentationIntegrityError = (message) => {
+    const error = new Error(message);
+    error.statusCode = 409;
+    error.code = 'ORDER_PRESENTATION_DATA_INVALID';
+    return error;
+};
+
+const orderCurrency = (order) => {
+    const storedCurrency = order?.currency;
+    const currency = getOrderCurrency({ currency: storedCurrency }, null);
+    if (typeof storedCurrency !== 'string' || storedCurrency !== currency) {
+        throw presentationIntegrityError('The stored order currency is invalid.');
+    }
+    return currency;
+};
+const formatMoney = (n, currency) => formatOrderMoney(n, currency);
+
+const exactMinor = (value, label) => BigInt(toMinorUnits(
+    requirePresentationMoney(value, label),
+));
+
+// COD confirmations are frozen financial messages. Do not generate one from a
+// partial/legacy-looking object: every displayed line and the displayed total
+// must reconcile with the authoritative checkout snapshot before it reaches
+// the durable WhatsApp queue.
+const assertCodConfirmationMoneyIntegrity = (order) => {
+    const currency = orderCurrency(order);
+    if (!Array.isArray(order?.orderItems) || order.orderItems.length === 0) {
+        throw presentationIntegrityError('The stored order items are invalid.');
+    }
+    if (!order?.orderSummary || typeof order.orderSummary !== 'object') {
+        throw presentationIntegrityError('The stored order summary is invalid.');
+    }
+
+    let lineSubtotalMinor = 0n;
+    for (const item of order.orderItems) {
+        const quantity = item?.quantity;
+        if (!Number.isSafeInteger(quantity) || quantity < 1) {
+            throw presentationIntegrityError('The stored order item quantity is invalid.');
+        }
+        lineSubtotalMinor += exactMinor(orderItemLineSubtotal({
+            price: item.price,
+            lineSubtotal: item.lineSubtotal,
+            quantity,
+        }), 'order item line subtotal');
+    }
+
+    const subtotalMinor = exactMinor(order.orderSummary.subtotal, 'order subtotal');
+    const shippingMinor = exactMinor(order.orderSummary.shippingCost, 'order shipping');
+    const taxMinor = exactMinor(order.orderSummary.tax, 'order tax');
+    const discountMinor = exactMinor(order.orderSummary.couponDiscount, 'order coupon discount');
+    const totalMinor = exactMinor(order.orderSummary.totalAmount, 'order total');
+    if (
+        lineSubtotalMinor !== subtotalMinor
+        || subtotalMinor + shippingMinor + taxMinor - discountMinor !== totalMinor
+    ) {
+        throw presentationIntegrityError('The stored order total does not reconcile with its item and summary snapshots.');
+    }
+    return currency;
+};
 
 const itemStoreName = (it) =>
     it?.store?.storeName ||
@@ -36,8 +97,18 @@ const itemStoreName = (it) =>
     '';
 
 const buildProductLine = (it, currency) => {
-    const qty = Number(it.quantity || it.qty || 1) || 1;
-    const price = formatOrderMoney((Number(it.price) || 0) * qty, currency);
+    const qty = it.quantity;
+    if (!Number.isSafeInteger(qty) || qty < 1) {
+        const error = new Error('The stored order item quantity is invalid.');
+        error.statusCode = 409;
+        error.code = 'ORDER_PRESENTATION_DATA_INVALID';
+        throw error;
+    }
+    const price = formatOrderMoney(orderItemLineSubtotal({
+        price: it.price,
+        lineSubtotal: it.lineSubtotal,
+        quantity: qty,
+    }), currency);
     const store = itemStoreName(it);
     const options = formatItemOptionsText(it);
     return `- ${orderItemName(it)}${options ? ` (${options})` : ''} x${qty} - ${price}${store ? ` _(from ${store})_` : ''}`;
@@ -80,7 +151,7 @@ exports.KEEPCANCEL_BTN_PREFIX = KEEPCANCEL_BTN_PREFIX;
 exports.buildOrderButtonsPayload = (order) => {
     const buyerName = order.shippingInfo?.fullName?.split(' ')[0] || 'there';
     const itemCount = order.orderItems?.length || 0;
-    const currency = orderCurrency(order);
+    const currency = assertCodConfirmationMoneyIntegrity(order);
     const total = formatMoney(order.orderSummary?.totalAmount, currency);
     const city = order.shippingInfo?.city || 'your location';
 
@@ -128,7 +199,7 @@ exports.buildOrderButtonsPayload = (order) => {
 exports.buildOrderListPayload = (order) => {
     const buyerName = order.shippingInfo?.fullName?.split(' ')[0] || 'there';
     const itemCount = order.orderItems?.length || 0;
-    const currency = orderCurrency(order);
+    const currency = assertCodConfirmationMoneyIntegrity(order);
     const total = formatMoney(order.orderSummary?.totalAmount, currency);
     const city = order.shippingInfo?.city || 'your location';
 
@@ -176,7 +247,7 @@ exports.buildOrderListPayload = (order) => {
 exports.buildOrderConfirmationMessage = (order) => {
     const buyerName = order.shippingInfo?.fullName?.split(' ')[0] || 'there';
     const itemCount = order.orderItems?.length || 0;
-    const currency = orderCurrency(order);
+    const currency = assertCodConfirmationMoneyIntegrity(order);
     const total = formatMoney(order.orderSummary?.totalAmount, currency);
     const city = order.shippingInfo?.city || 'your location';
 
@@ -228,28 +299,17 @@ exports.parseButtonId = (id) => {
 };
 
 // ──────────────────────────────────────────────────────────────────────────
-// Phone normalisation (unchanged)
+// Phone normalisation for already-authoritative internal destinations. Raw
+// order input is canonicalized with country context before reaching this path.
 // ──────────────────────────────────────────────────────────────────────────
-const DEFAULT_COUNTRY_CODE = String(process.env.WHATSAPP_DEFAULT_COUNTRY_CODE || '92')
-    .replace(/[^\d]/g, '') || '92';
-
 exports.normalizePhone = (raw) => {
     if (!raw) return '';
     let p = String(raw).trim();
-
-    const hadPlus = p.startsWith('+');
     const hadDoubleZero = /^00\d/.test(p);
-
     p = p.replace(/[^\d]/g, '');
     if (!p) return '';
-
-    if (hadPlus) return p;
-    if (hadDoubleZero) return p.replace(/^00/, '');
-
-    p = p.replace(/^0+/, '');
-    if (p.length > 0 && p.length <= 10) p = DEFAULT_COUNTRY_CODE + p;
-
-    return p;
+    if (hadDoubleZero) p = p.replace(/^00/, '');
+    return /^[1-9]\d{7,14}$/.test(p) ? p : '';
 };
 
 // ──────────────────────────────────────────────────────────────────────────

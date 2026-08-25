@@ -7,7 +7,14 @@
 
 import { Alert, Linking } from 'react-native';
 import api from '../config/api';
-import { formatOrderItemOptions } from './orderPresentation';
+import {
+  formatOrderItemOptions,
+  getOrderCurrency,
+  getOrderItemLineSubtotal,
+  getOrderItemQuantity,
+  getOrderTotal,
+} from './orderPresentation';
+import { currencyCodeIsSupported, roundCurrencyAmount } from './currencySafety';
 
 const digitsOnly = (value) => String(value || '').replace(/\D/g, '');
 
@@ -34,23 +41,37 @@ export const sanitizePhone = (rawPhone, countryCallingCode = '') => {
   return international.length >= 8 && international.length <= 15 ? international : '';
 };
 
-const formatMoney = (amount, formatPrice, sourceCurrency = 'USD') => {
-  const numericAmount = Number(amount || 0);
+const formatMoney = (amount, formatPrice, sourceCurrency) => {
+  if (
+    typeof amount !== 'number'
+    || !Number.isFinite(amount)
+    || amount < 0
+    || roundCurrencyAmount(amount) !== amount
+    || typeof sourceCurrency !== 'string'
+    || sourceCurrency !== sourceCurrency.trim().toUpperCase()
+    || !currencyCodeIsSupported(sourceCurrency)
+  ) {
+    const error = new Error('The stored order money cannot be represented safely.');
+    error.code = 'ORDER_PRESENTATION_DATA_INVALID';
+    throw error;
+  }
   if (typeof formatPrice === 'function') {
-    try {
-      return formatPrice(numericAmount, { sourceCurrency });
-    } catch (_) {}
+    return formatPrice(amount, {
+      sourceCurrency,
+      targetCurrency: sourceCurrency,
+      showCode: true,
+    });
   }
 
   try {
     return new Intl.NumberFormat(undefined, {
       style: 'currency',
-      currency: sourceCurrency || 'USD',
+      currency: sourceCurrency,
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
-    }).format(numericAmount);
+    }).format(amount);
   } catch (_) {
-    return `${sourceCurrency || 'USD'} ${numericAmount.toFixed(2)}`;
+    return `${sourceCurrency} ${amount.toFixed(2)}`;
   }
 };
 
@@ -61,27 +82,17 @@ export const buildVerifyMessage = (order, formatPrice) => {
     || order?.orderItems?.[0]?.store?.storeName
     || 'our store';
   const orderId = order?.orderId || String(order?._id || '').slice(-8).toUpperCase();
-  const currency = order?.currency || 'USD';
+  const currency = getOrderCurrency(order);
 
   const lines = (order?.orderItems || []).map((item) => {
     const name = item?.product?.name || item?.productId?.name || item?.name || 'Item';
-    const quantity = item?.qty || item?.quantity || 1;
+    const quantity = getOrderItemQuantity(item);
     const options = formatOrderItemOptions(item);
-    const total = formatMoney((Number(item?.price) || 0) * quantity, formatPrice, currency);
+    const total = formatMoney(getOrderItemLineSubtotal(item), formatPrice, currency);
     return `- ${name}${options ? ` (${options})` : ''} x${quantity} - ${total}`;
   });
 
-  const summary = order?.orderSummary || {};
-  const subtotal = Number(summary.subtotal || 0);
-  const tax = Number(summary.tax || 0);
-  let shipping = Number(summary.shippingCost || 0);
-  if (order?.sellerShipping?.length) {
-    shipping = order.sellerShipping.reduce(
-      (sum, entry) => sum + Number(entry?.shippingMethod?.price || 0),
-      0,
-    );
-  }
-  const total = Number(summary.totalAmount ?? subtotal + tax + shipping);
+  const total = getOrderTotal(order);
 
   return [
     `Hello ${fullName}, this is ${storeName} on Rozare.`,
@@ -136,7 +147,16 @@ export const openWhatsAppVerify = async (order, formatPrice) => {
     return false;
   }
 
-  const text = encodeURIComponent(buildVerifyMessage(order, formatPrice));
+  let text;
+  try {
+    text = encodeURIComponent(buildVerifyMessage(order, formatPrice));
+  } catch (_) {
+    Alert.alert(
+      'Order total unavailable',
+      'This order contains invalid money data and cannot be sent for verification. Refresh it or contact support.',
+    );
+    return false;
+  }
   const appUrl = `whatsapp://send?phone=${phone}&text=${text}`;
   const webUrl = `https://wa.me/${phone}?text=${text}`;
 
