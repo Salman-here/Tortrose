@@ -18,6 +18,7 @@ import {
     parseStoredGuestCart,
     serializeGuestCart,
 } from "../utils/guestCart";
+import { validateProductSelection } from "../utils/productOptions";
 
 const GlobalContext = createContext();
 
@@ -173,58 +174,86 @@ export const GlobalProvider = ({ children }) => {
     // ===================================
     const [loadingProductId, setLoadingProductId] = useState(null)
     
-    const handleAddToCart = async (id, selectedColor = null, selectedOptions = null) => {
+    const handleAddToCart = async (id, selectedColor = null, selectedOptions = null, productHint = null) => {
         try {
             setIsCartLoading(true)
             setLoadingProductId(id)
-            const myKey = optionsKeyOf(selectedOptions);
+            let canonicalColor = selectedColor;
+            let canonicalOptions = selectedOptions;
+            let authoritativeProduct = productHint;
+
+            if (authoritativeProduct) {
+                const selection = validateProductSelection(
+                    authoritativeProduct,
+                    selectedOptions,
+                    selectedColor,
+                );
+                if (!selection.ok) {
+                    const missing = selection.missingOptions.map(option => option.name).join(', ');
+                    throw new Error(missing ? `Choose ${missing} before adding this product.` : 'Review the selected product options.');
+                }
+                canonicalColor = selection.selectedColor;
+                canonicalOptions = selection.selectedOptions;
+            }
+
+            const myKey = optionsKeyOf(canonicalOptions);
 
             const existingCartItem = cartItems?.cart?.find(item =>
                 item?.product?._id === id &&
-                item?.selectedColor === selectedColor &&
+                (item?.selectedColor || null) === (canonicalColor || null) &&
                 optionsKeyOf(item?.selectedOptions) === myKey
             ) || null;
 
             if (existingCartItem) {
                 await handleRemoveCartItem(existingCartItem._id);
-                setIsCartLoading(false);
-                setLoadingProductId(null);
-                return;
+                return true;
             }
 
             if (!currentUser) {
-                try {
-                    const params = new URLSearchParams();
-                    appendLocationParams(params);
-                    const suffix = params.toString();
-                    const pRes = await axios.get(`${import.meta.env.VITE_API_URL}api/products/get-single-product/${id}${suffix ? `?${suffix}` : ''}`);
-                    const pData = pRes.data.product || pRes.data;
-                    if (!Number.isSafeInteger(pData?.stock) || pData.stock < 1) {
-                        throw new Error('This product is currently out of stock.');
-                    }
-                    const gc = getGuestCart();
-                    const nextCart = saveGuestCart([
-                        ...gc,
-                        { product: pData, qty: 1, selectedColor, selectedOptions: selectedOptions || undefined },
-                    ]);
-                    setCartItems(guestCartState(nextCart));
-                    trackAddToCart(pData, 1);
-                    toast.success('Added to cart');
-                } catch (error) { toast.error(error?.message || 'Failed to add to cart'); }
-                setIsCartLoading(false);
-                setLoadingProductId(null);
-                return;
+                const params = new URLSearchParams();
+                appendLocationParams(params);
+                const suffix = params.toString();
+                const pRes = await axios.get(`${import.meta.env.VITE_API_URL}api/products/get-single-product/${id}${suffix ? `?${suffix}` : ''}`);
+                authoritativeProduct = pRes.data.product || pRes.data;
+                const selection = validateProductSelection(
+                    authoritativeProduct,
+                    selectedOptions,
+                    selectedColor,
+                );
+                if (!selection.ok) {
+                    const missing = selection.missingOptions.map(option => option.name).join(', ');
+                    throw new Error(missing ? `Choose ${missing} before adding this product.` : 'Review the selected product options.');
+                }
+                canonicalColor = selection.selectedColor;
+                canonicalOptions = selection.selectedOptions;
+                if (!Number.isSafeInteger(authoritativeProduct?.stock) || authoritativeProduct.stock < 1) {
+                    throw new Error('This product is currently out of stock.');
+                }
+                const gc = getGuestCart();
+                const nextCart = saveGuestCart([
+                    ...gc,
+                    {
+                        product: authoritativeProduct,
+                        qty: 1,
+                        selectedColor: canonicalColor,
+                        selectedOptions: canonicalOptions || undefined,
+                    },
+                ]);
+                setCartItems(guestCartState(nextCart));
+                trackAddToCart(authoritativeProduct, 1);
+                toast.success('Added to cart');
+                return true;
             }
 
             const token = getAuthToken()
             const res = await axios.post(`${import.meta.env.VITE_API_URL}api/cart/add/${id}`,
-                { selectedColor, selectedOptions: selectedOptions || undefined },
+                { selectedColor: canonicalColor, selectedOptions: canonicalOptions || undefined },
                 { headers: { Authorization: `Bearer ${token}` } })
             toast.success(res.data.msg)
 
             const addedItem = res.data.cart?.find(item =>
                 item?.product?._id === id &&
-                item?.selectedColor === selectedColor &&
+                (item?.selectedColor || null) === (canonicalColor || null) &&
                 optionsKeyOf(item?.selectedOptions) === myKey
             );
             if (addedItem?.product) trackAddToCart(addedItem.product, 1);
@@ -232,10 +261,12 @@ export const GlobalProvider = ({ children }) => {
             // Update cart items with fresh data from backend
             // Update cart items with fresh data from backend
             setCartItems(normalizeServerCartPayload(res.data))
+            return true;
 
         } catch (error) {
             console.error(error);
-            toast.error(error.response?.data?.msg || 'Failed to add to cart')
+            toast.error(error.response?.data?.msg || error.message || 'Failed to add to cart')
+            return false;
         }
         finally {
             setIsCartLoading(false)

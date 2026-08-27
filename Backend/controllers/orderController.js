@@ -78,6 +78,10 @@ const {
     parseStrictFiniteNumber,
 } = require('../services/numericInputService');
 const {
+    validateProductSelection,
+    createProductSelectionError,
+} = require('../services/productSelectionService');
+const {
     validateAndPriceCoupons,
     validateAndPriceShipping,
 } = require('../services/checkoutPricingService');
@@ -1249,6 +1253,13 @@ exports.placeOrder = async (req, res) => {
         const nativeOrderItems = order.orderItems.map((item) => {
             const product = productById.get(toId(item.id));
             if (!product) return null;
+            const selection = validateProductSelection(product, {
+                selectedColor: item.selectedColor,
+                selectedOptions: item.selectedOptions,
+            });
+            if (!selection.ok) {
+                throw createProductSelectionError(product, selection, 'checkout');
+            }
             const quantity = parsePositiveSafeInteger(item.quantity, { fallback: 1 });
             if (quantity === null) {
                 const err = new Error(`Choose a whole-number quantity of at least 1 for "${product.name}".`);
@@ -1278,8 +1289,8 @@ exports.placeOrder = async (req, res) => {
                 priceOriginal: sourcePrice,
                 priceCurrency: sourceCurrency,
                 quantity,
-                selectedColor: item.selectedColor || null,
-                selectedOptions: item.selectedOptions || undefined,
+                selectedColor: selection.selectedColor,
+                selectedOptions: selection.selectedOptions,
                 returnPolicySnapshotVersion: 1,
                 returnPolicy: effectiveReturnPolicy,
             };
@@ -1963,6 +1974,15 @@ exports.placeOrder = async (req, res) => {
         return res.status(error.statusCode || 500).json({
             msg: error.statusCode ? error.message : "Server error while creating checkout session. Try again!",
             ...(error.code ? { code: error.code } : {}),
+            ...(error?.needsSelection ? {
+                needsSelection: true,
+                productId: error.productId,
+                productName: error.productName,
+                requiredOptions: error.requiredOptions,
+                availableColors: error.availableColors,
+                missingOptions: error.missingOptions,
+                invalidOptions: error.invalidOptions,
+            } : {}),
         });
     }
 }
@@ -3291,11 +3311,18 @@ exports.reorder = async (req, res) => {
             }
             if (product.stock === 0) { unavailable++; continue; }
             const qty = Math.min(orderedQuantity, product.stock);
-            const selectedOptions = toPlainOptions(item.selectedOptions);
+            const selection = validateProductSelection(product, {
+                selectedColor: item.selectedColor,
+                selectedOptions: toPlainOptions(item.selectedOptions),
+            });
+            if (!selection.ok) {
+                throw createProductSelectionError(product, selection, 'add');
+            }
+            const selectedOptions = selection.selectedOptions || {};
             const itemOptionsKey = optionsKey(selectedOptions);
             const existing = cart.cartItems.find(
                 (p) => p.product?.toString() === item.productId.toString() &&
-                       (p.selectedColor || null) === (item.selectedColor || null) &&
+                       (p.selectedColor || null) === selection.selectedColor &&
                        optionsKey(p.selectedOptions) === itemOptionsKey
             );
             if (existing) {
@@ -3318,7 +3345,7 @@ exports.reorder = async (req, res) => {
                 cart.cartItems.push({
                     product: item.productId,
                     qty,
-                    selectedColor: item.selectedColor || null,
+                    selectedColor: selection.selectedColor,
                     selectedOptions: Object.keys(selectedOptions).length ? selectedOptions : undefined,
                 });
             }
@@ -3336,6 +3363,15 @@ exports.reorder = async (req, res) => {
         res.status(error.statusCode || 500).json({
             msg: error.statusCode ? error.message : 'Server error while re-ordering',
             ...(error.code ? { code: error.code } : {}),
+            ...(error?.needsSelection ? {
+                needsSelection: true,
+                productId: error.productId,
+                productName: error.productName,
+                requiredOptions: error.requiredOptions,
+                availableColors: error.availableColors,
+                missingOptions: error.missingOptions,
+                invalidOptions: error.invalidOptions,
+            } : {}),
         });
     }
 };

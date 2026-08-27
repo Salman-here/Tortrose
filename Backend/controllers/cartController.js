@@ -9,6 +9,10 @@ const { getProductCurrency, getProductEffectivePrice } = require('../services/pr
 const { sumMoney } = require('../services/moneyMath');
 const { priceOrderItemLines } = require('../services/orderLinePricingService');
 const { parsePositiveSafeInteger } = require('../services/numericInputService');
+const {
+    validateProductSelection,
+    createProductSelectionError,
+} = require('../services/productSelectionService');
 
 const cartDataIntegrityError = (message, code = 'CART_DATA_INVALID') => {
     const error = new Error(message);
@@ -72,6 +76,15 @@ const sendCartError = (res, error, fallbackMessage) => res
     .json({
         msg: error?.statusCode ? error.message : fallbackMessage,
         ...(error?.code ? { code: error.code } : {}),
+        ...(error?.needsSelection ? {
+            needsSelection: true,
+            productId: error.productId,
+            productName: error.productName,
+            requiredOptions: error.requiredOptions,
+            availableColors: error.availableColors,
+            missingOptions: error.missingOptions,
+            invalidOptions: error.invalidOptions,
+        } : {}),
     });
 
 // Stable string key for an option set, used to dedupe cart lines per variant combo
@@ -128,16 +141,24 @@ exports.addToCart = async (req, res) => {
     const { id: userId } = req.user
     const { id } = req.params
     const { selectedColor, selectedOptions } = req.body || {}
-    const incomingKey = optionsKey(selectedOptions);
 
     try {
-        const product = await Product.findOne(publicProductFilter({ _id: id })).select('_id stock').lean();
+        const product = await Product.findOne(publicProductFilter({ _id: id }))
+            .select('_id name stock colors optionGroups')
+            .lean();
         if (!product) {
             return res.status(404).json({ msg: 'Product is not available' });
         }
         if (requireStoredProductStock(product.stock) < 1) {
             return res.status(409).json({ msg: 'Product is out of stock' });
         }
+        const selection = validateProductSelection(product, { selectedColor, selectedOptions });
+        if (!selection.ok) {
+            throw createProductSelectionError(product, selection, 'add');
+        }
+        const canonicalColor = selection.selectedColor;
+        const canonicalOptions = selection.selectedOptions;
+        const incomingKey = optionsKey(canonicalOptions);
 
         const existingCart = await Cart.findOne({ user: userId })
 
@@ -145,7 +166,7 @@ exports.addToCart = async (req, res) => {
             await assertPersistedCartQuantities(existingCart);
             const item = existingCart.cartItems.find(item =>
                 item.product.equals(id) &&
-                item.selectedColor === (selectedColor || null) &&
+                item.selectedColor === canonicalColor &&
                 optionsKey(item.selectedOptions) === incomingKey
             )
 
@@ -156,8 +177,8 @@ exports.addToCart = async (req, res) => {
 
             existingCart.cartItems.push({
                 product: id,
-                selectedColor: selectedColor || null,
-                selectedOptions: selectedOptions || undefined,
+                selectedColor: canonicalColor,
+                selectedOptions: canonicalOptions,
             })
             await existingCart.populate('cartItems.product')
             await existingCart.save()
@@ -170,8 +191,8 @@ exports.addToCart = async (req, res) => {
             cartItems: [
                 {
                     product: id,
-                    selectedColor: selectedColor || null,
-                    selectedOptions: selectedOptions || undefined,
+                    selectedColor: canonicalColor,
+                    selectedOptions: canonicalOptions,
                 }
             ]
         })
@@ -229,10 +250,24 @@ exports.mergeGuestCart = async (req, res) => {
 
         const productIds = [...new Set(normalized.map((item) => item.productId))];
         const products = await Product.find(publicProductFilter({ _id: { $in: productIds } }))
-            .select('_id stock')
+            .select('_id name stock colors optionGroups')
             .lean();
         products.forEach(product => requireStoredProductStock(product.stock));
         const productsById = new Map(products.map((product) => [String(product._id), product]));
+
+        const mergeableItems = normalized.flatMap((item) => {
+            const product = productsById.get(item.productId);
+            if (!product || product.stock < 1) return [];
+            const selection = validateProductSelection(product, item);
+            if (!selection.ok) {
+                throw createProductSelectionError(product, selection, 'add');
+            }
+            return [{
+                ...item,
+                selectedColor: selection.selectedColor,
+                selectedOptions: selection.selectedOptions,
+            }];
+        });
 
         let cart = await Cart.findOne({ user: userId });
         if (cart) {
@@ -241,9 +276,8 @@ exports.mergeGuestCart = async (req, res) => {
             cart = new Cart({ user: userId, cartItems: [] });
         }
 
-        for (const item of normalized) {
+        for (const item of mergeableItems) {
             const product = productsById.get(item.productId);
-            if (!product || product.stock < 1) continue;
 
             const itemKey = optionsKey(item.selectedOptions);
             const existingItem = cart.cartItems.find((cartItem) =>

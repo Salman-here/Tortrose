@@ -23,7 +23,7 @@ const createUser = () => User.create({
   currency: 'PKR',
 });
 
-const createProduct = (seller, suffix, stock = 10) => Product.create({
+const createProduct = (seller, suffix, stock = 10, overrides = {}) => Product.create({
   name: `Merge Product ${suffix}`,
   description: `Merge product ${suffix} for checkout testing.`,
   price: 500,
@@ -35,6 +35,7 @@ const createProduct = (seller, suffix, stock = 10) => Product.create({
   image: `https://example.com/${suffix}.jpg`,
   images: [{ url: `https://example.com/${suffix}.jpg` }],
   seller: seller._id,
+  ...overrides,
 });
 
 beforeAll(async () => {
@@ -69,7 +70,10 @@ describe('guest cart merge', () => {
       role: 'seller',
       currency: 'PKR',
     });
-    const product = await createProduct(seller, 'options', 8);
+    const product = await createProduct(seller, 'options', 8, {
+      colors: ['Black'],
+      optionGroups: [{ name: 'Size', values: ['Small', 'Large'] }],
+    });
 
     const res = await request(app)
       .post('/api/cart/merge')
@@ -101,7 +105,7 @@ describe('guest cart merge', () => {
       role: 'seller',
       currency: 'PKR',
     });
-    const product = await createProduct(seller, 'stock', 5);
+    const product = await createProduct(seller, 'stock', 5, { colors: ['Blue'] });
     await Cart.create({
       user: buyer._id,
       cartItems: [{ product: product._id, qty: 4, selectedColor: 'Blue' }],
@@ -141,6 +145,32 @@ describe('guest cart merge', () => {
       expect(await Cart.findOne({ user: buyer._id })).toBeNull();
     },
   );
+
+  test('rejects an incomplete configurable line without creating a cart', async () => {
+    const buyer = await createUser();
+    const seller = await User.create({
+      username: 'cart-options-required-seller',
+      email: 'cart-options-required-seller@test.com',
+      password: 'password123',
+      role: 'seller',
+      currency: 'PKR',
+    });
+    const product = await createProduct(seller, 'required-options', 5, {
+      optionGroups: [{ name: 'Size', values: ['S', 'M'] }],
+    });
+
+    const res = await request(app)
+      .post('/api/cart/merge')
+      .set('Authorization', tokenFor(buyer))
+      .send({ items: [{ productId: product._id.toString(), qty: 1 }] });
+
+    expect(res.status).toBe(400);
+    expect(res.body).toMatchObject({
+      code: 'PRODUCT_OPTIONS_REQUIRED',
+      needsSelection: true,
+    });
+    expect(await Cart.findOne({ user: buyer._id })).toBeNull();
+  });
 
   test('fails closed without repairing a corrupt raw existing-cart quantity', async () => {
     const buyer = await createUser();

@@ -25,6 +25,7 @@ import GlassBackground from '../components/common/GlassBackground';
 import GlassPanel from '../components/common/GlassPanel';
 import KeyboardAwareFormScrollView from '../components/common/KeyboardAwareFormScrollView';
 import PremiumTopBar, { PremiumTopBarAction } from '../components/common/PremiumTopBar';
+import ProductOptionsModal from '../components/common/ProductOptionsModal';
 import { trackProductView } from '../utils/recentlyViewed';
 import {
   clampGalleryIndex,
@@ -35,6 +36,12 @@ import {
 import { spacing, fontSize, borderRadius, shadows, fontWeight } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 import { getCartPresentationItemCount } from '../utils/cartPresentation';
+import {
+  getInitialProductSelections,
+  hasProductOptions,
+  validateProductSelections,
+} from '../utils/productOptions';
+import { optionsKeyOf } from '../utils/guestCart';
 
 const PRODUCT_TOPBAR_SHEEN = [
   'rgba(14,165,233,0.12)',
@@ -66,6 +73,7 @@ export default function ProductDetailScreen({ route, navigation }) {
   const [selectedImageIndex, setSelectedImageIndex] = useState(0);
   const [selectedColor, setSelectedColor] = useState(null);
   const [selectedOptions, setSelectedOptions] = useState({});
+  const [optionsModalVisible, setOptionsModalVisible] = useState(false);
   const [storeData, setStoreData] = useState(null);
   const [storeProductCount, setStoreProductCount] = useState(null);
   const [storePolicy, setStorePolicy] = useState(null);
@@ -84,15 +92,16 @@ export default function ProductDetailScreen({ route, navigation }) {
   const [reviewComment, setReviewComment] = useState('');
   const [submittingReview, setSubmittingReview] = useState(false);
 
-  const optionsKeyOf = (opts) => opts ? Object.keys(opts).filter(k => opts[k]).sort().map(k => `${k}:${opts[k]}`).join('|') : '';
-  const myOptKey = optionsKeyOf(selectedOptions);
-  const allOptionsSelected = product?.optionGroups?.length
-    ? product.optionGroups.every(g => selectedOptions[g.name])
-    : (!product?.colors?.length || !!selectedColor);
+  const productHasOptions = hasProductOptions(product);
+  const selectionValidation = validateProductSelections(product, {
+    selectedColor,
+    selectedOptions,
+  });
+  const myOptKey = optionsKeyOf(selectionValidation.selectedOptions);
   const isInWishlist = product && wishlistItems?.some((item) => item._id === product._id);
   const cartLineItem = product && cartItems?.cart?.find((item) =>
     item.product?._id === product._id &&
-    (item.selectedColor || null) === (selectedColor || null) &&
+    (item.selectedColor || null) === selectionValidation.selectedColor &&
     optionsKeyOf(item.selectedOptions) === myOptKey
   );
   const isInCart = !!cartLineItem;
@@ -131,6 +140,10 @@ export default function ProductDetailScreen({ route, navigation }) {
       const res = await api.get(`/api/products/get-single-product/${productId}`);
       const prod = res.data.product;
       setProduct(prod);
+      const initialSelection = getInitialProductSelections(prod);
+      setSelectedColor(initialSelection.selectedColor);
+      setSelectedOptions(initialSelection.selectedOptions || {});
+      setOptionsModalVisible(false);
       setStorePolicy(res.data.storePolicy || null);
       const sellerId = typeof prod.seller === 'string' ? prod.seller : prod.seller?._id;
       if (sellerId) {
@@ -224,8 +237,20 @@ export default function ProductDetailScreen({ route, navigation }) {
 
   const handleWishlistToggle = () => { if (!currentUser) { navigation.navigate('Login'); return; } isInWishlist ? handleDeleteFromWishlist(product._id) : handleAddToWishlist(product._id); };
   const handleAddToCartClick = () => {
-    if (!allOptionsSelected) { Feedback.show({ type: 'error', text1: 'Please select all options' }); return; }
-    handleAddToCart(product._id, selectedColor, selectedOptions, product);
+    if (productHasOptions) {
+      // Required choices are collected in one focused sheet. This also covers
+      // partially selected inline choices and keeps card/detail behavior equal.
+      setOptionsModalVisible(true);
+      return;
+    }
+    handleAddToCart(product._id, null, null, product);
+  };
+
+  const handleOptionsConfirm = async ({ selectedColor: nextColor, selectedOptions: nextOptions }) => {
+    setSelectedColor(nextColor || null);
+    setSelectedOptions(nextOptions || {});
+    const added = await handleAddToCart(product._id, nextColor || null, nextOptions || null, product);
+    if (added) setOptionsModalVisible(false);
   };
 
   const handleAskAI = () => {
@@ -865,6 +890,16 @@ export default function ProductDetailScreen({ route, navigation }) {
         </View>
         </ScrollView>
 
+      <ProductOptionsModal
+        visible={optionsModalVisible}
+        product={product}
+        selectedColor={selectedColor}
+        selectedOptions={selectedOptions}
+        onClose={() => setOptionsModalVisible(false)}
+        onConfirm={handleOptionsConfirm}
+        submitting={isCartLoading && loadingProductId === productId}
+      />
+
       {/* Review Modal */}
       <Modal visible={reviewModalVisible} animationType="slide" transparent onRequestClose={() => setReviewModalVisible(false)}>
         <View style={styles.modalOverlay}>
@@ -996,9 +1031,9 @@ export default function ProductDetailScreen({ route, navigation }) {
               accessibilityLabel={
                 product.stock === 0
                   ? 'Out of stock'
-                  : allOptionsSelected
-                    ? `Add ${product.name} to cart`
-                    : 'Choose product options'
+                  : productHasOptions
+                    ? `Choose options for ${product.name}`
+                    : `Add ${product.name} to cart`
               }
               accessibilityState={{
                 disabled: product.stock === 0 || (isCartLoading && loadingProductId === productId),
@@ -1019,8 +1054,8 @@ export default function ProductDetailScreen({ route, navigation }) {
                   )
                   : (
                     <>
-                      <Ionicons name={allOptionsSelected ? 'bag-add-outline' : 'options-outline'} size={18} color="#fff" />
-                      <Text style={styles.addToCartText}>{allOptionsSelected ? 'Add to cart' : 'Choose options'}</Text>
+                      <Ionicons name={productHasOptions ? 'options-outline' : 'bag-add-outline'} size={18} color="#fff" />
+                      <Text style={styles.addToCartText}>{productHasOptions ? 'Choose options' : 'Add to cart'}</Text>
                       <Ionicons name="arrow-forward" size={16} color="rgba(255,255,255,0.9)" />
                     </>
                   )}

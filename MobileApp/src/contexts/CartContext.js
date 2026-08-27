@@ -28,6 +28,10 @@ import {
   writeGuestCart,
 } from '../utils/guestCart';
 import { normalizeServerCartPayload } from '../utils/cartPresentation';
+import {
+  describeSelectionError,
+  validateProductSelections,
+} from '../utils/productOptions';
 
 const CartContext = createContext();
 const EMPTY_CART = { totalCartPrice: 0, totalCartCurrency: null, cart: [] };
@@ -270,33 +274,53 @@ export const CartProvider = ({ children }) => {
     selectedOptions = null,
     productHint = null
   ) => {
-    if (!id) return;
-
-    const existingLine = cartItemsRef.current.cart.find((item) => (
-      lineMatches(item, id, selectedColor, selectedOptions)
-    ));
-    if (existingLine) {
-      await handleRemoveCartItem(existingLine._id);
-      return;
-    }
+    if (!id) return false;
 
     setIsCartLoading(true);
     setLoadingProductId(id);
     hapticImpact(Haptics.ImpactFeedbackStyle.Medium);
 
     try {
-      if (!currentUserId) {
-        let product = productHint;
-        if (!product || String(product._id || '') !== String(id)) {
-          const response = await api.get(`/api/products/get-single-product/${id}`);
-          product = response.data?.product || response.data;
+      let product = productHint;
+      let canonicalColor = selectedColor;
+      let canonicalOptions = selectedOptions;
+
+      const applyProductSelection = (selectionProduct) => {
+        const validation = validateProductSelections(selectionProduct, {
+          selectedColor,
+          selectedOptions,
+        });
+        if (!validation.ok) {
+          throw new Error(describeSelectionError(validation) || 'Review your product options to continue');
         }
+        canonicalColor = validation.selectedColor;
+        canonicalOptions = validation.selectedOptions;
+      };
+
+      if (product && String(product._id || '') === String(id)) {
+        applyProductSelection(product);
+      }
+
+      const existingLine = cartItemsRef.current.cart.find((item) => (
+        lineMatches(item, id, canonicalColor, canonicalOptions)
+      ));
+      if (existingLine) {
+        await handleRemoveCartItem(existingLine._id);
+        return true;
+      }
+
+      if (!currentUserId) {
+        // Guest lines live locally, so refresh the public product before the
+        // write to enforce the same current option contract as the API cart.
+        const response = await api.get(`/api/products/get-single-product/${id}`);
+        product = response.data?.product || response.data;
         if (!product?._id) throw new Error('Product details are unavailable');
+        applyProductSelection(product);
         if (product.stock !== undefined && Number(product.stock) <= 0) {
           throw new Error('This product is out of stock');
         }
 
-        const identity = cartLineIdentity(id, selectedColor, selectedOptions);
+        const identity = cartLineIdentity(id, canonicalColor, canonicalOptions);
         await runGuestMutation((items) => {
           if (items.some((item) => (
             cartLineIdentity(
@@ -309,17 +333,17 @@ export const CartProvider = ({ children }) => {
           return [
             ...items,
             {
-              _id: guestLineId(id, selectedColor, selectedOptions),
+              _id: guestLineId(id, canonicalColor, canonicalOptions),
               product: { ...product, _id: id },
               qty: 1,
-              selectedColor: selectedColor || null,
-              ...(selectedOptions ? { selectedOptions } : {}),
+              selectedColor: canonicalColor || null,
+              ...(canonicalOptions ? { selectedOptions: canonicalOptions } : {}),
               __guest: true,
             },
           ];
         });
         Feedback.show({ type: 'success', text1: 'Added to your bag', text2: 'Ready when you are' });
-        return;
+        return true;
       }
 
       const previousCart = cartItemsRef.current;
@@ -327,8 +351,8 @@ export const CartProvider = ({ children }) => {
         const optimisticLine = {
           _id: `__optim_${id}_${Date.now()}`,
           qty: 1,
-          selectedColor: selectedColor || null,
-          ...(selectedOptions ? { selectedOptions } : {}),
+          selectedColor: canonicalColor || null,
+          ...(canonicalOptions ? { selectedOptions: canonicalOptions } : {}),
           product: { ...productHint, _id: id },
           __optimistic: true,
         };
@@ -344,8 +368,8 @@ export const CartProvider = ({ children }) => {
 
       try {
         const response = await api.post(`/api/cart/add/${id}`, {
-          selectedColor,
-          ...(selectedOptions ? { selectedOptions } : {}),
+          selectedColor: canonicalColor,
+          ...(canonicalOptions ? { selectedOptions: canonicalOptions } : {}),
         });
         replaceCart(normalizeServerCart(response.data));
         Feedback.show({
@@ -353,6 +377,7 @@ export const CartProvider = ({ children }) => {
           text1: 'Added to your bag',
           text2: response.data?.msg || 'Ready when you are',
         });
+        return true;
       } catch (error) {
         replaceCart(previousCart);
         throw error;
@@ -363,6 +388,7 @@ export const CartProvider = ({ children }) => {
         text1: 'Could not add item',
         text2: error.response?.data?.msg || error.message || 'Please try again',
       });
+      return false;
     } finally {
       setIsCartLoading(false);
       setLoadingProductId(null);

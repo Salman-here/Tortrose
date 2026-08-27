@@ -7,13 +7,16 @@ import {
   resolveProductPresentationMoney,
   useCurrency,
 } from "../../contexts/CurrencyContext";
-import React, { useState, memo } from "react";
+import React, { useMemo, useState, memo } from "react";
 import { optimizeImage, buildSrcSet } from "../../utils/optimizeImage";
 import { getStoreSubdomainUrl } from "../../utils/subdomainHelper";
+import ProductOptionsModal from "./ProductOptionsModal";
+import { hasProductOptions } from "../../utils/productOptions";
+import { optionsKeyOf } from "../../utils/guestCart";
 
 const ProductCard = memo(({
   _id, name, image, images, category, price, discountedPrice, currency, priceCurrency,
-  stock, rating, isFeatured, idx, store, seller,
+  stock, rating, isFeatured, idx, store, seller, colors, optionGroups,
 }) => {
   const { wishlistItems, handleAddToWishlist, handleDeleteFromWishlist, cartItems, handleAddToCart, handleQtyInc, handleQtyDec, isCartLoading, loadingProductId, qtyUpdateId } = useGlobal();
   const { currentUser } = useAuth();
@@ -22,10 +25,36 @@ const ProductCard = memo(({
 
   const [imageLoaded, setImageLoaded] = useState(false);
   const [activeImageIndex, setActiveImageIndex] = useState(0);
+  const [isOptionsModalOpen, setIsOptionsModalOpen] = useState(false);
+  const [selectedOptions, setSelectedOptions] = useState({});
+  const [selectedColor, setSelectedColor] = useState(null);
+
+  const productForOptions = useMemo(() => ({
+    _id,
+    name,
+    image,
+    images,
+    price,
+    discountedPrice,
+    currency,
+    priceCurrency,
+    stock,
+    colors,
+    optionGroups,
+  }), [_id, name, image, images, price, discountedPrice, currency, priceCurrency, stock, colors, optionGroups]);
+  const hasOptions = hasProductOptions(productForOptions);
 
   const isInWishlist = wishlistItems?.some((item) => item?._id === _id);
-  const cartItem = cartItems?.cart?.find((item) => item?.product?._id === _id);
-  const isInCart = !!cartItem;
+  const cartItem = cartItems?.cart?.find((item) => (
+    item?.product?._id === _id
+    && item?.selectedColor === (selectedColor || null)
+    && optionsKeyOf(item?.selectedOptions) === optionsKeyOf(selectedOptions)
+  ));
+  const anyCartItem = cartItems?.cart?.find((item) => item?.product?._id === _id);
+  // A card cannot guess which variant the buyer wants. Keep the cart badge
+  // useful when any variant is present, but only show quantity controls after
+  // the buyer has explicitly selected the matching version in the picker.
+  const isInCart = hasOptions ? Boolean(anyCartItem) : Boolean(cartItem);
   const productMoney = { price, discountedPrice, currency, priceCurrency };
   const numericPrice = resolveProductPresentationMoney(productMoney, 'price');
   const numericDiscountedPrice = resolveProductPresentationMoney(productMoney, 'discountedPrice');
@@ -42,7 +71,20 @@ const ProductCard = memo(({
   };
 
   const handleAddToCartClick = () => {
-    handleAddToCart(_id);
+    if (hasOptions) {
+      setIsOptionsModalOpen(true);
+      return;
+    }
+    handleAddToCart(_id, null, null, productForOptions);
+  };
+
+  const handleOptionsConfirm = async ({ selectedOptions: nextOptions, selectedColor: nextColor }) => {
+    const normalizedOptions = nextOptions || {};
+    const normalizedColor = nextColor || null;
+    setSelectedOptions(normalizedOptions);
+    setSelectedColor(normalizedColor);
+    const added = await handleAddToCart(_id, normalizedColor, normalizedOptions, productForOptions);
+    if (added) setIsOptionsModalOpen(false);
   };
 
   // Handle product navigation - redirect to product's store subdomain if different
@@ -101,6 +143,7 @@ const ProductCard = memo(({
         ].map((btn, i) => (
           <button key={i}
             onClick={btn.onClick}
+            disabled={stock === 0}
             className={`p-1.5 sm:p-2 rounded-full glass-button transition-transform active:scale-90 hover:scale-110 ${btn.active ? btn.activeClass : ''}`}>
             {btn.icon}
           </button>
@@ -230,7 +273,7 @@ const ProductCard = memo(({
               : isCartLoading && loadingProductId === _id ? (
                 <span className="flex items-center justify-center gap-1"><Loader2 size={14} className="animate-spin" /><span className="hidden sm:inline">Adding...</span></span>
               ) : (
-                <span className="flex items-center justify-center gap-1"><ShoppingCart size={14} /> <span className="hidden sm:inline">Add to Cart</span><span className="sm:hidden">Add</span></span>
+                <span className="flex items-center justify-center gap-1"><ShoppingCart size={14} /> <span className="hidden sm:inline">{hasOptions ? 'Choose options' : 'Add to Cart'}</span><span className="sm:hidden">{hasOptions ? 'Choose' : 'Add'}</span></span>
               )
             }
           </button>
@@ -244,6 +287,16 @@ const ProductCard = memo(({
           </Link>
         </div>
       </div>
+
+      <ProductOptionsModal
+        open={isOptionsModalOpen}
+        product={productForOptions}
+        selectedOptions={selectedOptions}
+        selectedColor={selectedColor}
+        onClose={() => setIsOptionsModalOpen(false)}
+        onConfirm={handleOptionsConfirm}
+        submitting={isCartLoading && loadingProductId === _id}
+      />
     </div>
   );
 });

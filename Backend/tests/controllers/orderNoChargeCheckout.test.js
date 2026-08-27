@@ -221,6 +221,51 @@ beforeEach(async () => {
 });
 
 describe('initial zero-value and provider-minimum checkout boundaries', () => {
+  test('blocks checkout when a configurable product has no explicit selection', async () => {
+    const fixture = await makeCheckout('cash_on_delivery');
+    await Product.updateOne(
+      { _id: fixture.product._id },
+      { $set: { optionGroups: [{ name: 'Size', values: ['Small', 'Large'], default: 'Large' }] } },
+    );
+    const res = response();
+
+    await placeOrder({
+      body: { order: fixture.order, paymentFlow: 'checkout_session', clientSurface: 'web' },
+      headers: { 'x-idempotency-key': fixture.key },
+      user: { id: fixture.buyer._id.toString(), role: 'user' },
+    }, res);
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      code: 'PRODUCT_OPTIONS_REQUIRED',
+      needsSelection: true,
+      productId: fixture.product._id,
+      missingOptions: [{ name: 'Size', values: ['Small', 'Large'] }],
+    }));
+    expect(await Order.countDocuments({ checkoutIdempotencyKey: fixture.key })).toBe(0);
+    expect((await Product.findById(fixture.product._id)).stock).toBe(5);
+  });
+
+  test('canonicalizes a valid checkout selection before it is stored', async () => {
+    const fixture = await makeCheckout('cash_on_delivery');
+    await Product.updateOne(
+      { _id: fixture.product._id },
+      { $set: { optionGroups: [{ name: 'Size', values: ['Small', 'Large'] }] } },
+    );
+    fixture.order.orderItems[0].selectedOptions = { size: 'large' };
+    const res = response();
+
+    await placeOrder({
+      body: { order: fixture.order, paymentFlow: 'checkout_session', clientSurface: 'web' },
+      headers: { 'x-idempotency-key': fixture.key },
+      user: { id: fixture.buyer._id.toString(), role: 'user' },
+    }, res);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    const stored = await Order.findOne({ checkoutIdempotencyKey: fixture.key }).lean();
+    expect(stored.orderItems[0]).toMatchObject({ selectedOptions: { Size: 'Large' } });
+  });
+
   test('persists a domestic buyer phone in the selected country, never a server default country', async () => {
     const fixture = await makeCheckout('cash_on_delivery');
     fixture.order.shippingInfo = {

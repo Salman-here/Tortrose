@@ -23,7 +23,7 @@ const createUser = (suffix, role = 'user') => User.create({
   currency: 'PKR',
 });
 
-const createProduct = (seller, suffix, stock = 10) => Product.create({
+const createProduct = (seller, suffix, stock = 10, overrides = {}) => Product.create({
   name: `Cart Reliability Product ${suffix}`,
   description: `Cart reliability product ${suffix} for API testing.`,
   price: 500,
@@ -35,6 +35,7 @@ const createProduct = (seller, suffix, stock = 10) => Product.create({
   image: `https://example.com/${suffix}.jpg`,
   images: [{ url: `https://example.com/${suffix}.jpg` }],
   seller: seller._id,
+  ...overrides,
 });
 
 beforeAll(async () => {
@@ -60,6 +61,67 @@ afterAll(async () => {
 }, 60000);
 
 describe('cart reliability status contracts', () => {
+  test('requires product options and returns the picker contract', async () => {
+    const buyer = await createUser('missing-options');
+    const seller = await createUser('missing-options-seller', 'seller');
+    const product = await createProduct(seller, 'missing-options', 5, {
+      optionGroups: [{ name: 'Size', values: ['Small', 'Large'], default: 'Large' }],
+    });
+
+    const response = await request(app)
+      .post(`/api/cart/add/${product._id}`)
+      .set('Authorization', tokenFor(buyer))
+      .send({});
+
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({
+      code: 'PRODUCT_OPTIONS_REQUIRED',
+      needsSelection: true,
+      productId: product._id.toString(),
+      productName: product.name,
+      missingOptions: [{ name: 'Size', values: ['Small', 'Large'] }],
+    });
+    expect(await Cart.countDocuments({ user: buyer._id })).toBe(0);
+  });
+
+  test('persists only canonical values from the current product options', async () => {
+    const buyer = await createUser('canonical-options');
+    const seller = await createUser('canonical-options-seller', 'seller');
+    const product = await createProduct(seller, 'canonical-options', 5, {
+      colors: ['Black', 'White'],
+      optionGroups: [{ name: 'Size', values: ['Small', 'Large'] }],
+    });
+
+    const response = await request(app)
+      .post(`/api/cart/add/${product._id}`)
+      .set('Authorization', tokenFor(buyer))
+      .send({ selectedColor: 'black', selectedOptions: { size: 'large' } });
+
+    expect(response.status).toBe(200);
+    expect(response.body.cart[0]).toMatchObject({
+      selectedColor: 'Black',
+      selectedOptions: { Size: 'Large' },
+    });
+  });
+
+  test('rejects an option key the seller does not offer', async () => {
+    const buyer = await createUser('fabricated-options');
+    const seller = await createUser('fabricated-options-seller', 'seller');
+    const product = await createProduct(seller, 'fabricated-options', 5);
+
+    const response = await request(app)
+      .post(`/api/cart/add/${product._id}`)
+      .set('Authorization', tokenFor(buyer))
+      .send({ selectedOptions: { Engraving: 'Free text' } });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({
+      code: 'PRODUCT_OPTIONS_INVALID',
+      needsSelection: true,
+    });
+    expect(await Cart.countDocuments({ user: buyer._id })).toBe(0);
+  });
+
   test('rejects adding an out-of-stock product with a conflict response', async () => {
     const buyer = await createUser('buyer');
     const seller = await createUser('seller', 'seller');

@@ -89,6 +89,11 @@ const {
 } = require('./productPricingService');
 const { normalizeSocialLinks } = require('./socialLinksService');
 const {
+  plainOptions,
+  validateProductSelection,
+  summarizeSelectionRequest,
+} = require('./productSelectionService');
+const {
   assertProductCreationAllowed,
   getSellerProductCurrencyState,
   withProductCurrencyWriteLock,
@@ -1148,97 +1153,6 @@ function buildSellerOrderStatusScope(sellerId, status) {
 
 function sellerOrderStatus(order, sellerId) {
   return getSellerFulfillment(order, sellerId)?.status || order?.orderStatus;
-}
-
-function plainOptions(value) {
-  if (!value) return {};
-  if (value instanceof Map) return Object.fromEntries(value.entries());
-  if (typeof value.toJSON === 'function') return value.toJSON();
-  return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
-}
-
-function normalizeProductOptionGroups(product) {
-  return (product?.optionGroups || [])
-    .map(group => ({
-      name: cleanAIField(group?.name, { maxLength: 80 }),
-      values: normalizeStringArray(group?.values),
-    }))
-    .filter(group => group.name && group.values.length > 0);
-}
-
-function findCaseInsensitive(value, choices = []) {
-  const raw = String(value || '').trim();
-  if (!raw) return '';
-  return choices.find(choice => choice.toLowerCase() === raw.toLowerCase()) || '';
-}
-
-function resolveSelectedOption(selectedOptions, groupName) {
-  const opts = plainOptions(selectedOptions);
-  if (Object.prototype.hasOwnProperty.call(opts, groupName)) return opts[groupName];
-  const key = Object.keys(opts).find(k => k.toLowerCase() === String(groupName).toLowerCase());
-  return key ? opts[key] : undefined;
-}
-
-function validateProductSelection(product, selections = {}) {
-  const groups = normalizeProductOptionGroups(product);
-  const legacyColors = normalizeStringArray(product?.colors);
-  const selectedOptions = plainOptions(selections.selectedOptions);
-  let selectedColor = String(selections.selectedColor || '').trim();
-  const normalizedOptions = {};
-  const missingOptions = [];
-  const invalidOptions = [];
-  const hasColorGroup = groups.some(group => group.name.toLowerCase() === 'color');
-
-  for (const group of groups) {
-    const rawValue = resolveSelectedOption(selectedOptions, group.name);
-    const rawFromColor = group.name.toLowerCase() === 'color' && selectedColor ? selectedColor : '';
-    const chosen = findCaseInsensitive(rawValue || rawFromColor, group.values);
-    if (!rawValue && !rawFromColor) {
-      missingOptions.push({ name: group.name, values: group.values });
-      continue;
-    }
-    if (!chosen) {
-      invalidOptions.push({ name: group.name, value: rawValue || rawFromColor, values: group.values });
-      continue;
-    }
-    normalizedOptions[group.name] = chosen;
-    if (group.name.toLowerCase() === 'color') selectedColor = chosen;
-  }
-
-  if (!hasColorGroup && legacyColors.length > 0) {
-    if (!selectedColor) {
-      selectedColor = String(resolveSelectedOption(selectedOptions, 'Color') || resolveSelectedOption(selectedOptions, 'color') || '').trim();
-    }
-    const chosenColor = findCaseInsensitive(selectedColor, legacyColors);
-    if (!selectedColor) {
-      missingOptions.push({ name: 'Color', values: legacyColors });
-    } else if (!chosenColor) {
-      invalidOptions.push({ name: 'Color', value: selectedColor, values: legacyColors });
-    } else {
-      selectedColor = chosenColor;
-    }
-  }
-
-  return {
-    ok: missingOptions.length === 0 && invalidOptions.length === 0,
-    selectedColor: selectedColor || null,
-    selectedOptions: Object.keys(normalizedOptions).length > 0 ? normalizedOptions : undefined,
-    missingOptions,
-    invalidOptions,
-    requiredOptions: groups.map(group => ({ name: group.name, values: group.values })),
-    availableColors: legacyColors,
-  };
-}
-
-function summarizeSelectionRequest(product, selection) {
-  const parts = [];
-  for (const opt of selection.missingOptions || []) {
-    parts.push(`${opt.name}: ${opt.values.join(', ')}`);
-  }
-  for (const opt of selection.invalidOptions || []) {
-    parts.push(`${opt.name} must be one of: ${opt.values.join(', ')}`);
-  }
-  return `"${product?.name || 'This product'}" needs a selection before checkout. ${parts.join(' | ')}`;
 }
 
 function parseQuantity(value, fallback = 1) {
@@ -2373,7 +2287,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
           return {
             success: false,
             needsSelection: true,
-            error: summarizeSelectionRequest(product, selection),
+            error: summarizeSelectionRequest(product, selection, 'add'),
             data: {
               productId: product._id,
               name: product.name,

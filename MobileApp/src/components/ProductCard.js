@@ -17,6 +17,13 @@ import { colors, spacing, fontSize, borderRadius, shadows, fontWeight, glass } f
 import { useTheme } from '../contexts/ThemeContext';
 import { tap as hapticTap } from '../utils/haptics';
 import GlassBlurFill from './common/GlassBlurFill';
+import ProductOptionsModal from './common/ProductOptionsModal';
+import {
+  getInitialProductSelections,
+  hasProductOptions,
+  validateProductSelections,
+} from '../utils/productOptions';
+import { optionsKeyOf } from '../utils/guestCart';
 
 const { width } = Dimensions.get('window');
 const CARD_WIDTH = (width - spacing.lg * 2 - spacing.sm) / 2;
@@ -54,6 +61,9 @@ function ProductCard({ product, index = 0, onPress, compact = false }) {
 
   const [imageLoading, setImageLoading] = useState(true);
   const [imageError, setImageError] = useState(false);
+  const [optionsModalVisible, setOptionsModalVisible] = useState(false);
+  const [selectedColor, setSelectedColor] = useState(null);
+  const [selectedOptions, setSelectedOptions] = useState({});
   const scaleAnim = useRef(new Animated.Value(0.9)).current;
   const opacityAnim = useRef(new Animated.Value(0)).current;
   const heartScale = useRef(new Animated.Value(1)).current;
@@ -68,11 +78,34 @@ function ProductCard({ product, index = 0, onPress, compact = false }) {
     return () => clearTimeout(t);
   }, [index]);
 
+  // Keep a card's variant draft tied to the product identity. Defaults are
+  // applied only when the catalog explicitly provides a valid default value.
+  useEffect(() => {
+    if (!product?._id) return;
+    const initial = getInitialProductSelections(product);
+    setSelectedColor(initial.selectedColor);
+    setSelectedOptions(initial.selectedOptions || {});
+    setOptionsModalVisible(false);
+  }, [product?._id]);
+
   if (!product) return null;
 
   const { _id, name, image, images, category, stock, rating, isFeatured } = product;
+  const productHasOptions = hasProductOptions(product);
+  const currentSelection = validateProductSelections(product, {
+    selectedColor,
+    selectedOptions,
+  });
   const isInWishlist = wishlistItems?.some((item) => item?._id === _id);
-  const cartItem = cartItems?.cart?.find((item) => item?.product?._id === _id);
+  const cartItem = cartItems?.cart?.find((item) => {
+    if (item?.product?._id !== _id) return false;
+    // A card cannot infer which variant a buyer wants until the sheet is
+    // confirmed. For optionless products preserve the historic one-line UX.
+    if (!productHasOptions) return true;
+    if (!currentSelection.ok) return false;
+    return (item.selectedColor || null) === (currentSelection.selectedColor || null)
+      && optionsKeyOf(item.selectedOptions) === optionsKeyOf(currentSelection.selectedOptions);
+  });
   const isInCart = !!cartItem;
   const isOutOfStock = stock === 0;
   const storedPrice = resolveProductPresentationMoney(product, 'price');
@@ -90,7 +123,18 @@ function ProductCard({ product, index = 0, onPress, compact = false }) {
   };
 
   const handleAddToCartClick = () => {
+    if (productHasOptions) {
+      setOptionsModalVisible(true);
+      return;
+    }
     handleAddToCart(_id, null, null, product);
+  };
+
+  const handleOptionsConfirm = async ({ selectedColor: nextColor, selectedOptions: nextOptions }) => {
+    setSelectedColor(nextColor || null);
+    setSelectedOptions(nextOptions || {});
+    const added = await handleAddToCart(_id, nextColor || null, nextOptions || null, product);
+    if (added) setOptionsModalVisible(false);
   };
   // Some legacy products store a text label instead of a URL — treat those as missing
   const rawImageSource = (typeof images?.[0] === 'string' ? images[0] : images?.[0]?.url) || image;
@@ -115,10 +159,13 @@ function ProductCard({ product, index = 0, onPress, compact = false }) {
         onLongPress={() => {
           if (isOutOfStock) return;
           hapticTap();
-          handleAddToCart(_id, null, null, product);
+          if (productHasOptions) setOptionsModalVisible(true);
+          else handleAddToCart(_id, null, null, product);
         }}
         delayLongPress={350}
-        accessibilityHint="Long-press to quick-add to cart"
+        accessibilityHint={productHasOptions
+          ? 'Long-press to choose product options'
+          : 'Long-press to quick-add to cart'}
         activeOpacity={0.9}
         disabled={isOutOfStock}
       >
@@ -201,8 +248,8 @@ function ProductCard({ product, index = 0, onPress, compact = false }) {
               <LinearGradient colors={LOGO_GRADIENT} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.addToCartButton}>
                 {isLoading ? <ActivityIndicator size="small" color="#fff" /> : (
                   <View style={styles.btnContent}>
-                    <Ionicons name="cart-outline" size={14} color="#fff" />
-                    <Text style={styles.addToCartText}>Add to Cart</Text>
+                    <Ionicons name={productHasOptions ? 'options-outline' : 'cart-outline'} size={14} color="#fff" />
+                    <Text style={styles.addToCartText}>{productHasOptions ? 'Choose options' : 'Add to Cart'}</Text>
                   </View>
                 )}
               </LinearGradient>
@@ -216,6 +263,19 @@ function ProductCard({ product, index = 0, onPress, compact = false }) {
           </TouchableOpacity>
         </View>
       </TouchableOpacity>
+      {productHasOptions && (
+        <ProductOptionsModal
+          visible={optionsModalVisible}
+          product={product}
+          selectedColor={selectedColor}
+          selectedOptions={selectedOptions}
+          submitting={isLoading}
+          onClose={() => {
+            if (!isLoading) setOptionsModalVisible(false);
+          }}
+          onConfirm={handleOptionsConfirm}
+        />
+      )}
     </Animated.View>
   );
 }

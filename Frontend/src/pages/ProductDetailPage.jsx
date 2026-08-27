@@ -7,6 +7,7 @@ import Loader from '../components/common/Loader';
 import StoreInfo from '../components/common/StoreInfo';
 import SEOHead from '../components/common/SEOHead';
 import ProductCard from '../components/common/ProductCard';
+import ProductOptionsModal from '../components/common/ProductOptionsModal';
 import { toast } from 'react-toastify';
 import { useGlobal } from '../contexts/GlobalContext';
 import {
@@ -18,6 +19,7 @@ import { useBuyerLocation } from '../contexts/BuyerLocationContext';
 import { getAuthToken } from "../utils/cookieHelper";
 import { trackProductView } from '../utils/tiktokPixel';
 import { addRecentlyViewedProduct } from '../utils/recentlyViewedProducts';
+import { createProductSelection, hasProductOptions } from '../utils/productOptions';
 
 function ProductDetailPage() {
     const { id } = useParams();
@@ -43,6 +45,7 @@ function ProductDetailPage() {
     const [rating, setRating] = useState(5);
     const [selectedColor, setSelectedColor] = useState(null);
     const [selectedOptions, setSelectedOptions] = useState({}); // { Size: 'L', Color: 'Red' }
+    const [isOptionsModalOpen, setIsOptionsModalOpen] = useState(false);
     const [imageLoading, setImageLoading] = useState(true);
     const [storeData, setStoreData] = useState(null);
     const [storePolicy, setStorePolicy] = useState(null);
@@ -61,8 +64,7 @@ function ProductDetailPage() {
         optionsKeyOf(item.selectedOptions) === myOptKey
     );
     const isInCart = !!cartLineItem;
-    // Has the buyer picked all required options?
-    const allOptionsSelected = !product.optionGroups?.length || product.optionGroups.every(g => selectedOptions[g.name]);
+    const productHasOptions = hasProductOptions(product);
 
     const hasLoadedProductMoney = Boolean(product?._id);
     const productPrice = hasLoadedProductMoney
@@ -98,6 +100,23 @@ function ProductDetailPage() {
     };
 
     const handleRating = (star) => setRating(star);
+
+    const handleAddToCartClick = () => {
+        if (productHasOptions) {
+            setIsOptionsModalOpen(true);
+            return;
+        }
+        handleAddToCart(id, selectedColor, selectedOptions, product);
+    };
+
+    const handleOptionsConfirm = async ({ selectedOptions: nextOptions, selectedColor: nextColor }) => {
+        const normalizedOptions = nextOptions || {};
+        const normalizedColor = nextColor || null;
+        setSelectedOptions(normalizedOptions);
+        setSelectedColor(normalizedColor);
+        const added = await handleAddToCart(id, normalizedColor, normalizedOptions, product);
+        if (added) setIsOptionsModalOpen(false);
+    };
 
     const handleAddReview = async (e) => {
         e.preventDefault();
@@ -135,18 +154,12 @@ function ProductDetailPage() {
             setStorePolicy(res.data.storePolicy || null);
             setMainImg(res.data.product.image);
             setImageLoading(true);
-            // Pre-select default options from optionGroups
-            if (res.data.product.optionGroups?.length) {
-                const defaults = {};
-                res.data.product.optionGroups.forEach(g => {
-                    if (g.default && g.values.includes(g.default)) {
-                        defaults[g.name] = g.default;
-                    }
-                });
-                if (Object.keys(defaults).length > 0) {
-                    setSelectedOptions(defaults);
-                }
-            }
+            // Pre-select only valid seller defaults; the add action still
+            // opens the picker so buyers can review or change every option.
+            const initialSelection = createProductSelection(res.data.product, {}, null);
+            setSelectedOptions(initialSelection.selectedOptions || {});
+            setSelectedColor(initialSelection.selectedColor || null);
+            setIsOptionsModalOpen(false);
             if (res.data.product.seller) {
                 try {
                     const storeParams = new URLSearchParams();
@@ -762,8 +775,8 @@ function ProductDetailPage() {
                                     </div>
                                 ) : (
                                     <motion.button
-                                        disabled={product.stock === 0 || isCartLoading || loadingProductId === id || (product.colors?.length > 0 && !product.optionGroups?.length && !selectedColor) || !allOptionsSelected}
-                                        onClick={() => { handleAddToCart(id, selectedColor, selectedOptions) }}
+                                        disabled={product.stock === 0 || isCartLoading || loadingProductId === id}
+                                        onClick={handleAddToCartClick}
                                         whileHover={product.stock > 0 ? { scale: 1.02 } : {}}
                                         whileTap={product.stock > 0 ? { scale: 0.98 } : {}}
                                         className="flex-1 px-6 py-3 rounded-xl font-semibold flex items-center justify-center gap-2 transition-all text-sm"
@@ -780,7 +793,7 @@ function ProductDetailPage() {
                                                 </span>
                                             ) : (
                                                 <span className="flex items-center gap-2">
-                                                    <ShoppingCart size={16} /> Add to Cart
+                                                    <ShoppingCart size={16} /> {productHasOptions ? 'Choose options' : 'Add to Cart'}
                                                 </span>
                                             )
                                         }
@@ -1002,6 +1015,16 @@ function ProductDetailPage() {
                         </div>
                     </motion.section>
                 )}
+
+                <ProductOptionsModal
+                    open={isOptionsModalOpen}
+                    product={product}
+                    selectedOptions={selectedOptions}
+                    selectedColor={selectedColor}
+                    onClose={() => setIsOptionsModalOpen(false)}
+                    onConfirm={handleOptionsConfirm}
+                    submitting={isCartLoading && loadingProductId === id}
+                />
             </div>
         </motion.div>
     );

@@ -65,3 +65,4 @@ export { default as SearchAutocomplete } from './SearchAutocomplete';
 export { default as PriceRangeFilter } from './PriceRangeFilter';
 export { default as TrustedStoresSection } from './TrustedStoresSection';
 export { default as TrustScoreSheet } from './TrustScoreSheet';
+export { default as ProductOptionsModal } from './ProductOptionsModal';

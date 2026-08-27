@@ -405,6 +405,31 @@ describe('Order access isolation', () => {
     },
   );
 
+  test('does not reorder a product whose current options are missing from the old order', async () => {
+    const seller = await createUser('seller-reorder-options', 'seller');
+    const otherSeller = await createUser('other-reorder-options', 'seller');
+    const buyer = await createUser('buyer-reorder-options', 'user');
+    const sellerProduct = await createProduct(seller, 'reorder-options', 100);
+    const otherProduct = await createProduct(otherSeller, 'other-reorder-options', 50);
+    const order = await createOrder({ buyer, sellerProduct, otherProduct });
+    await Product.updateOne(
+      { _id: sellerProduct._id },
+      { $set: { optionGroups: [{ name: 'Size', values: ['S', 'M'] }] } },
+    );
+
+    const res = await request(app)
+      .post(`/api/order/reorder/${order._id}`)
+      .set('Authorization', tokenFor(buyer));
+
+    expect(res.status).toBe(400);
+    expect(res.body).toMatchObject({
+      code: 'PRODUCT_OPTIONS_REQUIRED',
+      needsSelection: true,
+      productId: sellerProduct._id.toString(),
+    });
+    expect(await Cart.findOne({ user: buyer._id })).toBeNull();
+  });
+
   test('fails closed without repairing a corrupt existing cart quantity', async () => {
     const seller = await createUser('seller-reorder-cart', 'seller');
     const otherSeller = await createUser('other-reorder-cart', 'seller');
