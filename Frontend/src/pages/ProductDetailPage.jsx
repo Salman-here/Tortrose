@@ -20,6 +20,7 @@ import { getAuthToken } from "../utils/cookieHelper";
 import { trackProductView } from '../utils/tiktokPixel';
 import { addRecentlyViewedProduct } from '../utils/recentlyViewedProducts';
 import { createProductSelection, hasProductOptions } from '../utils/productOptions';
+import { buildProductAIChatPrompt, openAIChat } from '../utils/aiChatLauncher';
 
 function ProductDetailPage() {
     const { id } = useParams();
@@ -116,6 +117,16 @@ function ProductDetailPage() {
         setSelectedColor(normalizedColor);
         const added = await handleAddToCart(id, normalizedColor, normalizedOptions, product);
         if (added) setIsOptionsModalOpen(false);
+    };
+
+    const handleAskAI = () => {
+        if (!product?._id) return;
+        const prompt = buildProductAIChatPrompt({
+            product,
+            storeName: storeData?.storeName,
+            formattedPrice: formatPrice(displayPrice, { sourceCurrency: productCurrency }),
+        });
+        openAIChat({ prompt, productId: product._id });
     };
 
     const handleAddReview = async (e) => {
@@ -634,6 +645,49 @@ function ProductDetailPage() {
                             >
                                 {product.description}
                             </motion.p>
+
+                            <motion.button
+                                type="button"
+                                onClick={handleAskAI}
+                                variants={fadeIn}
+                                whileHover={{ y: -2, scale: 1.01 }}
+                                whileTap={{ scale: 0.985 }}
+                                className="group relative w-full overflow-hidden rounded-2xl p-[1px] mb-6 text-left"
+                                style={{
+                                    background: 'linear-gradient(120deg, rgba(20,184,166,0.75), rgba(14,165,233,0.68), rgba(99,102,241,0.78))',
+                                    boxShadow: '0 14px 34px -22px rgba(14,165,233,0.85)',
+                                }}
+                                aria-label={`Ask Rozare AI about ${product.name}`}
+                            >
+                                <span
+                                    className="relative flex items-center gap-3 rounded-[15px] px-4 py-3.5 sm:px-5"
+                                    style={{ background: 'hsl(var(--background) / 0.9)', backdropFilter: 'blur(18px)' }}
+                                >
+                                    <span
+                                        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-white"
+                                        style={{
+                                            background: 'var(--logo-gradient, linear-gradient(135deg, #14b8a6, #0ea5e9, #6366f1))',
+                                            boxShadow: '0 9px 22px -8px rgba(14,165,233,0.8)',
+                                        }}
+                                    >
+                                        <Sparkles size={19} />
+                                    </span>
+                                    <span className="min-w-0 flex-1">
+                                        <span className="block text-sm font-bold" style={{ color: 'hsl(var(--foreground))' }}>
+                                            Ask Rozare AI about this product
+                                        </span>
+                                        <span className="mt-0.5 block text-xs leading-relaxed" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                                            Compare it, check the fit, or discover useful alternatives.
+                                        </span>
+                                    </span>
+                                    <span
+                                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition-transform duration-200 group-hover:translate-x-0.5"
+                                        style={{ background: 'rgba(99,102,241,0.1)', color: 'hsl(230, 70%, 58%)' }}
+                                    >
+                                        <ChevronRight size={18} />
+                                    </span>
+                                </span>
+                            </motion.button>
 
                             {/* Dynamic Option Selectors (Size, Color, Material, etc.) */}
                             {product.optionGroups && product.optionGroups.length > 0 && (

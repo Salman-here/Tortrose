@@ -66,3 +66,5 @@ export { default as PriceRangeFilter } from './PriceRangeFilter';
 export { default as TrustedStoresSection } from './TrustedStoresSection';
 export { default as TrustScoreSheet } from './TrustScoreSheet';
 export { default as ProductOptionsModal } from './ProductOptionsModal';
+export { default as AIChatHistoryModal } from './AIChatHistoryModal';
+export { default as AppLaunchScreen } from './AppLaunchScreen';

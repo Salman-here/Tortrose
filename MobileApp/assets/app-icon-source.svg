@@ -5,17 +5,22 @@
       <stop offset="0.5" stop-color="#0EA5E9"/>
       <stop offset="1" stop-color="#6366F1"/>
     </linearGradient>
-    <radialGradient id="highlight" cx="0.34" cy="0.2" r="0.86">
-      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.18"/>
+    <radialGradient id="highlight" cx="0.3" cy="0.18" r="0.88">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.2"/>
       <stop offset="0.62" stop-color="#FFFFFF" stop-opacity="0.04"/>
       <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
     </radialGradient>
   </defs>
   <rect width="1024" height="1024" fill="url(#brand)"/>
   <rect width="1024" height="1024" fill="url(#highlight)"/>
-  <g transform="translate(39.5 92) scale(17.5)" fill="none" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M37 14 a15 15 0 0 1 -25 21" stroke="#FFFFFF" stroke-opacity="0.45" stroke-width="1.6"/>
-    <path d="M15 14 h11 a7 7 0 0 1 0 14 h-7 l9 6 M19 14 v20" stroke="#FFFFFF" stroke-width="3.4"/>
-    <circle cx="35" cy="12" r="2" fill="#FFFFFF" stroke="none"/>
+  <!-- Non-adaptive equivalent of the approved Android preview: 138% size, +5.1% horizontal, +3.75% vertical. -->
+  <g transform="translate(52.224 38.4)">
+    <g transform="translate(512 512) scale(1.38) translate(-512 -512)">
+      <g transform="translate(50 61) scale(17.5)" fill="none" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M37 14 a15 15 0 0 1 -25 21" stroke="#FFFFFF" stroke-opacity="0.42" stroke-width="1.6"/>
+        <path d="M15 14 h11 a7 7 0 0 1 0 14 h-7 l9 6 M19 14 v20" stroke="#FFFFFF" stroke-width="3.4"/>
+        <circle cx="35" cy="12" r="2" fill="#FFFFFF" stroke="none"/>
+      </g>
+    </g>
   </g>
 </svg>

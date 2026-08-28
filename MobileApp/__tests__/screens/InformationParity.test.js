@@ -176,11 +176,21 @@ describe('AI daily quota ownership', () => {
     expect(chatBot).toContain('const { formatPrice, formatProductPrice, currency } = useCurrency();');
     expect(chatBot).toContain("resolveProductPresentationMoney(p, 'discountedPrice')");
     expect(chatBot).toContain("form.append('currency', requestCurrency);");
-    expect(chatBot).toContain('{ messages, requestKey, currency: requestCurrency }');
+    expect(chatBot).toContain('currency: requestCurrency,');
+    expect(chatBot).toContain("source: 'mobile'");
+    expect(chatBot).toContain('...(conversationId ? { conversationId } : {})');
+    expect(chatBot).toContain('requestKey = createChatRequestKey(),');
     expect(chatBot).toContain('code: args.code, sellerId: args.sellerId, productId: args.productId, currency: requestCurrency');
     expect(chatBot).not.toContain('cartTotal: args.cartTotal');
     expect(chatBot).toContain('currency=${encodeURIComponent(requestCurrency)}&');
     expect(chatBot).toContain('const attempt = await getOrCreatePersistedMutationAttemptForFingerprint({');
-    expect(chatBot).toContain('const response = await callAI(aiMessages, attachmentsToSend, attempt.key, currency);');
+    expect(chatBot).toContain([
+      'const response = await callAI(',
+      '        aiMessages,',
+      '        attachmentsToSend,',
+      '        attempt.key,',
+      '        currency,',
+      '        activeConvoIdRef.current,',
+    ].join('\n'));
   });
 });

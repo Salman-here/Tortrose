@@ -37,6 +37,8 @@ const product = {
   price: 120,
   discountedPrice: 90,
   stock: 5,
+  colors: ['Black'],
+  optionGroups: [{ name: 'Size', values: ['Large'] }],
 };
 
 const mockApi = api;
@@ -71,6 +73,8 @@ describe('CartContext guest and authenticated ownership', () => {
   });
 
   it('adds, persists, and removes a guest line without calling authenticated APIs', async () => {
+    mockApi.get.mockResolvedValue({ data: { product } });
+
     await act(async () => {
       root = TestRenderer.create(<CartProvider><CartProbe /></CartProvider>);
       await flushEffects();

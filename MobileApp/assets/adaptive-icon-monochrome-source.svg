@@ -1,7 +1,12 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
-  <g transform="translate(26 80) scale(18)" fill="none" stroke="#FFFFFF" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M37 14 a15 15 0 0 1 -25 21" stroke-width="1.8"/>
-    <path d="M15 14 h11 a7 7 0 0 1 0 14 h-7 l9 6 M19 14 v20" stroke-width="3.4"/>
-    <circle cx="35" cy="12" r="2" fill="#FFFFFF" stroke="none"/>
+  <!-- Approved in the Android-calibrated preview: 92% size, +3.4% horizontal, +2.5% vertical. -->
+  <g transform="translate(34.816 25.6)">
+    <g transform="translate(512 512) scale(0.92) translate(-512 -512)">
+      <g transform="translate(50 61) scale(17.5)" fill="none" stroke="#000000" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M37 14 a15 15 0 0 1 -25 21" stroke-opacity="0.5" stroke-width="1.6"/>
+        <path d="M15 14 h11 a7 7 0 0 1 0 14 h-7 l9 6 M19 14 v20" stroke-width="3.4"/>
+        <circle cx="35" cy="12" r="2" fill="#000000" stroke="none"/>
+      </g>
+    </g>
   </g>
 </svg>

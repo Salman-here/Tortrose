@@ -3,7 +3,7 @@
  * Role-aware with tool calling, rate limits, contextual chips, TTS, and embedded dashboard mode
  */
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, TextInput, FlatList, Modal,
   Platform, Alert, ActivityIndicator, ScrollView, Image,
@@ -33,8 +33,14 @@ import {
 import { useTheme } from '../contexts/ThemeContext';
 import PremiumTopBar, { PremiumTopBarAction } from './common/PremiumTopBar';
 import GlassBlurFill from './common/GlassBlurFill';
+import AIChatHistoryModal from './common/AIChatHistoryModal';
 import { getOrderCurrency, getOrderTotal } from '../utils/orderPresentation';
 import { shouldRetainIdempotencyKey } from '../utils/currencySafety';
+import {
+  normalizeChatHistoryMessage,
+  normalizeConversationSummary,
+} from '../utils/aiChatHistory';
+import { tap as hapticTap } from '../utils/haptics';
 import {
   clearPersistedMutationAttemptForFingerprint,
   createChatMutationFingerprint,
@@ -96,6 +102,18 @@ const ROLE_GREETINGS = {
 const ROLE_TITLES = {
   user: { title: 'AI Stylist', subtitle: 'Personal Shopping Assistant' },
   seller: { title: 'Business Assistant', subtitle: 'Store Management & Growth' },
+};
+
+const buildWelcomeMessage = (currentUser, role) => {
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+  const name = currentUser?.username || currentUser?.name?.split(' ')[0] || '';
+  const greetFn = ROLE_GREETINGS[role] || ROLE_GREETINGS.user;
+  return {
+    id: `welcome-${Date.now()}`,
+    role: 'assistant',
+    content: greetFn(name, greeting),
+  };
 };
 
 const STATIC_CLIENT_ROUTES = {
@@ -433,7 +451,13 @@ async function executeToolCall(name, args, selectedCurrency = 'USD') {
 // ─── Non-streaming AI call via our backend ───
 // Uses /api/ai-chat/once which handles the tool execution loop server-side
 // and returns the final response with tool results included.
-async function callAI(messages, attachments = [], requestKey = createChatRequestKey(), selectedCurrency = 'USD') {
+async function callAI(
+  messages,
+  attachments = [],
+  requestKey = createChatRequestKey(),
+  selectedCurrency = 'USD',
+  conversationId = null,
+) {
   const requestCurrency = String(selectedCurrency || 'USD').trim().toUpperCase();
   const uploadAttachments = (Array.isArray(attachments) ? attachments : [])
     .map(buildUploadPart)
@@ -444,6 +468,8 @@ async function callAI(messages, attachments = [], requestKey = createChatRequest
     form.append('messages', JSON.stringify(messages));
     form.append('requestKey', requestKey);
     form.append('currency', requestCurrency);
+    form.append('source', 'mobile');
+    if (conversationId) form.append('conversationId', conversationId);
     uploadAttachments.forEach((part, index) => {
       if (Platform.OS === 'web' && typeof File !== 'undefined' && part instanceof File) {
         form.append('attachments', part, part.name || attachments[index]?.name || `attachment-${index + 1}`);
@@ -457,7 +483,13 @@ async function callAI(messages, attachments = [], requestKey = createChatRequest
     return resp.data;
   }
 
-  const resp = await api.post('/api/ai-chat/once', { messages, requestKey, currency: requestCurrency }, {
+  const resp = await api.post('/api/ai-chat/once', {
+    messages,
+    requestKey,
+    currency: requestCurrency,
+    source: 'mobile',
+    ...(conversationId ? { conversationId } : {}),
+  }, {
     headers: { 'Idempotency-Key': requestKey },
   });
   return resp.data;
@@ -494,6 +526,14 @@ export default function ChatBot({
   const [contextualChips, setContextualChips] = useState([]);
   const [rateLimit, setRateLimit] = useState({ used: 0, limit: -1, remaining: -1 });
   const [userContext, setUserContext] = useState(null);
+  const [activeConvoId, setActiveConvoId] = useState(null);
+  const [conversations, setConversations] = useState([]);
+  const [historyVisible, setHistoryVisible] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyRefreshing, setHistoryRefreshing] = useState(false);
+  const [conversationLoading, setConversationLoading] = useState(false);
+  const [historyError, setHistoryError] = useState('');
+  const [historyBusyId, setHistoryBusyId] = useState(null);
 
   const audioRecorder = useAudioRecorder(RecordingPresets.LOW_QUALITY);
   const recorderState = useAudioRecorderState(audioRecorder, 250);
@@ -501,6 +541,17 @@ export default function ChatBot({
   const sendLockRef = useRef(false);
   const recordingActiveRef = useRef(false);
   const audioRecorderRef = useRef(audioRecorder);
+  const historyInitializedForRef = useRef(null);
+  const activeConvoIdRef = useRef(null);
+  const currentUserId = currentUser?._id || currentUser?.id || null;
+  const activeConversation = useMemo(
+    () => conversations.find(conversation => conversation._id === activeConvoId) || null,
+    [conversations, activeConvoId],
+  );
+
+  useEffect(() => {
+    activeConvoIdRef.current = activeConvoId;
+  }, [activeConvoId]);
 
   useEffect(() => {
     recordingActiveRef.current = recorderState.isRecording;
@@ -627,6 +678,211 @@ export default function ChatBot({
     }
   }, [audioRecorder]);
 
+  const showWelcomeConversation = useCallback((conversationId = null) => {
+    const resolvedConversationId = conversationId ? String(conversationId) : null;
+    Speech.stop();
+    activeConvoIdRef.current = resolvedConversationId;
+    setActiveConvoId(resolvedConversationId);
+    setInput('');
+    setPendingAttachments([]);
+    setMessages([buildWelcomeMessage(currentUser, effectiveRole)]);
+    setContextualChips(ROLE_CHIPS[effectiveRole] || ROLE_CHIPS.user);
+  }, [currentUser, effectiveRole]);
+
+  const refreshConversations = useCallback(async ({ refreshing = false, silent = false } = {}) => {
+    if (!currentUserId) {
+      setConversations([]);
+      setHistoryError('');
+      return { conversations: [], activeConversationId: null };
+    }
+
+    if (refreshing) setHistoryRefreshing(true);
+    else if (!silent) setHistoryLoading(true);
+
+    try {
+      const response = await api.get('/api/ai-chat/conversations');
+      const nextConversations = (Array.isArray(response.data?.conversations)
+        ? response.data.conversations
+        : [])
+        .map(normalizeConversationSummary)
+        .filter(Boolean);
+      const nextActiveId = response.data?.activeConversationId
+        ? String(response.data.activeConversationId)
+        : null;
+      setConversations(nextConversations);
+      setHistoryError('');
+      return { conversations: nextConversations, activeConversationId: nextActiveId };
+    } catch (error) {
+      setHistoryError('Could not sync your conversations.');
+      return null;
+    } finally {
+      if (refreshing) setHistoryRefreshing(false);
+      else if (!silent) setHistoryLoading(false);
+    }
+  }, [currentUserId]);
+
+  const loadConversation = useCallback(async (
+    conversationId,
+    { closeHistory = true, silent = false } = {},
+  ) => {
+    const targetId = String(conversationId || '');
+    if (!targetId || sendLockRef.current) return false;
+
+    setConversationLoading(true);
+    setHistoryBusyId(targetId);
+    try {
+      const response = await api.get(`/api/ai-chat/conversations/${targetId}`);
+      const resolvedId = String(response.data?._id || targetId);
+      const loadedMessages = (Array.isArray(response.data?.messages) ? response.data.messages : [])
+        .filter(message => message?.role === 'user' || message?.role === 'assistant')
+        .map((message, index) => normalizeChatHistoryMessage(message, index, resolvedId));
+
+      Speech.stop();
+      activeConvoIdRef.current = resolvedId;
+      setActiveConvoId(resolvedId);
+      setInput('');
+      setPendingAttachments([]);
+      if (loadedMessages.length > 0) {
+        setMessages(loadedMessages);
+        setContextualChips([]);
+      } else {
+        setMessages([buildWelcomeMessage(currentUser, effectiveRole)]);
+        setContextualChips(ROLE_CHIPS[effectiveRole] || ROLE_CHIPS.user);
+      }
+      setConversations(previous => previous.map(conversation => (
+        conversation._id === resolvedId
+          ? { ...conversation, isActive: true, title: response.data?.title || conversation.title }
+          : { ...conversation, isActive: false }
+      )));
+      if (closeHistory) setHistoryVisible(false);
+      setHistoryError('');
+      return true;
+    } catch (error) {
+      if (!silent) {
+        Alert.alert('Conversation unavailable', 'This conversation could not be loaded. Please try again.');
+      }
+      return false;
+    } finally {
+      setHistoryBusyId(null);
+      setConversationLoading(false);
+    }
+  }, [currentUser, effectiveRole]);
+
+  const startNewConversation = useCallback(async () => {
+    if (loading || conversationLoading || recordingBusy || sendLockRef.current) return false;
+    await cancelVoiceRecording();
+    setHistoryBusyId('new');
+
+    try {
+      let nextConversationId = null;
+      if (currentUserId) {
+        const response = await api.post('/api/ai-chat/conversations', {
+          title: 'New Chat',
+          source: 'mobile',
+        });
+        if (!response.data?._id) throw new Error('Conversation was not created.');
+        nextConversationId = String(response.data._id);
+        setConversations(previous => [
+          {
+            _id: nextConversationId,
+            title: response.data.title || 'New Chat',
+            preview: '',
+            messageCount: 0,
+            lastActive: new Date().toISOString(),
+            source: 'mobile',
+            isActive: true,
+          },
+          ...previous.map(conversation => ({ ...conversation, isActive: false })),
+        ]);
+      }
+
+      showWelcomeConversation(nextConversationId);
+      setHistoryVisible(false);
+      if (currentUserId) await refreshConversations({ silent: true });
+      return true;
+    } catch (error) {
+      Alert.alert('Could not start a new chat', 'Your current conversation is still safe. Please try again.');
+      return false;
+    } finally {
+      setHistoryBusyId(null);
+    }
+  }, [
+    cancelVoiceRecording,
+    conversationLoading,
+    currentUserId,
+    loading,
+    recordingBusy,
+    refreshConversations,
+    showWelcomeConversation,
+  ]);
+
+  const renameConversation = useCallback(async (conversationId, title) => {
+    const targetId = String(conversationId || '');
+    const nextTitle = String(title || '').trim();
+    if (!targetId || !nextTitle) return false;
+
+    setHistoryBusyId(targetId);
+    try {
+      await api.patch(`/api/ai-chat/conversations/${targetId}/rename`, { title: nextTitle });
+      setConversations(previous => previous.map(conversation => (
+        conversation._id === targetId ? { ...conversation, title: nextTitle } : conversation
+      )));
+      return true;
+    } catch (error) {
+      Alert.alert('Rename failed', 'The conversation name could not be updated.');
+      return false;
+    } finally {
+      setHistoryBusyId(null);
+    }
+  }, []);
+
+  const deleteConversation = useCallback(async (conversationId) => {
+    const targetId = String(conversationId || '');
+    if (!targetId || sendLockRef.current) return false;
+
+    setHistoryBusyId(targetId);
+    try {
+      await api.delete(`/api/ai-chat/conversations/${targetId}`);
+      const wasActive = activeConvoIdRef.current === targetId;
+      setConversations(previous => previous.filter(conversation => conversation._id !== targetId));
+      const refreshed = await refreshConversations({ silent: true });
+      if (wasActive) {
+        const nextActiveId = refreshed?.activeConversationId;
+        const nextActive = refreshed?.conversations?.find(
+          conversation => conversation._id === nextActiveId && conversation.messageCount > 0,
+        );
+        if (nextActive) {
+          await loadConversation(nextActive._id, { closeHistory: false, silent: true });
+        } else {
+          showWelcomeConversation(nextActiveId || null);
+        }
+      }
+      return true;
+    } catch (error) {
+      Alert.alert('Delete failed', 'The conversation could not be deleted. Please try again.');
+      return false;
+    } finally {
+      setHistoryBusyId(null);
+    }
+  }, [loadConversation, refreshConversations, showWelcomeConversation]);
+
+  const openConversationHistory = useCallback(() => {
+    if (!currentUserId) {
+      Alert.alert(
+        'Save your conversations',
+        'Sign in to keep chat history synced securely across the web and mobile app.',
+        [
+          { text: 'Not now', style: 'cancel' },
+          { text: 'Sign in', onPress: () => navigation?.navigate('Login') },
+        ],
+      );
+      return;
+    }
+    hapticTap();
+    setHistoryVisible(true);
+    refreshConversations().catch(() => {});
+  }, [currentUserId, navigation, refreshConversations]);
+
   const handleCloseChat = useCallback(async () => {
     Speech.stop();
     await cancelVoiceRecording();
@@ -667,34 +923,76 @@ export default function ChatBot({
     } catch { return { used: 0, limit: -1, remaining: -1 }; }
   }, []);
 
-  // Init
+  const fetchUserContext = useCallback(async () => {
+    try {
+      const res = await api.get('/api/chatbot/user-context');
+      setUserContext(res.data);
+    } catch {}
+  }, []);
+
+  // Initialize the currently-active account conversation once per user/role.
+  // Guests keep an in-memory session; authenticated users resume their latest
+  // web/app conversation and can switch sessions from the history sheet.
   useEffect(() => {
-    if (visible && messages.length === 0) {
-      const hour = new Date().getHours();
-      const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
-      const name = currentUser?.username || currentUser?.name?.split(' ')[0] || '';
-      const greetFn = ROLE_GREETINGS[effectiveRole] || ROLE_GREETINGS.user;
-      setMessages([{ id: '0', role: 'assistant', content: greetFn(name, greeting) }]);
-      setContextualChips(ROLE_CHIPS[effectiveRole] || ROLE_CHIPS.user);
+    if (!visible) return undefined;
+
+    const historyIdentity = `${currentUserId || 'guest'}:${effectiveRole}`;
+    if (historyInitializedForRef.current === historyIdentity) {
+      if (messages.length === 0) showWelcomeConversation(activeConvoIdRef.current);
+      return undefined;
     }
-    if (visible) {
-      checkRateLimit();
-      if (currentUser && !userContext) fetchUserContext();
+
+    historyInitializedForRef.current = historyIdentity;
+    setConversations([]);
+    activeConvoIdRef.current = null;
+    setActiveConvoId(null);
+    setHistoryError('');
+
+    if (!currentUserId) {
+      showWelcomeConversation(null);
+      return undefined;
     }
-  }, [visible, currentUser, effectiveRole]);
+
+    let cancelled = false;
+    setConversationLoading(true);
+    (async () => {
+      const history = await refreshConversations({ silent: true });
+      if (cancelled) return;
+      const activeId = history?.activeConversationId;
+      const activeSummary = history?.conversations?.find(
+        conversation => conversation._id === activeId,
+      );
+      if (activeId && activeSummary?.messageCount > 0) {
+        await loadConversation(activeId, { closeHistory: false, silent: true });
+      } else {
+        showWelcomeConversation(activeId || null);
+      }
+    })().finally(() => {
+      if (!cancelled) setConversationLoading(false);
+    });
+
+    return () => { cancelled = true; };
+  }, [
+    currentUserId,
+    effectiveRole,
+    loadConversation,
+    messages.length,
+    refreshConversations,
+    showWelcomeConversation,
+    visible,
+  ]);
+
+  useEffect(() => {
+    if (!visible) return;
+    checkRateLimit();
+    if (currentUser && !userContext) fetchUserContext();
+  }, [checkRateLimit, currentUser, fetchUserContext, userContext, visible]);
 
   useEffect(() => {
     if (visible && initialPrompt) {
       setInput((current) => current.trim() ? current : initialPrompt);
     }
   }, [visible, initialPrompt]);
-
-  const fetchUserContext = async () => {
-    try {
-      const res = await api.get('/api/chatbot/user-context');
-      setUserContext(res.data);
-    } catch {}
-  };
 
   // TTS
   const speak = useCallback((text) => {
@@ -711,6 +1009,7 @@ export default function ChatBot({
     if (
       (!msgText && attachmentsToSend.length === 0)
       || loading
+      || conversationLoading
       || sendLockRef.current
       || recorderState.isRecording
     ) return;
@@ -789,7 +1088,18 @@ export default function ChatBot({
         randomUUID: Crypto.randomUUID,
       });
       attemptKey = attempt.key;
-      const response = await callAI(aiMessages, attachmentsToSend, attempt.key, currency);
+      const response = await callAI(
+        aiMessages,
+        attachmentsToSend,
+        attempt.key,
+        currency,
+        activeConvoIdRef.current,
+      );
+      if (response.conversationId) {
+        const savedConversationId = String(response.conversationId);
+        activeConvoIdRef.current = savedConversationId;
+        setActiveConvoId(savedConversationId);
+      }
       const unresolvedAction = (response.toolResults || []).find(entry => (
         UNRESOLVED_AI_ACTION_CODES.has(entry?.result?.code)
       ));
@@ -885,6 +1195,12 @@ export default function ChatBot({
       };
       setMessages(prev => [...prev, assistantMsg]);
       if (ttsEnabled && assistantContent) speak(assistantContent);
+      refreshConversations({ silent: true }).then((history) => {
+        if (!activeConvoIdRef.current && history?.activeConversationId) {
+          activeConvoIdRef.current = history.activeConversationId;
+          setActiveConvoId(history.activeConversationId);
+        }
+      });
     } catch (err) {
       if (!shouldRetainIdempotencyKey(err.response?.status)) {
         await clearPersistedMutationAttemptForFingerprint(
@@ -912,21 +1228,6 @@ export default function ChatBot({
       sendLockRef.current = false;
       setLoading(false);
     }
-  };
-
-  const clearChat = async () => {
-    if (loading || sendLockRef.current) return;
-    Speech.stop();
-    await cancelVoiceRecording();
-    const hour = new Date().getHours();
-    const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
-    const name = currentUser?.username || currentUser?.name?.split(' ')[0] || '';
-    const greetFn = ROLE_GREETINGS[effectiveRole] || ROLE_GREETINGS.user;
-    setInput('');
-    setPendingAttachments([]);
-    setMessages([{ id: `welcome-${Date.now()}`, role: 'assistant', content: greetFn(name, greeting) }]);
-    setContextualChips(ROLE_CHIPS[effectiveRole] || ROLE_CHIPS.user);
-    api.delete('/api/chatbot/history').catch(() => {});
   };
 
   // ─── Render ───
@@ -1201,8 +1502,8 @@ export default function ChatBot({
         <PremiumTopBar
           title="Chat with AI"
           subtitle={rateLimit.limit > 0
-            ? `${roleInfo.title} · ${rateLimit.remaining} messages left`
-            : `${roleInfo.title} · Ready to help`}
+            ? `${activeConversation?.title && activeConversation.title !== 'New Chat' ? activeConversation.title : roleInfo.title} · ${rateLimit.remaining} messages left`
+            : `${activeConversation?.title && activeConversation.title !== 'New Chat' ? activeConversation.title : roleInfo.title} · Ready to help`}
           icon="sparkles"
           onBack={handleCloseChat}
           backLabel="Leave AI chat"
@@ -1214,6 +1515,14 @@ export default function ChatBot({
           right={(
             <>
               <PremiumTopBarAction
+                icon="time-outline"
+                onPress={openConversationHistory}
+                badge={currentUserId ? conversations.length : 0}
+                color={c.textSecondary}
+                accessibilityLabel="Open chat history"
+                disabled={conversationLoading}
+              />
+              <PremiumTopBarAction
                 icon={ttsEnabled ? 'volume-high' : 'volume-mute-outline'}
                 onPress={() => setTtsEnabled(!ttsEnabled)}
                 color={ttsEnabled ? c.primary : c.textSecondary}
@@ -1221,11 +1530,11 @@ export default function ChatBot({
                 accessibilityLabel={ttsEnabled ? 'Turn voice responses off' : 'Turn voice responses on'}
               />
               <PremiumTopBarAction
-                icon="trash-outline"
-                onPress={clearChat}
-                color={c.textSecondary}
+                icon="add"
+                onPress={startNewConversation}
+                primary
                 accessibilityLabel="Start a new chat"
-                disabled={loading || recordingBusy}
+                disabled={loading || conversationLoading || recordingBusy}
               />
             </>
           )}
@@ -1249,8 +1558,28 @@ export default function ChatBot({
           <TouchableOpacity onPress={() => setTtsEnabled(!ttsEnabled)} style={styles.headerBtn} accessibilityLabel="Toggle voice" hitSlop={6}>
             <Ionicons name={ttsEnabled ? 'volume-high' : 'volume-mute'} size={16} color={ttsEnabled ? c.primary : c.textLight} />
           </TouchableOpacity>
-          <TouchableOpacity onPress={clearChat} style={[styles.headerBtn, loading && { opacity: 0.45 }]} accessibilityLabel="Clear chat" hitSlop={6} disabled={loading || recordingBusy}>
-            <Ionicons name="trash-outline" size={16} color={c.textLight} />
+          <TouchableOpacity
+            onPress={openConversationHistory}
+            style={[styles.headerBtn, conversationLoading && { opacity: 0.45 }]}
+            accessibilityLabel="Open chat history"
+            hitSlop={6}
+            disabled={conversationLoading}
+          >
+            <Ionicons name="time-outline" size={16} color={c.textLight} />
+            {currentUserId && conversations.length > 0 && (
+              <View style={styles.headerCountBadge}>
+                <Text style={styles.headerCountText}>{Math.min(conversations.length, 9)}{conversations.length > 9 ? '+' : ''}</Text>
+              </View>
+            )}
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={startNewConversation}
+            style={[styles.headerBtn, styles.headerNewChatBtn, (loading || conversationLoading) && { opacity: 0.45 }]}
+            accessibilityLabel="Start a new chat"
+            hitSlop={6}
+            disabled={loading || conversationLoading || recordingBusy}
+          >
+            <Ionicons name="add" size={18} color="#fff" />
           </TouchableOpacity>
           {onClose && (
             <TouchableOpacity onPress={handleCloseChat} style={styles.headerBtn} accessibilityLabel="Close" hitSlop={6}>
@@ -1261,31 +1590,41 @@ export default function ChatBot({
       )}
 
       {/* Messages */}
-      <FlatList
-        ref={flatListRef}
-        style={styles.messageListView}
-        data={messages}
-        renderItem={renderMessage}
-        keyExtractor={item => item.id}
-        contentContainerStyle={styles.messageList}
-        onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
-        showsVerticalScrollIndicator={false}
-        ListHeaderComponent={assistantIntro}
-        ListFooterComponent={loading ? (
-          <View style={styles.typingRow}>
-            <LinearGradient colors={palette.gradients.cta} style={styles.botAvatar}>
-              <Ionicons name="sparkles" size={12} color="#fff" />
-            </LinearGradient>
-            <View style={styles.typingBubble}>
-              <ActivityIndicator size="small" color={c.primary} />
-              <Text style={styles.typingText}>AI is thinking...</Text>
+      {conversationLoading ? (
+        <View style={styles.conversationLoadingState}>
+          <LinearGradient colors={palette.gradients.cta} style={styles.conversationLoadingIcon}>
+            <ActivityIndicator size="small" color="#fff" />
+          </LinearGradient>
+          <Text style={styles.conversationLoadingTitle}>Opening conversation</Text>
+          <Text style={styles.conversationLoadingText}>Restoring your messages and context…</Text>
+        </View>
+      ) : (
+        <FlatList
+          ref={flatListRef}
+          style={styles.messageListView}
+          data={messages}
+          renderItem={renderMessage}
+          keyExtractor={item => item.id}
+          contentContainerStyle={styles.messageList}
+          onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
+          showsVerticalScrollIndicator={false}
+          ListHeaderComponent={assistantIntro}
+          ListFooterComponent={loading ? (
+            <View style={styles.typingRow}>
+              <LinearGradient colors={palette.gradients.cta} style={styles.botAvatar}>
+                <Ionicons name="sparkles" size={12} color="#fff" />
+              </LinearGradient>
+              <View style={styles.typingBubble}>
+                <ActivityIndicator size="small" color={c.primary} />
+                <Text style={styles.typingText}>AI is thinking...</Text>
+              </View>
             </View>
-          </View>
-        ) : null}
-      />
+          ) : null}
+        />
+      )}
 
       {/* Contextual Chips */}
-      {contextualChips.length > 0 && !loading && (
+      {contextualChips.length > 0 && !loading && !conversationLoading && (
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipsBar} contentContainerStyle={styles.chipsContainer}>
           {contextualChips.map((chip, i) => (
             <TouchableOpacity
@@ -1365,8 +1704,8 @@ export default function ChatBot({
           )}
           <TouchableOpacity
             onPress={pickImages}
-            disabled={loading || recorderState.isRecording}
-            style={[styles.composerBtn, (loading || recorderState.isRecording) && { opacity: 0.45 }]}
+            disabled={loading || conversationLoading || recorderState.isRecording}
+            style={[styles.composerBtn, (loading || conversationLoading || recorderState.isRecording) && { opacity: 0.45 }]}
             accessibilityRole="button"
             accessibilityLabel="Attach product image"
             hitSlop={4}
@@ -1375,8 +1714,8 @@ export default function ChatBot({
           </TouchableOpacity>
           <TouchableOpacity
             onPress={pickFiles}
-            disabled={loading || recorderState.isRecording}
-            style={[styles.composerBtn, (loading || recorderState.isRecording) && { opacity: 0.45 }]}
+            disabled={loading || conversationLoading || recorderState.isRecording}
+            style={[styles.composerBtn, (loading || conversationLoading || recorderState.isRecording) && { opacity: 0.45 }]}
             accessibilityRole="button"
             accessibilityLabel="Attach product file"
             hitSlop={4}
@@ -1385,11 +1724,11 @@ export default function ChatBot({
           </TouchableOpacity>
           <TouchableOpacity
             onPress={recorderState.isRecording ? stopVoiceRecording : startVoiceRecording}
-            disabled={loading || recordingBusy}
+            disabled={loading || conversationLoading || recordingBusy}
             style={[
               styles.composerBtn,
               recorderState.isRecording && styles.recordingComposerBtn,
-              (loading || recordingBusy) && { opacity: 0.45 },
+              (loading || conversationLoading || recordingBusy) && { opacity: 0.45 },
             ]}
             accessibilityRole="button"
             accessibilityLabel={recorderState.isRecording ? 'Stop voice recording' : 'Record voice note'}
@@ -1405,13 +1744,13 @@ export default function ChatBot({
             placeholderTextColor={c.textLight}
             returnKeyType="send"
             onSubmitEditing={() => sendMessage()}
-            editable={!loading && !recorderState.isRecording}
+            editable={!loading && !conversationLoading && !recorderState.isRecording}
             multiline={false}
           />
           <TouchableOpacity
             onPress={() => sendMessage()}
-            disabled={(!input.trim() && pendingAttachments.length === 0) || loading || recorderState.isRecording}
-            style={[styles.sendBtn, ((!input.trim() && pendingAttachments.length === 0) || loading || recorderState.isRecording) && { opacity: 0.4 }]}
+            disabled={(!input.trim() && pendingAttachments.length === 0) || loading || conversationLoading || recorderState.isRecording}
+            style={[styles.sendBtn, ((!input.trim() && pendingAttachments.length === 0) || loading || conversationLoading || recorderState.isRecording) && { opacity: 0.4 }]}
             accessibilityRole="button"
             accessibilityLabel="Send message"
             hitSlop={4}
@@ -1420,6 +1759,22 @@ export default function ChatBot({
           </TouchableOpacity>
         </View>
       </KeyboardStickyView>
+
+      <AIChatHistoryModal
+        visible={historyVisible}
+        conversations={conversations}
+        activeConversationId={activeConvoId}
+        loading={historyLoading}
+        refreshing={historyRefreshing}
+        error={historyError}
+        busyConversationId={historyBusyId}
+        onClose={() => setHistoryVisible(false)}
+        onRefresh={() => refreshConversations({ refreshing: true })}
+        onSelect={loadConversation}
+        onCreate={startNewConversation}
+        onRename={renameConversation}
+        onDelete={deleteConversation}
+      />
     </View>
   );
 
@@ -1459,6 +1814,9 @@ const makeStyles = (palette) => {
     rateBadge: { flexShrink: 0, backgroundColor: c.primarySubtle, paddingHorizontal: 6, paddingVertical: 1, borderRadius: borderRadius.full },
     rateBadgeText: { fontSize: 9, fontWeight: fontWeight.semibold, color: c.primary },
     headerBtn: { width: 36, height: 36, borderRadius: 12, backgroundColor: g.bgSubtle, borderWidth: 1, borderColor: g.borderSubtle, justifyContent: 'center', alignItems: 'center', marginLeft: spacing.xs },
+    headerNewChatBtn: { overflow: 'hidden', backgroundColor: c.primary, borderColor: c.primary, shadowColor: '#6366F1', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.26, shadowRadius: 7, elevation: 3 },
+    headerCountBadge: { position: 'absolute', top: -4, right: -4, minWidth: 17, height: 17, paddingHorizontal: 3, borderRadius: 9, alignItems: 'center', justifyContent: 'center', backgroundColor: c.primary, borderWidth: 1.5, borderColor: c.surface },
+    headerCountText: { color: '#fff', fontSize: 8, fontWeight: fontWeight.bold },
 
     // Full-screen concierge introduction
     assistantIntro: {
@@ -1580,6 +1938,10 @@ const makeStyles = (palette) => {
     // Messages
     messageListView: { flex: 1 },
     messageList: { flexGrow: 1, paddingHorizontal: spacing.md, paddingTop: spacing.sm, paddingBottom: spacing.lg },
+    conversationLoadingState: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: spacing.xl },
+    conversationLoadingIcon: { width: 50, height: 50, borderRadius: 16, alignItems: 'center', justifyContent: 'center', marginBottom: spacing.md, shadowColor: '#0EA5E9', shadowOffset: { width: 0, height: 5 }, shadowOpacity: 0.28, shadowRadius: 10, elevation: 4 },
+    conversationLoadingTitle: { color: c.text, fontSize: fontSize.md, fontWeight: fontWeight.bold },
+    conversationLoadingText: { marginTop: spacing.xs, color: c.textSecondary, fontSize: fontSize.sm, textAlign: 'center' },
     msgRow: { flexDirection: 'row', alignItems: 'flex-end', marginBottom: spacing.md, gap: spacing.xs },
     msgRowUser: { justifyContent: 'flex-end' },
     botAvatar: { width: 28, height: 28, borderRadius: 9, justifyContent: 'center', alignItems: 'center' },

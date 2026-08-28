@@ -9,9 +9,14 @@
  */
 
 import React, { createContext, useContext, useEffect, useMemo, useState, useCallback, useRef } from 'react';
-import { Platform, useColorScheme } from 'react-native';
+import { Appearance, AppState, Platform, useColorScheme } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { lightPalette, darkPalette } from '../styles/palettes';
+import {
+  isThemeMode,
+  normalizeSystemColorScheme,
+  resolveThemeMode,
+} from '../utils/themeMode';
 
 const STORAGE_KEY = 'app_theme_mode'; // 'light' | 'dark' | 'system'
 
@@ -44,16 +49,46 @@ const ThemeContext = createContext({
 });
 
 export function ThemeProvider({ children }) {
-  const systemScheme = useColorScheme(); // 'light' | 'dark' | null
+  const observedSystemScheme = useColorScheme();
+  const [systemScheme, setSystemScheme] = useState(() =>
+    normalizeSystemColorScheme(
+      observedSystemScheme || Appearance.getColorScheme()
+    )
+  );
   const [mode, setModeState] = useState('light'); // saved preference — default light to match the website
   const [hydrated, setHydrated] = useState(false);
+
+  // Keep System mode current while the app is open and whenever it returns
+  // from Android settings. The foreground refresh also covers devices whose
+  // Appearance event is paused while Rozare is in the background.
+  useEffect(() => {
+    if (observedSystemScheme === 'light' || observedSystemScheme === 'dark') {
+      setSystemScheme(observedSystemScheme);
+    }
+  }, [observedSystemScheme]);
+
+  useEffect(() => {
+    const appearanceSubscription = Appearance.addChangeListener(({ colorScheme }) => {
+      setSystemScheme(normalizeSystemColorScheme(colorScheme));
+    });
+    const appStateSubscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        setSystemScheme(normalizeSystemColorScheme(Appearance.getColorScheme()));
+      }
+    });
+
+    return () => {
+      appearanceSubscription.remove();
+      appStateSubscription.remove();
+    };
+  }, []);
 
   // Hydrate saved preference once
   useEffect(() => {
     (async () => {
       try {
         const saved = await AsyncStorage.getItem(STORAGE_KEY);
-        if (saved === 'light' || saved === 'dark' || saved === 'system') {
+        if (isThemeMode(saved)) {
           setModeState(saved);
         }
       } catch {
@@ -70,14 +105,14 @@ export function ThemeProvider({ children }) {
     AsyncStorage.setItem(STORAGE_KEY, mode).catch(() => {});
   }, [mode, hydrated]);
 
-  const resolvedMode = mode === 'system' ? (systemScheme === 'dark' ? 'dark' : 'light') : mode;
+  const resolvedMode = resolveThemeMode(mode, systemScheme);
   const isDark = resolvedMode === 'dark';
   const palette = Platform.OS === 'android'
     ? (isDark ? androidDarkPalette : androidLightPalette)
     : (isDark ? darkPalette : lightPalette);
 
   const setMode = useCallback((next) => {
-    if (next === 'light' || next === 'dark' || next === 'system') {
+    if (isThemeMode(next)) {
       setModeState(next);
     }
   }, []);

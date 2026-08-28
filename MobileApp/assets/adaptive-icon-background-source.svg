@@ -5,12 +5,13 @@
       <stop offset="0.5" stop-color="#0EA5E9"/>
       <stop offset="1" stop-color="#6366F1"/>
     </linearGradient>
-    <radialGradient id="highlight" cx="0.34" cy="0.2" r="0.86">
-      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.18"/>
+    <radialGradient id="highlight" cx="0.3" cy="0.18" r="0.88">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.2"/>
       <stop offset="0.62" stop-color="#FFFFFF" stop-opacity="0.04"/>
       <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
     </radialGradient>
   </defs>
+  <!-- Full bleed: the launcher applies circle, squircle, or rounded-square masking. -->
   <rect width="1024" height="1024" fill="url(#brand)"/>
   <rect width="1024" height="1024" fill="url(#highlight)"/>
 </svg>

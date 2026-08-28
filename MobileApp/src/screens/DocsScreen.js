@@ -32,7 +32,7 @@ const SECTIONS = [
     id: 'ai-powered-shopping',
     title: 'AI-Powered Shopping',
     icon: 'chatbubbles-outline',
-    body: 'The Rozare AI can search products in natural language, give style advice, manage your cart and wishlist, find and validate coupons, help place orders, and track deliveries. It understands context within the current conversation, so follow-up requests such as “show me something cheaper” continue from what you were discussing.',
+    body: 'The Rozare AI can search products in natural language, give style advice, manage your cart and wishlist, find and validate coupons, help place orders, and track deliveries. It understands context within the current conversation, so follow-up requests such as “show me something cheaper” continue from what you were discussing. When signed in, tap History to reopen, search, rename, or delete saved web and app conversations, and use New Chat whenever you want a fresh session.',
   },
   {
     id: 'getting-started',

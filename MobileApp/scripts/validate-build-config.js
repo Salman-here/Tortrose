@@ -35,6 +35,22 @@ function assertStringMap(value, location) {
   }
 }
 
+function readPngMetadata(relativePath) {
+  const absolutePath = path.join(projectRoot, relativePath);
+  const bytes = fs.readFileSync(absolutePath);
+  const pngSignature = '89504e470d0a1a0a';
+
+  if (bytes.length < 26 || bytes.subarray(0, 8).toString('hex') !== pngSignature) {
+    fail(`${relativePath} must be a valid PNG image`);
+  }
+
+  return {
+    width: bytes.readUInt32BE(16),
+    height: bytes.readUInt32BE(20),
+    colorType: bytes[25],
+  };
+}
+
 function validateLocales(expoConfig) {
   const locales = expoConfig.locales || {};
 
@@ -153,6 +169,29 @@ function validateEasConfig(expoConfig) {
   if (!packageConfig.dependencies?.['expo-updates']) {
     fail('expo-updates must be installed as a direct dependency');
   }
+
+  const previewUpdateScript = packageConfig.scripts?.['update:preview'] || '';
+  for (const requiredPart of [
+    'eas-cli update',
+    '--channel preview',
+    '--environment preview',
+    '--platform android',
+  ]) {
+    if (!previewUpdateScript.includes(requiredPart)) {
+      fail(`update:preview must include ${requiredPart}`);
+    }
+  }
+
+  const productionUpdateScript = packageConfig.scripts?.['update:production'] || '';
+  for (const requiredPart of [
+    'eas-cli update',
+    '--channel production',
+    '--environment production',
+  ]) {
+    if (!productionUpdateScript.includes(requiredPart)) {
+      fail(`update:production must include ${requiredPart}`);
+    }
+  }
 }
 
 function validatePlugins(expoConfig) {
@@ -166,11 +205,32 @@ function validatePlugins(expoConfig) {
   if (duplicates.length > 0) {
     fail(`Duplicate Expo config plugins: ${[...new Set(duplicates)].join(', ')}`);
   }
+
+  const pinnedStripePlugin = (expoConfig.plugins || []).find(
+    (plugin) => Array.isArray(plugin) && plugin[0] === './plugins/withPinnedStripeAndroid'
+  );
+  if (pinnedStripePlugin?.[1]?.version !== '23.3.0') {
+    fail('Stripe Android must be pinned to exact version 23.3.0 for deterministic Gradle resolution');
+  }
 }
 
 function validateBranding(expoConfig) {
+  const packageConfig = readJson('package.json');
+
   if (expoConfig.name !== 'Rozare') {
     fail('expo.name must be exactly "Rozare"');
+  }
+
+  if (packageConfig.version !== expoConfig.version) {
+    fail('package.json and app.json versions must match');
+  }
+
+  if (expoConfig.userInterfaceStyle !== 'automatic') {
+    fail('expo.userInterfaceStyle must be "automatic" so System theme follows the device');
+  }
+
+  if (!packageConfig.dependencies?.['expo-system-ui']) {
+    fail('expo-system-ui must be installed for automatic Android appearance');
   }
 
   const englishLocale = readJson(expoConfig.locales?.en || 'locales/en.json');
@@ -193,6 +253,43 @@ function validateBranding(expoConfig) {
     if (typeof iconPath !== 'string' || !fs.existsSync(path.join(projectRoot, iconPath))) {
       fail(`Missing configured launcher icon asset: ${iconPath || '<unset>'}`);
     }
+
+    const metadata = readPngMetadata(iconPath);
+    if (metadata.width !== 1024 || metadata.height !== 1024) {
+      fail(`Launcher icon ${iconPath} must be exactly 1024x1024`);
+    }
+  }
+
+  const splashPlugin = (expoConfig.plugins || []).find(
+    (plugin) => Array.isArray(plugin) && plugin[0] === 'expo-splash-screen'
+  );
+  const splashOptions = splashPlugin?.[1];
+
+  if (!packageConfig.dependencies?.['expo-splash-screen']) {
+    fail('expo-splash-screen must be installed as a direct dependency');
+  }
+
+  if (
+    !splashOptions ||
+    splashOptions.backgroundColor !== '#F4F8FF' ||
+    splashOptions.resizeMode !== 'contain' ||
+    splashOptions.imageWidth !== 200
+  ) {
+    fail('expo-splash-screen must use the premium Rozare launch configuration');
+  }
+
+  const splashPath = splashOptions.image;
+  if (typeof splashPath !== 'string' || !fs.existsSync(path.join(projectRoot, splashPath))) {
+    fail(`Missing configured splash image: ${splashPath || '<unset>'}`);
+  }
+
+  const splashMetadata = readPngMetadata(splashPath);
+  if (
+    splashMetadata.width !== 1024 ||
+    splashMetadata.height !== 1024 ||
+    ![4, 6].includes(splashMetadata.colorType)
+  ) {
+    fail('Splash image must be a transparent 1024x1024 PNG');
   }
 }
 

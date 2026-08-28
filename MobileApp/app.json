@@ -2,20 +2,16 @@
   "expo": {
     "name": "Rozare",
     "slug": "rozare",
-    "version": "1.0.3",
+    "version": "1.0.8",
     "runtimeVersion": {
       "policy": "appVersion"
     },
     "orientation": "portrait",
     "scheme": "rozare",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "automatic",
     "description": "Rozare is an AI-powered marketplace where shoppers discover products from independent sellers and brands, while sellers manage their stores with dashboard tools, AI chat, WhatsApp workflows, secure checkout, order status updates, and multi-currency support.",
-    "splash": {
-      "image": "./assets/splash.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#6366f1"
-    },
+    "backgroundColor": "#F4F8FF",
     "androidStatusBar": {
       "barStyle": "dark-content"
     },
@@ -32,7 +28,7 @@
         "backgroundColor": "#0EA5E9"
       },
       "package": "com.rozare.app",
-      "versionCode": 4,
+      "versionCode": 9,
       "permissions": [
         "CAMERA",
         "READ_EXTERNAL_STORAGE",
@@ -62,7 +58,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.rozare.app",
-      "buildNumber": "4",
+      "buildNumber": "9",
       "associatedDomains": [
         "applinks:rozare.com"
       ],
@@ -78,6 +74,19 @@
     },
     "plugins": [
       "expo-secure-store",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#F4F8FF",
+          "image": "./assets/splash.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "dark": {
+            "backgroundColor": "#EEF4FF",
+            "image": "./assets/splash.png"
+          }
+        }
+      ],
       [
         "expo-notifications",
         {
@@ -106,6 +115,12 @@
         "@stripe/stripe-react-native",
         {
           "enableGooglePay": true
+        }
+      ],
+      [
+        "./plugins/withPinnedStripeAndroid",
+        {
+          "version": "23.3.0"
         }
       ]
     ],

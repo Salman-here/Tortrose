@@ -29,6 +29,7 @@ import {
   createScopedMutationStorageKey,
   getOrCreatePersistedMutationAttemptForFingerprint,
 } from '../../utils/persistedMutationAttempt';
+import { OPEN_AI_CHAT_EVENT } from '../../utils/aiChatLauncher';
 
 // ─── Endpoint (our own backend — no Supabase) ───
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000/';
@@ -484,6 +485,20 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
     && typeof navigator !== 'undefined'
     && Boolean(navigator.mediaDevices?.getUserMedia)
     && typeof MediaRecorder !== 'undefined';
+
+  // Product and discovery surfaces can open the single global assistant with
+  // contextual text while preserving the user's current conversation.
+  useEffect(() => {
+    const handleOpenAIChat = (event) => {
+      const prompt = String(event?.detail?.prompt || '').trim();
+      setIsOpen(true);
+      if (prompt) setInput(prompt);
+      window.requestAnimationFrame?.(() => inputRef.current?.focus());
+    };
+
+    window.addEventListener(OPEN_AI_CHAT_EVENT, handleOpenAIChat);
+    return () => window.removeEventListener(OPEN_AI_CHAT_EVENT, handleOpenAIChat);
+  }, []);
 
   // ─── Load initial messages from parent (AI Chat page) ───
   useEffect(() => {
@@ -1118,17 +1133,18 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
                 <span className="text-xs opacity-70">Thinking...</span>
               </div>
             ) : isAssistant ? (
-              <ReactMarkdown
-                className="prose prose-sm prose-invert max-w-none [&>p]:mb-1 [&>p:last-child]:mb-0 [&>ul]:mb-1 [&>ol]:mb-1 [&_li]:text-sm"
-                components={{
-                  a: ({ node: _node, ...props }) => (
-                    <a {...props} className="text-blue-400 underline" target="_blank" rel="noopener noreferrer" />
-                  ),
-                  p: ({ node: _node, ...props }) => <p {...props} className="mb-1" />,
-                }}
-              >
-                {visibleUserContent || ''}
-              </ReactMarkdown>
+              <div className="prose prose-sm prose-invert max-w-none [&>p]:mb-1 [&>p:last-child]:mb-0 [&>ul]:mb-1 [&>ol]:mb-1 [&_li]:text-sm">
+                <ReactMarkdown
+                  components={{
+                    a: ({ node: _node, ...props }) => (
+                      <a {...props} className="text-blue-400 underline" target="_blank" rel="noopener noreferrer" />
+                    ),
+                    p: ({ node: _node, ...props }) => <p {...props} className="mb-1" />,
+                  }}
+                >
+                  {visibleUserContent || ''}
+                </ReactMarkdown>
+              </div>
             ) : (
               <div className="space-y-2">
                 {imageAttachments.map((attachment, attachmentIdx) => (

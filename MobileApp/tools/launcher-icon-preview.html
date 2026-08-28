@@ -1,0 +1,335 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Rozare launcher icon preview</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        --art-scale: 1;
+        --art-x: 0%;
+        --art-y: 0%;
+        --android-viewport-scale: 1.5;
+      }
+
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        color: #172033;
+        background:
+          radial-gradient(circle at 16% 12%, rgba(45, 212, 191, 0.16), transparent 28rem),
+          radial-gradient(circle at 86% 24%, rgba(129, 140, 248, 0.14), transparent 30rem),
+          #f6f9ff;
+      }
+
+      main { width: min(1160px, calc(100% - 40px)); margin: 0 auto; padding: 44px 0 54px; }
+      .eyebrow { margin: 0 0 10px; color: #0f9f9a; font-size: 13px; font-weight: 800; letter-spacing: 0.16em; text-transform: uppercase; }
+      h1 { margin: 0; font-size: clamp(32px, 5vw, 54px); letter-spacing: -0.045em; }
+      .intro { max-width: 720px; margin: 14px 0 0; color: #637089; font-size: 17px; line-height: 1.65; }
+
+      .panel {
+        margin-top: 30px;
+        padding: 28px;
+        border: 1px solid rgba(121, 142, 181, 0.18);
+        border-radius: 28px;
+        background: rgba(255, 255, 255, 0.82);
+        box-shadow: 0 28px 70px rgba(67, 84, 128, 0.13);
+        backdrop-filter: blur(18px);
+      }
+
+      .previews { display: grid; grid-template-columns: repeat(3, 1fr); gap: 28px; }
+      .preview-card { text-align: center; }
+      .preview-stage {
+        min-height: 286px;
+        display: grid;
+        place-items: center;
+        padding: 30px;
+        border-radius: 22px;
+        background: linear-gradient(145deg, #edf2f8, #ffffff);
+        box-shadow: inset 0 0 0 1px rgba(91, 109, 145, 0.08);
+      }
+
+      .icon {
+        position: relative;
+        width: 210px;
+        aspect-ratio: 1;
+        overflow: hidden;
+        background: #0ea5e9;
+        box-shadow: 0 18px 36px rgba(43, 91, 151, 0.24), 0 3px 9px rgba(29, 46, 79, 0.16);
+      }
+      .adaptive-background,
+      .adaptive-foreground {
+        position: absolute;
+        inset: 0;
+        transform: scale(var(--android-viewport-scale));
+        transform-origin: center;
+      }
+      .adaptive-background {
+        background: linear-gradient(135deg, #14b8a6 0%, #0ea5e9 50%, #6366f1 100%);
+      }
+      .adaptive-background::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: radial-gradient(circle at 30% 18%, rgba(255,255,255,.2), rgba(255,255,255,.04) 62%, transparent 100%);
+      }
+      .alignment-grid {
+        display: none;
+        position: absolute;
+        inset: 0;
+        z-index: 5;
+        pointer-events: none;
+        background-image:
+          linear-gradient(rgba(255, 255, 255, 0.28) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(255, 255, 255, 0.28) 1px, transparent 1px);
+        background-size: 10% 10%;
+        box-shadow: inset 0 0 0 1px rgba(19, 43, 76, 0.2);
+      }
+      .alignment-grid::before,
+      .alignment-grid::after {
+        content: "";
+        position: absolute;
+        background: rgba(255, 255, 255, 0.95);
+        box-shadow: 0 0 0 1px rgba(19, 43, 76, 0.16);
+      }
+      .alignment-grid::before { top: 0; bottom: 0; left: 50%; width: 2px; transform: translateX(-1px); }
+      .alignment-grid::after { left: 0; right: 0; top: 50%; height: 2px; transform: translateY(-1px); }
+      .grid .alignment-grid { display: block; }
+      .circular-grid {
+        display: none;
+        position: absolute;
+        inset: 0;
+        z-index: 6;
+        pointer-events: none;
+      }
+      .circular-grid span {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        aspect-ratio: 1;
+        border: 1px solid rgba(255, 255, 255, 0.58);
+        border-radius: 50%;
+        transform: translate(-50%, -50%);
+        box-shadow: 0 0 0 1px rgba(19, 43, 76, 0.08);
+      }
+      .circular-grid span:nth-child(1) { width: 20%; }
+      .circular-grid span:nth-child(2) { width: 40%; }
+      .circular-grid span:nth-child(3) { width: 60%; }
+      .circular-grid span:nth-child(4) { width: 80%; }
+      .circular-grid span:nth-child(5) { width: 100%; }
+      .radial .circular-grid { display: block; }
+      .circle { border-radius: 50%; }
+      .squircle { border-radius: 25%; }
+      .rounded { border-radius: 19%; }
+
+      .artwork {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        transform: translate(var(--art-x), var(--art-y)) scale(var(--art-scale));
+        transform-origin: center;
+      }
+      .safe .icon::after {
+        content: "";
+        position: absolute;
+        inset: 4.1667%;
+        border: 1px dashed rgba(255, 255, 255, 0.64);
+        border-radius: 50%;
+        z-index: 7;
+        pointer-events: none;
+      }
+      .preview-card h2 { margin: 17px 0 4px; font-size: 17px; }
+      .preview-card p { margin: 0; color: #7c879c; font-size: 13px; }
+      .spec-badge {
+        display: inline-flex;
+        margin-top: 14px;
+        padding: 7px 11px;
+        border-radius: 999px;
+        color: #087f8c;
+        background: rgba(20, 184, 166, 0.1);
+        font-size: 12px;
+        font-weight: 800;
+      }
+
+      .controls { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; margin-top: 30px; padding-top: 26px; border-top: 1px solid #e8edf5; }
+      .control label { display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 14px; font-weight: 700; }
+      output { color: #0f9f9a; font-variant-numeric: tabular-nums; }
+      input[type="range"] { width: 100%; accent-color: #0ea5e9; }
+      .actions { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-top: 24px; }
+      .hint { margin: 0; color: #758198; font-size: 13px; line-height: 1.5; }
+      button {
+        border: 0;
+        border-radius: 999px;
+        padding: 11px 18px;
+        color: #ffffff;
+        background: linear-gradient(135deg, #14b8a6, #0ea5e9 55%, #6366f1);
+        font: inherit;
+        font-size: 13px;
+        font-weight: 800;
+        cursor: pointer;
+        box-shadow: 0 8px 18px rgba(14, 165, 233, 0.22);
+      }
+      button.secondary {
+        color: #53617a;
+        background: #edf2f8;
+        box-shadow: none;
+      }
+      .button-group { display: flex; gap: 10px; }
+      .submission-status { margin: 8px 0 0; color: #0f9f9a; font-size: 13px; font-weight: 800; }
+      .submission-status:empty { display: none; }
+      .toggle { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; font-size: 13px; font-weight: 700; color: #526078; }
+
+      @media (max-width: 800px) {
+        .previews, .controls { grid-template-columns: 1fr; }
+        .preview-stage { min-height: 250px; }
+        .icon { width: 185px; }
+        .actions { align-items: flex-start; flex-direction: column; }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p class="eyebrow">Rozare brand lab</p>
+      <h1>Launcher icon preview</h1>
+      <p class="intro">Preview the Android adaptive icon through common launcher masks. This calibrated preview models Android's 108×108 dp layers through the central 72×72 dp viewport, including the system's 1.5× crop.</p>
+      <span class="spec-badge">Android viewport simulation enabled · 108 → 72 dp · 1.5×</span>
+
+      <section class="panel" id="previewPanel">
+        <div class="previews">
+          <article class="preview-card">
+            <div class="preview-stage"><div class="icon circle"><div class="adaptive-background"></div><div class="alignment-grid"></div><div class="circular-grid"><span></span><span></span><span></span><span></span><span></span></div></div></div>
+            <h2>Circle</h2><p>Pixel and circular launcher themes</p>
+          </article>
+          <article class="preview-card">
+            <div class="preview-stage"><div class="icon squircle"><div class="adaptive-background"></div><div class="alignment-grid"></div><div class="circular-grid"><span></span><span></span><span></span><span></span><span></span></div></div></div>
+            <h2>Squircle</h2><p>Samsung-style launcher themes</p>
+          </article>
+          <article class="preview-card">
+            <div class="preview-stage"><div class="icon rounded"><div class="adaptive-background"></div><div class="alignment-grid"></div><div class="circular-grid"><span></span><span></span><span></span><span></span><span></span></div></div></div>
+            <h2>Rounded square</h2><p>Standard Android launcher themes</p>
+          </article>
+        </div>
+
+        <div class="controls">
+          <div class="control"><label for="scale">Logo size <output id="scaleValue">92%</output></label><input id="scale" type="range" min="60" max="150" step="0.1" value="92" /></div>
+          <div class="control"><label for="x">Horizontal <output id="xValue">+3.4%</output></label><input id="x" type="range" min="-12" max="12" step="0.1" value="3.4" /></div>
+          <div class="control"><label for="y">Vertical <output id="yValue">+2.5%</output></label><input id="y" type="range" min="-12" max="12" step="0.1" value="2.5" /></div>
+        </div>
+
+        <div class="actions">
+          <div>
+            <p class="hint">92% / +3.4% / +2.5% is the approved native adjustment and includes Android's simulated 1.5× crop.</p>
+            <p class="submission-status" id="submitStatus" role="status" aria-live="polite"></p>
+          </div>
+          <label class="toggle"><input id="gridOverlay" type="checkbox" /> Show grid</label>
+          <label class="toggle"><input id="circularGrid" type="checkbox" /> Circular grid</label>
+          <label class="toggle"><input id="safeZone" type="checkbox" /> Show safe zone</label>
+          <div class="button-group">
+            <button class="secondary" id="reset" type="button">Reset</button>
+            <button id="submit" type="button">Submit final logo</button>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <template id="artworkTemplate">
+      <div class="adaptive-foreground">
+        <svg class="artwork" viewBox="0 0 1024 1024" aria-hidden="true">
+          <g transform="translate(50 61) scale(17.5)" fill="none" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M37 14 a15 15 0 0 1 -25 21" stroke="#fff" stroke-opacity=".42" stroke-width="1.6"/>
+            <path d="M15 14 h11 a7 7 0 0 1 0 14 h-7 l9 6 M19 14 v20" stroke="#fff" stroke-width="3.4"/>
+            <circle cx="35" cy="12" r="2" fill="#fff"/>
+          </g>
+        </svg>
+      </div>
+    </template>
+    <script>
+      const root = document.documentElement;
+      const panel = document.querySelector('#previewPanel');
+      const template = document.querySelector('#artworkTemplate');
+      const submitButton = document.querySelector('#submit');
+      const submitStatus = document.querySelector('#submitStatus');
+      document.querySelectorAll('.icon').forEach((icon) => icon.append(template.content.cloneNode(true)));
+
+      const controls = {
+        scale: { element: document.querySelector('#scale'), output: document.querySelector('#scaleValue'), variable: '--art-scale', format: (value) => `${value}%`, css: (value) => Number(value) / 100 },
+        x: { element: document.querySelector('#x'), output: document.querySelector('#xValue'), variable: '--art-x', format: (value) => `${Number(value) > 0 ? '+' : ''}${value}%`, css: (value) => `${value}%` },
+        y: { element: document.querySelector('#y'), output: document.querySelector('#yValue'), variable: '--art-y', format: (value) => `${Number(value) > 0 ? '+' : ''}${value}%`, css: (value) => `${value}%` },
+      };
+
+      const values = () => ({
+        scale: Number(controls.scale.element.value),
+        x: Number(controls.x.element.value),
+        y: Number(controls.y.element.value),
+      });
+      const update = () => {
+        Object.values(controls).forEach(({ element, output, variable, format, css }) => {
+          output.value = format(element.value);
+          root.style.setProperty(variable, css(element.value));
+        });
+      };
+      const markDraft = () => {
+        submitButton.textContent = 'Submit final logo';
+        submitStatus.textContent = '';
+        if (new URLSearchParams(location.search).get('status') === 'ready') {
+          history.replaceState(null, '', location.pathname);
+        }
+      };
+      Object.values(controls).forEach(({ element }) => element.addEventListener('input', () => {
+        update();
+        markDraft();
+      }));
+      const gridOverlay = document.querySelector('#gridOverlay');
+      gridOverlay.addEventListener('change', (event) => panel.classList.toggle('grid', event.target.checked));
+      const circularGrid = document.querySelector('#circularGrid');
+      circularGrid.addEventListener('change', (event) => panel.classList.toggle('radial', event.target.checked));
+      document.querySelector('#safeZone').addEventListener('change', (event) => panel.classList.toggle('safe', event.target.checked));
+      document.querySelector('#reset').addEventListener('click', () => {
+        controls.scale.element.value = 92;
+        controls.x.element.value = 3.4;
+        controls.y.element.value = 2.5;
+        update();
+        markDraft();
+      });
+      submitButton.addEventListener('click', () => {
+        const adjustment = values();
+        const params = new URLSearchParams({
+          status: 'ready',
+          scale: String(adjustment.scale),
+          x: String(adjustment.x),
+          y: String(adjustment.y),
+        });
+        history.replaceState(null, '', `${location.pathname}?${params}`);
+        submitButton.textContent = 'Submitted ✓';
+        submitStatus.textContent = `Final logo saved: ${adjustment.scale}% size, ${adjustment.x >= 0 ? '+' : ''}${adjustment.x}% horizontal, ${adjustment.y >= 0 ? '+' : ''}${adjustment.y}% vertical. Return to chat and send “submitted”.`;
+      });
+
+      const initial = new URLSearchParams(location.search);
+      if (initial.get('grid') === '1') {
+        gridOverlay.checked = true;
+        panel.classList.add('grid');
+      }
+      if (initial.get('radial') === '1') {
+        circularGrid.checked = true;
+        panel.classList.add('radial');
+      }
+      Object.entries(controls).forEach(([key, { element }]) => {
+        if (!initial.has(key)) return;
+        const requested = Number(initial.get(key));
+        if (Number.isFinite(requested) && requested >= Number(element.min) && requested <= Number(element.max)) {
+          element.value = String(requested);
+        }
+      });
+      if (initial.get('status') === 'ready') {
+        submitButton.textContent = 'Submitted ✓';
+        const adjustment = values();
+        submitStatus.textContent = `Final logo saved: ${adjustment.scale}% size, ${adjustment.x >= 0 ? '+' : ''}${adjustment.x}% horizontal, ${adjustment.y >= 0 ? '+' : ''}${adjustment.y}% vertical. Return to chat and send “submitted”.`;
+      }
+      update();
+    </script>
+  </body>
+</html>

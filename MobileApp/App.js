@@ -3,6 +3,7 @@ import { View, Text, TouchableOpacity, StyleSheet, Animated } from 'react-native
 import { NavigationContainer } from '@react-navigation/native';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar as ExpoStatusBar } from 'expo-status-bar';
+import * as SplashScreen from 'expo-splash-screen';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { Ionicons } from '@expo/vector-icons';
 import NetInfo from '@react-native-community/netinfo';
@@ -16,6 +17,12 @@ import AppNavigator from './src/navigation/AppNavigator';
 import OnboardingWalkthrough, { shouldShowOnboarding } from './src/components/OnboardingWalkthrough';
 import { isBiometricEnabled, isBiometricAvailable, authenticateBiometric } from './src/utils/biometricLock';
 import GlassPanel from './src/components/common/GlassPanel';
+import AppLaunchScreen from './src/components/common/AppLaunchScreen';
+
+SplashScreen.setOptions({
+  duration: 450,
+  fade: true,
+});
 
 // ─── Sentry Crash Reporting (only when a real DSN is configured) ─────────────
 const SENTRY_DSN = process.env.EXPO_PUBLIC_SENTRY_DSN;
@@ -312,7 +319,7 @@ function BiometricGate({ children }) {
     })();
   }, [tryUnlock]);
 
-  if (locked === null) return null;
+  if (locked === null) return <AppLaunchScreen message="Securing your space" />;
   if (locked) {
     return (
       <View style={biometricStyles.container}>
@@ -344,8 +351,8 @@ function App() {
     shouldShowOnboarding().then(setShowOnboarding);
   }, []);
 
-  // Still checking — show nothing briefly
-  if (showOnboarding === null) return null;
+  // Keep the native splash transition visually continuous while local state hydrates.
+  if (showOnboarding === null) return <AppLaunchScreen />;
 
   if (showOnboarding) {
     return (

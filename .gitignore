@@ -18,3 +18,6 @@ id_ed25519
 infra/evolution/.env
 ROZARE_MIGRATION_COMPLETE.md
 Backend/test-email.js
+
+# Local visual QA renders
+MobileApp/assets/.render-test.png

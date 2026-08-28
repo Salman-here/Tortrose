@@ -16,6 +16,7 @@ import { BlurTargetView, BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { tap as hapticTap } from '../utils/haptics';
+import { getBottomTabTheme } from '../utils/bottomTabTheme';
 
 // Website --logo-gradient — same as the Add to Cart / CTA buttons
 const CTA_GRADIENT = ['#14B8A6', '#0EA5E9', '#6366F1'];
@@ -25,12 +26,13 @@ const CTA_GRADIENT = ['#14B8A6', '#0EA5E9', '#6366F1'];
 function GlassTabBarBackground({ isDark, palette }) {
   const tabBlurTarget = useRef(null);
   const [tabBlurReady, setTabBlurReady] = useState(false);
+  const tabTheme = getBottomTabTheme(palette, isDark);
   const surfaceStyle = [
     StyleSheet.absoluteFill,
     {
-      backgroundColor: palette.glass.bgStrong,
+      backgroundColor: tabTheme.surfaceColor,
       borderWidth: 1,
-      borderColor: palette.glass.border,
+      borderColor: tabTheme.borderColor,
       borderRadius: 28,
       overflow: 'hidden',
     },
@@ -45,21 +47,19 @@ function GlassTabBarBackground({ isDark, palette }) {
           onLayout={() => setTabBlurReady(true)}
         >
           <LinearGradient
-            colors={isDark
-              ? ['rgba(20,184,166,0.32)', 'rgba(14,165,233,0.16)', 'rgba(99,102,241,0.34)']
-              : ['rgba(153,246,228,0.46)', 'rgba(186,230,253,0.30)', 'rgba(199,210,254,0.48)']}
+            colors={tabTheme.auroraColors}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 1 }}
             style={StyleSheet.absoluteFill}
           />
-          <View style={[styles.tabPrism, styles.tabPrismLeft, { backgroundColor: isDark ? 'rgba(45,212,191,0.44)' : 'rgba(45,212,191,0.52)' }]} />
-          <View style={[styles.tabPrism, styles.tabPrismCenter, { backgroundColor: isDark ? 'rgba(56,189,248,0.36)' : 'rgba(56,189,248,0.44)' }]} />
-          <View style={[styles.tabPrism, styles.tabPrismRight, { backgroundColor: isDark ? 'rgba(129,140,248,0.42)' : 'rgba(129,140,248,0.50)' }]} />
+          <View style={[styles.tabPrism, styles.tabPrismLeft, { backgroundColor: tabTheme.prismColors[0] }]} />
+          <View style={[styles.tabPrism, styles.tabPrismCenter, { backgroundColor: tabTheme.prismColors[1] }]} />
+          <View style={[styles.tabPrism, styles.tabPrismRight, { backgroundColor: tabTheme.prismColors[2] }]} />
         </BlurTargetView>
         {tabBlurReady && (
           <BlurView
             blurTarget={tabBlurTarget}
-            tint={isDark ? 'dark' : 'default'}
+            tint={tabTheme.blurTint}
             intensity={36}
             blurMethod={Number.parseInt(String(Platform.Version), 10) >= 31
               ? 'dimezisBlurViewSdk31Plus'
@@ -69,9 +69,7 @@ function GlassTabBarBackground({ isDark, palette }) {
           />
         )}
         <LinearGradient
-          colors={isDark
-            ? ['rgba(255,255,255,0.12)', 'rgba(255,255,255,0.018)']
-            : ['rgba(255,255,255,0.30)', 'rgba(255,255,255,0.035)']}
+          colors={tabTheme.finishColors}
           style={StyleSheet.absoluteFill}
           pointerEvents="none"
         />
@@ -85,6 +83,11 @@ function GlassTabBarBackground({ isDark, palette }) {
         tint={isDark ? 'dark' : 'light'}
         intensity={60}
         style={StyleSheet.absoluteFill}
+      />
+      <LinearGradient
+        colors={tabTheme.finishColors}
+        style={StyleSheet.absoluteFill}
+        pointerEvents="none"
       />
     </View>
   );
@@ -330,6 +333,7 @@ function SlidingTabBar({
 }) {
   const activeIndex = useRef(new Animated.Value(state.index)).current;
   const [barWidth, setBarWidth] = useState(0);
+  const tabTheme = getBottomTabTheme(palette, isDark);
   const routeCount = Math.max(state.routes.length, 1);
   const slotWidth = barWidth / routeCount;
   const indicatorWidth = 52;
@@ -360,11 +364,17 @@ function SlidingTabBar({
         {
           bottom: Math.max(bottomInset, spacing.md),
           height: 66,
+          shadowColor: tabTheme.shadowColor,
+          shadowOpacity: tabTheme.shadowOpacity,
         },
       ]}
     >
       <View pointerEvents="none" style={StyleSheet.absoluteFill}>
-        <GlassTabBarBackground isDark={isDark} palette={palette} />
+        <GlassTabBarBackground
+          key={isDark ? 'bottom-tab-dark' : 'bottom-tab-light'}
+          isDark={isDark}
+          palette={palette}
+        />
       </View>
 
       {barWidth > 0 && (
@@ -388,7 +398,7 @@ function SlidingTabBar({
         {state.routes.map((route, index) => {
           const { options } = descriptors[route.key];
           const isFocused = state.index === index;
-          const color = isFocused ? '#fff' : palette.colors.textLight;
+          const color = isFocused ? '#fff' : tabTheme.inactiveIconColor;
           const accessibilityLabel = options.tabBarAccessibilityLabel
             || options.title
             || options.tabBarLabel

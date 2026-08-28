@@ -2614,6 +2614,7 @@ exports.chatOnce = async (req, res) => {
     }
 
     // Save chat history — only the LAST user message + final AI response (not full history)
+    let savedConvoId = null;
     if (userId) {
       try {
         const responseText = sanitizeAssistantVisibleText(
@@ -2636,7 +2637,13 @@ exports.chatOnce = async (req, res) => {
           });
         }
         if (newMessages.length > 0) {
-          await saveToConversation(userId, body.conversationId || null, newMessages, 'web');
+          const source = body.source === 'mobile' ? 'mobile' : 'web';
+          savedConvoId = await saveToConversation(
+            userId,
+            body.conversationId || null,
+            newMessages,
+            source,
+          );
         }
       } catch (e) { /* non-fatal */ }
     }
@@ -2653,6 +2660,7 @@ exports.chatOnce = async (req, res) => {
       toolResults,
       clientActions,
       role: effectiveRole,
+      conversationId: savedConvoId?.toString() || null,
     });
   } catch (err) {
     console.error('chatOnce error:', err);
@@ -2672,6 +2680,9 @@ exports.chatOnce = async (req, res) => {
  * Save messages to a specific conversation (or create/find the active one).
  */
 async function saveToConversation(userId, conversationId, messages, source = 'web') {
+  const resolvedSource = source === 'whatsapp'
+    ? 'whatsapp'
+    : (source === 'mobile' ? 'mobile' : 'web');
   let history = await ChatHistory.findOne({ user: userId });
   if (!history) {
     history = new ChatHistory({ user: userId, conversations: [] });
@@ -2679,10 +2690,16 @@ async function saveToConversation(userId, conversationId, messages, source = 'we
 
   let convo;
   if (conversationId) {
-    convo = history.conversations.id(conversationId);
+    const requestedConvo = history.conversations.id(conversationId);
+    const requestedIsWhatsApp = requestedConvo?.source === 'whatsapp';
+    const sourceIsWhatsApp = resolvedSource === 'whatsapp';
+    // Web/mobile may share a conversation, but WhatsApp must remain isolated.
+    if (requestedConvo && requestedIsWhatsApp === sourceIsWhatsApp) {
+      convo = requestedConvo;
+    }
   }
   if (!convo) {
-    if (source === 'whatsapp') {
+    if (resolvedSource === 'whatsapp') {
       // For WhatsApp: find existing WhatsApp conversation or create one
       convo = history.conversations.find(c => c.source === 'whatsapp');
     } else {
@@ -2692,16 +2709,36 @@ async function saveToConversation(userId, conversationId, messages, source = 'we
     if (!convo) {
       // Auto-generate title from first user message
       const firstUserMsg = messages.find(m => m.role === 'user');
-      const title = source === 'whatsapp'
+      const title = resolvedSource === 'whatsapp'
         ? '[WhatsApp] Chat'
         : (firstUserMsg
           ? stripAttachmentMetadata(firstUserMsg.content).slice(0, 60) + (stripAttachmentMetadata(firstUserMsg.content).length > 60 ? '...' : '')
           : 'New Chat');
-      history.conversations.push({ title, messages: [], isActive: source !== 'whatsapp', source });
+      history.conversations.push({
+        title,
+        messages: [],
+        isActive: resolvedSource !== 'whatsapp',
+        source: resolvedSource,
+      });
       convo = history.conversations[history.conversations.length - 1];
-      if (source !== 'whatsapp') {
+      if (resolvedSource !== 'whatsapp') {
         history.activeConversationId = convo._id;
       }
+    }
+  }
+
+  // A newly-created empty session receives a useful title from its first user
+  // turn. Explicitly renamed conversations are never overwritten.
+  const firstUserMsg = messages.find(m => m.role === 'user');
+  const alreadyHasUserMessage = convo.messages.some(m => m.role === 'user');
+  if (
+    !alreadyHasUserMessage
+    && firstUserMsg?.content
+    && (!convo.title || convo.title === 'New Chat')
+  ) {
+    const cleanTitle = stripAttachmentMetadata(firstUserMsg.content);
+    if (cleanTitle) {
+      convo.title = cleanTitle.slice(0, 60) + (cleanTitle.length > 60 ? '...' : '');
     }
   }
 
@@ -2742,6 +2779,7 @@ exports.getConversations = async (req, res) => {
 
     // Return conversations sorted by last active, with summary info
     const conversations = history.conversations
+      .filter(c => c.source !== 'whatsapp')
       .sort((a, b) => new Date(b.lastActive || b.updatedAt) - new Date(a.lastActive || a.updatedAt))
       .map(c => ({
         _id: c._id,
@@ -2749,12 +2787,19 @@ exports.getConversations = async (req, res) => {
         messageCount: c.messages?.length || 0,
         lastActive: c.lastActive || c.updatedAt,
         isActive: c.isActive,
+        source: c.source === 'mobile' ? 'mobile' : 'web',
         preview: stripAttachmentMetadata(c.messages?.filter(m => m.role === 'user').pop()?.content || '').slice(0, 80),
       }));
 
+    const activeConversationId = conversations.some(
+      conversation => conversation._id?.toString() === history.activeConversationId?.toString()
+    )
+      ? history.activeConversationId
+      : null;
+
     return res.json({
       conversations,
-      activeConversationId: history.activeConversationId,
+      activeConversationId,
     });
   } catch (err) {
     console.error('getConversations error:', err);
@@ -2774,7 +2819,9 @@ exports.getConversation = async (req, res) => {
     const history = await ChatHistory.findOne({ user: userId }).lean();
     if (!history) return res.json({ messages: [], title: 'New Chat' });
 
-    const convo = history.conversations?.find(c => c._id?.toString() === conversationId);
+    const convo = history.conversations?.find(
+      c => c._id?.toString() === conversationId && c.source !== 'whatsapp'
+    );
     if (!convo) return res.status(404).json({ error: 'Conversation not found.' });
 
     // Mark this as active
@@ -2799,7 +2846,9 @@ exports.getConversation = async (req, res) => {
     return res.json({
       _id: convo._id,
       title: convo.title,
+      source: convo.source === 'mobile' ? 'mobile' : 'web',
       messages: (convo.messages || []).map(m => ({
+        _id: m._id,
         role: m.role,
         content: m.content,
         attachments: m.attachments || [],
@@ -2829,8 +2878,10 @@ exports.createConversation = async (req, res) => {
     // Deactivate all existing conversations
     history.conversations.forEach(c => { c.isActive = false; });
 
-    const title = req.body.title || 'New Chat';
-    history.conversations.push({ title, messages: [], isActive: true });
+    const requestedTitle = String(req.body?.title || '').trim();
+    const title = requestedTitle ? requestedTitle.slice(0, 100) : 'New Chat';
+    const source = req.body?.source === 'mobile' ? 'mobile' : 'web';
+    history.conversations.push({ title, messages: [], isActive: true, source });
     const newConvo = history.conversations[history.conversations.length - 1];
     history.activeConversationId = newConvo._id;
 
@@ -2839,6 +2890,7 @@ exports.createConversation = async (req, res) => {
     return res.json({
       _id: newConvo._id,
       title: newConvo.title,
+      source: newConvo.source,
       messages: [],
     });
   } catch (err) {
@@ -2859,13 +2911,25 @@ exports.deleteConversation = async (req, res) => {
     const history = await ChatHistory.findOne({ user: userId });
     if (!history) return res.status(404).json({ error: 'No chat history found.' });
 
+    const targetConversation = history.conversations.find(
+      c => c._id?.toString() === conversationId && c.source !== 'whatsapp'
+    );
+    if (!targetConversation) {
+      return res.status(404).json({ error: 'Conversation not found.' });
+    }
+
     history.conversations = history.conversations.filter(
       c => c._id?.toString() !== conversationId
     );
 
     // If we deleted the active one, activate the latest
     if (history.activeConversationId?.toString() === conversationId) {
-      const latest = history.conversations[history.conversations.length - 1];
+      history.conversations.forEach(c => {
+        if (c.source !== 'whatsapp') c.isActive = false;
+      });
+      const latest = history.conversations
+        .filter(c => c.source !== 'whatsapp')
+        .sort((a, b) => new Date(b.lastActive || b.updatedAt) - new Date(a.lastActive || a.updatedAt))[0];
       if (latest) {
         latest.isActive = true;
         history.activeConversationId = latest._id;
@@ -2891,12 +2955,20 @@ exports.renameConversation = async (req, res) => {
     const { conversationId } = req.params;
     const { title } = req.body;
     if (!userId) return res.status(401).json({ error: 'Authentication required.' });
-    if (!title) return res.status(400).json({ error: 'Title is required.' });
+    const normalizedTitle = String(title || '').trim();
+    if (!normalizedTitle) return res.status(400).json({ error: 'Title is required.' });
 
-    await ChatHistory.updateOne(
-      { user: userId, 'conversations._id': conversationId },
-      { $set: { 'conversations.$.title': title.slice(0, 100) } }
+    const result = await ChatHistory.updateOne(
+      {
+        user: userId,
+        conversations: {
+          $elemMatch: { _id: conversationId, source: { $ne: 'whatsapp' } },
+        },
+      },
+      { $set: { 'conversations.$.title': normalizedTitle.slice(0, 100) } }
     );
+
+    if (!result.matchedCount) return res.status(404).json({ error: 'Conversation not found.' });
 
     return res.json({ success: true });
   } catch (err) {
@@ -2914,10 +2986,17 @@ exports.clearConversation = async (req, res) => {
     const { conversationId } = req.params;
     if (!userId) return res.status(401).json({ error: 'Authentication required.' });
 
-    await ChatHistory.updateOne(
-      { user: userId, 'conversations._id': conversationId },
+    const result = await ChatHistory.updateOne(
+      {
+        user: userId,
+        conversations: {
+          $elemMatch: { _id: conversationId, source: { $ne: 'whatsapp' } },
+        },
+      },
       { $set: { 'conversations.$.messages': [] } }
     );
+
+    if (!result.matchedCount) return res.status(404).json({ error: 'Conversation not found.' });
 
     return res.json({ success: true, message: 'Messages cleared.' });
   } catch (err) {
@@ -2936,4 +3015,5 @@ exports.__private = {
   formatContextBlock,
   createDurableMutationSlotAllocator,
   durableMutationTransportFailure,
+  saveToConversation,
 };
