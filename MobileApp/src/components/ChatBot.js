@@ -34,6 +34,7 @@ import { useTheme } from '../contexts/ThemeContext';
 import PremiumTopBar, { PremiumTopBarAction } from './common/PremiumTopBar';
 import GlassBlurFill from './common/GlassBlurFill';
 import AIChatHistoryModal from './common/AIChatHistoryModal';
+import SafetyActionsSheet from './common/SafetyActionsSheet';
 import { getOrderCurrency, getOrderTotal } from '../utils/orderPresentation';
 import { shouldRetainIdempotencyKey } from '../utils/currencySafety';
 import {
@@ -534,6 +535,7 @@ export default function ChatBot({
   const [conversationLoading, setConversationLoading] = useState(false);
   const [historyError, setHistoryError] = useState('');
   const [historyBusyId, setHistoryBusyId] = useState(null);
+  const [reportingMessage, setReportingMessage] = useState(null);
 
   const audioRecorder = useAudioRecorder(RecordingPresets.LOW_QUALITY);
   const recorderState = useAudioRecorderState(audioRecorder, 250);
@@ -1392,6 +1394,18 @@ export default function ChatBot({
               )}
             </View>
           ))}
+          {!isUser && !item.isStreaming && !item.isError && Boolean(sanitizeAssistantText(item.content)) && (
+            <TouchableOpacity
+              style={styles.reportResponseButton}
+              onPress={() => setReportingMessage(item)}
+              activeOpacity={0.72}
+              accessibilityRole="button"
+              accessibilityLabel="Report this AI response"
+            >
+              <Ionicons name="flag-outline" size={12} color={c.textSecondary} />
+              <Text style={styles.reportResponseText}>Report response</Text>
+            </TouchableOpacity>
+          )}
         </View>
         {isUser && (
           <View style={styles.userAvatar}>
@@ -1775,6 +1789,18 @@ export default function ChatBot({
         onRename={renameConversation}
         onDelete={deleteConversation}
       />
+      <SafetyActionsSheet
+        visible={Boolean(reportingMessage)}
+        onClose={() => setReportingMessage(null)}
+        initialMode="report"
+        report={reportingMessage ? {
+          kind: 'ai_response',
+          content: sanitizeAssistantText(reportingMessage.content),
+          ...(activeConvoId && /^[a-f0-9]{24}$/i.test(String(reportingMessage.id || ''))
+            ? { conversationId: activeConvoId, messageId: reportingMessage.id }
+            : {}),
+        } : null}
+      />
     </View>
   );
 
@@ -1964,6 +1990,8 @@ const makeStyles = (palette) => {
     productPrice: { fontSize: 10, fontWeight: fontWeight.semibold, color: c.primary },
     actionResult: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, marginTop: spacing.xs, padding: spacing.sm, borderRadius: borderRadius.md, backgroundColor: c.primarySubtle, borderWidth: 1, borderColor: c.primaryLighter },
     actionResultText: { fontSize: 11, fontWeight: fontWeight.medium, color: c.primary },
+    reportResponseButton: { alignSelf: 'flex-start', marginTop: spacing.sm, minHeight: 28, flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 9, borderRadius: 999, backgroundColor: g.bgSubtle, borderWidth: StyleSheet.hairlineWidth, borderColor: g.borderSubtle },
+    reportResponseText: { color: c.textSecondary, fontSize: 10, fontWeight: fontWeight.semibold },
 
     // Style card
     styleCard: { marginTop: spacing.sm, borderRadius: borderRadius.lg, overflow: 'hidden', backgroundColor: c.secondarySubtle, borderWidth: 1, borderColor: c.secondaryLighter },

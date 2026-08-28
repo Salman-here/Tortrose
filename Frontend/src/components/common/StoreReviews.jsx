@@ -10,10 +10,12 @@ import {
   ThumbsUp,
   Trash2,
   X,
+  MoreHorizontal,
 } from 'lucide-react';
 import { toast } from 'react-toastify';
 import { useAuth } from '../../contexts/AuthContext';
 import { getAuthToken } from '../../utils/cookieHelper';
+import SafetyActionsDialog from './SafetyActionsDialog';
 
 const API = `${import.meta.env.VITE_API_URL}api/store-reviews`;
 const EMPTY_SUMMARY = {
@@ -74,6 +76,7 @@ export default function StoreReviews({ storeId, storeOwnerId, onSummaryChange })
   const [form, setForm] = useState({ rating: 5, title: '', comment: '' });
   const [replyingTo, setReplyingTo] = useState('');
   const [replyText, setReplyText] = useState('');
+  const [safetyReview, setSafetyReview] = useState(null);
 
   const myReview = useMemo(() => {
     if (eligibility?.review) return eligibility.review;
@@ -283,9 +286,13 @@ export default function StoreReviews({ storeId, storeOwnerId, onSummaryChange })
                     <span className="text-[11px]" style={{ color: 'hsl(var(--muted-foreground))' }}>{new Date(review.updatedAt || review.createdAt).toLocaleDateString()}</span>
                   </div>
                 </div>
-                {mine && (
+                {mine ? (
                   <button type="button" onClick={() => deleteReview(review._id)} className="w-8 h-8 rounded-lg inline-flex items-center justify-center" title="Delete review">
                     <Trash2 size={15} style={{ color: 'hsl(0,72%,52%)' }} />
+                  </button>
+                ) : (
+                  <button type="button" onClick={() => setSafetyReview(review)} className="w-8 h-8 rounded-lg inline-flex items-center justify-center" title="Review safety options" aria-label="Review safety options">
+                    <MoreHorizontal size={16} style={{ color: 'hsl(var(--muted-foreground))' }} />
                   </button>
                 )}
               </div>
@@ -342,6 +349,13 @@ export default function StoreReviews({ storeId, storeOwnerId, onSummaryChange })
           </motion.div>
         )}
       </AnimatePresence>
+      <SafetyActionsDialog
+        open={Boolean(safetyReview)}
+        onClose={() => setSafetyReview(null)}
+        report={safetyReview ? { kind: 'review', targetId: safetyReview._id } : null}
+        block={safetyReview && entityId(safetyReview.user) ? { userId: entityId(safetyReview.user), source: 'reviewer', label: 'reviewer' } : null}
+        onBlocked={(userId) => setReviews((previous) => previous.filter((review) => entityId(review.user) !== String(userId)))}
+      />
     </section>
   );
 }

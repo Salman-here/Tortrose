@@ -30,6 +30,7 @@ import GlassPanel from '../components/common/GlassPanel';
 import GlassBlurFill from '../components/common/GlassBlurFill';
 import TrustScoreSheet from '../components/common/TrustScoreSheet';
 import StoreReviews from '../components/common/StoreReviews';
+import SafetyActionsSheet from '../components/common/SafetyActionsSheet';
 import { spacing, fontSize, borderRadius, fontWeight } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 
@@ -96,6 +97,10 @@ export default function StoreScreen({ route, navigation }) {
   const [storeCoupons, setStoreCoupons] = useState([]);
   const [copiedCoupon, setCopiedCoupon] = useState(null);
   const [storeRating, setStoreRating] = useState({ average: 0, count: 0 });
+  const [safetyVisible, setSafetyVisible] = useState(false);
+  const isOwnStore = Boolean(
+    getEntityId(store?.seller) && getEntityId(store.seller) === getEntityId(currentUser),
+  );
 
   // Debounced product search (server-side, like website)
   useEffect(() => {
@@ -443,6 +448,9 @@ export default function StoreScreen({ route, navigation }) {
           <TouchableOpacity style={styles.topBarActionBtn} onPress={handleShare} activeOpacity={0.75} accessibilityLabel="Share store" hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}>
             <Ionicons name="share-social-outline" size={18} color={palette.colors.text} />
           </TouchableOpacity>
+          {!isOwnStore && <TouchableOpacity style={styles.topBarActionBtn} onPress={() => setSafetyVisible(true)} activeOpacity={0.75} accessibilityLabel="Store safety options" hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}>
+            <Ionicons name="ellipsis-horizontal" size={18} color={palette.colors.text} />
+          </TouchableOpacity>}
         </View>
       </GlassPanel>
 
@@ -485,6 +493,13 @@ export default function StoreScreen({ route, navigation }) {
       />
       </SafeAreaView>
       <TrustScoreSheet visible={trustSheetVisible} onClose={() => setTrustSheetVisible(false)} storeId={store?._id} storeName={storeName} />
+      <SafetyActionsSheet
+        visible={safetyVisible}
+        onClose={() => setSafetyVisible(false)}
+        report={store ? { kind: 'store', targetId: store._id } : null}
+        block={getEntityId(store?.seller) ? { userId: getEntityId(store.seller), source: 'seller', label: 'seller' } : null}
+        onBlocked={() => navigation.navigate('MainTabs', { screen: 'Marketplace' })}
+      />
     </GlassBackground>
   );
 }

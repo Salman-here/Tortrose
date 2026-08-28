@@ -26,6 +26,7 @@ import GlassPanel from '../components/common/GlassPanel';
 import KeyboardAwareFormScrollView from '../components/common/KeyboardAwareFormScrollView';
 import PremiumTopBar, { PremiumTopBarAction } from '../components/common/PremiumTopBar';
 import ProductOptionsModal from '../components/common/ProductOptionsModal';
+import SafetyActionsSheet from '../components/common/SafetyActionsSheet';
 import { trackProductView } from '../utils/recentlyViewed';
 import {
   clampGalleryIndex,
@@ -91,6 +92,7 @@ export default function ProductDetailScreen({ route, navigation }) {
   const [reviewRating, setReviewRating] = useState(5);
   const [reviewComment, setReviewComment] = useState('');
   const [submittingReview, setSubmittingReview] = useState(false);
+  const [safetyAction, setSafetyAction] = useState(null);
 
   const productHasOptions = hasProductOptions(product);
   const selectionValidation = validateProductSelections(product, {
@@ -108,6 +110,10 @@ export default function ProductDetailScreen({ route, navigation }) {
   const cartCount = Array.isArray(cartItems?.cart)
     ? getCartPresentationItemCount(cartItems.cart)
     : 0;
+  const productSellerId = typeof product?.seller === 'string' ? product.seller : product?.seller?._id;
+  const isOwnSellerContent = Boolean(
+    productSellerId && String(productSellerId) === String(currentUser?._id || currentUser?.id || ''),
+  );
 
   const handleBack = useCallback(() => {
     if (navigation.canGoBack?.()) navigation.goBack();
@@ -372,6 +378,16 @@ export default function ProductDetailScreen({ route, navigation }) {
             accessibilityLabel="Share product"
             disabled={!product}
           />
+          {!isOwnSellerContent && <PremiumTopBarAction
+            icon="ellipsis-horizontal"
+            onPress={() => product && setSafetyAction({
+              report: { kind: 'product', targetId: product._id },
+              block: productSellerId ? { userId: productSellerId, source: 'seller', label: 'seller' } : null,
+              onBlocked: () => navigation.navigate('MainTabs', { screen: 'Marketplace' }),
+            })}
+            accessibilityLabel="Product safety options"
+            disabled={!product}
+          />}
         </>
       )}
     />
@@ -850,17 +866,37 @@ export default function ProductDetailScreen({ route, navigation }) {
                 <Ionicons name="create-outline" size={14} color="#fff" /><Text style={{ fontSize: fontSize.sm, fontWeight: fontWeight.semibold, color: '#fff' }}>Write</Text>
               </TouchableOpacity>
             </View>
-            {product.reviews?.length > 0 ? product.reviews.slice(0, 5).map((review, i) => (
-              <View key={i} style={styles.reviewCard}>
+            {product.reviews?.length > 0 ? product.reviews.slice(0, 5).map((review, i) => {
+              const reviewerId = review.user?._id || review.user;
+              const isOwnReview = reviewerId && String(reviewerId) === String(currentUser?._id || currentUser?.id || '');
+              return (
+              <View key={review._id || i} style={styles.reviewCard}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginBottom: spacing.sm }}>
                   <View style={styles.reviewAvatar}><Text style={{ fontSize: fontSize.sm, fontWeight: fontWeight.bold, color: '#fff' }}>{(review.user?.name || 'U')[0].toUpperCase()}</Text></View>
                   <View style={{ flex: 1 }}><Text style={{ fontSize: fontSize.sm, fontWeight: fontWeight.semibold, color: palette.colors.text }}>{review.user?.name || 'Anonymous'}</Text>
                     <View style={{ flexDirection: 'row', gap: 2 }}>{[1,2,3,4,5].map(s => <Ionicons key={s} name={s <= review.rating ? 'star' : 'star-outline'} size={11} color={palette.colors.star} />)}</View>
                   </View>
+                  {!isOwnReview && review._id && (
+                    <TouchableOpacity
+                      style={styles.reviewSafetyButton}
+                      onPress={() => setSafetyAction({
+                        report: { kind: 'review', targetId: review._id },
+                        block: reviewerId ? { userId: reviewerId, source: 'reviewer', label: 'reviewer' } : null,
+                        onBlocked: () => setProduct(previous => previous ? {
+                          ...previous,
+                          reviews: (previous.reviews || []).filter(item => String(item.user?._id || item.user) !== String(reviewerId)),
+                        } : previous),
+                      })}
+                      accessibilityRole="button"
+                      accessibilityLabel="Review safety options"
+                    >
+                      <Ionicons name="ellipsis-horizontal" size={16} color={palette.colors.textSecondary} />
+                    </TouchableOpacity>
+                  )}
                 </View>
                 <Text style={{ fontSize: fontSize.sm, color: palette.colors.textSecondary, lineHeight: 18 }}>{review.comment}</Text>
               </View>
-            )) : (
+            );}) : (
               <View style={{ alignItems: 'center', paddingVertical: spacing.xl }}>
                 <Ionicons name="chatbubble-ellipses-outline" size={32} color={palette.colors.textLight} />
                 <Text style={{ fontSize: fontSize.sm, color: palette.colors.textSecondary, marginTop: spacing.sm }}>No reviews yet. Be the first!</Text>
@@ -959,6 +995,14 @@ export default function ProductDetailScreen({ route, navigation }) {
           </KeyboardAwareFormScrollView>
         </View>
       </Modal>
+
+      <SafetyActionsSheet
+        visible={Boolean(safetyAction)}
+        onClose={() => setSafetyAction(null)}
+        report={safetyAction?.report}
+        block={safetyAction?.block}
+        onBlocked={safetyAction?.onBlocked}
+      />
 
       {/* Safe-area-aware persistent purchase controls */}
       <Animated.View
@@ -1077,6 +1121,7 @@ const buildStyles = (p) => StyleSheet.create({
     marginHorizontal: 0,
     zIndex: 10,
   },
+  reviewSafetyButton: { width: 32, height: 32, borderRadius: 11, alignItems: 'center', justifyContent: 'center', backgroundColor: p.glass.bgSubtle },
   loadingState: {
     flex: 1,
     alignItems: 'center',

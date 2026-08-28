@@ -27,6 +27,8 @@ const AboutPage = lazy(() => import('../pages/AboutPage'))
 const ContactPage = lazy(() => import('../pages/ContactPage'))
 const FAQPage = lazy(() => import('../pages/FAQPage'))
 const TrackOrderPage = lazy(() => import('../pages/TrackOrderPage'))
+const BlockedAccountsPage = lazy(() => import('../pages/BlockedAccountsPage'))
+const AccountDeletionPage = lazy(() => import('../pages/AccountDeletionPage'))
 
 // ── Auth standalone
 const Login = lazy(() => import('../components/auth/Login'))
@@ -142,11 +144,13 @@ function AppRoutes({ subdomainSlug = null }) {
                     {/* INFO & LEGAL PAGES */}
                     <Route path='/terms' element={<TermsOfService />} />
                     <Route path='/privacy' element={<PrivacyPolicy />} />
+                    <Route path='/account-deletion' element={<AccountDeletionPage />} />
                     <Route path='/about' element={<AboutPage />} />
                     <Route path='/contact' element={<ContactPage />} />
                     <Route path='/faq' element={<FAQPage />} />
                     <Route path='/docs' element={<DocsRouteGate />} />
                     <Route path='/track-order' element={<TrackOrderPage />} />
+                    <Route path='/settings/blocked-accounts' element={<ProtectedRoute><BlockedAccountsPage /></ProtectedRoute>} />
 
                     {/* Checkout - accessible to everyone (guest & logged in) */}
                     <Route path={'/checkout'} element={<Checkout />} />

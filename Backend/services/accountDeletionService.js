@@ -31,6 +31,8 @@ const ExpoPushTokenRegistration = require('../models/ExpoPushTokenRegistration')
 const SubscriptionPromotion = require('../models/SubscriptionPromotion');
 const WhatsAppPendingMessage = require('../models/WhatsAppPendingMessage');
 const WhatsAppInboundReceipt = require('../models/WhatsAppInboundReceipt');
+const UserBlock = require('../models/UserBlock');
+const Complaint = require('../models/Complaint');
 const { normalizePhoneDigits } = require('../utils/phoneNumber');
 const { teardownAccountBilling } = require('./accountBillingTeardownService');
 
@@ -187,6 +189,17 @@ async function deleteAccountCascade(userId, { allowAdminDeletion = false } = {})
             { $set: { expoPushTokens: [] } }
         ),
         pushTokenRegistrations: () => ExpoPushTokenRegistration.deleteMany({ user: sellerId }),
+        userBlocks: () => UserBlock.deleteMany({
+            $or: [{ blocker: sellerId }, { blocked: sellerId }],
+        }),
+        safetyReportsByAccount: () => Complaint.updateMany(
+            { user: sellerId },
+            { $set: { user: null, 'report.reporterType': 'anonymous' } },
+        ),
+        safetyReportsAboutAccount: () => Complaint.updateMany(
+            { 'report.targetUser': sellerId },
+            { $set: { 'report.targetUser': null } },
+        ),
         promotionReservations: () => SubscriptionPromotion.updateMany(
             { 'reservations.seller': sellerId },
             { $pull: { reservations: { seller: sellerId } } }

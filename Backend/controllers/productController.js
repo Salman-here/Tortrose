@@ -62,6 +62,11 @@ const {
     parseNonNegativeSafeInteger,
     parseStrictFiniteNumber,
 } = require('../services/numericInputService')
+const {
+    blockedIdSet,
+    getBlockedUserIds,
+    isUserBlocked,
+} = require('../services/userBlockService')
 
 const OTHER_BRANDS_FILTER = '__other_brands__';
 const POPULAR_BRAND_MIN_PRODUCTS = Math.max(2, parseInt(process.env.POPULAR_BRAND_MIN_PRODUCTS || '3', 10) || 3);
@@ -753,7 +758,10 @@ exports.getProducts = async (req, res) => {
             select: 'seller verification visibility',
             populate: { path: 'seller', select: '_id' },
         });
-        const activeSellerIds = activeStores.map(s => s.seller?._id || s.seller).filter(Boolean);
+        const blockedSellers = blockedIdSet(await getBlockedUserIds(req));
+        const activeSellerIds = activeStores
+            .map(s => s.seller?._id || s.seller)
+            .filter(sellerId => sellerId && !blockedSellers.has(String(sellerId)));
 
         // Count total active sellers for diversity calculation
         const totalSellers = activeSellerIds.length;
@@ -854,6 +862,9 @@ exports.getSingleProduct = async (req, res) => {
         // Check if seller's store is active (hide products from blocked sellers)
         let storePolicy = null;
         if (singleProduct.seller) {
+            if (await isUserBlocked(req, singleProduct.seller)) {
+                return res.status(404).json({ msg: 'Product not available' });
+            }
             const store = await findActiveStore({ seller: singleProduct.seller });
             if (!store) {
                 return res.status(404).json({ msg: 'Product not available' });
@@ -876,6 +887,13 @@ exports.getSingleProduct = async (req, res) => {
             path: 'reviews.user',
             select: 'avatar username email'
         })
+        const blockedReviewers = blockedIdSet(await getBlockedUserIds(req));
+        if (blockedReviewers.size && Array.isArray(singleProduct.reviews)) {
+            singleProduct.reviews = singleProduct.reviews.filter(review => {
+                const reviewerId = review?.user?._id || review?.user;
+                return !reviewerId || !blockedReviewers.has(String(reviewerId));
+            });
+        }
         res.status(200).json({
             msg: 'fetched single product',
             product: serializeProductCurrencyMetadata(singleProduct, 'USD'),
@@ -896,7 +914,10 @@ exports.getFilters = async (req, res) => {
             select: 'seller visibility',
             populate: { path: 'seller', select: '_id' },
         });
-        const activeSellerIds = activeStores.map(s => s.seller?._id || s.seller).filter(Boolean);
+        const blockedSellers = blockedIdSet(await getBlockedUserIds(req));
+        const activeSellerIds = activeStores
+            .map(s => s.seller?._id || s.seller)
+            .filter(sellerId => sellerId && !blockedSellers.has(String(sellerId)));
         const productScope = publicProductFilter({
             $or: [
                 { seller: null },

@@ -167,9 +167,16 @@ describe('native branding assets', () => {
       (plugin) => Array.isArray(plugin) && plugin[0] === 'expo-splash-screen',
     );
 
-    expect(appConfig.version).toBe('1.0.8');
-    expect(appConfig.android.versionCode).toBe(9);
-    expect(appConfig.ios.buildNumber).toBe('9');
+    expect(appConfig.version).toBe('1.0.9');
+    expect(appConfig.android.versionCode).toBe(10);
+    expect(appConfig.ios.buildNumber).toBe('10');
+    expect(appConfig.android.blockedPermissions).toEqual(
+      expect.arrayContaining([
+        'android.permission.CAMERA',
+        'android.permission.READ_EXTERNAL_STORAGE',
+        'android.permission.WRITE_EXTERNAL_STORAGE',
+      ]),
+    );
     expect(appConfig.userInterfaceStyle).toBe('automatic');
     expect(appConfig.android.adaptiveIcon.backgroundColor).toBe('#0EA5E9');
     expect(appConfig.androidStatusBar.barStyle).toBe('dark-content');

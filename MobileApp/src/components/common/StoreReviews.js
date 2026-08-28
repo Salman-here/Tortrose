@@ -13,6 +13,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import GlassPanel from './GlassPanel';
 import KeyboardAwareFormScrollView from './KeyboardAwareFormScrollView';
+import SafetyActionsSheet from './SafetyActionsSheet';
 import { spacing, fontSize, fontWeight, borderRadius, shadows } from '../../styles/theme';
 
 const Stars = ({ value = 0, size = 14, color, emptyColor }) => {
@@ -61,6 +62,7 @@ export default function StoreReviews({ storeId, storeOwnerId, onSummaryChange })
   const [showAll, setShowAll] = useState(false);
   const [eligibility, setEligibility] = useState(null);
   const [eligibilityLoading, setEligibilityLoading] = useState(false);
+  const [safetyReview, setSafetyReview] = useState(null);
 
   const currentUserId = String(currentUser?._id || currentUser?.id || '');
   const isOwnStore = Boolean(currentUserId && currentUserId === String(storeOwnerId || ''));
@@ -255,9 +257,19 @@ export default function StoreReviews({ storeId, storeOwnerId, onSummaryChange })
                       <Text style={styles.timeText}>· {new Date(r.createdAt).toLocaleDateString()}</Text>
                     </View>
                   </View>
-                  {isMine && (
+                  {isMine ? (
                     <TouchableOpacity onPress={() => handleDelete(r._id)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                       <Ionicons name="trash-outline" size={16} color={palette.colors.error} />
+                    </TouchableOpacity>
+                  ) : (
+                    <TouchableOpacity
+                      style={styles.reviewSafetyBtn}
+                      onPress={() => setSafetyReview(r)}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      accessibilityRole="button"
+                      accessibilityLabel="Review safety options"
+                    >
+                      <Ionicons name="ellipsis-horizontal" size={16} color={palette.colors.textSecondary} />
                     </TouchableOpacity>
                   )}
                 </View>
@@ -344,6 +356,17 @@ export default function StoreReviews({ storeId, storeOwnerId, onSummaryChange })
           </GlassPanel>
         </View>
       </Modal>
+      <SafetyActionsSheet
+        visible={Boolean(safetyReview)}
+        onClose={() => setSafetyReview(null)}
+        report={safetyReview ? { kind: 'review', targetId: safetyReview._id } : null}
+        block={safetyReview && (safetyReview.user?._id || safetyReview.user) ? {
+          userId: safetyReview.user?._id || safetyReview.user,
+          source: 'reviewer',
+          label: 'reviewer',
+        } : null}
+        onBlocked={(userId) => setReviews(previous => previous.filter(review => String(review.user?._id || review.user) !== String(userId)))}
+      />
     </View>
   );
 }
@@ -366,6 +389,7 @@ const buildStyles = (p) => StyleSheet.create({
 
   reviewCard: { padding: spacing.md, marginTop: spacing.sm },
   reviewHeader: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginBottom: spacing.sm },
+  reviewSafetyBtn: { width: 32, height: 32, borderRadius: 11, alignItems: 'center', justifyContent: 'center', backgroundColor: p.glass.bgSubtle },
   avatarWrap: { width: 36, height: 36 },
   avatar: { width: 36, height: 36, borderRadius: 18 },
   avatarFallback: { justifyContent: 'center', alignItems: 'center' },

@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const verifyToken = require('../middleware/authMiddleware');
+const { optionalAuth } = require('../middleware/authMiddleware');
 const {
   getStoreReviews,
   getStoreReviewSummary,
@@ -13,7 +14,7 @@ const {
 } = require('../controllers/storeReviewController');
 
 // Public
-router.get('/:storeId', getStoreReviews);
+router.get('/:storeId', optionalAuth, getStoreReviews);
 router.get('/:storeId/summary', getStoreReviewSummary);
 router.post('/summary/bulk', getBulkStoreReviewSummaries);
 

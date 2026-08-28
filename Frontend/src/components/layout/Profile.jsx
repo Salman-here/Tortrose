@@ -3,8 +3,9 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
     User, Mail, Lock, Eye, EyeOff, Edit3, Save, X, Loader as LucideLoader,
     Camera, User as UserIcon, Shield, Sparkles, CheckCircle, AlertCircle,
-    MapPin, Phone, Home
+    MapPin, Phone, Home, Ban
 } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import Loader from '../common/Loader';
 import PhoneField from '../common/PhoneField';
 import { useAuth } from '../../contexts/AuthContext';
@@ -491,6 +492,10 @@ const UserProfile = () => {
                     )}
                 </motion.form>
             </motion.div>
+            <Link to="/settings/blocked-accounts" className="mt-4 glass-panel p-4 flex items-center gap-3 transition-transform hover:scale-[1.005]">
+                <span className="w-10 h-10 rounded-xl inline-flex items-center justify-center" style={{ background: 'rgba(245,158,11,.12)', color: 'hsl(45,80%,40%)' }}><Ban size={18} /></span>
+                <span><strong className="block text-sm" style={{ color: 'hsl(var(--foreground))' }}>Blocked accounts</strong><span className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>Manage hidden sellers and reviewers</span></span>
+            </Link>
         </div>
     );
 };

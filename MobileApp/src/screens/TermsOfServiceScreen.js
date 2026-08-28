@@ -14,7 +14,7 @@ import { useTheme } from '../contexts/ThemeContext';
 
 const sections = [
   { icon: 'people-outline', title: '1. Acceptance of Terms', content: 'By accessing and using Rozare ("the Platform"), you agree to be bound by these Terms of Service. If you do not agree to these terms, please do not use our platform. These terms apply to all visitors, users, sellers, and others who access or use the service.' },
-  { icon: 'shield-outline', title: '2. User Accounts', content: 'You are responsible for maintaining the confidentiality of your account credentials. You must be at least 18 years old to create an account. You agree to provide accurate, current, and complete information during registration. We reserve the right to suspend or terminate accounts that violate these terms.' },
+  { icon: 'shield-outline', title: '2. User Accounts', content: 'You are responsible for maintaining the confidentiality of your account credentials and for providing accurate information. If you are under the age of legal majority where you live, you may use Rozare only with the permission and active involvement of a parent or legal guardian. A parent or guardian is responsible for supervising purchases, payments, selling activity, and information shared by a minor. We may suspend or terminate accounts that violate these terms.' },
   { icon: 'scale-outline', title: '3. Seller Obligations', content: 'Sellers on Rozare must provide accurate product descriptions, pricing, and availability information. Sellers are responsible for fulfilling orders in a timely manner, handling returns per our return policy, and complying with all applicable laws and regulations regarding their products and business operations.' },
   { icon: 'warning-outline', title: '4. Prohibited Activities', content: 'Users may not: sell counterfeit or illegal products; engage in fraudulent transactions; harass other users; attempt to circumvent platform fees; use automated tools to scrape data; or violate any applicable laws. Violation of these terms may result in immediate account termination.' },
   { icon: 'globe-outline', title: '5. Intellectual Property', content: 'All content on Rozare, including logos, designs, and software, is owned by Rozare or its licensors. Users retain ownership of content they upload but grant Rozare a non-exclusive license to use, display, and distribute such content in connection with the platform\'s services.' },
@@ -32,7 +32,7 @@ export default function TermsOfServiceScreen({ navigation }) {
       <SafeAreaView style={styles.container} edges={Platform.OS === 'android' ? [] : ['top']}>
         <PremiumBackHeader
           title="Terms of Service"
-          subtitle="Last updated: March 1, 2026"
+          subtitle="Last updated: August 29, 2026"
           icon="document-text-outline"
           onBack={() => navigation.goBack()}
           rightIcon="shield-checkmark-outline"

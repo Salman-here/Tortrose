@@ -13,7 +13,7 @@ const sections = [
   {
     icon: <Shield size={20} />,
     title: '2. User Accounts',
-    content: `You are responsible for maintaining the confidentiality of your account credentials. You must be at least 18 years old to create an account. You agree to provide accurate, current, and complete information during registration. We reserve the right to suspend or terminate accounts that violate these terms.`
+    content: `You are responsible for maintaining the confidentiality of your account credentials and for providing accurate information. If you are under the age of legal majority where you live, you may use Rozare only with the permission and active involvement of a parent or legal guardian. A parent or guardian is responsible for supervising purchases, payments, selling activity, and information shared by a minor. We may suspend or terminate accounts that violate these terms.`
   },
   {
     icon: <Scale size={20} />,
@@ -73,7 +73,7 @@ function TermsOfService() {
             Terms of Service
           </h1>
           <p style={{ color: 'hsl(var(--muted-foreground))' }} className="text-sm">
-            Last updated: March 1, 2026
+            Last updated: August 29, 2026
           </p>
         </div>
 
@@ -115,7 +115,8 @@ function TermsOfService() {
         <div className="glass-panel p-6 mt-8 text-center">
           <p style={{ color: 'hsl(var(--muted-foreground))' }} className="text-sm">
             Questions about these terms? <Link to="/contact" className="font-medium" style={{ color: 'hsl(var(--primary))' }}>Contact us</Link> or read our{' '}
-            <Link to="/privacy" className="font-medium" style={{ color: 'hsl(var(--primary))' }}>Privacy Policy</Link>.
+            <Link to="/privacy" className="font-medium" style={{ color: 'hsl(var(--primary))' }}>Privacy Policy</Link> or review our{' '}
+            <Link to="/account-deletion" className="font-medium" style={{ color: 'hsl(var(--primary))' }}>account-deletion instructions</Link>.
           </p>
         </div>
       </motion.div>

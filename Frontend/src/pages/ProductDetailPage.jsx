@@ -1,8 +1,8 @@
 import axios from 'axios';
 import React, { useRef, useState, useEffect } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Heart, ShoppingCart, Star, ChevronRight, ChevronLeft, Zap, Sparkles, Share2, RotateCcw, Loader2, Home, Tag, Package, Ticket, Copy, Check, Calendar, Plus, Minus, X, CreditCard, Banknote } from 'lucide-react';
+import { Heart, ShoppingCart, Star, ChevronRight, ChevronLeft, Zap, Sparkles, RotateCcw, Loader2, Home, Tag, Package, Ticket, Copy, Check, Calendar, Plus, Minus, X, CreditCard, Banknote, Flag, MoreHorizontal } from 'lucide-react';
 import Loader from '../components/common/Loader';
 import StoreInfo from '../components/common/StoreInfo';
 import SEOHead from '../components/common/SEOHead';
@@ -21,9 +21,13 @@ import { trackProductView } from '../utils/tiktokPixel';
 import { addRecentlyViewedProduct } from '../utils/recentlyViewedProducts';
 import { createProductSelection, hasProductOptions } from '../utils/productOptions';
 import { buildProductAIChatPrompt, openAIChat } from '../utils/aiChatLauncher';
+import SafetyActionsDialog from '../components/common/SafetyActionsDialog';
+import { useAuth } from '../contexts/AuthContext';
 
 function ProductDetailPage() {
     const { id } = useParams();
+    const navigate = useNavigate();
+    const { currentUser } = useAuth();
     const { formatPrice } = useCurrency();
     const { appendLocationParams, locationQueryString } = useBuyerLocation();
     const {
@@ -53,6 +57,7 @@ function ProductDetailPage() {
     const [availableCoupons, setAvailableCoupons] = useState([]);
     const [copiedCoupon, setCopiedCoupon] = useState(null);
     const [relatedProducts, setRelatedProducts] = useState([]);
+    const [safetyAction, setSafetyAction] = useState(null);
     const commentRef = useRef();
 
     const isInWishlist = product && wishlistItems?.some((item) => item._id === product._id);
@@ -66,6 +71,10 @@ function ProductDetailPage() {
     );
     const isInCart = !!cartLineItem;
     const productHasOptions = hasProductOptions(product);
+    const productSellerId = product?.seller?._id || product?.seller || storeData?.seller?._id || storeData?.seller;
+    const isOwnSellerContent = Boolean(
+        productSellerId && String(productSellerId) === String(currentUser?._id || currentUser?.id || ''),
+    );
 
     const hasLoadedProductMoney = Boolean(product?._id);
     const productPrice = hasLoadedProductMoney
@@ -646,7 +655,7 @@ function ProductDetailPage() {
                                 {product.description}
                             </motion.p>
 
-                            <motion.button
+                            {!isOwnSellerContent && <motion.button
                                 type="button"
                                 onClick={handleAskAI}
                                 variants={fadeIn}
@@ -687,6 +696,20 @@ function ProductDetailPage() {
                                         <ChevronRight size={18} />
                                     </span>
                                 </span>
+                            </motion.button>}
+
+                            <motion.button
+                                type="button"
+                                onClick={() => setSafetyAction({
+                                    report: { kind: 'product', targetId: product._id },
+                                    block: productSellerId ? { userId: productSellerId, source: 'seller', label: 'seller' } : null,
+                                    onBlocked: () => navigate('/products'),
+                                })}
+                                variants={fadeIn}
+                                className="mb-6 inline-flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold transition-colors hover:bg-white/10"
+                                style={{ color: 'hsl(var(--muted-foreground))', border: '1px solid var(--glass-border)' }}
+                            >
+                                <Flag size={13} /> Product safety options
                             </motion.button>
 
                             {/* Dynamic Option Selectors (Size, Color, Material, etc.) */}
@@ -987,6 +1010,8 @@ function ProductDetailPage() {
                                     {product.reviews && product.reviews.length > 0 ? (
                                         product.reviews.map((review, index) => {
                                             const date = new Date(review.createdAt);
+                                            const reviewerId = review.user?._id || review.user;
+                                            const isOwnReview = reviewerId && String(reviewerId) === String(currentUser?._id || currentUser?.id || '');
                                             return (
                                                 <motion.div
                                                     key={review._id || index}
@@ -1017,6 +1042,24 @@ function ProductDetailPage() {
                                                             </div>
                                                             <p className="text-sm" style={{ color: 'hsl(var(--foreground))' }}>{review.comment}</p>
                                                         </div>
+                                                        {!isOwnReview && review._id && (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => setSafetyAction({
+                                                                    report: { kind: 'review', targetId: review._id },
+                                                                    block: reviewerId ? { userId: reviewerId, source: 'reviewer', label: 'reviewer' } : null,
+                                                                    onBlocked: () => setProduct(previous => ({
+                                                                        ...previous,
+                                                                        reviews: (previous.reviews || []).filter(item => String(item.user?._id || item.user) !== String(reviewerId)),
+                                                                    })),
+                                                                })}
+                                                                className="w-8 h-8 rounded-xl inline-flex items-center justify-center shrink-0"
+                                                                style={{ color: 'hsl(var(--muted-foreground))', background: 'var(--glass-bg-subtle)' }}
+                                                                aria-label="Review safety options"
+                                                            >
+                                                                <MoreHorizontal size={16} />
+                                                            </button>
+                                                        )}
                                                     </div>
                                                 </motion.div>
                                             );
@@ -1078,6 +1121,13 @@ function ProductDetailPage() {
                     onClose={() => setIsOptionsModalOpen(false)}
                     onConfirm={handleOptionsConfirm}
                     submitting={isCartLoading && loadingProductId === id}
+                />
+                <SafetyActionsDialog
+                    open={Boolean(safetyAction)}
+                    onClose={() => setSafetyAction(null)}
+                    report={safetyAction?.report}
+                    block={safetyAction?.block}
+                    onBlocked={safetyAction?.onBlocked}
                 />
             </div>
         </motion.div>

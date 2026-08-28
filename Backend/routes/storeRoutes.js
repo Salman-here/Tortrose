@@ -27,7 +27,7 @@ const {
     cancelProductCurrencyChange
 } = require('../controllers/storeController');
 const verifyToken = require('../middleware/authMiddleware');
-const { admin } = require('../middleware/authMiddleware');
+const { admin, optionalAuth } = require('../middleware/authMiddleware');
 const User = require('../models/User');
 
 // Middleware to check if user is a seller (reads live role from DB so a freshly
@@ -92,13 +92,13 @@ router.put('/verification/:storeId/reject', verifyToken, admin, rejectVerificati
 router.put('/verification/:storeId/remove', verifyToken, admin, removeVerification);
 
 // Public Store Routes - Order matters! Specific routes before dynamic params
-router.get('/search', searchStores);
-router.get('/suggestions', getStoreSuggestions);
-router.get('/all', getAllStores);
-router.get('/seller/:id', getStoreBySellerId);
+router.get('/search', optionalAuth, searchStores);
+router.get('/suggestions', optionalAuth, getStoreSuggestions);
+router.get('/all', optionalAuth, getAllStores);
+router.get('/seller/:id', optionalAuth, getStoreBySellerId);
 router.get('/check-subdomain/:slug', verifyToken, checkSubdomainAvailability); // Check availability
-router.get('/:slug/products', getStoreProducts);
+router.get('/:slug/products', optionalAuth, getStoreProducts);
 router.post('/:slug/view', incrementStoreView);
-router.get('/:slug', getStoreBySlug); // This must be last
+router.get('/:slug', optionalAuth, getStoreBySlug); // This must be last
 
 module.exports = router;

@@ -152,6 +152,7 @@ import PaymentCancelScreen from '../screens/PaymentCancelScreen';
 import BecomeSellerScreen from '../screens/BecomeSellerScreen';
 import NotificationsScreen from '../screens/NotificationsScreen';
 import SettingsScreen from '../screens/SettingsScreen';
+import BlockedAccountsScreen from '../screens/BlockedAccountsScreen';
 import EditProfileScreen from '../screens/EditProfileScreen';
 import SellerNotificationsScreen from '../screens/seller/SellerNotificationsScreen';
 import NotificationSettingsScreen from '../screens/shared/NotificationSettingsScreen';
@@ -670,6 +671,7 @@ export default function AppNavigator() {
         component={SettingsScreen}
         options={{ headerShown: false }}
       />
+      <Stack.Screen name="BlockedAccounts" component={BlockedAccountsScreen} options={{ headerShown: false }} />
       <Stack.Screen
         name="EditProfile"
         component={EditProfileScreen}

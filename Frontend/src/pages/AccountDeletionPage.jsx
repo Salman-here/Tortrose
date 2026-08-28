@@ -1,0 +1,23 @@
+import { useEffect } from 'react';
+import { Link } from 'react-router-dom';
+import { CheckCircle2, Clock3, Mail, ShieldCheck, Trash2 } from 'lucide-react';
+import { motion } from 'framer-motion';
+import SEOHead from '../components/common/SEOHead';
+
+export default function AccountDeletionPage() {
+  useEffect(() => { window.scrollTo(0, 0); }, []);
+  return (
+    <div className="max-w-4xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
+      <SEOHead title="Delete Your Rozare Account" description="Request deletion of your Rozare account and understand what data is deleted or retained." canonical="/account-deletion" />
+      <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}>
+        <div className="text-center mb-9"><div className="mx-auto w-16 h-16 rounded-3xl text-white flex items-center justify-center mb-4" style={{ background: 'linear-gradient(135deg,#14B8A6,#0EA5E9,#6366F1)' }}><Trash2 size={28} /></div><h1 className="text-3xl sm:text-4xl font-extrabold" style={{ color: 'hsl(var(--foreground))' }}>Delete your Rozare account</h1><p className="text-sm mt-3 max-w-2xl mx-auto" style={{ color: 'hsl(var(--muted-foreground))' }}>This page applies to the Rozare app and marketplace operated by Rozare. Account deletion is permanent and cannot be undone.</p></div>
+        <div className="grid md:grid-cols-2 gap-5">
+          <section className="glass-panel p-6"><div className="flex items-center gap-3 mb-4"><ShieldCheck size={21} style={{ color: 'hsl(var(--primary))' }} /><h2 className="text-lg font-bold" style={{ color: 'hsl(var(--foreground))' }}>Delete inside the app</h2></div><ol className="text-sm leading-7 list-decimal pl-5" style={{ color: 'hsl(var(--muted-foreground))' }}><li>Sign in to your Rozare account.</li><li>Open <strong style={{ color: 'hsl(var(--foreground))' }}>Profile → Settings</strong>.</li><li>Choose <strong style={{ color: 'hsl(var(--foreground))' }}>Delete Account</strong>.</li><li>Confirm the permanent deletion prompt.</li></ol></section>
+          <section className="glass-panel p-6"><div className="flex items-center gap-3 mb-4"><Mail size={21} style={{ color: 'hsl(var(--primary))' }} /><h2 className="text-lg font-bold" style={{ color: 'hsl(var(--foreground))' }}>Request deletion without the app</h2></div><p className="text-sm leading-relaxed" style={{ color: 'hsl(var(--muted-foreground))' }}>Email us from the address registered to your account. Use the subject “Delete my Rozare account” and include your Rozare username. We may ask you to verify ownership before deletion.</p><a href="mailto:privacy@rozare.com?subject=Delete%20my%20Rozare%20account" className="mt-5 w-full px-4 py-3 rounded-xl text-white font-semibold inline-flex items-center justify-center gap-2" style={{ background: 'hsl(var(--primary))' }}><Mail size={16} /> Email privacy@rozare.com</a></section>
+        </div>
+        <section className="glass-panel p-6 mt-5"><h2 className="text-lg font-bold mb-4" style={{ color: 'hsl(var(--foreground))' }}>What happens to your data</h2><div className="space-y-3 text-sm" style={{ color: 'hsl(var(--muted-foreground))' }}><p className="flex gap-2"><CheckCircle2 size={17} className="shrink-0 mt-0.5" style={{ color: 'hsl(150,60%,42%)' }} />Your profile, saved addresses, cart, wishlist, push tokens, chat history, and content that is not legally required are deleted or de-identified.</p><p className="flex gap-2"><Clock3 size={17} className="shrink-0 mt-0.5" style={{ color: 'hsl(45,80%,42%)' }} />Order, payment, refund, tax, fraud-prevention, dispute, and safety records may be retained for the period required by law or necessary to protect users.</p><p>We aim to complete verified email requests within 30 days. A legal or security requirement may extend that period; if so, we will explain where permitted.</p></div></section>
+        <p className="text-center text-sm mt-7" style={{ color: 'hsl(var(--muted-foreground))' }}>Read the <Link to="/privacy" className="font-semibold" style={{ color: 'hsl(var(--primary))' }}>Privacy Policy</Link> or <Link to="/contact" className="font-semibold" style={{ color: 'hsl(var(--primary))' }}>contact support</Link>.</p>
+      </motion.div>
+    </div>
+  );
+}

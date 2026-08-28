@@ -6,7 +6,7 @@ import {
   Sparkles, Palette, Clock, ArrowRight, Volume2, VolumeX, Trash2,
   Heart, MapPin, Bell, Ticket, CheckCircle, XCircle, Search,
   ShoppingBag, BarChart3, Shield, Megaphone, Settings,
-  Plus, Star, Eye, ShoppingCart, Maximize2, Store, ImagePlus, FileText, Mic, Square
+  Plus, Star, Eye, ShoppingCart, Maximize2, Store, ImagePlus, FileText, Mic, Square, Flag
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
@@ -30,6 +30,7 @@ import {
   getOrCreatePersistedMutationAttemptForFingerprint,
 } from '../../utils/persistedMutationAttempt';
 import { OPEN_AI_CHAT_EVENT } from '../../utils/aiChatLauncher';
+import SafetyActionsDialog from './SafetyActionsDialog';
 
 // ─── Endpoint (our own backend — no Supabase) ───
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000/';
@@ -464,6 +465,7 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
   const [pendingProductImages, setPendingProductImages] = useState([]);
   const [isRecordingVoice, setIsRecordingVoice] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const [reportingMessage, setReportingMessage] = useState(null);
 
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
@@ -1329,6 +1331,17 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
             }
             return null;
           })}
+          {isAssistant && !msg.isStreaming && !msg.isError && Boolean(visibleUserContent) && (
+            <button
+              type="button"
+              onClick={() => setReportingMessage(msg)}
+              className="mt-2 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-[10px] font-semibold transition-colors hover:bg-white/10"
+              style={{ color: 'hsl(var(--muted-foreground))', border: '1px solid hsl(var(--border) / .7)' }}
+              aria-label="Report this AI response"
+            >
+              <Flag size={11} /> Report response
+            </button>
+          )}
         </div>
 
         {isUser && (
@@ -1661,6 +1674,18 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
           Powered by Rozare AI · Actions are role-secured
         </p>
       </div>
+      <SafetyActionsDialog
+        open={Boolean(reportingMessage)}
+        onClose={() => setReportingMessage(null)}
+        initialMode="report"
+        report={reportingMessage ? {
+          kind: 'ai_response',
+          content: sanitizeAssistantContent(reportingMessage.content),
+          ...((reportingMessage._id || reportingMessage.id) && activeConvoId
+            ? { conversationId: activeConvoId, messageId: reportingMessage._id || reportingMessage.id }
+            : {}),
+        } : null}
+      />
     </motion.div>
   );
 

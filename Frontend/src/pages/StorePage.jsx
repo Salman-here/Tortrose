@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Store, Package, Eye, Share2, ChevronRight, ChevronLeft, Home, Globe, MapPin, Users, Ticket, Copy, Check, Calendar, Percent, DollarSign, Search, Tag, Star } from 'lucide-react';
+import { Store, Package, Eye, Share2, ChevronRight, ChevronLeft, Home, Globe, MapPin, Users, Ticket, Copy, Check, Calendar, Percent, DollarSign, Search, Tag, Star, Flag } from 'lucide-react';
 import axios from 'axios';
 import { toast } from 'react-toastify';
 import ProductCard from '../components/common/ProductCard';
@@ -15,6 +15,8 @@ import { useCurrency } from '../contexts/CurrencyContext';
 import { useBuyerLocation } from '../contexts/BuyerLocationContext';
 import { buildStoreThemeStyle, getStoreTheme, isDefaultStoreTheme } from '../utils/storeThemes';
 import StoreReviews from '../components/common/StoreReviews';
+import SafetyActionsDialog from '../components/common/SafetyActionsDialog';
+import { useAuth } from '../contexts/AuthContext';
 
 const getEntityId = (value) => {
     if (!value) return '';
@@ -36,6 +38,7 @@ const StorePage = ({ slugOverride = null }) => {
     const STORE_PRODUCTS_PER_PAGE = 12;
     const { slug: slugFromParams } = useParams();
     const slug = slugOverride || slugFromParams;
+    const { currentUser } = useAuth();
     const { formatPrice } = useCurrency();
     const { appendLocationParams, locationQueryString } = useBuyerLocation();
     const [store, setStore] = useState(null);
@@ -52,6 +55,10 @@ const StorePage = ({ slugOverride = null }) => {
     const [productPagination, setProductPagination] = useState({ total: 0, page: 1, pages: 1, limit: STORE_PRODUCTS_PER_PAGE });
     const [storeCategories, setStoreCategories] = useState([]);
     const [storeRating, setStoreRating] = useState({ average: 0, count: 0 });
+    const [safetyVisible, setSafetyVisible] = useState(false);
+    const isOwnStore = Boolean(
+        getEntityId(store?.seller) && getEntityId(store.seller) === getEntityId(currentUser),
+    );
 
     const categories = useMemo(() => {
         if (storeCategories.length > 0) return storeCategories;
@@ -581,7 +588,7 @@ const StorePage = ({ slugOverride = null }) => {
                             </div>
 
                             {/* Share Button */}
-                            <motion.button
+                            {!isOwnStore && <motion.button
                                 onClick={handleShare}
                                 className="glass-button px-5 py-2.5 rounded-xl flex items-center gap-2 font-medium text-sm"
                                 style={{ color: themeForeground }}
@@ -593,6 +600,16 @@ const StorePage = ({ slugOverride = null }) => {
                             >
                                 <Share2 size={18} />
                                 Share Store
+                            </motion.button>}
+                            <motion.button
+                                type="button"
+                                onClick={() => setSafetyVisible(true)}
+                                className="glass-button px-4 py-2.5 rounded-xl flex items-center gap-2 font-medium text-sm"
+                                style={{ color: themeMuted }}
+                                whileHover={{ scale: 1.03 }}
+                                whileTap={{ scale: 0.96 }}
+                            >
+                                <Flag size={16} /> Safety
                             </motion.button>
                         </div>
                     </div>
@@ -820,6 +837,13 @@ const StorePage = ({ slugOverride = null }) => {
                     storeId={store._id}
                     storeOwnerId={getEntityId(store.seller)}
                     onSummaryChange={setStoreRating}
+                />
+                <SafetyActionsDialog
+                    open={safetyVisible}
+                    onClose={() => setSafetyVisible(false)}
+                    report={{ kind: 'store', targetId: store._id }}
+                    block={getEntityId(store.seller) ? { userId: getEntityId(store.seller), source: 'seller', label: 'seller' } : null}
+                    onBlocked={() => navigateToMainDomainPath('/stores')}
                 />
             </div>
         </motion.div>

@@ -11,6 +11,7 @@ const {
   getStoreReviewSummaries,
   getStoreReviewSummary,
 } = require('../services/storeReviewService');
+const { getBlockedUserIds } = require('../services/userBlockService');
 
 const validId = (id) => mongoose.Types.ObjectId.isValid(id);
 
@@ -22,8 +23,12 @@ exports.getStoreReviews = asyncHandler(async (req, res) => {
   const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 20, 1), 100);
   const skip = Math.max(parseInt(req.query.skip, 10) || 0, 0);
 
+  const blockedReviewers = await getBlockedUserIds(req);
+  const reviewFilter = { store: storeId, isVerifiedPurchase: true };
+  if (blockedReviewers.length) reviewFilter.user = { $nin: blockedReviewers };
+
   const [reviews, summary] = await Promise.all([
-    StoreReview.find({ store: storeId, isVerifiedPurchase: true })
+    StoreReview.find(reviewFilter)
       .select('-helpfulBy -order')
       .populate('user', 'username avatar')
       .sort({ createdAt: -1 })
@@ -33,7 +38,14 @@ exports.getStoreReviews = asyncHandler(async (req, res) => {
     getStoreReviewSummary(storeId),
   ]);
 
-  res.json({ reviews, summary, pagination: { limit, skip, hasMore: skip + reviews.length < summary.count } });
+  const visibleCount = blockedReviewers.length
+    ? await StoreReview.countDocuments(reviewFilter)
+    : summary.count;
+  res.json({
+    reviews,
+    summary,
+    pagination: { limit, skip, hasMore: skip + reviews.length < visibleCount },
+  });
 });
 
 // GET /api/store-reviews/:storeId/summary — public lightweight aggregate

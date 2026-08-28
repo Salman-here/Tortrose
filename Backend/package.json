@@ -10,6 +10,7 @@
     "migrate:product-currency:write": "node scripts/migrateProductNativeCurrency.js --write",
     "preflight:order-id-uniqueness": "node scripts/preflightOrderIdUniqueness.js",
     "preflight:stripe-payment-indexes": "node scripts/checkStripePaymentReferenceDuplicates.js",
+    "provision:play-reviewers": "node scripts/provisionPlayReviewAccounts.js",
     "heroku-postbuild": "echo 'Backend build complete'"
   },
   "jest": {

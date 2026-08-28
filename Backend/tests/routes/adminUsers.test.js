@@ -14,6 +14,8 @@ const Order = require('../../models/Order')
 const AdminWhatsAppNumber = require('../../models/AdminWhatsAppNumber')
 const ExpoPushTokenRegistration = require('../../models/ExpoPushTokenRegistration')
 const SellerBalanceTransaction = require('../../models/SellerBalanceTransaction')
+const UserBlock = require('../../models/UserBlock')
+const Complaint = require('../../models/Complaint')
 const { hashValue } = require('../../services/pushTokenRevocationService')
 
 let app
@@ -42,6 +44,8 @@ afterEach(async () => {
         AdminWhatsAppNumber.deleteMany({}),
         ExpoPushTokenRegistration.deleteMany({}),
         SellerBalanceTransaction.deleteMany({}),
+        UserBlock.deleteMany({}),
+        Complaint.deleteMany({}),
     ])
 })
 
@@ -290,6 +294,30 @@ describe('admin user management data', () => {
             referenceId: 'self-delete-preserved-ledger',
             description: 'Self-delete historical ledger evidence',
         })
+        const peer = await User.create({
+            username: 'self-delete-peer',
+            email: 'self-delete-peer@test.com',
+            password: 'password123',
+            role: 'user',
+        })
+        await UserBlock.create([
+            { blocker: seller._id, blocked: peer._id, source: 'user' },
+            { blocker: peer._id, blocked: seller._id, source: 'seller' },
+        ])
+        const reportBySeller = await Complaint.create({
+            user: seller._id,
+            category: 'ai_response',
+            subject: 'Safety report by deleted account',
+            message: 'Retained safety evidence',
+            report: { kind: 'ai_response', reason: 'other', sourceId: 'self-delete-report', reporterType: 'account' },
+        })
+        const reportAboutSeller = await Complaint.create({
+            user: peer._id,
+            category: 'seller_complaint',
+            subject: 'Safety report about deleted account',
+            message: 'Retained moderation evidence',
+            report: { kind: 'seller', reason: 'other', sourceId: String(seller._id), targetUser: seller._id, reporterType: 'account' },
+        })
 
         const response = await request(app)
             .delete('/api/user/delete-account')
@@ -301,6 +329,12 @@ describe('admin user management data', () => {
         await expect(Product.exists({ _id: product._id })).resolves.toBeNull()
         await expect(Order.exists({ _id: evidenceId })).resolves.not.toBeNull()
         await expect(SellerBalanceTransaction.exists({ _id: ledger._id })).resolves.not.toBeNull()
+        await expect(UserBlock.countDocuments({ $or: [{ blocker: seller._id }, { blocked: seller._id }] })).resolves.toBe(0)
+        const retainedReporterRecord = await Complaint.findById(reportBySeller._id).lean()
+        expect(retainedReporterRecord.user).toBeNull()
+        expect(retainedReporterRecord.report.reporterType).toBe('anonymous')
+        const retainedTargetRecord = await Complaint.findById(reportAboutSeller._id).lean()
+        expect(retainedTargetRecord.report.targetUser).toBeNull()
         const evidence = await Order.collection.findOne({ _id: evidenceId })
         expect(evidence.paymentResult.paymentIntentId).toBe('pi_self_delete_evidence')
     })

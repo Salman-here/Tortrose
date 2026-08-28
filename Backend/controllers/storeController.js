@@ -58,9 +58,20 @@ const {
     enqueueStoreCreatedNotification,
     enqueueStoreVerificationNotification,
 } = require('../services/sellerOperationalNotificationService');
+const {
+    blockedIdSet,
+    getBlockedUserIds,
+    isUserBlocked,
+} = require('../services/userBlockService');
 
 const comparablePriceUSD = (product) =>
     convertAmountSync(getProductEffectivePrice(product), getProductCurrency(product), 'USD');
+const hideBlockedStores = async (req, stores) => {
+    const blocked = blockedIdSet(await getBlockedUserIds(req));
+    return blocked.size
+        ? (stores || []).filter(store => !blocked.has(String(store?.seller?._id || store?.seller || '')))
+        : (stores || []);
+};
 const storeAnalyticsDataError = label => {
     const error = new Error(`Stored store analytics ${label} is invalid. Analytics are unavailable until the source data is corrected.`);
     error.code = 'STORE_ANALYTICS_DATA_INVALID';
@@ -744,7 +755,8 @@ exports.searchStores = async (req, res) => {
             populate: { path: 'seller', select: 'username email' },
         });
 
-        const storesWithRatings = await attachStoreReviewSummaries(stores.slice(0, 20));
+        const visibleStores = await hideBlockedStores(req, stores);
+        const storesWithRatings = await attachStoreReviewSummaries(visibleStores.slice(0, 20));
         res.status(200).json({
             msg: 'Stores fetched successfully',
             stores: storesWithRatings,
@@ -777,7 +789,8 @@ exports.getStoreSuggestions = async (req, res) => {
             select: 'storeName storeSlug logo trustCount verification sellerType visibility',
         });
 
-        const suggestions = await attachStoreReviewSummaries(stores.slice(0, 5));
+        const visibleStores = await hideBlockedStores(req, stores);
+        const suggestions = await attachStoreReviewSummaries(visibleStores.slice(0, 5));
         res.status(200).json({ suggestions });
     } catch (error) {
         console.error('Get store suggestions error:', error);
@@ -795,6 +808,9 @@ exports.getStoreBySlug = async (req, res) => {
             .populate('seller', 'username email avatar role status');
 
         if (!store || store.seller?.role !== 'seller' || store.seller?.status !== 'active') {
+            return res.status(404).json({ msg: 'Store not found' });
+        }
+        if (await isUserBlocked(req, store.seller?._id || store.seller)) {
             return res.status(404).json({ msg: 'Store not found' });
         }
         if (!isStoreVisibleToBuyer(store, buyerLocation)) {
@@ -825,6 +841,9 @@ exports.getStoreBySellerId = async (req, res) => {
             .populate('seller', 'username email avatar role status');
 
         if (!store || store.seller?.role !== 'seller' || store.seller?.status !== 'active') {
+            return res.status(404).json({ msg: 'Store not found for this seller' });
+        }
+        if (await isUserBlocked(req, store.seller?._id || store.seller)) {
             return res.status(404).json({ msg: 'Store not found for this seller' });
         }
         if (!isStoreVisibleToBuyer(store, buyerLocation)) {
@@ -860,6 +879,9 @@ exports.getStoreProducts = async (req, res) => {
             return res.status(404).json({ msg: 'Store not found' });
         }
         if (!await isActiveSellerAccount(store.seller)) {
+            return res.status(404).json({ msg: 'Store not found' });
+        }
+        if (await isUserBlocked(req, store.seller)) {
             return res.status(404).json({ msg: 'Store not found' });
         }
         if (!isStoreVisibleToBuyer(store, buyerLocation)) {
@@ -996,18 +1018,24 @@ exports.getAllStores = async (req, res) => {
             }),
         ]);
 
+        const blockedSellers = blockedIdSet(await getBlockedUserIds(req));
+        const filterBlockedStores = stores => blockedSellers.size
+            ? (stores || []).filter(store => !blockedSellers.has(String(store?.seller?._id || store?.seller || '')))
+            : (stores || []);
+        const buyerFilteredStores = filterBlockedStores(allFilteredStores);
+        const buyerVisibleCountStores = filterBlockedStores(visibleCountStores);
         const storesForSorting = sort === 'rating'
-            ? await attachStoreReviewSummaries(allFilteredStores)
-            : allFilteredStores;
+            ? await attachStoreReviewSummaries(buyerFilteredStores)
+            : buyerFilteredStores;
         const sortedStores = sortStores(storesForSorting);
         let stores = sortedStores.slice(skip, skip + limitNum);
         if (sort !== 'rating') {
             stores = await attachStoreReviewSummaries(stores);
         }
         const total = sortedStores.length;
-        const allCount = visibleCountStores.length;
-        const brandCount = visibleCountStores.filter(store => store.sellerType === 'brand').length;
-        const storeCount = visibleCountStores.filter(store => (store.sellerType || 'store') === 'store').length;
+        const allCount = buyerVisibleCountStores.length;
+        const brandCount = buyerVisibleCountStores.filter(store => store.sellerType === 'brand').length;
+        const storeCount = buyerVisibleCountStores.filter(store => (store.sellerType || 'store') === 'store').length;
 
         // Get product count for each store
         const Product = require('../models/Product');

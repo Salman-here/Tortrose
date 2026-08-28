@@ -258,7 +258,12 @@ exports.getMyComplaints = async (req, res) => {
         const complaints = await Complaint.find({ user: userId })
             .sort({ createdAt: -1 })
             .populate('relatedOrder', 'orderId orderStatus')
-            .populate('relatedProduct', 'name image');
+              .populate([
+                  { path: 'relatedProduct', select: 'name image' },
+                  { path: 'report.targetUser', select: 'username avatar role status' },
+                  { path: 'report.relatedStore', select: 'storeName storeSlug logo' },
+                  { path: 'report.relatedReview', select: 'title comment rating user store' },
+              ]);
         res.json({ complaints });
     } catch (error) {
         console.error('Get complaints error:', error);
@@ -287,7 +292,12 @@ exports.getAllComplaints = async (req, res) => {
             .limit(parseInt(limit))
             .populate('user', 'username email avatar')
             .populate('relatedOrder', 'orderId orderStatus')
-            .populate('relatedProduct', 'name image');
+            .populate([
+                { path: 'relatedProduct', select: 'name image' },
+                { path: 'report.targetUser', select: 'username email avatar role status' },
+                { path: 'report.relatedStore', select: 'storeName storeSlug logo' },
+                { path: 'report.relatedReview', select: 'title comment rating user store' },
+            ]);
 
         // Category stats
         const categoryStats = await Complaint.aggregate([

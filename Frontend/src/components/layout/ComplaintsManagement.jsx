@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { MessageSquare, Filter, Search, Eye, ChevronDown, AlertCircle, Clock, CheckCircle, XCircle, Loader2, User, Package, ShoppingBag, Bug, Lightbulb, HelpCircle } from 'lucide-react';
+import { MessageSquare, Search, AlertCircle, Clock, CheckCircle, Loader2, User, Package, ShoppingBag, Bug, Lightbulb, HelpCircle, Bot, Store, Star } from 'lucide-react';
 import axios from 'axios';
 import { toast } from 'react-toastify';
 import Loader from '../common/Loader';
@@ -15,6 +15,9 @@ const CATEGORIES = [
     { value: 'seller_complaint', label: 'Seller Complaint', icon: <User size={14} /> },
     { value: 'website_bug', label: 'Website Bug', icon: <Bug size={14} /> },
     { value: 'suggestion', label: 'Suggestion', icon: <Lightbulb size={14} /> },
+    { value: 'ai_response', label: 'AI Response Report', icon: <Bot size={14} /> },
+    { value: 'review_report', label: 'Review Report', icon: <Star size={14} /> },
+    { value: 'store_report', label: 'Store Report', icon: <Store size={14} /> },
     { value: 'other', label: 'Other', icon: <HelpCircle size={14} /> },
 ];
 
@@ -184,7 +187,7 @@ const ComplaintsManagement = () => {
                                         </div>
                                         <p className="text-xs truncate" style={{ color: 'hsl(var(--muted-foreground))' }}>{c.message}</p>
                                         <div className="flex items-center gap-3 mt-2 text-[11px]" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                                            <span className="flex items-center gap-1"><User size={11} /> {c.user?.username || 'Unknown'}</span>
+                                            <span className="flex items-center gap-1"><User size={11} /> {c.user?.username || 'Anonymous'}</span>
                                             <span>{CATEGORIES.find(cat => cat.value === c.category)?.label || c.category}</span>
                                             <span>{new Date(c.createdAt).toLocaleDateString()}</span>
                                         </div>
@@ -200,6 +203,23 @@ const ComplaintsManagement = () => {
                                                 <p className="text-xs font-semibold mb-1" style={{ color: 'hsl(var(--foreground))' }}>Full Message:</p>
                                                 <p className="text-sm whitespace-pre-line" style={{ color: 'hsl(var(--muted-foreground))' }}>{c.message}</p>
                                             </div>
+                                            {c.report?.kind && (
+                                                <div className="glass-inner rounded-xl p-3 mb-3">
+                                                    <div className="flex flex-wrap gap-2 mb-2">
+                                                        <span className="text-[10px] px-2 py-1 rounded-full font-bold uppercase" style={{ background: 'rgba(99,102,241,0.12)', color: 'hsl(220,70%,55%)' }}>
+                                                            {c.report.kind.replace('_', ' ')}
+                                                        </span>
+                                                        <span className="text-[10px] px-2 py-1 rounded-full font-bold uppercase" style={{ background: 'rgba(245,158,11,0.12)', color: 'hsl(45,80%,40%)' }}>
+                                                            {c.report.reason}
+                                                        </span>
+                                                        <span className="text-[10px] px-2 py-1 rounded-full font-bold uppercase" style={{ background: 'rgba(107,114,128,0.12)', color: 'hsl(var(--muted-foreground))' }}>
+                                                            {c.report.reporterType}
+                                                        </span>
+                                                    </div>
+                                                    {c.report.targetUser?.username && <p className="text-xs mb-2" style={{ color: 'hsl(var(--muted-foreground))' }}>Reported account: <strong style={{ color: 'hsl(var(--foreground))' }}>{c.report.targetUser.username}</strong></p>}
+                                                    {c.report.contentSnapshot && <p className="text-xs whitespace-pre-line break-words" style={{ color: 'hsl(var(--muted-foreground))' }}>{c.report.contentSnapshot}</p>}
+                                                </div>
+                                            )}
                                             {c.user?.email && (
                                                 <p className="text-xs mb-3" style={{ color: 'hsl(var(--muted-foreground))' }}>
                                                     Email: <span className="font-medium" style={{ color: 'hsl(var(--foreground))' }}>{c.user.email}</span>

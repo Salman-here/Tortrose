@@ -225,11 +225,13 @@ export default function SettingsScreen({ navigation }) {
           <Text style={styles.sectionLabel}>LEGAL</Text>
           <GlassPanel variant="card" style={styles.settingCard}>
             <SettingRow icon="shield-outline" iconColor={palette.colors.secondary} iconBg="rgba(139,92,246,0.15)" title="Privacy Policy" onPress={() => navigation.navigate('PrivacyPolicy')} />
-            <SettingRow icon="document-text-outline" iconColor={palette.colors.info} iconBg="rgba(59,130,246,0.15)" title="Terms of Service" onPress={() => navigation.navigate('TermsOfService')} showBorder={false} />
+            <SettingRow icon="document-text-outline" iconColor={palette.colors.info} iconBg="rgba(59,130,246,0.15)" title="Terms of Service" onPress={() => navigation.navigate('TermsOfService')} />
+            <SettingRow icon="person-remove-outline" iconColor={palette.colors.warning} iconBg="rgba(245,158,11,0.15)" title="Account Deletion Information" subtitle="How deletion works and what is retained" onPress={() => Linking.openURL('https://rozare.com/account-deletion')} showBorder={false} />
           </GlassPanel>
 
           <Text style={styles.sectionLabel}>ACCOUNT</Text>
           <GlassPanel variant="card" style={styles.settingCard}>
+            <SettingRow icon="ban-outline" iconColor={palette.colors.warning} iconBg="rgba(245,158,11,0.15)" title="Blocked Accounts" subtitle="Manage hidden sellers and reviewers" onPress={() => navigation.navigate('BlockedAccounts')} />
             <SettingRow icon="trash-outline" iconColor={palette.colors.error} iconBg="rgba(239,68,68,0.15)" title={isDeletingAccount ? 'Deleting Account…' : 'Delete Account'} subtitle="Permanently remove your account" onPress={isDeletingAccount ? undefined : handleDeleteAccount} showBorder={false} />
           </GlassPanel>
 

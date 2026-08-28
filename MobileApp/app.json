@@ -2,7 +2,7 @@
   "expo": {
     "name": "Rozare",
     "slug": "rozare",
-    "version": "1.0.8",
+    "version": "1.0.9",
     "runtimeVersion": {
       "policy": "appVersion"
     },
@@ -28,14 +28,16 @@
         "backgroundColor": "#0EA5E9"
       },
       "package": "com.rozare.app",
-      "versionCode": 9,
+      "versionCode": 10,
       "permissions": [
-        "CAMERA",
-        "READ_EXTERNAL_STORAGE",
-        "WRITE_EXTERNAL_STORAGE",
         "RECORD_AUDIO",
         "RECEIVE_BOOT_COMPLETED",
         "VIBRATE"
+      ],
+      "blockedPermissions": [
+        "android.permission.CAMERA",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE"
       ],
       "intentFilters": [
         {
@@ -58,7 +60,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.rozare.app",
-      "buildNumber": "9",
+      "buildNumber": "10",
       "associatedDomains": [
         "applinks:rozare.com"
       ],
