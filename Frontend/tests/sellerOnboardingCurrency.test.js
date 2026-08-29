@@ -23,6 +23,13 @@ test('web seller activation sends the visible listing currency to the backend', 
   assert.match(becomeSellerSource, /useCurrency\(\)/);
 });
 
+test('existing buyers bind seller WhatsApp OTP send and verify to their authenticated account', () => {
+  const authenticatedOtpCalls = becomeSellerSource.match(
+    /api\/seller-whatsapp\/(?:send-otp|verify-otp)[\s\S]{0,260}Authorization:\s*`Bearer \$\{token\}`/g
+  ) || [];
+  assert.equal(authenticatedOtpCalls.length, 2);
+});
+
 test('the live seller-signup alias resolves to the hardened BecomeSeller flow', () => {
   assert.match(routesSource, /path='\/become-seller'\s+element=\{<BecomeSeller\s*\/>\}/);
   assert.match(routesSource, /path='\/seller-signup'\s+element=\{<Navigate to='\/become-seller' replace\s*\/>\}/);

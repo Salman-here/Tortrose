@@ -285,7 +285,12 @@ export default function BecomeSeller() {
     setWhatsappSending(true);
     setWhatsappError('');
     try {
-      await axios.post(`${import.meta.env.VITE_API_URL}api/seller-whatsapp/send-otp`, { whatsappNumber: formData.phoneNumber });
+      const token = getAuthToken();
+      await axios.post(
+        `${import.meta.env.VITE_API_URL}api/seller-whatsapp/send-otp`,
+        { whatsappNumber: formData.phoneNumber },
+        token ? { headers: { Authorization: `Bearer ${token}` } } : {}
+      );
       setWhatsappCodeSent(true);
       setOtpCountdown(120);
       setResendCooldown(30);
@@ -310,7 +315,12 @@ export default function BecomeSeller() {
     setWhatsappVerifying(true);
     setWhatsappError('');
     try {
-      await axios.post(`${import.meta.env.VITE_API_URL}api/seller-whatsapp/verify-otp`, { whatsappNumber: formData.phoneNumber, otp: whatsappOtp });
+      const token = getAuthToken();
+      await axios.post(
+        `${import.meta.env.VITE_API_URL}api/seller-whatsapp/verify-otp`,
+        { whatsappNumber: formData.phoneNumber, otp: whatsappOtp },
+        token ? { headers: { Authorization: `Bearer ${token}` } } : {}
+      );
       setWhatsappVerified(true);
       setWhatsappCodeSent(false);
       setWhatsappOtp('');
