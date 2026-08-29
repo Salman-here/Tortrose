@@ -8,7 +8,7 @@ import {
     CheckSquare, AlertCircle, Menu, TriangleAlert, TrafficCone,
     LayoutPanelLeft, ShoppingBag, Users, CheckCircle, Bell,
     Settings, TrendingUp, Info, AlertTriangle, Loader2,
-    Shield, Store, Bot, MessageCircle, Megaphone, BrainCircuit,
+    Shield, Store, Bot, MessageCircle, Megaphone, BrainCircuit, TestTube2,
 } from 'lucide-react';
 import { uploadImageToCloudinary } from '../../utils/uploadToCloudinary';
 import axios from 'axios';
@@ -41,6 +41,7 @@ const getAdminMenuItems = ({ pendingOrders = 0, lowStockProducts = 0 } = {}) => 
     { id: 'tax', label: 'Tax Config', icon: <DollarSign size={18} />, link: '/admin-dashboard/tax-configuration' },
     { id: 'notifications', label: 'Notifications', icon: <Bell size={18} />, link: '/admin-dashboard/notifications' },
     { id: 'whatsapp', label: 'WhatsApp Verify', icon: <MessageCircle size={18} />, link: '/admin-dashboard/whatsapp-verification' },
+    { id: 'whatsapp-test', label: 'WA Test Inbox', icon: <TestTube2 size={18} />, link: '/admin-dashboard/whatsapp-test-inbox' },
     { id: 'broadcast', label: 'Broadcast', icon: <Megaphone size={18} />, link: '/admin-dashboard/broadcast' },
     { id: 'ads', label: 'Seller Ads', icon: <Megaphone size={18} />, link: '/admin-dashboard/ads' },
     { id: 'ai-prompts', label: 'AI Prompts', icon: <BrainCircuit size={18} />, link: '/admin-dashboard/ai-prompts' },
@@ -643,6 +644,7 @@ const AdminSidebar = ({ activeTab, setActiveTab, isSidebarOpen, setIsSidebarOpen
         { id: 'tax', label: 'Tax Config', icon: <DollarSign size={18} />, link: '/admin-dashboard/tax-configuration' },
         { id: 'notifications', label: 'Notifications', icon: <Bell size={18} />, link: '/admin-dashboard/notifications' },
         { id: 'whatsapp', label: 'WhatsApp Verify', icon: <MessageCircle size={18} />, link: '/admin-dashboard/whatsapp-verification' },
+        { id: 'whatsapp-test', label: 'WA Test Inbox', icon: <TestTube2 size={18} />, link: '/admin-dashboard/whatsapp-test-inbox' },
         { id: 'broadcast', label: 'Broadcast', icon: <Megaphone size={18} />, link: '/admin-dashboard/broadcast' },
         { id: 'ads', label: 'Seller Ads', icon: <Megaphone size={18} />, link: '/admin-dashboard/ads' },
         { id: 'ai-prompts', label: 'AI Prompts', icon: <BrainCircuit size={18} />, link: '/admin-dashboard/ai-prompts' },

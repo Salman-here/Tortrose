@@ -3,6 +3,7 @@ const router = express.Router();
 const verifyToken = require('../middleware/authMiddleware');
 const { admin } = require('../middleware/authMiddleware');
 const ctrl = require('../controllers/whatsappController');
+const testInboxCtrl = require('../controllers/adminWhatsAppTestInboxController');
 
 // Admin-only management
 router.get('/status', verifyToken, admin, ctrl.getStatus);
@@ -13,6 +14,15 @@ router.post('/pairing-code', verifyToken, admin, ctrl.requestPairingCode);
 router.get('/queue', verifyToken, admin, ctrl.getQueue);
 router.post('/queue/:id/retry', verifyToken, admin, ctrl.retryQueueItem);
 router.get('/stats', verifyToken, admin, ctrl.getStats);
+
+// Fixed fictional-number test pool and virtual inbox (admin only). These
+// routes never accept arbitrary phone numbers, so real recipients cannot be
+// redirected into the test transport.
+router.post('/test-inbox/provision', verifyToken, admin, testInboxCtrl.provisionPool);
+router.get('/test-inbox/numbers', verifyToken, admin, testInboxCtrl.getNumbers);
+router.patch('/test-inbox/numbers/:id', verifyToken, admin, testInboxCtrl.setNumberActive);
+router.get('/test-inbox/messages', verifyToken, admin, testInboxCtrl.getMessages);
+router.post('/test-inbox/messages/:id/action', verifyToken, admin, testInboxCtrl.applyMessageAction);
 
 // Seller-instance management (admin only)
 router.get('/seller/status', verifyToken, admin, ctrl.getSellerStatus);

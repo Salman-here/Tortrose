@@ -63,6 +63,7 @@ const NotificationSettings = lazy(() => import('../components/layout/Notificatio
 const AdminSubdomainManagement = lazy(() => import('../components/layout/AdminSubdomainManagement'))
 const ComplaintsManagement = lazy(() => import('../components/layout/ComplaintsManagement'))
 const WhatsAppVerificationPanel = lazy(() => import('../components/layout/admin/WhatsAppVerificationPanel'))
+const WhatsAppTestInbox = lazy(() => import('../components/layout/admin/WhatsAppTestInbox'))
 const AdminBroadcastPanel = lazy(() => import('../components/layout/admin/AdminBroadcastPanel'))
 const AdminAdsPanel = lazy(() => import('../components/layout/admin/AdminAdsPanel'))
 const AdminAIPromptsPanel = lazy(() => import('../components/layout/admin/AdminAIPromptsPanel'))
@@ -202,6 +203,7 @@ function AppRoutes({ subdomainSlug = null }) {
                     <Route path='/admin-dashboard/subdomains' element={<ProtectedRoute role={'admin'}><AdminSubdomainManagement /></ProtectedRoute>} />
                     <Route path='/admin-dashboard/complaints' element={<ProtectedRoute role={'admin'}><ComplaintsManagement /></ProtectedRoute>} />
                     <Route path='/admin-dashboard/whatsapp-verification' element={<ProtectedRoute role={'admin'}><WhatsAppVerificationPanel /></ProtectedRoute>} />
+                    <Route path='/admin-dashboard/whatsapp-test-inbox' element={<ProtectedRoute role={'admin'}><WhatsAppTestInbox /></ProtectedRoute>} />
                     <Route path='/admin-dashboard/broadcast' element={<ProtectedRoute role={'admin'}><AdminBroadcastPanel /></ProtectedRoute>} />
                     <Route path='/admin-dashboard/ads' element={<ProtectedRoute role={'admin'}><AdminAdsPanel /></ProtectedRoute>} />
                     <Route path='/admin-dashboard/ai-prompts' element={<ProtectedRoute role={'admin'}><AdminAIPromptsPanel /></ProtectedRoute>} />

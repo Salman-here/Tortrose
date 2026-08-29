@@ -23,6 +23,10 @@ const {
     isZombieGatewayBody,
     reportZombieSignal,
 } = require('./gatewayHealth');
+const {
+    captureOutboundIfTestNumber,
+    isActiveTestNumber,
+} = require('./testNumberPoolService');
 
 // Shared helpers (not instance-specific)
 
@@ -377,6 +381,15 @@ function createEvolutionClient(instanceEnvVar, defaultName) {
 
     const sendText = async (number, text) => {
         if (!isConfigured()) throw new Error('Evolution API not configured');
+        const testDelivery = await captureOutboundIfTestNumber({
+            number,
+            instanceName: instanceName(),
+            instanceType: instanceType(),
+            messageType: 'text',
+            text,
+            payload: { text },
+        });
+        if (testDelivery) return testDelivery;
         const recipient = await normalizeSendRecipient(number);
         const { data } = await client().post(`/message/sendText/${instanceName()}`, {
             number: recipient,
@@ -396,6 +409,15 @@ function createEvolutionClient(instanceEnvVar, defaultName) {
      */
     const sendMedia = async (number, mediaUrl, caption = '', mediaType = 'image') => {
         if (!isConfigured()) throw new Error('Evolution API not configured');
+        const testDelivery = await captureOutboundIfTestNumber({
+            number,
+            instanceName: instanceName(),
+            instanceType: instanceType(),
+            messageType: 'media',
+            text: caption,
+            payload: { mediaUrl, caption, mediaType },
+        });
+        if (testDelivery) return testDelivery;
         const recipient = await normalizeSendRecipient(number);
         const { data } = await client().post(`/message/sendMedia/${instanceName()}`, {
             number: recipient,
@@ -410,6 +432,15 @@ function createEvolutionClient(instanceEnvVar, defaultName) {
 
     const sendPoll = async (number, { name, values, selectableCount = 1 }) => {
         if (!isConfigured()) throw new Error('Evolution API not configured');
+        const testDelivery = await captureOutboundIfTestNumber({
+            number,
+            instanceName: instanceName(),
+            instanceType: instanceType(),
+            messageType: 'poll',
+            text: name,
+            payload: { name, values, selectableCount },
+        });
+        if (testDelivery) return testDelivery;
         const recipient = await normalizeSendRecipient(number);
         const { data } = await client().post(`/message/sendPoll/${instanceName()}`, {
             number: recipient,
@@ -427,6 +458,15 @@ function createEvolutionClient(instanceEnvVar, defaultName) {
         if (!Array.isArray(sections) || sections.length === 0) {
             throw new Error('sendList: sections array is required');
         }
+        const testDelivery = await captureOutboundIfTestNumber({
+            number,
+            instanceName: instanceName(),
+            instanceType: instanceType(),
+            messageType: 'list',
+            text: [title, description].filter(Boolean).join('\n'),
+            payload: { title, description, buttonText, footerText, sections },
+        });
+        if (testDelivery) return testDelivery;
         const recipient = await normalizeSendRecipient(number);
         const { data } = await client().post(`/message/sendList/${instanceName()}`, {
             number: recipient,
@@ -446,16 +486,26 @@ function createEvolutionClient(instanceEnvVar, defaultName) {
         if (!Array.isArray(buttons) || buttons.length === 0) {
             throw new Error('sendButtons: buttons array is required');
         }
+        const normalizedButtons = buttons.map((button) => ({
+            type: button.type || 'reply',
+            displayText: button.displayText,
+            id: button.id,
+        }));
+        const testDelivery = await captureOutboundIfTestNumber({
+            number,
+            instanceName: instanceName(),
+            instanceType: instanceType(),
+            messageType: 'buttons',
+            text: [title, description].filter(Boolean).join('\n'),
+            payload: { title, description, footer, buttons: normalizedButtons },
+        });
+        if (testDelivery) return testDelivery;
         const payload = {
             number: await normalizeSendRecipient(number),
             title,
             description,
             footer,
-            buttons: buttons.map((b) => ({
-                type: b.type || 'reply',
-                displayText: b.displayText,
-                id: b.id,
-            })),
+            buttons: normalizedButtons,
             delay: 0,
         };
         const { data } = await client().post(`/message/sendButtons/${instanceName()}`, payload);
@@ -558,9 +608,10 @@ function createEvolutionClient(instanceEnvVar, defaultName) {
     };
 
     const checkWhatsAppNumber = async (number) => {
-        if (!isConfigured()) return null;
         const clean = String(number || '').replace(/\D/g, '');
         if (!clean) return false;
+        if (await isActiveTestNumber(clean)) return true;
+        if (!isConfigured()) return null;
         try {
             const { data } = await client().post(`/chat/whatsappNumbers/${instanceName()}`, {
                 numbers: [clean],
