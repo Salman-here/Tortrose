@@ -21,6 +21,7 @@ router.get('/stats', verifyToken, admin, ctrl.getStats);
 router.post('/test-inbox/provision', verifyToken, admin, testInboxCtrl.provisionPool);
 router.get('/test-inbox/numbers', verifyToken, admin, testInboxCtrl.getNumbers);
 router.patch('/test-inbox/numbers/:id', verifyToken, admin, testInboxCtrl.setNumberActive);
+router.post('/test-inbox/numbers/:id/inbound-text', verifyToken, admin, testInboxCtrl.sendInboundText);
 router.get('/test-inbox/messages', verifyToken, admin, testInboxCtrl.getMessages);
 router.post('/test-inbox/messages/:id/action', verifyToken, admin, testInboxCtrl.applyMessageAction);
 

@@ -13,6 +13,7 @@ const {
 } = require('../services/whatsapp/testNumberPoolService');
 
 const MAX_PAGE_SIZE = 100;
+const MAX_INBOUND_TEXT_LENGTH = 4000;
 
 const actionChoices = (message = {}) => {
     if (message.messageType === 'buttons') {
@@ -235,6 +236,117 @@ const dispatchSyntheticButton = async ({ number, instanceName, actionId, actionL
 
     await handleEvolutionWebhook(request, response);
     return { statusCode, responseBody, inboundMessageId: request.body.data.key.id };
+};
+
+const dispatchSyntheticText = async ({ number, instanceName, text, inboundMessageId }) => {
+    let statusCode = 200;
+    let responseBody = null;
+    const response = {
+        status(code) {
+            statusCode = code;
+            return this;
+        },
+        json(body) {
+            responseBody = body;
+            return body;
+        },
+    };
+    const request = {
+        whatsappWebhookAuthenticated: true,
+        headers: {},
+        body: {
+            event: 'MESSAGES_UPSERT',
+            instance: instanceName || process.env.EVOLUTION_SELLER_INSTANCE_NAME || 'rozare-seller',
+            data: {
+                key: {
+                    id: inboundMessageId,
+                    remoteJid: `${number}@s.whatsapp.net`,
+                    fromMe: false,
+                },
+                messageTimestamp: Math.floor(Date.now() / 1000),
+                message: { conversation: text },
+            },
+        },
+    };
+
+    await handleEvolutionWebhook(request, response);
+    return { statusCode, responseBody, inboundMessageId };
+};
+
+exports.sendInboundText = async (req, res) => {
+    const adminId = req.user?._id || req.user?.id || null;
+    let inbound = null;
+    try {
+        const text = typeof req.body?.text === 'string' ? req.body.text.trim() : '';
+        if (!text) {
+            return res.status(400).json({ success: false, msg: 'Inbound WhatsApp text is required.' });
+        }
+        if (text.length > MAX_INBOUND_TEXT_LENGTH) {
+            return res.status(400).json({
+                success: false,
+                msg: `Inbound WhatsApp text cannot exceed ${MAX_INBOUND_TEXT_LENGTH} characters.`,
+            });
+        }
+
+        const number = await WhatsAppTestNumber.findById(req.params.id);
+        if (!number || !testPoolNumbers().includes(number.number)) {
+            return res.status(404).json({ success: false, msg: 'WhatsApp test number not found.' });
+        }
+        if (!number.isActive) {
+            return res.status(409).json({ success: false, msg: 'This WhatsApp test number is inactive.' });
+        }
+
+        const instanceName = process.env.EVOLUTION_SELLER_INSTANCE_NAME || 'rozare-seller';
+        const inboundMessageId = `rozare-test-inbound-${crypto.randomUUID()}`;
+        inbound = await WhatsAppTestMessage.create({
+            number: number.number,
+            direction: 'inbound',
+            instanceName,
+            instanceType: 'unified',
+            messageType: 'text',
+            text,
+            messageId: inboundMessageId,
+            processingStatus: 'processing',
+            createdBy: adminId,
+        });
+        number.lastUsedAt = new Date();
+        await number.save();
+
+        const dispatch = await dispatchSyntheticText({
+            number: number.number,
+            instanceName,
+            text,
+            inboundMessageId,
+        });
+        if (dispatch.statusCode >= 400 || dispatch.responseBody?.ok === false) {
+            throw Object.assign(new Error('The live WhatsApp AI path rejected the simulated inbound text.'), {
+                statusCode: 502,
+            });
+        }
+
+        inbound.processingStatus = 'processed';
+        inbound.processedAt = new Date();
+        inbound.processingError = '';
+        await inbound.save();
+
+        return res.status(200).json({
+            success: true,
+            msg: 'Inbound WhatsApp text was submitted through the live AI path.',
+            data: serializeMessage(inbound.toObject()),
+            webhook: dispatch.responseBody,
+        });
+    } catch (error) {
+        if (inbound) {
+            inbound.processingStatus = 'failed';
+            inbound.processingError = String(error.message || 'Unknown processing error').slice(0, 1200);
+            await inbound.save().catch(() => null);
+        }
+        console.error('[whatsapp-test-inbox] sendInboundText:', error.message);
+        return res.status(error.statusCode || 500).json({
+            success: false,
+            msg: error.message || 'Failed to process the inbound WhatsApp text.',
+        });
+    }
 };
 
 exports.applyMessageAction = async (req, res) => {

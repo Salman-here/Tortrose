@@ -3,7 +3,7 @@ import axios from 'axios';
 import { motion } from 'framer-motion';
 import {
     Activity, CheckCircle2, Clock, Copy, Inbox, Loader2, MessageCircle,
-    Phone, Power, RefreshCw, ShieldCheck, TestTube2, Users, XCircle,
+    Phone, Power, RefreshCw, Send, ShieldCheck, TestTube2, Users, XCircle,
 } from 'lucide-react';
 import { toast } from 'react-toastify';
 import { getAuthToken } from '../../../utils/cookieHelper';
@@ -49,6 +49,8 @@ const WhatsAppTestInbox = () => {
     const [refreshing, setRefreshing] = useState(false);
     const [provisioning, setProvisioning] = useState(false);
     const [actingMessageId, setActingMessageId] = useState('');
+    const [inboundText, setInboundText] = useState('');
+    const [sendingInbound, setSendingInbound] = useState(false);
 
     const fetchNumbers = useCallback(async () => {
         const { data } = await axios.get(`${API}api/whatsapp/test-inbox/numbers`, { headers: authHeaders() });
@@ -153,6 +155,28 @@ const WhatsAppTestInbox = () => {
         [numberFilter, numbers]
     );
 
+    const sendInboundText = async event => {
+        event.preventDefault();
+        const text = inboundText.trim();
+        if (!selectedNumber || !text || sendingInbound) return;
+        setSendingInbound(true);
+        try {
+            const { data } = await axios.post(
+                `${API}api/whatsapp/test-inbox/numbers/${selectedNumber._id}/inbound-text`,
+                { text },
+                { headers: authHeaders() }
+            );
+            setInboundText('');
+            toast.success(data.msg || 'Inbound WhatsApp text processed.');
+            await refresh({ quiet: true });
+        } catch (error) {
+            toast.error(error.response?.data?.msg || 'Inbound WhatsApp text failed.');
+            await fetchMessages().catch(() => null);
+        } finally {
+            setSendingInbound(false);
+        }
+    };
+
     if (loading) {
         return <div className="min-h-[55vh] flex items-center justify-center"><Loader2 className="animate-spin" size={34} /></div>;
     }
@@ -249,6 +273,45 @@ const WhatsAppTestInbox = () => {
                         </div>
                         {numberFilter && <button onClick={() => setNumberFilter('')} className="text-xs px-3 py-2 rounded-xl glass-inner">Clear filter</button>}
                     </div>
+
+                    {selectedNumber && (
+                        <form onSubmit={sendInboundText} className="mb-4 rounded-2xl p-4 glass-inner"
+                            style={{ border: '1px solid rgba(34,197,94,0.24)' }}>
+                            <div className="flex items-center justify-between gap-3 mb-2">
+                                <div>
+                                    <div className="text-xs font-extrabold" style={{ color: 'hsl(var(--foreground))' }}>
+                                        Send inbound WhatsApp text
+                                    </div>
+                                    <div className="text-[10px] mt-0.5" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                                        Runs through the authenticated production webhook and the same AI routing used by real WhatsApp messages.
+                                    </div>
+                                </div>
+                                <MessageCircle size={18} style={{ color: 'hsl(150,70%,40%)' }} />
+                            </div>
+                            <textarea
+                                value={inboundText}
+                                onChange={event => setInboundText(event.target.value)}
+                                maxLength={4000}
+                                rows={3}
+                                disabled={sendingInbound || !selectedNumber.isActive}
+                                placeholder={selectedNumber.isActive ? 'Type a buyer or seller message to Rozare AI…' : 'Activate this test number first.'}
+                                aria-label="Inbound WhatsApp text"
+                                className="w-full rounded-xl px-3 py-2.5 text-xs resize-y outline-none disabled:opacity-50"
+                                style={{ background: 'hsl(var(--background) / 0.7)', border: '1px solid hsl(var(--border))', color: 'hsl(var(--foreground))' }}
+                            />
+                            <div className="mt-2 flex items-center justify-between gap-3">
+                                <span className="text-[9px]" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                                    {inboundText.length}/4000 · {formatNumber(selectedNumber.number)}
+                                </span>
+                                <button type="submit" disabled={sendingInbound || !selectedNumber.isActive || !inboundText.trim()}
+                                    className="px-4 py-2.5 rounded-xl text-xs font-bold text-white inline-flex items-center gap-2 disabled:opacity-50"
+                                    style={{ background: 'hsl(150,70%,40%)' }}>
+                                    {sendingInbound ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
+                                    {sendingInbound ? 'Processing AI reply…' : 'Send through live AI'}
+                                </button>
+                            </div>
+                        </form>
+                    )}
 
                     {!messages.length ? (
                         <div className="py-16 text-center">

@@ -114,4 +114,51 @@ describe('admin WhatsApp test inbox actions', () => {
             errorSpy.mockRestore();
         }
     });
+
+    test('sends free-form inbound text through the authenticated live AI webhook path', async () => {
+        const number = await WhatsAppTestNumber.findOne({ number: '12025550110' });
+        const res = makeResponse();
+
+        await controller.sendInboundText({
+            params: { id: number._id.toString() },
+            body: { text: 'Show me my latest order.' },
+            user: {},
+        }, res);
+
+        expect(res.statusCode).toBe(200);
+        expect(res.body.success).toBe(true);
+        expect(mockHandleEvolutionWebhook).toHaveBeenCalledTimes(1);
+        const syntheticRequest = mockHandleEvolutionWebhook.mock.calls[0][0];
+        expect(syntheticRequest.whatsappWebhookAuthenticated).toBe(true);
+        expect(syntheticRequest.body.data.key.remoteJid).toBe('12025550110@s.whatsapp.net');
+        expect(syntheticRequest.body.data.key.fromMe).toBe(false);
+        expect(syntheticRequest.body.data.message.conversation).toBe('Show me my latest order.');
+
+        const inbound = await WhatsAppTestMessage.findOne({ direction: 'inbound', messageType: 'text' }).lean();
+        expect(inbound.text).toBe('Show me my latest order.');
+        expect(inbound.processingStatus).toBe('processed');
+    });
+
+    test('rejects blank text and inactive test numbers before dispatching inbound AI work', async () => {
+        const number = await WhatsAppTestNumber.findOne({ number: '12025550110' });
+        const blankRes = makeResponse();
+        await controller.sendInboundText({
+            params: { id: number._id.toString() },
+            body: { text: '   ' },
+            user: {},
+        }, blankRes);
+        expect(blankRes.statusCode).toBe(400);
+
+        number.isActive = false;
+        await number.save();
+        const inactiveRes = makeResponse();
+        await controller.sendInboundText({
+            params: { id: number._id.toString() },
+            body: { text: 'Hello' },
+            user: {},
+        }, inactiveRes);
+        expect(inactiveRes.statusCode).toBe(409);
+        expect(mockHandleEvolutionWebhook).not.toHaveBeenCalled();
+        expect(await WhatsAppTestMessage.countDocuments({ direction: 'inbound' })).toBe(0);
+    });
 });
