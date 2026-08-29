@@ -5,6 +5,7 @@ const mongoose = require('mongoose');
 const ConnectDB = require('../config/db');
 const User = require('../models/User');
 const Store = require('../models/Store');
+const SellerSubscription = require('../models/SellerSubscription');
 const { initializeSubscription } = require('../controllers/subscriptionController');
 
 const APPLY_FLAG = '--apply';
@@ -44,6 +45,33 @@ async function provisionUser({ email, password, username, role, rotatePasswords 
   }
   await user.save();
   return user;
+}
+
+async function ensureReviewerSellerAccess(sellerId) {
+  let subscription = await initializeSubscription(sellerId);
+  if (subscription.stripeCustomerId || subscription.stripeSubscriptionId) {
+    throw new Error('The reserved seller reviewer account has Stripe billing history; refusing to replace its entitlement.');
+  }
+
+  const now = new Date();
+  const reviewAccessEnd = new Date('2099-12-31T23:59:59.000Z');
+  subscription.status = 'active';
+  subscription.plan = 'elite';
+  subscription.planName = 'Rozare Elite - Play review access';
+  subscription.subscribedAt = subscription.subscribedAt || now;
+  subscription.currentPeriodStart = subscription.currentPeriodStart || now;
+  subscription.currentPeriodEnd = reviewAccessEnd;
+  subscription.trialStartDate = undefined;
+  subscription.trialEndDate = undefined;
+  subscription.freePeriodEndDate = undefined;
+  subscription.bonusExpiryDate = undefined;
+  subscription.bonusFeaturesActive = true;
+  subscription.bonusFeaturesExpiredPermanently = false;
+  subscription.aiMessageLimit = -1;
+  subscription.blockedAt = undefined;
+  subscription.blockedReason = '';
+  await subscription.save();
+  return subscription;
 }
 
 async function run() {
@@ -88,7 +116,7 @@ async function run() {
       isActive: true,
     });
   }
-  await initializeSubscription(seller._id);
+  const sellerSubscription = await ensureReviewerSellerAccess(seller._id);
 
   // Never print passwords or connection details. This output is safe for CI
   // and confirms only the identities that were provisioned.
@@ -96,6 +124,11 @@ async function run() {
     ok: true,
     buyer: { id: String(buyer._id), email: buyer.email, role: buyer.role },
     seller: { id: String(seller._id), email: seller.email, role: seller.role },
+    sellerReviewAccess: {
+      status: sellerSubscription.status,
+      plan: sellerSubscription.plan,
+      validUntil: sellerSubscription.currentPeriodEnd,
+    },
     passwordsRotated: rotatePasswords,
   }, null, 2));
 }

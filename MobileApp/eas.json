@@ -20,7 +20,7 @@
     "production": {
       "channel": "production",
       "environment": "production",
-      "autoIncrement": true,
+      "autoIncrement": false,
       "env": {
         "EXPO_PUBLIC_PROJECT_ID": "21e1e6b1-bb29-47bc-a337-236fb17314cf"
       }
