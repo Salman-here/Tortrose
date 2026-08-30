@@ -208,9 +208,10 @@ exports.buyerOrderConfirmationRequestEmail = (order, confirmUrl) => ({
       <table style="width:100%;">${renderOrderSummaryRows(order)}</table>
     </div>
     <div style="text-align:center;margin:24px 0;">
-      <a href="${escapeHtml(confirmUrl)}" style="display:inline-block;background:linear-gradient(135deg,${brandColor},#8b5cf6);color:#fff;padding:14px 36px;border-radius:10px;text-decoration:none;font-weight:600;font-size:15px;">Review &amp; Confirm Order</a>
+      <a href="${escapeHtml(`${confirmUrl}?intent=confirm`)}" style="display:inline-block;background:#16a34a;color:#fff;padding:14px 28px;border-radius:10px;text-decoration:none;font-weight:600;font-size:15px;margin:0 8px 10px;">Confirm Order</a>
+      <a href="${escapeHtml(`${confirmUrl}?intent=cancel`)}" style="display:inline-block;background:#dc2626;color:#fff;padding:14px 28px;border-radius:10px;text-decoration:none;font-weight:600;font-size:15px;margin:0 8px 10px;">Cancel Order</a>
     </div>
-    <p style="color:#94a3b8;margin:24px 0 0;font-size:12px;text-align:center;">If you didn't place this order, you can safely ignore this email or click the link to decline it.</p>
+    <p style="color:#94a3b8;margin:24px 0 0;font-size:12px;text-align:center;">For security, either button opens Rozare's decision page. Email scanners cannot confirm or cancel the order automatically.</p>
   `),
 });
 

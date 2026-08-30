@@ -231,6 +231,25 @@ describe('financial notification domain contracts', () => {
     ))).toBe(true);
   });
 
+  test('COD email exposes separate scanner-safe confirm and cancel intent buttons', async () => {
+    const { order } = paidMixedOrder();
+    order.paymentMethod = 'cash_on_delivery';
+    order.isPaid = false;
+    order.createdAt = new Date('2026-08-24T11:00:00.000Z');
+    order.confirmation = { token: 'a'.repeat(64) };
+
+    await enqueueCodOrderBuyerConfirmationNotification(order, { channels: ['email'] });
+
+    const record = await NotificationOutbox.findOne({ channel: 'email' }).lean();
+    expect(record.payload.html).toContain('>Confirm Order</a>');
+    expect(record.payload.html).toContain('>Cancel Order</a>');
+    expect(record.payload.html).toContain(`/orders/confirm/${'a'.repeat(64)}?intent=confirm`);
+    expect(record.payload.html).toContain(`/orders/confirm/${'a'.repeat(64)}?intent=cancel`);
+    expect(record.payload.text).toContain('Confirm Order:');
+    expect(record.payload.text).toContain('Cancel Order:');
+    expect(record.payload.html).not.toContain('/api/order/');
+  });
+
   test('COD guests default only to available event-snapshot destinations', async () => {
     const { order } = paidMixedOrder();
     delete order.user;

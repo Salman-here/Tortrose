@@ -737,6 +737,8 @@ async function enqueueCodOrderBuyerConfirmationNotification(order, {
   }
   const frontendUrl = String(process.env.FRONTEND_URL || 'https://rozare.com').replace(/\/+$/, '');
   const confirmUrl = `${frontendUrl}/orders/confirm/${encodeURIComponent(token)}`;
+  const confirmIntentUrl = `${confirmUrl}?intent=confirm`;
+  const cancelIntentUrl = `${confirmUrl}?intent=cancel`;
   const recipient = buyerOrderRecipient(order);
   const selectedChannels = channels || buyerReceiptChannels(order, {
     includeAccountChannels: recipient.kind === 'user',
@@ -753,8 +755,8 @@ async function enqueueCodOrderBuyerConfirmationNotification(order, {
     },
     email: {
       subject: `Confirm cash on delivery order ${orderNumber}`,
-      text: `Confirm order #${orderNumber}. Order total: {{money.order_total}}. Review and confirm: ${confirmUrl}`,
-      html: `<p>Please confirm cash on delivery order <strong>#${escapeHtml(orderNumber)}</strong>.</p><p>Order total: <strong>{{money.order_total}}</strong>.</p><p><a href="${escapeHtml(confirmUrl)}">Review and confirm order</a></p>`,
+      text: `Review cash on delivery order #${orderNumber}. Order total: {{money.order_total}}. Confirm Order: ${confirmIntentUrl} Cancel Order: ${cancelIntentUrl}`,
+      html: `<p>Please confirm or cancel cash on delivery order <strong>#${escapeHtml(orderNumber)}</strong>.</p><p>Order total: <strong>{{money.order_total}}</strong>.</p><div style="margin:24px 0"><a href="${escapeHtml(confirmIntentUrl)}" style="display:inline-block;background:#16a34a;color:#fff;padding:12px 22px;border-radius:8px;text-decoration:none;font-weight:700;margin:0 10px 10px 0">Confirm Order</a><a href="${escapeHtml(cancelIntentUrl)}" style="display:inline-block;background:#dc2626;color:#fff;padding:12px 22px;border-radius:8px;text-decoration:none;font-weight:700;margin:0 0 10px">Cancel Order</a></div><p style="color:#64748b;font-size:13px">For security, either button opens Rozare's decision page so email scanners cannot confirm or cancel your order automatically.</p>`,
     },
     whatsapp: {
       message: `Rozare Cash on Delivery Order\n\nOrder: #${orderNumber}\nTotal: {{money.order_total}}\n\nReview and confirm: ${confirmUrl}`,

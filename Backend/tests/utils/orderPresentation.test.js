@@ -159,6 +159,10 @@ describe('order presentation helpers', () => {
 
     expect(buyerEmail.html).toContain('Size: Large, Finish: Walnut, Color: Brown');
     expect(buyerEmail.html).toContain('Rs4,343.79 PKR');
+    expect(buyerEmail.html).toContain('>Confirm Order</a>');
+    expect(buyerEmail.html).toContain('>Cancel Order</a>');
+    expect(buyerEmail.html).toContain('https://example.com/confirm?intent=confirm');
+    expect(buyerEmail.html).toContain('https://example.com/confirm?intent=cancel');
     expect(sellerEmail.html).toContain('Size: Large, Finish: Walnut, Color: Brown');
     expect(sellerEmail.html).toContain('Rs4,343.79 PKR');
     expect(orderItemLineText(sampleOrder.orderItems[0], sampleOrder.currency)).toContain('Rs4,093.79 PKR');
