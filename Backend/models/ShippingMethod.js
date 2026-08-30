@@ -37,9 +37,13 @@ const shippingMethodSchema = mongoose.Schema({
         validate: {
           validator(value) {
             return isExactStoredMoney(value)
-              && (this.type === 'free' ? value === 0 : value > 0);
+              && (this.type === 'free'
+                ? value === 0
+                : this.isActive === false
+                  ? value >= 0
+                  : value > 0);
           },
-          message: 'Free shipping must cost 0 and paid shipping must use an exact positive cent amount',
+          message: 'Free shipping must cost 0; active paid shipping must use an exact positive cent amount',
         },
       },
       currency: {
@@ -61,7 +65,11 @@ const shippingMethodSchema = mongoose.Schema({
           validator(value) {
             if (value === null || value === undefined) return true;
             return isExactStoredMoney(value)
-              && (this.type === 'free' ? value === 0 : value > 0);
+              && (this.type === 'free'
+                ? value === 0
+                : this.isActive === false
+                  ? value >= 0
+                  : value > 0);
           },
           message: 'Shipping input amount must be an exact valid cent amount',
         },

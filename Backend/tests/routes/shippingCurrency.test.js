@@ -132,6 +132,52 @@ describe('shipping currency', () => {
     });
   });
 
+  test('stores disabled unconfigured paid slots without exposing them at checkout', async () => {
+    const seller = await createSeller();
+    const product = await Product.create({
+      name: 'Inactive Shipping Slot Product',
+      description: 'Regression fixture for dashboard shipping configuration',
+      price: 1000,
+      currency: 'PKR',
+      priceCurrency: 'PKR',
+      category: 'Test',
+      brand: 'Test Brand',
+      stock: 5,
+      image: 'https://example.com/product.jpg',
+      images: [{ url: 'https://example.com/product.jpg' }],
+      seller: seller._id,
+    });
+
+    const saveResponse = await request(app)
+      .put('/api/shipping/methods')
+      .set('Authorization', tokenFor(seller))
+      .send({
+        currency: 'PKR',
+        methods: [
+          { type: 'standard', cost: 300, currency: 'PKR', deliveryDays: 3, isActive: true },
+          { type: 'fast', cost: 0, currency: 'PKR', deliveryDays: 2, isActive: false },
+        ],
+      });
+
+    expect(saveResponse.status).toBe(200);
+    expect(saveResponse.body.shippingMethods.methods[1]).toMatchObject({
+      type: 'fast',
+      cost: 0,
+      costInputAmount: 0,
+      currency: 'PKR',
+      isActive: false,
+    });
+
+    const checkoutResponse = await request(app)
+      .post('/api/shipping/cart')
+      .send({ cartItems: [{ productId: product._id.toString() }] });
+
+    expect(checkoutResponse.status).toBe(200);
+    expect(checkoutResponse.body.shippingMethods[seller._id.toString()].methods).toEqual([
+      expect.objectContaining({ type: 'standard', cost: 300, isActive: true }),
+    ]);
+  });
+
   test('returns a raw currency-less legacy shipping cost as canonical USD', async () => {
     const seller = await createSeller();
     await Store.create({

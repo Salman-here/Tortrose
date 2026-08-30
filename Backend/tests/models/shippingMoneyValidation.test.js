@@ -16,6 +16,13 @@ describe('shipping money schema integrity', () => {
     ]).validateSync()).toBeUndefined();
   });
 
+  test('accepts an unconfigured inactive paid slot alongside an active method', () => {
+    expect(makeShipping([
+      { type: 'standard', cost: 500, currency: 'PKR', deliveryDays: 3, isActive: true },
+      { type: 'fast', cost: 0, costInputAmount: 0, currency: 'PKR', deliveryDays: 2, isActive: false },
+    ]).validateSync()).toBeUndefined();
+  });
+
   test.each([
     [[{ type: 'free', cost: 1, currency: 'PKR', deliveryDays: 5, isActive: true }], 'methods.0.cost'],
     [[{ type: 'standard', cost: 0, currency: 'PKR', deliveryDays: 5, isActive: true }], 'methods.0.cost'],

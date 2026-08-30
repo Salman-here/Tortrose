@@ -78,6 +78,18 @@ const normalizeShippingCostInput = (method = {}) => {
     return 0;
   }
 
+  // The dashboard keeps all three method slots in the saved configuration.
+  // A paid slot that has never been configured is represented as inactive with
+  // a zero cost. It must remain harmless and persistable until the seller turns
+  // it on, at which point the positive-cost rule below applies.
+  if (method.isActive === false && (
+    rawCost === undefined
+    || rawCost === null
+    || (typeof rawCost === 'string' && !rawCost.trim())
+  )) {
+    return 0;
+  }
+
   if (
     rawCost === undefined
     || rawCost === null
@@ -93,7 +105,9 @@ const normalizeShippingCostInput = (method = {}) => {
     if (cost !== parsedCost) {
       throw shippingInputError('Paid shipping cost must use exact cents');
     }
-    if (cost <= 0) throw shippingInputError('Paid shipping methods must have cost > 0');
+    if (cost < 0 || (method.isActive !== false && cost <= 0)) {
+      throw shippingInputError('Paid shipping methods must have cost > 0');
+    }
     return cost;
   } catch (error) {
     if (String(error?.code || '').startsWith('MONEY_')) {
@@ -146,11 +160,19 @@ const serializeShippingMethod = (method, fallbackCurrency = 'USD') => {
     !['free', 'standard', 'fast'].includes(raw.type)
     || typeof raw.cost !== 'number'
     || cost !== raw.cost
-    || (raw.type === 'free' ? cost !== 0 : cost <= 0)
+    || (raw.type === 'free'
+      ? cost !== 0
+      : raw.isActive === false
+        ? cost < 0
+        : cost <= 0)
     || (raw.costInputAmount != null && (
       typeof raw.costInputAmount !== 'number'
       || costInputAmount !== raw.costInputAmount
-      || (raw.type === 'free' ? costInputAmount !== 0 : costInputAmount <= 0)
+      || (raw.type === 'free'
+        ? costInputAmount !== 0
+        : raw.isActive === false
+          ? costInputAmount < 0
+          : costInputAmount <= 0)
     ))
   ) {
     throw shippingDataError('Shipping method contains an invalid stored cost.', 'SHIPPING_COST_INVALID');
@@ -302,7 +324,11 @@ const updateShippingMethods = async (req, res) => {
         });
       }
       
-      if (normalizedMethod.type !== 'free' && normalizedMethod.cost <= 0) {
+      if (
+        normalizedMethod.type !== 'free'
+        && normalizedMethod.isActive !== false
+        && normalizedMethod.cost <= 0
+      ) {
         return res.status(400).json({
           success: false,
           msg: 'Paid shipping methods must have cost > 0'
