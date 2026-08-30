@@ -30,3 +30,13 @@ test('cart and checkout cards use the same exact line-unit allocation as settlem
   assert.match(checkout, /getExactLineUnitAmount\(itemLineTotal, qty\)/);
   assert.match(checkout, /Complete line:/);
 });
+
+test('admin order cancellation runs directly without a confirmation popup', () => {
+  const orderDetail = readSource('../src/components/layout/OrderDetail.jsx');
+
+  assert.match(orderDetail, /onClick=\{handleCancelOrder\}/);
+  assert.match(orderDetail, /isCancelling \? 'Cancelling\.\.\.' : 'Cancel Order'/);
+  assert.doesNotMatch(orderDetail, /showCancelConfirm/);
+  assert.doesNotMatch(orderDetail, /Keep Order/);
+  assert.doesNotMatch(orderDetail, /Are you sure\? This action cannot be undone\./);
+});

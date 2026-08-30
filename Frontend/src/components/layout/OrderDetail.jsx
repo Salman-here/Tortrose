@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import axios from "axios";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import { toast } from "react-toastify";
 import { ArrowLeft, Edit, Package, XCircle, Clock, RefreshCw, Truck, CheckCircle, Mail, MessageCircle, AlertCircle } from "lucide-react";
 import { Link, useParams } from "react-router-dom";
@@ -81,8 +81,8 @@ const OrderDetail = () => {
         });
     };
     const [isUpdating, setIsUpdating] = useState(false);
+    const [isCancelling, setIsCancelling] = useState(false);
     const [newStatus, setNewStatus] = useState(null);
-    const [showCancelConfirm, setShowCancelConfirm] = useState(false);
     const { id } = useParams();
 
     const getStatusIcon = (status) => {
@@ -109,9 +109,11 @@ const OrderDetail = () => {
     };
 
     const handleCancelOrder = async () => {
-        try { const token = getAuthToken(); await axios.patch(`${import.meta.env.VITE_API_URL}api/order/cancel/${id}`, {}, { headers: { Authorization: `Bearer ${token}` } }); fetchOrderDetail(); }
-        catch (error) { toast.error(error.response?.msg || 'Error cancelling order'); }
-        finally { setShowCancelConfirm(false); }
+        if (isCancelling) return;
+        setIsCancelling(true);
+        try { const token = getAuthToken(); const res = await axios.patch(`${import.meta.env.VITE_API_URL}api/order/cancel/${id}`, {}, { headers: { Authorization: `Bearer ${token}` } }); toast.success(res.data.msg || 'Order cancelled'); await fetchOrderDetail(); }
+        catch (error) { toast.error(error.response?.data?.msg || 'Error cancelling order'); }
+        finally { setIsCancelling(false); }
     };
 
     if (!order) return <div className="flex justify-center items-center min-h-[400px]"><Loader /></div>;
@@ -519,9 +521,10 @@ const OrderDetail = () => {
                             ) : (
                                 currentUser?.role !== 'seller' && (
                                     <div className="pt-4" style={{ borderTop: '1px solid var(--glass-border)' }}>
-                                        <button onClick={() => setShowCancelConfirm(true)} className="px-4 py-2 rounded-xl text-sm font-medium flex items-center gap-2"
+                                        <button onClick={handleCancelOrder} disabled={isCancelling} className="px-4 py-2 rounded-xl text-sm font-medium flex items-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
                                             style={{ background: 'rgba(239, 68, 68, 0.12)', color: 'hsl(0, 72%, 55%)' }}>
-                                            <XCircle className="w-4 h-4" /> Cancel Order
+                                            {isCancelling ? <RefreshCw className="w-4 h-4 animate-spin" /> : <XCircle className="w-4 h-4" />}
+                                            {isCancelling ? 'Cancelling...' : 'Cancel Order'}
                                         </button>
                                     </div>
                                 )
@@ -530,22 +533,6 @@ const OrderDetail = () => {
                     </div>
                 </div>
             </div>
-
-            {/* Cancel Confirmation Modal */}
-            <AnimatePresence>
-                {showCancelConfirm && (
-                    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-50" onClick={() => setShowCancelConfirm(false)}>
-                        <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }} className="glass-panel p-6 max-w-md w-full" onClick={(e) => e.stopPropagation()}>
-                            <h3 className="text-lg font-semibold mb-2" style={{ color: 'hsl(var(--foreground))' }}>Cancel Order</h3>
-                            <p className="text-sm mb-6" style={{ color: 'hsl(var(--muted-foreground))' }}>Are you sure? This action cannot be undone.</p>
-                            <div className="flex justify-end space-x-3">
-                                <button onClick={() => setShowCancelConfirm(false)} className="px-4 py-2 rounded-xl glass-inner font-medium" style={{ color: 'hsl(var(--foreground))' }}>Keep Order</button>
-                                <button onClick={handleCancelOrder} className="px-4 py-2 rounded-xl text-white font-medium" style={{ background: 'hsl(0, 72%, 55%)' }}>Cancel Order</button>
-                            </div>
-                        </motion.div>
-                    </motion.div>
-                )}
-            </AnimatePresence>
             </div>
         </motion.div>
     );
