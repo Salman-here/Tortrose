@@ -376,6 +376,53 @@ test('durable event identity dedupes analytics and keeps the frozen financial bo
   assert.equal(mergeNotificationStreams({ durableItems: [durable], analyticsItems: [sameEventKey] }).length, 1);
 });
 
+test('distinct durable seller fulfillment transitions for one order all remain visible', () => {
+  const first = inspectNotificationInboxResponse(inbox({
+    items: [durableItem({
+      title: 'Seller is preparing your items',
+      body: 'Nova Nest Market is preparing your items.',
+      category: 'order',
+      eventKey: `order:${ORDER_ID}:seller-fulfillment:first:buyer:v1`,
+      eventType: 'order.seller_fulfillment_updated',
+    })],
+  }), buyerAccount).items[0];
+  const second = inspectNotificationInboxResponse(inbox({
+    items: [durableItem({
+      _id: SECOND_NOTIFICATION_ID,
+      title: 'Seller shipped your items',
+      body: 'Pulse Peak Gear shipped your items.',
+      category: 'order',
+      eventKey: `order:${ORDER_ID}:seller-fulfillment:second:buyer:v1`,
+      eventType: 'order.seller_fulfillment_updated',
+      createdAt: '2026-08-26T10:05:00.000Z',
+      updatedAt: '2026-08-26T10:05:00.000Z',
+    })],
+  }), buyerAccount).items[0];
+  const syntheticFallback = {
+    id: `seller-fulfillment-${ORDER_ID}`,
+    type: 'info',
+    category: 'order',
+    title: 'Synthetic seller update',
+    description: 'This fallback must not replace durable history.',
+    time: '2026-08-26T10:10:00.000Z',
+    read: false,
+    eventKey: '',
+    eventType: 'order.seller_fulfillment_updated',
+    aggregateType: 'Order',
+    aggregateId: ORDER_ID,
+    linkTo: `/user-dashboard/order/detail/${ORDER_ID}`,
+    _stream: 'analytics',
+  };
+
+  const merged = mergeNotificationStreams({
+    durableItems: [second, first],
+    analyticsItems: [syntheticFallback],
+  });
+  assert.equal(merged.length, 2);
+  assert.deepEqual(merged.map(item => item.eventKey), [second.eventKey, first.eventKey]);
+  assert.ok(merged.every(item => item._stream === 'durable'));
+});
+
 test('buyer notification route is accessible and all web surfaces use the guarded durable inbox', () => {
   const routes = readFileSync(new URL('../src/routes/AppRoutes.jsx', import.meta.url), 'utf8');
   const buyerDashboard = readFileSync(new URL('../src/components/layout/UserDashboard.jsx', import.meta.url), 'utf8');

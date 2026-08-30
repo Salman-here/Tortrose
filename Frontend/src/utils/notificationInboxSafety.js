@@ -455,30 +455,52 @@ export const inspectAnalyticsNotificationResponse = (payload, account, expectedR
   return errors.length > 0 ? { valid: false, errors, items: [] } : { valid: true, errors: [], items };
 };
 
-const notificationDedupeKeys = item => {
+const notificationExactDedupeKeys = item => {
   const keys = [];
   if (item.inboxId) keys.push(`inbox:${item.inboxId}`);
   if (item.eventKey) keys.push(`event:${item.eventKey}`);
   if (item.id) keys.push(`id:${item.id}`);
-  if (item.eventType && item.aggregateType && item.aggregateId) {
-    keys.push(`event-aggregate:${item.eventType}:${item.aggregateType}:${item.aggregateId}`);
-  }
   return keys;
 };
+
+const notificationEventAggregateKey = item => (
+  item.eventType && item.aggregateType && item.aggregateId
+    ? `event-aggregate:${item.eventType}:${item.aggregateType}:${item.aggregateId}`
+    : ''
+);
 
 export const mergeNotificationStreams = ({ durableItems = [], analyticsItems = [] } = {}) => {
   if (!Array.isArray(durableItems) || !Array.isArray(analyticsItems)) return [];
   const merged = [];
   const seen = new Set();
-  // Consume the authoritative inbox first so a newer analytics row can never
-  // replace a frozen durable financial message with a recomputed description.
-  [...durableItems, ...analyticsItems].forEach(item => {
-      if (!isPlainObject(item) || !isValidDateString(item.time)) return;
-      const keys = notificationDedupeKeys(item);
-      if (keys.some(key => seen.has(key))) return;
-      keys.forEach(key => seen.add(key));
-      merged.push(item);
-    });
+  const durableEventAggregates = new Set();
+
+  // Durable events are authoritative history. Distinct event keys for the
+  // same order and event type (for example, each seller-owned fulfillment
+  // transition) must all remain visible.
+  durableItems.forEach(item => {
+    if (!isPlainObject(item) || !isValidDateString(item.time)) return;
+    const keys = notificationExactDedupeKeys(item);
+    if (keys.some(key => seen.has(key))) return;
+    keys.forEach(key => seen.add(key));
+    const eventAggregateKey = notificationEventAggregateKey(item);
+    if (eventAggregateKey) durableEventAggregates.add(eventAggregateKey);
+    merged.push(item);
+  });
+
+  // Analytics rows are synthetic fallbacks. Suppress them when a durable
+  // event already represents that event type and aggregate, while keeping
+  // every distinct durable transition above.
+  analyticsItems.forEach(item => {
+    if (!isPlainObject(item) || !isValidDateString(item.time)) return;
+    const eventAggregateKey = notificationEventAggregateKey(item);
+    if (eventAggregateKey && durableEventAggregates.has(eventAggregateKey)) return;
+    const keys = notificationExactDedupeKeys(item);
+    if (eventAggregateKey) keys.push(eventAggregateKey);
+    if (keys.some(key => seen.has(key))) return;
+    keys.forEach(key => seen.add(key));
+    merged.push(item);
+  });
   return merged.sort((left, right) => Date.parse(right.time) - Date.parse(left.time));
 };
 
