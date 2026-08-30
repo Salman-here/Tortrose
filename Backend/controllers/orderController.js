@@ -3214,10 +3214,10 @@ exports.cancelOrder = async (req, res) => {
         const cancellationAt = new Date();
         const confirmationFields = {};
         if (wasConfirmedViaWhatsApp) {
-            // Mark that the buyer retracted their WhatsApp confirmation
             confirmationFields.cancelledFromDashboardAt = cancellationAt;
-            confirmationFields.cancelledFromDashboardNote =
-                'Order was confirmed by buyer via Rozare WhatsApp automation, but buyer changed their mind and cancelled from their account dashboard.';
+            confirmationFields.cancelledFromDashboardNote = role === 'admin'
+                ? 'Order was confirmed by buyer via Rozare WhatsApp automation, then cancelled by an administrator.'
+                : 'Order was confirmed by buyer via Rozare WhatsApp automation, but buyer changed their mind and cancelled from their account dashboard.';
         }
 
         // Also track if confirmed via email then cancelled from account
@@ -3227,9 +3227,11 @@ exports.cancelOrder = async (req, res) => {
         );
         if (wasConfirmedViaEmail) {
             confirmationFields.cancelledFromDashboardAt = cancellationAt;
-            confirmationFields.cancelledFromDashboardNote =
-                'Buyer confirmed via email, then cancelled from their account.';
+            confirmationFields.cancelledFromDashboardNote = role === 'admin'
+                ? 'Order was confirmed by buyer via email, then cancelled by an administrator.'
+                : 'Buyer confirmed via email, then cancelled from their account.';
         }
+        confirmationFields.cancelledVia = role === 'admin' ? 'admin' : 'dashboard';
 
         // If order wasn't confirmed by anyone yet, just mark the cancellation
         if (!wasConfirmedViaWhatsApp && !wasConfirmedViaEmail) {

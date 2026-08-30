@@ -630,6 +630,11 @@ const orderSchema = mongoose.Schema(
             // Populated when buyer confirms on WhatsApp then later cancels from their dashboard
             cancelledFromDashboardAt: { type: Date, default: null },
             cancelledFromDashboardNote: { type: String, default: '' },
+            // Canonical cancellation audit fields. The older dashboard fields
+            // above remain for backwards compatibility with existing orders.
+            cancelledAt: { type: Date, default: null },
+            cancelledByRole: { type: String, enum: ['buyer', 'seller', 'admin', 'system', null], default: null },
+            cancelledVia: { type: String, enum: ['email', 'whatsapp', 'dashboard', 'admin', 'manual', 'system', null], default: null },
             // Email send tracking
             emailSentAt: { type: Date, default: null },
             emailSentSuccess: { type: Boolean, default: null }, // null=not attempted, true/false
@@ -712,16 +717,38 @@ orderSchema.virtual('confirmationSourceLabel').get(function () {
     const confirmed = !!this.confirmation?.confirmedAt;
     const declined = !!this.confirmation?.declinedAt;
     const cancelledFromDash = !!this.confirmation?.cancelledFromDashboardAt;
+    const cancelled = this.orderStatus === 'cancelled'
+        || !!this.confirmation?.cancelledAt
+        || declined
+        || cancelledFromDash;
+    const cancelledByRole = this.confirmation?.cancelledByRole;
+    const cancelledVia = this.confirmation?.cancelledVia;
 
-    // Special case: confirmed then cancelled from email page or account
-    if (cancelledFromDash && confirmed) {
+    // Special case: an order was confirmed and then cancelled by a later actor.
+    if (cancelled && confirmed) {
         const note = this.confirmation?.cancelledFromDashboardNote || '';
-        const cancelledFrom = note.includes('account') || note.includes('dashboard')
-            ? 'account' : 'email';
+        const legacyCancelledFrom = note.includes('account') || note.includes('dashboard')
+            ? 'dashboard' : 'email';
+        const source = cancelledVia || legacyCancelledFrom;
         const confirmedChannel = via === 'whatsapp' ? 'WhatsApp' : (via === 'email' ? 'email' : via);
-        return `Cancelled by buyer from ${cancelledFrom} (was confirmed via ${confirmedChannel})`;
+        if (cancelledByRole === 'admin') {
+            return `Cancelled by administrator (was confirmed by buyer via ${confirmedChannel})`;
+        }
+        if (cancelledByRole === 'seller') {
+            return `Cancelled by seller (was confirmed by buyer via ${confirmedChannel})`;
+        }
+        if (cancelledByRole === 'system') {
+            return `Cancelled automatically by Rozare (was confirmed by buyer via ${confirmedChannel})`;
+        }
+        const buyerSource = source === 'dashboard'
+            ? 'from account'
+            : `via ${source === 'whatsapp' ? 'Rozare WhatsApp automation' : source}`;
+        return `Cancelled by buyer ${buyerSource} (was confirmed via ${confirmedChannel})`;
     }
 
+    if (cancelledByRole === 'admin') return 'Cancelled by administrator';
+    if (cancelledByRole === 'seller') return 'Cancelled by seller';
+    if (cancelledByRole === 'system') return 'Cancelled automatically by Rozare';
     if (!via) return '';
     const action = confirmed ? 'Confirmed' : declined ? 'Cancelled' : '';
     if (!action) return '';

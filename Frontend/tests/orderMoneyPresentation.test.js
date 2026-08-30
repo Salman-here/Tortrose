@@ -40,3 +40,12 @@ test('admin order cancellation runs directly without a confirmation popup', () =
   assert.doesNotMatch(orderDetail, /Keep Order/);
   assert.doesNotMatch(orderDetail, /Are you sure\? This action cannot be undone\./);
 });
+
+test('buyer surfaces distinguish administrator cancellation and disable stale decision buttons', () => {
+  const buyerDetail = readSource('../src/components/layout/UserOrderDetail.jsx');
+  const emailDecision = readSource('../src/pages/OrderConfirmationPage.jsx');
+
+  assert.match(buyerDetail, /Order cancelled by \{actorLabel\}/);
+  assert.match(emailDecision, /A Rozare administrator cancelled this order/);
+  assert.match(emailDecision, /notYetDecided && !cancelledByAnotherActor/);
+});

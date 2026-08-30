@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { buildVerifyMessage, hasWhatsAppPhone, sanitizePhone } from '../src/utils/whatsapp.js';
+import {
+  buildVerifyMessage,
+  getConfirmationSourceLabel,
+  hasWhatsAppPhone,
+  sanitizePhone,
+} from '../src/utils/whatsapp.js';
 
 test('web WhatsApp routing preserves explicit international destinations', () => {
   assert.equal(sanitizePhone('+44 7700 900123'), '447700900123');
@@ -58,4 +63,29 @@ test('web WhatsApp order money fails closed on unsupported or collided snapshots
       error => error?.code === 'ORDER_PRESENTATION_DATA_INVALID',
     );
   }
+});
+
+test('web order labels preserve the actor who cancelled after buyer confirmation', () => {
+  const baseOrder = {
+    orderStatus: 'cancelled',
+    confirmation: {
+      confirmedAt: '2026-08-30T10:00:00.000Z',
+      confirmedVia: 'email',
+      cancelledAt: '2026-08-30T10:05:00.000Z',
+      cancelledVia: 'admin',
+    },
+  };
+
+  assert.equal(getConfirmationSourceLabel({
+    ...baseOrder,
+    confirmation: { ...baseOrder.confirmation, cancelledByRole: 'admin' },
+  }), 'Cancelled by administrator (was confirmed by buyer via email)');
+  assert.equal(getConfirmationSourceLabel({
+    ...baseOrder,
+    confirmation: {
+      ...baseOrder.confirmation,
+      cancelledByRole: 'buyer',
+      cancelledVia: 'dashboard',
+    },
+  }), 'Cancelled by buyer from account (was confirmed via email)');
 });

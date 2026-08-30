@@ -104,6 +104,9 @@ const sanitizeOrderForPublic = (order) => ({
         whatsappError: order.confirmation?.whatsappError || '',
         cancelledFromDashboardAt: order.confirmation?.cancelledFromDashboardAt || null,
         cancelledFromDashboardNote: order.confirmation?.cancelledFromDashboardNote || '',
+        cancelledAt: order.confirmation?.cancelledAt || null,
+        cancelledByRole: order.confirmation?.cancelledByRole || null,
+        cancelledVia: order.confirmation?.cancelledVia || null,
         decidedAt: order.confirmation?.decidedAt || null,
         decidedVia: order.confirmation?.decidedVia || null,
     },
@@ -221,6 +224,7 @@ exports.declineOrder = async (req, res) => {
                         cancelledFromDashboardAt: cancelledAt,
                         cancelledFromDashboardNote:
                             'Order was confirmed by buyer via WhatsApp, but buyer changed their mind and cancelled from the email confirmation page.',
+                        cancelledVia: 'email',
                     },
                     allowedExistingDecisionChannels: ['whatsapp'],
                     cancellationActorRole: 'buyer',
@@ -323,6 +327,9 @@ exports.reconfirmOrder = async (req, res) => {
                 declinedAt: null,
                 cancelledFromDashboardAt: null,
                 cancelledFromDashboardNote: '',
+                cancelledAt: null,
+                cancelledByRole: null,
+                cancelledVia: null,
             },
             at: confirmedAt,
         });

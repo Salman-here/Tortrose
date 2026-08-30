@@ -74,6 +74,26 @@ const paymentMethodLabel = (method) => ({
 
 const getConfirmationNotice = (order) => {
   const confirmation = order?.confirmation || {};
+  if (
+    order?.orderStatus === 'cancelled'
+    && ['admin', 'seller', 'system'].includes(confirmation.cancelledByRole)
+  ) {
+    const actorLabel = confirmation.cancelledByRole === 'admin'
+      ? 'a Rozare administrator'
+      : confirmation.cancelledByRole === 'seller'
+        ? 'the seller'
+        : 'Rozare';
+    return {
+      type: 'error', icon: 'close-circle-outline',
+      title: confirmation.cancelledByRole === 'system'
+        ? 'Cancelled automatically by Rozare'
+        : `Cancelled by ${actorLabel}`,
+      body: confirmation.confirmedAt
+        ? `This happened after you confirmed via ${confirmation.confirmedVia || 'Rozare'}. Nothing has been charged.`
+        : 'Nothing has been charged.',
+      date: confirmation.cancelledAt || confirmation.cancelledFromDashboardAt || confirmation.declinedAt,
+    };
+  }
   if (confirmation.cancelledFromDashboardAt && confirmation.confirmedAt) {
     return {
       type: 'error', icon: 'close-circle-outline', title: 'Cancelled after confirmation',

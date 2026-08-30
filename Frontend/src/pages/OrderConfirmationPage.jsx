@@ -124,17 +124,26 @@ export default function OrderConfirmationPage() {
   const conf = order?.confirmation;
   const confirmedVia = conf?.decidedVia || conf?.confirmedVia;
   const maskedPhone = order?.shippingInfo?.maskedPhone;
+  const orderCancelled = order?.orderStatus === 'cancelled';
+  const cancellationActor = conf?.cancelledByRole;
+  const cancelledByAnotherActor = orderCancelled
+    && ['admin', 'seller', 'system'].includes(cancellationActor);
 
   // Simple states
   // cancelledViaWhatsApp = buyer pressed cancel button on WA (declinedAt set, decidedVia=whatsapp, NOT cancelledFromDashboard)
-  const confirmedViaWhatsApp = confirmedVia === 'whatsapp' && conf?.confirmedAt && !conf?.cancelledFromDashboardAt && !conf?.declinedAt;
-  const cancelledViaWhatsApp = conf?.declinedAt && (conf?.decidedVia === 'whatsapp' || conf?.confirmedVia === 'whatsapp') && !conf?.cancelledFromDashboardAt && !conf?.confirmedAt;
-  const confirmedViaEmail = confirmedVia === 'email' && conf?.confirmedAt && !conf?.declinedAt && !conf?.cancelledFromDashboardAt;
-  const cancelledViaEmail = confirmedVia === 'email' && conf?.declinedAt && !conf?.cancelledFromDashboardAt;
+  const confirmedViaWhatsApp = confirmedVia === 'whatsapp' && conf?.confirmedAt && !orderCancelled;
+  const cancelledViaWhatsApp = !cancelledByAnotherActor && conf?.declinedAt && (conf?.decidedVia === 'whatsapp' || conf?.confirmedVia === 'whatsapp') && !conf?.cancelledFromDashboardAt && !conf?.confirmedAt;
+  const confirmedViaEmail = confirmedVia === 'email' && conf?.confirmedAt && !orderCancelled;
+  const cancelledViaEmail = !cancelledByAnotherActor && confirmedVia === 'email' && conf?.declinedAt && !conf?.cancelledFromDashboardAt;
   // Cancelled from account (user dashboard) — with or without prior confirmation
-  const cancelledFromAccount = (conf?.decidedVia === 'dashboard' || (conf?.cancelledFromDashboardAt && conf?.cancelledFromDashboardNote?.includes('account'))) && order?.orderStatus === 'cancelled';
+  const cancelledFromAccount = !cancelledByAnotherActor && (conf?.cancelledVia === 'dashboard' || conf?.decidedVia === 'dashboard' || (conf?.cancelledFromDashboardAt && conf?.cancelledFromDashboardNote?.includes('account'))) && orderCancelled;
   // Cancelled from email page after WA/email confirm
-  const cancelledFromEmailPage = conf?.cancelledFromDashboardAt && !conf?.cancelledFromDashboardNote?.includes('account') && order?.orderStatus === 'cancelled';
+  const cancelledFromEmailPage = !cancelledByAnotherActor
+    && conf?.cancelledFromDashboardAt
+    && (conf?.cancelledVia
+      ? conf.cancelledVia === 'email'
+      : !conf?.cancelledFromDashboardNote?.includes('account'))
+    && orderCancelled;
   const notYetDecided = !actionDone && !expired;
   const summarySubtotal = getOrderSummaryAmount(order, ['subtotal'], 'order subtotal');
   const summaryShipping = getOrderSummaryAmount(order, ['shippingCost', 'shippingFee'], 'order shipping');
@@ -181,6 +190,24 @@ export default function OrderConfirmationPage() {
 
         {!loading && order && (
           <>
+            {cancelledByAnotherActor && (
+              <div className="rounded-xl p-4 mb-5 flex items-start gap-3" style={{ background: 'rgba(239, 68, 68, 0.08)', border: '1px solid rgba(239,68,68,0.20)' }}>
+                <XCircle size={20} style={{ color: 'hsl(0, 72%, 55%)', flexShrink: 0, marginTop: 2 }} />
+                <div className="flex-1">
+                  <p className="font-semibold text-sm" style={{ color: 'hsl(0, 72%, 50%)' }}>
+                    {cancellationActor === 'admin'
+                      ? 'A Rozare administrator cancelled this order'
+                      : cancellationActor === 'seller'
+                        ? 'The seller cancelled this order'
+                        : 'Rozare automatically cancelled this order'}
+                  </p>
+                  <p className="text-xs mt-0.5" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                    No charges applied.
+                  </p>
+                </div>
+              </div>
+            )}
+
             {/* Already confirmed via WhatsApp — no cancel button, just text */}
             {confirmedViaWhatsApp && (
               <div className="rounded-xl p-4 mb-5 flex items-start gap-3" style={{ background: 'rgba(16, 185, 129, 0.10)', border: '1px solid rgba(16,185,129,0.25)' }}>
@@ -386,7 +413,7 @@ export default function OrderConfirmationPage() {
             </div>
 
             {/* Action buttons — only for undecided, non-expired */}
-            {notYetDecided && !confirmedViaWhatsApp && !cancelledViaWhatsApp && !confirmedViaEmail && !cancelledViaEmail && !cancelledFromAccount && !cancelledFromEmailPage && (
+            {notYetDecided && !cancelledByAnotherActor && !confirmedViaWhatsApp && !cancelledViaWhatsApp && !confirmedViaEmail && !cancelledViaEmail && !cancelledFromAccount && !cancelledFromEmailPage && (
               <div className="flex flex-col sm:flex-row gap-3">
                 <button onClick={handleConfirm} disabled={submitting}
                   className="flex-1 inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl font-semibold text-sm transition-all"

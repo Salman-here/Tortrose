@@ -196,14 +196,39 @@ export const getConfirmationSourceLabel = (order) => {
   const confirmed = Boolean(confirmation.confirmedAt);
   const declined = Boolean(confirmation.declinedAt);
   const cancelledFromDashboard = Boolean(confirmation.cancelledFromDashboardAt);
+  const cancelled = order?.orderStatus === 'cancelled'
+    || Boolean(confirmation.cancelledAt)
+    || declined
+    || cancelledFromDashboard;
+  const cancellationActor = confirmation.cancelledByRole;
 
-  if (cancelledFromDashboard && confirmed) {
+  if (cancelled && confirmed) {
     const note = confirmation.cancelledFromDashboardNote || '';
-    const cancelledFrom = /account|dashboard/i.test(note) ? 'account' : 'email';
-    const confirmedChannel = via === 'whatsapp' ? 'WhatsApp' : (via === 'email' ? 'email' : via || 'buyer');
-    return `Cancelled by buyer from ${cancelledFrom} (was confirmed via ${confirmedChannel})`;
+    const cancellationVia = confirmation.cancelledVia
+      || (/account|dashboard/i.test(note) ? 'dashboard' : 'email');
+    const confirmedChannel = confirmation.confirmedVia === 'whatsapp'
+      ? 'WhatsApp'
+      : (confirmation.confirmedVia === 'email' ? 'email' : confirmation.confirmedVia || 'Rozare');
+    if (cancellationActor === 'admin') {
+      return `Cancelled by administrator (was confirmed by buyer via ${confirmedChannel})`;
+    }
+    if (cancellationActor === 'seller') {
+      return `Cancelled by seller (was confirmed by buyer via ${confirmedChannel})`;
+    }
+    if (cancellationActor === 'system') {
+      return `Cancelled automatically by Rozare (was confirmed by buyer via ${confirmedChannel})`;
+    }
+    const buyerSource = cancellationVia === 'dashboard'
+      ? 'from account'
+      : `via ${cancellationVia === 'whatsapp' ? 'Rozare WhatsApp automation' : cancellationVia}`;
+    return `Cancelled by buyer ${buyerSource} (was confirmed via ${confirmedChannel})`;
   }
 
+  if (cancelled) {
+    if (cancellationActor === 'admin') return 'Cancelled by administrator';
+    if (cancellationActor === 'seller') return 'Cancelled by seller';
+    if (cancellationActor === 'system') return 'Cancelled automatically by Rozare';
+  }
   if (!via || (!confirmed && !declined)) return '';
   const action = confirmed ? 'Confirmed' : 'Cancelled';
   const channels = {

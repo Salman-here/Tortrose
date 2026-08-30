@@ -188,6 +188,37 @@ describe('order fulfillment transition boundaries', () => {
     }));
   });
 
+  test('admin cancellation after email confirmation records the administrator instead of the buyer', async () => {
+    const order = orderFixture({ orderStatus: 'confirmed' });
+    order.confirmation = {
+      confirmedAt: new Date('2026-08-30T10:00:00.000Z'),
+      confirmedVia: 'email',
+      decidedAt: new Date('2026-08-30T10:00:00.000Z'),
+      decidedVia: 'email',
+    };
+    mockOrderFindById.mockResolvedValue(order);
+    mockCancelOrderSafely.mockResolvedValue({
+      status: 'cancelled',
+      order: { ...order, orderStatus: 'cancelled' },
+      alreadyCancelled: false,
+    });
+    const res = response();
+
+    await cancelOrder({
+      params: { id: order._id },
+      user: { role: 'admin', id: 'admin_1' },
+    }, res);
+
+    expect(mockCancelOrderSafely).toHaveBeenCalledWith(expect.objectContaining({
+      cancellationActorRole: 'admin',
+      confirmationFields: expect.objectContaining({
+        cancelledVia: 'admin',
+        cancelledFromDashboardNote: expect.stringContaining('administrator'),
+      }),
+    }));
+    expect(res.status).toHaveBeenCalledWith(200);
+  });
+
   test('rejects partial seller cancellation of a multi-seller order before any mutation', async () => {
     const order = orderFixture({ sellers: [sellerId, otherSellerId] });
     mockOrderFindOne.mockResolvedValue(order);

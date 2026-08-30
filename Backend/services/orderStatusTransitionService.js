@@ -47,6 +47,9 @@ const confirmationFields = (channel, at) => ({
   decidedVia: channel,
   cancelledFromDashboardAt: null,
   cancelledFromDashboardNote: '',
+  cancelledAt: null,
+  cancelledByRole: null,
+  cancelledVia: null,
 });
 
 const applyConfirmationFields = (order, fields) => {

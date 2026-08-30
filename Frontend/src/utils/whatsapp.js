@@ -158,26 +158,51 @@ export const isOrderHandledByWhatsAppAutomation = (order) =>
 // Returns '' when nothing should be displayed.
 export const getConfirmationSourceLabel = (order) => {
   if (!order?.confirmation) return '';
-  const via = order.confirmation.decidedVia || order.confirmation.confirmedVia;
-  const confirmed = !!order.confirmation.confirmedAt;
-  const declined = !!order.confirmation.declinedAt;
-  const cancelledFromDash = !!order.confirmation.cancelledFromDashboardAt;
+  const confirmation = order.confirmation;
+  const via = confirmation.decidedVia || confirmation.confirmedVia;
+  const confirmed = !!confirmation.confirmedAt;
+  const declined = !!confirmation.declinedAt;
+  const cancelled = order.orderStatus === 'cancelled'
+    || !!confirmation.cancelledAt
+    || declined
+    || !!confirmation.cancelledFromDashboardAt;
+  const cancellationActor = confirmation.cancelledByRole;
 
-  // Special: confirmed then cancelled from email page or account
-  if (cancelledFromDash && confirmed) {
-    const note = order.confirmation.cancelledFromDashboardNote || '';
-    const cancelledFrom = note.includes('account') || note.includes('dashboard')
-        ? 'account' : 'email';
-    const confirmedChannel = via === 'whatsapp' ? 'WhatsApp' : (via === 'email' ? 'email' : via);
-    return `Cancelled by buyer from ${cancelledFrom} (was confirmed via ${confirmedChannel})`;
+  if (cancelled && confirmed) {
+    const note = confirmation.cancelledFromDashboardNote || '';
+    const legacyVia = note.includes('account') || note.includes('dashboard')
+      ? 'dashboard'
+      : 'email';
+    const cancellationVia = confirmation.cancelledVia || legacyVia;
+    const confirmedChannel = confirmation.confirmedVia === 'whatsapp'
+      ? 'WhatsApp'
+      : (confirmation.confirmedVia === 'email' ? 'email' : confirmation.confirmedVia || 'Rozare');
+    if (cancellationActor === 'admin') {
+      return `Cancelled by administrator (was confirmed by buyer via ${confirmedChannel})`;
+    }
+    if (cancellationActor === 'seller') {
+      return `Cancelled by seller (was confirmed by buyer via ${confirmedChannel})`;
+    }
+    if (cancellationActor === 'system') {
+      return `Cancelled automatically by Rozare (was confirmed by buyer via ${confirmedChannel})`;
+    }
+    const buyerSource = cancellationVia === 'dashboard'
+      ? 'from account'
+      : `via ${cancellationVia === 'whatsapp' ? 'Rozare WhatsApp automation' : cancellationVia}`;
+    return `Cancelled by buyer ${buyerSource} (was confirmed via ${confirmedChannel})`;
   }
 
+  if (cancelled) {
+    if (cancellationActor === 'admin') return 'Cancelled by administrator';
+    if (cancellationActor === 'seller') return 'Cancelled by seller';
+    if (cancellationActor === 'system') return 'Cancelled automatically by Rozare';
+  }
   if (!via || (!confirmed && !declined)) return '';
   const action = confirmed ? 'Confirmed' : 'Cancelled';
   if (via === 'whatsapp') return `${action} by buyer via Rozare WhatsApp automation`;
-  if (via === 'email')    return `${action} by buyer via email link`;
-  if (via === 'manual')   return `${action} manually by seller`;
-  if (via === 'admin')    return `${action} by admin`;
+  if (via === 'email') return `${action} by buyer via email link`;
+  if (via === 'manual') return `${action} manually by seller`;
+  if (via === 'admin') return `${action} by admin`;
   if (via === 'dashboard') return `${action} by buyer from account`;
   return `${action} by buyer`;
 };

@@ -152,10 +152,42 @@ const OrderDetail = () => {
                 </div>
 
                 {/* Buyer-side confirmation / cancellation status */}
-                {(order?.confirmation?.confirmedAt || order?.confirmation?.declinedAt) && (() => {
+                {(order?.confirmation?.confirmedAt || order?.confirmation?.declinedAt || order?.confirmation?.cancelledAt) && (() => {
                     const cancelledFromDash = !!order.confirmation.cancelledFromDashboardAt;
                     const confirmed = !!order.confirmation.confirmedAt;
                     const via = order.confirmation.decidedVia || order.confirmation.confirmedVia;
+                    const cancellationActor = order.confirmation.cancelledByRole;
+                    const cancelledByAnotherActor = order.orderStatus === 'cancelled'
+                        && ['admin', 'seller', 'system'].includes(cancellationActor);
+
+                    if (cancelledByAnotherActor) {
+                        const actorLabel = cancellationActor === 'admin'
+                            ? 'a Rozare administrator'
+                            : cancellationActor === 'seller'
+                                ? 'the seller'
+                                : 'Rozare automatically';
+                        const confirmedChannel = order.confirmation.confirmedVia === 'whatsapp'
+                            ? 'WhatsApp'
+                            : order.confirmation.confirmedVia === 'email'
+                                ? 'email'
+                                : 'Rozare';
+                        return (
+                            <div className="mt-4 p-3 rounded-xl flex items-start gap-3"
+                                style={{ background: 'rgba(239, 68, 68, 0.08)', border: '1px solid rgba(239, 68, 68, 0.25)' }}>
+                                <XCircle className="w-5 h-5 mt-0.5 shrink-0" style={{ color: 'hsl(0, 70%, 45%)' }} />
+                                <div className="min-w-0">
+                                    <p className="text-sm font-semibold" style={{ color: 'hsl(0, 70%, 45%)' }}>
+                                        Order cancelled by {actorLabel}
+                                    </p>
+                                    <p className="text-xs mt-0.5" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                                        {confirmed
+                                            ? `This happened after you confirmed via ${confirmedChannel}. Nothing has been charged.`
+                                            : 'Nothing has been charged.'}
+                                    </p>
+                                </div>
+                            </div>
+                        );
+                    }
 
                     // Cancelled after previously confirming (from account or email page)
                     if (cancelledFromDash && confirmed) {

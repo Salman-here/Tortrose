@@ -478,13 +478,20 @@ describe('transactional order fulfillment transitions', () => {
     });
     const replay = await cancelOrderSafely({
       orderId: order._id,
-      reason: 'Buyer replayed cancellation.',
-      cancellationActorRole: 'buyer',
+      reason: 'Administrator replayed cancellation.',
+      cancellationActorRole: 'admin',
       at: new Date('2026-08-24T17:35:00.000Z'),
     });
 
     expect(first).toMatchObject({ status: 'cancelled', alreadyCancelled: false });
     expect(replay).toMatchObject({ status: 'cancelled', alreadyCancelled: true });
+    expect(await Order.findById(order._id).lean()).toMatchObject({
+      confirmation: {
+        cancelledAt,
+        cancelledByRole: 'buyer',
+        cancelledVia: 'dashboard',
+      },
+    });
     const records = await NotificationOutbox.find({
       aggregateId: String(order._id),
       eventType: 'order.status_updated',

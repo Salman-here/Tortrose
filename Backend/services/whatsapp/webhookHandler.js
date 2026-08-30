@@ -822,6 +822,9 @@ exports.handleEvolutionWebhook = async (req, res) => {
                             declinedAt: null,
                             cancelledFromDashboardAt: null,
                             cancelledFromDashboardNote: '',
+                            cancelledAt: null,
+                            cancelledByRole: null,
+                            cancelledVia: null,
                         },
                         at: reconfirmedAt,
                     });

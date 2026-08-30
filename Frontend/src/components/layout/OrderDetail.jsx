@@ -8,6 +8,7 @@ import Loader from "../common/Loader";
 import { useAuth } from "../../contexts/AuthContext";
 import { useCurrency } from "../../contexts/CurrencyContext";
 import { getAuthToken } from "../../utils/cookieHelper";
+import { getConfirmationSourceLabel } from "../../utils/whatsapp";
 import {
     getExactOrderItemUnitAmount,
     getOrderCurrency,
@@ -170,40 +171,13 @@ const OrderDetail = () => {
             </div>
 
             {/* Buyer decision banner — shows how the order was confirmed or cancelled */}
-            {(order?.confirmation?.confirmedAt || order?.confirmation?.declinedAt) && (() => {
-                const cancelledFromDash = !!order.confirmation.cancelledFromDashboardAt;
-                const confirmed = !!order.confirmation.confirmedAt;
-                const via = order.confirmation.confirmedVia;
-
-                // If confirmed then cancelled — show the cancellation as primary
-                if (cancelledFromDash && confirmed) {
-                    const note = order.confirmation.cancelledFromDashboardNote || '';
-                    const cancelledFrom = note.includes('account') || note.includes('dashboard')
-                        ? 'account' : 'email';
-                    const confirmedChannel = via === 'whatsapp' ? 'WhatsApp' : (via === 'email' ? 'email' : via);
-                    return (
-                        <div className="mx-4 sm:mx-6 p-3 rounded-xl flex items-start gap-3"
-                            style={{ background: 'rgba(239, 68, 68, 0.08)', border: '1px solid rgba(239, 68, 68, 0.25)' }}>
-                            <span className="text-base" style={{ color: 'hsl(0, 70%, 45%)' }}>❌</span>
-                            <div className="min-w-0">
-                                <p className="text-sm font-semibold" style={{ color: 'hsl(0, 70%, 45%)' }}>
-                                    Cancelled by buyer from {cancelledFrom} (was confirmed via {confirmedChannel})
-                                </p>
-                                <p className="text-xs mt-0.5" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                                    Cancelled {timeAgo(order.confirmation.cancelledFromDashboardAt)} · {new Date(order.confirmation.cancelledFromDashboardAt).toLocaleString()}
-                                </p>
-                            </div>
-                        </div>
-                    );
-                }
-
-                const whenIso = confirmed ? order.confirmation.confirmedAt : order.confirmation.declinedAt;
-                const verbPast = confirmed ? 'Confirmed' : 'Cancelled';
-                const viaLabel = via === 'whatsapp'
-                    ? 'Rozare WhatsApp automation'
-                    : via === 'email'
-                        ? 'email confirmation link'
-                        : (via || 'the order confirmation flow');
+            {(order?.confirmation?.confirmedAt || order?.confirmation?.declinedAt || order?.confirmation?.cancelledAt) && (() => {
+                const cancelled = order?.orderStatus === 'cancelled';
+                const confirmed = !!order.confirmation.confirmedAt && !cancelled;
+                const whenIso = cancelled
+                    ? (order.confirmation.cancelledAt || order.confirmation.cancelledFromDashboardAt || order.confirmation.declinedAt || order.updatedAt)
+                    : (confirmed ? order.confirmation.confirmedAt : order.confirmation.declinedAt);
+                const sourceLabel = getConfirmationSourceLabel(order);
                 const palette = confirmed
                     ? { bg: 'rgba(16, 185, 129, 0.08)', border: 'rgba(16, 185, 129, 0.25)', title: 'hsl(150, 60%, 35%)' }
                     : { bg: 'rgba(239, 68, 68, 0.08)',  border: 'rgba(239, 68, 68, 0.25)',  title: 'hsl(0, 70%, 45%)' };
@@ -215,7 +189,7 @@ const OrderDetail = () => {
                         </span>
                         <div className="min-w-0">
                             <p className="text-sm font-semibold" style={{ color: palette.title }}>
-                                {verbPast} by buyer via {viaLabel}
+                                {sourceLabel || (confirmed ? 'Order confirmed' : 'Order cancelled')}
                             </p>
                             <p className="text-xs mt-0.5" style={{ color: 'hsl(var(--muted-foreground))' }}>
                                 {timeAgo(whenIso)} · {new Date(whenIso).toLocaleString()}
@@ -311,7 +285,7 @@ const OrderDetail = () => {
                                 <>
                                     <XCircle className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: 'hsl(0, 72%, 55%)' }} />
                                     <p className="text-xs font-medium" style={{ color: 'hsl(0, 72%, 55%)' }}>
-                                        Buyer cancelled via {order.confirmation.decidedVia || order.confirmation.confirmedVia || 'unknown'} · {timeAgo(order.confirmation.declinedAt)}
+                                        {getConfirmationSourceLabel(order) || 'Order cancelled'} · {timeAgo(order.confirmation.cancelledAt || order.confirmation.declinedAt)}
                                     </p>
                                 </>
                             ) : (

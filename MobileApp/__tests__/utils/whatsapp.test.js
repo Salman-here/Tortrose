@@ -63,4 +63,17 @@ describe('seller WhatsApp helpers', () => {
       confirmation: { confirmedAt: '2026-08-08T10:00:00Z', confirmedVia: 'whatsapp' },
     })).toContain('Rozare WhatsApp automation');
   });
+
+  it('preserves the administrator as cancellation actor after buyer confirmation', () => {
+    expect(getConfirmationSourceLabel({
+      orderStatus: 'cancelled',
+      confirmation: {
+        confirmedAt: '2026-08-30T10:00:00Z',
+        confirmedVia: 'email',
+        cancelledAt: '2026-08-30T10:05:00Z',
+        cancelledByRole: 'admin',
+        cancelledVia: 'admin',
+      },
+    })).toBe('Cancelled by administrator (was confirmed by buyer via email)');
+  });
 });
