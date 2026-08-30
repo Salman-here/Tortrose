@@ -20,7 +20,7 @@ import {
   trackInitiateCheckout,
   trackPlaceAnOrder
 } from "../../utils/tiktokPixel";
-import { formatOrderItemOptions } from "../../utils/orderItems";
+import { formatOrderItemOptions, getExactLineUnitAmount } from "../../utils/orderItems";
 import { rememberPostAuthRedirect } from "../../utils/postAuthRedirect";
 import {
   addCurrencyAmounts,
@@ -1531,7 +1531,8 @@ export default function Checkout() {
                                   const { product, qty } = item;
                                   const { _id, name, image } = product;
                                   const itemSourceCurrency = productCurrency(product);
-                                  const itemPrice = productPriceInCheckoutCurrency(product);
+                                  const itemLineTotal = getCartLineTotal(item);
+                                  const exactUnitAmount = getExactLineUnitAmount(itemLineTotal, qty);
                                   const productCouponDiscount = getProductCouponDiscount(item);
                                   const productKey = `product-${_id}`;
                                   const showPerProductInput = couponConfig?.type === 'per-product' && couponConfig.productIds.includes(_id);
@@ -1558,7 +1559,11 @@ export default function Checkout() {
                                           <div>
                                             <h4 className="font-medium text-sm sm:text-base" style={{ color: 'hsl(var(--foreground))' }}>{name}</h4>
                                             <p>
-                                              <span className="font-bold text-sm" style={{ color: 'hsl(var(--muted-foreground))' }}>{checkoutMoney(itemPrice, { sourceCurrency: itemSourceCurrency })}</span>
+                                              <span className="font-bold text-sm" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                                                {exactUnitAmount === null
+                                                  ? `Complete line: ${checkoutMoney(itemLineTotal, { sourceCurrency: itemSourceCurrency })}`
+                                                  : checkoutMoney(exactUnitAmount, { sourceCurrency: itemSourceCurrency })}
+                                              </span>
                                               {productCouponDiscount > 0 && (
                                                 <span className="ml-2 text-xs font-semibold" style={{ color: 'hsl(150, 60%, 45%)' }}>
                                                   -{checkoutMoney(productCouponDiscount)} coupon

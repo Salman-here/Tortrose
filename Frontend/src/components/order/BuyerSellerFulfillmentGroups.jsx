@@ -10,10 +10,10 @@ import {
   XCircle,
 } from 'lucide-react';
 import {
+  getExactOrderItemUnitAmount,
   getOrderItemLineSubtotal,
   getOrderItemOptionPairs,
   getOrderSellerGroups,
-  hasExactOrderItemUnitEquation,
 } from '../../utils/orderItems';
 
 const statusSteps = ['pending', 'confirmed', 'processing', 'shipped', 'delivered'];
@@ -106,6 +106,7 @@ const SellerGroup = ({ group, formatMoney, index }) => {
         <div className="space-y-3">
           {group.items.map((item, itemIndex) => {
             const options = getOrderItemOptionPairs(item);
+            const exactUnitAmount = getExactOrderItemUnitAmount(item);
             return (
               <div key={`${group.itemIndexes[itemIndex]}:${item.productId || item.name}`} className="flex items-start gap-3">
                 <div className="w-14 h-14 rounded-xl overflow-hidden shrink-0 flex items-center justify-center" style={{ background: 'rgba(255,255,255,0.04)' }}>
@@ -119,7 +120,7 @@ const SellerGroup = ({ group, formatMoney, index }) => {
                     </div>
                   )}
                   <p className="text-xs mt-1.5" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                    {hasExactOrderItemUnitEquation(item) ? `${item.quantity} × ${formatMoney(item.price)}` : `${item.quantity} unit${item.quantity === 1 ? '' : 's'} · complete line price`}
+                    {exactUnitAmount !== null ? `${item.quantity} × ${formatMoney(exactUnitAmount)}` : `${item.quantity} unit${item.quantity === 1 ? '' : 's'} · complete line price`}
                   </p>
                 </div>
                 <span className="text-sm font-bold shrink-0" style={{ color: 'hsl(var(--foreground))' }}>{formatMoney(getOrderItemLineSubtotal(item))}</span>

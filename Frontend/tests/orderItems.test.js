@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  getExactLineUnitAmount,
+  getExactOrderItemUnitAmount,
   getOrderCurrency,
   getOrderItemQuantity,
   getOrderSellerShippingBreakdown,
@@ -192,6 +194,29 @@ test('hides a rounded converted unit that cannot reproduce its authoritative lin
   const item = { price: 0, quantity: 1000, lineSubtotal: 3.57 };
   assert.equal(hasExactOrderItemUnitEquation(item), false);
   assert.equal(getOrderItemLineSubtotal(item), 3.57);
+});
+
+test('derives visible units from frozen line cents instead of a mismatched rounded catalog unit', () => {
+  const converted = { price: 15.3, quantity: 1, lineSubtotal: 15.29 };
+  assert.equal(hasExactOrderItemUnitEquation(converted), false);
+  assert.equal(getExactOrderItemUnitAmount(converted), 15.29);
+  assert.equal(getExactLineUnitAmount(10, 4), 2.5);
+  assert.equal(getExactLineUnitAmount(10, 3), null);
+});
+
+test('rejects invalid exact-line unit inputs instead of manufacturing display money', () => {
+  for (const lineSubtotal of ['', '15.29', false, Infinity, -1, 0.001]) {
+    assert.throws(
+      () => getExactLineUnitAmount(lineSubtotal, 1),
+      (error) => error?.code === 'ORDER_PRESENTATION_DATA_INVALID',
+    );
+  }
+  for (const quantity of [0, -1, 1.5, '1']) {
+    assert.throws(
+      () => getExactLineUnitAmount(15.29, quantity),
+      (error) => error?.code === 'ORDER_PRESENTATION_DATA_INVALID',
+    );
+  }
 });
 
 test('keeps the legacy reconstructed unit equation internally consistent', () => {

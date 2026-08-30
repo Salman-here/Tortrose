@@ -7,7 +7,7 @@ import { Link } from "react-router-dom";
 import { toast } from "react-toastify";
 import Loader from '../common/Loader'
 import { getMainDomainUrl, isSubdomain } from "../../utils/subdomainHelper";
-import { formatOrderItemOptions } from "../../utils/orderItems";
+import { formatOrderItemOptions, getExactLineUnitAmount } from "../../utils/orderItems";
 import {
   addCurrencyAmounts,
   checkoutHasUnsupportedCurrency,
@@ -158,9 +158,9 @@ const CartDropdown = () => {
                     const price = getProductSourceAmount(product, 'price')
                     const discountedPrice = getProductSourceAmount(product, 'discountedPrice')
                     const hasDiscount = discountedPrice > 0 && discountedPrice < price
-                    const displayPrice = hasDiscount ? discountedPrice : price
                     const productCurrency = getCartPresentationProductCurrency(product)
                     const lineTotal = cartLineTotals[index]
+                    const exactUnitAmount = getExactLineUnitAmount(lineTotal, qty)
 
                     return (
                       <div key={index} className="relative p-4">
@@ -190,7 +190,9 @@ const CartDropdown = () => {
                               </p>
                             )}
                             <div className="flex items-baseline gap-1.5 mt-1">
-                              <span className="font-bold text-sm" style={{ color: 'hsl(var(--primary))' }}>{cartMoney(convertAmount(displayPrice, productCurrency, currency), productCurrency)}</span>
+                              <span className="font-bold text-sm" style={{ color: 'hsl(var(--primary))' }}>
+                                {exactUnitAmount === null ? 'Complete line price' : cartMoney(exactUnitAmount, productCurrency)}
+                              </span>
                               {hasDiscount && <span className="text-xs line-through" style={{ color: 'hsl(var(--muted-foreground))' }}>{cartMoney(convertAmount(price, productCurrency, currency), productCurrency)}</span>}
                             </div>
                             <QuantitySelector qty={qty} onIncrement={() => handleQtyInc(item._id)} onDecrement={() => handleQtyDec(item._id)} />

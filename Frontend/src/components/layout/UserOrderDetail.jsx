@@ -8,6 +8,7 @@ import { useCurrency } from "../../contexts/CurrencyContext";
 import Loader from "../common/Loader";
 import { getAuthToken } from "../../utils/cookieHelper";
 import {
+    getExactOrderItemUnitAmount,
     getOrderCurrency,
     getOrderItemLineSubtotal,
     getOrderItemOptionPairs,
@@ -18,6 +19,21 @@ import {
 } from "../../utils/orderItems";
 import BuyerReturnsPanel from "./BuyerReturnsPanel";
 import BuyerSellerFulfillmentGroups from "../order/BuyerSellerFulfillmentGroups";
+
+const OrderItemMoney = ({ item, formatMoney, amountClassName }) => {
+    const lineSubtotal = getOrderItemLineSubtotal(item);
+    const exactUnitAmount = getExactOrderItemUnitAmount(item);
+    return (
+        <>
+            <p className={amountClassName} style={{ color: 'hsl(var(--foreground))' }}>
+                {formatMoney(exactUnitAmount ?? lineSubtotal)}
+            </p>
+            <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                {exactUnitAmount === null ? 'Complete frozen line price' : `Subtotal: ${formatMoney(lineSubtotal)}`}
+            </p>
+        </>
+    );
+};
 
 const OrderDetail = () => {
     const { formatPrice } = useCurrency();
@@ -366,13 +382,11 @@ const OrderDetail = () => {
                                             </div>
                                         )}
                                         <div className="mt-2 sm:hidden">
-                                            <p className="text-sm font-semibold" style={{ color: 'hsl(var(--foreground))' }}>{orderMoney(item.price)}</p>
-                                            <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>Subtotal: {orderMoney(getOrderItemLineSubtotal(item))}</p>
+                                            <OrderItemMoney item={item} formatMoney={orderMoney} amountClassName="text-sm font-semibold" />
                                         </div>
                                     </div>
                                     <div className="text-right hidden sm:block shrink-0">
-                                        <p className="text-sm font-semibold" style={{ color: 'hsl(var(--foreground))' }}>{orderMoney(item.price)}</p>
-                                            <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>Subtotal: {orderMoney(getOrderItemLineSubtotal(item))}</p>
+                                        <OrderItemMoney item={item} formatMoney={orderMoney} amountClassName="text-sm font-semibold" />
                                     </div>
                                 </motion.div>
                             ))}

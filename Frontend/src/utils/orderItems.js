@@ -350,6 +350,25 @@ export const getOrderItemLineSubtotal = (item = {}) => {
   return multiplyCurrencyAmount(price, quantity);
 };
 
+// A converted line is allocated in integer minor units. Derive a visible unit
+// amount only when those exact cents divide evenly by the quantity; otherwise
+// the UI must describe the authoritative complete line price instead of
+// showing a rounded unit that cannot reproduce the line total.
+export const getExactLineUnitAmount = (lineSubtotal, quantity) => {
+  const total = requireExactStoredMoney(lineSubtotal, 'line subtotal');
+  if (!Number.isSafeInteger(quantity) || quantity < 1) {
+    throw orderPresentationIntegrityError('line quantity');
+  }
+  const totalMinor = toCurrencyMinorUnits(total);
+  if (!Number.isSafeInteger(totalMinor) || totalMinor % quantity !== 0) return null;
+  const unit = roundCurrencyAmount(total / quantity);
+  return toCurrencyMinorUnits(unit) * quantity === totalMinor ? unit : null;
+};
+
+export const getExactOrderItemUnitAmount = (item = {}) => (
+  getExactLineUnitAmount(getOrderItemLineSubtotal(item), readLegacyLineQuantity(item))
+);
+
 // A globally converted line can have a non-zero total even when its converted
 // unit rounds to 0.00. Only render "quantity x unit" when that visible equation
 // reproduces the authoritative stored line total in integer minor units.
