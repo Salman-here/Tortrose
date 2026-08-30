@@ -118,6 +118,9 @@ const { resolveOrderReference } = require('../services/orderReferenceService');
 const { nextShortOrderId } = require('../services/orderPublicIdService');
 const { buildBuyerOrderView } = require('../services/buyerOrderPresentationService');
 const {
+    withAuthoritativeOrderConfirmationDelivery,
+} = require('../services/orderConfirmationDeliveryStatusService');
+const {
     formatItemOptionsText,
     formatOrderMoney,
     formatOrderItemUnitMoney,
@@ -3113,14 +3116,19 @@ exports.getOrderDetail = async (req, res) => {
             }
 
             const filteredOrder = buildSellerOrderView(order, sellerProductIds, userId)
-            return res.status(200).json({ msg: 'Order fetched successfully.', order: filteredOrder })
+            const presentedOrder = await withAuthoritativeOrderConfirmationDelivery(filteredOrder)
+            return res.status(200).json({ msg: 'Order fetched successfully.', order: presentedOrder })
         }
 
         if (role !== 'admin' && toId(order.user) !== toId(userId)) {
             return res.status(403).json({ msg: 'You can only view your own orders' })
         }
 
-        res.status(200).json({ msg: 'Order fetched successfully.', order: buildBuyerOrderView(order) })
+        const buyerOrder = buildBuyerOrderView(order)
+        const presentedOrder = role === 'admin'
+            ? await withAuthoritativeOrderConfirmationDelivery(buyerOrder)
+            : buyerOrder
+        res.status(200).json({ msg: 'Order fetched successfully.', order: presentedOrder })
     } catch (error) {
         console.error(error);
         res.status(error.statusCode || 500).json({

@@ -14,6 +14,9 @@ const {
 const {
   recoverPendingSellerOperationalNotifications,
 } = require('./sellerOperationalNotificationService');
+const {
+  syncOrderConfirmationDeliveryStatus,
+} = require('./orderConfirmationDeliveryStatusService');
 
 const DEFAULT_INTERVAL_MS = 2_000;
 const DEFAULT_BATCH_SIZE = 20;
@@ -62,13 +65,17 @@ async function processNotificationOutboxRecord(record, {
       });
     }
     if (result?.outcome === 'skipped') {
-      return markNotificationSkipped({
+      const marked = await markNotificationSkipped({
         id: record._id,
         leaseToken,
         code: result.code,
         reason: result.reason,
         at: completedAt,
       });
+      await syncOrderConfirmationDeliveryStatus(marked).catch(error => {
+        console.error('[notification-outbox] failed to sync skipped confirmation delivery:', error.message);
+      });
+      return marked;
     }
     if (result?.outcome !== 'delivered') {
       const error = new Error('Notification channel returned an invalid delivery outcome.');
@@ -76,14 +83,22 @@ async function processNotificationOutboxRecord(record, {
       error.retryable = true;
       throw error;
     }
-    return markNotificationDelivered({
+    const marked = await markNotificationDelivered({
       id: record._id,
       leaseToken,
       providerMessageId: result.providerMessageId,
       at: completedAt,
     });
+    await syncOrderConfirmationDeliveryStatus(marked).catch(error => {
+      console.error('[notification-outbox] failed to sync delivered confirmation:', error.message);
+    });
+    return marked;
   } catch (error) {
-    return markNotificationFailed({ record, leaseToken, error, at: clock() });
+    const marked = await markNotificationFailed({ record, leaseToken, error, at: clock() });
+    await syncOrderConfirmationDeliveryStatus(marked).catch(syncError => {
+      console.error('[notification-outbox] failed to sync failed confirmation delivery:', syncError.message);
+    });
+    return marked;
   }
 }
 

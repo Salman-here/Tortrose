@@ -6,6 +6,7 @@ const mockMarkNotificationDeferred = jest.fn();
 const mockMarkNotificationFailed = jest.fn();
 const mockMarkNotificationSkipped = jest.fn();
 const mockReapExhaustedNotificationLeases = jest.fn();
+const mockSyncOrderConfirmationDeliveryStatus = jest.fn();
 
 jest.mock('../../services/notificationOutboxDeliveryService', () => ({
   deliverNotificationRecord: jest.fn(),
@@ -20,6 +21,10 @@ jest.mock('../../services/notificationOutboxService', () => ({
   reapExhaustedNotificationLeases: mockReapExhaustedNotificationLeases,
 }));
 
+jest.mock('../../services/orderConfirmationDeliveryStatusService', () => ({
+  syncOrderConfirmationDeliveryStatus: mockSyncOrderConfirmationDeliveryStatus,
+}));
+
 const {
   createOperationalRecoveryGate,
   processNotificationOutboxBatch,
@@ -29,6 +34,7 @@ const {
 describe('notification outbox worker timing', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockSyncOrderConfirmationDeliveryStatus.mockResolvedValue(null);
   });
 
   test('records provider completion time rather than claim-start time', async () => {
@@ -41,6 +47,8 @@ describe('notification outbox worker timing', () => {
       outcome: 'delivered',
       providerMessageId: 'provider-1',
     });
+    const marked = { _id: 'outbox-1', status: 'delivered' };
+    mockMarkNotificationDelivered.mockResolvedValue(marked);
 
     await processNotificationOutboxRecord(record, { deliver, now: clock });
 
@@ -52,6 +60,7 @@ describe('notification outbox worker timing', () => {
       at: completedAt,
     });
     expect(mockMarkNotificationDelivered.mock.calls[0][0].at).not.toEqual(startedAt);
+    expect(mockSyncOrderConfirmationDeliveryStatus).toHaveBeenCalledWith(marked);
   });
 
   test('releases a pending durable child without recording a provider failure', async () => {
