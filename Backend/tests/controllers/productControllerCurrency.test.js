@@ -138,6 +138,48 @@ describe('productController currency write helpers', () => {
     }
   );
 
+  test('admin product serialization preserves a corrupt row for repair without exposing it as valid money', () => {
+    expect(__private.serializeAdminProductCurrencyMetadata({
+      _id: '64b000000000000000000002',
+      name: 'Legacy precision issue',
+      price: 10.001,
+      discountedPrice: 0,
+      currency: 'USD',
+      priceCurrency: 'USD',
+      discountedPriceCurrency: 'USD',
+    }, 'USD')).toMatchObject({
+      _id: '64b000000000000000000002',
+      price: 10.001,
+      _comparablePrice: null,
+      adminDataIssue: {
+        scope: 'money',
+        code: 'PRODUCT_PRICE_INVALID',
+      },
+    });
+  });
+
+  test('admin comparable pricing isolates a corrupt product instead of rejecting the complete dashboard list', async () => {
+    const [product] = await __private.attachAdminComparablePrices([{
+      _id: '64b000000000000000000002',
+      name: 'Legacy precision issue',
+      price: 10.001,
+      discountedPrice: 0,
+      currency: 'USD',
+      priceCurrency: 'USD',
+      discountedPriceCurrency: 'USD',
+    }], 'USD');
+
+    expect(product).toMatchObject({
+      _id: '64b000000000000000000002',
+      price: 10.001,
+      _comparablePrice: null,
+      adminDataIssue: {
+        scope: 'money',
+        code: 'PRODUCT_PRICE_INVALID',
+      },
+    });
+  });
+
   test('rejects a positive product price that converts below one target cent', async () => {
     await expect(__private.applyProductCurrencyMetadata({
       name: 'Tiny PKR product',

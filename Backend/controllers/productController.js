@@ -465,9 +465,60 @@ async function attachComparablePrices(products, targetCurrency = 'USD') {
     }));
 }
 
+const ADMIN_RECOVERABLE_PRODUCT_DATA_CODES = new Set([
+    'PRODUCT_PRICE_INVALID',
+    'PRODUCT_CURRENCY_METADATA_INVALID',
+]);
+
+const isAdminRecoverableProductDataError = error => (
+    ADMIN_RECOVERABLE_PRODUCT_DATA_CODES.has(error?.code)
+);
+
+const adminProductDataIssue = (product, error) => {
+    const plainProduct = product?.toObject ? product.toObject() : { ...product };
+    return {
+        ...plainProduct,
+        _comparablePrice: null,
+        adminDataIssue: {
+            scope: 'money',
+            code: error.code,
+        },
+    };
+};
+
+function serializeAdminProductCurrencyMetadata(product, fallbackCurrency = 'USD') {
+    try {
+        return serializeProductCurrencyMetadata(product, fallbackCurrency);
+    } catch (error) {
+        if (!isAdminRecoverableProductDataError(error)) throw error;
+        return adminProductDataIssue(product, error);
+    }
+}
+
+async function attachAdminComparablePrices(products, targetCurrency = 'USD') {
+    const currency = normalizeCurrency(targetCurrency);
+    return Promise.all(products.map(async (product) => {
+        const plainProduct = product?.toObject ? product.toObject() : product;
+        let amount;
+        let sourceCurrency;
+        try {
+            amount = requireStoredProductEffectivePrice(plainProduct);
+            sourceCurrency = requireStoredProductCurrency(plainProduct, 'USD');
+        } catch (error) {
+            if (!isAdminRecoverableProductDataError(error)) throw error;
+            return adminProductDataIssue(plainProduct, error);
+        }
+        return {
+            ...plainProduct,
+            _comparablePrice: await convertAmount(amount, sourceCurrency, currency),
+        };
+    }));
+}
+
 function filterByComparablePriceRange(products, range) {
     if (!range || (range.min === null && range.max === null)) return products;
     return products.filter(product => {
+        if (product?.adminDataIssue?.scope === 'money') return false;
         const price = Number(product._comparablePrice ?? convertAmountSync(
             requireStoredProductEffectivePrice(product),
             requireStoredProductCurrency(product, 'USD'),
@@ -601,6 +652,9 @@ const applySorting = (products, sortBy, sortOrder, sellerProductCounts, totalSel
     switch(sortBy) {
         case 'price':
             return products.sort((a, b) => {
+                const invalidA = a?.adminDataIssue?.scope === 'money';
+                const invalidB = b?.adminDataIssue?.scope === 'money';
+                if (invalidA !== invalidB) return invalidA ? 1 : -1;
                 const priceA = a._comparablePrice ?? convertAmountSync(requireStoredProductEffectivePrice(a), requireStoredProductCurrency(a, 'USD'), 'USD');
                 const priceB = b._comparablePrice ?? convertAmountSync(requireStoredProductEffectivePrice(b), requireStoredProductCurrency(b, 'USD'), 'USD');
                 return (priceA - priceB) * order;
@@ -1863,7 +1917,7 @@ exports.getAdminProducts = async (req, res) => {
             products = fuzzyRankProducts(products, search)
         }
 
-        products = await attachComparablePrices(products, requestedCurrency)
+        products = await attachAdminComparablePrices(products, requestedCurrency)
         products = filterByComparablePriceRange(products, parsedPriceRange)
 
         const sellerProductCounts = {}
@@ -1876,7 +1930,7 @@ exports.getAdminProducts = async (req, res) => {
 
         res.status(200).json({
             msg: 'Fetched admin products successfully.',
-            products: paginated.products.map(product => serializeProductCurrencyMetadata(product, 'USD')),
+            products: paginated.products.map(product => serializeAdminProductCurrencyMetadata(product, 'USD')),
             pagination: paginated.pagination,
         })
     } catch (error) {
@@ -1889,6 +1943,8 @@ exports.__private = {
     MAX_BULK_PRODUCT_MUTATIONS,
     applyProductCurrencyMetadata,
     serializeProductCurrencyMetadata,
+    serializeAdminProductCurrencyMetadata,
+    attachAdminComparablePrices,
     invalidProductCurrencyField,
     invalidProductNumber,
     normalizeBulkMoneyInput,
