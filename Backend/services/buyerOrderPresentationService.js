@@ -22,7 +22,7 @@ const presentationError = (message, code = 'BUYER_ORDER_PRESENTATION_INVALID') =
 
 const plainOrder = order => (
   order?.toObject
-    ? order.toObject({ virtuals: true })
+    ? order.toObject({ virtuals: true, flattenMaps: true })
     : { ...(order || {}) }
 );
 

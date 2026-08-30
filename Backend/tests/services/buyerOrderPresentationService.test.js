@@ -1,6 +1,7 @@
 'use strict';
 
 const mongoose = require('mongoose');
+const Order = require('../../models/Order');
 const { buildBuyerOrderView } = require('../../services/buyerOrderPresentationService');
 const { sumMoney } = require('../../services/moneyMath');
 
@@ -97,6 +98,14 @@ describe('buyer seller-group order presentation', () => {
         group.summary.reconciliationAdjustment,
       ])).toBe(group.summary.totalAmount);
     }
+  });
+
+  test('flattens mongoose option maps so buyers receive the exact selected product options', () => {
+    const view = buildBuyerOrderView(new Order(mixedSellerOrder()));
+    const serialized = JSON.parse(JSON.stringify(view));
+
+    expect(serialized.orderItems[0].selectedOptions).toEqual({ Size: 'Large' });
+    expect(serialized.sellerGroups[0].itemIndexes).toEqual([0]);
   });
 
   test('marks legacy orders unavailable instead of guessing missing seller ownership', () => {
