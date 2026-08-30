@@ -103,26 +103,35 @@ const ORDER_LIFECYCLE_STATUS_COPY = Object.freeze({
   },
 });
 const ORDER_LIFECYCLE_ACTOR_ROLES = new Set(['buyer', 'seller', 'admin', 'system']);
+const ORDER_CANCELLATION_BUYER_DETAIL = Object.freeze({
+  buyer: 'You cancelled this order.',
+  seller: 'A seller cancelled your order.',
+  admin: 'A Rozare administrator cancelled your order.',
+  system: 'Rozare automatically cancelled your order.',
+});
 
-const orderLifecycleBuyerTemplates = (orderNumber, status) => {
+const orderLifecycleBuyerTemplates = (orderNumber, status, { actorRole } = {}) => {
   const copy = ORDER_LIFECYCLE_STATUS_COPY[status];
+  const detail = status === 'cancelled'
+    ? `${ORDER_CANCELLATION_BUYER_DETAIL[actorRole]} This status does not by itself record or promise a refund.`
+    : copy.detail;
   const totalSentence = 'Frozen order total: {{money.order_total}}.';
   return {
     inapp: {
       title: copy.title,
-      body: `Order #${orderNumber}: ${copy.detail} ${totalSentence}`,
+      body: `Order #${orderNumber}: ${detail} ${totalSentence}`,
     },
     push: {
       title: copy.title,
-      body: `Order #${orderNumber}: ${copy.detail} ${totalSentence}`,
+      body: `Order #${orderNumber}: ${detail} ${totalSentence}`,
     },
     email: {
       subject: `${copy.title} - ${orderNumber}`,
-      text: `Order #${orderNumber}: ${copy.detail} ${totalSentence} Open your Rozare account for details.`,
-      html: `<p>Order <strong>#${escapeHtml(orderNumber)}</strong>: ${escapeHtml(copy.detail)}</p><p>${totalSentence}</p><p>Open your Rozare account for details.</p>`,
+      text: `Order #${orderNumber}: ${detail} ${totalSentence} Open your Rozare account for details.`,
+      html: `<p>Order <strong>#${escapeHtml(orderNumber)}</strong>: ${escapeHtml(detail)}</p><p>${totalSentence}</p><p>Open your Rozare account for details.</p>`,
     },
     whatsapp: {
-      message: `${copy.title}\n\nOrder: #${orderNumber}\n${copy.detail}\n${totalSentence}\n\nOpen your Rozare account for details.`,
+      message: `${copy.title}\n\nOrder: #${orderNumber}\n${detail}\n${totalSentence}\n\nOpen your Rozare account for details.`,
     },
   };
 };
@@ -176,7 +185,7 @@ async function enqueueOrderLifecycleBuyerNotifications(order, {
     financial: true,
     recipient,
     channels: selectedChannels,
-    templates: orderLifecycleBuyerTemplates(orderNumber, status),
+    templates: orderLifecycleBuyerTemplates(orderNumber, status, { actorRole }),
     metadata: {
       category: 'order',
       linkTo: `/user-dashboard/order/detail/${id}`,

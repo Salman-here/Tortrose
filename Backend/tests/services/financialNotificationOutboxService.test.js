@@ -468,6 +468,41 @@ describe('financial notification domain contracts', () => {
     expect(await NotificationOutbox.countDocuments()).toBe(1);
   });
 
+  test.each([
+    ['buyer', /You cancelled this order/i],
+    ['seller', /A seller cancelled your order/i],
+    ['admin', /A Rozare administrator cancelled your order/i],
+    ['system', /Rozare automatically cancelled your order/i],
+  ])('buyer cancellation receipts attribute the %s actor across every delivery channel', async (
+    actorRole,
+    expectedCopy,
+  ) => {
+    const { order } = paidMixedOrder();
+    order._id = id();
+    order.orderId = `ORD-BUYER-CANCEL-${actorRole.toUpperCase()}`;
+    order.orderStatus = 'cancelled';
+
+    await enqueueOrderLifecycleBuyerNotifications(order, {
+      status: 'cancelled',
+      previousStatus: 'confirmed',
+      transitionAt: new Date(`2026-08-24T19:0${actorRole.length}:00.000Z`),
+      actorRole,
+      channels: ['inapp', 'push', 'email', 'whatsapp'],
+    });
+
+    const records = await NotificationOutbox.find({ aggregateId: String(order._id) }).lean();
+    expect(records).toHaveLength(4);
+    for (const record of records) {
+      const rendered = record.payload.body
+        || record.payload.text
+        || record.payload.html
+        || record.payload.message;
+      expect(rendered).toMatch(expectedCopy);
+      expect(rendered).toMatch(/does not by itself record or promise a refund/i);
+      expect(record.payload.data.changedByRole).toBe(actorRole);
+    }
+  });
+
   test('seller fulfillment update names only that store/items and uses its frozen settlement allocation', async () => {
     const { order, sellerA, sellerB } = paidMixedOrder();
     order.orderStatus = 'pending';

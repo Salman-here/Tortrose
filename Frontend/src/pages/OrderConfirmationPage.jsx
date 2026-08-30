@@ -13,6 +13,7 @@ import {
   getOrderTotal,
   hasExactOrderItemUnitEquation,
 } from '../utils/orderItems';
+import { shouldShowGenericConfirmedBanner } from '../utils/orderConfirmationPresentation';
 
 const API = import.meta.env.VITE_API_URL;
 
@@ -145,6 +146,18 @@ export default function OrderConfirmationPage() {
       : !conf?.cancelledFromDashboardNote?.includes('account'))
     && orderCancelled;
   const notYetDecided = !actionDone && !expired;
+  const showGenericConfirmedBanner = shouldShowGenericConfirmedBanner({
+    actionDone,
+    orderStatus: order?.orderStatus,
+    hasSpecificConfirmationState: Boolean(confirmedViaWhatsApp || confirmedViaEmail),
+    hasCancellationState: Boolean(
+      cancelledByAnotherActor
+      || cancelledFromAccount
+      || cancelledFromEmailPage
+      || cancelledViaWhatsApp
+      || cancelledViaEmail
+    ),
+  });
   const summarySubtotal = getOrderSummaryAmount(order, ['subtotal'], 'order subtotal');
   const summaryShipping = getOrderSummaryAmount(order, ['shippingCost', 'shippingFee'], 'order shipping');
   const summaryTax = getOrderSummaryAmount(order, ['tax', 'taxAmount'], 'order tax');
@@ -328,7 +341,7 @@ export default function OrderConfirmationPage() {
             )}
 
             {/* Generic confirmed (just confirmed fresh) */}
-            {actionDone === 'confirmed' && !confirmedViaWhatsApp && !confirmedViaEmail && !cancelledFromAccount && !cancelledFromEmailPage && !cancelledViaWhatsApp && !cancelledViaEmail && (
+            {showGenericConfirmedBanner && (
               <div className="rounded-xl p-4 mb-5 flex items-start gap-3" style={{ background: 'rgba(16, 185, 129, 0.10)', border: '1px solid rgba(16,185,129,0.25)' }}>
                 <CheckCircle2 size={20} style={{ color: 'hsl(150, 60%, 40%)', flexShrink: 0, marginTop: 2 }} />
                 <div>
