@@ -168,7 +168,7 @@ describe('native branding assets', () => {
     );
 
     expect(appConfig.version).toBe('1.0.9');
-    expect(appConfig.android.versionCode).toBe(10);
+    expect(appConfig.android.versionCode).toBe(11);
     expect(appConfig.ios.buildNumber).toBe('10');
     expect(appConfig.android.blockedPermissions).toEqual(
       expect.arrayContaining([
