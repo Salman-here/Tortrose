@@ -10,6 +10,8 @@
     "migrate:product-currency:write": "node scripts/migrateProductNativeCurrency.js --write",
     "preflight:order-id-uniqueness": "node scripts/preflightOrderIdUniqueness.js",
     "preflight:stripe-payment-indexes": "node scripts/checkStripePaymentReferenceDuplicates.js",
+    "repair:cancelled-order-coupons:dry-run": "node scripts/releaseCancelledOrderCouponRedemptions.js",
+    "repair:cancelled-order-coupons:write": "node scripts/releaseCancelledOrderCouponRedemptions.js --write",
     "provision:play-reviewers": "node scripts/provisionPlayReviewAccounts.js",
     "heroku-postbuild": "echo 'Backend build complete'"
   },
