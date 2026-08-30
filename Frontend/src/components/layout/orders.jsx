@@ -10,7 +10,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useCurrency } from '../../contexts/CurrencyContext';
 import { getAuthToken } from "../../utils/cookieHelper";
 import ReturnOrdersPanel from './ReturnOrdersPanel';
-import { inspectOrderListMoney } from '../../utils/orderItems';
+import { inspectOrderListMoney, inspectSellerOrderListMoney } from '../../utils/orderItems';
 import { buildOrderExportQuery, orderExportErrorMessage } from '../../utils/orderExport';
 
 const OrderManagement = () => {
@@ -319,7 +319,9 @@ const OrderManagement = () => {
                                 <tbody>
                                      {[...orders].reverse().map((order, i) => {
                                          const ss = getStatusStyle(order.orderStatus);
-                                         const money = inspectOrderListMoney(order);
+                                         const money = currentUser?.role === 'seller'
+                                             ? inspectSellerOrderListMoney(order)
+                                             : inspectOrderListMoney(order);
                                         return (
                                             <motion.tr key={order._id} initial={{ opacity: 0 }} animate={{ opacity: 1 }}
                                                 transition={{ delay: i * 0.02 }}
@@ -339,10 +341,17 @@ const OrderManagement = () => {
                                                         {(order.orderStatus || 'unknown').charAt(0).toUpperCase() + (order.orderStatus || 'unknown').slice(1)}
                                                     </span>
                                                 </td>
-                                                <td className="px-5 py-4 text-sm font-bold" style={{ color: 'hsl(var(--foreground))', letterSpacing: '-0.03em' }}>
-                                                    {money.valid
-                                                        ? formatPrice(money.total, { sourceCurrency: money.currency, targetCurrency: money.currency, showCode: true })
-                                                        : 'Money unavailable'}
+                                                <td className="px-5 py-4" style={{ color: 'hsl(var(--foreground))' }}>
+                                                    <div className="text-sm font-bold" style={{ letterSpacing: '-0.03em' }}>
+                                                        {money.valid
+                                                            ? formatPrice(money.total, { sourceCurrency: money.currency, targetCurrency: money.currency, showCode: true })
+                                                            : 'Money unavailable'}
+                                                    </div>
+                                                    {money.valid && money.buyerCurrency && money.buyerCurrency !== money.currency && (
+                                                        <div className="text-[10px] mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                                                            Buyer paid {formatPrice(money.buyerTotal, { sourceCurrency: money.buyerCurrency, targetCurrency: money.buyerCurrency, showCode: true })}
+                                                        </div>
+                                                    )}
                                                 </td>
                                                 <td className="px-5 py-4">
                                                     <div className="flex items-center gap-3 justify-end">
@@ -405,7 +414,9 @@ const OrderManagement = () => {
                         <div className="md:hidden space-y-3 p-4">
                              {[...orders].reverse().map((order, i) => {
                                  const ss = getStatusStyle(order.orderStatus);
-                                 const money = inspectOrderListMoney(order);
+                                 const money = currentUser?.role === 'seller'
+                                     ? inspectSellerOrderListMoney(order)
+                                     : inspectOrderListMoney(order);
                                 return (
                                     <motion.div key={order._id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
                                         transition={{ delay: i * 0.03 }}>
@@ -438,7 +449,7 @@ const OrderManagement = () => {
                                                     );
                                                 })()}
                                                 <div className="flex justify-between items-center">
-                                                    <div className="flex items-center gap-2">
+                                                    <div className="flex items-start gap-2">
                                                         <span className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>{new Date(order.createdAt).toLocaleDateString()}</span>
                                                         <span className="px-2 py-0.5 text-[10px] rounded-full font-medium"
                                                             style={order.isPaid ? { background: 'rgba(16, 185, 129, 0.12)', color: 'hsl(150, 60%, 40%)' } : { background: 'rgba(239, 68, 68, 0.12)', color: 'hsl(0, 72%, 55%)' }}>
@@ -467,11 +478,18 @@ const OrderManagement = () => {
                                                                 </button>
                                                             );
                                                         })()}
-                                                        <span className="text-sm font-bold" style={{ color: 'hsl(var(--foreground))' }}>
-                                                            {money.valid
-                                                                ? formatPrice(money.total, { sourceCurrency: money.currency, targetCurrency: money.currency, showCode: true })
-                                                                : 'Money unavailable'}
-                                                        </span>
+                                                        <div className="text-right">
+                                                            <span className="text-sm font-bold block" style={{ color: 'hsl(var(--foreground))' }}>
+                                                                {money.valid
+                                                                    ? formatPrice(money.total, { sourceCurrency: money.currency, targetCurrency: money.currency, showCode: true })
+                                                                    : 'Money unavailable'}
+                                                            </span>
+                                                            {money.valid && money.buyerCurrency && money.buyerCurrency !== money.currency && (
+                                                                <p className="text-[10px] mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                                                                    Buyer paid {formatPrice(money.buyerTotal, { sourceCurrency: money.buyerCurrency, targetCurrency: money.buyerCurrency, showCode: true })}
+                                                                </p>
+                                                            )}
+                                                        </div>
                                                     </div>
                                                 </div>
                                             </div>

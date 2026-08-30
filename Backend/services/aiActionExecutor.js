@@ -58,8 +58,10 @@ const {
 const {
   buildOrderItemMoneyAllocations,
   orderItemKey,
+  sellerCurrencyMoneyPresentation,
   sellerOrderSummaryForItems,
   isSellerRevenueRecognized,
+  sumCurrencyAmountsInCurrency,
   sumOrderAmountsInCurrency,
   SELLER_SETTLEMENT_VERSION,
   buildOrderSellerSettlement,
@@ -4491,7 +4493,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
             { awaitingPayment: { $ne: true } },
           ],
         })
-          .select('orderSummary appliedCoupons orderStatus sellerFulfillment isPaid isDelivered paymentMethod createdAt orderItems sellerShipping shippingMethod currency')
+          .select('orderSummary appliedCoupons orderStatus sellerFulfillment sellerPolicies isPaid isDelivered paymentMethod createdAt orderItems sellerShipping shippingMethod currency exchangeRateSnapshot sellerSettlementVersion sellerSettlement sellerCurrencyMoneyVersion sellerCurrencyMoney')
           .lean();
         const sellerOrders = orders
           .map(order => ({
@@ -4506,9 +4508,13 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
         const paidSellerOrders = sellerOrders.filter(({ order }) => isSellerRevenueRecognized(order, userId));
         const revenueEntries = paidSellerOrders.map(({ order, items }) => {
           const sellerMoney = sellerOrderSummaryForItems(order, userId, items);
-          return { order, amount: sellerMoney.totalAmount };
+          const native = sellerCurrencyMoneyPresentation(order, userId, items);
+          return {
+            amount: native?.summary?.totalAmount ?? sellerMoney.totalAmount,
+            currency: native?.currency || order.currency,
+          };
         });
-        const totalRevenue = await sumOrderAmountsInCurrency(revenueEntries, preferredCurrency);
+        const totalRevenue = await sumCurrencyAmountsInCurrency(revenueEntries, preferredCurrency);
 
         const statusCounts = {};
         sellerOrders.forEach(({ status }) => {

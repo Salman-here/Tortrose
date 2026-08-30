@@ -3,14 +3,19 @@ const fc = require('fast-check');
 const {
   buildOrderItemMoneyAllocations,
   buildOrderSellerSettlement,
+  buildOrderSellerCurrencyMoney,
+  buildSellerCurrencyItemMoneyAllocations,
   convertOrderAmount,
   convertOrderAmountAtCheckout,
   formatOrderMoney,
   getFrozenSellerSettlement,
+  getFrozenSellerCurrencyMoney,
   getRequestedCurrency,
   resolveRequestedCurrency,
   sellerSettlementUsdTargetForSource,
   sellerOrderSummary,
+  sellerCurrencyTotalEntry,
+  sellerCurrencyMoneyPresentation,
   isSellerRevenueRecognized,
   sumOrderAmountsInCurrency,
 } = require('../../services/orderMoneyService');
@@ -46,6 +51,144 @@ const makeOrder = ({ tax = 0, shippingCost = 0, couponDiscount = 0 } = {}) => ({
     { seller: 'seller-a', status: 'confirmed' },
     { seller: 'seller-b', status: 'confirmed' },
   ],
+});
+
+describe('frozen seller store-currency money', () => {
+  const rates = { USD: 1, PKR: 277.86, EUR: 0.92, GBP: 0.79 };
+
+  const freezeSellerMoney = (order) => {
+    order.sellerSettlementVersion = 1;
+    order.sellerSettlement = buildOrderSellerSettlement(order, { requireOrderTotal: true });
+    order.sellerCurrencyMoneyVersion = 1;
+    order.sellerCurrencyMoney = buildOrderSellerCurrencyMoney(order);
+    return order;
+  };
+
+  test('total-only legacy presentation uses the frozen seller ledger without rebuilding inconsistent line allocations', () => {
+    const order = {
+      currency: 'USD',
+      orderItems: [{
+        _id: 'legacy-zero-line', productId: 'legacy-product', seller: 'legacy-seller',
+        price: 100, lineSubtotal: 0, quantity: 1,
+      }],
+      orderSummary: { subtotal: 100, shippingCost: 0, tax: 0, couponDiscount: 0, totalAmount: 100 },
+      sellerSettlementVersion: 1,
+      sellerSettlement: [{
+        seller: 'legacy-seller', sourceCurrency: 'USD', sourceAmountMinor: 10000, amountUSDMinor: 10000,
+      }],
+    };
+
+    expect(sellerCurrencyTotalEntry(order, 'legacy-seller', order.orderItems)).toMatchObject({
+      currency: 'USD',
+      buyerCurrency: 'USD',
+      totalMinor: 10000,
+      buyerTotalMinor: 10000,
+      persisted: false,
+    });
+    expect(() => sellerCurrencyMoneyPresentation(order, 'legacy-seller', order.orderItems))
+      .toThrow('stored order subtotal does not reconcile');
+  });
+
+  test('PKR buyer and USD seller retain $29.50 while the buyer allocation remains Rs8,196.87', () => {
+    const order = freezeSellerMoney({
+      currency: 'PKR',
+      exchangeRateSnapshot: { base: 'USD', rates, capturedAt: new Date('2026-08-30T00:00:00Z'), source: 'test', fallback: false },
+      orderItems: [{
+        _id: 'usd-line', productId: 'usd-product', seller: 'usd-seller', name: 'Wallet',
+        price: 8196.87, lineSubtotal: 8196.87, sourcePrice: 29.5, sourceCurrency: 'USD',
+        sourceLineSubtotal: 29.5, priceOriginal: 29.5, priceCurrency: 'USD', quantity: 1,
+      }],
+      sellerShipping: [{ seller: 'usd-seller', shippingMethod: { name: 'Free', price: 0, estimatedDays: 5, sourceCost: 0, sourceCurrency: 'USD' } }],
+      sellerPolicies: [{ seller: 'usd-seller', productCurrency: 'USD' }],
+      appliedCoupons: [],
+      orderSummary: { subtotal: 8196.87, shippingCost: 0, tax: 0, couponDiscount: 0, totalAmount: 8196.87 },
+    });
+
+    const frozen = getFrozenSellerCurrencyMoney(order);
+    const view = sellerCurrencyMoneyPresentation(order, 'usd-seller', order.orderItems);
+    expect(frozen).toEqual([expect.objectContaining({ currency: 'USD', totalMinor: 2950, buyerTotalMinor: 819687 })]);
+    expect(view.summary).toEqual(expect.objectContaining({ subtotal: 29.5, totalAmount: 29.5 }));
+    expect(view.buyerSummary.totalAmount).toBe(8196.87);
+    expect(view.itemMoney[0]).toEqual(expect.objectContaining({ lineSubtotal: 29.5, buyerLineSubtotal: 8196.87 }));
+    expect(view.exchangeRate).toEqual(expect.objectContaining({ from: 'USD', to: 'PKR', rate: 277.86, frozen: true }));
+  });
+
+  test('USD buyer and PKR seller keep the native product line and expose the exact frozen FX cent adjustment', () => {
+    const order = freezeSellerMoney({
+      currency: 'USD',
+      exchangeRateSnapshot: { base: 'USD', rates, capturedAt: new Date('2026-08-30T00:00:00Z'), source: 'test', fallback: false },
+      orderItems: [{
+        _id: 'pkr-line', productId: 'pkr-product', seller: 'pkr-seller', name: 'Lamp',
+        price: 8.1, lineSubtotal: 8.1, sourcePrice: 2250, sourceCurrency: 'PKR',
+        sourceLineSubtotal: 2250, priceOriginal: 2250, priceCurrency: 'PKR', quantity: 1,
+      }],
+      sellerShipping: [{ seller: 'pkr-seller', shippingMethod: { name: 'Free', price: 0, estimatedDays: 3, sourceCost: 0, sourceCurrency: 'PKR' } }],
+      sellerPolicies: [{ seller: 'pkr-seller', productCurrency: 'PKR' }],
+      appliedCoupons: [],
+      orderSummary: { subtotal: 8.1, shippingCost: 0, tax: 0, couponDiscount: 0, totalAmount: 8.1 },
+    });
+
+    const view = sellerCurrencyMoneyPresentation(order, 'pkr-seller', order.orderItems);
+    expect(view.itemMoney[0].lineSubtotal).toBe(2250);
+    expect(view.summary).toEqual({
+      subtotal: 2250,
+      shippingCost: 0,
+      tax: 0,
+      couponDiscount: 0,
+      reconciliationAdjustment: 0.67,
+      totalAmount: 2250.67,
+    });
+    expect(view.buyerSummary.totalAmount).toBe(8.1);
+  });
+
+  test('paid native shipping and native coupon discount freeze and reconcile independently', () => {
+    const order = freezeSellerMoney({
+      currency: 'PKR',
+      exchangeRateSnapshot: { base: 'USD', rates, capturedAt: new Date('2026-08-30T00:00:00Z'), source: 'test', fallback: false },
+      orderItems: [{
+        _id: 'usd-line', productId: 'usd-product', seller: 'usd-seller', name: 'Wallet',
+        price: 8196.87, lineSubtotal: 8196.87, sourcePrice: 29.5, sourceCurrency: 'USD',
+        sourceLineSubtotal: 29.5, priceOriginal: 29.5, priceCurrency: 'USD', quantity: 1,
+      }],
+      sellerShipping: [{ seller: 'usd-seller', shippingMethod: { name: 'Express', price: 1389.3, estimatedDays: 2, sourceCost: 5, sourceCurrency: 'USD' } }],
+      sellerPolicies: [{ seller: 'usd-seller', productCurrency: 'USD' }],
+      couponUsageVersion: 1,
+      appliedCoupons: [{
+        couponId: 'coupon-usd', seller: 'usd-seller', code: 'SAVE10', discountType: 'percentage',
+        discountValue: 10, appliedDiscountAmount: 819.69, currency: 'PKR', sourceDiscountValue: 10,
+        sourceAppliedDiscountAmount: 2.95, sourceCurrency: 'USD', applicableProductIds: ['usd-product'],
+        couponTermsFingerprint: 'a'.repeat(64),
+      }],
+      orderSummary: { subtotal: 8196.87, shippingCost: 1389.3, tax: 0, couponDiscount: 819.69, totalAmount: 8766.48 },
+    });
+
+    const view = sellerCurrencyMoneyPresentation(order, 'usd-seller', order.orderItems);
+    expect(view.summary).toEqual({
+      subtotal: 29.5,
+      shippingCost: 5,
+      tax: 0,
+      couponDiscount: 2.95,
+      reconciliationAdjustment: 0,
+      totalAmount: 31.55,
+    });
+    expect(view.buyerSummary.totalAmount).toBe(8766.48);
+    const itemAllocations = buildSellerCurrencyItemMoneyAllocations(order, 'usd-seller', order.orderItems);
+    expect([...itemAllocations.total.values()]).toEqual([31.55]);
+  });
+
+  test('rejects a tampered seller-native total even when its components look individually valid', () => {
+    const order = freezeSellerMoney({
+      currency: 'USD',
+      orderItems: [{ _id: 'line', productId: 'product', seller: 'seller', price: 10, lineSubtotal: 10, sourcePrice: 10, sourceCurrency: 'USD', sourceLineSubtotal: 10, quantity: 1 }],
+      sellerShipping: [{ seller: 'seller', shippingMethod: { name: 'Free', price: 0, estimatedDays: 2, sourceCost: 0, sourceCurrency: 'USD' } }],
+      sellerPolicies: [{ seller: 'seller', productCurrency: 'USD' }],
+      appliedCoupons: [],
+      orderSummary: { subtotal: 10, shippingCost: 0, tax: 0, couponDiscount: 0, totalAmount: 10 },
+    });
+    order.sellerCurrencyMoney[0].totalMinor = 1001;
+    order.sellerCurrencyMoney[0].adjustmentMinor = 1;
+    expect(() => getFrozenSellerCurrencyMoney(order)).toThrow(expect.objectContaining({ code: 'SELLER_CURRENCY_MONEY_INVALID' }));
+  });
 });
 
 describe('orderMoneyService exact seller allocation', () => {

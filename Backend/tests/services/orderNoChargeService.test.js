@@ -206,12 +206,27 @@ describe('atomic no-charge online checkout', () => {
     expect(await WalletTransaction.countDocuments({ referenceId: stored._id })).toBe(0);
     const notifications = await NotificationOutbox.find({ aggregateId: String(stored._id) }).lean();
     expect(notifications).toHaveLength(8);
-    expect(notifications.filter(row => row.recipient.audienceRole === 'buyer')).toHaveLength(4);
-    expect(notifications.filter(row => row.recipient.audienceRole === 'seller')).toHaveLength(4);
-    expect(notifications.every(row => (
+    const buyerNotifications = notifications.filter(row => row.recipient.audienceRole === 'buyer');
+    const sellerNotifications = notifications.filter(row => row.recipient.audienceRole === 'seller');
+    expect(buyerNotifications).toHaveLength(4);
+    expect(sellerNotifications).toHaveLength(4);
+    expect(buyerNotifications.every(row => (
       row.money.length === 1
       && row.money[0].currency === 'USD'
       && row.money[0].amountMinor === 0
+    ))).toBe(true);
+    expect(sellerNotifications.every(row => (
+      row.money.length === 2
+      && row.money.some(money => (
+        money.key === 'seller_store_total'
+        && money.currency === 'USD'
+        && money.amountMinor === 0
+      ))
+      && row.money.some(money => (
+        money.key === 'seller_order_total'
+        && money.currency === 'USD'
+        && money.amountMinor === 0
+      ))
     ))).toBe(true);
 
     let replay;

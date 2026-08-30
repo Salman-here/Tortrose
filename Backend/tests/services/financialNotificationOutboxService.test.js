@@ -330,6 +330,45 @@ describe('financial notification domain contracts', () => {
     expect(sellers.map(record => record.payload.body).join(' ')).toContain('Rs1,680.00 PKR');
   });
 
+  test('seller notification renders store currency first and the buyer checkout equivalent second', async () => {
+    const { order, sellerA, sellerB } = paidMixedOrder();
+    order.sellerCurrencyMoneyVersion = 1;
+    order.sellerCurrencyMoney = [
+      {
+        seller: sellerA,
+        currency: 'PKR',
+        buyerCurrency: 'PKR',
+        subtotalMinor: 20000,
+        shippingMinor: 0,
+        taxMinor: 0,
+        discountMinor: 0,
+        adjustmentMinor: 0,
+        totalMinor: 20000,
+        buyerTotalMinor: 20000,
+      },
+      {
+        seller: sellerB,
+        currency: 'USD',
+        buyerCurrency: 'PKR',
+        subtotalMinor: 600,
+        shippingMinor: 0,
+        taxMinor: 0,
+        discountMinor: 0,
+        adjustmentMinor: 0,
+        totalMinor: 600,
+        buyerTotalMinor: 168000,
+      },
+    ];
+
+    const [record] = await enqueuePaidOrderSellerNotifications(order, sellerB, { channels: ['inapp'] });
+    expect(record.money).toEqual([
+      expect.objectContaining({ key: 'seller_store_total', currency: 'USD', amountMinor: 600 }),
+      expect.objectContaining({ key: 'seller_order_total', currency: 'PKR', amountMinor: 168000 }),
+    ]);
+    expect(record.payload.body).toContain('$6.00');
+    expect(record.payload.body).toContain('Rs1,680.00 PKR');
+  });
+
   test.each([
     ['PKR', 1880, 'Rs1,880.00 PKR', 188000],
     ['USD', 6.71, '$6.71', 671],

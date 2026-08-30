@@ -52,6 +52,10 @@ const normalizeShippingMethod = (row, order, groupCount) => {
  */
 const buildBuyerOrderView = order => {
   const result = plainOrder(order);
+  // Seller-native values are a seller reporting contract. Buyers and admins
+  // receive only the frozen checkout-currency order and seller-group totals.
+  delete result.sellerCurrencyMoneyVersion;
+  delete result.sellerCurrencyMoney;
   const items = Array.isArray(order?.orderItems) ? order.orderItems : [];
   const grouped = new Map();
 

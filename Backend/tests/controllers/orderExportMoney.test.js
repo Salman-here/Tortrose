@@ -170,6 +170,96 @@ describe('order export money calculations', () => {
     expect(res.body).toContain('1000.00,100.00,0.00,50.00,0.00,1050.00');
   });
 
+  test('seller exports use the frozen store-currency snapshot instead of reconverting the buyer total', async () => {
+    const sellerId = new mongoose.Types.ObjectId();
+    const productId = new mongoose.Types.ObjectId();
+    await Order.create({
+      orderId: 'EXPORT-SELLER-NATIVE',
+      currency: 'PKR',
+      exchangeRateSnapshot: {
+        base: 'USD',
+        rates: { USD: 1, PKR: 277.86, EUR: 0.8, GBP: 0.75 },
+        capturedAt: new Date('2026-08-30T00:00:00.000Z'),
+        source: 'checkout-test',
+        fallback: false,
+      },
+      orderItems: [{
+        productId,
+        seller: sellerId,
+        name: 'Frozen USD Export Item',
+        image: 'https://example.com/frozen-export.jpg',
+        price: 8196.87,
+        lineSubtotal: 8196.87,
+        sourcePrice: 29.5,
+        sourceLineSubtotal: 29.5,
+        sourceCurrency: 'USD',
+        priceOriginal: 29.5,
+        priceCurrency: 'USD',
+        quantity: 1,
+      }],
+      shippingInfo: {
+        fullName: 'Seller Export Buyer',
+        email: 'seller-export@example.com',
+        phone: '+14155552671',
+        address: '1 Frozen Report Street',
+        city: 'Report City',
+        state: 'Report State',
+        postalCode: '10000',
+        country: 'United States',
+      },
+      shippingMethod: { name: 'Free', price: 0, estimatedDays: 5 },
+      sellerShipping: [{
+        seller: sellerId,
+        shippingMethod: {
+          name: 'Free', price: 0, estimatedDays: 5, sourceCost: 0, sourceCurrency: 'USD',
+        },
+      }],
+      sellerPolicies: [{ seller: sellerId, storeName: 'Frozen USD Store', productCurrency: 'USD' }],
+      orderSummary: {
+        subtotal: 8196.87,
+        shippingCost: 0,
+        tax: 0,
+        couponDiscount: 0,
+        totalAmount: 8196.87,
+      },
+      sellerSettlementVersion: 1,
+      sellerSettlement: [{
+        seller: sellerId,
+        sourceCurrency: 'PKR',
+        sourceAmountMinor: 819687,
+        amountUSDMinor: 2950,
+      }],
+      sellerCurrencyMoneyVersion: 1,
+      sellerCurrencyMoney: [{
+        seller: sellerId,
+        currency: 'USD',
+        buyerCurrency: 'PKR',
+        subtotalMinor: 2950,
+        shippingMinor: 0,
+        taxMinor: 0,
+        discountMinor: 0,
+        adjustmentMinor: 0,
+        totalMinor: 2950,
+        buyerTotalMinor: 819687,
+      }],
+      sellerFulfillment: [{ seller: sellerId, status: 'confirmed' }],
+      paymentMethod: 'stripe',
+      isPaid: true,
+      awaitingPayment: false,
+      orderStatus: 'confirmed',
+    });
+
+    const res = response();
+    await exportOrders({
+      user: { role: 'seller', id: sellerId },
+      query: { format: 'csv', currency: 'USD' },
+    }, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('29.50,0.00,0.00,0.00,0.00,29.50');
+    expect(res.body).not.toContain('29.27');
+  });
+
   test('sums minor units exactly and rejects unsupported requested currencies', async () => {
     expect(_sumExportMinorUnits([
       { totalMinor: 10 },

@@ -173,4 +173,80 @@ describe('durable seller settlement persistence', () => {
     const persisted = await Order.findById(order._id);
     expect(getFrozenSellerSettlement(persisted)).toEqual(original);
   });
+
+  test('blocks later document and query mutations of frozen seller-currency money', async () => {
+    const seller = new mongoose.Types.ObjectId();
+    const order = await Order.create({
+      user: new mongoose.Types.ObjectId(),
+      currency: 'USD',
+      orderId: `ORD-NATIVE-IMMUTABLE-${new mongoose.Types.ObjectId()}`,
+      orderItems: [{
+        productId: new mongoose.Types.ObjectId(),
+        seller,
+        name: 'Immutable native item',
+        price: 10,
+        lineSubtotal: 10,
+        sourcePrice: 10,
+        sourceLineSubtotal: 10,
+        sourceCurrency: 'USD',
+        quantity: 1,
+      }],
+      shippingInfo,
+      shippingMethod: { name: 'free', price: 0, estimatedDays: 1, seller },
+      sellerShipping: [{
+        seller,
+        shippingMethod: { name: 'free', price: 0, estimatedDays: 1, sourceCost: 0, sourceCurrency: 'USD' },
+      }],
+      sellerPolicies: [{ seller, productCurrency: 'USD' }],
+      orderSummary: { subtotal: 10, shippingCost: 0, tax: 0, couponDiscount: 0, totalAmount: 10 },
+      sellerSettlementVersion: 1,
+      sellerSettlement: [{ seller, sourceCurrency: 'USD', sourceAmountMinor: 1000, amountUSDMinor: 1000 }],
+      sellerCurrencyMoneyVersion: 1,
+      sellerCurrencyMoney: [{
+        seller,
+        currency: 'USD',
+        buyerCurrency: 'USD',
+        subtotalMinor: 1000,
+        shippingMinor: 0,
+        taxMinor: 0,
+        discountMinor: 0,
+        adjustmentMinor: 0,
+        totalMinor: 1000,
+        buyerTotalMinor: 1000,
+      }],
+      paymentMethod: 'stripe',
+      isPaid: true,
+      orderStatus: 'confirmed',
+    });
+
+    const documentAttempt = await Order.findById(order._id);
+    documentAttempt.sellerCurrencyMoney[0].adjustmentMinor = 1;
+    documentAttempt.sellerCurrencyMoney[0].totalMinor = 1001;
+    documentAttempt.sellerCurrencyMoney.push({
+      seller: new mongoose.Types.ObjectId(),
+      currency: 'USD',
+      buyerCurrency: 'USD',
+      subtotalMinor: 1,
+      shippingMinor: 0,
+      taxMinor: 0,
+      discountMinor: 0,
+      adjustmentMinor: 0,
+      totalMinor: 1,
+      buyerTotalMinor: 1,
+    });
+    await expect(documentAttempt.save()).rejects.toMatchObject({
+      code: 'SELLER_CURRENCY_MONEY_IMMUTABLE',
+    });
+
+    await Order.updateOne(
+      { _id: order._id },
+      { $set: { 'sellerCurrencyMoney.0.totalMinor': 9999 } },
+    );
+
+    const persisted = await Order.findById(order._id).lean();
+    expect(persisted.sellerCurrencyMoney[0]).toMatchObject({
+      totalMinor: 1000,
+      adjustmentMinor: 0,
+    });
+  });
 });

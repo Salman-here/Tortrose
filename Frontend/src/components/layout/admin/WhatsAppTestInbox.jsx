@@ -127,10 +127,6 @@ const WhatsAppTestInbox = () => {
     };
 
     const applyAction = async (message, action) => {
-        const approved = window.confirm(
-            `Process “${action.label}” for ${formatNumber(message.number)} through the live WhatsApp decision path?`
-        );
-        if (!approved) return;
         setActingMessageId(message._id);
         try {
             const { data } = await axios.post(

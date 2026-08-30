@@ -86,9 +86,12 @@ const {
     validateAndPriceShipping,
 } = require('../services/checkoutPricingService');
 const {
+    SELLER_CURRENCY_MONEY_VERSION,
     SELLER_SETTLEMENT_VERSION,
+    buildOrderSellerCurrencyMoney,
     buildOrderSellerSettlement,
     getAccountingOrderCurrency,
+    sellerCurrencyMoneyPresentation,
     sellerOrderSummaryForItems,
 } = require('../services/orderMoneyService');
 const {
@@ -982,6 +985,11 @@ const buildSellerOrderView = (order, sellerProductIds, sellerId) => {
         ss => toId(ss.seller) === toId(sellerId)
     );
     const sellerMoney = sellerOrderSummaryForItems(order, sellerId, sellerOrderItems);
+    const sellerCurrencyMoney = sellerCurrencyMoneyPresentation(
+        order,
+        sellerId,
+        sellerOrderItems,
+    );
 
     const obj = order.toObject ? order.toObject() : { ...order };
     const sellerFulfillment = sellerFulfillmentFor(order, sellerId);
@@ -1001,6 +1009,7 @@ const buildSellerOrderView = (order, sellerProductIds, sellerId) => {
             : obj.shippingMethod,
         sellerFulfillment: sellerFulfillment ? [sellerFulfillment] : [],
         sellerPolicies: sellerPolicy ? [sellerPolicy] : [],
+        sellerCurrencyMoney,
         orderSummary: {
             subtotal: sellerMoney.subtotal,
             shippingCost: sellerMoney.shippingCost,
@@ -1539,6 +1548,7 @@ exports.placeOrder = async (req, res) => {
                     seller: sellerId,
                     store: store?._id || null,
                     storeName: store?.storeName || '',
+                    productCurrency: store?.productCurrency || 'USD',
                     paymentPolicy: store?.paymentPolicy || 'online_and_cod',
                     returnPolicy: normalizeReturnPolicy(store?.returnPolicy || {}),
                 };
@@ -1571,6 +1581,8 @@ exports.placeOrder = async (req, res) => {
         newOrder.sellerSettlement = buildOrderSellerSettlement(newOrder, {
             requireOrderTotal: true,
         });
+        newOrder.sellerCurrencyMoneyVersion = SELLER_CURRENCY_MONEY_VERSION;
+        newOrder.sellerCurrencyMoney = buildOrderSellerCurrencyMoney(newOrder);
         // Enforce Stripe's documented eight-digit charge ceiling before this
         // order, coupon reservation, inventory reservation, Stripe customer,
         // or payment object can be created. Zero remains valid here because it
@@ -2552,9 +2564,13 @@ exports.exportOrders = async (req, res) => {
         const rows = [];
         for (const order of orders) {
             const o = order.toObject ? order.toObject() : order;
-            const sourceCurrency = requireCanonicalStoredOrderCurrency(o.currency);
+            const sellerNativeMoney = role === 'seller' ? o.sellerCurrencyMoney : null;
+            const exportSummary = sellerNativeMoney?.summary || o.orderSummary;
+            const sourceCurrency = requireCanonicalStoredOrderCurrency(
+                sellerNativeMoney?.currency || o.currency,
+            );
             const exportMoney = buildOrderExportMoney({
-                summary: o.orderSummary,
+                summary: exportSummary,
                 sourceCurrency,
                 reportCurrency,
                 rateSnapshot,

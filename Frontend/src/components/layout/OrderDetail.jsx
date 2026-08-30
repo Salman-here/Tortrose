@@ -11,6 +11,7 @@ import { getAuthToken } from "../../utils/cookieHelper";
 import {
     getExactOrderItemUnitAmount,
     getOrderCurrency,
+    getSellerCurrencyMoney,
     getOrderItemLineSubtotal,
     getOrderItemOptionPairs,
     getOrderSellerShippingBreakdown,
@@ -18,9 +19,29 @@ import {
     getOrderTotal,
 } from "../../utils/orderItems";
 
-const OrderItemMoney = ({ item, formatMoney, amountClassName }) => {
+const OrderItemMoney = ({ item, formatMoney, amountClassName, sellerItemMoney = null, buyerFormatMoney = null }) => {
     const lineSubtotal = getOrderItemLineSubtotal(item);
     const exactUnitAmount = getExactOrderItemUnitAmount(item);
+    if (sellerItemMoney) {
+        const nativeUnit = sellerItemMoney.originalCurrency === sellerItemMoney.currency
+            ? sellerItemMoney.originalUnitPrice
+            : null;
+        return (
+            <>
+                <p className={amountClassName} style={{ color: 'hsl(var(--foreground))' }}>
+                    {formatMoney(nativeUnit ?? sellerItemMoney.lineSubtotal)}
+                </p>
+                <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                    Store subtotal: {formatMoney(sellerItemMoney.lineSubtotal)}
+                </p>
+                {sellerItemMoney.buyerCurrency !== sellerItemMoney.currency && (
+                    <p className="text-[10px] mt-0.5" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                        Buyer equivalent: {buyerFormatMoney(sellerItemMoney.buyerLineSubtotal)}
+                    </p>
+                )}
+            </>
+        );
+    }
     return (
         <>
             <p className={amountClassName} style={{ color: 'hsl(var(--foreground))' }}>
@@ -96,19 +117,29 @@ const OrderDetail = () => {
     if (!order) return <div className="flex justify-center items-center min-h-[400px]"><Loader /></div>;
 
     const ss = getStatusStyle(order?.orderStatus);
-    const summarySubtotal = getOrderSummaryAmount(order, ['subtotal'], 'order subtotal');
-    const summaryTax = getOrderSummaryAmount(order, ['tax', 'taxAmount'], 'order tax');
-    const summaryCouponDiscount = getOrderSummaryAmount(
-        order,
-        ['couponDiscount', 'discountAmount'],
-        'order coupon discount',
-    );
-    const reconciliationAdjustment = getOrderSummaryAmount(
-        order,
-        ['reconciliationAdjustment'],
-        'order reconciliation adjustment',
-        { signed: true },
-    );
+    const sellerCurrencyMoney = currentUser?.role === 'seller'
+        ? getSellerCurrencyMoney(order)
+        : null;
+    const sellerMoney = (amount) => formatPrice(amount, {
+        sourceCurrency: sellerCurrencyMoney?.currency || getOrderCurrency(order),
+        targetCurrency: sellerCurrencyMoney?.currency || getOrderCurrency(order),
+        showCode: true,
+    });
+    const summarySubtotal = sellerCurrencyMoney?.summary.subtotal
+        ?? getOrderSummaryAmount(order, ['subtotal'], 'order subtotal');
+    const summaryTax = sellerCurrencyMoney?.summary.tax
+        ?? getOrderSummaryAmount(order, ['tax', 'taxAmount'], 'order tax');
+    const summaryCouponDiscount = sellerCurrencyMoney?.summary.couponDiscount
+        ?? getOrderSummaryAmount(order, ['couponDiscount', 'discountAmount'], 'order coupon discount');
+    const reconciliationAdjustment = sellerCurrencyMoney?.summary.reconciliationAdjustment
+        ?? getOrderSummaryAmount(
+            order,
+            ['reconciliationAdjustment'],
+            'order reconciliation adjustment',
+            { signed: true },
+        );
+    const primaryMoney = sellerCurrencyMoney ? sellerMoney : orderMoney;
+    const primaryTotal = sellerCurrencyMoney?.summary.totalAmount ?? getOrderTotal(order);
 
     return (
         <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="p-4 sm:p-6">
@@ -356,11 +387,23 @@ const OrderDetail = () => {
                                             </div>
                                         )}
                                         <div className="mt-2 sm:hidden">
-                                            <OrderItemMoney item={item} formatMoney={orderMoney} amountClassName="text-sm font-semibold" />
+                                            <OrderItemMoney
+                                                item={item}
+                                                formatMoney={primaryMoney}
+                                                buyerFormatMoney={orderMoney}
+                                                sellerItemMoney={sellerCurrencyMoney?.itemMoney?.[index] || null}
+                                                amountClassName="text-sm font-semibold"
+                                            />
                                         </div>
                                     </div>
                                     <div className="text-right hidden sm:block flex-shrink-0">
-                                        <OrderItemMoney item={item} formatMoney={orderMoney} amountClassName="text-sm sm:text-base font-medium" />
+                                        <OrderItemMoney
+                                            item={item}
+                                            formatMoney={primaryMoney}
+                                            buyerFormatMoney={orderMoney}
+                                            sellerItemMoney={sellerCurrencyMoney?.itemMoney?.[index] || null}
+                                            amountClassName="text-sm sm:text-base font-medium"
+                                        />
                                     </div>
                                 </motion.div>
                             ))}
@@ -369,24 +412,42 @@ const OrderDetail = () => {
 
                     {/* Order Summary */}
                     <div className="mt-6 glass-inner rounded-xl p-4">
-                        <h2 className="text-lg font-semibold mb-4" style={{ color: 'hsl(var(--foreground))' }}>Order Summary</h2>
+                        <h2 className="text-lg font-semibold" style={{ color: 'hsl(var(--foreground))' }}>
+                            {sellerCurrencyMoney ? `Your Store-Currency Summary (${sellerCurrencyMoney.currency})` : 'Order Summary'}
+                        </h2>
+                        {sellerCurrencyMoney && (
+                            <p className="text-xs mt-1 mb-4" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                                Frozen at checkout. This is your order value in the store currency; it is not a live-FX estimate.
+                            </p>
+                        )}
                         <div className="space-y-2">
-                            <div className="flex justify-between"><span className="text-sm" style={{ color: 'hsl(var(--muted-foreground))' }}>Subtotal</span><span className="text-sm font-medium" style={{ color: 'hsl(var(--foreground))' }}>{orderMoney(summarySubtotal)}</span></div>
+                            <div className="flex justify-between"><span className="text-sm" style={{ color: 'hsl(var(--muted-foreground))' }}>Subtotal</span><span className="text-sm font-medium" style={{ color: 'hsl(var(--foreground))' }}>{primaryMoney(summarySubtotal)}</span></div>
                             {(() => {
                                 const sellerId = currentUser?.role === 'seller'
                                     ? String(currentUser.id || currentUser._id)
                                     : null;
-                                const shipping = getOrderSellerShippingBreakdown(order, sellerId);
+                                const shipping = sellerCurrencyMoney
+                                    ? {
+                                        total: sellerCurrencyMoney.summary.shippingCost,
+                                        entries: (order.sellerShipping || []).map((entry) => ({
+                                            ...entry,
+                                            shippingMethod: {
+                                                ...entry.shippingMethod,
+                                                price: sellerCurrencyMoney.summary.shippingCost,
+                                            },
+                                        })),
+                                    }
+                                    : getOrderSellerShippingBreakdown(order, sellerId);
                                 return shipping.total > 0 || shipping.entries.length > 0 ? (
                                     <div className="space-y-1">
-                                        <div className="flex justify-between"><span className="text-sm font-medium" style={{ color: 'hsl(var(--muted-foreground))' }}>Shipping</span><span className="text-sm font-medium" style={{ color: 'hsl(var(--foreground))' }}>{orderMoney(shipping.total)}</span></div>
-                                        {shipping.entries.length > 0 && <div className="pl-4 space-y-1">{shipping.entries.map((ss, i) => (<div key={i} className="flex justify-between text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}><span>{ss.shippingMethod.name} ({ss.shippingMethod.estimatedDays} days)</span><span>{orderMoney(ss.shippingMethod.price)}</span></div>))}</div>}
+                                        <div className="flex justify-between"><span className="text-sm font-medium" style={{ color: 'hsl(var(--muted-foreground))' }}>Shipping</span><span className="text-sm font-medium" style={{ color: 'hsl(var(--foreground))' }}>{primaryMoney(shipping.total)}</span></div>
+                                        {shipping.entries.length > 0 && <div className="pl-4 space-y-1">{shipping.entries.map((ss, i) => (<div key={i} className="flex justify-between text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}><span>{ss.shippingMethod.name} ({ss.shippingMethod.estimatedDays} days)</span><span>{primaryMoney(ss.shippingMethod.price)}</span></div>))}</div>}
                                     </div>
                                 ) : null;
                             })()}
-                            {summaryTax > 0 && <div className="flex justify-between"><span className="text-sm" style={{ color: 'hsl(var(--muted-foreground))' }}>Tax</span><span className="text-sm font-medium" style={{ color: 'hsl(var(--foreground))' }}>{orderMoney(summaryTax)}</span></div>}
-                            {summaryCouponDiscount > 0 && <div className="flex justify-between"><span className="text-sm" style={{ color: 'hsl(150, 60%, 45%)' }}>Coupon Discount</span><span className="text-sm font-medium" style={{ color: 'hsl(150, 60%, 45%)' }}>-{orderMoney(summaryCouponDiscount)}</span></div>}
-                            {reconciliationAdjustment !== 0 && <div className="flex justify-between"><span className="text-sm" style={{ color: 'hsl(var(--muted-foreground))' }}>Rounding adjustment</span><span className="text-sm font-medium" style={{ color: 'hsl(var(--foreground))' }}>{reconciliationAdjustment > 0 ? '+' : '-'}{orderMoney(Math.abs(reconciliationAdjustment))}</span></div>}
+                            {summaryTax > 0 && <div className="flex justify-between"><span className="text-sm" style={{ color: 'hsl(var(--muted-foreground))' }}>Tax</span><span className="text-sm font-medium" style={{ color: 'hsl(var(--foreground))' }}>{primaryMoney(summaryTax)}</span></div>}
+                            {summaryCouponDiscount > 0 && <div className="flex justify-between"><span className="text-sm" style={{ color: 'hsl(150, 60%, 45%)' }}>Coupon Discount</span><span className="text-sm font-medium" style={{ color: 'hsl(150, 60%, 45%)' }}>-{primaryMoney(summaryCouponDiscount)}</span></div>}
+                            {reconciliationAdjustment !== 0 && <div className="flex justify-between"><span className="text-sm" style={{ color: 'hsl(var(--muted-foreground))' }}>Frozen FX/cent adjustment</span><span className="text-sm font-medium" style={{ color: 'hsl(var(--foreground))' }}>{reconciliationAdjustment > 0 ? '+' : '-'}{primaryMoney(Math.abs(reconciliationAdjustment))}</span></div>}
                             {order?.appliedCoupons?.length > 0 && (
                                 <div className="flex flex-wrap gap-1 mt-1">
                                     {order.appliedCoupons.map((c, i) => (
@@ -397,9 +458,20 @@ const OrderDetail = () => {
                             <div className="flex justify-between pt-2" style={{ borderTop: '1px solid var(--glass-border)' }}>
                                 <span className="text-lg font-semibold" style={{ color: 'hsl(var(--foreground))' }}>Total Amount</span>
                                 <span className="text-lg font-extrabold" style={{ color: 'hsl(var(--foreground))' }}>
-                                    {orderMoney(getOrderTotal(order))}
+                                    {primaryMoney(primaryTotal)}
                                 </span>
                             </div>
+                            {sellerCurrencyMoney && sellerCurrencyMoney.buyerCurrency !== sellerCurrencyMoney.currency && (
+                                <div className="mt-4 p-3 rounded-xl" style={{ background: 'rgba(99, 102, 241, 0.08)', border: '1px solid rgba(99, 102, 241, 0.18)' }}>
+                                    <div className="flex justify-between gap-4">
+                                        <span className="text-sm font-medium" style={{ color: 'hsl(var(--muted-foreground))' }}>Buyer checkout equivalent</span>
+                                        <span className="text-sm font-bold" style={{ color: 'hsl(var(--foreground))' }}>{orderMoney(sellerCurrencyMoney.buyerSummary.totalAmount)}</span>
+                                    </div>
+                                    <p className="text-[10px] mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                                        Frozen rate: 1 {sellerCurrencyMoney.currency} = {sellerCurrencyMoney.exchangeRate.rate.toLocaleString(undefined, { maximumFractionDigits: 6 })} {sellerCurrencyMoney.buyerCurrency}. Buyer and seller values will not change with live FX.
+                                    </p>
+                                </div>
+                            )}
                         </div>
                     </div>
 

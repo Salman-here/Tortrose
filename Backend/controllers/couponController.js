@@ -18,11 +18,12 @@ const {
     isSellerRevenueRecognized,
     lineTotal,
     roundMoney,
-    sumOrderAmountsInCurrency,
+    sumCurrencyAmountsInCurrency,
     toId,
     itemBelongsToSeller,
     requireStoredOrderMoney,
 } = require('../services/orderMoneyService');
+const { getOrderItemSourceLineSubtotal } = require('../services/orderLinePricingService');
 const { sumMoney } = require('../services/moneyMath');
 const {
     assertStoredCouponMoneyTerms,
@@ -875,16 +876,36 @@ exports.getCouponAnalytics = async (req, res) => {
                     sellerIndexes.map(index => discountAllocations.get(itemKeys[index]) ?? 0),
                 );
 
-                attributedOrders.push({ order, sellerSubtotal, sellerDiscount });
+                const sellerSubtotalEntries = sellerIndexes.map(index => {
+                    const item = orderItems[index];
+                    return {
+                        amount: getOrderItemSourceLineSubtotal(item) ?? lineTotal(item),
+                        currency: item?.sourceCurrency || item?.priceCurrency || order.currency,
+                    };
+                });
+                const hasNativeDiscount = appliedCoupon.sourceAppliedDiscountAmount !== null
+                    && appliedCoupon.sourceAppliedDiscountAmount !== undefined;
+                const sellerDiscountEntry = {
+                    amount: hasNativeDiscount
+                        ? requireStoredOrderMoney(
+                            appliedCoupon.sourceAppliedDiscountAmount,
+                            'source applied coupon discount',
+                        )
+                        : sellerDiscount,
+                    currency: hasNativeDiscount
+                        ? appliedCoupon.sourceCurrency
+                        : order.currency,
+                };
+                attributedOrders.push({ order, sellerSubtotalEntries, sellerDiscountEntry });
             }
 
             const [totalRevenue, totalDiscount] = await Promise.all([
-                sumOrderAmountsInCurrency(
-                    attributedOrders.map(({ order, sellerSubtotal }) => ({ order, amount: sellerSubtotal })),
+                sumCurrencyAmountsInCurrency(
+                    attributedOrders.flatMap(({ sellerSubtotalEntries }) => sellerSubtotalEntries),
                     targetCurrency,
                 ),
-                sumOrderAmountsInCurrency(
-                    attributedOrders.map(({ order, sellerDiscount }) => ({ order, amount: sellerDiscount })),
+                sumCurrencyAmountsInCurrency(
+                    attributedOrders.map(({ sellerDiscountEntry }) => sellerDiscountEntry),
                     targetCurrency,
                 ),
             ]);

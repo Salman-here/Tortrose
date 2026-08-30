@@ -35,6 +35,7 @@ import {
 } from '../../utils/whatsapp';
 import {
   getOrderCurrency,
+  getSellerCurrencyMoney,
   getOrderItemQuantity,
   getOrderItemLineSubtotal,
   getOrderSummaryAmount,
@@ -176,21 +177,33 @@ export default function OrderDetailManagementScreen({ route, navigation }) {
   const orderItems = order.orderItems || order.items || [];
   const shippingInfo = order.shippingInfo || order.shippingAddress || {};
   const orderCurrency = getOrderCurrency(order);
-  const money = (amount) => formatPrice(amount, { sourceCurrency: orderCurrency });
-  const shippingCost = getOrderSummaryAmount(
+  const sellerCurrencyMoney = getSellerCurrencyMoney(order);
+  const primaryCurrency = sellerCurrencyMoney?.currency || orderCurrency;
+  const money = (amount) => formatPrice(amount, {
+    sourceCurrency: primaryCurrency,
+    targetCurrency: primaryCurrency,
+    showCode: true,
+  });
+  const buyerMoney = (amount) => formatPrice(amount, {
+    sourceCurrency: orderCurrency,
+    targetCurrency: orderCurrency,
+    showCode: true,
+  });
+  const shippingCost = sellerCurrencyMoney?.summary.shippingCost ?? getOrderSummaryAmount(
     order,
     ['shippingCost', 'shippingFee'],
     'order shipping',
     { fallback: order.shippingCost ?? order.shippingMethod?.price ?? 0 },
   );
-  const totalAmount = getOrderTotal(order);
-  const tax = getOrderSummaryAmount(order, ['tax', 'taxAmount'], 'order tax');
-  const couponDiscount = getOrderSummaryAmount(
+  const totalAmount = sellerCurrencyMoney?.summary.totalAmount ?? getOrderTotal(order);
+  const tax = sellerCurrencyMoney?.summary.tax
+    ?? getOrderSummaryAmount(order, ['tax', 'taxAmount'], 'order tax');
+  const couponDiscount = sellerCurrencyMoney?.summary.couponDiscount ?? getOrderSummaryAmount(
     order,
     ['couponDiscount', 'discountAmount'],
     'order coupon discount',
   );
-  const reconciliationAdjustment = getOrderSummaryAmount(
+  const reconciliationAdjustment = sellerCurrencyMoney?.summary.reconciliationAdjustment ?? getOrderSummaryAmount(
     order,
     ['reconciliationAdjustment'],
     'order reconciliation adjustment',
@@ -203,7 +216,7 @@ export default function OrderDetailManagementScreen({ route, navigation }) {
     couponDiscount,
     -reconciliationAdjustment,
   ));
-  const subtotal = getOrderSummaryAmount(
+  const subtotal = sellerCurrencyMoney?.summary.subtotal ?? getOrderSummaryAmount(
     order,
     ['subtotal'],
     'order subtotal',
@@ -386,20 +399,45 @@ export default function OrderDetailManagementScreen({ route, navigation }) {
                     <Text key={name} style={styles.itemOption}>{name}: {value}</Text>
                   ))}
                 </View>
-                <Text style={styles.itemTotal}>{money(getOrderItemLineSubtotal(item))}</Text>
+                <View style={styles.itemMoneyBlock}>
+                  <Text style={styles.itemTotal}>
+                    {money(sellerCurrencyMoney?.itemMoney?.[index]?.lineSubtotal ?? getOrderItemLineSubtotal(item))}
+                  </Text>
+                  {sellerCurrencyMoney && sellerCurrencyMoney.buyerCurrency !== sellerCurrencyMoney.currency && (
+                    <Text style={styles.itemBuyerTotal}>
+                      Buyer: {buyerMoney(sellerCurrencyMoney.itemMoney[index].buyerLineSubtotal)}
+                    </Text>
+                  )}
+                </View>
               </View>
             );
           })}
         </GlassPanel>
 
         <GlassPanel variant="card" style={styles.section}>
-          <Text style={styles.sectionTitle}>Summary</Text>
+          <Text style={styles.sectionTitle}>
+            {sellerCurrencyMoney ? `Store-Currency Summary (${sellerCurrencyMoney.currency})` : 'Summary'}
+          </Text>
+          {sellerCurrencyMoney && (
+            <Text style={styles.frozenMoneyNote}>Frozen at checkout; not recalculated with live FX.</Text>
+          )}
           <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Subtotal</Text><Text style={styles.summaryValue}>{money(subtotal)}</Text></View>
           <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Shipping</Text><Text style={styles.summaryValue}>{shippingCost === 0 ? 'Free' : money(shippingCost)}</Text></View>
           {tax > 0 && <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Tax</Text><Text style={styles.summaryValue}>{money(tax)}</Text></View>}
           {couponDiscount > 0 && <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Coupon Discount</Text><Text style={[styles.summaryValue, { color: palette.colors.success }]}>-{money(couponDiscount)}</Text></View>}
           {reconciliationAdjustment !== 0 && <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Rounding adjustment</Text><Text style={styles.summaryValue}>{reconciliationAdjustment > 0 ? '+' : '-'}{money(Math.abs(reconciliationAdjustment))}</Text></View>}
           <View style={[styles.summaryRow, styles.summaryTotal]}><Text style={styles.totalLabel}>Total</Text><Text style={styles.totalValue}>{money(totalAmount)}</Text></View>
+          {sellerCurrencyMoney && sellerCurrencyMoney.buyerCurrency !== sellerCurrencyMoney.currency && (
+            <View style={styles.buyerEquivalentBox}>
+              <View style={styles.summaryRow}>
+                <Text style={styles.summaryLabel}>Buyer checkout equivalent</Text>
+                <Text style={styles.summaryValue}>{buyerMoney(sellerCurrencyMoney.buyerSummary.totalAmount)}</Text>
+              </View>
+              <Text style={styles.frozenMoneyNote}>
+                1 {sellerCurrencyMoney.currency} = {sellerCurrencyMoney.exchangeRate.rate.toLocaleString(undefined, { maximumFractionDigits: 6 })} {sellerCurrencyMoney.buyerCurrency} at checkout.
+              </Text>
+            </View>
+          )}
         </GlassPanel>
 
         {orderStatus !== 'delivered' && orderStatus !== 'cancelled' && (
@@ -490,7 +528,11 @@ const buildStyles = (p) => StyleSheet.create({
   itemName: { ...typography.bodySemibold, color: p.colors.text, marginBottom: spacing.xs },
   itemQty: { ...typography.bodySmall, color: p.colors.textSecondary },
   itemOption: { ...typography.caption, color: p.colors.textSecondary, marginTop: 2 },
+  itemMoneyBlock: { alignItems: 'flex-end', marginLeft: spacing.sm, maxWidth: 130 },
   itemTotal: { ...typography.bodySemibold, color: p.colors.primary, marginLeft: spacing.sm },
+  itemBuyerTotal: { ...typography.caption, color: p.colors.textSecondary, marginTop: 3, textAlign: 'right' },
+  frozenMoneyNote: { ...typography.caption, color: p.colors.textSecondary, lineHeight: 16, marginBottom: spacing.sm },
+  buyerEquivalentBox: { marginTop: spacing.md, padding: spacing.md, borderRadius: borderRadius.lg, backgroundColor: p.colors.primarySubtle || 'rgba(99,102,241,0.08)' },
   summaryRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: spacing.sm, gap: spacing.md },
   summaryLabel: { ...typography.body, color: p.colors.textSecondary },
   summaryValue: { ...typography.body, color: p.colors.text, textAlign: 'right' },

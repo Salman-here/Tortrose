@@ -9,8 +9,9 @@ const { getProductCurrency, getProductEffectivePrice } = require('../services/pr
 const {
     resolveRequestedCurrency,
     sellerOrderSummary,
+    sellerCurrencyMoneyPresentation,
     isSellerRevenueRecognized,
-    sumOrderAmountsInCurrency,
+    sumCurrencyAmountsInCurrency,
     roundMoney,
 } = require('../services/orderMoneyService');
 const StoreView = require('../models/StoreView');
@@ -1158,11 +1159,20 @@ exports.getStoreAnalytics = async (req, res) => {
 
         const sellerProductIdSet = new Set(sellerProductIds.map(id => id.toString()));
         const recognizedOrders = orders.filter(order => isSellerRevenueRecognized(order, sellerId));
-        const totalSales = await sumOrderAmountsInCurrency(
-            recognizedOrders.map(order => ({
-                order,
-                amount: sellerOrderSummary(order, sellerProductIdSet, sellerId).totalAmount,
-            })),
+        const totalSales = await sumCurrencyAmountsInCurrency(
+            recognizedOrders.map(order => {
+                const sellerItems = (order.orderItems || []).filter(item => (
+                    item?.seller
+                        ? String(item.seller) === String(sellerId)
+                        : sellerProductIdSet.has(String(item?.productId))
+                ));
+                const native = sellerCurrencyMoneyPresentation(order, sellerId, sellerItems);
+                const fallback = sellerOrderSummary(order, sellerProductIdSet, sellerId);
+                return {
+                    amount: native?.summary?.totalAmount ?? fallback.totalAmount,
+                    currency: native?.currency || order.currency,
+                };
+            }),
             targetCurrency
         );
         const views = requireStoreAnalyticsCount(store.views, 'view count');

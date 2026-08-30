@@ -9,7 +9,10 @@ const {
   exchangeRatesUnavailableError,
 } = require('./currencyService');
 const { buildOrderItemDiscountAllocations } = require('./orderDiscountService');
-const { getOrderItemLineSubtotal } = require('./orderLinePricingService');
+const {
+  getOrderItemLineSubtotal,
+  getOrderItemSourceLineSubtotal,
+} = require('./orderLinePricingService');
 const {
   allocateConvertedMinorUnitsByRates,
   allocateMinorUnitsByWeights,
@@ -22,6 +25,7 @@ const { parseStrictFiniteNumber } = require('./numericInputService');
 
 const toId = (value) => value?._id?.toString?.() || value?.toString?.() || String(value || '');
 const SELLER_SETTLEMENT_VERSION = 1;
+const SELLER_CURRENCY_MONEY_VERSION = 1;
 
 const sellerSettlementError = (message, code = 'SELLER_SETTLEMENT_INVALID') => {
   const error = new Error(message);
@@ -672,6 +676,53 @@ const sumOrderAmountsInCurrency = async (
   return fromMinorUnits(converted.totalMinorUnits);
 };
 
+// Seller-native reporting entries carry their own frozen source currency.
+// Keeping this separate from order-currency reporting prevents a seller total
+// from being reinterpreted as the buyer's currency before conversion.
+const sumCurrencyAmountsInCurrency = async (
+  entries = [],
+  targetCurrency = 'USD',
+  { rateSnapshot = null, requireTrusted = true } = {},
+) => {
+  if (!isSupportedCurrency(targetCurrency)) {
+    throw sellerSettlementError('The requested reporting currency is unsupported.', 'ORDER_CURRENCY_INVALID');
+  }
+  const target = normalizeCurrency(targetCurrency);
+  const buckets = new Map();
+  for (const entry of entries) {
+    const amount = parseStrictFiniteNumber(entry?.amount);
+    if (amount === null || amount < 0) {
+      throw sellerSettlementError('A stored reporting amount is invalid.', 'ORDER_MONEY_INVALID');
+    }
+    try {
+      toMinorUnits(amount, 6);
+    } catch (_) {
+      throw sellerSettlementError('A stored reporting amount is outside the supported money range.', 'ORDER_MONEY_INVALID');
+    }
+    const source = requireCanonicalSellerCurrency(entry?.currency, 'reporting source currency');
+    if (amount === 0) continue;
+    if (!buckets.has(source)) buckets.set(source, []);
+    buckets.get(source).push(amount);
+  }
+  if (!buckets.size) return 0;
+  if ([...buckets.keys()].every(source => source === target)) {
+    return roundMoney(sumMoney([...buckets.values()].flat(), 6));
+  }
+  const snapshot = await (rateSnapshot || getExchangeRateSnapshot());
+  if (requireTrusted && snapshot?.fallback) throw exchangeRatesUnavailableError();
+  const rates = normalizeRates(snapshot?.rates);
+  if (!rates) throw exchangeRatesUnavailableError();
+  const converted = allocateConvertedMinorUnitsByRates(
+    [...buckets.entries()].map(([source, sourceAmounts]) => ({
+      key: source,
+      amount: sumMoney(sourceAmounts, 6),
+      sourceRate: rates[source],
+    })),
+    rates[target],
+  );
+  return fromMinorUnits(converted.totalMinorUnits);
+};
+
 const sellerOrderSubtotal = (order, sellerProductIds, sellerId) => {
   const idSet = buildIdSet(sellerProductIds);
   return orderItemsSubtotal(order, item => (
@@ -983,6 +1034,418 @@ const buildOrderSellerSettlement = (
   }));
 };
 
+const requireCanonicalSellerCurrency = (value, label = 'seller currency') => {
+  if (
+    typeof value !== 'string'
+    || value !== value.trim()
+    || value !== value.toUpperCase()
+    || !isSupportedCurrency(value)
+  ) {
+    throw sellerSettlementError(`The stored ${label} is unsupported or malformed.`, 'SELLER_CURRENCY_MONEY_INVALID');
+  }
+  return value;
+};
+
+const requireStoredMinorUnits = (
+  value,
+  label,
+  { signed = false } = {},
+) => {
+  if (!Number.isSafeInteger(value) || (!signed && value < 0)) {
+    throw sellerSettlementError(`The stored ${label} is invalid.`, 'SELLER_CURRENCY_MONEY_INVALID');
+  }
+  try {
+    fromMinorUnits(value);
+  } catch (_) {
+    throw sellerSettlementError(`The stored ${label} is outside the supported range.`, 'SELLER_CURRENCY_MONEY_INVALID');
+  }
+  return value;
+};
+
+const allocateFrozenAmountsToCurrency = (order, entries, targetCurrency) => {
+  const target = requireCanonicalSellerCurrency(targetCurrency);
+  const normalized = (entries || []).map((entry, index) => ({
+    key: entry.key ?? `entry:${index}`,
+    amount: requireStoredOrderMoney(entry.amount, `seller native source amount ${index + 1}`),
+    sourceCurrency: requireCanonicalSellerCurrency(
+      entry.sourceCurrency,
+      `seller native source currency ${index + 1}`,
+    ),
+  }));
+  if (!normalized.length) return new Map();
+  if (normalized.every(entry => entry.sourceCurrency === target)) {
+    return new Map(normalized.map(entry => [entry.key, entry.amount]));
+  }
+  const rates = getOrderExchangeRates(order);
+  if (!rates) {
+    throw sellerSettlementError(
+      'A seller-native amount has no trusted checkout exchange-rate snapshot.',
+      'SELLER_CURRENCY_EXCHANGE_RATE_MISSING',
+    );
+  }
+  const allocated = allocateConvertedMinorUnitsByRates(
+    normalized.map(entry => ({
+      key: entry.key,
+      amount: entry.amount,
+      sourceRate: rates[entry.sourceCurrency],
+    })),
+    rates[target],
+  );
+  return new Map([...allocated.allocations].map(([key, minor]) => [key, fromMinorUnits(minor)]));
+};
+
+const sellerCurrencyForOrder = (order, sellerId, sellerItems = []) => {
+  const sellerKey = toId(sellerId);
+  const policy = (order?.sellerPolicies || []).find(entry => toId(entry?.seller) === sellerKey);
+  if (policy?.productCurrency !== null && policy?.productCurrency !== undefined) {
+    return requireCanonicalSellerCurrency(policy.productCurrency, 'seller policy product currency');
+  }
+  const shipping = (order?.sellerShipping || []).find(entry => toId(entry?.seller) === sellerKey);
+  if (shipping?.shippingMethod?.sourceCurrency) {
+    return requireCanonicalSellerCurrency(
+      shipping.shippingMethod.sourceCurrency,
+      'seller shipping source currency',
+    );
+  }
+  const itemCurrencies = [...new Set((sellerItems || [])
+    .map(item => item?.sourceCurrency ?? item?.priceCurrency)
+    .filter(value => value !== null && value !== undefined)
+    .map(value => requireCanonicalSellerCurrency(value, 'seller item source currency')))];
+  if (itemCurrencies.length === 1) return itemCurrencies[0];
+  if (itemCurrencies.length > 1) {
+    throw sellerSettlementError(
+      'A legacy seller order has mixed native currencies and no frozen store currency.',
+      'SELLER_CURRENCY_SNAPSHOT_AMBIGUOUS',
+    );
+  }
+  return getAccountingOrderCurrency(order);
+};
+
+const sellerCurrencyItemRows = (order, sellerItems, targetCurrency) => {
+  const allItems = order?.orderItems || [];
+  const itemKeys = buildOrderItemKeys(allItems);
+  const rows = (sellerItems || []).map((item, fallbackIndex) => {
+    const orderIndex = resolveOrderItemIndex(allItems, item, fallbackIndex);
+    const key = orderItemKey(item, orderIndex, itemKeys);
+    const sourceAmount = getOrderItemSourceLineSubtotal(item) ?? getOrderItemLineSubtotal(item);
+    const sourceCurrency = requireCanonicalSellerCurrency(
+      item?.sourceCurrency ?? item?.priceCurrency ?? getAccountingOrderCurrency(order),
+      'seller item source currency',
+    );
+    return { key, item, orderIndex, sourceAmount, sourceCurrency };
+  });
+  const converted = allocateFrozenAmountsToCurrency(
+    order,
+    rows.map(row => ({ key: row.key, amount: row.sourceAmount, sourceCurrency: row.sourceCurrency })),
+    targetCurrency,
+  );
+  return rows.map(row => ({
+    ...row,
+    targetAmount: converted.get(row.key) || 0,
+  }));
+};
+
+const sellerNativeDiscount = (order, sellerId, sellerCurrency, buyerMoney) => {
+  const sellerKey = toId(sellerId);
+  const rows = (order?.appliedCoupons || [])
+    .filter(coupon => toId(coupon?.seller) === sellerKey)
+    .map((coupon, index) => {
+      const hasNativeAmount = coupon?.sourceAppliedDiscountAmount !== null
+        && coupon?.sourceAppliedDiscountAmount !== undefined;
+      return {
+        key: `coupon:${toId(coupon?.couponId) || index}`,
+        amount: hasNativeAmount
+          ? requireStoredOrderMoney(coupon.sourceAppliedDiscountAmount, 'seller native coupon discount')
+          : requireStoredOrderMoney(coupon?.appliedDiscountAmount, 'seller buyer-currency coupon discount'),
+        sourceCurrency: hasNativeAmount
+          ? requireCanonicalSellerCurrency(coupon?.sourceCurrency, 'seller coupon source currency')
+          : getAccountingOrderCurrency(order),
+      };
+    });
+  if (!rows.length && buyerMoney.couponDiscount > 0) {
+    rows.push({
+      key: 'legacy-seller-discount',
+      amount: buyerMoney.couponDiscount,
+      sourceCurrency: getAccountingOrderCurrency(order),
+    });
+  }
+  const converted = allocateFrozenAmountsToCurrency(order, rows, sellerCurrency);
+  return sumOrderMoney([...converted.values()], 'seller native coupon discount');
+};
+
+const sellerNativeShipping = (order, sellerId, sellerCurrency, buyerMoney) => {
+  const shipping = (order?.sellerShipping || []).find(
+    entry => toId(entry?.seller) === toId(sellerId),
+  );
+  const hasSource = shipping?.shippingMethod?.sourceCost !== null
+    && shipping?.shippingMethod?.sourceCost !== undefined;
+  const amount = hasSource
+    ? requireStoredOrderMoney(shipping.shippingMethod.sourceCost, 'seller native shipping')
+    : buyerMoney.shippingCost;
+  const sourceCurrency = hasSource
+    ? requireCanonicalSellerCurrency(shipping.shippingMethod.sourceCurrency, 'seller shipping source currency')
+    : getAccountingOrderCurrency(order);
+  const converted = allocateFrozenAmountsToCurrency(
+    order,
+    [{ key: 'shipping', amount, sourceCurrency }],
+    sellerCurrency,
+  );
+  return converted.get('shipping') || 0;
+};
+
+const sellerLedgerTotalInCurrency = (order, settlement, sellerCurrency) => {
+  const buyerCurrency = getAccountingOrderCurrency(order);
+  if (sellerCurrency === buyerCurrency) return fromMinorUnits(settlement.sourceAmountMinor);
+  if (sellerCurrency === 'USD') return fromMinorUnits(settlement.amountUSDMinor);
+  const converted = allocateFrozenAmountsToCurrency(
+    order,
+    [{ key: 'total', amount: fromMinorUnits(settlement.amountUSDMinor), sourceCurrency: 'USD' }],
+    sellerCurrency,
+  );
+  return converted.get('total') || 0;
+};
+
+const buildSellerCurrencyMoneyEntry = (order, sellerId, sellerItems = []) => {
+  const sellerKey = toId(sellerId);
+  if (!sellerKey || !sellerItems.length) {
+    throw sellerSettlementError('Seller-native money requires an owned order line.', 'SELLER_CURRENCY_MONEY_INVALID');
+  }
+  const frozenSettlement = getFrozenSellerSettlement(order);
+  const settlement = (frozenSettlement || []).find(entry => entry.seller === sellerKey);
+  if (!settlement) {
+    throw sellerSettlementError(
+      'Seller-native money requires a frozen seller settlement.',
+      'SELLER_CURRENCY_SETTLEMENT_MISSING',
+    );
+  }
+  const buyerCurrency = getAccountingOrderCurrency(order);
+  const currency = sellerCurrencyForOrder(order, sellerKey, sellerItems);
+  const buyerMoney = sellerOrderSummaryForItems(order, sellerKey, sellerItems);
+  if (toMinorUnits(buyerMoney.totalAmount) !== settlement.sourceAmountMinor) {
+    throw sellerSettlementError(
+      'Seller-native money does not reconcile with the frozen buyer-currency allocation.',
+      'SELLER_CURRENCY_MONEY_INVALID',
+    );
+  }
+  const itemRows = sellerCurrencyItemRows(order, sellerItems, currency);
+  const subtotal = sumOrderMoney(itemRows.map(row => row.targetAmount), 'seller native subtotal');
+  const shipping = sellerNativeShipping(order, sellerKey, currency, buyerMoney);
+  const tax = (allocateFrozenAmountsToCurrency(
+    order,
+    [{ key: 'tax', amount: buyerMoney.tax, sourceCurrency: buyerCurrency }],
+    currency,
+  ).get('tax') || 0);
+  const discount = sellerNativeDiscount(order, sellerKey, currency, buyerMoney);
+  const total = sellerLedgerTotalInCurrency(order, settlement, currency);
+  const adjustment = sumOrderMoney(
+    [total, -subtotal, -shipping, -tax, discount],
+    'seller native reconciliation adjustment',
+  );
+  return {
+    seller: sellerKey,
+    currency,
+    buyerCurrency,
+    subtotalMinor: toMinorUnits(subtotal),
+    shippingMinor: toMinorUnits(shipping),
+    taxMinor: toMinorUnits(tax),
+    discountMinor: toMinorUnits(discount),
+    adjustmentMinor: toMinorUnits(Math.abs(adjustment)) * (adjustment < 0 ? -1 : 1),
+    totalMinor: toMinorUnits(total),
+    buyerTotalMinor: settlement.sourceAmountMinor,
+  };
+};
+
+const buildOrderSellerCurrencyMoney = (order) => {
+  const settlement = getFrozenSellerSettlement(order);
+  if (!settlement) {
+    throw sellerSettlementError('Seller-native money requires a frozen seller settlement.');
+  }
+  const { groups, unresolvedItemCount } = groupOrderItemsForSellerSettlement(order);
+  if (unresolvedItemCount > 0) {
+    throw sellerSettlementError(
+      'Seller-native money cannot resolve one or more seller-owned lines.',
+      'SELLER_CURRENCY_OWNER_MISSING',
+    );
+  }
+  return settlement.map(entry => buildSellerCurrencyMoneyEntry(
+    order,
+    entry.seller,
+    groups.get(entry.seller) || [],
+  ));
+};
+
+const normalizedSellerCurrencyMoneyEntry = (entry, buyerCurrency) => {
+  const normalized = {
+    seller: toId(entry?.seller),
+    currency: requireCanonicalSellerCurrency(entry?.currency),
+    buyerCurrency: requireCanonicalSellerCurrency(entry?.buyerCurrency, 'seller buyer currency'),
+    subtotalMinor: requireStoredMinorUnits(entry?.subtotalMinor, 'seller native subtotal'),
+    shippingMinor: requireStoredMinorUnits(entry?.shippingMinor, 'seller native shipping'),
+    taxMinor: requireStoredMinorUnits(entry?.taxMinor, 'seller native tax'),
+    discountMinor: requireStoredMinorUnits(entry?.discountMinor, 'seller native discount'),
+    adjustmentMinor: requireStoredMinorUnits(entry?.adjustmentMinor, 'seller native adjustment', { signed: true }),
+    totalMinor: requireStoredMinorUnits(entry?.totalMinor, 'seller native total'),
+    buyerTotalMinor: requireStoredMinorUnits(entry?.buyerTotalMinor, 'seller buyer-currency total'),
+  };
+  if (!normalized.seller || normalized.buyerCurrency !== buyerCurrency) {
+    throw sellerSettlementError('The frozen seller-native money identity is malformed.', 'SELLER_CURRENCY_MONEY_INVALID');
+  }
+  const calculated = BigInt(normalized.subtotalMinor)
+    + BigInt(normalized.shippingMinor)
+    + BigInt(normalized.taxMinor)
+    - BigInt(normalized.discountMinor)
+    + BigInt(normalized.adjustmentMinor);
+  if (calculated !== BigInt(normalized.totalMinor)) {
+    throw sellerSettlementError('The frozen seller-native money components do not reconcile.', 'SELLER_CURRENCY_MONEY_INVALID');
+  }
+  return normalized;
+};
+
+const getFrozenSellerCurrencyMoney = (order) => {
+  const version = order?.sellerCurrencyMoneyVersion;
+  if (version === null || version === undefined || version === 0) return null;
+  if (version !== SELLER_CURRENCY_MONEY_VERSION || !Array.isArray(order?.sellerCurrencyMoney)) {
+    throw sellerSettlementError('The frozen seller-native money snapshot is malformed.', 'SELLER_CURRENCY_MONEY_INVALID');
+  }
+  const buyerCurrency = getAccountingOrderCurrency(order);
+  const settlement = getFrozenSellerSettlement(order);
+  if (!settlement) {
+    throw sellerSettlementError('The seller-native snapshot has no seller settlement.', 'SELLER_CURRENCY_MONEY_INVALID');
+  }
+  const seen = new Set();
+  const entries = order.sellerCurrencyMoney.map(entry => {
+    const normalized = normalizedSellerCurrencyMoneyEntry(entry, buyerCurrency);
+    if (seen.has(normalized.seller)) {
+      throw sellerSettlementError('The seller-native snapshot contains a duplicate seller.', 'SELLER_CURRENCY_MONEY_INVALID');
+    }
+    seen.add(normalized.seller);
+    const ledger = settlement.find(candidate => candidate.seller === normalized.seller);
+    if (!ledger || ledger.sourceAmountMinor !== normalized.buyerTotalMinor) {
+      throw sellerSettlementError('The seller-native snapshot disagrees with the frozen settlement.', 'SELLER_CURRENCY_MONEY_INVALID');
+    }
+    const expectedTotal = sellerLedgerTotalInCurrency(order, ledger, normalized.currency);
+    if (toMinorUnits(expectedTotal) !== normalized.totalMinor) {
+      throw sellerSettlementError('The seller-native total disagrees with the frozen settlement rate.', 'SELLER_CURRENCY_MONEY_INVALID');
+    }
+    return normalized;
+  }).sort((left, right) => left.seller.localeCompare(right.seller));
+  if (
+    entries.length !== settlement.length
+    || settlement.some(entry => !seen.has(entry.seller))
+  ) {
+    throw sellerSettlementError('The seller-native snapshot does not cover every seller.', 'SELLER_CURRENCY_MONEY_INVALID');
+  }
+  return entries;
+};
+
+// Notification delivery and other total-only consumers must not reconstruct a
+// complete item allocation for legacy orders. Older rows can contain an
+// authoritative seller settlement while lacking the newer per-line snapshots.
+// The frozen settlement plus frozen checkout rates is sufficient to present
+// the seller's total safely; detailed seller views continue to use the stricter
+// sellerCurrencyMoneyPresentation path below.
+const sellerCurrencyTotalEntry = (order, sellerId, sellerItems = []) => {
+  const sellerKey = toId(sellerId);
+  const frozen = getFrozenSellerCurrencyMoney(order);
+  const frozenEntry = frozen?.find(candidate => candidate.seller === sellerKey);
+  if (frozenEntry) return { ...frozenEntry, persisted: true };
+
+  const settlement = getFrozenSellerSettlement(order);
+  const ledger = settlement?.find(candidate => candidate.seller === sellerKey);
+  if (!sellerKey || !ledger) return null;
+
+  const currency = sellerCurrencyForOrder(order, sellerKey, sellerItems);
+  return {
+    seller: sellerKey,
+    currency,
+    buyerCurrency: getAccountingOrderCurrency(order),
+    totalMinor: toMinorUnits(sellerLedgerTotalInCurrency(order, ledger, currency)),
+    buyerTotalMinor: ledger.sourceAmountMinor,
+    persisted: false,
+  };
+};
+
+const sellerCurrencyMoneyPresentation = (order, sellerId, sellerItems = []) => {
+  const sellerKey = toId(sellerId);
+  const frozen = getFrozenSellerCurrencyMoney(order);
+  const entry = frozen?.find(candidate => candidate.seller === sellerKey)
+    || (!frozen && getFrozenSellerSettlement(order)
+      ? buildSellerCurrencyMoneyEntry(order, sellerKey, sellerItems)
+      : null);
+  if (!entry) return null;
+  const buyerMoney = sellerOrderSummaryForItems(order, sellerKey, sellerItems);
+  const itemRows = sellerCurrencyItemRows(order, sellerItems, entry.currency);
+  if (toMinorUnits(sumOrderMoney(itemRows.map(row => row.targetAmount), 'seller item native total')) !== entry.subtotalMinor) {
+    throw sellerSettlementError('Seller-native item lines do not equal the frozen subtotal.', 'SELLER_CURRENCY_MONEY_INVALID');
+  }
+  const rates = getOrderExchangeRates(order);
+  const exchangeRate = entry.currency === entry.buyerCurrency
+    ? 1
+    : rates
+      ? rates[entry.buyerCurrency] / rates[entry.currency]
+      : null;
+  if (entry.currency !== entry.buyerCurrency && (!Number.isFinite(exchangeRate) || exchangeRate <= 0)) {
+    throw sellerSettlementError('The frozen seller display exchange rate is unavailable.', 'SELLER_CURRENCY_EXCHANGE_RATE_MISSING');
+  }
+  return {
+    version: SELLER_CURRENCY_MONEY_VERSION,
+    persisted: Boolean(frozen),
+    currency: entry.currency,
+    buyerCurrency: entry.buyerCurrency,
+    summary: {
+      subtotal: fromMinorUnits(entry.subtotalMinor),
+      shippingCost: fromMinorUnits(entry.shippingMinor),
+      tax: fromMinorUnits(entry.taxMinor),
+      couponDiscount: fromMinorUnits(entry.discountMinor),
+      reconciliationAdjustment: fromMinorUnits(entry.adjustmentMinor),
+      totalAmount: fromMinorUnits(entry.totalMinor),
+    },
+    buyerSummary: {
+      subtotal: buyerMoney.subtotal,
+      shippingCost: buyerMoney.shippingCost,
+      tax: buyerMoney.tax,
+      couponDiscount: buyerMoney.couponDiscount,
+      reconciliationAdjustment: buyerMoney.adjustment,
+      totalAmount: buyerMoney.totalAmount,
+    },
+    exchangeRate: {
+      from: entry.currency,
+      to: entry.buyerCurrency,
+      rate: exchangeRate,
+      capturedAt: order?.exchangeRateSnapshot?.capturedAt || null,
+      source: order?.exchangeRateSnapshot?.source || '',
+      frozen: true,
+    },
+    itemMoney: itemRows.map((row, sellerItemIndex) => ({
+      sellerItemIndex,
+      orderItemKey: row.key,
+      orderItemIndex: row.orderIndex,
+      currency: entry.currency,
+      lineSubtotal: row.targetAmount,
+      buyerCurrency: entry.buyerCurrency,
+      buyerLineSubtotal: getOrderItemLineSubtotal(row.item),
+      originalCurrency: row.sourceCurrency,
+      originalLineSubtotal: row.sourceAmount,
+      originalUnitPrice: row.item?.sourcePrice ?? row.item?.priceOriginal ?? null,
+    })),
+  };
+};
+
+const buildSellerCurrencyItemMoneyAllocations = (order, sellerId, sellerItems = []) => {
+  const presentation = sellerCurrencyMoneyPresentation(order, sellerId, sellerItems);
+  if (!presentation) return null;
+  const weights = presentation.itemMoney.map(item => ({
+    key: item.orderItemKey,
+    weight: item.lineSubtotal,
+  }));
+  return {
+    currency: presentation.currency,
+    itemKeys: buildOrderItemKeys(order?.orderItems || []),
+    total: allocateRoundedAmount(presentation.summary.totalAmount, weights),
+    presentation,
+  };
+};
+
 const ensureOrderSellerSettlement = async (
   order,
   { session = null, requireOrderTotal = false, rateSnapshot = null } = {},
@@ -1234,6 +1697,7 @@ module.exports = {
   getOrderExchangeRates,
   ensureOrderExchangeRateSnapshot,
   sumOrderAmountsInCurrency,
+  sumCurrencyAmountsInCurrency,
   sellerOrderSubtotal,
   sellerOrderUnits,
   sellerShippingAmount,
@@ -1246,9 +1710,16 @@ module.exports = {
   isSellerRevenueRecognized,
   formatOrderMoney,
   SELLER_SETTLEMENT_VERSION,
+  SELLER_CURRENCY_MONEY_VERSION,
   sellerSettlementError,
   getFrozenSellerSettlement,
   buildOrderSellerSettlement,
+  buildSellerCurrencyMoneyEntry,
+  buildOrderSellerCurrencyMoney,
+  getFrozenSellerCurrencyMoney,
+  sellerCurrencyTotalEntry,
+  sellerCurrencyMoneyPresentation,
+  buildSellerCurrencyItemMoneyAllocations,
   ensureOrderSellerSettlement,
   sellerSettlementEntry,
   sellerSettlementUsdTargetForSource,

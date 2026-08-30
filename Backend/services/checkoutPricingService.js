@@ -19,7 +19,10 @@ const {
     toMinorUnits,
 } = require('./moneyMath');
 const { couponTermsFingerprint } = require('./couponTermsService');
-const { getOrderItemLineSubtotal } = require('./orderLinePricingService');
+const {
+    getOrderItemLineSubtotal,
+    getOrderItemSourceLineSubtotal,
+} = require('./orderLinePricingService');
 const { parseStrictFiniteNumber } = require('./numericInputService');
 
 const toId = value => value?._id?.toString?.() || value?.toString?.() || '';
@@ -408,6 +411,28 @@ const validateAndPriceCoupons = async ({
             'COUPON_CURRENCY_NOT_SUPPORTED',
             { requireCanonical: true, statusCode: 409 },
         );
+        const sourceEligibleLines = applicableProductIds.flatMap(productId => (
+            (orderItemsByProduct.get(productId) || []).map((item, index) => {
+                const sourceAmount = getOrderItemSourceLineSubtotal(item) ?? lineSubtotal(item);
+                const sourceCurrency = requireSupportedCheckoutCurrency(
+                    item?.sourceCurrency ?? item?.priceCurrency ?? currency,
+                    currency,
+                    'ORDER_LINE_CURRENCY_NOT_SUPPORTED',
+                    { requireCanonical: true, statusCode: 409 },
+                );
+                return {
+                    key: `${productId}:${index}`,
+                    sourceAmount,
+                    sourceCurrency,
+                };
+            })
+        ));
+        const sourceApplicableSubtotal = sumMoney((await allocateCheckoutAmountsBySource({
+            entries: sourceEligibleLines,
+            orderCurrency: couponCurrency,
+            exchangeRates,
+            exchangeRatesFallback,
+        })).map(entry => entry.targetAmount));
         const minimumAmount = coupon.minOrderAmount > 0
             ? roundMoney(await convertCheckoutAmount(coupon.minOrderAmount, couponCurrency, currency, exchangeRates, exchangeRatesFallback))
             : 0;
@@ -424,11 +449,19 @@ const validateAndPriceCoupons = async ({
         let directTargetAmount = null;
         let foreignAllocation = null;
         let storedDiscountValue;
+        let sourceAppliedDiscountAmount;
         if (coupon.discountType === 'percentage') {
             if (rawDiscountValue > 100) {
                 throw checkoutError(`Coupon ${coupon.code} has an invalid percentage.`, 'COUPON_DISCOUNT_INVALID');
             }
             storedDiscountValue = rawDiscountValue;
+            sourceAppliedDiscountAmount = percentageOfMoney(sourceApplicableSubtotal, storedDiscountValue);
+            if (hasMaximumDiscount) {
+                sourceAppliedDiscountAmount = Math.min(
+                    sourceAppliedDiscountAmount,
+                    roundMoney(rawMaximumDiscount),
+                );
+            }
             const percentageAmount = percentageOfMoney(applicableSubtotal, storedDiscountValue);
             if (percentageAmount <= 0) {
                 throw checkoutError(`Coupon ${coupon.code} does not provide a valid discount for this order.`, 'COUPON_DISCOUNT_INVALID');
@@ -465,6 +498,7 @@ const validateAndPriceCoupons = async ({
             const effectiveSourceValue = sourceMaximum === null
                 ? sourceFaceValue
                 : Math.min(sourceFaceValue, sourceMaximum);
+            sourceAppliedDiscountAmount = Math.min(sourceApplicableSubtotal, effectiveSourceValue);
             storedDiscountValue = roundMoney(await convertCheckoutAmount(
                 sourceFaceValue,
                 couponCurrency,
@@ -513,6 +547,7 @@ const validateAndPriceCoupons = async ({
             applicableProductIds,
             storedDiscountValue,
             sourceDiscountValue: rawDiscountValue,
+            sourceAppliedDiscountAmount: roundMoney(sourceAppliedDiscountAmount),
             directTargetAmount,
             foreignAllocation,
         });
@@ -551,6 +586,7 @@ const validateAndPriceCoupons = async ({
             discountValue: stage.storedDiscountValue,
             appliedDiscountAmount,
             currency,
+            sourceAppliedDiscountAmount: stage.sourceAppliedDiscountAmount,
             sourceDiscountValue: stage.sourceDiscountValue,
             sourceCurrency: stage.couponCurrency,
             applicableProductIds: stage.applicableProductIds,

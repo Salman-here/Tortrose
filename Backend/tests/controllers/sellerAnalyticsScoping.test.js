@@ -163,6 +163,70 @@ describe('seller analytics order isolation', () => {
     expect(analytics.notifications.some((item) => item.title.includes('AN-AWAITING-PAYMENT'))).toBe(false);
   });
 
+  test('reports frozen USD seller money instead of re-converting the PKR buyer allocation', async () => {
+    const sellerId = new mongoose.Types.ObjectId();
+    const product = await createProduct(sellerId, 'native-usd');
+    await Order.create({
+      user: new mongoose.Types.ObjectId(),
+      orderId: 'AN-NATIVE-USD',
+      currency: 'PKR',
+      exchangeRateSnapshot: {
+        base: 'USD',
+        rates: { USD: 1, PKR: 277.86, EUR: 0.92, GBP: 0.79 },
+        capturedAt: new Date('2026-08-30T00:00:00Z'),
+        source: 'test',
+        fallback: false,
+      },
+      orderItems: [{
+        productId: product._id,
+        seller: sellerId,
+        name: product.name,
+        image: product.image,
+        price: 8196.87,
+        lineSubtotal: 8196.87,
+        sourcePrice: 29.5,
+        sourceCurrency: 'USD',
+        sourceLineSubtotal: 29.5,
+        priceOriginal: 29.5,
+        priceCurrency: 'USD',
+        quantity: 1,
+      }],
+      shippingInfo: {
+        fullName: 'PKR Buyer', email: 'pkr@example.com', phone: '+923001234567',
+        address: '1 Test Road', city: 'Karachi', state: 'Sindh', postalCode: '74000', country: 'Pakistan',
+      },
+      shippingMethod: { name: 'Free', price: 0, estimatedDays: 3, seller: sellerId },
+      sellerShipping: [{ seller: sellerId, shippingMethod: { name: 'Free', price: 0, estimatedDays: 3, sourceCost: 0, sourceCurrency: 'USD' } }],
+      sellerPolicies: [{ seller: sellerId, productCurrency: 'USD', storeName: 'USD Store' }],
+      sellerFulfillment: [{ seller: sellerId, status: 'confirmed' }],
+      orderSummary: { subtotal: 8196.87, shippingCost: 0, tax: 0, couponDiscount: 0, totalAmount: 8196.87 },
+      sellerSettlementVersion: 1,
+      sellerSettlement: [{ seller: sellerId, sourceCurrency: 'PKR', sourceAmountMinor: 819687, amountUSDMinor: 2950 }],
+      sellerCurrencyMoneyVersion: 1,
+      sellerCurrencyMoney: [{
+        seller: sellerId, currency: 'USD', buyerCurrency: 'PKR', subtotalMinor: 2950,
+        shippingMinor: 0, taxMinor: 0, discountMinor: 0, adjustmentMinor: 0,
+        totalMinor: 2950, buyerTotalMinor: 819687,
+      }],
+      orderStatus: 'confirmed',
+      paymentMethod: 'stripe',
+      isPaid: true,
+      paidAt: new Date(),
+      awaitingPayment: false,
+    });
+
+    const response = responseMock();
+    await getSellerAnalytics({
+      user: { id: sellerId.toString(), role: 'seller' },
+      query: { days: '30', currency: 'USD' },
+    }, response);
+
+    expect(response.status).toHaveBeenCalledWith(200);
+    const analytics = response.json.mock.calls[0][0].analytics;
+    expect(analytics.summary).toMatchObject({ totalRevenue: 29.5, paidOrders: 1, avgOrderValue: 29.5 });
+    expect(analytics.topProducts[0]).toMatchObject({ name: product.name, revenue: 29.5, sold: 1 });
+  });
+
   test('keeps generated seller notifications scoped to the same seller rules', async () => {
     const sellerId = new mongoose.Types.ObjectId();
     const otherSellerId = new mongoose.Types.ObjectId();
@@ -307,5 +371,76 @@ describe('seller analytics order isolation', () => {
       .find(item => item.id === `paid-${order._id}`);
     expect(paid).toEqual(expect.objectContaining({ description: '$5.00' }));
     expect(paid.description).not.toContain('999');
+  });
+
+  test('paid notification fallback presents a legacy cross-currency order in the seller currency', async () => {
+    const sellerId = new mongoose.Types.ObjectId();
+    const product = await createProduct(sellerId, 'legacy-native-notice');
+    const order = await Order.create({
+      user: new mongoose.Types.ObjectId(),
+      orderId: 'NOTICE-LEGACY-NATIVE',
+      currency: 'PKR',
+      exchangeRateSnapshot: {
+        base: 'USD',
+        rates: { USD: 1, PKR: 277.86, EUR: 0.92, GBP: 0.79 },
+        capturedAt: new Date('2026-08-30T00:00:00Z'),
+        source: 'test',
+        fallback: false,
+      },
+      orderItems: [{
+        productId: product._id,
+        seller: sellerId,
+        name: product.name,
+        image: product.image,
+        price: 8196.87,
+        lineSubtotal: 8196.87,
+        sourcePrice: 29.5,
+        sourceCurrency: 'USD',
+        sourceLineSubtotal: 29.5,
+        priceOriginal: 29.5,
+        priceCurrency: 'USD',
+        quantity: 1,
+      }],
+      shippingInfo: {
+        fullName: 'PKR Buyer', email: 'pkr-notice@example.com', phone: '+923001234567',
+        address: '1 Test Road', city: 'Karachi', state: 'Sindh', postalCode: '74000', country: 'Pakistan',
+      },
+      shippingMethod: { name: 'Free', price: 0, estimatedDays: 3, seller: sellerId },
+      sellerShipping: [{
+        seller: sellerId,
+        shippingMethod: {
+          name: 'Free', price: 0, estimatedDays: 3, sourceCost: 0, sourceCurrency: 'USD',
+        },
+      }],
+      sellerPolicies: [{ seller: sellerId, productCurrency: 'USD', storeName: 'USD Store' }],
+      sellerFulfillment: [{ seller: sellerId, status: 'confirmed' }],
+      orderSummary: {
+        subtotal: 8196.87, shippingCost: 0, tax: 0, couponDiscount: 0, totalAmount: 8196.87,
+      },
+      sellerSettlementVersion: 1,
+      sellerSettlement: [{
+        seller: sellerId,
+        sourceCurrency: 'PKR',
+        sourceAmountMinor: 819687,
+        amountUSDMinor: 2950,
+      }],
+      orderStatus: 'confirmed',
+      paymentMethod: 'stripe',
+      isPaid: true,
+      paidAt: new Date(),
+      awaitingPayment: false,
+    });
+
+    const response = responseMock();
+    await getSellerNotifications({
+      user: { id: sellerId.toString(), role: 'seller' },
+      query: {},
+    }, response);
+
+    expect(response.status).toHaveBeenCalledWith(200);
+    const paid = response.json.mock.calls[0][0].notifications
+      .find(item => item.id === `paid-${order._id}`);
+    expect(paid).toEqual(expect.objectContaining({ description: '$29.50' }));
+    expect(paid.description).not.toContain('8,196.87');
   });
 });

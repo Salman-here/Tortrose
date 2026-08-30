@@ -8,6 +8,7 @@ const {
   outboxError,
 } = require('./notificationOutboxService');
 const {
+  orderSellerStoreTotalSnapshot,
   orderSellerTotalSnapshot,
   orderStockRefundSnapshot,
   orderTotalSnapshot,
@@ -29,6 +30,10 @@ const { tryOrderBuyerPhoneE164 } = require('./orderBuyerContactService');
 
 const stringId = value => value?._id?.toString?.() || value?.toString?.() || '';
 const safeText = (value, max = 300) => String(value || '').trim().slice(0, max);
+const sellerOrderMoneySnapshots = (order, sellerId) => [
+  orderSellerStoreTotalSnapshot(order, sellerId),
+  orderSellerTotalSnapshot(order, sellerId),
+];
 const isValidSnapshotEmail = value => (
   typeof value === 'string'
   && value === value.trim()
@@ -494,19 +499,19 @@ async function enqueuePaidOrderBuyerNotifications(order, {
 const paidSellerTemplates = orderNumber => ({
   inapp: {
     title: 'Paid order received',
-    body: `Your portion of order #${orderNumber} is {{money.seller_order_total}} in the buyer's frozen order currency.`,
+    body: `Order #${orderNumber}: store-currency total {{money.seller_store_total}}; buyer checkout equivalent {{money.seller_order_total}}.`,
   },
   push: {
     title: 'Paid order received',
-    body: `Order #${orderNumber}: your order allocation is {{money.seller_order_total}}.`,
+    body: `Order #${orderNumber}: your frozen store-currency total is {{money.seller_store_total}}.`,
   },
   email: {
     subject: `Paid order received - ${orderNumber}`,
-    text: `Your portion of buyer order #${orderNumber} is {{money.seller_order_total}} in the order currency. Open Seller Dashboard to process it.`,
-    html: `<p>You received paid order <strong>#${escapeHtml(orderNumber)}</strong>.</p><p>Your portion of the buyer order total: <strong>{{money.seller_order_total}}</strong>.</p><p>This is the frozen order-currency allocation, not a live-FX estimate of a bank payout.</p>`,
+    text: `You received paid order #${orderNumber}. Frozen store-currency total: {{money.seller_store_total}}. Buyer checkout equivalent: {{money.seller_order_total}}. Open Seller Dashboard to process it.`,
+    html: `<p>You received paid order <strong>#${escapeHtml(orderNumber)}</strong>.</p><p>Frozen store-currency total: <strong>{{money.seller_store_total}}</strong>.</p><p>Buyer checkout equivalent: <strong>{{money.seller_order_total}}</strong>.</p><p>Both values are frozen at checkout; neither is a live-FX bank-payout estimate.</p>`,
   },
   whatsapp: {
-    message: `Paid Order Received\n\nOrder: #${orderNumber}\nYour order allocation: {{money.seller_order_total}}\n\nThis is the frozen buyer-order currency amount. Open Seller Dashboard to process the order.`,
+    message: `Paid Order Received\n\nOrder: #${orderNumber}\nStore-currency total: {{money.seller_store_total}}\nBuyer checkout equivalent: {{money.seller_order_total}}\n\nBoth values were frozen at checkout. Open Seller Dashboard to process the order.`,
   },
 });
 
@@ -541,7 +546,7 @@ async function enqueuePaidOrderSellerNotifications(order, sellerId, {
       relatedOrder: id,
       data: { type: 'paid_order_received', orderId: id },
     },
-    money: [orderSellerTotalSnapshot(order, seller)],
+    money: sellerOrderMoneySnapshots(order, seller),
     session,
   });
 }
@@ -613,19 +618,19 @@ async function enqueueNoChargeOrderBuyerNotifications(order, {
 const noChargeSellerTemplates = orderNumber => ({
   inapp: {
     title: 'No-charge order received',
-    body: `Order #${orderNumber} is confirmed. Your frozen order allocation is {{money.seller_order_total}}; no buyer payment was required.`,
+    body: `Order #${orderNumber} is confirmed. Store total {{money.seller_store_total}}; buyer equivalent {{money.seller_order_total}}. No payment was required.`,
   },
   push: {
     title: 'No-charge order received',
-    body: `Order #${orderNumber}: your allocation is {{money.seller_order_total}}. No buyer payment was required.`,
+    body: `Order #${orderNumber}: store-currency total {{money.seller_store_total}}. No buyer payment was required.`,
   },
   email: {
     subject: `No-charge order received - ${orderNumber}`,
-    text: `Order #${orderNumber} is confirmed. Your frozen order allocation is {{money.seller_order_total}}. No buyer payment was required or collected. Open Seller Dashboard to process your items.`,
-    html: `<p>Order <strong>#${escapeHtml(orderNumber)}</strong> is confirmed.</p><p>Your frozen order allocation: <strong>{{money.seller_order_total}}</strong>.</p><p>No buyer payment was required or collected. Open Seller Dashboard to process your items.</p>`,
+    text: `Order #${orderNumber} is confirmed. Frozen store-currency total: {{money.seller_store_total}}. Buyer checkout equivalent: {{money.seller_order_total}}. No buyer payment was required or collected.`,
+    html: `<p>Order <strong>#${escapeHtml(orderNumber)}</strong> is confirmed.</p><p>Frozen store-currency total: <strong>{{money.seller_store_total}}</strong>.</p><p>Buyer checkout equivalent: <strong>{{money.seller_order_total}}</strong>.</p><p>No buyer payment was required or collected.</p>`,
   },
   whatsapp: {
-    message: `No-Charge Order Received\n\nOrder: #${orderNumber}\nYour order allocation: {{money.seller_order_total}}\nNo buyer payment was required or collected.\n\nOpen Seller Dashboard to process your items.`,
+    message: `No-Charge Order Received\n\nOrder: #${orderNumber}\nStore-currency total: {{money.seller_store_total}}\nBuyer checkout equivalent: {{money.seller_order_total}}\nNo buyer payment was required or collected.`,
   },
 });
 
@@ -636,10 +641,10 @@ async function enqueueNoChargeOrderSellerNotifications(order, sellerId, {
   const id = stringId(order?._id);
   const seller = stringId(sellerId);
   const orderNumber = safeText(order?.orderId || id, 100);
-  const sellerTotal = requireZeroSnapshot(
-    orderSellerTotalSnapshot(order, seller),
+  const sellerTotals = sellerOrderMoneySnapshots(order, seller).map(snapshot => requireZeroSnapshot(
+    snapshot,
     'No-charge seller allocation',
-  );
+  ));
   return enqueueNotificationEvent({
     eventKey: `order:${id}:no-charge-confirmed:seller:${seller}:v1`,
     eventType: 'order.no_charge_confirmed',
@@ -663,7 +668,7 @@ async function enqueueNoChargeOrderSellerNotifications(order, sellerId, {
       relatedOrder: id,
       data: { type: 'no_charge_order_received', orderId: id },
     },
-    money: [sellerTotal],
+    money: sellerTotals,
     session,
   });
 }
@@ -671,19 +676,19 @@ async function enqueueNoChargeOrderSellerNotifications(order, sellerId, {
 const codSellerPlacedTemplates = orderNumber => ({
   inapp: {
     title: 'New cash on delivery order',
-    body: `Order #${orderNumber}: your frozen order allocation is {{money.seller_order_total}}. Payment has not been collected yet.`,
+    body: `Order #${orderNumber}: store-currency total {{money.seller_store_total}}; buyer equivalent {{money.seller_order_total}}. Payment is uncollected.`,
   },
   push: {
     title: 'New cash on delivery order',
-    body: `Order #${orderNumber}: your allocation is {{money.seller_order_total}}. Await buyer confirmation.`,
+    body: `Order #${orderNumber}: store-currency total {{money.seller_store_total}}. Await buyer confirmation.`,
   },
   email: {
     subject: `New cash on delivery order - ${orderNumber}`,
-    text: `You received cash on delivery order #${orderNumber}. Your frozen order allocation is {{money.seller_order_total}}. Payment has not been collected. Open Seller Dashboard for your items and shipping details.`,
-    html: `<p>You received cash on delivery order <strong>#${escapeHtml(orderNumber)}</strong>.</p><p>Your frozen order allocation: <strong>{{money.seller_order_total}}</strong>.</p><p>Payment has not been collected. Open Seller Dashboard for only your items and shipping details.</p>`,
+    text: `You received cash on delivery order #${orderNumber}. Frozen store-currency total: {{money.seller_store_total}}. Buyer checkout equivalent: {{money.seller_order_total}}. Payment has not been collected.`,
+    html: `<p>You received cash on delivery order <strong>#${escapeHtml(orderNumber)}</strong>.</p><p>Frozen store-currency total: <strong>{{money.seller_store_total}}</strong>.</p><p>Buyer checkout equivalent: <strong>{{money.seller_order_total}}</strong>.</p><p>Payment has not been collected.</p>`,
   },
   whatsapp: {
-    message: `New Cash on Delivery Order\n\nOrder: #${orderNumber}\nYour order allocation: {{money.seller_order_total}}\nPayment has not been collected.\n\nOpen Seller Dashboard to review your items and await buyer confirmation.`,
+    message: `New Cash on Delivery Order\n\nOrder: #${orderNumber}\nStore-currency total: {{money.seller_store_total}}\nBuyer checkout equivalent: {{money.seller_order_total}}\nPayment has not been collected.\n\nOpen Seller Dashboard to review your items.`,
   },
 });
 
@@ -717,7 +722,7 @@ async function enqueueCodOrderSellerNotifications(order, sellerId, {
       relatedOrder: id,
       data: { type: 'cod_order_received', orderId: id },
     },
-    money: [orderSellerTotalSnapshot(order, seller)],
+    money: sellerOrderMoneySnapshots(order, seller),
     session,
   });
 }
@@ -824,18 +829,18 @@ const codSellerDecisionTemplates = (
     ? 'Cash on delivery has not been collected yet.'
     : 'No cash on delivery payment was collected.';
   const allocationSentence = includeMoney
-    ? ' Your frozen allocation is {{money.seller_order_total}}.'
+    ? ' Your frozen store-currency total is {{money.seller_store_total}}; buyer checkout equivalent {{money.seller_order_total}}.'
     : '';
   const allocationLine = includeMoney
-    ? '\nYour order allocation: {{money.seller_order_total}}'
+    ? '\nStore-currency total: {{money.seller_store_total}}\nBuyer checkout equivalent: {{money.seller_order_total}}'
     : '';
   return {
     inapp: { title, body: `${action}${allocationSentence} ${settlementMeaning}` },
     push: { title, body: `Order #${orderNumber}.${allocationSentence} ${settlementMeaning}` },
     email: {
       subject: `${title} - ${orderNumber}`,
-      text: `${action}${includeMoney ? ' Your frozen order allocation is {{money.seller_order_total}}.' : ''} ${settlementMeaning}`,
-      html: `<p>${escapeHtml(action)}</p>${includeMoney ? '<p>Your frozen order allocation: <strong>{{money.seller_order_total}}</strong>.</p>' : ''}<p>${escapeHtml(settlementMeaning)}</p>`,
+      text: `${action}${includeMoney ? ' Your frozen store-currency total is {{money.seller_store_total}}; buyer checkout equivalent {{money.seller_order_total}}.' : ''} ${settlementMeaning}`,
+      html: `<p>${escapeHtml(action)}</p>${includeMoney ? '<p>Frozen store-currency total: <strong>{{money.seller_store_total}}</strong>.</p><p>Buyer checkout equivalent: <strong>{{money.seller_order_total}}</strong>.</p>' : ''}<p>${escapeHtml(settlementMeaning)}</p>`,
     },
     whatsapp: {
       message: `${title}\n\nOrder: #${orderNumber}${allocationLine}\n${settlementMeaning}\n\nOpen Seller Dashboard for your items.`,
@@ -871,9 +876,12 @@ async function enqueueCodOrderDecisionSellerNotifications(order, sellerId, {
     .digest('hex');
   let money = [];
   try {
-    money = [orderSellerTotalSnapshot(order, seller)];
+    money = sellerOrderMoneySnapshots(order, seller);
   } catch (error) {
-    if (error?.code !== 'NOTIFICATION_SELLER_SETTLEMENT_MISSING') throw error;
+    if (![
+      'NOTIFICATION_SELLER_SETTLEMENT_MISSING',
+      'NOTIFICATION_SELLER_CURRENCY_MONEY_MISSING',
+    ].includes(error?.code)) throw error;
   }
   const financial = money.length > 0;
   return enqueueNotificationEvent({

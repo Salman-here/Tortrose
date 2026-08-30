@@ -317,6 +317,115 @@ export const inspectOrderListMoney = (order) => {
   }
 };
 
+export const getSellerCurrencyMoney = (order = {}) => {
+  const raw = order?.sellerCurrencyMoney;
+  if (raw === null || raw === undefined) return null;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw) || raw.version !== 1) {
+    throw orderPresentationIntegrityError('seller currency money snapshot');
+  }
+  const currency = requireCanonicalOrderCurrency(raw.currency, 'seller currency');
+  const buyerCurrency = requireCanonicalOrderCurrency(raw.buyerCurrency, 'seller buyer currency');
+  if (buyerCurrency !== getOrderCurrency(order)) {
+    throw orderPresentationIntegrityError('seller buyer currency');
+  }
+  const readSummary = (summary, prefix) => {
+    if (!summary || typeof summary !== 'object' || Array.isArray(summary)) {
+      throw orderPresentationIntegrityError(`${prefix} summary`);
+    }
+    const normalized = {
+      subtotal: requireExactStoredMoney(summary.subtotal, `${prefix} subtotal`),
+      shippingCost: requireExactStoredMoney(summary.shippingCost, `${prefix} shipping`),
+      tax: requireExactStoredMoney(summary.tax, `${prefix} tax`),
+      couponDiscount: requireExactStoredMoney(summary.couponDiscount, `${prefix} discount`),
+      reconciliationAdjustment: requireExactStoredMoney(
+        summary.reconciliationAdjustment,
+        `${prefix} reconciliation adjustment`,
+        { signed: true },
+      ),
+      totalAmount: requireExactStoredMoney(summary.totalAmount, `${prefix} total`),
+    };
+    const calculated = addCurrencyAmounts(
+      normalized.subtotal,
+      normalized.shippingCost,
+      normalized.tax,
+      -normalized.couponDiscount,
+      normalized.reconciliationAdjustment,
+    );
+    if (calculated !== normalized.totalAmount) {
+      throw orderPresentationIntegrityError(`${prefix} summary total`);
+    }
+    return normalized;
+  };
+  const summary = readSummary(raw.summary, 'seller currency');
+  const buyerSummary = readSummary(raw.buyerSummary, 'seller buyer-currency');
+  if (buyerSummary.totalAmount !== getOrderTotal(order)) {
+    throw orderPresentationIntegrityError('seller buyer-currency total');
+  }
+  if (!raw.exchangeRate || typeof raw.exchangeRate !== 'object') {
+    throw orderPresentationIntegrityError('seller exchange rate');
+  }
+  const exchangeRate = raw.exchangeRate.rate;
+  if (
+    raw.exchangeRate.from !== currency
+    || raw.exchangeRate.to !== buyerCurrency
+    || raw.exchangeRate.frozen !== true
+    || typeof exchangeRate !== 'number'
+    || !Number.isFinite(exchangeRate)
+    || exchangeRate <= 0
+    || (currency === buyerCurrency && exchangeRate !== 1)
+  ) throw orderPresentationIntegrityError('seller exchange rate');
+  if (!Array.isArray(raw.itemMoney) || raw.itemMoney.length !== (order.orderItems || []).length) {
+    throw orderPresentationIntegrityError('seller item currency money');
+  }
+  const itemMoney = raw.itemMoney.map((item, index) => {
+    if (
+      !item
+      || item.sellerItemIndex !== index
+      || item.currency !== currency
+      || item.buyerCurrency !== buyerCurrency
+    ) throw orderPresentationIntegrityError('seller item currency money');
+    return {
+      ...item,
+      lineSubtotal: requireExactStoredMoney(item.lineSubtotal, 'seller item line subtotal'),
+      buyerLineSubtotal: requireExactStoredMoney(item.buyerLineSubtotal, 'seller buyer item line subtotal'),
+      originalLineSubtotal: requireExactStoredMoney(item.originalLineSubtotal, 'seller original item line subtotal'),
+      originalUnitPrice: item.originalUnitPrice === null || item.originalUnitPrice === undefined
+        ? null
+        : requireExactStoredMoney(item.originalUnitPrice, 'seller original item unit price'),
+      originalCurrency: requireCanonicalOrderCurrency(item.originalCurrency, 'seller original item currency'),
+    };
+  });
+  if (addCurrencyAmounts(...itemMoney.map(item => item.lineSubtotal)) !== summary.subtotal) {
+    throw orderPresentationIntegrityError('seller item subtotal');
+  }
+  return {
+    ...raw,
+    currency,
+    buyerCurrency,
+    summary,
+    buyerSummary,
+    exchangeRate: { ...raw.exchangeRate, rate: exchangeRate },
+    itemMoney,
+  };
+};
+
+export const inspectSellerOrderListMoney = (order) => {
+  try {
+    const sellerMoney = getSellerCurrencyMoney(order);
+    if (!sellerMoney) return inspectOrderListMoney(order);
+    return {
+      valid: true,
+      currency: sellerMoney.currency,
+      total: sellerMoney.summary.totalAmount,
+      buyerCurrency: sellerMoney.buyerCurrency,
+      buyerTotal: sellerMoney.buyerSummary.totalAmount,
+      frozenExchangeRate: sellerMoney.exchangeRate,
+    };
+  } catch (error) {
+    return { valid: false, currency: null, total: null, error };
+  }
+};
+
 export const getOrderItemOptionPairs = (item = {}) => {
   const pairs = [];
   const selectedOptions = toPlainOptions(item.selectedOptions);

@@ -11,8 +11,10 @@ import {
   getOrderItemLineSubtotal,
   getOrderSummaryAmount,
   getOrderTotal,
+  getSellerCurrencyMoney,
   hasExactOrderItemUnitEquation,
   inspectOrderListMoney,
+  inspectSellerOrderListMoney,
 } from '../src/utils/orderItems.js';
 
 const groupedOrder = () => ({
@@ -276,4 +278,90 @@ test('rejects conflicting total aliases and non-reconciling persisted summaries'
     () => getOrderTotal({ orderSummary: { subtotal: 1, couponDiscount: 2 } }),
     (error) => error?.code === 'ORDER_PRESENTATION_DATA_INVALID',
   );
+});
+
+const sellerCurrencyOrder = () => ({
+  currency: 'PKR',
+  orderItems: [{
+    _id: 'line-1',
+    price: 8196.87,
+    lineSubtotal: 8196.87,
+    sourcePrice: 29.5,
+    sourceCurrency: 'USD',
+    sourceLineSubtotal: 29.5,
+    quantity: 1,
+  }],
+  orderSummary: {
+    subtotal: 8196.87,
+    shippingCost: 0,
+    tax: 0,
+    couponDiscount: 0,
+    reconciliationAdjustment: 0,
+    totalAmount: 8196.87,
+  },
+  sellerCurrencyMoney: {
+    version: 1,
+    persisted: true,
+    currency: 'USD',
+    buyerCurrency: 'PKR',
+    summary: {
+      subtotal: 29.5,
+      shippingCost: 0,
+      tax: 0,
+      couponDiscount: 0,
+      reconciliationAdjustment: 0,
+      totalAmount: 29.5,
+    },
+    buyerSummary: {
+      subtotal: 8196.87,
+      shippingCost: 0,
+      tax: 0,
+      couponDiscount: 0,
+      reconciliationAdjustment: 0,
+      totalAmount: 8196.87,
+    },
+    exchangeRate: { from: 'USD', to: 'PKR', rate: 277.86, frozen: true },
+    itemMoney: [{
+      sellerItemIndex: 0,
+      orderItemKey: 'line-1',
+      currency: 'USD',
+      lineSubtotal: 29.5,
+      buyerCurrency: 'PKR',
+      buyerLineSubtotal: 8196.87,
+      originalCurrency: 'USD',
+      originalLineSubtotal: 29.5,
+      originalUnitPrice: 29.5,
+    }],
+  },
+});
+
+test('seller list and detail money prefer frozen USD while retaining the exact buyer PKR allocation', () => {
+  const order = sellerCurrencyOrder();
+  const detail = getSellerCurrencyMoney(order);
+  const list = inspectSellerOrderListMoney(order);
+  assert.equal(detail.summary.totalAmount, 29.5);
+  assert.equal(detail.buyerSummary.totalAmount, 8196.87);
+  assert.deepEqual(list, {
+    valid: true,
+    currency: 'USD',
+    total: 29.5,
+    buyerCurrency: 'PKR',
+    buyerTotal: 8196.87,
+    frozenExchangeRate: detail.exchangeRate,
+  });
+});
+
+test('seller currency presentation fails closed on tampered totals, items, or FX metadata', () => {
+  const wrongTotal = sellerCurrencyOrder();
+  wrongTotal.sellerCurrencyMoney.summary.totalAmount = 29.51;
+  const wrongItem = sellerCurrencyOrder();
+  wrongItem.sellerCurrencyMoney.itemMoney[0].lineSubtotal = 29.49;
+  const liveRate = sellerCurrencyOrder();
+  liveRate.sellerCurrencyMoney.exchangeRate.frozen = false;
+  for (const order of [wrongTotal, wrongItem, liveRate]) {
+    assert.throws(
+      () => getSellerCurrencyMoney(order),
+      error => error?.code === 'ORDER_PRESENTATION_DATA_INVALID',
+    );
+  }
 });

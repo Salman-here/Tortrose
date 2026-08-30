@@ -172,6 +172,84 @@ export const getOrderTotal = (order) => {
   return legacyTotal;
 };
 
+export const getSellerCurrencyMoney = (order = {}) => {
+  const raw = order?.sellerCurrencyMoney;
+  if (raw === null || raw === undefined) return null;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw) || raw.version !== 1) {
+    throw orderPresentationIntegrityError('seller currency money snapshot');
+  }
+  const currency = requireCanonicalOrderCurrency(raw.currency, 'seller currency');
+  const buyerCurrency = requireCanonicalOrderCurrency(raw.buyerCurrency, 'seller buyer currency');
+  if (buyerCurrency !== getOrderCurrency(order)) {
+    throw orderPresentationIntegrityError('seller buyer currency');
+  }
+  const readSummary = (summary, prefix) => {
+    if (!summary || typeof summary !== 'object' || Array.isArray(summary)) {
+      throw orderPresentationIntegrityError(`${prefix} summary`);
+    }
+    const value = {
+      subtotal: requireExactStoredMoney(summary.subtotal, `${prefix} subtotal`),
+      shippingCost: requireExactStoredMoney(summary.shippingCost, `${prefix} shipping`),
+      tax: requireExactStoredMoney(summary.tax, `${prefix} tax`),
+      couponDiscount: requireExactStoredMoney(summary.couponDiscount, `${prefix} discount`),
+      reconciliationAdjustment: requireExactStoredMoney(
+        summary.reconciliationAdjustment,
+        `${prefix} adjustment`,
+        { signed: true },
+      ),
+      totalAmount: requireExactStoredMoney(summary.totalAmount, `${prefix} total`),
+    };
+    if (addCurrencyAmounts(
+      value.subtotal,
+      value.shippingCost,
+      value.tax,
+      -value.couponDiscount,
+      value.reconciliationAdjustment,
+    ) !== value.totalAmount) throw orderPresentationIntegrityError(`${prefix} total`);
+    return value;
+  };
+  const summary = readSummary(raw.summary, 'seller currency');
+  const buyerSummary = readSummary(raw.buyerSummary, 'seller buyer-currency');
+  if (buyerSummary.totalAmount !== getOrderTotal(order)) {
+    throw orderPresentationIntegrityError('seller buyer-currency total');
+  }
+  if (
+    !raw.exchangeRate
+    || raw.exchangeRate.from !== currency
+    || raw.exchangeRate.to !== buyerCurrency
+    || raw.exchangeRate.frozen !== true
+    || typeof raw.exchangeRate.rate !== 'number'
+    || !Number.isFinite(raw.exchangeRate.rate)
+    || raw.exchangeRate.rate <= 0
+    || (currency === buyerCurrency && raw.exchangeRate.rate !== 1)
+  ) throw orderPresentationIntegrityError('seller exchange rate');
+  if (!Array.isArray(raw.itemMoney) || raw.itemMoney.length !== (order.orderItems || []).length) {
+    throw orderPresentationIntegrityError('seller item currency money');
+  }
+  const itemMoney = raw.itemMoney.map((item, index) => {
+    if (
+      !item
+      || item.sellerItemIndex !== index
+      || item.currency !== currency
+      || item.buyerCurrency !== buyerCurrency
+    ) throw orderPresentationIntegrityError('seller item currency money');
+    return {
+      ...item,
+      lineSubtotal: requireExactStoredMoney(item.lineSubtotal, 'seller item line subtotal'),
+      buyerLineSubtotal: requireExactStoredMoney(item.buyerLineSubtotal, 'seller buyer item line subtotal'),
+      originalLineSubtotal: requireExactStoredMoney(item.originalLineSubtotal, 'seller original line subtotal'),
+      originalUnitPrice: item.originalUnitPrice === null || item.originalUnitPrice === undefined
+        ? null
+        : requireExactStoredMoney(item.originalUnitPrice, 'seller original unit price'),
+      originalCurrency: requireCanonicalOrderCurrency(item.originalCurrency, 'seller original item currency'),
+    };
+  });
+  if (addCurrencyAmounts(...itemMoney.map(item => item.lineSubtotal)) !== summary.subtotal) {
+    throw orderPresentationIntegrityError('seller item subtotal');
+  }
+  return { ...raw, currency, buyerCurrency, summary, buyerSummary, itemMoney };
+};
+
 export const getOrderLeadItem = (order) => (order?.orderItems || [])[0] || null;
 
 export const formatOrderItemOptions = (item) => {

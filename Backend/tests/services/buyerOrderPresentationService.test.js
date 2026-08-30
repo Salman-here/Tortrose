@@ -108,6 +108,19 @@ describe('buyer seller-group order presentation', () => {
     expect(serialized.sellerGroups[0].itemIndexes).toEqual([0]);
   });
 
+  test('does not expose the seller-native reporting snapshot in the buyer payload', () => {
+    const order = mixedSellerOrder();
+    order.sellerCurrencyMoneyVersion = 1;
+    order.sellerCurrencyMoney = [{ seller: sellerA, currency: 'PKR', totalMinor: 1000 }];
+
+    const view = buildBuyerOrderView(order);
+
+    expect(view).not.toHaveProperty('sellerCurrencyMoneyVersion');
+    expect(view).not.toHaveProperty('sellerCurrencyMoney');
+    expect(view.currency).toBe('PKR');
+    expect(view.orderSummary.totalAmount).toBe(36);
+  });
+
   test('marks legacy orders unavailable instead of guessing missing seller ownership', () => {
     const order = mixedSellerOrder();
     order.orderItems[1].seller = null;

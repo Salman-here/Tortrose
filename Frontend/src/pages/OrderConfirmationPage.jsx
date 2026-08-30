@@ -87,7 +87,6 @@ export default function OrderConfirmationPage() {
   };
 
   const handleDecline = async () => {
-    if (!window.confirm('Are you sure you want to cancel this order?')) return;
     setSubmitting(true);
     try {
       const res = await axios.post(`${API}api/order-confirm/${token}/decline`);

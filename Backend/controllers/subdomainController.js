@@ -8,9 +8,10 @@ const { convertAmountSync } = require('../services/currencyService');
 const { getProductCurrency, getProductEffectivePrice } = require('../services/productPricingService');
 const {
     resolveRequestedCurrency,
+    sellerCurrencyMoneyPresentation,
     sellerOrderSummaryForItems,
     isSellerRevenueRecognized,
-    sumOrderAmountsInCurrency,
+    sumCurrencyAmountsInCurrency,
 } = require('../services/orderMoneyService');
 const {
     buyerLocationFromRequest,
@@ -184,9 +185,13 @@ exports.getSellerSubdomainAnalytics = async (req, res) => {
         const revenueEntries = recognizedOrders.map(order => {
             const sellerItems = sellerItemsForOrder(order, sellerId, productIds);
             const sellerMoney = sellerOrderSummaryForItems(order, sellerId, sellerItems);
-            return { order, amount: sellerMoney.totalAmount };
+            const native = sellerCurrencyMoneyPresentation(order, sellerId, sellerItems);
+            return {
+                amount: native?.summary?.totalAmount ?? sellerMoney.totalAmount,
+                currency: native?.currency || order.currency,
+            };
         });
-        const totalRevenue = await sumOrderAmountsInCurrency(revenueEntries, targetCurrency);
+        const totalRevenue = await sumCurrencyAmountsInCurrency(revenueEntries, targetCurrency);
         const totalOrders = recognizedOrders.length;
 
         // Store views are currently retained only as a lifetime counter. Do not
@@ -299,9 +304,13 @@ exports.getAllSubdomains = async (req, res) => {
             const revenueEntries = recognizedOrders.map(order => {
                 const sellerItems = sellerItemsForOrder(order, sellerId, productIds);
                 const sellerMoney = sellerOrderSummaryForItems(order, sellerId, sellerItems);
-                return { order, amount: sellerMoney.totalAmount };
+                const native = sellerCurrencyMoneyPresentation(order, sellerId, sellerItems);
+                return {
+                    amount: native?.summary?.totalAmount ?? sellerMoney.totalAmount,
+                    currency: native?.currency || order.currency,
+                };
             });
-            const totalRevenue = await sumOrderAmountsInCurrency(revenueEntries, targetCurrency);
+            const totalRevenue = await sumCurrencyAmountsInCurrency(revenueEntries, targetCurrency);
 
             return {
                 _id: store._id,

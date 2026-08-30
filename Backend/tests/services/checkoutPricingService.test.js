@@ -113,6 +113,56 @@ describe('checkoutPricingService', () => {
             discountValue: 50,
             appliedDiscountAmount: 10,
             currency: 'USD',
+            sourceAppliedDiscountAmount: 10,
+            sourceCurrency: 'USD',
+        });
+    });
+
+    test('freezes the exact seller-currency coupon amount beside the buyer PKR allocation', async () => {
+        Coupon.find.mockReturnValue(queryResult([{
+            _id: COUPON_ID,
+            seller: 'seller-usd',
+            code: 'USD10',
+            discountType: 'percentage',
+            discountValue: 10,
+            currency: 'USD',
+            applicableTo: 'all',
+            applicableProducts: [],
+            minOrderAmount: 0,
+            maxDiscountAmount: null,
+            maxUses: null,
+            maxUsesPerUser: 1,
+            usedCount: 0,
+            usedBy: [],
+            isActive: true,
+            startDate: new Date('2025-01-01T00:00:00.000Z'),
+            expiryDate: new Date('2030-01-01T00:00:00.000Z'),
+        }]));
+
+        const result = await validateAndPriceCoupons({
+            requestedCoupons: [{ couponId: COUPON_ID, applicableProductIds: ['product-usd'] }],
+            orderItems: [{
+                productId: 'product-usd',
+                seller: 'seller-usd',
+                price: 8196.87,
+                lineSubtotal: 8196.87,
+                sourcePrice: 29.5,
+                sourceCurrency: 'USD',
+                sourceLineSubtotal: 29.5,
+                quantity: 1,
+            }],
+            userId: 'buyer-1',
+            orderCurrency: 'PKR',
+            exchangeRates: { USD: 1, PKR: 277.86, EUR: 0.92, GBP: 0.79 },
+            at: new Date('2026-01-01T00:00:00.000Z'),
+        });
+
+        expect(result.couponDiscount).toBe(819.69);
+        expect(result.appliedCoupons[0]).toMatchObject({
+            appliedDiscountAmount: 819.69,
+            currency: 'PKR',
+            sourceAppliedDiscountAmount: 2.95,
+            sourceCurrency: 'USD',
         });
     });
 

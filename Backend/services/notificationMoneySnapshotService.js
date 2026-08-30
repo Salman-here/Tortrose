@@ -4,6 +4,7 @@ const { CURRENCIES, isSupportedCurrency } = require('./currencyService');
 const { fromMinorUnits, toMinorUnits } = require('./moneyMath');
 const {
   getFrozenSellerSettlement,
+  sellerCurrencyTotalEntry,
   sellerSettlementEntry,
 } = require('./orderMoneyService');
 
@@ -166,6 +167,31 @@ const orderSellerTotalSnapshot = (order, sellerId, key = 'seller_order_total') =
   });
 };
 
+const orderSellerStoreTotalSnapshot = (order, sellerId, key = 'seller_store_total') => {
+  const sellerKey = sellerId?._id?.toString?.() || sellerId?.toString?.() || '';
+  const sellerItems = (order?.orderItems || []).filter(item => (
+    (item?.seller?._id?.toString?.() || item?.seller?.toString?.() || '') === sellerKey
+  ));
+  const sellerMoney = sellerCurrencyTotalEntry(order, sellerKey, sellerItems);
+  if (!sellerMoney) {
+    throw notificationMoneyError(
+      'The order has no frozen store-currency total for this seller.',
+      'NOTIFICATION_SELLER_CURRENCY_MONEY_MISSING',
+    );
+  }
+  return snapshotMinorMoney({
+    key,
+    label: 'Seller store-currency order total',
+    amountMinor: sellerMoney.totalMinor,
+    currency: sellerMoney.currency,
+    sourceModel: 'Order',
+    sourceDocumentId: order?._id,
+    sourcePath: sellerMoney.persisted
+      ? `sellerCurrencyMoney[${sellerKey}].totalMinor`
+      : `computedSellerCurrencyTotal[${sellerKey}].totalMinor`,
+  });
+};
+
 const sellerSettlementUsdSnapshot = (order, sellerId, key = 'seller_settlement_usd') => {
   const sellerKey = sellerId?._id?.toString?.() || sellerId?.toString?.() || '';
   const frozenSettlement = getFrozenSellerSettlement(order);
@@ -310,6 +336,7 @@ module.exports = {
   formatMoneySnapshot,
   notificationMoneyError,
   orderSellerTotalSnapshot,
+  orderSellerStoreTotalSnapshot,
   orderStockRefundSnapshot,
   orderTotalSnapshot,
   requireExactStoredMoney,

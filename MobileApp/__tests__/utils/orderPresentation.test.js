@@ -11,6 +11,7 @@ import {
   getOrderItemQuantity,
   getOrderSummaryAmount,
   getOrderTotal,
+  getSellerCurrencyMoney,
   hasExactOrderItemUnitEquation,
 } from '../../src/utils/orderPresentation';
 
@@ -226,5 +227,47 @@ describe('order presentation helpers', () => {
     expect(canCancelOrder({ ...order, isPaid: true })).toBe(false);
     expect(canCancelOrder({ ...order, sellerFulfillment: [{ status: 'shipped' }] })).toBe(false);
     expect(canCancelOrder({ ...order, orderStatus: 'delivered' })).toBe(false);
+  });
+
+  it('keeps seller-native and buyer-checkout totals as two validated frozen values', () => {
+    const sellerOrder = {
+      currency: 'PKR',
+      orderItems: [{ price: 8196.87, lineSubtotal: 8196.87, quantity: 1 }],
+      orderSummary: { subtotal: 8196.87, shippingCost: 0, tax: 0, couponDiscount: 0, totalAmount: 8196.87 },
+      sellerCurrencyMoney: {
+        version: 1,
+        currency: 'USD',
+        buyerCurrency: 'PKR',
+        summary: { subtotal: 29.5, shippingCost: 0, tax: 0, couponDiscount: 0, reconciliationAdjustment: 0, totalAmount: 29.5 },
+        buyerSummary: { subtotal: 8196.87, shippingCost: 0, tax: 0, couponDiscount: 0, reconciliationAdjustment: 0, totalAmount: 8196.87 },
+        exchangeRate: { from: 'USD', to: 'PKR', rate: 277.86, frozen: true },
+        itemMoney: [{
+          sellerItemIndex: 0,
+          currency: 'USD',
+          lineSubtotal: 29.5,
+          buyerCurrency: 'PKR',
+          buyerLineSubtotal: 8196.87,
+          originalCurrency: 'USD',
+          originalLineSubtotal: 29.5,
+          originalUnitPrice: 29.5,
+        }],
+      },
+    };
+    const money = getSellerCurrencyMoney(sellerOrder);
+    expect(money.summary.totalAmount).toBe(29.5);
+    expect(money.buyerSummary.totalAmount).toBe(8196.87);
+
+    const tampered = JSON.parse(JSON.stringify(sellerOrder));
+    tampered.sellerCurrencyMoney.itemMoney[0].lineSubtotal = 29.49;
+    expect(() => getSellerCurrencyMoney(tampered)).toThrow('seller item subtotal');
+
+    const invalidSameCurrencyRate = JSON.parse(JSON.stringify(sellerOrder));
+    invalidSameCurrencyRate.currency = 'USD';
+    invalidSameCurrencyRate.sellerCurrencyMoney.buyerCurrency = 'USD';
+    invalidSameCurrencyRate.sellerCurrencyMoney.exchangeRate = {
+      from: 'USD', to: 'USD', rate: 2, frozen: true,
+    };
+    invalidSameCurrencyRate.sellerCurrencyMoney.itemMoney[0].buyerCurrency = 'USD';
+    expect(() => getSellerCurrencyMoney(invalidSameCurrencyRate)).toThrow('seller exchange rate');
   });
 });

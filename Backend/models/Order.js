@@ -264,6 +264,15 @@ const orderSchema = mongoose.Schema(
                 seller: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
                 store: { type: mongoose.Schema.Types.ObjectId, ref: "Store", default: null },
                 storeName: { type: String, default: '' },
+                // Freeze the store's selling currency independently from the
+                // buyer's checkout currency. Seller order presentation and
+                // analytics must never follow a later store-currency change.
+                productCurrency: {
+                    type: String,
+                    enum: ["USD", "PKR", "EUR", "GBP"],
+                    default: null,
+                    immutable: true,
+                },
                 paymentPolicy: {
                     type: String,
                     enum: ['online_and_cod', 'advance_only'],
@@ -349,6 +358,74 @@ const orderSchema = mongoose.Schema(
             }
         ],
 
+        // Versioned seller-native presentation snapshot. Settlement remains
+        // the payment/refund ledger in buyer order currency + USD; this second
+        // snapshot freezes what each seller sees in the store currency that
+        // was active at checkout. Every component is stored in minor units so
+        // seller UI, notifications, exports, and analytics share exact cents.
+        sellerCurrencyMoneyVersion: {
+            type: Number,
+            default: 0,
+            min: 0,
+            immutable: true,
+            set: strictNumberSetter,
+            validate: {
+                validator: value => Number.isSafeInteger(value) && value >= 0,
+                message: 'Seller currency money version must be a non-negative safe integer',
+            },
+        },
+        sellerCurrencyMoney: [
+            {
+                _id: false,
+                seller: {
+                    type: mongoose.Schema.Types.ObjectId,
+                    ref: "User",
+                    required: true,
+                    immutable: true,
+                },
+                currency: {
+                    type: String,
+                    enum: ["USD", "PKR", "EUR", "GBP"],
+                    required: true,
+                    immutable: true,
+                },
+                buyerCurrency: {
+                    type: String,
+                    enum: ["USD", "PKR", "EUR", "GBP"],
+                    required: true,
+                    immutable: true,
+                },
+                subtotalMinor: {
+                    type: Number, required: true, min: 0, immutable: true, set: strictNumberSetter,
+                    validate: { validator: Number.isSafeInteger, message: 'Seller native subtotal must be safe minor units' },
+                },
+                shippingMinor: {
+                    type: Number, required: true, min: 0, immutable: true, set: strictNumberSetter,
+                    validate: { validator: Number.isSafeInteger, message: 'Seller native shipping must be safe minor units' },
+                },
+                taxMinor: {
+                    type: Number, required: true, min: 0, immutable: true, set: strictNumberSetter,
+                    validate: { validator: Number.isSafeInteger, message: 'Seller native tax must be safe minor units' },
+                },
+                discountMinor: {
+                    type: Number, required: true, min: 0, immutable: true, set: strictNumberSetter,
+                    validate: { validator: Number.isSafeInteger, message: 'Seller native discount must be safe minor units' },
+                },
+                adjustmentMinor: {
+                    type: Number, required: true, immutable: true, set: strictNumberSetter,
+                    validate: { validator: Number.isSafeInteger, message: 'Seller native adjustment must be signed safe minor units' },
+                },
+                totalMinor: {
+                    type: Number, required: true, min: 0, immutable: true, set: strictNumberSetter,
+                    validate: { validator: Number.isSafeInteger, message: 'Seller native total must be safe minor units' },
+                },
+                buyerTotalMinor: {
+                    type: Number, required: true, min: 0, immutable: true, set: strictNumberSetter,
+                    validate: { validator: Number.isSafeInteger, message: 'Seller buyer-currency total must be safe minor units' },
+                },
+            }
+        ],
+
         appliedCoupons: [
             {
                 couponId: { type: mongoose.Schema.Types.ObjectId, ref: "Coupon" },
@@ -373,6 +450,10 @@ const orderSchema = mongoose.Schema(
                 },
                 appliedDiscountAmount: exactMoneyField({ default: null }),
                 currency: { type: String, enum: ["USD", "PKR", "EUR", "GBP"], uppercase: true, trim: true },
+                // Exact seller/store-currency discount frozen at checkout.
+                // `appliedDiscountAmount` remains the buyer-order-currency
+                // allocation used by charging and refunds.
+                sourceAppliedDiscountAmount: exactMoneyField({ default: null }),
                 sourceDiscountValue: {
                     type: Number,
                     min: 0,
@@ -569,6 +650,7 @@ const orderSchema = mongoose.Schema(
 // Legacy backfill is the only exception and opts in explicitly through the
 // compare-and-set helper in orderMoneyService.
 orderSchema.path('sellerSettlement').immutable(true);
+orderSchema.path('sellerCurrencyMoney').immutable(true);
 
 // Every newly persisted order owns an immutable, unambiguous international
 // buyer destination. This protects future writers that bypass the two current
@@ -604,6 +686,18 @@ orderSchema.pre('save', function rejectFrozenSettlementMutation(next) {
     ) {
         const error = new Error('The frozen seller settlement cannot be changed.');
         error.code = 'SELLER_SETTLEMENT_IMMUTABLE';
+        return next(error);
+    }
+    if (
+        !this.isNew
+        && Number(this.sellerCurrencyMoneyVersion || 0) > 0
+        && (
+            this.isModified('sellerCurrencyMoney')
+            || this.isModified('sellerCurrencyMoneyVersion')
+        )
+    ) {
+        const error = new Error('The frozen seller-currency money snapshot cannot be changed.');
+        error.code = 'SELLER_CURRENCY_MONEY_IMMUTABLE';
         return next(error);
     }
     return next();

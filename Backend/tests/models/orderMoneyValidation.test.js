@@ -162,4 +162,52 @@ describe('order financial persistence validation', () => {
     order.appliedCoupons[0].appliedDiscountAmount = 0.001;
     await expect(order.validate()).rejects.toThrow(/shippingMethod\.price|appliedDiscountAmount|Stored order money/);
   });
+
+  test('persists exact seller-native minor units and rejects unsafe snapshot integers', async () => {
+    const order = validOrder();
+    const seller = order.orderItems[0].seller;
+    order.sellerSettlementVersion = 1;
+    order.sellerSettlement = [{
+      seller,
+      sourceCurrency: 'PKR',
+      sourceAmountMinor: 200000,
+      amountUSDMinor: 721,
+    }];
+    order.sellerCurrencyMoneyVersion = 1;
+    order.sellerCurrencyMoney = [{
+      seller,
+      currency: 'PKR',
+      buyerCurrency: 'PKR',
+      subtotalMinor: 200000,
+      shippingMinor: 0,
+      taxMinor: 0,
+      discountMinor: 0,
+      adjustmentMinor: 0,
+      totalMinor: 200000,
+      buyerTotalMinor: 200000,
+    }];
+    await expect(order.validate()).resolves.toBeUndefined();
+
+    order.sellerCurrencyMoney[0].adjustmentMinor = 0.5;
+    await expect(order.validate()).rejects.toThrow(/sellerCurrencyMoney|native adjustment|safe minor units/);
+  });
+
+  test('rejects a sub-cent seller source coupon allocation', async () => {
+    const order = validOrder({
+      appliedCoupons: [{
+        couponId: objectId(),
+        seller: objectId(),
+        code: 'SOURCE10',
+        discountType: 'fixed',
+        discountValue: 10,
+        appliedDiscountAmount: 10,
+        currency: 'PKR',
+        sourceAppliedDiscountAmount: 0.001,
+        sourceDiscountValue: 10,
+        sourceCurrency: 'PKR',
+        couponTermsFingerprint: 'b'.repeat(64),
+      }],
+    });
+    await expect(order.validate()).rejects.toThrow(/sourceAppliedDiscountAmount|Stored order money/);
+  });
 });

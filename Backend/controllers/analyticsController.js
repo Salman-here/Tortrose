@@ -6,13 +6,15 @@ const {
     resolveRequestedCurrency,
     roundMoney,
     formatOrderMoney,
-    getFrozenSellerSettlement,
-    sellerSettlementEntry,
+    sellerCurrencyTotalEntry,
+    sellerCurrencyMoneyPresentation,
+    buildSellerCurrencyItemMoneyAllocations,
     sellerOrderSummaryForItems,
     buildOrderItemMoneyAllocations,
     orderItemKey,
     isSellerRevenueRecognized,
     sumOrderAmountsInCurrency,
+    sumCurrencyAmountsInCurrency,
     toId,
 } = require('../services/orderMoneyService');
 const { fromMinorUnits } = require('../services/moneyMath');
@@ -31,21 +33,20 @@ const sellerOrderScope = (sellerId, sellerProductIds = []) => ({
     ],
 });
 
-const sellerNotificationMoney = (order, sellerId) => {
-    const frozen = getFrozenSellerSettlement(order);
+const sellerNotificationMoney = (order, sellerId, sellerItems) => {
+    const nativeEntry = sellerCurrencyTotalEntry(order, sellerId, sellerItems);
     // A paid receipt must never be reconstructed from mutable/legacy order
     // lines. Older orders without the frozen settlement remain visible as
     // operational order alerts, but do not receive a guessed money receipt.
-    if (!frozen) return null;
-    const settlement = sellerSettlementEntry(frozen, sellerId);
-    if (!settlement) {
+    if (!nativeEntry) {
+        if (!Number(order?.sellerSettlementVersion)) return null;
         const error = new Error('The paid order has no frozen settlement for this seller notification.');
         error.code = 'SELLER_NOTIFICATION_SETTLEMENT_MISSING';
         throw error;
     }
     return {
-        amount: fromMinorUnits(settlement.sourceAmountMinor),
-        currency: settlement.sourceCurrency,
+        amount: fromMinorUnits(nativeEntry.totalMinor),
+        currency: nativeEntry.currency,
     };
 };
 
@@ -149,12 +150,15 @@ exports.getSellerAnalytics = async (req, res) => {
                     entry => String(entry?.seller || '') === String(userId)
                 );
                 const sellerMoney = sellerOrderSummaryForItems(order, userId, sellerItems);
+                const sellerNativeMoney = sellerCurrencyMoneyPresentation(order, userId, sellerItems);
                 sellerOrders.push({
                     ...order.toObject(),
                     sellerItems,
                     sellerStatus: sellerFulfillment?.status || order.orderStatus || 'pending',
-                    sellerRevenue: sellerMoney.totalAmount,
+                    sellerRevenue: sellerNativeMoney?.summary?.totalAmount ?? sellerMoney.totalAmount,
+                    sellerRevenueCurrency: sellerNativeMoney?.currency || order.currency,
                     sellerMoney,
+                    sellerNativeMoney,
                     sellerUnits: sellerMoney.units,
                 });
             }
@@ -174,22 +178,30 @@ exports.getSellerAnalytics = async (req, res) => {
             if (dayBuckets[key]) {
                 dayBuckets[key].orders++;
                 if (isSellerRevenueRecognized(o, userId)) {
-                    dayBuckets[key].moneyEntries.push({ order: o, amount: o.sellerRevenue });
+                    dayBuckets[key].moneyEntries.push({
+                        amount: o.sellerRevenue,
+                        currency: o.sellerRevenueCurrency,
+                    });
                 }
             }
         }
         const recognizedMoneyEntries = sellerOrders
             .filter(order => isSellerRevenueRecognized(order, userId))
-            .map(order => ({ order, amount: order.sellerRevenue }));
+            .map(order => ({ amount: order.sellerRevenue, currency: order.sellerRevenueCurrency }));
         await Promise.all(Object.values(dayBuckets).map(async bucket => {
-            bucket.revenue = await sumOrderAmountsInCurrency(bucket.moneyEntries, targetCurrency);
+            bucket.revenue = await sumCurrencyAmountsInCurrency(bucket.moneyEntries, targetCurrency);
             delete bucket.moneyEntries;
         }));
 
         const productMap = {};
         for (const o of sellerOrders) {
             if (!isSellerRevenueRecognized(o, userId)) continue;
-            const allocations = buildOrderItemMoneyAllocations(o);
+            const nativeAllocations = buildSellerCurrencyItemMoneyAllocations(
+                o,
+                userId,
+                o.sellerItems,
+            );
+            const allocations = nativeAllocations || buildOrderItemMoneyAllocations(o);
             for (const item of o.sellerItems) {
                 const id = String(item.productId);
                 if (!productMap[id]) productMap[id] = { name: item.name, image: item.image, revenue: 0, sold: 0, moneyEntries: [] };
@@ -200,15 +212,18 @@ exports.getSellerAnalytics = async (req, res) => {
                     throw analyticsOrderDataError('A seller order item no longer matches its frozen order line.');
                 }
                 const itemRevenue = requireOrderItemAllocation(
-                    allocations,
+                    nativeAllocations ? { total: nativeAllocations.total } : allocations,
                     orderItemKey(item, orderIndex, allocations.itemKeys),
                 );
-                productMap[id].moneyEntries.push({ order: o, amount: itemRevenue });
+                productMap[id].moneyEntries.push({
+                    amount: itemRevenue,
+                    currency: nativeAllocations?.currency || o.currency,
+                });
                 productMap[id].sold = addAnalyticsUnits(productMap[id].sold, item.quantity);
             }
         }
         await Promise.all(Object.values(productMap).map(async product => {
-            product.revenue = await sumOrderAmountsInCurrency(product.moneyEntries, targetCurrency);
+            product.revenue = await sumCurrencyAmountsInCurrency(product.moneyEntries, targetCurrency);
             delete product.moneyEntries;
         }));
 
@@ -221,7 +236,7 @@ exports.getSellerAnalytics = async (req, res) => {
         // The chart rounds each day for presentation. Compute the summary from
         // the complete unrounded currency buckets so daily rounding cannot lose
         // or create a cent relative to payment reporting.
-        const totalRevenue = await sumOrderAmountsInCurrency(recognizedMoneyEntries, targetCurrency);
+        const totalRevenue = await sumCurrencyAmountsInCurrency(recognizedMoneyEntries, targetCurrency);
         const paidOrders = sellerOrders.filter(o => isSellerRevenueRecognized(o, userId)).length;
         const totalUnitsSold = sellerOrders.reduce(
             (sum, order) => isSellerRevenueRecognized(order, userId) ? sum + order.sellerUnits : sum,
@@ -317,7 +332,7 @@ exports.getSellerNotifications = async (req, res) => {
                 notifications.push({ id: `order-${order._id}`, type: 'info', category: 'order', title: `New order ${order.orderId}`, description: `${sellerItems.length} item(s) awaiting your review`, time: order.createdAt, read: false, orderId: order._id });
             }
             if (order.isPaid && sellerStatus === 'confirmed') {
-                const sellerMoney = sellerNotificationMoney(order, userId);
+                const sellerMoney = sellerNotificationMoney(order, userId, sellerItems);
                 if (sellerMoney) {
                     notifications.push({ id: `paid-${order._id}`, type: 'success', category: 'payment', title: `Payment received for ${order.orderId}`, description: formatOrderMoney(sellerMoney.amount, sellerMoney.currency), time: order.paidAt || order.createdAt, read: false, orderId: order._id });
                 }
