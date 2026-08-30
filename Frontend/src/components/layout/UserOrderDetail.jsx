@@ -12,15 +12,24 @@ import {
     getOrderItemLineSubtotal,
     getOrderItemOptionPairs,
     getOrderSellerShippingBreakdown,
+    getOrderSellerGroups,
     getOrderSummaryAmount,
     getOrderTotal,
 } from "../../utils/orderItems";
 import BuyerReturnsPanel from "./BuyerReturnsPanel";
+import BuyerSellerFulfillmentGroups from "../order/BuyerSellerFulfillmentGroups";
 
 const OrderDetail = () => {
     const { formatPrice } = useCurrency();
     const [order, setOrder] = useState(null);
-    const orderMoney = (amount) => formatPrice(amount, { sourceCurrency: getOrderCurrency(order) });
+    const orderMoney = (amount) => {
+        const orderCurrency = getOrderCurrency(order);
+        return formatPrice(amount, {
+            sourceCurrency: orderCurrency,
+            targetCurrency: orderCurrency,
+            showCode: true,
+        });
+    };
     const { id } = useParams();
     const [showCancelConfirm, setShowCancelConfirm] = useState(false);
 
@@ -81,6 +90,25 @@ const OrderDetail = () => {
         'order reconciliation adjustment',
         { signed: true },
     );
+    const sellerGrouping = (() => {
+        try {
+            return { groups: getOrderSellerGroups(order), invalid: false };
+        } catch (_) {
+            return { groups: [], invalid: true };
+        }
+    })();
+    const fulfillmentStartedGroup = sellerGrouping.groups.find(group => ['shipped', 'delivered'].includes(group.status));
+    const canCancelWholeOrder = !sellerGrouping.invalid
+        && order.orderStatus !== 'cancelled'
+        && order.orderStatus !== 'delivered'
+        && order.orderStatus !== 'shipped'
+        && !order.isPaid
+        && !fulfillmentStartedGroup;
+    const unpaidStatusLabel = order.orderStatus === 'cancelled'
+        ? 'Unpaid'
+        : order.paymentMethod === 'cash_on_delivery'
+            ? 'Due on delivery'
+            : 'Pending';
 
     return (
         <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="max-w-full p-4 sm:p-6">
@@ -265,7 +293,7 @@ const OrderDetail = () => {
                             </div>
                         </div>
 
-                        {order?.orderStatus !== 'cancelled' && order?.orderStatus !== 'delivered' && !order?.isPaid && !['shipped'].includes(order?.orderStatus) && (
+                        {canCancelWholeOrder && (
                             <div className="mt-4 pt-4" style={{ borderTop: '1px solid var(--glass-border)' }}>
                                 <motion.button whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.97 }}
                                     onClick={() => setShowCancelConfirm(true)}
@@ -273,6 +301,11 @@ const OrderDetail = () => {
                                     style={{ background: 'rgba(239, 68, 68, 0.1)', color: 'hsl(0, 72%, 55%)', border: '1px solid rgba(239, 68, 68, 0.2)' }}>
                                     <XCircle className="w-4 h-4" /> Cancel Order
                                 </motion.button>
+                            </div>
+                        )}
+                        {!canCancelWholeOrder && fulfillmentStartedGroup && !order.isPaid && (
+                            <div className="mt-4 pt-4 text-xs flex items-start gap-2" style={{ borderTop: '1px solid var(--glass-border)', color: 'hsl(var(--muted-foreground))' }}>
+                                <Truck className="w-4 h-4 shrink-0" /> The whole order can no longer be cancelled because {fulfillmentStartedGroup.storeName} already {fulfillmentStartedGroup.status === 'delivered' ? 'delivered' : 'shipped'} its portion.
                             </div>
                         )}
                     </div>
@@ -288,7 +321,7 @@ const OrderDetail = () => {
                                 <span style={{ color: 'hsl(var(--muted-foreground))' }}>Status:</span>
                                 {order.isPaid
                                     ? <span className="flex items-center gap-1 font-semibold" style={{ color: 'hsl(150, 60%, 40%)' }}><CheckCircle className="w-4 h-4" /> Paid</span>
-                                    : <span className="flex items-center gap-1 font-semibold" style={{ color: 'hsl(30, 90%, 50%)' }}><Clock className="w-4 h-4" /> Pending</span>
+                                    : <span className="flex items-center gap-1 font-semibold" style={{ color: order.orderStatus === 'cancelled' ? 'hsl(0, 72%, 55%)' : 'hsl(30, 90%, 50%)' }}><Clock className="w-4 h-4" /> {unpaidStatusLabel}</span>
                                 }
                             </div>
                             {order.paymentResult?.paymentIntentId && (
@@ -305,8 +338,10 @@ const OrderDetail = () => {
                     </div>
                 </div>
 
-                {/* Order Items */}
-                <div className="lg:col-span-2">
+                {/* Seller-owned shipment groups */}
+                <div className="lg:col-span-2 space-y-4">
+                    <BuyerSellerFulfillmentGroups order={order} formatMoney={orderMoney} />
+                    {sellerGrouping.groups.length === 0 && !sellerGrouping.invalid && (
                     <div className="glass-panel overflow-hidden">
                         <div className="p-4 sm:p-5" style={{ borderBottom: '1px solid var(--glass-border)' }}>
                             <h2 className="text-base sm:text-lg font-semibold" style={{ color: 'hsl(var(--foreground))' }}>Order Items</h2>
@@ -343,6 +378,7 @@ const OrderDetail = () => {
                             ))}
                         </div>
                     </div>
+                    )}
                 </div>
             </div>
 

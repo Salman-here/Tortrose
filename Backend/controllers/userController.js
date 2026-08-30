@@ -37,6 +37,11 @@ const {
 const { deleteAccountCascade } = require('../services/accountDeletionService')
 const { isValidExpoToken } = require('../utils/expoPush')
 const {
+    assertTrialGrantDoesNotReplacePaidEntitlement,
+    calculateTrialPeriod,
+    normalizeTrialGrantInput,
+} = require('../services/sellerTrialGrantService')
+const {
     registerPushToken,
     revokePushToken: revokePushTokenRegistration,
     isCredentialShape,
@@ -68,7 +73,7 @@ exports.getUsers = async (req, res) => {
         const [subscriptions, stores] = await Promise.all([
             sellerIds.length
                 ? SellerSubscription.find({ seller: { $in: sellerIds } })
-                    .select('seller status plan planName trialStartDate trialEndDate subscribedAt freePeriodEndDate currentPeriodStart currentPeriodEnd bonusExpiryDate blockedAt blockedReason aiMessageLimit cancelledAt createdAt updatedAt')
+                    .select('seller status plan planName trialStartDate trialEndDate adminTrialGrant subscribedAt freePeriodEndDate currentPeriodStart currentPeriodEnd bonusExpiryDate blockedAt blockedReason aiMessageLimit cancelledAt createdAt updatedAt')
                     .lean()
                 : [],
             sellerIds.length
@@ -125,24 +130,29 @@ exports.toggleBlockUser = async (req, res) => {
 exports.unblockSellerSubscription = async (req, res) => {
     const { role } = req.user
     const { id } = req.params
-    const extensionDays = Math.max(1, Math.min(90, Number.parseInt(req.body?.extensionDays, 10) || 15))
 
     if (role !== 'admin') return res.status(403).json({ msg: 'Admin access only.' })
 
     try {
+        const grant = normalizeTrialGrantInput(req.body)
         const seller = await User.findById(id)
         if (!seller) return res.status(404).json({ msg: 'Seller not found.' })
         if (seller.role !== 'seller') return res.status(400).json({ msg: 'This account is not a seller.' })
 
         const now = new Date()
-        const trialEndDate = new Date(now.getTime() + extensionDays * 24 * 60 * 60 * 1000)
-
         let subscription = await SellerSubscription.findOne({ seller: seller._id })
+        assertTrialGrantDoesNotReplacePaidEntitlement(subscription)
+        const period = calculateTrialPeriod({
+            currentTrialEndDate: subscription?.trialEndDate,
+            ...grant,
+            now,
+        })
+
         if (!subscription) {
             subscription = new SellerSubscription({
                 seller: seller._id,
                 trialStartDate: now,
-                trialEndDate,
+                trialEndDate: period.endsAt,
                 status: 'trial',
                 plan: 'free_trial',
                 planName: 'Rozare Free Trial',
@@ -150,13 +160,41 @@ exports.unblockSellerSubscription = async (req, res) => {
             })
         } else {
             subscription.status = 'trial'
-            subscription.plan = subscription.plan || 'free_trial'
-            subscription.planName = subscription.planName || 'Rozare Free Trial'
-            subscription.trialEndDate = trialEndDate
+            subscription.plan = 'free_trial'
+            subscription.planName = 'Rozare Free Trial'
+            if (grant.mode === 'reset' || !subscription.trialStartDate) {
+                subscription.trialStartDate = now
+            }
+            subscription.trialEndDate = period.endsAt
             subscription.blockedAt = null
             subscription.blockedReason = ''
             subscription.warningEmailSent = false
+            subscription.trialBlockedNotificationEventAt = null
+            subscription.trialBlockedNotificationEnqueuedAt = null
             subscription.cancelledAt = null
+            subscription.set('lifecyclePricing.trialExpiring.eventAt', null)
+            subscription.set('lifecyclePricing.trialExpiring.starterStandardAmountMinor', null)
+            subscription.set('lifecyclePricing.trialExpiring.starterFounderAmountMinor', null)
+            subscription.set('lifecyclePricing.trialExpiring.starterFreePeriodDays', null)
+            if (subscription.paymentRisk?.suspended) {
+                subscription.paymentRisk.suspended = false
+                subscription.paymentRisk.reason = ''
+                subscription.paymentRisk.previousStatus = null
+                subscription.paymentRisk.updatedAt = now
+                if (subscription.paymentRisk.failureNotification?.state) {
+                    subscription.paymentRisk.failureNotification.state = 'superseded'
+                    subscription.paymentRisk.failureNotification.completedAt = now
+                }
+            }
+        }
+        subscription.adminTrialGrant = {
+            amount: grant.amount,
+            unit: grant.unit,
+            mode: grant.mode,
+            grantedAt: now,
+            startsAt: period.startsAt,
+            endsAt: period.endsAt,
+            grantedBy: req.user.id,
         }
         await subscription.save()
 
@@ -175,7 +213,13 @@ exports.unblockSellerSubscription = async (req, res) => {
         }
 
         res.status(200).json({
-            msg: `${seller.username}'s store has been unblocked and the trial was extended for ${extensionDays} day${extensionDays === 1 ? '' : 's'}.`,
+            msg: `${seller.username}'s store is active with a trial ${grant.mode === 'extend' ? 'extension' : 'reset'} of ${grant.amount} ${grant.unit}.`,
+            trialGrant: {
+                ...grant,
+                startsAt: period.startsAt,
+                endsAt: period.endsAt,
+                extendedExistingTrial: period.extendedExistingTrial,
+            },
             seller: {
                 _id: seller._id,
                 username: seller.username,
@@ -186,8 +230,11 @@ exports.unblockSellerSubscription = async (req, res) => {
             store,
         })
     } catch (error) {
-        console.error(error)
-        res.status(500).json({ msg: 'Server error while unblocking seller.' })
+        if (!error.statusCode || error.statusCode >= 500) console.error(error)
+        res.status(error.statusCode || 500).json({
+            msg: error.statusCode ? error.message : 'Server error while configuring seller trial.',
+            ...(error.code ? { code: error.code } : {}),
+        })
     }
 }
 

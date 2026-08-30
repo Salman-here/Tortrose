@@ -88,6 +88,7 @@ const {
   requireStoredProductDiscountPrice,
 } = require('./productPricingService');
 const { normalizeSocialLinks } = require('./socialLinksService');
+const { nextShortOrderId } = require('./orderPublicIdService');
 const {
   plainOptions,
   validateProductSelection,
@@ -2886,6 +2887,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
           };
         });
 
+        const publicOrderId = await nextShortOrderId();
         const newOrder = new Order({
           user: userId,
           currency: preferredCurrency,
@@ -2902,8 +2904,8 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
           } } : {}),
           checkoutIdempotencyKey: aiCheckoutIdempotencyKey,
           checkoutRequestFingerprint: aiRequestFingerprint,
-          orderId: `ORD-${Date.now()}-${crypto.randomBytes(10).toString('hex').toUpperCase()}`,
-          orderIdVersion: 2,
+          orderId: publicOrderId,
+          orderIdVersion: 3,
           orderItems: persistedOrderItems,
           shippingInfo: {
             fullName: shipping.fullName,

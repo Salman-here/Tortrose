@@ -115,6 +115,8 @@ const {
     enqueueCodOrderSellerNotifications,
 } = require('../services/financialNotificationOutboxService');
 const { resolveOrderReference } = require('../services/orderReferenceService');
+const { nextShortOrderId } = require('../services/orderPublicIdService');
+const { buildBuyerOrderView } = require('../services/buyerOrderPresentationService');
 const {
     formatItemOptionsText,
     formatOrderMoney,
@@ -1475,6 +1477,7 @@ exports.placeOrder = async (req, res) => {
         // console.log("cartItems::::", cartItems);
 
 
+        const publicOrderId = await nextShortOrderId();
         const newOrder = new Order({
             ...(userId ? { user: userId } : {}),
             ...(checkoutIdempotencyKey ? { checkoutIdempotencyKey } : {}),
@@ -1488,11 +1491,11 @@ exports.placeOrder = async (req, res) => {
                 source: exchangeRateSnapshot.source,
                 fallback: exchangeRateSnapshot.fallback,
             } } : {}),
-            // Ten random bytes plus the database uniqueness guard make the
-            // human-facing id collision-resistant. Provider routing still
-            // uses this order's immutable Mongo _id as the authority.
-            orderId: `ORD-${Date.now()}-${crypto.randomBytes(10).toString('hex').toUpperCase()}`,
-            orderIdVersion: 2,
+            // A MongoDB-backed monotonic allocator keeps this human-facing id
+            // compact while remaining collision-safe across server instances.
+            // Provider routing still uses the immutable Mongo _id.
+            orderId: publicOrderId,
+            orderIdVersion: 3,
 
             orderItems: normalizedOrderItems,
 
@@ -2292,7 +2295,10 @@ exports.getOrders = async (req, res) => {
 
     } catch (error) {
         console.error("Error fetching Order:", error);
-        return res.status(500).json({ msg: "Server error while fetching orders" });
+        return res.status(error.statusCode || 500).json({
+            msg: error.statusCode ? error.message : "Server error while fetching orders",
+            ...(error.code ? { code: error.code } : {}),
+        });
     }
 }
 
@@ -2928,12 +2934,15 @@ exports.getUserOrders = async (req, res) => {
         query.awaitingPayment = { $ne: true }
 
         // console.log(query);
-        let orders = await Order.find(query)
+        const orders = await Order.find(query)
         // console.log('get user ordersss:::::::::::::', orders);
         // orders = orders.find(item => item.user)
 
 
-        res.status(200).json({ msg: 'User Orders fetched successfully', orders: orders })
+        res.status(200).json({
+            msg: 'User Orders fetched successfully',
+            orders: orders.map(buildBuyerOrderView),
+        })
 
     } catch (error) {
         console.error("Error fetching Order:", error);
@@ -3111,10 +3120,13 @@ exports.getOrderDetail = async (req, res) => {
             return res.status(403).json({ msg: 'You can only view your own orders' })
         }
 
-        res.status(200).json({ msg: 'Order fetched successfully.', order: order })
+        res.status(200).json({ msg: 'Order fetched successfully.', order: buildBuyerOrderView(order) })
     } catch (error) {
         console.error(error);
-        res.status(500).json({ msg: 'Server error while fetching order detail' })
+        res.status(error.statusCode || 500).json({
+            msg: error.statusCode ? error.message : 'Server error while fetching order detail',
+            ...(error.code ? { code: error.code } : {}),
+        })
     }
 }
 
@@ -3138,7 +3150,7 @@ exports.trackGuestOrder = async (req, res) => {
             return res.status(404).json({ msg: 'Order not found. Please check your email and order ID.' });
         }
 
-        res.status(200).json({ msg: 'Order found', order });
+        res.status(200).json({ msg: 'Order found', order: buildBuyerOrderView(order) });
     } catch (error) {
         console.error('Error tracking guest order:', error);
         res.status(error.statusCode || 500).json({

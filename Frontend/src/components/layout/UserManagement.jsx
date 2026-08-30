@@ -18,8 +18,12 @@ const UserManagement = () => {
   const [showBlockModal, setShowBlockModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [showRoleModal, setShowRoleModal] = useState(false);
+  const [showTrialModal, setShowTrialModal] = useState(false);
   const [selectedUser, setSelectedUser] = useState(null);
-  const [unblockingUserId, setUnblockingUserId] = useState('');
+  const [trialAmount, setTrialAmount] = useState(15);
+  const [trialUnit, setTrialUnit] = useState('days');
+  const [trialMode, setTrialMode] = useState('reset');
+  const [trialSaving, setTrialSaving] = useState(false);
 
   const serializeFilters = useCallback(() => {
     let params = new URLSearchParams();
@@ -61,23 +65,42 @@ const UserManagement = () => {
     catch { toast.error('Server error'); } setShowRoleModal(false); setSelectedUser(null);
   };
 
-  const handleUnblockSeller = async (user) => {
-    if (!window.confirm(`Unblock ${user.username}'s store and extend the trial by 15 days?`)) return;
+  const handleConfigureTrial = (user) => {
+    setSelectedUser(user);
+    setTrialAmount(15);
+    setTrialUnit('days');
+    setTrialMode(user.sellerSubscription?.trialEndDate ? 'extend' : 'reset');
+    setShowTrialModal(true);
+  };
+
+  const closeTrialModal = () => {
+    if (trialSaving) return;
+    setShowTrialModal(false);
+    setSelectedUser(null);
+  };
+
+  const confirmTrialGrant = async () => {
+    const amount = Number(trialAmount);
+    if (!Number.isSafeInteger(amount) || amount < 1) {
+      toast.error('Enter a positive whole number for the trial duration.');
+      return;
+    }
     try {
-      setUnblockingUserId(user._id);
+      setTrialSaving(true);
       const token = getAuthToken();
       const res = await axios.patch(
-        `${import.meta.env.VITE_API_URL}api/user/seller/${user._id}/unblock-subscription`,
-        { extensionDays: 15 },
+        `${import.meta.env.VITE_API_URL}api/user/seller/${selectedUser._id}/unblock-subscription`,
+        { amount, unit: trialUnit, mode: trialMode },
         { headers: { Authorization: `Bearer ${token}` } }
       );
-      toast.success(res.data?.msg || 'Seller unblocked');
-      fetchUsers();
-      fetchAllUsers();
+      toast.success(res.data?.msg || 'Seller trial configured');
+      await Promise.all([fetchUsers(), fetchAllUsers()]);
+      setShowTrialModal(false);
+      setSelectedUser(null);
     } catch (error) {
-      toast.error(error.response?.data?.msg || 'Failed to unblock seller');
+      toast.error(error.response?.data?.msg || 'Failed to configure seller trial');
     } finally {
-      setUnblockingUserId('');
+      setTrialSaving(false);
     }
   };
 
@@ -121,6 +144,36 @@ const UserManagement = () => {
     return subscription.status?.replace(/_/g, ' ') || '';
   };
   const isSellerSubscriptionBlocked = (user) => user.role === 'seller' && (user.sellerSubscription?.status === 'blocked' || user.store?.isActive === false);
+  const hasProtectedPaidEntitlement = (user) => (
+    user.role === 'seller'
+    && user.sellerSubscription?.plan
+    && user.sellerSubscription.plan !== 'free_trial'
+    && ['active', 'free_period', 'past_due'].includes(user.sellerSubscription.status)
+  );
+
+  const trialPreviewDate = () => {
+    const now = new Date();
+    const currentEnd = selectedUser?.sellerSubscription?.trialEndDate
+      ? new Date(selectedUser.sellerSubscription.trialEndDate)
+      : null;
+    const start = trialMode === 'extend'
+      && currentEnd
+      && Number.isFinite(currentEnd.getTime())
+      && currentEnd > now
+      ? new Date(currentEnd)
+      : now;
+    const preview = new Date(start);
+    if (trialUnit === 'months') {
+      const originalDay = preview.getUTCDate();
+      preview.setUTCDate(1);
+      preview.setUTCMonth(preview.getUTCMonth() + Number(trialAmount || 0));
+      const lastDay = new Date(Date.UTC(preview.getUTCFullYear(), preview.getUTCMonth() + 1, 0)).getUTCDate();
+      preview.setUTCDate(Math.min(originalDay, lastDay));
+    } else {
+      preview.setUTCDate(preview.getUTCDate() + Number(trialAmount || 0));
+    }
+    return Number.isFinite(preview.getTime()) ? formatDate(preview) : 'Invalid duration';
+  };
 
   const totalUsers = allUsers.length;
   const activeUsers = allUsers.filter(u => u.status === 'active').length;
@@ -154,11 +207,11 @@ const UserManagement = () => {
 
     return (
       <>
-        {isSellerSubscriptionBlocked(user) && (
-          <button onClick={() => handleUnblockSeller(user)} disabled={unblockingUserId === user._id} className="p-2 rounded-xl transition-colors disabled:opacity-50"
+        {user.role === 'seller' && (
+          <button onClick={() => handleConfigureTrial(user)} disabled={hasProtectedPaidEntitlement(user)} className="p-2 rounded-xl transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             style={{ color: 'hsl(150, 60%, 45%)', background: 'rgba(16, 185, 129, 0.08)' }}
-            title="Unblock seller store and extend trial">
-            {unblockingUserId === user._id ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserCheck className="w-4 h-4" />}
+            title={hasProtectedPaidEntitlement(user) ? 'Paid-plan entitlement is active' : 'Configure seller trial'}>
+            <CalendarDays className="w-4 h-4" />
           </button>
         )}
         <button onClick={() => handleBlockUser(user)} className="p-2 rounded-xl transition-colors"
@@ -362,6 +415,69 @@ const UserManagement = () => {
               </div>
               <div className="flex justify-end">
                 <button onClick={() => setShowRoleModal(false)} className="px-6 py-2 rounded-xl glass-inner font-medium" style={{ color: 'hsl(var(--foreground))' }}>Cancel</button>
+              </div>
+            </Motion.div>
+          </Motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Seller Trial Modal */}
+      <AnimatePresence>
+        {showTrialModal && selectedUser && (
+          <Motion.div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-50" onClick={closeTrialModal} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+            <Motion.div className="glass-panel max-w-lg w-full p-6" onClick={e => e.stopPropagation()} initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}>
+              <div className="flex items-start gap-3 mb-5">
+                <div className="glass-inner p-2.5 rounded-xl"><CalendarDays className="w-5 h-5" style={{ color: 'hsl(var(--primary))' }} /></div>
+                <div>
+                  <h3 className="text-lg font-semibold" style={{ color: 'hsl(var(--foreground))' }}>Configure seller trial</h3>
+                  <p className="text-sm mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                    {selectedUser.username} · {selectedUser.store?.storeName || 'No store created'}
+                  </p>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="text-xs font-semibold uppercase tracking-wide" style={{ color: 'hsl(var(--muted-foreground))' }}>Duration</label>
+                  <div className="grid grid-cols-[1fr_140px] gap-3 mt-2">
+                    <input type="number" min="1" max={trialUnit === 'months' ? '120' : '3650'} step="1" value={trialAmount} onChange={e => setTrialAmount(e.target.value)} className="glass-input" aria-label="Trial duration" />
+                    <select value={trialUnit} onChange={e => setTrialUnit(e.target.value)} className="glass-input cursor-pointer" aria-label="Trial duration unit">
+                      <option value="days">Days</option>
+                      <option value="months">Months</option>
+                    </select>
+                  </div>
+                  <p className="text-xs mt-1.5" style={{ color: 'hsl(var(--muted-foreground))' }}>Months use calendar dates, so one month is not forced to 30 days.</p>
+                </div>
+
+                <div>
+                  <label className="text-xs font-semibold uppercase tracking-wide" style={{ color: 'hsl(var(--muted-foreground))' }}>How to apply it</label>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
+                    {[
+                      { value: 'reset', title: 'Reset from today', detail: 'Start the selected duration now.' },
+                      { value: 'extend', title: 'Extend current trial', detail: 'Add time after a future trial end; otherwise start now.' },
+                    ].map(option => (
+                      <button key={option.value} type="button" onClick={() => setTrialMode(option.value)} className="p-3 rounded-xl text-left transition-colors" style={trialMode === option.value ? { background: 'rgba(99, 102, 241, 0.12)', border: '1px solid rgba(99, 102, 241, 0.3)' } : { background: 'rgba(255,255,255,0.03)', border: '1px solid var(--glass-border)' }}>
+                        <span className="text-sm font-semibold block" style={{ color: 'hsl(var(--foreground))' }}>{option.title}</span>
+                        <span className="text-xs block mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>{option.detail}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="glass-inner rounded-xl p-3 text-sm flex items-center justify-between gap-3">
+                  <span style={{ color: 'hsl(var(--muted-foreground))' }}>New trial end</span>
+                  <span className="font-semibold" style={{ color: 'hsl(var(--foreground))' }}>{trialPreviewDate()}</span>
+                </div>
+                <p className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                  Saving reactivates the seller and store, clears expired-trial blocks, and grants a Rozare Free Trial. An active paid-plan entitlement must be ended first.
+                </p>
+              </div>
+
+              <div className="flex justify-end gap-3 mt-6">
+                <button onClick={closeTrialModal} disabled={trialSaving} className="px-4 py-2 rounded-xl glass-inner font-medium disabled:opacity-50" style={{ color: 'hsl(var(--foreground))' }}>Cancel</button>
+                <button onClick={confirmTrialGrant} disabled={trialSaving} className="px-4 py-2 rounded-xl text-white font-medium flex items-center gap-2 disabled:opacity-50" style={{ background: 'linear-gradient(135deg, hsl(220, 70%, 55%), hsl(260, 60%, 60%))' }}>
+                  {trialSaving && <Loader2 className="w-4 h-4 animate-spin" />} Apply trial
+                </button>
               </div>
             </Motion.div>
           </Motion.div>

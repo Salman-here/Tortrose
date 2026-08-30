@@ -155,6 +155,151 @@ export const getOrderSellerShippingBreakdown = (order, sellerId = null) => {
   };
 };
 
+const SELLER_FULFILLMENT_STATUSES = new Set([
+  'pending',
+  'confirmed',
+  'processing',
+  'shipped',
+  'delivered',
+  'cancelled',
+]);
+
+/**
+ * Validate the backend's versioned seller grouping before any buyer UI uses
+ * it. Groups reference canonical orderItems by index and all per-seller money
+ * must conserve the immutable full-order checkout summary exactly.
+ */
+export const getOrderSellerGroups = (order = {}) => {
+  const rawGroups = order?.sellerGroups;
+  if (rawGroups === null || rawGroups === undefined) return [];
+  if (!Array.isArray(rawGroups)) throw orderPresentationIntegrityError('seller order groups');
+  if (order.sellerGroupingAvailable === false) {
+    if (rawGroups.length) throw orderPresentationIntegrityError('seller order grouping state');
+    return [];
+  }
+  if (!Array.isArray(order.orderItems)) throw orderPresentationIntegrityError('order items');
+
+  const seenSellers = new Set();
+  const seenIndexes = new Set();
+  const groups = rawGroups.map((group) => {
+    if (!group || typeof group !== 'object') throw orderPresentationIntegrityError('seller order group');
+    const sellerId = clean(group.sellerId);
+    const storeName = clean(group.storeName);
+    const status = clean(group.status).toLowerCase();
+    if (!sellerId || !storeName || seenSellers.has(sellerId) || !SELLER_FULFILLMENT_STATUSES.has(status)) {
+      throw orderPresentationIntegrityError('seller order group identity');
+    }
+    seenSellers.add(sellerId);
+    if (!Array.isArray(group.itemIndexes) || !group.itemIndexes.length) {
+      throw orderPresentationIntegrityError('seller order item indexes');
+    }
+    const itemIndexes = group.itemIndexes.map((index) => {
+      if (
+        !Number.isSafeInteger(index)
+        || index < 0
+        || index >= order.orderItems.length
+        || seenIndexes.has(index)
+      ) {
+        throw orderPresentationIntegrityError('seller order item indexes');
+      }
+      seenIndexes.add(index);
+      return index;
+    });
+    const items = itemIndexes.map(index => order.orderItems[index]);
+    const units = items.reduce((sum, item) => {
+      const next = sum + getOrderItemQuantity(item);
+      if (!Number.isSafeInteger(next)) throw orderPresentationIntegrityError('seller order units');
+      return next;
+    }, 0);
+    if (
+      group.itemCount !== undefined
+      && (!Number.isSafeInteger(group.itemCount) || group.itemCount !== items.length)
+    ) throw orderPresentationIntegrityError('seller order item count');
+    if (
+      group.units !== undefined
+      && (!Number.isSafeInteger(group.units) || group.units !== units)
+    ) throw orderPresentationIntegrityError('seller order units');
+
+    const summary = group.summary || {};
+    const normalizedSummary = {
+      subtotal: requireExactStoredMoney(summary.subtotal, 'seller subtotal'),
+      shippingCost: requireExactStoredMoney(summary.shippingCost, 'seller shipping'),
+      tax: requireExactStoredMoney(summary.tax, 'seller tax'),
+      couponDiscount: requireExactStoredMoney(summary.couponDiscount, 'seller discount'),
+      reconciliationAdjustment: requireExactStoredMoney(
+        summary.reconciliationAdjustment,
+        'seller reconciliation adjustment',
+        { signed: true },
+      ),
+      totalAmount: requireExactStoredMoney(summary.totalAmount, 'seller total'),
+    };
+    const calculatedSellerTotal = addCurrencyAmounts(
+      normalizedSummary.subtotal,
+      normalizedSummary.shippingCost,
+      normalizedSummary.tax,
+      -normalizedSummary.couponDiscount,
+      normalizedSummary.reconciliationAdjustment,
+    );
+    if (calculatedSellerTotal !== normalizedSummary.totalAmount) {
+      throw orderPresentationIntegrityError('seller summary total');
+    }
+
+    let shippingMethod = null;
+    if (group.shippingMethod !== null && group.shippingMethod !== undefined) {
+      const name = group.shippingMethod?.name;
+      const estimatedDays = group.shippingMethod?.estimatedDays;
+      const price = requireExactStoredMoney(group.shippingMethod?.price, 'seller shipping method price');
+      if (
+        typeof name !== 'string'
+        || !name.trim()
+        || name !== name.trim()
+        || (estimatedDays !== null && estimatedDays !== undefined
+          && (!Number.isSafeInteger(estimatedDays) || estimatedDays < 1))
+        || price !== normalizedSummary.shippingCost
+      ) throw orderPresentationIntegrityError('seller shipping method');
+      shippingMethod = { ...group.shippingMethod, name, estimatedDays, price };
+    }
+
+    return {
+      ...group,
+      sellerId,
+      storeName,
+      status,
+      itemIndexes,
+      itemCount: items.length,
+      units,
+      items,
+      shippingMethod,
+      summary: normalizedSummary,
+    };
+  });
+
+  if (seenIndexes.size !== order.orderItems.length) {
+    throw orderPresentationIntegrityError('seller order item coverage');
+  }
+  const fullSummary = {
+    subtotal: getOrderSummaryAmount(order, ['subtotal'], 'order subtotal'),
+    shippingCost: getOrderSummaryAmount(order, ['shippingCost', 'shippingFee'], 'order shipping'),
+    tax: getOrderSummaryAmount(order, ['tax', 'taxAmount'], 'order tax'),
+    couponDiscount: getOrderSummaryAmount(order, ['couponDiscount', 'discountAmount'], 'order discount'),
+    reconciliationAdjustment: getOrderSummaryAmount(
+      order,
+      ['reconciliationAdjustment'],
+      'order reconciliation adjustment',
+      { signed: true },
+    ),
+    totalAmount: getOrderTotal(order),
+  };
+  for (const key of Object.keys(fullSummary)) {
+    const groupedTotal = addCurrencyAmounts(...groups.map(group => group.summary[key]));
+    if (groupedTotal !== fullSummary[key]) {
+      throw orderPresentationIntegrityError(`seller grouped ${key}`);
+    }
+  }
+
+  return groups;
+};
+
 export const inspectOrderListMoney = (order) => {
   try {
     return {

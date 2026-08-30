@@ -341,7 +341,7 @@ const OrderManagement = () => {
                                                 </td>
                                                 <td className="px-5 py-4 text-sm font-bold" style={{ color: 'hsl(var(--foreground))', letterSpacing: '-0.03em' }}>
                                                     {money.valid
-                                                        ? formatPrice(money.total, { sourceCurrency: money.currency })
+                                                        ? formatPrice(money.total, { sourceCurrency: money.currency, targetCurrency: money.currency, showCode: true })
                                                         : 'Money unavailable'}
                                                 </td>
                                                 <td className="px-5 py-4">
@@ -469,7 +469,7 @@ const OrderManagement = () => {
                                                         })()}
                                                         <span className="text-sm font-bold" style={{ color: 'hsl(var(--foreground))' }}>
                                                             {money.valid
-                                                                ? formatPrice(money.total, { sourceCurrency: money.currency })
+                                                                ? formatPrice(money.total, { sourceCurrency: money.currency, targetCurrency: money.currency, showCode: true })
                                                                 : 'Money unavailable'}
                                                         </span>
                                                     </div>

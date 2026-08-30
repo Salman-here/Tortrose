@@ -5,12 +5,51 @@ import {
   getOrderCurrency,
   getOrderItemQuantity,
   getOrderSellerShippingBreakdown,
+  getOrderSellerGroups,
   getOrderItemLineSubtotal,
   getOrderSummaryAmount,
   getOrderTotal,
   hasExactOrderItemUnitEquation,
   inspectOrderListMoney,
 } from '../src/utils/orderItems.js';
+
+const groupedOrder = () => ({
+  currency: 'PKR',
+  sellerGroupingAvailable: true,
+  orderItems: [
+    { name: 'Option item', price: 10, lineSubtotal: 10, quantity: 1, selectedOptions: { Size: 'Large' } },
+    { name: 'Second seller item', price: 20, lineSubtotal: 40, quantity: 2 },
+  ],
+  orderSummary: {
+    subtotal: 50,
+    shippingCost: 5,
+    tax: 3,
+    couponDiscount: 2,
+    totalAmount: 56,
+  },
+  sellerGroups: [
+    {
+      sellerId: 'seller-a',
+      storeName: 'Store A',
+      itemIndexes: [0],
+      itemCount: 1,
+      units: 1,
+      status: 'shipped',
+      shippingMethod: { name: 'Free local', price: 0, estimatedDays: 2 },
+      summary: { subtotal: 10, shippingCost: 0, tax: 1, couponDiscount: 0.4, reconciliationAdjustment: 0, totalAmount: 10.6 },
+    },
+    {
+      sellerId: 'seller-b',
+      storeName: 'Store B',
+      itemIndexes: [1],
+      itemCount: 1,
+      units: 2,
+      status: 'processing',
+      shippingMethod: { name: 'Express', price: 5, estimatedDays: 5 },
+      summary: { subtotal: 40, shippingCost: 5, tax: 2, couponDiscount: 1.6, reconciliationAdjustment: 0, totalAmount: 45.4 },
+    },
+  ],
+});
 
 test('seller shipping breakdown requires exact rows and reconciles to the order summary', () => {
   const order = {
@@ -35,6 +74,40 @@ test('seller shipping breakdown requires exact rows and reconciles to the order 
       error => error?.code === 'ORDER_PRESENTATION_DATA_INVALID',
     );
   }
+});
+
+test('seller order groups cover every item once and conserve all checkout money', () => {
+  const groups = getOrderSellerGroups(groupedOrder());
+  assert.equal(groups.length, 2);
+  assert.equal(groups[0].storeName, 'Store A');
+  assert.equal(groups[0].status, 'shipped');
+  assert.equal(groups[0].items[0].selectedOptions.Size, 'Large');
+  assert.equal(groups[1].units, 2);
+  assert.equal(groups[1].summary.totalAmount, 45.4);
+});
+
+test('seller order groups fail closed on coverage, shipping, or money divergence', () => {
+  const duplicateIndex = groupedOrder();
+  duplicateIndex.sellerGroups[1].itemIndexes = [0];
+  const wrongShipping = groupedOrder();
+  wrongShipping.sellerGroups[1].shippingMethod.price = 4;
+  const wrongTotal = groupedOrder();
+  wrongTotal.sellerGroups[1].summary.totalAmount = 45.39;
+  const missingItem = groupedOrder();
+  missingItem.sellerGroups.pop();
+  for (const order of [duplicateIndex, wrongShipping, wrongTotal, missingItem]) {
+    assert.throws(
+      () => getOrderSellerGroups(order),
+      error => error?.code === 'ORDER_PRESENTATION_DATA_INVALID',
+    );
+  }
+});
+
+test('legacy seller grouping explicitly unavailable renders through the legacy path', () => {
+  const order = groupedOrder();
+  order.sellerGroupingAvailable = false;
+  order.sellerGroups = [];
+  assert.deepEqual(getOrderSellerGroups(order), []);
 });
 
 test('treats only missing legacy order currency metadata as USD', () => {

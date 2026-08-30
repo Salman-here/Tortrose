@@ -40,11 +40,21 @@ describe('order public-id uniqueness cutover', () => {
         unique: true,
         partialFilterExpression: { orderIdVersion: 2 },
       }),
+      expect.objectContaining({
+        name: 'uniq_short_order_public_id',
+        unique: true,
+        partialFilterExpression: { orderIdVersion: 3 },
+      }),
     ]));
 
     const publicId = 'ORD-1770000000000-AABBCCDDEEFF';
     await Order.collection.insertOne({ orderId: publicId, orderIdVersion: 2 });
     await expect(Order.collection.insertOne({ orderId: publicId, orderIdVersion: 2 }))
+      .rejects.toMatchObject({ code: 11000 });
+
+    const shortPublicId = 'ORD-1788027012731';
+    await Order.collection.insertOne({ orderId: shortPublicId, orderIdVersion: 3 });
+    await expect(Order.collection.insertOne({ orderId: shortPublicId, orderIdVersion: 3 }))
       .rejects.toMatchObject({ code: 11000 });
 
     await Order.collection.insertMany([
@@ -70,6 +80,8 @@ describe('order public-id uniqueness cutover', () => {
         totalOrders: 4,
         legacyUnversionedOrders: 3,
         modernVersionedOrders: 1,
+        longVersionedOrders: 1,
+        shortVersionedOrders: 0,
         invalidOrderIds: 1,
         malformedModernOrders: 0,
       },
@@ -93,6 +105,24 @@ describe('order public-id uniqueness cutover', () => {
     expect(result.samples.malformedModern[0]).toMatchObject({
       orderId: 'BAD-MODERN-ID',
       orderIdVersion: 2,
+    });
+  });
+
+  test('reports compact version-3 ids separately and rejects malformed compact rows', async () => {
+    await Order.collection.insertMany([
+      { orderId: 'ORD-1788027012731', orderIdVersion: 3 },
+      { orderId: 'ORD-1788027012731-TOO-LONG', orderIdVersion: 3 },
+    ]);
+    const result = await analyzeOrderIds({ sampleLimit: 5 });
+    expect(result.counts).toMatchObject({
+      shortVersionedOrders: 2,
+      malformedShortOrders: 1,
+      malformedModernOrders: 1,
+    });
+    expect(result.readyForModernUniqueIndex).toBe(false);
+    expect(result.samples.malformedShort[0]).toMatchObject({
+      orderId: 'ORD-1788027012731-TOO-LONG',
+      orderIdVersion: 3,
     });
   });
 });

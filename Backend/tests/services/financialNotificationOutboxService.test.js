@@ -10,6 +10,7 @@ const {
   enqueueNoChargeOrderBuyerNotifications,
   enqueueNoChargeOrderSellerNotifications,
   enqueueOrderLifecycleBuyerNotifications,
+  enqueueOrderSellerFulfillmentBuyerNotifications,
   enqueueOrderStockRefundBuyerNotifications,
   enqueuePaidOrderBuyerNotifications,
   enqueuePaidOrderSellerNotifications,
@@ -407,6 +408,68 @@ describe('financial notification domain contracts', () => {
     expect(persisted.payload.body).toContain('Rs1,880.00 PKR');
     expect(persisted.payload.body).toMatch(/does not by itself record or promise a refund/i);
     expect(await NotificationOutbox.countDocuments()).toBe(1);
+  });
+
+  test('seller fulfillment update names only that store/items and uses its frozen settlement allocation', async () => {
+    const { order, sellerA, sellerB } = paidMixedOrder();
+    order.orderStatus = 'pending';
+    order.sellerFulfillment = [
+      { seller: sellerA, status: 'pending' },
+      { seller: sellerB, status: 'processing' },
+    ];
+    order.sellerPolicies = [
+      { seller: sellerA, storeName: 'PKR Store' },
+      { seller: sellerB, storeName: 'USD Store' },
+    ];
+    order.sellerShipping = [
+      { seller: sellerA, shippingMethod: { name: 'Local', price: 0, estimatedDays: 2 } },
+      { seller: sellerB, shippingMethod: { name: 'International', price: 0, estimatedDays: 8 } },
+    ];
+    const transitionAt = new Date('2026-08-24T18:30:00.000Z');
+
+    const first = await enqueueOrderSellerFulfillmentBuyerNotifications(order, {
+      sellerId: sellerB,
+      status: 'processing',
+      previousStatus: 'pending',
+      transitionAt,
+      actorRole: 'seller',
+    });
+    const replay = await enqueueOrderSellerFulfillmentBuyerNotifications(order, {
+      sellerId: sellerB,
+      status: 'processing',
+      previousStatus: 'pending',
+      transitionAt,
+      actorRole: 'seller',
+    });
+
+    expect(first.map(record => record.channel).sort())
+      .toEqual(['email', 'inapp', 'push', 'whatsapp']);
+    expect(replay.map(record => String(record._id)))
+      .toEqual(first.map(record => String(record._id)));
+    for (const record of first) {
+      expect(record).toMatchObject({
+        eventType: 'order.seller_fulfillment_updated',
+        financial: true,
+      });
+      expect(record.money).toEqual([expect.objectContaining({
+        key: 'seller_order_total',
+        currency: 'PKR',
+        amountMinor: 168000,
+      })]);
+      expect(record.payload.data).toMatchObject({
+        sellerId: sellerB.toString(),
+        storeName: 'USD Store',
+        itemNames: ['USD seller item converted at checkout'],
+        status: 'processing',
+      });
+      const rendered = record.payload.body
+        || record.payload.text
+        || record.payload.html
+        || record.payload.message;
+      expect(rendered).toContain('Rs1,680.00 PKR');
+      expect(rendered).toContain('USD Store');
+      expect(rendered).not.toContain('PKR seller item');
+    }
   });
 
   test('completed stock-loss refund receipt is exact, all-channel, and keyed by the Stripe refund', async () => {

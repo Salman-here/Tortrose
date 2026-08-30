@@ -18,6 +18,7 @@ const {
 const {
   enqueueCodOrderDecisionSellerNotifications,
   enqueueOrderLifecycleBuyerNotifications,
+  enqueueOrderSellerFulfillmentBuyerNotifications,
 } = require('./financialNotificationOutboxService');
 
 const STATUS_RANK = Object.freeze({
@@ -155,6 +156,9 @@ const transitionOrderFulfillment = async ({
     // as authorization for a financial/fulfillment state transition.
     const authoritativeSellerIds = await resolveOrderSellerIds(order, session);
     ensureSellerFulfillmentEntries(order, authoritativeSellerIds, at);
+    const previousSellerStatuses = new Map(
+      order.sellerFulfillment.map(entry => [toId(entry.seller), entry.status]),
+    );
     const sellerFulfillment = actorRole === 'seller'
       ? sellerFulfillmentFor(order, actorId)
       : null;
@@ -255,15 +259,32 @@ const transitionOrderFulfillment = async ({
     const persistedActorStatus = actorRole === 'seller'
       ? sellerFulfillmentFor(order, actorId)?.status
       : order.orderStatus;
+    const sellerTransitions = order.sellerFulfillment
+      .map(entry => ({
+        sellerId: toId(entry.seller),
+        previousStatus: previousSellerStatuses.get(toId(entry.seller)),
+        status: entry.status,
+      }))
+      .filter(entry => entry.previousStatus && entry.previousStatus !== entry.status);
     transition = {
-      actorStatusChanged: persistedActorStatus !== actorCurrentStatus,
+      actorStatusChanged: persistedActorStatus !== actorCurrentStatus || sellerTransitions.length > 0,
       aggregateStatusChanged: order.orderStatus !== previousAggregateStatus,
       previousActorStatus: actorCurrentStatus,
       currentActorStatus: persistedActorStatus,
       previousAggregateStatus,
       currentAggregateStatus: order.orderStatus,
+      sellerTransitions,
     };
-    if (transition.aggregateStatusChanged) {
+    if (sellerTransitions.length) {
+      for (const sellerTransition of sellerTransitions) {
+        await enqueueOrderSellerFulfillmentBuyerNotifications(order, {
+          ...sellerTransition,
+          transitionAt: at,
+          actorRole,
+          session,
+        });
+      }
+    } else if (transition.aggregateStatusChanged) {
       await enqueueOrderLifecycleBuyerNotifications(order, {
         status: transition.currentAggregateStatus,
         previousStatus: transition.previousAggregateStatus,

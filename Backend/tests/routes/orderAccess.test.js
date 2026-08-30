@@ -43,6 +43,7 @@ const createOrder = ({ buyer, sellerProduct, otherProduct }) =>
     orderItems: [
       {
         productId: sellerProduct._id,
+        seller: sellerProduct.seller,
         name: sellerProduct.name,
         image: sellerProduct.image,
         price: sellerProduct.price,
@@ -50,6 +51,7 @@ const createOrder = ({ buyer, sellerProduct, otherProduct }) =>
       },
       {
         productId: otherProduct._id,
+        seller: otherProduct.seller,
         name: otherProduct.name,
         image: otherProduct.image,
         price: otherProduct.price,
@@ -75,6 +77,14 @@ const createOrder = ({ buyer, sellerProduct, otherProduct }) =>
     sellerShipping: [
       { seller: sellerProduct.seller, shippingMethod: { name: 'standard', price: 10, estimatedDays: 5 } },
       { seller: otherProduct.seller, shippingMethod: { name: 'standard', price: 5, estimatedDays: 5 } },
+    ],
+    sellerFulfillment: [
+      { seller: sellerProduct.seller, status: 'processing' },
+      { seller: otherProduct.seller, status: 'shipped' },
+    ],
+    sellerPolicies: [
+      { seller: sellerProduct.seller, storeName: 'Seller Store' },
+      { seller: otherProduct.seller, storeName: 'Other Store' },
     ],
     orderSummary: {
       subtotal: sellerProduct.price * 2 + otherProduct.price,
@@ -288,6 +298,23 @@ describe('Order access isolation', () => {
       .set('Authorization', tokenFor(otherBuyer));
 
     expect(ownRes.status).toBe(200);
+    expect(ownRes.body.order).toMatchObject({
+      buyerPresentationVersion: 1,
+      sellerGroupingAvailable: true,
+    });
+    expect(ownRes.body.order.sellerGroups).toHaveLength(2);
+    expect(ownRes.body.order.sellerGroups[0]).toMatchObject({
+      storeName: 'Seller Store',
+      itemIndexes: [0],
+      status: 'processing',
+      summary: { subtotal: 200, shippingCost: 10, tax: 20, totalAmount: 230 },
+    });
+    expect(ownRes.body.order.sellerGroups[1]).toMatchObject({
+      storeName: 'Other Store',
+      itemIndexes: [1],
+      status: 'shipped',
+      summary: { subtotal: 50, shippingCost: 5, tax: 5, totalAmount: 60 },
+    });
     expect(otherRes.status).toBe(403);
   });
 

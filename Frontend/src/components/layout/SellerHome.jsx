@@ -288,7 +288,11 @@ const SellerHome = () => {
                                                     <div className="text-right shrink-0">
                                                         <p className="text-sm font-semibold" style={{ color: 'hsl(var(--foreground))' }}>
                                                             {money.valid
-                                                                ? formatPrice(money.total, { sourceCurrency: money.currency })
+                                                                ? formatPrice(money.total, {
+                                                                    sourceCurrency: money.currency,
+                                                                    targetCurrency: money.currency,
+                                                                    showCode: true,
+                                                                })
                                                                 : 'Money unavailable'}
                                                         </p>
                                                         <span className="text-[10px] font-medium px-2 py-0.5 rounded-full"

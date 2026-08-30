@@ -5,7 +5,9 @@ require('dotenv').config();
 const mongoose = require('mongoose');
 const Order = require('../models/Order');
 
-const MODERN_ORDER_ID_PATTERN = /^ORD-\d{13}-[0-9A-F]{6,32}$/;
+const LONG_ORDER_ID_PATTERN = /^ORD-\d{13}-[0-9A-F]{6,32}$/;
+const SHORT_ORDER_ID_PATTERN = /^ORD-\d{13}$/;
+const MODERN_ORDER_ID_PATTERN = LONG_ORDER_ID_PATTERN;
 const DEFAULT_SAMPLE_LIMIT = 20;
 const MAX_SAMPLE_LIMIT = 100;
 
@@ -84,11 +86,19 @@ const invalidOrderIdFilter = {
   ],
 };
 
-const malformedModernFilter = {
+const malformedLongFilter = {
   orderIdVersion: 2,
   $or: [
     invalidOrderIdFilter,
-    { orderId: { $type: 'string', $not: MODERN_ORDER_ID_PATTERN } },
+    { orderId: { $type: 'string', $not: LONG_ORDER_ID_PATTERN } },
+  ],
+};
+
+const malformedShortFilter = {
+  orderIdVersion: 3,
+  $or: [
+    invalidOrderIdFilter,
+    { orderId: { $type: 'string', $not: SHORT_ORDER_ID_PATTERN } },
   ],
 };
 
@@ -102,30 +112,42 @@ async function analyzeOrderIds({ sampleLimit = DEFAULT_SAMPLE_LIMIT } = {}) {
   const limit = boundedSampleLimit(sampleLimit);
   const [
     totalOrders,
-    versionedOrders,
+    longVersionedOrders,
+    shortVersionedOrders,
     invalidOrderIds,
-    malformedModernOrders,
+    malformedLongOrders,
+    malformedShortOrders,
     allDuplicates,
-    modernDuplicates,
+    longDuplicates,
+    shortDuplicates,
     invalidSamples,
-    malformedModernSamples,
+    malformedLongSamples,
+    malformedShortSamples,
     indexes,
   ] = await Promise.all([
     Order.countDocuments({}),
     Order.countDocuments({ orderIdVersion: 2 }),
+    Order.countDocuments({ orderIdVersion: 3 }),
     Order.countDocuments(invalidOrderIdFilter),
-    Order.countDocuments(malformedModernFilter),
+    Order.countDocuments(malformedLongFilter),
+    Order.countDocuments(malformedShortFilter),
     duplicateFacet({ sampleLimit: limit }),
     duplicateFacet({ filter: { orderIdVersion: 2 }, sampleLimit: limit }),
+    duplicateFacet({ filter: { orderIdVersion: 3 }, sampleLimit: limit }),
     sampleDocuments(invalidOrderIdFilter, limit),
-    sampleDocuments(malformedModernFilter, limit),
+    sampleDocuments(malformedLongFilter, limit),
+    sampleDocuments(malformedShortFilter, limit),
     Order.collection.indexes(),
   ]);
 
-  const modernIndex = indexes.find(index => index.name === 'uniq_modern_order_public_id') || null;
+  const longIndex = indexes.find(index => index.name === 'uniq_modern_order_public_id') || null;
+  const shortIndex = indexes.find(index => index.name === 'uniq_short_order_public_id') || null;
   const lookupIndex = indexes.find(index => index.name === 'idx_order_public_id_lookup') || null;
-  const readyForModernUniqueIndex = modernDuplicates.duplicateGroups === 0
-    && malformedModernOrders === 0;
+  const readyForModernUniqueIndex = longDuplicates.duplicateGroups === 0
+    && shortDuplicates.duplicateGroups === 0
+    && malformedLongOrders === 0
+    && malformedShortOrders === 0;
+  const versionedOrders = longVersionedOrders + shortVersionedOrders;
 
   return {
     generatedAt: new Date().toISOString(),
@@ -134,28 +156,46 @@ async function analyzeOrderIds({ sampleLimit = DEFAULT_SAMPLE_LIMIT } = {}) {
       totalOrders,
       legacyUnversionedOrders: totalOrders - versionedOrders,
       modernVersionedOrders: versionedOrders,
+      longVersionedOrders,
+      shortVersionedOrders,
       invalidOrderIds,
-      malformedModernOrders,
+      malformedModernOrders: malformedLongOrders + malformedShortOrders,
+      malformedLongOrders,
+      malformedShortOrders,
     },
     duplicates: {
       all: allDuplicates,
-      modernVersioned: modernDuplicates,
+      modernVersioned: {
+        duplicateGroups: longDuplicates.duplicateGroups + shortDuplicates.duplicateGroups,
+        affectedOrders: longDuplicates.affectedOrders + shortDuplicates.affectedOrders,
+        samples: [...longDuplicates.samples, ...shortDuplicates.samples].slice(0, limit),
+      },
+      longVersioned: longDuplicates,
+      shortVersioned: shortDuplicates,
     },
     samples: {
       invalid: invalidSamples.map(row => ({ ...row, _id: String(row._id) })),
-      malformedModern: malformedModernSamples.map(row => ({ ...row, _id: String(row._id) })),
+      malformedModern: [...malformedLongSamples, ...malformedShortSamples]
+        .slice(0, limit)
+        .map(row => ({ ...row, _id: String(row._id) })),
+      malformedLong: malformedLongSamples.map(row => ({ ...row, _id: String(row._id) })),
+      malformedShort: malformedShortSamples.map(row => ({ ...row, _id: String(row._id) })),
     },
     indexes: {
       lookupPresent: !!lookupIndex,
-      modernUniquePresent: !!modernIndex,
-      modernUniqueDefinition: modernIndex,
+      modernUniquePresent: !!longIndex && !!shortIndex,
+      modernUniqueDefinition: longIndex,
+      longUniquePresent: !!longIndex,
+      longUniqueDefinition: longIndex,
+      shortUniquePresent: !!shortIndex,
+      shortUniqueDefinition: shortIndex,
     },
     readyForModernUniqueIndex,
     cutoverPlan: [
       'Keep every duplicate or malformed historical order unversioned; do not rename it automatically because emails, returns, wallet entries, and provider metadata may reference it.',
-      'Deploy the partial unique index only after readyForModernUniqueIndex is true. It protects orderIdVersion=2 rows while leaving legacy evidence unchanged.',
+      'Deploy the partial unique indexes only after readyForModernUniqueIndex is true. They protect version-2 long ids and version-3 short ids while leaving legacy evidence unchanged.',
       'Keep Mongo _id authoritative in all new provider metadata and make every legacy public-id lookup reject more than one scoped match.',
-      'If legacy promotion is desired later, review duplicate groups manually, then backfill orderIdVersion=2 only for individually verified, globally unique ids with compare-and-set writes.',
+      'If legacy promotion is desired later, review duplicate groups manually. Do not rename historical ids automatically; version 3 is reserved for newly allocated compact ids.',
     ],
   };
 }
@@ -172,7 +212,7 @@ async function run(argv = process.argv.slice(2)) {
   } else {
     console.log(`Read-only order-id preflight: ${assessment.counts.totalOrders} total order(s).`);
     console.log(`Legacy duplicate groups: ${assessment.duplicates.all.duplicateGroups}; modern duplicate groups: ${assessment.duplicates.modernVersioned.duplicateGroups}.`);
-    console.log(`Invalid ids: ${assessment.counts.invalidOrderIds}; malformed version-2 ids: ${assessment.counts.malformedModernOrders}.`);
+    console.log(`Invalid ids: ${assessment.counts.invalidOrderIds}; malformed version-2 ids: ${assessment.counts.malformedLongOrders}; malformed version-3 ids: ${assessment.counts.malformedShortOrders}.`);
     console.log(`Modern partial unique index ready: ${assessment.readyForModernUniqueIndex ? 'YES' : 'NO'}.`);
     if (assessment.duplicates.all.samples.length) {
       console.log('Duplicate samples:');
@@ -195,7 +235,9 @@ if (require.main === module) {
 }
 
 module.exports = {
+  LONG_ORDER_ID_PATTERN,
   MODERN_ORDER_ID_PATTERN,
+  SHORT_ORDER_ID_PATTERN,
   analyzeOrderIds,
   duplicateFacet,
   parseArguments,

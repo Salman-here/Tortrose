@@ -67,6 +67,35 @@ const sellerSubscriptionSchema = new mongoose.Schema({
     // Trial: starts when user becomes a seller (or creates store)
     trialStartDate: { type: Date, default: Date.now },
     trialEndDate: { type: Date }, // trialStartDate + 15 days
+    // Last explicit admin override. This is presentation/audit metadata; the
+    // authoritative access boundary remains trialEndDate.
+    adminTrialGrant: {
+        amount: {
+            type: Number,
+            default: null,
+            min: 1,
+            max: 3650,
+            set: strictActualNumberSetter,
+            validate: {
+                validator: value => value === null || value === undefined || (Number.isSafeInteger(value) && value > 0),
+                message: 'Admin trial amount must be a positive whole number',
+            },
+        },
+        unit: {
+            type: String,
+            enum: { values: ['days', 'months', null], message: 'Admin trial unit is invalid' },
+            default: null,
+        },
+        mode: {
+            type: String,
+            enum: { values: ['reset', 'extend', null], message: 'Admin trial mode is invalid' },
+            default: null,
+        },
+        grantedAt: { type: Date, default: null },
+        startsAt: { type: Date, default: null },
+        endsAt: { type: Date, default: null },
+        grantedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    },
 
     // Subscription
     status: {

@@ -7,6 +7,7 @@ import { Link } from 'react-router-dom';
 import { useCurrency } from '../../contexts/CurrencyContext';
 import { getAuthToken } from "../../utils/cookieHelper";
 import { formatOrderItemOptions, getOrderCurrency, getOrderTotal } from "../../utils/orderItems";
+import { BuyerSellerStatusChips } from '../order/BuyerSellerFulfillmentGroups';
 
 const containerVariants = { hidden: { opacity: 0 }, visible: { opacity: 1, transition: { staggerChildren: 0.08 } } };
 const itemVariants = { hidden: { y: 20, opacity: 0 }, visible: { y: 0, opacity: 1, transition: { type: "spring", stiffness: 100 } } };
@@ -116,13 +117,21 @@ const UserOrdersManagement = () => {
                                         <p className="text-xs flex items-center gap-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
                                             <Calendar className="h-3 w-3" />{formatDate(order.createdAt)}
                                         </p>
+                                        <BuyerSellerStatusChips order={order} />
                                     </div>
                                 </div>
                                 <div className="flex flex-col sm:flex-row sm:items-center gap-3 mt-4 md:mt-0">
                                     <StatusBadge status={order.orderStatus} />
                                     <div className="text-left sm:text-right">
                                         <p className="text-base font-extrabold" style={{ color: 'hsl(var(--foreground))' }}>
-                                            {formatPrice(getOrderTotal(order), { sourceCurrency: getOrderCurrency(order) })}
+                                            {(() => {
+                                                const orderCurrency = getOrderCurrency(order);
+                                                return formatPrice(getOrderTotal(order), {
+                                                    sourceCurrency: orderCurrency,
+                                                    targetCurrency: orderCurrency,
+                                                    showCode: true,
+                                                });
+                                            })()}
                                         </p>
                                         <Link to={`/user-dashboard/order/detail/${order._id}`}>
                                             <button className="text-sm font-medium flex items-center mt-1" style={{ color: 'hsl(var(--primary))' }}>

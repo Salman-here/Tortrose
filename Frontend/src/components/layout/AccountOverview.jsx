@@ -195,7 +195,11 @@ const AccountOverview = () => {
                                             <div className="text-right shrink-0">
                                                 <p className="text-base font-extrabold" style={{ color: 'hsl(var(--foreground))' }}>
                                                     {money.valid
-                                                        ? formatPrice(money.total, { sourceCurrency: money.currency })
+                                                        ? formatPrice(money.total, {
+                                                            sourceCurrency: money.currency,
+                                                            targetCurrency: money.currency,
+                                                            showCode: true,
+                                                        })
                                                         : 'Money unavailable'}
                                                 </p>
                                             </div>

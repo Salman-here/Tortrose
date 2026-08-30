@@ -145,6 +145,136 @@ describe('admin user management data', () => {
         })
     })
 
+    test('admin can reset a blocked seller trial by an explicit calendar-month duration', async () => {
+        const admin = await User.create({
+            username: 'trial-admin',
+            email: 'trial-admin@test.com',
+            password: 'password123',
+            role: 'admin',
+        })
+        const seller = await User.create({
+            username: 'trial-seller',
+            email: 'trial-seller@test.com',
+            password: 'password123',
+            role: 'seller',
+            status: 'blocked',
+        })
+        await SellerSubscription.create({
+            seller: seller._id,
+            status: 'blocked',
+            plan: 'free_trial',
+            trialEndDate: new Date(Date.now() - 86_400_000),
+            blockedAt: new Date(),
+            blockedReason: 'Trial expired',
+            warningEmailSent: true,
+            trialBlockedNotificationEventAt: new Date(),
+            trialBlockedNotificationEnqueuedAt: new Date(),
+        })
+        const store = await Store.create({
+            seller: seller._id,
+            storeName: 'Calendar Trial Store',
+            storeSlug: 'calendar-trial-store',
+            isActive: false,
+            blockedAt: new Date(),
+        })
+
+        const response = await request(app)
+            .patch(`/api/user/seller/${seller._id}/unblock-subscription`)
+            .set('Authorization', tokenFor(admin))
+            .send({ amount: 2, unit: 'months', mode: 'reset' })
+
+        expect(response.status).toBe(200)
+        expect(response.body.trialGrant).toMatchObject({
+            amount: 2,
+            unit: 'months',
+            mode: 'reset',
+            extendedExistingTrial: false,
+        })
+        const startsAt = new Date(response.body.trialGrant.startsAt)
+        const expectedEnd = new Date(startsAt)
+        const originalDay = expectedEnd.getUTCDate()
+        expectedEnd.setUTCDate(1)
+        expectedEnd.setUTCMonth(expectedEnd.getUTCMonth() + 2)
+        const lastDay = new Date(Date.UTC(expectedEnd.getUTCFullYear(), expectedEnd.getUTCMonth() + 1, 0)).getUTCDate()
+        expectedEnd.setUTCDate(Math.min(originalDay, lastDay))
+        expect(new Date(response.body.trialGrant.endsAt)).toEqual(expectedEnd)
+
+        const [persistedSeller, persistedSubscription, persistedStore] = await Promise.all([
+            User.findById(seller._id).lean(),
+            SellerSubscription.findOne({ seller: seller._id }).lean(),
+            Store.findById(store._id).lean(),
+        ])
+        expect(persistedSeller.status).toBe('active')
+        expect(persistedStore).toMatchObject({ isActive: true, blockedAt: null })
+        expect(persistedSubscription).toMatchObject({
+            status: 'trial',
+            plan: 'free_trial',
+            planName: 'Rozare Free Trial',
+            blockedAt: null,
+            blockedReason: '',
+            warningEmailSent: false,
+            trialBlockedNotificationEventAt: null,
+            trialBlockedNotificationEnqueuedAt: null,
+            adminTrialGrant: {
+                amount: 2,
+                unit: 'months',
+                mode: 'reset',
+                grantedBy: admin._id,
+            },
+        })
+        expect(persistedSubscription.trialEndDate).toEqual(expectedEnd)
+
+        const refreshed = await request(app)
+            .get('/api/user/get')
+            .set('Authorization', tokenFor(admin))
+        const presented = refreshed.body.users.find(user => user._id === seller._id.toString())
+        expect(presented.sellerSubscription).toMatchObject({
+            displayPlanName: 'Rozare Free Trial',
+            displayStatus: '2-Month Free Trial',
+            periodLabel: 'Trial ends',
+        })
+    })
+
+    test('trial configuration rejects coercible input and does not replace an active paid entitlement', async () => {
+        const admin = await User.create({
+            username: 'trial-guard-admin',
+            email: 'trial-guard-admin@test.com',
+            password: 'password123',
+            role: 'admin',
+        })
+        const seller = await User.create({
+            username: 'paid-trial-guard-seller',
+            email: 'paid-trial-guard-seller@test.com',
+            password: 'password123',
+            role: 'seller',
+        })
+        const originalEnd = new Date(Date.now() + 30 * 86_400_000)
+        await SellerSubscription.create({
+            seller: seller._id,
+            status: 'active',
+            plan: 'starter',
+            planName: 'Rozare Starter',
+            currentPeriodEnd: originalEnd,
+        })
+
+        const malformed = await request(app)
+            .patch(`/api/user/seller/${seller._id}/unblock-subscription`)
+            .set('Authorization', tokenFor(admin))
+            .send({ amount: '2', unit: 'months', mode: 'reset' })
+        expect(malformed.status).toBe(400)
+        expect(malformed.body.code).toBe('ADMIN_TRIAL_DURATION_INVALID')
+
+        const protectedPaid = await request(app)
+            .patch(`/api/user/seller/${seller._id}/unblock-subscription`)
+            .set('Authorization', tokenFor(admin))
+            .send({ amount: 2, unit: 'months', mode: 'reset' })
+        expect(protectedPaid.status).toBe(409)
+        expect(protectedPaid.body.code).toBe('ADMIN_TRIAL_ACTIVE_PAID_ENTITLEMENT')
+        const persisted = await SellerSubscription.findOne({ seller: seller._id }).lean()
+        expect(persisted).toMatchObject({ status: 'active', plan: 'starter' })
+        expect(persisted.currentPeriodEnd).toEqual(originalEnd)
+    })
+
     test('deleting a seller removes marketplace inventory but preserves order evidence', async () => {
         const admin = await User.create({
             username: 'deletion-admin',

@@ -3,6 +3,9 @@ const { roundMoney } = require('../services/moneyMath');
 const { parseStrictFiniteNumber } = require('../services/numericInputService');
 const { canonicalizeShippingPhone } = require('../services/orderBuyerContactService');
 
+const LONG_PUBLIC_ORDER_ID_PATTERN = /^ORD-\d{13}-[0-9A-F]{6,32}$/;
+const SHORT_PUBLIC_ORDER_ID_PATTERN = /^ORD-\d{13}$/;
+
 const strictNumberSetter = value => {
     if (value === null || value === undefined) return value;
     const parsed = parseStrictFiniteNumber(value);
@@ -101,8 +104,19 @@ const orderSchema = mongoose.Schema(
             source: { type: String, default: "", maxlength: 80 },
             fallback: { type: Boolean, default: false },
         },
-        orderId: { type: String, required: true },
-        // Version 2 public ids are created only by code that also carries the
+        orderId: {
+            type: String,
+            required: true,
+            validate: {
+                validator(value) {
+                    if (this.orderIdVersion === 2) return LONG_PUBLIC_ORDER_ID_PATTERN.test(value);
+                    if (this.orderIdVersion === 3) return SHORT_PUBLIC_ORDER_ID_PATTERN.test(value);
+                    return typeof value === 'string' && value.length > 0;
+                },
+                message: 'The versioned public order id format is invalid.',
+            },
+        },
+        // Version 2/3 public ids are created only by code that also carries the
         // immutable Mongo _id through payment/provider metadata. Historical
         // rows deliberately remain unversioned until a read-only duplicate
         // preflight proves that they are safe to promote. This lets the
@@ -110,7 +124,7 @@ const orderSchema = mongoose.Schema(
         // display ids are already globally unique.
         orderIdVersion: {
             type: Number,
-            enum: [2],
+            enum: [2, 3],
             default: null,
             immutable: true,
         },
@@ -638,6 +652,14 @@ orderSchema.index(
         unique: true,
         partialFilterExpression: { orderIdVersion: 2 },
         name: 'uniq_modern_order_public_id',
+    }
+);
+orderSchema.index(
+    { orderId: 1, orderIdVersion: 1 },
+    {
+        unique: true,
+        partialFilterExpression: { orderIdVersion: 3 },
+        name: 'uniq_short_order_public_id',
     }
 );
 orderSchema.index(

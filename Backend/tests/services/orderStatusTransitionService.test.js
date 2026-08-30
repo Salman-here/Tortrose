@@ -66,6 +66,10 @@ const createOrder = async ({
     country: 'United States',
   },
   shippingMethod: { name: 'Standard', price: 0, estimatedDays: 3 },
+  sellerShipping: [{
+    seller: sellerId,
+    shippingMethod: { name: 'Standard', price: 0, estimatedDays: 3 },
+  }],
   orderSummary: {
     subtotal: totalAmount,
     shippingCost: 0,
@@ -83,6 +87,7 @@ const createOrder = async ({
   orderStatus,
   inventoryCommitted,
   sellerFulfillment: [{ seller: sellerId, status: orderStatus }],
+  sellerPolicies: [{ seller: sellerId, storeName: 'Status Race Store' }],
   confirmation: confirmation || {
     token: `confirmation-token-${suffix}`,
     tokenExpiresAt: new Date(Date.now() + 60 * 60 * 1000),
@@ -295,7 +300,7 @@ describe('transactional order fulfillment transitions', () => {
     });
   });
 
-  test('commits one replay-safe all-channel buyer event with the frozen PKR checkout total', async () => {
+  test('commits one replay-safe seller-scoped all-channel buyer event with the frozen PKR checkout total', async () => {
     const product = await createProduct('pkr-notification-outbox');
     const order = await createOrder({
       suffix: 'PKR-NOTIFICATION-OUTBOX',
@@ -322,7 +327,7 @@ describe('transactional order fulfillment transitions', () => {
     expect(replay.transition.aggregateStatusChanged).toBe(false);
     const records = await NotificationOutbox.find({
       aggregateId: String(order._id),
-      eventType: 'order.status_updated',
+      eventType: 'order.seller_fulfillment_updated',
     }).lean();
     expect(records.map(record => record.channel).sort())
       .toEqual(['email', 'inapp', 'push', 'whatsapp']);
@@ -332,13 +337,126 @@ describe('transactional order fulfillment transitions', () => {
       expect(record.money).toEqual([expect.objectContaining({
         amountMinor: 188000,
         currency: 'PKR',
-        sourcePath: 'orderSummary.totalAmount',
+        sourcePath: `computedSellerSummary[${sellerId}].totalAmount`,
       })]);
+      expect(record.payload.data).toMatchObject({
+        type: 'seller_fulfillment_updated',
+        sellerId: sellerId.toString(),
+        storeName: 'Status Race Store',
+        previousStatus: 'pending',
+        status: 'shipped',
+      });
       const rendered = record.payload.body
         || record.payload.text
         || record.payload.html
         || record.payload.message;
       expect(rendered).toContain('Rs1,880.00 PKR');
+    }
+  });
+
+  test('notifies for only the seller portion that advanced even when aggregate status stays pending', async () => {
+    const sellerB = new mongoose.Types.ObjectId();
+    const productA = await createProduct('multi-seller-a');
+    const productB = await Product.create({
+      seller: sellerB,
+      name: 'Status race product multi-seller-b',
+      description: 'Second transactional fulfillment fixture.',
+      price: 100,
+      currency: 'USD',
+      category: 'Test',
+      brand: 'Test',
+      stock: 9,
+      totalSales: 1,
+      image: 'https://example.com/status-race-b.jpg',
+      images: [{ url: 'https://example.com/status-race-b.jpg' }],
+    });
+    const order = await createOrder({
+      suffix: 'MULTI-SELLER-INDEPENDENT-STATUS',
+      product: productA,
+      currency: 'PKR',
+      totalAmount: 200,
+    });
+    await Order.updateOne({ _id: order._id }, {
+      $set: {
+        'orderItems.0.price': 100,
+        'orderItems.0.lineSubtotal': 100,
+        'orderSummary.subtotal': 200,
+        'orderSummary.totalAmount': 200,
+      },
+    });
+    await Order.updateOne({ _id: order._id }, {
+      $push: {
+        orderItems: {
+          productId: productB._id,
+          seller: sellerB,
+          name: productB.name,
+          image: productB.image,
+          price: 100,
+          lineSubtotal: 100,
+          quantity: 1,
+        },
+        sellerShipping: {
+          seller: sellerB,
+          shippingMethod: { name: 'International', price: 0, estimatedDays: 8 },
+        },
+        sellerFulfillment: { seller: sellerB, status: 'pending' },
+        sellerPolicies: { seller: sellerB, storeName: 'Second Status Store' },
+      },
+    });
+    const transitionAt = new Date('2026-08-24T18:00:00.000Z');
+
+    const first = await transitionOrderFulfillment({
+      orderId: order._id,
+      actorRole: 'seller',
+      actorId: sellerB,
+      newStatus: 'processing',
+      at: transitionAt,
+    });
+    const replay = await transitionOrderFulfillment({
+      orderId: order._id,
+      actorRole: 'seller',
+      actorId: sellerB,
+      newStatus: 'processing',
+      at: new Date('2026-08-24T18:05:00.000Z'),
+    });
+
+    expect(first.transition).toMatchObject({
+      actorStatusChanged: true,
+      aggregateStatusChanged: false,
+      previousAggregateStatus: 'pending',
+      currentAggregateStatus: 'pending',
+      sellerTransitions: [{
+        sellerId: sellerB.toString(),
+        previousStatus: 'pending',
+        status: 'processing',
+      }],
+    });
+    expect(replay.transition).toMatchObject({
+      actorStatusChanged: false,
+      aggregateStatusChanged: false,
+      sellerTransitions: [],
+    });
+    const records = await NotificationOutbox.find({
+      aggregateId: String(order._id),
+      eventType: 'order.seller_fulfillment_updated',
+    }).lean();
+    expect(records.map(record => record.channel).sort())
+      .toEqual(['email', 'inapp', 'push', 'whatsapp']);
+    expect(new Set(records.map(record => record.eventKey)).size).toBe(1);
+    for (const record of records) {
+      expect(record.occurredAt).toEqual(transitionAt);
+      expect(record.payload.data).toMatchObject({
+        sellerId: sellerB.toString(),
+        storeName: 'Second Status Store',
+        itemNames: [productB.name],
+        previousStatus: 'pending',
+        status: 'processing',
+      });
+      expect(record.payload.data.itemNames).not.toContain(productA.name);
+      expect(record.money).toEqual([expect.objectContaining({
+        amountMinor: 10000,
+        currency: 'PKR',
+      })]);
     }
   });
 

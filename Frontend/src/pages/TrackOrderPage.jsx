@@ -9,9 +9,11 @@ import {
   formatOrderItemOptions,
   getOrderCurrency,
   getOrderItemLineSubtotal,
+  getOrderSellerGroups,
   getOrderTotal,
   hasExactOrderItemUnitEquation,
 } from "../utils/orderItems";
+import BuyerSellerFulfillmentGroups from "../components/order/BuyerSellerFulfillmentGroups";
 
 const statusSteps = ["pending", "confirmed", "processing", "shipped", "delivered"];
 const statusConfig = {
@@ -45,7 +47,14 @@ function TrackOrderContent() {
   const [searched, setSearched] = useState(false);
   const [showItems, setShowItems] = useState(false);
   const { formatPrice } = useCurrency();
-  const orderMoney = (amount) => formatPrice(amount, { sourceCurrency: getOrderCurrency(order) });
+  const orderMoney = (amount) => {
+    const orderCurrency = getOrderCurrency(order);
+    return formatPrice(amount, {
+      sourceCurrency: orderCurrency,
+      targetCurrency: orderCurrency,
+      showCode: true,
+    });
+  };
 
   const handleTrack = async (e) => {
     e.preventDefault();
@@ -70,6 +79,14 @@ function TrackOrderContent() {
 
   const currentStepIndex = order ? statusSteps.indexOf(order.orderStatus) : -1;
   const isCancelled = order?.orderStatus === "cancelled";
+  const sellerGrouping = (() => {
+    if (!order) return { groups: [], invalid: false };
+    try {
+      return { groups: getOrderSellerGroups(order), invalid: false };
+    } catch (_) {
+      return { groups: [], invalid: true };
+    }
+  })();
 
   return (
     <div className="min-h-[70vh] py-8 px-4">
@@ -126,6 +143,11 @@ function TrackOrderContent() {
                   <>
                     <Search className="w-4 h-4" /> Track Order
                   </>
+                )}
+                {sellerGrouping.groups.length > 1 && (
+                  <p className="text-xs text-center -mt-3" style={{ color: "hsl(var(--muted-foreground))" }}>
+                    Overall status follows the least-advanced active seller shipment. See each store below for its exact progress.
+                  </p>
                 )}
               </motion.button>
             </div>
@@ -209,8 +231,11 @@ function TrackOrderContent() {
                   </p>
                 </div>
 
-                {/* Order Items */}
-                <div>
+                {/* Seller-owned shipment groups */}
+                <BuyerSellerFulfillmentGroups order={order} formatMoney={orderMoney} />
+
+                {/* Legacy orders without immutable seller snapshots */}
+                {sellerGrouping.groups.length === 0 && !sellerGrouping.invalid && <div>
                   <button
                     onClick={() => setShowItems(!showItems)}
                     className="w-full flex items-center justify-between py-2 text-sm font-semibold"
@@ -251,7 +276,7 @@ function TrackOrderContent() {
                       </motion.div>
                     )}
                   </AnimatePresence>
-                </div>
+                </div>}
 
                 {/* Payment Info */}
                 <div className="flex items-center justify-between text-sm glass-inner rounded-xl p-3">

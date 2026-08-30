@@ -51,7 +51,21 @@ const presentSellerSubscription = (subscription, now = new Date()) => {
     let periodLabel = endingLabel('Period', periodEndDate, now)
 
     if (isSellerTrial) {
-        displayStatus = status === 'trial' ? '15-Day Free Trial' : displayStatus
+        const adminGrant = subscription.adminTrialGrant
+        const grantAmount = adminGrant?.amount
+        const grantUnit = adminGrant?.unit
+        const hasAdminGrant = Number.isSafeInteger(grantAmount)
+            && grantAmount > 0
+            && ['days', 'months'].includes(grantUnit)
+        if (status === 'trial' && hasAdminGrant) {
+            const rawUnit = grantUnit.slice(0, -1)
+            const unit = `${rawUnit.charAt(0).toUpperCase()}${rawUnit.slice(1)}`
+            displayStatus = adminGrant.mode === 'extend'
+                ? `${grantAmount}-${unit} Trial Extension`
+                : `${grantAmount}-${unit} Free Trial`
+        } else if (status === 'trial') {
+            displayStatus = '15-Day Free Trial'
+        }
         periodEndDate = subscription.trialEndDate || null
         periodLabel = endingLabel('Trial', periodEndDate, now)
     } else if (status === 'free_period') {

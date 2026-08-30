@@ -20,6 +20,7 @@ const {
   withdrawalPayoutSnapshot,
   withdrawalRequestedSnapshot,
 } = require('./notificationMoneySnapshotService');
+const { sellerOrderSummaryForItems } = require('./orderMoneyService');
 const {
   buildOrderButtonsPayload,
   buildOrderListPayload,
@@ -187,6 +188,165 @@ async function enqueueOrderLifecycleBuyerNotifications(order, {
     // This is the checkout total already frozen on the order. Product source
     // currencies and live FX are deliberately not consulted during rendering.
     money: [orderTotalSnapshot(order)],
+    session,
+  });
+}
+
+const SELLER_FULFILLMENT_STATUS_COPY = Object.freeze({
+  confirmed: { title: 'Seller confirmed your items', detail: 'confirmed and accepted your items' },
+  processing: { title: 'Seller is preparing your items', detail: 'is preparing your items' },
+  shipped: { title: 'Seller shipped your items', detail: 'shipped your items' },
+  delivered: { title: 'Seller delivered your items', detail: 'marked your items delivered' },
+});
+
+const sellerFulfillmentBuyerMoneySnapshot = (order, sellerId) => {
+  // Versioned settlement is the strongest immutable evidence and must fail
+  // closed if malformed. The computed fallback exists only for legacy orders
+  // that predate sellerSettlementVersion.
+  if (Number(order?.sellerSettlementVersion || 0) > 0) {
+    return orderSellerTotalSnapshot(order, sellerId);
+  }
+  const sellerKey = stringId(sellerId);
+  const sellerItems = (order?.orderItems || []).filter(
+    item => stringId(item?.seller) === sellerKey,
+  );
+  const summary = sellerOrderSummaryForItems(order, sellerKey, sellerItems);
+  return snapshotMajorMoney({
+    key: 'seller_order_total',
+    label: 'Seller order allocation',
+    amount: summary.totalAmount,
+    currency: order?.currency,
+    sourceModel: 'Order',
+    sourceDocumentId: order?._id,
+    sourcePath: `computedSellerSummary[${sellerKey}].totalAmount`,
+  });
+};
+
+const sellerFulfillmentBuyerTemplates = ({
+  orderNumber,
+  storeName,
+  status,
+  itemSummary,
+  shippingSummary,
+}) => {
+  const copy = SELLER_FULFILLMENT_STATUS_COPY[status];
+  const detail = `${storeName} ${copy.detail}: ${itemSummary}.`;
+  const money = 'This seller portion totals {{money.seller_order_total}} in your frozen checkout currency.';
+  const shipping = shippingSummary ? ` ${shippingSummary}` : '';
+  return {
+    inapp: { title: copy.title, body: `Order #${orderNumber}: ${detail}${shipping} ${money}` },
+    push: { title: copy.title, body: `${storeName}: ${itemSummary}. ${money}` },
+    email: {
+      subject: `${copy.title} - ${orderNumber}`,
+      text: `Order #${orderNumber}: ${detail}${shipping} ${money} Open your Rozare order to track every seller separately.`,
+      html: `<p>Order <strong>#${escapeHtml(orderNumber)}</strong>: ${escapeHtml(detail)}</p>${shipping ? `<p>${escapeHtml(shippingSummary)}</p>` : ''}<p>${money}</p><p>Open your Rozare order to track every seller separately.</p>`,
+    },
+    whatsapp: {
+      message: `${copy.title}\n\nOrder: #${orderNumber}\nStore: ${storeName}\nItems: ${itemSummary}\nStatus: ${status}${shippingSummary ? `\n${shippingSummary}` : ''}\n${money}\n\nOpen your Rozare order to track every seller separately.`,
+    },
+  };
+};
+
+/**
+ * Queue one buyer event for one seller-owned fulfillment transition. This is
+ * intentionally independent of the aggregate orderStatus: in a multi-seller
+ * order Seller B can advance while Seller A remains pending, and the buyer
+ * must still receive and see that update.
+ */
+async function enqueueOrderSellerFulfillmentBuyerNotifications(order, {
+  sellerId,
+  status,
+  previousStatus,
+  transitionAt,
+  actorRole,
+  channels = null,
+  session = null,
+} = {}) {
+  if (!Object.prototype.hasOwnProperty.call(SELLER_FULFILLMENT_STATUS_COPY, status)) {
+    throw outboxError('Seller fulfillment notification status is invalid.');
+  }
+  if (!ORDER_LIFECYCLE_ACTOR_ROLES.has(actorRole)) {
+    throw outboxError('Seller fulfillment notification actor role is invalid.');
+  }
+  const seller = stringId(sellerId);
+  if (!seller) throw outboxError('Seller fulfillment notification requires a seller.');
+  const persistedFulfillment = (order?.sellerFulfillment || []).filter(
+    entry => stringId(entry?.seller) === seller,
+  );
+  if (persistedFulfillment.length !== 1 || persistedFulfillment[0].status !== status) {
+    throw outboxError('Seller fulfillment notification does not match the persisted seller status.');
+  }
+  const previous = safeText(previousStatus, 40).toLowerCase();
+  if (!previous || previous === status || !/^[a-z][a-z_]{0,39}$/.test(previous)) {
+    throw outboxError('Seller fulfillment notification requires the previous persisted status.');
+  }
+
+  const at = requireEventDate(transitionAt, 'Seller fulfillment transition timestamp');
+  const id = stringId(order?._id);
+  const orderNumber = safeText(order?.orderId || id, 100);
+  const sellerItems = (order?.orderItems || []).filter(item => stringId(item?.seller) === seller);
+  if (!sellerItems.length) {
+    throw outboxError('Seller fulfillment notification has no immutable seller item snapshots.');
+  }
+  const policy = (order?.sellerPolicies || []).find(entry => stringId(entry?.seller) === seller);
+  const shipping = (order?.sellerShipping || []).find(entry => stringId(entry?.seller) === seller);
+  const storeName = safeText(policy?.storeName, 100) || 'A seller';
+  const itemNames = sellerItems.map(item => safeText(item?.name, 100) || 'Order item');
+  const visibleNames = itemNames.slice(0, 4);
+  const itemSummary = safeText(
+    `${visibleNames.join(', ')}${itemNames.length > visibleNames.length ? ` and ${itemNames.length - visibleNames.length} more` : ''}`,
+    300,
+  );
+  const shippingName = safeText(shipping?.shippingMethod?.name, 100);
+  const estimatedDays = shipping?.shippingMethod?.estimatedDays;
+  const shippingSummary = shippingName
+    ? `Shipping: ${shippingName}${Number.isSafeInteger(estimatedDays) ? `, estimated ${estimatedDays} day${estimatedDays === 1 ? '' : 's'}` : ''}.`
+    : '';
+  const recipient = buyerOrderRecipient(order);
+  const selectedChannels = channels || buyerReceiptChannels(order, {
+    includeAccountChannels: recipient.kind === 'user',
+  });
+  if (!selectedChannels.length) return [];
+  const transitionHash = crypto.createHash('sha256')
+    .update(`${seller}:${previous}:${status}:${at.toISOString()}`)
+    .digest('hex');
+
+  return enqueueNotificationEvent({
+    eventKey: `order:${id}:seller-fulfillment:${transitionHash}:buyer:v1`,
+    eventType: 'order.seller_fulfillment_updated',
+    aggregateType: 'Order',
+    aggregateId: id,
+    occurredAt: at,
+    financial: true,
+    recipient,
+    channels: selectedChannels,
+    templates: sellerFulfillmentBuyerTemplates({
+      orderNumber,
+      storeName,
+      status,
+      itemSummary,
+      shippingSummary,
+    }),
+    metadata: {
+      category: 'order',
+      linkTo: recipient.kind === 'user' ? `/user-dashboard/order/detail/${id}` : '/track-order',
+      channelId: 'orders',
+      relatedOrder: id,
+      data: {
+        type: 'seller_fulfillment_updated',
+        orderId: id,
+        publicOrderId: orderNumber,
+        sellerId: seller,
+        storeName,
+        itemNames,
+        previousStatus: previous,
+        status,
+        shippingName: shippingName || null,
+        estimatedDays: Number.isSafeInteger(estimatedDays) ? estimatedDays : null,
+        changedByRole: actorRole,
+      },
+    },
+    money: [sellerFulfillmentBuyerMoneySnapshot(order, seller)],
     session,
   });
 }
@@ -1399,6 +1559,7 @@ module.exports = {
   enqueueNoChargeOrderBuyerNotifications,
   enqueueNoChargeOrderSellerNotifications,
   enqueueOrderLifecycleBuyerNotifications,
+  enqueueOrderSellerFulfillmentBuyerNotifications,
   enqueueOrderStockRefundBuyerNotifications,
   enqueuePaidOrderBuyerNotifications,
   enqueuePaidOrderSellerNotifications,

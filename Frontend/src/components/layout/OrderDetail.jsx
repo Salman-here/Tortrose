@@ -35,7 +35,14 @@ const OrderDetail = () => {
     const { currentUser } = useAuth();
     const { formatPrice } = useCurrency();
     const [order, setOrder] = useState(null);
-    const orderMoney = (amount) => formatPrice(amount, { sourceCurrency: getOrderCurrency(order) });
+    const orderMoney = (amount) => {
+        const orderCurrency = getOrderCurrency(order);
+        return formatPrice(amount, {
+            sourceCurrency: orderCurrency,
+            targetCurrency: orderCurrency,
+            showCode: true,
+        });
+    };
     const [isUpdating, setIsUpdating] = useState(false);
     const [newStatus, setNewStatus] = useState(null);
     const [showCancelConfirm, setShowCancelConfirm] = useState(false);
