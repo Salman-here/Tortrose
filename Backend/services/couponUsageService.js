@@ -435,8 +435,18 @@ const consumeOrderCoupons = async ({ orderId, session = null, at = new Date() })
   }, session)
 );
 
-const releaseOrderCouponsInSession = async (order, session, reason, at = new Date()) => {
-  const redemptions = await CouponRedemption.find({ order: order._id, status: 'reserved' })
+const releaseOrderCouponsInSession = async (
+  order,
+  session,
+  reason,
+  at = new Date(),
+  { includeConsumed = false } = {},
+) => {
+  const releasableStatuses = includeConsumed ? ['reserved', 'consumed'] : ['reserved'];
+  const redemptions = await CouponRedemption.find({
+    order: order._id,
+    status: { $in: releasableStatuses },
+  })
     .sort({ coupon: 1 })
     .session(session);
   for (const redemption of redemptions) {
@@ -447,6 +457,73 @@ const releaseOrderCouponsInSession = async (order, session, reason, at = new Dat
     await redemption.save({ session });
   }
   return redemptions.length;
+};
+
+/**
+ * Re-acquire coupon capacity for an unpaid cancelled order before it is
+ * re-confirmed. Cancellation returns both reserved and consumed capacity to
+ * the coupon pool, so a later buyer override must validate the current coupon
+ * terms and limits again instead of silently reusing a released redemption.
+ */
+const reactivateReleasedOrderCouponsInSession = async (order, session, at = new Date()) => {
+  const appliedCoupons = sortedAppliedCoupons(order);
+  if (!appliedCoupons.length) return { reactivated: 0, reused: false, order };
+  const buyerId = assertAuthenticatedCouponBuyer(order, null);
+  const redemptions = await CouponRedemption.find({ order: order._id })
+    .sort({ coupon: 1 })
+    .session(session);
+
+  if (
+    redemptions.length !== appliedCoupons.length
+    || appliedCoupons.some(applied => !redemptions.some(redemption => (
+      toId(redemption.coupon) === toId(applied.couponId)
+      && toId(redemption.user) === buyerId
+      && redemption.couponTermsFingerprint === applied.couponTermsFingerprint
+    )))
+  ) {
+    throw usageError('Coupon reservation state is inconsistent.', 'COUPON_RESERVATION_CONFLICT');
+  }
+
+  const released = redemptions.filter(redemption => redemption.status === 'released');
+  if (!released.length) return { reactivated: 0, reused: true, order };
+  if (released.length !== redemptions.length) {
+    throw usageError('Coupon reservation state is inconsistent.', 'COUPON_RESERVATION_CONFLICT');
+  }
+
+  const ratesDocument = order.exchangeRateSnapshot?.rates;
+  const exchangeRates = ratesDocument?.toObject
+    ? ratesDocument.toObject()
+    : (ratesDocument || null);
+  const repriced = await validateAndPriceCoupons({
+    requestedCoupons: appliedCoupons,
+    orderItems: order.orderItems,
+    userId: buyerId,
+    orderCurrency: order.currency,
+    exchangeRates,
+    exchangeRatesFallback: order.exchangeRateSnapshot?.fallback === true,
+    at,
+    session,
+  });
+  assertPersistedPricingMatches(order, repriced);
+
+  for (const appliedCoupon of sortedAppliedCoupons({ appliedCoupons: repriced.appliedCoupons })) {
+    const coupon = await Coupon.findById(appliedCoupon.couponId).session(session);
+    if (!coupon || couponTermsFingerprint(coupon) !== appliedCoupon.couponTermsFingerprint) {
+      throw usageError(
+        'A coupon changed after this order was cancelled. Apply an available coupon in a new order.',
+        'COUPON_TERMS_CHANGED',
+      );
+    }
+    await incrementCouponUsage(coupon, buyerId, session);
+    const redemption = released.find(entry => toId(entry.coupon) === toId(appliedCoupon.couponId));
+    redemption.status = 'reserved';
+    redemption.consumedAt = null;
+    redemption.releasedAt = null;
+    redemption.releaseReason = '';
+    await redemption.save({ session });
+  }
+
+  return { reactivated: released.length, reused: false, order };
 };
 
 const releaseOrderCoupons = async ({ orderId, reason = '', session = null, at = new Date() }) => (
@@ -533,6 +610,7 @@ module.exports = {
   reserveOrderCoupons,
   consumeOrderCoupons,
   releaseOrderCoupons,
+  reactivateReleasedOrderCouponsInSession,
   deleteUnpaidOrderAndReleaseCoupons,
   deleteCouponIfUnreserved,
   // Exported only for focused lifecycle tests and callers that already own a

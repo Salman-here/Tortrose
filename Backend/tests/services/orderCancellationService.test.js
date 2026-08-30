@@ -164,7 +164,7 @@ describe('central unpaid-order cancellation lifecycle', () => {
     expect((await CouponRedemption.findOne({ order: order._id })).status).toBe('consumed');
   });
 
-  test('concurrent COD cancellation restores inventory once, keeps the consumed coupon, and reconfirm reserves once', async () => {
+  test('concurrent COD cancellation restores inventory and coupon capacity once, then reconfirm reserves once', async () => {
     const ids = identity();
     await createProduct(ids);
     const coupon = await createCoupon(ids);
@@ -214,8 +214,8 @@ describe('central unpaid-order cancellation lifecycle', () => {
       orderStatus: 'cancelled',
       inventoryCommitted: false,
     });
-    expect((await Coupon.findById(coupon._id)).usedCount).toBe(1);
-    expect((await CouponRedemption.findOne({ order: order._id })).status).toBe('consumed');
+    expect((await Coupon.findById(coupon._id)).usedCount).toBe(0);
+    expect((await CouponRedemption.findOne({ order: order._id })).status).toBe('released');
 
     await expect(commitOrderInventory(order._id))
       .rejects.toMatchObject({ code: 'ORDER_CANCELLED' });
@@ -231,10 +231,11 @@ describe('central unpaid-order cancellation lifecycle', () => {
       orderStatus: 'confirmed',
       inventoryCommitted: true,
     });
+    expect((await Coupon.findById(coupon._id)).usedCount).toBe(1);
     expect((await CouponRedemption.findOne({ order: order._id })).status).toBe('consumed');
   });
 
-  test('reconfirm fails closed when cancellation released a still-reserved coupon', async () => {
+  test('reconfirm safely reacquires a released coupon when its terms and capacity remain available', async () => {
     const ids = identity();
     await createProduct(ids);
     const coupon = await createCoupon(ids);
@@ -252,15 +253,55 @@ describe('central unpaid-order cancellation lifecycle', () => {
     });
 
     expect((await CouponRedemption.findOne({ order: order._id })).status).toBe('released');
+    await reconfirmCancelledCodOrder({ orderId: order._id });
+
+    expect(await Order.findById(order._id).lean()).toMatchObject({
+      orderStatus: 'confirmed',
+      inventoryCommitted: true,
+    });
+    expect(await Product.findById(ids.product).lean()).toMatchObject({ stock: 4, totalSales: 1 });
+    expect((await Coupon.findById(coupon._id)).usedCount).toBe(1);
+    expect((await CouponRedemption.findOne({ order: order._id })).status).toBe('consumed');
+  });
+
+  test('reconfirm rolls back inventory when another buyer used the released final coupon slot', async () => {
+    const ids = identity();
+    await createProduct(ids);
+    const coupon = await createCoupon(ids);
+    coupon.maxUses = 1;
+    await coupon.save();
+    const order = await createOrder({
+      ids,
+      coupon,
+      paymentMethod: 'cash_on_delivery',
+      paymentSetupState: 'closed',
+    });
+    await reserveOrderCoupons({ orderId: order._id, userId: ids.buyer });
+    await commitOrderInventoryAndCoupons(order._id);
+    await cancelUnpaidOrderLocally({ orderId: order._id, reason: 'buyer cancelled' });
+
+    const otherIds = {
+      ...ids,
+      buyer: new mongoose.Types.ObjectId(),
+    };
+    const otherOrder = await createOrder({
+      ids: otherIds,
+      coupon,
+      paymentMethod: 'cash_on_delivery',
+      paymentSetupState: 'closed',
+    });
+    await reserveOrderCoupons({ orderId: otherOrder._id, userId: otherIds.buyer });
+    await commitOrderInventoryAndCoupons(otherOrder._id);
+
     await expect(reconfirmCancelledCodOrder({ orderId: order._id }))
-      .rejects.toMatchObject({ code: 'COUPON_RESERVATION_RELEASED' });
+      .rejects.toMatchObject({ code: 'COUPON_USAGE_LIMIT' });
 
     expect(await Order.findById(order._id).lean()).toMatchObject({
       orderStatus: 'cancelled',
       inventoryCommitted: false,
     });
-    expect(await Product.findById(ids.product).lean()).toMatchObject({ stock: 5, totalSales: 0 });
-    expect((await Coupon.findById(coupon._id)).usedCount).toBe(0);
+    expect(await Product.findById(ids.product).lean()).toMatchObject({ stock: 4, totalSales: 1 });
+    expect((await Coupon.findById(coupon._id)).usedCount).toBe(1);
     expect((await CouponRedemption.findOne({ order: order._id })).status).toBe('released');
   });
 

@@ -10,6 +10,7 @@ const {
 const {
   COUPON_USAGE_VERSION,
   consumeOrderCoupons,
+  reactivateReleasedOrderCouponsInSession,
   releaseOrderCouponsInSession,
 } = require('./couponUsageService');
 const {
@@ -186,6 +187,7 @@ const cancelUnpaidOrderLocally = async ({
     transactionSession,
     reason,
     at,
+    { includeConsumed: true },
   );
 
   order.orderStatus = 'cancelled';
@@ -442,10 +444,11 @@ const reconfirmCancelledCodOrder = async ({
     order.inventoryCommitted = true;
   }
 
-  // A COD coupon is normally consumed at placement and remains consumed
-  // while a cancelled order is eligible for re-confirmation. Validate that
-  // state in the same transaction. A released reservation cannot be silently
-  // reused after its capacity was returned to the coupon pool.
+  // Cancellation returns limited coupon capacity to the pool. Re-acquire and
+  // validate that capacity inside this transaction before consuming it again;
+  // if the coupon changed or another buyer used the final slot, inventory and
+  // every order mutation roll back together.
+  await reactivateReleasedOrderCouponsInSession(order, transactionSession, at);
   const couponResult = await consumeOrderCoupons({
     orderId: order._id,
     session: transactionSession,
