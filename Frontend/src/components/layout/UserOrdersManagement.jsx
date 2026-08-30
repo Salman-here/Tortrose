@@ -6,7 +6,7 @@ import Loader from '../common/Loader';
 import { Link } from 'react-router-dom';
 import { useCurrency } from '../../contexts/CurrencyContext';
 import { getAuthToken } from "../../utils/cookieHelper";
-import { formatOrderItemOptions, getOrderCurrency, getOrderTotal } from "../../utils/orderItems";
+import { formatOrderItemOptions, inspectOrderListMoney } from "../../utils/orderItems";
 import { BuyerSellerStatusChips } from '../order/BuyerSellerFulfillmentGroups';
 
 const containerVariants = { hidden: { opacity: 0 }, visible: { opacity: 1, transition: { staggerChildren: 0.08 } } };
@@ -125,12 +125,14 @@ const UserOrdersManagement = () => {
                                     <div className="text-left sm:text-right">
                                         <p className="text-base font-extrabold" style={{ color: 'hsl(var(--foreground))' }}>
                                             {(() => {
-                                                const orderCurrency = getOrderCurrency(order);
-                                                return formatPrice(getOrderTotal(order), {
-                                                    sourceCurrency: orderCurrency,
-                                                    targetCurrency: orderCurrency,
-                                                    showCode: true,
-                                                });
+                                                const money = inspectOrderListMoney(order);
+                                                return money.valid
+                                                    ? formatPrice(money.total, {
+                                                        sourceCurrency: money.currency,
+                                                        targetCurrency: money.currency,
+                                                        showCode: true,
+                                                    })
+                                                    : 'Money unavailable';
                                             })()}
                                         </p>
                                         <Link to={`/user-dashboard/order/detail/${order._id}`}>
