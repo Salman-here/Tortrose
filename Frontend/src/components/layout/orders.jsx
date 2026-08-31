@@ -101,6 +101,16 @@ const OrderManagement = () => {
         return styles[status] || { bg: 'rgba(255,255,255,0.08)', color: 'hsl(var(--muted-foreground))' };
     };
 
+    const formatBuyerOrderedAmount = (money) => {
+        const buyerCurrency = String(money.buyerCurrency).trim().toUpperCase();
+        const buyerAmount = formatPrice(money.buyerTotal, {
+            sourceCurrency: buyerCurrency,
+            targetCurrency: buyerCurrency,
+        });
+
+        return `Buyer ordered in ${buyerCurrency}: ${buyerAmount}`;
+    };
+
     const pendingCount = orders.filter(o => o.orderStatus === 'pending').length;
     const confirmedCount = orders.filter(o => o.orderStatus === 'confirmed').length;
     const processingCount = orders.filter(o => o.orderStatus === 'processing').length;
@@ -349,7 +359,7 @@ const OrderManagement = () => {
                                                     </div>
                                                     {money.valid && money.buyerCurrency && money.buyerCurrency !== money.currency && (
                                                         <div className="text-[10px] mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                                                            Buyer paid {formatPrice(money.buyerTotal, { sourceCurrency: money.buyerCurrency, targetCurrency: money.buyerCurrency, showCode: true })}
+                                                            {formatBuyerOrderedAmount(money)}
                                                         </div>
                                                     )}
                                                 </td>
@@ -486,7 +496,7 @@ const OrderManagement = () => {
                                                             </span>
                                                             {money.valid && money.buyerCurrency && money.buyerCurrency !== money.currency && (
                                                                 <p className="text-[10px] mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                                                                    Buyer paid {formatPrice(money.buyerTotal, { sourceCurrency: money.buyerCurrency, targetCurrency: money.buyerCurrency, showCode: true })}
+                                                                    {formatBuyerOrderedAmount(money)}
                                                                 </p>
                                                             )}
                                                         </div>
