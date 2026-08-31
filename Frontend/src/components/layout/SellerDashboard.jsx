@@ -723,8 +723,8 @@ const SellerDashboard = () => {
             <div className={`flex-1 min-w-0 flex flex-col min-h-screen ${!isMobile ? 'ml-64' : ''}`}>
                 {/* Top Header Bar */}
                 <div className="sticky top-0 z-30 mx-4 mt-4 glass-panel-strong" style={{ borderRadius: 20, borderBottom: '1px solid var(--glass-border)' }}>
-                    <div className="flex items-center justify-between px-4 sm:px-6 py-3">
-                        <div className="flex items-center gap-3">
+                    <div className="flex min-w-0 items-center justify-between gap-2 px-4 sm:px-6 py-3">
+                        <div className="flex min-w-0 items-center gap-3">
                             {isMobile && (
                                 <motion.button whileTap={{ scale: 0.95 }} onClick={() => setIsSidebarOpen(o => !o)}
                                     className="p-2 rounded-xl glass-inner" style={{ color: 'hsl(var(--foreground))' }}>
@@ -733,18 +733,18 @@ const SellerDashboard = () => {
                                     </motion.div>
                                 </motion.button>
                             )}
-                            <div>
-                                <h1 className="text-lg font-bold" style={{ color: 'hsl(var(--foreground))' }}>{getPageTitle()}</h1>
+                            <div className="min-w-0">
+                                <h1 className="truncate text-lg font-bold" style={{ color: 'hsl(var(--foreground))' }}>{getPageTitle()}</h1>
                                 <p className="text-xs hidden sm:block" style={{ color: 'hsl(var(--muted-foreground))' }}>
                                     Welcome back, {currentUser?.username || 'Seller'}
                                 </p>
                             </div>
                         </div>
 
-                        <div className="flex items-center gap-2 sm:gap-3">
+                        <div className="flex shrink-0 items-center gap-2 sm:gap-3">
                             <CurrencySelector />
                             {/* Home Button */}
-                            <Link to="/" title="Back to Home">
+                            <Link to="/" title="Back to Home" className="hidden sm:block">
                                 <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
                                     className="p-2.5 rounded-xl glass-inner" style={{ color: 'hsl(150, 60%, 45%)' }}>
                                     <LayoutPanelLeft size={18} />
@@ -771,7 +771,7 @@ const SellerDashboard = () => {
                             </div>
 
                             {/* User Avatar */}
-                            <Link to="/seller-dashboard/store-settings">
+                            <Link to="/seller-dashboard/store-settings" className="hidden sm:block">
                                 <motion.div whileHover={{ scale: 1.05 }} className="flex items-center gap-2 cursor-pointer">
                                     <div className="w-8 h-8 rounded-xl flex items-center justify-center text-sm font-bold border"
                                         style={{

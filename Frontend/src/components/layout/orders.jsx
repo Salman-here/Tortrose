@@ -168,14 +168,14 @@ const OrderManagement = () => {
             {/* Filters */}
             <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}
                 className="glass-panel p-4 sm:p-5 mb-6">
-                <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-2">
+                <div className="flex flex-col items-stretch gap-3 mb-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex min-w-0 items-center gap-2 sm:shrink-0">
                         <Filter size={14} style={{ color: 'hsl(var(--muted-foreground))' }} />
                         <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'hsl(var(--muted-foreground))' }}>Filters</span>
                     </div>
                     <div className="flex items-center gap-2">
                         {/* Format selector buttons */}
-                        <div className="flex rounded-lg overflow-hidden" style={{ border: '1px solid var(--glass-border)' }}>
+                        <div className="flex min-w-0 flex-1 rounded-lg overflow-hidden sm:flex-none" style={{ border: '1px solid var(--glass-border)' }}>
                             {[
                                 { id: 'pdf', label: 'PDF', icon: FileText, color: 'hsl(0, 72%, 55%)' },
                                 { id: 'excel', label: 'Excel', icon: FileSpreadsheet, color: 'hsl(150, 60%, 40%)' },
@@ -185,7 +185,7 @@ const OrderManagement = () => {
                                 const active = exportFormat === f.id;
                                 return (
                                     <button key={f.id} onClick={() => setExportFormat(f.id)}
-                                        className="px-2.5 py-1.5 text-[10px] font-bold inline-flex items-center gap-1 transition-all"
+                                        className="flex-1 px-2.5 py-1.5 text-[10px] font-bold inline-flex items-center justify-center gap-1 transition-all sm:flex-none"
                                         style={{
                                             background: active ? `${f.color}1A` : 'transparent',
                                             color: active ? f.color : 'hsl(var(--muted-foreground))',
@@ -307,7 +307,7 @@ const OrderManagement = () => {
                 ) : (
                     <>
                         {/* Desktop Table */}
-                        <div className="hidden md:block overflow-x-auto">
+                        <div className="hidden 2xl:block overflow-x-auto">
                             <table className="w-full">
                                 <thead>
                                     <tr style={{ borderBottom: '1px solid var(--glass-border)' }}>
@@ -411,7 +411,7 @@ const OrderManagement = () => {
                         </div>
 
                         {/* Mobile Cards */}
-                        <div className="md:hidden space-y-3 p-4">
+                        <div className="2xl:hidden space-y-3 p-4">
                              {orders.map((order, i) => {
                                  const ss = getStatusStyle(order.orderStatus);
                                  const money = currentUser?.role === 'seller'
