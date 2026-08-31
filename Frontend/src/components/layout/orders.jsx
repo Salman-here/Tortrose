@@ -109,7 +109,7 @@ const OrderManagement = () => {
     const cancelledCount = orders.filter(o => o.orderStatus === 'cancelled').length;
 
     return (
-        <div className="p-4 sm:p-6 max-w-7xl mx-auto">
+        <div className="w-full min-w-0 p-4 sm:p-6 max-w-7xl mx-auto">
             {/* Header */}
             <div className="mb-6">
                 <div className="tag-pill mb-3">

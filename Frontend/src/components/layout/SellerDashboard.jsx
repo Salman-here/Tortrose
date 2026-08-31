@@ -720,7 +720,7 @@ const SellerDashboard = () => {
             />
 
             {/* Main Content */}
-            <div className={`flex-1 flex flex-col min-h-screen ${!isMobile ? 'ml-64' : ''}`}>
+            <div className={`flex-1 min-w-0 flex flex-col min-h-screen ${!isMobile ? 'ml-64' : ''}`}>
                 {/* Top Header Bar */}
                 <div className="sticky top-0 z-30 mx-4 mt-4 glass-panel-strong" style={{ borderRadius: 20, borderBottom: '1px solid var(--glass-border)' }}>
                     <div className="flex items-center justify-between px-4 sm:px-6 py-3">
@@ -929,7 +929,7 @@ const SellerDashboard = () => {
                 )}
 
                 {/* Page Content */}
-                <div className="flex-1">
+                <div className="flex-1 min-w-0">
                     {aiChatOpen ? (
                         <div className="p-3 sm:p-4 lg:p-6">
                             <div className="glass-panel-strong overflow-hidden" style={{ borderRadius: 20, height: 'calc(100vh - 140px)' }}>
