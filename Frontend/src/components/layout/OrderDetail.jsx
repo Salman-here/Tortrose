@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useId, useState } from "react";
 import axios from "axios";
 import { motion } from "framer-motion";
 import { toast } from "react-toastify";
-import { ArrowLeft, Edit, Package, XCircle, Clock, RefreshCw, Truck, CheckCircle, Mail, MessageCircle, AlertCircle } from "lucide-react";
+import { ArrowLeft, Edit, Package, XCircle, Clock, RefreshCw, Truck, CheckCircle, Mail, MessageCircle, AlertCircle, Info } from "lucide-react";
 import { Link, useParams } from "react-router-dom";
 import Loader from "../common/Loader";
 import { useAuth } from "../../contexts/AuthContext";
@@ -52,6 +52,43 @@ const OrderItemMoney = ({ item, formatMoney, amountClassName, sellerItemMoney = 
                 {exactUnitAmount === null ? 'Complete frozen line price' : `Subtotal: ${formatMoney(lineSubtotal)}`}
             </p>
         </>
+    );
+};
+
+const AdjustmentInfoTooltip = ({ adjustment, buyerCurrency, sellerCurrency, formattedAmount }) => {
+    const tooltipId = useId();
+    const isDeduction = adjustment < 0;
+    const direction = isDeduction ? 'less' : 'more';
+    const action = isDeduction ? 'deducted' : 'added';
+    const hasCurrencyConversion = buyerCurrency && sellerCurrency && buyerCurrency !== sellerCurrency;
+    const explanation = hasCurrencyConversion
+        ? `The buyer checked out in ${buyerCurrency} while your store uses ${sellerCurrency}. The converted seller allocation had to be rounded to ${buyerCurrency}'s supported decimal places and reconciled with the buyer total. It converts back to ${formattedAmount} ${direction} than the unrounded store total, so this amount was ${action}. This is currency rounding, not a discount or platform fee.`
+        : `The frozen checkout allocation required cent reconciliation. ${formattedAmount} was ${action} so the stored amounts add up exactly. This is a rounding adjustment, not a discount or platform fee.`;
+
+    return (
+        <span className="group relative inline-flex shrink-0 items-center">
+            <button
+                type="button"
+                aria-label="Why is this currency adjustment shown?"
+                aria-describedby={tooltipId}
+                className="inline-flex h-5 w-5 cursor-help items-center justify-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70"
+                style={{ color: 'hsl(var(--muted-foreground))', background: 'rgba(99, 102, 241, 0.1)' }}
+            >
+                <Info className="h-3.5 w-3.5" aria-hidden="true" />
+            </button>
+            <span
+                id={tooltipId}
+                role="tooltip"
+                className="pointer-events-none invisible absolute bottom-full left-1/2 z-50 mb-2 w-72 max-w-[calc(100vw-3rem)] -translate-x-1/2 rounded-xl px-3 py-2.5 text-left text-xs font-normal leading-relaxed opacity-0 shadow-2xl transition-all duration-150 group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100"
+                style={{
+                    color: 'hsl(var(--foreground))',
+                    background: 'hsl(var(--background))',
+                    border: '1px solid var(--glass-border)',
+                }}
+            >
+                {explanation}
+            </span>
+        </span>
     );
 };
 
@@ -423,7 +460,22 @@ const OrderDetail = () => {
                             })()}
                             {summaryTax > 0 && <div className="flex justify-between"><span className="text-sm" style={{ color: 'hsl(var(--muted-foreground))' }}>Tax</span><span className="text-sm font-medium" style={{ color: 'hsl(var(--foreground))' }}>{primaryMoney(summaryTax)}</span></div>}
                             {summaryCouponDiscount > 0 && <div className="flex justify-between"><span className="text-sm" style={{ color: 'hsl(150, 60%, 45%)' }}>Coupon Discount</span><span className="text-sm font-medium" style={{ color: 'hsl(150, 60%, 45%)' }}>-{primaryMoney(summaryCouponDiscount)}</span></div>}
-                            {reconciliationAdjustment !== 0 && <div className="flex justify-between"><span className="text-sm" style={{ color: 'hsl(var(--muted-foreground))' }}>Frozen FX/cent adjustment</span><span className="text-sm font-medium" style={{ color: 'hsl(var(--foreground))' }}>{reconciliationAdjustment > 0 ? '+' : '-'}{primaryMoney(Math.abs(reconciliationAdjustment))}</span></div>}
+                            {reconciliationAdjustment !== 0 && (
+                                <div className="flex justify-between gap-4">
+                                    <span className="inline-flex items-center gap-1.5 text-sm" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                                        Frozen FX/cent adjustment
+                                        <AdjustmentInfoTooltip
+                                            adjustment={reconciliationAdjustment}
+                                            buyerCurrency={sellerCurrencyMoney?.buyerCurrency}
+                                            sellerCurrency={sellerCurrencyMoney?.currency}
+                                            formattedAmount={primaryMoney(Math.abs(reconciliationAdjustment))}
+                                        />
+                                    </span>
+                                    <span className="shrink-0 text-sm font-medium" style={{ color: 'hsl(var(--foreground))' }}>
+                                        {reconciliationAdjustment > 0 ? '+' : '-'}{primaryMoney(Math.abs(reconciliationAdjustment))}
+                                    </span>
+                                </div>
+                            )}
                             {order?.appliedCoupons?.length > 0 && (
                                 <div className="flex flex-wrap gap-1 mt-1">
                                     {order.appliedCoupons.map((c, i) => (
