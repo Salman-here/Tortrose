@@ -391,9 +391,9 @@ const OrderDetail = () => {
                         <h2 className="text-lg font-semibold" style={{ color: 'hsl(var(--foreground))' }}>
                             {sellerCurrencyMoney ? `Your Store-Currency Summary (${sellerCurrencyMoney.currency})` : 'Order Summary'}
                         </h2>
-                        {sellerCurrencyMoney && (
+                        {sellerCurrencyMoney && sellerCurrencyMoney.buyerCurrency !== sellerCurrencyMoney.currency && (
                             <p className="text-xs mt-1 mb-4" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                                Frozen at checkout. This is your order value in the store currency; it is not a live-FX estimate.
+                                Buyer checked out in {sellerCurrencyMoney.buyerCurrency}. Your store prices are in {sellerCurrencyMoney.currency}, so they were converted to {sellerCurrencyMoney.buyerCurrency} for this order.
                             </p>
                         )}
                         <div className="space-y-2">
