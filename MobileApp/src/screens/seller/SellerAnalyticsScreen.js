@@ -9,7 +9,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import api from '../../config/api';
+import api, { API_ENDPOINTS } from '../../config/api';
 import GlassBackground from '../../components/common/GlassBackground';
 import GlassPanel from '../../components/common/GlassPanel';
 import { SellerInlineError, SellerScreenHeader, SellerScreenSkeleton } from '../../components/seller/SellerUI';
@@ -17,6 +17,7 @@ import { spacing, fontSize, fontWeight, borderRadius, typography } from '../../s
 import { useTheme } from '../../contexts/ThemeContext';
 import { useCurrency } from '../../contexts/CurrencyContext';
 import { sellerAnalyticsMoneyIsValid } from '../../utils/currencySafety';
+import { inspectSellerProductCurrencyState } from '../../utils/productCurrencyState';
 
 const RANGES = [
   { label: '7 Days', value: '7' },
@@ -38,7 +39,7 @@ const CAT_COLORS = ['#6366f1', '#10b981', '#0ea5e9', '#8b5cf6', '#f97316', '#ec4
 export default function SellerAnalyticsScreen({ navigation }) {
   const { palette } = useTheme();
   const styles = buildStyles(palette);
-  const { currency, formatAmount } = useCurrency();
+  const { formatAmount } = useCurrency();
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -52,10 +53,18 @@ export default function SellerAnalyticsScreen({ navigation }) {
     analyticsRequestRef.current = requestId;
     setLoading(true); setError(null);
     try {
-      const res = await api.get(`/api/analytics/seller?days=${timeRange}&currency=${currency}`);
+      const productCurrencyResponse = await api.get(API_ENDPOINTS.STORES.PRODUCT_CURRENCY);
+      const productCurrencyState = inspectSellerProductCurrencyState(
+        productCurrencyResponse.data?.productCurrency
+      );
+      if (!productCurrencyState.valid || productCurrencyState.hasStore !== true) {
+        throw new Error('Your store product currency could not be verified. Please retry.');
+      }
+      const sellerCurrency = productCurrencyState.activeCurrency;
+      const res = await api.get(`/api/analytics/seller?days=${timeRange}&currency=${sellerCurrency}`);
       if (analyticsRequestRef.current !== requestId) return;
       const nextAnalytics = res.data.analytics;
-      if (!sellerAnalyticsMoneyIsValid(nextAnalytics, currency)) {
+      if (!sellerAnalyticsMoneyIsValid(nextAnalytics, sellerCurrency)) {
         throw new Error('Analytics returned incomplete or invalid money totals. Please retry.');
       }
       setAnalytics(nextAnalytics);
@@ -72,7 +81,7 @@ export default function SellerAnalyticsScreen({ navigation }) {
         setRefreshing(false);
       }
     }
-  }, [currency, timeRange]);
+  }, [timeRange]);
 
   useEffect(() => {
     fetchAnalytics();

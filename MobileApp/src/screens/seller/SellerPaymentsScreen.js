@@ -46,6 +46,7 @@ import {
   shouldRetainWithdrawalAttempt,
   withdrawalNeedsLiveFx,
 } from '../../utils/sellerMoneySafety';
+import { inspectSellerProductCurrencyState } from '../../utils/productCurrencyState';
 
 const WITHDRAWAL_ATTEMPT_STORAGE_KEY = 'rozare_seller_withdrawal_attempt_v1';
 
@@ -112,7 +113,7 @@ const StatCard = ({ icon, label, value, description, color, styles }) => (
 export default function SellerPaymentsScreen({ navigation }) {
   const { palette } = useTheme();
   const styles = makeStyles(palette);
-  const { currency, currencies, formatAmount } = useCurrency();
+  const { currencies, formatAmount } = useCurrency();
   const { currentUser } = useAuth();
   const withdrawalAttemptStorageKey = createScopedMutationStorageKey(
     WITHDRAWAL_ATTEMPT_STORAGE_KEY,
@@ -124,6 +125,7 @@ export default function SellerPaymentsScreen({ navigation }) {
   const [savingAccount, setSavingAccount] = useState(false);
   const [requesting, setRequesting] = useState(false);
   const [summary, setSummary] = useState(null);
+  const [sellerCurrency, setSellerCurrency] = useState(null);
   const [loadError, setLoadError] = useState('');
   const [showAccountForm, setShowAccountForm] = useState(false);
   const [accountForm, setAccountForm] = useState(defaultAccountForm);
@@ -158,20 +160,31 @@ export default function SellerPaymentsScreen({ navigation }) {
   useEffect(() => {
     void retireActiveWithdrawalAttempt();
     setWithdrawAmount('');
-  }, [currency, retireActiveWithdrawalAttempt]);
+  }, [sellerCurrency, retireActiveWithdrawalAttempt]);
 
   const fetchSummary = useCallback(async () => {
-    const requestCurrency = String(currency || 'USD').toUpperCase();
     const requestId = summaryRequestRef.current.id + 1;
     summaryRequestRef.current.controller?.abort();
     const controller = new AbortController();
     summaryRequestRef.current = { id: requestId, controller };
     summaryRef.current = null;
     setSummary(null);
+    setSellerCurrency(null);
     setLoadError('');
     setLoading(true);
     setRefreshing(true);
     try {
+      const productCurrencyResponse = await api.get(API_ENDPOINTS.STORES.PRODUCT_CURRENCY, {
+        signal: controller.signal,
+      });
+      if (summaryRequestRef.current.id !== requestId) return;
+      const productCurrencyState = inspectSellerProductCurrencyState(
+        productCurrencyResponse.data?.productCurrency
+      );
+      if (!productCurrencyState.valid || productCurrencyState.hasStore !== true) {
+        throw new Error('Your store product currency could not be verified. Please retry.');
+      }
+      const requestCurrency = productCurrencyState.activeCurrency;
       const res = await api.get(
         `${API_ENDPOINTS.PAYMENTS.SELLER_SUMMARY}?currency=${encodeURIComponent(requestCurrency)}`,
         { signal: controller.signal }
@@ -201,6 +214,7 @@ export default function SellerPaymentsScreen({ navigation }) {
       }
       const normalizedNext = { ...next, displayCurrency: responseCurrency };
       summaryRef.current = normalizedNext;
+      setSellerCurrency(requestCurrency);
       setSummary(normalizedNext);
       setLoadError('');
       setAccountForm({
@@ -224,7 +238,7 @@ export default function SellerPaymentsScreen({ navigation }) {
         setRefreshing(false);
       }
     }
-  }, [currency]);
+  }, []);
 
   useEffect(() => {
     fetchSummary();
@@ -240,17 +254,18 @@ export default function SellerPaymentsScreen({ navigation }) {
   }, [fetchSummary]);
 
   const summaryMatchesCurrency = Boolean(summary)
-    && String(summary.displayCurrency || currency).toUpperCase() === String(currency || 'USD').toUpperCase();
+    && Boolean(sellerCurrency)
+    && String(summary.displayCurrency).toUpperCase() === sellerCurrency;
   const activeSummary = summaryMatchesCurrency ? summary : null;
   const displayRevenue = activeSummary?.displayRevenue || {};
   const displayValue = (field) => displayRevenue[field];
   const withdrawalLimits = activeSummary?.withdrawalLimits || {};
   const paymentAccount = activeSummary?.paymentAccount;
   const exchangeRatesAreFallback = activeSummary?.exchangeRateStatus?.fallback !== false;
-  const withdrawalRequiresLiveFx = withdrawalNeedsLiveFx(currency, paymentAccount?.currency);
+  const withdrawalRequiresLiveFx = withdrawalNeedsLiveFx(sellerCurrency, paymentAccount?.currency);
   const withdrawalBlockedByFallback = exchangeRatesAreFallback && withdrawalRequiresLiveFx;
-  const displayMoneyIsApproximate = exchangeRatesAreFallback && String(currency || 'USD').toUpperCase() !== 'USD';
-  const formatDisplayMoney = (amount) => `${displayMoneyIsApproximate ? '≈' : ''}${formatAmount(amount)}`;
+  const displayMoneyIsApproximate = exchangeRatesAreFallback && sellerCurrency !== 'USD';
+  const formatDisplayMoney = (amount) => `${displayMoneyIsApproximate ? '≈' : ''}${formatAmount(amount, { targetCurrency: sellerCurrency })}`;
   const withdrawals = activeSummary?.withdrawals || [];
   const availableInCurrentCurrency = withdrawalLimits.availableDisplayAmount;
   const minimumWithdrawalInCurrentCurrency = withdrawalLimits.minimumDisplayAmount;
@@ -313,7 +328,7 @@ export default function SellerPaymentsScreen({ navigation }) {
       return;
     }
     if (toCurrencyMinorUnits(availableInCurrentCurrency) < toCurrencyMinorUnits(minimumWithdrawalInCurrentCurrency)) {
-      Alert.alert('Minimum withdrawal', `Minimum withdrawal amount is ${formatAmount(minimumWithdrawalInCurrentCurrency)}`);
+      Alert.alert('Minimum withdrawal', `Minimum withdrawal amount is ${formatDisplayMoney(minimumWithdrawalInCurrentCurrency)}`);
       return;
     }
     if (!withdrawalInput) {
@@ -323,17 +338,17 @@ export default function SellerPaymentsScreen({ navigation }) {
     const amount = withdrawalInput.amount;
 
     if (toCurrencyMinorUnits(amount) < toCurrencyMinorUnits(minimumWithdrawalInCurrentCurrency)) {
-      Alert.alert('Minimum withdrawal', `Minimum withdrawal amount is ${formatAmount(minimumWithdrawalInCurrentCurrency)}`);
+      Alert.alert('Minimum withdrawal', `Minimum withdrawal amount is ${formatDisplayMoney(minimumWithdrawalInCurrentCurrency)}`);
       return;
     }
     if (toCurrencyMinorUnits(amount) > toCurrencyMinorUnits(availableInCurrentCurrency)) {
-      Alert.alert('Too high', `You can withdraw up to ${formatAmount(availableInCurrentCurrency)}`);
+      Alert.alert('Too high', `You can withdraw up to ${formatDisplayMoney(availableInCurrentCurrency)}`);
       return;
     }
 
     withdrawalSubmissionRef.current = true;
     setRequesting(true);
-    const fingerprint = `${currentUser?._id || currentUser?.id || 'guest'}:${String(currency || 'USD').toUpperCase()}:${amount.toFixed(2)}`;
+    const fingerprint = `${currentUser?._id || currentUser?.id || 'guest'}:${sellerCurrency}:${amount.toFixed(2)}`;
     let attemptKey = '';
     try {
       await withdrawalAttemptResetRef.current;
@@ -351,7 +366,7 @@ export default function SellerPaymentsScreen({ navigation }) {
       };
       await api.post(API_ENDPOINTS.PAYMENTS.SELLER_WITHDRAWALS, {
         amount,
-        currency,
+        currency: sellerCurrency,
       }, {
         headers: { 'Idempotency-Key': attempt.key },
       });
@@ -515,7 +530,7 @@ export default function SellerPaymentsScreen({ navigation }) {
           </View>
           <View style={styles.amountRow}>
             <View style={{ flex: 1 }}>
-              <Text style={styles.inputLabel}>Amount in {currency}</Text>
+              <Text style={styles.inputLabel}>Amount in {sellerCurrency}</Text>
               <TextInput
                 style={[styles.input, !!withdrawalInputError && styles.inputInvalid]}
                 value={withdrawAmount}
@@ -524,7 +539,7 @@ export default function SellerPaymentsScreen({ navigation }) {
                 keyboardType="decimal-pad"
                 placeholder="0.00"
                 placeholderTextColor={palette.colors.textSecondary}
-                accessibilityLabel={`Withdrawal amount in ${currency}`}
+                accessibilityLabel={`Withdrawal amount in ${sellerCurrency}`}
               />
               {!!withdrawalInputError && <Text style={styles.fieldError}>{withdrawalInputError}</Text>}
             </View>

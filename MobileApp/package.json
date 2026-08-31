@@ -28,7 +28,7 @@
     "@sentry/react-native": "~7.11.0",
     "@stripe/stripe-react-native": "0.63.0",
     "axios": "^1.19.0",
-    "expo": "~55.0.30",
+    "expo": "~55.0.31",
     "expo-asset": "~55.0.18",
     "expo-audio": "~55.0.18",
     "expo-auth-session": "~55.0.18",

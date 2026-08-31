@@ -4,7 +4,9 @@
 
 import React, {
   useCallback,
+  useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 import {
@@ -23,6 +25,7 @@ import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
+import { useFocusEffect } from '@react-navigation/native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../contexts/AuthContext';
 import { useGlobal } from '../contexts/GlobalContext';
@@ -92,6 +95,11 @@ export default function CartScreen({ navigation }) {
 
   const [refreshing, setRefreshing] = useState(false);
   const [checkoutDockHeight, setCheckoutDockHeight] = useState(INITIAL_DOCK_HEIGHT);
+  const refreshExchangeRatesRef = useRef(refreshExchangeRates);
+
+  useEffect(() => {
+    refreshExchangeRatesRef.current = refreshExchangeRates;
+  }, [refreshExchangeRates]);
 
   const cart = Array.isArray(cartItems?.cart) ? cartItems.cart : [];
   const lineItemCount = cart.length;
@@ -105,6 +113,14 @@ export default function CartScreen({ navigation }) {
       setRefreshing(false);
     }
   }, [fetchCart, refreshExchangeRates]);
+
+  // A cart can sit on a device while sellers change prices or live FX moves.
+  // Re-entering the screen must rehydrate from the server before checkout,
+  // rather than treating the last rendered device snapshot as a price lock.
+  useFocusEffect(useCallback(() => {
+    Promise.all([fetchCart(), refreshExchangeRatesRef.current()]).catch(() => undefined);
+    return undefined;
+  }, [fetchCart]));
 
   const cartSourceCurrencies = cart.map((item) => (
     hasCurrencyAmount(getEffectiveProductSourcePrice(item?.product))

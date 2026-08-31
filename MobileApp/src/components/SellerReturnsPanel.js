@@ -986,7 +986,7 @@ const buildStyles = (p) => StyleSheet.create({
   skeletonChips: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.md },
   skeletonCardFooter: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, marginTop: spacing.lg },
   modalOverlay: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.lg, backgroundColor: 'rgba(15,23,42,0.66)' },
-  modalCard: { width: '100%', maxWidth: 540, maxHeight: '88%', padding: 0, borderRadius: borderRadius.xxxl },
+  modalCard: { width: '100%', maxWidth: 540, height: '88%', padding: 0, borderRadius: borderRadius.xxxl },
   modalContent: { padding: spacing.lg },
   modalHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.md },
   modalIcon: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center', borderRadius: 15, backgroundColor: p.colors.primarySubtle, borderWidth: 1, borderColor: p.colors.primaryLighter },

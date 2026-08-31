@@ -10,7 +10,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import Feedback from '../utils/feedback';
-import api from '../config/api';
+import api, { API_UPLOAD_TIMEOUT_MS } from '../config/api';
 import { useAuth } from '../contexts/AuthContext';
 import GlassBackground from '../components/common/GlassBackground';
 import GlassPanel from '../components/common/GlassPanel';
@@ -40,7 +40,10 @@ export default function EditProfileScreen({ navigation }) {
       setIsUploadingAvatar(true);
       const formData = new FormData();
       formData.append('profileImage', { uri: asset.uri, type: asset.mimeType || 'image/jpeg', name: `avatar_${Date.now()}.jpg` });
-      await api.post('/api/upload/profile-image', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
+      await api.post('/api/upload/profile-image', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: API_UPLOAD_TIMEOUT_MS,
+      });
       setAvatarUri(asset.uri);
       await fetchAndUpdateCurrentUser();
       Feedback.show({ type: 'success', text1: 'Photo Updated' });

@@ -19,6 +19,7 @@ const ORDER_CURRENCIES = new Set(['USD', 'PKR', 'EUR', 'GBP']);
 const hasOwn = (value, key) => Boolean(value)
   && typeof value === 'object'
   && Object.prototype.hasOwnProperty.call(value, key);
+const clean = (value) => String(value ?? '').trim();
 
 const requireCanonicalOrderCurrency = (value, label = 'order currency') => {
   if (
@@ -172,6 +173,161 @@ export const getOrderTotal = (order) => {
   return legacyTotal;
 };
 
+const SELLER_FULFILLMENT_STATUSES = new Set([
+  'pending',
+  'confirmed',
+  'processing',
+  'shipped',
+  'delivered',
+  'cancelled',
+]);
+
+/**
+ * Validate the backend's immutable buyer-facing seller groups before the UI
+ * renders them. Every order item must belong to exactly one group and the
+ * grouped minor-unit amounts must conserve the frozen checkout summary.
+ */
+export const getOrderSellerGroups = (order = {}) => {
+  const rawGroups = order?.sellerGroups;
+  if (rawGroups === null || rawGroups === undefined) return [];
+  if (!Array.isArray(rawGroups)) throw orderPresentationIntegrityError('seller order groups');
+  if (order.sellerGroupingAvailable === false) {
+    if (rawGroups.length) throw orderPresentationIntegrityError('seller order grouping state');
+    return [];
+  }
+  if (!Array.isArray(order.orderItems)) throw orderPresentationIntegrityError('order items');
+
+  const seenSellers = new Set();
+  const seenIndexes = new Set();
+  const groups = rawGroups.map((group) => {
+    if (!group || typeof group !== 'object' || Array.isArray(group)) {
+      throw orderPresentationIntegrityError('seller order group');
+    }
+    const sellerId = clean(group.sellerId);
+    const storeName = clean(group.storeName);
+    const status = clean(group.status).toLowerCase();
+    if (
+      !sellerId
+      || !storeName
+      || seenSellers.has(sellerId)
+      || !SELLER_FULFILLMENT_STATUSES.has(status)
+    ) throw orderPresentationIntegrityError('seller order group identity');
+    seenSellers.add(sellerId);
+
+    if (!Array.isArray(group.itemIndexes) || !group.itemIndexes.length) {
+      throw orderPresentationIntegrityError('seller order item indexes');
+    }
+    const itemIndexes = group.itemIndexes.map((index) => {
+      if (
+        !Number.isSafeInteger(index)
+        || index < 0
+        || index >= order.orderItems.length
+        || seenIndexes.has(index)
+      ) throw orderPresentationIntegrityError('seller order item indexes');
+      seenIndexes.add(index);
+      return index;
+    });
+    const items = itemIndexes.map(index => order.orderItems[index]);
+    const units = items.reduce((sum, item) => {
+      const next = sum + getOrderItemQuantity(item);
+      if (!Number.isSafeInteger(next)) throw orderPresentationIntegrityError('seller order units');
+      return next;
+    }, 0);
+    if (
+      group.itemCount !== undefined
+      && (!Number.isSafeInteger(group.itemCount) || group.itemCount !== items.length)
+    ) throw orderPresentationIntegrityError('seller order item count');
+    if (
+      group.units !== undefined
+      && (!Number.isSafeInteger(group.units) || group.units !== units)
+    ) throw orderPresentationIntegrityError('seller order units');
+
+    const summary = group.summary || {};
+    const normalizedSummary = {
+      subtotal: requireExactStoredMoney(summary.subtotal, 'seller subtotal'),
+      shippingCost: requireExactStoredMoney(summary.shippingCost, 'seller shipping'),
+      tax: requireExactStoredMoney(summary.tax, 'seller tax'),
+      couponDiscount: requireExactStoredMoney(summary.couponDiscount, 'seller discount'),
+      reconciliationAdjustment: requireExactStoredMoney(
+        summary.reconciliationAdjustment,
+        'seller reconciliation adjustment',
+        { signed: true },
+      ),
+      totalAmount: requireExactStoredMoney(summary.totalAmount, 'seller total'),
+    };
+    if (addCurrencyAmounts(
+      normalizedSummary.subtotal,
+      normalizedSummary.shippingCost,
+      normalizedSummary.tax,
+      -normalizedSummary.couponDiscount,
+      normalizedSummary.reconciliationAdjustment,
+    ) !== normalizedSummary.totalAmount) {
+      throw orderPresentationIntegrityError('seller summary total');
+    }
+
+    let shippingMethod = null;
+    if (group.shippingMethod !== null && group.shippingMethod !== undefined) {
+      const name = group.shippingMethod?.name;
+      const estimatedDays = group.shippingMethod?.estimatedDays;
+      const price = requireExactStoredMoney(group.shippingMethod?.price, 'seller shipping method price');
+      if (
+        typeof name !== 'string'
+        || !name.trim()
+        || name !== name.trim()
+        || (estimatedDays !== null && estimatedDays !== undefined
+          && (!Number.isSafeInteger(estimatedDays) || estimatedDays < 1))
+        || price !== normalizedSummary.shippingCost
+      ) throw orderPresentationIntegrityError('seller shipping method');
+      shippingMethod = { ...group.shippingMethod, name, estimatedDays, price };
+    }
+
+    return {
+      ...group,
+      sellerId,
+      storeName,
+      status,
+      itemIndexes,
+      itemCount: items.length,
+      units,
+      items,
+      shippingMethod,
+      summary: normalizedSummary,
+    };
+  });
+
+  if (seenIndexes.size !== order.orderItems.length) {
+    throw orderPresentationIntegrityError('seller order item coverage');
+  }
+  const fullSummary = {
+    subtotal: getOrderSummaryAmount(order, ['subtotal'], 'order subtotal'),
+    shippingCost: getOrderSummaryAmount(order, ['shippingCost', 'shippingFee'], 'order shipping'),
+    tax: getOrderSummaryAmount(order, ['tax', 'taxAmount'], 'order tax'),
+    couponDiscount: getOrderSummaryAmount(order, ['couponDiscount', 'discountAmount'], 'order discount'),
+    reconciliationAdjustment: getOrderSummaryAmount(
+      order,
+      ['reconciliationAdjustment'],
+      'order reconciliation adjustment',
+      { signed: true },
+    ),
+    totalAmount: getOrderTotal(order),
+  };
+  Object.keys(fullSummary).forEach((key) => {
+    if (addCurrencyAmounts(...groups.map(group => group.summary[key])) !== fullSummary[key]) {
+      throw orderPresentationIntegrityError(`seller grouped ${key}`);
+    }
+  });
+
+  return groups;
+};
+
+export const inspectOrderListMoney = (order) => {
+  try {
+    return { valid: true, currency: getOrderCurrency(order), total: getOrderTotal(order) };
+  } catch (error) {
+    return { valid: false, currency: null, total: null, error };
+  }
+};
+
 export const getSellerCurrencyMoney = (order = {}) => {
   const raw = order?.sellerCurrencyMoney;
   if (raw === null || raw === undefined) return null;
@@ -250,21 +406,45 @@ export const getSellerCurrencyMoney = (order = {}) => {
   return { ...raw, currency, buyerCurrency, summary, buyerSummary, itemMoney };
 };
 
+export const inspectSellerOrderListMoney = (order) => {
+  try {
+    const sellerMoney = getSellerCurrencyMoney(order);
+    if (!sellerMoney) return inspectOrderListMoney(order);
+    return {
+      valid: true,
+      currency: sellerMoney.currency,
+      total: sellerMoney.summary.totalAmount,
+      buyerCurrency: sellerMoney.buyerCurrency,
+      buyerTotal: sellerMoney.buyerSummary.totalAmount,
+      frozenExchangeRate: sellerMoney.exchangeRate,
+    };
+  } catch (error) {
+    return { valid: false, currency: null, total: null, error };
+  }
+};
+
 export const getOrderLeadItem = (order) => (order?.orderItems || [])[0] || null;
 
-export const formatOrderItemOptions = (item) => {
-  const values = [];
-  if (item?.selectedColor) values.push(`Color: ${item.selectedColor}`);
+export const getOrderItemOptionPairs = (item = {}) => {
+  const pairs = [];
   const options = item?.selectedOptions;
-  if (options && typeof options === 'object') {
+  if (options && typeof options === 'object' && !Array.isArray(options)) {
     Object.entries(options).forEach(([name, value]) => {
-      if (value !== undefined && value !== null && String(value).trim()) {
-        values.push(`${name}: ${value}`);
-      }
+      const optionName = clean(name);
+      const optionValue = clean(value);
+      if (optionName && optionValue) pairs.push({ name: optionName, value: optionValue });
     });
   }
-  return values.join('  •  ');
+  const selectedColor = clean(item?.selectedColor);
+  if (selectedColor && !pairs.some(pair => pair.name.toLowerCase() === 'color')) {
+    pairs.unshift({ name: 'Color', value: selectedColor });
+  }
+  return pairs;
 };
+
+export const formatOrderItemOptions = (item = {}) => (
+  getOrderItemOptionPairs(item).map(pair => `${pair.name}: ${pair.value}`).join('  •  ')
+);
 
 // New orders persist the line total because a converted unit can round below
 // one cent. Only legacy orders should reconstruct it from rounded unit price.
@@ -437,6 +617,7 @@ export const assertOrderDetailPresentation = (order) => {
       && appliedCouponTotal !== storedOrderDiscount
     )
   ) throw orderPresentationIntegrityError('applied coupon total');
+  getOrderSellerGroups(order);
   return order;
 };
 

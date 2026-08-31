@@ -12,13 +12,19 @@ describe('complete seller catalog loading', () => {
         .mockResolvedValueOnce({ data: { products: pageThree, pagination: { page: 3, limit: 100, totalProducts: 201, totalPages: 3, hasMore: false } } }),
     };
 
-    const products = await fetchCompleteSellerCatalog(apiClient);
+    const products = await fetchCompleteSellerCatalog(apiClient, { refreshKey: 'qa-refresh' });
     expect(products).toHaveLength(201);
     expect(products[0]).toEqual({ _id: 'p-1' });
     expect(products[200]).toEqual({ _id: 'p-201' });
     expect(apiClient.get).toHaveBeenCalledTimes(3);
     expect(apiClient.get).toHaveBeenNthCalledWith(1, '/api/products/get-seller-products', {
-      params: { page: 1, limit: 100, sortBy: 'newest', sortOrder: 'desc' },
+      params: {
+        page: 1,
+        limit: 100,
+        sortBy: 'newest',
+        sortOrder: 'desc',
+        _mobileRefresh: 'qa-refresh',
+      },
     });
   });
 

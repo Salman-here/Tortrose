@@ -66,6 +66,15 @@ export const filterOrdersByStatus = (orders = [], status) => {
   return orders.filter((order) => (order.orderStatus || order.status) === status);
 };
 
+export const newestOrdersFirst = (orders = []) => [...orders].sort((left, right) => {
+  const leftTime = new Date(left?.createdAt || 0).getTime();
+  const rightTime = new Date(right?.createdAt || 0).getTime();
+  if (!Number.isFinite(leftTime) && !Number.isFinite(rightTime)) return 0;
+  if (!Number.isFinite(leftTime)) return 1;
+  if (!Number.isFinite(rightTime)) return -1;
+  return rightTime - leftTime;
+});
+
 const getApiError = (error, fallback) => (
   error?.response?.data?.msg || error?.response?.data?.message || error?.message || fallback
 );
@@ -153,7 +162,9 @@ export default function OrderManagementScreen({ navigation, route }) {
       const response = await api.get(API_ENDPOINTS.ORDERS.GET_ALL, {
         params: buildOrderFilterParams(filters),
       });
-      setOrders(response?.data?.orders || []);
+      const nextOrders = response?.data?.orders;
+      if (!Array.isArray(nextOrders)) throw new Error('The seller order list is invalid.');
+      setOrders(newestOrdersFirst(nextOrders));
       setHasLoaded(true);
     } catch (error) {
       setLoadError(getApiError(error, 'Your seller orders could not be loaded.'));
@@ -236,12 +247,13 @@ export default function OrderManagementScreen({ navigation, route }) {
       <OrderCard
         order={item}
         showCustomer
+        sellerView={!isAdmin}
         confirmationLabel={confirmationLabel}
         onPress={() => openOrder(item)}
         onWhatsApp={canVerify ? (order) => openWhatsAppVerify(order, formatPrice) : undefined}
       />
     );
-  }, [formatPrice, openOrder]);
+  }, [formatPrice, isAdmin, openOrder]);
 
   const listHeader = (
     <View>

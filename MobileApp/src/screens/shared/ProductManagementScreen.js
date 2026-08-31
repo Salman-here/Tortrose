@@ -62,6 +62,7 @@ export default function ProductManagementScreen({ navigation, route }) {
     currency,
     exchangeRatesFallback,
     exchangeRatesLoading,
+    formatAmount,
     formatProductPrice,
   } = useCurrency();
 
@@ -497,6 +498,14 @@ export default function ProductManagementScreen({ navigation, route }) {
     const hasDiscount = presentation.hasDiscount;
     const isHidden = isProductHiddenByModeration(item);
     const hiddenReason = getProductModerationReason(item);
+    const formatManagedPrice = (field) => {
+      if (!presentation.moneyValid) return 'Price unavailable';
+      if (isAdmin) return formatProductPrice(item, { field });
+      const amount = field === 'discountedPrice'
+        ? presentation.discountedPrice
+        : presentation.price;
+      return formatAmount(amount, { targetCurrency: presentation.currency });
+    };
 
     return (
       <GlassPanel variant="card" style={[styles.productCard, isSelected && styles.productCardSelected]}>
@@ -548,10 +557,10 @@ export default function ProductManagementScreen({ navigation, route }) {
             <View style={styles.priceRow}>
               <Text style={styles.productPrice}>
                 {presentation.moneyValid
-                  ? formatProductPrice(item, { field: hasDiscount ? 'discountedPrice' : 'price' })
+                  ? formatManagedPrice(hasDiscount ? 'discountedPrice' : 'price')
                   : 'Price unavailable'}
               </Text>
-              {hasDiscount && presentation.moneyValid && <Text style={styles.originalPrice}>{formatProductPrice(item, { field: 'price' })}</Text>}
+              {hasDiscount && presentation.moneyValid && <Text style={styles.originalPrice}>{formatManagedPrice('price')}</Text>}
             </View>
             <View style={[styles.stockBadge, { backgroundColor: `${stockStatus.color}20` }]}>
               <Text style={[styles.stockText, { color: stockStatus.color }]}>
@@ -571,7 +580,7 @@ export default function ProductManagementScreen({ navigation, route }) {
         </TouchableOpacity>
       </GlassPanel>
     );
-  }, [deletingId, deleteProduct, selectMode, selectedProducts, handleSelectProduct, palette, formatProductPrice, styles, openProductForm]);
+  }, [deletingId, deleteProduct, selectMode, selectedProducts, handleSelectProduct, palette, formatAmount, formatProductPrice, isAdmin, styles, openProductForm]);
 
   const renderHeader = useCallback(() => (
     <View style={styles.headerContainer}>

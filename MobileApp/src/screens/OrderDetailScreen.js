@@ -40,6 +40,7 @@ import {
   getOrderItemCount,
   getOrderItemLineSubtotal,
   getOrderItemQuantity,
+  getOrderSellerGroups,
   getOrderSummaryAmount,
   getOrderTotal,
   normalizeOrderStatus,
@@ -53,8 +54,6 @@ const STATUS_META = {
   delivered: { icon: 'checkmark-done-outline', label: 'Delivered', description: 'Your order has arrived.' },
   cancelled: { icon: 'close-circle-outline', label: 'Cancelled', description: 'This order is closed.' },
 };
-
-const idOf = (value) => String(value?._id || value || '');
 
 const formatDate = (value, includeTime = false) => {
   if (!value) return 'Not available';
@@ -140,7 +139,7 @@ export default function OrderDetailScreen({ route, navigation }) {
   const styles = useMemo(() => buildStyles(palette), [palette]);
   const insets = useSafeAreaInsets();
   const { orderId } = route.params;
-  const { currency, formatPrice } = useCurrency();
+  const { formatPrice } = useCurrency();
   const { fetchCart } = useGlobal();
   const [order, setOrder] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -151,7 +150,14 @@ export default function OrderDetailScreen({ route, navigation }) {
   const [sharingInvoice, setSharingInvoice] = useState(false);
 
   const orderMoney = useCallback(
-    (amount) => formatPrice(amount, { sourceCurrency: getOrderCurrency(order) }),
+    (amount) => {
+      const orderCurrency = getOrderCurrency(order);
+      return formatPrice(amount, {
+        sourceCurrency: orderCurrency,
+        targetCurrency: orderCurrency,
+        showCode: true,
+      });
+    },
     [formatPrice, order],
   );
 
@@ -260,24 +266,7 @@ export default function OrderDetailScreen({ route, navigation }) {
 
   const sellerGroups = useMemo(() => {
     if (!order) return [];
-    const policies = new Map((order.sellerPolicies || []).map((policy) => [idOf(policy.seller), policy]));
-    const shipping = new Map((order.sellerShipping || []).map((entry) => [idOf(entry.seller), entry.shippingMethod]));
-    const fulfillments = order.sellerFulfillment || [];
-    if (!fulfillments.length) return [];
-    return fulfillments.map((entry, index) => {
-      const sellerId = idOf(entry.seller);
-      const policy = policies.get(sellerId);
-      const sellerItems = (order.orderItems || []).filter((item) => idOf(item.seller) === sellerId);
-      return {
-        key: sellerId || String(index),
-        name: policy?.storeName || entry.seller?.storeName || `Store ${index + 1}`,
-        status: normalizeOrderStatus(entry.status),
-        updatedAt: entry.updatedAt,
-        deliveredAt: entry.deliveredAt,
-        shippingMethod: shipping.get(sellerId),
-        itemCount: sellerItems.reduce((total, item) => total + getOrderItemQuantity(item), 0),
-      };
-    });
+    return getOrderSellerGroups(order);
   }, [order]);
 
   if (isLoading) {
@@ -419,37 +408,26 @@ export default function OrderDetailScreen({ route, navigation }) {
           )}
 
           {sellerGroups.length > 0 && (
-            <Section title="Store fulfillment" subtitle={sellerGroups.length > 1 ? `${sellerGroups.length} stores are fulfilling this order` : 'Progress from the store'} icon="storefront-outline" styles={styles}>
-              {sellerGroups.map((group, index) => {
-                const groupMeta = STATUS_META[group.status];
-                const groupStyle = group.status === 'confirmed'
-                  ? { solid: palette.colors.info, bg: palette.colors.infoLight }
-                  : (statusColors[group.status] || statusColors.pending);
-                return (
-                  <View key={group.key} style={[styles.storeRow, index === sellerGroups.length - 1 && { marginBottom: 0 }]}>
-                    <View style={[styles.storeIcon, { backgroundColor: `${groupStyle.solid}16` }]}>
-                      <Ionicons name="storefront-outline" size={19} color={groupStyle.solid} />
-                    </View>
-                    <View style={styles.storeCopy}>
-                      <Text style={styles.storeName} numberOfLines={1}>{group.name}</Text>
-                      <Text style={styles.storeMeta}>
-                        {group.itemCount} item{group.itemCount === 1 ? '' : 's'}
-                        {group.shippingMethod?.name ? `  •  ${group.shippingMethod.name}` : ''}
-                        {group.shippingMethod?.estimatedDays ? `  •  ${group.shippingMethod.estimatedDays} days` : ''}
-                      </Text>
-                      {group.updatedAt && <Text style={styles.storeUpdated}>Updated {formatDate(group.updatedAt, true)}</Text>}
-                    </View>
-                    <View style={[styles.smallStatus, { backgroundColor: groupStyle.bg }]}>
-                      <Ionicons name={groupMeta.icon} size={12} color={groupStyle.solid} />
-                      <Text style={[styles.smallStatusText, { color: groupStyle.solid }]}>{groupMeta.label}</Text>
-                    </View>
-                  </View>
-                );
-              })}
+            <Section
+              title="Seller shipments"
+              subtitle={`One order split into ${sellerGroups.length} store shipment${sellerGroups.length === 1 ? '' : 's'}. Each store controls only its own products, shipping, and status.`}
+              icon="storefront-outline"
+              styles={styles}
+            >
+              {sellerGroups.map((group, index) => (
+                <SellerShipmentGroup
+                  key={group.sellerId}
+                  group={group}
+                  formatMoney={orderMoney}
+                  palette={palette}
+                  styles={styles}
+                  last={index === sellerGroups.length - 1}
+                />
+              ))}
             </Section>
           )}
 
-          <Section title={`Products (${itemCount})`} subtitle="Items included in this order" icon="bag-handle-outline" styles={styles}>
+          {sellerGroups.length === 0 && <Section title={`Products (${itemCount})`} subtitle="Items included in this order" icon="bag-handle-outline" styles={styles}>
             {(order.orderItems || []).map((item, index) => {
               const options = formatOrderItemOptions(item);
               return (
@@ -472,7 +450,7 @@ export default function OrderDetailScreen({ route, navigation }) {
                 </View>
               );
             })}
-          </Section>
+          </Section>}
 
           <BuyerReturnsSection order={order} formatMoney={orderMoney} />
 
@@ -545,9 +523,7 @@ export default function OrderDetailScreen({ route, navigation }) {
               <View>
                 <Text style={styles.totalLabel}>Total</Text>
                 <Text style={styles.totalCurrency}>
-                  {currency === orderCurrency
-                    ? `${orderCurrency} checkout total`
-                    : `${currency} display · placed in ${orderCurrency}`}
+                  {orderCurrency} checkout total
                 </Text>
               </View>
               <Text style={styles.totalValue}>{orderMoney(total)}</Text>
@@ -594,6 +570,108 @@ function Section({ title, subtitle, icon, children, styles }) {
       </View>
       {children}
     </GlassPanel>
+  );
+}
+
+function SellerShipmentGroup({ group, formatMoney, palette, styles, last }) {
+  const meta = STATUS_META[group.status] || STATUS_META.pending;
+  const tone = group.status === 'confirmed'
+    ? { solid: palette.colors.info, bg: palette.colors.infoLight }
+    : (statusColors[group.status] || statusColors.pending);
+  const activeIndex = Math.max(0, ORDER_STAGES.indexOf(group.status));
+  const summary = group.summary;
+
+  return (
+    <View style={[styles.sellerShipment, last && { marginBottom: 0 }]}>
+      <View style={styles.sellerShipmentHeader}>
+        <View style={[styles.storeIcon, { backgroundColor: `${tone.solid}16` }]}>
+          <Ionicons name="storefront-outline" size={20} color={tone.solid} />
+        </View>
+        <View style={styles.storeCopy}>
+          <Text style={styles.storeName} numberOfLines={1}>{group.storeName}</Text>
+          <Text style={styles.storeMeta}>
+            {group.itemCount} product line{group.itemCount === 1 ? '' : 's'} · {group.units} unit{group.units === 1 ? '' : 's'}
+          </Text>
+        </View>
+        <View style={[styles.smallStatus, { backgroundColor: tone.bg }]}>
+          <Ionicons name={meta.icon} size={12} color={tone.solid} />
+          <Text style={[styles.smallStatusText, { color: tone.solid }]}>{meta.label}</Text>
+        </View>
+      </View>
+
+      {group.status === 'cancelled' ? (
+        <View style={styles.cancelledShipment}>
+          <Ionicons name="close-circle-outline" size={16} color={palette.colors.error} />
+          <Text style={styles.cancelledShipmentText}>This store's portion was cancelled.</Text>
+        </View>
+      ) : (
+        <View style={styles.sellerProgress} accessibilityLabel={`${group.storeName} shipment status: ${meta.label}`}>
+          {ORDER_STAGES.map((stage, index) => (
+            <View key={stage} style={styles.sellerProgressStep}>
+              <View style={[
+                styles.sellerProgressBar,
+                index <= activeIndex && { backgroundColor: (statusColors[stage] || statusColors.pending).solid },
+              ]} />
+              <Ionicons
+                name={STATUS_META[stage].icon}
+                size={13}
+                color={index <= activeIndex ? (statusColors[stage] || statusColors.pending).solid : palette.colors.textLight}
+              />
+            </View>
+          ))}
+        </View>
+      )}
+
+      <View style={styles.sellerItems}>
+        {group.items.map((item, index) => {
+          const options = formatOrderItemOptions(item);
+          return (
+            <View key={`${group.itemIndexes[index]}:${item.productId || item.name}`} style={styles.sellerItemRow}>
+              <Image
+                source={{ uri: item.image || 'https://rozare.com/favicon-512.png' }}
+                style={styles.sellerItemImage}
+                contentFit="cover"
+                cachePolicy="memory-disk"
+              />
+              <View style={styles.sellerItemCopy}>
+                <Text style={styles.sellerItemName} numberOfLines={2}>{item.name || 'Product'}</Text>
+                {!!options && <Text style={styles.sellerItemOptions}>{options}</Text>}
+                <Text style={styles.sellerItemQuantity}>Qty {getOrderItemQuantity(item)}</Text>
+              </View>
+              <Text style={styles.sellerItemAmount}>{formatMoney(getOrderItemLineSubtotal(item))}</Text>
+            </View>
+          );
+        })}
+      </View>
+
+      <View style={styles.sellerShippingCard}>
+        <View style={styles.sellerShippingCopy}>
+          <Text style={styles.sellerShippingName}>
+            {group.shippingMethod?.name || 'Shipping details unavailable for this legacy order'}
+          </Text>
+          {!!group.shippingMethod?.estimatedDays && (
+            <Text style={styles.sellerShippingMeta}>
+              {group.shippingMethod.estimatedDays} day{group.shippingMethod.estimatedDays === 1 ? '' : 's'} estimated delivery
+            </Text>
+          )}
+        </View>
+        {!!group.shippingMethod && (
+          <Text style={styles.sellerShippingAmount}>
+            {group.shippingMethod.price === 0 ? 'Free' : formatMoney(group.shippingMethod.price)}
+          </Text>
+        )}
+      </View>
+
+      <View style={styles.sellerAllocation}>
+        <Text style={styles.sellerAllocationCaption}>YOUR CHECKOUT BREAKDOWN FOR THIS STORE</Text>
+        <View style={styles.groupSummaryRow}><Text style={styles.groupSummaryLabel}>Products</Text><Text style={styles.groupSummaryValue}>{formatMoney(summary.subtotal)}</Text></View>
+        <View style={styles.groupSummaryRow}><Text style={styles.groupSummaryLabel}>Shipping</Text><Text style={styles.groupSummaryValue}>{summary.shippingCost === 0 ? 'Free' : formatMoney(summary.shippingCost)}</Text></View>
+        {summary.tax > 0 && <View style={styles.groupSummaryRow}><Text style={styles.groupSummaryLabel}>Tax</Text><Text style={styles.groupSummaryValue}>{formatMoney(summary.tax)}</Text></View>}
+        {summary.couponDiscount > 0 && <View style={styles.groupSummaryRow}><Text style={styles.groupSummaryLabel}>Discount</Text><Text style={[styles.groupSummaryValue, { color: palette.colors.success }]}>-{formatMoney(summary.couponDiscount)}</Text></View>}
+        {summary.reconciliationAdjustment !== 0 && <View style={styles.groupSummaryRow}><Text style={styles.groupSummaryLabel}>Rounding</Text><Text style={styles.groupSummaryValue}>{summary.reconciliationAdjustment > 0 ? '+' : '-'}{formatMoney(Math.abs(summary.reconciliationAdjustment))}</Text></View>}
+        <View style={[styles.groupSummaryRow, styles.groupSummaryTotal]}><Text style={styles.groupTotalLabel}>Store total</Text><Text style={styles.groupTotalValue}>{formatMoney(summary.totalAmount)}</Text></View>
+      </View>
+    </View>
   );
 }
 
@@ -675,14 +753,40 @@ const buildStyles = (p) => StyleSheet.create({
   etaLabel: { fontSize: 9, color: p.colors.textSecondary, fontWeight: fontWeight.semibold },
   etaValue: { marginTop: 2, fontSize: fontSize.sm, color: p.colors.text, fontWeight: fontWeight.extrabold },
   etaHint: { maxWidth: 75, textAlign: 'right', fontSize: 8, lineHeight: 12, color: p.colors.textLight },
-  storeRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, padding: spacing.md, marginBottom: spacing.sm, borderRadius: 16, backgroundColor: p.glass.bgSubtle, borderWidth: 1, borderColor: p.glass.borderSubtle },
+  sellerShipment: { marginBottom: spacing.md, overflow: 'hidden', borderRadius: 18, backgroundColor: p.glass.bgSubtle, borderWidth: 1, borderColor: p.glass.borderSubtle },
+  sellerShipmentHeader: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, padding: spacing.md, borderBottomWidth: 1, borderBottomColor: p.glass.borderSubtle },
   storeIcon: { width: 40, height: 40, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
   storeCopy: { flex: 1, minWidth: 0 },
   storeName: { fontSize: fontSize.sm, color: p.colors.text, fontWeight: fontWeight.bold },
   storeMeta: { marginTop: 3, fontSize: 9, color: p.colors.textSecondary },
-  storeUpdated: { marginTop: 3, fontSize: 8, color: p.colors.textLight },
   smallStatus: { flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 7, paddingVertical: 5, borderRadius: 10 },
   smallStatusText: { fontSize: 8, fontWeight: fontWeight.bold },
+  sellerProgress: { flexDirection: 'row', gap: 4, paddingHorizontal: spacing.md, paddingTop: spacing.md },
+  sellerProgressStep: { flex: 1, alignItems: 'center', gap: 5 },
+  sellerProgressBar: { width: '100%', height: 4, borderRadius: 3, backgroundColor: p.glass.borderSubtle },
+  cancelledShipment: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, margin: spacing.md, padding: spacing.sm, borderRadius: 12, backgroundColor: p.colors.errorSubtle },
+  cancelledShipmentText: { flex: 1, color: p.colors.error, fontSize: fontSize.xs, fontWeight: fontWeight.semibold },
+  sellerItems: { paddingHorizontal: spacing.md, paddingTop: spacing.sm },
+  sellerItemRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingVertical: spacing.sm, borderBottomWidth: 1, borderBottomColor: p.glass.borderSubtle },
+  sellerItemImage: { width: 52, height: 52, borderRadius: 14, backgroundColor: p.glass.bgStrong },
+  sellerItemCopy: { flex: 1, minWidth: 0 },
+  sellerItemName: { color: p.colors.text, fontSize: fontSize.xs, lineHeight: 16, fontWeight: fontWeight.bold },
+  sellerItemOptions: { marginTop: 3, color: p.colors.primary, fontSize: 9, lineHeight: 13, fontWeight: fontWeight.semibold },
+  sellerItemQuantity: { marginTop: 3, color: p.colors.textSecondary, fontSize: 9 },
+  sellerItemAmount: { maxWidth: 105, color: p.colors.text, fontSize: fontSize.xs, fontWeight: fontWeight.extrabold, textAlign: 'right' },
+  sellerShippingCard: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, margin: spacing.md, padding: spacing.sm, borderRadius: 13, backgroundColor: p.glass.bgStrong },
+  sellerShippingCopy: { flex: 1, minWidth: 0 },
+  sellerShippingName: { color: p.colors.text, fontSize: fontSize.xs, fontWeight: fontWeight.bold },
+  sellerShippingMeta: { marginTop: 2, color: p.colors.textSecondary, fontSize: 9 },
+  sellerShippingAmount: { color: p.colors.text, fontSize: fontSize.xs, fontWeight: fontWeight.extrabold },
+  sellerAllocation: { marginHorizontal: spacing.md, marginBottom: spacing.md, padding: spacing.md, borderRadius: 14, backgroundColor: 'rgba(99,102,241,0.07)', borderWidth: 1, borderColor: 'rgba(99,102,241,0.13)' },
+  sellerAllocationCaption: { marginBottom: spacing.sm, color: p.colors.textLight, fontSize: 8, letterSpacing: 0.7, fontWeight: fontWeight.extrabold },
+  groupSummaryRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.md, paddingVertical: 4 },
+  groupSummaryLabel: { color: p.colors.textSecondary, fontSize: fontSize.xs },
+  groupSummaryValue: { color: p.colors.text, fontSize: fontSize.xs, fontWeight: fontWeight.semibold },
+  groupSummaryTotal: { marginTop: spacing.xs, paddingTop: spacing.sm, borderTopWidth: 1, borderTopColor: p.glass.borderSubtle },
+  groupTotalLabel: { color: p.colors.text, fontSize: fontSize.sm, fontWeight: fontWeight.extrabold },
+  groupTotalValue: { color: p.colors.primary, fontSize: fontSize.sm, fontWeight: fontWeight.extrabold },
   productRow: { flexDirection: 'row', paddingBottom: spacing.md, marginBottom: spacing.md, borderBottomWidth: 1, borderBottomColor: p.glass.borderSubtle },
   productImage: { width: 76, height: 76, borderRadius: 18, backgroundColor: p.glass.bgSubtle },
   productCopy: { flex: 1, minWidth: 0, marginLeft: spacing.md },

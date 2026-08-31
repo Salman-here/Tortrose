@@ -35,6 +35,7 @@ import {
 } from '../../utils/whatsapp';
 import {
   getOrderCurrency,
+  getOrderItemOptionPairs,
   getSellerCurrencyMoney,
   getOrderItemQuantity,
   getOrderItemLineSubtotal,
@@ -66,11 +67,6 @@ const getItemImage = (item) => {
 
 const getItemName = (item) => item?.name || item?.product?.name || item?.productId?.name || 'Product';
 
-const getSelectedOptions = (item) => {
-  if (!item?.selectedOptions || typeof item.selectedOptions !== 'object') return [];
-  return Object.entries(item.selectedOptions).filter(([, value]) => value);
-};
-
 export default function OrderDetailManagementScreen({ route, navigation }) {
   const { palette } = useTheme();
   const { formatPrice } = useCurrency();
@@ -87,6 +83,7 @@ export default function OrderDetailManagementScreen({ route, navigation }) {
   const [loadError, setLoadError] = useState('');
   const [actionError, setActionError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
+  const [showAdjustmentInfo, setShowAdjustmentInfo] = useState(false);
 
   const fetchOrder = useCallback(async ({ initial = false } = {}) => {
     if (initial) setLoading(true);
@@ -232,6 +229,12 @@ export default function OrderDetailManagementScreen({ route, navigation }) {
     wallet: 'Rozare Wallet',
   }[order.paymentMethod] || order.paymentMethod || 'Payment method unavailable';
   const displayOrderId = order.orderId || `#${String(order._id || '').slice(-8).toUpperCase()}`;
+  const hasCurrencyConversion = sellerCurrencyMoney
+    && sellerCurrencyMoney.buyerCurrency !== sellerCurrencyMoney.currency;
+  const adjustmentIsDeduction = reconciliationAdjustment < 0;
+  const adjustmentExplanation = hasCurrencyConversion
+    ? `The buyer checked out in ${sellerCurrencyMoney.buyerCurrency} while your store uses ${sellerCurrencyMoney.currency}. The converted seller allocation had to be rounded to ${sellerCurrencyMoney.buyerCurrency}'s supported decimal places and reconciled with the buyer total. It converts back to ${money(Math.abs(reconciliationAdjustment))} ${adjustmentIsDeduction ? 'less' : 'more'} than the unrounded store total, so this amount was ${adjustmentIsDeduction ? 'deducted' : 'added'}. This is currency rounding, not a discount or platform fee.`
+    : `The frozen checkout allocation required cent reconciliation. ${money(Math.abs(reconciliationAdjustment))} was ${adjustmentIsDeduction ? 'deducted' : 'added'} so the stored amounts add up exactly. This is a rounding adjustment, not a discount or platform fee.`;
 
   return (
     <GlassBackground>
@@ -381,7 +384,7 @@ export default function OrderDetailManagementScreen({ route, navigation }) {
           {orderItems.map((item, index) => {
             const itemImage = getItemImage(item);
             const quantity = getOrderItemQuantity(item);
-            const selectedOptions = getSelectedOptions(item);
+            const selectedOptions = getOrderItemOptionPairs(item);
             return (
               <View key={`${item._id || item.productId?._id || item.productId || index}`} style={styles.itemCard}>
                 {itemImage ? (
@@ -394,9 +397,8 @@ export default function OrderDetailManagementScreen({ route, navigation }) {
                 <View style={styles.itemInfo}>
                   <Text style={styles.itemName} numberOfLines={2}>{getItemName(item)}</Text>
                   <Text style={styles.itemQty}>Qty: {quantity}</Text>
-                  {item.selectedColor && <Text style={styles.itemOption}>Color: {item.selectedColor}</Text>}
-                  {selectedOptions.map(([name, value]) => (
-                    <Text key={name} style={styles.itemOption}>{name}: {value}</Text>
+                  {selectedOptions.map(({ name, value }) => (
+                    <Text key={`${name}:${value}`} style={styles.itemOption}>{name}: {value}</Text>
                   ))}
                 </View>
                 <View style={styles.itemMoneyBlock}>
@@ -416,25 +418,50 @@ export default function OrderDetailManagementScreen({ route, navigation }) {
 
         <GlassPanel variant="card" style={styles.section}>
           <Text style={styles.sectionTitle}>
-            {sellerCurrencyMoney ? `Store-Currency Summary (${sellerCurrencyMoney.currency})` : 'Summary'}
+            {sellerCurrencyMoney ? `Your Store-Currency Summary (${sellerCurrencyMoney.currency})` : 'Summary'}
           </Text>
-          {sellerCurrencyMoney && (
-            <Text style={styles.frozenMoneyNote}>Frozen at checkout; not recalculated with live FX.</Text>
+          {hasCurrencyConversion && (
+            <Text style={styles.frozenMoneyNote}>
+              Buyer checked out in {sellerCurrencyMoney.buyerCurrency}. Your store prices are in {sellerCurrencyMoney.currency}, so they were converted to {sellerCurrencyMoney.buyerCurrency} for this order.
+            </Text>
           )}
           <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Subtotal</Text><Text style={styles.summaryValue}>{money(subtotal)}</Text></View>
           <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Shipping</Text><Text style={styles.summaryValue}>{shippingCost === 0 ? 'Free' : money(shippingCost)}</Text></View>
           {tax > 0 && <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Tax</Text><Text style={styles.summaryValue}>{money(tax)}</Text></View>}
           {couponDiscount > 0 && <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Coupon Discount</Text><Text style={[styles.summaryValue, { color: palette.colors.success }]}>-{money(couponDiscount)}</Text></View>}
-          {reconciliationAdjustment !== 0 && <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Rounding adjustment</Text><Text style={styles.summaryValue}>{reconciliationAdjustment > 0 ? '+' : '-'}{money(Math.abs(reconciliationAdjustment))}</Text></View>}
+          {reconciliationAdjustment !== 0 && (
+            <>
+              <View style={styles.summaryRow}>
+                <View style={styles.adjustmentLabelRow}>
+                  <Text style={styles.summaryLabel}>Frozen FX/cent adjustment</Text>
+                  <TouchableOpacity
+                    style={styles.adjustmentInfoButton}
+                    onPress={() => setShowAdjustmentInfo(value => !value)}
+                    accessibilityRole="button"
+                    accessibilityLabel="Why is this currency adjustment shown?"
+                    accessibilityState={{ expanded: showAdjustmentInfo }}
+                  >
+                    <Ionicons name="information-circle-outline" size={17} color={palette.colors.primary} />
+                  </TouchableOpacity>
+                </View>
+                <Text style={styles.summaryValue}>{reconciliationAdjustment > 0 ? '+' : '-'}{money(Math.abs(reconciliationAdjustment))}</Text>
+              </View>
+              {showAdjustmentInfo && (
+                <View style={styles.adjustmentInfoPanel} accessibilityRole="text">
+                  <Text style={styles.adjustmentInfoText}>{adjustmentExplanation}</Text>
+                </View>
+              )}
+            </>
+          )}
           <View style={[styles.summaryRow, styles.summaryTotal]}><Text style={styles.totalLabel}>Total</Text><Text style={styles.totalValue}>{money(totalAmount)}</Text></View>
-          {sellerCurrencyMoney && sellerCurrencyMoney.buyerCurrency !== sellerCurrencyMoney.currency && (
+          {hasCurrencyConversion && (
             <View style={styles.buyerEquivalentBox}>
               <View style={styles.summaryRow}>
                 <Text style={styles.summaryLabel}>Buyer checkout equivalent</Text>
                 <Text style={styles.summaryValue}>{buyerMoney(sellerCurrencyMoney.buyerSummary.totalAmount)}</Text>
               </View>
               <Text style={styles.frozenMoneyNote}>
-                1 {sellerCurrencyMoney.currency} = {sellerCurrencyMoney.exchangeRate.rate.toLocaleString(undefined, { maximumFractionDigits: 6 })} {sellerCurrencyMoney.buyerCurrency} at checkout.
+                Frozen rate: 1 {sellerCurrencyMoney.currency} = {sellerCurrencyMoney.exchangeRate.rate.toLocaleString(undefined, { maximumFractionDigits: 6 })} {sellerCurrencyMoney.buyerCurrency}. Buyer and seller values will not change with live FX.
               </Text>
             </View>
           )}
@@ -532,6 +559,10 @@ const buildStyles = (p) => StyleSheet.create({
   itemTotal: { ...typography.bodySemibold, color: p.colors.primary, marginLeft: spacing.sm },
   itemBuyerTotal: { ...typography.caption, color: p.colors.textSecondary, marginTop: 3, textAlign: 'right' },
   frozenMoneyNote: { ...typography.caption, color: p.colors.textSecondary, lineHeight: 16, marginBottom: spacing.sm },
+  adjustmentLabelRow: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
+  adjustmentInfoButton: { width: 28, height: 28, flexShrink: 0, alignItems: 'center', justifyContent: 'center', borderRadius: 14, backgroundColor: p.colors.primarySubtle || 'rgba(99,102,241,0.10)' },
+  adjustmentInfoPanel: { marginTop: -spacing.xs, marginBottom: spacing.sm, padding: spacing.md, borderRadius: borderRadius.lg, backgroundColor: p.glass.bgStrong, borderWidth: 1, borderColor: p.glass.borderSubtle },
+  adjustmentInfoText: { ...typography.caption, color: p.colors.textSecondary, lineHeight: 17 },
   buyerEquivalentBox: { marginTop: spacing.md, padding: spacing.md, borderRadius: borderRadius.lg, backgroundColor: p.colors.primarySubtle || 'rgba(99,102,241,0.08)' },
   summaryRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: spacing.sm, gap: spacing.md },
   summaryLabel: { ...typography.body, color: p.colors.textSecondary },

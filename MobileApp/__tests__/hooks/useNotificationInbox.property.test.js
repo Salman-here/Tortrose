@@ -101,6 +101,20 @@ describe('useNotificationInbox helpers', () => {
       }));
     });
 
+    it('keeps the public order reference separate from the internal grouping id', () => {
+      expect(normalizePersistentInboxNotification({
+        _id: 'outbox-order-2',
+        aggregateType: 'Order',
+        aggregateId: '6a94ffdcbcde01045357cab2',
+        title: 'Seller delivered your items',
+        body: 'Order #ORD-1788186109184: Mobile Cedar Lane marked your items delivered.',
+        category: 'order',
+      })).toEqual(expect.objectContaining({
+        orderId: '6a94ffdcbcde01045357cab2',
+        publicOrderId: 'ORD-1788186109184',
+      }));
+    });
+
     it('prefers a supported server category over a legacy type heuristic', () => {
       expect(categorizeNotification('unknown_queued_type', 'payment')).toBe('payment');
       expect(categorizeNotification('order_paid', 'announcement')).toBe('system');
@@ -255,6 +269,29 @@ describe('useNotificationInbox helpers', () => {
       const groups = groupNotifications(notifs);
       const o1 = groups.find(g => g.type === 'group' && g.orderId === 'o1');
       expect(o1.items).toHaveLength(2);
+    });
+
+    test('uses the public order reference for display without changing the grouping key', () => {
+      const groups = groupNotifications([
+        {
+          id: '1',
+          orderId: '6a94ffdcbcde01045357cab2',
+          publicOrderId: 'ORD-1788186109184',
+          category: 'order',
+          createdAt: '2026-08-31T00:00:00Z',
+        },
+        {
+          id: '2',
+          orderId: '6a94ffdcbcde01045357cab2',
+          category: 'delivery',
+          createdAt: '2026-08-31T01:00:00Z',
+        },
+      ]);
+
+      expect(groups[0]).toEqual(expect.objectContaining({
+        orderId: '6a94ffdcbcde01045357cab2',
+        publicOrderId: 'ORD-1788186109184',
+      }));
     });
 
     test('keeps non-order notifications as singles', () => {

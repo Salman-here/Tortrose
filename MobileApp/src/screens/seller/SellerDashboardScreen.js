@@ -5,7 +5,7 @@
  * quick-action tiles, and recent orders.
  */
 
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useCallback, useMemo, useRef } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, RefreshControl, TouchableOpacity, Modal, Platform,
 } from 'react-native';
@@ -13,7 +13,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import api from '../../config/api';
+import { useFocusEffect } from '@react-navigation/native';
+import api, { API_ENDPOINTS } from '../../config/api';
 import { useAuth } from '../../contexts/AuthContext';
 import OrderCard from '../../components/common/OrderCard';
 import { EmptyOrders } from '../../components/common/EmptyState';
@@ -24,6 +25,7 @@ import ChatBot from '../../components/ChatBot';
 import { spacing, fontSize, borderRadius, fontWeight } from '../../styles/theme';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useCurrency } from '../../contexts/CurrencyContext';
+import { inspectSellerProductCurrencyState } from '../../utils/productCurrencyState';
 import {
   SellerInlineError,
   SellerScreenHeader,
@@ -131,7 +133,7 @@ const founderPromotionIsPresentable = (promotion) => (
 
 export default function SellerDashboardScreen({ navigation }) {
   const { palette } = useTheme();
-  const { currency, formatAmount } = useCurrency();
+  const { formatAmount } = useCurrency();
   const styles = buildStyles(palette);
 
   const { currentUser } = useAuth();
@@ -141,6 +143,7 @@ export default function SellerDashboardScreen({ navigation }) {
   const [products, setProducts] = useState(null);
   const [orders, setOrders] = useState(null);
   const [moneyMetrics, setMoneyMetrics] = useState(null);
+  const [sellerCurrency, setSellerCurrency] = useState(null);
   const [showAI, setShowAI] = useState(false);
   const [subscription, setSubscription] = useState(null);
   const [showFounderOffer, setShowFounderOffer] = useState(false);
@@ -153,20 +156,41 @@ export default function SellerDashboardScreen({ navigation }) {
   const fetchDashboardData = useCallback(async () => {
     const requestId = dashboardRequestRef.current + 1;
     dashboardRequestRef.current = requestId;
+    const refreshKey = `${Date.now()}-${requestId}`;
+    const freshParams = { _mobileRefresh: refreshKey };
     setMoneyMetrics(null);
+    setSellerCurrency(null);
     setLoadError('');
     setShowFounderOffer(false);
+    let requestedSellerCurrency = null;
+    try {
+      const response = await api.get(API_ENDPOINTS.STORES.PRODUCT_CURRENCY, { params: freshParams });
+      const inspected = inspectSellerProductCurrencyState(response.data?.productCurrency);
+      if (!inspected.valid || inspected.hasStore !== true) {
+        throw new Error('Store product currency is invalid.');
+      }
+      requestedSellerCurrency = inspected.activeCurrency;
+    } catch (_error) {
+      requestedSellerCurrency = null;
+    }
+    if (dashboardRequestRef.current !== requestId) return;
     const requests = await Promise.allSettled([
-      api.get('/api/stores/my-store'),
-      fetchCompleteSellerCatalog(),
-      api.get('/api/order/get'),
-      api.get('/api/subscription/status'),
-      api.get('/api/notifications/me'),
-      api.get(`/api/stores/analytics?currency=${encodeURIComponent(currency)}`),
+      api.get('/api/stores/my-store', { params: freshParams }),
+      fetchCompleteSellerCatalog(api, { refreshKey }),
+      api.get('/api/order/get', { params: freshParams }),
+      api.get('/api/subscription/status', { params: freshParams }),
+      api.get('/api/notifications/me', { params: freshParams }),
+      requestedSellerCurrency
+        ? api.get('/api/stores/analytics', {
+          params: { currency: requestedSellerCurrency, ...freshParams },
+        })
+        : Promise.reject(new Error('Store product currency is unavailable.')),
     ]);
     if (dashboardRequestRef.current !== requestId) return;
     const [storeResult, productsResult, ordersResult, subscriptionResult, notificationsResult, metricsResult] = requests;
     const coreFailures = [];
+    if (!requestedSellerCurrency) coreFailures.push('store currency');
+    else setSellerCurrency(requestedSellerCurrency);
 
     if (storeResult.status === 'fulfilled') {
       const nextStore = storeResult.value.data?.store || storeResult.value.data || null;
@@ -225,7 +249,10 @@ export default function SellerDashboardScreen({ navigation }) {
 
     if (metricsResult.status === 'fulfilled') {
       const nextMetrics = metricsResult.value.data?.analytics || null;
-      if (selectAuthoritativeSellerMetrics(nextMetrics, currency) !== null) {
+      if (
+        requestedSellerCurrency
+        && selectAuthoritativeSellerMetrics(nextMetrics, requestedSellerCurrency) !== null
+      ) {
         setMoneyMetrics(nextMetrics);
       } else {
         setMoneyMetrics(null);
@@ -264,17 +291,25 @@ export default function SellerDashboardScreen({ navigation }) {
 
     setIsLoading(false);
     setRefreshing(false);
-  }, [currency, sellerKey]);
+  }, [sellerKey]);
 
-  useEffect(() => { fetchDashboardData(); }, [fetchDashboardData]);
-  useEffect(() => () => { dashboardRequestRef.current += 1; }, []);
+  useFocusEffect(useCallback(() => {
+    fetchDashboardData();
+    return () => { dashboardRequestRef.current += 1; };
+  }, [fetchDashboardData]));
 
   const stats = useMemo(
     () => (products && orders ? calculateSellerStats(products, orders) : null),
     [products, orders]
   );
-  const authoritativeRevenue = selectAuthoritativeSellerRevenue(moneyMetrics, currency);
+  const authoritativeRevenue = sellerCurrency
+    ? selectAuthoritativeSellerRevenue(moneyMetrics, sellerCurrency)
+    : null;
   const onRefresh = useCallback(() => { setRefreshing(true); fetchDashboardData(); }, [fetchDashboardData]);
+  const closeAssistantAndRefresh = useCallback(() => {
+    setShowAI(false);
+    fetchDashboardData();
+  }, [fetchDashboardData]);
   // Newest first — sort explicitly so we don't depend on API ordering
   const recentOrders = orders ? [...orders]
     .sort((a, b) => {
@@ -287,7 +322,7 @@ export default function SellerDashboardScreen({ navigation }) {
     })
     .slice(0, 5) : [];
 
-  const formatDashboardRevenue = (amount) => formatAmount(amount, { targetCurrency: currency });
+  const formatDashboardRevenue = (amount) => formatAmount(amount, { targetCurrency: sellerCurrency });
 
   if (isLoading) {
     return (
@@ -595,7 +630,8 @@ export default function SellerDashboardScreen({ navigation }) {
               {recentOrders.map((order) => (
                 <OrderCard key={order._id} order={order}
                   onPress={() => navigation.navigate('OrderDetailManagement', { orderId: order._id, isAdmin: false })}
-                  showCustomer={true} />
+                  showCustomer={true}
+                  sellerView />
               ))}
             </View>
           ) : orders === null ? (
@@ -655,7 +691,13 @@ export default function SellerDashboardScreen({ navigation }) {
       <AIChatFab onPress={() => setShowAI(true)} style={{ bottom: 24, right: 20 }} />
 
       {/* AI ChatBot */}
-      <ChatBot embedded={false} dashboardRole="seller" visible={showAI} onClose={() => setShowAI(false)} navigation={navigation} />
+      <ChatBot
+        embedded={false}
+        dashboardRole="seller"
+        visible={showAI}
+        onClose={closeAssistantAndRefresh}
+        navigation={navigation}
+      />
       </SafeAreaView>
     </GlassBackground>
   );

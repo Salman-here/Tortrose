@@ -164,11 +164,13 @@ export function buildNotificationsFromOrders(orders, { durableNotifications = []
 
 export function normalizePersistentInboxNotification(notification) {
   if (!notification?._id) return null;
+  const publicOrderId = String(notification.body || '').match(/\b(ORD-[A-Za-z0-9-]+)\b/i)?.[1] || null;
   return {
     id: getPersistentNotificationInboxId(notification),
     orderId: String(notification.aggregateType || '').toLowerCase() === 'order'
       ? notification.aggregateId || null
       : null,
+    publicOrderId,
     category: categorizeNotification(notification.eventType, notification.category),
     title: notification.title,
     body: notification.body,
@@ -199,12 +201,19 @@ export function groupNotifications(notifications) {
   notifications.forEach(n => {
     if (n.orderId) {
       if (!orderMap.has(n.orderId)) {
-        const group = { type: 'group', orderId: n.orderId, items: [], latestDate: n.createdAt };
+        const group = {
+          type: 'group',
+          orderId: n.orderId,
+          publicOrderId: n.publicOrderId || n.data?.publicOrderId || null,
+          items: [],
+          latestDate: n.createdAt,
+        };
         orderMap.set(n.orderId, group);
         groups.push(group);
       }
       const g = orderMap.get(n.orderId);
       g.items.push(n);
+      if (!g.publicOrderId) g.publicOrderId = n.publicOrderId || n.data?.publicOrderId || null;
       if (new Date(n.createdAt) > new Date(g.latestDate)) g.latestDate = n.createdAt;
     } else {
       groups.push({ type: 'single', item: n });

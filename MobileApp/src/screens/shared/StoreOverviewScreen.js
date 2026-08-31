@@ -12,7 +12,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import api from '../../config/api';
+import api, { API_ENDPOINTS } from '../../config/api';
 import VerifiedBadge from '../../components/VerifiedBadge';
 import GlassBackground from '../../components/common/GlassBackground';
 import GlassPanel from '../../components/common/GlassPanel';
@@ -25,6 +25,7 @@ import {
 } from '../../components/seller/SellerUI';
 import { fetchCompleteSellerCatalog, getProductImage } from '../../utils/sellerCatalog';
 import { useCurrency } from '../../contexts/CurrencyContext';
+import { inspectSellerProductCurrencyState } from '../../utils/productCurrencyState';
 import { useTheme } from '../../contexts/ThemeContext';
 import { getStorefrontHost } from '../../utils/storefrontUrl';
 import {
@@ -80,11 +81,12 @@ export const calculateStoreOverview = (
 export default function StoreOverviewScreen({ navigation }) {
   const { palette } = useTheme();
   const styles = buildStyles(palette);
-  const { currency, formatAmount } = useCurrency();
+  const { formatAmount } = useCurrency();
   const [store, setStore] = useState(null);
   const [products, setProducts] = useState(null);
   const [orders, setOrders] = useState(null);
   const [moneyMetrics, setMoneyMetrics] = useState(null);
+  const [sellerCurrency, setSellerCurrency] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState('');
@@ -94,16 +96,33 @@ export default function StoreOverviewScreen({ navigation }) {
     const requestId = overviewRequestRef.current + 1;
     overviewRequestRef.current = requestId;
     setMoneyMetrics(null);
+    setSellerCurrency(null);
     setLoadError('');
+    let requestedSellerCurrency = null;
+    try {
+      const response = await api.get(API_ENDPOINTS.STORES.PRODUCT_CURRENCY);
+      const inspected = inspectSellerProductCurrencyState(response.data?.productCurrency);
+      if (!inspected.valid || inspected.hasStore !== true) {
+        throw new Error('Store product currency is invalid.');
+      }
+      requestedSellerCurrency = inspected.activeCurrency;
+    } catch (_error) {
+      requestedSellerCurrency = null;
+    }
+    if (overviewRequestRef.current !== requestId) return;
     const results = await Promise.allSettled([
       api.get('/api/stores/my-store'),
       fetchCompleteSellerCatalog(),
       api.get('/api/order/get'),
-      api.get(`/api/stores/analytics?currency=${encodeURIComponent(currency)}`),
+      requestedSellerCurrency
+        ? api.get(`/api/stores/analytics?currency=${encodeURIComponent(requestedSellerCurrency)}`)
+        : Promise.reject(new Error('Store product currency is unavailable.')),
     ]);
     if (overviewRequestRef.current !== requestId) return;
     const [storeResult, productResult, orderResult, metricsResult] = results;
     const failed = [];
+    if (!requestedSellerCurrency) failed.push('store currency');
+    else setSellerCurrency(requestedSellerCurrency);
     const storeMissing = storeResult.status === 'rejected'
       && storeResult.reason?.response?.status === 404;
 
@@ -144,7 +163,10 @@ export default function StoreOverviewScreen({ navigation }) {
 
     if (!storeMissing && metricsResult.status === 'fulfilled') {
       const nextMetrics = metricsResult.value.data?.analytics || null;
-      if (selectAuthoritativeSellerMetrics(nextMetrics, currency) !== null) {
+      if (
+        requestedSellerCurrency
+        && selectAuthoritativeSellerMetrics(nextMetrics, requestedSellerCurrency) !== null
+      ) {
         setMoneyMetrics(nextMetrics);
       } else {
         setMoneyMetrics(null);
@@ -158,7 +180,7 @@ export default function StoreOverviewScreen({ navigation }) {
     setLoadError(failed.length ? `Could not refresh ${failed.join(', ')}. Unavailable values are hidden until a successful retry.` : '');
     setLoading(false);
     setRefreshing(false);
-  }, [currency]);
+  }, []);
 
   useEffect(() => {
     loadOverview();
@@ -169,7 +191,9 @@ export default function StoreOverviewScreen({ navigation }) {
     () => (products && orders ? calculateStoreOverview(products, orders) : null),
     [products, orders]
   );
-  const authoritativeMetrics = selectAuthoritativeSellerMetrics(moneyMetrics, currency);
+  const authoritativeMetrics = sellerCurrency
+    ? selectAuthoritativeSellerMetrics(moneyMetrics, sellerCurrency)
+    : null;
   const authoritativeRevenue = authoritativeMetrics?.totalSales ?? null;
   const authoritativeAverage = authoritativeMetrics === null
     ? null

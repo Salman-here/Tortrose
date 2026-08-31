@@ -2,7 +2,7 @@
  * CheckoutScreen — Liquid Glass Design
  */
 
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useCallback, useState, useEffect, useMemo, useRef } from 'react';
 import {
   View, Text, ScrollView, TextInput, TouchableOpacity,
   StyleSheet, Modal, ActivityIndicator,
@@ -13,6 +13,7 @@ import Feedback from '../utils/feedback';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useStripe } from '@stripe/stripe-react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import api, { API_ENDPOINTS } from '../config/api';
 import { useAuth } from '../contexts/AuthContext';
 import { useGlobal } from '../contexts/GlobalContext';
@@ -135,12 +136,22 @@ export default function CheckoutScreen({ navigation }) {
   const activeCheckoutAttemptRef = useRef(null);
   const summaryRequestRef = useRef({ id: 0, controller: null });
   const walletRequestRef = useRef(0);
+  const refreshExchangeRatesRef = useRef(refreshExchangeRates);
+
+  useEffect(() => {
+    refreshExchangeRatesRef.current = refreshExchangeRates;
+  }, [refreshExchangeRates]);
 
   // Coupon state
   const [couponCode, setCouponCode] = useState('');
   const [appliedCoupons, setAppliedCoupons] = useState([]);
   const [sellerCoupons, setSellerCoupons] = useState({});
   const [couponLoading, setCouponLoading] = useState(false);
+
+  useFocusEffect(useCallback(() => {
+    Promise.all([fetchCart(), refreshExchangeRatesRef.current()]).catch(() => undefined);
+    return undefined;
+  }, [fetchCart]));
 
   const productPriceInCheckoutCurrency = (product, amount = undefined) => {
     if (!product) return 0;

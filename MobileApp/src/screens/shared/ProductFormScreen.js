@@ -11,7 +11,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
-import api, { API_ENDPOINTS } from '../../config/api';
+import api, { API_ENDPOINTS, API_UPLOAD_TIMEOUT_MS } from '../../config/api';
 import SmartTagGenerator from '../../components/SmartTagGenerator';
 import Loader from '../../components/common/Loader';
 import GlassBackground from '../../components/common/GlassBackground';
@@ -244,6 +244,7 @@ export default function ProductFormScreen({ navigation, route }) {
 
     const res = await api.post(API_ENDPOINTS.UPLOAD.PRODUCT_IMAGE, formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: API_UPLOAD_TIMEOUT_MS,
     });
     return res.data?.imageUrl;
   };

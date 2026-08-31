@@ -91,4 +91,37 @@ describe('seller mobile presentation safety', () => {
     expect(overview).not.toMatch(/Number\(store\?\.trustCount/);
     expect(dashboard).not.toMatch(/Number\(notificationsResult/);
   });
+
+  it('requests every seller revenue surface in the authoritative store currency', () => {
+    const analytics = readFileSync(require.resolve('../../src/screens/seller/SellerAnalyticsScreen.js'), 'utf8');
+    const overview = readFileSync(require.resolve('../../src/screens/shared/StoreOverviewScreen.js'), 'utf8');
+    const dashboard = readFileSync(require.resolve('../../src/screens/seller/SellerDashboardScreen.js'), 'utf8');
+
+    for (const source of [analytics, overview, dashboard]) {
+      expect(source).toContain('API_ENDPOINTS.STORES.PRODUCT_CURRENCY');
+      expect(source).toContain('inspectSellerProductCurrencyState');
+      expect(source).toContain('activeCurrency');
+      expect(source).not.toMatch(/const \{ currency, formatAmount \} = useCurrency\(\)/);
+    }
+  });
+
+  it('refreshes seller dashboard totals after navigation and assistant mutations', () => {
+    const dashboard = readFileSync(require.resolve('../../src/screens/seller/SellerDashboardScreen.js'), 'utf8');
+
+    expect(dashboard).toContain("import { useFocusEffect } from '@react-navigation/native';");
+    expect(dashboard).toContain('useFocusEffect(useCallback(() => {');
+    expect(dashboard).toContain('dashboardRequestRef.current += 1;');
+    expect(dashboard).toContain('const closeAssistantAndRefresh = useCallback(() => {');
+    expect(dashboard).toContain('onClose={closeAssistantAndRefresh}');
+    expect(dashboard).toContain('const freshParams = { _mobileRefresh: refreshKey };');
+    expect(dashboard).toContain('fetchCompleteSellerCatalog(api, { refreshKey })');
+  });
+
+  it('keeps seller-owned catalog prices in each product native currency', () => {
+    const products = readFileSync(require.resolve('../../src/screens/shared/ProductManagementScreen.js'), 'utf8');
+
+    expect(products).toContain("return formatAmount(amount, { targetCurrency: presentation.currency });");
+    expect(products).toContain("if (isAdmin) return formatProductPrice(item, { field });");
+    expect(products).toContain("formatManagedPrice(hasDiscount ? 'discountedPrice' : 'price')");
+  });
 });

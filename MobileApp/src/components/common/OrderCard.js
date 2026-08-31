@@ -16,12 +16,12 @@ import {
   ORDER_STAGES,
   formatOrderItemOptions,
   getEstimatedDeliveryDate,
-  getOrderCurrency,
   getOrderDisplayId,
   getOrderItemCount,
   getOrderLeadItem,
   getOrderProgress,
-  getOrderTotal,
+  inspectOrderListMoney,
+  inspectSellerOrderListMoney,
   normalizeOrderStatus,
 } from '../../utils/orderPresentation';
 
@@ -55,6 +55,7 @@ const OrderCard = ({
   showCustomer = false,
   onWhatsApp,
   confirmationLabel = '',
+  sellerView = false,
   style,
 }) => {
   const { palette } = useTheme();
@@ -71,18 +72,29 @@ const OrderCard = ({
   const leadItem = getOrderLeadItem(order);
   const options = formatOrderItemOptions(leadItem);
   let itemCount = null;
-  let total = null;
-  let currency = null;
   try {
     itemCount = getOrderItemCount(order);
-    total = getOrderTotal(order);
-    currency = getOrderCurrency(order);
   } catch (_) {
     itemCount = null;
-    total = null;
-    currency = null;
   }
-  const financialPresentationValid = itemCount !== null && total !== null && currency !== null;
+  const moneyPresentation = sellerView
+    ? inspectSellerOrderListMoney(order)
+    : inspectOrderListMoney(order);
+  const financialPresentationValid = itemCount !== null && moneyPresentation.valid;
+  const formatFrozenMoney = (amount, moneyCurrency) => formatPrice(amount, {
+    sourceCurrency: moneyCurrency,
+    targetCurrency: moneyCurrency,
+    showCode: true,
+  });
+  const buyerEquivalent = sellerView
+    && moneyPresentation.valid
+    && moneyPresentation.buyerCurrency
+    && moneyPresentation.buyerCurrency !== moneyPresentation.currency
+    ? `Buyer ordered in ${moneyPresentation.buyerCurrency}: ${formatFrozenMoney(
+      moneyPresentation.buyerTotal,
+      moneyPresentation.buyerCurrency,
+    )}`
+    : '';
   const progress = getOrderProgress(status);
   const estimate = getEstimatedDeliveryDate(order);
   const customerName = order.user?.name || order.shippingInfo?.fullName;
@@ -224,10 +236,11 @@ const OrderCard = ({
           </View>
 
           <View style={styles.totalBlock}>
-            <Text style={styles.totalCaption}>ORDER TOTAL</Text>
+            <Text style={styles.totalCaption}>{sellerView ? 'YOUR TOTAL' : 'ORDER TOTAL'}</Text>
             <Text style={styles.total}>{financialPresentationValid
-              ? formatPrice(total, { sourceCurrency: currency })
+              ? formatFrozenMoney(moneyPresentation.total, moneyPresentation.currency)
               : 'Money unavailable'}</Text>
+            {!!buyerEquivalent && <Text style={styles.buyerEquivalent}>{buyerEquivalent}</Text>}
           </View>
 
           {onWhatsApp ? (
@@ -260,7 +273,7 @@ export const CompactOrderCard = ({ order, onPress }) => {
   const color = status === 'confirmed' ? palette.colors.info : (statusColors[status]?.solid || palette.colors.warning);
   let money = null;
   try {
-    money = { total: getOrderTotal(order), currency: getOrderCurrency(order) };
+    money = inspectOrderListMoney(order);
   } catch (_) {
     money = null;
   }
@@ -271,8 +284,12 @@ export const CompactOrderCard = ({ order, onPress }) => {
         <Text style={styles.compactOrderId}>{getOrderDisplayId(order)}</Text>
         <Text style={styles.compactStatus}>{STATUS_META[status].label}</Text>
       </View>
-      <Text style={styles.compactAmount}>{money
-        ? formatPrice(money.total, { sourceCurrency: money.currency })
+      <Text style={styles.compactAmount}>{money?.valid
+        ? formatPrice(money.total, {
+          sourceCurrency: money.currency,
+          targetCurrency: money.currency,
+          showCode: true,
+        })
         : 'Money unavailable'}</Text>
       <Ionicons name="chevron-forward" size={16} color={palette.colors.textLight} />
     </TouchableOpacity>
@@ -315,6 +332,7 @@ const buildStyles = (p) => StyleSheet.create({
   totalBlock: { alignItems: 'flex-end', marginHorizontal: spacing.sm },
   totalCaption: { fontSize: 8, letterSpacing: 0.8, fontWeight: fontWeight.bold, color: p.colors.textLight },
   total: { marginTop: 2, fontSize: fontSize.lg, fontWeight: fontWeight.extrabold, color: p.colors.text },
+  buyerEquivalent: { maxWidth: 155, marginTop: 3, fontSize: 9, lineHeight: 12, color: p.colors.textSecondary, textAlign: 'right' },
   chevron: { width: 34, height: 34, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(99,102,241,0.10)' },
   whatsAppButton: { width: 34, height: 34, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(34,197,94,0.12)' },
   compactContainer: { flexDirection: 'row', alignItems: 'center', paddingVertical: spacing.md, paddingHorizontal: spacing.sm, borderBottomWidth: 1, borderBottomColor: p.glass.borderSubtle },

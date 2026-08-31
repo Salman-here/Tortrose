@@ -8,11 +8,15 @@ import {
   getOrderDisplayId,
   getOrderItemCount,
   getOrderItemLineSubtotal,
+  getOrderItemOptionPairs,
   getOrderItemQuantity,
+  getOrderSellerGroups,
   getOrderSummaryAmount,
   getOrderTotal,
   getSellerCurrencyMoney,
   hasExactOrderItemUnitEquation,
+  inspectOrderListMoney,
+  inspectSellerOrderListMoney,
 } from '../../src/utils/orderPresentation';
 
 describe('order presentation helpers', () => {
@@ -168,6 +172,86 @@ describe('order presentation helpers', () => {
 
   it('formats selected color and options without exposing object syntax', () => {
     expect(formatOrderItemOptions(order.orderItems[0])).toBe('Color: Blue  •  Size: M');
+    expect(getOrderItemOptionPairs({
+      selectedColor: 'Blue',
+      selectedOptions: { Color: 'Navy', Size: 'L' },
+    })).toEqual([
+      { name: 'Color', value: 'Navy' },
+      { name: 'Size', value: 'L' },
+    ]);
+  });
+
+  it('validates complete buyer seller groups and exact checkout conservation', () => {
+    const groupedOrder = {
+      currency: 'USD',
+      orderItems: [
+        { productId: 'product-a', name: 'A', price: 7, lineSubtotal: 7, quantity: 1 },
+        { productId: 'product-b', name: 'B', price: 3, lineSubtotal: 3, quantity: 1 },
+      ],
+      orderSummary: {
+        subtotal: 10,
+        shippingCost: 1.5,
+        tax: 0.5,
+        couponDiscount: 0.25,
+        reconciliationAdjustment: 0,
+        totalAmount: 11.75,
+      },
+      sellerGroups: [
+        {
+          sellerId: 'seller-a',
+          storeName: 'Store A',
+          status: 'shipped',
+          itemIndexes: [0],
+          itemCount: 1,
+          units: 1,
+          shippingMethod: { name: 'Express', estimatedDays: 2, price: 1 },
+          summary: {
+            subtotal: 7,
+            shippingCost: 1,
+            tax: 0.35,
+            couponDiscount: 0.15,
+            reconciliationAdjustment: 0,
+            totalAmount: 8.2,
+          },
+        },
+        {
+          sellerId: 'seller-b',
+          storeName: 'Store B',
+          status: 'confirmed',
+          itemIndexes: [1],
+          itemCount: 1,
+          units: 1,
+          shippingMethod: { name: 'Standard', estimatedDays: 5, price: 0.5 },
+          summary: {
+            subtotal: 3,
+            shippingCost: 0.5,
+            tax: 0.15,
+            couponDiscount: 0.1,
+            reconciliationAdjustment: 0,
+            totalAmount: 3.55,
+          },
+        },
+      ],
+    };
+
+    const groups = getOrderSellerGroups(groupedOrder);
+    expect(groups).toHaveLength(2);
+    expect(groups[0]).toMatchObject({
+      sellerId: 'seller-a',
+      storeName: 'Store A',
+      status: 'shipped',
+      items: [groupedOrder.orderItems[0]],
+      units: 1,
+    });
+    expect(groups.map(group => group.summary.totalAmount)).toEqual([8.2, 3.55]);
+
+    const duplicateItem = JSON.parse(JSON.stringify(groupedOrder));
+    duplicateItem.sellerGroups[1].itemIndexes = [0];
+    expect(() => getOrderSellerGroups(duplicateItem)).toThrow('seller order item indexes');
+
+    const missingMoney = JSON.parse(JSON.stringify(groupedOrder));
+    missingMoney.sellerGroups[1].summary.totalAmount = 3.54;
+    expect(() => getOrderSellerGroups(missingMoney)).toThrow('seller summary total');
   });
 
   it('prefers the persisted line subtotal and keeps a legacy unit-price fallback', () => {
@@ -256,6 +340,18 @@ describe('order presentation helpers', () => {
     const money = getSellerCurrencyMoney(sellerOrder);
     expect(money.summary.totalAmount).toBe(29.5);
     expect(money.buyerSummary.totalAmount).toBe(8196.87);
+    expect(inspectOrderListMoney(sellerOrder)).toMatchObject({
+      valid: true,
+      currency: 'PKR',
+      total: 8196.87,
+    });
+    expect(inspectSellerOrderListMoney(sellerOrder)).toMatchObject({
+      valid: true,
+      currency: 'USD',
+      total: 29.5,
+      buyerCurrency: 'PKR',
+      buyerTotal: 8196.87,
+    });
 
     const tampered = JSON.parse(JSON.stringify(sellerOrder));
     tampered.sellerCurrencyMoney.itemMoney[0].lineSubtotal = 29.49;

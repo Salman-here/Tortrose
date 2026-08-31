@@ -24,7 +24,7 @@ import {
   useAudioRecorder,
   useAudioRecorderState,
 } from 'expo-audio';
-import api from '../config/api';
+import api, { API_UPLOAD_TIMEOUT_MS } from '../config/api';
 import { useAuth } from '../contexts/AuthContext';
 import { resolveProductPresentationMoney, useCurrency } from '../contexts/CurrencyContext';
 import {
@@ -480,6 +480,7 @@ async function callAI(
     });
     const resp = await api.post('/api/ai-chat/once', form, {
       headers: { 'Content-Type': 'multipart/form-data', 'Idempotency-Key': requestKey },
+      timeout: API_UPLOAD_TIMEOUT_MS,
     });
     return resp.data;
   }

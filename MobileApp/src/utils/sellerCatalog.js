@@ -15,9 +15,18 @@ const catalogProductsHaveUniqueIds = (products) => {
  * page limit. Dashboard totals and stock alerts must not silently become a
  * first-page sample when a store grows beyond the default page size.
  */
-export async function fetchCompleteSellerCatalog(apiClient = api) {
+export async function fetchCompleteSellerCatalog(
+  apiClient = api,
+  { refreshKey = String(Date.now()) } = {},
+) {
   const requestPage = (page) => apiClient.get('/api/products/get-seller-products', {
-    params: { page, limit: 100, sortBy: 'newest', sortOrder: 'desc' },
+    params: {
+      page,
+      limit: 100,
+      sortBy: 'newest',
+      sortOrder: 'desc',
+      _mobileRefresh: refreshKey,
+    },
   });
 
   const firstResponse = await requestPage(1);

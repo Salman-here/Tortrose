@@ -11,7 +11,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
-import api, { API_ENDPOINTS } from '../../config/api';
+import api, { API_ENDPOINTS, API_UPLOAD_TIMEOUT_MS } from '../../config/api';
 import VerifiedBadge from '../../components/VerifiedBadge';
 import GlassBackground from '../../components/common/GlassBackground';
 import GlassPanel from '../../components/common/GlassPanel';
@@ -299,6 +299,7 @@ export default function SellerStoreSettingsScreen({ navigation }) {
     });
     const response = await api.post(API_ENDPOINTS.UPLOAD.STORE_IMAGE, body, {
       headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: API_UPLOAD_TIMEOUT_MS,
     });
     if (!response.data?.imageUrl) throw new Error(`The ${type} upload did not return a secure URL.`);
     return response.data.imageUrl;

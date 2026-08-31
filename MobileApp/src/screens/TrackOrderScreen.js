@@ -120,7 +120,14 @@ export default function TrackOrderScreen({ navigation }) {
   }, [currentUser?.email, email]);
 
   const orderMoney = useCallback(
-    (amount, targetOrder = order) => formatPrice(amount, { sourceCurrency: getOrderCurrency(targetOrder) }),
+    (amount, targetOrder = order) => {
+      const orderCurrency = getOrderCurrency(targetOrder);
+      return formatPrice(amount, {
+        sourceCurrency: orderCurrency,
+        targetCurrency: orderCurrency,
+        showCode: true,
+      });
+    },
     [formatPrice, order]
   );
 

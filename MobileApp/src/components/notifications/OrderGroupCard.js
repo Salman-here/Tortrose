@@ -19,7 +19,7 @@ export default function OrderGroupCard({ group, onPress, onMarkRead, readIds }) 
   const [expanded, setExpanded] = useState(false);
   const rotateAnim = useRef(new Animated.Value(0)).current;
   const { items, orderId } = group;
-  const shortId = orderId.slice(-6).toUpperCase();
+  const displayOrderId = String(group.publicOrderId || orderId.slice(-6)).toUpperCase();
   const unreadCount = items.filter(i => !i.read && !readIds.has(i.id)).length;
   const latestItem = items[0];
   const latestMeta = META[latestItem.category] || META.system;
@@ -40,7 +40,7 @@ export default function OrderGroupCard({ group, onPress, onMarkRead, readIds }) 
           <Ionicons name="cube-outline" size={22} color={latestMeta.color} />
         </View>
         <View style={styles.headerText}>
-          <Text style={styles.title}>Order #{shortId}</Text>
+          <Text style={styles.title}>Order #{displayOrderId}</Text>
           <Text style={styles.subtitle} numberOfLines={1}>{latestItem.title} · {items.length} updates</Text>
           <Text style={styles.time}>{formatTime(group.latestDate)}</Text>
         </View>
