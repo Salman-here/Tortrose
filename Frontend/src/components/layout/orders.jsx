@@ -317,7 +317,7 @@ const OrderManagement = () => {
                                     </tr>
                                 </thead>
                                 <tbody>
-                                     {[...orders].reverse().map((order, i) => {
+                                     {orders.map((order, i) => {
                                          const ss = getStatusStyle(order.orderStatus);
                                          const money = currentUser?.role === 'seller'
                                              ? inspectSellerOrderListMoney(order)
@@ -412,7 +412,7 @@ const OrderManagement = () => {
 
                         {/* Mobile Cards */}
                         <div className="md:hidden space-y-3 p-4">
-                             {[...orders].reverse().map((order, i) => {
+                             {orders.map((order, i) => {
                                  const ss = getStatusStyle(order.orderStatus);
                                  const money = currentUser?.role === 'seller'
                                      ? inspectSellerOrderListMoney(order)
