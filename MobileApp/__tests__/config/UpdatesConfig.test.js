@@ -1,3 +1,5 @@
+const fs = require('fs');
+const path = require('path');
 const appConfig = require('../../app.json').expo;
 const easConfig = require('../../eas.json');
 const packageConfig = require('../../package.json');
@@ -24,6 +26,12 @@ describe('EAS Update release contract', () => {
       distribution: 'internal',
       android: { buildType: 'apk' },
     });
+    expect(easConfig.build['production-apk']).toMatchObject({
+      channel: 'production',
+      environment: 'production',
+      distribution: 'internal',
+      android: { buildType: 'apk' },
+    });
     expect(easConfig.build.production).toMatchObject({
       channel: 'production',
       environment: 'production',
@@ -41,5 +49,27 @@ describe('EAS Update release contract', () => {
       './plugins/withPinnedStripeAndroid',
       { version: '23.3.0' },
     ]);
+  });
+
+  it('binds the production Android package to the public Firebase client only', () => {
+    const googleServicesPath = path.resolve(
+      __dirname,
+      '../..',
+      appConfig.android.googleServicesFile
+    );
+    const googleServices = JSON.parse(fs.readFileSync(googleServicesPath, 'utf8'));
+    const androidClient = googleServices.client.find(
+      (client) =>
+        client.client_info.android_client_info.package_name === appConfig.android.package
+    );
+
+    expect(appConfig.android.package).toBe('com.rozare.app');
+    expect(appConfig.android.googleServicesFile).toBe('./google-services.json');
+    expect(appConfig.android.versionCode).toBeGreaterThanOrEqual(12);
+    expect(googleServices.project_info.project_id).toBe('rozare-production');
+    expect(androidClient.client_info.mobilesdk_app_id).toBeTruthy();
+    expect(JSON.stringify(googleServices)).not.toContain('"private_key"');
+    expect(packageConfig.dependencies['expo-notifications']).toBeTruthy();
+    expect(appConfig.plugins).toContainEqual(expect.arrayContaining(['expo-notifications']));
   });
 });

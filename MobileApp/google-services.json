@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "235828539800",
+    "project_id": "rozare-production",
+    "storage_bucket": "rozare-production.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:235828539800:android:287bef53654addb0b9fbed",
+        "android_client_info": {
+          "package_name": "com.rozare.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD48eNtpqq3j6kvW39slfZVFiYdjm9H84Y"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

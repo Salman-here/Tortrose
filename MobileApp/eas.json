@@ -17,6 +17,19 @@
         "SENTRY_DISABLE_NATIVE_DEBUG_UPLOAD": "true"
       }
     },
+    "production-apk": {
+      "channel": "production",
+      "environment": "production",
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_PROJECT_ID": "21e1e6b1-bb29-47bc-a337-236fb17314cf",
+        "SENTRY_DISABLE_AUTO_UPLOAD": "true",
+        "SENTRY_DISABLE_NATIVE_DEBUG_UPLOAD": "true"
+      }
+    },
     "production": {
       "channel": "production",
       "environment": "production",

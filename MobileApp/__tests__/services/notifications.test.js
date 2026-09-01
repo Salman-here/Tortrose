@@ -38,7 +38,7 @@ const mockApi = require('../../src/config/api').default;
 const mockPublicAxios = require('axios');
 const mockNotifications = require('expo-notifications');
 const mockForegroundHandler = mockNotifications.setNotificationHandler.mock.calls[0][0].handleNotification;
-const STATE_KEY = 'pushTokenRegistrationState:v2';
+const STATE_KEY = 'pushTokenRegistrationState.v2';
 const CREDENTIAL = 'a'.repeat(43);
 let secureValues;
 
@@ -115,6 +115,20 @@ describe('notification runtime isolation', () => {
     await setActiveNotificationIdentity(null);
     expect(secureValues.has('activeNotificationRole')).toBe(false);
     expect(secureValues.has('activeNotificationUserId')).toBe(false);
+  });
+
+  it('uses only native SecureStore-compatible keys during push registration', async () => {
+    const user = { _id: 'seller-secure-store', role: 'seller' };
+    const generation = await setActiveNotificationIdentity(user);
+
+    await expect(savePushTokenToServer('ExpoPushToken[secure-store]', { user, generation }))
+      .resolves.toBe(true);
+
+    const touchedKeys = [mockSecureGet, mockSecureSet, mockSecureDel]
+      .flatMap(mock => mock.mock.calls.map(call => call[0]));
+    expect(touchedKeys.length).toBeGreaterThan(0);
+    expect(touchedKeys).toEqual(expect.arrayContaining([STATE_KEY]));
+    expect(touchedKeys.every(key => /^[A-Za-z0-9._-]+$/.test(key))).toBe(true);
   });
 
   it('repairs identity storage when rapid changes resolve in reverse order', async () => {

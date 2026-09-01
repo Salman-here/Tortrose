@@ -111,6 +111,7 @@ function validateEasConfig(expoConfig) {
   const packageConfig = readJson('package.json');
   const projectId = expoConfig.extra?.eas?.projectId;
   const preview = easConfig.build?.preview;
+  const productionApk = easConfig.build?.['production-apk'];
   const production = easConfig.build?.production;
 
   if (
@@ -135,6 +136,15 @@ function validateEasConfig(expoConfig) {
   }
 
   if (
+    productionApk?.distribution !== 'internal' ||
+    productionApk?.android?.buildType !== 'apk' ||
+    productionApk?.channel !== 'production' ||
+    productionApk?.environment !== 'production'
+  ) {
+    fail('production-apk must be an internal APK using production channel and environment');
+  }
+
+  if (
     production?.channel !== 'production' ||
     production?.environment !== 'production'
   ) {
@@ -145,11 +155,22 @@ function validateEasConfig(expoConfig) {
     fail('Preview EXPO_PUBLIC_PROJECT_ID must match expo.extra.eas.projectId');
   }
 
+  if (productionApk?.env?.EXPO_PUBLIC_PROJECT_ID !== projectId) {
+    fail('Production APK EXPO_PUBLIC_PROJECT_ID must match expo.extra.eas.projectId');
+  }
+
   if (
     preview?.env?.SENTRY_DISABLE_AUTO_UPLOAD !== 'true' ||
     preview?.env?.SENTRY_DISABLE_NATIVE_DEBUG_UPLOAD !== 'true'
   ) {
     fail('Preview builds must disable authenticated Sentry artifact uploads');
+  }
+
+  if (
+    productionApk?.env?.SENTRY_DISABLE_AUTO_UPLOAD !== 'true' ||
+    productionApk?.env?.SENTRY_DISABLE_NATIVE_DEBUG_UPLOAD !== 'true'
+  ) {
+    fail('Production APK builds must disable authenticated Sentry artifact uploads');
   }
 
   const expectedUpdatesUrl = `https://u.expo.dev/${projectId}`;
@@ -211,6 +232,54 @@ function validatePlugins(expoConfig) {
   );
   if (pinnedStripePlugin?.[1]?.version !== '23.3.0') {
     fail('Stripe Android must be pinned to exact version 23.3.0 for deterministic Gradle resolution');
+  }
+}
+
+function validateFirebase(expoConfig) {
+  const packageConfig = readJson('package.json');
+  const androidConfig = expoConfig.android || {};
+  const googleServicesPath = androidConfig.googleServicesFile;
+
+  if (androidConfig.package !== 'com.rozare.app') {
+    fail('expo.android.package must remain com.rozare.app for Firebase and Play');
+  }
+
+  if (typeof googleServicesPath !== 'string') {
+    fail('expo.android.googleServicesFile must point to google-services.json');
+  }
+
+  const googleServices = readJson(googleServicesPath);
+  if (googleServices.project_info?.project_id !== 'rozare-production') {
+    fail('google-services.json must belong to the rozare-production Firebase project');
+  }
+
+  const matchingClient = (googleServices.client || []).find(
+    (client) =>
+      client.client_info?.android_client_info?.package_name === androidConfig.package
+  );
+
+  if (!matchingClient?.client_info?.mobilesdk_app_id) {
+    fail('google-services.json must contain the com.rozare.app Android client');
+  }
+
+  const serializedGoogleServices = JSON.stringify(googleServices);
+  if (
+    serializedGoogleServices.includes('"private_key"') ||
+    serializedGoogleServices.includes('"private_key_id"') ||
+    serializedGoogleServices.includes('"client_email"')
+  ) {
+    fail('google-services.json must never contain a service-account credential');
+  }
+
+  const pluginNames = (expoConfig.plugins || []).map((plugin) =>
+    Array.isArray(plugin) ? plugin[0] : plugin
+  );
+  if (!pluginNames.includes('expo-notifications')) {
+    fail('expo-notifications config plugin is required for native push support');
+  }
+
+  if (!packageConfig.dependencies?.['expo-notifications']) {
+    fail('expo-notifications must be installed as a direct dependency');
   }
 }
 
@@ -303,8 +372,9 @@ if (!expoConfig || typeof expoConfig !== 'object') {
 validateLocales(expoConfig);
 validateEasConfig(expoConfig);
 validatePlugins(expoConfig);
+validateFirebase(expoConfig);
 validateBranding(expoConfig);
 
 console.log(
-  '[build-config] Validated Expo project, preview APK profile, plugins, and localized native resources.'
+  '[build-config] Validated Expo project, Firebase push config, preview APK profile, plugins, and localized native resources.'
 );

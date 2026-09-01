@@ -19,9 +19,12 @@ import {
 const Notifications = getNotificationsModule();
 const ACTIVE_NOTIFICATION_ROLE_KEY = 'activeNotificationRole';
 const ACTIVE_NOTIFICATION_USER_KEY = 'activeNotificationUserId';
-const PUSH_REGISTRATION_STATE_KEY = 'pushTokenRegistrationState:v2';
-const LEGACY_ACTIVE_PUSH_REGISTRATION_KEY = 'activePushTokenRegistration:v1';
-const LEGACY_PENDING_PUSH_REVOCATIONS_KEY = 'pendingPushTokenRevocations:v1';
+// Expo SecureStore keys must contain only letters, numbers, '.', '-' and '_'.
+// Colons work in ordinary JS storage mocks but are rejected by the native
+// Android SecureStore module before a push token can be registered.
+const PUSH_REGISTRATION_STATE_KEY = 'pushTokenRegistrationState.v2';
+const LEGACY_ACTIVE_PUSH_REGISTRATION_KEY = 'activePushTokenRegistration.v1';
+const LEGACY_PENDING_PUSH_REVOCATIONS_KEY = 'pendingPushTokenRevocations.v1';
 const REVOCATION_CREDENTIAL_RE = /^[A-Za-z0-9_-]{43}$/;
 let activeNotificationGeneration = 0;
 let activeNotificationRole = 'guest';

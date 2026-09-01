@@ -1,6 +1,6 @@
 {
   "name": "mobile-app",
-  "version": "1.0.9",
+  "version": "1.0.10",
   "main": "index.js",
   "scripts": {
     "start": "expo start",
@@ -11,6 +11,7 @@
     "test:watch": "jest --watch",
     "validate:build-config": "node scripts/validate-build-config.js",
     "build:preview": "npx eas-cli build --platform android --profile preview",
+    "build:production-apk": "npx eas-cli build --platform android --profile production-apk",
     "update:preview": "npx eas-cli update --channel preview --environment preview --platform android",
     "update:production": "npx eas-cli update --channel production --environment production",
     "eas-build-post-install": "npm run validate:build-config"
