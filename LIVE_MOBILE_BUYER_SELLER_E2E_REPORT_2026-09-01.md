@@ -4,19 +4,31 @@
 
 **Environment:** Live Rozare production API and the Android mobile application
 
-**Mobile runtime:** `1.0.9`
+**Android runtime tested:** `1.0.10`
 
-**Mobile implementation commit:** `62677f9c0d38a2706b18add34fa652075be9f56e`
+**Commerce-flow implementation commit:** `62677f9c0d38a2706b18add34fa652075be9f56e`
 
-**Final production OTA group:** `81a52ef1-05ac-45f5-8dab-0f33ba21a25c`
+**Firebase/native-release commit:** `168e8ae08068da2293f43cb9aef880cc672a792b`
 
-**Android update:** `01a05973-f163-7d12-b08f-3aaee159ab76`
+**Final commerce-flow OTA group:** `81a52ef1-05ac-45f5-8dab-0f33ba21a25c`
+
+**Android Firebase OTA group:** `b81135a4-b6a6-488f-a70a-bbb095dabacc`
+
+**Android Firebase update:** `01a05b11-eba5-7757-94bd-42bbe01e20c0`
 
 **iOS update:** `01a05973-f163-7a77-8ba6-890ca9a35dd2`
 
-**Final OTA dashboard:** `https://expo.dev/accounts/rozare/projects/rozare/updates/81a52ef1-05ac-45f5-8dab-0f33ba21a25c`
+**Android Firebase OTA dashboard:** `https://expo.dev/accounts/rozare/projects/rozare/updates/b81135a4-b6a6-488f-a70a-bbb095dabacc`
 
-**Overall result:** **PASS for the tested Android buyer, seller, catalog, COD, mixed-currency, multi-seller, order-status, review, return, email, WhatsApp test-inbox, and in-app notification flows.** Native Android remote push remains blocked by missing Firebase configuration and requires a new native build; this cannot be delivered by OTA.
+**Installed Android verification APK:** `e610b2cf-3305-4f90-bab3-307448a3ad23`
+
+**Production Android App Bundle:** `de1132c0-23bf-472b-9c18-d9e68de8aae6`
+
+**Production build dashboard:** `https://expo.dev/accounts/rozare/projects/rozare/builds/de1132c0-23bf-472b-9c18-d9e68de8aae6`
+
+**AAB artifact:** `https://expo.dev/artifacts/eas/fckVJrTvPrDcVnVJqSx12jCjmgFV1zvI1SxDoG08-jI.aab`
+
+**Overall result:** **PASS for the tested Android buyer, seller, catalog, COD, mixed-currency, multi-seller, order-status, review, return, email, WhatsApp test-inbox, in-app notification, and native Firebase push flows.** Android push was verified in the foreground, background, and with the application process terminated.
 
 ## 1. Executive conclusion
 
@@ -30,11 +42,12 @@ The live mobile application now follows the same buyer/seller money and order co
 - Cancelled, confirmed-but-not-delivered, and return-rejected orders do not incorrectly increase recognized revenue.
 - Product options survive the complete buyer-to-seller flow.
 - Email confirmation, WhatsApp confirmation/cancellation, seller WhatsApp updates, and buyer/seller in-app notifications were exercised against live orders.
+- Firebase Cloud Messaging remote push was exercised against the live admin broadcaster while the Android app was foregrounded, backgrounded, and process-terminated.
 - A delivered item was reviewed, and a delivered seller shipment went through a live return-request and seller-rejection flow.
 - Cart and checkout now refresh authoritative catalog and money data instead of trusting an old device-side snapshot.
 - The website `Frontend` was not modified during this mobile phase.
 
-The final mobile code is pushed to `main`, and the production OTA was published for both Android and iOS. Android was exercised interactively. The iOS bundle compiled and published, but a physical iOS device/simulator was not available on this Windows test host.
+The final mobile code is pushed to `main`. The commerce-flow OTA was published for Android and iOS, and the Firebase token-registration fix was published to the new Android `1.0.10` runtime. A production-signed Android APK was installed and exercised interactively, and a store-distribution Android App Bundle was created from the same commit and Firebase credentials. The iOS bundle compiled and published, but a physical iOS device/simulator was not available on this Windows test host.
 
 ## 2. Dedicated live test identities
 
@@ -325,13 +338,46 @@ An automation input attempt concatenated two QA note strings in the seller note 
 
 ### 9.4 Native Android remote push
 
-The installed native Android binary reported:
+The previous `Default FirebaseApp is not initialized` blocker was removed through a complete native Firebase release setup:
 
-`Default FirebaseApp is not initialized`
+- Created Firebase project `rozare-production` (`Rozare Production`) and registered Android package `com.rozare.app`.
+- Added the public Android Firebase client configuration through `google-services.json` and Expo's `android.googleServicesFile` setting.
+- Uploaded a dedicated Firebase Admin service-account key to EAS as the Android FCM V1 credential. The downloaded local private-key copy was deleted after the upload and no private key is present in the repository.
+- Added build validation that rejects a missing/mismatched Firebase project, package, or Android app ID.
+- Increased the app to version `1.0.10`, Android version code `12`, and runtime `1.0.10`.
+- Built and installed the production-signed APK `e610b2cf-3305-4f90-bab3-307448a3ad23` on the Android emulator.
+- Verified installed package metadata: `versionName=1.0.10`, `versionCode=12`, and `targetSdk=36`.
+- Verified native startup log: `FirebaseApp initialization successful`.
 
-The Expo project has no Android `googleServicesFile`, and EAS has no configured FCM legacy or service-account credential for this app. A JavaScript OTA cannot add this native Firebase configuration. The available production cloud-build quota was also exhausted during this test window.
+The first live launch exposed an independent registration defect: Expo SecureStore rejects `:` in key names. Push-token registration state keys were changed to use only supported characters, guarded by a regression test, and delivered through Android update group `b81135a4-b6a6-488f-a70a-bbb095dabacc`.
 
-**Result: FAIL / native-release blocker.** In-app, email, and WhatsApp notifications work, but background/closed-app Android push cannot be marked ready until Firebase is configured and a new Android native build is produced and installed.
+#### Foreground delivery
+
+- Target: `rozare.mobile.seller.83113@mailinator.com` only.
+- Admin result: `Sent to 1 recipient(s) — 1 push, 0 email, 0 WhatsApp.`
+- Notification: `Rozare Android foreground push test`.
+- Android displayed the exact title and body under the Rozare notification channel while the app was open.
+- Android notification diagnostics recorded one enqueued and one posted Rozare notification.
+
+#### Background delivery
+
+- The signed-in Rozare app was placed in the background on Android Home.
+- The live admin broadcaster again targeted only the Harbor seller and only the Mobile Push channel.
+- Notification: `Rozare Android background push test`.
+- Android displayed the exact title and body in the notification shade.
+- Tapping the notification reopened the signed-in Rozare application successfully.
+
+#### Terminated-process delivery
+
+- Rozare was first launched normally, placed in the background, and its application process was terminated without placing the package into Android's special force-stopped state.
+- Diagnostics confirmed no Rozare process and `stopped=false` before sending.
+- Notification: `Rozare Android closed-app push test — process terminated`.
+- The live admin broadcaster reported one push and no other delivery channels.
+- Android displayed the exact title and body in the notification shade, and tapping it launched the signed-in application successfully.
+
+An additional diagnostic used Android's explicit force-stop command. As designed by Android, a force-stopped package does not receive immediately; the queued notification was delivered after the user launched the app and cleared that special stopped state. This is different from an ordinary closed or process-terminated app and is not a Rozare delivery defect.
+
+**Result: PASS.** Native Firebase initialization, Expo push-token registration, live backend targeting, Android foreground delivery, background delivery, terminated-process delivery, and notification-tap launch behavior all worked on the production-signed `1.0.10` build.
 
 ## 10. Defects found and fixed during mobile testing
 
@@ -351,6 +397,8 @@ The Expo project has no Android `googleServicesFile`, and EAS has no configured 
 | Media upload timeout was too short | Real image uploads could fail prematurely | Mobile upload timeout increased to 60 seconds | Product/store media tests and source guard |
 | Product option values could duplicate | Buyer/seller selection became confusing | Option presentation deduplication | Walnut flow and unit coverage |
 | Expo SDK patch was one version behind | Expo Doctor failed dependency health | Expo updated from `55.0.30` to `55.0.31` | Expo Doctor 20/20 |
+| Android had no native Firebase project/configuration | FCM could not initialize or register a device token | Registered `com.rozare.app`, added Google Services config, and assigned an FCM V1 service account in EAS | Production-signed APK startup and three live push lifecycle tests |
+| Push registration used unsupported SecureStore key characters | Firebase initialized, but device-token persistence failed at runtime | Replaced `:` with supported `.` separators and added a key-safety regression test | Clean startup logs, token registration, and live delivery |
 
 ## 11. Main implementation areas
 
@@ -378,6 +426,14 @@ The Expo project has no Android `googleServicesFile`, and EAS has no configured 
 - Kept seller notifications scoped to seller-owned totals.
 - Corrected return and address modal layouts for usable mobile actions.
 
+### Native Android Firebase push
+
+- Added the Android Google Services client configuration for `com.rozare.app`.
+- Connected EAS to a dedicated FCM V1 service-account credential without committing the private key.
+- Added strict build-time validation for Firebase project, application ID, and credential-facing public configuration.
+- Corrected push-token SecureStore keys and added regression coverage for every token-registration storage key.
+- Added a signed internal APK profile for device-level release verification before store submission.
+
 ### Mobile reliability
 
 - Increased image upload timeout.
@@ -389,7 +445,7 @@ The Expo project has no Android `googleServicesFile`, and EAS has no configured 
 
 | Validation | Final result |
 |---|---|
-| Complete Jest suite | **86/86 suites passed; 1,055/1,055 tests passed** |
+| Complete Jest suite | **86/86 suites passed; 1,057/1,057 tests passed** |
 | Babel source parse | **259 JavaScript files parsed successfully** |
 | Expo Doctor | **20/20 checks passed** |
 | Mobile build configuration | **PASS** |
@@ -398,8 +454,12 @@ The Expo project has no Android `googleServicesFile`, and EAS has no configured 
 | Android production bundle | **PASS, 2,333 modules** |
 | iOS production bundle | **PASS, 2,332 modules** |
 | Production OTA publish | **PASS** |
+| Firebase/Android build configuration validation | **PASS** |
+| Production-signed Android APK build and install | **PASS — version 1.0.10 (12)** |
+| Foreground, background, and terminated-process push | **PASS** |
+| Production Android App Bundle | **PASS — version 1.0.10 (12), artifact downloaded and archive structure verified** |
 
-The first final Jest run exposed one stale source-text assertion in `InformationParity.test.js`: it expected the old generic payment formatter even though the implementation now correctly supplies `targetCurrency: sellerCurrency`. The assertion was updated to enforce the new store-currency contract. The targeted suite then passed, followed by the complete 1,055-test suite.
+The first final Jest run exposed one stale source-text assertion in `InformationParity.test.js`: it expected the old generic payment formatter even though the implementation now correctly supplies `targetCurrency: sellerCurrency`. The assertion was updated to enforce the new store-currency contract. The Firebase release phase then added configuration and SecureStore safety coverage. The complete final suite passed all 1,057 tests.
 
 ## 13. Production release history for this test phase
 
@@ -419,6 +479,15 @@ The authoritative final group superseding those incremental releases is:
 
 - **`81a52ef1-05ac-45f5-8dab-0f33ba21a25c`** from code commit **`62677f9c0d38a2706b18add34fa652075be9f56e`**.
 
+The Android native Firebase release then moved to runtime `1.0.10` and Android version code `12`:
+
+- Firebase/token-registration Android OTA: **`b81135a4-b6a6-488f-a70a-bbb095dabacc`**, update **`01a05b11-eba5-7757-94bd-42bbe01e20c0`**.
+- Installed production-signed verification APK: **`e610b2cf-3305-4f90-bab3-307448a3ad23`**.
+- APK SHA-256: **`6B8B74190B03F84E383F56F1C75DEAC5834FB6C592E5BB12C1C1E29949D47967`**.
+- Store-distribution production AAB: **`de1132c0-23bf-472b-9c18-d9e68de8aae6`**.
+- AAB size: **`89,146,792` bytes**; SHA-256: **`2BB2BE2C205BB046848D18F651B186F3EAF356DDCEEC8C63A6432EAF8EEAA79E`**.
+- All three artifacts use code commit **`168e8ae08068da2293f43cb9aef880cc672a792b`** and the production channel.
+
 The EAS metadata includes a dirty-worktree marker because an older website report and untracked `test-assets/` existed outside `MobileApp`. `MobileApp` itself was committed before the final publish, and those unrelated files were not included in the mobile bundle or code commit.
 
 ## 14. Scope exclusions and honest limitations
@@ -426,7 +495,7 @@ The EAS metadata includes a dirty-worktree marker because an older website repor
 - All live orders used COD. Stripe and Rozare Wallet payment execution were intentionally not used in this test phase.
 - No real products were shipped and no real cash was collected.
 - WhatsApp was verified through the approved allowlisted test-number inbox, not an external handset.
-- Android background remote push remains blocked until Firebase native configuration and a new Android build are available.
+- Native Android push was verified on a Google Play-enabled Android emulator with a production-signed build. Vendor-specific physical-device battery restrictions were not part of this test.
 - iOS compiled and received the production OTA, but interactive iOS device testing was not possible from the Windows host.
 - Branding upload was tested on Harbor; Cedar and Orbit kept default branding.
 - The website `Frontend` was deliberately left unchanged.
@@ -453,8 +522,8 @@ The EAS metadata includes a dirty-worktree marker because an older website repor
 | Review after delivery | PASS |
 | Return request and seller rejection | PASS |
 | Android/iOS OTA bundle and publish | PASS |
-| Android native remote push | **FAIL — Firebase native rebuild required** |
+| Android native remote push | **PASS — foreground, background, and terminated process** |
 | Stripe/Wallet execution | NOT TESTED BY SCOPE |
 | Interactive iOS device flows | NOT RUN ON WINDOWS HOST |
 
-The Android live mobile commerce flows exercised in this report are correct after the fixes and production OTA. The remaining release work is specifically the native Android Firebase push setup and native rebuild; it is separate from the buyer/seller order, currency, dashboard, email, WhatsApp, and in-app behavior verified here.
+The tested Android mobile commerce and notification flows are release-ready on version `1.0.10` (build `12`). Buyer/seller order behavior, currency calculations, dashboards, email, WhatsApp test-inbox, in-app notifications, Firebase remote push, notification tapping, signed APK installation, and the production store build all passed. The stated Stripe/Wallet and interactive iOS exclusions remain outside this report's verified scope.
