@@ -26,7 +26,10 @@ const unrefTimer = timer => timer?.unref?.();
  * AI/tool latency. Presence failures are deliberately isolated from delivery.
  */
 function startTypingPresence({ client, recipient, logger = console } = {}) {
-    const noOp = { stop() {} };
+    const noOp = {
+        stop() {},
+        restoreOnlineAfterReply() {},
+    };
     if (
         !envEnabled('WHATSAPP_AI_TYPING_ENABLED', true) ||
         !recipient ||
@@ -170,6 +173,14 @@ function startTypingPresence({ client, recipient, logger = console } = {}) {
                         queueOnlineRestore();
                     });
             }
+        },
+        restoreOnlineAfterReply() {
+            // `stop()` runs before the outbound reply so "typing" disappears
+            // promptly. The reply itself can then become the newest WhatsApp
+            // chat-state event, so reassert `available` after delivery too.
+            // This queues background work only and never delays the response.
+            if (!started || virtualRecipient) return;
+            queueOnlineRestore();
         },
     };
 

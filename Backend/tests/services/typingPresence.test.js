@@ -80,6 +80,12 @@ describe('WhatsApp AI typing presence lifecycle', () => {
         expect(restoreOnlinePresence).toHaveBeenCalledTimes(1);
         expect(sendChatPresence.mock.invocationCallOrder.at(-1))
             .toBeLessThan(restoreOnlinePresence.mock.invocationCallOrder[0]);
+
+        indicator.restoreOnlineAfterReply();
+        await flushPromises();
+        expect(restoreOnlinePresence).toHaveBeenCalledTimes(2);
+        expect(restoreOnlinePresence.mock.invocationCallOrder[0])
+            .toBeLessThan(restoreOnlinePresence.mock.invocationCallOrder[1]);
     });
 
     test('restores online again after an outstanding finite pulse emits its trailing pause', async () => {
@@ -141,6 +147,7 @@ describe('WhatsApp AI typing presence lifecycle', () => {
         jest.advanceTimersByTime(500);
         await flushPromises();
         indicator.stop();
+        indicator.restoreOnlineAfterReply();
         await flushPromises();
 
         expect(sendChatPresence).toHaveBeenCalledTimes(1);

@@ -470,6 +470,20 @@ async function handleNonSellerOnSellerInstance(phone, recipient = phone) {
  */
 async function processIncomingWhatsAppMessageNow(phone, messageText, instanceType, rawAttachments = [], options = {}) {
     const startedAt = Date.now();
+    let typingIndicator = null;
+    let stoppedTypingIndicator = null;
+    const stopTyping = () => {
+        if (typingIndicator) {
+            stoppedTypingIndicator = typingIndicator;
+            typingIndicator = null;
+            stoppedTypingIndicator.stop();
+        }
+        return stoppedTypingIndicator;
+    };
+    const restoreOnlineAfterReply = () => {
+        stoppedTypingIndicator?.restoreOnlineAfterReply?.();
+    };
+
     if (!AI_CHAT_ENABLED) {
         console.log(`[wa-ai-chat] AI chat disabled, ignoring message from ${phone}`);
         return;
@@ -531,7 +545,6 @@ async function processIncomingWhatsAppMessageNow(phone, messageText, instanceTyp
         // Presence starts only if real processing lasts beyond the short
         // threshold. It runs entirely in the background and cannot delay or
         // fail the AI request or the reply.
-        let typingIndicator = null;
         try {
             typingIndicator = startTypingPresence({
                 client: getClient(effectiveInstanceType),
@@ -545,11 +558,6 @@ async function processIncomingWhatsAppMessageNow(phone, messageText, instanceTyp
                 presenceError?.message || 'unknown error'
             );
         }
-        const stopTyping = () => {
-            const activeIndicator = typingIndicator;
-            typingIndicator = null;
-            activeIndicator?.stop();
-        };
 
         let attachmentResult;
         let attachmentsAt;
@@ -620,13 +628,19 @@ async function processIncomingWhatsAppMessageNow(phone, messageText, instanceTyp
             // The response is sent immediately with Evolution delay still at 0.
             stopTyping();
             sendStartedAt = Date.now();
-            if (result.responseText) {
-                const responseText = sanitizeVisibleAIResponse(result.responseText) ||
-                    "Done. I processed that, but I do not have a written update to send.";
-                await sendResponse(finalReplyTo, responseText, effectiveInstanceType);
-            } else {
-                // AI returned empty response — send a fallback
-                await sendResponse(finalReplyTo, "I'm sorry, I couldn't process that. Could you try rephrasing? 🤔", effectiveInstanceType);
+            try {
+                if (result.responseText) {
+                    const responseText = sanitizeVisibleAIResponse(result.responseText) ||
+                        "Done. I processed that, but I do not have a written update to send.";
+                    await sendResponse(finalReplyTo, responseText, effectiveInstanceType);
+                } else {
+                    // AI returned empty response — send a fallback
+                    await sendResponse(finalReplyTo, "I'm sorry, I couldn't process that. Could you try rephrasing? 🤔", effectiveInstanceType);
+                }
+            } finally {
+                // Run strictly after the provider send attempt settles. This is
+                // fire-and-forget and cannot extend the reply latency.
+                restoreOnlineAfterReply();
             }
 
             textSentAt = Date.now();
@@ -643,6 +657,9 @@ async function processIncomingWhatsAppMessageNow(phone, messageText, instanceTyp
                         await client.sendText(finalReplyTo, `📸 Image: ${img.imageUrl}\n${img.caption}`).catch(() => {});
                     }
                 }
+                // Media messages are additional outbound chat events, so ensure
+                // `available` is also the final presence after they finish.
+                restoreOnlineAfterReply();
             }
         } finally {
             stopTyping();
@@ -666,7 +683,13 @@ async function processIncomingWhatsAppMessageNow(phone, messageText, instanceTyp
                 await sendResponse(replyTo, errorMsg, instanceType);
             } catch (sendErr) {
                 console.error('[wa-ai-chat] Failed to send error message:', sendErr.message);
+            } finally {
+                restoreOnlineAfterReply();
             }
+        } else {
+            // Durable callers may intentionally suppress the error reply, but a
+            // typing cycle that already started must still return to online.
+            restoreOnlineAfterReply();
         }
         if (options.propagateErrors) {
             throw err;
