@@ -16,6 +16,21 @@
       "permanent": true
     },
     {
+      "source": "/stores",
+      "destination": "/marketplace",
+      "permanent": true
+    },
+    {
+      "source": "/stores/trusted",
+      "destination": "/marketplace/trusted",
+      "permanent": true
+    },
+    {
+      "source": "/seller-signup",
+      "destination": "/become-seller",
+      "permanent": true
+    },
+    {
       "source": "/docs",
       "has": [{ "type": "host", "value": "rozare.com" }],
       "destination": "https://docs.rozare.com/",
@@ -48,17 +63,6 @@
     {
       "source": "/sitemap-stores.xml",
       "destination": "https://rozare.up.railway.app/sitemap-stores.xml"
-    },
-    {
-      "source": "/",
-      "has": [
-        {
-          "type": "header",
-          "key": "user-agent",
-          "value": ".*(bot|crawler|spider|crawling|Googlebot|Bingbot|Slurp|DuckDuckBot|Baiduspider|YandexBot|Sogou|Exabot|facebot|ia_archiver|AhrefsBot|SemrushBot|MJ12bot|DotBot|BLEXBot|GPTBot|ChatGPT-User|ClaudeBot|Claude-Web|PerplexityBot|Applebot|Twitterbot|LinkedInBot|WhatsApp|facebookexternalhit).*"
-        }
-      ],
-      "destination": "/home-prerendered.html"
     },
     {
       "source": "/(.*)",

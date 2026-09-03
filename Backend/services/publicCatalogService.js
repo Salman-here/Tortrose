@@ -2,10 +2,21 @@
 
 const Store = require('../models/Store');
 const User = require('../models/User');
+const {
+  PROTECTED_STORE_SLUG_PATTERN,
+  STORE_SLUG_PATTERN,
+} = require('../utils/storeSlug');
 
 const ACTIVE_STORE_QUERY = {
   isActive: true,
   blockedAt: null,
+};
+
+const PUBLIC_STORE_SLUG_CLAUSE = {
+  storeSlug: {
+    $regex: STORE_SLUG_PATTERN,
+    $not: PROTECTED_STORE_SLUG_PATTERN,
+  },
 };
 
 const normalizeId = (value) => {
@@ -14,7 +25,7 @@ const normalizeId = (value) => {
 };
 
 async function getActiveSellerIds(extraStoreFilter = {}) {
-  const stores = await Store.find({ ...ACTIVE_STORE_QUERY, ...extraStoreFilter })
+  const stores = await Store.find(activeStoreQuery(extraStoreFilter))
     .select('seller')
     .lean();
   const sellerIds = stores.map(store => store.seller).filter(Boolean);
@@ -28,7 +39,15 @@ async function getActiveSellerIds(extraStoreFilter = {}) {
 }
 
 function activeStoreQuery(extra = {}) {
-  return { ...ACTIVE_STORE_QUERY, ...extra };
+  const { $and: extraAnd = [], ...rest } = extra || {};
+  return {
+    ...rest,
+    ...ACTIVE_STORE_QUERY,
+    $and: [
+      ...(Array.isArray(extraAnd) ? extraAnd : [extraAnd]).filter(Boolean),
+      PUBLIC_STORE_SLUG_CLAUSE,
+    ],
+  };
 }
 
 function applyActiveSellerProductFilter(productFilter = {}, activeSellerIds = []) {
@@ -79,6 +98,7 @@ async function findActiveStore(filter = {}, options = {}) {
 
 module.exports = {
   ACTIVE_STORE_QUERY,
+  PUBLIC_STORE_SLUG_CLAUSE,
   activeStoreQuery,
   applyActiveSellerProductFilter,
   findActiveStore,

@@ -47,6 +47,7 @@ function ProductDetailPage() {
     const [mainImg, setMainImg] = useState(null);
     const [selectedIdx, setSelectedIdx] = useState(0);
     const [loading, setLoading] = useState(true);
+    const [loadError, setLoadError] = useState(false);
     const [rating, setRating] = useState(5);
     const [selectedColor, setSelectedColor] = useState(null);
     const [selectedOptions, setSelectedOptions] = useState({}); // { Size: 'L', Color: 'Red' }
@@ -163,6 +164,7 @@ function ProductDetailPage() {
 
     const fetchProduct = async () => {
         setLoading(true);
+        setLoadError(false);
         try {
             const params = new URLSearchParams();
             appendLocationParams(params);
@@ -194,6 +196,9 @@ function ProductDetailPage() {
                 }
             }
         } catch (err) {
+            setProduct({});
+            setStoreData(null);
+            setLoadError(true);
             toast.error('Product not found');
         } finally {
             setLoading(false);
@@ -293,9 +298,24 @@ function ProductDetailPage() {
     };
 
     if (loading) return (
-        <div className='h flex justify-center items-center'>
-            <Loader />
-        </div>
+        <>
+            <SEOHead title="Loading product" description="Loading this Rozare product." noindex />
+            <div className='h flex justify-center items-center'>
+                <Loader />
+            </div>
+        </>
+    );
+
+    if (loadError || !product?._id || !product?.name) return (
+        <>
+            <SEOHead title="Product unavailable" description="This product does not exist or is not publicly available on Rozare." noindex />
+            <div className="min-h-[60vh] flex flex-col items-center justify-center px-4 text-center">
+                <Package size={46} style={{ color: 'hsl(var(--muted-foreground))' }} />
+                <h1 className="mt-4 text-2xl font-bold" style={{ color: 'hsl(var(--foreground))' }}>Product unavailable</h1>
+                <p className="mt-2 text-sm" style={{ color: 'hsl(var(--muted-foreground))' }}>This product does not exist or is no longer public.</p>
+                <Link to="/products" className="glass-button mt-6 rounded-xl px-5 py-2.5 font-semibold">Browse products</Link>
+            </div>
+        </>
     );
 
     return (
@@ -319,8 +339,9 @@ function ProductDetailPage() {
                             '@context': 'https://schema.org',
                             '@type': 'Product',
                             name: product.name,
-                            description: product.description,
-                            image: product.image,
+                            description: product.description || `Buy ${product.name} from ${storeData?.storeName || 'an independent seller'} on Rozare.`,
+                            sku: String(product._id),
+                            image: [...new Set([product.image, ...(product.images || []).map(image => image?.url)].filter(Boolean))],
                             brand: product.brand ? { '@type': 'Brand', name: product.brand } : undefined,
                             offers: {
                                 '@type': 'Offer',
@@ -328,9 +349,9 @@ function ProductDetailPage() {
                                 priceCurrency: productCurrency,
                                 availability: product.stock > 0 ? 'https://schema.org/InStock' : 'https://schema.org/OutOfStock',
                                 url: `https://rozare.com/single-product/${id}`,
-                                seller: { '@type': 'Organization', name: 'Rozare' },
+                                seller: { '@type': 'Organization', name: storeData?.storeName || 'Rozare Marketplace' },
                             },
-                            ...(product.rating && {
+                            ...(Number(product.rating) > 0 && Number(product.numReviews) > 0 && {
                                 aggregateRating: {
                                     '@type': 'AggregateRating',
                                     ratingValue: product.rating,

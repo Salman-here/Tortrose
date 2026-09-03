@@ -14,6 +14,7 @@ const {
   applyActiveSellerProductFilter,
   getActiveSellerIds,
   isProductSellerPubliclyActive,
+  PUBLIC_STORE_SLUG_CLAUSE,
 } = require('../../services/publicCatalogService');
 
 describe('publicCatalogService', () => {
@@ -26,6 +27,15 @@ describe('publicCatalogService', () => {
       isActive: true,
       blockedAt: null,
       seller: 'seller-1',
+      $and: [PUBLIC_STORE_SLUG_CLAUSE],
+    });
+  });
+
+  test('callers cannot override the public active-store contract', () => {
+    expect(activeStoreQuery({ isActive: false, blockedAt: new Date('2026-01-01') })).toMatchObject({
+      isActive: true,
+      blockedAt: null,
+      $and: [PUBLIC_STORE_SLUG_CLAUSE],
     });
   });
 
@@ -57,6 +67,7 @@ describe('publicCatalogService', () => {
       isActive: true,
       blockedAt: null,
       'verification.isVerified': true,
+      $and: [PUBLIC_STORE_SLUG_CLAUSE],
     });
     expect(select).toHaveBeenCalledWith('seller');
     expect(User.find).toHaveBeenCalledWith({
@@ -76,6 +87,7 @@ describe('publicCatalogService', () => {
       isActive: true,
       blockedAt: null,
       seller: 'blocked-seller',
+      $and: [PUBLIC_STORE_SLUG_CLAUSE],
     });
 
     Store.exists.mockResolvedValueOnce(true);

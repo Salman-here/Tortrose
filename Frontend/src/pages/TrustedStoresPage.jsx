@@ -72,7 +72,7 @@ const TrustedStoresPage = () => {
                 <SEOHead
                     title="My Trusted Stores"
                     description="Your personal list of trusted independent stores on Rozare."
-                    canonical="/stores/trusted"
+                    canonical="/marketplace/trusted"
                     noindex={true}
                 />
                 <motion.div

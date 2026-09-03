@@ -125,14 +125,19 @@ const SubdomainStorePage = () => {
 
     if (loading) {
         return (
-            <div className="flex justify-center items-center min-h-screen">
-                <Loader />
-            </div>
+            <>
+                <SEOHead title="Loading store" description="Loading this Rozare store." noindex />
+                <div className="flex justify-center items-center min-h-screen">
+                    <Loader />
+                </div>
+            </>
         );
     }
 
     if (blocked) {
         return (
+            <>
+            <SEOHead title="Store unavailable" description="This store is not currently public on Rozare." noindex />
             <div className="flex flex-col items-center justify-center min-h-screen p-4">
                 <div className="glass-inner p-6 rounded-2xl mb-4">
                     <Store size={48} style={{ color: 'hsl(30, 90%, 50%)' }} />
@@ -151,11 +156,14 @@ const SubdomainStorePage = () => {
                     Browse Other Stores
                 </motion.button>
             </div>
+            </>
         );
     }
 
     if (notFound) {
         return (
+            <>
+            <SEOHead title="Store not found" description="This store does not exist or has been removed from Rozare." noindex />
             <div className="flex flex-col items-center justify-center min-h-screen p-4">
                 <div className="glass-inner p-6 rounded-2xl mb-4">
                     <Store size={48} style={{ color: 'hsl(var(--muted-foreground))' }} />
@@ -171,6 +179,7 @@ const SubdomainStorePage = () => {
                     Browse All Stores
                 </motion.button>
             </div>
+            </>
         );
     }
 
@@ -189,7 +198,7 @@ const SubdomainStorePage = () => {
                     description={store?.description
                         ? `${store.description.slice(0, 140)} - Shop on Rozare.`
                         : `Shop products from ${store?.storeName} on Rozare. Browse products, reviews, trust signals, and seller-managed shipping options.`}
-                    canonical={`/`}
+                    canonical={`https://${subdomain}.rozare.com/`}
                     ogImage={store?.logo || undefined}
                     ogImageAlt={`${store?.storeName} store logo`}
                 />

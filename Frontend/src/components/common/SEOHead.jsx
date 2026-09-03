@@ -20,7 +20,11 @@ export default function SEOHead({
   children,
 }) {
   const fullTitle    = title ? `${title} | ${SITE_NAME}` : `${SITE_NAME} - AI Shopping Marketplace`;
-  const canonicalUrl = canonical ? `${SITE_URL}${canonical}` : null;
+  const canonicalUrl = canonical
+    ? (/^https?:\/\//i.test(canonical)
+      ? canonical
+      : `${SITE_URL}${canonical.startsWith('/') ? canonical : `/${canonical}`}`)
+    : null;
   const imageAlt     = ogImageAlt || fullTitle;
   const allKeywords  = keywords ? `${keywords}, ${DEFAULT_KEYWORDS}` : DEFAULT_KEYWORDS;
 
@@ -30,7 +34,7 @@ export default function SEOHead({
       <title>{fullTitle}</title>
       <meta name="description" content={description} />
       <meta name="keywords" content={allKeywords} />
-      <meta name="robots" content={noindex ? 'noindex, nofollow' : 'index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1'} />
+      <meta name="robots" content={noindex ? 'noindex, nofollow, noarchive, nosnippet' : 'index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1'} />
       {canonicalUrl && <link rel="canonical" href={canonicalUrl} />}
 
       {/* ── Open Graph ────────────────────────── */}

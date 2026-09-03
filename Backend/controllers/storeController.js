@@ -51,8 +51,8 @@ const {
 } = require('../services/subdomainSlugMutationService');
 const {
     MAX_STORE_SLUG_LENGTH,
+    safeGeneratedStoreSlugBase,
     validateStoreSlug,
-    slugifyStoreName,
 } = require('../utils/storeSlug');
 const { runInTransaction } = require('../services/walletService');
 const {
@@ -145,8 +145,10 @@ const cleanList = (items) => [...new Set(
 
 // Helper function to generate unique slug
 const generateUniqueSlug = async (storeName) => {
-    const generated = slugifyStoreName(storeName);
-    const baseSlug = generated || `store-${crypto.randomBytes(4).toString('hex')}`;
+    const baseSlug = safeGeneratedStoreSlugBase(
+        storeName,
+        crypto.randomBytes(6).toString('hex'),
+    );
     let slug = baseSlug;
 
     // Check if slug exists
@@ -203,7 +205,9 @@ exports.checkSubdomainAvailability = async (req, res) => {
 
         const validation = validateStoreSlug(slug);
         if (!validation.valid) {
-            return res.status(validation.code === 'RESERVED_SUBDOMAIN' ? 200 : 400).json({
+            return res.status(
+                ['RESERVED_SUBDOMAIN', 'PROTECTED_BRAND_SUBDOMAIN'].includes(validation.code) ? 200 : 400
+            ).json({
                 available: false,
                 msg: validation.msg,
                 code: validation.code,

@@ -110,7 +110,7 @@ async function run() {
     await Store.create({
       seller: seller._id,
       storeName: 'Rozare Play Review Store',
-      storeSlug: 'rozare-play-review-store',
+      storeSlug: 'play-review-store',
       description: 'A private reviewer-ready store account used to verify Rozare seller features.',
       visibility: { mode: 'global', label: 'Visible globally' },
       isActive: true,

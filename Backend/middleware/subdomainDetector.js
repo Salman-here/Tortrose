@@ -2,6 +2,7 @@
 const Store = require('../models/Store');
 const { findActiveStore } = require('../services/publicCatalogService');
 const { releaseExpiredStoreSlug } = require('../services/subdomainSlugMutationService');
+const { isProtectedStoreSlug, normalizeStoreSlug } = require('../utils/storeSlug');
 
 const subdomainDetector = async (req, res, next) => {
     try {
@@ -9,12 +10,12 @@ const subdomainDetector = async (req, res, next) => {
 
         // Priority 1: Explicit ?slug= query param (used when frontend is on a different host)
         if (req.query.slug) {
-            subdomain = req.query.slug.toLowerCase().trim();
+            subdomain = normalizeStoreSlug(req.query.slug);
         }
 
         // Priority 2: X-Store-Subdomain header (alternative way to pass it)
         if (!subdomain && req.get('x-store-subdomain')) {
-            subdomain = req.get('x-store-subdomain').toLowerCase().trim();
+            subdomain = normalizeStoreSlug(req.get('x-store-subdomain'));
         }
 
         // Priority 3: Detect from Host header (works when backend is on same domain)
@@ -22,8 +23,8 @@ const subdomainDetector = async (req, res, next) => {
             const host = req.get('host') || '';
             const parts = host.split('.');
             if (parts.length > 2) {
-                const hostSub = parts[0].toLowerCase();
-                if (!['www', 'api', 'admin', 'app', 'docs', 'help', 'blog', 'mail', 'cdn', 'static'].includes(hostSub)) {
+                const hostSub = normalizeStoreSlug(parts[0]);
+                if (!isProtectedStoreSlug(hostSub)) {
                     subdomain = hostSub;
                 }
             }
@@ -33,8 +34,9 @@ const subdomainDetector = async (req, res, next) => {
             return next();
         }
 
-        // Skip common subdomains
-        if (['www', 'api', 'admin', 'app', 'docs', 'help', 'blog', 'mail', 'cdn', 'static'].includes(subdomain)) {
+        // Never resolve platform or protected-brand hostnames as seller stores,
+        // including any legacy row that predates the current reservation list.
+        if (isProtectedStoreSlug(subdomain)) {
             return next();
         }
 

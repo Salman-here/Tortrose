@@ -144,6 +144,7 @@ const {
 } = require('./orderFulfillmentService');
 const { removeFulfilledOrderItemsFromCart } = require('./cartFulfillmentService');
 const { changeStoreSlug } = require('./subdomainSlugMutationService');
+const { validateStoreSlug } = require('../utils/storeSlug');
 const {
   enqueueCodOrderBuyerConfirmationNotification,
   enqueueCodOrderSellerNotifications,
@@ -232,8 +233,6 @@ function isTruthy(value) {
 
 const STORE_CHANGE_COOLDOWN_DAYS = { storeName: 7, storeSlug: 30, sellerType: 30 };
 const STORE_FIELD_LABELS = { storeName: 'store name', storeSlug: 'subdomain', sellerType: 'store type' };
-const RESERVED_SUBDOMAINS = new Set(['www', 'api', 'admin', 'app', 'mail', 'ftp', 'shop', 'store', 'blog', 'docs', 'help', 'cdn', 'static', 'support']);
-
 function escapeRegExp(value) {
   return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -4843,14 +4842,13 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
           if (isPlaceholderValue(slug)) {
             return { success: false, error: 'No subdomain was provided. Ask the seller what new subdomain they want before updating.' };
           }
-          if (slug.length < 3 || slug.length > 63) {
-            return { success: false, error: 'Subdomain must be 3-63 characters.' };
-          }
-          if (!/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(slug)) {
-            return { success: false, error: 'Subdomain can only contain lowercase letters, numbers, and hyphens, and cannot start or end with a hyphen.' };
-          }
-          if (RESERVED_SUBDOMAINS.has(slug)) {
-            return { success: false, error: 'This subdomain is reserved by the system.' };
+          const slugValidation = validateStoreSlug(slug);
+          if (!slugValidation.valid) {
+            return {
+              success: false,
+              error: slugValidation.msg,
+              code: slugValidation.code,
+            };
           }
           if (slug === existingStore.storeSlug) {
             delete normalizedUpdates.storeSlug;

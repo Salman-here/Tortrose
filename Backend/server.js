@@ -756,6 +756,7 @@ app.use('/api/whatsapp', whatsappRoutes);
 app.use('/api/seller-whatsapp', sellerWhatsappRoutes);
 app.use('/api/user-whatsapp', userWhatsappRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/seo', require('./routes/seoRoutes'));
 
 // ── Dynamic SEO sitemaps (products & stores) ──
 app.use('/', require('./routes/sitemapRoutes'));

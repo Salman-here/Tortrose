@@ -97,7 +97,7 @@ describe('canonical subdomain slug mutation', () => {
     await adminUpdateSubdomain({
       user: { id: adminId.toString(), role: 'admin' },
       params: { storeId: store._id.toString() },
-      body: { newSlug: 'admin-cannot-race-checkout' },
+      body: { newSlug: 'operator-cannot-race-checkout' },
     }, res);
     expect(res.status).toHaveBeenCalledWith(423);
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({

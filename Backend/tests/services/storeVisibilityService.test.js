@@ -70,20 +70,22 @@ describe('storeVisibilityService', () => {
   test('excludes an otherwise active store when its seller account is missing', async () => {
     const activeSellerId = '111111111111111111111111';
     const orphanSellerId = '222222222222222222222222';
+    const protectedSellerId = '333333333333333333333333';
     const stores = [
-      { _id: 'aaaaaaaaaaaaaaaaaaaaaaaa', seller: activeSellerId },
+      { _id: 'aaaaaaaaaaaaaaaaaaaaaaaa', seller: activeSellerId, storeSlug: 'ordinary-store' },
       { _id: 'bbbbbbbbbbbbbbbbbbbbbbbb', seller: orphanSellerId },
+      { _id: 'cccccccccccccccccccccccc', seller: protectedSellerId, storeSlug: 'rozare-legacy-store' },
     ];
     const lean = jest.fn().mockResolvedValue(stores);
     const StoreModel = { find: jest.fn(() => ({ lean })) };
-    const userLean = jest.fn().mockResolvedValue([{ _id: activeSellerId }]);
+    const userLean = jest.fn().mockResolvedValue([{ _id: activeSellerId }, { _id: protectedSellerId }]);
     const userSelect = jest.fn(() => ({ lean: userLean }));
     const userFind = jest.spyOn(User, 'find').mockReturnValue({ select: userSelect });
 
     await expect(findVisibleStores(StoreModel, { isActive: true }, {}, {}))
       .resolves.toEqual([stores[0]]);
     expect(userFind).toHaveBeenCalledWith({
-      _id: { $in: [activeSellerId, orphanSellerId] },
+      _id: { $in: [activeSellerId, orphanSellerId, protectedSellerId] },
       role: 'seller',
       status: 'active',
     });

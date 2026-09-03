@@ -254,14 +254,19 @@ const StorePage = ({ slugOverride = null }) => {
 
     if (loading) {
         return (
-            <div className="flex justify-center items-center min-h-screen">
-                <Loader />
-            </div>
+            <>
+                <SEOHead title="Loading store" description="Loading this Rozare store." noindex />
+                <div className="flex justify-center items-center min-h-screen">
+                    <Loader />
+                </div>
+            </>
         );
     }
 
     if (notFound) {
         return (
+            <>
+            <SEOHead title="Store unavailable" description="This store does not exist or is not publicly available on Rozare." noindex />
             <div className="flex flex-col items-center justify-center min-h-screen p-4">
                 <div className="glass-inner p-6 rounded-2xl mb-4">
                     <Store size={48} style={{ color: 'hsl(var(--muted-foreground))' }} />
@@ -284,6 +289,7 @@ const StorePage = ({ slugOverride = null }) => {
                     </motion.button>
                 </div>
             </div>
+            </>
         );
     }
 
@@ -341,7 +347,7 @@ const StorePage = ({ slugOverride = null }) => {
                     description={store?.description
                         ? `${store.description.slice(0, 120)} - Shop products from ${store?.storeName} on Rozare with secure checkout, trust signals, and seller-managed shipping.`
                         : `Shop products from ${store?.storeName} on Rozare. Browse this seller's products, reviews, trust count, and shipping options before checkout.`}
-                    canonical={`https://${slug}.rozare.com`}
+                    canonical={`https://${slug}.rozare.com/`}
                     ogImage={store?.logo || undefined}
                     ogImageAlt={`${store?.storeName} - Shop on Rozare Marketplace`}
                     keywords={`${store?.storeName}, ${store?.storeName} store, ${store?.storeName} products, ${store?.storeName} shop, buy from ${store?.storeName}, ${store?.storeName} online, rozare store, trusted store, online shop, independent seller`}

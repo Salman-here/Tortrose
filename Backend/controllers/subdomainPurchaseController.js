@@ -22,6 +22,7 @@ const {
     releaseSubdomainResourceLock,
 } = require('../services/subdomainResourceLockService');
 const { releaseExpiredStoreSlug } = require('../services/subdomainSlugMutationService');
+const { isProtectedStoreSlug } = require('../utils/storeSlug');
 const {
     enqueueSubdomainOwnershipExpiredNotification,
     enqueueSubdomainRemovedNotification,
@@ -180,6 +181,12 @@ exports.purchaseSubdomain = async (req, res) => {
         }
         if (!store) {
             return res.status(404).json({ msg: 'Store not found. Create a store first.' });
+        }
+        if (isProtectedStoreSlug(store.storeSlug)) {
+            return res.status(400).json({
+                msg: 'This store subdomain is reserved and cannot be purchased or renewed.',
+                code: 'RESERVED_SUBDOMAIN',
+            });
         }
 
         const purchase = store.subdomainPurchase || {};

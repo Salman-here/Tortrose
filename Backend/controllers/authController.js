@@ -17,7 +17,7 @@ const {
     productCurrencyFromSellerSignupOtp,
 } = require('../services/sellerOnboardingCurrencyService');
 const { normalizePhoneDigits, toE164PhoneNumber } = require('../utils/phoneNumber');
-const { MAX_STORE_SLUG_LENGTH, slugifyStoreName } = require('../utils/storeSlug');
+const { MAX_STORE_SLUG_LENGTH, safeGeneratedStoreSlugBase } = require('../utils/storeSlug');
 const { generateSixDigitOTP, signAuthToken } = require('../utils/authSecurity');
 const { escapeHtml } = require('../utils/orderPresentation');
 
@@ -494,8 +494,7 @@ exports.verifySellerOTPAndRegister = async (req, res) => {
         const Store = shouldCreateStore ? require('../models/Store') : null;
         let slug = '';
         if (shouldCreateStore) {
-            const baseSlug = slugifyStoreName(requestedStoreName)
-                || `store-${newUserId.toString().slice(-8)}`;
+            const baseSlug = safeGeneratedStoreSlugBase(requestedStoreName, newUserId);
             slug = baseSlug;
             let existingStore = await Store.findOne({ storeSlug: slug });
             let counter = 1;

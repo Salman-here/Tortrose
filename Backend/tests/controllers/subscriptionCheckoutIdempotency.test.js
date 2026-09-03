@@ -262,7 +262,7 @@ const paymentNotificationFixture = async suffix => {
   const store = await Store.create({
     seller: seller._id,
     storeName: `Payment Notification ${suffix}`,
-    storeSlug: `payment-notification-${suffix}`,
+    storeSlug: `merchant-notification-${suffix}`,
     isActive: true,
   });
   const invoiceId = `in_payment_notification_${suffix}`;
@@ -1676,7 +1676,7 @@ describe('subscription billing idempotency', () => {
       await Store.create({
         seller: seller._id,
         storeName: `Stripe Period ${periodDays}`,
-        storeSlug: `stripe-period-${periodDays}`,
+        storeSlug: `gateway-period-${periodDays}`,
         isActive: false,
       });
       const currentPeriodStart = Math.floor(Date.now() / 1000) - 5 * 24 * 60 * 60;
@@ -1741,7 +1741,7 @@ describe('subscription billing idempotency', () => {
     await Store.create({
       seller: seller._id,
       storeName: 'Stripe Delayed Trial',
-      storeSlug: 'stripe-delayed-trial',
+      storeSlug: 'gateway-delayed-trial',
       isActive: false,
     });
     const currentPeriodStart = Math.floor(Date.now() / 1000) - 5 * 24 * 60 * 60;
@@ -1806,7 +1806,7 @@ describe('subscription billing idempotency', () => {
     await Store.create({
       seller: seller._id,
       storeName: 'Stripe Elapsed Trial',
-      storeSlug: 'stripe-elapsed-trial',
+      storeSlug: 'gateway-elapsed-trial',
       isActive: false,
     });
     const paidPeriodStart = Math.floor(Date.now() / 1000) - 5 * 24 * 60 * 60;
@@ -1906,7 +1906,7 @@ describe('subscription billing idempotency', () => {
     await Store.create({
       seller: seller._id,
       storeName: `Stripe Invalid Period ${safeSuffix}`,
-      storeSlug: `stripe-invalid-period-${safeSuffix}`,
+      storeSlug: `gateway-invalid-period-${safeSuffix}`,
       isActive: false,
     });
     const remote = stripeSubscriptionWithPrice({

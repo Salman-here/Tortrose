@@ -115,6 +115,34 @@ describe('subdomain Stripe Checkout creation', () => {
     }));
   });
 
+  test('refuses to sell or renew a protected legacy hostname', async () => {
+    const seller = await User.create({
+      username: 'protected-hostname-seller',
+      email: 'protected-hostname-seller@example.com',
+      role: 'seller',
+      isVerified: true,
+    });
+    await Store.collection.insertOne({
+      seller: seller._id,
+      storeName: 'Legacy Reserved Store',
+      storeSlug: 'rozare-legacy-store',
+      isActive: true,
+      blockedAt: null,
+    });
+    const response = responseMock();
+
+    await purchaseSubdomain({
+      user: { id: seller._id.toString(), role: 'seller' },
+      body: { checkoutClient: 'web' },
+    }, response);
+
+    expect(response.status).toHaveBeenCalledWith(400);
+    expect(response.json).toHaveBeenCalledWith(expect.objectContaining({
+      code: 'RESERVED_SUBDOMAIN',
+    }));
+    expect(stripe.checkout.sessions.create).not.toHaveBeenCalled();
+  });
+
   test('binds the paid slug and uses the fixed mobile return bridge', async () => {
     const seller = await User.create({
       username: 'checkout-seller',

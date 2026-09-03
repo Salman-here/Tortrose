@@ -51,7 +51,7 @@ const StoresListing = () => {
         ? {
             title: 'Brands on Rozare - Fashion, Tech & Lifestyle Brands',
             description: 'Discover brand storefronts on Rozare. Shop from fashion, beauty, electronics, lifestyle, and seller-run brands with reviews and trust signals.',
-            canonical: '/marketplace?type=brand',
+            canonical: '/marketplace',
             keywords: 'brands, brand storefronts, fashion brands, beauty brands, tech brands, lifestyle brands, rozare brands',
             heading: 'Brands',
             subheading: 'Shop from brands and seller-run storefronts',
@@ -60,7 +60,7 @@ const StoresListing = () => {
         ? {
             title: 'Stores on Rozare - Independent Sellers & Local Shops',
             description: 'Browse independent stores and local sellers on Rozare. Discover products from seller-run storefronts with reviews, trust signals, and store details.',
-            canonical: '/marketplace?type=store',
+            canonical: '/marketplace',
             keywords: 'stores, independent sellers, online stores, local shops, small business, rozare stores',
             heading: 'Stores',
             subheading: 'Discover independent seller storefronts',

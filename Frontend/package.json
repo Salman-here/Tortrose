@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "vite build && vite build --ssr scripts/docs-ssr-entry.jsx --outDir dist-ssr-docs --ssrManifest false && vite build --ssr scripts/home-ssr-entry.jsx --outDir dist-ssr-home --ssrManifest false && node scripts/prerender-docs.mjs && node scripts/prerender-home.mjs",
     "lint": "eslint .",
+    "test:seo": "node --test tests/seoRouting.test.mjs",
     "preview": "vite preview --host 0.0.0.0 --port 4173"
   },
   "engines": {
@@ -16,6 +17,7 @@
     "@stripe/react-stripe-js": "^4.0.2",
     "@stripe/stripe-js": "^7.9.0",
     "@tailwindcss/vite": "^4.1.16",
+    "@vercel/functions": "^3.9.5",
     "axios": "^1.10.0",
     "framer-motion": "^12.23.24",
     "lucide-react": "^0.525.0",

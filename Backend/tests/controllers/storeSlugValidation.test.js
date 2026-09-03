@@ -5,7 +5,11 @@ jest.mock('../../controllers/mailController', () => ({ sendEmail: jest.fn().mock
 
 const Store = require('../../models/Store');
 const User = require('../../models/User');
-const { validateStoreSlug } = require('../../utils/storeSlug');
+const {
+  PROTECTED_STORE_SLUG_PATTERN,
+  safeGeneratedStoreSlugBase,
+  validateStoreSlug,
+} = require('../../utils/storeSlug');
 const { checkSubdomainAvailability, createStore, updateStore } = require('../../controllers/storeController');
 
 let mongoServer;
@@ -63,8 +67,62 @@ describe('seller subdomain hostname contract', () => {
     ['edge-', 'INVALID_SUBDOMAIN_FORMAT'],
     ['دکان', 'INVALID_SUBDOMAIN_FORMAT'],
     ['admin', 'RESERVED_SUBDOMAIN'],
+    ['admin12', 'RESERVED_SUBDOMAIN'],
+    ['admin-portal', 'RESERVED_SUBDOMAIN'],
+    ['hello', 'RESERVED_SUBDOMAIN'],
+    ['rozare', 'RESERVED_SUBDOMAIN'],
+    ['rozare12', 'RESERVED_SUBDOMAIN'],
+    ['rozare-official', 'RESERVED_SUBDOMAIN'],
+    ['ro-zare-support', 'RESERVED_SUBDOMAIN'],
+    ['amazon', 'PROTECTED_BRAND_SUBDOMAIN'],
+    ['amazon12', 'PROTECTED_BRAND_SUBDOMAIN'],
+    ['amazon-official', 'PROTECTED_BRAND_SUBDOMAIN'],
+    ['a-ma-zon-official', 'PROTECTED_BRAND_SUBDOMAIN'],
+    ['co-ca-cola-shop', 'PROTECTED_BRAND_SUBDOMAIN'],
+    ['pay-pal2', 'PROTECTED_BRAND_SUBDOMAIN'],
   ])('rejects invalid or protected hostname %s', (slug, code) => {
     expect(validateStoreSlug(slug)).toMatchObject({ valid: false, code });
+  });
+
+  test.each(['appletree-goods', 'metabolic-market', 'supportive-style', 'merchant-new']) (
+    'does not over-block an ordinary hostname %s',
+    slug => {
+      expect(validateStoreSlug(slug)).toEqual({ valid: true, slug });
+      expect(PROTECTED_STORE_SLUG_PATTERN.test(slug)).toBe(false);
+    }
+  );
+
+  test.each([
+    'rozare12',
+    'ro-zare-support',
+    'admin-portal',
+    'hello',
+    'amazon-official',
+    'a-ma-zon-official',
+    'pay-pal2',
+  ])('database public-catalog filter also excludes protected hostname %s', slug => {
+    expect(PROTECTED_STORE_SLUG_PATTERN.test(slug)).toBe(true);
+  });
+
+  test('generated slugs never assign a protected store name as its hostname', () => {
+    expect(safeGeneratedStoreSlugBase('Rozare 12', 'abcdef123456')).toBe('merchant-abcdef123456');
+    expect(safeGeneratedStoreSlugBase('Amazon', 'abcdef123456')).toBe('merchant-abcdef123456');
+    expect(safeGeneratedStoreSlugBase('Cedar Lane', 'abcdef123456')).toBe('cedar-lane');
+  });
+
+  test('the Store model rejects protected slugs even when a controller is bypassed', async () => {
+    const seller = await User.create({
+      username: 'model-policy-seller',
+      email: 'model-policy-seller@example.com',
+      role: 'seller',
+      isVerified: true,
+    });
+
+    await expect(Store.create({
+      seller: seller._id,
+      storeName: 'Protected Host Store',
+      storeSlug: 'rozare12',
+    })).rejects.toThrow('This subdomain is reserved by Rozare');
   });
 
   test('normalizes a valid hostname to lowercase', () => {

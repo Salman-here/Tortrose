@@ -30,7 +30,7 @@ const createSeller = (suffix) => User.create({
 const createStore = (seller, suffix, subdomainPurchase = {}) => Store.create({
   seller: seller._id,
   storeName: `Webhook Store ${suffix}`,
-  storeSlug: `webhook-store-${suffix}`,
+  storeSlug: `merchant-event-store-${suffix}`,
   subdomainPurchase,
 });
 
@@ -256,7 +256,7 @@ describe('subdomain purchase webhook', () => {
     const store = await Store.create({
       seller: seller._id,
       storeName: 'Webhook Store natural-expiry',
-      storeSlug: 'webhook-store-natural-expiry',
+      storeSlug: 'merchant-event-store-natural-expiry',
       isActive: false,
       blockedAt: new Date(Date.now() - 30 * DAY_MS),
       subdomainPurchase: {
@@ -309,7 +309,7 @@ describe('subdomain purchase webhook', () => {
     const store = await Store.create({
       seller: seller._id,
       storeName: 'Webhook Store removal-checkout-lock',
-      storeSlug: 'webhook-store-removal-checkout-lock',
+      storeSlug: 'merchant-event-store-removal-checkout-lock',
       isActive: false,
       blockedAt: new Date(Date.now() - 10 * DAY_MS),
       subdomainPurchase: {
@@ -325,7 +325,7 @@ describe('subdomain purchase webhook', () => {
 
     await processSubdomainRemovals();
     let protectedStore = await Store.findById(store._id);
-    expect(protectedStore.storeSlug).toBe('webhook-store-removal-checkout-lock');
+    expect(protectedStore.storeSlug).toBe('merchant-event-store-removal-checkout-lock');
     expect(protectedStore.subdomainPurchase.removalScheduledAt).not.toBeNull();
 
     await Store.updateOne({ _id: store._id }, {
@@ -337,7 +337,7 @@ describe('subdomain purchase webhook', () => {
     expect(protectedStore.storeSlug).toMatch(/^removed-/);
     expect(protectedStore.subdomainPurchase.removalScheduledAt).toBeNull();
     expect(protectedStore.subdomainPurchase.removalNotice).toMatchObject({
-      previousSlug: 'webhook-store-removal-checkout-lock',
+      previousSlug: 'merchant-event-store-removal-checkout-lock',
     });
     expect(protectedStore.subdomainPurchase.removalNotice.removedAt).toBeTruthy();
     expect(protectedStore.subdomainPurchase.removalNotice.notificationEnqueuedAt).toBeTruthy();
@@ -391,7 +391,7 @@ describe('subdomain purchase webhook', () => {
     const store = await Store.create({
       seller: seller._id,
       storeName: 'Webhook Store active-removal-guard',
-      storeSlug: 'webhook-store-active-removal-guard',
+      storeSlug: 'merchant-event-store-active-removal-guard',
       isActive: true,
       blockedAt: null,
       subdomainPurchase: {
@@ -403,6 +403,6 @@ describe('subdomain purchase webhook', () => {
     await processSubdomainRemovals();
 
     const activeStore = await Store.findById(store._id);
-    expect(activeStore.storeSlug).toBe('webhook-store-active-removal-guard');
+    expect(activeStore.storeSlug).toBe('merchant-event-store-active-removal-guard');
   });
 });

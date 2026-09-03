@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { slugifyStoreName, validateStoreSlug } = require('../utils/storeSlug');
 
 const storeThemeCustomSchema = new mongoose.Schema({
   name: {
@@ -100,7 +101,20 @@ const storeSchema = new mongoose.Schema({
   storeSlug: {
     type: String,
     required: true,
-    lowercase: true
+    lowercase: true,
+    trim: true,
+    validate: {
+      validator(value) {
+        // Existing legacy rows with a newly-reserved slug must remain editable
+        // until an administrator migrates them. Every creation or actual slug
+        // mutation is still rejected at the model boundary.
+        if (typeof this?.isModified === 'function' && !this.isNew && !this.isModified('storeSlug')) {
+          return true;
+        }
+        return validateStoreSlug(value).valid;
+      },
+      message: props => validateStoreSlug(props.value).msg || 'Invalid store subdomain',
+    },
   },
   sellerType: {
     type: String,
@@ -420,15 +434,15 @@ storeSchema.index({
   'visibility.townKey': 1
 });
 
-// Pre-save middleware to generate slug if not provided
-storeSchema.pre('save', function(next) {
+// Generate a safe fallback before validation when an internal/legacy caller did
+// not provide a slug. Public creation controllers still perform uniqueness
+// checks and normally provide the final slug explicitly.
+storeSchema.pre('validate', function(next) {
   if (this.isModified('storeName') && !this.storeSlug) {
-    this.storeSlug = this.storeName
-      .toLowerCase()
-      .trim()
-      .replace(/[^\w\s-]/g, '') // Remove special characters
-      .replace(/\s+/g, '-') // Replace spaces with hyphens
-      .replace(/-+/g, '-'); // Replace multiple hyphens with single hyphen
+    const generated = slugifyStoreName(this.storeName);
+    this.storeSlug = validateStoreSlug(generated).valid
+      ? generated
+      : `merchant-${String(this._id).slice(-12)}`;
   }
   next();
 });

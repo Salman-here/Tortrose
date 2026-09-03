@@ -25,7 +25,7 @@ const {
     toE164PhoneNumber,
     sellerPhoneConflictQuery,
 } = require('../utils/phoneNumber')
-const { slugifyStoreName } = require('../utils/storeSlug')
+const { safeGeneratedStoreSlugBase } = require('../utils/storeSlug')
 const {
     conflictMessage,
     findWhatsAppIdentityConflict,
@@ -375,7 +375,7 @@ exports.becomeSeller = async (req, res) => {
 
         // Check store name uniqueness before proceeding
         const StoreModel = require('../models/Store')
-        const baseSlug = slugifyStoreName(storeName) || `store-${user._id.toString().slice(-8)}`
+        const baseSlug = safeGeneratedStoreSlugBase(storeName, user._id)
         const desiredSlug = baseSlug
         const slugTaken = await StoreModel.findOne({ storeSlug: desiredSlug })
         if (slugTaken) {

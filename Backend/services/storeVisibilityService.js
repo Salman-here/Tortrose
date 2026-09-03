@@ -1,5 +1,7 @@
 'use strict';
 
+const { isProtectedStoreSlug } = require('../utils/storeSlug');
+
 const User = require('../models/User');
 
 const EARTH_RADIUS_KM = 6371;
@@ -427,7 +429,12 @@ async function findVisibleStores(StoreModel, baseFilter = {}, buyerLocation = {}
   return stores.filter(store => {
     const id = String(store._id || '');
     const sellerId = String(store?.seller?._id || store?.seller || '');
-    if (!id || seen.has(id) || !activeSellerIds.has(sellerId)) return false;
+    if (
+      !id
+      || seen.has(id)
+      || !activeSellerIds.has(sellerId)
+      || isProtectedStoreSlug(store?.storeSlug)
+    ) return false;
     seen.add(id);
     return true;
   });
