@@ -17,6 +17,7 @@ import {
   Modal,
   ScrollView,
   Platform,
+  useWindowDimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -27,7 +28,6 @@ import CurrencySelector from '../components/CurrencySelector';
 import { PersonalizedSliders, SearchAutocomplete, PriceRangeFilter, TrustedStoresSection } from '../components/common';
 import GlassBackground from '../components/common/GlassBackground';
 import GlassPanel from '../components/common/GlassPanel';
-import KeyboardAwareFormScrollView from '../components/common/KeyboardAwareFormScrollView';
 import GlassBlurFill from '../components/common/GlassBlurFill';
 import AIChatFab from '../components/common/AIChatFab';
 import { addSearchHistory } from '../utils/searchHistory';
@@ -61,6 +61,7 @@ const PRODUCT_SORT_OPTIONS = [
 export default function HomeScreen({ navigation }) {
   const { palette } = useTheme();
   const styles = buildStyles(palette);
+  const { height: viewportHeight } = useWindowDimensions();
 
   const { currentUser } = useAuth();
   const { fetchCart, unreadNotifCount } = useGlobal();
@@ -784,6 +785,7 @@ export default function HomeScreen({ navigation }) {
   );
 
   const renderFilterModal = () => {
+    const filterSheetHeight = Math.min(viewportHeight * 0.92, 760);
     const draftOtherSelected = otherCategories.length > 0
       && otherCategories.every(category => {
         const normalized = String(category).trim().toLowerCase();
@@ -834,6 +836,8 @@ export default function HomeScreen({ navigation }) {
         transparent
         statusBarTranslucent
         onRequestClose={() => setShowFilters(false)}
+        accessibilityViewIsModal
+        testID="home-filter-modal"
       >
         <View style={styles.modalOverlay}>
           <TouchableOpacity
@@ -842,7 +846,7 @@ export default function HomeScreen({ navigation }) {
             activeOpacity={1}
             accessibilityLabel="Close filters"
           />
-          <GlassPanel variant="strong" style={styles.modalContent}>
+          <GlassPanel variant="strong" style={[styles.modalContent, { height: filterSheetHeight }]}>
             <LinearGradient
               colors={HERO_SHEEN}
               start={{ x: 0, y: 0 }}
@@ -879,11 +883,15 @@ export default function HomeScreen({ navigation }) {
               </TouchableOpacity>
             </View>
 
-            <KeyboardAwareFormScrollView
+            {/* This modal has a bounded sheet height. Keep its body on the native
+                scroller: the shared keyboard-aware wrapper forces flex: 1 and can
+                collapse inside an Android Modal whose parent is height-bounded. */}
+            <ScrollView
               style={styles.modalBody}
               contentContainerStyle={styles.modalBodyContent}
               showsVerticalScrollIndicator={false}
-              bottomOffset={32}
+              keyboardShouldPersistTaps="handled"
+              nestedScrollEnabled
             >
               <View style={styles.sheetSearchBox}>
                 <Ionicons name="search-outline" size={19} color={palette.colors.primary} />
@@ -1056,7 +1064,7 @@ export default function HomeScreen({ navigation }) {
                   onChange={(range) => setFilterDraft(previous => ({ ...previous, priceRange: range }))}
                 />
               </View>
-            </KeyboardAwareFormScrollView>
+            </ScrollView>
 
             <View style={styles.modalFooter}>
               <TouchableOpacity
@@ -1320,7 +1328,7 @@ const buildStyles = (p) => StyleSheet.create({
   modalCountBadge: { minWidth: 21, height: 21, borderRadius: 11, paddingHorizontal: 6, alignItems: 'center', justifyContent: 'center', backgroundColor: p.colors.primarySubtle, borderWidth: 1, borderColor: p.colors.primaryLighter },
   modalCountBadgeText: { fontSize: 10, color: p.colors.primary, fontWeight: fontWeight.bold },
   modalCloseButton: { width: 38, height: 38, borderRadius: 19, backgroundColor: p.glass.bgSubtle, borderWidth: 1, borderColor: p.glass.borderSubtle, justifyContent: 'center', alignItems: 'center' },
-  modalBody: { flexGrow: 0 },
+  modalBody: { flex: 1, minHeight: 0 },
   modalBodyContent: { padding: spacing.lg, paddingBottom: spacing.sm },
   sheetSearchBox: { height: 50, flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingHorizontal: spacing.md, borderRadius: borderRadius.xl, backgroundColor: p.glass.bgSubtle, borderWidth: 1, borderColor: p.glass.border, marginBottom: spacing.lg },
   sheetSearchInput: { flex: 1, fontSize: fontSize.md, color: p.colors.text },

@@ -4,7 +4,9 @@ const path = require('path');
 const screenFiles = [
   'src/screens/CheckoutScreen.js',
   'src/screens/BecomeSellerScreen.js',
-  'src/screens/HomeScreen.js',
+  // Home's filter sheet intentionally uses a native ScrollView. Its search
+  // field is already at the top, while the keyboard wrapper can collapse a
+  // height-bounded Android Modal body.
   'src/screens/auth/LoginScreen.js',
   'src/screens/auth/SignUpScreen.js',
   'src/screens/auth/SellerSignUpScreen.js',

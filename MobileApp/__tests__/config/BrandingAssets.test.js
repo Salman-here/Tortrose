@@ -97,6 +97,35 @@ describe('native branding assets', () => {
     expect(source).toContain('translate(50 61) scale(17.5)');
   });
 
+  test('notification icon keeps the approved white mark large and centered on transparency', () => {
+    const notificationIcon = readPng('assets/notification-icon.png');
+    const bounds = alphaBounds(notificationIcon);
+    let coloredVisiblePixels = 0;
+
+    for (let offset = 0; offset < notificationIcon.data.length; offset += 4) {
+      const alpha = notificationIcon.data[offset + 3];
+      if (
+        alpha > 8
+        && (
+          notificationIcon.data[offset] !== 255
+          || notificationIcon.data[offset + 1] !== 255
+          || notificationIcon.data[offset + 2] !== 255
+        )
+      ) {
+        coloredVisiblePixels += 1;
+      }
+    }
+
+    expect({ width: notificationIcon.width, height: notificationIcon.height }).toEqual({
+      width: 96,
+      height: 96,
+    });
+    expect(bounds).toEqual({ minX: 19, minY: 18, maxX: 76, maxY: 77 });
+    expect(alphaAt(notificationIcon, 0, 0)).toBe(0);
+    expect(alphaAt(notificationIcon, 95, 95)).toBe(0);
+    expect(coloredVisiblePixels).toBe(0);
+  });
+
   test('adaptive background is a full-bleed version of the favicon brand gradient', () => {
     const background = readPng('assets/adaptive-icon-background.png');
     const source = fs.readFileSync(
