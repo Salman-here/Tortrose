@@ -10,7 +10,7 @@ const ENV_KEYS = [
 ];
 
 const flushPromises = async () => {
-    for (let index = 0; index < 12; index += 1) {
+    for (let index = 0; index < 6; index += 1) {
         await Promise.resolve();
     }
 };
@@ -38,9 +38,8 @@ describe('WhatsApp AI typing presence lifecycle', () => {
 
     test('does not show typing when work finishes before the threshold', async () => {
         const sendChatPresence = jest.fn().mockResolvedValue({});
-        const restoreOnlinePresence = jest.fn().mockResolvedValue({});
         const indicator = startTypingPresence({
-            client: { sendChatPresence, restoreOnlinePresence },
+            client: { sendChatPresence },
             recipient: '923001112222@s.whatsapp.net',
         });
 
@@ -49,14 +48,12 @@ describe('WhatsApp AI typing presence lifecycle', () => {
         await flushPromises();
 
         expect(sendChatPresence).not.toHaveBeenCalled();
-        expect(restoreOnlinePresence).not.toHaveBeenCalled();
     });
 
-    test('shows composing during real processing, then clears and restores online', async () => {
+    test('shows composing only during real processing and clears without blocking', async () => {
         const sendChatPresence = jest.fn().mockResolvedValue({});
-        const restoreOnlinePresence = jest.fn().mockResolvedValue({});
         const indicator = startTypingPresence({
-            client: { sendChatPresence, restoreOnlinePresence },
+            client: { sendChatPresence },
             recipient: '923001112222@s.whatsapp.net',
         });
 
@@ -77,25 +74,15 @@ describe('WhatsApp AI typing presence lifecycle', () => {
             '923001112222@s.whatsapp.net',
             { presence: 'paused', delay: 0 }
         );
-        expect(restoreOnlinePresence).toHaveBeenCalledTimes(1);
-        expect(sendChatPresence.mock.invocationCallOrder.at(-1))
-            .toBeLessThan(restoreOnlinePresence.mock.invocationCallOrder[0]);
-
-        indicator.restoreOnlineAfterReply();
-        await flushPromises();
-        expect(restoreOnlinePresence).toHaveBeenCalledTimes(2);
-        expect(restoreOnlinePresence.mock.invocationCallOrder[0])
-            .toBeLessThan(restoreOnlinePresence.mock.invocationCallOrder[1]);
     });
 
-    test('restores online again after an outstanding finite pulse emits its trailing pause', async () => {
+    test('renews finite typing pulses only while work is active', async () => {
         const sendChatPresence = jest.fn((_recipient, { presence, delay }) => {
             if (presence === 'paused') return Promise.resolve({});
             return new Promise(resolve => setTimeout(() => resolve({}), delay));
         });
-        const restoreOnlinePresence = jest.fn().mockResolvedValue({});
         const indicator = startTypingPresence({
-            client: { sendChatPresence, restoreOnlinePresence },
+            client: { sendChatPresence },
             recipient: '923001112222@s.whatsapp.net',
         });
 
@@ -116,64 +103,10 @@ describe('WhatsApp AI typing presence lifecycle', () => {
 
         indicator.stop();
         await flushPromises();
-        expect(restoreOnlinePresence).toHaveBeenCalledTimes(1);
         const callsAfterStop = sendChatPresence.mock.calls.length;
-
-        // The second composing request is already in flight. When Evolution
-        // completes it, its own trailing `paused` must be followed by another
-        // serialized `available` restore.
-        jest.advanceTimersByTime(2000);
-        await flushPromises();
-        expect(sendChatPresence).toHaveBeenCalledTimes(callsAfterStop);
-        expect(restoreOnlinePresence).toHaveBeenCalledTimes(2);
-
         jest.advanceTimersByTime(10_000);
         await flushPromises();
         expect(sendChatPresence).toHaveBeenCalledTimes(callsAfterStop);
-        expect(restoreOnlinePresence).toHaveBeenCalledTimes(2);
-    });
-
-    test('does not touch instance presence for a virtual test recipient', async () => {
-        const sendChatPresence = jest.fn().mockResolvedValue({
-            skipped: true,
-            reason: 'virtual_test_number',
-        });
-        const restoreOnlinePresence = jest.fn().mockResolvedValue({});
-        const indicator = startTypingPresence({
-            client: { sendChatPresence, restoreOnlinePresence },
-            recipient: '12025550101',
-        });
-
-        jest.advanceTimersByTime(500);
-        await flushPromises();
-        indicator.stop();
-        indicator.restoreOnlineAfterReply();
-        await flushPromises();
-
-        expect(sendChatPresence).toHaveBeenCalledTimes(1);
-        expect(restoreOnlinePresence).not.toHaveBeenCalled();
-    });
-
-    test('isolates online restoration failures from the response lifecycle', async () => {
-        const sendChatPresence = jest.fn().mockResolvedValue({});
-        const restoreOnlinePresence = jest.fn().mockRejectedValue(new Error('restore offline'));
-        const logger = { warn: jest.fn() };
-        const indicator = startTypingPresence({
-            client: { sendChatPresence, restoreOnlinePresence },
-            recipient: '923001112222@s.whatsapp.net',
-            logger,
-        });
-
-        jest.advanceTimersByTime(500);
-        await flushPromises();
-        expect(() => indicator.stop()).not.toThrow();
-        await flushPromises();
-
-        expect(restoreOnlinePresence).toHaveBeenCalledTimes(1);
-        expect(logger.warn).toHaveBeenCalledWith(
-            '[wa-ai-chat] Online presence restore failed; message delivery was unaffected:',
-            'restore offline'
-        );
     });
 
     test('isolates provider failures and stops retrying presence', async () => {

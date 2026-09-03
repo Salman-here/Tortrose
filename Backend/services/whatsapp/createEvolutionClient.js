@@ -433,24 +433,6 @@ function createEvolutionClient(instanceEnvVar, defaultName) {
     };
 
     /**
-     * Re-advertise the instance's normal online state after a per-chat typing
-     * cycle. Evolution's chat-presence endpoint finishes every finite pulse by
-     * sending `paused`; on some WhatsApp clients that also hides the pre-existing
-     * "online" label. The instance endpoint has no trailing chat-state update.
-     */
-    const restoreOnlinePresence = async () => {
-        if (!isConfigured()) throw new Error('Evolution API not configured');
-        if (!lowLatencySettings().alwaysOnline) {
-            return { skipped: true, reason: 'always_online_disabled' };
-        }
-
-        const { data } = await client().post(`/instance/setPresence/${instanceName()}`, {
-            presence: 'available',
-        });
-        return { presence: 'available', raw: data };
-    };
-
-    /**
      * Send an image (media) message via WhatsApp.
      * @param {string} number - Recipient phone number
      * @param {string} mediaUrl - Public URL of the image
@@ -687,7 +669,6 @@ function createEvolutionClient(instanceEnvVar, defaultName) {
         requestPairingCode,
         sendText,
         sendChatPresence,
-        restoreOnlinePresence,
         sendMedia,
         sendPoll,
         sendList,

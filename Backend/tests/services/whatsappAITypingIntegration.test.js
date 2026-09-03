@@ -14,11 +14,7 @@ const mockSellerClient = {
     sendChatPresence: jest.fn(),
 };
 const mockStopTyping = jest.fn();
-const mockRestoreOnlineAfterReply = jest.fn();
-const mockStartTypingPresence = jest.fn(() => ({
-    stop: mockStopTyping,
-    restoreOnlineAfterReply: mockRestoreOnlineAfterReply,
-}));
+const mockStartTypingPresence = jest.fn(() => ({ stop: mockStopTyping }));
 
 jest.mock('../../models/User', () => ({ findOne: jest.fn() }));
 jest.mock('../../models/AdminWhatsAppNumber', () => ({ findOne: jest.fn() }));
@@ -94,61 +90,6 @@ describe('WhatsApp AI typing integration', () => {
         expect(mockBuyerSendText).toHaveBeenCalledWith(recipient, 'Fast AI reply');
         expect(mockStopTyping.mock.invocationCallOrder[0])
             .toBeLessThan(mockBuyerSendText.mock.invocationCallOrder[0]);
-        expect(mockRestoreOnlineAfterReply).toHaveBeenCalledTimes(1);
-        expect(mockBuyerSendText.mock.invocationCallOrder[0])
-            .toBeLessThan(mockRestoreOnlineAfterReply.mock.invocationCallOrder[0]);
-    });
-
-    test('reasserts online after all pending product media has been delivered', async () => {
-        const recipient = '923001112222@s.whatsapp.net';
-        processAIChatMessage.mockImplementationOnce(async (_user, _messages, aiOptions) => {
-            aiOptions._pendingImages = [{
-                imageUrl: 'https://example.com/product.jpg',
-                caption: 'Product photo',
-            }];
-            return { responseText: 'Here is the product' };
-        });
-
-        await _processIncomingWhatsAppMessageNow(
-            '923001112222',
-            'Show me the product',
-            'main',
-            [],
-            { replyTo: recipient, messageId: 'message-with-image' }
-        );
-
-        expect(mockBuyerSendText).toHaveBeenCalledWith(recipient, 'Here is the product');
-        expect(mockBuyerClient.sendMedia).toHaveBeenCalledWith(
-            recipient,
-            'https://example.com/product.jpg',
-            'Product photo',
-            'image'
-        );
-        expect(mockRestoreOnlineAfterReply).toHaveBeenCalledTimes(2);
-        expect(mockBuyerClient.sendMedia.mock.invocationCallOrder[0])
-            .toBeLessThan(mockRestoreOnlineAfterReply.mock.invocationCallOrder[1]);
-    });
-
-    test('reasserts online after an AI failure response is delivered', async () => {
-        const recipient = '923001112222@s.whatsapp.net';
-        processAIChatMessage.mockRejectedValueOnce(new Error('AI failed'));
-
-        await _processIncomingWhatsAppMessageNow(
-            '923001112222',
-            'Hello',
-            'main',
-            [],
-            { replyTo: recipient, messageId: 'message-ai-failure' }
-        );
-
-        expect(mockStopTyping).toHaveBeenCalledTimes(1);
-        expect(mockBuyerSendText).toHaveBeenCalledWith(
-            recipient,
-            expect.stringContaining('Something went wrong')
-        );
-        expect(mockRestoreOnlineAfterReply).toHaveBeenCalledTimes(1);
-        expect(mockBuyerSendText.mock.invocationCallOrder[0])
-            .toBeLessThan(mockRestoreOnlineAfterReply.mock.invocationCallOrder[0]);
     });
 
     test('does not start typing for an immediate rate-limit response', async () => {

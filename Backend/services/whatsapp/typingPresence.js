@@ -26,10 +26,7 @@ const unrefTimer = timer => timer?.unref?.();
  * AI/tool latency. Presence failures are deliberately isolated from delivery.
  */
 function startTypingPresence({ client, recipient, logger = console } = {}) {
-    const noOp = {
-        stop() {},
-        restoreOnlineAfterReply() {},
-    };
+    const noOp = { stop() {} };
     if (
         !envEnabled('WHATSAPP_AI_TYPING_ENABLED', true) ||
         !recipient ||
@@ -59,12 +56,9 @@ function startTypingPresence({ client, recipient, logger = console } = {}) {
     let stopped = false;
     let started = false;
     let presenceUnavailable = false;
-    let virtualRecipient = false;
-    let availabilityFailureLogged = false;
     let startTimer = null;
     let renewalTimer = null;
     let maximumTimer = null;
-    let availabilityRestoreQueue = Promise.resolve();
 
     const stopTimers = () => {
         if (startTimer) clearTimeout(startTimer);
@@ -89,43 +83,15 @@ function startTypingPresence({ client, recipient, logger = console } = {}) {
     const requestPresence = (presence, delay) => Promise.resolve()
         .then(() => client.sendChatPresence(recipient, { presence, delay }));
 
-    const queueOnlineRestore = () => {
-        if (typeof client.restoreOnlinePresence !== 'function') return;
-
-        // Serialize restorations. One is requested after the immediate `paused`
-        // cleanup and another after any already-running finite composing request
-        // resolves. The second call is intentional: Evolution appends its own
-        // trailing `paused` after that request's delay, so `available` must win
-        // the final race. This queue never blocks the reply.
-        availabilityRestoreQueue = availabilityRestoreQueue
-            .then(() => client.restoreOnlinePresence())
-            .catch((error) => {
-                if (availabilityFailureLogged) return;
-                availabilityFailureLogged = true;
-                logger.warn?.(
-                    '[wa-ai-chat] Online presence restore failed; message delivery was unaffected:',
-                    error?.response?.status || error?.message || 'unknown error'
-                );
-            });
-    };
-
     const runComposingPulse = () => {
         if (stopped || presenceUnavailable) return;
         requestPresence('composing', pulseMs)
             .then((result) => {
+                if (stopped) return;
                 // Virtual test numbers intentionally have no real WhatsApp chat.
                 // Do not renew or create admin-inbox transport noise for them.
                 if (result?.skipped) {
-                    virtualRecipient = true;
                     presenceUnavailable = true;
-                    return;
-                }
-
-                if (stopped) {
-                    // This request has just emitted Evolution's trailing
-                    // `paused`. Restore `available` after it, so the delayed
-                    // completion cannot hide the online label again.
-                    queueOnlineRestore();
                     return;
                 }
 
@@ -135,13 +101,7 @@ function startTypingPresence({ client, recipient, logger = console } = {}) {
                 renewalTimer = setTimeout(runComposingPulse, PULSE_RENEWAL_GAP_MS);
                 unrefTimer(renewalTimer);
             })
-            .catch((error) => {
-                logFailureOnce(error);
-                // If Evolution applied the state but its response failed or
-                // timed out, restoring the configured online state is safe and
-                // prevents a stale presence. Do not retry chat presence.
-                queueOnlineRestore();
-            });
+            .catch(logFailureOnce);
     };
 
     const begin = () => {
@@ -159,28 +119,11 @@ function startTypingPresence({ client, recipient, logger = console } = {}) {
             if (stopped) return;
             stopped = true;
             stopTimers();
-            if (started && !presenceUnavailable && !virtualRecipient) {
-                // Do not await this chain: clearing chat state and restoring the
-                // configured always-online state must never delay the reply.
-                requestPresence('paused', 0)
-                    .then((result) => {
-                        if (!result?.skipped) queueOnlineRestore();
-                    })
-                    .catch((error) => {
-                        logFailureOnce(error);
-                        // A timeout can happen after Evolution already applied
-                        // the state, so make a best-effort restore even on error.
-                        queueOnlineRestore();
-                    });
+            if (started && !presenceUnavailable) {
+                // Do not await this request: clearing presence must never delay
+                // the actual reply. The active composing pulse is also finite.
+                requestPresence('paused', 0).catch(logFailureOnce);
             }
-        },
-        restoreOnlineAfterReply() {
-            // `stop()` runs before the outbound reply so "typing" disappears
-            // promptly. The reply itself can then become the newest WhatsApp
-            // chat-state event, so reassert `available` after delivery too.
-            // This queues background work only and never delays the response.
-            if (!started || virtualRecipient) return;
-            queueOnlineRestore();
         },
     };
 

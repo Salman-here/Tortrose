@@ -17,7 +17,6 @@ describe('Evolution client recipient routing', () => {
     process.env.EVOLUTION_API_KEY = 'test-key';
     delete process.env.EVOLUTION_SELLER_INSTANCE_NAME;
     delete process.env.EVOLUTION_WEBHOOK_BASE64;
-    delete process.env.EVOLUTION_ALWAYS_ONLINE;
   });
 
   test('keeps an explicit phone JID unchanged before sending text', async () => {
@@ -128,36 +127,6 @@ describe('Evolution client recipient routing', () => {
       presence: 'composing',
       delay: 20001,
     })).rejects.toThrow('whole number from 0 to 20000');
-    expect(post).not.toHaveBeenCalled();
-  });
-
-  test('restores the configured always-online state through instance presence', async () => {
-    const post = jest.fn().mockResolvedValue({
-      data: { presence: 'available' },
-    });
-    axios.create.mockReturnValue({ post });
-    const client = createEvolutionClient('EVOLUTION_SELLER_INSTANCE_NAME', 'rozare-seller');
-
-    await expect(client.restoreOnlinePresence()).resolves.toEqual({
-      presence: 'available',
-      raw: { presence: 'available' },
-    });
-    expect(post).toHaveBeenCalledWith(
-      '/instance/setPresence/rozare-seller',
-      { presence: 'available' }
-    );
-  });
-
-  test('does not force online presence when always-online is explicitly disabled', async () => {
-    process.env.EVOLUTION_ALWAYS_ONLINE = 'false';
-    const post = jest.fn();
-    axios.create.mockReturnValue({ post });
-    const client = createEvolutionClient('EVOLUTION_SELLER_INSTANCE_NAME', 'rozare-seller');
-
-    await expect(client.restoreOnlinePresence()).resolves.toEqual({
-      skipped: true,
-      reason: 'always_online_disabled',
-    });
     expect(post).not.toHaveBeenCalled();
   });
 
