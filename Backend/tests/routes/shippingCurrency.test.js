@@ -91,6 +91,7 @@ describe('shipping currency', () => {
       seller: seller._id,
       storeName: 'Advance Bags',
       storeSlug: `advance-bags-${Date.now()}`,
+      logo: 'https://example.com/advance-bags-logo.png',
       paymentPolicy: 'advance_only',
       visibility: { mode: 'global' },
     });
@@ -128,7 +129,10 @@ describe('shipping currency', () => {
     expect(res.body.shippingMethods[seller._id.toString()]).toMatchObject({
       paymentPolicy: 'advance_only',
       allowsCashOnDelivery: false,
-      store: expect.objectContaining({ storeName: 'Advance Bags' }),
+      store: expect.objectContaining({
+        storeName: 'Advance Bags',
+        logo: 'https://example.com/advance-bags-logo.png',
+      }),
     });
   });
 

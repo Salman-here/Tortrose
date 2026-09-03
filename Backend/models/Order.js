@@ -264,6 +264,15 @@ const orderSchema = mongoose.Schema(
                 seller: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
                 store: { type: mongoose.Schema.Types.ObjectId, ref: "Store", default: null },
                 storeName: { type: String, default: '' },
+                // Keep the store identity usable in historical orders even if
+                // the live store is later renamed, removed, or loses its media.
+                storeLogo: {
+                    type: String,
+                    trim: true,
+                    maxlength: 4096,
+                    default: '',
+                    immutable: true,
+                },
                 // Freeze the store's selling currency independently from the
                 // buyer's checkout currency. Seller order presentation and
                 // analytics must never follow a later store-currency change.

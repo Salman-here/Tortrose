@@ -2695,7 +2695,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
         if (orderItems.length === 0) return { success: false, error: 'No items to order.' };
         const sellerIds = [...new Set(productItems.map(p => normalizeObjectIdString(p.seller)).filter(Boolean))];
         const sellerStores = await Store.find({ seller: { $in: sellerIds }, isActive: true })
-          .select('seller storeName paymentPolicy returnPolicy productCurrency')
+          .select('seller storeName logo paymentPolicy returnPolicy productCurrency')
           .lean();
         const sellerStoreById = new Map(sellerStores.map(store => [normalizeObjectIdString(store.seller), store]));
         for (const item of orderItems) {
@@ -2942,6 +2942,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
               seller: sellerId,
               store: store?._id || null,
               storeName: store?.storeName || '',
+              storeLogo: store?.logo || '',
               paymentPolicy: store?.paymentPolicy || 'online_and_cod',
               returnPolicy: normalizeReturnPolicy(store?.returnPolicy || {}),
             };

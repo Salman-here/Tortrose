@@ -98,6 +98,7 @@ async function createCatalog() {
     seller: seller._id,
     storeName: 'AI Order Store',
     storeSlug: `ai-order-${seller._id}`,
+    logo: 'https://example.com/ai-order-store-logo.png',
     productCurrency: 'USD',
     isActive: true,
     paymentPolicy: 'online_and_cod',
@@ -165,6 +166,10 @@ describe('AI COD order idempotency', () => {
         phoneE164: '+923001234567',
         countryCode: 'PK',
       }),
+      sellerPolicies: [expect.objectContaining({
+        storeName: 'AI Order Store',
+        storeLogo: 'https://example.com/ai-order-store-logo.png',
+      })],
     });
   });
 

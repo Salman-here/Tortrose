@@ -13,6 +13,11 @@ export const toPlainOptions = (value) => {
 };
 
 const clean = (value) => String(value ?? '').trim();
+const cleanStoreLogo = value => (
+  typeof value === 'string' && value.trim().length <= 4096
+    ? value.trim()
+    : ''
+);
 
 const orderPresentationIntegrityError = (label) => {
   const error = new Error(`The stored ${label} is invalid.`);
@@ -185,6 +190,7 @@ export const getOrderSellerGroups = (order = {}) => {
     if (!group || typeof group !== 'object') throw orderPresentationIntegrityError('seller order group');
     const sellerId = clean(group.sellerId);
     const storeName = clean(group.storeName);
+    const storeLogo = cleanStoreLogo(group.storeLogo);
     const status = clean(group.status).toLowerCase();
     if (!sellerId || !storeName || seenSellers.has(sellerId) || !SELLER_FULFILLMENT_STATUSES.has(status)) {
       throw orderPresentationIntegrityError('seller order group identity');
@@ -264,6 +270,7 @@ export const getOrderSellerGroups = (order = {}) => {
       ...group,
       sellerId,
       storeName,
+      storeLogo,
       status,
       itemIndexes,
       itemCount: items.length,

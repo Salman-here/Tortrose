@@ -5,10 +5,10 @@ import {
   Clock,
   Package,
   RefreshCw,
-  Store,
   Truck,
   XCircle,
 } from 'lucide-react';
+import StoreAvatar from '../common/StoreAvatar';
 import {
   getExactOrderItemUnitAmount,
   getOrderItemLineSubtotal,
@@ -77,7 +77,7 @@ export const BuyerSellerStatusChips = ({ order }) => {
     <div className="flex flex-wrap gap-1.5 mt-2">
       {groups.map(group => (
         <span key={group.sellerId} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px]" style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid var(--glass-border-subtle)', color: 'hsl(var(--muted-foreground))' }}>
-          <Store className="w-3 h-3" /> <span className="max-w-[130px] truncate">{group.storeName}</span> · <span className="font-semibold capitalize">{group.status}</span>
+          <StoreAvatar logo={group.storeLogo} storeName={group.storeName} size="xs" /> <span className="max-w-[130px] truncate">{group.storeName}</span> · <span className="font-semibold capitalize">{group.status}</span>
         </span>
       ))}
     </div>
@@ -91,7 +91,7 @@ const SellerGroup = ({ group, formatMoney, index }) => {
       <div className="p-4 sm:p-5" style={{ borderBottom: '1px solid var(--glass-border-subtle)' }}>
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
-            <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ background: 'rgba(99, 102, 241, 0.10)' }}><Store className="w-5 h-5" style={{ color: 'hsl(var(--primary))' }} /></div>
+            <StoreAvatar logo={group.storeLogo} storeName={group.storeName} />
             <div className="min-w-0">
               <h3 className="text-base font-bold truncate" style={{ color: 'hsl(var(--foreground))' }}>{group.storeName}</h3>
               <p className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>{group.itemCount} product line{group.itemCount === 1 ? '' : 's'} · {group.units} unit{group.units === 1 ? '' : 's'}</p>

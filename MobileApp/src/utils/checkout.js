@@ -54,6 +54,11 @@ export const getSellerDisplayName = (sellerData, fallback = 'Store') => (
   || fallback
 );
 
+export const getSellerLogo = (sellerData) => {
+  const logo = sellerData?.store?.logo || sellerData?.seller?.storeLogo || sellerData?.seller?.logo;
+  return typeof logo === 'string' && logo.trim().length <= 4096 ? logo.trim() : '';
+};
+
 export const parseCheckoutTaxConfigResponse = (payload = {}) => {
   const response = payload?.data && typeof payload.data === 'object' ? payload.data : payload;
   if (
@@ -198,6 +203,9 @@ export const parseCheckoutShippingMethodsResponse = (payload = {}, expectedSelle
     verified[sellerId] = {
       ...sellerData,
       seller: { ...sellerData.seller },
+      ...(sellerData.store && typeof sellerData.store === 'object' && !Array.isArray(sellerData.store)
+        ? { store: { ...sellerData.store, logo: getSellerLogo(sellerData) } }
+        : {}),
       methods: sellerData.methods.map((method) => ({ ...method })),
     };
   });

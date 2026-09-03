@@ -12,6 +12,11 @@ const FULFILLMENT_STATUSES = new Set([
 ]);
 
 const toId = value => value?._id?.toString?.() || value?.toString?.() || '';
+const cleanLogo = value => (
+  typeof value === 'string' && value.trim().length <= 4096
+    ? value.trim()
+    : ''
+);
 
 const presentationError = (message, code = 'BUYER_ORDER_PRESENTATION_INVALID') => {
   const error = new Error(message);
@@ -50,7 +55,7 @@ const normalizeShippingMethod = (row, order, groupCount) => {
  * indexes deliberately reference the one canonical orderItems array instead
  * of copying financial lines into a second, potentially divergent payload.
  */
-const buildBuyerOrderView = order => {
+const buildBuyerOrderView = (order, { storeLogosBySeller = new Map() } = {}) => {
   const result = plainOrder(order);
   // Seller-native values are a seller reporting contract. Buyers and admins
   // receive only the frozen checkout-currency order and seller-group totals.
@@ -84,10 +89,17 @@ const buildBuyerOrderView = order => {
       throw presentationError('The stored seller fulfillment status is invalid.');
     }
     const summary = sellerOrderSummaryForItems(order, sellerId, sellerItems);
+    const currentStoreLogo = storeLogosBySeller instanceof Map
+      ? storeLogosBySeller.get(sellerId)
+      : storeLogosBySeller?.[sellerId];
 
     return {
       sellerId,
       storeName: String(policy?.storeName || '').trim() || `Store ${groupIndex + 1}`,
+      // Prefer the current store logo while it exists. The immutable checkout
+      // snapshot keeps historical order identity available if the store is
+      // later deleted or its live logo becomes unavailable.
+      storeLogo: cleanLogo(currentStoreLogo) || cleanLogo(policy?.storeLogo),
       itemIndexes,
       itemCount: summary.itemCount,
       units: summary.units,

@@ -25,6 +25,18 @@ const sellerIdForCartItem = (item) => toId(
   || item?.seller
 );
 
+export const getCheckoutSellerDisplayName = (sellerData, fallback = 'Store') => (
+  sellerData?.store?.storeName
+  || sellerData?.seller?.storeName
+  || sellerData?.seller?.username
+  || fallback
+);
+
+export const getCheckoutSellerLogo = (sellerData) => {
+  const logo = sellerData?.store?.logo || sellerData?.seller?.storeLogo || sellerData?.seller?.logo;
+  return typeof logo === 'string' && logo.trim().length <= 4096 ? logo.trim() : '';
+};
+
 export const createCheckoutMoneyCartSignature = (cartItems = []) => JSON.stringify(
   (Array.isArray(cartItems) ? cartItems : [])
     .map((item) => ({
@@ -244,6 +256,9 @@ export const parseCheckoutShippingMethodsResponse = (payload = {}, expectedSelle
     verified[sellerId] = {
       ...sellerData,
       seller: { ...sellerData.seller },
+      ...(sellerData.store && typeof sellerData.store === 'object' && !Array.isArray(sellerData.store)
+        ? { store: { ...sellerData.store, logo: getCheckoutSellerLogo(sellerData) } }
+        : {}),
       methods: sellerData.methods.map((method) => ({ ...method })),
     };
   });

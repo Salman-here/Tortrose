@@ -6,6 +6,7 @@ const jwt = require('jsonwebtoken');
 const orderRoutes = require('../../routes/orderRoutes');
 const Order = require('../../models/Order');
 const Product = require('../../models/Product');
+const Store = require('../../models/Store');
 const User = require('../../models/User');
 const Cart = require('../../models/Cart');
 
@@ -118,6 +119,7 @@ afterAll(async () => {
 beforeEach(async () => {
   await Order.deleteMany({});
   await Product.deleteMany({});
+  await Store.deleteMany({});
   await User.deleteMany({});
   await Cart.deleteMany({});
 });
@@ -287,6 +289,20 @@ describe('Order access isolation', () => {
     const otherBuyer = await createUser('buyer-detail-other', 'user');
     const sellerProduct = await createProduct(seller, 'seller-detail', 100);
     const otherProduct = await createProduct(otherSeller, 'other-detail', 50);
+    await Store.create([
+      {
+        seller: seller._id,
+        storeName: 'Seller Store',
+        storeSlug: `seller-store-${seller._id}`,
+        logo: 'https://example.com/seller-store-current.png',
+      },
+      {
+        seller: otherSeller._id,
+        storeName: 'Other Store',
+        storeSlug: `other-store-${otherSeller._id}`,
+        logo: 'https://example.com/other-store-current.png',
+      },
+    ]);
     const order = await createOrder({ buyer, sellerProduct, otherProduct });
 
     const ownRes = await request(app)
@@ -305,12 +321,14 @@ describe('Order access isolation', () => {
     expect(ownRes.body.order.sellerGroups).toHaveLength(2);
     expect(ownRes.body.order.sellerGroups[0]).toMatchObject({
       storeName: 'Seller Store',
+      storeLogo: 'https://example.com/seller-store-current.png',
       itemIndexes: [0],
       status: 'processing',
       summary: { subtotal: 200, shippingCost: 10, tax: 20, totalAmount: 230 },
     });
     expect(ownRes.body.order.sellerGroups[1]).toMatchObject({
       storeName: 'Other Store',
+      storeLogo: 'https://example.com/other-store-current.png',
       itemIndexes: [1],
       status: 'shipped',
       summary: { subtotal: 50, shippingCost: 5, tax: 5, totalAmount: 60 },

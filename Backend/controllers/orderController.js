@@ -136,6 +136,20 @@ const {
 } = require('../utils/orderPresentation');
 
 const toId = (value) => value?.toString?.() || String(value || '');
+
+const loadStoreLogosBySeller = async (orders) => {
+    const orderList = Array.isArray(orders) ? orders : [orders];
+    const sellerIds = [...new Set(orderList.flatMap(order => (
+        (order?.orderItems || []).map(item => toId(item?.seller)).filter(Boolean)
+    )))];
+    if (sellerIds.length === 0) return new Map();
+
+    const stores = await Store.find({ seller: { $in: sellerIds } })
+        .select('seller logo')
+        .lean();
+    return new Map(stores.map(store => [toId(store.seller), String(store.logo || '').trim()]));
+};
+
 const checkoutFingerprintMatches = ({
     existingOrder,
     requestFingerprint,
@@ -1232,7 +1246,7 @@ exports.placeOrder = async (req, res) => {
         let storeBySeller = new Map();
         if (sellerIdsInOrder.length > 0) {
             const stores = await Store.find({ seller: { $in: sellerIdsInOrder }, isActive: true })
-                .select('seller storeName visibility paymentPolicy returnPolicy productCurrency');
+                .select('seller storeName logo visibility paymentPolicy returnPolicy productCurrency');
             storeBySeller = new Map(stores.map(store => [toId(store.seller), store]));
             const buyerLocation = normalizeBuyerLocation({
                 ...(order.buyerLocation || {}),
@@ -1548,6 +1562,7 @@ exports.placeOrder = async (req, res) => {
                     seller: sellerId,
                     store: store?._id || null,
                     storeName: store?.storeName || '',
+                    storeLogo: store?.logo || '',
                     productCurrency: store?.productCurrency || 'USD',
                     paymentPolicy: store?.paymentPolicy || 'online_and_cod',
                     returnPolicy: normalizeReturnPolicy(store?.returnPolicy || {}),
@@ -2958,9 +2973,10 @@ exports.getUserOrders = async (req, res) => {
         // orders = orders.find(item => item.user)
 
 
+        const storeLogosBySeller = await loadStoreLogosBySeller(orders);
         res.status(200).json({
             msg: 'User Orders fetched successfully',
-            orders: orders.map(buildBuyerOrderView),
+            orders: orders.map(order => buildBuyerOrderView(order, { storeLogosBySeller })),
         })
 
     } catch (error) {
@@ -3140,7 +3156,8 @@ exports.getOrderDetail = async (req, res) => {
             return res.status(403).json({ msg: 'You can only view your own orders' })
         }
 
-        const buyerOrder = buildBuyerOrderView(order)
+        const storeLogosBySeller = await loadStoreLogosBySeller(order)
+        const buyerOrder = buildBuyerOrderView(order, { storeLogosBySeller })
         const presentedOrder = role === 'admin'
             ? await withAuthoritativeOrderConfirmationDelivery(buyerOrder)
             : buyerOrder
@@ -3174,7 +3191,11 @@ exports.trackGuestOrder = async (req, res) => {
             return res.status(404).json({ msg: 'Order not found. Please check your email and order ID.' });
         }
 
-        res.status(200).json({ msg: 'Order found', order: buildBuyerOrderView(order) });
+        const storeLogosBySeller = await loadStoreLogosBySeller(order);
+        res.status(200).json({
+            msg: 'Order found',
+            order: buildBuyerOrderView(order, { storeLogosBySeller }),
+        });
     } catch (error) {
         console.error('Error tracking guest order:', error);
         res.status(error.statusCode || 500).json({

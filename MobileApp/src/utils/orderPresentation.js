@@ -20,6 +20,11 @@ const hasOwn = (value, key) => Boolean(value)
   && typeof value === 'object'
   && Object.prototype.hasOwnProperty.call(value, key);
 const clean = (value) => String(value ?? '').trim();
+const cleanStoreLogo = value => (
+  typeof value === 'string' && value.trim().length <= 4096
+    ? value.trim()
+    : ''
+);
 
 const requireCanonicalOrderCurrency = (value, label = 'order currency') => {
   if (
@@ -205,6 +210,7 @@ export const getOrderSellerGroups = (order = {}) => {
     }
     const sellerId = clean(group.sellerId);
     const storeName = clean(group.storeName);
+    const storeLogo = cleanStoreLogo(group.storeLogo);
     const status = clean(group.status).toLowerCase();
     if (
       !sellerId
@@ -285,6 +291,7 @@ export const getOrderSellerGroups = (order = {}) => {
       ...group,
       sellerId,
       storeName,
+      storeLogo,
       status,
       itemIndexes,
       itemCount: items.length,

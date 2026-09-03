@@ -26,6 +26,7 @@ import { ErrorState } from '../components/common/EmptyState';
 import GlassBackground from '../components/common/GlassBackground';
 import GlassPanel from '../components/common/GlassPanel';
 import PremiumBackHeader from '../components/common/PremiumBackHeader';
+import StoreAvatar from '../components/common/StoreAvatar';
 import BuyerReturnsSection from '../components/BuyerReturnsSection';
 import { shareInvoice } from '../utils/invoiceUtils';
 import { useTheme } from '../contexts/ThemeContext';
@@ -584,9 +585,15 @@ function SellerShipmentGroup({ group, formatMoney, palette, styles, last }) {
   return (
     <View style={[styles.sellerShipment, last && { marginBottom: 0 }]}>
       <View style={styles.sellerShipmentHeader}>
-        <View style={[styles.storeIcon, { backgroundColor: `${tone.solid}16` }]}>
-          <Ionicons name="storefront-outline" size={20} color={tone.solid} />
-        </View>
+        <StoreAvatar
+          logo={group.storeLogo}
+          storeName={group.storeName}
+          size={40}
+          fallbackColor={tone.solid}
+          fallbackBackgroundColor={`${tone.solid}16`}
+          borderColor={`${tone.solid}28`}
+          style={styles.storeIcon}
+        />
         <View style={styles.storeCopy}>
           <Text style={styles.storeName} numberOfLines={1}>{group.storeName}</Text>
           <Text style={styles.storeMeta}>

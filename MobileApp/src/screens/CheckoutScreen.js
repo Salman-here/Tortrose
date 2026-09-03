@@ -41,6 +41,7 @@ import {
   getCartItemQuantity,
   getCartItemSellerId,
   getSellerDisplayName,
+  getSellerLogo,
   isCheckoutRepriceRequired,
   isPositiveSourceAmountRoundedToZero,
   parseCheckoutCouponAvailabilityResponse,
@@ -72,6 +73,7 @@ import {
 } from '../utils/currencySafety';
 import { createScopedMutationStorageKey } from '../utils/persistedMutationAttempt';
 import { inspectWalletSummaryPresentation } from '../utils/walletPresentationSafety';
+import StoreAvatar from '../components/common/StoreAvatar';
 
 const CHECKOUT_ATTEMPT_STORAGE_KEY = 'rozare_checkout_attempt_v1';
 
@@ -1344,7 +1346,12 @@ export default function CheckoutScreen({ navigation }) {
               return (
                 <View key={sellerId} style={styles.sellerDeliveryCard}>
                   <View style={styles.sellerDeliveryHeader}>
-                    <View style={styles.sellerIcon}><Ionicons name="storefront-outline" size={17} color={palette.colors.primary} /></View>
+                    <StoreAvatar
+                      logo={getSellerLogo(sellerData)}
+                      storeName={getSellerDisplayName(sellerData)}
+                      size={36}
+                      style={styles.sellerIcon}
+                    />
                     <View style={{ flex: 1 }}>
                       <Text style={styles.sellerName} numberOfLines={1}>{getSellerDisplayName(sellerData)}</Text>
                       <Text style={styles.sellerItemsText}>{sellerItems.length} {sellerItems.length === 1 ? 'item' : 'items'} in this shipment</Text>

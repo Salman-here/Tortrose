@@ -200,6 +200,7 @@ describe('order presentation helpers', () => {
         {
           sellerId: 'seller-a',
           storeName: 'Store A',
+          storeLogo: 'https://example.com/store-a-logo.png',
           status: 'shipped',
           itemIndexes: [0],
           itemCount: 1,
@@ -239,11 +240,16 @@ describe('order presentation helpers', () => {
     expect(groups[0]).toMatchObject({
       sellerId: 'seller-a',
       storeName: 'Store A',
+      storeLogo: 'https://example.com/store-a-logo.png',
       status: 'shipped',
       items: [groupedOrder.orderItems[0]],
       units: 1,
     });
     expect(groups.map(group => group.summary.totalAmount)).toEqual([8.2, 3.55]);
+
+    const malformedLogo = JSON.parse(JSON.stringify(groupedOrder));
+    malformedLogo.sellerGroups[0].storeLogo = { unsafe: true };
+    expect(getOrderSellerGroups(malformedLogo)[0].storeLogo).toBe('');
 
     const duplicateItem = JSON.parse(JSON.stringify(groupedOrder));
     duplicateItem.sellerGroups[1].itemIndexes = [0];

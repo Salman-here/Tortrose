@@ -405,7 +405,7 @@ const getShippingMethodsForCart = async (req, res) => {
       ShippingMethod.find({
         seller: { $in: sellerIds }
       }).populate('seller', 'username currency'),
-      Store.find({ seller: { $in: sellerIds } }).select('seller storeName storeSlug paymentPolicy productCurrency').lean(),
+      Store.find({ seller: { $in: sellerIds } }).select('seller storeName storeSlug logo paymentPolicy productCurrency').lean(),
     ]);
     const storeBySeller = new Map(stores.map(store => [store.seller.toString(), store]));
     
@@ -419,7 +419,12 @@ const getShippingMethodsForCart = async (req, res) => {
       const store = storeBySeller.get(sellerId) || null;
       const paymentPolicy = normalizeStorePaymentPolicy(store?.paymentPolicy);
       const paymentInfo = {
-        store: store ? { _id: store._id, storeName: store.storeName, storeSlug: store.storeSlug } : null,
+        store: store ? {
+          _id: store._id,
+          storeName: store.storeName,
+          storeSlug: store.storeSlug,
+          logo: store.logo || '',
+        } : null,
         paymentPolicy,
         paymentPolicyLabel: PAYMENT_POLICY_LABELS[paymentPolicy],
         allowsCashOnDelivery: storeAllowsCashOnDelivery(store),

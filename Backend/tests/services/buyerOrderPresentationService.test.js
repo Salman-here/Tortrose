@@ -43,8 +43,8 @@ const mixedSellerOrder = () => ({
     { seller: sellerB, status: 'processing', updatedAt: new Date('2026-08-30T11:00:00.000Z') },
   ],
   sellerPolicies: [
-    { seller: sellerA, storeName: 'Pakistan Store' },
-    { seller: sellerB, storeName: 'USD Store' },
+    { seller: sellerA, storeName: 'Pakistan Store', storeLogo: 'https://example.com/pakistan-store.png' },
+    { seller: sellerB, storeName: 'USD Store', storeLogo: 'https://example.com/usd-store.png' },
   ],
   orderSummary: {
     subtotal: 30,
@@ -67,6 +67,7 @@ describe('buyer seller-group order presentation', () => {
     expect(view.sellerGroups[0]).toMatchObject({
       sellerId: sellerA.toString(),
       storeName: 'Pakistan Store',
+      storeLogo: 'https://example.com/pakistan-store.png',
       itemIndexes: [0],
       itemCount: 1,
       units: 1,
@@ -76,6 +77,7 @@ describe('buyer seller-group order presentation', () => {
     expect(view.sellerGroups[1]).toMatchObject({
       sellerId: sellerB.toString(),
       storeName: 'USD Store',
+      storeLogo: 'https://example.com/usd-store.png',
       itemIndexes: [1],
       itemCount: 1,
       units: 2,
@@ -106,6 +108,19 @@ describe('buyer seller-group order presentation', () => {
 
     expect(serialized.orderItems[0].selectedOptions).toEqual({ Size: 'Large' });
     expect(serialized.sellerGroups[0].itemIndexes).toEqual([0]);
+  });
+
+  test('prefers the current store logo and keeps the checkout snapshot as its fallback', () => {
+    const order = mixedSellerOrder();
+    const view = buildBuyerOrderView(order, {
+      storeLogosBySeller: new Map([
+        [sellerA.toString(), 'https://example.com/pakistan-store-current.png'],
+        [sellerB.toString(), ''],
+      ]),
+    });
+
+    expect(view.sellerGroups[0].storeLogo).toBe('https://example.com/pakistan-store-current.png');
+    expect(view.sellerGroups[1].storeLogo).toBe('https://example.com/usd-store.png');
   });
 
   test('does not expose the seller-native reporting snapshot in the buyer payload', () => {

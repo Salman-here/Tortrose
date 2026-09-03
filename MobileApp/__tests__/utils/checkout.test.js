@@ -15,6 +15,7 @@ import {
   createCheckoutAttemptKey,
   createCheckoutFingerprint,
   getCartItemQuantity,
+  getSellerLogo,
   getOrCreateCheckoutAttempt,
   findCouponOverlap,
   isCheckoutRepriceRequired,
@@ -138,13 +139,24 @@ describe('checkout production contracts', () => {
       shippingMethods: {
         sellerA: {
           seller: { _id: 'sellerA', username: 'Store A' },
+          store: {
+            _id: 'storeA',
+            storeName: 'Store A',
+            logo: 'https://example.com/store-a-logo.png',
+          },
           paymentPolicy: 'advance_only',
           allowsCashOnDelivery: false,
           methods: [shippingMethod({ cost: 250, currency: 'PKR', costCurrency: 'PKR', costInputAmount: 250 })],
         },
       },
     });
-    expect(parseCheckoutShippingMethodsResponse(payload(), ['sellerA']).sellerA.methods[0].cost).toBe(250);
+    const parsed = parseCheckoutShippingMethodsResponse(payload(), ['sellerA']);
+    expect(parsed.sellerA.methods[0].cost).toBe(250);
+    expect(getSellerLogo(parsed.sellerA)).toBe('https://example.com/store-a-logo.png');
+
+    const malformedLogo = payload();
+    malformedLogo.shippingMethods.sellerA.store.logo = { unsafe: true };
+    expect(getSellerLogo(parseCheckoutShippingMethodsResponse(malformedLogo, ['sellerA']).sellerA)).toBe('');
 
     [
       (value) => { value.success = false; },

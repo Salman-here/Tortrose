@@ -40,6 +40,8 @@ import {
 import {
   calculateCheckoutCouponPricing,
   createCheckoutMoneyCartSignature,
+  getCheckoutSellerDisplayName,
+  getCheckoutSellerLogo,
   isCheckoutRepriceRequired,
   isPositiveSourceAmountRoundedToZero,
   parseCheckoutCouponAvailabilityResponse,
@@ -56,6 +58,7 @@ import {
 } from "../../utils/persistedMutationAttempt";
 import { requireWalletSummaryResponse } from '../../utils/walletPaymentRisk';
 import { getCartPresentationProductCurrency } from '../../utils/cartPresentation';
+import StoreAvatar from '../common/StoreAvatar';
 
 const CHECKOUT_ATTEMPT_STORAGE_KEY = 'rozare_checkout_attempt_v1';
 const ORDER_SUCCESS_STORAGE_KEY = 'rozare_order_success_v1';
@@ -1808,12 +1811,26 @@ export default function Checkout() {
                                 )}
 
                                 <div className="space-y-6">
-                                {Object.entries(sellerShippingMethods).map(([sellerId, { seller, methods }]) => {
+                                {Object.entries(sellerShippingMethods).map(([sellerId, sellerData]) => {
+                                  const { seller, methods } = sellerData;
                                   const sellerProducts = cartItemsBySeller[sellerId] || [];
                                   const isExpanded = expandedSellers[sellerId] === true; // Default to collapsed
+                                  const storeName = getCheckoutSellerDisplayName(sellerData);
 
                                   return (
                                     <div key={sellerId} className="border border-gray-200 rounded-lg p-4 bg-gray-50">
+                                      <div className="flex items-center gap-3 mb-3 pb-3 border-b border-gray-200">
+                                        <StoreAvatar
+                                          logo={getCheckoutSellerLogo(sellerData)}
+                                          storeName={storeName}
+                                        />
+                                        <div className="min-w-0">
+                                          <p className="font-semibold text-sm text-gray-900 truncate">{storeName}</p>
+                                          <p className="text-xs text-gray-500">
+                                            {sellerProducts.length} {sellerProducts.length === 1 ? 'item' : 'items'} in this shipment
+                                          </p>
+                                        </div>
+                                      </div>
                                       {/* Products from this Seller */}
                                       <div className="mb-3">
                                         {sellerProducts.length > 0 && (

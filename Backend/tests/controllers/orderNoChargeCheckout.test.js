@@ -116,6 +116,7 @@ const makeCheckout = async paymentMethod => {
     seller: seller._id,
     storeName: `Free ${paymentMethod} Store`,
     storeSlug: `free-${slugToken}-store`,
+    logo: `https://example.com/free-${slugToken}-store-logo.png`,
     visibility: { mode: 'global', label: 'Worldwide' },
     paymentPolicy: paymentMethod === 'cash_on_delivery' ? 'online_and_cod' : 'advance_only',
     isActive: true,
@@ -264,6 +265,10 @@ describe('initial zero-value and provider-minimum checkout boundaries', () => {
     expect(res.status).toHaveBeenCalledWith(200);
     const stored = await Order.findOne({ checkoutIdempotencyKey: fixture.key }).lean();
     expect(stored.orderItems[0]).toMatchObject({ selectedOptions: { Size: 'Large' } });
+    expect(stored.sellerPolicies[0]).toMatchObject({
+      storeName: 'Free cash_on_delivery Store',
+      storeLogo: 'https://example.com/free-cash-on-delivery-store-logo.png',
+    });
   });
 
   test('persists a domestic buyer phone in the selected country, never a server default country', async () => {
