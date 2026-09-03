@@ -89,6 +89,47 @@ describe('Evolution client recipient routing', () => {
     expect(sentPayload.delay).toBe(0);
   });
 
+  test('sends per-chat typing presence without changing message delivery delay', async () => {
+    let request;
+    axios.create.mockReturnValue({
+      post: jest.fn(async (url, payload) => {
+        request = { url, payload };
+        return { data: { presence: 'composing' } };
+      }),
+    });
+
+    const client = createEvolutionClient('EVOLUTION_SELLER_INSTANCE_NAME', 'rozare-seller');
+    await client.sendChatPresence('923499166402@s.whatsapp.net', {
+      presence: 'composing',
+      delay: 10000,
+    });
+
+    expect(request).toEqual({
+      url: '/chat/sendPresence/rozare-seller',
+      payload: {
+        number: '923499166402@s.whatsapp.net',
+        presence: 'composing',
+        delay: 10000,
+      },
+    });
+  });
+
+  test('rejects unsafe chat-presence values before calling Evolution', async () => {
+    const post = jest.fn();
+    axios.create.mockReturnValue({ post });
+    const client = createEvolutionClient('EVOLUTION_SELLER_INSTANCE_NAME', 'rozare-seller');
+
+    await expect(client.sendChatPresence('923499166402@s.whatsapp.net', {
+      presence: 'available',
+      delay: 1000,
+    })).rejects.toThrow('Unsupported WhatsApp chat presence');
+    await expect(client.sendChatPresence('923499166402@s.whatsapp.net', {
+      presence: 'composing',
+      delay: 20001,
+    })).rejects.toThrow('whole number from 0 to 20000');
+    expect(post).not.toHaveBeenCalled();
+  });
+
   test('registers webhook using Evolution v2.3 wrapped payload with inbound events', async () => {
     let webhookPayload;
     axios.create.mockReturnValue({

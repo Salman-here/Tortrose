@@ -26,6 +26,7 @@ const {
 const {
     captureOutboundIfTestNumber,
     isActiveTestNumber,
+    isReservedTestPoolNumber,
 } = require('./testNumberPoolService');
 
 // Shared helpers (not instance-specific)
@@ -401,6 +402,37 @@ function createEvolutionClient(instanceEnvVar, defaultName) {
     };
 
     /**
+     * Set the per-chat WhatsApp presence (for example, "composing").
+     * Evolution v2.3.x keeps the presence active for `delay` milliseconds and
+     * then clears it. This is separate from sendText so AI work and delivery do
+     * not wait for an artificial message delay.
+     */
+    const sendChatPresence = async (number, { presence = 'composing', delay = 0 } = {}) => {
+        if (!isConfigured()) throw new Error('Evolution API not configured');
+        if (isReservedTestPoolNumber(number)) {
+            return { skipped: true, reason: 'virtual_test_number' };
+        }
+
+        const allowedPresence = new Set(['composing', 'recording', 'paused']);
+        if (!allowedPresence.has(presence)) {
+            throw new RangeError('Unsupported WhatsApp chat presence');
+        }
+
+        const numericDelay = Number(delay);
+        if (!Number.isSafeInteger(numericDelay) || numericDelay < 0 || numericDelay > 20_000) {
+            throw new RangeError('WhatsApp chat presence delay must be a whole number from 0 to 20000 milliseconds');
+        }
+
+        const recipient = await normalizeSendRecipient(number);
+        const { data } = await client().post(`/chat/sendPresence/${instanceName()}`, {
+            number: recipient,
+            presence,
+            delay: numericDelay,
+        });
+        return { presence, delay: numericDelay, raw: data };
+    };
+
+    /**
      * Send an image (media) message via WhatsApp.
      * @param {string} number - Recipient phone number
      * @param {string} mediaUrl - Public URL of the image
@@ -636,6 +668,7 @@ function createEvolutionClient(instanceEnvVar, defaultName) {
         connectInstance,
         requestPairingCode,
         sendText,
+        sendChatPresence,
         sendMedia,
         sendPoll,
         sendList,

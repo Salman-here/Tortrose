@@ -3,6 +3,7 @@
 const mockPost = jest.fn();
 const mockCaptureOutbound = jest.fn();
 const mockIsActiveTestNumber = jest.fn();
+const mockIsReservedTestPoolNumber = jest.fn();
 
 jest.mock('axios', () => ({
     create: jest.fn(() => ({
@@ -16,6 +17,7 @@ jest.mock('axios', () => ({
 jest.mock('../../services/whatsapp/testNumberPoolService', () => ({
     captureOutboundIfTestNumber: (...args) => mockCaptureOutbound(...args),
     isActiveTestNumber: (...args) => mockIsActiveTestNumber(...args),
+    isReservedTestPoolNumber: (...args) => mockIsReservedTestPoolNumber(...args),
 }));
 jest.mock('../../services/whatsapp/jidRoutingStore', () => ({
     rememberInboundRoute: jest.fn(),
@@ -41,6 +43,7 @@ beforeEach(() => {
     mockPost.mockResolvedValue({ data: { key: { id: 'provider-message-id' } } });
     mockCaptureOutbound.mockResolvedValue(null);
     mockIsActiveTestNumber.mockResolvedValue(false);
+    mockIsReservedTestPoolNumber.mockReturnValue(false);
 });
 
 afterEach(() => {
@@ -86,6 +89,21 @@ describe('Evolution client test transport', () => {
         const client = createEvolutionClient('EVOLUTION_SELLER_INSTANCE_NAME', 'rozare-seller');
 
         await expect(client.checkWhatsAppNumber('12025550101')).resolves.toBe(true);
+        expect(mockPost).not.toHaveBeenCalled();
+    });
+
+    test('skips typing presence for a virtual test number without creating an inbox message', async () => {
+        mockIsReservedTestPoolNumber.mockReturnValue(true);
+        const client = createEvolutionClient('EVOLUTION_SELLER_INSTANCE_NAME', 'rozare-seller');
+
+        await expect(client.sendChatPresence('12025550101', {
+            presence: 'composing',
+            delay: 10000,
+        })).resolves.toEqual({
+            skipped: true,
+            reason: 'virtual_test_number',
+        });
+        expect(mockCaptureOutbound).not.toHaveBeenCalled();
         expect(mockPost).not.toHaveBeenCalled();
     });
 });

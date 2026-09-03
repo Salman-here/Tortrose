@@ -22,6 +22,7 @@ const { resolveOutboundRecipient } = require('./jidRoutingStore');
 const { phoneFromJid, uniqueNonEmpty } = require('./addressing');
 const { routingScopeFor } = require('./gatewayMode');
 const { findWhatsAppIdentityConflict } = require('../whatsappIdentityService');
+const { startTypingPresence } = require('./typingPresence');
 
 const SITE_URL = process.env.FRONTEND_URL || 'https://www.rozare.com';
 const RATE_LIMIT_PER_HOUR = Number(process.env.WHATSAPP_AI_RATE_LIMIT_PER_HOUR || 30);
@@ -527,87 +528,124 @@ async function processIncomingWhatsAppMessageNow(phone, messageText, instanceTyp
             return;
         }
 
-        // 3. Process media/files after the user is identified and rate-limited.
-        const attachmentResult = attachments.length
-            ? await processChatAttachments(attachments)
-            : { context: '', attachments: [] };
-        for (const item of attachmentResult.processed || []) {
-            if (!item.success) {
-                console.warn(`[wa-ai-chat] ${item.type || 'attachment'} processing failed: ${String(item.error || 'unknown error').slice(0, 240)}`);
-            }
-        }
-        const failedVoice = (attachmentResult.processed || []).find(
-            (item) => item?.type === 'audio' && item.success === false
-        );
-        if (
-            failedVoice &&
-            options.propagateErrors === true &&
-            Number(options.durableAttempt || 1) < 3
-        ) {
-            const voiceError = new Error(
-                `Voice transcription failed: ${failedVoice.error || 'unknown error'}`
+        // Presence starts only if real processing lasts beyond the short
+        // threshold. It runs entirely in the background and cannot delay or
+        // fail the AI request or the reply.
+        let typingIndicator = null;
+        try {
+            typingIndicator = startTypingPresence({
+                client: getClient(effectiveInstanceType),
+                recipient: finalReplyTo,
+            });
+        } catch (presenceError) {
+            // Presence is cosmetic. Even an unexpected local setup failure must
+            // never prevent, delay, or replace the actual AI response.
+            console.warn(
+                '[wa-ai-chat] Typing presence setup failed; continuing without it:',
+                presenceError?.message || 'unknown error'
             );
-            voiceError.code = 'WHATSAPP_VOICE_TRANSCRIPTION_RETRY';
-            voiceError.retryable = true;
-            throw voiceError;
         }
-        const attachmentsAt = Date.now();
-        const userContent = [trimmedText, attachmentResult.context].filter(Boolean).join('\n\n') ||
-            (attachments.length ? 'Attachment uploaded' : trimmedText);
-
-        // 4. Load conversation history
-        const conversationHistory = await loadWhatsAppConversation(user._id);
-        const historyAt = Date.now();
-
-        // 5. Build messages array (history + new message)
-        const messages = [
-            ...conversationHistory,
-            {
-                role: 'user',
-                content: userContent,
-                attachments: attachmentResult.attachments || [],
-            },
-        ];
-
-        // 6. Process through AI pipeline
-        const userObj = { _id: user._id, id: user._id.toString(), role };
-
-        // Evolution's inbound message id remains stable across durable retries,
-        // so server-side tools (especially COD order creation) can be replayed
-        // safely without creating a second order or decrementing stock twice.
-        const aiOptions = {
-            mode: 'whatsapp',
-            requestKey: options.messageId || null,
+        const stopTyping = () => {
+            const activeIndicator = typingIndicator;
+            typingIndicator = null;
+            activeIndicator?.stop();
         };
-        const aiStartedAt = Date.now();
-        const result = await processAIChatMessage(userObj, messages, aiOptions);
-        const aiFinishedAt = Date.now();
 
-        // 7. Send AI response
-        const sendStartedAt = Date.now();
-        if (result.responseText) {
-            const responseText = sanitizeVisibleAIResponse(result.responseText) ||
-                "Done. I processed that, but I do not have a written update to send.";
-            await sendResponse(finalReplyTo, responseText, effectiveInstanceType);
-        } else {
-            // AI returned empty response — send a fallback
-            await sendResponse(finalReplyTo, "I'm sorry, I couldn't process that. Could you try rephrasing? 🤔", effectiveInstanceType);
-        }
-
-        const textSentAt = Date.now();
-
-        // 8. Send pending product images (if AI used send_product_image tool)
-        if (aiOptions._pendingImages?.length) {
-            const client = getClient(effectiveInstanceType);
-            for (const img of aiOptions._pendingImages) {
-                try {
-                    await client.sendMedia(finalReplyTo, img.imageUrl, img.caption, 'image');
-                } catch (imgErr) {
-                    console.error(`[wa-ai-chat] Failed to send product image to ${matchedPhone || primaryPhone}:`, imgErr.message);
-                    // Fallback: send image URL as text
-                    await client.sendText(finalReplyTo, `📸 Image: ${img.imageUrl}\n${img.caption}`).catch(() => {});
+        let attachmentResult;
+        let attachmentsAt;
+        let historyAt;
+        let aiStartedAt;
+        let aiFinishedAt;
+        let sendStartedAt;
+        let textSentAt;
+        let aiOptions;
+        try {
+            // 3. Process media/files after the user is identified and rate-limited.
+            attachmentResult = attachments.length
+                ? await processChatAttachments(attachments)
+                : { context: '', attachments: [] };
+            for (const item of attachmentResult.processed || []) {
+                if (!item.success) {
+                    console.warn(`[wa-ai-chat] ${item.type || 'attachment'} processing failed: ${String(item.error || 'unknown error').slice(0, 240)}`);
                 }
             }
+            const failedVoice = (attachmentResult.processed || []).find(
+                (item) => item?.type === 'audio' && item.success === false
+            );
+            if (
+                failedVoice &&
+                options.propagateErrors === true &&
+                Number(options.durableAttempt || 1) < 3
+            ) {
+                const voiceError = new Error(
+                    `Voice transcription failed: ${failedVoice.error || 'unknown error'}`
+                );
+                voiceError.code = 'WHATSAPP_VOICE_TRANSCRIPTION_RETRY';
+                voiceError.retryable = true;
+                throw voiceError;
+            }
+            attachmentsAt = Date.now();
+            const userContent = [trimmedText, attachmentResult.context].filter(Boolean).join('\n\n') ||
+                (attachments.length ? 'Attachment uploaded' : trimmedText);
+
+            // 4. Load conversation history
+            const conversationHistory = await loadWhatsAppConversation(user._id);
+            historyAt = Date.now();
+
+            // 5. Build messages array (history + new message)
+            const messages = [
+                ...conversationHistory,
+                {
+                    role: 'user',
+                    content: userContent,
+                    attachments: attachmentResult.attachments || [],
+                },
+            ];
+
+            // 6. Process through AI pipeline
+            const userObj = { _id: user._id, id: user._id.toString(), role };
+
+            // Evolution's inbound message id remains stable across durable retries,
+            // so server-side tools (especially COD order creation) can be replayed
+            // safely without creating a second order or decrementing stock twice.
+            aiOptions = {
+                mode: 'whatsapp',
+                requestKey: options.messageId || null,
+            };
+            aiStartedAt = Date.now();
+            const result = await processAIChatMessage(userObj, messages, aiOptions);
+            aiFinishedAt = Date.now();
+
+            // Stop presence before delivery, without awaiting the cleanup call.
+            // The response is sent immediately with Evolution delay still at 0.
+            stopTyping();
+            sendStartedAt = Date.now();
+            if (result.responseText) {
+                const responseText = sanitizeVisibleAIResponse(result.responseText) ||
+                    "Done. I processed that, but I do not have a written update to send.";
+                await sendResponse(finalReplyTo, responseText, effectiveInstanceType);
+            } else {
+                // AI returned empty response — send a fallback
+                await sendResponse(finalReplyTo, "I'm sorry, I couldn't process that. Could you try rephrasing? 🤔", effectiveInstanceType);
+            }
+
+            textSentAt = Date.now();
+
+            // 8. Send pending product images (if AI used send_product_image tool)
+            if (aiOptions._pendingImages?.length) {
+                const client = getClient(effectiveInstanceType);
+                for (const img of aiOptions._pendingImages) {
+                    try {
+                        await client.sendMedia(finalReplyTo, img.imageUrl, img.caption, 'image');
+                    } catch (imgErr) {
+                        console.error(`[wa-ai-chat] Failed to send product image to ${matchedPhone || primaryPhone}:`, imgErr.message);
+                        // Fallback: send image URL as text
+                        await client.sendText(finalReplyTo, `📸 Image: ${img.imageUrl}\n${img.caption}`).catch(() => {});
+                    }
+                }
+            }
+        } finally {
+            stopTyping();
         }
 
         console.log(`[wa-ai-chat] Response sent to ${matchedPhone || primaryPhone} (${role}) via ${effectiveInstanceType}`);
