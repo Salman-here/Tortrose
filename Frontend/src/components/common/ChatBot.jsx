@@ -1316,7 +1316,10 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
                     products={result.data.items.map(item => ({
                       _id: item.productId,
                       name: item.name,
-                      price: item.originalPrice || item.price,
+                      // view_cart already returns each unit price converted into
+                      // the buyer's selected cart currency. Never pair the
+                      // seller-native originalPrice with the buyer currency.
+                      price: item.price,
                       discountedPrice: item.price,
                       currency: item.currency || result.data.currency,
                       image: item.image,

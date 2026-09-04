@@ -1296,7 +1296,10 @@ export default function ChatBot({
                     const product = {
                       _id: cartItem.productId,
                       name: cartItem.name,
-                      price: cartItem.originalPrice || cartItem.price,
+                      // view_cart prices are authoritative buyer-currency
+                      // amounts. The seller-native original price must not be
+                      // relabelled with the buyer's currency on this card.
+                      price: cartItem.price,
                       discountedPrice: cartItem.price,
                       currency: cartItem.currency || tr.result.data.currency,
                       priceCurrency: cartItem.currency || tr.result.data.currency,

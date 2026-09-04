@@ -198,6 +198,8 @@ describe('AI daily quota ownership', () => {
     expect(chatBot).toContain("['search_products', 'list_my_products', 'get_wishlist'].includes(tr.name)");
     expect(chatBot).toContain("tr.name === 'get_product_detail'");
     expect(chatBot).toContain("tr.name === 'view_cart'");
+    expect(chatBot).toContain('price: cartItem.price,');
+    expect(chatBot).not.toContain('price: cartItem.originalPrice || cartItem.price');
     expect(chatBot).toContain("['add_to_wishlist', 'remove_from_wishlist'].includes(tr.name)");
     expect(chatBot).toContain('void fetchWishlist();');
     expect(chatBot).toContain('void fetchCart();');

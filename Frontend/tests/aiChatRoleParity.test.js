@@ -56,3 +56,8 @@ test('refreshing an AI-updated profile does not reset the visible conversation',
   assert.match(chatBot, /\}, \[initialMessages, conversationId, role\]\);/);
   assert.doesNotMatch(chatBot, /\[initialMessages, conversationId, role, userName\]/);
 });
+
+test('AI cart cards use the converted buyer-currency price', () => {
+  assert.match(chatBot, /toolName === 'view_cart'[\s\S]*?price: item\.price,[\s\S]*?currency: item\.currency \|\| result\.data\.currency/);
+  assert.doesNotMatch(chatBot, /price: item\.originalPrice \|\| item\.price/);
+});
