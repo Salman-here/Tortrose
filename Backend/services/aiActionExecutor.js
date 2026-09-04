@@ -1307,7 +1307,11 @@ function requireStoredAIShippingMethod(method, fallbackCurrency = 'USD') {
   if (
     normalizedCost === null
     || normalizedCost !== cost
-    || (method.type === 'free' ? cost !== 0 : cost <= 0)
+    || (method.type === 'free'
+      ? cost !== 0
+      : method.isActive === false
+        ? cost < 0
+        : cost <= 0)
   ) {
     const error = new Error('A stored shipping method has an invalid cost.');
     error.status = 409;

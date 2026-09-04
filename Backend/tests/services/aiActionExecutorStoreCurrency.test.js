@@ -392,6 +392,46 @@ describe('AI seller-native money writes', () => {
     });
   });
 
+  test('AI can read an unconfigured inactive paid shipping slot with zero cost', async () => {
+    const seller = await createPkrSeller();
+    await ShippingMethod.create({
+      seller: seller._id,
+      methods: [
+        {
+          type: 'standard',
+          cost: 500,
+          currency: 'PKR',
+          costCurrency: 'PKR',
+          costInputAmount: 500,
+          deliveryDays: 3,
+          isActive: true,
+        },
+        {
+          type: 'fast',
+          cost: 0,
+          currency: 'PKR',
+          costCurrency: 'PKR',
+          costInputAmount: 0,
+          deliveryDays: 2,
+          isActive: false,
+        },
+      ],
+    });
+
+    const result = await executeToolCall('get_shipping_methods', {}, seller);
+
+    expect(result.success).toBe(true);
+    expect(result.data.methods).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'fast',
+        cost: 0,
+        costInputAmount: 0,
+        currency: 'PKR',
+        isActive: false,
+      }),
+    ]));
+  });
+
   test('AI shipping preserves an explicit supported currency different from store currency', async () => {
     const seller = await createPkrSeller();
 
