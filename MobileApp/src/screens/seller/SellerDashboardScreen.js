@@ -21,7 +21,6 @@ import { EmptyOrders } from '../../components/common/EmptyState';
 import GlassBackground from '../../components/common/GlassBackground';
 import GlassPanel from '../../components/common/GlassPanel';
 import AIChatFab from '../../components/common/AIChatFab';
-import ChatBot from '../../components/ChatBot';
 import { spacing, fontSize, borderRadius, fontWeight } from '../../styles/theme';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useCurrency } from '../../contexts/CurrencyContext';
@@ -144,7 +143,6 @@ export default function SellerDashboardScreen({ navigation }) {
   const [orders, setOrders] = useState(null);
   const [moneyMetrics, setMoneyMetrics] = useState(null);
   const [sellerCurrency, setSellerCurrency] = useState(null);
-  const [showAI, setShowAI] = useState(false);
   const [subscription, setSubscription] = useState(null);
   const [showFounderOffer, setShowFounderOffer] = useState(false);
   const [loadError, setLoadError] = useState('');
@@ -306,10 +304,6 @@ export default function SellerDashboardScreen({ navigation }) {
     ? selectAuthoritativeSellerRevenue(moneyMetrics, sellerCurrency)
     : null;
   const onRefresh = useCallback(() => { setRefreshing(true); fetchDashboardData(); }, [fetchDashboardData]);
-  const closeAssistantAndRefresh = useCallback(() => {
-    setShowAI(false);
-    fetchDashboardData();
-  }, [fetchDashboardData]);
   // Newest first — sort explicitly so we don't depend on API ordering
   const recentOrders = orders ? [...orders]
     .sort((a, b) => {
@@ -687,16 +681,10 @@ export default function SellerDashboardScreen({ navigation }) {
         </View>
       </Modal>
 
-      {/* AI FAB — matches website chat launcher */}
-      <AIChatFab onPress={() => setShowAI(true)} style={{ bottom: 24, right: 20 }} />
-
-      {/* AI ChatBot */}
-      <ChatBot
-        embedded={false}
-        dashboardRole="seller"
-        visible={showAI}
-        onClose={closeAssistantAndRefresh}
-        navigation={navigation}
+      {/* Sellers and buyers share the same full-screen AI chat experience. */}
+      <AIChatFab
+        onPress={() => navigation.navigate('AIChat', { role: 'seller' })}
+        style={{ bottom: 24, right: 20 }}
       />
       </SafeAreaView>
     </GlassBackground>

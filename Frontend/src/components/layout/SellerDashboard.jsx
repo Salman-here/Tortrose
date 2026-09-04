@@ -9,11 +9,10 @@ import {
 import axios from 'axios';
 import GlassBackground from '../common/GlassBackground';
 import { toast } from 'react-toastify';
-import { Link, Outlet, useLocation } from 'react-router-dom';
+import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { uploadImageToCloudinary } from '../../utils/uploadToCloudinary';
 import { useCurrency } from '../../contexts/CurrencyContext';
 import { useAuth } from '../../contexts/AuthContext';
-import ChatBotComponent from '../common/ChatBot';
 import CurrencySelector from '../common/CurrencySelector';
 import { PRESET_CATEGORIES } from '../../utils/categories';
 import { getAuthToken } from "../../utils/cookieHelper";
@@ -94,8 +93,8 @@ const SellerDashboard = () => {
     } = useNotificationBellInbox({ currentUser, role: 'seller' });
     const { currency } = useCurrency();
     const location = useLocation();
+    const navigate = useNavigate();
     const [isMobile, setIsMobile] = useState(false);
-    const [aiChatOpen, setAiChatOpen] = useState(false);
     const [subscriptionData, setSubscriptionData] = useState(null);
 
     useEffect(() => {
@@ -716,7 +715,7 @@ const SellerDashboard = () => {
                 isMobile={isMobile}
                 pendingOrders={pendingOrders}
                 lowStockProducts={lowStockProducts + outOfStockProducts}
-                onAiChat={() => setAiChatOpen(true)}
+                onAiChat={() => navigate('/ai-chat')}
             />
 
             {/* Main Content */}
@@ -837,7 +836,7 @@ const SellerDashboard = () => {
                                         {getSellerMenuItems({ pendingOrders, lowStockProducts: lowStockProducts + outOfStockProducts }).map(item => {
                                             const isActive = activeTab === item.id;
                                             const onClick = () => {
-                                                if (item.action === 'ai-chat') { setAiChatOpen(true); setIsSidebarOpen(false); return; }
+                                                if (item.action === 'ai-chat') { navigate('/ai-chat'); setIsSidebarOpen(false); return; }
                                                 setActiveTab(item.id); setIsSidebarOpen(false);
                                             };
                                             const inner = (
@@ -930,26 +929,7 @@ const SellerDashboard = () => {
 
                 {/* Page Content */}
                 <div className="flex-1 min-w-0">
-                    {aiChatOpen ? (
-                        <div className="p-3 sm:p-4 lg:p-6">
-                            <div className="glass-panel-strong overflow-hidden" style={{ borderRadius: 20, height: 'calc(100vh - 140px)' }}>
-                                <div className="flex items-center justify-between px-4 py-3" style={{ borderBottom: '1px solid var(--glass-border)' }}>
-                                    <div className="flex items-center gap-2">
-                                        <Bot size={18} style={{ color: 'hsl(150, 60%, 45%)' }} />
-                                        <span className="text-sm font-bold" style={{ color: 'hsl(var(--foreground))' }}>AI Business Assistant</span>
-                                    </div>
-                                    <button onClick={() => setAiChatOpen(false)} className="p-1.5 rounded-lg glass-inner" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                                        <X size={16} />
-                                    </button>
-                                </div>
-                                <div className="h-[calc(100%-49px)] overflow-hidden">
-                                    <ChatBotComponent embedded dashboardRole="seller" />
-                                </div>
-                            </div>
-                        </div>
-                    ) : (
-                        <Outlet context={outletContext} />
-                    )}
+                    <Outlet context={outletContext} />
                 </div>
             </div>
 

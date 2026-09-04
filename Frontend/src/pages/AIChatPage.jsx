@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   MessageCircle, Plus, Trash2, Edit3, Check, X, ChevronLeft,
-  Bot, Sparkles, Clock, Search, Menu, Zap, Star, ArrowRight
+  Bot, Sparkles, Clock, Search, Menu, Zap, Star, ArrowRight, ShoppingBag
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
@@ -24,6 +24,40 @@ function AIChatPage() {
   const navigate = useNavigate();
   const { currentUser } = useAuth();
   const authToken = getAuthToken();
+  const assistantRole = currentUser?.role === 'seller'
+    ? 'seller'
+    : currentUser?.role === 'admin'
+      ? 'admin'
+      : 'user';
+  const welcomeContent = assistantRole === 'seller'
+    ? {
+        description: 'Your business assistant for products, orders, store settings, shipping, promotions, analytics, and more.',
+        cards: [
+          { icon: ShoppingBag, label: 'Catalog', desc: 'Create and manage products' },
+          { icon: MessageCircle, label: 'Orders', desc: 'Review and fulfil orders' },
+          { icon: Star, label: 'Promotions', desc: 'Manage coupons and featured items' },
+          { icon: Zap, label: 'Business Insights', desc: 'Check sales, payments, and store data' },
+        ],
+      }
+    : assistantRole === 'admin'
+      ? {
+          description: 'Your platform assistant for users, stores, orders, complaints, subscriptions, and operations.',
+          cards: [
+            { icon: Search, label: 'Platform Search', desc: 'Find users, stores, and orders' },
+            { icon: MessageCircle, label: 'Support', desc: 'Review complaints and requests' },
+            { icon: Star, label: 'Verification', desc: 'Manage store verification' },
+            { icon: Zap, label: 'Operations', desc: 'Check analytics and platform data' },
+          ],
+        }
+      : {
+          description: 'Your personal shopping companion. Search products, manage orders, get style advice, and more.',
+          cards: [
+            { icon: Search, label: 'Smart Search', desc: 'Find products with AI-powered search' },
+            { icon: Star, label: 'Style Advice', desc: 'Get personalized fashion tips' },
+            { icon: MessageCircle, label: 'Order Help', desc: 'Track, cancel, or manage orders' },
+            { icon: Zap, label: 'Quick Actions', desc: 'Add to cart, wishlist & more' },
+          ],
+        };
 
   const [conversations, setConversations] = useState([]);
   const [activeConvoId, setActiveConvoId] = useState(null);
@@ -377,6 +411,7 @@ function AIChatPage() {
           <div className="flex-1 overflow-hidden">
             <ChatBot
               embedded={true}
+              dashboardRole={assistantRole}
               conversationId={activeConvoId}
               initialMessages={loadedMessages}
               loadingHistory={loading}
@@ -402,16 +437,11 @@ function AIChatPage() {
               <div>
                 <h2 className="text-2xl font-bold" style={{ color: 'hsl(var(--foreground))' }}>Rozare AI Assistant</h2>
                 <p className="text-sm mt-2" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                  Your personal shopping companion. Search products, manage orders, get style advice, and more.
+                  {welcomeContent.description}
                 </p>
               </div>
               <div className="grid grid-cols-2 gap-3">
-                {[
-                  { icon: Search, label: 'Smart Search', desc: 'Find products with AI-powered search' },
-                  { icon: Star, label: 'Style Advice', desc: 'Get personalized fashion tips' },
-                  { icon: MessageCircle, label: 'Order Help', desc: 'Track, cancel, or manage orders' },
-                  { icon: Zap, label: 'Quick Actions', desc: 'Add to cart, wishlist & more' },
-                ].map((item, i) => (
+                {welcomeContent.cards.map((item, i) => (
                   <motion.div key={i} whileHover={{ scale: 1.03 }}
                     className="p-3 rounded-xl text-left cursor-default transition-all"
                     style={{ background: 'hsl(var(--muted) / 0.15)', border: '1px solid hsl(var(--border))' }}>
