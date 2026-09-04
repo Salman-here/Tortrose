@@ -685,7 +685,20 @@ const userTools = [
           },
           shippingInfo: {
             type: 'object',
-            description: 'Shipping address. If not provided, uses saved address. Required fields: fullName, email, phone, address, city, state, postalCode, country.',
+            description: 'Shipping address. When the user supplies shipping details, pass every supplied field here and do not fall back to a saved address. If omitted, the saved address is used.',
+            properties: {
+              fullName: { type: 'string' },
+              email: { type: 'string' },
+              phone: { type: 'string' },
+              address: { type: 'string' },
+              city: { type: 'string' },
+              state: { type: 'string' },
+              postalCode: { type: 'string' },
+              country: { type: 'string' },
+              countryCode: { type: 'string' },
+            },
+            required: ['fullName', 'email', 'phone', 'address', 'city', 'state', 'postalCode', 'country'],
+            additionalProperties: false,
           },
           paymentMethod: { type: 'string', enum: ['cash_on_delivery', 'stripe'], description: 'Use cash_on_delivery for chat orders. Stripe card and Rozare Wallet require secure /checkout instead of a chat order.' },
         },
@@ -1500,7 +1513,7 @@ function groundedAssistantResponseText(responseText = '', completedToolResults =
 
 function explicitToolReceiptSummary(explicitlyRequestedTools = [], completedToolResults = []) {
   const requested = Array.isArray(explicitlyRequestedTools) ? explicitlyRequestedTools : [];
-  if (requested.length < 2) return '';
+  if (requested.length < 1) return '';
   const results = Array.isArray(completedToolResults) ? completedToolResults : [];
   const lines = requested.map((toolName) => {
     const entry = results.find(result => (result?.tool || result?.action) === toolName);

@@ -266,7 +266,10 @@ describe('AI chat controller daily limit enforcement', () => {
         { mode: 'whatsapp', currency: 'PKR', requestKey: 'mutation-integrity-retry' },
       );
 
-      expect(result.responseText).toBe('Fast shipping is now inactive.');
+      expect(result.responseText).toBe([
+        'Here are the exact results:',
+        '- **Update Shipping:** Shipping updated.',
+      ].join('\n'));
       expect(result.toolResults).toEqual([
         expect.objectContaining({
           tool: 'update_shipping',
@@ -444,6 +447,10 @@ describe('AI chat controller daily limit enforcement', () => {
     expect(summary).toContain('**Add Address:** Address added.');
     expect(summary).toContain('**Get Addresses:** Profile has 2 addresses.');
     expect(summary).not.toContain('Both live reads completed');
+    expect(__private.explicitToolReceiptSummary(
+      ['place_order'],
+      [{ tool: 'place_order', result: { success: true, message: 'Order placed and awaiting confirmation.' } }],
+    )).toContain('**Place Order:** Order placed and awaiting confirmation.');
   });
 
   it('does not turn an empty failed tool receipt into a success claim', () => {
@@ -503,7 +510,12 @@ describe('AI chat controller daily limit enforcement', () => {
     expect(executeToolCall).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
-      message: expect.objectContaining({ content: 'Order not found or access denied.' }),
+      message: expect.objectContaining({
+        content: [
+          'Here are the exact results:',
+          '- **Get Order Detail:** Order not found or access denied.',
+        ].join('\n'),
+      }),
       toolResults: [expect.objectContaining({ tool: 'get_order_detail' })],
     }));
   });
@@ -1023,7 +1035,7 @@ describe('AI chat controller daily limit enforcement', () => {
 
     const output = res.write.mock.calls.map(([chunk]) => chunk).join('');
     expect(output).not.toContain("I've restored your Fast shipping method.");
-    expect(output).toContain('Fast shipping is now inactive.');
+    expect(output).toContain('**Update Shipping:** Shipping updated.');
     expect(output).toContain('"type":"tool_result"');
     expect(output).toContain('data: [DONE]');
     expect(fetchMock).toHaveBeenCalledTimes(3);
@@ -1057,6 +1069,10 @@ describe('AI chat controller daily limit enforcement', () => {
     expect(schemas.get('update_profile').parameters.properties.updates.additionalProperties).toBe(false);
     expect(schemas.get('get_order_detail').parameters.properties.orderId.description).toContain('Public ORD- number');
     expect(schemas.get('cancel_order').parameters.properties.orderId.description).toContain('Public ORD- number');
+    expect(schemas.get('place_order').parameters.properties.shippingInfo).toMatchObject({
+      required: ['fullName', 'email', 'phone', 'address', 'city', 'state', 'postalCode', 'country'],
+      additionalProperties: false,
+    });
     expect(schemas.get('send_product_image').description).toContain('web and mobile display a rich image card');
     expect(schemas.get('create_coupon').parameters.properties.coupon.properties.currency.enum).toEqual(supported);
     expect(schemas.get('update_coupon').parameters.properties.updates.properties.currency.enum).toEqual(supported);
