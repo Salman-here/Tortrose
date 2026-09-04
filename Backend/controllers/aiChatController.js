@@ -536,7 +536,7 @@ const userTools = [
         type: 'object',
         properties: {
           code: { type: 'string' },
-          sellerId: { type: 'string', description: 'Optional seller ID to disambiguate a code used by multiple sellers' },
+          sellerId: { type: 'string', description: 'Optional seller account ID to disambiguate a code used by multiple sellers. A store ID is also accepted and resolved to its owning seller. Omit this unless disambiguation is needed.' },
           productId: { type: 'string', description: 'Optional product ID from the current cart to scope the coupon' },
         },
         required: ['code'],

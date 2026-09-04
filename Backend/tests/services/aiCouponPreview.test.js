@@ -199,6 +199,51 @@ describe('AI coupon preview checkout parity', () => {
     });
   });
 
+  test('resolves a public store id supplied as the seller selector', async () => {
+    installCart([cartItem({
+      _id: '64b0000000000000000000a4',
+      productId: PRODUCT_A,
+      seller: SELLER_A,
+      price: 100,
+    })]);
+    installCoupons([coupon({ _id: COUPON_A, seller: SELLER_A })]);
+    mockStoreFindOne.mockReturnValue(queryResult({ _id: STORE_A, seller: SELLER_A }));
+
+    const result = await executeToolCall('validate_coupon', {
+      code: 'SAVE10',
+      sellerId: STORE_A,
+    }, { _id: BUYER_ID, role: 'user', currency: 'USD' });
+
+    expect(result).toMatchObject({
+      success: true,
+      data: {
+        couponId: COUPON_A,
+        discount: 10,
+        applicableProductIds: [PRODUCT_A],
+      },
+    });
+    expect(mockStoreFindOne).toHaveBeenCalledWith({ _id: STORE_A });
+  });
+
+  test('still rejects an unrelated seller selector that is not a cart store', async () => {
+    installCart([cartItem({
+      _id: '64b0000000000000000000a4',
+      productId: PRODUCT_A,
+      seller: SELLER_A,
+      price: 100,
+    })]);
+    installCoupons([coupon({ _id: COUPON_A, seller: SELLER_A })]);
+    mockStoreFindOne.mockReturnValue(queryResult(null));
+
+    await expect(executeToolCall('validate_coupon', {
+      code: 'SAVE10',
+      sellerId: SELLER_B,
+    }, { _id: BUYER_ID, role: 'user', currency: 'USD' })).resolves.toMatchObject({
+      success: false,
+      code: 'COUPON_SELLER_NOT_IN_CART',
+    });
+  });
+
   test.each(['1', true, 0, 1.5])(
     'fails closed when the authenticated cart stores a corrupt quantity (%p)',
     async (qty) => {

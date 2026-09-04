@@ -3303,6 +3303,20 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
           };
         });
         const cartSellerIds = [...new Set(nativeItems.map(item => normalizeObjectIdString(item.seller)).filter(Boolean))];
+        let resolvedRequestedSellerId = requestedSellerId;
+        if (resolvedRequestedSellerId && !cartSellerIds.includes(resolvedRequestedSellerId)) {
+          // Product/search results naturally expose a store id, while coupons are
+          // owned by the seller account behind that store. Accept that public id
+          // as a selector, but only when it resolves to a seller already present
+          // in this authenticated cart. Unrelated or fabricated ids still fail.
+          const requestedStore = await Store.findOne({ _id: resolvedRequestedSellerId })
+            .select('seller')
+            .lean();
+          const storeSellerId = normalizeObjectIdString(requestedStore?.seller);
+          if (storeSellerId && cartSellerIds.includes(storeSellerId)) {
+            resolvedRequestedSellerId = storeSellerId;
+          }
+        }
         const selectedProduct = requestedProductId
           ? nativeItems.find(item => normalizeObjectIdString(item.productId) === requestedProductId)
           : null;
@@ -3311,8 +3325,8 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
         }
         const selectedSellerId = selectedProduct
           ? normalizeObjectIdString(selectedProduct.seller)
-          : requestedSellerId;
-        if (requestedSellerId && selectedProduct && normalizeObjectIdString(selectedProduct.seller) !== requestedSellerId) {
+          : resolvedRequestedSellerId;
+        if (resolvedRequestedSellerId && selectedProduct && normalizeObjectIdString(selectedProduct.seller) !== resolvedRequestedSellerId) {
           return { success: false, code: 'COUPON_CONTEXT_MISMATCH', error: 'The selected product does not belong to the selected seller.' };
         }
         if (selectedSellerId && !cartSellerIds.includes(selectedSellerId)) {
