@@ -96,6 +96,7 @@ const { normalizeSocialLinks } = require('./socialLinksService');
 const { nextShortOrderId } = require('./orderPublicIdService');
 const {
   plainOptions,
+  normalizeProductOptionGroups,
   validateProductSelection,
   summarizeSelectionRequest,
 } = require('./productSelectionService');
@@ -1230,6 +1231,47 @@ function aiOrderItemView(item, { sellerMoney = null, sellerItemIndex = -1 } = {}
 
 function parseQuantity(value, fallback = 1) {
   return parsePositiveSafeInteger(value, { fallback });
+}
+
+function parseAISelectedOptions(value) {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return { ...plainOptions(value) };
+  }
+  if (typeof value !== 'string' || !value.trim()) return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? { ...plainOptions(parsed) }
+      : {};
+  } catch (_) {
+    return {};
+  }
+}
+
+function textContainsSelectionToken(text, value) {
+  const escaped = String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  if (!escaped) return false;
+  return new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`, 'i').test(String(text || ''));
+}
+
+function resolveExplicitAISelectedOptions(product, selectedOptions, lastUserText = '') {
+  const resolved = parseAISelectedOptions(selectedOptions);
+  const existingKeys = new Set(Object.keys(resolved).map(key => String(key).trim().toLowerCase()));
+  const text = String(lastUserText || '');
+
+  for (const group of normalizeProductOptionGroups(product)) {
+    const groupKey = String(group.name || '').trim().toLowerCase();
+    if (!groupKey || existingKeys.has(groupKey) || !textContainsSelectionToken(text, group.name)) continue;
+    const explicitlyNamedValues = group.values.filter(value => textContainsSelectionToken(text, value));
+    // Recover only one unambiguous value explicitly named by the user. Never
+    // select a default or guess when multiple choices appear in the request.
+    if (explicitlyNamedValues.length === 1) {
+      resolved[group.name] = explicitlyNamedValues[0];
+      existingKeys.add(groupKey);
+    }
+  }
+
+  return Object.keys(resolved).length ? resolved : undefined;
 }
 
 function requireStoredAIOrderQuantity(value) {
@@ -2408,7 +2450,14 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
         if (availableStock <= 0) return { success: false, error: `"${product.name}" is out of stock.` };
         if (quantity > availableStock) return { success: false, error: `Only ${availableStock} unit${availableStock !== 1 ? 's' : ''} of "${product.name}" are available.` };
 
-        const selection = validateProductSelection(product, { selectedColor, selectedOptions });
+        const selection = validateProductSelection(product, {
+          selectedColor,
+          selectedOptions: resolveExplicitAISelectedOptions(
+            product,
+            selectedOptions,
+            args._lastUserText,
+          ),
+        });
         if (!selection.ok) {
           return {
             success: false,
@@ -2748,7 +2797,14 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
           if (!quantity) return { success: false, error: 'Please provide a valid quantity of at least 1.' };
           if (quantity > availableStock) return { success: false, error: `Only ${availableStock} unit${availableStock !== 1 ? 's' : ''} of "${product.name}" are available.` };
 
-          const selection = validateProductSelection(product, { selectedColor, selectedOptions });
+          const selection = validateProductSelection(product, {
+            selectedColor,
+            selectedOptions: resolveExplicitAISelectedOptions(
+              product,
+              selectedOptions,
+              args._lastUserText,
+            ),
+          });
           if (!selection.ok) {
             return {
               success: false,
@@ -7090,6 +7146,8 @@ module.exports = {
     requireAIDerivedMoney,
     parseMoneyInput,
     parseQuantity,
+    parseAISelectedOptions,
+    resolveExplicitAISelectedOptions,
     requireStoredAIShippingCurrency,
     requireStoredAIShippingMethod,
     requireStoredAITaxConfig,

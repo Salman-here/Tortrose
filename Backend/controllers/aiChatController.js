@@ -617,6 +617,7 @@ const userTools = [
           selectedOptions: {
             type: 'object',
             description: 'Required product options, e.g. {"Size":"M","Color":"Red"}. Ask the user before choosing options.',
+            additionalProperties: { type: 'string' },
           },
         },
         required: ['productId'],
@@ -680,6 +681,7 @@ const userTools = [
           selectedOptions: {
             type: 'object',
             description: 'Required product options for direct order, e.g. {"Size":"M","Color":"Red"}.',
+            additionalProperties: { type: 'string' },
           },
           shippingInfo: {
             type: 'object',

@@ -77,6 +77,35 @@ describe('aiActionExecutor product currency conversion notice', () => {
   });
 });
 
+describe('aiActionExecutor explicit product-option recovery', () => {
+  const product = {
+    optionGroups: [{ name: 'Material', values: ['Walnut', 'Oak'] }],
+  };
+
+  test('accepts a nested JSON object or a JSON-encoded option map', () => {
+    expect(__private.resolveExplicitAISelectedOptions(product, { Material: 'Oak' }, ''))
+      .toEqual({ Material: 'Oak' });
+    expect(__private.resolveExplicitAISelectedOptions(product, '{"Material":"Walnut"}', ''))
+      .toEqual({ Material: 'Walnut' });
+  });
+
+  test('recovers one option explicitly named in the latest user request', () => {
+    expect(__private.resolveExplicitAISelectedOptions(
+      product,
+      undefined,
+      'Add it with Material set to Oak.',
+    )).toEqual({ Material: 'Oak' });
+  });
+
+  test('never guesses when the request names multiple available values', () => {
+    expect(__private.resolveExplicitAISelectedOptions(
+      product,
+      undefined,
+      'Which Material should I choose, Walnut or Oak?',
+    )).toBeUndefined();
+  });
+});
+
 describe('aiActionExecutor stored money integrity', () => {
   test('currency-less AI order products remain canonical USD and corrupt metadata fails closed', () => {
     expect(__private.stableAIProductCurrency({ price: 10 })).toBe('USD');
