@@ -432,6 +432,61 @@ describe('AI seller-native money writes', () => {
     ]));
   });
 
+  test('AI can deactivate a paid shipping method and reset its unused cost to zero', async () => {
+    const seller = await createPkrSeller();
+    await ShippingMethod.create({
+      seller: seller._id,
+      methods: [
+        {
+          type: 'standard',
+          cost: 300,
+          currency: 'PKR',
+          costCurrency: 'PKR',
+          costInputAmount: 300,
+          deliveryDays: 3,
+          isActive: true,
+        },
+        {
+          type: 'fast',
+          cost: 500,
+          currency: 'PKR',
+          costCurrency: 'PKR',
+          costInputAmount: 500,
+          deliveryDays: 1,
+          isActive: true,
+        },
+      ],
+    });
+
+    const deactivate = await executeToolCall('update_shipping', {
+      method: 'fast',
+      cost: 0,
+      currency: 'PKR',
+      deliveryDays: 2,
+      isActive: false,
+    }, seller);
+
+    expect(deactivate.success).toBe(true);
+    await expect(ShippingMethod.findOne({ seller: seller._id }).lean()).resolves.toMatchObject({
+      methods: expect.arrayContaining([expect.objectContaining({
+        type: 'fast',
+        cost: 0,
+        costInputAmount: 0,
+        deliveryDays: 2,
+        isActive: false,
+      })]),
+    });
+
+    const invalidReactivate = await executeToolCall('update_shipping', {
+      method: 'fast',
+      isActive: true,
+    }, seller);
+    expect(invalidReactivate).toMatchObject({
+      success: false,
+      error: expect.stringContaining('active paid shipping method'),
+    });
+  });
+
   test('AI shipping preserves an explicit supported currency different from store currency', async () => {
     const seller = await createPkrSeller();
 

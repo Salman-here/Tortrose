@@ -5051,9 +5051,6 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
         if (method === 'free' && shippingCost != null && shippingCost !== 0) {
           return { success: false, error: 'Free shipping must have a cost of 0.' };
         }
-        if (method !== 'free' && shippingCost !== null && shippingCost <= 0) {
-          return { success: false, error: 'Paid shipping must cost at least 0.01.' };
-        }
         if (deliveryDays != null) {
           const numericDays = parsePositiveSafeInteger(deliveryDays);
           if (numericDays === null) {
@@ -5091,11 +5088,16 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
         ) {
           return { success: false, error: 'Provide the shipping cost together with its new currency.' };
         }
-        if (method !== 'free' && !existing && !(shippingCost > 0)) {
-          return { success: false, error: 'A paid shipping method requires a cost greater than 0.' };
-        }
-        if (method !== 'free' && shippingCost != null && shippingCost <= 0) {
-          return { success: false, error: 'A paid shipping method requires a cost of at least 0.01.' };
+        const effectiveActive = isActive != null
+          ? isActive
+          : existing
+            ? existing.isActive !== false
+            : true;
+        const effectiveCost = shippingCost != null
+          ? shippingCost
+          : existingStoredMethod?.cost;
+        if (method !== 'free' && effectiveActive && !(effectiveCost > 0)) {
+          return { success: false, error: 'An active paid shipping method requires a cost of at least 0.01.' };
         }
         if (existing) {
           if (method === 'free') {
@@ -5112,15 +5114,15 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
           if (deliveryDays != null) existing.deliveryDays = deliveryDays;
           if (isActive != null) existing.isActive = isActive;
         } else {
-          if (method !== 'free' && shippingCost === null) {
-            return { success: false, error: 'Provide a positive cost for paid shipping.' };
+          if (method !== 'free' && shippingCost === null && effectiveActive) {
+            return { success: false, error: 'Provide a positive cost for active paid shipping.' };
           }
           shipping.methods.push({
             type: method,
-            cost: method === 'free' ? 0 : shippingCost,
+            cost: method === 'free' ? 0 : (shippingCost ?? 0),
             currency: shippingCurrency,
             costCurrency: shippingCurrency,
-            costInputAmount: method === 'free' ? 0 : shippingCost,
+            costInputAmount: method === 'free' ? 0 : (shippingCost ?? 0),
             deliveryDays: deliveryDays ?? 3,
             isActive: isActive !== false,
           });
