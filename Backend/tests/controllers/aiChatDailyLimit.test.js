@@ -272,6 +272,16 @@ describe('AI chat controller daily limit enforcement', () => {
       tool: 'update_shipping',
       result: { success: true },
     }])).toBe(false);
+    expect(__private.isUnbackedMutationClaim(
+      'Your store description has been updated.',
+      'Restore my store description now.',
+      [],
+    )).toBe(true);
+    expect(__private.isUnbackedMutationClaim(
+      'Your coupon is now active.',
+      'Activate my coupon.',
+      [],
+    )).toBe(true);
     expect(__private.isUnbackedMutationClaim('You can restore it from Shipping.', request, [])).toBe(false);
   });
 

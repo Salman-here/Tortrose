@@ -1652,8 +1652,13 @@ function durableMutationTransportFailure(toolName, result) {
   };
 }
 
-const AI_MUTATION_REQUEST_RE = /\b(?:add|create|update|change|edit|delete|remove|cancel|submit|place|feature|unfeature|restore|activate|deactivate|mark|clear|rename|apply|set|save|increase|decrease)\b/i;
-const AI_COMPLETED_MUTATION_CLAIM_RE = /(?:\b(?:i(?:'ve| have)|we(?:'ve| have))\b[^\n.!?]{0,120}\b(?:added|created|updated|changed|edited|deleted|removed|cancelled|canceled|submitted|placed|featured|unfeatured|restored|activated|deactivated|marked|cleared|renamed|applied|saved|set|increased|decreased)\b|^\s*(?:done|completed|successfully)\b)/i;
+const AI_MUTATION_REQUEST_RE = /\b(?:add|create|update|change|edit|delete|remove|cancel|submit|place|feature|unfeature|restore|activate|deactivate|enable|disable|mark|clear|rename|apply|set|save|increase|decrease|make|turn)\b/i;
+const AI_COMPLETED_MUTATION_CLAIM_RE = new RegExp([
+  String.raw`\b(?:i(?:'ve| have)|we(?:'ve| have))\b[^\n.!?]{0,120}\b(?:added|created|updated|changed|edited|deleted|removed|cancelled|canceled|submitted|placed|featured|unfeatured|restored|activated|deactivated|enabled|disabled|marked|cleared|renamed|applied|saved|set|increased|decreased)\b`,
+  String.raw`\b(?:your|the|this|it)\b[^\n.!?]{0,120}\b(?:has|have)\s+been\s+(?:successfully\s+)?(?:added|created|updated|changed|edited|deleted|removed|cancelled|canceled|submitted|placed|featured|unfeatured|restored|activated|deactivated|enabled|disabled|marked|cleared|renamed|applied|saved|set|increased|decreased)\b`,
+  String.raw`\b(?:your|the|this|it)\b[^\n.!?]{0,120}\b(?:is|are)\s+now\s+(?:active|inactive|featured|unfeatured|updated|changed|deleted|removed|cancelled|canceled|submitted|placed|enabled|disabled|cleared|saved)\b`,
+  String.raw`^\s*(?:done|completed|successfully)\b`,
+].join('|'), 'i');
 const AI_MUTATION_INTEGRITY_RETRY = [
   'Integrity check: your previous draft claimed that a durable account or store change was completed,',
   'but this turn has no successful mutation tool result. Do not repeat or paraphrase that unsupported claim.',
