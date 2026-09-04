@@ -332,6 +332,38 @@ describe('AI chat controller daily limit enforcement', () => {
     )).toEqual([]);
   });
 
+  it('requires every explicitly listed live read instead of allowing an answer from memory', () => {
+    const tools = __private.getTools('user');
+    const request = [
+      'Call exactly these five live tools and report each result:',
+      'get_my_profile, get_addresses, get_notifications, get_my_orders, and get_my_complaints.',
+      'Do not infer or skip any.',
+    ].join(' ');
+    const requested = __private.explicitlyRequestedAITools(request, tools);
+
+    expect(requested).toEqual(expect.arrayContaining([
+      'get_my_profile',
+      'get_addresses',
+      'get_notifications',
+      'get_my_orders',
+      'get_my_complaints',
+    ]));
+    expect(requested).toHaveLength(5);
+    expect(__private.missingExplicitAITools(request, tools, [{
+      tool: 'get_my_profile',
+      result: { success: true },
+    }])).toEqual(expect.arrayContaining([
+      'get_addresses',
+      'get_notifications',
+      'get_my_orders',
+      'get_my_complaints',
+    ]));
+    expect(__private.explicitlyRequestedAITools(
+      'What happens if I use update_profile?',
+      tools,
+    )).toEqual([]);
+  });
+
   it('normalizes AI navigation to real role-scoped routes', () => {
     expect(__private.normalizeAIClientRoute('/seller-dashboard/products', 'seller'))
       .toBe('/seller-dashboard/product-management');

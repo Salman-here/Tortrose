@@ -1740,26 +1740,40 @@ function isUnbackedMutationClaim(text, lastUserText, toolResults = []) {
   return !hasSuccessfulDurableMutation(toolResults);
 }
 
-function explicitlyRequestedDurableMutationTools(lastUserText, availableTools = []) {
+function explicitlyRequestedAITools(lastUserText, availableTools = []) {
   const text = String(lastUserText || '');
   if (!text.trim()) return [];
+  if (!/\b(?:invoke|call|execute|run|perform|use|using)\b/i.test(text)) return [];
+  if (
+    /\b(?:what (?:happens|would happen)|how (?:does|would)|can i|could i|should i)\b/i.test(text)
+    && !/\b(?:now|i confirm|go ahead|do it|apply it)\b/i.test(text)
+  ) return [];
 
   return [...new Set(availableTools
     .map(tool => tool?.function?.name)
-    .filter(name => name && isDurableMutatingAITool?.(name))
+    .filter(Boolean)
     .filter((name) => {
       const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const instruction = new RegExp(
-        `\\b(?:invoke|call|execute|run|perform|use|using)\\s+(?:the\\s+)?(?:real\\s+)?${escapedName}(?:\\s+tool)?\\b`,
-        'ig'
+      const mentioned = new RegExp(`\\b${escapedName}\\b`, 'i');
+      if (!mentioned.test(text)) return false;
+      const negated = new RegExp(
+        `\\b(?:do\\s+not|don't|dont|never|without)\\b[^\\n.!?]{0,48}\\b${escapedName}\\b`,
+        'i'
       );
-      let match;
-      while ((match = instruction.exec(text)) !== null) {
-        const prefix = text.slice(Math.max(0, match.index - 24), match.index);
-        if (!/(?:do\s+not|don't|dont|never|without)\s*$/i.test(prefix)) return true;
-      }
-      return false;
+      return !negated.test(text);
     }))];
+}
+
+function explicitlyRequestedDurableMutationTools(lastUserText, availableTools = []) {
+  return explicitlyRequestedAITools(lastUserText, availableTools)
+    .filter(name => isDurableMutatingAITool?.(name));
+}
+
+function missingExplicitAITools(lastUserText, availableTools = [], toolResults = []) {
+  const requested = explicitlyRequestedAITools(lastUserText, availableTools);
+  return requested.filter(name => !toolResults.some(entry => (
+    entry?.tool === name && entry?.result?.success === true
+  )));
 }
 
 function missingExplicitDurableMutationTools(lastUserText, availableTools = [], toolResults = []) {
@@ -1782,13 +1796,27 @@ function failedMutationMessage(toolResults = []) {
 
 function addMutationIntegrityRetry(conversationMessages, draftText, missingTools = []) {
   if (draftText) conversationMessages.push({ role: 'assistant', content: draftText });
-  const explicitToolInstruction = missingTools.length
-    ? ` The user explicitly requested these mutation tools in this turn and none has succeeded yet: ${missingTools.join(', ')}.`
-    : '';
+  const integrityInstruction = missingTools.length
+    ? [
+        'Integrity check: the user explicitly requested these tools in this turn, but they do not have successful current-turn results:',
+        `${missingTools.join(', ')}.`,
+        'Do not answer them from memory, context, or inference.',
+        'Call every missing tool now and report only its actual result.',
+      ].join(' ')
+    : AI_MUTATION_INTEGRITY_RETRY;
   conversationMessages.push({
     role: 'system',
-    content: `${AI_MUTATION_INTEGRITY_RETRY}${explicitToolInstruction}`,
+    content: integrityInstruction,
   });
+}
+
+function failedExplicitToolMessage(toolResults = [], missingTools = []) {
+  const latestFailure = [...toolResults].reverse().find(entry => (
+    missingTools.includes(entry?.tool) && entry?.result?.success !== true
+  ));
+  const exactError = latestFailure?.result?.error || latestFailure?.result?.message;
+  if (exactError) return `I could not complete ${latestFailure.tool}: ${exactError}`;
+  return `I could not execute the requested tool${missingTools.length === 1 ? '' : 's'} (${missingTools.join(', ')}), so I cannot verify the result. Please try again.`;
 }
 
 const AI_COMMON_ROUTES = new Set([
@@ -2258,10 +2286,14 @@ async function processAIChatMessage(userObj, incomingMessages, options = {}) {
       const draftText = sanitizeAssistantVisibleText(
         typeof message.content === 'string' ? message.content : ''
       );
-      const missingExplicitTools = missingExplicitDurableMutationTools(
+      const completedToolResults = [
+        ...toolResults,
+        ...clientActions.map(action => ({ tool: action.action, result: { success: true } })),
+      ];
+      const missingExplicitTools = missingExplicitAITools(
         lastUserText,
         tools,
-        toolResults
+        completedToolResults
       );
       if (
         missingExplicitTools.length > 0
@@ -2271,7 +2303,12 @@ async function processAIChatMessage(userObj, incomingMessages, options = {}) {
           addMutationIntegrityRetry(conversationMessages, draftText, missingExplicitTools);
           continue;
         }
-        lastMessage = { ...message, content: failedMutationMessage(toolResults) };
+        lastMessage = {
+          ...message,
+          content: missingExplicitTools.length
+            ? failedExplicitToolMessage(completedToolResults, missingExplicitTools)
+            : failedMutationMessage(toolResults),
+        };
       }
       break;
     }
@@ -2613,9 +2650,10 @@ exports.streamChat = async (req, res) => {
       if (toolCalls.length === 0) {
         let visibleText = sanitizeAssistantVisibleText(assistantContent);
         const streamToolResults = turnToolEvents
-          .filter(event => event.type === 'tool_result')
-          .map(event => ({ tool: event.tool, result: event.result }));
-        const missingExplicitTools = missingExplicitDurableMutationTools(
+          .map(event => event.type === 'tool_result'
+            ? { tool: event.tool, result: event.result }
+            : { tool: event.action, result: { success: true } });
+        const missingExplicitTools = missingExplicitAITools(
           lastUserText,
           tools,
           streamToolResults
@@ -2628,7 +2666,9 @@ exports.streamChat = async (req, res) => {
             addMutationIntegrityRetry(conversationMessages, visibleText, missingExplicitTools);
             continue;
           }
-          visibleText = failedMutationMessage(streamToolResults);
+          visibleText = missingExplicitTools.length
+            ? failedExplicitToolMessage(streamToolResults, missingExplicitTools)
+            : failedMutationMessage(streamToolResults);
         }
         if (visibleText && !closed()) {
           res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: visibleText } }] })}\n\n`);
@@ -2871,10 +2911,14 @@ exports.chatOnce = async (req, res) => {
         const draftText = sanitizeAssistantVisibleText(
           typeof message.content === 'string' ? message.content : ''
         );
-        const missingExplicitTools = missingExplicitDurableMutationTools(
+        const completedToolResults = [
+          ...toolResults,
+          ...clientActions.map(action => ({ tool: action.action, result: { success: true } })),
+        ];
+        const missingExplicitTools = missingExplicitAITools(
           lastUserText,
           tools,
-          toolResults
+          completedToolResults
         );
         if (
           missingExplicitTools.length > 0
@@ -2884,7 +2928,12 @@ exports.chatOnce = async (req, res) => {
             addMutationIntegrityRetry(conversationMessages, draftText, missingExplicitTools);
             continue;
           }
-          lastMessage = { ...message, content: failedMutationMessage(toolResults) };
+          lastMessage = {
+            ...message,
+            content: missingExplicitTools.length
+              ? failedExplicitToolMessage(completedToolResults, missingExplicitTools)
+              : failedMutationMessage(toolResults),
+          };
         }
         break;
       }
@@ -3324,9 +3373,12 @@ exports.__private = {
   durableMutationTransportFailure,
   hasSuccessfulDurableMutation,
   isUnbackedMutationClaim,
+  explicitlyRequestedAITools,
   explicitlyRequestedDurableMutationTools,
+  missingExplicitAITools,
   missingExplicitDurableMutationTools,
   failedMutationMessage,
+  failedExplicitToolMessage,
   normalizeAIClientRoute,
   normalizeAIClientActionArgs,
   normalizeAIChatToolArgs,
