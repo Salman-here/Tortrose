@@ -401,6 +401,81 @@ describe('AI chat controller daily limit enforcement', () => {
     expect(grounded[1].content).toContain('Do not recap');
   });
 
+  it('uses an authoritative successful tool receipt when the model summary is empty', () => {
+    const placed = {
+      tool: 'place_order',
+      result: {
+        success: true,
+        message: 'Order placed successfully! Order #ORD-1788546075206 — Rs1,990.00 PKR — Cash on Delivery',
+      },
+    };
+
+    expect(__private.groundedAssistantResponseText('', [placed])).toBe(placed.result.message);
+    expect(__private.groundedAssistantResponseText('The order is confirmed.', [placed]))
+      .toBe('The order is confirmed.');
+    expect(__private.groundedAssistantResponseText("Sorry, I couldn't process that.", [placed]))
+      .toBe(placed.result.message);
+  });
+
+  it('does not turn an empty failed tool receipt into a success claim', () => {
+    expect(__private.groundedAssistantResponseText('', [{
+      tool: 'place_order',
+      result: { success: false, error: 'The delivery phone number is invalid.' },
+    }])).toBe('The delivery phone number is invalid.');
+  });
+
+  it('returns the successful mobile mutation receipt when the final model message is empty', async () => {
+    const originalFetch = global.fetch;
+    const fetchMock = jest.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [{
+            message: {
+              role: 'assistant',
+              content: '',
+              tool_calls: [{
+                id: 'address-add-1',
+                type: 'function',
+                function: {
+                  name: 'add_address',
+                  arguments: JSON.stringify({
+                    address: { fullName: 'Buyer QA', address: '1 Test Road', city: 'Islamabad' },
+                  }),
+                },
+              }],
+            },
+          }],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ choices: [{ message: { role: 'assistant', content: '' } }] }),
+      });
+    global.fetch = fetchMock;
+    executeToolCall.mockResolvedValue({ success: true, message: 'New address "Home" added successfully!' });
+    const res = response();
+
+    try {
+      await chatOnce({
+        body: { source: 'mobile', messages: [{ role: 'user', content: 'Add this address now.' }] },
+        headers: { 'idempotency-key': 'mobile-empty-summary-key' },
+        user: { role: 'user' },
+        aiChatDailyUsage: { allowed: true, used: 0, limit: 20, remaining: 19, role: 'user' },
+      }, res);
+    } finally {
+      global.fetch = originalFetch;
+    }
+
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      message: expect.objectContaining({ content: 'New address "Home" added successfully!' }),
+      toolResults: [expect.objectContaining({
+        tool: 'add_address',
+        result: expect.objectContaining({ success: true }),
+      })],
+    }));
+  });
+
   it('forces every explicitly requested mobile tool and only summarizes after completion', async () => {
     const originalFetch = global.fetch;
     const fetchMock = jest.fn()

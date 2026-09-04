@@ -1456,6 +1456,48 @@ function sanitizeAssistantVisibleText(text = '') {
   return splitInternalAssistantContent(text).visible;
 }
 
+function groundedAssistantResponseText(responseText = '', completedToolResults = []) {
+  const visibleText = sanitizeAssistantVisibleText(responseText);
+  const results = (Array.isArray(completedToolResults) ? completedToolResults : [])
+    .map(entry => ({
+      tool: entry?.tool || entry?.action || '',
+      result: entry?.result || (entry?.action ? { success: true } : null),
+    }))
+    .filter(entry => entry.result);
+  const successful = results.filter(({ result }) => result?.success === true);
+  const failed = results.filter(({ result }) => result?.success !== true);
+  const contradictsSuccessfulReceipts = (
+    successful.length > 0
+    && failed.length === 0
+    && /\b(?:could(?:n't| not)|can(?:not|'t)|unable|failed)\b[^\n.!?]{0,80}\b(?:process|complete|perform|place|update|add|remove|create|cancel|submit|do)\b/i.test(visibleText)
+  );
+  if (visibleText && !contradictsSuccessfulReceipts) return visibleText;
+  if (results.length === 0) return visibleText;
+
+  // A tool receipt is authoritative even when the model's final prose is
+  // empty. Prefer the exact executor message so every channel reports what
+  // really happened rather than falling back to a contradictory generic
+  // failure message.
+  const receiptMessages = results
+    .map(({ result }) => result?.message || result?.error || '')
+    .map(message => sanitizeAssistantVisibleText(String(message || '')).trim())
+    .filter(Boolean)
+    .filter((message, index, all) => all.indexOf(message) === index);
+  if (receiptMessages.length > 0) return receiptMessages.join('\n\n');
+
+  if (successful.length > 0 && failed.length === 0) {
+    return successful.length === 1
+      ? 'The requested live action completed successfully.'
+      : 'The requested live actions completed successfully.';
+  }
+  if (failed.length > 0 && successful.length === 0) {
+    return failed.length === 1
+      ? 'I could not complete the requested live action.'
+      : 'I could not complete the requested live actions.';
+  }
+  return 'I completed the successful actions above, but one or more requested actions could not be completed.';
+}
+
 function buildSavedAssistantMessage(responseText = '', toolEvents = []) {
   const content = sanitizeAssistantVisibleText(responseText);
   const events = Array.isArray(toolEvents) ? toolEvents.filter(Boolean) : [];
@@ -2503,8 +2545,12 @@ async function processAIChatMessage(userObj, incomingMessages, options = {}) {
     }
   }
 
-  const responseText = sanitizeAssistantVisibleText(
-    typeof lastMessage?.content === 'string' ? lastMessage.content : ''
+  const responseText = groundedAssistantResponseText(
+    typeof lastMessage?.content === 'string' ? lastMessage.content : '',
+    [
+      ...toolResults,
+      ...clientActions.map(action => ({ action: action.action })),
+    ],
   );
 
   // Save to conversation history — ONLY the NEW messages from this interaction
@@ -2754,6 +2800,7 @@ exports.streamChat = async (req, res) => {
             ? failedExplicitToolMessage(streamToolResults, missingExplicitTools)
             : failedMutationMessage(streamToolResults);
         }
+        visibleText = groundedAssistantResponseText(visibleText, streamToolResults);
         if (visibleText && !closed()) {
           res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: visibleText } }] })}\n\n`);
         }
@@ -3083,8 +3130,12 @@ exports.chatOnce = async (req, res) => {
     let savedConvoId = null;
     if (userId) {
       try {
-        const responseText = sanitizeAssistantVisibleText(
-          typeof lastMessage?.content === 'string' ? lastMessage.content : ''
+        const responseText = groundedAssistantResponseText(
+          typeof lastMessage?.content === 'string' ? lastMessage.content : '',
+          [
+            ...toolResults,
+            ...clientActions.map(action => ({ action: action.action })),
+          ],
         );
         const lastUserMsg = cleanMessages.filter(m => m.role === 'user').pop();
         const newMessages = [];
@@ -3109,12 +3160,16 @@ exports.chatOnce = async (req, res) => {
       } catch (e) { /* non-fatal */ }
     }
 
-    const responseText = sanitizeAssistantVisibleText(
-      typeof lastMessage?.content === 'string' ? lastMessage.content : ''
+    const responseText = groundedAssistantResponseText(
+      typeof lastMessage?.content === 'string' ? lastMessage.content : '',
+      [
+        ...toolResults,
+        ...clientActions.map(action => ({ action: action.action })),
+      ],
     );
     const visibleMessage = lastMessage
       ? { ...lastMessage, content: responseText }
-      : lastMessage;
+      : (responseText ? { role: 'assistant', content: responseText } : lastMessage);
 
     return res.json({
       message: visibleMessage,
@@ -3489,6 +3544,7 @@ exports.__private = {
   normalizeAIClientRoute,
   normalizeAIClientActionArgs,
   normalizeAIChatToolArgs,
+  groundedAssistantResponseText,
   buildSavedAssistantMessage,
   saveToConversation,
 };
