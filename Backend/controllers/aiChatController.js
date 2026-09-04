@@ -25,6 +25,7 @@ const {
   isClientSideTool,
   storeChangeLimits,
   getDurableAIActionIntentKey,
+  isDurableMutatingAITool,
 } = require('../services/aiActionExecutor');
 const { publicProductFilter } = require('../services/productModerationService');
 const { processChatAttachments, appendAttachmentContextToMessages } = require('../services/aiAttachmentService');
@@ -1651,6 +1652,44 @@ function durableMutationTransportFailure(toolName, result) {
   };
 }
 
+const AI_MUTATION_REQUEST_RE = /\b(?:add|create|update|change|edit|delete|remove|cancel|submit|place|feature|unfeature|restore|activate|deactivate|mark|clear|rename|apply|set|save|increase|decrease)\b/i;
+const AI_COMPLETED_MUTATION_CLAIM_RE = /(?:\b(?:i(?:'ve| have)|we(?:'ve| have))\b[^\n.!?]{0,120}\b(?:added|created|updated|changed|edited|deleted|removed|cancelled|canceled|submitted|placed|featured|unfeatured|restored|activated|deactivated|marked|cleared|renamed|applied|saved|set|increased|decreased)\b|^\s*(?:done|completed|successfully)\b)/i;
+const AI_MUTATION_INTEGRITY_RETRY = [
+  'Integrity check: your previous draft claimed that a durable account or store change was completed,',
+  'but this turn has no successful mutation tool result. Do not repeat or paraphrase that unsupported claim.',
+  'Call the matching mutation tool now if the user has supplied everything required and authorized the action.',
+  'Otherwise, state exactly what is missing. You may claim completion only after a success: true tool result in this turn.',
+].join(' ');
+
+function hasSuccessfulDurableMutation(toolResults = []) {
+  return toolResults.some(entry => (
+    isDurableMutatingAITool?.(entry?.tool)
+    && entry?.result?.success === true
+  ));
+}
+
+function isUnbackedMutationClaim(text, lastUserText, toolResults = []) {
+  if (!AI_MUTATION_REQUEST_RE.test(String(lastUserText || ''))) return false;
+  if (!AI_COMPLETED_MUTATION_CLAIM_RE.test(String(text || ''))) return false;
+  return !hasSuccessfulDurableMutation(toolResults);
+}
+
+function failedMutationMessage(toolResults = []) {
+  const latestFailure = [...toolResults].reverse().find(entry => (
+    isDurableMutatingAITool?.(entry?.tool)
+    && entry?.result?.success !== true
+  ));
+  const exactError = latestFailure?.result?.error || latestFailure?.result?.message;
+  return exactError
+    ? `I could not complete that change: ${exactError}`
+    : 'I could not verify that change, so I have not claimed it was applied. Please try the request again.';
+}
+
+function addMutationIntegrityRetry(conversationMessages, draftText) {
+  if (draftText) conversationMessages.push({ role: 'assistant', content: draftText });
+  conversationMessages.push({ role: 'system', content: AI_MUTATION_INTEGRITY_RETRY });
+}
+
 function createDurableMutationSlotAllocator() {
   const slotByIntent = new Map();
   let nextSlot = 0;
@@ -2032,7 +2071,19 @@ async function processAIChatMessage(userObj, incomingMessages, options = {}) {
       );
     }
 
-    if (!message.tool_calls?.length) break;
+    if (!message.tool_calls?.length) {
+      const draftText = sanitizeAssistantVisibleText(
+        typeof message.content === 'string' ? message.content : ''
+      );
+      if (isUnbackedMutationClaim(draftText, lastUserText, toolResults)) {
+        if (!isLast) {
+          addMutationIntegrityRetry(conversationMessages, draftText);
+          continue;
+        }
+        lastMessage = { ...message, content: failedMutationMessage(toolResults) };
+      }
+      break;
+    }
 
     // Add assistant message and execute tools
     conversationMessages.push(message);
@@ -2343,22 +2394,33 @@ exports.streamChat = async (req, res) => {
         break;
       }
 
-      // Consume the stream: forward text to client in real-time, accumulate tool calls
+      // Buffer each model round until we know whether it contains tool calls.
+      // This prevents a premature "I changed it" draft from reaching the UI
+      // before a matching durable mutation succeeds.
       const { assistantContent, toolCalls } = await consumeStream(upstreamResp, {
-        onText: (chunk) => {
-          // Stream text chunks to client in real-time (typing effect)
-          if (!closed()) {
-            res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: chunk } }] })}\n\n`);
-          }
-        },
+        onText: () => {},
         role: effectiveRole,
       });
 
       // If no tool calls, the AI gave a direct text answer — we're done
       if (toolCalls.length === 0) {
+        let visibleText = sanitizeAssistantVisibleText(assistantContent);
+        const streamToolResults = turnToolEvents
+          .filter(event => event.type === 'tool_result')
+          .map(event => ({ tool: event.tool, result: event.result }));
+        if (isUnbackedMutationClaim(visibleText, lastUserText, streamToolResults)) {
+          if (!isLastChance) {
+            addMutationIntegrityRetry(conversationMessages, visibleText);
+            continue;
+          }
+          visibleText = failedMutationMessage(streamToolResults);
+        }
+        if (visibleText && !closed()) {
+          res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: visibleText } }] })}\n\n`);
+        }
         finalTextSent = true;
         // Add assistant message to conversation for history
-        conversationMessages.push({ role: 'assistant', content: sanitizeAssistantVisibleText(assistantContent) });
+        conversationMessages.push({ role: 'assistant', content: visibleText });
         break;
       }
 
@@ -2587,8 +2649,21 @@ exports.chatOnce = async (req, res) => {
         );
       }
 
-      // If no tool calls, done
-      if (!message.tool_calls?.length) break;
+      // If no tool calls, reject any unsupported durable-mutation success
+      // claim and give the model one more chance to execute the real action.
+      if (!message.tool_calls?.length) {
+        const draftText = sanitizeAssistantVisibleText(
+          typeof message.content === 'string' ? message.content : ''
+        );
+        if (isUnbackedMutationClaim(draftText, lastUserText, toolResults)) {
+          if (!isLast) {
+            addMutationIntegrityRetry(conversationMessages, draftText);
+            continue;
+          }
+          lastMessage = { ...message, content: failedMutationMessage(toolResults) };
+        }
+        break;
+      }
 
       // Add assistant message and execute tools
       conversationMessages.push(message);
@@ -3026,5 +3101,8 @@ exports.__private = {
   formatContextBlock,
   createDurableMutationSlotAllocator,
   durableMutationTransportFailure,
+  hasSuccessfulDurableMutation,
+  isUnbackedMutationClaim,
+  failedMutationMessage,
   saveToConversation,
 };

@@ -9,6 +9,12 @@ jest.mock('../../services/aiActionExecutor', () => ({
       ? `${toolName}:${JSON.stringify(args || {})}`
       : null
   )),
+  isDurableMutatingAITool: jest.fn(toolName => [
+    'add_product',
+    'toggle_coupon',
+    'bulk_price_update',
+    'update_shipping',
+  ].includes(toolName)),
 }));
 jest.mock('../../services/aiAttachmentService', () => ({
   processChatAttachments: jest.fn(),
@@ -181,6 +187,92 @@ describe('AI chat controller daily limit enforcement', () => {
       }),
       expect.objectContaining({ role: 'guest', currency: 'PKR' }),
     );
+  });
+
+  it('retries an unsupported mutation success claim and executes the real tool', async () => {
+    const originalFetch = global.fetch;
+    const fetchMock = jest.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [{
+            message: {
+              role: 'assistant',
+              content: "I've restored your Fast shipping method.",
+            },
+          }],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [{
+            message: {
+              role: 'assistant',
+              content: '',
+              tool_calls: [{
+                id: 'shipping-1',
+                type: 'function',
+                function: {
+                  name: 'update_shipping',
+                  arguments: JSON.stringify({
+                    method: 'fast',
+                    cost: 0,
+                    currency: 'PKR',
+                    deliveryDays: 2,
+                    isActive: false,
+                  }),
+                },
+              }],
+            },
+          }],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { role: 'assistant', content: 'Fast shipping is now inactive.' } }],
+        }),
+      });
+    global.fetch = fetchMock;
+    executeToolCall.mockResolvedValue({ success: true, message: 'Shipping updated.' });
+
+    try {
+      const result = await processAIChatMessage(
+        { role: 'seller' },
+        [{ role: 'user', content: 'Restore Fast shipping to inactive with 0 PKR and 2 days.' }],
+        { mode: 'whatsapp', currency: 'PKR', requestKey: 'mutation-integrity-retry' },
+      );
+
+      expect(result.responseText).toBe('Fast shipping is now inactive.');
+      expect(result.toolResults).toEqual([
+        expect.objectContaining({
+          tool: 'update_shipping',
+          result: expect.objectContaining({ success: true }),
+        }),
+      ]);
+    } finally {
+      global.fetch = originalFetch;
+    }
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(executeToolCall).toHaveBeenCalledWith(
+      'update_shipping',
+      expect.objectContaining({ method: 'fast', cost: 0, isActive: false }),
+      expect.objectContaining({ role: 'seller', currency: 'PKR' }),
+    );
+  });
+
+  it('detects a claimed mutation only when no successful durable result exists', () => {
+    const text = "I've restored your Fast shipping method.";
+    const request = 'Restore Fast shipping now.';
+
+    expect(__private.isUnbackedMutationClaim(text, request, [])).toBe(true);
+    expect(__private.isUnbackedMutationClaim(text, request, [{
+      tool: 'update_shipping',
+      result: { success: true },
+    }])).toBe(false);
+    expect(__private.isUnbackedMutationClaim('You can restore it from Shipping.', request, [])).toBe(false);
   });
 
   it('assigns stable mutation slots across read reordering and repeated identical calls', () => {
@@ -423,6 +515,77 @@ describe('AI chat controller daily limit enforcement', () => {
     expect(output).toContain('"retainAttempt":false');
     expect(output).not.toContain('data: [DONE]');
     expect(res.end).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not stream an unsupported mutation claim and retries through the real action', async () => {
+    const originalFetch = global.fetch;
+    const encoder = new TextEncoder();
+    const streamResponse = (events) => {
+      let read = false;
+      return {
+        ok: true,
+        body: {
+          getReader: () => ({
+            read: jest.fn(async () => {
+              if (read) return { done: true, value: undefined };
+              read = true;
+              return {
+                done: false,
+                value: encoder.encode(`${events.join('\n')}\ndata: [DONE]\n`),
+              };
+            }),
+            cancel: jest.fn(),
+          }),
+        },
+      };
+    };
+    const fetchMock = jest.fn()
+      .mockResolvedValueOnce(streamResponse([
+        `data: ${JSON.stringify({ choices: [{ delta: { content: "I've restored your Fast shipping method." } }] })}`,
+      ]))
+      .mockResolvedValueOnce(streamResponse([
+        `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{
+          index: 0,
+          id: 'shipping-stream-1',
+          function: {
+            name: 'update_shipping',
+            arguments: JSON.stringify({ method: 'fast', cost: 0, currency: 'PKR', deliveryDays: 2, isActive: false }),
+          },
+        }] } }] })}`,
+      ]))
+      .mockResolvedValueOnce(streamResponse([
+        `data: ${JSON.stringify({ choices: [{ delta: { content: 'Fast shipping is now inactive.' } }] })}`,
+      ]));
+    global.fetch = fetchMock;
+    executeToolCall.mockResolvedValue({ success: true, message: 'Shipping updated.' });
+    const res = {
+      ...response(),
+      writableEnded: false,
+      destroyed: false,
+      flushHeaders: jest.fn(),
+      write: jest.fn(),
+      end: jest.fn(function end() { this.writableEnded = true; }),
+    };
+
+    try {
+      await streamChat({
+        body: { messages: [{ role: 'user', content: 'Restore Fast shipping now.' }] },
+        headers: { 'idempotency-key': 'stream-mutation-integrity' },
+        user: { role: 'seller' },
+        on: jest.fn(),
+        aiChatDailyUsage: { allowed: true, used: 0, limit: -1, remaining: -1, role: 'seller' },
+      }, res);
+    } finally {
+      global.fetch = originalFetch;
+    }
+
+    const output = res.write.mock.calls.map(([chunk]) => chunk).join('');
+    expect(output).not.toContain("I've restored your Fast shipping method.");
+    expect(output).toContain('Fast shipping is now inactive.');
+    expect(output).toContain('"type":"tool_result"');
+    expect(output).toContain('data: [DONE]');
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(executeToolCall).toHaveBeenCalledTimes(1);
   });
 
   it('exposes explicit supported currencies on every seller money-action schema', () => {
