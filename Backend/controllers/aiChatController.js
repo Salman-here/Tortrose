@@ -992,12 +992,16 @@ const sellerTools = [
     type: 'function',
     function: {
       name: 'update_shipping',
-      description: "Update one of the seller's shipping methods.",
+      description: "Update one of the seller's shipping methods. Preserve the seller's exact requested cost: an inactive paid method may use 0, while an active paid method requires at least 0.01.",
       parameters: {
         type: 'object',
         properties: {
           method: { type: 'string', enum: ['free', 'standard', 'fast'] },
-          cost: { type: 'number' },
+          cost: {
+            type: 'number',
+            minimum: 0,
+            description: 'Exact shipping cost. Send 0 unchanged when the seller is deactivating a paid method; active standard/fast methods require at least 0.01.',
+          },
           currency: {
             type: 'string',
             enum: ['USD', 'PKR', 'EUR', 'GBP'],

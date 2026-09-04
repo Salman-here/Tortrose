@@ -620,6 +620,12 @@ describe('AI chat controller daily limit enforcement', () => {
     expect(schemas.get('bulk_discount').parameters.properties.currency.enum).toEqual(supported);
     expect(schemas.get('bulk_price_update').parameters.properties.currency.enum).toEqual(supported);
     expect(schemas.get('update_shipping').parameters.properties.currency.enum).toEqual(supported);
+    expect(schemas.get('update_shipping').description).toContain('inactive paid method may use 0');
+    expect(schemas.get('update_shipping').parameters.properties.cost).toMatchObject({
+      type: 'number',
+      minimum: 0,
+    });
+    expect(schemas.get('update_shipping').parameters.properties.cost.description).toContain('Send 0 unchanged');
     expect(schemas.get('create_coupon').parameters.properties.coupon.properties.currency.enum).toEqual(supported);
     expect(schemas.get('update_coupon').parameters.properties.updates.properties.currency.enum).toEqual(supported);
   });
