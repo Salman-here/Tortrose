@@ -282,7 +282,7 @@ export default function ShippingConfiguration() {
             <ul className="text-xs space-y-1 list-disc list-inside" style={{ color: 'hsl(var(--muted-foreground))' }}>
               <li>At least one shipping method must be active</li>
               <li>Free shipping must have zero cost</li>
-              <li>Standard and Fast shipping must have cost greater than zero</li>
+              <li>Enabled Standard and Fast shipping methods must cost at least 0.01</li>
               <li>New shipping fees use your store product currency{storeCurrency ? ` (${storeCurrency})` : ''}</li>
               <li>Existing fees remain stored in their native currency; changing display currency never rewrites them</li>
               <li>Delivery days must be at least 1</li>
