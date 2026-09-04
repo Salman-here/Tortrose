@@ -203,6 +203,8 @@ const summarizeToolEventsForPrompt = (toolEvents = []) => {
       lines.push(`[Tool memory: add_product duplicate blocked. Existing productId=${existing.productId || ''}; name="${existing.name || ''}". Ask for explicit duplicate confirmation before creating another listing.]`);
     } else if (result.success === false) {
       lines.push(`[Tool memory: ${event.tool} failed: ${result.error || result.message || 'unknown error'}. Do not claim it succeeded.]`);
+    } else if (result.success === true) {
+      lines.push(`[Tool memory: ${event.tool} succeeded in the previous assistant turn. Do not repeat it unless the current user explicitly asks to run it again.]`);
     }
     if (lines.length >= 6) break;
   }
@@ -446,7 +448,7 @@ const ProductCardGrid = ({ products, onViewProduct, onAddToCart, title }) => (
 
 function ChatBot({ embedded = false, conversationId = null, initialMessages = null, loadingHistory = false, onConversationCreated = null, dashboardRole = null }) {
   const navigate = useNavigate();
-  const { currentUser } = useAuth();
+  const { currentUser, fetchAndUpdateCurrentUser } = useAuth();
   const { fetchWishlist, fetchCart } = useGlobal();
   const chatAttemptStorageKey = createScopedMutationStorageKey(
     CHAT_ATTEMPT_STORAGE_KEY,
@@ -807,7 +809,10 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
 
     // Build conversation history for the API (only user/assistant text messages)
     const apiMessages = [...messages, apiUserMsg]
-      .filter(m => (m.role === 'user' || m.role === 'assistant') && m.content)
+      .filter(m => (
+        (m.role === 'user' || m.role === 'assistant')
+        && (m.content || (Array.isArray(m.toolEvents) && m.toolEvents.length > 0))
+      ))
       .map(m => {
         const toolMemory = summarizeToolEventsForPrompt(m.toolEvents);
         const attachmentMemory = (m.attachments || [])
@@ -820,9 +825,10 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
         const content = attachmentMemory
           ? `${baseContent || 'Image attached'}\n\n${attachmentMemory}`
           : baseContent;
+        const promptContent = [content, toolMemory].filter(Boolean).join('\n\n');
         return {
           role: m.role,
-          content: toolMemory ? `${content}\n\n${toolMemory}` : content,
+          content: promptContent,
         };
       });
 
@@ -972,6 +978,9 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
                 if (['add_to_cart', 'remove_from_cart', 'clear_cart', 'place_order'].includes(parsed.tool)) {
                   void fetchCart();
                 }
+                if (parsed.tool === 'update_profile') {
+                  void fetchAndUpdateCurrentUser();
+                }
               }
               // Add tool result to the current assistant message
               setMessages(prev => {
@@ -1061,7 +1070,7 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
       setIsLoading(false);
       setPendingTools([]);
     }
-  }, [messages, isLoading, isStartingNewChat, authToken, activeConvoId, handleClientAction, currentUser?._id, currentUser?.id, currency, chatAttemptStorageKey, onConversationCreated, fetchWishlist, fetchCart]);
+  }, [messages, isLoading, isStartingNewChat, authToken, activeConvoId, handleClientAction, currentUser?._id, currentUser?.id, currency, chatAttemptStorageKey, onConversationCreated, fetchWishlist, fetchCart, fetchAndUpdateCurrentUser]);
 
   // ─── Clear chat (start a brand-new conversation) ───
   const clearChat = async () => {

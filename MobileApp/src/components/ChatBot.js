@@ -230,6 +230,8 @@ const summarizeToolResultsForPrompt = (toolResults = []) => {
       lines.push(`[Tool memory: add_product duplicate blocked. Existing productId=${existing.productId || ''}; name="${existing.name || ''}". Ask for explicit duplicate confirmation before creating another listing.]`);
     } else if (result.success === false) {
       lines.push(`[Tool memory: ${event.name} failed: ${result.error || result.message || 'unknown error'}. Do not claim it succeeded.]`);
+    } else if (result.success === true) {
+      lines.push(`[Tool memory: ${event.name} succeeded in the previous assistant turn. Do not repeat it unless the current user explicitly asks to run it again.]`);
     }
     if (lines.length >= 6) break;
   }
@@ -440,7 +442,7 @@ export default function ChatBot({
   navigation,
   initialPrompt = '',
 }) {
-  const { currentUser } = useAuth();
+  const { currentUser, fetchAndUpdateCurrentUser } = useAuth();
   const { fetchWishlist } = useWishlist();
   const { fetchCart } = useCart();
   const { refreshUnreadCount } = useNotificationCount();
@@ -997,12 +999,15 @@ export default function ChatBot({
     setPendingAttachments([]);
 
     const aiMessages = messages
-      .filter(m => m.role === 'user' || m.role === 'assistant')
+      .filter(m => (
+        (m.role === 'user' || m.role === 'assistant')
+        && (m.content || (Array.isArray(m.toolResults) && m.toolResults.length > 0))
+      ))
       .map(m => {
         const toolMemory = summarizeToolResultsForPrompt(m.toolResults);
         return {
           role: m.role,
-          content: toolMemory ? `${m.content}\n\n${toolMemory}` : m.content,
+          content: [m.content, toolMemory].filter(Boolean).join('\n\n'),
         };
       });
     aiMessages.push({ role: 'user', content: visibleContent });
@@ -1078,6 +1083,9 @@ export default function ChatBot({
         }
         if (tr.name === 'mark_notifications_read') {
           void refreshUnreadCount();
+        }
+        if (tr.name === 'update_profile') {
+          void fetchAndUpdateCurrentUser();
         }
       }
       const clientActions = response.clientActions || [];

@@ -157,4 +157,19 @@ describe('AI conversation history contract', () => {
     expect(app.title).toBe('Continue in the app');
     expect(history.save).toHaveBeenCalledTimes(1);
   });
+
+  it('persists tool-only assistant turns so follow-ups cannot replay completed actions', () => {
+    const toolEvents = [{
+      type: 'tool_result',
+      tool: 'add_address',
+      result: { success: true, message: 'Address added.' },
+    }];
+
+    expect(__private.buildSavedAssistantMessage('', toolEvents)).toEqual({
+      role: 'assistant',
+      content: '',
+      toolEvents,
+    });
+    expect(__private.buildSavedAssistantMessage('', [])).toBeNull();
+  });
 });

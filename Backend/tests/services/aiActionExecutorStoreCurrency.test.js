@@ -104,6 +104,28 @@ async function createProduct(seller, overrides = {}) {
 }
 
 describe('AI seller-native money writes', () => {
+  test('profile updates normalize supported currency and reject unsupported metadata', async () => {
+    const seller = await createPkrSeller();
+
+    const invalid = await executeToolCall('update_profile', {
+      updates: { currency: 'CAD' },
+    }, seller);
+    expect(invalid).toMatchObject({ success: false, error: 'Currency must be USD, PKR, EUR, or GBP.' });
+    await expect(User.findById(seller._id).then(user => user.currency)).resolves.toBe('USD');
+
+    const valid = await executeToolCall('update_profile', {
+      updates: { username: 'AI Profile QA', currency: 'pkr' },
+    }, seller);
+    expect(valid).toMatchObject({
+      success: true,
+      data: { username: 'AI Profile QA', currency: 'PKR' },
+    });
+    await expect(User.findById(seller._id).then(user => ({
+      username: user.username,
+      currency: user.currency,
+    }))).resolves.toEqual({ username: 'AI Profile QA', currency: 'PKR' });
+  });
+
   test('wishlist product cards preserve native currency, stock, and review metadata', async () => {
     const seller = await createPkrSeller();
     const product = await createProduct(seller, {

@@ -356,10 +356,10 @@ const userTools = [
     type: 'function',
     function: {
       name: 'get_order_detail',
-      description: 'Get full details of a specific order.',
+      description: 'Get full details of a specific order using either its public ORD- number or internal order ID.',
       parameters: {
         type: 'object',
-        properties: { orderId: { type: 'string', description: 'MongoDB _id of the order' } },
+        properties: { orderId: { type: 'string', description: 'Public ORD- number or internal order ID' } },
         required: ['orderId'],
       },
     },
@@ -371,7 +371,7 @@ const userTools = [
       description: "Cancel a pending order (user's own only).",
       parameters: {
         type: 'object',
-        properties: { orderId: { type: 'string', description: 'MongoDB _id of the order' } },
+        properties: { orderId: { type: 'string', description: 'Public ORD- number or internal order ID' } },
         required: ['orderId'],
       },
     },
@@ -454,7 +454,21 @@ const userTools = [
         properties: {
           address: {
             type: 'object',
-            description: 'Address object with fullName, address, city, state, postalCode, country, phone',
+            description: 'Saved shipping address.',
+            properties: {
+              label: { type: 'string' },
+              fullName: { type: 'string' },
+              email: { type: 'string' },
+              phone: { type: 'string' },
+              address: { type: 'string' },
+              city: { type: 'string' },
+              state: { type: 'string' },
+              stateCode: { type: 'string' },
+              postalCode: { type: 'string' },
+              country: { type: 'string' },
+              countryCode: { type: 'string' },
+            },
+            required: ['fullName', 'address', 'city'],
           },
         },
         required: ['address'],
@@ -465,11 +479,19 @@ const userTools = [
     type: 'function',
     function: {
       name: 'update_profile',
-      description: "Update the user's own profile (username only).",
+      description: "Update the authenticated user's own display name, contact phone, or preferred display currency.",
       parameters: {
         type: 'object',
         properties: {
-          updates: { type: 'object', description: 'Object with fields to update (e.g. { username: "NewName" })' },
+          updates: {
+            type: 'object',
+            properties: {
+              username: { type: 'string', minLength: 1, maxLength: 120 },
+              phone: { type: 'string', minLength: 1, maxLength: 40 },
+              currency: { type: 'string', enum: ['USD', 'PKR', 'EUR', 'GBP'] },
+            },
+            additionalProperties: false,
+          },
         },
         required: ['updates'],
       },
@@ -633,7 +655,7 @@ const userTools = [
     type: 'function',
     function: {
       name: 'send_product_image',
-      description: 'Send a product image to the user on WhatsApp. Only use this when the user explicitly asks to see a product image. Do NOT send images automatically when listing products.',
+      description: 'Show or send a product image in the current AI channel. On WhatsApp this sends media; web and mobile display a rich image card. Only use when the user explicitly asks to see an image.',
       parameters: {
         type: 'object',
         properties: {
@@ -1432,6 +1454,18 @@ function sanitizeAssistantVisibleText(text = '') {
   return splitInternalAssistantContent(text).visible;
 }
 
+function buildSavedAssistantMessage(responseText = '', toolEvents = []) {
+  const content = sanitizeAssistantVisibleText(responseText);
+  const events = Array.isArray(toolEvents) ? toolEvents.filter(Boolean) : [];
+  if (!content && events.length === 0) return null;
+
+  return {
+    role: 'assistant',
+    content,
+    ...(events.length ? { toolEvents: events } : {}),
+  };
+}
+
 function prepareIncomingChatMessages(incomingMessages = []) {
   const cleanMessages = [];
   const internalBlocks = [];
@@ -1560,6 +1594,28 @@ function getUpdatePayload(args) {
     : (args || {});
 }
 
+function normalizeAIChatToolArgs(toolName, args = {}, lastUserText = '') {
+  if (toolName !== 'update_shipping') return args;
+
+  const text = String(lastUserText || '').toLowerCase();
+  const requestsInactive = /\b(?:inactive|deactivat(?:e|ed|ing)|disabl(?:e|ed|ing))\b/.test(text);
+  const requestsZeroCost = (
+    /\b(?:cost|price)\b[^.!?\n]{0,35}\b(?:exactly\s+)?(?:0(?:\.0+)?|zero)\b/.test(text)
+    || /\b(?:exactly\s+)?0(?:\.0+)?\s*(?:pkr|usd|eur|gbp)\b/.test(text)
+    || /\bzero[-\s]cost\b/.test(text)
+  );
+  const negatesZero = /\b(?:not|never)\b[^.!?\n]{0,20}\b(?:0(?:\.0+)?|zero)\b/.test(text);
+  if (!requestsInactive || !requestsZeroCost || negatesZero) return args;
+
+  if (args?.updates && typeof args.updates === 'object' && !Array.isArray(args.updates)) {
+    return {
+      ...args,
+      updates: { ...args.updates, cost: 0, isActive: false },
+    };
+  }
+  return { ...(args || {}), cost: 0, isActive: false };
+}
+
 function looksLikeStoreChangeQuestion(text) {
   const t = String(text || '').toLowerCase();
   if (!/(store\s*name|subdomain|store\s*slug|slug)/.test(t)) return false;
@@ -1589,15 +1645,16 @@ function isPlaceholderStoreValue(value) {
 }
 
 async function executeToolCallForChat(toolName, args, userObj, lastUserText = '', turnContext = {}) {
-  const argsWithContext = args && typeof args === 'object' && !Array.isArray(args)
-    ? { ...args, _lastUserText: lastUserText, ...turnContext }
+  const normalizedArgs = normalizeAIChatToolArgs(toolName, args, lastUserText);
+  const argsWithContext = normalizedArgs && typeof normalizedArgs === 'object' && !Array.isArray(normalizedArgs)
+    ? { ...normalizedArgs, _lastUserText: lastUserText, ...turnContext }
     : { _lastUserText: lastUserText, ...turnContext };
 
   if (toolName !== 'update_store') {
     return executeToolCall(toolName, argsWithContext, userObj);
   }
 
-  const updates = getUpdatePayload(args);
+  const updates = getUpdatePayload(normalizedArgs);
   const identityFields = ['storeName', 'storeSlug', 'sellerType'];
   const touchesIdentity = identityFields.some(field => updates[field] !== undefined);
   const hasPlaceholder = identityFields.some(field => isPlaceholderStoreValue(updates[field]));
@@ -2183,6 +2240,7 @@ async function processAIChatMessage(userObj, incomingMessages, options = {}) {
       const toolName = tc.function.name;
       let args = {};
       try { args = JSON.parse(tc.function.arguments || '{}'); } catch {}
+      args = normalizeAIChatToolArgs(toolName, args, lastUserText);
 
       // Special handling for send_product_image in WhatsApp mode
       if (toolName === 'send_product_image' && isWhatsApp) {
@@ -2324,17 +2382,12 @@ async function processAIChatMessage(userObj, incomingMessages, options = {}) {
           ...(Array.isArray(lastUserMsg.attachments) ? { attachments: lastUserMsg.attachments } : {}),
         });
       }
-      if (responseText) {
-        const toolEvents = [
-          ...toolResults.map(t => ({ type: 'tool_result', tool: t.tool, result: t.result })),
-          ...clientActions.map(c => ({ type: 'client_action', action: c.action, args: c.args })),
-        ];
-        newMessages.push({
-          role: 'assistant',
-          content: responseText,
-          ...(toolEvents.length ? { toolEvents } : {}),
-        });
-      }
+      const toolEvents = [
+        ...toolResults.map(t => ({ type: 'tool_result', tool: t.tool, result: t.result })),
+        ...clientActions.map(c => ({ type: 'client_action', action: c.action, args: c.args })),
+      ];
+      const assistantMessage = buildSavedAssistantMessage(responseText, toolEvents);
+      if (assistantMessage) newMessages.push(assistantMessage);
 
       if (newMessages.length > 0) {
         savedConvoId = await saveToConversation(userId, options.conversationId || null, newMessages, isWhatsApp ? 'whatsapp' : 'web');
@@ -2534,6 +2587,7 @@ exports.streamChat = async (req, res) => {
         const toolName = tc.function.name;
         let args = {};
         try { args = JSON.parse(tc.function.arguments || '{}'); } catch {}
+        args = normalizeAIChatToolArgs(toolName, args, lastUserText);
 
         if (isClientSideTool(toolName)) {
           args = normalizeAIClientActionArgs(toolName, args, effectiveRole);
@@ -2596,9 +2650,8 @@ exports.streamChat = async (req, res) => {
           .map(m => sanitizeAssistantVisibleText(m.content).trim())
           .filter(Boolean)
           .join('\n\n');
-        if (assistantText) {
-          newMessages.push({ role: 'assistant', content: assistantText, toolEvents: turnToolEvents });
-        }
+        const assistantMessage = buildSavedAssistantMessage(assistantText, turnToolEvents);
+        if (assistantMessage) newMessages.push(assistantMessage);
 
         const savedConvoId = await saveToConversation(userId, conversationId, newMessages);
         // Send the conversationId back to the client so it can track it
@@ -2765,6 +2818,7 @@ exports.chatOnce = async (req, res) => {
         const toolName = tc.function.name;
         let args = {};
         try { args = JSON.parse(tc.function.arguments || '{}'); } catch {}
+        args = normalizeAIChatToolArgs(toolName, args, lastUserText);
 
         if (isClientSideTool(toolName)) {
           args = normalizeAIClientActionArgs(toolName, args, effectiveRole);
@@ -2805,17 +2859,12 @@ exports.chatOnce = async (req, res) => {
         if (lastUserMsg?.content) {
           newMessages.push({ role: 'user', content: typeof lastUserMsg.content === 'string' ? lastUserMsg.content : '' });
         }
-        if (responseText) {
-          const toolEvents = [
-            ...toolResults.map(t => ({ type: 'tool_result', tool: t.tool, result: t.result })),
-            ...clientActions.map(c => ({ type: 'client_action', action: c.action, args: c.args })),
-          ];
-          newMessages.push({
-            role: 'assistant',
-            content: responseText,
-            ...(toolEvents.length ? { toolEvents } : {}),
-          });
-        }
+        const toolEvents = [
+          ...toolResults.map(t => ({ type: 'tool_result', tool: t.tool, result: t.result })),
+          ...clientActions.map(c => ({ type: 'client_action', action: c.action, args: c.args })),
+        ];
+        const assistantMessage = buildSavedAssistantMessage(responseText, toolEvents);
+        if (assistantMessage) newMessages.push(assistantMessage);
         if (newMessages.length > 0) {
           const source = body.source === 'mobile' ? 'mobile' : 'web';
           savedConvoId = await saveToConversation(
@@ -3200,5 +3249,7 @@ exports.__private = {
   failedMutationMessage,
   normalizeAIClientRoute,
   normalizeAIClientActionArgs,
+  normalizeAIChatToolArgs,
+  buildSavedAssistantMessage,
   saveToConversation,
 };

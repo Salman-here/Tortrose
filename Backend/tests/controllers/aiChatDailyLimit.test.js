@@ -52,6 +52,26 @@ describe('AI chat controller daily limit enforcement', () => {
     consoleError.mockRestore();
   });
 
+  it('preserves an explicit inactive zero-cost shipping request when the model substitutes 0.01', () => {
+    expect(__private.normalizeAIChatToolArgs(
+      'update_shipping',
+      { method: 'fast', cost: 0.01, deliveryDays: 2, isActive: false },
+      'Set Fast inactive, exactly 0 PKR, with 2 delivery days.',
+    )).toEqual({ method: 'fast', cost: 0, deliveryDays: 2, isActive: false });
+
+    expect(__private.normalizeAIChatToolArgs(
+      'update_shipping',
+      { updates: { method: 'standard', cost: 0.01, isActive: true } },
+      'Deactivate Standard and set its cost to zero.',
+    )).toEqual({ updates: { method: 'standard', cost: 0, isActive: false } });
+
+    expect(__private.normalizeAIChatToolArgs(
+      'update_shipping',
+      { method: 'fast', cost: 0.01, isActive: true },
+      'Keep Fast active at 0.01 PKR.',
+    )).toEqual({ method: 'fast', cost: 0.01, isActive: true });
+  });
+
   it.each([
     ['stream', streamChat],
     ['once', chatOnce],
@@ -626,6 +646,11 @@ describe('AI chat controller daily limit enforcement', () => {
       minimum: 0,
     });
     expect(schemas.get('update_shipping').parameters.properties.cost.description).toContain('Send 0 unchanged');
+    expect(schemas.get('update_profile').parameters.properties.updates.properties.currency.enum).toEqual(supported);
+    expect(schemas.get('update_profile').parameters.properties.updates.additionalProperties).toBe(false);
+    expect(schemas.get('get_order_detail').parameters.properties.orderId.description).toContain('Public ORD- number');
+    expect(schemas.get('cancel_order').parameters.properties.orderId.description).toContain('Public ORD- number');
+    expect(schemas.get('send_product_image').description).toContain('web and mobile display a rich image card');
     expect(schemas.get('create_coupon').parameters.properties.coupon.properties.currency.enum).toEqual(supported);
     expect(schemas.get('update_coupon').parameters.properties.updates.properties.currency.enum).toEqual(supported);
   });

@@ -202,6 +202,7 @@ describe('AI daily quota ownership', () => {
     expect(chatBot).toContain('void fetchWishlist();');
     expect(chatBot).toContain('void fetchCart();');
     expect(chatBot).toContain('void refreshUnreadCount();');
+    expect(chatBot).toContain('void fetchAndUpdateCurrentUser();');
   });
 
   it('lets the server consume quota and handles the authoritative 429 response', () => {
@@ -210,6 +211,14 @@ describe('AI daily quota ownership', () => {
     expect(chatBot).not.toContain("api.post('/api/ai-actions/rate-limit/increment'");
     expect(chatBot).toContain("response.code === 'AI_DAILY_LIMIT_REACHED'");
     expect(chatBot).toContain('checkRateLimit();');
+  });
+
+  it('keeps tool-only turns in model context without replaying successful actions', () => {
+    const chatBot = read('../../src/components/ChatBot.js');
+
+    expect(chatBot).toContain('Array.isArray(m.toolResults) && m.toolResults.length > 0');
+    expect(chatBot).toContain('succeeded in the previous assistant turn. Do not repeat it');
+    expect(chatBot).toContain("[m.content, toolMemory].filter(Boolean).join('\\n\\n')");
   });
 
   it('threads the selected currency through every mobile AI money request path', () => {

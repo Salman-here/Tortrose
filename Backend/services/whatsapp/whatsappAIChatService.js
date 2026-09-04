@@ -181,6 +181,8 @@ function summarizeToolEventsForMemory(toolEvents = []) {
             lines.push(`[Tool memory: add_product duplicate blocked. Existing productId=${existing.productId || ''}; name="${existing.name || ''}". Ask for explicit duplicate confirmation before creating another listing.]`);
         } else if (result.success === false) {
             lines.push(`[Tool memory: ${tool} failed: ${result.error || result.message || 'unknown error'}. Do not claim it succeeded.]`);
+        } else if (result.success === true) {
+            lines.push(`[Tool memory: ${tool} succeeded in the previous assistant turn. Do not repeat it unless the current user explicitly asks to run it again.]`);
         }
 
         if (lines.length >= 6) break;

@@ -2009,17 +2009,42 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
         if (!userId) return { success: false, error: 'Authentication required.' };
         const updates = args.updates || args;
         const allowed = {};
-        if (updates.username) allowed.username = updates.username;
-        if (updates.name) allowed.username = updates.name;
-        if (updates.phone) allowed['sellerInfo.phoneNumber'] = updates.phone;
-        if (updates.currency) allowed.currency = updates.currency;
+        const requestedName = updates.username || updates.name;
+        if (requestedName) {
+          const username = cleanAIField(requestedName, { maxLength: 120 });
+          if (!username) return { success: false, error: 'Display name cannot be empty.' };
+          allowed.username = username;
+        }
+        if (updates.phone) {
+          const phone = cleanAIField(updates.phone, { maxLength: 40 });
+          if (!phone) return { success: false, error: 'Phone number cannot be empty.' };
+          allowed['sellerInfo.phoneNumber'] = phone;
+        }
+        if (updates.currency != null) {
+          if (typeof updates.currency !== 'string' || !isSupportedCurrency(updates.currency)) {
+            return { success: false, error: 'Currency must be USD, PKR, EUR, or GBP.' };
+          }
+          allowed.currency = normalizeCurrency(updates.currency);
+        }
 
         if (Object.keys(allowed).length === 0) {
           return { success: false, error: 'No valid fields to update. You can update: name, phone, currency.' };
         }
 
-        await User.findByIdAndUpdate(userId, { $set: allowed });
-        return { success: true, message: 'Profile updated successfully! ✨' };
+        const updatedUser = await User.findByIdAndUpdate(
+          userId,
+          { $set: allowed },
+          { new: true, runValidators: true },
+        ).select('username currency sellerInfo.phoneNumber').lean();
+        return {
+          success: true,
+          data: {
+            username: updatedUser?.username,
+            currency: updatedUser?.currency,
+            phone: updatedUser?.sellerInfo?.phoneNumber || '',
+          },
+          message: 'Profile updated successfully! ✨',
+        };
       }
 
       case 'get_notifications': {
