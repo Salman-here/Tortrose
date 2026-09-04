@@ -3323,17 +3323,37 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
         if (requestedProductId && !selectedProduct) {
           return { success: false, code: 'COUPON_PRODUCT_NOT_IN_CART', error: 'The selected product is not in your current cart.' };
         }
-        const selectedSellerId = selectedProduct
+        let selectedSellerId = selectedProduct
           ? normalizeObjectIdString(selectedProduct.seller)
           : resolvedRequestedSellerId;
         if (resolvedRequestedSellerId && selectedProduct && normalizeObjectIdString(selectedProduct.seller) !== resolvedRequestedSellerId) {
           return { success: false, code: 'COUPON_CONTEXT_MISMATCH', error: 'The selected product does not belong to the selected seller.' };
         }
+        let candidateCoupons = null;
         if (selectedSellerId && !cartSellerIds.includes(selectedSellerId)) {
-          return { success: false, code: 'COUPON_SELLER_NOT_IN_CART', error: 'Your cart has no products from the selected seller.' };
+          // sellerId is optional model-supplied disambiguation. If it is stale or
+          // came from a different public object, prefer the only coupon with this
+          // code that can actually apply to the authenticated cart. Never choose
+          // arbitrarily when more than one cart seller uses the same code.
+          const cartCodeCoupons = await Coupon.find({
+            code: normalizedCode,
+            seller: { $in: cartSellerIds },
+          }).lean();
+          if (cartCodeCoupons.length === 1) {
+            candidateCoupons = cartCodeCoupons;
+            selectedSellerId = normalizeObjectIdString(cartCodeCoupons[0].seller);
+          } else if (cartCodeCoupons.length > 1) {
+            return {
+              success: false,
+              code: 'COUPON_AMBIGUOUS',
+              error: 'More than one seller in your cart uses this coupon code. Choose the coupon for a specific cart product.',
+            };
+          } else {
+            return { success: false, code: 'COUPON_SELLER_NOT_IN_CART', error: 'Your cart has no products from the selected seller.' };
+          }
         }
 
-        const candidateCoupons = await Coupon.find({
+        candidateCoupons = candidateCoupons || await Coupon.find({
           code: normalizedCode,
           seller: selectedSellerId || { $in: cartSellerIds },
         }).lean();

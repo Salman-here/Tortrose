@@ -225,7 +225,7 @@ describe('AI coupon preview checkout parity', () => {
     expect(mockStoreFindOne).toHaveBeenCalledWith({ _id: STORE_A });
   });
 
-  test('still rejects an unrelated seller selector that is not a cart store', async () => {
+  test('recovers the only matching cart coupon from an unrelated optional seller selector', async () => {
     installCart([cartItem({
       _id: '64b0000000000000000000a4',
       productId: PRODUCT_A,
@@ -239,8 +239,31 @@ describe('AI coupon preview checkout parity', () => {
       code: 'SAVE10',
       sellerId: SELLER_B,
     }, { _id: BUYER_ID, role: 'user', currency: 'USD' })).resolves.toMatchObject({
+      success: true,
+      data: {
+        couponId: COUPON_A,
+        applicableProductIds: [PRODUCT_A],
+      },
+    });
+  });
+
+  test('does not recover an unrelated selector when two cart sellers use the code', async () => {
+    installCart([
+      cartItem({ _id: '64b0000000000000000000a4', productId: PRODUCT_A, seller: SELLER_A, price: 100 }),
+      cartItem({ _id: '64b0000000000000000000b4', productId: PRODUCT_B, seller: SELLER_B, price: 50 }),
+    ]);
+    installCoupons([
+      coupon({ _id: COUPON_A, seller: SELLER_A }),
+      coupon({ _id: COUPON_B, seller: SELLER_B }),
+    ]);
+    mockStoreFindOne.mockReturnValue(queryResult(null));
+
+    await expect(executeToolCall('validate_coupon', {
+      code: 'SAVE10',
+      sellerId: '64b0000000000000000000c1',
+    }, { _id: BUYER_ID, role: 'user', currency: 'USD' })).resolves.toMatchObject({
       success: false,
-      code: 'COUPON_SELLER_NOT_IN_CART',
+      code: 'COUPON_AMBIGUOUS',
     });
   });
 
