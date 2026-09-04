@@ -281,10 +281,10 @@ describe('AI chat controller daily limit enforcement', () => {
     const initialRequest = JSON.parse(fetchMock.mock.calls[0][1].body);
     const retryRequest = JSON.parse(fetchMock.mock.calls[1][1].body);
     const summaryRequest = JSON.parse(fetchMock.mock.calls[2][1].body);
-    expect(initialRequest.tool_choice).toBe('required');
-    expect(initialRequest.parallel_tool_calls).toBe(true);
+    expect(initialRequest.tool_choice).toEqual({ type: 'function', function: { name: 'update_shipping' } });
+    expect(initialRequest.parallel_tool_calls).toBe(false);
     expect(initialRequest.tools.map(tool => tool.function.name)).toEqual(['update_shipping']);
-    expect(retryRequest.tool_choice).toBe('required');
+    expect(retryRequest.tool_choice).toEqual({ type: 'function', function: { name: 'update_shipping' } });
     expect(retryRequest.tools.map(tool => tool.function.name)).toEqual(['update_shipping']);
     expect(summaryRequest).not.toHaveProperty('tool_choice');
     expect(summaryRequest).not.toHaveProperty('tools');
@@ -374,6 +374,33 @@ describe('AI chat controller daily limit enforcement', () => {
     )).toEqual([]);
   });
 
+  it('preserves the user-stated order for dependent explicit tools', () => {
+    const tools = __private.getTools('user');
+    const request = 'Call add_to_wishlist now, then call get_wishlist to verify the saved result.';
+    const requested = __private.explicitlyRequestedAITools(request, tools);
+
+    expect(requested).toEqual(['add_to_wishlist', 'get_wishlist']);
+    expect(__private.explicitToolRequestOptions(requested, requested, tools)).toMatchObject({
+      offeredTools: [expect.objectContaining({ function: expect.objectContaining({ name: 'add_to_wishlist' }) })],
+      toolChoice: { type: 'function', function: { name: 'add_to_wishlist' } },
+      parallelToolCalls: false,
+    });
+  });
+
+  it('adds a current-turn-only grounding guard before a tool summary', () => {
+    const messages = [{ role: 'user', content: 'Call get_wishlist.' }];
+    const grounded = __private.messagesForCurrentTurnSummary(
+      messages,
+      [{ tool: 'get_wishlist', result: { success: true } }],
+      [],
+    );
+
+    expect(grounded).toHaveLength(2);
+    expect(grounded[1]).toMatchObject({ role: 'system' });
+    expect(grounded[1].content).toContain('only the latest user message');
+    expect(grounded[1].content).toContain('Do not recap');
+  });
+
   it('forces every explicitly requested mobile tool and only summarizes after completion', async () => {
     const originalFetch = global.fetch;
     const fetchMock = jest.fn()
@@ -442,14 +469,10 @@ describe('AI chat controller daily limit enforcement', () => {
     const initialRequest = JSON.parse(fetchMock.mock.calls[0][1].body);
     const remainingRequest = JSON.parse(fetchMock.mock.calls[1][1].body);
     const summaryRequest = JSON.parse(fetchMock.mock.calls[2][1].body);
-    expect(initialRequest.tool_choice).toBe('required');
-    expect(initialRequest.parallel_tool_calls).toBe(true);
-    expect(initialRequest.tools.map(tool => tool.function.name)).toEqual(expect.arrayContaining([
-      'get_my_profile',
-      'get_addresses',
-    ]));
-    expect(initialRequest.tools).toHaveLength(2);
-    expect(remainingRequest.tool_choice).toBe('required');
+    expect(initialRequest.tool_choice).toEqual({ type: 'function', function: { name: 'get_my_profile' } });
+    expect(initialRequest.parallel_tool_calls).toBe(false);
+    expect(initialRequest.tools.map(tool => tool.function.name)).toEqual(['get_my_profile']);
+    expect(remainingRequest.tool_choice).toEqual({ type: 'function', function: { name: 'get_addresses' } });
     expect(remainingRequest.tools.map(tool => tool.function.name)).toEqual(['get_addresses']);
     expect(summaryRequest).not.toHaveProperty('tool_choice');
     expect(summaryRequest).not.toHaveProperty('tools');
@@ -842,10 +865,10 @@ describe('AI chat controller daily limit enforcement', () => {
     const initialRequest = JSON.parse(fetchMock.mock.calls[0][1].body);
     const retryRequest = JSON.parse(fetchMock.mock.calls[1][1].body);
     const summaryRequest = JSON.parse(fetchMock.mock.calls[2][1].body);
-    expect(initialRequest.tool_choice).toBe('required');
-    expect(initialRequest.parallel_tool_calls).toBe(true);
+    expect(initialRequest.tool_choice).toEqual({ type: 'function', function: { name: 'update_shipping' } });
+    expect(initialRequest.parallel_tool_calls).toBe(false);
     expect(initialRequest.tools.map(tool => tool.function.name)).toEqual(['update_shipping']);
-    expect(retryRequest.tool_choice).toBe('required');
+    expect(retryRequest.tool_choice).toEqual({ type: 'function', function: { name: 'update_shipping' } });
     expect(retryRequest.tools.map(tool => tool.function.name)).toEqual(['update_shipping']);
     expect(summaryRequest).not.toHaveProperty('tool_choice');
     expect(summaryRequest).not.toHaveProperty('tools');

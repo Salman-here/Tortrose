@@ -1761,7 +1761,46 @@ function explicitlyRequestedAITools(lastUserText, availableTools = []) {
         'i'
       );
       return !negated.test(text);
-    }))];
+    }))]
+    .sort((left, right) => (
+      text.toLowerCase().indexOf(left.toLowerCase())
+      - text.toLowerCase().indexOf(right.toLowerCase())
+    ));
+}
+
+function explicitToolRequestOptions(explicitlyRequestedTools, missingRequestedTools, tools) {
+  if (!explicitlyRequestedTools.length) {
+    return { offeredTools: tools, toolChoice: undefined, parallelToolCalls: undefined };
+  }
+
+  // Explicit multi-tool requests may contain dependencies such as "add, then
+  // read". Offer and force only the next named tool so the provider cannot run
+  // the read against stale state in parallel with the mutation.
+  const nextToolName = missingRequestedTools[0];
+  if (!nextToolName) {
+    return { offeredTools: [], toolChoice: undefined, parallelToolCalls: undefined };
+  }
+  return {
+    offeredTools: tools.filter(tool => tool?.function?.name === nextToolName),
+    toolChoice: { type: 'function', function: { name: nextToolName } },
+    parallelToolCalls: false,
+  };
+}
+
+function messagesForCurrentTurnSummary(conversationMessages, completedToolResults, missingRequestedTools) {
+  if (!completedToolResults.length || missingRequestedTools.length) return conversationMessages;
+  return [
+    ...conversationMessages,
+    {
+      role: 'system',
+      content: [
+        'Write the final response for only the latest user message.',
+        'Ground it only in tool-result messages produced after that latest user message.',
+        'Do not recap, merge, or reuse results from earlier turns.',
+        'If a current tool failed, state that failure rather than describing an earlier success.',
+      ].join(' '),
+    },
+  ];
 }
 
 function explicitlyRequestedDurableMutationTools(lastUserText, availableTools = []) {
@@ -2220,7 +2259,7 @@ async function processAIChatMessage(userObj, incomingMessages, options = {}) {
   const lastUserText = cleanMessages.filter(m => m.role === 'user').pop()?.content || '';
   const explicitlyRequestedTools = explicitlyRequestedAITools(lastUserText, tools);
 
-  const MAX_ITERATIONS = Math.min(10, Math.max(5, explicitlyRequestedTools.length + 1));
+  const MAX_ITERATIONS = Math.min(20, Math.max(6, explicitlyRequestedTools.length + 3));
   let lastMessage = null;
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
@@ -2234,9 +2273,11 @@ async function processAIChatMessage(userObj, incomingMessages, options = {}) {
       tools,
       completedToolResults
     );
-    const offeredTools = explicitlyRequestedTools.length
-      ? tools.filter(tool => missingRequestedTools.includes(tool?.function?.name))
-      : tools;
+    const { offeredTools, toolChoice, parallelToolCalls } = explicitToolRequestOptions(
+      explicitlyRequestedTools,
+      missingRequestedTools,
+      tools,
+    );
     if (!OPENROUTER_API_KEY) {
       throw new Error('AI service temporarily unavailable.');
     }
@@ -2258,10 +2299,14 @@ async function processAIChatMessage(userObj, incomingMessages, options = {}) {
         },
         body: JSON.stringify({
           model: AI_MODEL,
-          messages: conversationMessages,
+          messages: messagesForCurrentTurnSummary(
+            conversationMessages,
+            completedToolResults,
+            missingRequestedTools,
+          ),
           tools: isLast || offeredTools.length === 0 ? undefined : offeredTools,
-          tool_choice: !isLast && missingRequestedTools.length > 0 ? 'required' : undefined,
-          parallel_tool_calls: !isLast && missingRequestedTools.length > 0 ? true : undefined,
+          tool_choice: !isLast ? toolChoice : undefined,
+          parallel_tool_calls: !isLast ? parallelToolCalls : undefined,
           stream: false,
           temperature: 0.7,
         }),
@@ -2592,7 +2637,7 @@ exports.streamChat = async (req, res) => {
     // The AI may request tool calls. We execute them server-side, feed results back,
     // and let the AI generate a natural language summary. Explicit multi-tool
     // requests get enough bounded rounds for every named tool plus the summary.
-    const MAX_TOOL_ITERATIONS = Math.min(10, Math.max(5, explicitlyRequestedTools.length + 1));
+    const MAX_TOOL_ITERATIONS = Math.min(20, Math.max(6, explicitlyRequestedTools.length + 3));
     let iteration = 0;
     let finalTextSent = false;
     let terminalToolFailure = null;
@@ -2609,9 +2654,11 @@ exports.streamChat = async (req, res) => {
         tools,
         completedToolResults
       );
-      const offeredTools = explicitlyRequestedTools.length
-        ? tools.filter(tool => missingRequestedTools.includes(tool?.function?.name))
-        : tools;
+      const { offeredTools, toolChoice, parallelToolCalls } = explicitToolRequestOptions(
+        explicitlyRequestedTools,
+        missingRequestedTools,
+        tools,
+      );
 
       // Call OpenRouter (streaming). Keep the abort timer active while the body
       // is consumed too; fetch resolves as soon as headers arrive, while a
@@ -2633,10 +2680,14 @@ exports.streamChat = async (req, res) => {
           },
           body: JSON.stringify({
             model: AI_MODEL,
-            messages: conversationMessages,
+            messages: messagesForCurrentTurnSummary(
+              conversationMessages,
+              completedToolResults,
+              missingRequestedTools,
+            ),
             tools: isLastChance || offeredTools.length === 0 ? undefined : offeredTools,
-            tool_choice: !isLastChance && missingRequestedTools.length > 0 ? 'required' : undefined,
-            parallel_tool_calls: !isLastChance && missingRequestedTools.length > 0 ? true : undefined,
+            tool_choice: !isLastChance ? toolChoice : undefined,
+            parallel_tool_calls: !isLastChance ? parallelToolCalls : undefined,
             stream: true,
             temperature: 0.7,
           }),
@@ -2893,7 +2944,7 @@ exports.chatOnce = async (req, res) => {
     const mutationSlotForIntent = createDurableMutationSlotAllocator();
 
     // Tool execution loop (non-streaming)
-    const MAX_ITERATIONS = Math.min(10, Math.max(5, explicitlyRequestedTools.length + 1));
+    const MAX_ITERATIONS = Math.min(20, Math.max(6, explicitlyRequestedTools.length + 3));
     let lastMessage = null;
 
     for (let i = 0; i < MAX_ITERATIONS; i++) {
@@ -2907,9 +2958,11 @@ exports.chatOnce = async (req, res) => {
         tools,
         completedToolResults
       );
-      const offeredTools = explicitlyRequestedTools.length
-        ? tools.filter(tool => missingRequestedTools.includes(tool?.function?.name))
-        : tools;
+      const { offeredTools, toolChoice, parallelToolCalls } = explicitToolRequestOptions(
+        explicitlyRequestedTools,
+        missingRequestedTools,
+        tools,
+      );
 
       const upstream = await fetch(OPENROUTER_URL, {
         method: 'POST',
@@ -2921,10 +2974,14 @@ exports.chatOnce = async (req, res) => {
         },
         body: JSON.stringify({
           model: AI_MODEL,
-          messages: conversationMessages,
+          messages: messagesForCurrentTurnSummary(
+            conversationMessages,
+            completedToolResults,
+            missingRequestedTools,
+          ),
           tools: isLast || offeredTools.length === 0 ? undefined : offeredTools,
-          tool_choice: !isLast && missingRequestedTools.length > 0 ? 'required' : undefined,
-          parallel_tool_calls: !isLast && missingRequestedTools.length > 0 ? true : undefined,
+          tool_choice: !isLast ? toolChoice : undefined,
+          parallel_tool_calls: !isLast ? parallelToolCalls : undefined,
           stream: false,
           temperature: 0.7,
         }),
@@ -3420,6 +3477,8 @@ exports.__private = {
   hasSuccessfulDurableMutation,
   isUnbackedMutationClaim,
   explicitlyRequestedAITools,
+  explicitToolRequestOptions,
+  messagesForCurrentTurnSummary,
   explicitlyRequestedDurableMutationTools,
   missingExplicitAITools,
   missingExplicitDurableMutationTools,
