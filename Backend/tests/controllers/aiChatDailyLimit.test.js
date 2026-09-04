@@ -278,6 +278,16 @@ describe('AI chat controller daily limit enforcement', () => {
     }
 
     expect(fetchMock).toHaveBeenCalledTimes(3);
+    const initialRequest = JSON.parse(fetchMock.mock.calls[0][1].body);
+    const retryRequest = JSON.parse(fetchMock.mock.calls[1][1].body);
+    const summaryRequest = JSON.parse(fetchMock.mock.calls[2][1].body);
+    expect(initialRequest.tool_choice).toBe('required');
+    expect(initialRequest.parallel_tool_calls).toBe(true);
+    expect(initialRequest.tools.map(tool => tool.function.name)).toEqual(['update_shipping']);
+    expect(retryRequest.tool_choice).toBe('required');
+    expect(retryRequest.tools.map(tool => tool.function.name)).toEqual(['update_shipping']);
+    expect(summaryRequest).not.toHaveProperty('tool_choice');
+    expect(summaryRequest).not.toHaveProperty('tools');
     expect(executeToolCall).toHaveBeenCalledWith(
       'update_shipping',
       expect.objectContaining({ method: 'fast', cost: 0, isActive: false }),
@@ -362,6 +372,106 @@ describe('AI chat controller daily limit enforcement', () => {
       'What happens if I use update_profile?',
       tools,
     )).toEqual([]);
+  });
+
+  it('forces every explicitly requested mobile tool and only summarizes after completion', async () => {
+    const originalFetch = global.fetch;
+    const fetchMock = jest.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [{
+            message: {
+              role: 'assistant',
+              content: '',
+              tool_calls: [{
+                id: 'profile-read-1',
+                type: 'function',
+                function: { name: 'get_my_profile', arguments: '{}' },
+              }],
+            },
+          }],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [{
+            message: {
+              role: 'assistant',
+              content: '',
+              tool_calls: [{
+                id: 'addresses-read-1',
+                type: 'function',
+                function: { name: 'get_addresses', arguments: '{}' },
+              }],
+            },
+          }],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { role: 'assistant', content: 'Both live reads completed.' } }],
+        }),
+      });
+    global.fetch = fetchMock;
+    executeToolCall
+      .mockResolvedValueOnce({ success: true, data: { name: 'Buyer QA' } })
+      .mockResolvedValueOnce({ success: true, data: [] });
+    const res = response();
+
+    try {
+      await chatOnce({
+        body: {
+          source: 'mobile',
+          messages: [{
+            role: 'user',
+            content: 'Call exactly get_my_profile and get_addresses now, then report both live results.',
+          }],
+        },
+        headers: { 'idempotency-key': 'mobile-explicit-read-key' },
+        user: { role: 'user' },
+        aiChatDailyUsage: { allowed: true, used: 0, limit: 20, remaining: 19, role: 'user' },
+      }, res);
+    } finally {
+      global.fetch = originalFetch;
+    }
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    const initialRequest = JSON.parse(fetchMock.mock.calls[0][1].body);
+    const remainingRequest = JSON.parse(fetchMock.mock.calls[1][1].body);
+    const summaryRequest = JSON.parse(fetchMock.mock.calls[2][1].body);
+    expect(initialRequest.tool_choice).toBe('required');
+    expect(initialRequest.parallel_tool_calls).toBe(true);
+    expect(initialRequest.tools.map(tool => tool.function.name)).toEqual(expect.arrayContaining([
+      'get_my_profile',
+      'get_addresses',
+    ]));
+    expect(initialRequest.tools).toHaveLength(2);
+    expect(remainingRequest.tool_choice).toBe('required');
+    expect(remainingRequest.tools.map(tool => tool.function.name)).toEqual(['get_addresses']);
+    expect(summaryRequest).not.toHaveProperty('tool_choice');
+    expect(summaryRequest).not.toHaveProperty('tools');
+    expect(executeToolCall).toHaveBeenNthCalledWith(
+      1,
+      'get_my_profile',
+      expect.objectContaining({ _chatToolOrdinal: 0 }),
+      expect.objectContaining({ role: 'user' }),
+    );
+    expect(executeToolCall).toHaveBeenNthCalledWith(
+      2,
+      'get_addresses',
+      expect.objectContaining({ _chatToolOrdinal: 0 }),
+      expect.objectContaining({ role: 'user' }),
+    );
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      message: expect.objectContaining({ content: 'Both live reads completed.' }),
+      toolResults: expect.arrayContaining([
+        expect.objectContaining({ tool: 'get_my_profile' }),
+        expect.objectContaining({ tool: 'get_addresses' }),
+      ]),
+    }));
   });
 
   it('normalizes AI navigation to real role-scoped routes', () => {
@@ -729,6 +839,16 @@ describe('AI chat controller daily limit enforcement', () => {
     expect(output).toContain('"type":"tool_result"');
     expect(output).toContain('data: [DONE]');
     expect(fetchMock).toHaveBeenCalledTimes(3);
+    const initialRequest = JSON.parse(fetchMock.mock.calls[0][1].body);
+    const retryRequest = JSON.parse(fetchMock.mock.calls[1][1].body);
+    const summaryRequest = JSON.parse(fetchMock.mock.calls[2][1].body);
+    expect(initialRequest.tool_choice).toBe('required');
+    expect(initialRequest.parallel_tool_calls).toBe(true);
+    expect(initialRequest.tools.map(tool => tool.function.name)).toEqual(['update_shipping']);
+    expect(retryRequest.tool_choice).toBe('required');
+    expect(retryRequest.tools.map(tool => tool.function.name)).toEqual(['update_shipping']);
+    expect(summaryRequest).not.toHaveProperty('tool_choice');
+    expect(summaryRequest).not.toHaveProperty('tools');
     expect(executeToolCall).toHaveBeenCalledTimes(1);
   });
 

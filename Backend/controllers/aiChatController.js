@@ -2218,12 +2218,25 @@ async function processAIChatMessage(userObj, incomingMessages, options = {}) {
   const toolResults = [];
   const clientActions = [];
   const lastUserText = cleanMessages.filter(m => m.role === 'user').pop()?.content || '';
+  const explicitlyRequestedTools = explicitlyRequestedAITools(lastUserText, tools);
 
-  const MAX_ITERATIONS = 5;
+  const MAX_ITERATIONS = Math.min(10, Math.max(5, explicitlyRequestedTools.length + 1));
   let lastMessage = null;
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
     const isLast = i === MAX_ITERATIONS - 1;
+    const completedToolResults = [
+      ...toolResults,
+      ...clientActions.map(action => ({ tool: action.action, result: { success: true } })),
+    ];
+    const missingRequestedTools = missingExplicitAITools(
+      lastUserText,
+      tools,
+      completedToolResults
+    );
+    const offeredTools = explicitlyRequestedTools.length
+      ? tools.filter(tool => missingRequestedTools.includes(tool?.function?.name))
+      : tools;
     if (!OPENROUTER_API_KEY) {
       throw new Error('AI service temporarily unavailable.');
     }
@@ -2246,7 +2259,9 @@ async function processAIChatMessage(userObj, incomingMessages, options = {}) {
         body: JSON.stringify({
           model: AI_MODEL,
           messages: conversationMessages,
-          tools: isLast ? undefined : tools,
+          tools: isLast || offeredTools.length === 0 ? undefined : offeredTools,
+          tool_choice: !isLast && missingRequestedTools.length > 0 ? 'required' : undefined,
+          parallel_tool_calls: !isLast && missingRequestedTools.length > 0 ? true : undefined,
           stream: false,
           temperature: 0.7,
         }),
@@ -2567,6 +2582,7 @@ exports.streamChat = async (req, res) => {
     // Collect tool events from this turn so we can persist them with the assistant message
     const turnToolEvents = [];
     const lastUserText = cleanMessages.filter(m => m.role === 'user').pop()?.content || '';
+    const explicitlyRequestedTools = explicitlyRequestedAITools(lastUserText, tools);
     const toolTurnContext = {
       _chatRequestKey: getHttpChatToolRequestKey(req, 'stream', userId),
     };
@@ -2574,8 +2590,9 @@ exports.streamChat = async (req, res) => {
 
     // ═══ Tool Execution Loop ═══
     // The AI may request tool calls. We execute them server-side, feed results back,
-    // and let the AI generate a natural language summary. Max 5 iterations for safety.
-    const MAX_TOOL_ITERATIONS = 5;
+    // and let the AI generate a natural language summary. Explicit multi-tool
+    // requests get enough bounded rounds for every named tool plus the summary.
+    const MAX_TOOL_ITERATIONS = Math.min(10, Math.max(5, explicitlyRequestedTools.length + 1));
     let iteration = 0;
     let finalTextSent = false;
     let terminalToolFailure = null;
@@ -2583,6 +2600,18 @@ exports.streamChat = async (req, res) => {
     while (iteration < MAX_TOOL_ITERATIONS && !closed()) {
       iteration++;
       const isLastChance = iteration === MAX_TOOL_ITERATIONS;
+      const completedToolResults = turnToolEvents
+        .map(event => event.type === 'tool_result'
+          ? { tool: event.tool, result: event.result }
+          : { tool: event.action, result: { success: true } });
+      const missingRequestedTools = missingExplicitAITools(
+        lastUserText,
+        tools,
+        completedToolResults
+      );
+      const offeredTools = explicitlyRequestedTools.length
+        ? tools.filter(tool => missingRequestedTools.includes(tool?.function?.name))
+        : tools;
 
       // Call OpenRouter (streaming). Keep the abort timer active while the body
       // is consumed too; fetch resolves as soon as headers arrive, while a
@@ -2605,7 +2634,9 @@ exports.streamChat = async (req, res) => {
           body: JSON.stringify({
             model: AI_MODEL,
             messages: conversationMessages,
-            tools: isLastChance ? undefined : tools, // Don't offer tools on last iteration
+            tools: isLastChance || offeredTools.length === 0 ? undefined : offeredTools,
+            tool_choice: !isLastChance && missingRequestedTools.length > 0 ? 'required' : undefined,
+            parallel_tool_calls: !isLastChance && missingRequestedTools.length > 0 ? true : undefined,
             stream: true,
             temperature: 0.7,
           }),
@@ -2855,17 +2886,30 @@ exports.chatOnce = async (req, res) => {
     const toolResults = []; // Collect tool results for client
     const clientActions = []; // Collect client-side actions
     const lastUserText = cleanMessages.filter(m => m.role === 'user').pop()?.content || '';
+    const explicitlyRequestedTools = explicitlyRequestedAITools(lastUserText, tools);
     const toolTurnContext = {
       _chatRequestKey: getHttpChatToolRequestKey(req, 'once', userId),
     };
     const mutationSlotForIntent = createDurableMutationSlotAllocator();
 
     // Tool execution loop (non-streaming)
-    const MAX_ITERATIONS = 5;
+    const MAX_ITERATIONS = Math.min(10, Math.max(5, explicitlyRequestedTools.length + 1));
     let lastMessage = null;
 
     for (let i = 0; i < MAX_ITERATIONS; i++) {
       const isLast = i === MAX_ITERATIONS - 1;
+      const completedToolResults = [
+        ...toolResults,
+        ...clientActions.map(action => ({ tool: action.action, result: { success: true } })),
+      ];
+      const missingRequestedTools = missingExplicitAITools(
+        lastUserText,
+        tools,
+        completedToolResults
+      );
+      const offeredTools = explicitlyRequestedTools.length
+        ? tools.filter(tool => missingRequestedTools.includes(tool?.function?.name))
+        : tools;
 
       const upstream = await fetch(OPENROUTER_URL, {
         method: 'POST',
@@ -2878,7 +2922,9 @@ exports.chatOnce = async (req, res) => {
         body: JSON.stringify({
           model: AI_MODEL,
           messages: conversationMessages,
-          tools: isLast ? undefined : tools,
+          tools: isLast || offeredTools.length === 0 ? undefined : offeredTools,
+          tool_choice: !isLast && missingRequestedTools.length > 0 ? 'required' : undefined,
+          parallel_tool_calls: !isLast && missingRequestedTools.length > 0 ? true : undefined,
           stream: false,
           temperature: 0.7,
         }),
