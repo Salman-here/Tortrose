@@ -500,6 +500,46 @@ describe('AI chat controller daily limit enforcement', () => {
     expect(executeToolCall).toHaveBeenCalledTimes(1);
   });
 
+  it('ends a stalled streaming provider request with a bounded user-facing timeout', async () => {
+    const originalFetch = global.fetch;
+    jest.useFakeTimers();
+    global.fetch = jest.fn((_url, options = {}) => new Promise((_resolve, reject) => {
+      options.signal?.addEventListener('abort', () => {
+        const error = new Error('aborted');
+        error.name = 'AbortError';
+        reject(error);
+      }, { once: true });
+    }));
+    const res = {
+      ...response(),
+      writableEnded: false,
+      destroyed: false,
+      flushHeaders: jest.fn(),
+      write: jest.fn(),
+      end: jest.fn(function end() { this.writableEnded = true; }),
+    };
+
+    try {
+      const pending = streamChat({
+        body: { messages: [{ role: 'user', content: 'Show my wishlist.' }] },
+        headers: { 'idempotency-key': 'stalled-stream-request' },
+        user: { role: 'user' },
+        on: jest.fn(),
+        aiChatDailyUsage: { allowed: true, used: 1, limit: 20, remaining: 19, role: 'user' },
+      }, res);
+      await jest.advanceTimersByTimeAsync(60001);
+      await pending;
+    } finally {
+      global.fetch = originalFetch;
+      jest.useRealTimers();
+    }
+
+    const output = res.write.mock.calls.map(([chunk]) => chunk).join('');
+    expect(output).toContain('AI service timed out. Please try again.');
+    expect(output).toContain('data: [DONE]');
+    expect(res.end).toHaveBeenCalledTimes(1);
+  });
+
   it('ends SSE without DONE when a mutation has no caller-supplied request key', async () => {
     const originalFetch = global.fetch;
     const encoder = new TextEncoder();

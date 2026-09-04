@@ -2504,48 +2504,67 @@ exports.streamChat = async (req, res) => {
       iteration++;
       const isLastChance = iteration === MAX_TOOL_ITERATIONS;
 
-      // Call OpenRouter (streaming)
-      const upstreamResp = await fetch(OPENROUTER_URL, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${OPENROUTER_API_KEY}`,
-          'Content-Type': 'application/json',
-          'HTTP-Referer': SITE_URL,
-          'X-Title': SITE_NAME,
-        },
-        body: JSON.stringify({
-          model: AI_MODEL,
-          messages: conversationMessages,
-          tools: isLastChance ? undefined : tools, // Don't offer tools on last iteration
-          stream: true,
-          temperature: 0.7,
-        }),
-      });
+      // Call OpenRouter (streaming). Keep the abort timer active while the body
+      // is consumed too; fetch resolves as soon as headers arrive, while a
+      // stalled provider can otherwise leave the browser loading forever.
+      const upstreamController = new AbortController();
+      const upstreamTimeout = setTimeout(() => upstreamController.abort(), AI_REQUEST_TIMEOUT_MS);
+      upstreamTimeout.unref?.();
+      let upstreamResp;
+      let assistantContent = '';
+      let toolCalls = [];
+      try {
+        upstreamResp = await fetch(OPENROUTER_URL, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+            'Content-Type': 'application/json',
+            'HTTP-Referer': SITE_URL,
+            'X-Title': SITE_NAME,
+          },
+          body: JSON.stringify({
+            model: AI_MODEL,
+            messages: conversationMessages,
+            tools: isLastChance ? undefined : tools, // Don't offer tools on last iteration
+            stream: true,
+            temperature: 0.7,
+          }),
+          signal: upstreamController.signal,
+        });
 
-      if (!upstreamResp.ok) {
-        const errorText = await upstreamResp.text().catch(() => '');
-        console.error('OpenRouter error', upstreamResp.status, errorText);
-        const errMsg = upstreamResp.status === 429
-          ? 'AI rate limit hit. Please try again in a moment.'
-          : upstreamResp.status === 402
-            ? 'AI credits exhausted. Please top up.'
-            : 'AI service temporarily unavailable.';
-        send({ error: errMsg });
-        break;
+        if (!upstreamResp.ok) {
+          const errorText = await upstreamResp.text().catch(() => '');
+          console.error('OpenRouter error', upstreamResp.status, errorText);
+          const errMsg = upstreamResp.status === 429
+            ? 'AI rate limit hit. Please try again in a moment.'
+            : upstreamResp.status === 402
+              ? 'AI credits exhausted. Please top up.'
+              : 'AI service temporarily unavailable.';
+          send({ error: errMsg });
+          break;
+        }
+
+        if (!upstreamResp.body) {
+          send({ error: 'Empty AI response' });
+          break;
+        }
+
+        // Buffer each model round until we know whether it contains tool calls.
+        // This prevents a premature "I changed it" draft from reaching the UI
+        // before a matching durable mutation succeeds.
+        ({ assistantContent, toolCalls } = await consumeStream(upstreamResp, {
+          onText: () => {},
+          role: effectiveRole,
+        }));
+      } catch (error) {
+        if (error?.name === 'AbortError') {
+          send({ error: 'AI service timed out. Please try again.' });
+          break;
+        }
+        throw error;
+      } finally {
+        clearTimeout(upstreamTimeout);
       }
-
-      if (!upstreamResp.body) {
-        send({ error: 'Empty AI response' });
-        break;
-      }
-
-      // Buffer each model round until we know whether it contains tool calls.
-      // This prevents a premature "I changed it" draft from reaching the UI
-      // before a matching durable mutation succeeds.
-      const { assistantContent, toolCalls } = await consumeStream(upstreamResp, {
-        onText: () => {},
-        role: effectiveRole,
-      });
 
       // If no tool calls, the AI gave a direct text answer — we're done
       if (toolCalls.length === 0) {
