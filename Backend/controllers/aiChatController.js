@@ -239,7 +239,7 @@ const SHARED_NAVIGATION_TOOL = {
   type: 'function',
   function: {
     name: 'navigate',
-    description: 'Navigate the user to a page in the application.',
+    description: 'Navigate the user to a real page in the application. Use canonical routes: seller products /seller-dashboard/product-management, seller orders /seller-dashboard/order-management, seller shipping /seller-dashboard/shipping-configuration, seller settings /seller-dashboard/store-settings, buyer orders /user-dashboard/orders, buyer profile /user-dashboard/profile, cart /cart, checkout /checkout, marketplace /marketplace. The server validates and normalizes every route.',
     parameters: {
       type: 'object',
       properties: {
@@ -1690,6 +1690,88 @@ function addMutationIntegrityRetry(conversationMessages, draftText) {
   conversationMessages.push({ role: 'system', content: AI_MUTATION_INTEGRITY_RETRY });
 }
 
+const AI_COMMON_ROUTES = new Set([
+  '/', '/marketplace', '/marketplace/trusted', '/trusted-stores', '/about',
+  '/faq', '/contact', '/docs', '/track-order', '/become-seller', '/terms',
+  '/privacy', '/ai-chat', '/login', '/signup', '/cart', '/checkout',
+  '/products', '/stores', '/settings/blocked-accounts',
+]);
+const AI_ROLE_ROUTES = {
+  user: new Set([
+    '/user-dashboard', '/user-dashboard/account-overview', '/user-dashboard/profile',
+    '/user-dashboard/orders', '/user-dashboard/whatsapp', '/user-dashboard/wallet',
+    '/user-dashboard/notifications', '/user-dashboard/payment-methods',
+  ]),
+  seller: new Set([
+    '/seller-dashboard', '/seller-dashboard/seller-home', '/seller-dashboard/store-overview',
+    '/seller-dashboard/product-management', '/seller-dashboard/order-management',
+    '/seller-dashboard/store-settings', '/seller-dashboard/shipping-configuration',
+    '/seller-dashboard/analytics', '/seller-dashboard/payments',
+    '/seller-dashboard/payment-methods', '/seller-dashboard/notifications',
+    '/seller-dashboard/notification-settings', '/seller-dashboard/subdomain',
+    '/seller-dashboard/subscription', '/seller-dashboard/ads',
+    '/seller-dashboard/coupons', '/seller-dashboard/whatsapp-settings',
+    '/seller-dashboard/profile',
+  ]),
+  admin: new Set([
+    '/admin-dashboard', '/admin-dashboard/store-overview',
+    '/admin-dashboard/product-management', '/admin-dashboard/order-management',
+    '/admin-dashboard/user-management', '/admin-dashboard/tax-configuration',
+    '/admin-dashboard/store-verifications', '/admin-dashboard/analytics',
+    '/admin-dashboard/payments', '/admin-dashboard/notifications',
+    '/admin-dashboard/notification-settings', '/admin-dashboard/subdomains',
+    '/admin-dashboard/complaints', '/admin-dashboard/whatsapp-verification',
+    '/admin-dashboard/whatsapp-test-inbox', '/admin-dashboard/broadcast',
+    '/admin-dashboard/ads', '/admin-dashboard/ai-prompts',
+  ]),
+};
+const AI_ROUTE_ALIASES = {
+  '/seller/apply': '/become-seller',
+  '/seller-signup': '/become-seller',
+  '/apply-seller': '/become-seller',
+  '/seller-registration': '/become-seller',
+  '/seller-dashboard/products': '/seller-dashboard/product-management',
+  '/seller-dashboard/product': '/seller-dashboard/product-management',
+  '/seller-dashboard/orders': '/seller-dashboard/order-management',
+  '/seller-dashboard/shipping': '/seller-dashboard/shipping-configuration',
+  '/seller-dashboard/settings': '/seller-dashboard/store-settings',
+  '/seller-dashboard/store': '/seller-dashboard/store-overview',
+  '/seller-dashboard/coupon-management': '/seller-dashboard/coupons',
+  '/user-dashboard/order-management': '/user-dashboard/orders',
+};
+
+function normalizeAIClientRoute(route, role = 'guest') {
+  const raw = String(route || '').trim();
+  if (!raw) return role === 'seller' ? '/seller-dashboard' : role === 'admin' ? '/admin-dashboard' : '/';
+
+  let pathname = raw.startsWith('/') ? raw : `/${raw}`;
+  try {
+    pathname = new URL(raw, SITE_URL).pathname;
+  } catch {}
+  const normalized = (AI_ROUTE_ALIASES[pathname] || pathname).replace(/\/+$/, '') || '/';
+  if (AI_COMMON_ROUTES.has(normalized) || AI_ROLE_ROUTES[role]?.has(normalized)) return normalized;
+
+  const dynamicAllowed = [
+    /^\/single-product\/[^/]+$/,
+    /^\/store\/[^/]+$/,
+    /^\/orders\/confirm\/[^/]+$/,
+    ...(role === 'seller' ? [/^\/seller-dashboard\/order\/[^/]+$/] : []),
+    ...(role === 'user' ? [/^\/user-dashboard\/order(?:\/detail)?\/[^/]+$/] : []),
+    ...(role === 'admin' ? [/^\/admin-dashboard\/order\/[^/]+$/] : []),
+  ].some(pattern => pattern.test(normalized));
+  if (dynamicAllowed) return normalized;
+
+  return role === 'seller' ? '/seller-dashboard' : role === 'admin' ? '/admin-dashboard' : '/';
+}
+
+function normalizeAIClientActionArgs(toolName, args, role) {
+  if (toolName !== 'navigate') return args;
+  return {
+    ...(args || {}),
+    route: normalizeAIClientRoute(args?.route, role),
+  };
+}
+
 function createDurableMutationSlotAllocator() {
   const slotByIntent = new Map();
   let nextSlot = 0;
@@ -2155,6 +2237,7 @@ async function processAIChatMessage(userObj, incomingMessages, options = {}) {
       }
 
       if (isClientSideTool(toolName)) {
+        args = normalizeAIClientActionArgs(toolName, args, effectiveRole);
         if (isWhatsApp) {
           // In WhatsApp mode, convert client-side tools to text results
           let textResult = '';
@@ -2444,6 +2527,7 @@ exports.streamChat = async (req, res) => {
         try { args = JSON.parse(tc.function.arguments || '{}'); } catch {}
 
         if (isClientSideTool(toolName)) {
+          args = normalizeAIClientActionArgs(toolName, args, effectiveRole);
           // Client-side tools: send to frontend for rendering, give AI a success ack
           send({ type: 'client_action', action: toolName, args, id: tc.id });
           // Persist client actions other than navigation (which is a one-time side-effect)
@@ -2674,6 +2758,7 @@ exports.chatOnce = async (req, res) => {
         try { args = JSON.parse(tc.function.arguments || '{}'); } catch {}
 
         if (isClientSideTool(toolName)) {
+          args = normalizeAIClientActionArgs(toolName, args, effectiveRole);
           clientActions.push({ action: toolName, args, id: tc.id });
           conversationMessages.push({
             role: 'tool',
@@ -3104,5 +3189,7 @@ exports.__private = {
   hasSuccessfulDurableMutation,
   isUnbackedMutationClaim,
   failedMutationMessage,
+  normalizeAIClientRoute,
+  normalizeAIClientActionArgs,
   saveToConversation,
 };

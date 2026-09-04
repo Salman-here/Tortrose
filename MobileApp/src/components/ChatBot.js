@@ -48,6 +48,7 @@ import {
   createScopedMutationStorageKey,
   getOrCreatePersistedMutationAttemptForFingerprint,
 } from '../utils/persistedMutationAttempt';
+import { resolveAIClientRoute } from '../utils/aiClientRoutes';
 
 // Uses our own backend (no Supabase) - the /api/ai-chat/once endpoint handles
 // non-streaming tool execution loop server-side and returns the final response.
@@ -115,77 +116,6 @@ const buildWelcomeMessage = (currentUser, role) => {
     role: 'assistant',
     content: greetFn(name, greeting),
   };
-};
-
-const STATIC_CLIENT_ROUTES = {
-  orders: { name: 'Orders' },
-  checkout: { name: 'Checkout' },
-  settings: { name: 'Settings' },
-  'track-order': { name: 'TrackOrder' },
-  'become-seller': { name: 'BecomeSeller' },
-  about: { name: 'About' },
-  faq: { name: 'FAQ' },
-  contact: { name: 'Contact' },
-  docs: { name: 'Docs' },
-  terms: { name: 'TermsOfService' },
-  'terms-of-service': { name: 'TermsOfService' },
-  privacy: { name: 'PrivacyPolicy' },
-  'privacy-policy': { name: 'PrivacyPolicy' },
-  'ai-chat': { name: 'AIChat' },
-  notifications: { name: 'Notifications' },
-  'user-dashboard': { name: 'UserDashboard' },
-  'seller-dashboard': { name: 'SellerDashboard' },
-  wallet: { name: 'Wallet' },
-};
-
-const TAB_CLIENT_ROUTES = {
-  '': 'Home',
-  home: 'Home',
-  cart: 'Cart',
-  profile: 'Account',
-  account: 'Account',
-  stores: 'Marketplace',
-  marketplace: 'Marketplace',
-  favorites: 'Wishlist',
-  wishlist: 'Wishlist',
-};
-
-const resolveClientRoute = (rawRoute) => {
-  const raw = String(rawRoute || '').trim();
-  if (!raw) return { type: 'tab', screen: 'Home' };
-
-  let path = raw
-    .replace(/^https?:\/\/[^/]+/i, '')
-    .split(/[?#]/)[0]
-    .replace(/^\/+|\/+$/g, '');
-  try {
-    path = decodeURIComponent(path);
-  } catch {}
-
-  const routeKey = path.toLowerCase();
-  if (TAB_CLIENT_ROUTES[routeKey]) {
-    return { type: 'tab', screen: TAB_CLIENT_ROUTES[routeKey] };
-  }
-  if (STATIC_CLIENT_ROUTES[routeKey]) {
-    return { type: 'stack', ...STATIC_CLIENT_ROUTES[routeKey] };
-  }
-  if (routeKey === 'marketplace/trusted') {
-    return { type: 'tab', screen: 'Wishlist', params: { tab: 'stores' } };
-  }
-
-  const segments = path.split('/').filter(Boolean);
-  const resource = segments[0]?.toLowerCase();
-  const identifier = segments.slice(1).join('/');
-  if (resource === 'single-product' && identifier && !identifier.startsWith(':')) {
-    return { type: 'stack', name: 'ProductDetail', params: { productId: identifier } };
-  }
-  if (resource === 'store' && identifier && !identifier.startsWith(':')) {
-    return { type: 'stack', name: 'Store', params: { storeSlug: identifier } };
-  }
-  if (resource === 'order' && identifier && !identifier.startsWith(':')) {
-    return { type: 'stack', name: 'OrderDetail', params: { orderId: identifier } };
-  }
-  return null;
 };
 
 const MAX_ATTACHMENTS = 10;
@@ -1138,7 +1068,7 @@ export default function ChatBot({
       for (const ca of clientActions) {
         if (ca.action === 'navigate' && ca.args?.route) {
           const label = ca.args.label || ca.args.route;
-          const target = resolveClientRoute(ca.args.route);
+          const target = resolveAIClientRoute(ca.args.route);
           let navigationResult = {
             navigated: false,
             label,

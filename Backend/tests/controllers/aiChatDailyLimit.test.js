@@ -275,6 +275,21 @@ describe('AI chat controller daily limit enforcement', () => {
     expect(__private.isUnbackedMutationClaim('You can restore it from Shipping.', request, [])).toBe(false);
   });
 
+  it('normalizes AI navigation to real role-scoped routes', () => {
+    expect(__private.normalizeAIClientRoute('/seller-dashboard/products', 'seller'))
+      .toBe('/seller-dashboard/product-management');
+    expect(__private.normalizeAIClientRoute('/seller-dashboard/orders', 'seller'))
+      .toBe('/seller-dashboard/order-management');
+    expect(__private.normalizeAIClientRoute('/seller-dashboard/not-a-page', 'seller'))
+      .toBe('/seller-dashboard');
+    expect(__private.normalizeAIClientRoute('/admin-dashboard/user-management', 'seller'))
+      .toBe('/seller-dashboard');
+    expect(__private.normalizeAIClientRoute('https://outside.example/seller-dashboard/products', 'seller'))
+      .toBe('/seller-dashboard/product-management');
+    expect(__private.normalizeAIClientRoute('/user-dashboard/orders', 'user'))
+      .toBe('/user-dashboard/orders');
+  });
+
   it('assigns stable mutation slots across read reordering and repeated identical calls', () => {
     const slot = __private.createDurableMutationSlotAllocator();
     const addArgs = { name: 'One product', price: 10 };
