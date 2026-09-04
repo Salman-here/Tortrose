@@ -461,6 +461,7 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
   const [pendingTools, setPendingTools] = useState([]);
   const [activeConvoId, setActiveConvoId] = useState(conversationId);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [isStartingNewChat, setIsStartingNewChat] = useState(false);
   const isUploadingProductImage = false;
   const [pendingProductImages, setPendingProductImages] = useState([]);
   const [isRecordingVoice, setIsRecordingVoice] = useState(false);
@@ -766,7 +767,7 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
   const sendMessage = useCallback(async (text, attachments = []) => {
     const trimmedText = String(text || '').trim();
     const pendingAttachments = Array.isArray(attachments) ? attachments : (attachments ? [attachments] : []);
-    if ((!trimmedText && pendingAttachments.length === 0) || isLoading) return;
+    if ((!trimmedText && pendingAttachments.length === 0) || isLoading || isStartingNewChat) return;
 
     const displayAttachments = pendingAttachments.map(attachment => ({
       type: attachment.type?.startsWith('image/') ? 'image' : attachment.type?.startsWith('audio/') ? 'audio' : 'file',
@@ -1050,10 +1051,12 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
       setIsLoading(false);
       setPendingTools([]);
     }
-  }, [messages, isLoading, authToken, activeConvoId, handleClientAction, currentUser?._id, currentUser?.id, currency, chatAttemptStorageKey, onConversationCreated]);
+  }, [messages, isLoading, isStartingNewChat, authToken, activeConvoId, handleClientAction, currentUser?._id, currentUser?.id, currency, chatAttemptStorageKey, onConversationCreated]);
 
   // ─── Clear chat (start a brand-new conversation) ───
   const clearChat = async () => {
+    if (isLoading || isStartingNewChat) return;
+    setIsStartingNewChat(true);
     setMessages([]);
     setShowChips(true);
     setPendingTools([]);
@@ -1062,8 +1065,8 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
 
     // For logged-in users, create a fresh conversation on the server so the next
     // message doesn't accidentally append to the previously-active conversation.
-    if (authToken) {
-      try {
+    try {
+      if (authToken) {
         const resp = await fetch(`${API_BASE}api/ai-chat/conversations`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${authToken}` },
@@ -1076,9 +1079,11 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
             if (onConversationCreated) onConversationCreated(data._id);
           }
         }
-      } catch (e) {
-        console.error('Failed to start new conversation:', e);
       }
+    } catch (e) {
+      console.error('Failed to start new conversation:', e);
+    } finally {
+      setIsStartingNewChat(false);
     }
 
     // Re-trigger greeting
@@ -1406,7 +1411,8 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
         </div>
         <button
           onClick={clearChat}
-          className="p-2 rounded-xl hover:bg-white/20 active:bg-white/30 transition-colors relative"
+          disabled={isLoading || isStartingNewChat}
+          className="p-2 rounded-xl hover:bg-white/20 active:bg-white/30 transition-colors relative disabled:opacity-50"
           title="New chat"
           aria-label="New chat"
         >
@@ -1612,7 +1618,7 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
-                  disabled={isLoading || isUploadingProductImage}
+                  disabled={isLoading || isStartingNewChat || isUploadingProductImage}
                   className="h-8 w-8 shrink-0 rounded-xl flex items-center justify-center transition-all disabled:opacity-40 hover:scale-[1.04] active:scale-95"
                   style={{
                     background: 'hsl(var(--background) / 0.7)',
@@ -1630,7 +1636,7 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
               <button
                 type="button"
                 onClick={isRecordingVoice ? stopVoiceRecording : startVoiceRecording}
-                disabled={isLoading && !isRecordingVoice}
+                disabled={(isLoading || isStartingNewChat) && !isRecordingVoice}
                 className="h-8 w-8 shrink-0 rounded-xl flex items-center justify-center transition-all disabled:opacity-40 hover:scale-[1.04] active:scale-95"
                 style={{
                   background: isRecordingVoice ? 'rgba(239,68,68,0.14)' : 'hsl(var(--background) / 0.7)',
@@ -1647,15 +1653,15 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
               ref={inputRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder={isRecordingVoice ? 'Recording voice note...' : isLoading ? 'AI is thinking...' : 'Ask Rozare anything...'}
-              disabled={isLoading || isUploadingProductImage || isRecordingVoice}
+              placeholder={isRecordingVoice ? 'Recording voice note...' : isStartingNewChat ? 'Starting a new chat...' : isLoading ? 'AI is thinking...' : 'Ask Rozare anything...'}
+              disabled={isLoading || isStartingNewChat || isUploadingProductImage || isRecordingVoice}
               className="flex-1 bg-transparent text-sm outline-none min-w-0 placeholder:opacity-60"
               style={{ color: 'hsl(var(--foreground))' }}
             />
           </div>
           <button
             type="submit"
-            disabled={isLoading || isUploadingProductImage || isRecordingVoice || (!input.trim() && pendingProductImages.length === 0)}
+            disabled={isLoading || isStartingNewChat || isUploadingProductImage || isRecordingVoice || (!input.trim() && pendingProductImages.length === 0)}
             className="h-11 w-11 shrink-0 rounded-2xl flex items-center justify-center transition-all disabled:opacity-40 hover:scale-[1.04] active:scale-95"
             style={{
               background: BRAND_GRADIENT,
@@ -1664,7 +1670,7 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
             }}
             aria-label="Send message"
           >
-            {isLoading ? <Loader2 size={18} className="animate-spin" /> : <Send size={17} />}
+            {(isLoading || isStartingNewChat) ? <Loader2 size={18} className="animate-spin" /> : <Send size={17} />}
           </button>
         </form>
         <p

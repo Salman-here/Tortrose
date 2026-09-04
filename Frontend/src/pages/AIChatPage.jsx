@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   MessageCircle, Plus, Trash2, Edit3, Check, X, ChevronLeft,
-  Bot, Sparkles, Clock, Search, Menu, Zap, Star, ArrowRight, ShoppingBag
+  Bot, Sparkles, Clock, Search, Menu, Zap, Star, ArrowRight, ShoppingBag, Loader2
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
@@ -70,8 +70,12 @@ function AIChatPage() {
   const [editTitle, setEditTitle] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(false);
+  const [creatingConversation, setCreatingConversation] = useState(false);
 
-  const headers = { 'Content-Type': 'application/json', ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}) };
+  const headers = useMemo(() => ({
+    'Content-Type': 'application/json',
+    ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+  }), [authToken]);
 
   const loadConversations = useCallback(async () => {
     if (!authToken) return;
@@ -79,13 +83,13 @@ function AIChatPage() {
       const res = await resilientFetch(`${API_BASE}api/ai-chat/conversations`, { headers });
       const data = await readJsonResponse(res, 'Failed to load conversations');
       setConversations(data.conversations || []);
-      if (data.activeConversationId && !activeConvoId) {
-        setActiveConvoId(data.activeConversationId);
+      if (data.activeConversationId) {
+        setActiveConvoId(currentId => currentId || data.activeConversationId);
       }
     } catch (e) {
       console.error('Failed to load conversations:', e);
     }
-  }, [authToken]);
+  }, [authToken, headers]);
 
   useEffect(() => { loadConversations(); }, [loadConversations]);
 
@@ -103,19 +107,23 @@ function AIChatPage() {
     } finally {
       setLoading(false);
     }
-  }, [authToken]);
+  }, [authToken, headers]);
 
   const createNewChat = async () => {
+    if (creatingConversation) return;
+    setCreatingConversation(true);
     try {
       const res = await fetch(`${API_BASE}api/ai-chat/conversations`, {
         method: 'POST', headers, body: JSON.stringify({ title: 'New Chat' }),
       });
-      const data = await res.json();
+      const data = await readJsonResponse(res, 'Failed to create conversation');
       setActiveConvoId(data._id);
       setLoadedMessages([]);
       await loadConversations();
     } catch (e) {
       console.error('Failed to create conversation:', e);
+    } finally {
+      setCreatingConversation(false);
     }
   };
 
@@ -259,7 +267,8 @@ function AIChatPage() {
               {/* New Chat Button */}
               <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
                 onClick={createNewChat}
-                className="w-full flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all"
+                disabled={creatingConversation}
+                className="w-full flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all disabled:opacity-60"
                 style={{
                   background: BRAND_GRADIENT,
                   color: 'white',
@@ -407,7 +416,13 @@ function AIChatPage() {
         </div>
 
         {/* Chat or Welcome State */}
-        {activeConvoId || loadedMessages !== null ? (
+        {creatingConversation ? (
+          <div className="flex-1 flex items-center justify-center" aria-live="polite">
+            <div className="flex items-center gap-2 text-sm" style={{ color: 'hsl(var(--muted-foreground))' }}>
+              <Loader2 size={18} className="animate-spin" /> Starting a new conversation...
+            </div>
+          </div>
+        ) : activeConvoId || loadedMessages !== null ? (
           <div className="flex-1 overflow-hidden">
             <ChatBot
               embedded={true}
@@ -453,6 +468,7 @@ function AIChatPage() {
               </div>
               <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
                 onClick={createNewChat}
+                disabled={creatingConversation}
                 className="px-6 py-3 rounded-xl font-semibold text-white inline-flex items-center gap-2 transition-all"
                 style={{ background: BRAND_GRADIENT, boxShadow: '0 4px 15px rgba(14,165,233,0.35)' }}>
                 <Plus size={16} /> Start a Conversation
