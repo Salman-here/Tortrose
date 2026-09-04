@@ -105,14 +105,14 @@ describe('seller mobile presentation safety', () => {
     }
   });
 
-  it('refreshes seller dashboard totals after navigation and assistant mutations', () => {
+  it('refreshes seller dashboard totals after returning from the shared AI screen', () => {
     const dashboard = readFileSync(require.resolve('../../src/screens/seller/SellerDashboardScreen.js'), 'utf8');
 
     expect(dashboard).toContain("import { useFocusEffect } from '@react-navigation/native';");
     expect(dashboard).toContain('useFocusEffect(useCallback(() => {');
     expect(dashboard).toContain('dashboardRequestRef.current += 1;');
-    expect(dashboard).toContain('const closeAssistantAndRefresh = useCallback(() => {');
-    expect(dashboard).toContain('onClose={closeAssistantAndRefresh}');
+    expect(dashboard).toContain("navigation.navigate('AIChat', { role: 'seller' })");
+    expect(dashboard).not.toContain('closeAssistantAndRefresh');
     expect(dashboard).toContain('const freshParams = { _mobileRefresh: refreshKey };');
     expect(dashboard).toContain('fetchCompleteSellerCatalog(api, { refreshKey })');
   });
