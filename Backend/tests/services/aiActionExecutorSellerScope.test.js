@@ -7,6 +7,10 @@ const Store = require('../../models/Store');
 const SellerBalanceTransaction = require('../../models/SellerBalanceTransaction');
 const { cancelOrderSafely } = require('../../services/orderCancellationService');
 const { __private, executeToolCall } = require('../../services/aiActionExecutor');
+const {
+  buildOrderSellerCurrencyMoney,
+  buildOrderSellerSettlement,
+} = require('../../services/orderMoneyService');
 
 const SELLER_A = '111111111111111111111111';
 const SELLER_B = '222222222222222222222222';
@@ -425,6 +429,122 @@ describe('aiActionExecutor seller order attribution', () => {
     expect(detail).toMatchObject({
       success: true,
       data: { summary: exactMoney },
+    });
+  });
+
+  test('seller AI leads with frozen store currency and keeps buyer checkout money as context', async () => {
+    const rates = { USD: 1, PKR: 277.86, EUR: 0.92, GBP: 0.79 };
+    const frozenOrder = {
+      currency: 'USD',
+      exchangeRateSnapshot: {
+        base: 'USD',
+        rates,
+        capturedAt: new Date('2026-08-30T00:00:00.000Z'),
+        source: 'test',
+        fallback: false,
+      },
+      orderItems: [{
+        productId: PRODUCT_A,
+        seller: SELLER_B,
+        name: 'PKR seller item',
+        image: 'https://example.com/pkr-item.jpg',
+        price: 7.16,
+        lineSubtotal: 7.16,
+        sourcePrice: 1990,
+        sourceCurrency: 'PKR',
+        sourceLineSubtotal: 1990,
+        priceOriginal: 1990,
+        priceCurrency: 'PKR',
+        quantity: 1,
+        selectedColor: 'Walnut',
+        selectedOptions: { Finish: 'Matte' },
+      }],
+      sellerShipping: [{
+        seller: SELLER_B,
+        shippingMethod: {
+          name: 'Free',
+          price: 0,
+          estimatedDays: 3,
+          sourceCost: 0,
+          sourceCurrency: 'PKR',
+        },
+      }],
+      sellerPolicies: [{ seller: SELLER_B, productCurrency: 'PKR' }],
+      orderSummary: {
+        subtotal: 7.16,
+        shippingCost: 0,
+        tax: 0,
+        couponDiscount: 0,
+        totalAmount: 7.16,
+      },
+    };
+    frozenOrder.sellerSettlementVersion = 1;
+    frozenOrder.sellerSettlement = buildOrderSellerSettlement(frozenOrder, { requireOrderTotal: true });
+    frozenOrder.sellerCurrencyMoneyVersion = 1;
+    frozenOrder.sellerCurrencyMoney = buildOrderSellerCurrencyMoney(frozenOrder);
+
+    const order = await createOrder('SELLER-NATIVE-AI', frozenOrder.orderItems[0], frozenOrder);
+    const seller = { id: SELLER_B, role: 'seller', currency: 'USD' };
+
+    const sellerOrders = await executeToolCall('get_seller_orders', {}, seller);
+    const sharedOrders = await executeToolCall('get_my_orders', {}, seller);
+    const detail = await executeToolCall('get_order_detail', { orderId: order._id.toString() }, seller);
+
+    const expectedNative = {
+      currency: 'PKR',
+      total: 1989.48,
+      money: {
+        subtotal: 1990,
+        shipping: 0,
+        tax: 0,
+        discount: 0,
+        adjustment: -0.52,
+        total: 1989.48,
+      },
+      buyerEquivalent: {
+        currency: 'USD',
+        subtotal: 7.16,
+        shipping: 0,
+        tax: 0,
+        discount: 0,
+        adjustment: 0,
+        total: 7.16,
+      },
+    };
+    expect(sellerOrders).toMatchObject({ success: true, data: { orders: [expectedNative] } });
+    expect(sharedOrders).toMatchObject({
+      success: true,
+      data: {
+        orders: [{
+          ...expectedNative,
+          items: [{
+            name: 'PKR seller item',
+            price: 1990,
+            lineSubtotal: 1990,
+            currency: 'PKR',
+            buyerPrice: 7.16,
+            buyerLineSubtotal: 7.16,
+            buyerCurrency: 'USD',
+            selectedColor: 'Walnut',
+            selectedOptions: { Finish: 'Matte' },
+          }],
+        }],
+      },
+    });
+    expect(detail).toMatchObject({
+      success: true,
+      data: {
+        currency: 'PKR',
+        buyerCurrency: 'USD',
+        summary: expectedNative.money,
+        buyerSummary: expectedNative.buyerEquivalent,
+        items: [{
+          name: 'PKR seller item',
+          lineSubtotal: 1990,
+          selectedColor: 'Walnut',
+          selectedOptions: { Finish: 'Matte' },
+        }],
+      },
     });
   });
 

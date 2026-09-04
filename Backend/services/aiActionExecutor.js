@@ -1160,6 +1160,74 @@ function sellerOrderStatus(order, sellerId) {
   return getSellerFulfillment(order, sellerId)?.status || order?.orderStatus;
 }
 
+function sellerAIOrderMoney(order, sellerId, sellerItems = []) {
+  const buyerSummary = sellerOrderSummaryForItems(order, sellerId, sellerItems);
+  const native = sellerCurrencyMoneyPresentation(order, sellerId, sellerItems);
+  const currency = native?.currency || getAccountingOrderCurrency(order);
+  const buyerCurrency = native?.buyerCurrency || getAccountingOrderCurrency(order);
+  const nativeSummary = native?.summary || {
+    subtotal: buyerSummary.subtotal,
+    shippingCost: buyerSummary.shippingCost,
+    tax: buyerSummary.tax,
+    couponDiscount: buyerSummary.couponDiscount,
+    reconciliationAdjustment: buyerSummary.adjustment,
+    totalAmount: buyerSummary.totalAmount,
+  };
+  const frozenBuyerSummary = native?.buyerSummary || {
+    subtotal: buyerSummary.subtotal,
+    shippingCost: buyerSummary.shippingCost,
+    tax: buyerSummary.tax,
+    couponDiscount: buyerSummary.couponDiscount,
+    reconciliationAdjustment: buyerSummary.adjustment,
+    totalAmount: buyerSummary.totalAmount,
+  };
+  const toAIComponents = summary => ({
+    subtotal: summary.subtotal,
+    shipping: summary.shippingCost,
+    tax: summary.tax,
+    discount: summary.couponDiscount,
+    adjustment: summary.reconciliationAdjustment || 0,
+    total: summary.totalAmount,
+  });
+
+  return {
+    currency,
+    money: toAIComponents(nativeSummary),
+    buyerCurrency,
+    buyerMoney: toAIComponents(frozenBuyerSummary),
+    exchangeRate: native?.exchangeRate || null,
+    itemMoney: native?.itemMoney || [],
+  };
+}
+
+function aiOrderItemView(item, { sellerMoney = null, sellerItemIndex = -1 } = {}) {
+  const quantity = requireStoredAIOrderQuantity(item?.quantity);
+  const buyerLineSubtotal = getOrderItemLineSubtotal(item);
+  const nativeLine = sellerItemIndex >= 0
+    ? sellerMoney?.itemMoney?.[sellerItemIndex]
+    : null;
+  const lineSubtotal = nativeLine?.lineSubtotal ?? buyerLineSubtotal;
+  const price = sellerMoney
+    ? roundMoney(lineSubtotal / quantity)
+    : requireStoredOrderMoney(item?.price, 'order item price');
+
+  return {
+    name: item?.name || item?.productId?.name,
+    price,
+    lineSubtotal,
+    quantity,
+    image: item?.image || item?.productId?.image,
+    selectedColor: item?.selectedColor || null,
+    selectedOptions: plainOptions(item?.selectedOptions),
+    ...(sellerMoney ? {
+      currency: sellerMoney.currency,
+      buyerCurrency: sellerMoney.buyerCurrency,
+      buyerPrice: requireStoredOrderMoney(item?.price, 'buyer order item price'),
+      buyerLineSubtotal,
+    } : {}),
+  };
+}
+
 function parseQuantity(value, fallback = 1) {
   return parsePositiveSafeInteger(value, { fallback });
 }
@@ -1692,11 +1760,15 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
           // CRITICAL: Filter order items to only show THIS seller's products + recalculate seller-specific total
           orders = orders.map(o => {
             const sellerItems = filterSellerOrderItems(o, userId, productIds);
-            const sellerMoney = sellerOrderSummaryForItems(o, userId, sellerItems);
+            const sellerMoney = sellerAIOrderMoney(o, userId, sellerItems);
             return {
               ...o,
               orderItems: sellerItems,
-              _sellerTotal: sellerMoney.total,
+              _sellerTotal: sellerMoney.money.total,
+              _sellerCurrency: sellerMoney.currency,
+              _sellerBuyerCurrency: sellerMoney.buyerCurrency,
+              _sellerBuyerMoney: sellerMoney.buyerMoney,
+              _sellerExchangeRate: sellerMoney.exchangeRate,
               _sellerMoney: sellerMoney,
               _sellerStatus: sellerOrderStatus(o, userId),
             };
@@ -1726,15 +1798,17 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
                 role === 'seller' ? o._sellerTotal : o.orderSummary?.totalAmount,
                 role === 'seller' ? 'seller order total' : 'order total',
               ),
-              currency: getAccountingOrderCurrency(o),
-              money: role === 'seller' ? o._sellerMoney : undefined,
+              currency: role === 'seller' ? o._sellerCurrency : getAccountingOrderCurrency(o),
+              money: role === 'seller' ? o._sellerMoney.money : undefined,
+              buyerEquivalent: role === 'seller' ? {
+                currency: o._sellerBuyerCurrency,
+                ...o._sellerBuyerMoney,
+              } : undefined,
+              exchangeRate: role === 'seller' ? o._sellerExchangeRate : undefined,
               buyer: role === 'seller' ? (o.user?.username || 'Guest') : undefined,
-              items: (o.orderItems || []).map(i => ({
-                name: i.name || i.productId?.name,
-                price: i.price,
-                lineSubtotal: getOrderItemLineSubtotal(i),
-                quantity: i.quantity,
-                image: i.image || i.productId?.image,
+              items: (o.orderItems || []).map((item, sellerItemIndex) => aiOrderItemView(item, {
+                sellerMoney: role === 'seller' ? o._sellerMoney : null,
+                sellerItemIndex: role === 'seller' ? sellerItemIndex : -1,
               })),
               date: o.createdAt,
               isPaid: o.isPaid,
@@ -1787,11 +1861,15 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
         // For sellers: filter items to only their products + compute seller subtotal
         let items = order.orderItems || [];
         let summary = order.orderSummary;
+        let sellerMoney = null;
         if (role === 'seller') {
           items = filterSellerOrderItems(order, userId, sellerProductIds);
           if (!items.length) return { success: false, error: 'Order not found or access denied.' };
-          const sellerMoney = sellerOrderSummaryForItems(order, userId, items);
-          summary = { ...sellerMoney, note: 'Shows only your exact allocated share of this order' };
+          sellerMoney = sellerAIOrderMoney(order, userId, items);
+          summary = {
+            ...sellerMoney.money,
+            note: 'Shows only your exact allocated share of this order in your frozen store currency',
+          };
         }
 
         return {
@@ -1800,14 +1878,18 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
             orderId: order.orderId,
             status: role === 'seller' ? sellerOrderStatus(order, userId) : order.orderStatus,
             buyer: role === 'seller' ? (order.user?.username || 'Guest') : undefined,
-            items: items.map(i => ({
-              name: i.name || i.productId?.name,
-              price: i.price,
-              lineSubtotal: getOrderItemLineSubtotal(i),
-              quantity: i.quantity,
-              image: i.image || i.productId?.image,
+            currency: role === 'seller' ? sellerMoney.currency : getAccountingOrderCurrency(order),
+            buyerCurrency: role === 'seller' ? sellerMoney.buyerCurrency : undefined,
+            items: items.map((item, sellerItemIndex) => aiOrderItemView(item, {
+              sellerMoney,
+              sellerItemIndex: role === 'seller' ? sellerItemIndex : -1,
             })),
             summary,
+            buyerSummary: role === 'seller' ? {
+              currency: sellerMoney.buyerCurrency,
+              ...sellerMoney.buyerMoney,
+            } : undefined,
+            exchangeRate: role === 'seller' ? sellerMoney.exchangeRate : undefined,
             shipping: role !== 'seller' ? order.shippingInfo : { city: order.shippingInfo?.city, country: order.shippingInfo?.country },
             paymentMethod: order.paymentMethod,
             isPaid: order.isPaid,
@@ -4654,15 +4736,21 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
         // Filter items & compute seller-specific totals per order
         const sellerOrders = orders.map(o => {
           const sellerItems = filterSellerOrderItems(o, userId, productIds);
-          const sellerMoney = sellerOrderSummaryForItems(o, userId, sellerItems);
+          const sellerMoney = sellerAIOrderMoney(o, userId, sellerItems);
           const fulfillment = getSellerFulfillment(o, userId);
           return {
             orderId: o.orderId,
             status: fulfillment?.status || o.orderStatus,
             buyer: o.user?.username || o.guestEmail || 'Guest',
-            total: sellerMoney.total,
-            itemCount: sellerMoney.itemCount,
-            money: sellerMoney,
+            total: sellerMoney.money.total,
+            currency: sellerMoney.currency,
+            itemCount: sellerItems.length,
+            money: sellerMoney.money,
+            buyerEquivalent: {
+              currency: sellerMoney.buyerCurrency,
+              ...sellerMoney.buyerMoney,
+            },
+            exchangeRate: sellerMoney.exchangeRate,
             date: o.createdAt,
             paymentMethod: o.paymentMethod,
             isPaid: o.isPaid,
