@@ -484,6 +484,8 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
   // Derived
   const role = ['user', 'seller', 'admin'].includes(dashboardRole) ? dashboardRole : (currentUser?.role || 'user');
   const userName = currentUser?.username || '';
+  const latestUserNameRef = useRef(userName);
+  latestUserNameRef.current = userName;
   const authToken = typeof window !== 'undefined' ? getAuthToken() : null;
   const chips = ROLE_CHIPS[role] || ROLE_CHIPS.user;
   const titles = ROLE_TITLES[role] || ROLE_TITLES.user;
@@ -520,11 +522,11 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
         const hour = new Date().getHours();
         const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
         const greetFn = ROLE_GREETINGS[role] || ROLE_GREETINGS.user;
-        setMessages([{ role: 'assistant', content: greetFn(userName, greeting) }]);
+        setMessages([{ role: 'assistant', content: greetFn(latestUserNameRef.current, greeting) }]);
         setShowChips(true);
       }
     }
-  }, [initialMessages, conversationId, role, userName]);
+  }, [initialMessages, conversationId, role]);
 
   // ─── Track conversationId from parent ───
   useEffect(() => {

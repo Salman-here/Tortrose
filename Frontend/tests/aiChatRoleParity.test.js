@@ -49,3 +49,10 @@ test('tool-only assistant turns remain in follow-up context and completed action
   assert.match(chatBot, /succeeded in the previous assistant turn\. Do not repeat it/);
   assert.match(chatBot, /\[content, toolMemory\]\.filter\(Boolean\)\.join/);
 });
+
+test('refreshing an AI-updated profile does not reset the visible conversation', () => {
+  assert.match(chatBot, /const latestUserNameRef = useRef\(userName\)/);
+  assert.match(chatBot, /greetFn\(latestUserNameRef\.current, greeting\)/);
+  assert.match(chatBot, /\}, \[initialMessages, conversationId, role\]\);/);
+  assert.doesNotMatch(chatBot, /\[initialMessages, conversationId, role, userName\]/);
+});
