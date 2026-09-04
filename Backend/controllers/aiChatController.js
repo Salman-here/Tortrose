@@ -1740,6 +1740,35 @@ function isUnbackedMutationClaim(text, lastUserText, toolResults = []) {
   return !hasSuccessfulDurableMutation(toolResults);
 }
 
+function explicitlyRequestedDurableMutationTools(lastUserText, availableTools = []) {
+  const text = String(lastUserText || '');
+  if (!text.trim()) return [];
+
+  return [...new Set(availableTools
+    .map(tool => tool?.function?.name)
+    .filter(name => name && isDurableMutatingAITool?.(name))
+    .filter((name) => {
+      const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const instruction = new RegExp(
+        `\\b(?:invoke|call|execute|run|perform|use|using)\\s+(?:the\\s+)?(?:real\\s+)?${escapedName}(?:\\s+tool)?\\b`,
+        'ig'
+      );
+      let match;
+      while ((match = instruction.exec(text)) !== null) {
+        const prefix = text.slice(Math.max(0, match.index - 24), match.index);
+        if (!/(?:do\s+not|don't|dont|never|without)\s*$/i.test(prefix)) return true;
+      }
+      return false;
+    }))];
+}
+
+function missingExplicitDurableMutationTools(lastUserText, availableTools = [], toolResults = []) {
+  const requested = explicitlyRequestedDurableMutationTools(lastUserText, availableTools);
+  return requested.filter(name => !toolResults.some(entry => (
+    entry?.tool === name && entry?.result?.success === true
+  )));
+}
+
 function failedMutationMessage(toolResults = []) {
   const latestFailure = [...toolResults].reverse().find(entry => (
     isDurableMutatingAITool?.(entry?.tool)
@@ -1751,9 +1780,15 @@ function failedMutationMessage(toolResults = []) {
     : 'I could not verify that change, so I have not claimed it was applied. Please try the request again.';
 }
 
-function addMutationIntegrityRetry(conversationMessages, draftText) {
+function addMutationIntegrityRetry(conversationMessages, draftText, missingTools = []) {
   if (draftText) conversationMessages.push({ role: 'assistant', content: draftText });
-  conversationMessages.push({ role: 'system', content: AI_MUTATION_INTEGRITY_RETRY });
+  const explicitToolInstruction = missingTools.length
+    ? ` The user explicitly requested these mutation tools in this turn and none has succeeded yet: ${missingTools.join(', ')}.`
+    : '';
+  conversationMessages.push({
+    role: 'system',
+    content: `${AI_MUTATION_INTEGRITY_RETRY}${explicitToolInstruction}`,
+  });
 }
 
 const AI_COMMON_ROUTES = new Set([
@@ -2223,9 +2258,17 @@ async function processAIChatMessage(userObj, incomingMessages, options = {}) {
       const draftText = sanitizeAssistantVisibleText(
         typeof message.content === 'string' ? message.content : ''
       );
-      if (isUnbackedMutationClaim(draftText, lastUserText, toolResults)) {
+      const missingExplicitTools = missingExplicitDurableMutationTools(
+        lastUserText,
+        tools,
+        toolResults
+      );
+      if (
+        missingExplicitTools.length > 0
+        || isUnbackedMutationClaim(draftText, lastUserText, toolResults)
+      ) {
         if (!isLast) {
-          addMutationIntegrityRetry(conversationMessages, draftText);
+          addMutationIntegrityRetry(conversationMessages, draftText, missingExplicitTools);
           continue;
         }
         lastMessage = { ...message, content: failedMutationMessage(toolResults) };
@@ -2572,9 +2615,17 @@ exports.streamChat = async (req, res) => {
         const streamToolResults = turnToolEvents
           .filter(event => event.type === 'tool_result')
           .map(event => ({ tool: event.tool, result: event.result }));
-        if (isUnbackedMutationClaim(visibleText, lastUserText, streamToolResults)) {
+        const missingExplicitTools = missingExplicitDurableMutationTools(
+          lastUserText,
+          tools,
+          streamToolResults
+        );
+        if (
+          missingExplicitTools.length > 0
+          || isUnbackedMutationClaim(visibleText, lastUserText, streamToolResults)
+        ) {
           if (!isLastChance) {
-            addMutationIntegrityRetry(conversationMessages, visibleText);
+            addMutationIntegrityRetry(conversationMessages, visibleText, missingExplicitTools);
             continue;
           }
           visibleText = failedMutationMessage(streamToolResults);
@@ -2820,9 +2871,17 @@ exports.chatOnce = async (req, res) => {
         const draftText = sanitizeAssistantVisibleText(
           typeof message.content === 'string' ? message.content : ''
         );
-        if (isUnbackedMutationClaim(draftText, lastUserText, toolResults)) {
+        const missingExplicitTools = missingExplicitDurableMutationTools(
+          lastUserText,
+          tools,
+          toolResults
+        );
+        if (
+          missingExplicitTools.length > 0
+          || isUnbackedMutationClaim(draftText, lastUserText, toolResults)
+        ) {
           if (!isLast) {
-            addMutationIntegrityRetry(conversationMessages, draftText);
+            addMutationIntegrityRetry(conversationMessages, draftText, missingExplicitTools);
             continue;
           }
           lastMessage = { ...message, content: failedMutationMessage(toolResults) };
@@ -3265,6 +3324,8 @@ exports.__private = {
   durableMutationTransportFailure,
   hasSuccessfulDurableMutation,
   isUnbackedMutationClaim,
+  explicitlyRequestedDurableMutationTools,
+  missingExplicitDurableMutationTools,
   failedMutationMessage,
   normalizeAIClientRoute,
   normalizeAIClientActionArgs,

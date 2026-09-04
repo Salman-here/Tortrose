@@ -14,6 +14,8 @@ jest.mock('../../services/aiActionExecutor', () => ({
     'toggle_coupon',
     'bulk_price_update',
     'update_shipping',
+    'update_profile',
+    'add_address',
   ].includes(toolName)),
 }));
 jest.mock('../../services/aiAttachmentService', () => ({
@@ -260,7 +262,7 @@ describe('AI chat controller daily limit enforcement', () => {
     try {
       const result = await processAIChatMessage(
         { role: 'seller' },
-        [{ role: 'user', content: 'Restore Fast shipping to inactive with 0 PKR and 2 days.' }],
+        [{ role: 'user', content: 'Use update_shipping now to restore Fast shipping to inactive with 0 PKR and 2 days.' }],
         { mode: 'whatsapp', currency: 'PKR', requestKey: 'mutation-integrity-retry' },
       );
 
@@ -302,7 +304,32 @@ describe('AI chat controller daily limit enforcement', () => {
       'Activate my coupon.',
       [],
     )).toBe(true);
+    expect(__private.isUnbackedMutationClaim(
+      'No problem at all! Your display name has been updated back to "Rozare Mobile Buyer".',
+      'Restore my display name using update_profile now.',
+      [],
+    )).toBe(true);
     expect(__private.isUnbackedMutationClaim('You can restore it from Shipping.', request, [])).toBe(false);
+  });
+
+  it('requires every explicitly named mutation tool to succeed in the current turn', () => {
+    const tools = __private.getTools('user');
+    const request = 'Use add_address now, then invoke update_profile to save my name. I confirm both.';
+
+    expect(__private.explicitlyRequestedDurableMutationTools(request, tools))
+      .toEqual(['add_address', 'update_profile']);
+    expect(__private.missingExplicitDurableMutationTools(request, tools, [{
+      tool: 'add_address',
+      result: { success: true },
+    }])).toEqual(['update_profile']);
+    expect(__private.missingExplicitDurableMutationTools(request, tools, [
+      { tool: 'add_address', result: { success: true } },
+      { tool: 'update_profile', result: { success: true } },
+    ])).toEqual([]);
+    expect(__private.explicitlyRequestedDurableMutationTools(
+      'Do not use update_profile; only explain what it does.',
+      tools,
+    )).toEqual([]);
   });
 
   it('normalizes AI navigation to real role-scoped routes', () => {
@@ -654,7 +681,7 @@ describe('AI chat controller daily limit enforcement', () => {
 
     try {
       await streamChat({
-        body: { messages: [{ role: 'user', content: 'Restore Fast shipping now.' }] },
+        body: { messages: [{ role: 'user', content: 'Use update_shipping now to restore Fast shipping.' }] },
         headers: { 'idempotency-key': 'stream-mutation-integrity' },
         user: { role: 'seller' },
         on: jest.fn(),
