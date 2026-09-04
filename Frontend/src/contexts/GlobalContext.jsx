@@ -94,8 +94,11 @@ export const GlobalProvider = ({ children }) => {
         cart: []
     })
 
-    const fetchWishlist = async () => {
-
+    const fetchWishlist = useCallback(async () => {
+        if (!currentUser) {
+            setWishlistItems([]);
+            return [];
+        }
         try {
             let token = getAuthToken()
             const res = await axios.get(`${import.meta.env.VITE_API_URL}api/products/get-wishlist`, {
@@ -103,13 +106,21 @@ export const GlobalProvider = ({ children }) => {
                     Authorization: `Bearer ${token}`
                 }
             })
-            setWishlistItems(res.data.wishlist)
+            const wishlist = Array.isArray(res.data?.wishlist) ? res.data.wishlist : [];
+            setWishlistItems(wishlist)
+            return wishlist;
 
         } catch (error) {
-            console.error(error.response?.data.msg);
-            toast.error(error.response?.data.msg)
+            const message = error.response?.data?.msg || 'Failed to fetch wishlist';
+            console.error(message);
+            toast.error(message)
+            return null;
         }
-    }
+    }, [currentUser])
+
+    useEffect(() => {
+        fetchWishlist();
+    }, [fetchWishlist]);
 
     const handleAddToWishlist = async (id) => {
         try {

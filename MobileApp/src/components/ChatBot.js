@@ -26,6 +26,9 @@ import {
 } from 'expo-audio';
 import api, { API_UPLOAD_TIMEOUT_MS } from '../config/api';
 import { useAuth } from '../contexts/AuthContext';
+import { useWishlist } from '../contexts/WishlistContext';
+import { useCart } from '../contexts/CartContext';
+import { useNotificationCount } from '../contexts/NotificationCountContext';
 import { resolveProductPresentationMoney, useCurrency } from '../contexts/CurrencyContext';
 import {
   spacing, fontSize, borderRadius, fontWeight,
@@ -438,6 +441,9 @@ export default function ChatBot({
   initialPrompt = '',
 }) {
   const { currentUser } = useAuth();
+  const { fetchWishlist } = useWishlist();
+  const { fetchCart } = useCart();
+  const { refreshUnreadCount } = useNotificationCount();
   const chatAttemptStorageKey = createScopedMutationStorageKey(
     CHAT_ATTEMPT_STORAGE_KEY,
     currentUser?._id || currentUser?.id || 'guest'
@@ -1062,6 +1068,18 @@ export default function ChatBot({
         name: tr.tool,
         result: tr.result,
       }));
+      for (const tr of toolResults) {
+        if (tr.result?.success !== true) continue;
+        if (['add_to_wishlist', 'remove_from_wishlist'].includes(tr.name)) {
+          void fetchWishlist();
+        }
+        if (['add_to_cart', 'remove_from_cart', 'clear_cart', 'place_order'].includes(tr.name)) {
+          void fetchCart();
+        }
+        if (tr.name === 'mark_notifications_read') {
+          void refreshUnreadCount();
+        }
+      }
       const clientActions = response.clientActions || [];
 
       // Handle client-side actions (navigate, style advice, outfit suggestions)
@@ -1218,12 +1236,16 @@ export default function ChatBot({
           {/* Tool results */}
           {item.toolResults?.map((tr, i) => (
             <View key={i}>
-              {tr.name === 'search_products' && (tr.result?.data?.products || tr.result?.products)?.length > 0 && (
+              {['search_products', 'list_my_products', 'get_wishlist'].includes(tr.name) && (tr.result?.data?.products || tr.result?.data?.items || tr.result?.products)?.length > 0 && (
                 <View style={styles.productResults}>
-                  {(tr.result?.data?.products || tr.result?.products).map((p, pi) => (
+                  {(tr.result?.data?.products || tr.result?.data?.items || tr.result?.products).map((p, pi) => (
                     <TouchableOpacity key={pi} style={styles.productItem}
                       onPress={() => navigation?.navigate('ProductDetail', { productId: p._id })}>
-                      <View style={styles.productDot} />
+                      {p.image ? (
+                        <Image source={{ uri: p.image }} style={styles.productThumb} resizeMode="cover" />
+                      ) : (
+                        <View style={styles.productDot} />
+                      )}
                       <View style={{ flex: 1 }}>
                         <Text style={styles.productName} numberOfLines={1}>{p.name}</Text>
                         <Text style={styles.productPrice}>{formatProductPrice(p, {
@@ -1236,6 +1258,59 @@ export default function ChatBot({
                       <Ionicons name="chevron-forward" size={14} color={c.textLight} />
                     </TouchableOpacity>
                   ))}
+                </View>
+              )}
+              {tr.name === 'get_product_detail' && tr.result?.data?._id && (
+                <View style={styles.productResults}>
+                  <TouchableOpacity style={styles.productItem}
+                    onPress={() => navigation?.navigate('ProductDetail', { productId: tr.result.data._id })}>
+                    {tr.result.data.image ? (
+                      <Image source={{ uri: tr.result.data.image }} style={styles.productThumb} resizeMode="cover" />
+                    ) : (
+                      <View style={styles.productDot} />
+                    )}
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.productName} numberOfLines={1}>{tr.result.data.name}</Text>
+                      <Text style={styles.productPrice}>{formatProductPrice(tr.result.data, {
+                        field: resolveProductPresentationMoney(tr.result.data, 'discountedPrice') > 0
+                          && resolveProductPresentationMoney(tr.result.data, 'discountedPrice') < resolveProductPresentationMoney(tr.result.data, 'price')
+                          ? 'discountedPrice'
+                          : 'price',
+                      })}</Text>
+                    </View>
+                    <Ionicons name="chevron-forward" size={14} color={c.textLight} />
+                  </TouchableOpacity>
+                </View>
+              )}
+              {tr.name === 'view_cart' && tr.result?.data?.items?.length > 0 && (
+                <View style={styles.productResults}>
+                  {tr.result.data.items.map((cartItem, pi) => {
+                    const product = {
+                      _id: cartItem.productId,
+                      name: cartItem.name,
+                      price: cartItem.originalPrice || cartItem.price,
+                      discountedPrice: cartItem.price,
+                      currency: cartItem.currency || tr.result.data.currency,
+                      priceCurrency: cartItem.currency || tr.result.data.currency,
+                      stock: 1,
+                      image: cartItem.image,
+                    };
+                    return (
+                      <TouchableOpacity key={cartItem.productId || pi} style={styles.productItem}
+                        onPress={() => navigation?.navigate('ProductDetail', { productId: product._id })}>
+                        {product.image ? (
+                          <Image source={{ uri: product.image }} style={styles.productThumb} resizeMode="cover" />
+                        ) : (
+                          <View style={styles.productDot} />
+                        )}
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.productName} numberOfLines={1}>{product.name}</Text>
+                          <Text style={styles.productPrice}>{formatProductPrice(product, { field: 'discountedPrice' })}</Text>
+                        </View>
+                        <Text style={styles.productPrice}>x{cartItem.quantity || 1}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
                 </View>
               )}
               {tr.name === 'send_product_image' && tr.result?.data?.imageUrl && (
@@ -1313,7 +1388,7 @@ export default function ChatBot({
                   )}
                 </View>
               )}
-              {!['search_products', 'send_product_image', 'navigate', 'show_style_advice', 'suggest_outfit', 'get_my_orders', 'get_order_detail', 'get_my_complaints'].includes(tr.name) && (tr.result?.msg || tr.result?.message || tr.result?.error) && (
+              {!['search_products', 'list_my_products', 'get_wishlist', 'get_product_detail', 'view_cart', 'send_product_image', 'navigate', 'show_style_advice', 'suggest_outfit'].includes(tr.name) && (tr.result?.msg || tr.result?.message || tr.result?.error) && (
                 <View style={[styles.actionResult, {
                   backgroundColor: tr.result?.success === false ? c.errorSubtle : c.successSubtle,
                   borderColor: tr.result?.success === false ? c.error : c.successLighter,
@@ -1917,6 +1992,7 @@ const makeStyles = (palette) => {
     // Tool results
     productResults: { marginTop: spacing.sm, gap: spacing.xs },
     productItem: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, padding: spacing.sm, borderRadius: borderRadius.lg, backgroundColor: g.bgSubtle, borderWidth: 1, borderColor: g.borderSubtle },
+    productThumb: { width: 38, height: 38, borderRadius: borderRadius.md, backgroundColor: g.bgSubtle },
     productDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: c.primary },
     productName: { fontSize: 11, fontWeight: fontWeight.medium, color: c.text },
     productPrice: { fontSize: 10, fontWeight: fontWeight.semibold, color: c.primary },

@@ -104,6 +104,42 @@ async function createProduct(seller, overrides = {}) {
 }
 
 describe('AI seller-native money writes', () => {
+  test('wishlist product cards preserve native currency, stock, and review metadata', async () => {
+    const seller = await createPkrSeller();
+    const product = await createProduct(seller, {
+      name: 'Native PKR Wishlist Product',
+      price: 1850,
+      discountedPrice: 1690,
+      discountedPriceCurrency: 'PKR',
+      stock: 27,
+      rating: 4.5,
+      numReviews: 8,
+    });
+    await User.findByIdAndUpdate(seller._id, { $addToSet: { wishlist: product._id } });
+
+    const result = await executeToolCall('get_wishlist', {}, seller);
+
+    expect(result).toMatchObject({
+      success: true,
+      data: {
+        count: 1,
+        items: [{
+          _id: product._id,
+          name: 'Native PKR Wishlist Product',
+          price: 1850,
+          discountedPrice: 1690,
+          currency: 'PKR',
+          priceCurrency: 'PKR',
+          discountedPriceCurrency: 'PKR',
+          stock: 27,
+          inStock: true,
+          rating: 4.5,
+          numReviews: 8,
+        }],
+      },
+    });
+  });
+
   test.each([0.001, 0.005, 10.001])(
     'rejects non-exact-cent product create, edit, and bulk money before persistence: %s', async invalidAmount => {
     const seller = await createPkrSeller();

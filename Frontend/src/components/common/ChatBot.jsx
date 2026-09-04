@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
+import { useGlobal } from '../../contexts/GlobalContext';
 import {
   requireCanonicalPresentationCurrency,
   requireExactPresentationMoney,
@@ -446,6 +447,7 @@ const ProductCardGrid = ({ products, onViewProduct, onAddToCart, title }) => (
 function ChatBot({ embedded = false, conversationId = null, initialMessages = null, loadingHistory = false, onConversationCreated = null, dashboardRole = null }) {
   const navigate = useNavigate();
   const { currentUser } = useAuth();
+  const { fetchWishlist, fetchCart } = useGlobal();
   const chatAttemptStorageKey = createScopedMutationStorageKey(
     CHAT_ATTEMPT_STORAGE_KEY,
     currentUser?._id || currentUser?.id || 'guest'
@@ -963,6 +965,14 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
               setPendingTools(prev =>
                 prev.map(t => t.id === parsed.id ? { ...t, status: 'done', result: parsed.result } : t)
               );
+              if (parsed.result?.success === true) {
+                if (['add_to_wishlist', 'remove_from_wishlist'].includes(parsed.tool)) {
+                  void fetchWishlist();
+                }
+                if (['add_to_cart', 'remove_from_cart', 'clear_cart', 'place_order'].includes(parsed.tool)) {
+                  void fetchCart();
+                }
+              }
               // Add tool result to the current assistant message
               setMessages(prev => {
                 const copy = [...prev];
@@ -1051,7 +1061,7 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
       setIsLoading(false);
       setPendingTools([]);
     }
-  }, [messages, isLoading, isStartingNewChat, authToken, activeConvoId, handleClientAction, currentUser?._id, currentUser?.id, currency, chatAttemptStorageKey, onConversationCreated]);
+  }, [messages, isLoading, isStartingNewChat, authToken, activeConvoId, handleClientAction, currentUser?._id, currentUser?.id, currency, chatAttemptStorageKey, onConversationCreated, fetchWishlist, fetchCart]);
 
   // ─── Clear chat (start a brand-new conversation) ───
   const clearChat = async () => {

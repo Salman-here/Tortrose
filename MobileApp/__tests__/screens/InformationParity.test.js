@@ -192,6 +192,18 @@ describe('currency account and live-rate isolation', () => {
 });
 
 describe('AI daily quota ownership', () => {
+  it('renders shared rich product results and refreshes native state after AI mutations', () => {
+    const chatBot = read('../../src/components/ChatBot.js');
+
+    expect(chatBot).toContain("['search_products', 'list_my_products', 'get_wishlist'].includes(tr.name)");
+    expect(chatBot).toContain("tr.name === 'get_product_detail'");
+    expect(chatBot).toContain("tr.name === 'view_cart'");
+    expect(chatBot).toContain("['add_to_wishlist', 'remove_from_wishlist'].includes(tr.name)");
+    expect(chatBot).toContain('void fetchWishlist();');
+    expect(chatBot).toContain('void fetchCart();');
+    expect(chatBot).toContain('void refreshUnreadCount();');
+  });
+
   it('lets the server consume quota and handles the authoritative 429 response', () => {
     const chatBot = read('../../src/components/ChatBot.js');
 

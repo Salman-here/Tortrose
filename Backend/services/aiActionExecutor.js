@@ -1923,19 +1923,29 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
           .populate({
             path: 'wishlist',
             match: applyActiveSellerProductFilter(publicProductFilter(), activeSellerIds),
-            select: 'name price discountedPrice image category rating stock seller',
+            select: 'name price discountedPrice currency priceCurrency discountedPriceCurrency image images category rating numReviews stock seller',
           })
           .lean();
 
-        const items = (user?.wishlist || []).filter(Boolean).map(p => ({
-          _id: p._id,
-          name: p.name,
-          price: p.price,
-          discountedPrice: p.discountedPrice,
-          image: p.image,
-          category: p.category,
-          inStock: p.stock > 0,
-        }));
+        const items = (user?.wishlist || []).filter(Boolean).map(p => {
+          const productCurrency = stableAIProductCurrency(p);
+          return {
+            _id: p._id,
+            name: p.name,
+            price: p.price,
+            discountedPrice: p.discountedPrice,
+            currency: productCurrency,
+            priceCurrency: productCurrency,
+            discountedPriceCurrency: requireStoredProductDiscountCurrency(p, productCurrency),
+            image: p.image,
+            images: p.images,
+            category: p.category,
+            stock: p.stock,
+            inStock: p.stock > 0,
+            rating: p.rating,
+            numReviews: p.numReviews,
+          };
+        });
 
         return {
           success: true,
