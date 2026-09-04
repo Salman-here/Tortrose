@@ -1498,6 +1498,25 @@ function groundedAssistantResponseText(responseText = '', completedToolResults =
   return 'I completed the successful actions above, but one or more requested actions could not be completed.';
 }
 
+function explicitToolReceiptSummary(explicitlyRequestedTools = [], completedToolResults = []) {
+  const requested = Array.isArray(explicitlyRequestedTools) ? explicitlyRequestedTools : [];
+  if (requested.length < 2) return '';
+  const results = Array.isArray(completedToolResults) ? completedToolResults : [];
+  const lines = requested.map((toolName) => {
+    const entry = results.find(result => (result?.tool || result?.action) === toolName);
+    if (!entry) return '';
+    const result = entry.result || {};
+    const label = toolName.replace(/_/g, ' ').replace(/\b\w/g, letter => letter.toUpperCase());
+    const detail = result.message
+      || result.error
+      || (result.success === true ? 'Completed.' : 'Failed.');
+    return `- **${label}:** ${detail}`;
+  }).filter(Boolean);
+  return lines.length === requested.length
+    ? ['Here are the exact results:', ...lines].join('\n')
+    : '';
+}
+
 function buildSavedAssistantMessage(responseText = '', toolEvents = []) {
   const content = sanitizeAssistantVisibleText(responseText);
   const events = Array.isArray(toolEvents) ? toolEvents.filter(Boolean) : [];
@@ -2563,13 +2582,21 @@ async function processAIChatMessage(userObj, incomingMessages, options = {}) {
     }
   }
 
-  const responseText = groundedAssistantResponseText(
+  const completedToolResults = [
+    ...toolResults,
+    ...clientActions.map(action => ({
+      tool: action.action,
+      result: { success: true, message: `${action.action} displayed.` },
+    })),
+  ];
+  const groundedResponseText = groundedAssistantResponseText(
     typeof lastMessage?.content === 'string' ? lastMessage.content : '',
-    [
-      ...toolResults,
-      ...clientActions.map(action => ({ action: action.action })),
-    ],
+    completedToolResults,
   );
+  const responseText = explicitToolReceiptSummary(
+    explicitlyRequestedTools,
+    completedToolResults,
+  ) || groundedResponseText;
 
   // Save to conversation history — ONLY the NEW messages from this interaction
   // (not the full history that was passed in as context, to avoid duplication)
@@ -2824,6 +2851,10 @@ exports.streamChat = async (req, res) => {
             : failedMutationMessage(streamToolResults);
         }
         visibleText = groundedAssistantResponseText(visibleText, streamToolResults);
+        visibleText = explicitToolReceiptSummary(
+          explicitlyRequestedTools,
+          streamToolResults,
+        ) || visibleText;
         if (visibleText && !closed()) {
           res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: visibleText } }] })}\n\n`);
         }
@@ -3168,13 +3199,21 @@ exports.chatOnce = async (req, res) => {
     let savedConvoId = null;
     if (userId) {
       try {
-        const responseText = groundedAssistantResponseText(
+        const completedToolResults = [
+          ...toolResults,
+          ...clientActions.map(action => ({
+            tool: action.action,
+            result: { success: true, message: `${action.action} displayed.` },
+          })),
+        ];
+        const groundedResponseText = groundedAssistantResponseText(
           typeof lastMessage?.content === 'string' ? lastMessage.content : '',
-          [
-            ...toolResults,
-            ...clientActions.map(action => ({ action: action.action })),
-          ],
+          completedToolResults,
         );
+        const responseText = explicitToolReceiptSummary(
+          explicitlyRequestedTools,
+          completedToolResults,
+        ) || groundedResponseText;
         const lastUserMsg = cleanMessages.filter(m => m.role === 'user').pop();
         const newMessages = [];
         if (lastUserMsg?.content) {
@@ -3198,13 +3237,21 @@ exports.chatOnce = async (req, res) => {
       } catch (e) { /* non-fatal */ }
     }
 
-    const responseText = groundedAssistantResponseText(
+    const completedToolResults = [
+      ...toolResults,
+      ...clientActions.map(action => ({
+        tool: action.action,
+        result: { success: true, message: `${action.action} displayed.` },
+      })),
+    ];
+    const groundedResponseText = groundedAssistantResponseText(
       typeof lastMessage?.content === 'string' ? lastMessage.content : '',
-      [
-        ...toolResults,
-        ...clientActions.map(action => ({ action: action.action })),
-      ],
+      completedToolResults,
     );
+    const responseText = explicitToolReceiptSummary(
+      explicitlyRequestedTools,
+      completedToolResults,
+    ) || groundedResponseText;
     const visibleMessage = lastMessage
       ? { ...lastMessage, content: responseText }
       : (responseText ? { role: 'assistant', content: responseText } : lastMessage);
@@ -3585,6 +3632,7 @@ exports.__private = {
   normalizeAIClientActionArgs,
   normalizeAIChatToolArgs,
   groundedAssistantResponseText,
+  explicitToolReceiptSummary,
   buildSavedAssistantMessage,
   saveToConversation,
 };

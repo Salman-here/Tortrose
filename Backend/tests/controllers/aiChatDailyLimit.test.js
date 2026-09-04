@@ -430,6 +430,22 @@ describe('AI chat controller daily limit enforcement', () => {
       .toBe(placed.result.message);
   });
 
+  it('builds explicit multi-tool summaries from the exact current receipts', () => {
+    const summary = __private.explicitToolReceiptSummary(
+      ['get_my_profile', 'add_address', 'get_addresses'],
+      [
+        { tool: 'get_my_profile', result: { success: true, message: 'Profile has 1 address.' } },
+        { tool: 'add_address', result: { success: true, message: 'Address added.' } },
+        { tool: 'get_addresses', result: { success: true, message: 'Profile has 2 addresses.' } },
+      ],
+    );
+
+    expect(summary).toContain('**Get My Profile:** Profile has 1 address.');
+    expect(summary).toContain('**Add Address:** Address added.');
+    expect(summary).toContain('**Get Addresses:** Profile has 2 addresses.');
+    expect(summary).not.toContain('Both live reads completed');
+  });
+
   it('does not turn an empty failed tool receipt into a success claim', () => {
     expect(__private.groundedAssistantResponseText('', [{
       tool: 'place_order',
@@ -632,7 +648,13 @@ describe('AI chat controller daily limit enforcement', () => {
       expect.objectContaining({ role: 'user' }),
     );
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
-      message: expect.objectContaining({ content: 'Both live reads completed.' }),
+      message: expect.objectContaining({
+        content: [
+          'Here are the exact results:',
+          '- **Get My Profile:** Completed.',
+          '- **Get Addresses:** Completed.',
+        ].join('\n'),
+      }),
       toolResults: expect.arrayContaining([
         expect.objectContaining({ tool: 'get_my_profile' }),
         expect.objectContaining({ tool: 'get_addresses' }),
