@@ -387,6 +387,19 @@ describe('AI chat controller daily limit enforcement', () => {
     });
   });
 
+  it('executes only one copy of the currently forced explicit tool', () => {
+    const calls = [
+      { id: 'orders-all', function: { name: 'get_my_orders', arguments: '{}' } },
+      { id: 'orders-pending', function: { name: 'get_my_orders', arguments: '{"status":"pending"}' } },
+      { id: 'wrong-tool', function: { name: 'get_addresses', arguments: '{}' } },
+    ];
+
+    expect(__private.constrainExplicitToolCalls(calls, 'get_my_orders')).toEqual([calls[0]]);
+    expect(__private.constrainExplicitToolCalls(calls, 'get_addresses')).toEqual([calls[2]]);
+    expect(__private.constrainExplicitToolCalls(calls, 'get_notifications')).toEqual([]);
+    expect(__private.constrainExplicitToolCalls(calls, '')).toEqual(calls);
+  });
+
   it('adds a current-turn-only grounding guard before a tool summary', () => {
     const messages = [{ role: 'user', content: 'Call get_wishlist.' }];
     const grounded = __private.messagesForCurrentTurnSummary(

@@ -1831,6 +1831,15 @@ function explicitToolRequestOptions(explicitlyRequestedTools, missingRequestedTo
   };
 }
 
+function constrainExplicitToolCalls(toolCalls = [], nextToolName = '') {
+  if (!nextToolName) return Array.isArray(toolCalls) ? toolCalls : [];
+  const calls = Array.isArray(toolCalls) ? toolCalls : [];
+  const matchingCall = calls.find(call => (
+    (call?.function?.name || call?.name) === nextToolName
+  ));
+  return matchingCall ? [matchingCall] : [];
+}
+
 function messagesForCurrentTurnSummary(conversationMessages, completedToolResults, missingRequestedTools) {
   if (!completedToolResults.length || missingRequestedTools.length) return conversationMessages;
   return [
@@ -2389,6 +2398,10 @@ async function processAIChatMessage(userObj, incomingMessages, options = {}) {
       message.tool_calls = message.tool_calls.filter(tc =>
         tc.function?.name && isToolAllowedForRole(tc.function.name, effectiveRole)
       );
+      message.tool_calls = constrainExplicitToolCalls(
+        message.tool_calls,
+        explicitlyRequestedTools.length ? missingRequestedTools[0] : '',
+      );
     }
 
     if (!message.tool_calls?.length) {
@@ -2781,6 +2794,11 @@ exports.streamChat = async (req, res) => {
         clearTimeout(upstreamTimeout);
       }
 
+      toolCalls = constrainExplicitToolCalls(
+        toolCalls,
+        explicitlyRequestedTools.length ? missingRequestedTools[0] : '',
+      );
+
       // If no tool calls, the AI gave a direct text answer — we're done
       if (toolCalls.length === 0) {
         let visibleText = sanitizeAssistantVisibleText(assistantContent);
@@ -2839,8 +2857,19 @@ exports.streamChat = async (req, res) => {
           args = normalizeAIClientActionArgs(toolName, args, effectiveRole);
           // Client-side tools: send to frontend for rendering, give AI a success ack
           send({ type: 'client_action', action: toolName, args, id: tc.id });
-          // Persist client actions other than navigation (which is a one-time side-effect)
-          if (toolName !== 'navigate') {
+          if (toolName === 'navigate') {
+            // Navigation is executed once by the active client, but its success
+            // receipt must be retained so the explicit-tool guard does not
+            // retry it or incorrectly report that it failed.
+            turnToolEvents.push({
+              type: 'tool_result',
+              tool: toolName,
+              result: {
+                success: true,
+                message: `Opened ${args.label || args.route || 'the requested page'}.`,
+              },
+            });
+          } else {
             turnToolEvents.push({ type: 'client_action', action: toolName, args });
           }
           conversationMessages.push({
@@ -3059,6 +3088,10 @@ exports.chatOnce = async (req, res) => {
       if (message.tool_calls?.length) {
         message.tool_calls = message.tool_calls.filter(tc =>
           tc.function?.name && isToolAllowedForRole(tc.function.name, effectiveRole)
+        );
+        message.tool_calls = constrainExplicitToolCalls(
+          message.tool_calls,
+          explicitlyRequestedTools.length ? missingRequestedTools[0] : '',
         );
       }
 
@@ -3540,6 +3573,7 @@ exports.__private = {
   isUnbackedMutationClaim,
   explicitlyRequestedAITools,
   explicitToolRequestOptions,
+  constrainExplicitToolCalls,
   messagesForCurrentTurnSummary,
   explicitlyRequestedDurableMutationTools,
   missingExplicitAITools,
