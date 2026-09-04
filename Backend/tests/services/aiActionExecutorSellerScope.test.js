@@ -548,6 +548,37 @@ describe('aiActionExecutor seller order attribution', () => {
     });
   });
 
+  test('seller AI store read reports pending verification and the native product currency', async () => {
+    await Store.create({
+      seller: SELLER_B,
+      storeName: 'Pending Native Store',
+      storeSlug: 'pending-native-store',
+      productCurrency: 'PKR',
+      verification: {
+        isVerified: false,
+        status: 'pending',
+        appliedAt: new Date('2026-09-04T00:00:00.000Z'),
+      },
+      isActive: true,
+    });
+
+    const result = await executeToolCall('get_my_store', {}, {
+      id: SELLER_B,
+      role: 'seller',
+      currency: 'USD',
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      data: {
+        storeName: 'Pending Native Store',
+        productCurrency: 'PKR',
+        verification: { isVerified: false, status: 'pending' },
+      },
+    });
+    expect(result.message).toContain('pending verification');
+  });
+
   test('seller AI cannot cancel a paid seller fulfillment without a verified refund', async () => {
     const order = await createOrder('PAID-SELLER-PORTION', {
       name: 'paid seller item',

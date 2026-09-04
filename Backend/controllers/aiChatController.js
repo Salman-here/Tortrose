@@ -356,7 +356,7 @@ const userTools = [
     type: 'function',
     function: {
       name: 'get_order_detail',
-      description: 'Get full details of a specific order using either its public ORD- number or internal order ID.',
+      description: 'Get full details of a specific order using either its public ORD- number or internal order ID. Seller results lead with the frozen store-currency amount and retain the frozen buyer checkout amount as reconciliation context.',
       parameters: {
         type: 'object',
         properties: { orderId: { type: 'string', description: 'Public ORD- number or internal order ID' } },
@@ -936,7 +936,7 @@ const sellerTools = [
     type: 'function',
     function: {
       name: 'get_seller_orders',
-      description: "Get orders that contain the seller's products.",
+      description: "Get orders that contain the seller's products. Each result leads with that seller's frozen store-currency amount and includes the frozen buyer checkout equivalent separately.",
       parameters: {
         type: 'object',
         properties: {

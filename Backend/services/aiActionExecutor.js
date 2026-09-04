@@ -4873,6 +4873,13 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
 
         const productCount = await Product.countDocuments({ seller: userId });
         const storeUrl = store.storeSlug ? `https://${store.storeSlug}.rozare.com/` : null;
+        const verificationStatus = store.verification?.isVerified
+          ? 'verified'
+          : store.verification?.status === 'pending'
+            ? 'pending verification'
+            : store.verification?.status === 'rejected'
+              ? 'verification rejected'
+              : 'not verified';
         return {
           success: true,
           data: {
@@ -4890,11 +4897,12 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
             socialLinks: store.socialLinks,
             returnPolicy: store.returnPolicy,
             paymentPolicy: store.paymentPolicy || 'online_and_cod',
+            productCurrency: store.productCurrency || 'USD',
             productCount,
             changeLimits: storeChangeLimits(store),
             createdAt: store.createdAt,
           },
-          message: `Your store "${store.storeName}" - ${store.verification?.isVerified ? 'verified' : 'not verified'} - ${productCount} products, ${store.views} views${storeUrl ? ` - ${storeUrl}` : ''}.`,
+          message: `Your store "${store.storeName}" - ${verificationStatus} - ${productCount} products, ${store.views} views${storeUrl ? ` - ${storeUrl}` : ''}.`,
         };
       }
 
