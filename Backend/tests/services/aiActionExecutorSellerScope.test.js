@@ -82,6 +82,58 @@ const createCurrentProduct = seller => Product.create({
 });
 
 describe('aiActionExecutor seller order attribution', () => {
+  test('buyer AI can read its own order by public or immutable id', async () => {
+    const buyer = await User.create({
+      username: 'buyer-order-detail',
+      email: 'buyer-order-detail@test.com',
+      password: 'password123',
+      role: 'user',
+    });
+    const stranger = await User.create({
+      username: 'other-buyer',
+      email: 'other-buyer@test.com',
+      password: 'password123',
+      role: 'user',
+    });
+    const order = await createOrder('ORD-1788546075206', {
+      name: 'Buyer detail product',
+      seller: SELLER_A,
+      productId: PRODUCT_A,
+    }, {
+      user: buyer._id,
+      orderIdVersion: 3,
+    });
+
+    const publicDetail = await executeToolCall(
+      'get_order_detail',
+      { orderId: order.orderId },
+      { id: buyer._id.toString(), role: 'user', currency: 'USD' },
+    );
+    const immutableDetail = await executeToolCall(
+      'get_order_detail',
+      { orderId: order._id.toString() },
+      { id: buyer._id.toString(), role: 'user', currency: 'USD' },
+    );
+    const denied = await executeToolCall(
+      'get_order_detail',
+      { orderId: order.orderId },
+      { id: stranger._id.toString(), role: 'user', currency: 'USD' },
+    );
+
+    expect(publicDetail).toMatchObject({
+      success: true,
+      data: { orderId: order.orderId, status: 'pending' },
+    });
+    expect(immutableDetail).toMatchObject({
+      success: true,
+      data: { orderId: order.orderId, status: 'pending' },
+    });
+    expect(denied).toMatchObject({
+      success: false,
+      error: 'Order not found or access denied.',
+    });
+  });
+
   test('AI admin deletion removes marketplace data and retains order snapshots', async () => {
     const seller = await User.create({
       username: 'ai-delete-seller',

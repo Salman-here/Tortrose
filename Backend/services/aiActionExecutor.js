@@ -217,8 +217,11 @@ function isClientSideTool(name) {
 // ─── Helpers ───
 function toId(v) {
   if (!v) return null;
-  if (typeof v === 'string' && mongoose.Types.ObjectId.isValid(v)) return v;
-  return null;
+  const candidate = v?._id || v;
+  const normalized = typeof candidate === 'string'
+    ? candidate.trim()
+    : String(candidate || '').trim();
+  return mongoose.Types.ObjectId.isValid(normalized) ? normalized : null;
 }
 
 function safeLimit(v, def = 10, max = 50) {

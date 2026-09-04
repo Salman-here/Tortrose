@@ -1859,6 +1859,11 @@ function missingExplicitAITools(lastUserText, availableTools = [], toolResults =
   )));
 }
 
+function unattemptedExplicitAITools(lastUserText, availableTools = [], toolResults = []) {
+  const requested = explicitlyRequestedAITools(lastUserText, availableTools);
+  return requested.filter(name => !toolResults.some(entry => entry?.tool === name));
+}
+
 function missingExplicitDurableMutationTools(lastUserText, availableTools = [], toolResults = []) {
   const requested = explicitlyRequestedDurableMutationTools(lastUserText, availableTools);
   return requested.filter(name => !toolResults.some(entry => (
@@ -2312,7 +2317,7 @@ async function processAIChatMessage(userObj, incomingMessages, options = {}) {
       ...toolResults,
       ...clientActions.map(action => ({ tool: action.action, result: { success: true } })),
     ];
-    const missingRequestedTools = missingExplicitAITools(
+    const missingRequestedTools = unattemptedExplicitAITools(
       lastUserText,
       tools,
       completedToolResults
@@ -2394,7 +2399,7 @@ async function processAIChatMessage(userObj, incomingMessages, options = {}) {
         ...toolResults,
         ...clientActions.map(action => ({ tool: action.action, result: { success: true } })),
       ];
-      const missingExplicitTools = missingExplicitAITools(
+      const missingExplicitTools = unattemptedExplicitAITools(
         lastUserText,
         tools,
         completedToolResults
@@ -2697,7 +2702,7 @@ exports.streamChat = async (req, res) => {
         .map(event => event.type === 'tool_result'
           ? { tool: event.tool, result: event.result }
           : { tool: event.action, result: { success: true } });
-      const missingRequestedTools = missingExplicitAITools(
+      const missingRequestedTools = unattemptedExplicitAITools(
         lastUserText,
         tools,
         completedToolResults
@@ -2783,7 +2788,7 @@ exports.streamChat = async (req, res) => {
           .map(event => event.type === 'tool_result'
             ? { tool: event.tool, result: event.result }
             : { tool: event.action, result: { success: true } });
-        const missingExplicitTools = missingExplicitAITools(
+        const missingExplicitTools = unattemptedExplicitAITools(
           lastUserText,
           tools,
           streamToolResults
@@ -3002,7 +3007,7 @@ exports.chatOnce = async (req, res) => {
         ...toolResults,
         ...clientActions.map(action => ({ tool: action.action, result: { success: true } })),
       ];
-      const missingRequestedTools = missingExplicitAITools(
+      const missingRequestedTools = unattemptedExplicitAITools(
         lastUserText,
         tools,
         completedToolResults
@@ -3067,7 +3072,7 @@ exports.chatOnce = async (req, res) => {
           ...toolResults,
           ...clientActions.map(action => ({ tool: action.action, result: { success: true } })),
         ];
-        const missingExplicitTools = missingExplicitAITools(
+        const missingExplicitTools = unattemptedExplicitAITools(
           lastUserText,
           tools,
           completedToolResults
@@ -3538,6 +3543,7 @@ exports.__private = {
   messagesForCurrentTurnSummary,
   explicitlyRequestedDurableMutationTools,
   missingExplicitAITools,
+  unattemptedExplicitAITools,
   missingExplicitDurableMutationTools,
   failedMutationMessage,
   failedExplicitToolMessage,

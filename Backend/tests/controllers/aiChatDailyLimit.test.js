@@ -424,6 +424,61 @@ describe('AI chat controller daily limit enforcement', () => {
     }])).toBe('The delivery phone number is invalid.');
   });
 
+  it('attempts an explicitly requested failed tool once and reports its receipt', async () => {
+    const originalFetch = global.fetch;
+    const fetchMock = jest.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [{
+            message: {
+              role: 'assistant',
+              content: '',
+              tool_calls: [{
+                id: 'order-detail-1',
+                type: 'function',
+                function: {
+                  name: 'get_order_detail',
+                  arguments: JSON.stringify({ orderId: 'ORD-1788546075206' }),
+                },
+              }],
+            },
+          }],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ choices: [{ message: { role: 'assistant', content: '' } }] }),
+      });
+    global.fetch = fetchMock;
+    executeToolCall.mockResolvedValue({ success: false, error: 'Order not found or access denied.' });
+    const res = response();
+
+    try {
+      await chatOnce({
+        body: {
+          source: 'mobile',
+          messages: [{
+            role: 'user',
+            content: 'Use get_order_detail now for order ORD-1788546075206.',
+          }],
+        },
+        headers: { 'idempotency-key': 'mobile-order-detail-failure-key' },
+        user: { role: 'user' },
+        aiChatDailyUsage: { allowed: true, used: 0, limit: 20, remaining: 19, role: 'user' },
+      }, res);
+    } finally {
+      global.fetch = originalFetch;
+    }
+
+    expect(executeToolCall).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      message: expect.objectContaining({ content: 'Order not found or access denied.' }),
+      toolResults: [expect.objectContaining({ tool: 'get_order_detail' })],
+    }));
+  });
+
   it('returns the successful mobile mutation receipt when the final model message is empty', async () => {
     const originalFetch = global.fetch;
     const fetchMock = jest.fn()
