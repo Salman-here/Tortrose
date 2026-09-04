@@ -8,10 +8,12 @@ const StripeEntitlementPayment = require('../models/StripeEntitlementPayment');
 const { stripe, STRIPE_MODE } = require('../config/stripe');
 const { ensureStripeCustomerForUser } = require('../services/stripeCustomerService');
 const {
-    META_ADS_ADDON_CENTS,
     buildPlanPricing,
-    getPricingCatalog,
 } = require('../services/subscriptionPricingService');
+const {
+    buildSubscriptionStatusPresentation,
+    getSubscriptionCatalog,
+} = require('../services/subscriptionPresentationService');
 const { getHostedCheckoutReturnUrls } = require('../utils/hostedCheckoutReturnUrls');
 const {
     fingerprintCheckoutRequest,
@@ -2924,11 +2926,8 @@ exports.initializeSubscription = async (sellerId) => {
     }
 };
 
-// Get subscription status
-exports.getSubscriptionStatus = async (req, res) => {
-    try {
-        const sellerId = req.user.id;
-        let sub = await SellerSubscription.findOne({ seller: sellerId });
+const getSellerSubscriptionStatusData = async (sellerId) => {
+    let sub = await SellerSubscription.findOne({ seller: sellerId });
 
         if (!sub) {
             sub = await exports.initializeSubscription(sellerId);
@@ -2967,54 +2966,29 @@ exports.getSubscriptionStatus = async (req, res) => {
             await sub.save();
         }
 
-        // Calculate grace period info
         const now = new Date();
-        const hasGracePeriod = sub.status === 'blocked' && sub.bonusGraceDeadline && now < sub.bonusGraceDeadline && !sub.bonusFeaturesExpiredPermanently;
-        const graceDaysRemaining = hasGracePeriod ? Math.ceil((sub.bonusGraceDeadline - now) / (1000 * 60 * 60 * 24)) : 0;
 
         const founderPromotion = await getFounderPromotionStatus(sub);
         const founderDiscountPercent = await founderDiscountPercentForPresentation(sub);
 
-        res.json({
-            subscription: {
-                status: sub.status,
-                plan: sub.plan,
-                planName: sub.status === 'trial' || sub.plan === 'free_trial'
-                    ? 'Rozare Free Trial'
-                    : sub.planName || (sub.plan === 'elite' ? 'Rozare Elite' : 'Rozare Starter'),
-                trialStartDate: sub.trialStartDate,
-                trialEndDate: sub.trialEndDate,
-                trialDaysRemaining: sub.trialDaysRemaining,
-                isTrialExpiringSoon: sub.isTrialExpiringSoon,
-                isBlocked: sub.isBlocked,
-                subscribedAt: sub.subscribedAt,
-                freePeriodEndDate: sub.freePeriodEndDate,
-                currentPeriodEnd: sub.currentPeriodEnd,
-                aiMessageLimit: -1,
-                aiMessagesUnlimited: true,
-                metaAdsIncluded: sub.metaAdsIncluded || false,
-                metaAdsAddonCents: META_ADS_ADDON_CENTS,
-                cancelledAt: sub.cancelledAt,
-                blockedReason: sub.blockedReason,
-                bonusFeaturesActive: sub.bonusFeaturesActive,
-                bonusExpiryDate: sub.bonusExpiryDate,
-                bonusFeaturesExpiredPermanently: sub.bonusFeaturesExpiredPermanently || false,
-                bonusGraceDeadline: sub.bonusGraceDeadline || null,
-                bonusGraceDaysRemaining: graceDaysRemaining,
-                pendingDowngrade: sub.pendingDowngrade?.toPlan || null,
-                hasUsedFreePeriod: sub.hasUsedFreePeriod || false,
-                pricing: getPricingCatalog(),
-                founderOffer: {
-                    active: Boolean(sub.founderOffer?.active),
-                    code: sub.founderOffer?.code || null,
-                    discountPercent: founderDiscountPercent,
-                    claimedAt: sub.founderOffer?.claimedAt || null,
-                    forfeitedAt: sub.founderOffer?.forfeitedAt || null,
-                    source: sub.founderOffer?.source || null,
-                },
-                founderPromotion,
-            },
+        return buildSubscriptionStatusPresentation(sub, {
+            founderPromotion,
+            founderDiscountPercent,
+            now,
         });
+};
+
+exports.getSellerSubscriptionStatusData = getSellerSubscriptionStatusData;
+
+exports.getSubscriptionCatalog = (req, res) => {
+    res.json({ catalog: getSubscriptionCatalog() });
+};
+
+// Get subscription status
+exports.getSubscriptionStatus = async (req, res) => {
+    try {
+        const subscription = await getSellerSubscriptionStatusData(req.user.id);
+        res.json({ subscription });
     } catch (error) {
         console.error('Get subscription status error:', error);
         if (error?.code === 'SUBSCRIPTION_FOUNDER_OFFER_INVALID') {

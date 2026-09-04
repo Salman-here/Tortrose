@@ -411,31 +411,50 @@ const SellerSubscription = () => {
         setEliteMetaAds((value) => !value);
     };
 
-    const starterFeatures = [
+    const catalogFeatureList = (key, fallback) => {
+        const values = subscription?.catalog?.features?.[key];
+        return Array.isArray(values) && values.length > 0 && values.every(value => typeof value === 'string' && value.trim())
+            ? values.map(value => value.trim())
+            : fallback;
+    };
+    const trialFeatures = catalogFeatureList('trial', [
+        'Store & products visible to all customers',
+        'Up to 15 product listings during the free trial',
+        'Secure payment processing',
+        'Custom subdomain for your store',
+        'Order management & customer insights',
+        'Unlimited seller AI chat',
+        'Manage your store, orders & products from WhatsApp by chatting with AI',
+        'Get WhatsApp notifications when you receive a new order',
+        'Rozare WhatsApp order confirmation automation',
+        'Featured product highlighting (6 products)',
+    ]);
+    const starterFeatures = catalogFeatureList('starter', [
         'Store & products visible to all customers',
         'Unlimited product listings',
         'Secure payment processing',
         'Custom subdomain for your store',
         'Order management & customer insights',
+        'Unlimited seller AI chat',
         'Manage your store, orders & products from WhatsApp by chatting with AI',
         'Get WhatsApp notifications when you receive a new order',
         'Rozare WhatsApp order confirmation automation',
         'Featured product highlighting (6 products)',
-    ];
+    ]);
 
-    const bonusFeatures = [
+    const bonusFeatures = catalogFeatureList('bonus', [
         'Smart description generator with AI',
         'Advanced analytics & growth insights',
         'Smart tag AI generator for products',
         'Priority support & early access to new features',
         'Coupon & discount management system',
         'Bulk discount & promotional tools',
-    ];
+    ]);
 
-    const eliteOnlyFeatures = [
+    const eliteOnlyFeatures = catalogFeatureList('eliteOnly', [
         'Rozare will run TikTok ads for your store and featured products',
         'Customizable store themes with your own colors and layouts',
-    ];
+    ]);
 
     const eliteCardFeatures = [
         { icon: <Store size={13} />, text: 'Everything in Starter' },
@@ -784,7 +803,7 @@ const SellerSubscription = () => {
 
                         <p className="text-[10px] font-bold uppercase tracking-wider mb-2" style={{ color: 'hsl(150, 60%, 45%)' }}>Features from Starter</p>
                         <div className="space-y-1.5 mb-3">
-                            {starterFeatures.map((f, i) => (
+                            {trialFeatures.map((f, i) => (
                                 <div key={i} className="flex items-center gap-2">
                                     <Check size={12} style={{ color: 'hsl(150, 60%, 45%)' }} />
                                     <span className="text-[11px]" style={{ color: 'hsl(var(--foreground))' }}>{f}</span>
@@ -820,7 +839,7 @@ const SellerSubscription = () => {
 
                         <p className="text-[10px] font-bold uppercase tracking-wider mb-2" style={{ color: 'hsl(150, 60%, 45%)' }}>Features from Starter</p>
                         <div className="space-y-1.5 mb-3">
-                            {starterFeatures.map((f, i) => (
+                            {(subscription?.plan === 'free_trial' || subscription?.blockedReason?.includes('Trial') ? trialFeatures : starterFeatures).map((f, i) => (
                                 <div key={i} className="flex items-center gap-2">
                                     <X size={12} style={{ color: 'hsl(0, 72%, 55%)' }} />
                                     <span className="text-[11px] line-through" style={{ color: 'hsl(var(--muted-foreground))' }}>{f}</span>

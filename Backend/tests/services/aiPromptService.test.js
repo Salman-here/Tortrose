@@ -58,6 +58,11 @@ describe('defaults and overrides', () => {
     expect(prompt.lastIndexOf('## Immutable live financial truth'))
       .toBeGreaterThan(prompt.indexOf('Legacy override says Starter'));
     expect(prompt).toContain('Never guess.');
+    expect(prompt).toContain('call get_subscription_catalog');
+    expect(prompt).toContain('call get_subscription_status');
+    expect(defaults.USER_PROMPT).toContain('Call get_subscription_catalog');
+    expect(defaults.SELLER_PROMPT).toContain('Call it before answering any seller subscription question');
+    expect(defaults.SELLER_PROMPT).toContain('Answer every part the seller asked');
   });
 
   test('whatsapp channel appends the WhatsApp addendum', async () => {

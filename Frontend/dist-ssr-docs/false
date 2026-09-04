@@ -3,5 +3,6 @@
     "/assets/react-vendor-BfHIaHDi.js"
   ],
   "scripts/docs-ssr-entry.jsx": [],
-  "src/pages/DocsPage.jsx": []
+  "src/pages/DocsPage.jsx": [],
+  "src/utils/subscriptionPricing.js": []
 }

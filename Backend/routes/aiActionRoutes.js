@@ -78,5 +78,6 @@ router.get('/search-stores', verifyToken, ai.searchStores);
 
 // Public route (no auth required)
 router.get('/search-products', ai.searchProducts);
+router.get('/subscription-catalog', ai.getSubscriptionCatalog);
 
 module.exports = router;

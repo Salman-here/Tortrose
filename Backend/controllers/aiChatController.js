@@ -250,6 +250,15 @@ const SHARED_NAVIGATION_TOOL = {
   },
 };
 
+const SUBSCRIPTION_CATALOG_TOOL = {
+  type: 'function',
+  function: {
+    name: 'get_subscription_catalog',
+    description: 'Get the current public Rozare seller-subscription catalog: exact prices, launch and founder discounts, trial and introductory periods, feature and product limits, FIRST100 rules, add-on price, and billing lifecycle rules. This does not report live founder availability for a specific seller. Use it before answering general subscription questions.',
+    parameters: { type: 'object', properties: {} },
+  },
+};
+
 const userTools = [
   {
     type: 'function',
@@ -275,6 +284,7 @@ const userTools = [
     },
   },
   SHARED_NAVIGATION_TOOL,
+  SUBSCRIPTION_CATALOG_TOOL,
   {
     type: 'function',
     function: {
@@ -1126,14 +1136,14 @@ const sellerTools = [
     type: 'function',
     function: {
       name: 'get_subscription_status',
-      description: "Get the seller's current subscription plan and status.",
+      description: "Get the seller's complete live subscription truth. Use it before answering about plan/status, exact prices, trial or introductory-period dates and eligibility, features and limits, billing timing, cancellation, scheduled downgrade, Starter bonus expiry or grace, FIRST100 eligibility/availability, or the Meta ads add-on. Report the returned live fields; do not fill gaps from memory.",
       parameters: { type: 'object', properties: {} },
     },
   },
 ];
 
 const adminTools = [
-  ...sellerTools,
+  ...sellerTools.filter(tool => tool.function.name !== 'get_subscription_status'),
   {
     type: 'function',
     function: {
@@ -1495,6 +1505,7 @@ async function getSystemPrompt(role, channel = 'web') {
 const GUEST_TOOL_NAMES = new Set([
   'search_products',
   'navigate',
+  'get_subscription_catalog',
   'show_style_advice',
   'suggest_outfit',
   'get_product_detail',

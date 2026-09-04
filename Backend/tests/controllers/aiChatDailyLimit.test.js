@@ -435,6 +435,17 @@ describe('AI chat controller daily limit enforcement', () => {
     expect(schemas.get('create_coupon').parameters.properties.coupon.properties.currency.enum).toEqual(supported);
     expect(schemas.get('update_coupon').parameters.properties.updates.properties.currency.enum).toEqual(supported);
   });
+
+  it('gives every role live catalog access and gives sellers the complete status tool', () => {
+    const guestTools = new Map(__private.getTools('guest').map(tool => [tool.function.name, tool.function]));
+    const userTools = new Map(__private.getTools('user').map(tool => [tool.function.name, tool.function]));
+    const sellerTools = new Map(__private.getTools('seller').map(tool => [tool.function.name, tool.function]));
+
+    expect(guestTools.has('get_subscription_catalog')).toBe(true);
+    expect(userTools.has('get_subscription_catalog')).toBe(true);
+    expect(sellerTools.get('get_subscription_status').description).toContain('complete live subscription truth');
+    expect(sellerTools.get('get_subscription_status').description).toContain('bonus expiry or grace');
+  });
 });
 
 describe('AI chat persisted money context integrity', () => {

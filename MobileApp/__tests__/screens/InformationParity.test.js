@@ -102,6 +102,36 @@ describe('website and mobile information parity', () => {
     expect(faqAnswer('What is the Trust system?')).toContain('does not grant a verified badge');
     expect(faqAnswer('How are stores verified?')).toContain('an admin reviews the store');
   });
+
+  it('documents the complete subscription contract and loads live catalog values', () => {
+    const docsText = readStaticConstant(mobileDocs, 'SECTIONS')
+      .find(section => section.id === 'subscription-plans')?.body || '';
+    const subscriptionScreen = read('../../src/screens/seller/SellerSubscriptionScreen.js');
+
+    expect(docsText).toContain('up to 15 products during that trial');
+    expect(docsText).toContain('one 30-day introductory period');
+    expect(docsText).toContain('one 45-day introductory period');
+    expect(docsText).toContain('rate is claimed only after Stripe confirms completion');
+    expect(docsText).toContain('extra 40% founder discount');
+    expect(docsText).toContain('reserves a place for 35 minutes');
+    expect(docsText).toContain('permanently forfeited if the subscription ends');
+    expect(docsText).toContain('3 days after blocking');
+    expect(docsText).toContain('does not grant a fresh Starter bonus period');
+    expect(mobileDocs).toContain('api.get(API_ENDPOINTS.SUBSCRIPTION.CATALOG');
+    expect(mobileDocs).toContain('buildSubscriptionDocsBody(subscriptionCatalog)');
+
+    expect(subscriptionScreen).toContain("free_period: ['Introductory Period'");
+    expect(subscriptionScreen).toContain("past_due: ['Past Due'");
+    expect(subscriptionScreen).toContain('Access currently unavailable');
+    expect(subscriptionScreen).toContain('FIRST100 founder rate forfeited');
+    expect(subscriptionScreen).toContain('Bonus features expired');
+    expect(subscriptionScreen).toContain('The complete subscription lifecycle');
+    expect(subscriptionScreen).toContain('starterBonusPeriodUsed');
+    expect(subscriptionScreen).toContain('Up to 15 product listings during the free trial');
+    expect(subscriptionScreen).toContain('Rozare WhatsApp order confirmation automation');
+    expect(subscriptionScreen).toContain('model.isElite && model.isSubscribed && styles.currentEliteCard');
+    expect(subscriptionScreen).toContain("model.isBlocked\n                      ? 'Subscribe to restore your public store and seller tools'");
+  });
 });
 
 describe('product gallery gesture ownership', () => {

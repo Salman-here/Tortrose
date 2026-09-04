@@ -435,6 +435,7 @@ async function executeToolCall(name, args, selectedCurrency = 'USD') {
       case 'delete_coupon': { const res = await api.post('/api/ai-actions/delete-coupon', args); return res.data; }
       case 'toggle_coupon': { const res = await api.post('/api/ai-actions/toggle-coupon', args); return res.data; }
       case 'get_subscription_status': { const res = await api.get('/api/ai-actions/subscription-status'); return res.data; }
+      case 'get_subscription_catalog': { const res = await api.get('/api/ai-actions/subscription-catalog'); return res.data; }
 
       // ─── Admin broadcast & subscriptions parity ───
       case 'send_broadcast': { const res = await api.post('/api/ai-actions/send-broadcast', args); return res.data; }

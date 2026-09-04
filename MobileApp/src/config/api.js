@@ -128,6 +128,7 @@ export const API_ENDPOINTS = {
     CITIES: '/api/locations/cities',
   },
   SUBSCRIPTION: {
+    CATALOG: '/api/subscription/catalog',
     STATUS: '/api/subscription/status',
     CREATE_CHECKOUT: '/api/subscription/create-checkout',
     CANCEL: '/api/subscription/cancel',

@@ -3,6 +3,7 @@ const router = express.Router();
 const verifyToken = require('../middleware/authMiddleware');
 const { admin, seller } = require('../middleware/authMiddleware');
 const {
+    getSubscriptionCatalog,
     getSubscriptionStatus,
     createCheckout,
     cancelSubscription,
@@ -21,6 +22,7 @@ const { mobileCheckoutReturn } = require('../controllers/mobileCheckoutReturnCon
 // Public Stripe return bridge: validates a fixed flow/result and offers an
 // app deep link plus a real website fallback. It never accepts a return URL.
 router.get('/mobile-return', mobileCheckoutReturn);
+router.get('/catalog', getSubscriptionCatalog);
 
 router.get('/status', verifyToken, seller, getSubscriptionStatus);
 router.post('/create-checkout', verifyToken, seller, createCheckout);

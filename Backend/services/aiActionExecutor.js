@@ -35,8 +35,11 @@ const Cart = require('../models/Cart');
 const StoreReview = require('../models/StoreReview');
 const { buildSellerPaymentSummary } = require('../controllers/PaymentController');
 const { generateConfirmationToken } = require('../controllers/orderConfirmationController');
-const { getFounderPromotionStatus } = require('./founderPromotionService');
-const { buildPlanPricing, getPricingCatalog } = require('./subscriptionPricingService');
+const { getSellerSubscriptionStatusData } = require('../controllers/subscriptionController');
+const {
+  buildSubscriptionStatusMessage,
+  getSubscriptionCatalog,
+} = require('./subscriptionPresentationService');
 const {
   buildModerationFields,
   isProductBlocked,
@@ -5586,40 +5589,27 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
 
       case 'get_subscription_status': {
         if (!userId) return { success: false, error: 'Authentication required.' };
-        const sub = await SellerSubscription.findOne({ seller: userId }).lean();
-        if (!sub) return { success: true, data: null, message: 'No subscription found.' };
-
-        const founderPromotion = await getFounderPromotionStatus(sub);
-        const trialDaysRemaining = sub.status === 'trial' && sub.trialEndDate
-          ? Math.max(0, Math.ceil((new Date(sub.trialEndDate) - new Date()) / 86400000))
-          : 0;
-        const currentPricing = ['starter', 'elite'].includes(sub.plan)
-          ? buildPlanPricing(sub.plan, Boolean(sub.metaAdsIncluded), Boolean(sub.founderOffer?.active))
-          : null;
+        if (role !== 'seller') {
+          return {
+            success: false,
+            error: 'A seller account is required to view seller-specific subscription status.',
+          };
+        }
+        const subscription = await getSellerSubscriptionStatusData(userId);
 
         return {
           success: true,
-          data: {
-            status: sub.status,
-            plan: sub.plan,
-            planName: sub.planName,
-            trialDaysRemaining,
-            bonusFeaturesActive: sub.bonusFeaturesActive,
-            currentPeriodEnd: sub.currentPeriodEnd,
-            aiMessagesUnlimited: true,
-            metaAdsIncluded: Boolean(sub.metaAdsIncluded),
-            currentMonthlyAmountCents: currentPricing?.unitAmount || null,
-            pricing: getPricingCatalog(),
-            founderOffer: {
-              active: Boolean(sub.founderOffer?.active),
-              code: sub.founderOffer?.code || null,
-              forfeited: Boolean(sub.founderOffer?.forfeitedAt),
-            },
-            founderPromotion,
-          },
-          message: `Your subscription: ${sub.planName} (${sub.status}). ${sub.status === 'trial' ? `Trial ends in ${trialDaysRemaining} days.` : ''}`,
+          data: subscription,
+          message: buildSubscriptionStatusMessage(subscription),
         };
       }
+
+      case 'get_subscription_catalog':
+        return {
+          success: true,
+          data: getSubscriptionCatalog(),
+          message: 'Current Rozare seller-subscription catalog loaded.',
+        };
 
       // ─────────────────────────────────────────────
       //  ADMIN TOOLS

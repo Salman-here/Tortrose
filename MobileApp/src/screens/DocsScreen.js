@@ -3,7 +3,7 @@
  * Searchable, collapsible documentation sections for shoppers and sellers.
  */
 
-import React, { useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, LayoutAnimation, Platform, UIManager } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -12,6 +12,7 @@ import GlassPanel from '../components/common/GlassPanel';
 import PremiumBackHeader from '../components/common/PremiumBackHeader';
 import { spacing, fontSize, fontWeight, borderRadius } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
+import api, { API_ENDPOINTS } from '../config/api';
 
 if (
   Platform.OS === 'android'
@@ -86,7 +87,7 @@ const SECTIONS = [
     id: 'subscription-plans',
     title: 'Subscription Plans',
     icon: 'diamond-outline',
-    body: 'Every seller starts with a 15-day free trial. Starter is $9.99/month after a 15% launch discount and has a 30-day free intro when eligible; Elite is $21.65/month after a 30% launch discount and has a 45-day free intro when eligible. The first 100 completed checkouts using FIRST100 lock Starter at $5.99 or Elite at $12.99 while the subscription remains uninterrupted. Elite includes Rozare-run TikTok ads; the optional Meta ads add-on costs $4/month. Starter bonus Elite features last 6 months. Upgrades are immediate, downgrades apply at period end, and cancellation keeps the store active through the paid period.',
+    body: 'Every seller starts with a 15-day free trial, may list up to 15 products during that trial, receives core Starter access plus eligible Elite growth tools, and does not need a credit card. Paid Starter includes a public store, unlimited listings, secure payments, a custom subdomain, order management and customer insights, unlimited seller AI, WhatsApp management, new-order alerts, order-confirmation automation, and 6 featured products. Its $11.75 list price has a 15% launch discount to $9.99/month and one 30-day introductory period when the account has not used it before. Starter includes one six-month bonus period with smart descriptions, advanced analytics, smart tags, priority support, coupons, and bulk promotion tools; restarting or switching plans does not grant a fresh Starter bonus period. Paid Elite has 12 featured products, a $30.93 list price, a 30% launch discount to $21.65/month, and one 45-day introductory period when eligible. Elite keeps the growth tools permanently while active and adds custom store themes plus Rozare-run TikTok ads; Meta ads are an optional $4/month add-on. The first 100 sellers whose subscription Checkout completes with FIRST100 receive an extra 40% founder discount, locking Starter at $5.99 or Elite at $12.99 while that subscription remains uninterrupted. Starting Checkout reserves a place for 35 minutes, and the rate is claimed only after Stripe confirms completion. The founder rate survives Starter/Elite changes and renewals but is permanently forfeited if the subscription ends. Upgrades and Meta changes are immediate and may be prorated, Elite-to-Starter downgrades start at period end, and cancellation keeps access active through the current period. When access ends the public store and products are hidden but data is preserved. A Starter seller with unused bonus time has 3 days after blocking to re-subscribe before those bonus tools are permanently removed from Starter.',
   },
   {
     id: 'payments',
@@ -162,19 +163,93 @@ const SECTIONS = [
   },
 ];
 
+const safeInteger = (value, fallback) => (
+  Number.isSafeInteger(value) && value >= 0 ? value : fallback
+);
+
+const formatUsd = (cents, fallback) => {
+  if (!Number.isSafeInteger(cents) || cents < 0) return fallback;
+  const value = BigInt(cents);
+  return `$${value / 100n}.${String(value % 100n).padStart(2, '0')}`;
+};
+
+export const buildSubscriptionDocsBody = (catalog) => {
+  const pricing = catalog?.pricing;
+  const starter = pricing?.starter;
+  const elite = pricing?.elite;
+  const trialDays = safeInteger(catalog?.trial?.days, 15);
+  const trialProductLimit = safeInteger(catalog?.trial?.productListingLimit, 15);
+  const starterFeatured = safeInteger(catalog?.starter?.featuredProductLimit, 6);
+  const eliteFeatured = safeInteger(catalog?.elite?.featuredProductLimit, 12);
+  const bonusMonths = safeInteger(catalog?.starter?.bonusFeaturesMonths, 6);
+  const graceDays = safeInteger(catalog?.bonusGraceDays, 3);
+  const founderCode = typeof catalog?.founderPromotion?.code === 'string'
+    && catalog.founderPromotion.code.trim()
+    ? catalog.founderPromotion.code.trim()
+    : 'FIRST100';
+  const founderDiscount = safeInteger(catalog?.founderPromotion?.discountPercent, 40);
+  const founderMax = safeInteger(catalog?.founderPromotion?.maxRedemptions, 100);
+  const founderReservationMinutes = safeInteger(
+    catalog?.founderPromotion?.checkoutReservationMinutes,
+    35,
+  );
+  const starterList = formatUsd(starter?.listAmountCents, '$11.75');
+  const starterPrice = formatUsd(starter?.standardAmountCents, '$9.99');
+  const starterFounder = formatUsd(starter?.founderAmountCents, '$5.99');
+  const eliteList = formatUsd(elite?.listAmountCents, '$30.93');
+  const elitePrice = formatUsd(elite?.standardAmountCents, '$21.65');
+  const eliteFounder = formatUsd(elite?.founderAmountCents, '$12.99');
+  const metaPrice = formatUsd(pricing?.metaAdsAddonCents, '$4.00');
+  const starterDiscount = safeInteger(starter?.advertisedDiscountPercent, 15);
+  const eliteDiscount = safeInteger(elite?.advertisedDiscountPercent, 30);
+  const starterIntro = safeInteger(starter?.freePeriodDays, 30);
+  const eliteIntro = safeInteger(elite?.freePeriodDays, 45);
+  const starterFeatures = Array.isArray(catalog?.features?.starter)
+    ? catalog.features.starter.join(', ')
+    : 'public store access, unlimited listings, secure payments, a custom subdomain, order management, unlimited seller AI, WhatsApp management and order alerts';
+  const bonusFeatures = Array.isArray(catalog?.features?.bonus)
+    ? catalog.features.bonus.join(', ')
+    : 'smart descriptions, advanced analytics, smart tags, priority support, coupons, and bulk promotion tools';
+  const eliteOnlyFeatures = Array.isArray(catalog?.features?.eliteOnly)
+    ? catalog.features.eliteOnly.join(', ')
+    : 'custom store themes and Rozare-run TikTok ads';
+
+  return `Every seller starts with a ${trialDays}-day free trial, may list up to ${trialProductLimit} products during that trial, receives core Starter access plus eligible Elite growth tools, and does not need a credit card. Paid Starter includes ${starterFeatures}; it supports ${starterFeatured} featured products, has a ${starterList} list price, a ${starterDiscount}% launch discount to ${starterPrice}/month, and one ${starterIntro}-day introductory period when the account has not used it before. Its temporary growth tools are ${bonusFeatures}; they last for one ${bonusMonths}-month Starter bonus period, and restarting or switching plans does not grant a fresh period. Paid Elite supports ${eliteFeatured} featured products, has a ${eliteList} list price, a ${eliteDiscount}% launch discount to ${elitePrice}/month, and one ${eliteIntro}-day introductory period when eligible. Elite keeps the growth tools permanently while active and adds ${eliteOnlyFeatures}; Meta ads are an optional ${metaPrice}/month add-on. The first ${founderMax} sellers whose subscription Checkout completes with ${founderCode} receive an extra ${founderDiscount}% founder discount, locking Starter at ${starterFounder} or Elite at ${eliteFounder} while that subscription remains uninterrupted. Starting Checkout reserves a place for ${founderReservationMinutes} minutes, and the rate is claimed only after Stripe confirms completion. The founder rate survives plan changes and renewals but is permanently forfeited if the subscription ends. Upgrades and Meta changes are immediate and may be prorated, downgrades start at period end, and cancellation keeps access active through the current period. When access ends, the public store and products are hidden but data is preserved. A Starter seller with unused bonus time has ${graceDays} days after blocking to re-subscribe before those bonus tools are permanently removed from Starter.`;
+};
+
 export default function DocsScreen({ navigation }) {
   const { palette } = useTheme();
   const styles = buildStyles(palette);
   const [query, setQuery] = useState('');
   const [openId, setOpenId] = useState(SECTIONS[0].id);
+  const [subscriptionCatalog, setSubscriptionCatalog] = useState(null);
+
+  useEffect(() => {
+    let active = true;
+    api.get(API_ENDPOINTS.SUBSCRIPTION.CATALOG, { skipAuthSessionCleanup: true })
+      .then((response) => {
+        if (active && response.data?.catalog) setSubscriptionCatalog(response.data.catalog);
+      })
+      .catch(() => {
+        // The bundled documentation remains available offline. Live catalog
+        // values replace it automatically whenever the API is reachable.
+      });
+    return () => { active = false; };
+  }, []);
+
+  const sections = useMemo(() => SECTIONS.map(section => (
+    section.id === 'subscription-plans' && subscriptionCatalog
+      ? { ...section, body: buildSubscriptionDocsBody(subscriptionCatalog) }
+      : section
+  )), [subscriptionCatalog]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return SECTIONS;
-    return SECTIONS.filter(
+    if (!q) return sections;
+    return sections.filter(
       (s) => s.title.toLowerCase().includes(q) || s.body.toLowerCase().includes(q)
     );
-  }, [query]);
+  }, [query, sections]);
 
   const toggle = (id) => {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);

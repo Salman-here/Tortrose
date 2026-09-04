@@ -1207,31 +1207,9 @@ exports.toggleCoupon = async (req, res) => {
     return couponController.toggleCoupon(adapted, res);
 };
 
-exports.getSubscriptionStatus = async (req, res) => {
-    const { role, id: userId } = req.user;
-    try {
-        if (role !== 'seller' && role !== 'admin') return res.status(403).json({ msg: 'Unauthorized' });
-
-        const SellerSubscription = require('../models/SellerSubscription');
-        const sub = await SellerSubscription.findOne({ seller: userId });
-
-        if (!sub) return res.json({ msg: 'No subscription found', hasSubscription: false });
-
-        res.json({
-            hasSubscription: true,
-            plan: sub.plan,
-            status: sub.status,
-            trialEndsAt: sub.trialEndsAt,
-            currentPeriodEnd: sub.currentPeriodEnd,
-            features: sub.features || [],
-            aiMessageLimit: -1,
-            aiMessagesUnlimited: true,
-            bonusExpiresAt: sub.bonusExpiresAt
-        });
-    } catch (error) {
-        console.error('AI subscription status error:', error);
-        res.status(500).json({ msg: 'Server error' });
-    }
+exports.getSubscriptionCatalog = (req, res) => {
+    const { getSubscriptionCatalog } = require('../services/subscriptionPresentationService');
+    res.json({ catalog: getSubscriptionCatalog() });
 };
 
 // ─── ADMIN BROADCAST & SUBSCRIPTION ───
@@ -1446,7 +1424,7 @@ const AI_ACTION_ROUTE_ROLES = {
         'update_order_status', 'get_my_store', 'update_store',
         'get_store_analytics', 'apply_for_verification', 'get_shipping_methods',
         'update_shipping', 'create_coupon', 'get_my_coupons', 'update_coupon',
-        'delete_coupon', 'toggle_coupon', 'get_subscription_status',
+        'delete_coupon', 'toggle_coupon',
         'get_all_users', 'delete_user', 'block_user', 'change_user_role',
         'get_admin_analytics', 'get_all_orders', 'get_all_complaints',
         'update_complaint', 'get_pending_verifications', 'approve_verification',

@@ -71,6 +71,8 @@ export async function executeAIToolCall(name, args, ctx = {}) {
       return { ok: true, styleAdvice: args };
     case 'suggest_outfit':
       return { ok: true, outfitSuggestion: args };
+    case 'get_subscription_catalog':
+      return GET('/subscription-catalog');
 
     // ─── User tools ───
     case 'get_my_orders':

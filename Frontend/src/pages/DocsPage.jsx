@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
+import axios from 'axios';
+import { formatUsdCents, getSubscriptionPricing } from '../utils/subscriptionPricing';
 
 // On the docs subdomain, internal app links must hop to the main domain.
 const mainHref = (path) => {
@@ -48,11 +50,36 @@ const SECTIONS = [
   { id: 'faq', title: 'Frequently Asked Questions', icon: HelpCircle },
 ];
 
+const safeCatalogInteger = (value, fallback) => (
+  Number.isSafeInteger(value) && value >= 0 ? value : fallback
+);
+
+const safeCatalogFeatures = (value, fallback) => (
+  Array.isArray(value) && value.length > 0 && value.every(item => typeof item === 'string' && item.trim())
+    ? value.map(item => item.trim())
+    : fallback
+);
+
 function DocsPage() {
   const [activeSection, setActiveSection] = useState('what-is-rozare');
   const [searchQuery, setSearchQuery] = useState('');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [subscriptionCatalog, setSubscriptionCatalog] = useState(null);
   const contentRef = useRef(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const apiBase = `${import.meta.env.VITE_API_URL || 'https://rozare.up.railway.app/'}`.replace(/\/?$/, '/');
+    axios.get(`${apiBase}api/subscription/catalog`, { signal: controller.signal })
+      .then(response => setSubscriptionCatalog(response.data?.catalog || null))
+      .catch(error => {
+        if (error?.code !== 'ERR_CANCELED' && error?.name !== 'CanceledError') {
+          // Prerendered fallback copy remains complete when the live catalog is unreachable.
+          setSubscriptionCatalog(null);
+        }
+      });
+    return () => controller.abort();
+  }, []);
 
   useEffect(() => {
     const observer = new IntersectionObserver(
@@ -73,6 +100,65 @@ function DocsPage() {
   const filteredSections = searchQuery
     ? SECTIONS.filter(s => s.title.toLowerCase().includes(searchQuery.toLowerCase()))
     : SECTIONS;
+
+  const livePricing = getSubscriptionPricing({ pricing: subscriptionCatalog?.pricing });
+  const pricing = livePricing || {
+    starter: { listAmountCents: 1175, standardAmountCents: 999, founderAmountCents: 599, advertisedDiscountPercent: 15, freePeriodDays: 30 },
+    elite: { listAmountCents: 3093, standardAmountCents: 2165, founderAmountCents: 1299, advertisedDiscountPercent: 30, freePeriodDays: 45 },
+    metaAdsAddonCents: 400,
+  };
+  const trialDays = safeCatalogInteger(subscriptionCatalog?.trial?.days, 15);
+  const trialProductLimit = safeCatalogInteger(subscriptionCatalog?.trial?.productListingLimit, 15);
+  const starterFeaturedLimit = safeCatalogInteger(subscriptionCatalog?.starter?.featuredProductLimit, 6);
+  const eliteFeaturedLimit = safeCatalogInteger(subscriptionCatalog?.elite?.featuredProductLimit, 12);
+  const starterBonusMonths = safeCatalogInteger(subscriptionCatalog?.starter?.bonusFeaturesMonths, 6);
+  const bonusGraceDays = safeCatalogInteger(subscriptionCatalog?.bonusGraceDays, 3);
+  const founderCode = typeof subscriptionCatalog?.founderPromotion?.code === 'string'
+    && subscriptionCatalog.founderPromotion.code.trim()
+    ? subscriptionCatalog.founderPromotion.code.trim()
+    : 'FIRST100';
+  const founderDiscountPercent = safeCatalogInteger(subscriptionCatalog?.founderPromotion?.discountPercent, 40);
+  const founderMaxRedemptions = safeCatalogInteger(subscriptionCatalog?.founderPromotion?.maxRedemptions, 100);
+  const founderReservationMinutes = safeCatalogInteger(subscriptionCatalog?.founderPromotion?.checkoutReservationMinutes, 35);
+  const defaultTrialFeatures = [
+    'Store and products visible to all customers',
+    `Up to ${trialProductLimit} product listings during the free trial`,
+    'Secure payment processing',
+    'Custom subdomain for your store',
+    'Order management and customer insights',
+    'Unlimited seller AI chat',
+    'Manage your store, orders and products from WhatsApp by chatting with AI',
+    'WhatsApp notifications for new orders',
+    'Rozare WhatsApp order confirmation automation',
+    `Featured product highlighting (${starterFeaturedLimit} products)`,
+  ];
+  const defaultStarterFeatures = [
+    'Store visible to all customers',
+    'Unlimited product listings',
+    'Secure payment processing',
+    'Custom subdomain',
+    'Order management and customer insights',
+    'Unlimited seller AI chat',
+    'Manage store, orders and products from WhatsApp by chatting with AI',
+    'WhatsApp new-order notifications and order confirmation automation',
+    `Featured products (${starterFeaturedLimit})`,
+  ];
+  const defaultBonusFeatures = [
+    'Smart description generator with AI',
+    'Advanced analytics and growth insights',
+    'Smart tag AI generator',
+    'Priority support and early access',
+    'Coupon and discount management',
+    'Bulk discount and promotional tools',
+  ];
+  const defaultEliteOnlyFeatures = [
+    'Rozare-run TikTok ads for your store and featured products',
+    'Customizable store themes',
+  ];
+  const trialFeatures = safeCatalogFeatures(subscriptionCatalog?.features?.trial, defaultTrialFeatures);
+  const starterFeatures = safeCatalogFeatures(subscriptionCatalog?.features?.starter, defaultStarterFeatures);
+  const bonusFeatures = safeCatalogFeatures(subscriptionCatalog?.features?.bonus, defaultBonusFeatures);
+  const eliteOnlyFeatures = safeCatalogFeatures(subscriptionCatalog?.features?.eliteOnly, defaultEliteOnlyFeatures);
 
   const scrollToSection = (id) => {
     const el = document.getElementById(id);
@@ -110,7 +196,7 @@ function DocsPage() {
         { '@type': 'Question', name: 'What is Rozare?', acceptedAnswer: { '@type': 'Answer', text: 'Rozare is an AI-powered marketplace where shoppers discover products and sellers manage stores through dashboard tools, AI chat, and WhatsApp.' } },
         { '@type': 'Question', name: 'How do I become a seller on Rozare?', acceptedAnswer: { '@type': 'Answer', text: 'Go to /become-seller, create or sign in to your account, add your store details, verify your WhatsApp number, and activate your seller account to start the 15-day free trial.' } },
         { '@type': 'Question', name: 'Can I manage my Rozare store from WhatsApp?', acceptedAnswer: { '@type': 'Answer', text: 'Yes. Connect your WhatsApp number in seller settings and chat with the Rozare AI to add products, update stock, manage orders, run analytics, and get instant new-order notifications.' } },
-        { '@type': 'Question', name: 'How much does Rozare cost?', acceptedAnswer: { '@type': 'Answer', text: 'Shopping on Rozare is free. Sellers start with a 15-day free trial, then choose Starter at $9.99/month after a 15% launch discount or Elite at $21.65/month after a 30% launch discount. Eligible sellers also receive a 30-day Starter or 45-day Elite free intro. The first 100 sellers who complete Checkout with FIRST100 receive an additional locked 40% founder discount while their subscription remains uninterrupted.' } },
+        { '@type': 'Question', name: 'How much does Rozare cost?', acceptedAnswer: { '@type': 'Answer', text: `Shopping on Rozare is free. Sellers start with a ${trialDays}-day free trial with up to ${trialProductLimit} product listings. Starter is ${formatUsdCents(pricing.starter.standardAmountCents)}/month after a ${pricing.starter.advertisedDiscountPercent}% launch discount and Elite is ${formatUsdCents(pricing.elite.standardAmountCents)}/month after a ${pricing.elite.advertisedDiscountPercent}% launch discount. An eligible account gets one ${pricing.starter.freePeriodDays}-day Starter or ${pricing.elite.freePeriodDays}-day Elite introductory period. The first ${founderMaxRedemptions} completed ${founderCode} Checkouts receive an extra ${founderDiscountPercent}% founder discount, retained only while the subscription remains uninterrupted.` } },
         { '@type': 'Question', name: 'Does Rozare have a mobile app?', acceptedAnswer: { '@type': 'Answer', text: 'Rozare includes a React Native / Expo mobile app experience for iOS and Android with shopping, selling, AI chat, and push notification support.' } },
       ],
     },
@@ -546,69 +632,56 @@ function DocsPage() {
 
               {/* SUBSCRIPTION PLANS */}
               <DocSection id="subscription-plans" title="Subscription Plans" icon={Award}>
-                <p>Every new seller gets a <strong>15-day free trial to launch their store</strong> with Starter features and eligible Elite tools. After the trial, choose Rozare Starter or Rozare Elite. Both plans include a generous free intro period.</p>
+                <p>Every new seller gets a <strong>{trialDays}-day free trial</strong> with core Starter access, eligible Elite growth tools, up to <strong>{trialProductLimit} product listings</strong>, and no credit-card requirement. After the trial, choose Rozare Starter or Rozare Elite. Each account can receive only one introductory period, and only when it has not used that period before.</p>
 
                 <div className="grid md:grid-cols-3 gap-4 my-6">
-                  <PlanCard name="Free Trial" price="15 days" features={[
-                    'Core selling features unlocked',
-                    'Unlimited product listings',
-                    'Smart description generator with AI',
-                    'Unlimited seller AI chat',
-                    'Manage store via WhatsApp by chatting with AI',
-                    'WhatsApp notifications for new orders',
-                    'Analytics, smart tags, coupons, bulk tools',
+                  <PlanCard name="Free Trial" price={`${trialDays} days`} features={[
+                    ...trialFeatures,
+                    ...bonusFeatures,
                     'No credit card required',
                   ]} />
-                  <PlanCard name="Rozare Starter" price="$9.99/mo" features={[
-                    '15% off the $11.75 list price',
-                    '30-day free intro period',
-                    'Store visible to all customers',
-                    'Unlimited product listings',
-                    'Custom subdomain',
-                    'Unlimited seller AI chat',
-                    'Manage store via WhatsApp by chatting with AI',
-                    'WhatsApp notifications for new orders',
-                    'WhatsApp order confirmation automation',
-                    'Featured products (6)',
-                    'Bonus Elite features for 6 months',
+                  <PlanCard name="Rozare Starter" price={`${formatUsdCents(pricing.starter.standardAmountCents)}/mo`} features={[
+                    `${pricing.starter.advertisedDiscountPercent}% off the ${formatUsdCents(pricing.starter.listAmountCents)} list price`,
+                    `${pricing.starter.freePeriodDays}-day one-time intro period when eligible`,
+                    ...starterFeatures,
+                    ...bonusFeatures.map(feature => `${feature} (first ${starterBonusMonths} months)`),
                   ]} />
-                  <PlanCard name="Rozare Elite" price="$21.65/mo" featured features={[
-                    '30% off the $30.93 list price',
-                    '45-day free intro period',
+                  <PlanCard name="Rozare Elite" price={`${formatUsdCents(pricing.elite.standardAmountCents)}/mo`} featured features={[
+                    `${pricing.elite.advertisedDiscountPercent}% off the ${formatUsdCents(pricing.elite.listAmountCents)} list price`,
+                    `${pricing.elite.freePeriodDays}-day one-time intro period when eligible`,
                     'Everything in Starter',
-                    'Smart description generator with AI',
-                    'Advanced analytics & growth insights',
-                    'Smart tag AI generator',
-                    'Coupon & discount management',
-                    'Bulk discount & promotional tools',
-                    'Customizable store themes',
-                    'Priority support',
-                    'Featured products (12)',
-                    'Rozare-run TikTok ads for your store and featured products',
-                    'Optional Meta ads add-on (+$4/month)',
+                    `Featured products (${eliteFeaturedLimit})`,
+                    ...bonusFeatures,
+                    ...eliteOnlyFeatures,
+                    `Optional Meta ads add-on (+${formatUsdCents(pricing.metaAdsAddonCents)}/month)`,
                   ]} />
                 </div>
 
                 <InfoBox type="info" title="Elite ads">
-                  Rozare Elite includes TikTok ads run by Rozare for your store and featured products. Sellers can request ads from Seller Dashboard - Ads, or ask the Rozare AI to select active featured products and submit the request. Every start, stop, or product change goes to admin approval. Meta ads can be added for $4/month, making standard Elite + Meta $25.65/month.
+                  Rozare Elite includes TikTok ads run by Rozare for your store and featured products. Sellers can request ads from Seller Dashboard - Ads, or ask the Rozare AI to select active featured products and submit the request. Every start, stop, or product change goes to admin approval. Meta ads can be added for {formatUsdCents(pricing.metaAdsAddonCents)}/month, making standard Elite + Meta {formatUsdCents(pricing.elite.standardAmountCents + pricing.metaAdsAddonCents)}/month.
                 </InfoBox>
 
-                <InfoBox type="tip" title="FIRST100 founder coupon">
-                  The first 100 sellers who complete subscription Checkout using <strong>FIRST100</strong> receive an extra 40% off: Starter becomes $5.99/month and Elite becomes $12.99/month. Meta ads remain $4/month, making founder Elite + Meta $16.99/month. The founder rate survives renewals and Starter/Elite plan changes while the subscription stays uninterrupted. It is permanently lost when the seller unsubscribes and the subscription ends.
+                <InfoBox type="tip" title={`${founderCode} founder coupon`}>
+                  The first {founderMaxRedemptions} sellers whose subscription Checkout completes using <strong>{founderCode}</strong> receive an extra {founderDiscountPercent}% founder discount: Starter becomes {formatUsdCents(pricing.starter.founderAmountCents)}/month and Elite becomes {formatUsdCents(pricing.elite.founderAmountCents)}/month. Meta ads remain {formatUsdCents(pricing.metaAdsAddonCents)}/month, making founder Elite + Meta {formatUsdCents(pricing.elite.founderAmountCents + pricing.metaAdsAddonCents)}/month. Starting Checkout reserves a place for {founderReservationMinutes} minutes; the rate is claimed only after Stripe confirms completion. It survives renewals and Starter/Elite plan changes while the subscription stays uninterrupted, but is permanently lost when that subscription ends.
                 </InfoBox>
 
                 <InfoBox type="tip" title="Bonus features for Starter">
-                  Rozare Starter includes bonus Elite features (advanced analytics, smart tags, coupons, bulk tools, priority support) <strong>for the first 6 months</strong>. Customizable themes stay Elite-only. Upgrade to Elite at any time to keep bonus features permanently.
+                  Rozare Starter includes the listed growth tools during its <strong>one-time first {starterBonusMonths}-month bonus period</strong>. Restarting or switching plans never creates a fresh Starter bonus period. If a Starter subscription ends while unused bonus time remains, the seller has {bonusGraceDays} days after blocking to re-subscribe and preserve that remaining time; after the grace window, those tools are permanently removed from Starter. Customizable themes and Rozare-run TikTok ads stay Elite-only. Upgrade to Elite to keep the growth tools permanently while Elite remains active.
+                </InfoBox>
+
+                <InfoBox type="important" title="When access ends">
+                  A cancelled plan remains active through its current paid or introductory period. When the trial or subscription actually ends, the public store and products are hidden, but the seller's data is preserved and returns after an eligible subscription is activated.
                 </InfoBox>
 
                 <h3>Manage your subscription</h3>
                 <ul>
                   <li>Open Seller Dashboard → Subscription.</li>
                   <li>Upgrade Starter → Elite anytime — instant access.</li>
+                  <li>Immediate upgrades and Meta add-on changes may create a prorated Stripe billing difference.</li>
                   <li>Downgrade Elite → Starter — takes effect at the end of your billing cycle.</li>
                   <li>Cancel anytime — your store stays active until the end of your paid period.</li>
                   <li>A scheduled cancellation can be undone before the subscription ends.</li>
-                  <li>A locked FIRST100 rate remains during plan changes but is permanently forfeited when the subscription ends.</li>
+                  <li>A locked {founderCode} rate remains during plan changes but is permanently forfeited when the subscription ends.</li>
                 </ul>
               </DocSection>
 
@@ -836,7 +909,7 @@ function DocsPage() {
               {/* FAQ */}
               <DocSection id="faq" title="Frequently Asked Questions" icon={HelpCircle}>
                 <FAQItem q="Is Rozare free for shoppers?" a="Yes. Shopping is completely free. You only pay for the products you buy. There are no membership fees." />
-                <FAQItem q="How much does it cost to sell on Rozare?" a="Every new seller gets a 15-day free trial. Starter is $9.99/month after a 15% launch discount and includes a 30-day free intro when eligible. Elite is $21.65/month after a 30% launch discount and includes a 45-day free intro when eligible. The first 100 sellers who complete Checkout with FIRST100 get an extra locked 40% founder discount: $5.99 Starter or $12.99 Elite while the subscription remains uninterrupted. Meta ads add $4/month." />
+                <FAQItem q="How much does it cost to sell on Rozare?" a={`Every new seller gets a ${trialDays}-day free trial with up to ${trialProductLimit} product listings. Starter is ${formatUsdCents(pricing.starter.standardAmountCents)}/month after a ${pricing.starter.advertisedDiscountPercent}% launch discount and includes one ${pricing.starter.freePeriodDays}-day intro when eligible. Elite is ${formatUsdCents(pricing.elite.standardAmountCents)}/month after a ${pricing.elite.advertisedDiscountPercent}% launch discount and includes one ${pricing.elite.freePeriodDays}-day intro when eligible. The first ${founderMaxRedemptions} completed ${founderCode} Checkouts can lock an extra ${founderDiscountPercent}% founder discount: ${formatUsdCents(pricing.starter.founderAmountCents)} Starter or ${formatUsdCents(pricing.elite.founderAmountCents)} Elite while the subscription stays uninterrupted. A Checkout reservation lasts ${founderReservationMinutes} minutes. Meta ads add ${formatUsdCents(pricing.metaAdsAddonCents)}/month.`} />
                 <FAQItem q="Can I manage my store from WhatsApp?" a="Yes. Once you connect your WhatsApp number in seller settings, you can chat with the Rozare AI to handle supported tasks such as adding products, updating stock, managing orders, running discounts, and checking analytics. You can also get instant notifications for new orders." />
                 <FAQItem q="Does Rozare have a mobile app?" a="Rozare includes a React Native / Expo mobile app experience for iOS and Android with shopping, selling, AI chat, push notifications, voice search, and the same core marketplace workflows." />
                 <FAQItem q="How does the AI know about my store?" a="The AI calls secure server-side tools that read and write only your store's data. Other sellers cannot see your data, and you cannot see theirs." />
@@ -844,8 +917,8 @@ function DocsPage() {
                 <FAQItem q="What payment methods are available?" a="Checkout supports Stripe card, Rozare Wallet, and Cash on Delivery. One order uses one payment method. COD is available only when every seller allows it; otherwise use card or a sufficient same-currency Wallet balance." />
                 <FAQItem q="How do returns and refunds work?" a="Return eligibility is seller- and item-specific and opens after that seller portion is delivered. Request it from order details within the saved policy window. The seller tracks pickup and review, then funds an approved refund from seller balance or card. Only verified funding credits your Rozare Wallet and completes the return." />
                 <FAQItem q="How do sellers receive Stripe payments?" a="Sellers add their bank details in Seller Dashboard - Payments. Delivered Stripe-paid order revenue becomes withdrawable, then the seller sends a withdrawal request for admin review. COD payments are handled by the seller directly." />
-                <FAQItem q="What's the difference between Starter and Elite?" a="Both plans include unlimited listings, unlimited seller AI chat, a custom subdomain, WhatsApp store management, new-order WhatsApp notifications, and the core marketplace features. Elite adds customizable store themes, the smart description generator with AI, advanced analytics, smart tag AI, coupon and bulk tools permanently, priority support, 12 featured products (vs 6), and Rozare-run TikTok ads. Meta ads can be added to Elite for $4/month." />
-                <FAQItem q="What happens after my 15-day free trial ends?" a="If you don't subscribe, your store and products are temporarily hidden until you subscribe — your data is preserved. Subscribe to Starter or Elite to instantly reactivate everything, with the plan's free intro period applied when eligible." />
+                <FAQItem q="What's the difference between Starter and Elite?" a={`Both paid plans include unlimited listings, unlimited seller AI chat, a custom subdomain, WhatsApp store management and core marketplace features. Starter supports ${starterFeaturedLimit} featured products and includes the growth-tool bundle for ${starterBonusMonths} months. Elite supports ${eliteFeaturedLimit} featured products, keeps those growth tools permanently while active, and adds custom themes plus Rozare-run TikTok ads. Meta ads can be added to Elite for ${formatUsdCents(pricing.metaAdsAddonCents)}/month.`} />
+                <FAQItem q={`What happens after my ${trialDays}-day free trial ends?`} a="If you don't subscribe, your store and products are temporarily hidden until you subscribe — your data is preserved. Subscribe to Starter or Elite to reactivate everything, with the account's one-time introductory period applied only if it is still eligible." />
                 <FAQItem q="Can I cancel anytime?" a="Yes. Cancel from Seller Dashboard → Subscription. Your store stays active until the end of your current billing period." />
                 <FAQItem q="What's the maximum number of tags per product?" a="The product form shows its current limit. AI-assisted tools may apply a stricter safeguard, so keep only the most useful search tags." />
                 <FAQItem q="How long can my product description be?" a="Up to 2000 characters. A live counter is shown in the form." />

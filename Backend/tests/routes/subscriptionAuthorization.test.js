@@ -34,4 +34,11 @@ describe('subscription route authorization boundaries', () => {
     expect(middleware).not.toContain(seller);
     expect(middleware).not.toContain(admin);
   });
+
+  test('keeps the read-only subscription catalog public', () => {
+    const middleware = routeMiddleware('/catalog', 'get');
+    expect(middleware).toHaveLength(1);
+    expect(middleware).not.toContain(seller);
+    expect(middleware).not.toContain(admin);
+  });
 });
