@@ -226,8 +226,10 @@ describe('AI daily quota ownership', () => {
   it('threads the selected currency through every mobile AI money request path', () => {
     const chatBot = read('../../src/components/ChatBot.js');
 
-    expect(chatBot).toContain('const { formatPrice, formatProductPrice, currency } = useCurrency();');
+    expect(chatBot).toContain('const { formatPrice, formatProductPrice, getProductCurrency, currency } = useCurrency();');
     expect(chatBot).toContain("resolveProductPresentationMoney(p, 'discountedPrice')");
+    expect(chatBot).toContain("tr.name === 'list_my_products'");
+    expect(chatBot).toContain('getProductCurrency(p)');
     expect(chatBot).toContain("form.append('currency', requestCurrency);");
     expect(chatBot).toContain('currency: requestCurrency,');
     expect(chatBot).toContain("source: 'mobile'");
