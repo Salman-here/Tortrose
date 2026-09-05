@@ -4753,6 +4753,10 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
       case 'get_seller_analytics': {
         if (!userId) return { success: false, error: 'Authentication required.' };
         const store = await Store.findOne({ seller: userId }).select('storeName views trustCount').lean();
+        const sellerCurrencyState = await getSellerProductCurrencyState(userId);
+        const reportingCurrency = sellerCurrencyState?.hasStore
+          ? sellerCurrencyState.activeCurrency
+          : preferredCurrency;
 
         const myProducts = await Product.find({ seller: userId }).select('_id').lean();
         const productIds = myProducts.map(p => p._id);
@@ -4784,7 +4788,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
             currency: native?.currency || order.currency,
           };
         });
-        const totalRevenue = await sumCurrencyAmountsInCurrency(revenueEntries, preferredCurrency);
+        const totalRevenue = await sumCurrencyAmountsInCurrency(revenueEntries, reportingCurrency);
 
         const statusCounts = {};
         sellerOrders.forEach(({ status }) => {
@@ -4817,14 +4821,14 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
             totalProducts: myProducts.length,
             totalOrders: sellerOrders.length,
             totalRevenue: roundMoney(totalRevenue),
-            currency: preferredCurrency,
+            currency: reportingCurrency,
             storeViews: store?.views || 0,
             trustCount: store?.trustCount || 0,
             ordersByStatus: statusCounts,
             topProducts,
             lowStockAlerts: lowStock.map(p => ({ name: p.name, stock: p.stock })),
           },
-          message: `📊 Store "${store?.storeName}": ${myProducts.length} products, ${sellerOrders.length} orders, ${await userMoney(totalRevenue, preferredCurrency)} revenue, ${store?.views || 0} views.`,
+          message: `📊 Store "${store?.storeName}": ${myProducts.length} products, ${sellerOrders.length} orders, ${await formatMoney(totalRevenue, reportingCurrency, { sourceCurrency: reportingCurrency })} revenue, ${store?.views || 0} views.`,
         };
       }
 
@@ -4832,9 +4836,13 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
         if (!userId) return { success: false, error: 'Authentication required.' };
         const targetSellerId = role === 'admin' && args.sellerId ? toId(args.sellerId) : userId;
         if (!targetSellerId) return { success: false, error: 'Seller not found.' };
+        const sellerCurrencyState = await getSellerProductCurrencyState(targetSellerId);
+        const reportingCurrency = sellerCurrencyState?.hasStore
+          ? sellerCurrencyState.activeCurrency
+          : preferredCurrency;
 
-        const paymentSummary = await buildSellerPaymentSummary(targetSellerId, { displayCurrency: preferredCurrency });
-        const revenue = paymentSummary.revenue || {};
+        const paymentSummary = await buildSellerPaymentSummary(targetSellerId, { displayCurrency: reportingCurrency });
+        const revenue = paymentSummary.displayRevenue || {};
         const withdrawableBalance = requireAIDerivedMoney(revenue.withdrawableBalance, 'withdrawable balance');
         const codDeliveredRevenue = requireAIDerivedMoney(revenue.codDeliveredRevenue, 'delivered COD revenue');
         const totalDeliveredRevenue = requireAIDerivedMoney(revenue.totalDeliveredRevenue, 'total delivered revenue');
@@ -4843,6 +4851,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
           success: true,
           data: {
             revenue,
+            currency: reportingCurrency,
             paymentAccountLinked: !!paymentSummary.paymentAccount,
             paymentAccount: paymentSummary.paymentAccount,
             recentWithdrawals: (paymentSummary.withdrawals || []).slice(0, 5).map(w => ({
@@ -4852,7 +4861,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
               adminNote: w.adminNote || '',
             })),
           },
-          message: `Payments summary: withdrawable online balance ${await formatMoney(withdrawableBalance, preferredCurrency)}, delivered COD revenue ${await formatMoney(codDeliveredRevenue, preferredCurrency)}, total delivered revenue ${await formatMoney(totalDeliveredRevenue, preferredCurrency)}, estimated revenue ${await formatMoney(estimatedRevenue, preferredCurrency)}.`,
+          message: `Payments summary: withdrawable online balance ${await formatMoney(withdrawableBalance, reportingCurrency, { sourceCurrency: reportingCurrency })}, delivered COD revenue ${await formatMoney(codDeliveredRevenue, reportingCurrency, { sourceCurrency: reportingCurrency })}, total delivered revenue ${await formatMoney(totalDeliveredRevenue, reportingCurrency, { sourceCurrency: reportingCurrency })}, estimated revenue ${await formatMoney(estimatedRevenue, reportingCurrency, { sourceCurrency: reportingCurrency })}.`,
         };
       }
 

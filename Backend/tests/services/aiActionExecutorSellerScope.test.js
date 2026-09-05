@@ -774,6 +774,42 @@ describe('aiActionExecutor seller order attribution', () => {
     expect(result.data.ordersByStatus.delivered).toBeUndefined();
   });
 
+  test('seller AI analytics and payments use the store product currency instead of account display currency', async () => {
+    await User.create({
+      _id: SELLER_B,
+      username: 'native-currency-ai-seller',
+      email: 'native-currency-ai-seller@test.com',
+      password: 'password123',
+      role: 'seller',
+      currency: 'USD',
+    });
+    await Store.create({
+      seller: SELLER_B,
+      storeName: 'Native Currency AI Store',
+      storeSlug: 'native-currency-ai-store',
+      productCurrency: 'PKR',
+      isActive: true,
+    });
+
+    const seller = { id: SELLER_B, role: 'seller', currency: 'USD' };
+    const analytics = await executeToolCall('get_seller_analytics', {}, seller);
+    const payments = await executeToolCall('get_seller_payments', {}, seller);
+
+    expect(analytics).toMatchObject({
+      success: true,
+      data: { currency: 'PKR', totalRevenue: 0 },
+    });
+    expect(analytics.message).toContain('Rs0.00');
+    expect(payments).toMatchObject({
+      success: true,
+      data: {
+        currency: 'PKR',
+        revenue: { withdrawableBalance: 0 },
+      },
+    });
+    expect(payments.message).toContain('Rs0.00');
+  });
+
   test('admin AI analytics excludes hidden/unpaid revenue and allocates partial COD exactly', async () => {
     const item = (productId, seller, price) => ({
       productId,
