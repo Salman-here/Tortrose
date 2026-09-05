@@ -8,13 +8,17 @@ const displayText = (value, fallback) => (
     typeof value === 'string' && value.trim() ? value.trim() : fallback
 );
 
-const ProductCard = ({ product, index, onEditProduct, setDeleteConfirm }) => {
+const ProductCard = ({ product, index, onEditProduct, setDeleteConfirm, displayNativeCurrency = false }) => {
     const { formatPrice } = useCurrency();
     const safeProduct = product && typeof product === 'object' && !Array.isArray(product) ? product : {};
     const presentation = inspectSellerProductPresentation(safeProduct);
     const { price, discountedPrice, stock, rating } = presentation;
     const hasDiscount = presentation.hasDiscount;
     const productCurrency = presentation.currency;
+    const priceFormatOptions = {
+        sourceCurrency: productCurrency,
+        ...(displayNativeCurrency ? { targetCurrency: productCurrency } : {}),
+    };
     const discountPercent = presentation.discountPercent;
     const canEdit = presentation.managementSafe && presentation.valid && typeof onEditProduct === 'function';
     const canDelete = presentation.managementSafe && typeof setDeleteConfirm === 'function';
@@ -134,15 +138,15 @@ const ProductCard = ({ product, index, onEditProduct, setDeleteConfirm }) => {
                     ) : hasDiscount ? (
                         <>
                             <span className="text-lg font-extrabold" style={{ color: 'hsl(var(--foreground))', letterSpacing: '-0.03em' }}>
-                                {formatPrice(discountedPrice, { sourceCurrency: productCurrency })}
+                                {formatPrice(discountedPrice, priceFormatOptions)}
                             </span>
                             <span className="text-sm line-through" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                                {formatPrice(price, { sourceCurrency: productCurrency })}
+                                {formatPrice(price, priceFormatOptions)}
                             </span>
                         </>
                     ) : (
                         <span className="text-lg font-extrabold" style={{ color: 'hsl(var(--foreground))', letterSpacing: '-0.03em' }}>
-                            {formatPrice(price, { sourceCurrency: productCurrency })}
+                            {formatPrice(price, priceFormatOptions)}
                         </span>
                     )}
                 </div>

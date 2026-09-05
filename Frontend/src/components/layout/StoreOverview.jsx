@@ -190,7 +190,7 @@ const StoreOverview = () => {
                                         <span className="w-1 h-1 rounded-full" style={{ background: 'hsl(var(--muted-foreground))' }} />
                                         <span className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>
                                             {presentation.moneyValid
-                                                ? formatPrice(presentation.price, { sourceCurrency: presentation.currency })
+                                                ? formatPrice(presentation.price, { sourceCurrency: presentation.currency, targetCurrency: usesCanonicalOverview ? presentation.currency : undefined })
                                                 : 'Price unavailable'}
                                         </span>
                                     </div>
@@ -283,7 +283,7 @@ const StoreOverview = () => {
                                 </div>
                                 <span className="text-sm font-semibold" style={{ color: 'hsl(var(--foreground))' }}>
                                     {presentation.moneyValid
-                                        ? formatPrice(presentation.price, { sourceCurrency: presentation.currency })
+                                        ? formatPrice(presentation.price, { sourceCurrency: presentation.currency, targetCurrency: usesCanonicalOverview ? presentation.currency : undefined })
                                         : 'Price unavailable'}
                                 </span>
                             </motion.div>

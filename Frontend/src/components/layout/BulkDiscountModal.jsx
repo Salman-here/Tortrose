@@ -295,10 +295,10 @@ const BulkDiscountModal = ({ isOpen, onClose, selectedProducts, onSuccess, isAdm
                                             <p className="text-xs sm:text-sm font-medium truncate" style={{ color: 'hsl(var(--foreground))' }}>{product.name}</p>
                                             <p className="text-[10px] sm:text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>
                                                 {presentation?.moneyValid
-                                                    ? formatPrice(presentation.price, { sourceCurrency: presentation.currency })
+                                                    ? formatPrice(presentation.price, { sourceCurrency: presentation.currency, targetCurrency: isAdmin ? undefined : presentation.currency })
                                                     : 'Price unavailable'}
                                                 {presentation?.hasDiscount && (
-                                                    <span className="ml-2" style={{ color: 'hsl(150, 60%, 45%)' }}>{formatPrice(presentation.discountedPrice, { sourceCurrency: presentation.currency })}</span>
+                                                    <span className="ml-2" style={{ color: 'hsl(150, 60%, 45%)' }}>{formatPrice(presentation.discountedPrice, { sourceCurrency: presentation.currency, targetCurrency: isAdmin ? undefined : presentation.currency })}</span>
                                                 )}
                                             </p>
                                         </div>

@@ -11,9 +11,6 @@ import { toast } from 'react-toastify';
 import { useCurrency } from '../../contexts/CurrencyContext';
 import { getAuthToken } from "../../utils/cookieHelper";
 import {
-    normalizeCurrencyCode,
-} from '../../utils/currencySafety';
-import {
     couponAnalyticsResponseIsValid,
     inspectCouponPresentation,
     isExactCouponMoneyInput,
@@ -47,7 +44,7 @@ const createCouponForm = (currency) => ({
 });
 
 const CouponManagement = () => {
-    const { formatPrice, currency } = useCurrency();
+    const { formatPrice } = useCurrency();
     const [coupons, setCoupons] = useState([]);
     const [products, setProducts] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -76,7 +73,6 @@ const CouponManagement = () => {
     }, []);
 
     const fetchAnalytics = useCallback(async () => {
-        const requestedCurrency = normalizeCurrencyCode(currency, '');
         analyticsRequestRef.current.controller?.abort();
         const controller = new AbortController();
         const requestId = analyticsRequestRef.current.id + 1;
@@ -86,6 +82,18 @@ const CouponManagement = () => {
         setAnalyticsError('');
         try {
             const token = getAuthToken();
+            const productCurrencyResponse = await axios.get(`${import.meta.env.VITE_API_URL}api/stores/product-currency`, {
+                headers: { Authorization: `Bearer ${token}` },
+                signal: controller.signal,
+            });
+            if (analyticsRequestRef.current.id !== requestId) return;
+            const productCurrencyState = inspectSellerProductCurrencyState(
+                productCurrencyResponse.data?.productCurrency
+            );
+            if (!productCurrencyState.valid || productCurrencyState.hasStore !== true) {
+                throw new Error('Your store product currency could not be verified. Please retry.');
+            }
+            const requestedCurrency = productCurrencyState.activeCurrency;
             const res = await axios.get(`${import.meta.env.VITE_API_URL}api/coupons/analytics?currency=${requestedCurrency}`, {
                 headers: { Authorization: `Bearer ${token}` },
                 signal: controller.signal,
@@ -103,7 +111,7 @@ const CouponManagement = () => {
         } finally {
             if (analyticsRequestRef.current.id === requestId) setAnalyticsLoading(false);
         }
-    }, [currency]);
+    }, []);
 
     useEffect(() => {
         fetchAnalytics();
@@ -401,17 +409,17 @@ const CouponManagement = () => {
     const formatCouponMoney = (coupon, amount = coupon?.discountValue) => {
         const presentation = inspectCouponPresentation(coupon);
         return presentation.valid
-            ? formatPrice(amount, { sourceCurrency: presentation.currency })
+            ? formatPrice(amount, { sourceCurrency: presentation.currency, targetCurrency: presentation.currency })
             : 'Money unavailable';
     };
     const formatAnalyticsCouponMoney = (coupon) =>
-        formatPrice(coupon.discountValue, { sourceCurrency: coupon.currency });
+        formatPrice(coupon.discountValue, { sourceCurrency: coupon.currency, targetCurrency: coupon.currency });
     const formatAnalyticsMoney = (amount) =>
-        formatPrice(amount, { sourceCurrency: analyticsCurrency });
+        formatPrice(amount, { sourceCurrency: analyticsCurrency, targetCurrency: analyticsCurrency });
     const formatProductMoney = (product) => {
         const presentation = inspectSellerProductPresentation(product);
         return presentation.valid
-            ? formatPrice(presentation.price, { sourceCurrency: presentation.currency })
+            ? formatPrice(presentation.price, { sourceCurrency: presentation.currency, targetCurrency: presentation.currency })
             : 'Price unavailable';
     };
 

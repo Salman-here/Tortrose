@@ -288,7 +288,7 @@ const ProductManagement = () => {
                                             </motion.button>
                                         </div>
                                     )}
-                                    <ProductCard product={product} index={index} onEditProduct={handleEditProduct} setDeleteConfirm={setDeleteConfirm} selectMode={selectMode} />
+                                    <ProductCard product={product} index={index} onEditProduct={handleEditProduct} setDeleteConfirm={setDeleteConfirm} selectMode={selectMode} displayNativeCurrency={!isAdminDashboard} />
                                 </div>
                             ))}
                         </div>

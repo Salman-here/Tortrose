@@ -13,8 +13,9 @@ test('web seller reports request and retain the store product currency', () => {
   const settings = readLayout('StoreSettings.jsx');
   const subdomain = readLayout('SellerSubdomainManagement.jsx');
   const payments = readLayout('SellerPayments.jsx');
+  const coupons = readLayout('CouponManagement.jsx');
 
-  for (const source of [analytics, dashboard, settings, subdomain, payments]) {
+  for (const source of [analytics, dashboard, settings, subdomain, payments, coupons]) {
     assert.match(source, /api\/stores\/product-currency/);
     assert.match(source, /inspectSellerProductCurrencyState/);
   }
@@ -36,6 +37,10 @@ test('web seller reports request and retain the store product currency', () => {
   assert.match(payments, /setSellerCurrency\(requestCurrency\)/);
   assert.match(payments, /currency: sellerCurrency/);
   assert.doesNotMatch(payments, /const \{ formatAmount, currency,/);
+
+  assert.match(coupons, /api\/coupons\/analytics\?currency=\$\{requestedCurrency\}/);
+  assert.match(coupons, /couponAnalyticsResponseIsValid\(res\.data, requestedCurrency\)/);
+  assert.doesNotMatch(coupons, /const \{ formatPrice, currency \}/);
 });
 
 test('web seller money is formatted without converting back to account display currency', () => {
@@ -44,6 +49,9 @@ test('web seller money is formatted without converting back to account display c
   const settings = readLayout('StoreSettings.jsx');
   const subdomain = readLayout('SellerSubdomainManagement.jsx');
   const payments = readLayout('SellerPayments.jsx');
+  const coupons = readLayout('CouponManagement.jsx');
+  const productCard = readLayout('ProductCard.jsx');
+  const productManagement = readLayout('ProductManagement.jsx');
 
   for (const source of [home, overview]) {
     assert.match(source, /reportCurrency/);
@@ -52,6 +60,11 @@ test('web seller money is formatted without converting back to account display c
   assert.match(settings, /sourceCurrency: analyticsCurrency, targetCurrency: analyticsCurrency/);
   assert.match(subdomain, /sourceCurrency: analytics\.currency, targetCurrency: analytics\.currency/);
   assert.match(payments, /formatAmount\(amount, \{ targetCurrency: sellerCurrency \}\)/);
+  assert.match(coupons, /sourceCurrency: analyticsCurrency, targetCurrency: analyticsCurrency/);
+  assert.match(coupons, /sourceCurrency: presentation\.currency, targetCurrency: presentation\.currency/);
+  assert.match(productCard, /displayNativeCurrency/);
+  assert.match(productCard, /targetCurrency: productCurrency/);
+  assert.match(productManagement, /displayNativeCurrency=\{!isAdminDashboard\}/);
 });
 
 test('seller order action exposes the actual confirmation source to assistive UI', () => {
