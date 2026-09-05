@@ -11,6 +11,7 @@ const tokenGet = (key) =>
 
 export const API_BASE_URL = (process.env.EXPO_PUBLIC_API_URL || 'https://rozare.up.railway.app').replace(/\/$/, '');
 export const API_UPLOAD_TIMEOUT_MS = 60000;
+export const API_AI_TIMEOUT_MS = 60000;
 
 export const API_ENDPOINTS = {
   AUTH: {

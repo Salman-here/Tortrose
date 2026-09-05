@@ -24,7 +24,7 @@ import {
   useAudioRecorder,
   useAudioRecorderState,
 } from 'expo-audio';
-import api, { API_UPLOAD_TIMEOUT_MS } from '../config/api';
+import api, { API_AI_TIMEOUT_MS, API_UPLOAD_TIMEOUT_MS } from '../config/api';
 import { useAuth } from '../contexts/AuthContext';
 import { useWishlist } from '../contexts/WishlistContext';
 import { useCart } from '../contexts/CartContext';
@@ -416,7 +416,7 @@ async function callAI(
     });
     const resp = await api.post('/api/ai-chat/once', form, {
       headers: { 'Content-Type': 'multipart/form-data', 'Idempotency-Key': requestKey },
-      timeout: API_UPLOAD_TIMEOUT_MS,
+      timeout: Math.max(API_UPLOAD_TIMEOUT_MS, API_AI_TIMEOUT_MS),
     });
     return resp.data;
   }
@@ -429,6 +429,7 @@ async function callAI(
     ...(conversationId ? { conversationId } : {}),
   }, {
     headers: { 'Idempotency-Key': requestKey },
+    timeout: API_AI_TIMEOUT_MS,
   });
   return resp.data;
 }
