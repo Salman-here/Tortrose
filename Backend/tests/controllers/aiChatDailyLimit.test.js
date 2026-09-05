@@ -1076,6 +1076,18 @@ describe('AI chat controller daily limit enforcement', () => {
     expect(schemas.get('send_product_image').description).toContain('web and mobile display a rich image card');
     expect(schemas.get('create_coupon').parameters.properties.coupon.properties.currency.enum).toEqual(supported);
     expect(schemas.get('update_coupon').parameters.properties.updates.properties.currency.enum).toEqual(supported);
+    expect(schemas.get('edit_product').parameters.properties.updates.properties).toMatchObject({
+      description: { type: 'string' },
+      stock: { type: 'number' },
+      colors: { type: 'array' },
+      optionGroups: { type: 'array' },
+    });
+    expect(schemas.get('update_store').parameters.properties.updates.properties).toMatchObject({
+      storeName: { type: 'string' },
+      description: { type: 'string' },
+      paymentPolicy: { enum: ['online_and_cod', 'advance_only'] },
+      returnPolicy: { type: 'object' },
+    });
   });
 
   it('gives every role live catalog access and gives sellers the complete status tool', () => {
