@@ -293,11 +293,11 @@ const StoreSettings = () => {
     const [subdomainOwned, setSubdomainOwned] = useState(false);
 
     const formatCompactPrice = (value, analyticsCurrency) => {
-        const symbol = formatPrice(0, { sourceCurrency: analyticsCurrency, decimals: 0 }).replace(/[0-9,.]/g, '');
+        const symbol = formatPrice(0, { sourceCurrency: analyticsCurrency, targetCurrency: analyticsCurrency, decimals: 0 }).replace(/[0-9,.]/g, '');
         if (value >= 1000000000) return `${symbol}${(value / 1000000000).toFixed(1)}B`;
         if (value >= 1000000) return `${symbol}${(value / 1000000).toFixed(1)}M`;
         if (value >= 10000) return `${symbol}${(value / 1000).toFixed(1)}K`;
-        return formatPrice(value, { sourceCurrency: analyticsCurrency });
+        return formatPrice(value, { sourceCurrency: analyticsCurrency, targetCurrency: analyticsCurrency });
     };
 
     const [storeData, setStoreData] = useState({
@@ -421,11 +421,24 @@ const StoreSettings = () => {
         setAnalyticsError('');
         try {
             const token = getAuthToken();
-            const res = await axios.get(`${import.meta.env.VITE_API_URL}api/stores/analytics?currency=${encodeURIComponent(currency)}`, {
+            const productCurrencyResponse = await axios.get(`${import.meta.env.VITE_API_URL}api/stores/product-currency`, {
                 headers: { Authorization: `Bearer ${token}` },
                 signal: controller.signal,
             });
-            const authoritative = selectAuthoritativeStoreAnalytics(res.data?.analytics, currency);
+            if (analyticsRequestRef.current.id !== requestId) return;
+            const productCurrencyState = inspectSellerProductCurrencyState(
+                productCurrencyResponse.data?.productCurrency
+            );
+            if (!productCurrencyState.valid || productCurrencyState.hasStore !== true) {
+                throw new Error('Your store product currency could not be verified. Please retry.');
+            }
+            const sellerCurrency = productCurrencyState.activeCurrency;
+            const res = await axios.get(`${import.meta.env.VITE_API_URL}api/stores/analytics?currency=${encodeURIComponent(sellerCurrency)}`, {
+                headers: { Authorization: `Bearer ${token}` },
+                signal: controller.signal,
+            });
+            if (analyticsRequestRef.current.id !== requestId) return;
+            const authoritative = selectAuthoritativeStoreAnalytics(res.data?.analytics, sellerCurrency);
             if (!authoritative) throw new Error('Store analytics returned invalid or inconsistent money data.');
             if (analyticsRequestRef.current.id === requestId) setAnalytics(authoritative);
         } catch (error) {
@@ -435,7 +448,7 @@ const StoreSettings = () => {
             setAnalytics(null);
             setAnalyticsError(error.response?.data?.msg || error.message || 'Store analytics are unavailable right now.');
         }
-    }, [currency]);
+    }, []);
 
     useEffect(() => {
         fetchAnalytics();

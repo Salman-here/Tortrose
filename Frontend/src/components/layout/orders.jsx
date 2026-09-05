@@ -368,11 +368,12 @@ const OrderManagement = () => {
                                                         {(() => {
                                                             const hasPhone = hasWhatsAppPhone(order);
                                                             const confirmed = isOrderConfirmedByBuyer(order);
+                                                            const confirmationSourceLabel = getConfirmationSourceLabel(order);
                                                             const enabled = hasPhone && !confirmed && money.valid;
                                                             const title = !money.valid
                                                                 ? 'Order money is unavailable; refresh before contacting the buyer'
                                                                 : confirmed
-                                                                ? `${getConfirmationSourceLabel(order) || 'Confirmed by buyer'}${order.confirmation?.confirmedAt ? ' · ' + new Date(order.confirmation.confirmedAt).toLocaleDateString() : ''}`
+                                                                ? `${confirmationSourceLabel || 'Confirmed by buyer'}${order.confirmation?.confirmedAt ? ' · ' + new Date(order.confirmation.confirmedAt).toLocaleDateString() : ''}`
                                                                 : (hasPhone ? 'Verify on WhatsApp' : 'No valid international WhatsApp destination');
                                                             return (
                                                                 <button
@@ -470,13 +471,14 @@ const OrderManagement = () => {
                                                         {(() => {
                                                             const hasPhone = hasWhatsAppPhone(order);
                                                             const confirmed = isOrderConfirmedByBuyer(order);
+                                                            const confirmationSourceLabel = getConfirmationSourceLabel(order);
                                                             const enabled = hasPhone && !confirmed && money.valid;
                                                             return (
                                                                 <button
                                                                     type="button"
                                                                     onClick={(e) => { e.preventDefault(); e.stopPropagation(); if (enabled) openWhatsAppVerify(order, formatPrice); }}
                                                                     disabled={!enabled}
-                                                                    aria-label={confirmed ? 'Confirmed via email' : (hasPhone ? 'Verify on WhatsApp' : 'No valid international WhatsApp destination')}
+                                                                    aria-label={confirmed ? (confirmationSourceLabel || 'Confirmed by buyer') : (hasPhone ? 'Verify on WhatsApp' : 'No valid international WhatsApp destination')}
                                                                     className="inline-flex items-center justify-center w-7 h-7 rounded-full"
                                                                     style={{
                                                                         background: confirmed ? 'rgba(16, 185, 129, 0.18)' : (hasPhone ? 'rgba(37, 211, 102, 0.15)' : 'rgba(255,255,255,0.04)'),

@@ -13,9 +13,10 @@ import {
     subdomainOwnershipResponseIsValid,
 } from '../../utils/subdomainOwnership';
 import { subdomainAnalyticsResponseIsValid } from '../../utils/subdomainAnalyticsSafety';
+import { inspectSellerProductCurrencyState } from '../../utils/productFormCurrency';
 
 const SellerSubdomainManagement = () => {
-    const { formatPrice, currency } = useCurrency();
+    const { formatPrice } = useCurrency();
     const [loading, setLoading] = useState(true);
     const [data, setData] = useState(null);
     const [editing, setEditing] = useState(false);
@@ -45,8 +46,20 @@ const SellerSubdomainManagement = () => {
             setOwnership(null);
             setLoadError('');
             const token = getAuthToken();
+            const productCurrencyResponse = await axios.get(`${import.meta.env.VITE_API_URL}api/stores/product-currency`, {
+                headers: { Authorization: `Bearer ${token}` },
+                signal: controller.signal,
+            });
+            if (dataRequestRef.current.id !== requestId) return;
+            const productCurrencyState = inspectSellerProductCurrencyState(
+                productCurrencyResponse.data?.productCurrency
+            );
+            if (!productCurrencyState.valid || productCurrencyState.hasStore !== true) {
+                throw new Error('Your store product currency could not be verified. Please retry.');
+            }
+            const sellerCurrency = productCurrencyState.activeCurrency;
             const [analyticsRes, ownershipRes] = await Promise.all([
-                axios.get(`${import.meta.env.VITE_API_URL}api/subdomain/analytics/seller?currency=${encodeURIComponent(currency)}`, {
+                axios.get(`${import.meta.env.VITE_API_URL}api/subdomain/analytics/seller?currency=${encodeURIComponent(sellerCurrency)}`, {
                     headers: { Authorization: `Bearer ${token}` },
                     signal: controller.signal,
                 }),
@@ -56,7 +69,7 @@ const SellerSubdomainManagement = () => {
                 }),
             ]);
             if (dataRequestRef.current.id !== requestId) return;
-            if (!subdomainAnalyticsResponseIsValid(analyticsRes.data, currency)) {
+            if (!subdomainAnalyticsResponseIsValid(analyticsRes.data, sellerCurrency)) {
                 throw new Error('Subdomain analytics returned invalid or inconsistent money data.');
             }
             if (!subdomainOwnershipResponseIsValid(ownershipRes.data)) {
@@ -74,7 +87,7 @@ const SellerSubdomainManagement = () => {
         } finally {
             if (dataRequestRef.current.id === requestId) setLoading(false);
         }
-    }, [currency]);
+    }, []);
 
     useEffect(() => {
         fetchData();
@@ -190,7 +203,7 @@ const SellerSubdomainManagement = () => {
     const stats = [
         { label: 'Total Views', value: analytics.totalViews, icon: <Eye size={18} />, color: 'hsl(220, 70%, 55%)' },
         { label: 'Total Orders', value: analytics.totalOrders, icon: <ShoppingBag size={18} />, color: 'hsl(150, 60%, 45%)' },
-        { label: 'Recognized Revenue', value: formatPrice(analytics.totalRevenue, { sourceCurrency: analytics.currency }), icon: <DollarSign size={18} />, color: 'hsl(200, 80%, 50%)' },
+        { label: 'Recognized Revenue', value: formatPrice(analytics.totalRevenue, { sourceCurrency: analytics.currency, targetCurrency: analytics.currency }), icon: <DollarSign size={18} />, color: 'hsl(200, 80%, 50%)' },
         { label: 'Conversion', value: `${analytics.conversionRate}%`, icon: <TrendingUp size={18} />, color: 'hsl(280, 60%, 55%)' },
     ];
 

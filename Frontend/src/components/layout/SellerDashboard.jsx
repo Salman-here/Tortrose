@@ -136,6 +136,7 @@ const SellerDashboard = () => {
     const [overviewProducts, setOverviewProducts] = useState(null);
     const [overviewOrders, setOverviewOrders] = useState(null);
     const [overviewMetrics, setOverviewMetrics] = useState(null);
+    const [overviewCurrency, setOverviewCurrency] = useState(null);
     const [overviewLoading, setOverviewLoading] = useState(true);
     const [overviewLoaded, setOverviewLoaded] = useState(false);
     const [overviewError, setOverviewError] = useState('');
@@ -168,6 +169,7 @@ const SellerDashboard = () => {
         setOverviewError('');
         setOverviewOrders(null);
         setOverviewMetrics(null);
+        setOverviewCurrency(null);
         setOverviewProducts(null);
 
         const token = getAuthToken();
@@ -176,10 +178,24 @@ const SellerDashboard = () => {
                 headers: { Authorization: `Bearer ${token}` },
                 signal: controller.signal,
             }),
-            axios.get(`${import.meta.env.VITE_API_URL}api/stores/analytics?currency=${encodeURIComponent(currency)}`, {
-                headers: { Authorization: `Bearer ${token}` },
-                signal: controller.signal,
-            }),
+            (async () => {
+                const productCurrencyResponse = await axios.get(`${import.meta.env.VITE_API_URL}api/stores/product-currency`, {
+                    headers: { Authorization: `Bearer ${token}` },
+                    signal: controller.signal,
+                });
+                const productCurrency = inspectSellerProductCurrencyState(
+                    productCurrencyResponse.data?.productCurrency
+                );
+                if (!productCurrency.valid || productCurrency.hasStore !== true) {
+                    throw new Error('Store product currency is unavailable.');
+                }
+                const activeCurrency = productCurrency.activeCurrency;
+                const metricsResponse = await axios.get(`${import.meta.env.VITE_API_URL}api/stores/analytics?currency=${encodeURIComponent(activeCurrency)}`, {
+                    headers: { Authorization: `Bearer ${token}` },
+                    signal: controller.signal,
+                });
+                return { activeCurrency, metricsResponse };
+            })(),
         ]);
 
         if (overviewRequestRef.current.id !== requestId || controller.signal.aborted) return;
@@ -192,13 +208,15 @@ const SellerDashboard = () => {
         } else failures.push('order totals');
 
         if (metricsResult.status === 'fulfilled') {
-            const nextMetrics = metricsResult.value.data?.analytics || null;
+            const { activeCurrency, metricsResponse } = metricsResult.value;
+            const nextMetrics = metricsResponse.data?.analytics || null;
             const inventoryValid = sellerInventoryOverviewIsValid(nextMetrics?.inventory)
                 && Number.isSafeInteger(nextMetrics?.productCount)
                 && nextMetrics.productCount >= 0
                 && nextMetrics.productCount === nextMetrics.inventory.totalProducts;
-            if (selectAuthoritativeSellerMetrics(nextMetrics, currency) !== null && inventoryValid) {
+            if (selectAuthoritativeSellerMetrics(nextMetrics, activeCurrency) !== null && inventoryValid) {
                 setOverviewMetrics(nextMetrics);
+                setOverviewCurrency(activeCurrency);
                 setOverviewProducts(
                     Array.isArray(nextMetrics?.inventory?.recentProducts)
                         ? nextMetrics.inventory.recentProducts.map(normalizeDashboardProduct)
@@ -206,11 +224,13 @@ const SellerDashboard = () => {
                 );
             } else {
                 setOverviewMetrics(null);
+                setOverviewCurrency(null);
                 setOverviewProducts([]);
                 failures.push('revenue or inventory totals');
             }
         } else {
             setOverviewMetrics(null);
+            setOverviewCurrency(null);
             setOverviewProducts([]);
             failures.push('inventory totals');
             failures.push('revenue totals');
@@ -221,7 +241,7 @@ const SellerDashboard = () => {
             ? `Could not refresh ${failures.join(', ')}. Unavailable values are hidden until a successful retry.`
             : '');
         setOverviewLoading(false);
-    }, [currency]);
+    }, []);
 
     useEffect(() => {
         const isOverviewRoute = location.pathname === '/seller-dashboard'
@@ -564,7 +584,7 @@ const SellerDashboard = () => {
         canFeature: subscriptionData?.status === 'trial' || subscriptionData?.bonusFeaturesActive === true || ['active', 'free_period'].includes(subscriptionData?.status),
         featuredStats, fetchFeaturedStats,
         productCurrencyState, fetchProductCurrencyState, handleConvertProductCurrency, handleCancelProductCurrencyChange,
-        overviewProducts, overviewOrders, overviewMetrics, overviewLoading, overviewLoaded, overviewError, refreshOverview: fetchOverviewData,
+        overviewProducts, overviewOrders, overviewMetrics, overviewCurrency, overviewLoading, overviewLoaded, overviewError, refreshOverview: fetchOverviewData,
     };
 
     // Get current page title

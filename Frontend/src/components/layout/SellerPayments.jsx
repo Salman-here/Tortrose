@@ -35,6 +35,7 @@ import {
     shouldRetainWithdrawalAttempt,
     withdrawalNeedsLiveFx,
 } from '../../utils/sellerMoneySafety';
+import { inspectSellerProductCurrencyState } from '../../utils/productFormCurrency';
 
 const API = `${import.meta.env.VITE_API_URL}api/payments`;
 const WITHDRAWAL_ATTEMPT_STORAGE_KEY = 'rozare_seller_withdrawal_attempt_v1';
@@ -137,7 +138,7 @@ const StatusPill = ({ status }) => (
 );
 
 const SellerPayments = () => {
-    const { formatAmount, currency, currencies } = useCurrency();
+    const { formatAmount, currencies } = useCurrency();
     const { currentUser } = useAuth();
     const withdrawalAttemptStorageKey = createScopedMutationStorageKey(
         WITHDRAWAL_ATTEMPT_STORAGE_KEY,
@@ -149,6 +150,7 @@ const SellerPayments = () => {
     const [savingAccount, setSavingAccount] = useState(false);
     const [requesting, setRequesting] = useState(false);
     const [summary, setSummary] = useState(null);
+    const [sellerCurrency, setSellerCurrency] = useState(null);
     const [accountForm, setAccountForm] = useState(defaultAccountForm);
     const [showAccountForm, setShowAccountForm] = useState(false);
     const [withdrawAmount, setWithdrawAmount] = useState('');
@@ -181,21 +183,33 @@ const SellerPayments = () => {
     useEffect(() => {
         void retireActiveWithdrawalAttempt();
         setWithdrawAmount('');
-    }, [currency, retireActiveWithdrawalAttempt]);
+    }, [sellerCurrency, retireActiveWithdrawalAttempt]);
 
     const fetchSummary = useCallback(async () => {
-        const requestCurrency = String(currency || 'USD').toUpperCase();
         const requestId = summaryRequestRef.current.id + 1;
         summaryRequestRef.current.controller?.abort();
         const controller = new AbortController();
         summaryRequestRef.current = { id: requestId, controller };
         summaryRef.current = null;
         setSummary(null);
+        setSellerCurrency(null);
         setLoadError('');
         setLoading(true);
         setRefreshingSummary(true);
         try {
             const token = getAuthToken();
+            const productCurrencyResponse = await axios.get(`${import.meta.env.VITE_API_URL}api/stores/product-currency`, {
+                headers: { Authorization: `Bearer ${token}` },
+                signal: controller.signal,
+            });
+            if (summaryRequestRef.current.id !== requestId) return;
+            const productCurrencyState = inspectSellerProductCurrencyState(
+                productCurrencyResponse.data?.productCurrency
+            );
+            if (!productCurrencyState.valid || productCurrencyState.hasStore !== true) {
+                throw new Error('Your store product currency could not be verified. Please retry.');
+            }
+            const requestCurrency = productCurrencyState.activeCurrency;
             const res = await axios.get(`${API}/seller/summary?currency=${encodeURIComponent(requestCurrency)}`, {
                 headers: { Authorization: `Bearer ${token}` },
                 signal: controller.signal,
@@ -225,6 +239,7 @@ const SellerPayments = () => {
 
             const nextSummary = { ...res.data, displayCurrency: responseCurrency };
             summaryRef.current = nextSummary;
+            setSellerCurrency(requestCurrency);
             setSummary(nextSummary);
             setLoadError('');
             setAccountForm({
@@ -250,7 +265,7 @@ const SellerPayments = () => {
                 setRefreshingSummary(false);
             }
         }
-    }, [currency]);
+    }, []);
 
     useEffect(() => {
         fetchSummary();
@@ -261,17 +276,18 @@ const SellerPayments = () => {
     }, [fetchSummary]);
 
     const summaryMatchesCurrency = Boolean(summary)
-        && String(summary.displayCurrency || currency).toUpperCase() === String(currency || 'USD').toUpperCase();
+        && Boolean(sellerCurrency)
+        && String(summary.displayCurrency).toUpperCase() === sellerCurrency;
     const activeSummary = summaryMatchesCurrency ? summary : null;
     const displayRevenue = activeSummary?.displayRevenue || {};
     const displayValue = (field) => displayRevenue[field];
     const withdrawalLimits = activeSummary?.withdrawalLimits || {};
     const paymentAccount = activeSummary?.paymentAccount;
     const exchangeRatesAreFallback = activeSummary?.exchangeRateStatus?.fallback !== false;
-    const withdrawalRequiresLiveFx = withdrawalNeedsLiveFx(currency, paymentAccount?.currency);
+    const withdrawalRequiresLiveFx = withdrawalNeedsLiveFx(sellerCurrency, paymentAccount?.currency);
     const withdrawalBlockedByFallback = exchangeRatesAreFallback && withdrawalRequiresLiveFx;
-    const displayMoneyIsApproximate = exchangeRatesAreFallback && String(currency || 'USD').toUpperCase() !== 'USD';
-    const formatDisplayMoney = (amount) => `${displayMoneyIsApproximate ? '≈' : ''}${formatAmount(amount)}`;
+    const displayMoneyIsApproximate = exchangeRatesAreFallback && sellerCurrency !== 'USD';
+    const formatDisplayMoney = (amount) => `${displayMoneyIsApproximate ? '≈' : ''}${formatAmount(amount, { targetCurrency: sellerCurrency })}`;
     const availableInCurrentCurrency = withdrawalLimits.availableDisplayAmount;
     const minimumWithdrawalInCurrentCurrency = withdrawalLimits.minimumDisplayAmount;
     const withdrawalInput = parseExactMoneyInput(withdrawAmount, { allowZero: false });
@@ -320,7 +336,7 @@ const SellerPayments = () => {
             return;
         }
         if (toCurrencyMinorUnits(availableInCurrentCurrency) < toCurrencyMinorUnits(minimumWithdrawalInCurrentCurrency)) {
-            toast.error(`Minimum withdrawal amount is ${formatAmount(minimumWithdrawalInCurrentCurrency)}`);
+            toast.error(`Minimum withdrawal amount is ${formatAmount(minimumWithdrawalInCurrentCurrency, { targetCurrency: sellerCurrency })}`);
             return;
         }
         if (!withdrawalInput) {
@@ -329,16 +345,16 @@ const SellerPayments = () => {
         }
         const amount = withdrawalInput.amount;
         if (toCurrencyMinorUnits(amount) < toCurrencyMinorUnits(minimumWithdrawalInCurrentCurrency)) {
-            toast.error(`Minimum withdrawal amount is ${formatAmount(minimumWithdrawalInCurrentCurrency)}`);
+            toast.error(`Minimum withdrawal amount is ${formatAmount(minimumWithdrawalInCurrentCurrency, { targetCurrency: sellerCurrency })}`);
             return;
         }
         if (toCurrencyMinorUnits(amount) > toCurrencyMinorUnits(availableInCurrentCurrency)) {
-            toast.error(`You can withdraw up to ${formatAmount(availableInCurrentCurrency)}`);
+            toast.error(`You can withdraw up to ${formatAmount(availableInCurrentCurrency, { targetCurrency: sellerCurrency })}`);
             return;
         }
 
         setRequesting(true);
-        const fingerprint = `${currentUser?._id || currentUser?.id || 'guest'}:${String(currency || 'USD').toUpperCase()}:${amount.toFixed(2)}`;
+        const fingerprint = `${currentUser?._id || currentUser?.id || 'guest'}:${sellerCurrency}:${amount.toFixed(2)}`;
         let attemptKey = '';
         try {
             await withdrawalAttemptResetRef.current;
@@ -359,7 +375,7 @@ const SellerPayments = () => {
                 `${API}/seller/withdrawals`,
                 {
                     amount,
-                    currency,
+                    currency: sellerCurrency,
                 },
                 { headers: { Authorization: `Bearer ${token}`, 'Idempotency-Key': attempt.key } }
             );
@@ -601,7 +617,7 @@ const SellerPayments = () => {
 
                         <div className="grid sm:grid-cols-[1fr_auto] gap-3">
                             <label className="space-y-1.5">
-                                <span className="text-xs font-semibold" style={{ color: 'hsl(var(--muted-foreground))' }}>Amount in {currency}</span>
+                                <span className="text-xs font-semibold" style={{ color: 'hsl(var(--muted-foreground))' }}>Amount in {sellerCurrency}</span>
                                 <input type="number" min={minimumWithdrawalInCurrentCurrency.toFixed(2)} step="0.01" disabled={requesting || withdrawalBlockedByFallback || refreshingSummary} aria-invalid={!!withdrawalInputError} className="w-full min-w-0 glass-inner rounded-xl px-3 py-2.5 text-sm outline-none disabled:opacity-60" value={withdrawAmount} onChange={(e) => updateWithdrawAmount(e.target.value)} placeholder="0.00" />
                                 {!!withdrawalInputError && <span className="block text-xs mt-1.5" style={{ color: 'hsl(0,72%,55%)' }}>{withdrawalInputError}</span>}
                             </label>

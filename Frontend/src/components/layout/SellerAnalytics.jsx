@@ -16,6 +16,7 @@ import {
     roundCurrencyAmount,
     sellerAnalyticsMoneyIsValid,
 } from '../../utils/currencySafety';
+import { inspectSellerProductCurrencyState } from '../../utils/productFormCurrency';
 
 const STATUS_ORDER = ['pending', 'confirmed', 'processing', 'shipped', 'delivered', 'cancelled'];
 const STATUS_COLORS = {
@@ -29,7 +30,7 @@ const STATUS_COLORS = {
 const statusColor = (status) => STATUS_COLORS[status] || 'hsl(var(--muted-foreground))';
 
 const SellerAnalytics = () => {
-    const { formatPrice, currency } = useCurrency();
+    const { formatPrice } = useCurrency();
     const [timeRange, setTimeRange] = useState('30');
     const [loading, setLoading] = useState(true);
     const [analytics, setAnalytics] = useState(null);
@@ -44,13 +45,25 @@ const SellerAnalytics = () => {
         setLoading(true);
         const token = getAuthToken();
         try {
-            const res = await axios.get(`${import.meta.env.VITE_API_URL}api/analytics/seller?days=${timeRange}&currency=${currency}`, {
+            const productCurrencyResponse = await axios.get(`${import.meta.env.VITE_API_URL}api/stores/product-currency`, {
+                headers: { Authorization: `Bearer ${token}` },
+                signal: controller.signal,
+            });
+            if (analyticsRequestRef.current.id !== requestId) return;
+            const productCurrencyState = inspectSellerProductCurrencyState(
+                productCurrencyResponse.data?.productCurrency
+            );
+            if (!productCurrencyState.valid || productCurrencyState.hasStore !== true) {
+                throw new Error('Your store product currency could not be verified. Please retry.');
+            }
+            const sellerCurrency = productCurrencyState.activeCurrency;
+            const res = await axios.get(`${import.meta.env.VITE_API_URL}api/analytics/seller?days=${timeRange}&currency=${encodeURIComponent(sellerCurrency)}`, {
                 headers: { Authorization: `Bearer ${token}` },
                 signal: controller.signal,
             });
             if (analyticsRequestRef.current.id !== requestId) return;
             const nextAnalytics = res.data.analytics;
-            if (!sellerAnalyticsMoneyIsValid(nextAnalytics, currency)) {
+            if (!sellerAnalyticsMoneyIsValid(nextAnalytics, sellerCurrency)) {
                 throw new Error('Analytics returned incomplete or invalid money totals. Please retry.');
             }
             setAnalytics(nextAnalytics);
@@ -63,7 +76,7 @@ const SellerAnalytics = () => {
         } finally {
             if (analyticsRequestRef.current.id === requestId) setLoading(false);
         }
-    }, [currency, timeRange]);
+    }, [timeRange]);
 
     useEffect(() => {
         fetchAnalytics();
@@ -99,7 +112,7 @@ const SellerAnalytics = () => {
                 <p className="text-xs font-semibold mb-1" style={{ color: 'hsl(var(--foreground))' }}>{label}</p>
                 {payload.map((p, i) => (
                     <p key={i} className="text-xs" style={{ color: p.color }}>
-                        {p.name}: {p.name === 'revenue' ? formatPrice(p.value, { sourceCurrency: analytics?.currency || currency, targetCurrency: analytics?.currency || currency }) : p.value}
+                        {p.name}: {p.name === 'revenue' ? formatPrice(p.value, { sourceCurrency: analytics?.currency, targetCurrency: analytics?.currency }) : p.value}
                     </p>
                 ))}
             </div>

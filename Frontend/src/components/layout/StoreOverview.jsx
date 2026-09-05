@@ -22,12 +22,14 @@ const StoreOverview = () => {
         overviewProducts = null,
         overviewOrders = null,
         overviewMetrics = null,
+        overviewCurrency = null,
         overviewLoaded = false,
         overviewError = '',
         refreshOverview,
         dashboardRole,
     } = context;
     const usesCanonicalOverview = dashboardRole === 'seller';
+    const reportCurrency = usesCanonicalOverview ? overviewCurrency : currency;
     const businessProducts = usesCanonicalOverview
         ? (Array.isArray(overviewProducts) ? overviewProducts : [])
         : products;
@@ -45,10 +47,10 @@ const StoreOverview = () => {
 
     const formatCompactPrice = (amount) => {
         const value = amount;
-        const symbol = formatPrice(0, { sourceCurrency: currency, decimals: 0 }).replace(/[0-9,.]/g, '');
+        const symbol = formatPrice(0, { sourceCurrency: reportCurrency, targetCurrency: reportCurrency, decimals: 0 }).replace(/[0-9,.]/g, '');
         if (value >= 1000000) return `${symbol}${(value / 1000000).toFixed(1)}M`;
         if (value >= 10000) return `${symbol}${(value / 1000).toFixed(1)}K`;
-        return formatPrice(value, { sourceCurrency: currency });
+        return formatPrice(value, { sourceCurrency: reportCurrency, targetCurrency: reportCurrency });
     };
 
     const inventoryOverview = overviewMetrics?.inventory || null;
@@ -75,7 +77,7 @@ const StoreOverview = () => {
     const featuredProducts = inventoryValid
         ? inventoryOverview.featuredProducts
         : (fallbackInventoryValid ? businessProducts.filter(product => product.isFeatured).length : null);
-    const authoritativeMetrics = selectAuthoritativeSellerMetrics(overviewMetrics, currency);
+    const authoritativeMetrics = selectAuthoritativeSellerMetrics(overviewMetrics, reportCurrency);
     const totalRevenue = authoritativeMetrics?.totalSales ?? null;
     const averageRecognizedOrder = authoritativeMetrics === null
         ? null

@@ -27,12 +27,14 @@ const SellerHome = () => {
         overviewProducts = null,
         overviewOrders = null,
         overviewMetrics = null,
+        overviewCurrency = null,
         overviewLoaded = false,
         overviewError = '',
         refreshOverview,
         dashboardRole,
     } = context;
     const usesCanonicalOverview = dashboardRole === 'seller';
+    const reportCurrency = usesCanonicalOverview ? overviewCurrency : currency;
     const businessProducts = usesCanonicalOverview
         ? (Array.isArray(overviewProducts) ? overviewProducts : [])
         : products;
@@ -50,10 +52,10 @@ const SellerHome = () => {
 
     const formatCompactPrice = (amount) => {
         const value = amount;
-        const symbol = formatPrice(0, { sourceCurrency: currency, decimals: 0 }).replace(/[0-9,.]/g, '');
+        const symbol = formatPrice(0, { sourceCurrency: reportCurrency, targetCurrency: reportCurrency, decimals: 0 }).replace(/[0-9,.]/g, '');
         if (value >= 1000000) return `${symbol}${(value / 1000000).toFixed(1)}M`;
         if (value >= 10000) return `${symbol}${(value / 1000).toFixed(1)}K`;
-        return formatPrice(value, { sourceCurrency: currency });
+        return formatPrice(value, { sourceCurrency: reportCurrency, targetCurrency: reportCurrency });
     };
 
     const inventoryValid = sellerInventoryOverviewIsValid(overviewMetrics?.inventory)
@@ -78,7 +80,7 @@ const SellerHome = () => {
         : (!usesCanonicalOverview && fallbackStockValid
             ? productPresentations.filter(presentation => presentation.stock > 0 && presentation.stock <= 10).length
             : null);
-    const totalRevenue = selectAuthoritativeSellerRevenue(overviewMetrics, currency);
+    const totalRevenue = selectAuthoritativeSellerRevenue(overviewMetrics, reportCurrency);
 
     const stats = [
         { label: 'Total Revenue', value: totalRevenue === null ? 'Unavailable' : formatCompactPrice(totalRevenue), icon: <DollarSign size={22} />, color: 'hsl(150, 60%, 45%)', bg: 'rgba(16, 185, 129, 0.12)' },
