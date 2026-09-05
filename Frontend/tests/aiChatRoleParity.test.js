@@ -61,3 +61,8 @@ test('AI cart cards use the converted buyer-currency price', () => {
   assert.match(chatBot, /toolName === 'view_cart'[\s\S]*?price: item\.price,[\s\S]*?currency: item\.currency \|\| result\.data\.currency/);
   assert.doesNotMatch(chatBot, /price: item\.originalPrice \|\| item\.price/);
 });
+
+test('seller-owned AI product cards stay in the store product currency', () => {
+  assert.match(chatBot, /preserveSourceCurrency=\{toolName === 'list_my_products'\}/);
+  assert.match(chatBot, /targetCurrency: preserveSourceCurrency \? productCurrency : undefined/);
+});

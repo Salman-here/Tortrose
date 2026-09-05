@@ -452,7 +452,7 @@ export default function ChatBot({
     currentUser?._id || currentUser?.id || 'guest'
   );
   const { palette } = useTheme();
-  const { formatPrice, formatProductPrice, currency } = useCurrency();
+  const { formatPrice, formatProductPrice, getProductCurrency, currency } = useCurrency();
   const insets = useSafeAreaInsets();
   const c = palette.colors;
   const styles = makeStyles(palette);
@@ -1262,6 +1262,9 @@ export default function ChatBot({
                             && resolveProductPresentationMoney(p, 'discountedPrice') < resolveProductPresentationMoney(p, 'price')
                             ? 'discountedPrice'
                             : 'price',
+                          targetCurrency: tr.name === 'list_my_products'
+                            ? getProductCurrency(p)
+                            : currency,
                         })}</Text>
                       </View>
                       <Ionicons name="chevron-forward" size={14} color={c.textLight} />

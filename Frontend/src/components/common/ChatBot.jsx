@@ -348,7 +348,7 @@ const DataListCard = ({ title, items, renderItem, icon: Icon = Package, color = 
 };
 
 // ─── Product Card (compact, for chat context) ───
-const ProductCardInChat = ({ product, onView, onAddToCart }) => {
+const ProductCardInChat = ({ product, onView, onAddToCart, preserveSourceCurrency = false }) => {
   const { formatPrice } = useCurrency();
   const productPrice = resolveProductPresentationMoney(product, 'price');
   const discountedPrice = resolveProductPresentationMoney(product, 'discountedPrice');
@@ -375,9 +375,15 @@ const ProductCardInChat = ({ product, onView, onAddToCart }) => {
       <div className="flex-1 min-w-0">
         <p className="text-[11px] font-semibold truncate" style={{ color: 'hsl(var(--foreground))' }}>{product.name}</p>
         <div className="flex items-center gap-1.5 mt-0.5">
-          <span className="text-[11px] font-bold" style={{ color: 'hsl(220, 70%, 55%)' }}>{formatPrice(displayPrice, { sourceCurrency: productCurrency })}</span>
+          <span className="text-[11px] font-bold" style={{ color: 'hsl(220, 70%, 55%)' }}>{formatPrice(displayPrice, {
+            sourceCurrency: productCurrency,
+            targetCurrency: preserveSourceCurrency ? productCurrency : undefined,
+          })}</span>
           {hasDiscount && (
-            <span className="text-[9px] line-through" style={{ color: 'hsl(var(--muted-foreground))' }}>{formatPrice(product.price, { sourceCurrency: productCurrency })}</span>
+            <span className="text-[9px] line-through" style={{ color: 'hsl(var(--muted-foreground))' }}>{formatPrice(productPrice, {
+              sourceCurrency: productCurrency,
+              targetCurrency: preserveSourceCurrency ? productCurrency : undefined,
+            })}</span>
           )}
         </div>
         <div className="flex items-center gap-1 mt-0.5">
@@ -416,7 +422,7 @@ const ProductCardInChat = ({ product, onView, onAddToCart }) => {
 };
 
 // ─── Product Card Grid (for search results) ───
-const ProductCardGrid = ({ products, onViewProduct, onAddToCart, title }) => (
+const ProductCardGrid = ({ products, onViewProduct, onAddToCart, title, preserveSourceCurrency = false }) => (
   <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="rounded-2xl overflow-hidden mt-2"
     style={{ background: 'var(--glass-bg, hsl(var(--muted)/0.2))', border: '1px solid var(--glass-border, hsl(var(--border)))' }}>
     <div className="px-3 py-2 flex items-center gap-2" style={{ background: 'linear-gradient(135deg, hsl(220, 70%, 55%, 0.12), hsl(280, 60%, 55%, 0.06))' }}>
@@ -431,6 +437,7 @@ const ProductCardGrid = ({ products, onViewProduct, onAddToCart, title }) => (
           product={p}
           onView={onViewProduct}
           onAddToCart={onAddToCart}
+          preserveSourceCurrency={preserveSourceCurrency}
         />
       ))}
       {products.length > 8 && (
@@ -1232,6 +1239,7 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
                     products={products}
                     title={result?.message || `${products.length} products`}
                     onViewProduct={(id) => navigate(`/single-product/${id}`)}
+                    preserveSourceCurrency={toolName === 'list_my_products'}
                     onAddToCart={(id) => sendMessage(`Add product ${id} to my cart`)}
                   />
                 );
