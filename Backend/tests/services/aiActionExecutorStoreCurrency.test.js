@@ -235,6 +235,58 @@ describe('AI seller-native money writes', () => {
     });
   });
 
+  test('recovers an omitted edit selector only from one exact product name in the current message', async () => {
+    const seller = await createPkrSeller();
+    const product = await createProduct(seller, { name: 'Aurora Thermal Travel Mug', stock: 18 });
+
+    const result = await executeToolCall('edit_product', {
+      updates: { stock: 24, colors: ['Black', 'Silver'] },
+      _lastUserText: 'Use edit_product now for Aurora Thermal Travel Mug and set stock to 24.',
+    }, seller);
+
+    expect(result.success).toBe(true);
+    await expect(Product.findById(product._id).lean()).resolves.toMatchObject({
+      stock: 24,
+      colors: ['Black', 'Silver'],
+    });
+  });
+
+  test('does not recover an omitted edit selector when the current message names multiple products', async () => {
+    const seller = await createPkrSeller();
+    await createProduct(seller, { name: 'Aurora Thermal Travel Mug' });
+    await createProduct(seller, { name: 'Aurora Trail Bottle' });
+
+    const result = await executeToolCall('edit_product', {
+      updates: { stock: 24 },
+      _lastUserText: 'Use edit_product for Aurora Thermal Travel Mug and Aurora Trail Bottle.',
+    }, seller);
+
+    expect(result).toMatchObject({
+      success: false,
+      error: 'Please specify which product to edit (productId or productName).',
+    });
+  });
+
+  test('recovers omitted feature and delete selectors from one exact current-message product name', async () => {
+    const seller = await createPkrSeller();
+    const featureTarget = await createProduct(seller, { name: 'Aurora Thermal Travel Mug' });
+
+    const featureResult = await executeToolCall('feature_product', {
+      featured: true,
+      _lastUserText: 'Use feature_product now for Aurora Thermal Travel Mug.',
+    }, seller);
+    expect(featureResult.success).toBe(true);
+    await expect(Product.findById(featureTarget._id).then(doc => doc.isFeatured)).resolves.toBe(true);
+
+    const deleteTarget = await createProduct(seller, { name: 'Disposable Catalog Sample' });
+    const deleteResult = await executeToolCall('delete_product', {
+      _lastUserText: 'Use delete_product now to delete Disposable Catalog Sample. I confirm deletion.',
+    }, seller);
+    expect(deleteResult).toMatchObject({ success: true, data: { deletedCount: 1 } });
+    await expect(Product.findById(deleteTarget._id)).resolves.toBeNull();
+    await expect(Product.findById(featureTarget._id)).resolves.not.toBeNull();
+  });
+
   test('discount-only edit and removal preserve the final price invariant', async () => {
     const seller = await createPkrSeller();
     const product = await createProduct(seller);

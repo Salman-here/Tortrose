@@ -838,6 +838,28 @@ async function resolveProductCandidates({ role, userId, args = {}, productId, pr
   return products;
 }
 
+async function recoverExplicitProductSelectorFromText({ role, userId, args = {}, text = '' }) {
+  const normalizedText = normalizeLookupText(text);
+  if (!normalizedText) return null;
+
+  const filter = productLookupBaseFilter(role, userId, args);
+  const products = await Product.find(filter)
+    .sort({ updatedAt: -1, createdAt: -1 })
+    .limit(300)
+    .select('name')
+    .lean();
+  const matches = products.filter(product => {
+    const normalizedName = normalizeLookupText(product.name);
+    return normalizedName && normalizedText.includes(normalizedName);
+  });
+
+  // Recovery is deliberately exact and single-match only. If the message names
+  // more than one listing (or none), the normal selector error remains in force
+  // so an AI model omission can never make the server choose arbitrarily.
+  if (matches.length !== 1) return null;
+  return { productId: matches[0]._id, productName: matches[0].name };
+}
+
 function formatProductCandidate(product) {
   return {
     productId: product._id,
@@ -3797,8 +3819,18 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
 
       case 'edit_product': {
         if (!userId) return { success: false, error: 'Authentication required.' };
-        const productId = args.productId;
-        const productName = cleanAIField(args.productName, { maxLength: 140 });
+        let productId = args.productId;
+        let productName = cleanAIField(args.productName, { maxLength: 140 });
+        if (!productId && !productName) {
+          const recovered = await recoverExplicitProductSelectorFromText({
+            role,
+            userId,
+            args,
+            text: args._lastUserText,
+          });
+          productId = recovered?.productId;
+          productName = recovered?.productName || '';
+        }
         const incomingUpdates = Object.keys(pickObject(args.updates)).length ? args.updates : args;
         const allowedProductFields = ['name', 'description', 'price', 'discountedPrice', 'currency', 'priceCurrency', 'discountedPriceCurrency', 'category', 'brand', 'stock', 'image', 'imageUrl', 'images', 'tags', 'colors', 'optionGroups', 'returnPolicy', 'isFeatured'];
         const updates = {};
@@ -4197,7 +4229,18 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
 
       case 'delete_product': {
         if (!userId) return { success: false, error: 'Authentication required.' };
-        const { productId, productIds, productName, productNames, deleteAllMatches } = args;
+        let { productId, productName } = args;
+        const { productIds, productNames, deleteAllMatches } = args;
+        if (!productId && !productName && !productIds?.length && !productNames?.length) {
+          const recovered = await recoverExplicitProductSelectorFromText({
+            role,
+            userId,
+            args,
+            text: args._lastUserText,
+          });
+          productId = recovered?.productId;
+          productName = recovered?.productName || '';
+        }
         const products = await resolveProductCandidates({
           role,
           userId,
@@ -4246,7 +4289,17 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
 
       case 'feature_product': {
         if (!userId) return { success: false, error: 'Authentication required.' };
-        const { productId, productName } = args;
+        let { productId, productName } = args;
+        if (!productId && !productName) {
+          const recovered = await recoverExplicitProductSelectorFromText({
+            role,
+            userId,
+            args,
+            text: args._lastUserText,
+          });
+          productId = recovered?.productId;
+          productName = recovered?.productName || '';
+        }
         const featured = args.featured !== false;
         const products = await resolveProductCandidates({ role, userId, args, productId, productName });
 
