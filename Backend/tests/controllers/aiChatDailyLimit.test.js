@@ -390,6 +390,27 @@ describe('AI chat controller daily limit enforcement', () => {
     });
   });
 
+  it('preserves repeated explicit tools when their arguments describe distinct sequential actions', () => {
+    const tools = __private.getTools('seller');
+    const request = [
+      'Use feature_product for Aurora with featured false,',
+      'then use feature_product for Aurora with featured true,',
+      'then use get_my_store.',
+    ].join(' ');
+    const requested = __private.explicitlyRequestedAITools(request, tools);
+
+    expect(requested).toEqual(['feature_product', 'feature_product', 'get_my_store']);
+    expect(__private.unattemptedExplicitAITools(request, tools, [{
+      tool: 'feature_product',
+      result: { success: true },
+    }])).toEqual(['feature_product', 'get_my_store']);
+    expect(__private.missingExplicitAITools(request, tools, [
+      { tool: 'feature_product', result: { success: true } },
+      { tool: 'feature_product', result: { success: false, error: 'Second action failed.' } },
+      { tool: 'get_my_store', result: { success: true } },
+    ])).toEqual(['feature_product']);
+  });
+
   it('executes only one copy of the currently forced explicit tool', () => {
     const calls = [
       { id: 'orders-all', function: { name: 'get_my_orders', arguments: '{}' } },
@@ -451,6 +472,16 @@ describe('AI chat controller daily limit enforcement', () => {
       ['place_order'],
       [{ tool: 'place_order', result: { success: true, message: 'Order placed and awaiting confirmation.' } }],
     )).toContain('**Place Order:** Order placed and awaiting confirmation.');
+
+    const repeated = __private.explicitToolReceiptSummary(
+      ['feature_product', 'feature_product'],
+      [
+        { tool: 'feature_product', result: { success: true, message: 'Aurora unfeatured.' } },
+        { tool: 'feature_product', result: { success: true, message: 'Aurora featured.' } },
+      ],
+    );
+    expect(repeated).toContain('**Feature Product:** Aurora unfeatured.');
+    expect(repeated).toContain('**Feature Product:** Aurora featured.');
   });
 
   it('does not turn an empty failed tool receipt into a success claim', () => {

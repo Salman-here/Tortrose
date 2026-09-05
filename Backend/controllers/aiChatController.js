@@ -1589,8 +1589,15 @@ function explicitToolReceiptSummary(explicitlyRequestedTools = [], completedTool
   const requested = Array.isArray(explicitlyRequestedTools) ? explicitlyRequestedTools : [];
   if (requested.length < 1) return '';
   const results = Array.isArray(completedToolResults) ? completedToolResults : [];
+  const resultQueues = new Map();
+  results.forEach((entry) => {
+    const toolName = entry?.tool || entry?.action;
+    if (!toolName) return;
+    if (!resultQueues.has(toolName)) resultQueues.set(toolName, []);
+    resultQueues.get(toolName).push(entry);
+  });
   const lines = requested.map((toolName) => {
-    const entry = results.find(result => (result?.tool || result?.action) === toolName);
+    const entry = resultQueues.get(toolName)?.shift();
     if (!entry) return '';
     const result = entry.result || {};
     const label = toolName.replace(/_/g, ' ').replace(/\b\w/g, letter => letter.toUpperCase());
@@ -1899,23 +1906,26 @@ function explicitlyRequestedAITools(lastUserText, availableTools = []) {
     && !/\b(?:now|i confirm|go ahead|do it|apply it)\b/i.test(text)
   ) return [];
 
-  return [...new Set(availableTools
+  const occurrences = [];
+  availableTools
     .map(tool => tool?.function?.name)
     .filter(Boolean)
-    .filter((name) => {
+    .forEach((name) => {
       const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const mentioned = new RegExp(`\\b${escapedName}\\b`, 'i');
-      if (!mentioned.test(text)) return false;
       const negated = new RegExp(
         `\\b(?:do\\s+not|don't|dont|never|without)\\b[^\\n.!?]{0,48}\\b${escapedName}\\b`,
         'i'
       );
-      return !negated.test(text);
-    }))]
-    .sort((left, right) => (
-      text.toLowerCase().indexOf(left.toLowerCase())
-      - text.toLowerCase().indexOf(right.toLowerCase())
-    ));
+      if (negated.test(text)) return;
+      const mentioned = new RegExp(`\\b${escapedName}\\b`, 'ig');
+      for (let match = mentioned.exec(text); match; match = mentioned.exec(text)) {
+        occurrences.push({ name, index: match.index });
+      }
+    });
+
+  return occurrences
+    .sort((left, right) => left.index - right.index)
+    .map(entry => entry.name);
 }
 
 function explicitToolRequestOptions(explicitlyRequestedTools, missingRequestedTools, tools) {
@@ -1969,21 +1979,42 @@ function explicitlyRequestedDurableMutationTools(lastUserText, availableTools = 
 
 function missingExplicitAITools(lastUserText, availableTools = [], toolResults = []) {
   const requested = explicitlyRequestedAITools(lastUserText, availableTools);
-  return requested.filter(name => !toolResults.some(entry => (
-    entry?.tool === name && entry?.result?.success === true
-  )));
+  return remainingRequestedToolOccurrences(
+    requested,
+    toolResults,
+    entry => entry?.result?.success === true,
+  );
 }
 
 function unattemptedExplicitAITools(lastUserText, availableTools = [], toolResults = []) {
   const requested = explicitlyRequestedAITools(lastUserText, availableTools);
-  return requested.filter(name => !toolResults.some(entry => entry?.tool === name));
+  return remainingRequestedToolOccurrences(requested, toolResults);
 }
 
 function missingExplicitDurableMutationTools(lastUserText, availableTools = [], toolResults = []) {
   const requested = explicitlyRequestedDurableMutationTools(lastUserText, availableTools);
-  return requested.filter(name => !toolResults.some(entry => (
-    entry?.tool === name && entry?.result?.success === true
-  )));
+  return remainingRequestedToolOccurrences(
+    requested,
+    toolResults,
+    entry => entry?.result?.success === true,
+  );
+}
+
+function remainingRequestedToolOccurrences(requestedTools = [], toolResults = [], predicate = () => true) {
+  const completedCounts = new Map();
+  for (const entry of Array.isArray(toolResults) ? toolResults : []) {
+    if (!predicate(entry)) continue;
+    const toolName = entry?.tool || entry?.action;
+    if (!toolName) continue;
+    completedCounts.set(toolName, (completedCounts.get(toolName) || 0) + 1);
+  }
+
+  return (Array.isArray(requestedTools) ? requestedTools : []).filter((toolName) => {
+    const remainingCompleted = completedCounts.get(toolName) || 0;
+    if (remainingCompleted < 1) return true;
+    completedCounts.set(toolName, remainingCompleted - 1);
+    return false;
+  });
 }
 
 function failedMutationMessage(toolResults = []) {
