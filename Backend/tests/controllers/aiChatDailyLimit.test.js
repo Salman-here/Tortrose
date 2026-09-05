@@ -74,6 +74,26 @@ describe('AI chat controller daily limit enforcement', () => {
     )).toEqual({ method: 'fast', cost: 0.01, isActive: true });
   });
 
+  it('does not carry an old order-status filter into an explicitly unfiltered request', () => {
+    expect(__private.normalizeAIChatToolArgs(
+      'get_seller_orders',
+      { status: 'delivered', limit: 20 },
+      'Invoke get_seller_orders now with no status filter.',
+    )).toEqual({ limit: 20 });
+
+    expect(__private.normalizeAIChatToolArgs(
+      'get_my_orders',
+      { status: 'cancelled' },
+      'Show all my orders.',
+    )).toEqual({});
+
+    expect(__private.normalizeAIChatToolArgs(
+      'get_seller_orders',
+      { status: 'delivered' },
+      'Show all delivered orders.',
+    )).toEqual({ status: 'delivered' });
+  });
+
   it.each([
     ['stream', streamChat],
     ['once', chatOnce],

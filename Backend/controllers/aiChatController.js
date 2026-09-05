@@ -1752,9 +1752,28 @@ function getUpdatePayload(args) {
 }
 
 function normalizeAIChatToolArgs(toolName, args = {}, lastUserText = '') {
+  const text = String(lastUserText || '').toLowerCase();
+  if (toolName === 'get_my_orders' || toolName === 'get_seller_orders') {
+    const requestsNoStatusFilter = (
+      /\b(?:without|no)\s+(?:a\s+)?status(?:\s+filter)?\b/.test(text)
+      || /\b(?:all|every)\s+statuses\b/.test(text)
+      || /\bstatus\s+(?:all|any)\b/.test(text)
+      || /\bunfiltered(?:\s+orders?)?\b/.test(text)
+    );
+    const namesAConcreteStatus = /\b(?:pending|confirmed|processing|shipped|delivered|cancelled|canceled)\b/.test(text);
+    const requestsAllOrders = /\b(?:all|every)\s+(?:my\s+|seller\s+)?orders\b/.test(text)
+      && !namesAConcreteStatus;
+
+    if (requestsNoStatusFilter || requestsAllOrders) {
+      const unfilteredArgs = { ...(args || {}) };
+      delete unfilteredArgs.status;
+      return unfilteredArgs;
+    }
+    return args;
+  }
+
   if (toolName !== 'update_shipping') return args;
 
-  const text = String(lastUserText || '').toLowerCase();
   const requestsInactive = /\b(?:inactive|deactivat(?:e|ed|ing)|disabl(?:e|ed|ing))\b/.test(text);
   const requestsZeroCost = (
     /\b(?:cost|price)\b[^.!?\n]{0,35}\b(?:exactly\s+)?(?:0(?:\.0+)?|zero)\b/.test(text)
