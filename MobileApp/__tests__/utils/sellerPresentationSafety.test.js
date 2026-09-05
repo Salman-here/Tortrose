@@ -124,4 +124,12 @@ describe('seller mobile presentation safety', () => {
     expect(products).toContain("if (isAdmin) return formatProductPrice(item, { field });");
     expect(products).toContain("formatManagedPrice(hasDiscount ? 'discountedPrice' : 'price')");
   });
+
+  it('reads the verification object from the live status response envelope', () => {
+    const settings = readFileSync(require.resolve('../../src/screens/seller/SellerStoreSettingsScreen.js'), 'utf8');
+
+    expect(settings).toContain('const nextVerification = response.data?.verification;');
+    expect(settings).toContain('setVerification(nextVerification);');
+    expect(settings).not.toContain('setVerification(response.data);');
+  });
 });

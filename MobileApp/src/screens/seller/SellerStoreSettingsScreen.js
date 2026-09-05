@@ -206,7 +206,11 @@ export default function SellerStoreSettingsScreen({ navigation }) {
   const fetchVerificationStatus = async () => {
     try {
       const response = await api.get('/api/stores/verification/status');
-      setVerification(response.data);
+      const nextVerification = response.data?.verification;
+      if (!nextVerification || typeof nextVerification !== 'object' || Array.isArray(nextVerification)) {
+        throw new Error('The server returned an invalid verification status.');
+      }
+      setVerification(nextVerification);
       setVerificationError('');
     } catch (error) {
       setVerificationError(error.response?.data?.msg || 'Verification status could not be loaded.');
