@@ -67,7 +67,7 @@ describe('seller currency recommendation in the actual onboarding screen', () =>
     await screen.findByText('Pakistan');
     await openStore(screen);
     expect(selectedCurrency(screen)).toBe('PKR');
-    expect(screen.getByText('PKR is recommended for Pakistan.')).toBeTruthy();
+    expect(screen.getByText('Based on your country (Pakistan), we recommend using PKR for your store/brand. This keeps your prices and reports in your local currency.')).toBeTruthy();
     expect(screen.getByText('PKR · Pakistani Rupee — Recommended')).toBeTruthy();
     expect(screen.queryByTestId('become-seller-product-currency-USD')).toBeNull();
     chooseCurrency(screen, 'USD');
@@ -89,7 +89,7 @@ describe('seller currency recommendation in the actual onboarding screen', () =>
     fireEvent.press(screen.getByTestId('onboarding-back'));
     country(screen, 'PK', 'Pakistan');
     await openStore(screen);
-    expect(screen.getByText('PKR is recommended for Pakistan.')).toBeTruthy();
+    expect(screen.getByText('Based on your country (Pakistan), we recommend using PKR for your store/brand. This keeps your prices and reports in your local currency.')).toBeTruthy();
     expect(selectedCurrency(screen)).toBe('EUR');
     expect(screen.getByText('Using EUR for your store')).toBeTruthy();
   });
@@ -150,7 +150,7 @@ describe('seller currency recommendation in the actual onboarding screen', () =>
     await screen.findByText(name);
     await openStore(screen);
     expect(selectedCurrency(screen)).toBe(currency);
-    expect(screen.getByText(`${currency} is recommended for ${name}.`)).toBeTruthy();
+    expect(screen.getByText(`Based on your country (${name}), we recommend using ${currency} for your store/brand. This keeps your prices and reports in your local currency.`)).toBeTruthy();
     fireEvent.press(screen.getByTestId('become-seller-product-currency'));
     expect(screen.getByTestId(`become-seller-product-currency-${currency}`).props.accessibilityState.selected).toBe(true);
     fireEvent.press(screen.getByTestId('become-seller-product-currency'));

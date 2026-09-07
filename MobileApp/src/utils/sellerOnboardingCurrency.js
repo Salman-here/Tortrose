@@ -48,7 +48,7 @@ export function sellerCurrencyRecommendation(location = {}) {
     message: !hasCountry
       ? 'Select your store country to see the recommended currency.'
       : localCurrency
-        ? `${currency} is recommended for ${countryLabel}.`
+        ? `Based on your country (${countryLabel}), we recommend using ${currency} for your store/brand. This keeps your prices and reports in your local currency.`
         : `Your local currency is not currently supported. USD is the recommended alternative; you can also choose PKR, EUR or GBP.`,
   };
 }
