@@ -9,6 +9,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Keyboard,
   StatusBar,
   StyleSheet,
   Text,
@@ -92,6 +93,7 @@ export default function BecomeSellerScreen({ navigation }) {
   });
   const countryTouchedRef = useRef(false);
   const [productCurrencyChanged, setProductCurrencyChanged] = useState(false);
+  const [productCurrencyOpen, setProductCurrencyOpen] = useState(false);
   const currencyRecommendation = sellerCurrencyRecommendation(formData);
   const [storeData, setStoreData] = useState({
     storeName: '',
@@ -203,6 +205,7 @@ export default function BecomeSellerScreen({ navigation }) {
   const handleHeaderBack = () => {
     setFormError('');
     setWhatsappError('');
+    setProductCurrencyOpen(false);
     if (flowStep === 'landing') navigation.goBack();
     else if (flowStep === 'account') setFlowStep('landing');
     else if (flowStep === 'emailOtp') setFlowStep('account');
@@ -804,10 +807,26 @@ export default function BecomeSellerScreen({ navigation }) {
         <Text style={styles.currencyHelp}>
           Product prices are saved in this currency. Buyers can view and pay in another supported currency using checkout conversion.
         </Text>
-        <Text style={styles.currencyRecommendation} accessibilityLiveRegion="polite">
-          {currencyRecommendation.message}
-        </Text>
-        <View style={styles.currencyGrid}>
+        <TouchableOpacity
+          testID="become-seller-product-currency"
+          accessibilityRole="combobox"
+          accessibilityLabel="Product listing currency"
+          accessibilityValue={{ text: storeData.productCurrency }}
+          accessibilityState={{ expanded: productCurrencyOpen }}
+          onPress={() => {
+            Keyboard.dismiss();
+            setProductCurrencyOpen(previous => !previous);
+          }}
+          activeOpacity={0.8}
+          style={styles.currencyDropdownTrigger}
+        >
+          <Text style={styles.currencyDropdownValue}>
+            {storeData.productCurrency} · {currencies?.[storeData.productCurrency]?.name || storeData.productCurrency}
+            {currencyRecommendation.hasCountry && storeData.productCurrency === currencyRecommendation.currency ? ' — Recommended' : ''}
+          </Text>
+          <Ionicons name={productCurrencyOpen ? 'chevron-up' : 'chevron-down'} size={18} color={palette.colors.textSecondary} />
+        </TouchableOpacity>
+        {productCurrencyOpen && <View style={styles.currencyDropdownMenu}>
           {SELLER_PRODUCT_CURRENCY_CODES.map(code => {
             const active = storeData.productCurrency === code;
             const recommended = currencyRecommendation.hasCountry && code === currencyRecommendation.currency;
@@ -821,20 +840,23 @@ export default function BecomeSellerScreen({ navigation }) {
                 onPress={() => {
                   setProductCurrencyChanged(true);
                   setStoreData(previous => ({ ...previous, productCurrency: normalizeSellerProductCurrency(code) }));
+                  setProductCurrencyOpen(false);
                   setFormError('');
                 }}
                 activeOpacity={0.8}
-                style={[styles.currencyOption, active && styles.currencyOptionActive]}
+                style={[styles.currencyDropdownOption, active && styles.currencyOptionActive]}
               >
-                <Text style={[styles.currencyCode, active && styles.currencyCodeActive]}>{code}</Text>
-                {recommended && <Text style={styles.currencyRecommendedBadge}>Recommended</Text>}
-                <Text style={[styles.currencyName, active && styles.currencyNameActive]} numberOfLines={1}>
-                  {currencies?.[code]?.name || code}
+                <Text style={[styles.currencyDropdownValue, active && styles.currencyCodeActive]}>
+                  {code} · {currencies?.[code]?.name || code}{recommended ? ' — Recommended' : ''}
                 </Text>
+                {active && <Ionicons name="checkmark" size={18} color={palette.colors.primary} />}
               </TouchableOpacity>
             );
           })}
-        </View>
+        </View>}
+        <Text style={styles.currencyRecommendation} accessibilityLiveRegion="polite">
+          {currencyRecommendation.message}
+        </Text>
         {productCurrencyChanged && (
           <View style={styles.currencyNotice} accessibilityLiveRegion="polite">
             <Ionicons name="information-circle-outline" size={20} color={palette.colors.primary} />
@@ -1208,17 +1230,16 @@ const buildStyles = (p) => StyleSheet.create({
   availableText: { fontSize: fontSize.xs, color: p.colors.success, fontWeight: fontWeight.semibold },
   groupLabel: { marginTop: spacing.sm, marginBottom: spacing.md, fontSize: 9, letterSpacing: 1, color: p.colors.textSecondary, fontWeight: fontWeight.bold },
   currencyHelp: { marginTop: -spacing.sm, marginBottom: spacing.sm, fontSize: fontSize.xs, lineHeight: 17, color: p.colors.textSecondary },
-  currencyRecommendation: { marginBottom: spacing.sm, fontSize: fontSize.xs, lineHeight: 18, color: p.colors.primary, fontWeight: fontWeight.medium },
-  currencyRecommendedBadge: { alignSelf: 'flex-start', marginTop: 4, paddingHorizontal: 7, paddingVertical: 2, borderRadius: 8, overflow: 'hidden', backgroundColor: `${p.colors.primary}15`, color: p.colors.primary, fontSize: 10, fontWeight: fontWeight.semibold },
+  currencyRecommendation: { marginTop: spacing.sm, marginBottom: spacing.sm, fontSize: fontSize.xs, lineHeight: 18, color: p.colors.primary, fontWeight: fontWeight.medium },
   currencyNotice: { flexDirection: 'row', gap: 8, marginBottom: spacing.md, padding: spacing.md, borderRadius: 14, backgroundColor: `${p.colors.primary}0D`, borderWidth: 1, borderColor: `${p.colors.primary}30` },
   currencyNoticeContent: { flex: 1, minWidth: 0 },
   currencyNoticeTitle: { fontSize: fontSize.sm, fontWeight: fontWeight.semibold, color: p.colors.text },
   currencyNoticeText: { marginTop: 4, fontSize: fontSize.xs, lineHeight: 18, color: p.colors.textSecondary },
-  currencyGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginBottom: spacing.md },
-  currencyOption: {
-    width: '48%',
-    minHeight: 58,
-    justifyContent: 'center',
+  currencyDropdownTrigger: {
+    minHeight: 48,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
     borderRadius: 14,
@@ -1226,11 +1247,11 @@ const buildStyles = (p) => StyleSheet.create({
     borderWidth: 1,
     borderColor: p.glass.border,
   },
-  currencyOptionActive: { backgroundColor: `${p.colors.primary}18`, borderColor: p.colors.primary },
-  currencyCode: { fontSize: fontSize.sm, color: p.colors.text, fontWeight: fontWeight.bold },
+  currencyDropdownMenu: { marginTop: 4, borderRadius: 14, overflow: 'hidden', borderWidth: 1, borderColor: p.glass.borderStrong, backgroundColor: p.glass.bgStrong },
+  currencyDropdownOption: { minHeight: 48, flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingHorizontal: spacing.md, paddingVertical: spacing.sm },
+  currencyDropdownValue: { flex: 1, fontSize: fontSize.sm, lineHeight: 20, color: p.colors.text },
+  currencyOptionActive: { backgroundColor: `${p.colors.primary}18` },
   currencyCodeActive: { color: p.colors.primary },
-  currencyName: { marginTop: 2, fontSize: 10, color: p.colors.textSecondary },
-  currencyNameActive: { color: p.colors.primary },
   phoneCard: {
     padding: spacing.md,
     marginBottom: spacing.lg,

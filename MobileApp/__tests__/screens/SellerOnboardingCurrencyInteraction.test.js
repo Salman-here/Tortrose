@@ -38,6 +38,11 @@ jest.mock('../../src/components/common/LocationAutocomplete', () => {
 const navigation = { replace: jest.fn(), navigate: jest.fn(), goBack: jest.fn() };
 const user = { _id: 'seller-onboarding-test-buyer', role: 'user', currency: 'USD' };
 const country = (screen, code, name) => fireEvent(screen.getByTestId('onboarding-country'), 'select', { isoCode: code, name });
+const selectedCurrency = screen => screen.getByTestId('become-seller-product-currency').props.accessibilityValue.text;
+const chooseCurrency = (screen, code) => {
+  fireEvent.press(screen.getByTestId('become-seller-product-currency'));
+  fireEvent.press(screen.getByTestId(`become-seller-product-currency-${code}`));
+};
 
 async function openStore(screen) {
   fireEvent.changeText(screen.getByTestId('onboarding-phone'), '+923001234567');
@@ -61,12 +66,16 @@ describe('seller currency recommendation in the actual onboarding screen', () =>
     fireEvent.press(screen.getByText('Start seller setup'));
     await screen.findByText('Pakistan');
     await openStore(screen);
-    expect(screen.getByTestId('become-seller-product-currency-PKR').props.accessibilityState.selected).toBe(true);
+    expect(selectedCurrency(screen)).toBe('PKR');
     expect(screen.getByText('PKR is recommended for Pakistan.')).toBeTruthy();
-    fireEvent.press(screen.getByTestId('become-seller-product-currency-USD'));
+    expect(screen.getByText('PKR · Pakistani Rupee — Recommended')).toBeTruthy();
+    expect(screen.queryByTestId('become-seller-product-currency-USD')).toBeNull();
+    chooseCurrency(screen, 'USD');
     expect(screen.getByText('Using USD for your store')).toBeTruthy();
     expect(screen.getByText(/100 means 100 USD/)).toBeTruthy();
-    expect(screen.getByTestId('become-seller-product-currency-USD').props.accessibilityState.selected).toBe(true);
+    expect(selectedCurrency(screen)).toBe('USD');
+    expect(screen.getByTestId('become-seller-product-currency').props.accessibilityState.expanded).toBe(false);
+    expect(screen.queryByTestId('become-seller-product-currency-USD')).toBeNull();
   });
 
   test('country changes update the default until an explicit selection, then preserve that selection', async () => {
@@ -75,13 +84,13 @@ describe('seller currency recommendation in the actual onboarding screen', () =>
     await screen.findByText('Pakistan');
     country(screen, 'GB', 'United Kingdom');
     await openStore(screen);
-    expect(screen.getByTestId('become-seller-product-currency-GBP').props.accessibilityState.selected).toBe(true);
-    fireEvent.press(screen.getByTestId('become-seller-product-currency-EUR'));
+    expect(selectedCurrency(screen)).toBe('GBP');
+    chooseCurrency(screen, 'EUR');
     fireEvent.press(screen.getByTestId('onboarding-back'));
     country(screen, 'PK', 'Pakistan');
     await openStore(screen);
     expect(screen.getByText('PKR is recommended for Pakistan.')).toBeTruthy();
-    expect(screen.getByTestId('become-seller-product-currency-EUR').props.accessibilityState.selected).toBe(true);
+    expect(selectedCurrency(screen)).toBe('EUR');
     expect(screen.getByText('Using EUR for your store')).toBeTruthy();
   });
 
@@ -94,7 +103,7 @@ describe('seller currency recommendation in the actual onboarding screen', () =>
     await act(async () => finishDetection({ data: { detected: true, country: 'PK', countryName: 'Pakistan' } }));
     expect(screen.queryByText('Pakistan')).toBeNull();
     await openStore(screen);
-    expect(screen.getByTestId('become-seller-product-currency-GBP').props.accessibilityState.selected).toBe(true);
+    expect(selectedCurrency(screen)).toBe('GBP');
   });
 
   test('failed detection leaves country blank and an unsupported local currency has an explained USD fallback', async () => {
@@ -105,7 +114,7 @@ describe('seller currency recommendation in the actual onboarding screen', () =>
     expect(screen.queryByText('United States')).toBeNull();
     country(screen, 'JP', 'Japan');
     await openStore(screen);
-    expect(screen.getByTestId('become-seller-product-currency-USD').props.accessibilityState.selected).toBe(true);
+    expect(selectedCurrency(screen)).toBe('USD');
     expect(screen.getByText(/local currency is not currently supported/)).toBeTruthy();
   });
 
@@ -114,7 +123,7 @@ describe('seller currency recommendation in the actual onboarding screen', () =>
     fireEvent.press(screen.getByText('Start seller setup'));
     await screen.findByText('Pakistan');
     await openStore(screen);
-    if (selectedCurrency !== 'PKR') fireEvent.press(screen.getByTestId(`become-seller-product-currency-${selectedCurrency}`));
+    if (selectedCurrency !== 'PKR') chooseCurrency(screen, selectedCurrency);
     fireEvent.changeText(screen.getByPlaceholderText('My Awesome Store'), 'Currency Verification Store');
     fireEvent.changeText(screen.getByPlaceholderText('Describe what you sell and what makes your store special'), 'Everyday home and travel accessories.');
     await screen.findByText('This store name is available');
@@ -128,5 +137,24 @@ describe('seller currency recommendation in the actual onboarding screen', () =>
     await waitFor(() => expect(api.post).toHaveBeenCalledWith('/api/user/become-seller', expect.objectContaining({
       countryCode: 'PK', productCurrency: selectedCurrency,
     })));
+  });
+
+  test.each([
+    ['US', 'United States', 'USD'],
+    ['GB', 'United Kingdom', 'GBP'],
+    ['DE', 'Germany', 'EUR'],
+  ])('detecting %s preselects %s country currency in the closed dropdown', async (code, name, currency) => {
+    axios.get.mockResolvedValue({ data: { detected: true, country: code, countryName: name } });
+    const screen = render(<BecomeSellerScreen navigation={navigation} />);
+    fireEvent.press(screen.getByText('Start seller setup'));
+    await screen.findByText(name);
+    await openStore(screen);
+    expect(selectedCurrency(screen)).toBe(currency);
+    expect(screen.getByText(`${currency} is recommended for ${name}.`)).toBeTruthy();
+    fireEvent.press(screen.getByTestId('become-seller-product-currency'));
+    expect(screen.getByTestId(`become-seller-product-currency-${currency}`).props.accessibilityState.selected).toBe(true);
+    fireEvent.press(screen.getByTestId('become-seller-product-currency'));
+    expect(selectedCurrency(screen)).toBe(currency);
+    expect(screen.queryByText(`Using ${currency} for your store`)).toBeNull();
   });
 });
