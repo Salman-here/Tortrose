@@ -19,7 +19,8 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import Feedback from '../utils/feedback';
-import api from '../config/api';
+import axios from 'axios';
+import api, { API_BASE_URL } from '../config/api';
 import { useAuth } from '../contexts/AuthContext';
 import { useCurrency } from '../contexts/CurrencyContext';
 import { useTheme } from '../contexts/ThemeContext';
@@ -34,7 +35,14 @@ import KeyboardAwareFormScrollView from '../components/common/KeyboardAwareFormS
 import PhoneNumberInput from '../components/common/PhoneNumberInput';
 import { borderRadius, fontSize, fontWeight, spacing } from '../styles/theme';
 import { isValidPhoneNumber as isValidPhone } from '../utils/phoneNumber';
-import { resolveBuyerLocation } from '../utils/buyerLocation';
+import {
+  SELLER_PRODUCT_CURRENCY_CODES,
+  normalizeSellerProductCurrency,
+  sellerCountryFromDetection,
+  sellerCountryFromProfile,
+  sellerCurrencyChangeMessage,
+  sellerCurrencyRecommendation,
+} from '../utils/sellerOnboardingCurrency';
 import useOtpCountdown from '../hooks/useOtpCountdown';
 
 const SELLER_STEPS = [
@@ -42,12 +50,6 @@ const SELLER_STEPS = [
   { key: 'store', label: 'Store' },
   { key: 'whatsapp', label: 'Verify' },
 ];
-
-const SELLER_PRODUCT_CURRENCY_CODES = ['USD', 'PKR', 'EUR', 'GBP'];
-const normalizeSellerProductCurrency = value => {
-  const code = String(value || '').trim().toUpperCase();
-  return SELLER_PRODUCT_CURRENCY_CODES.includes(code) ? code : 'USD';
-};
 
 const generateSlug = (value) => String(value || '')
   .toLowerCase()
@@ -66,7 +68,7 @@ export default function BecomeSellerScreen({ navigation }) {
     googleSignIn,
     fetchAndUpdateCurrentUser,
   } = useAuth();
-  const { currency: accountCurrency, currencies } = useCurrency();
+  const { currencies } = useCurrency();
 
   const [flowStep, setFlowStep] = useState('landing');
   const [loading, setLoading] = useState(false);
@@ -88,11 +90,13 @@ export default function BecomeSellerScreen({ navigation }) {
     countryCode: '',
     businessName: '',
   });
-  const productCurrencyTouchedRef = useRef(false);
+  const countryTouchedRef = useRef(false);
+  const [productCurrencyChanged, setProductCurrencyChanged] = useState(false);
+  const currencyRecommendation = sellerCurrencyRecommendation(formData);
   const [storeData, setStoreData] = useState({
     storeName: '',
     storeDescription: '',
-    productCurrency: normalizeSellerProductCurrency(currentUser?.currency || accountCurrency),
+    productCurrency: currencyRecommendation.currency,
     website: '',
     instagram: '',
     facebook: '',
@@ -124,32 +128,31 @@ export default function BecomeSellerScreen({ navigation }) {
     }
   }, [currentUser, navigation]);
 
-  // Account currency can arrive after the profile refresh. Track it as the
-  // visible default only until the seller explicitly chooses the store's
-  // native listing currency.
+  // Follow country changes until the seller deliberately selects a currency.
   useEffect(() => {
-    if (productCurrencyTouchedRef.current) return;
-    const productCurrency = normalizeSellerProductCurrency(currentUser?.currency || accountCurrency);
+    if (productCurrencyChanged) return;
+    const productCurrency = currencyRecommendation.currency;
     setStoreData(previous => (
       previous.productCurrency === productCurrency
         ? previous
         : { ...previous, productCurrency }
     ));
-  }, [accountCurrency, currentUser?.currency]);
+  }, [currencyRecommendation.currency, productCurrencyChanged]);
 
   useEffect(() => {
     let active = true;
-    const profileLocation = currentUser?.sellerInfo?.countryCode || currentUser?.sellerInfo?.country
-      ? currentUser.sellerInfo
-      : currentUser?.savedShippingInfo;
-    Promise.resolve(profileLocation || resolveBuyerLocation())
+    if (countryTouchedRef.current) return;
+    const profileCountry = sellerCountryFromProfile(currentUser);
+    const lookup = profileCountry
+      ? Promise.resolve(profileCountry)
+      : axios.get(`${API_BASE_URL}/api/currency/detect`, { timeout: 8000 })
+        .then(response => sellerCountryFromDetection(response.data));
+    lookup
       .then((location) => {
-        const resolved = location || { country: 'Pakistan', countryCode: 'PK' };
-        if (!active || (!resolved.countryCode && !resolved.country)) return;
+        if (!active || countryTouchedRef.current || !location) return;
         setFormData(previous => previous.countryCode || previous.country ? previous : {
           ...previous,
-          country: resolved.country || '',
-          countryCode: resolved.countryCode || '',
+          ...location,
         });
       })
       .catch(() => {});
@@ -693,15 +696,22 @@ export default function BecomeSellerScreen({ navigation }) {
         value={formData.country}
         code={formData.countryCode}
         placeholder="Select country"
-        onSelect={option => setFormData(prev => ({
-          ...prev,
-          country: option.name,
-          countryCode: option.isoCode,
-          state: '',
-          stateCode: '',
-          city: '',
-        }))}
-        onClear={() => setFormData(prev => ({ ...prev, country: '', countryCode: '', state: '', stateCode: '', city: '' }))}
+        onSelect={option => {
+          countryTouchedRef.current = true;
+          setFormData(prev => ({
+            ...prev,
+            country: option.name,
+            countryCode: option.isoCode,
+            countryCurrency: option.currency || '',
+            state: '',
+            stateCode: '',
+            city: '',
+          }));
+        }}
+        onClear={() => {
+          countryTouchedRef.current = true;
+          setFormData(prev => ({ ...prev, country: '', countryCode: '', countryCurrency: '', state: '', stateCode: '', city: '' }));
+        }}
       />
       <LocationAutocomplete
         type="state"
@@ -794,24 +804,30 @@ export default function BecomeSellerScreen({ navigation }) {
         <Text style={styles.currencyHelp}>
           Product prices are saved in this currency. Buyers can view and pay in another supported currency using checkout conversion.
         </Text>
+        <Text style={styles.currencyRecommendation} accessibilityLiveRegion="polite">
+          {currencyRecommendation.message}
+        </Text>
         <View style={styles.currencyGrid}>
           {SELLER_PRODUCT_CURRENCY_CODES.map(code => {
             const active = storeData.productCurrency === code;
+            const recommended = currencyRecommendation.hasCountry && code === currencyRecommendation.currency;
             return (
               <TouchableOpacity
                 key={code}
                 testID={`become-seller-product-currency-${code}`}
                 accessibilityRole="radio"
+                accessibilityLabel={`${code}, ${currencies?.[code]?.name || code}${recommended ? ', Recommended' : ''}`}
                 accessibilityState={{ selected: active }}
                 onPress={() => {
-                  productCurrencyTouchedRef.current = true;
-                  setStoreData(previous => ({ ...previous, productCurrency: code }));
+                  setProductCurrencyChanged(true);
+                  setStoreData(previous => ({ ...previous, productCurrency: normalizeSellerProductCurrency(code) }));
                   setFormError('');
                 }}
                 activeOpacity={0.8}
                 style={[styles.currencyOption, active && styles.currencyOptionActive]}
               >
                 <Text style={[styles.currencyCode, active && styles.currencyCodeActive]}>{code}</Text>
+                {recommended && <Text style={styles.currencyRecommendedBadge}>Recommended</Text>}
                 <Text style={[styles.currencyName, active && styles.currencyNameActive]} numberOfLines={1}>
                   {currencies?.[code]?.name || code}
                 </Text>
@@ -819,6 +835,15 @@ export default function BecomeSellerScreen({ navigation }) {
             );
           })}
         </View>
+        {productCurrencyChanged && (
+          <View style={styles.currencyNotice} accessibilityLiveRegion="polite">
+            <Ionicons name="information-circle-outline" size={20} color={palette.colors.primary} />
+            <View style={styles.currencyNoticeContent}>
+              <Text style={styles.currencyNoticeTitle}>Using {storeData.productCurrency} for your store</Text>
+              <Text style={styles.currencyNoticeText}>{sellerCurrencyChangeMessage(storeData.productCurrency)}</Text>
+            </View>
+          </View>
+        )}
         <Text style={styles.groupLabel}>SOCIAL LINKS · OPTIONAL</Text>
         {socialInputs.map(([key, icon, label, placeholder]) => renderInput({
           label,
@@ -1183,6 +1208,12 @@ const buildStyles = (p) => StyleSheet.create({
   availableText: { fontSize: fontSize.xs, color: p.colors.success, fontWeight: fontWeight.semibold },
   groupLabel: { marginTop: spacing.sm, marginBottom: spacing.md, fontSize: 9, letterSpacing: 1, color: p.colors.textSecondary, fontWeight: fontWeight.bold },
   currencyHelp: { marginTop: -spacing.sm, marginBottom: spacing.sm, fontSize: fontSize.xs, lineHeight: 17, color: p.colors.textSecondary },
+  currencyRecommendation: { marginBottom: spacing.sm, fontSize: fontSize.xs, lineHeight: 18, color: p.colors.primary, fontWeight: fontWeight.medium },
+  currencyRecommendedBadge: { alignSelf: 'flex-start', marginTop: 4, paddingHorizontal: 7, paddingVertical: 2, borderRadius: 8, overflow: 'hidden', backgroundColor: `${p.colors.primary}15`, color: p.colors.primary, fontSize: 10, fontWeight: fontWeight.semibold },
+  currencyNotice: { flexDirection: 'row', gap: 8, marginBottom: spacing.md, padding: spacing.md, borderRadius: 14, backgroundColor: `${p.colors.primary}0D`, borderWidth: 1, borderColor: `${p.colors.primary}30` },
+  currencyNoticeContent: { flex: 1, minWidth: 0 },
+  currencyNoticeTitle: { fontSize: fontSize.sm, fontWeight: fontWeight.semibold, color: p.colors.text },
+  currencyNoticeText: { marginTop: 4, fontSize: fontSize.xs, lineHeight: 18, color: p.colors.textSecondary },
   currencyGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginBottom: spacing.md },
   currencyOption: {
     width: '48%',

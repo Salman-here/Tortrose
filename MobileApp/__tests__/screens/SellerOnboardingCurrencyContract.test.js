@@ -2,6 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { SELLER_PRODUCT_CURRENCY_CODES } = require('../../src/utils/sellerOnboardingCurrency');
 
 const source = fs.readFileSync(
   path.join(__dirname, '../../src/screens/BecomeSellerScreen.js'),
@@ -14,7 +15,7 @@ const navigatorSource = fs.readFileSync(
 
 describe('seller onboarding product-currency contract', () => {
   test('the active mobile setup exposes all supported native listing currencies', () => {
-    expect(source).toMatch(/SELLER_PRODUCT_CURRENCY_CODES\s*=\s*\['USD', 'PKR', 'EUR', 'GBP'\]/);
+    expect(SELLER_PRODUCT_CURRENCY_CODES).toEqual(['USD', 'PKR', 'EUR', 'GBP']);
     for (const code of ['USD', 'PKR', 'EUR', 'GBP']) {
       expect(source).toContain('testID={`become-seller-product-currency-${code}`}');
     }

@@ -9,6 +9,14 @@ import { useCurrency } from '../contexts/CurrencyContext';
 import SEOHead from '../components/common/SEOHead';
 import PhoneField, { isValidPhone } from '../components/common/PhoneField';
 import LocationAutocomplete from '../components/common/LocationAutocomplete';
+import {
+  SELLER_PRODUCT_CURRENCY_CODES,
+  normalizeSellerProductCurrency,
+  sellerCountryFromDetection,
+  sellerCountryFromProfile,
+  sellerCurrencyChangeMessage,
+  sellerCurrencyRecommendation,
+} from '../utils/sellerOnboardingCurrency';
 import { getAuthToken, setCrossDomainCookie } from "../utils/cookieHelper";
 import {
   createTikTokEventId,
@@ -18,26 +26,22 @@ import {
   trackSellerRegistrationCompleted
 } from '../utils/tiktokPixel';
 
-const SELLER_PRODUCT_CURRENCY_CODES = ['USD', 'PKR', 'EUR', 'GBP'];
-const normalizeSellerProductCurrency = value => {
-  const code = String(value || '').trim().toUpperCase();
-  return SELLER_PRODUCT_CURRENCY_CODES.includes(code) ? code : 'USD';
-};
-
 export default function BecomeSeller() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { currentUser, setCurrentUser, fetchAndUpdateCurrentUser } = useAuth();
-  const { currency: accountCurrency, currencies } = useCurrency();
+  const { currencies } = useCurrency();
   const [loading, setLoading] = useState(false);
   // Steps: 0=landing, 0.5=guest signup, 0.6=OTP verify, 1=seller info, 2=store setup, 3=WhatsApp verify
   const [formStep, setFormStep] = useState(0);
   const [formData, setFormData] = useState({ phoneNumber: '', address: '', city: '', state: '', stateCode: '', country: '', countryCode: '', businessName: '' });
-  const productCurrencyTouchedRef = useRef(false);
+  const countryTouchedRef = useRef(false);
+  const [productCurrencyChanged, setProductCurrencyChanged] = useState(false);
+  const currencyRecommendation = sellerCurrencyRecommendation(formData);
   const [storeData, setStoreData] = useState({
     storeName: '',
     storeDescription: '',
-    productCurrency: normalizeSellerProductCurrency(currentUser?.currency || accountCurrency),
+    productCurrency: currencyRecommendation.currency,
     website: '',
     instagram: '',
     facebook: '',
@@ -88,23 +92,38 @@ export default function BecomeSeller() {
     }
   }, [searchParams, currentUser]);
 
-  // CurrencyContext refreshes the authoritative account preference after
-  // login. Keep the visible default aligned until the seller deliberately
-  // chooses a listing currency, then never overwrite that explicit choice.
+  // Seed the country from an address or successful detection, never from the
+  // account's default USD preference. A manual country choice wins any race.
   useEffect(() => {
-    if (productCurrencyTouchedRef.current) return;
-    const productCurrency = normalizeSellerProductCurrency(currentUser?.currency || accountCurrency);
+    let active = true;
+    if (countryTouchedRef.current) return;
+    const profileCountry = sellerCountryFromProfile(currentUser);
+    const lookup = profileCountry
+      ? Promise.resolve(profileCountry)
+      : axios.get(`${import.meta.env.VITE_API_URL}api/currency/detect`, { timeout: 8000 })
+        .then(response => sellerCountryFromDetection(response.data));
+    lookup.then(location => {
+      if (!active || countryTouchedRef.current || !location) return;
+      setFormData(previous => previous.country || previous.countryCode ? previous : { ...previous, ...location });
+    }).catch(() => {});
+    return () => { active = false; };
+  }, [currentUser]);
+
+  // Follow country changes until the seller deliberately selects a currency.
+  useEffect(() => {
+    if (productCurrencyChanged) return;
+    const productCurrency = currencyRecommendation.currency;
     setStoreData(previous => (
       previous.productCurrency === productCurrency
         ? previous
         : { ...previous, productCurrency }
     ));
-  }, [accountCurrency, currentUser?.currency]);
+  }, [currencyRecommendation.currency, productCurrencyChanged]);
 
   const handleInputChange = (e) => { const { name, value } = e.target; setFormData(prev => ({ ...prev, [name]: value })); };
   const handleStoreChange = (e) => { const { name, value } = e.target; setStoreData(prev => ({ ...prev, [name]: value })); };
   const handleProductCurrencyChange = (e) => {
-    productCurrencyTouchedRef.current = true;
+    setProductCurrencyChanged(true);
     setStoreData(prev => ({
       ...prev,
       productCurrency: normalizeSellerProductCurrency(e.target.value),
@@ -769,17 +788,22 @@ export default function BecomeSeller() {
                   placeholder="Select country"
                   required
                   onSelect={(option) => {
+                    countryTouchedRef.current = true;
                     setFormData(prev => ({
                       ...prev,
                       country: option.name,
                       countryCode: option.isoCode,
+                      countryCurrency: option.currency || '',
                       state: '',
                       stateCode: '',
                       city: '',
                     }));
                     setFormError('');
                   }}
-                  onClear={() => setFormData(prev => ({ ...prev, country: '', countryCode: '', state: '', stateCode: '', city: '' }))}
+                  onClear={() => {
+                    countryTouchedRef.current = true;
+                    setFormData(prev => ({ ...prev, country: '', countryCode: '', countryCurrency: '', state: '', stateCode: '', city: '' }));
+                  }}
                 />
                 <LocationAutocomplete
                   type="state"
@@ -893,25 +917,40 @@ export default function BecomeSeller() {
 
               {/* Product listing currency - persisted as the store's native price currency */}
               <div>
-                <label className="flex text-xs font-semibold uppercase tracking-wider mb-2 items-center gap-2" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                <label htmlFor="seller-product-currency" className="flex text-xs font-semibold uppercase tracking-wider mb-2 items-center gap-2" style={{ color: 'hsl(var(--muted-foreground))' }}>
                   <CreditCard size={14} style={{ color: 'hsl(var(--primary))' }} /> Product Listing Currency <span style={{ color: 'hsl(0, 72%, 55%)' }}>*</span>
                 </label>
                 <select
+                  id="seller-product-currency"
                   name="productCurrency"
                   value={storeData.productCurrency}
                   onChange={handleProductCurrencyChange}
                   className="glass-input"
+                  aria-describedby="seller-currency-recommendation seller-currency-help"
                   required
                 >
                   {SELLER_PRODUCT_CURRENCY_CODES.map(code => (
                     <option key={code} value={code}>
                       {code} · {currencies?.[code]?.name || code}
+                      {currencyRecommendation.hasCountry && code === currencyRecommendation.currency ? ' — Recommended' : ''}
                     </option>
                   ))}
                 </select>
-                <p className="text-[11px] mt-1.5 leading-relaxed" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                <p id="seller-currency-recommendation" className="text-xs mt-2 font-medium" aria-live="polite" style={{ color: 'hsl(var(--primary))' }}>
+                  {currencyRecommendation.message}
+                </p>
+                <p id="seller-currency-help" className="text-[11px] mt-1.5 leading-relaxed" style={{ color: 'hsl(var(--muted-foreground))' }}>
                   Enter and save all product prices in this currency. Buyers can still view and pay in another supported currency using the checkout conversion rate.
                 </p>
+                {productCurrencyChanged && (
+                  <div role="status" className="mt-3 rounded-xl p-3.5 flex items-start gap-2.5" style={{ background: 'hsl(var(--primary) / 0.06)', border: '1px solid hsl(var(--primary) / 0.18)' }}>
+                    <Globe2 size={18} className="shrink-0 mt-0.5" aria-hidden="true" style={{ color: 'hsl(var(--primary))' }} />
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold" style={{ color: 'hsl(var(--foreground))' }}>Using {storeData.productCurrency} for your store</p>
+                      <p className="text-xs mt-1 leading-relaxed" style={{ color: 'hsl(var(--muted-foreground))' }}>{sellerCurrencyChangeMessage(storeData.productCurrency)}</p>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Website - Optional */}
