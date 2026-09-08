@@ -34,7 +34,7 @@ const {
 } = require('../services/currencyService');
 const { roundMoney } = require('../services/moneyMath');
 const { consumeDailyUsageForRequest } = require('../services/aiChatRateLimitService');
-const { NATURAL_COMMERCE_ADDENDUM, sanitizeCommerceReply, catalogLookupBeforeClarification } = require('../services/aiConversationPolicy');
+const { NATURAL_COMMERCE_ADDENDUM, sanitizeCommerceReply, catalogLookupBeforeClarification, hasUnfinishedActionPromise } = require('../services/aiConversationPolicy');
 const { restoreAttachmentHistory, bindNamedProductImage } = require('../services/aiAttachmentHistoryService');
 
 // ─── OpenRouter Config ───────────────────────────────────────────────
@@ -1939,7 +1939,9 @@ function hasSuccessfulDurableMutation(toolResults = []) {
 }
 
 function isUnbackedMutationClaim(text, lastUserText, toolResults = []) {
-  if (!AI_MUTATION_REQUEST_RE.test(String(lastUserText || ''))) return false;
+  // Option answers often have no action verb ("black, the bigger one"). A
+  // specific completion claim still requires a successful action receipt.
+  if (!AI_MUTATION_REQUEST_RE.test(String(lastUserText || '')) && !/\b(?:added|created|updated|changed|edited|deleted|removed|cancelled|canceled|submitted|placed|saved|cleared)\b/i.test(text)) return false;
   if (!AI_COMPLETED_MUTATION_CLAIM_RE.test(String(text || ''))) return false;
   return !hasSuccessfulDurableMutation(toolResults);
 }
@@ -2007,6 +2009,20 @@ function retryNaturalCatalogLookup(state, draft, lastUserText, role, completedTo
   state.tool = lookupTool;
   conversationMessages.push({ role: 'system', content: `Search the live catalog before asking for exact spelling or an ID. Use ${lookupTool} now with the person's partial words, likely corrected spelling or description. Show a short list if more than one product matches. Do not perform a mutation merely to answer this lookup.` });
   return true;
+}
+
+function completeActionDraft(state, draft, completedTools, conversationMessages, canRetry) {
+  if (!hasUnfinishedActionPromise(draft)) return { text: draft };
+  if (canRetry && (state.promiseRetries || 0) < 2) {
+    state.promiseRetries = (state.promiseRetries || 0) + 1;
+    conversationMessages.push({ role: 'system', content: 'Your draft promises an action and asks the user to wait, but this response ends the turn. Continue the user-authorized workflow now using the conversation and supplied details. Execute only the remaining requested tools, never repeat a successful mutation. If information or permission is missing, ask a concrete question. If already completed, describe the actual result in past tense. Do not end with a future action promise.' });
+    return { retry: true };
+  }
+  const receipts = groundedAssistantResponseText('', completedTools);
+  if (hasSuccessfulDurableMutation(completedTools)) return { text: receipts };
+  // A successful lookup is not a completed change. Keep any useful receipt,
+  // but explicitly distinguish it from the mutation the draft only promised.
+  return { text: [receipts, 'The requested change is not confirmed. Please try again.'].filter(Boolean).join('\n\n') };
 }
 
 function constrainExplicitToolCalls(toolCalls = [], nextToolName = '') {
@@ -2608,13 +2624,17 @@ async function processAIChatMessage(userObj, incomingMessages, options = {}) {
     }
 
     if (!message.tool_calls?.length) {
-      const draftText = sanitizeAssistantVisibleText(
+      let draftText = sanitizeAssistantVisibleText(
         typeof message.content === 'string' ? message.content : ''
       );
       const completedToolResults = [
         ...toolResults,
         ...clientActions.map(action => ({ tool: action.action, result: { success: true } })),
       ];
+      const actionDraft = completeActionDraft(naturalLookupState, draftText, completedToolResults, conversationMessages, !isLast);
+      if (actionDraft.retry) continue;
+      draftText = actionDraft.text;
+      message.content = draftText;
       if (!isLast && !explicitlyRequestedTools.length && retryNaturalCatalogLookup(naturalLookupState, message.content || '', lastUserText, effectiveRole, completedToolResults, conversationMessages)) continue;
       const missingExplicitTools = unattemptedExplicitAITools(
         lastUserText,
@@ -2977,6 +2997,9 @@ exports.streamChat = async (req, res) => {
           .map(event => event.type === 'tool_result'
             ? { tool: event.tool, result: event.result }
             : { tool: event.action, result: { success: true } });
+        const actionDraft = completeActionDraft(naturalLookupState, visibleText, streamToolResults, conversationMessages, !isLastChance);
+        if (actionDraft.retry) continue;
+        visibleText = actionDraft.text;
         if (!isLastChance && !explicitlyRequestedTools.length && retryNaturalCatalogLookup(naturalLookupState, assistantContent, lastUserText, effectiveRole, streamToolResults, conversationMessages)) continue;
         const missingExplicitTools = unattemptedExplicitAITools(
           lastUserText,
@@ -3277,13 +3300,17 @@ exports.chatOnce = async (req, res) => {
       // If no tool calls, reject any unsupported durable-mutation success
       // claim and give the model one more chance to execute the real action.
       if (!message.tool_calls?.length) {
-        const draftText = sanitizeAssistantVisibleText(
+        let draftText = sanitizeAssistantVisibleText(
           typeof message.content === 'string' ? message.content : ''
         );
         const completedToolResults = [
           ...toolResults,
           ...clientActions.map(action => ({ tool: action.action, result: { success: true } })),
         ];
+        const actionDraft = completeActionDraft(naturalLookupState, draftText, completedToolResults, conversationMessages, !isLast);
+        if (actionDraft.retry) continue;
+        draftText = actionDraft.text;
+        message.content = draftText;
         if (!isLast && !explicitlyRequestedTools.length && retryNaturalCatalogLookup(naturalLookupState, message.content || '', lastUserText, effectiveRole, completedToolResults, conversationMessages)) continue;
         const missingExplicitTools = unattemptedExplicitAITools(
           lastUserText,

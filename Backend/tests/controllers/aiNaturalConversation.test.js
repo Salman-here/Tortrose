@@ -2,7 +2,7 @@
 process.env.OPENROUTER_API_KEY = 'natural-conversation-test';
 jest.mock('../../services/aiActionExecutor', () => ({
   executeToolCall: jest.fn(), isClientSideTool: () => false, storeChangeLimits: jest.fn(),
-  getDurableAIActionIntentKey: () => null, isDurableMutatingAITool: () => false,
+  getDurableAIActionIntentKey: () => null, isDurableMutatingAITool: tool => ['add_to_cart', 'update_cart_item', 'edit_product'].includes(tool),
 }));
 jest.mock('../../services/aiAttachmentService', () => ({ processChatAttachments: jest.fn(), appendAttachmentContextToMessages: jest.fn() }));
 jest.mock('../../services/aiChatRateLimitService', () => ({ consumeDailyUsageForRequest: jest.fn() }));
@@ -75,4 +75,29 @@ test.each(['web', 'mobile', 'whatsapp'])('%s can continue from a cart read to th
   expect(result.requests[1].tools.some(tool => tool.function.name === 'update_cart_item')).toBe(true);
   expect(executeToolCall).toHaveBeenCalledTimes(2);
   expect(result.visible).toBe('Your mug is now Silver, still quantity 1.');
+});
+
+test.each(['web', 'mobile', 'whatsapp'])('%s does not end with an unexecuted action promise after a short option answer', async channel => {
+  executeToolCall.mockResolvedValue({ success: true, message: 'Added one Black 500ml mug to the cart.' });
+  const result = await runChannel(channel, 'black, the bigger one', [
+    { role: 'assistant', content: 'Got it! Adding the Black 500ml mug to your cart now. Just a moment!' },
+    toolMessage('add_to_cart', { productName: 'Aurora Thermal Travel Mug', quantity: 1, selectedOptions: { Color: 'Black', Capacity: '500ml' } }),
+    { role: 'assistant', content: "I've added one Black 500ml mug to your cart." },
+  ]);
+  expect(executeToolCall).toHaveBeenCalledTimes(1);
+  expect(result.visible).toBe("I've added one Black 500ml mug to your cart.");
+  expect(result.requests[1].messages.at(-1).content).toContain('this response ends the turn');
+});
+
+test.each(['web', 'mobile', 'whatsapp'])('%s bounds unfinished-action retries and does not count a read as a completed change', async channel => {
+  executeToolCall.mockResolvedValue({ success: true, message: 'Your cart is empty.' });
+  const promise = { role: 'assistant', content: "I'll add the mug to your cart now." };
+  const result = await runChannel(channel, 'black, the bigger one', [
+    toolMessage('view_cart', {}), promise, promise, promise,
+  ]);
+  expect(executeToolCall).toHaveBeenCalledTimes(1);
+  expect(result.requests).toHaveLength(4);
+  expect(result.visible).toContain('Your cart is empty.');
+  expect(result.visible).toContain('The requested change is not confirmed.');
+  expect(result.visible).not.toContain("I'll add");
 });

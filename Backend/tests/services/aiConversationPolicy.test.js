@@ -1,5 +1,5 @@
 'use strict';
-const { sanitizeCommerceReply, isCartReplacementRequest, catalogLookupBeforeClarification } = require('../../services/aiConversationPolicy');
+const { sanitizeCommerceReply, isCartReplacementRequest, catalogLookupBeforeClarification, hasUnfinishedActionPromise } = require('../../services/aiConversationPolicy');
 
 test('hides database identifiers from prose while retaining working product links and public order numbers', () => {
   const internal = '6a9b63fe12c509a47fe03649';
@@ -21,4 +21,12 @@ test('requires a seller lookup before asking for exact spelling, but never repea
   expect(catalogLookupBeforeClarification(draft, 'find me a mug to buy', 'seller', [])).toBe('search_products');
   expect(catalogLookupBeforeClarification(draft, 'find my lunch jarr stock', 'seller', [{ tool: 'list_my_products', result: { success: true } }])).toBeNull();
   expect(catalogLookupBeforeClarification('Which color and capacity?', 'add the mug', 'user', [])).toBeNull();
+});
+
+test.each(["I'll add that mug now.", 'Got it! Adding the Black 500ml mug to your cart now. Just a moment!', 'Let me update the stock.'])('detects an unfinished action promise: %s', text => {
+  expect(hasUnfinishedActionPromise(text)).toBe(true);
+});
+
+test.each(["I've added one Black mug to your cart.", 'Which color would you like?', 'The mug has 22 in stock.'])('keeps completed results and genuine questions: %s', text => {
+  expect(hasUnfinishedActionPromise(text)).toBe(false);
 });
