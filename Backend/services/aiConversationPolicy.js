@@ -9,7 +9,7 @@ People use short names, spelling mistakes, pronouns and everyday language. Resol
 - When a buyer changes an item already in their cart ("make it silver instead", "change it to medium", "just two of those"), first view_cart if you do not have the current line. Then use update_cart_item, preserving unspecified options and quantity. Its cartItemId identifies ONE variant line. Do not add another item or remove/re-add as a substitute for editing. A deliberate additional item uses add_to_cart. An absolute quantity change uses update_cart_item.quantity.
 - If several variants of a product are in the cart, identify the requested line by its current options or ask which one. remove_from_cart removes only the chosen line; use allMatching only when the person expressly wants all variants of that product removed. clear_cart is for explicitly emptying the whole cart.
 - After any cart change, check the returned item options, quantities and full cart total against the user's request. Only describe the operation that succeeded. If a call failed, use its recovery guidance or ask a relevant question. Never stop with a promise to fix something you have not fixed.
-- A short reply to your question ("black, the bigger one", "eight in stock", "yes please") supplies details for the user's earlier request. Complete that already-requested action when its details are now sufficient. Do not end with "adding it now", "just a moment", or another promise. Execute the tool and then explain its actual result.
+- A short reply to your question ("black, the bigger one", "eight in stock", "yes please") supplies details for the user's earlier request. Complete that already-requested action when its details are now sufficient. Do not end with "adding it now", "just a moment", or another promise, in ANY language (including "main update kar rahi hoon", "ek minute dijiye", "main kar deta hoon"). Execute the tool and then explain its actual result.
 - For adding seller products from an image and rough notes, use the attachment and supplied details. Ask together for missing price, stock or unclear brand; infer an obvious category. Keep supplied spelling for a NEW product's title. For edits, find existing products using names/context. Distinguish "add this to my store" from "add this to my cart".
 - Keep product, cart-line, store and user IDs internal. Display friendly names and numbered choices, never raw database IDs or internal method names. Product links/cards are fine. Public order numbers such as ORD-123 remain visible.
 - Apply these rules equally to web, mobile and WhatsApp, including Roman Urdu and short informal messages. The tool results are authoritative; an earlier assistant claim is not proof.
@@ -57,8 +57,21 @@ function explicitlyClearsWholeCart(text = '') {
 }
 
 function hasUnfinishedActionPromise(text = '') {
-  return /\b(?:i(?:['’](?:ll|m)| will| am)|let me)\s+(?:now\s+)?(?:add(?:ing)?|updat(?:e|ing)|chang(?:e|ing)|remov(?:e|ing)|creat(?:e|ing)|plac(?:e|ing)|delet(?:e|ing)|clear(?:ing)?|fix(?:ing)?|sav(?:e|ing)|switch(?:ing)?)\b/i.test(text)
-    || /(?:^|[.!?]\s+)(?:adding|updating|changing|removing|creating|placing|deleting|clearing|saving|switching)\b[^.!?\n]{0,160}\b(?:cart|basket|product|stock|order|store|coupon|price|quantity)\b/i.test(text);
+  const value = String(text || '');
+  const commerce = /\b(?:cart|basket|product|stock|order|store|coupon|price|quantity|mug|item|add|update|change|remove|delete|clear|save)\b|(?:کارٹ|قیمت|آرڈر|اسٹاک|پروڈکٹ|दाम|कार्ट|ऑर्डर|स्टॉक)/i.test(value);
+  return /\b(?:i(?:['’](?:ll|m)| will| am)|let me)\s+(?:now\s+)?(?:add(?:ing)?|updat(?:e|ing)|chang(?:e|ing)|remov(?:e|ing)|creat(?:e|ing)|plac(?:e|ing)|delet(?:e|ing)|clear(?:ing)?|fix(?:ing)?|sav(?:e|ing)|switch(?:ing)?)\b/i.test(value)
+    || /(?:^|[.!?]\s+)(?:adding|updating|changing|removing|creating|placing|deleting|clearing|saving|switching)\b[^.!?\n]{0,160}\b(?:cart|basket|product|stock|order|store|coupon|price|quantity)\b/i.test(value)
+    || (commerce && (
+      /\b(?:ek|aik|one|just a)\s+(?:minute|moment|second)\b|\b(?:thoda|thora)\s+(?:intezar|intezaar|wait)\b/i.test(value)
+      || /\b(?:main|mein|mai)\b[^.!?\n]{0,220}\b(?:kar|kr|badal|hata|daal|dal)\s+(?:raha|rahi|rha|rhi|deta|deti|dunga|dungi|dun\s+ga|dun\s+gi)\b/i.test(value)
+      || /(?:میں|मैं)[^.!?\n]{0,160}(?:کر\s*(?:رہا|رہی|دوں)|کر\s*دیت[ای]|कर\s*(?:रहा|रही|दूँ|दूंगा|दूंगी)|कर\s*देत[ाी])/.test(value)
+    ));
 }
 
-module.exports = { NATURAL_COMMERCE_ADDENDUM, sanitizeCommerceReply, isCartReplacementRequest, catalogLookupBeforeClarification, explicitlyClearsWholeCart, hasUnfinishedActionPromise };
+function hasRomanUrduMutationClaim(text = '') {
+  const value = String(text || '');
+  return /\b(?:main\s+ne|maine|mein\s+ne)\b[^.!?\n]{0,200}\b(?:add|update|change|remove|delete|clear|save|kar|kr|badal|hata|daal|dal)\s+(?:kar\s+)?(?:diya|di|diye|dia)\b/i.test(value)
+    || /(?:میں\s*نے|मैंने)[^.!?\n]{0,160}(?:کر\s*دی[ایے]|بدل\s*دی[ایے]|حذف\s*کر\s*دی[ایے]|कर\s*दिया|बदल\s*दिया)/.test(value);
+}
+
+module.exports = { NATURAL_COMMERCE_ADDENDUM, sanitizeCommerceReply, isCartReplacementRequest, catalogLookupBeforeClarification, explicitlyClearsWholeCart, hasUnfinishedActionPromise, hasRomanUrduMutationClaim };

@@ -30,3 +30,21 @@ test.each(["I'll add that mug now.", 'Got it! Adding the Black 500ml mug to your
 test.each(["I've added one Black mug to your cart.", 'Which color would you like?', 'The mug has 22 in stock.'])('keeps completed results and genuine questions: %s', text => {
   expect(hasUnfinishedActionPromise(text)).toBe(false);
 });
+
+test.each([
+  'Main aapki cart mein mug ko black color mein update kar rahi hoon. Ek minute dijiye, main yeh kar deti hoon.',
+  'Main ab cart update kar deta hoon.',
+  'Main cart ko update kar dunga.',
+  'میں آپ کا کارٹ اپڈیٹ کر رہا ہوں۔',
+  'मैं कार्ट अपडेट कर रही हूँ।',
+])('detects an unfinished Roman Urdu or Urdu/Hindi action promise: %s', text => {
+  expect(hasUnfinishedActionPromise(text)).toBe(true);
+});
+
+test.each([
+  'Maine aapka cart update kar diya hai. Ab ek black mug hai.',
+  'Purple available nahi hai. Black ya Silver, kaunsa chahiye?',
+  'میں نے آپ کا کارٹ اپڈیٹ کر دیا ہے۔',
+])('keeps Urdu results and actual selection questions: %s', text => {
+  expect(hasUnfinishedActionPromise(text)).toBe(false);
+});

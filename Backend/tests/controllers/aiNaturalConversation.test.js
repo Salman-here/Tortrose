@@ -101,3 +101,27 @@ test.each(['web', 'mobile', 'whatsapp'])('%s bounds unfinished-action retries an
   expect(result.visible).toContain('The requested change is not confirmed.');
   expect(result.visible).not.toContain("I'll add");
 });
+
+test.each(['web', 'mobile', 'whatsapp'])('%s completes a Roman Urdu correction instead of returning a progress promise', async channel => {
+  executeToolCall.mockResolvedValue({ success: true, message: 'Updated one Black 350ml mug; the lunch jar is unchanged.' });
+  const result = await runChannel(channel, 'meri cart mein aurora mug ko black kar do, chota size wahi rakho aur sirf ek mug. jar ko mat badalna', [
+    { role: 'assistant', content: 'Main aapki cart mein Aurora mug ko black color mein update kar rahi hoon. Ek minute dijiye, main yeh kar deti hoon.' },
+    toolMessage('update_cart_item', { productName: 'Aurora Thermal Travel Mug', selectedColor: 'Black', quantity: 1 }),
+    { role: 'assistant', content: 'Maine mug ko Black kar diya hai. Size 350ml, quantity 1, aur jar wahi hai.' },
+  ]);
+  expect(executeToolCall).toHaveBeenCalledTimes(1);
+  expect(result.visible).toContain('Maine mug ko Black kar diya hai.');
+});
+
+test.each(['web', 'mobile', 'whatsapp'])('%s requires an action receipt for a Roman Urdu completion claim', async channel => {
+  executeToolCall.mockResolvedValue({ success: true, message: 'Updated one Black mug.' });
+  const claim = { role: 'assistant', content: 'Maine mug ko Black kar diya hai.' };
+  const result = await runChannel(channel, 'black kar do', [
+    claim,
+    toolMessage('update_cart_item', { productName: 'Aurora Thermal Travel Mug', selectedColor: 'Black' }),
+    claim,
+  ]);
+  expect(executeToolCall).toHaveBeenCalledTimes(1);
+  expect(result.requests).toHaveLength(3);
+  expect(result.visible).toBe(claim.content);
+});

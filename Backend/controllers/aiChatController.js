@@ -34,7 +34,7 @@ const {
 } = require('../services/currencyService');
 const { roundMoney } = require('../services/moneyMath');
 const { consumeDailyUsageForRequest } = require('../services/aiChatRateLimitService');
-const { NATURAL_COMMERCE_ADDENDUM, sanitizeCommerceReply, catalogLookupBeforeClarification, hasUnfinishedActionPromise } = require('../services/aiConversationPolicy');
+const { NATURAL_COMMERCE_ADDENDUM, sanitizeCommerceReply, catalogLookupBeforeClarification, hasUnfinishedActionPromise, hasRomanUrduMutationClaim } = require('../services/aiConversationPolicy');
 const { restoreAttachmentHistory, bindNamedProductImage } = require('../services/aiAttachmentHistoryService');
 
 // ─── OpenRouter Config ───────────────────────────────────────────────
@@ -1939,6 +1939,7 @@ function hasSuccessfulDurableMutation(toolResults = []) {
 }
 
 function isUnbackedMutationClaim(text, lastUserText, toolResults = []) {
+  if (hasRomanUrduMutationClaim(text)) return !hasSuccessfulDurableMutation(toolResults);
   // Option answers often have no action verb ("black, the bigger one"). A
   // specific completion claim still requires a successful action receipt.
   if (!AI_MUTATION_REQUEST_RE.test(String(lastUserText || '')) && !/\b(?:added|created|updated|changed|edited|deleted|removed|cancelled|canceled|submitted|placed|saved|cleared)\b/i.test(text)) return false;
