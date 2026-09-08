@@ -3599,8 +3599,10 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
           return { success: false, error: 'Product currency must be USD, PKR, EUR, or GBP.' };
         }
         const name = sanitizeProductName(cleanAIField(p.name, { maxLength: 140 }));
-        const category = cleanAIField(p.category, { maxLength: 80 });
-        const brand = cleanAIField(p.brand, { maxLength: 80 });
+        const [category, brand] = await Promise.all([
+          existingSellerTaxonomy(targetSellerId, 'category', cleanAIField(p.category, { maxLength: 80 })),
+          existingSellerTaxonomy(targetSellerId, 'brand', cleanAIField(p.brand, { maxLength: 80 })),
+        ]);
         const description = sanitizeProductDescription(cleanAIParagraph(p.description) || name);
         const missing = [];
         if (!name) missing.push('name');
@@ -4114,6 +4116,11 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
           });
           updates.currency = resolvedPriceCurrency;
           updates.priceCurrency = resolvedPriceCurrency;
+        }
+        if (defaultCurrencyOwnerId) {
+          for (const field of ['category', 'brand']) {
+            if (updates[field] !== undefined) updates[field] = await existingSellerTaxonomy(defaultCurrencyOwnerId, field, updates[field]);
+          }
         }
         if (updates.discountedPrice !== undefined) {
           updates.discountedPriceCurrency = resolveAIPriceCurrency({
@@ -6948,6 +6955,15 @@ function normalizeTaxConfigUpdate(args = {}, current = null, preferredCurrency =
     currency,
     isActive: has('isActive') ? args.isActive : (current?.isActive !== false),
   };
+}
+
+async function existingSellerTaxonomy(sellerId, field, value) {
+  if (!sellerId || !value) return value;
+  // Match only spelling/case variants in this seller's own catalog. Preserve
+  // new names and do not borrow another store's taxonomy or change titles.
+  const existing = await Product.findOne({ seller: sellerId, [field]: { $regex: `^${escapeRegExp(value)}$`, $options: 'i' } })
+    .sort({ createdAt: 1, _id: 1 }).select(field).lean();
+  return existing?.[field] || value;
 }
 
 function canonicalizeForHash(value) {

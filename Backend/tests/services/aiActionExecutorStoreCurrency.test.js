@@ -104,6 +104,22 @@ async function createProduct(seller, overrides = {}) {
 }
 
 describe('AI seller-native money writes', () => {
+  test('reuses this store category and brand casing for natural creation and edits', async () => {
+    const otherSeller = await createPkrSeller();
+    await createProduct(otherSeller, { name: 'Other Cup', category: 'DRINKWARE', brand: 'MOBILE AI FORGE' });
+    const seller = await createPkrSeller();
+    await createProduct(seller, { name: 'First Cup', category: 'Drinkware', brand: 'Mobile AI Forge' });
+    const result = await executeToolCall('add_product', {
+      name: 'Second Cup', description: 'Reusable cup with a lid.', price: 2300, currency: 'PKR', stock: 6,
+      category: 'drinkware', brand: 'mobile ai forge', image: 'https://example.com/second-cup.png',
+    }, seller);
+    expect(result.success).toBe(true);
+    const product = await Product.findOne({ seller: seller._id, name: 'Second Cup' }).lean();
+    expect(product).toMatchObject({ category: 'Drinkware', brand: 'Mobile AI Forge', price: 2300, stock: 6 });
+    expect((await executeToolCall('edit_product', { productName: 'Second Cup', updates: { category: 'DRINKWARE', brand: 'mobile ai forge' } }, seller)).success).toBe(true);
+    expect(await Product.findById(product._id).lean()).toMatchObject({ category: 'Drinkware', brand: 'Mobile AI Forge', price: 2300, stock: 6 });
+  });
+
   test('profile updates normalize supported currency and reject unsupported metadata', async () => {
     const seller = await createPkrSeller();
 
