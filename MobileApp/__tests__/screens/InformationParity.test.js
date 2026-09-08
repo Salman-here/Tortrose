@@ -220,7 +220,9 @@ describe('AI daily quota ownership', () => {
 
     expect(chatBot).toContain('Array.isArray(m.toolResults) && m.toolResults.length > 0');
     expect(chatBot).toContain('succeeded in the previous assistant turn. Do not repeat it');
-    expect(chatBot).toContain("[m.content, toolMemory].filter(Boolean).join('\\n\\n')");
+    expect(chatBot).toContain("[m.content, attachmentMemory, toolMemory].filter(Boolean).join('\\n\\n')");
+    expect(chatBot).toContain("event.name === 'preview_order'");
+    expect(chatBot).toContain('quoteToken: data.quoteToken');
   });
 
   it('threads the selected currency through every mobile AI money request path', () => {

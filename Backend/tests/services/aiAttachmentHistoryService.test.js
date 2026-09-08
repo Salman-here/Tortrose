@@ -44,3 +44,15 @@ test('anonymous requests or missing conversation IDs never query stored attachme
   expect(await restoreAttachmentHistory(messages, 'buyer-identity', undefined)).toBe(messages);
   expect(ChatHistory.findOne).not.toHaveBeenCalled();
 });
+
+test('restores a saved order preview for an older client without guessing between repeated summaries', async () => {
+  const data = { quoteToken: 'aip1.saved.signed', orderRequest: { productId: 'internal-product', quantity: 1 }, currency: 'PKR', summary: { totalAmount: 3939.5 } };
+  const previewMessage = { role: 'assistant', content: 'Your total is Rs3939.50. Confirm?', toolEvents: [{ tool: 'preview_order', result: { success: true, data } }] };
+  setHistory([previewMessage]);
+  const incoming = [{ role: 'assistant', content: previewMessage.content + '\n\n[Tool memory: preview_order succeeded.]' }, { role: 'user', content: 'yes please' }];
+  const restored = await restoreAttachmentHistory(incoming, 'buyer-identity', conversationId);
+  expect(restored[0].content).toContain(data.quoteToken);
+  expect(restored[1]).toEqual(incoming[1]);
+  setHistory([previewMessage, { ...previewMessage, toolEvents: [{ tool: 'preview_order', result: { success: true, data: { ...data, quoteToken: 'aip1.different.signed' } } }] }]);
+  expect(await restoreAttachmentHistory(incoming, 'buyer-identity', conversationId)).toEqual(incoming);
+});

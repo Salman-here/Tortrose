@@ -125,3 +125,15 @@ test.each(['web', 'mobile', 'whatsapp'])('%s requires an action receipt for a Ro
   expect(result.requests).toHaveLength(3);
   expect(result.visible).toBe(claim.content);
 });
+
+test.each(['web', 'mobile', 'whatsapp'])('%s requires the preview guard and can clearly say no order was placed', async channel => {
+  executeToolCall.mockResolvedValue({ success: true, data: { preview: true, summary: { totalAmount: 3939.5 } }, message: 'Order preview only. Total Rs3939.50. No order has been placed.' });
+  const reply = 'I have not placed your order. Your delivered total is Rs3939.50. Shall I place it?';
+  const result = await runChannel(channel, 'show me the delivered total first', [
+    toolMessage('preview_order', { productName: 'Aurora Thermal Travel Mug' }),
+    { role: 'assistant', content: reply },
+  ]);
+  expect(executeToolCall).toHaveBeenCalledTimes(1);
+  expect(executeToolCall.mock.calls[0][1]._requireOrderPreview).toBe(true);
+  expect(result.visible).toBe(reply);
+});

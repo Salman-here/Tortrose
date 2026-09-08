@@ -33,7 +33,8 @@ const AIActionReceipt = require('../models/AIActionReceipt');
 const StoreTrust = require('../models/StoreTrust');
 const Cart = require('../models/Cart');
 const { changeAICartItem } = require('./aiCartItemService');
-const { isCartReplacementRequest, explicitlyClearsWholeCart } = require('./aiConversationPolicy');
+const { createOrderPreview, verifyOrderPreview } = require('./aiOrderPreviewService');
+const { isCartReplacementRequest, explicitlyClearsWholeCart, isOrderPreviewOnlyRequest } = require('./aiConversationPolicy');
 const StoreReview = require('../models/StoreReview');
 const { buildSellerPaymentSummary } = require('../controllers/PaymentController');
 const { generateConfirmationToken } = require('../controllers/orderConfirmationController');
@@ -1665,7 +1666,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
 
     // Shopper tools accept friendly selectors too. Resolve only a unique
     // catalog match; multiple matches are returned for conversational choice.
-    if (args.productName && ['add_to_cart', 'add_to_wishlist', 'remove_from_wishlist', 'get_product_detail', 'send_product_image', 'place_order'].includes(toolName)) {
+    if (args.productName && ['add_to_cart', 'add_to_wishlist', 'remove_from_wishlist', 'get_product_detail', 'send_product_image', 'place_order', 'preview_order'].includes(toolName)) {
       const supplied = toId(args.productId);
       const existing = supplied ? await Product.findOne(publicProductFilter({ _id: supplied })).select('_id').lean() : null;
       if (!existing) {
@@ -2661,8 +2662,10 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
         return { success: true, message: 'Cart cleared! 🗑️' };
       }
 
+      case 'preview_order':
       case 'place_order': {
         if (!userId) return { success: false, error: 'You must be logged in to place an order.' };
+        const previewOnly = toolName === 'preview_order';
         const { productId, shippingInfo, paymentMethod, selectedColor, selectedOptions } = args;
         const normalizedPaymentMethod = paymentMethod || 'cash_on_delivery';
         if (!['cash_on_delivery', 'stripe'].includes(normalizedPaymentMethod)) {
@@ -2681,7 +2684,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
         // response. Refuse unsafe order creation without a durable logical-send
         // key, then reuse the original order whenever that key is replayed.
         const rawChatRequestKey = String(args._chatRequestKey || '').trim();
-        if (!rawChatRequestKey) {
+        if (!rawChatRequestKey && !previewOnly) {
           return {
             success: false,
             code: 'AI_ORDER_IDEMPOTENCY_REQUIRED',
@@ -2714,7 +2717,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
           };
         };
 
-        const existingAIOrder = await Order.findOne({
+        const existingAIOrder = previewOnly ? null : await Order.findOne({
           user: userId,
           checkoutIdempotencyKey: aiCheckoutIdempotencyKey,
         }).select('+checkoutRequestFingerprint');
@@ -2760,6 +2763,19 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
           return orderSuccessResult(existingAIOrder, true);
         }
 
+        // Preview is a read-only branch of the exact same pricing pipeline.
+        // In chat, a signed preview from a PREVIOUS user turn is mandatory.
+        // Retried committed orders above keep their original frozen receipt.
+        if (!previewOnly && args._requireOrderPreview && isOrderPreviewOnlyRequest(args._lastUserText)) return {
+          success: false, code: 'AI_ORDER_REVIEW_ONLY', needsOrderPreview: true,
+          error: 'The buyer requested information or a preview, not order placement. Show the preview and wait for their confirmation. No order has been placed.',
+          data: { nextTool: 'preview_order' },
+        };
+        if (!previewOnly && (args._requireOrderPreview || args.quoteToken)) {
+          const approved = verifyOrderPreview({ quoteToken: args.quoteToken, userId, requestKey: rawChatRequestKey });
+          if (!approved.success) return approved;
+        }
+
         const orderExchangeRateSnapshot = await getExchangeRateSnapshot();
         const orderRates = normalizeRates(orderExchangeRateSnapshot?.rates);
         const hasTrustedOrderRates = Boolean(
@@ -2787,7 +2803,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
 
         // Get user's saved address if shipping info not provided
         let shipping = shippingInfo;
-        if (!shipping || !shipping.fullName) {
+        if (!shipping) {
           const user = await User.findById(userId).select('savedShippingInfo savedAddresses username email sellerInfo').lean();
           // Try default address first, then first saved address
           if (user?.savedShippingInfo?.fullName) {
@@ -2981,6 +2997,17 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
           item.selectedOptions = selection.selectedOptions;
         }
 
+        const requestedByProduct = new Map();
+        for (const item of orderItems) {
+          const key = normalizeObjectIdString(item.productId);
+          requestedByProduct.set(key, (requestedByProduct.get(key) || 0) + item.quantity);
+        }
+        for (const [productKey, quantity] of requestedByProduct) {
+          const product = productItems.find(candidate => normalizeObjectIdString(candidate._id) === productKey);
+          const availableStock = requireStoredAIProductStock(product.stock);
+          if (!Number.isSafeInteger(quantity) || quantity > availableStock) return { success: false, error: `Only ${availableStock} units of "${product.name}" are available across all requested colors and sizes.` };
+        }
+
         orderItems = priceOrderItemLines({
           items: orderItems,
           targetCurrency: preferredCurrency,
@@ -3118,6 +3145,43 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
             returnPolicy,
           };
         });
+
+        const previewShipping = {
+          fullName: shipping.fullName, email: shipping.email,
+          phone: shippingPhoneSnapshot.e164, address: shipping.address,
+          city: shipping.city, state: shipping.state || '', postalCode: shipping.postalCode || '',
+          country: shipping.country, countryCode: shippingPhoneSnapshot.countryCode,
+        };
+        const previewSummary = { subtotal: subtotalRounded, shippingCost: shippingCostRounded, tax: taxRounded, couponDiscount: 0, totalAmount };
+        const previewContract = {
+          currency: preferredCurrency, paymentMethod: normalizedPaymentMethod,
+          scope: productId ? String(productId) : 'cart', items: persistedOrderItems,
+          shipping: previewShipping, sellerShipping, summary: previewSummary,
+        };
+        if (previewOnly) {
+          const preview = createOrderPreview({ userId, requestKey: rawChatRequestKey, contract: previewContract });
+          const orderRequest = {
+            ...(productId ? { productId: String(productId), quantity: persistedOrderItems[0].quantity,
+              ...(persistedOrderItems[0].selectedColor ? { selectedColor: persistedOrderItems[0].selectedColor } : {}),
+              ...(persistedOrderItems[0].selectedOptions ? { selectedOptions: persistedOrderItems[0].selectedOptions } : {}),
+            } : {}),
+            shippingInfo: previewShipping, paymentMethod: normalizedPaymentMethod,
+          };
+          return {
+            success: true,
+            data: {
+              preview: true, ...preview, orderRequest, currency: preferredCurrency,
+              items: persistedOrderItems, shippingInfo: previewShipping, summary: previewSummary,
+              sellers: sellerShipping.map(entry => ({ storeName: sellerStoreById.get(String(entry.seller))?.storeName || '', shippingMethod: entry.shippingMethod })),
+              estimatedDays: Math.max(...sellerShipping.map(entry => entry.shippingMethod.estimatedDays), 0),
+            },
+            message: `Order preview only — ${persistedOrderItems.map(item => `${item.quantity} × ${item.name}${item.selectedOptions ? ` (${Object.entries(item.selectedOptions).map(([name, value]) => `${name}: ${value}`).join(', ')})` : ''}`).join('; ')}. Products: ${await formatMoneyWithCode(subtotalRounded, preferredCurrency)}. Delivery: ${await formatMoneyWithCode(shippingCostRounded, preferredCurrency)}. Tax: ${await formatMoneyWithCode(taxRounded, preferredCurrency)}. Total: ${await formatMoneyWithCode(totalAmount, preferredCurrency)}. Cash on Delivery to ${shipping.fullName}, ${shipping.address}, ${shipping.city}, ${shipping.country}. No order has been placed. Ask the buyer to confirm.`,
+          };
+        }
+        if (args.quoteToken) {
+          const approved = verifyOrderPreview({ quoteToken: args.quoteToken, userId, requestKey: rawChatRequestKey, contract: previewContract });
+          if (!approved.success) return approved;
+        }
 
         const publicOrderId = await nextShortOrderId();
         const newOrder = new Order({

@@ -220,6 +220,8 @@ const summarizeToolResultsForPrompt = (toolResults = []) => {
     } else if (event.name === 'search_products' && result.success && Array.isArray(data.products)) {
       const products = data.products.slice(0, 12).map(p => `${p._id || p.productId}:${p.name}; store=${p.storeName || ''}; slug=${p.storeSlug || ''}; price=${p.discountedPrice || p.price || ''}; stock=${p.stock ?? ''}; colors=${JSON.stringify(p.colors || [])}; options=${JSON.stringify(p.optionGroups || [])}`);
       lines.push(`[Tool memory: search_products returned ${data.count ?? data.products.length} products. Internal product lookup for shopper follow-ups: ${products.join(' | ')}. Use these ids internally only; do not show raw product IDs.]`);
+    } else if (event.name === 'preview_order' && result.success && data.quoteToken) {
+      lines.push(`[Tool memory: preview_order did NOT place an order. Approved-preview candidate: ${JSON.stringify({ quoteToken: data.quoteToken, orderRequest: data.orderRequest, currency: data.currency, summary: data.summary })}. Only after the buyer confirms in their next message, copy this exact quoteToken and orderRequest into place_order. Keep the token internal.]`);
     } else if (['view_cart', 'add_to_cart', 'update_cart_item', 'remove_from_cart'].includes(event.name) && result.success && Array.isArray(data.items)) {
       const items = data.items.map(item => ({ cartItemId: item.cartItemId || item._id, productId: item.productId, name: item.name, quantity: item.quantity, selectedColor: item.selectedColor, selectedOptions: item.selectedOptions }));
       lines.push(`[Tool memory: ${event.name} current cart: ${JSON.stringify(items)}. Internal IDs only. Use update_cart_item for option/quantity changes and preserve other lines.]`);

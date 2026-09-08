@@ -9,6 +9,8 @@ People use short names, spelling mistakes, pronouns and everyday language. Resol
 - When a buyer changes an item already in their cart ("make it silver instead", "change it to medium", "just two of those"), first view_cart if you do not have the current line. Then use update_cart_item, preserving unspecified options and quantity. Its cartItemId identifies ONE variant line. Do not add another item or remove/re-add as a substitute for editing. A deliberate additional item uses add_to_cart. An absolute quantity change uses update_cart_item.quantity.
 - If several variants of a product are in the cart, identify the requested line by its current options or ask which one. remove_from_cart removes only the chosen line; use allMatching only when the person expressly wants all variants of that product removed. clear_cart is for explicitly emptying the whole cart.
 - After any cart change, check the returned item options, quantities and full cart total against the user's request. Only describe the operation that succeeded. If a call failed, use its recovery guidance or ask a relevant question. Never stop with a promise to fix something you have not fixed.
+- A cart may have changed through the website, app, WhatsApp or another device. Use the current cart. Never invent why an item disappeared or claim you removed it without a corresponding action receipt.
+- For ordering, use preview_order to show the exact requested items/options, delivery address, product subtotal, shipping, tax and delivered total before placing an order. A specific product can be previewed directly without adding it to the cart. If the buyer says only one product, do not include unrelated cart items. Ask for missing options/address, then show the preview and wait for their next confirmation message. Use that preview's quoteToken and orderRequest with place_order after confirmation. A preview does not create an order; changed/expired previews need a fresh total and confirmation. Coupons and online payments use secure checkout; never promise a coupon deduction that the order tool does not support.
 - A short reply to your question ("black, the bigger one", "eight in stock", "yes please") supplies details for the user's earlier request. Complete that already-requested action when its details are now sufficient. Do not end with "adding it now", "just a moment", or another promise, in ANY language (including "main update kar rahi hoon", "ek minute dijiye", "main kar deta hoon"). Execute the tool and then explain its actual result.
 - For adding seller products from an image and rough notes, use the attachment and supplied details. Ask together for missing price, stock or unclear brand; infer an obvious category. Keep supplied spelling for a NEW product's title. For edits, find existing products using names/context. Distinguish "add this to my store" from "add this to my cart".
 - Keep product, cart-line, store and user IDs internal. Display friendly names and numbered choices, never raw database IDs or internal method names. Product links/cards are fine. Public order numbers such as ORD-123 remain visible.
@@ -22,6 +24,7 @@ function sanitizeCommerceReply(text = '') {
     .replace(/https?:\/\/[^\s<>\])]+/gi, url => `ROZARELINKPLACEHOLDER${urls.push(url) - 1}END`)
     .replace(/\b(?:product|cart(?:[ -]?item|[ -]?line)?|store|seller|user|database|internal)\s*(?:_?id|identifier)\s*[*`]*\s*[:=#-]?\s*[*`]*\s*[a-f\d]{24}\b[*`]*/gi, '')
     .replace(/(?<![\w-])[a-f\d]{24}(?![\w-])/gi, '')
+    .replace(/\baip1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, '')
     .replace(/\b(?:please\s+)?provide\s+(?:a\s+|the\s+)?(?:product\s*Id|cart\s*Item\s*Id)\b\.?/gi, 'Please tell me which item you mean.')
     .split(/\r?\n/)
     .filter(line => !/^\s*(?:[-*•]|\d+[.)])\s*[*`]*\s*$/.test(line))
@@ -74,4 +77,8 @@ function hasRomanUrduMutationClaim(text = '') {
     || /(?:میں\s*نے|मैंने)[^.!?\n]{0,160}(?:کر\s*دی[ایے]|بدل\s*دی[ایے]|حذف\s*کر\s*دی[ایے]|कर\s*दिया|बदल\s*दिया)/.test(value);
 }
 
-module.exports = { NATURAL_COMMERCE_ADDENDUM, sanitizeCommerceReply, isCartReplacementRequest, catalogLookupBeforeClarification, explicitlyClearsWholeCart, hasUnfinishedActionPromise, hasRomanUrduMutationClaim };
+function isOrderPreviewOnlyRequest(text = '') {
+  return /\b(?:show|tell|check|calculate|quote|preview|review)\b[^.!?\n]{0,65}\b(?:total|delivery|shipping|cost|price|charges)\b|\b(?:do not|don't|dont|not yet|without)\b[^.!?\n]{0,35}\b(?:place|placing|order|ordering|buy|buying)\b|\b(?:pehle|pehlay)\b[^.!?\n]{0,35}\b(?:total|price|qeemat|keemat)\b/i.test(text);
+}
+
+module.exports = { NATURAL_COMMERCE_ADDENDUM, sanitizeCommerceReply, isCartReplacementRequest, catalogLookupBeforeClarification, explicitlyClearsWholeCart, hasUnfinishedActionPromise, hasRomanUrduMutationClaim, isOrderPreviewOnlyRequest };

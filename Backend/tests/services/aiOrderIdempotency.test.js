@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+process.env.JWT_SECRET = 'disposable-ai-preview-test-key';
 const { MongoMemoryReplSet } = require('mongodb-memory-server');
 
 jest.mock('../../controllers/mailController', () => ({
@@ -711,5 +712,65 @@ describe('AI COD order idempotency', () => {
     expect(new Set(results.map(result => result.data.orderId)).size).toBe(1);
     await expect(Order.countDocuments()).resolves.toBe(1);
     await expect(Product.findById(product._id).lean()).resolves.toMatchObject({ stock: 3, totalSales: 2 });
+  });
+});
+
+describe('read-only AI order previews and confirmed checkout', () => {
+  test('quotes real delivery and tax without creating orders, modifying carts or reserving stock', async () => {
+    const { buyer, product } = await createCatalog();
+    await ShippingMethod.create({ seller: product.seller, methods: [{ type: 'standard', cost: 3, currency: 'USD', costCurrency: 'USD', costInputAmount: 3, deliveryDays: 4, isActive: true }] });
+    await TaxConfig.create({ type: 'percentage', value: 10, currency: 'USD', isActive: true });
+    const cart = await Cart.create({ user: buyer._id, cartItems: [{ product: product._id, qty: 1 }] });
+    const beforeCart = await Cart.findById(cart._id).lean();
+    const beforeProduct = await Product.findById(product._id).lean();
+    const preview = await executeToolCall('preview_order', placeArgs(product, { _requireOrderPreview: true }), buyer);
+    expect(preview).toMatchObject({ success: true, data: { preview: true, currency: 'USD', summary: { subtotal: 24.68, shippingCost: 3, tax: 2.47, totalAmount: 30.15 }, estimatedDays: 4 } });
+    expect(preview.data.quoteToken).toMatch(/^aip1\./);
+    expect(preview.message).toContain('No order has been placed.');
+    expect(await Order.countDocuments()).toBe(0);
+    expect(await Cart.findById(cart._id).lean()).toEqual(beforeCart);
+    expect(await Product.findById(product._id).lean()).toEqual(beforeProduct);
+  });
+
+  test('requires review, blocks same-turn placement, then permits one confirmed order and safe replay', async () => {
+    const { buyer, product } = await createCatalog();
+    const args = placeArgs(product, { _requireOrderPreview: true });
+    expect(await executeToolCall('place_order', args, buyer)).toMatchObject({ success: false, code: 'AI_ORDER_PREVIEW_REQUIRED' });
+    const preview = await executeToolCall('preview_order', args, buyer);
+    expect(preview.success).toBe(true);
+    const confirmed = { ...preview.data.orderRequest, quoteToken: preview.data.quoteToken, _requireOrderPreview: true, _chatRequestKey: args._chatRequestKey };
+    expect(await executeToolCall('place_order', confirmed, buyer)).toMatchObject({ success: false, code: 'AI_ORDER_CONFIRMATION_REQUIRED' });
+    expect(await Order.countDocuments()).toBe(0);
+    confirmed._chatRequestKey = 'next-user-message-confirmed';
+    expect(await executeToolCall('place_order', { ...confirmed, _lastUserText: 'show me the total first, do not place the order yet' }, buyer)).toMatchObject({ success: false, code: 'AI_ORDER_REVIEW_ONLY' });
+    expect(await Order.countDocuments()).toBe(0);
+    const placed = await executeToolCall('place_order', confirmed, buyer);
+    expect(placed).toMatchObject({ success: true, data: { total: preview.data.summary.totalAmount, currency: 'USD' } });
+    const replay = await executeToolCall('place_order', confirmed, buyer);
+    expect(replay).toMatchObject({ success: true, reused: true, data: { orderId: placed.data.orderId } });
+    expect(await Order.countDocuments()).toBe(1);
+    expect((await Product.findById(product._id).lean()).stock).toBe(3);
+  });
+
+  test.each(['price', 'quantity', 'address', 'shipping'])('rejects a changed %s after preview without an order or stock change', async change => {
+    const { buyer, product } = await createCatalog();
+    const preview = await executeToolCall('preview_order', placeArgs(product), buyer);
+    const args = { ...preview.data.orderRequest, shippingInfo: { ...preview.data.orderRequest.shippingInfo }, quoteToken: preview.data.quoteToken, _requireOrderPreview: true, _chatRequestKey: 'confirmation' };
+    if (change === 'price') await Product.updateOne({ _id: product._id }, { $set: { price: 15 } });
+    if (change === 'quantity') args.quantity = 1;
+    if (change === 'address') args.shippingInfo.address = 'Another address';
+    if (change === 'shipping') await ShippingMethod.create({ seller: product.seller, methods: [{ type: 'standard', cost: 5, currency: 'USD', costCurrency: 'USD', costInputAmount: 5, deliveryDays: 4, isActive: true }] });
+    expect(await executeToolCall('place_order', args, buyer)).toMatchObject({ success: false, code: 'AI_ORDER_PREVIEW_CHANGED' });
+    expect(await Order.countDocuments()).toBe(0);
+    expect((await Product.findById(product._id).lean()).stock).toBe(5);
+  });
+
+  test('does not silently replace partial supplied shipping information with a saved address', async () => {
+    const { buyer, product } = await createCatalog();
+    await User.updateOne({ _id: buyer._id }, { $set: { savedShippingInfo: shippingInfo } });
+    const preview = await executeToolCall('preview_order', placeArgs(product, { shippingInfo: { city: 'Karachi' } }), buyer);
+    expect(preview).toMatchObject({ success: false, needsShippingInfo: true });
+    expect(preview.data.missingShippingFields).toContain('fullName');
+    expect(await Order.countDocuments()).toBe(0);
   });
 });

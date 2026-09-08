@@ -692,12 +692,13 @@ const userTools = [
     type: 'function',
     function: {
       name: 'place_order',
-      description: 'Place a Cash-on-Delivery order when COD is allowed. Can order a specific product by ID or checkout the entire cart. Uses the user\'s saved address if available, otherwise requires shipping info. Stripe card and Rozare Wallet are completed securely at /checkout. If any seller accepts online payment only, use /checkout instead.',
+      description: 'Place the Cash-on-Delivery order only after preview_order and the buyer\'s subsequent confirmation. Pass the exact quoteToken and orderRequest from the approved preview. Can order a specific product or the whole cart; preserve the approved scope and options. A missing/changed/expired preview requires a fresh preview and confirmation. Stripe, Wallet and coupons use secure /checkout.',
       parameters: {
         type: 'object',
         properties: {
           productId: { type: 'string', description: 'Optional: specific product ID to order. If omitted, orders entire cart.' },
           productName: { type: 'string', description: 'Optional product name for a direct product order.' },
+          quoteToken: { type: 'string', description: 'Internal signed token returned by the approved preview_order. Copy exactly; never display it to the buyer.' },
           quantity: { type: 'number', description: 'Quantity for a direct product order. Default 1.' },
           selectedColor: { type: 'string', description: 'Color choice for a direct product order when applicable.' },
           selectedOptions: {
@@ -728,6 +729,19 @@ const userTools = [
     },
   },
 ];
+
+const placeOrderTool = userTools.find(tool => tool.function.name === 'place_order');
+userTools.push({
+  type: 'function',
+  function: {
+    name: 'preview_order',
+    description: 'Calculate an exact COD order preview without creating an order, changing the cart, reserving stock or sending notifications. Uses the same live pricing, tax, shipping and option validation as place_order. Specify a product for a product-only order; omit it only for a whole-cart checkout. Collect missing choices/address, show the returned items/address/total, and ask the buyer to confirm in their next message. Keep quoteToken and orderRequest internal for that confirmation. No coupon is applied; use secure checkout for coupons or online payment.',
+    parameters: {
+      ...placeOrderTool.function.parameters,
+      properties: Object.fromEntries(Object.entries(placeOrderTool.function.parameters.properties).filter(([name]) => name !== 'quoteToken')),
+    },
+  },
+});
 
 const sellerTools = [
   ...userTools,
@@ -1846,8 +1860,8 @@ function isPlaceholderStoreValue(value) {
 async function executeToolCallForChat(toolName, args, userObj, lastUserText = '', turnContext = {}) {
   const normalizedArgs = normalizeAIChatToolArgs(toolName, toolName === 'add_product' ? bindNamedProductImage(args, turnContext._imageContextMessages) : args, lastUserText);
   const argsWithContext = normalizedArgs && typeof normalizedArgs === 'object' && !Array.isArray(normalizedArgs)
-    ? { ...normalizedArgs, _lastUserText: lastUserText, ...turnContext }
-    : { _lastUserText: lastUserText, ...turnContext };
+    ? { ...normalizedArgs, _lastUserText: lastUserText, ...turnContext, _requireOrderPreview: true }
+    : { _lastUserText: lastUserText, ...turnContext, _requireOrderPreview: true };
 
   if (toolName !== 'update_store') {
     const result = await executeToolCall(toolName, argsWithContext, userObj);
@@ -1939,6 +1953,9 @@ function hasSuccessfulDurableMutation(toolResults = []) {
 }
 
 function isUnbackedMutationClaim(text, lastUserText, toolResults = []) {
+  // A preview must be able to say "I have not placed your order" without
+  // turning that explicit non-action into an instruction to place one.
+  text = String(text || '').replace(/\b(?:i|we)\s+(?:have not|haven't|did not|didn't)\s+(?:yet\s+)?(?:placed?|created?|submitted?|added?|updated?|removed?|deleted?)\b[^.!?\n]*/gi, '');
   if (hasRomanUrduMutationClaim(text)) return !hasSuccessfulDurableMutation(toolResults);
   // Option answers often have no action verb ("black, the bigger one"). A
   // specific completion claim still requires a successful action receipt.
