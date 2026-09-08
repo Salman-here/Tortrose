@@ -6,7 +6,7 @@ const Cart = require('../models/Cart');
 const Product = require('../models/Product');
 const User = require('../models/User');
 const { plainOptions, validateProductSelection, summarizeSelectionRequest } = require('./productSelectionService');
-const { getExchangeRateSnapshot, isSupportedCurrency, formatMoney } = require('./currencyService');
+const { getExchangeRateSnapshot, isSupportedCurrency, formatMoneySync } = require('./currencyService');
 const { requireStoredProductEffectivePrice, requireStoredProductCurrency } = require('./productPricingService');
 const { priceOrderItemLines } = require('./orderLinePricingService');
 const { sumMoney } = require('./moneyMath');
@@ -134,6 +134,9 @@ async function changeAICartItem(userId, args = {}, operation = 'update') {
   const snapshot = await getExchangeRateSnapshot();
   const priced = priceOrderItemLines({ items: nativeLines, targetCurrency: currency, exchangeRates: snapshot.rates, exchangeRatesFallback: snapshot.fallback });
   const total = sumMoney(priced.map(line => line.lineSubtotal));
+  // The total is already priced in the buyer's currency. Formatting must not
+  // treat it as USD and convert it a second time. Do this before the write.
+  const formattedTotal = formatMoneySync(total, currency, { sourceCurrency: currency });
   // Compare the entire read snapshot, not just one line. This also detects
   // changes from older cart clients whose updates do not increment __v.
   const saved = await Cart.updateOne({ _id: cart._id, user: userId, cartItems: before, __v: cart.__v ?? { $exists: false } }, {
@@ -148,7 +151,7 @@ async function changeAICartItem(userId, args = {}, operation = 'update') {
   return {
     success: true,
     data: { item: updatedItem, items: after.map(line => preview(line, products)), cartItemCount: after.length, totalQuantity, totalCartPrice: total, totalCartCurrency: currency },
-    message: `${detail} Your cart now contains ${totalQuantity} unit${totalQuantity === 1 ? '' : 's'}. Cart subtotal: ${await formatMoney(total, currency)}.`,
+    message: `${detail} Your cart now contains ${totalQuantity} unit${totalQuantity === 1 ? '' : 's'}. Cart subtotal: ${formattedTotal}${currency === 'USD' ? ' USD' : ''}.`,
   };
 }
 

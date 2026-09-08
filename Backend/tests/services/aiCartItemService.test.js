@@ -65,6 +65,21 @@ test('changes only the requested color and preserves quantity, capacity, other p
   expect(saved.totalCartCurrency).toBe('PKR');
   expect(result.data.item.quantity).toBe(2);
   expect(result.data.totalQuantity).toBe(3);
+  expect(result.message).toContain('Cart subtotal: Rs8,329.00 PKR.');
+});
+
+test.each([
+  ['USD', 29.75, '$29.75 USD'],
+  ['PKR', 8329, 'Rs8,329.00 PKR'],
+  ['EUR', 26.77, '€26.77 EUR'],
+  ['GBP', 23.8, '£23.80 GBP'],
+])('formats the already-priced %s subtotal without a second conversion', async (currency, total, label) => {
+  await User.updateOne({ _id: buyer._id }, { $set: { currency } });
+  const result = await changeAICartItem(buyer._id, { productName: 'mug', selectedColor: 'Silver' });
+  expect(result.success).toBe(true);
+  expect(result.data.totalCartPrice).toBe(total);
+  expect((await read()).totalCartPrice).toBe(total);
+  expect(result.message).toContain(`Cart subtotal: ${label}.`);
 });
 
 test('supports partial names and partial option changes without resetting other choices', async () => {
