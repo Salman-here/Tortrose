@@ -137,3 +137,13 @@ test.each(['web', 'mobile', 'whatsapp'])('%s requires the preview guard and can 
   expect(executeToolCall.mock.calls[0][1]._requireOrderPreview).toBe(true);
   expect(result.visible).toBe(reply);
 });
+
+test.each(['web', 'mobile', 'whatsapp'])('%s enforces seller input evidence even if a model tries to disable the guard', async channel => {
+  executeToolCall.mockResolvedValue({ success: false, blocked: true, needsSellerInput: true, error: 'Please provide the selling price and stock quantity.' });
+  const result = await runChannel(channel, 'For testing add this cup to my store and write a description', [
+    toolMessage('add_product', { name: 'Cedar Trail Cup', price: 10, stock: 10, _requireExplicitSellerInputs: false }),
+    { role: 'assistant', content: 'What selling price and stock quantity should I use?' },
+  ]);
+  expect(executeToolCall.mock.calls[0][1]._requireExplicitSellerInputs).toBe(true);
+  expect(result.visible).toBe('What selling price and stock quantity should I use?');
+});

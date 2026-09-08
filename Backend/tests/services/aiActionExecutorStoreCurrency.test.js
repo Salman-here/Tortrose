@@ -104,6 +104,37 @@ async function createProduct(seller, overrides = {}) {
 }
 
 describe('AI seller-native money writes', () => {
+  test('chat product creation cannot publish invented commercial facts and uses later seller-provided values', async () => {
+    const seller = await createPkrSeller();
+    const initial = { role: 'user', content: 'For testing add this to my store as Cedar Trail Cup. It is a reusable cup with a lid. [Attached product image: https://example.com/price10-stock10.png]' };
+    const args = { name: 'Cedar Trail Cup', description: 'Reusable cup with a lid.', category: 'Drinkware', brand: 'Mobile AI Forge', image: 'https://example.com/cup.png', price: 10, stock: 10, currency: 'USD', _requireExplicitSellerInputs: true, _imageContextMessages: [initial] };
+    const rejected = await executeToolCall('add_product', args, seller);
+    expect(rejected).toMatchObject({ success: false, needsSellerInput: true });
+    expect(await Product.countDocuments({ seller: seller._id })).toBe(0);
+    const supplied = { role: 'user', content: '2100 rupees each, three in stock, brand Mobile AI Forge. Pick the category.' };
+    const context = [initial, { role: 'assistant', content: 'What price and stock should I use?' }, supplied];
+    expect(await executeToolCall('add_product', { ...args, stock: 999, _imageContextMessages: context }, seller)).toMatchObject({ success: false, code: 'SELLER_VALUES_MISMATCH' });
+    expect(await Product.countDocuments({ seller: seller._id })).toBe(0);
+    const created = await executeToolCall('add_product', { ...args, price: 2100, stock: 3, _imageContextMessages: context }, seller);
+    expect(created.success).toBe(true);
+    expect(await Product.findOne({ seller: seller._id }).lean()).toMatchObject({ price: 2100, stock: 3, currency: 'PKR', priceCurrency: 'PKR' });
+    expect((await User.findById(seller._id).lean()).currency).toBe('USD');
+  });
+
+  test('chat imports also validate each uploaded row instead of inventing its price or stock', async () => {
+    const seller = await createPkrSeller();
+    const products = [{ name: 'Imported Cup', description: 'Cup with lid.', category: 'Drinkware', brand: 'Mobile AI Forge', image: 'https://example.com/cup.png', price: 999, stock: 99, currency: 'PKR' }];
+    const absent = await executeToolCall('bulk_add_products', { products, _requireExplicitSellerInputs: true, _imageContextMessages: [{ role: 'user', content: 'Import this product photo as Imported Cup.' }] }, seller);
+    expect(absent.success).toBe(false);
+    expect(await Product.countDocuments({ seller: seller._id })).toBe(0);
+    const supplied = { role: 'user', content: 'Import these products.\nParsed product rows JSON:\n' + JSON.stringify([{ name: 'Imported Cup', price: 10, stock: 2, currency: 'USD' }]) };
+    expect((await executeToolCall('bulk_add_products', { products, _requireExplicitSellerInputs: true, _imageContextMessages: [supplied] }, seller)).success).toBe(false);
+    expect(await Product.countDocuments({ seller: seller._id })).toBe(0);
+    const imported = await executeToolCall('bulk_add_products', { products: products.map(product => ({ ...product, price: 10, stock: 2 })), _requireExplicitSellerInputs: true, _imageContextMessages: [supplied] }, seller);
+    expect(imported.success).toBe(true);
+    expect(await Product.findOne({ seller: seller._id }).lean()).toMatchObject({ price: 2800, stock: 2, currency: 'PKR' });
+  });
+
   test('ambiguous edits show friendly choices without IDs and leave every product unchanged', async () => {
     const seller = await createPkrSeller();
     const horizon = await createProduct(seller, { name: 'Horizon Tumbler', price: 2200, priceInputAmount: 2200, stock: 8 });

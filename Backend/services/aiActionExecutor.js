@@ -34,6 +34,7 @@ const StoreTrust = require('../models/StoreTrust');
 const Cart = require('../models/Cart');
 const { changeAICartItem } = require('./aiCartItemService');
 const { createOrderPreview, verifyOrderPreview } = require('./aiOrderPreviewService');
+const { assessSellerCreationInputs } = require('./aiSellerInputEvidenceService');
 const { isCartReplacementRequest, explicitlyClearsWholeCart, isOrderPreviewOnlyRequest } = require('./aiConversationPolicy');
 const StoreReview = require('../models/StoreReview');
 const { buildSellerPaymentSummary } = require('../controllers/PaymentController');
@@ -3588,7 +3589,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
           }
         }
 
-        const p = args.product || args;
+        const p = { ...(args.product || args) };
         const invalidCurrency = [
           p.priceCurrency,
           p.currency,
@@ -3613,6 +3614,35 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
         if (!brand) missing.push('brand');
         if (missing.length) {
           return { success: false, error: `Missing required fields: ${missing.join(', ')}`, missingFields: missing };
+        }
+        if (args._requireExplicitSellerInputs) {
+          const evidence = assessSellerCreationInputs({
+            name, productNames: args._sourceProductNames || [],
+            discountedPrice: parseMoneyInput(p.discountedPrice ?? 0, productEntryCurrency).amount,
+            currency: productEntryCurrency, messages: args._imageContextMessages || [], lastUserText: args._lastUserText,
+          });
+          if (!evidence.ok) return {
+            success: false, blocked: true, needsSellerInput: true,
+            error: `Before I publish "${name}", please provide the ${evidence.missing.join(' and ')}. I will keep the photo and other details.`,
+            data: { name, missingFields: evidence.missing },
+          };
+          const proposedPrice = parseMoneyInput(p.price, productEntryCurrency).amount;
+          const proposedStock = parseNonNegativeSafeInteger(p.stock);
+          const proposedSale = parseMoneyInput(p.discountedPrice ?? 0, productEntryCurrency).amount;
+          if (proposedPrice !== evidence.price || proposedStock !== evidence.stock || proposedSale > 0 && proposedSale !== evidence.discountedPrice) return {
+            success: false, blocked: true, needsSellerInput: true, code: 'SELLER_VALUES_MISMATCH',
+            error: 'The proposed price or stock does not match the seller-provided values. Use the exact supplied values, and ask for clarification if they are unclear. The server handles currency conversion. Nothing was published.',
+            data: { name },
+          };
+          // Currency comes from the seller's statement or the store default,
+          // never an unrelated account/display currency guessed by the model.
+          p.price = evidence.price;
+          p.currency = evidence.currency;
+          p.priceCurrency = evidence.currency;
+          p.stock = evidence.stock;
+          p.discountedPrice = evidence.discountedPrice;
+          p.discountedCurrency = evidence.discountedCurrency;
+          p.discountedPriceCurrency = evidence.discountedCurrency;
         }
         const lastUserText = cleanString(args._lastUserText);
         const inputCurrency = resolveAIPriceCurrency({
@@ -3876,6 +3906,9 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
             sellerId: targetSellerId,
             currency: item.currency || args.currency,
             _lastUserText: args._lastUserText,
+            _imageContextMessages: args._imageContextMessages,
+            _requireExplicitSellerInputs: args._requireExplicitSellerInputs,
+            _sourceProductNames: productsToAdd.map(product => product.name).filter(Boolean),
             createdVia: 'import',
             confirmDuplicate: item.confirmDuplicate === true || args.confirmDuplicate === true,
           }, user, { propagateErrors: true });

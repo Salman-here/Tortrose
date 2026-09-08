@@ -752,17 +752,17 @@ const sellerTools = [
     type: 'function',
     function: {
       name: 'add_product',
-      description: "Add a new product to the seller's store. Supports tags, colors, optionGroups, image URL(s), return policy, and improved descriptions. REQUIRED: name, price, category, brand, stock. Ask for any missing fields.",
+      description: "Add a new product to the seller's store. Supports tags, colors, optionGroups, image URL(s), return policy, and descriptions. REQUIRED: name, price, category, brand, stock. Never invent price or stock, even for testing. Obtain commercial values from the seller or uploaded rows; ask for missing values or confirmation of a clearly displayed proposal.",
       parameters: {
         type: 'object',
         properties: {
           name: { type: 'string', description: 'Clean product name only. No labels, markdown, or headings.' },
-          price: { type: 'number', description: 'Numeric product price in the provided currency or seller preferred currency.' },
+          price: { type: 'number', description: 'Seller-supplied price in its stated currency, or native store currency when unspecified. Never make up a price.' },
           currency: { type: 'string', description: 'ISO currency for price when explicit or from context, e.g. PKR, USD, EUR, GBP.' },
           description: { type: 'string', description: 'Plain product description only. No markdown heading, stars, or field labels.' },
           category: { type: 'string', description: 'Clean category name only.' },
           brand: { type: 'string', description: 'Clean brand name only.' },
-          stock: { type: 'number' },
+          stock: { type: 'number', description: 'Actual stock supplied or confirmed by the seller or their file. Ask when missing; do not invent a quantity or default to zero.' },
           image: { type: 'string', description: 'Primary product image URL from an upload, pasted URL, or hidden [Attached product image: URL] metadata.' },
           images: {
             type: 'array',
@@ -1871,6 +1871,7 @@ async function executeToolCallForChat(toolName, args, userObj, lastUserText = ''
   const argsWithContext = normalizedArgs && typeof normalizedArgs === 'object' && !Array.isArray(normalizedArgs)
     ? { ...normalizedArgs, _lastUserText: lastUserText, ...turnContext, _requireOrderPreview: true }
     : { _lastUserText: lastUserText, ...turnContext, _requireOrderPreview: true };
+  if (['add_product', 'bulk_add_products'].includes(toolName)) argsWithContext._requireExplicitSellerInputs = true;
 
   if (toolName !== 'update_store') {
     const result = await executeToolCall(toolName, argsWithContext, userObj);
