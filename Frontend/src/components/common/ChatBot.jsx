@@ -22,6 +22,7 @@ import { toast } from 'react-toastify';
 import ReactMarkdown from 'react-markdown';
 import { getAuthToken } from "../../utils/cookieHelper";
 import { resilientFetch } from '../../utils/httpResilience';
+import { createConversationRequestGate } from '../../utils/conversationRequestGate';
 import { normalizeAIRoute } from '../../utils/aiRouteGuard';
 import { shouldRetainIdempotencyKey } from '../../utils/currencySafety';
 import {
@@ -458,7 +459,7 @@ const ProductCardGrid = ({ products, onViewProduct, onAddToCart, title, preserve
 //  MAIN CHATBOT COMPONENT
 // ═══════════════════════════════════════════════════════
 
-function ChatBot({ embedded = false, conversationId = null, initialMessages = null, loadingHistory = false, onConversationCreated = null, dashboardRole = null }) {
+function ChatBot({ embedded = false, conversationId = null, initialMessages = null, loadingHistory = false, onConversationCreated = null, onBusyChange = null, dashboardRole = null }) {
   const navigate = useNavigate();
   const { currentUser, fetchAndUpdateCurrentUser } = useAuth();
   const { fetchWishlist, fetchCart } = useGlobal();
@@ -477,6 +478,7 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
   const [pendingTools, setPendingTools] = useState([]);
   const [activeConvoId, setActiveConvoId] = useState(conversationId);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [historyError, setHistoryError] = useState(false);
   const [isStartingNewChat, setIsStartingNewChat] = useState(false);
   const isUploadingProductImage = false;
   const [pendingProductImages, setPendingProductImages] = useState([]);
@@ -488,6 +490,7 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
   const inputRef = useRef(null);
   const fileInputRef = useRef(null);
   const hasLoadedHistory = useRef(false);
+  const historyRequests = useRef(createConversationRequestGate());
   const pendingProductImagesRef = useRef([]);
   const mediaRecorderRef = useRef(null);
   const recordingChunksRef = useRef([]);
@@ -499,6 +502,11 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
   const latestUserNameRef = useRef(userName);
   latestUserNameRef.current = userName;
   const authToken = typeof window !== 'undefined' ? getAuthToken() : null;
+  const historyAuthRef = useRef(authToken);
+  const waitingForHistory = loadingHistory || isLoadingHistory || Boolean(
+    isOpen && authToken && initialMessages === null && messages.length === 0 && !hasLoadedHistory.current
+  );
+  const chatBusy = isLoading || isStartingNewChat || waitingForHistory;
   const chips = ROLE_CHIPS[role] || ROLE_CHIPS.user;
   const titles = ROLE_TITLES[role] || ROLE_TITLES.user;
   const canUploadProductAttachment = authToken && (role === 'seller' || role === 'admin');
@@ -506,6 +514,11 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
     && typeof navigator !== 'undefined'
     && Boolean(navigator.mediaDevices?.getUserMedia)
     && typeof MediaRecorder !== 'undefined';
+
+  useEffect(() => {
+    onBusyChange?.(isLoading || isStartingNewChat || isRecordingVoice);
+    return () => onBusyChange?.(false);
+  }, [isLoading, isStartingNewChat, isRecordingVoice, onBusyChange]);
 
   // Product and discovery surfaces can open the single global assistant with
   // contextual text while preserving the user's current conversation.
@@ -524,6 +537,14 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
   // ─── Load initial messages from parent (AI Chat page) ───
   useEffect(() => {
     if (initialMessages !== null) {
+      setHistoryError(false);
+      setInput('');
+      setPendingProductImages(previous => {
+        previous.forEach(image => {
+          if (image?.previewUrl) URL.revokeObjectURL(image.previewUrl);
+        });
+        return [];
+      });
       if (initialMessages.length > 0) {
         setMessages(initialMessages.map(m => ({
           ...normalizeChatMessage(m),
@@ -545,61 +566,88 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
     setActiveConvoId(conversationId);
   }, [conversationId]);
 
-  // ─── Load chat history on open (floating mode only) ───
+  // Load history only when the parent has not supplied a selected conversation.
+  // Late responses are discarded after a selection, reset, close, or unmount.
   useEffect(() => {
-    if (isOpen && messages.length === 0 && initialMessages === null && !hasLoadedHistory.current && authToken) {
+    const isCurrent = historyRequests.current.begin();
+    if (historyAuthRef.current !== authToken) {
+      historyAuthRef.current = authToken;
+      hasLoadedHistory.current = false;
+      setMessages([]);
+      setInput('');
+      setActiveConvoId(conversationId);
+      setPendingProductImages(previous => {
+        previous.forEach(image => {
+          if (image?.previewUrl) URL.revokeObjectURL(image.previewUrl);
+        });
+        return [];
+      });
+    }
+    if (initialMessages !== null) {
       hasLoadedHistory.current = true;
-      setIsLoadingHistory(true);
-      // Try to load the active conversation from the API
-      resilientFetch(`${API_BASE}api/ai-chat/conversations`, {
-        headers: { Authorization: `Bearer ${authToken}` },
-      })
-        .then(r => r.json())
-        .then(data => {
-          const activeId = data.activeConversationId;
-          const activeConvo = data.conversations?.find(c => c._id === activeId);
-          if (activeId && activeConvo && activeConvo.messageCount > 0) {
-            // Load that conversation's messages
-            return resilientFetch(`${API_BASE}api/ai-chat/conversations/${activeId}`, {
-              headers: { Authorization: `Bearer ${authToken}` },
-            }).then(r => r.json());
-          }
-          return null;
-        })
-        .then(convoData => {
-          if (convoData && convoData.messages?.length > 0) {
-            setMessages(convoData.messages.map(m => ({
-              ...normalizeChatMessage(m),
-            })));
-            setActiveConvoId(convoData._id);
-            setShowChips(false);
-          } else {
-            // No history — show greeting
-            const hour = new Date().getHours();
-            const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
-            const greetFn = ROLE_GREETINGS[role] || ROLE_GREETINGS.user;
-            setMessages([{ role: 'assistant', content: greetFn(userName, greeting) }]);
-            setShowChips(true);
-          }
-        })
-        .catch(() => {
-          // Fallback greeting
-          const hour = new Date().getHours();
-          const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
-          const greetFn = ROLE_GREETINGS[role] || ROLE_GREETINGS.user;
-          setMessages([{ role: 'assistant', content: greetFn(userName, greeting) }]);
-          setShowChips(true);
-        })
-        .finally(() => setIsLoadingHistory(false));
-    } else if (isOpen && messages.length === 0 && initialMessages === null && !authToken) {
-      // Guest — just show greeting
+      setIsLoadingHistory(false);
+      return () => historyRequests.current.invalidate();
+    }
+    if (!isOpen || hasLoadedHistory.current) return undefined;
+    hasLoadedHistory.current = true;
+    let completed = false;
+    const showGreeting = () => {
       const hour = new Date().getHours();
       const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
       const greetFn = ROLE_GREETINGS[role] || ROLE_GREETINGS.user;
-      setMessages([{ role: 'assistant', content: greetFn(userName, greeting) }]);
+      setMessages([{ role: 'assistant', content: greetFn(latestUserNameRef.current, greeting) }]);
       setShowChips(true);
-    }
-  }, [isOpen, messages.length, initialMessages, authToken, role, userName]);
+    };
+    const loadHistory = async () => {
+      setIsLoadingHistory(true);
+      setHistoryError(false);
+      try {
+        if (!authToken) {
+          if (isCurrent()) showGreeting();
+          return;
+        }
+        let activeId = conversationId;
+        if (!activeId) {
+          const response = await resilientFetch(`${API_BASE}api/ai-chat/conversations`, {
+            headers: { Authorization: `Bearer ${authToken}` },
+          });
+          if (!response.ok) throw new Error('Could not load chat history');
+          const data = await response.json();
+          if (!isCurrent()) return;
+          activeId = data.activeConversationId;
+        }
+        let convoData = null;
+        if (activeId) {
+          const response = await resilientFetch(`${API_BASE}api/ai-chat/conversations/${activeId}`, {
+            headers: { Authorization: `Bearer ${authToken}` },
+          });
+          if (!response.ok) throw new Error('Could not load chat history');
+          convoData = await response.json();
+        }
+        if (!isCurrent()) return;
+        // An empty saved chat still has an ID; keep it instead of falling back
+        // to whichever conversation happens to be active on the server later.
+        setActiveConvoId(convoData?._id || activeId || null);
+        if (convoData?.messages?.length > 0) {
+          setMessages(convoData.messages.map(normalizeChatMessage));
+          setShowChips(false);
+        } else showGreeting();
+      } catch {
+        if (!isCurrent()) return;
+        setHistoryError(true);
+        setMessages([{ role: 'assistant', content: 'Could not load this conversation. Please reopen it or start a new chat.', isError: true }]);
+        setShowChips(false);
+      } finally {
+        completed = true;
+        if (isCurrent()) setIsLoadingHistory(false);
+      }
+    };
+    void loadHistory();
+    return () => {
+      historyRequests.current.invalidate();
+      if (!completed) hasLoadedHistory.current = false;
+    };
+  }, [isOpen, initialMessages, conversationId, authToken, role]);
 
   // ─── Auto-scroll ───
   useEffect(() => {
@@ -785,7 +833,7 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
   const sendMessage = useCallback(async (text, attachments = []) => {
     const trimmedText = String(text || '').trim();
     const pendingAttachments = Array.isArray(attachments) ? attachments : (attachments ? [attachments] : []);
-    if ((!trimmedText && pendingAttachments.length === 0) || isLoading || isStartingNewChat) return;
+    if ((!trimmedText && pendingAttachments.length === 0) || chatBusy || historyError) return;
 
     const displayAttachments = pendingAttachments.map(attachment => ({
       type: attachment.type?.startsWith('image/') ? 'image' : attachment.type?.startsWith('audio/') ? 'audio' : 'file',
@@ -1099,47 +1147,54 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
       setIsLoading(false);
       setPendingTools([]);
     }
-  }, [messages, isLoading, isStartingNewChat, authToken, activeConvoId, handleClientAction, currentUser?._id, currentUser?.id, currency, chatAttemptStorageKey, onConversationCreated, fetchWishlist, fetchCart, fetchAndUpdateCurrentUser]);
+  }, [messages, chatBusy, historyError, authToken, activeConvoId, handleClientAction, currentUser?._id, currentUser?.id, currency, chatAttemptStorageKey, onConversationCreated, fetchWishlist, fetchCart, fetchAndUpdateCurrentUser]);
 
   // ─── Clear chat (start a brand-new conversation) ───
   const clearChat = async () => {
-    if (isLoading || isStartingNewChat) return;
+    if (chatBusy || isRecordingVoice) return;
     setIsStartingNewChat(true);
-    setMessages([]);
-    setShowChips(true);
-    setPendingTools([]);
-    setActiveConvoId(null);
-    hasLoadedHistory.current = true; // don't re-load history into this new session
 
     // For logged-in users, create a fresh conversation on the server so the next
     // message doesn't accidentally append to the previously-active conversation.
     try {
+      let nextConversationId = null;
       if (authToken) {
         const resp = await fetch(`${API_BASE}api/ai-chat/conversations`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${authToken}` },
           body: JSON.stringify({ title: 'New Chat' }),
         });
-        if (resp.ok) {
-          const data = await resp.json();
-          if (data?._id) {
-            setActiveConvoId(data._id);
-            if (onConversationCreated) onConversationCreated(data._id);
-          }
-        }
+        if (!resp.ok) throw new Error('Could not start a new chat');
+        const data = await resp.json();
+        if (!data?._id) throw new Error('New conversation ID was missing');
+        nextConversationId = data._id;
       }
+      // Only discard the old conversation after the new ID is durable.
+      historyRequests.current.invalidate();
+      hasLoadedHistory.current = true;
+      setIsLoadingHistory(false);
+      setHistoryError(false);
+      setActiveConvoId(nextConversationId);
+      if (onConversationCreated) onConversationCreated(nextConversationId, { reset: true });
+      setInput('');
+      setPendingProductImages(previous => {
+        previous.forEach(image => {
+          if (image?.previewUrl) URL.revokeObjectURL(image.previewUrl);
+        });
+        return [];
+      });
+      setPendingTools([]);
+      const hour = new Date().getHours();
+      const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+      const greetFn = ROLE_GREETINGS[role] || ROLE_GREETINGS.user;
+      setMessages([{ role: 'assistant', content: greetFn(latestUserNameRef.current, greeting) }]);
+      setShowChips(true);
     } catch (e) {
       console.error('Failed to start new conversation:', e);
+      toast.error('Could not start a new chat. Your current chat is unchanged.');
     } finally {
       setIsStartingNewChat(false);
     }
-
-    // Re-trigger greeting
-    const hour = new Date().getHours();
-    const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
-    const greetFn = ROLE_GREETINGS[role] || ROLE_GREETINGS.user;
-    setMessages([{ role: 'assistant', content: greetFn(userName, greeting) }]);
-    setShowChips(true);
   };
 
   // ─── Render a message ───
@@ -1463,7 +1518,7 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
         </div>
         <button
           onClick={clearChat}
-          disabled={isLoading || isStartingNewChat}
+          disabled={chatBusy || isRecordingVoice}
           className="p-2 rounded-xl hover:bg-white/20 active:bg-white/30 transition-colors relative disabled:opacity-50"
           title="New chat"
           aria-label="New chat"
@@ -1496,7 +1551,7 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
         className="flex-1 overflow-y-auto overscroll-contain p-3 sm:p-4 space-y-3"
         style={{ scrollBehavior: 'smooth', background: 'hsl(var(--background))' }}
       >
-        {(isLoadingHistory || loadingHistory) ? (
+        {waitingForHistory ? (
           <div className="space-y-3 pt-2">
             {[0, 1, 2].map(i => (
               <div key={i} className={`flex gap-2 ${i % 2 === 1 ? 'justify-end' : ''}`}>
@@ -1670,7 +1725,7 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
-                  disabled={isLoading || isStartingNewChat || isUploadingProductImage}
+                  disabled={chatBusy || historyError || isUploadingProductImage}
                   className="h-8 w-8 shrink-0 rounded-xl flex items-center justify-center transition-all disabled:opacity-40 hover:scale-[1.04] active:scale-95"
                   style={{
                     background: 'hsl(var(--background) / 0.7)',
@@ -1688,7 +1743,7 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
               <button
                 type="button"
                 onClick={isRecordingVoice ? stopVoiceRecording : startVoiceRecording}
-                disabled={(isLoading || isStartingNewChat) && !isRecordingVoice}
+                disabled={(chatBusy || historyError) && !isRecordingVoice}
                 className="h-8 w-8 shrink-0 rounded-xl flex items-center justify-center transition-all disabled:opacity-40 hover:scale-[1.04] active:scale-95"
                 style={{
                   background: isRecordingVoice ? 'rgba(239,68,68,0.14)' : 'hsl(var(--background) / 0.7)',
@@ -1705,15 +1760,15 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
               ref={inputRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder={isRecordingVoice ? 'Recording voice note...' : isStartingNewChat ? 'Starting a new chat...' : isLoading ? 'AI is thinking...' : 'Ask Rozare anything...'}
-              disabled={isLoading || isStartingNewChat || isUploadingProductImage || isRecordingVoice}
+              placeholder={isRecordingVoice ? 'Recording voice note...' : isStartingNewChat ? 'Starting a new chat...' : waitingForHistory ? 'Loading conversation...' : isLoading ? 'AI is thinking...' : 'Ask Rozare anything...'}
+              disabled={chatBusy || historyError || isUploadingProductImage || isRecordingVoice}
               className="flex-1 bg-transparent text-sm outline-none min-w-0 placeholder:opacity-60"
               style={{ color: 'hsl(var(--foreground))' }}
             />
           </div>
           <button
             type="submit"
-            disabled={isLoading || isStartingNewChat || isUploadingProductImage || isRecordingVoice || (!input.trim() && pendingProductImages.length === 0)}
+            disabled={chatBusy || historyError || isUploadingProductImage || isRecordingVoice || (!input.trim() && pendingProductImages.length === 0)}
             className="h-11 w-11 shrink-0 rounded-2xl flex items-center justify-center transition-all disabled:opacity-40 hover:scale-[1.04] active:scale-95"
             style={{
               background: BRAND_GRADIENT,

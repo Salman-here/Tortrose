@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   MessageCircle, Plus, Trash2, Edit3, Check, X, ChevronLeft,
@@ -9,6 +9,8 @@ import { useAuth } from '../contexts/AuthContext';
 import ChatBot from '../components/common/ChatBot';
 import { getAuthToken } from "../utils/cookieHelper";
 import { resilientFetch } from '../utils/httpResilience';
+import { createConversationRequestGate } from '../utils/conversationRequestGate';
+import { toast } from 'react-toastify';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000/';
 const readJsonResponse = async (response, message) => {
@@ -71,6 +73,9 @@ function AIChatPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [creatingConversation, setCreatingConversation] = useState(false);
+  const [chatBusy, setChatBusy] = useState(false);
+  const historyRequests = useRef(createConversationRequestGate());
+  const listRequests = useRef(createConversationRequestGate());
 
   const headers = useMemo(() => ({
     'Content-Type': 'application/json',
@@ -79,11 +84,14 @@ function AIChatPage() {
 
   const loadConversations = useCallback(async () => {
     if (!authToken) return;
+    const isCurrentList = listRequests.current.begin();
+    const canRestoreSelection = historyRequests.current.capture();
     try {
       const res = await resilientFetch(`${API_BASE}api/ai-chat/conversations`, { headers });
       const data = await readJsonResponse(res, 'Failed to load conversations');
+      if (!isCurrentList()) return;
       setConversations(data.conversations || []);
-      if (data.activeConversationId) {
+      if (data.activeConversationId && canRestoreSelection()) {
         setActiveConvoId(currentId => currentId || data.activeConversationId);
       }
     } catch (e) {
@@ -91,46 +99,79 @@ function AIChatPage() {
     }
   }, [authToken, headers]);
 
-  useEffect(() => { loadConversations(); }, [loadConversations]);
+  useEffect(() => {
+    setConversations([]);
+    setActiveConvoId(null);
+    setLoadedMessages(null);
+    setLoading(false);
+    setCreatingConversation(false);
+    loadConversations();
+    return () => {
+      historyRequests.current.invalidate();
+      listRequests.current.invalidate();
+    };
+  }, [loadConversations]);
 
   const loadConversation = useCallback(async (convoId) => {
-    if (!authToken || !convoId) return;
+    if (!authToken || !convoId || chatBusy || creatingConversation) return;
+    const isCurrent = historyRequests.current.begin();
     setLoading(true);
     try {
       const res = await resilientFetch(`${API_BASE}api/ai-chat/conversations/${convoId}`, { headers });
       const data = await readJsonResponse(res, 'Failed to load conversation');
+      if (!isCurrent()) return;
       setActiveConvoId(convoId);
       setLoadedMessages(data.messages || []);
       if (window.innerWidth < 768) setSidebarOpen(false);
     } catch (e) {
       console.error('Failed to load conversation:', e);
+      if (isCurrent()) toast.error('Could not open that chat. Please try again.');
     } finally {
+      if (isCurrent()) setLoading(false);
+    }
+  }, [authToken, headers, chatBusy, creatingConversation]);
+
+  const handleConversationCreated = useCallback((convoId, { reset = false } = {}) => {
+    if (reset) {
+      historyRequests.current.invalidate();
+      setLoadedMessages([]);
       setLoading(false);
     }
-  }, [authToken, headers]);
+    setActiveConvoId(convoId);
+    loadConversations();
+  }, [loadConversations]);
 
   const createNewChat = async () => {
-    if (creatingConversation) return;
+    if (creatingConversation || chatBusy) return;
+    const isCurrent = historyRequests.current.begin();
+    setLoading(false);
     setCreatingConversation(true);
     try {
       const res = await fetch(`${API_BASE}api/ai-chat/conversations`, {
         method: 'POST', headers, body: JSON.stringify({ title: 'New Chat' }),
       });
       const data = await readJsonResponse(res, 'Failed to create conversation');
+      if (!data?._id) throw new Error('New conversation ID was missing');
+      if (!isCurrent()) return;
       setActiveConvoId(data._id);
       setLoadedMessages([]);
       await loadConversations();
     } catch (e) {
       console.error('Failed to create conversation:', e);
+      if (isCurrent()) toast.error('Could not start a new chat. Your current chat is unchanged.');
     } finally {
-      setCreatingConversation(false);
+      if (isCurrent()) setCreatingConversation(false);
     }
   };
 
   const deleteConversation = async (convoId) => {
+    if (chatBusy || creatingConversation) return;
     try {
-      await fetch(`${API_BASE}api/ai-chat/conversations/${convoId}`, { method: 'DELETE', headers });
+      const response = await fetch(`${API_BASE}api/ai-chat/conversations/${convoId}`, { method: 'DELETE', headers });
+      if (!response.ok) throw new Error('Failed to delete conversation');
       if (activeConvoId === convoId) {
+        historyRequests.current.invalidate();
+        setLoading(false);
         setActiveConvoId(null);
         setLoadedMessages(null);
       }
@@ -267,7 +308,7 @@ function AIChatPage() {
               {/* New Chat Button */}
               <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
                 onClick={createNewChat}
-                disabled={creatingConversation}
+                disabled={creatingConversation || chatBusy}
                 className="w-full flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all disabled:opacity-60"
                 style={{
                   background: BRAND_GRADIENT,
@@ -416,7 +457,7 @@ function AIChatPage() {
         </div>
 
         {/* Chat or Welcome State */}
-        {creatingConversation ? (
+        {creatingConversation && !activeConvoId && loadedMessages === null ? (
           <div className="flex-1 flex items-center justify-center" aria-live="polite">
             <div className="flex items-center gap-2 text-sm" style={{ color: 'hsl(var(--muted-foreground))' }}>
               <Loader2 size={18} className="animate-spin" /> Starting a new conversation...
@@ -425,15 +466,14 @@ function AIChatPage() {
         ) : activeConvoId || loadedMessages !== null ? (
           <div className="flex-1 overflow-hidden">
             <ChatBot
+              key={currentUser?._id || currentUser?.id || 'guest'}
               embedded={true}
               dashboardRole={assistantRole}
               conversationId={activeConvoId}
               initialMessages={loadedMessages}
-              loadingHistory={loading}
-              onConversationCreated={(convoId) => {
-                setActiveConvoId(convoId);
-                loadConversations();
-              }}
+              loadingHistory={loading || creatingConversation}
+              onBusyChange={setChatBusy}
+              onConversationCreated={handleConversationCreated}
             />
           </div>
         ) : (
