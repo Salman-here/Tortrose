@@ -2692,7 +2692,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
           };
         }
         const aiCheckoutIdempotencyKey = `ai-${crypto.createHash('sha256')
-          .update(`${userId}\0${rawChatRequestKey}`)
+          .update(`${userId}\0${!previewOnly && args.quoteToken ? `preview:${args.quoteToken}` : rawChatRequestKey}`)
           .digest('hex')}`;
         const aiRequestFingerprint = aiOrderRequestFingerprint(args);
 

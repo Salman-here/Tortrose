@@ -36,6 +36,7 @@ const { roundMoney } = require('../services/moneyMath');
 const { consumeDailyUsageForRequest } = require('../services/aiChatRateLimitService');
 const { NATURAL_COMMERCE_ADDENDUM, sanitizeCommerceReply, catalogLookupBeforeClarification, hasUnfinishedActionPromise, hasRomanUrduMutationClaim } = require('../services/aiConversationPolicy');
 const { restoreAttachmentHistory, bindNamedProductImage } = require('../services/aiAttachmentHistoryService');
+const { bindOrderPreviewToken } = require('../services/aiOrderPreviewService');
 
 // ─── OpenRouter Config ───────────────────────────────────────────────
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
@@ -692,13 +693,12 @@ const userTools = [
     type: 'function',
     function: {
       name: 'place_order',
-      description: 'Place the Cash-on-Delivery order only after preview_order and the buyer\'s subsequent confirmation. Pass the exact quoteToken and orderRequest from the approved preview. Can order a specific product or the whole cart; preserve the approved scope and options. A missing/changed/expired preview requires a fresh preview and confirmation. Stripe, Wallet and coupons use secure /checkout.',
+      description: 'Place the Cash-on-Delivery order only after preview_order and the buyer\'s subsequent confirmation. Supply the same top-level order details shown in the preview orderRequest; the server retains its signed preview internally. Can order a specific product or the whole cart; preserve the approved scope and options. A missing/changed/expired preview requires a fresh preview and confirmation. Stripe, Wallet and coupons use secure /checkout.',
       parameters: {
         type: 'object',
         properties: {
           productId: { type: 'string', description: 'Optional: specific product ID to order. If omitted, orders entire cart.' },
           productName: { type: 'string', description: 'Optional product name for a direct product order.' },
-          quoteToken: { type: 'string', description: 'Internal signed token returned by the approved preview_order. Copy exactly; never display it to the buyer.' },
           quantity: { type: 'number', description: 'Quantity for a direct product order. Default 1.' },
           selectedColor: { type: 'string', description: 'Color choice for a direct product order when applicable.' },
           selectedOptions: {
@@ -1669,7 +1669,7 @@ function prepareIncomingChatMessages(incomingMessages = []) {
       ? message.content
       : JSON.stringify(message.content ?? '');
     const { visible, internal } = splitInternalAssistantContent(rawContent);
-    if (internal) internalBlocks.push(internal);
+    if (internal) internalBlocks.push(internal.replace(/\baip1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, '[order preview retained by server]'));
 
     const nextMessage = {
       role: message.role,
@@ -1858,7 +1858,8 @@ function isPlaceholderStoreValue(value) {
 }
 
 async function executeToolCallForChat(toolName, args, userObj, lastUserText = '', turnContext = {}) {
-  const normalizedArgs = normalizeAIChatToolArgs(toolName, toolName === 'add_product' ? bindNamedProductImage(args, turnContext._imageContextMessages) : args, lastUserText);
+  let normalizedArgs = normalizeAIChatToolArgs(toolName, toolName === 'add_product' ? bindNamedProductImage(args, turnContext._imageContextMessages) : args, lastUserText);
+  if (toolName === 'place_order') normalizedArgs = bindOrderPreviewToken(normalizedArgs, turnContext._imageContextMessages, { userId: userObj?._id || userObj?.id, requestKey: turnContext._chatRequestKey });
   const argsWithContext = normalizedArgs && typeof normalizedArgs === 'object' && !Array.isArray(normalizedArgs)
     ? { ...normalizedArgs, _lastUserText: lastUserText, ...turnContext, _requireOrderPreview: true }
     : { _lastUserText: lastUserText, ...turnContext, _requireOrderPreview: true };
@@ -1896,6 +1897,11 @@ async function executeToolCallForChat(toolName, args, userObj, lastUserText = ''
   }
 
   return executeToolCall(toolName, argsWithContext, userObj);
+}
+
+function toolResultForModel(result) {
+  if (!result?.data?.quoteToken) return JSON.stringify(result);
+  return JSON.stringify({ ...result, data: { ...result.data, quoteToken: undefined } });
 }
 
 const TERMINAL_AI_ACTION_CODES = new Set([
@@ -2754,7 +2760,7 @@ async function processAIChatMessage(userObj, incomingMessages, options = {}) {
         conversationMessages.push({
           role: 'tool',
           tool_call_id: tc.id,
-          content: JSON.stringify(result),
+          content: toolResultForModel(result),
         });
       }
     }
@@ -3115,7 +3121,7 @@ exports.streamChat = async (req, res) => {
           conversationMessages.push({
             role: 'tool',
             tool_call_id: tc.id,
-            content: JSON.stringify(result),
+            content: toolResultForModel(result),
           });
         }
       }
@@ -3383,7 +3389,7 @@ exports.chatOnce = async (req, res) => {
           conversationMessages.push({
             role: 'tool',
             tool_call_id: tc.id,
-            content: JSON.stringify(result),
+            content: toolResultForModel(result),
           });
         }
       }

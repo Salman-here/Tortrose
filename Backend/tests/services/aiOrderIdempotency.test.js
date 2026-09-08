@@ -748,6 +748,8 @@ describe('read-only AI order previews and confirmed checkout', () => {
     expect(placed).toMatchObject({ success: true, data: { total: preview.data.summary.totalAmount, currency: 'USD' } });
     const replay = await executeToolCall('place_order', confirmed, buyer);
     expect(replay).toMatchObject({ success: true, reused: true, data: { orderId: placed.data.orderId } });
+    const repeatedConfirmation = await executeToolCall('place_order', { ...confirmed, _chatRequestKey: 'buyer-said-yes-again' }, buyer);
+    expect(repeatedConfirmation).toMatchObject({ success: true, reused: true, data: { orderId: placed.data.orderId } });
     expect(await Order.countDocuments()).toBe(1);
     expect((await Product.findById(product._id).lean()).stock).toBe(3);
   });

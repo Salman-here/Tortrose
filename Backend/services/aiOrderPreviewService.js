@@ -42,4 +42,23 @@ function verifyOrderPreview({ quoteToken, userId, requestKey, contract, now = Da
   return { success: true };
 }
 
-module.exports = { createOrderPreview, verifyOrderPreview, PREVIEW_TTL_MS };
+function bindOrderPreviewToken(args, messages, { userId, requestKey } = {}) {
+  const belongsToBuyer = token => {
+    const result = verifyOrderPreview({ quoteToken: token, userId, requestKey });
+    // Binding does not approve execution: the order service still rejects an
+    // expired or same-turn preview. Keep it available for committed replays.
+    return result.success || ['AI_ORDER_PREVIEW_EXPIRED', 'AI_ORDER_CONFIRMATION_REQUIRED'].includes(result.code);
+  };
+  if (belongsToBuyer(args.quoteToken)) return args;
+  for (const message of [...(messages || [])].reverse()) {
+    if (!['assistant', 'system'].includes(message?.role)) continue;
+    const candidates = [...new Set(String(message.content || '').match(/\baip1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])/g) || [])];
+    if (!candidates.length) continue;
+    const verified = candidates.filter(belongsToBuyer);
+    // Never guess between previews for multiple different candidate orders.
+    return verified.length === 1 ? { ...args, quoteToken: verified[0] } : args;
+  }
+  return args;
+}
+
+module.exports = { createOrderPreview, verifyOrderPreview, bindOrderPreviewToken, PREVIEW_TTL_MS };

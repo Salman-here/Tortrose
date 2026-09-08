@@ -30,7 +30,7 @@ async function restoreAttachmentHistory(messages, userId, conversationId) {
       const unique = new Map(previews.map(data => [data.quoteToken, data]));
       if (unique.size === 1) {
         const data = [...unique.values()][0];
-        return { ...message, content: `${messageText(message)}\n\n[Tool memory: preview_order did NOT place an order. ${JSON.stringify({ quoteToken: data.quoteToken, orderRequest: data.orderRequest, currency: data.currency, summary: data.summary })}. Use the exact token and request only after the buyer's next confirmation. Keep it internal.]` };
+        return { ...message, content: `${messageText(message)}\n\n[Tool memory: preview_order did NOT place an order. ${JSON.stringify({ quoteToken: data.quoteToken, orderRequest: data.orderRequest, currency: data.currency, summary: data.summary })}. Use the orderRequest fields only after the buyer's next confirmation. The server retains the token internally.]` };
       }
     }
     if (message.role !== 'user' || imageAttachments(message).length) return message;
