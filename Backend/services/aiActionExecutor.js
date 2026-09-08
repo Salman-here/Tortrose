@@ -32,6 +32,8 @@ const SellerAdRequest = require('../models/SellerAdRequest');
 const AIActionReceipt = require('../models/AIActionReceipt');
 const StoreTrust = require('../models/StoreTrust');
 const Cart = require('../models/Cart');
+const { changeAICartItem } = require('./aiCartItemService');
+const { isCartReplacementRequest, explicitlyClearsWholeCart } = require('./aiConversationPolicy');
 const StoreReview = require('../models/StoreReview');
 const { buildSellerPaymentSummary } = require('../controllers/PaymentController');
 const { generateConfirmationToken } = require('../controllers/orderConfirmationController');
@@ -174,6 +176,7 @@ const AI_MUTATING_TOOLS_WITH_OUTER_RECEIPT = new Set([
   'update_profile',
   'mark_notifications_read',
   'add_to_cart',
+  'update_cart_item',
   'remove_from_cart',
   'clear_cart',
   'add_product',
@@ -1660,6 +1663,28 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
       { sourceCurrency: requireStoredProductCurrency(product, 'USD') }
     );
 
+    // Shopper tools accept friendly selectors too. Resolve only a unique
+    // catalog match; multiple matches are returned for conversational choice.
+    if (args.productName && ['add_to_cart', 'add_to_wishlist', 'remove_from_wishlist', 'get_product_detail', 'send_product_image', 'place_order'].includes(toolName)) {
+      const supplied = toId(args.productId);
+      const existing = supplied ? await Product.findOne(publicProductFilter({ _id: supplied })).select('_id').lean() : null;
+      if (!existing) {
+        const lookup = await executeToolCallUnprotected('search_products', {
+          query: args.productName, storeName: args.storeName, storeSlug: args.storeSlug, limit: 20,
+        }, user);
+        const candidates = lookup.data?.products || [];
+        const query = normalizeLookupText(args.productName);
+        const exact = candidates.filter(product => normalizeLookupText(product.name) === query);
+        const matches = exact.length ? exact : fuzzyProductMatches(candidates, args.productName, 10);
+        if (matches.length !== 1 || lookup.data?.fallback) return {
+          success: false, needsProductSelection: true,
+          error: matches.length ? 'I found more than one possible product. Which one would you like?' : 'I could not find that product. Try a short name, brand or description.',
+          data: { products: matches },
+        };
+        args = { ...args, productId: String(matches[0]._id) };
+      }
+    }
+
     switch (toolName) {
 
       // ─────────────────────────────────────────────
@@ -2462,7 +2487,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
       case 'add_to_cart': {
         if (!userId) return { success: false, error: 'You must be logged in to add items to cart.' };
         const { productId, selectedColor, selectedOptions } = args;
-        if (!productId) return { success: false, error: 'Please provide a productId.' };
+        if (!productId) return { success: false, error: 'Which product would you like? I can find it using a name or description.' };
         const quantity = parseQuantity(args.quantity, 1);
         if (!quantity) return { success: false, error: 'Please provide a valid quantity of at least 1.' };
 
@@ -2504,6 +2529,16 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
           cart = new Cart({ user: userId, cartItems: [] });
         }
 
+        if (isCartReplacementRequest(args._lastUserText) && cart.cartItems.some(item => normalizeObjectIdString(item.product) === String(productId))) {
+          return { success: false, code: 'CART_ITEM_UPDATE_REQUIRED', error: 'This is a change to an item already in your cart. Its options need updating while keeping the existing quantity.', data: { nextTool: 'update_cart_item', productId: product._id } };
+        }
+        const quantityAlreadyInCart = cart.cartItems
+          .filter(item => normalizeObjectIdString(item.product) === String(productId))
+          .reduce((total, item) => total + requireStoredAIOrderQuantity(item.qty), 0);
+        if (!Number.isSafeInteger(quantityAlreadyInCart) || quantity > availableStock - quantityAlreadyInCart) {
+          return { success: false, error: `Only ${availableStock} units of "${product.name}" are available, including all colors and sizes in your cart.` };
+        }
+
         // Check if already in cart
         const normalizedSelectedOptions = selection.selectedOptions || undefined;
         const normalizedSelectedColor = selection.selectedColor || null;
@@ -2534,12 +2569,18 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
 
         return {
           success: true,
-          data: { cartItemCount: cart.cartItems.length, totalCartPrice: cart.totalCartPrice, totalCartCurrency: cart.totalCartCurrency, productId: product._id, name: product.name, quantity },
+          data: { cartItemCount: cart.cartItems.length, totalCartPrice: cart.totalCartPrice, totalCartCurrency: cart.totalCartCurrency, productId: product._id, name: product.name, quantity,
+            items: cart.cartItems.map(item => ({ cartItemId: item._id, productId: item.product?._id || item.product, name: item.product?.name || '', quantity: item.qty, selectedColor: item.selectedColor, selectedOptions: plainOptions(item.selectedOptions) })),
+          },
           message: `"${product.name}" added to cart! 🛒 Cart total: ${await userMoney(
             requireStoredOrderMoney(cart.totalCartPrice, 'cart total'),
             getAccountingOrderCurrency({ currency: cart.totalCartCurrency }),
           )} (${cart.cartItems.length} item${cart.cartItems.length !== 1 ? 's' : ''})`,
         };
+      }
+
+      case 'update_cart_item': {
+        return changeAICartItem(userId, args, 'update');
       }
 
       case 'view_cart': {
@@ -2561,6 +2602,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
           const sourcePrice = requireStoredProductEffectivePrice(p);
           return {
             _id: item._id,
+            cartItemId: item._id,
             productId: p._id,
             name: p.name,
             sourcePrice,
@@ -2600,33 +2642,17 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
       }
 
       case 'remove_from_cart': {
-        if (!userId) return { success: false, error: 'Authentication required.' };
-        const { productId } = args;
-        if (!productId) return { success: false, error: 'Please provide productId.' };
-
-        const cart = await Cart.findOne({ user: userId });
-        if (!cart) return { success: false, error: 'Cart is empty.' };
-
-        const before = cart.cartItems.length;
-        cart.cartItems = cart.cartItems.filter(item => !item.product.equals(toId(productId)));
-        if (cart.cartItems.length === before) {
-          return { success: false, error: 'Product not found in cart.' };
-        }
-        await cart.populate('cartItems.product');
-        await cart.save();
-
-        return {
-          success: true,
-          data: { cartItemCount: cart.cartItems.length, totalCartPrice: cart.totalCartPrice, totalCartCurrency: cart.totalCartCurrency },
-          message: `Item removed from cart. ${cart.cartItems.length} item${cart.cartItems.length !== 1 ? 's' : ''} remaining — ${await userMoney(
-            requireStoredOrderMoney(cart.totalCartPrice, 'cart total'),
-            getAccountingOrderCurrency({ currency: cart.totalCartCurrency }),
-          )}`,
-        };
+        if (isCartReplacementRequest(args._lastUserText)) return { success: false, code: 'CART_ITEM_UPDATE_REQUIRED', error: 'The item can be changed directly without removing it first.', data: { nextTool: 'update_cart_item' } };
+        return changeAICartItem(userId, args, 'remove');
       }
 
       case 'clear_cart': {
         if (!userId) return { success: false, error: 'Authentication required.' };
+        if (args._lastUserText && !explicitlyClearsWholeCart(args._lastUserText)) return {
+          success: false, code: 'CART_CLEAR_SCOPE_REQUIRED',
+          error: 'I will keep your other cart items. Please identify the items to remove, or ask to empty the whole cart.',
+          data: { nextTool: 'remove_from_cart', readTool: 'view_cart' },
+        };
         const cart = await Cart.findOne({ user: userId });
         if (!cart || !cart.cartItems?.length) return { success: true, message: 'Cart is already empty.' };
 

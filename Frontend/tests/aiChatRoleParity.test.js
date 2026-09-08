@@ -39,7 +39,7 @@ test('new-conversation creation blocks sending until the durable conversation ID
 
 test('successful AI cart and wishlist mutations refresh the shared application state', () => {
   assert.match(chatBot, /\['add_to_wishlist', 'remove_from_wishlist'\]\.includes\(parsed\.tool\)[\s\S]*?fetchWishlist\(\)/);
-  assert.match(chatBot, /\['add_to_cart', 'remove_from_cart', 'clear_cart', 'place_order'\]\.includes\(parsed\.tool\)[\s\S]*?fetchCart\(\)/);
+  assert.match(chatBot, /\['add_to_cart', 'update_cart_item', 'remove_from_cart', 'clear_cart', 'place_order'\]\.includes\(parsed\.tool\)[\s\S]*?fetchCart\(\)/);
   assert.match(chatBot, /parsed\.tool === 'update_profile'[\s\S]*?fetchAndUpdateCurrentUser\(\)/);
   assert.match(globalContext, /useEffect\(\(\) => \{\s*fetchWishlist\(\);\s*\}, \[fetchWishlist\]\)/);
 });

@@ -1,0 +1,24 @@
+'use strict';
+const { sanitizeCommerceReply, isCartReplacementRequest, catalogLookupBeforeClarification } = require('../../services/aiConversationPolicy');
+
+test('hides database identifiers from prose while retaining working product links and public order numbers', () => {
+  const internal = '6a9b63fe12c509a47fe03649';
+  expect(sanitizeCommerceReply(`Aurora mug\n- **Product ID:** ${internal}\n\nPrice: Rs100\n[View product](https://rozare.com/single-product/${internal})\nOrder ORD-1788599783647`))
+    .toBe(`Aurora mug\n\nPrice: Rs100\n[View product](https://rozare.com/single-product/${internal})\nOrder ORD-1788599783647`);
+  expect(sanitizeCommerceReply(`The item is ${internal}.`)).not.toContain(internal);
+});
+
+test.each(['make it silver instead, still just one mug', 'change the size to medium', 'switch that one to black', 'iski jagah silver kar do'])('recognizes a cart change rather than an addition: %s', text => {
+  expect(isCartReplacementRequest(text)).toBe(true);
+});
+test.each(['add another black mug', 'I want an extra mug', 'remove the black mug instead of the silver one', 'find a travel mug'])('does not treat an explicit addition/removal/search as a variant change: %s', text => {
+  expect(isCartReplacementRequest(text)).toBe(false);
+});
+
+test('requires a seller lookup before asking for exact spelling, but never repeats an attempted lookup', () => {
+  const draft = 'Please provide the exact product name or a more specific description.';
+  expect(catalogLookupBeforeClarification(draft, 'find my lunch jarr stock', 'seller', [])).toBe('list_my_products');
+  expect(catalogLookupBeforeClarification(draft, 'find me a mug to buy', 'seller', [])).toBe('search_products');
+  expect(catalogLookupBeforeClarification(draft, 'find my lunch jarr stock', 'seller', [{ tool: 'list_my_products', result: { success: true } }])).toBeNull();
+  expect(catalogLookupBeforeClarification('Which color and capacity?', 'add the mug', 'user', [])).toBeNull();
+});

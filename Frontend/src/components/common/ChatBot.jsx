@@ -193,6 +193,9 @@ const summarizeToolEventsForPrompt = (toolEvents = []) => {
     } else if (event.tool === 'search_products' && result.success && Array.isArray(data.products)) {
       const products = data.products.slice(0, 12).map(p => `${p._id || p.productId}:${p.name}; store=${p.storeName || ''}; slug=${p.storeSlug || ''}; price=${p.discountedPrice || p.price || ''}; stock=${p.stock ?? ''}; colors=${JSON.stringify(p.colors || [])}; options=${JSON.stringify(p.optionGroups || [])}`);
       lines.push(`[Tool memory: search_products returned ${data.count ?? data.products.length} products. Internal product lookup for shopper follow-ups: ${products.join(' | ')}. Use these ids internally only; do not show raw product IDs.]`);
+    } else if (['view_cart', 'add_to_cart', 'update_cart_item', 'remove_from_cart'].includes(event.tool) && result.success && Array.isArray(data.items)) {
+      const items = data.items.map(item => ({ cartItemId: item.cartItemId || item._id, productId: item.productId, name: item.name, quantity: item.quantity, selectedColor: item.selectedColor, selectedOptions: item.selectedOptions }));
+      lines.push(`[Tool memory: ${event.tool} current cart: ${JSON.stringify(items)}. Internal IDs only. Use update_cart_item for option/quantity changes and preserve other lines.]`);
     } else if (event.tool === 'get_product_detail' && result.success && data._id) {
       lines.push(`[Tool memory: get_product_detail productId=${data._id}; name="${data.name || ''}"; store="${data.storeName || ''}"; stock=${data.stock ?? ''}; colors=${JSON.stringify(data.colors || [])}; options=${JSON.stringify(data.optionGroups || [])}.]`);
     } else if (event.tool === 'search_stores' && result.success && Array.isArray(data.stores)) {
@@ -984,7 +987,7 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
                 if (['add_to_wishlist', 'remove_from_wishlist'].includes(parsed.tool)) {
                   void fetchWishlist();
                 }
-                if (['add_to_cart', 'remove_from_cart', 'clear_cart', 'place_order'].includes(parsed.tool)) {
+                if (['add_to_cart', 'update_cart_item', 'remove_from_cart', 'clear_cart', 'place_order'].includes(parsed.tool)) {
                   void fetchCart();
                 }
                 if (parsed.tool === 'update_profile') {

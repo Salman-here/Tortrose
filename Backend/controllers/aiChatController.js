@@ -9,9 +9,8 @@
  *  2. Role-based tool (function) exposure + strict server-side validation
  *  3. Deep personalization via live context injection
  *  4. Streaming Server-Sent Events (SSE) response to the client
- *  5. Security: the AI NEVER performs actions directly — it returns tool calls
- *     which the frontend executes against our own `/api/ai-actions/*` routes,
- *     which re-validate the caller's role on the server.
+ *  5. Security: role-authorized tools execute on the server; clients receive
+ *     their receipts and render the resulting conversational UI.
  */
 
 const crypto = require('crypto');
@@ -27,17 +26,15 @@ const {
   getDurableAIActionIntentKey,
   isDurableMutatingAITool,
 } = require('../services/aiActionExecutor');
-const { publicProductFilter } = require('../services/productModerationService');
 const { processChatAttachments, appendAttachmentContextToMessages } = require('../services/aiAttachmentService');
 const {
   formatMoneySync,
   isSupportedCurrency,
   normalizeCurrency,
 } = require('../services/currencyService');
-const { getProductCurrency } = require('../services/productPricingService');
 const { roundMoney } = require('../services/moneyMath');
-const { isProductSellerPubliclyActive } = require('../services/publicCatalogService');
 const { consumeDailyUsageForRequest } = require('../services/aiChatRateLimitService');
+const { NATURAL_COMMERCE_ADDENDUM, sanitizeCommerceReply, catalogLookupBeforeClarification } = require('../services/aiConversationPolicy');
 
 // ─── OpenRouter Config ───────────────────────────────────────────────
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
@@ -419,8 +416,7 @@ const userTools = [
       description: "Add a product to the user's wishlist.",
       parameters: {
         type: 'object',
-        properties: { productId: { type: 'string' } },
-        required: ['productId'],
+        properties: { productId: { type: 'string', description: 'Internal ID from product search.' }, productName: { type: 'string', description: 'Friendly product name when the ID is not known.' } },
       },
     },
   },
@@ -431,8 +427,7 @@ const userTools = [
       description: "Remove a product from the user's wishlist.",
       parameters: {
         type: 'object',
-        properties: { productId: { type: 'string' } },
-        required: ['productId'],
+        properties: { productId: { type: 'string', description: 'Internal ID from the wishlist.' }, productName: { type: 'string', description: 'Friendly product name.' } },
       },
     },
   },
@@ -587,11 +582,10 @@ const userTools = [
     type: 'function',
     function: {
       name: 'get_product_detail',
-      description: 'Get full details of a specific product by its ID (price, description, stock, colors, options, reviews).',
+      description: 'Get full product details (price, stock, colors, options, reviews). Use an internal ID from search or a friendly product name; never ask the user for an ID.',
       parameters: {
         type: 'object',
-        properties: { productId: { type: 'string', description: 'Product ID' } },
-        required: ['productId'],
+        properties: { productId: { type: 'string', description: 'Internal ID from a tool result' }, productName: { type: 'string', description: 'Product name or descriptive partial name' } },
       },
     },
   },
@@ -607,11 +601,12 @@ const userTools = [
     type: 'function',
     function: {
       name: 'add_to_cart',
-      description: 'Add a product to the user\'s shopping cart.',
+      description: 'Add an additional product/quantity to the shopping cart. For changing an existing item color, size or absolute quantity, use update_cart_item instead. Resolve names internally; never ask for a product ID.',
       parameters: {
         type: 'object',
         properties: {
           productId: { type: 'string', description: 'Product ID to add' },
+          productName: { type: 'string', description: 'Product name or partial name if an internal ID is not known. Ambiguous matches will be returned for choice.' },
           quantity: { type: 'number', description: 'Quantity to add. Default 1.' },
           selectedColor: { type: 'string', description: 'Optional color choice' },
           selectedOptions: {
@@ -620,7 +615,26 @@ const userTools = [
             additionalProperties: { type: 'string' },
           },
         },
-        required: ['productId'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'update_cart_item',
+      description: 'Change ONE existing cart item color, size, other options or absolute quantity in one safe operation. Preserves unspecified options, quantity and all other items. Use for "make it silver instead", "same size but black", "only two of those". Read view_cart for its cartItemId, or supply a product name and current options. Never remove/re-add to change a variant.',
+      parameters: {
+        type: 'object',
+        properties: {
+          cartItemId: { type: 'string', description: 'Internal cart-line ID from view_cart; never ask the user for it.' },
+          productId: { type: 'string', description: 'Internal product ID, if known.' },
+          productName: { type: 'string', description: 'Existing cart product name or partial name.' },
+          currentColor: { type: 'string', description: 'OLD color, to identify which existing variant changes.' },
+          currentOptions: { type: 'object', additionalProperties: { type: 'string' }, description: 'OLD options to disambiguate existing cart lines.' },
+          quantity: { type: 'integer', minimum: 1, description: 'Desired total quantity of this line; omitted preserves its quantity.' },
+          selectedColor: { type: 'string', description: 'NEW color explicitly chosen by the user.' },
+          selectedOptions: { type: 'object', additionalProperties: { type: 'string' }, description: 'NEW option values. Only include changed options; other choices remain saved.' },
+        },
       },
     },
   },
@@ -636,11 +650,14 @@ const userTools = [
     type: 'function',
     function: {
       name: 'remove_from_cart',
-      description: 'Remove a product from the user\'s cart.',
+      description: 'Remove the requested cart line. Read view_cart to identify its internal cartItemId. When variants differ, use currentColor/currentOptions. Use allMatching only if the user explicitly wants all matching variants removed.',
       parameters: {
         type: 'object',
-        properties: { productId: { type: 'string' } },
-        required: ['productId'],
+        properties: {
+          cartItemId: { type: 'string' }, productId: { type: 'string' }, productName: { type: 'string' },
+          currentColor: { type: 'string' }, currentOptions: { type: 'object', additionalProperties: { type: 'string' } },
+          allMatching: { type: 'boolean', description: 'Only true for an explicit request to remove all variants of the specified product.' },
+        },
       },
     },
   },
@@ -661,9 +678,9 @@ const userTools = [
         type: 'object',
         properties: {
           productId: { type: 'string', description: 'Product ID to send image for' },
+          productName: { type: 'string', description: 'Product name if the internal ID is not yet known.' },
           caption: { type: 'string', description: 'Optional caption to include with the image' },
         },
-        required: ['productId'],
       },
     },
   },
@@ -676,6 +693,7 @@ const userTools = [
         type: 'object',
         properties: {
           productId: { type: 'string', description: 'Optional: specific product ID to order. If omitted, orders entire cart.' },
+          productName: { type: 'string', description: 'Optional product name for a direct product order.' },
           quantity: { type: 'number', description: 'Quantity for a direct product order. Default 1.' },
           selectedColor: { type: 'string', description: 'Color choice for a direct product order when applicable.' },
           selectedOptions: {
@@ -1540,7 +1558,7 @@ function splitInternalAssistantContent(content = '') {
 }
 
 function sanitizeAssistantVisibleText(text = '') {
-  return splitInternalAssistantContent(text).visible;
+  return sanitizeCommerceReply(splitInternalAssistantContent(text).visible);
 }
 
 function groundedAssistantResponseText(responseText = '', completedToolResults = []) {
@@ -1674,7 +1692,7 @@ function prepareIncomingChatMessages(incomingMessages = []) {
 // the code defaults if the prompt store is unreachable.
 async function getSystemPrompt(role, channel = 'web') {
   try {
-    return await aiPromptService.getSystemPromptForRole(role, { channel });
+    return (await aiPromptService.getSystemPromptForRole(role, { channel })) + NATURAL_COMMERCE_ADDENDUM;
   } catch (err) {
     console.warn('[ai-chat] prompt service failed, using code defaults:', err.message);
     let base;
@@ -1694,7 +1712,8 @@ async function getSystemPrompt(role, channel = 'web') {
       + TOOL_MEMORY_ADDENDUM
       + COMMERCE_POLICY_ADDENDUM
       + whatsapp
-      + FINANCIAL_TRUTH_ADDENDUM;
+      + FINANCIAL_TRUTH_ADDENDUM
+      + NATURAL_COMMERCE_ADDENDUM;
   }
 }
 
@@ -1827,7 +1846,12 @@ async function executeToolCallForChat(toolName, args, userObj, lastUserText = ''
     : { _lastUserText: lastUserText, ...turnContext };
 
   if (toolName !== 'update_store') {
-    return executeToolCall(toolName, argsWithContext, userObj);
+    const result = await executeToolCall(toolName, argsWithContext, userObj);
+    return {
+      ...result,
+      ...(result?.message ? { message: sanitizeCommerceReply(result.message) } : {}),
+      ...(result?.error ? { error: sanitizeCommerceReply(result.error) } : {}),
+    };
   }
 
   const updates = getUpdatePayload(normalizedArgs);
@@ -1947,8 +1971,13 @@ function explicitlyRequestedAITools(lastUserText, availableTools = []) {
     .map(entry => entry.name);
 }
 
-function explicitToolRequestOptions(explicitlyRequestedTools, missingRequestedTools, tools) {
+function explicitToolRequestOptions(explicitlyRequestedTools, missingRequestedTools, tools, naturalLookupTool = '') {
   if (!explicitlyRequestedTools.length) {
+    if (naturalLookupTool && tools.some(tool => tool.function.name === naturalLookupTool)) return {
+      offeredTools: tools.filter(tool => tool.function.name === naturalLookupTool),
+      toolChoice: { type: 'function', function: { name: naturalLookupTool } },
+      parallelToolCalls: false,
+    };
     return { offeredTools: tools, toolChoice: undefined, parallelToolCalls: undefined };
   }
 
@@ -1964,6 +1993,16 @@ function explicitToolRequestOptions(explicitlyRequestedTools, missingRequestedTo
     toolChoice: { type: 'function', function: { name: nextToolName } },
     parallelToolCalls: false,
   };
+}
+
+function retryNaturalCatalogLookup(state, draft, lastUserText, role, completedTools, conversationMessages) {
+  if (state.retried) return false;
+  const lookupTool = catalogLookupBeforeClarification(draft, lastUserText, role, completedTools);
+  if (!lookupTool) return false;
+  state.retried = true;
+  state.tool = lookupTool;
+  conversationMessages.push({ role: 'system', content: `Search the live catalog before asking for exact spelling or an ID. Use ${lookupTool} now with the person's partial words, likely corrected spelling or description. Show a short list if more than one product matches. Do not perform a mutation merely to answer this lookup.` });
+  return true;
 }
 
 function constrainExplicitToolCalls(toolCalls = [], nextToolName = '') {
@@ -1982,10 +2021,11 @@ function messagesForCurrentTurnSummary(conversationMessages, completedToolResult
     {
       role: 'system',
       content: [
-        'Write the final response for only the latest user message.',
+        'Continue working on only the latest user request. Call any remaining necessary tools before writing the final response.',
         'Ground it only in tool-result messages produced after that latest user message.',
         'Do not recap, merge, or reuse results from earlier turns.',
-        'If a current tool failed, state that failure rather than describing an earlier success.',
+        'A product lookup or cart read may be an intermediate step, not completion of a requested edit. Finish the requested action or ask only for missing information.',
+        'If a current tool failed, use its safe recovery guidance or state the failure rather than describing an earlier success. Never repeat a successful mutation.',
       ].join(' '),
     },
   ];
@@ -2472,6 +2512,7 @@ async function processAIChatMessage(userObj, incomingMessages, options = {}) {
   const clientActions = [];
   const lastUserText = cleanMessages.filter(m => m.role === 'user').pop()?.content || '';
   const explicitlyRequestedTools = explicitlyRequestedAITools(lastUserText, tools);
+  const naturalLookupState = { retried: false, tool: '' };
 
   const MAX_ITERATIONS = Math.min(20, Math.max(6, explicitlyRequestedTools.length + 3));
   let lastMessage = null;
@@ -2491,6 +2532,7 @@ async function processAIChatMessage(userObj, incomingMessages, options = {}) {
       explicitlyRequestedTools,
       missingRequestedTools,
       tools,
+      completedToolResults.some(entry => entry.tool === naturalLookupState.tool) ? '' : naturalLookupState.tool,
     );
     if (!OPENROUTER_API_KEY) {
       throw new Error('AI service temporarily unavailable.');
@@ -2568,6 +2610,7 @@ async function processAIChatMessage(userObj, incomingMessages, options = {}) {
         ...toolResults,
         ...clientActions.map(action => ({ tool: action.action, result: { success: true } })),
       ];
+      if (!isLast && !explicitlyRequestedTools.length && retryNaturalCatalogLookup(naturalLookupState, message.content || '', lastUserText, effectiveRole, completedToolResults, conversationMessages)) continue;
       const missingExplicitTools = unattemptedExplicitAITools(
         lastUserText,
         tools,
@@ -2602,62 +2645,17 @@ async function processAIChatMessage(userObj, incomingMessages, options = {}) {
 
       // Special handling for send_product_image in WhatsApp mode
       if (toolName === 'send_product_image' && isWhatsApp) {
-        try {
-          const product = await Product.findOne(publicProductFilter({ _id: args.productId })).select('name image images price discountedPrice currency priceCurrency stock seller').lean();
-          const imageUrl = product?.image || product?.images?.[0]?.url || product?.images?.[0];
-          if (!product || !(await isProductSellerPubliclyActive(product.seller))) {
-            const toolResult = { success: false, error: 'Product not found.' };
-            conversationMessages.push({
-              role: 'tool',
-              tool_call_id: tc.id,
-              content: JSON.stringify(toolResult),
-            });
-            toolResults.push({ tool: toolName, result: toolResult, id: tc.id });
-          } else if (!imageUrl) {
-            conversationMessages.push({
-              role: 'tool',
-              tool_call_id: tc.id,
-              content: JSON.stringify({ success: false, message: 'This product does not have an image.' }),
-            });
-            toolResults.push({ tool: toolName, result: { success: false, error: 'This product does not have an image.' }, id: tc.id });
-          } else {
-            const productCurrency = getProductCurrency(product);
-            const priceText = product.discountedPrice
-              ? `~${formatMoneySync(product.price, productCurrency, { sourceCurrency: productCurrency })}~ ${formatMoneySync(product.discountedPrice, productCurrency, { sourceCurrency: productCurrency })}`
-              : formatMoneySync(product.price, productCurrency, { sourceCurrency: productCurrency });
-            const caption = args.caption || [`*${product.name}*`, `Price: ${priceText}`, `${SITE_URL}/single-product/${product._id}`].join('\n');
-            // Store image info for the WhatsApp service to send after response
-            if (!options._pendingImages) options._pendingImages = [];
-            options._pendingImages.push({ imageUrl, caption });
-            const toolResult = {
-              success: true,
-              data: {
-                productId: product._id,
-                name: product.name,
-                imageUrl,
-                caption,
-                price: product.discountedPrice || product.price,
-                currency: productCurrency,
-                stock: product.stock,
-              },
-              message: `Image of "${product.name}" will be sent to the user.`,
-            };
-            conversationMessages.push({
-              role: 'tool',
-              tool_call_id: tc.id,
-              content: JSON.stringify(toolResult),
-            });
-            toolResults.push({ tool: toolName, result: toolResult, id: tc.id });
-          }
-        } catch (imgErr) {
-          const toolResult = { success: false, error: 'Failed to fetch product image.' };
-          conversationMessages.push({
-            role: 'tool',
-            tool_call_id: tc.id,
-            content: JSON.stringify(toolResult),
-          });
-          toolResults.push({ tool: toolName, result: toolResult, id: tc.id });
+        const toolResult = await executeToolCallForChat(toolName, args, executorUser, lastUserText, toolTurnContext);
+        if (toolResult.success && toolResult.data?.imageUrl) {
+          const product = toolResult.data;
+          const priceText = formatMoneySync(product.price, product.currency, { sourceCurrency: product.currency });
+          const caption = sanitizeCommerceReply(args.caption || [`${product.name}`, `Price: ${priceText}`, `${SITE_URL}/single-product/${product.productId}`].join('\n'));
+          if (!options._pendingImages) options._pendingImages = [];
+          options._pendingImages.push({ imageUrl: product.imageUrl, caption });
+          toolResult.data.caption = caption;
         }
+        conversationMessages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify(toolResult) });
+        toolResults.push({ tool: toolName, result: toolResult, id: tc.id });
         continue;
       }
 
@@ -2858,6 +2856,7 @@ exports.streamChat = async (req, res) => {
     const turnToolEvents = [];
     const lastUserText = cleanMessages.filter(m => m.role === 'user').pop()?.content || '';
     const explicitlyRequestedTools = explicitlyRequestedAITools(lastUserText, tools);
+    const naturalLookupState = { retried: false, tool: '' };
     const toolTurnContext = {
       _chatRequestKey: getHttpChatToolRequestKey(req, 'stream', userId),
     };
@@ -2888,6 +2887,7 @@ exports.streamChat = async (req, res) => {
         explicitlyRequestedTools,
         missingRequestedTools,
         tools,
+        completedToolResults.some(entry => entry.tool === naturalLookupState.tool) ? '' : naturalLookupState.tool,
       );
 
       // Call OpenRouter (streaming). Keep the abort timer active while the body
@@ -2970,6 +2970,7 @@ exports.streamChat = async (req, res) => {
           .map(event => event.type === 'tool_result'
             ? { tool: event.tool, result: event.result }
             : { tool: event.action, result: { success: true } });
+        if (!isLastChance && !explicitlyRequestedTools.length && retryNaturalCatalogLookup(naturalLookupState, assistantContent, lastUserText, effectiveRole, streamToolResults, conversationMessages)) continue;
         const missingExplicitTools = unattemptedExplicitAITools(
           lastUserText,
           tools,
@@ -3189,6 +3190,7 @@ exports.chatOnce = async (req, res) => {
     const clientActions = []; // Collect client-side actions
     const lastUserText = cleanMessages.filter(m => m.role === 'user').pop()?.content || '';
     const explicitlyRequestedTools = explicitlyRequestedAITools(lastUserText, tools);
+    const naturalLookupState = { retried: false, tool: '' };
     const toolTurnContext = {
       _chatRequestKey: getHttpChatToolRequestKey(req, 'once', userId),
     };
@@ -3213,6 +3215,7 @@ exports.chatOnce = async (req, res) => {
         explicitlyRequestedTools,
         missingRequestedTools,
         tools,
+        completedToolResults.some(entry => entry.tool === naturalLookupState.tool) ? '' : naturalLookupState.tool,
       );
 
       const upstream = await fetch(OPENROUTER_URL, {
@@ -3273,6 +3276,7 @@ exports.chatOnce = async (req, res) => {
           ...toolResults,
           ...clientActions.map(action => ({ tool: action.action, result: { success: true } })),
         ];
+        if (!isLast && !explicitlyRequestedTools.length && retryNaturalCatalogLookup(naturalLookupState, message.content || '', lastUserText, effectiveRole, completedToolResults, conversationMessages)) continue;
         const missingExplicitTools = unattemptedExplicitAITools(
           lastUserText,
           tools,

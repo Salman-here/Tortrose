@@ -454,7 +454,8 @@ describe('AI chat controller daily limit enforcement', () => {
 
     expect(grounded).toHaveLength(2);
     expect(grounded[1]).toMatchObject({ role: 'system' });
-    expect(grounded[1].content).toContain('only the latest user message');
+    expect(grounded[1].content).toContain('only the latest user request');
+    expect(grounded[1].content).toContain('Call any remaining necessary tools');
     expect(grounded[1].content).toContain('Do not recap');
   });
 
