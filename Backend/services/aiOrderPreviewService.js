@@ -49,16 +49,62 @@ function bindOrderPreviewToken(args, messages, { userId, requestKey } = {}) {
     // expired or same-turn preview. Keep it available for committed replays.
     return result.success || ['AI_ORDER_PREVIEW_EXPIRED', 'AI_ORDER_CONFIRMATION_REQUIRED'].includes(result.code);
   };
-  if (belongsToBuyer(args.quoteToken)) return args;
+  const providedIsValid = belongsToBuyer(args.quoteToken);
   for (const message of [...(messages || [])].reverse()) {
     if (!['assistant', 'system'].includes(message?.role)) continue;
     const candidates = [...new Set(String(message.content || '').match(/\baip1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])/g) || [])];
     if (!candidates.length) continue;
     const verified = candidates.filter(belongsToBuyer);
     // Never guess between previews for multiple different candidate orders.
-    return verified.length === 1 ? { ...args, quoteToken: verified[0] } : args;
+    const token = providedIsValid ? args.quoteToken : verified.length === 1 ? verified[0] : null;
+    if (!token) return args;
+    const saved = previewDataFromMessage(message.content).find(data => data.quoteToken === token);
+    const fields = ['productId', 'quantity', 'selectedColor', 'selectedOptions', 'shippingInfo', 'paymentMethod'];
+    const defaults = Object.fromEntries(fields.filter(field => saved?.orderRequest?.[field] !== undefined).map(field => [field, saved.orderRequest[field]]));
+    return { ...defaults, ...args, quoteToken: token };
   }
   return args;
 }
 
-module.exports = { createOrderPreview, verifyOrderPreview, bindOrderPreviewToken, PREVIEW_TTL_MS };
+// Client and server history use JSON inside a labelled context line. Read the
+// balanced JSON object rather than asking a language model to reconstruct the
+// approved address/options. Quoted braces and escapes in names are supported.
+function previewDataFromMessage(content = '') {
+  const text = String(content || '');
+  const entries = [];
+  const pattern = /\{\s*"quoteToken"\s*:/g;
+  for (let match = pattern.exec(text); match; match = pattern.exec(text)) {
+    let depth = 0, quoted = false, escaped = false;
+    for (let i = match.index; i < Math.min(text.length, match.index + 16000); i += 1) {
+      const character = text[i];
+      if (quoted) {
+        if (escaped) escaped = false;
+        else if (character === '\\') escaped = true;
+        else if (character === '"') quoted = false;
+      } else if (character === '"') quoted = true;
+      else if (character === '{') depth += 1;
+      else if (character === '}' && --depth === 0) {
+        try { entries.push(JSON.parse(text.slice(match.index, i + 1))); } catch { /* ignore malformed context */ }
+        pattern.lastIndex = i + 1;
+        break;
+      }
+    }
+  }
+  return entries;
+}
+
+function reuseOrderPreviewRequest(messages, identity) {
+  for (const message of [...(messages || [])].reverse()) {
+    if (!['assistant', 'system'].includes(message?.role)) continue;
+    const data = previewDataFromMessage(message.content);
+    if (!data.length) continue;
+    if (data.length !== 1 || !data[0].orderRequest) return null;
+    const bound = bindOrderPreviewToken({}, [message], identity);
+    if (!bound.quoteToken) return null;
+    const { quoteToken, ...request } = bound;
+    return request;
+  }
+  return null;
+}
+
+module.exports = { createOrderPreview, verifyOrderPreview, bindOrderPreviewToken, reuseOrderPreviewRequest, previewDataFromMessage, PREVIEW_TTL_MS };

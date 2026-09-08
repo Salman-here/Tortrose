@@ -1,5 +1,5 @@
 'use strict';
-const { createOrderPreview, verifyOrderPreview, bindOrderPreviewToken, PREVIEW_TTL_MS } = require('../../services/aiOrderPreviewService');
+const { createOrderPreview, verifyOrderPreview, bindOrderPreviewToken, reuseOrderPreviewRequest, previewDataFromMessage, PREVIEW_TTL_MS } = require('../../services/aiOrderPreviewService');
 const userId = 'buyer-one';
 const contract = { currency: 'PKR', summary: { totalAmount: 3939.5 }, items: [{ name: 'Mug', quantity: 1, options: { Color: 'Silver', Capacity: '500ml' } }] };
 beforeEach(() => { process.env.JWT_SECRET = 'disposable-preview-key'; });
@@ -37,4 +37,16 @@ test('does not guess between multiple previews in one response', () => {
   const second = createOrderPreview({ userId, requestKey: 'preview-turn', contract: { ...contract, currency: 'USD' }, now: 1000 }).quoteToken;
   const args = { quantity: 1 };
   expect(bindOrderPreviewToken(args, [{ role: 'assistant', content: `${first}\n${second}` }], { userId, requestKey: 'next-confirmation' })).toEqual(args);
+});
+
+test('retains reviewed address and options for a short confirmation or unchanged refreshed preview', () => {
+  const quoteToken = make().quoteToken;
+  const orderRequest = { productId: 'a-product', quantity: 1, selectedOptions: { Color: 'Silver', Capacity: '500ml' }, shippingInfo: { fullName: 'Buyer "One"', address: '909 Test {Lane}', city: 'Lahore' }, paymentMethod: 'cash_on_delivery' };
+  const message = { role: 'assistant', content: `[Tool memory: preview_order ${JSON.stringify({ quoteToken, orderRequest, summary: contract.summary })}.]` };
+  const identity = { userId, requestKey: 'confirm-turn' };
+  expect(previewDataFromMessage(message.content)[0].orderRequest).toEqual(orderRequest);
+  expect(bindOrderPreviewToken({}, [message], identity)).toEqual({ ...orderRequest, quoteToken });
+  expect(bindOrderPreviewToken({ quantity: 2 }, [message], identity).quantity).toBe(2); // repricing guard must reject a changed confirmation
+  expect(reuseOrderPreviewRequest([message], identity)).toEqual(orderRequest);
+  expect(reuseOrderPreviewRequest([message], { ...identity, userId: 'another-buyer' })).toBeNull();
 });

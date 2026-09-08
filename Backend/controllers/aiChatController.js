@@ -36,7 +36,7 @@ const { roundMoney } = require('../services/moneyMath');
 const { consumeDailyUsageForRequest } = require('../services/aiChatRateLimitService');
 const { NATURAL_COMMERCE_ADDENDUM, sanitizeCommerceReply, catalogLookupBeforeClarification, hasUnfinishedActionPromise, hasRomanUrduMutationClaim } = require('../services/aiConversationPolicy');
 const { restoreAttachmentHistory, bindNamedProductImage } = require('../services/aiAttachmentHistoryService');
-const { bindOrderPreviewToken } = require('../services/aiOrderPreviewService');
+const { bindOrderPreviewToken, reuseOrderPreviewRequest } = require('../services/aiOrderPreviewService');
 
 // ─── OpenRouter Config ───────────────────────────────────────────────
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
@@ -738,7 +738,10 @@ userTools.push({
     description: 'Calculate an exact COD order preview without creating an order, changing the cart, reserving stock or sending notifications. Uses the same live pricing, tax, shipping and option validation as place_order. Specify a product for a product-only order; omit it only for a whole-cart checkout. Collect missing choices/address, show the returned items/address/total, and ask the buyer to confirm in their next message. Keep quoteToken and orderRequest internal for that confirmation. No coupon is applied; use secure checkout for coupons or online payment.',
     parameters: {
       ...placeOrderTool.function.parameters,
-      properties: Object.fromEntries(Object.entries(placeOrderTool.function.parameters.properties).filter(([name]) => name !== 'quoteToken')),
+      properties: {
+        ...Object.fromEntries(Object.entries(placeOrderTool.function.parameters.properties).filter(([name]) => name !== 'quoteToken')),
+        reusePreviousPreview: { type: 'boolean', description: 'Set true only when the buyer wants a fresh preview of the SAME order with no changes. The server reuses all previous items, options and delivery details exactly. Do not set this when changing the order or address.' },
+      },
     },
   },
 });
@@ -1860,6 +1863,11 @@ function isPlaceholderStoreValue(value) {
 async function executeToolCallForChat(toolName, args, userObj, lastUserText = '', turnContext = {}) {
   let normalizedArgs = normalizeAIChatToolArgs(toolName, toolName === 'add_product' ? bindNamedProductImage(args, turnContext._imageContextMessages) : args, lastUserText);
   if (toolName === 'place_order') normalizedArgs = bindOrderPreviewToken(normalizedArgs, turnContext._imageContextMessages, { userId: userObj?._id || userObj?.id, requestKey: turnContext._chatRequestKey });
+  if (toolName === 'preview_order' && normalizedArgs.reusePreviousPreview === true) {
+    const previous = reuseOrderPreviewRequest(turnContext._imageContextMessages, { userId: userObj?._id || userObj?.id, requestKey: turnContext._chatRequestKey });
+    if (!previous) return { success: false, error: 'I need to confirm which items and delivery address you want to preview. No order has been placed.' };
+    normalizedArgs = previous;
+  }
   const argsWithContext = normalizedArgs && typeof normalizedArgs === 'object' && !Array.isArray(normalizedArgs)
     ? { ...normalizedArgs, _lastUserText: lastUserText, ...turnContext, _requireOrderPreview: true }
     : { _lastUserText: lastUserText, ...turnContext, _requireOrderPreview: true };
@@ -2067,7 +2075,7 @@ function messagesForCurrentTurnSummary(conversationMessages, completedToolResult
       content: [
         'Continue working on only the latest user request. Call any remaining necessary tools before writing the final response.',
         'Ground it only in tool-result messages produced after that latest user message.',
-        'Do not recap, merge, or reuse results from earlier turns.',
+        'Use prior conversation to resolve the intended product, selected options, explicit delivery details and reviewed order. Do not recap an earlier completed action as if you performed it again in this turn.',
         'A product lookup or cart read may be an intermediate step, not completion of a requested edit. Finish the requested action or ask only for missing information.',
         'If a current tool failed, use its safe recovery guidance or state the failure rather than describing an earlier success. Never repeat a successful mutation.',
       ].join(' '),
