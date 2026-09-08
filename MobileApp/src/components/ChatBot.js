@@ -1009,9 +1009,12 @@ export default function ChatBot({
       ))
       .map(m => {
         const toolMemory = summarizeToolResultsForPrompt(m.toolResults);
+        const attachmentMemory = m.attachmentContext || (m.attachments || [])
+          .filter(attachment => attachment.type === 'image' && /^https?:\/\//i.test(attachment.url || ''))
+          .map(attachment => `[Attached product image: ${attachment.url}]`).join('\n');
         return {
           role: m.role,
-          content: [m.content, toolMemory].filter(Boolean).join('\n\n'),
+          content: [m.content, attachmentMemory, toolMemory].filter(Boolean).join('\n\n'),
         };
       });
     aiMessages.push({ role: 'user', content: visibleContent });
@@ -1044,6 +1047,11 @@ export default function ChatBot({
         currency,
         activeConvoIdRef.current,
       );
+      if (response.uploadContext) setMessages(previous => previous.map(message => message.id === userMsg.id ? {
+        ...message,
+        attachments: [...(message.attachments || []).filter(attachment => attachment.type !== 'image'), ...(response.uploadContext.attachments || [])],
+        attachmentContext: response.uploadContext.context || '',
+      } : message));
       if (response.conversationId) {
         const savedConversationId = String(response.conversationId);
         activeConvoIdRef.current = savedConversationId;

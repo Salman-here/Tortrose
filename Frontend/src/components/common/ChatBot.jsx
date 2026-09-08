@@ -827,7 +827,7 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
       ))
       .map(m => {
         const toolMemory = summarizeToolEventsForPrompt(m.toolEvents);
-        const attachmentMemory = (m.attachments || [])
+        const attachmentMemory = m.attachmentContext || (m.attachments || [])
           .filter(attachment => attachment?.type === 'image' && /^https?:\/\//i.test(attachment.url || ''))
           .map(attachment => `[Attached product image: ${attachment.url}]`)
           .join('\n');
@@ -937,6 +937,21 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
 
           try {
             const parsed = JSON.parse(jsonStr);
+
+            if (parsed.type === 'user_attachments') {
+              setMessages(previous => {
+                const copy = [...previous];
+                let index = copy.length - 1;
+                while (index >= 0 && copy[index].role !== 'user') index -= 1;
+                if (index >= 0) copy[index] = {
+                  ...copy[index],
+                  attachments: [...(copy[index].attachments || []).filter(attachment => attachment.type !== 'image'), ...(parsed.attachments || [])],
+                  attachmentContext: parsed.context || '',
+                };
+                return copy;
+              });
+              continue;
+            }
 
             // Error event
             if (parsed.error) {

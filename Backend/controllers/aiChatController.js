@@ -35,6 +35,7 @@ const {
 const { roundMoney } = require('../services/moneyMath');
 const { consumeDailyUsageForRequest } = require('../services/aiChatRateLimitService');
 const { NATURAL_COMMERCE_ADDENDUM, sanitizeCommerceReply, catalogLookupBeforeClarification } = require('../services/aiConversationPolicy');
+const { restoreAttachmentHistory, bindNamedProductImage } = require('../services/aiAttachmentHistoryService');
 
 // ─── OpenRouter Config ───────────────────────────────────────────────
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
@@ -207,9 +208,12 @@ async function getIncomingMessagesFromRequest(req) {
   if (uploadAttachments.length || explicitAttachments.length) {
     const attachmentResult = await processChatAttachments([...uploadAttachments, ...explicitAttachments]);
     incoming = appendAttachmentContextToMessages(incoming, attachmentResult);
+    req.aiUploadContext = { attachments: attachmentResult.attachments || [], context: attachmentResult.context || '' };
   }
 
-  return incoming;
+  // Older clients keep only a local preview URL until a reload. Recover the
+  // uploaded URL from this authenticated conversation before a follow-up.
+  return restoreAttachmentHistory(incoming, req.user?.id || req.user?._id, body.conversationId);
 }
 
 // ─── SYSTEM PROMPTS ──────────────────────────────────────────────────
@@ -1840,7 +1844,7 @@ function isPlaceholderStoreValue(value) {
 }
 
 async function executeToolCallForChat(toolName, args, userObj, lastUserText = '', turnContext = {}) {
-  const normalizedArgs = normalizeAIChatToolArgs(toolName, args, lastUserText);
+  const normalizedArgs = normalizeAIChatToolArgs(toolName, toolName === 'add_product' ? bindNamedProductImage(args, turnContext._imageContextMessages) : args, lastUserText);
   const argsWithContext = normalizedArgs && typeof normalizedArgs === 'object' && !Array.isArray(normalizedArgs)
     ? { ...normalizedArgs, _lastUserText: lastUserText, ...turnContext }
     : { _lastUserText: lastUserText, ...turnContext };
@@ -2486,6 +2490,7 @@ async function processAIChatMessage(userObj, incomingMessages, options = {}) {
   };
   const toolTurnContext = {
     _chatRequestKey: buildChatToolRequestKey(options.requestKey, mode, userId),
+    _imageContextMessages: incomingMessages,
   };
   const mutationSlotForIntent = createDurableMutationSlotAllocator();
   let systemContent = await getSystemPrompt(effectiveRole, isWhatsApp ? 'whatsapp' : 'web');
@@ -2836,6 +2841,7 @@ exports.streamChat = async (req, res) => {
 
     const closed = () => res.writableEnded || res.destroyed;
     const send = (obj) => { if (!closed()) res.write(`data: ${JSON.stringify(obj)}\n\n`); };
+    if (req.aiUploadContext) send({ type: 'user_attachments', ...req.aiUploadContext });
 
     // Heartbeat
     const heartbeat = setInterval(() => { if (!closed()) res.write(': ping\n\n'); }, 15000);
@@ -2859,6 +2865,7 @@ exports.streamChat = async (req, res) => {
     const naturalLookupState = { retried: false, tool: '' };
     const toolTurnContext = {
       _chatRequestKey: getHttpChatToolRequestKey(req, 'stream', userId),
+      _imageContextMessages: incoming,
     };
     const mutationSlotForIntent = createDurableMutationSlotAllocator();
 
@@ -3193,6 +3200,7 @@ exports.chatOnce = async (req, res) => {
     const naturalLookupState = { retried: false, tool: '' };
     const toolTurnContext = {
       _chatRequestKey: getHttpChatToolRequestKey(req, 'once', userId),
+      _imageContextMessages: incoming,
     };
     const mutationSlotForIntent = createDurableMutationSlotAllocator();
 
@@ -3399,6 +3407,7 @@ exports.chatOnce = async (req, res) => {
 
     return res.json({
       message: visibleMessage,
+      ...(req.aiUploadContext ? { uploadContext: req.aiUploadContext } : {}),
       toolResults,
       clientActions,
       role: effectiveRole,
