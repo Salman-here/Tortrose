@@ -104,6 +104,21 @@ async function createProduct(seller, overrides = {}) {
 }
 
 describe('AI seller-native money writes', () => {
+  test('ambiguous edits show friendly choices without IDs and leave every product unchanged', async () => {
+    const seller = await createPkrSeller();
+    const horizon = await createProduct(seller, { name: 'Horizon Tumbler', price: 2200, priceInputAmount: 2200, stock: 8 });
+    const summit = await createProduct(seller, { name: 'Summit Tumbler', price: 2300, priceInputAmount: 2300, stock: 6 });
+    const result = await executeToolCall('edit_product', { productName: 'tumbler', updates: { stock: 7 } }, seller);
+    expect(result).toMatchObject({ success: false, requiresSelection: true });
+    expect(result.error).toContain('Horizon Tumbler');
+    expect(result.error).toContain('Summit Tumbler');
+    expect(result.error).toContain('Rs2,300.00 PKR');
+    expect(result.error).not.toContain(String(horizon._id));
+    expect(result.error).not.toContain(String(summit._id));
+    expect((await Product.findById(horizon._id).lean()).stock).toBe(8);
+    expect((await Product.findById(summit._id).lean()).stock).toBe(6);
+  });
+
   test('reuses this store category and brand casing for natural creation and edits', async () => {
     const otherSeller = await createPkrSeller();
     await createProduct(otherSeller, { name: 'Other Cup', category: 'DRINKWARE', brand: 'MOBILE AI FORGE' });

@@ -89,6 +89,18 @@ test('supports partial names and partial option changes without resetting other 
   expect(result.data.totalCartPrice).toBe(4664.5);
 });
 
+test('uses the validated chat currency rather than a stale saved preference for edits and removals', async () => {
+  const actor = { _id: buyer._id, role: 'user', currency: 'USD' };
+  const result = await executeToolCall('update_cart_item', { productName: 'mug', selectedColor: 'Silver' }, actor);
+  expect(result).toMatchObject({ success: true, data: { totalCartCurrency: 'USD', totalCartPrice: 29.75 } });
+  expect(result.message).toContain('$29.75 USD');
+  expect((await read()).totalCartCurrency).toBe('USD');
+  const removed = await executeToolCall('remove_from_cart', { productName: 'mug' }, actor);
+  expect(removed).toMatchObject({ success: true, data: { totalCartCurrency: 'USD', totalCartPrice: 3.57 } });
+  expect(removed.message).toContain('$3.57 USD');
+  expect((await User.findById(buyer._id).lean()).currency).toBe('PKR');
+});
+
 test.each([0, -1, 1.5, true, '', '2', null, Number.MAX_SAFE_INTEGER + 1])('rejects invalid absolute quantity %p without any cart write', async quantity => {
   const result = await changeAICartItem(buyer._id, { productId: String(mug._id), quantity });
   expect(result.success).toBe(false);
@@ -111,6 +123,10 @@ test('multiple existing variants require a target; a chosen variant merges with 
   const before = await read();
   const ambiguous = await changeAICartItem(buyer._id, { productName: 'mug', selectedColor: 'Silver' });
   expect(ambiguous.needsCartItemSelection).toBe(true);
+  expect(ambiguous.error).toContain('Aurora Thermal Travel Mug');
+  expect(ambiguous.error).toContain('Color: Black');
+  expect(ambiguous.error).toContain('Color: Silver');
+  expect(ambiguous.error).not.toContain(String(mug._id));
   expect(await read()).toEqual(before);
   const result = await changeAICartItem(buyer._id, { productName: 'mug', currentColor: 'Black', selectedColor: 'Silver' });
   expect(result.success).toBe(true);

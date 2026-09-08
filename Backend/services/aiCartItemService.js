@@ -70,7 +70,7 @@ function mergeSelectedOptions(item, args) {
   };
 }
 
-async function changeAICartItem(userId, args = {}, operation = 'update') {
+async function changeAICartItem(userId, args = {}, operation = 'update', { currency: requestedCurrency } = {}) {
   if (!mongoose.isValidObjectId(userId)) return { success: false, error: 'Please sign in to manage your cart.' };
   const cart = await Cart.findOne({ user: userId }).lean();
   if (!cart?.cartItems?.length) return { success: false, error: 'Your cart is empty. Add an item first.' };
@@ -81,7 +81,7 @@ async function changeAICartItem(userId, args = {}, operation = 'update') {
   if (!matches.length) return { success: false, error: 'I could not find that item in your cart. Please choose an item from your current cart.', data: { items: cart.cartItems.map(item => preview(item, products)) } };
   if (matches.length > 1 && !removeAllMatches) return {
     success: false, needsCartItemSelection: true,
-    error: 'More than one cart item matches. Which product and current color or size would you like to change?',
+    error: `More than one cart item matches. Which one would you like to change?\n${matches.map((item, index) => `${index + 1}. ${preview(item, products).name}${selectionLabel(item) ? ` (${selectionLabel(item)})` : ''} — quantity ${item.qty}`).join('\n')}`,
     data: { items: matches.map(item => preview(item, products)) },
   };
   const before = cart.cartItems;
@@ -122,8 +122,8 @@ async function changeAICartItem(userId, args = {}, operation = 'update') {
     after = after.filter(line => !duplicateIds.has(id(line._id)));
   }
 
-  const account = await User.findById(userId).select('currency').lean();
-  const currency = account?.currency ?? 'USD';
+  const account = requestedCurrency === undefined ? await User.findById(userId).select('currency').lean() : null;
+  const currency = requestedCurrency === undefined ? (account?.currency ?? 'USD') : requestedCurrency;
   if (typeof currency !== 'string' || currency !== currency.trim().toUpperCase() || !isSupportedCurrency(currency)) return { success: false, error: 'Your account currency could not be verified. Please refresh your profile.' };
   const nativeLines = after.flatMap(line => {
     const currentProduct = products.get(id(line.product));

@@ -60,6 +60,7 @@ const {
   normalizeRates,
   exchangeRatesUnavailableError,
   formatMoney,
+  formatMoneySync,
 } = require('./currencyService');
 const {
   buildOrderItemMoneyAllocations,
@@ -788,7 +789,7 @@ function productLookupBaseFilter(role, userId, args = {}) {
 
 async function resolveProductCandidates({ role, userId, args = {}, productId, productIds, productName, productNames, excludeProductId, keepProductId }) {
   const filter = productLookupBaseFilter(role, userId, args);
-  const productCandidateSelect = 'name brand price stock category isFeatured isBlocked blockedReason moderationStatus moderationReason createdAt updatedAt tags description';
+  const productCandidateSelect = 'name brand price currency priceCurrency priceInputAmount priceVersion discountedPrice discountedPriceCurrency discountedPriceInputAmount stock category isFeatured isBlocked blockedReason moderationStatus moderationReason createdAt updatedAt tags description';
   const ids = [
     ...(Array.isArray(productIds) ? productIds : []),
     ...(productId ? [productId] : []),
@@ -1679,7 +1680,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
         const matches = exact.length ? exact : fuzzyProductMatches(candidates, args.productName, 10);
         if (matches.length !== 1 || lookup.data?.fallback) return {
           success: false, needsProductSelection: true,
-          error: matches.length ? 'I found more than one possible product. Which one would you like?' : 'I could not find that product. Try a short name, brand or description.',
+          error: matches.length ? `I found possible matches. Which one would you like?\n${productChoiceList(matches)}` : 'I could not find that product. Try a short name, brand or description.',
           data: { products: matches },
         };
         args = { ...args, productId: String(matches[0]._id) };
@@ -2581,7 +2582,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
       }
 
       case 'update_cart_item': {
-        return changeAICartItem(userId, args, 'update');
+        return changeAICartItem(userId, args, 'update', { currency: preferredCurrency });
       }
 
       case 'view_cart': {
@@ -2644,7 +2645,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
 
       case 'remove_from_cart': {
         if (isCartReplacementRequest(args._lastUserText)) return { success: false, code: 'CART_ITEM_UPDATE_REQUIRED', error: 'The item can be changed directly without removing it first.', data: { nextTool: 'update_cart_item' } };
-        return changeAICartItem(userId, args, 'remove');
+        return changeAICartItem(userId, args, 'remove', { currency: preferredCurrency });
       }
 
       case 'clear_cart': {
@@ -3175,7 +3176,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
               sellers: sellerShipping.map(entry => ({ storeName: sellerStoreById.get(String(entry.seller))?.storeName || '', shippingMethod: entry.shippingMethod })),
               estimatedDays: Math.max(...sellerShipping.map(entry => entry.shippingMethod.estimatedDays), 0),
             },
-            message: `Order preview only — ${persistedOrderItems.map(item => `${item.quantity} × ${item.name}${item.selectedOptions ? ` (${Object.entries(item.selectedOptions).map(([name, value]) => `${name}: ${value}`).join(', ')})` : ''}`).join('; ')}. Products: ${await formatMoneyWithCode(subtotalRounded, preferredCurrency)}. Delivery: ${await formatMoneyWithCode(shippingCostRounded, preferredCurrency)}. Tax: ${await formatMoneyWithCode(taxRounded, preferredCurrency)}. Total: ${await formatMoneyWithCode(totalAmount, preferredCurrency)}. Cash on Delivery to ${shipping.fullName}, ${shipping.address}, ${shipping.city}, ${shipping.country}. No order has been placed. Ask the buyer to confirm.`,
+            message: `Order preview only — ${persistedOrderItems.map(item => `${item.quantity} × ${item.name}${item.selectedOptions ? ` (${Object.entries(item.selectedOptions).map(([name, value]) => `${name}: ${value}`).join(', ')})` : ''}`).join('; ')}. Products: ${await formatMoneyWithCode(subtotalRounded, preferredCurrency)}. Delivery: ${await formatMoneyWithCode(shippingCostRounded, preferredCurrency)}. Tax: ${await formatMoneyWithCode(taxRounded, preferredCurrency)}. Total: ${await formatMoneyWithCode(totalAmount, preferredCurrency)}. Cash on Delivery to ${shipping.fullName}, ${shipping.address}, ${shipping.city}, ${shipping.country}. No order has been placed. Review these details before confirming.`,
           };
         }
         if (args.quoteToken) {
@@ -4046,7 +4047,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
               success: false,
               blocked: true,
               requiresSelection: true,
-              error: `I found ${candidates.length} products that could match "${productName}". Please choose by name, price, or latest/oldest wording before I edit anything.`,
+              error: `I found ${candidates.length} products that could match "${productName}". Which one should I change?\n${productChoiceList(candidates, true)}`,
               data: { matches: candidates.map(formatProductCandidate) },
             };
           }
@@ -4366,7 +4367,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
             success: false,
             blocked: true,
             requiresSelection: true,
-            error: `I found ${products.length} matching products. I did not delete anything yet. Please confirm which ones to remove by name, price, or "all matching".`,
+            error: `I found ${products.length} matching products. I did not delete anything. Which should I remove?\n${productChoiceList(products, true)}`,
             data: { matches: products.map(formatProductCandidate) },
           };
         }
@@ -4408,7 +4409,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
             success: false,
             blocked: true,
             requiresSelection: true,
-            error: `I found ${products.length} matching products. Please tell me which one to ${featured ? 'feature' : 'unfeature'} using its name, price, or latest/oldest wording.`,
+            error: `I found ${products.length} matching products. Which should I ${featured ? 'feature' : 'unfeature'}?\n${productChoiceList(products, true)}`,
             data: { matches: products.map(formatProductCandidate) },
           };
         }
@@ -6955,6 +6956,22 @@ function normalizeTaxConfigUpdate(args = {}, current = null, preferredCurrency =
     currency,
     isActive: has('isActive') ? args.isActive : (current?.isActive !== false),
   };
+}
+
+function productChoiceList(products, sellerNative = false) {
+  return products.map((product, index) => {
+    const details = [product.storeName || product.brand || ''];
+    if (sellerNative) {
+      try {
+        const currency = requireStoredProductCurrency(product, 'USD');
+        const price = requireStoredProductEffectivePrice(product);
+        const formatted = formatMoneySync(price, currency, { sourceCurrency: currency });
+        details.push(`${formatted}${currency === 'USD' ? ' USD' : ''}`);
+      } catch { /* A corrupt price must not hide the item's name or invent money. */ }
+    }
+    if (Number.isSafeInteger(product.stock) && product.stock >= 0) details.push(`stock ${product.stock}`);
+    return `${index + 1}. ${product.name}${details.filter(Boolean).length ? ` — ${details.filter(Boolean).join(' · ')}` : ''}`;
+  }).join('\n');
 }
 
 async function existingSellerTaxonomy(sellerId, field, value) {
