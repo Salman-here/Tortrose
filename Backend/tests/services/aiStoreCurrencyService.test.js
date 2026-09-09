@@ -203,3 +203,11 @@ test('the sixty-day boundary is exact and old request/cancel timestamps do not l
   expect(storeCurrencyChangeLimit({ lastProductCurrencyChangeAt: last }, now - 1).canChange).toBe(false);
   expect(isCurrencyChangeConfirmation('haan kar do', 'USD')).toBe(true);
 });
+
+test.each(['yes, change my store from PKR to USD', 'yes, change my PKR store to USD', 'please change my store currency from PKR to USD', 'yes, from Pakistani rupees to US dollars'])('accepts the reviewed source-to-target direction in ordinary confirmation: %s', text => {
+  expect(isCurrencyChangeConfirmation(text, 'USD', 'PKR')).toBe(true);
+});
+
+test.each(['yes, from USD to PKR', 'yes, from PKR to euros', 'yes, from PKR to Canadian dollars'])('rejects a reversed or different conversion direction: %s', text => {
+  expect(isCurrencyChangeConfirmation(text, 'USD', 'PKR')).toBe(false);
+});

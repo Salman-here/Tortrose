@@ -22,7 +22,7 @@ const money = (amount, currency) => {
   return value.includes(currency) ? value : `${value} ${currency}`;
 };
 
-function isCurrencyChangeConfirmation(text, targetCurrency) {
+function isCurrencyChangeConfirmation(text, targetCurrency, sourceCurrency) {
   const value = String(text || '').trim();
   if (!value || /[?？]|\b(?:no|not|don't|dont|do not|cancel|stop|wait|instead|but|unless|maybe|later|explain|what|why|how|when|which|tell me|show me|can you|could you|would you|nahi|nahin|mat|ruk)\b/i.test(value)) return false;
   if (/\b(?:only|just)\s+(?:this|that|one|the)\s+(?:product|item|price)\b|\b(?:single product|individual product|product price|stock|quantity)\b/i.test(value)) return false;
@@ -36,8 +36,16 @@ function isCurrencyChangeConfirmation(text, targetCurrency) {
     ['AED', /\b(?:AED|dirhams?)\b/i],
   ];
   const mentioned = aliases.filter(([, pattern]) => pattern.test(value)).map(([code]) => code);
-  if (mentioned.some(code => code !== targetCurrency)) return false;
+  const sourcePattern = aliases.find(([code]) => code === sourceCurrency)?.[1];
+  const targetPattern = aliases.find(([code]) => code === targetCurrency)?.[1];
+  const confirmsDirection = sourcePattern && targetPattern && new RegExp(
+    `(?:${sourcePattern.source})(?:\\s+(?:store|product|pricing|currency)){0,3}\\s+to\\s+(?:${targetPattern.source})`, 'i'
+  ).test(value);
+  // Mentioning the original currency is valid in "from PKR to USD". It must
+  // not make a clear confirmation fail, nor allow the reversed direction.
+  if (mentioned.some(code => code !== targetCurrency && !(confirmsDirection && code === sourceCurrency))) return false;
   return /^(?:yes|yep|yeah|confirm(?:ed)?|approve(?:d)?|go ahead|proceed|do it|sure|ok(?:ay)?|haan|han|ji|theek hai)\b/i.test(value)
+    || Boolean(confirmsDirection && /^(?:please\s+)?(?:change|switch|convert)\b/i.test(value))
     || /^(?:please\s+)?(?:change|switch|convert)\s+(?:my\s+|the\s+)?(?:whole\s+|entire\s+)?store(?:'s)?\s+(?:product\s+)?currency\s+to\s+(?:USD|PKR|EUR|GBP)\b/i.test(value);
 }
 
@@ -103,7 +111,7 @@ async function changeStoreCurrency(sellerId, args = {}) {
   if (!token) return failure('AI_CURRENCY_PREVIEW_REQUIRED', 'Please review a store-currency change preview first. Your store currency and products are unchanged.');
   const preview = await Preview.findOne({ token, seller: sellerId });
   if (!preview) return failure('AI_CURRENCY_PREVIEW_INVALID', 'That currency preview could not be verified for your store. Please request a fresh preview.');
-  if (!isCurrencyChangeConfirmation(args._lastUserText, preview.targetCurrency)) {
+  if (!isCurrencyChangeConfirmation(args._lastUserText, preview.targetCurrency, preview.sourceCurrency)) {
     return failure('AI_CURRENCY_CONFIRMATION_REQUIRED', 'No store-wide change was made. Please explicitly confirm the reviewed currency change, or ask your question before deciding.');
   }
   if (args.currency !== undefined && normalizeProductCurrency(args.currency, null) !== preview.targetCurrency) {
