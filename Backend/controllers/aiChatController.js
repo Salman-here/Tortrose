@@ -37,6 +37,7 @@ const { consumeDailyUsageForRequest } = require('../services/aiChatRateLimitServ
 const { NATURAL_COMMERCE_ADDENDUM, sanitizeCommerceReply, catalogLookupBeforeClarification, hasUnfinishedActionPromise, hasRomanUrduMutationClaim } = require('../services/aiConversationPolicy');
 const { restoreAttachmentHistory, bindNamedProductImage } = require('../services/aiAttachmentHistoryService');
 const { bindOrderPreviewToken, reuseOrderPreviewRequest } = require('../services/aiOrderPreviewService');
+const { getStoreCurrencyCooldownReply } = require('../services/aiStoreCurrencyService');
 
 // ─── OpenRouter Config ───────────────────────────────────────────────
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
@@ -2611,11 +2612,12 @@ async function processAIChatMessage(userObj, incomingMessages, options = {}) {
   const lastUserText = cleanMessages.filter(m => m.role === 'user').pop()?.content || '';
   const explicitlyRequestedTools = explicitlyRequestedAITools(lastUserText, tools);
   const naturalLookupState = { retried: false, tool: '' };
+  const currencyCooldownReply = await getStoreCurrencyCooldownReply(userId, effectiveRole, lastUserText);
 
   const MAX_ITERATIONS = Math.min(20, Math.max(6, explicitlyRequestedTools.length + 3));
-  let lastMessage = null;
+  let lastMessage = currencyCooldownReply ? { role: 'assistant', content: currencyCooldownReply } : null;
 
-  for (let i = 0; i < MAX_ITERATIONS; i++) {
+  for (let i = 0; !currencyCooldownReply && i < MAX_ITERATIONS; i++) {
     const isLast = i === MAX_ITERATIONS - 1;
     const completedToolResults = [
       ...toolResults,
@@ -2976,8 +2978,14 @@ exports.streamChat = async (req, res) => {
     let iteration = 0;
     let finalTextSent = false;
     let terminalToolFailure = null;
+    const currencyCooldownReply = await getStoreCurrencyCooldownReply(userId, effectiveRole, lastUserText);
+    if (currencyCooldownReply) {
+      send({ choices: [{ delta: { content: currencyCooldownReply } }] });
+      conversationMessages.push({ role: 'assistant', content: currencyCooldownReply });
+      finalTextSent = true;
+    }
 
-    while (iteration < MAX_TOOL_ITERATIONS && !closed()) {
+    while (!currencyCooldownReply && iteration < MAX_TOOL_ITERATIONS && !closed()) {
       iteration++;
       const isLastChance = iteration === MAX_TOOL_ITERATIONS;
       const completedToolResults = turnToolEvents
@@ -3310,9 +3318,10 @@ exports.chatOnce = async (req, res) => {
 
     // Tool execution loop (non-streaming)
     const MAX_ITERATIONS = Math.min(20, Math.max(6, explicitlyRequestedTools.length + 3));
-    let lastMessage = null;
+    const currencyCooldownReply = await getStoreCurrencyCooldownReply(userId, effectiveRole, lastUserText);
+    let lastMessage = currencyCooldownReply ? { role: 'assistant', content: currencyCooldownReply } : null;
 
-    for (let i = 0; i < MAX_ITERATIONS; i++) {
+    for (let i = 0; !currencyCooldownReply && i < MAX_ITERATIONS; i++) {
       const isLast = i === MAX_ITERATIONS - 1;
       const completedToolResults = [
         ...toolResults,

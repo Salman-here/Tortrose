@@ -22,6 +22,33 @@ const money = (amount, currency) => {
   return value.includes(currency) ? value : `${value} ${currency}`;
 };
 
+function isSingleStoreCurrencyRequest(text) {
+  const value = String(text || '').replace(/\b(store|shop|brand)(?:'s)?\s+(?:product|pricing)\s+currency\b/gi, '$1 currency');
+  return /\b(?:store|shop|brand)\b/i.test(value)
+    && /\b(?:currency|USD|PKR|EUR|GBP|dollars?|rupees?|euros?|pounds?)\b/i.test(value)
+    && /\b(?:change|switch|convert|preview|again|back|want)\b/i.test(value)
+    // Do not consume a separate product/order/profile action or block an
+    // individual foreign-currency price input during the store cooldown.
+    && !/\b(?:products?|items?|listings?|prices?|stock|quantity|orders?|coupons?|shipping|description|image|name|email|profile)\b/i.test(value);
+}
+
+async function getStoreCurrencyCooldownReply(sellerId, role, text) {
+  if (!sellerId || !['seller', 'admin'].includes(role) || !isSingleStoreCurrencyRequest(text)) return '';
+  const store = await Store.findOne({ seller: sellerId })
+    .select('productCurrency lastProductCurrencyChangeAt isActive').lean();
+  if (!store || !store.productCurrency) return '';
+  const currency = normalizeProductCurrency(store.productCurrency, null);
+  const limit = storeCurrencyChangeLimit(store);
+  if (store.isActive === false) return `Your store is blocked. Its product currency is ${currency}; no currency change was made.`;
+  if (limit.canChange) return '';
+  const codes = [...new Set((String(text).match(/\b(?:USD|PKR|EUR|GBP)\b/gi) || []).map(code => code.toUpperCase()))];
+  const target = /\bto\s+(USD|PKR|EUR|GBP)\b/i.exec(text)?.[1]?.toUpperCase();
+  if (target === currency || codes.length === 1 && codes[0] === currency) {
+    return `Your store already uses ${currency}. No store currency or product prices were changed.`;
+  }
+  return `Your store currently uses ${currency}. You cannot change its currency again until ${formatCurrencyChangeDate(limit.nextAllowedAt)} because a completed change starts a ${limit.cooldownDays}-day waiting period. You can still give me an individual product price in another supported currency; I will convert and save it in ${currency} and show both amounts. No store-wide change was made.`;
+}
+
 function isCurrencyChangeConfirmation(text, targetCurrency, sourceCurrency) {
   const value = String(text || '').trim();
   if (!value || /[?？]|\b(?:no|not|don't|dont|do not|cancel|stop|wait|instead|but|unless|maybe|later|explain|what|why|how|when|which|tell me|show me|can you|could you|would you|nahi|nahin|mat|ruk)\b/i.test(value)) return false;
@@ -154,4 +181,4 @@ async function changeStoreCurrency(sellerId, args = {}) {
   }
 }
 
-module.exports = { previewStoreCurrencyChange, changeStoreCurrency, previousPreviewToken, isCurrencyChangeConfirmation, PREVIEW_TTL_MS };
+module.exports = { previewStoreCurrencyChange, changeStoreCurrency, previousPreviewToken, isCurrencyChangeConfirmation, getStoreCurrencyCooldownReply, isSingleStoreCurrencyRequest, PREVIEW_TTL_MS };
