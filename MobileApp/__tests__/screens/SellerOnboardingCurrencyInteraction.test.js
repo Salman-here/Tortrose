@@ -5,6 +5,12 @@ import api from '../../src/config/api';
 import axios from 'axios';
 import { useAuth } from '../../src/contexts/AuthContext';
 
+// These are multi-screen integration journeys, not single-operation unit tests.
+// A cold RN render and several async transitions can exceed Jest's 5s default
+// on a loaded host. Keep each findBy/waitFor deadline and every assertion;
+// allow enough overall wall-clock time for the complete journey.
+jest.setTimeout(15000);
+
 jest.mock('@expo/vector-icons', () => ({ Ionicons: () => null }));
 jest.mock('expo-linear-gradient', () => ({ LinearGradient: ({ children }) => children }));
 jest.mock('../../src/config/api', () => ({ __esModule: true, API_BASE_URL: 'https://local.test', default: { get: jest.fn(), post: jest.fn() } }));

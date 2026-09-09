@@ -1609,13 +1609,24 @@ function groundedAssistantResponseText(responseText = '', completedToolResults =
   const successful = results.filter(({ result }) => result?.success === true);
   const failed = results.filter(({ result }) => result?.success !== true);
   const requiredDisclosures = [...new Set(results.map(({ result }) => result.requiredDisclosure).filter(value => typeof value === 'string' && value.trim()))];
-  const withDisclosures = text => [text, ...requiredDisclosures.filter(disclosure => !String(text || '').includes(disclosure))].filter(Boolean).join('\n\n');
+  if (requiredDisclosures.length) {
+    // Currency results already carry complete, server-confirmed wording. Use
+    // it once instead of repeating (or contradicting) the model's paraphrase.
+    const authoritative = results.map(({ result }) => {
+      const detail = sanitizeAssistantVisibleText(result.message || result.error || '');
+      const disclosure = sanitizeAssistantVisibleText(result.requiredDisclosure || '');
+      return disclosure && !detail.includes(disclosure)
+        ? [detail, disclosure].filter(Boolean).join('\n')
+        : detail;
+    }).filter(Boolean);
+    return [...new Set(authoritative)].join('\n\n');
+  }
   const contradictsSuccessfulReceipts = (
     successful.length > 0
     && failed.length === 0
     && /\b(?:could(?:n't| not)|can(?:not|'t)|unable|failed)\b[^\n.!?]{0,80}\b(?:process|complete|perform|place|update|add|remove|create|cancel|submit|do)\b/i.test(visibleText)
   );
-  if (visibleText && !contradictsSuccessfulReceipts) return withDisclosures(visibleText);
+  if (visibleText && !contradictsSuccessfulReceipts) return visibleText;
   if (results.length === 0) return visibleText;
 
   // A tool receipt is authoritative even when the model's final prose is
@@ -1627,7 +1638,7 @@ function groundedAssistantResponseText(responseText = '', completedToolResults =
     .map(message => sanitizeAssistantVisibleText(String(message || '')).trim())
     .filter(Boolean)
     .filter((message, index, all) => all.indexOf(message) === index);
-  if (receiptMessages.length > 0) return withDisclosures(receiptMessages.join('\n\n'));
+  if (receiptMessages.length > 0) return receiptMessages.join('\n\n');
 
   if (successful.length > 0 && failed.length === 0) {
     return successful.length === 1

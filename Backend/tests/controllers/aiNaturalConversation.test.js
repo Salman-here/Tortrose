@@ -57,7 +57,18 @@ test.each(['web', 'mobile', 'whatsapp'])('%s always includes the actual product 
     { role: 'assistant', content: 'Done.' },
   ]);
   expect(result.visible).toContain(disclosure);
-  expect(result.visible).toContain('Done.');
+  expect(result.visible).toContain('Product updated.');
+  expect(result.visible.split(disclosure)).toHaveLength(2);
+});
+
+test.each(['web', 'mobile', 'whatsapp'])('%s uses authoritative currency facts instead of duplicate or contradictory model pricing prose', async channel => {
+  const disclosure = 'Your store uses PKR. You supplied $10.00 USD; I converted it to Rs2,800.00 PKR. Your store currency remains PKR.';
+  executeToolCall.mockResolvedValue({ success: true, message: disclosure, requiredDisclosure: disclosure, data: { name: 'Travel Cup', price: 2800, currency: 'PKR' } });
+  const result = await runChannel(channel, 'make my travel cup ten dollars please', [
+    toolMessage('edit_product', { productName: 'Travel Cup', updates: { price: 10, currency: 'USD' } }),
+    { role: 'assistant', content: 'Done, your store is now USD and the cup costs 999 USD.' },
+  ]);
+  expect(result.visible).toBe(disclosure);
 });
 
 test.each(['web', 'mobile', 'whatsapp'])('%s always shows store-wide conversion consequences and sixty-day wait before confirmation', async channel => {
