@@ -79,6 +79,10 @@ const liveSnapshot = {
   source: 'test-live',
   fallback: false,
 };
+const queryResult = value => ({
+  session: jest.fn().mockReturnThis(),
+  then: (resolve, reject) => Promise.resolve(value).then(resolve, reject),
+});
 
 const mockUser = (currency = 'PKR') => {
   User.findById.mockReturnValue({
@@ -345,11 +349,13 @@ describe('storeProductCurrencyService', () => {
         updatedAt: new Date('2026-08-13T00:00:01.000Z'),
       },
     ];
-    Store.findOne.mockResolvedValueOnce(storeBefore).mockResolvedValueOnce(storeAfter);
+    Store.findOne.mockReturnValueOnce(queryResult(storeBefore))
+      .mockReturnValueOnce(queryResult(storeBefore))
+      .mockReturnValueOnce(queryResult(storeAfter));
     Product.aggregate
       .mockResolvedValueOnce([{ _id: 'PKR', count: 2 }])
       .mockResolvedValueOnce([{ _id: 'USD', count: 2 }]);
-    Product.find.mockResolvedValue(products);
+    Product.find.mockReturnValue(queryResult(products));
     Product.bulkWrite.mockResolvedValue({ matchedCount: 2, modifiedCount: 2 });
 
     const result = await convertPendingProductPrices('seller-1');
@@ -364,16 +370,16 @@ describe('storeProductCurrencyService', () => {
       expect.objectContaining({
         updateOne: expect.objectContaining({
           filter: expect.objectContaining({ _id: 'product-1', seller: 'seller-1', updatedAt: products[0].updatedAt }),
-          update: { $set: expect.objectContaining({ price: 1, discountedPrice: 0.5, currency: 'USD' }) },
+          update: { $set: expect.objectContaining({ price: 1, discountedPrice: 0.5, currency: 'USD' }), $unset: { discountedCurrency: '' } },
         }),
       }),
       expect.objectContaining({
         updateOne: expect.objectContaining({
           filter: expect.objectContaining({ _id: 'product-2', seller: 'seller-1', updatedAt: products[1].updatedAt }),
-          update: { $set: expect.objectContaining({ price: 2, discountedPrice: 0, currency: 'USD' }) },
+          update: { $set: expect.objectContaining({ price: 2, discountedPrice: 0, currency: 'USD' }), $unset: { discountedCurrency: '' } },
         }),
       }),
-    ], { session: { id: 'session-1' } });
+    ], { session: { id: 'session-1' }, strict: false });
     expect(Store.updateOne).toHaveBeenCalledWith(
       expect.objectContaining({
         _id: 'store-1',
@@ -454,12 +460,12 @@ describe('storeProductCurrencyService', () => {
 
   test('raises a conflict when a product changed and keeps store activation in the same failed transaction', async () => {
     const store = pendingStore();
-    Store.findOne.mockResolvedValue(store);
+    Store.findOne.mockReturnValue(queryResult(store));
     Product.aggregate.mockResolvedValue([{ _id: 'PKR', count: 1 }]);
-    Product.find.mockResolvedValue([{
+    Product.find.mockReturnValue(queryResult([{
       _id: 'product-1', seller: 'seller-1', price: 284.6, discountedPrice: 0, currency: 'PKR', priceCurrency: 'PKR',
       updatedAt: new Date('2026-08-13T00:00:00.000Z'),
-    }]);
+    }]));
     Product.bulkWrite.mockResolvedValue({ matchedCount: 0, modifiedCount: 0 });
 
     await expect(convertPendingProductPrices('seller-1')).rejects.toMatchObject({

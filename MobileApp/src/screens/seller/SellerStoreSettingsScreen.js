@@ -1027,7 +1027,7 @@ export default function SellerStoreSettingsScreen({ navigation }) {
                   key={code}
                   style={[styles.currencyChip, active && styles.currencyChipActive]}
                   onPress={() => updateProductCurrency(code)}
-                  disabled={productCurrencySaving || productCurrencyLoading || storeBlocked || Boolean(productCurrencyError) || !productCurrencyInfo}
+                  disabled={productCurrencySaving || productCurrencyLoading || storeBlocked || productCurrencyInfo?.changeLimit?.canChange === false || Boolean(productCurrencyError) || !productCurrencyInfo}
                   activeOpacity={0.8}
                 >
                   <Text style={[styles.currencyChipText, active && styles.currencyChipTextActive]}>{code}</Text>
@@ -1036,6 +1036,12 @@ export default function SellerStoreSettingsScreen({ navigation }) {
               );
             })}
           </View>
+          {productCurrencyInfo?.changeLimit && (
+            <Text style={styles.warningText}>
+              Store currency changes have a {productCurrencyInfo.changeLimit.cooldownDays}-day waiting period after completion. Existing regular and sale prices are converted; past orders and balances stay unchanged.
+              {productCurrencyInfo.changeLimit.canChange === false && ` You can change it again on ${new Date(productCurrencyInfo.changeLimit.nextAllowedAt).toLocaleString()}.`}
+            </Text>
+          )}
           {productCurrencyInfo?.status === 'pending_conversion' && (
             <View style={styles.warningPanel}>
               <Ionicons name="alert-circle-outline" size={18} color={palette.colors.warning} />

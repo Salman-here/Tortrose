@@ -153,6 +153,9 @@ const storeSchema = new mongoose.Schema({
     type: Date,
     default: null
   },
+  // Unlike productCurrencyChangedAt (which also tracks pending/cancel), this
+  // records only completed switches. Old stores are not retroactively locked.
+  lastProductCurrencyChangeAt: { type: Date, default: null },
   storeTheme: {
     type: storeThemeSchema,
     default: () => ({

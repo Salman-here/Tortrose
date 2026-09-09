@@ -601,6 +601,7 @@ describe('aiActionExecutor seller order attribution', () => {
   });
 
   test('seller AI store read reports pending verification and the native product currency', async () => {
+    await User.create({ _id: SELLER_B, username: 'Native Store Owner', email: 'native-store-owner@test.com', role: 'seller', currency: 'USD' });
     await Store.create({
       seller: SELLER_B,
       storeName: 'Pending Native Store',
@@ -625,6 +626,7 @@ describe('aiActionExecutor seller order attribution', () => {
       data: {
         storeName: 'Pending Native Store',
         productCurrency: 'PKR',
+        productCurrencySettings: { activeCurrency: 'PKR', changeLimit: { cooldownDays: 60, canChange: true } },
         verification: { isVerified: false, status: 'pending' },
       },
     });

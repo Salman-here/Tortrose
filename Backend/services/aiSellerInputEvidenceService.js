@@ -134,8 +134,13 @@ function assessSellerCreationInputs({ name, productNames = [], discountedPrice =
     if (!continuation && /\b(?:add|create|publish|import|list|upload)\b/i.test(text) && !/\b(?:cart|basket|wishlist)\b/i.test(text) && !/^\s*(?:yes|okay|ok|sure|haan|ji)\b/i.test(text)) start = index;
   });
   let prices = [], stocks = [], discounts = [], percentageDiscount = null, discountRemoved = false, previousAssistant = '';
+  let lastPriceAt = -1, lastStoreCurrencyChangeAt = -1;
   for (const [index, message] of input.entries()) {
-    if (message.role === 'assistant') { previousAssistant = String(message.content || '').split(/\n\s*\[Tool memory:/)[0]; continue; }
+    if (message.role === 'assistant') {
+      previousAssistant = String(message.content || '').split(/\n\s*\[Tool memory:/)[0];
+      if (/Your store product currency is now\b|Tool memory: change_store_currency succeeded/i.test(String(message.content || ''))) lastStoreCurrencyChangeAt = index;
+      continue;
+    }
     if (message.role !== 'user') continue;
     const parsed = parsedRows(message.content);
     const sharedCurrency = /\ball prices\s+(?:are\s+)?(?:in\s+)?(USD|PKR|EUR|GBP)\b|\b(?:these|following|all)\s+(USD|PKR|EUR|GBP)\s+products\b/i.exec(clean(parsed.text));
@@ -146,6 +151,7 @@ function assessSellerCreationInputs({ name, productNames = [], discountedPrice =
       const rowFacts = readFacts(`price ${row.price ?? ''}; stock ${row.stock ?? ''}; discounted price ${row.discountedPrice ?? ''}`);
       if ((row.priceCurrency || row.currency) && !codeFor(row.priceCurrency || row.currency)) return { ok: false, missing: ['supported price currency'], currency };
       prices = rowFacts.prices.map(fact => ({ ...fact, currency: codeFor(row.priceCurrency || row.currency) || fact.currency || rowCurrency || null }));
+      if (prices.length) lastPriceAt = index;
       stocks = rowFacts.stocks;
       discounts = rowFacts.discounts.map(fact => ({ ...fact, currency: codeFor(row.discountedPriceCurrency || row.currency) || fact.currency }));
     } else if (rows.length > 1) return { ok: false, missing: ['an unambiguous product row'], currency };
@@ -153,10 +159,13 @@ function assessSellerCreationInputs({ name, productNames = [], discountedPrice =
     const approved = /^(?:yes|yep|yeah|sure|ok(?:ay)?|confirmed?|approved?|haan|han|ji|theek(?: hai)?|looks good|that works)\b/i.test(parsed.text.trim())
       && !/\d|\b(?:but|not|no|change|cancel|different|another|other|instead|except|more|less|increase|decrease|nahi|mat)\b/i.test(parsed.text)
       && /\b(?:confirm|approve|shall i (?:add|publish|create)|should i (?:add|publish|create)|are these details correct|is (?:this|that) correct|does this look (?:right|correct))\b/i.test(previousAssistant);
-    const source = approved ? previousAssistant : parsed.text;
+    // A yes to converting the whole store is not approval of a new listing's
+    // price/stock, nor of the example prices shown for existing products.
+    const storeCurrencyPreview = /store (?:product )?currency/i.test(previousAssistant) && /existing product|waiting period|days|store-wide/i.test(previousAssistant);
+    const source = approved && !storeCurrencyPreview ? previousAssistant : parsed.text;
     const facts = readFacts(productText(source, name, productNames), previousAssistant);
     if (rowCurrency) facts.prices = facts.prices.map(fact => ({ ...fact, currency: fact.currency || rowCurrency }));
-    if (facts.prices.length) prices = facts.prices;
+    if (facts.prices.length) { prices = facts.prices; lastPriceAt = index; }
     if (facts.stocks.length) stocks = facts.stocks;
     if (facts.discounts.length) discounts = facts.discounts;
     if (/\b(?:remove|clear|no|without)\s+(?:the\s+)?discount\b/i.test(parsed.text)) {
@@ -173,6 +182,7 @@ function assessSellerCreationInputs({ name, productNames = [], discountedPrice =
   const stockAmounts = [...new Set(stocks.map(fact => fact.amount).filter(Number.isSafeInteger))];
   const explicitCurrencies = [...new Set(basePrices.map(fact => fact.currency).filter(Boolean))];
   const missing = [];
+  if (!explicitCurrencies.length && lastStoreCurrencyChangeAt > lastPriceAt && lastPriceAt >= 0) missing.push('price currency after the store currency change');
   if (priceAmounts.length !== 1 || explicitCurrencies.length > 1) missing.push('selling price');
   if (stockAmounts.length !== 1) missing.push('stock quantity');
   if (percentageDiscount !== null && priceAmounts.length === 1) {
@@ -188,7 +198,7 @@ function assessSellerCreationInputs({ name, productNames = [], discountedPrice =
   }
   if (discountAmounts.length > 1 || discountedPrice > 0 && !discountAmounts.length && !discountRemoved) missing.push('sale price');
   const discount = discounts[0];
-  return { ok: missing.length === 0, missing, price: priceAmounts[0], stock: stockAmounts[0], discountedPrice: discountAmounts[0] || 0, currency: explicitCurrencies[0] || currency, discountedCurrency: discount?.currency || explicitCurrencies[0] || currency };
+  return { ok: missing.length === 0, missing, price: priceAmounts[0], stock: stockAmounts[0], discountedPrice: discountAmounts[0] || 0, currency: explicitCurrencies[0] || currency, explicitPriceCurrency: explicitCurrencies.length === 1, discountedCurrency: discount?.currency || explicitCurrencies[0] || currency };
 }
 
 module.exports = { assessSellerCreationInputs, amountValue, readFacts };

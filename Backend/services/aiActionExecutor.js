@@ -35,6 +35,8 @@ const Cart = require('../models/Cart');
 const { changeAICartItem } = require('./aiCartItemService');
 const { createOrderPreview, verifyOrderPreview } = require('./aiOrderPreviewService');
 const { assessSellerCreationInputs } = require('./aiSellerInputEvidenceService');
+const { previewStoreCurrencyChange, changeStoreCurrency } = require('./aiStoreCurrencyService');
+const { storeCurrencyChangeLimit } = require('./storeCurrencyChangePolicy');
 const { isCartReplacementRequest, explicitlyClearsWholeCart, isOrderPreviewOnlyRequest } = require('./aiConversationPolicy');
 const StoreReview = require('../models/StoreReview');
 const { buildSellerPaymentSummary } = require('../controllers/PaymentController');
@@ -210,6 +212,7 @@ const AI_MUTATING_TOOLS_WITH_OUTER_RECEIPT = new Set([
 ]);
 const AI_DURABLE_MUTATING_TOOLS = new Set([
   ...AI_MUTATING_TOOLS_WITH_OUTER_RECEIPT,
+  'change_store_currency',
   'bulk_discount',
   'bulk_price_update',
 ]);
@@ -286,6 +289,7 @@ function storeChangeLimits(store) {
     storeName: cooldownStatus('storeName', store?.lastNameChangeAt),
     subdomain: cooldownStatus('storeSlug', store?.lastSlugChangeAt),
     sellerType: cooldownStatus('sellerType', store?.lastTypeChangeAt),
+    productCurrency: storeCurrencyChangeLimit(store),
   };
 }
 
@@ -486,6 +490,8 @@ async function buildProductCurrencyConversionNotice({
   sourceCurrency,
   savedAmount,
   productCurrency,
+  productName = '',
+  field = 'product price',
 } = {}) {
   const fromCurrency = normalizeCurrency(sourceCurrency);
   const toCurrency = normalizeCurrency(productCurrency);
@@ -493,7 +499,7 @@ async function buildProductCurrencyConversionNotice({
 
   const sourceText = await formatMoneyWithCode(sourceAmount, fromCurrency);
   const savedText = await formatMoneyWithCode(savedAmount, toCurrency);
-  return `Your selected product currency is ${toCurrency}, so I can't save this product in ${fromCurrency}. I converted ${sourceText} to ${savedText} and saved that as the product price. `;
+  return `${productName ? `${productName}: ` : ''}Your store uses ${toCurrency}. You supplied ${sourceText}; I converted it to ${savedText} and saved that as the ${field}. Your store currency remains ${toCurrency}. `;
 }
 
 const COMMON_COLOR_WORDS = new Set([
@@ -3626,6 +3632,10 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
             error: `Before I publish "${name}", please provide the ${evidence.missing.join(' and ')}. I will keep the photo and other details.`,
             data: { name, missingFields: evidence.missing },
           };
+          if (args._storeCurrencyChangedThisTurn && !evidence.explicitPriceCurrency) return {
+            success: false, blocked: true, needsSellerInput: true,
+            error: `Your store currency just changed to ${productEntryCurrency}. Please confirm the price and currency for "${name}" before I publish it; I will not reinterpret an earlier unlabelled amount.`,
+          };
           const proposedPrice = parseMoneyInput(p.price, productEntryCurrency).amount;
           const proposedStock = parseNonNegativeSafeInteger(p.stock);
           const proposedSale = parseMoneyInput(p.discountedPrice ?? 0, productEntryCurrency).amount;
@@ -3827,10 +3837,18 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
           sourceCurrency: priceInput.currency,
           savedAmount: product.price,
           productCurrency: productEntryCurrency,
+          productName: product.name,
         });
+        const saleConversionNotice = rawDiscountedPrice > 0 ? await buildProductCurrencyConversionNotice({
+          sourceAmount: rawDiscountedPrice, sourceCurrency: discountInput.currency,
+          savedAmount: product.discountedPrice, productCurrency: productEntryCurrency,
+          productName: product.name, field: 'sale price',
+        }) : '';
+        const requiredDisclosure = [conversionNotice, saleConversionNotice].filter(Boolean).join('\n').trim();
 
         return {
           success: true,
+          requiredDisclosure,
           data: {
             productId: product._id,
             name: product.name,
@@ -3856,10 +3874,16 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
             returnPolicy: product.returnPolicy,
             blocked: isProductBlocked(product),
             moderationReason: product.moderationReason || product.blockedReason || '',
+            ...(requiredDisclosure ? { priceConversion: {
+              suppliedPrice: rawPrice, suppliedCurrency: priceInput.currency,
+              savedPrice: product.price, storeCurrency: productEntryCurrency,
+              suppliedSalePrice: rawDiscountedPrice, suppliedSaleCurrency: discountInput.currency,
+              savedSalePrice: product.discountedPrice,
+            } } : {}),
           },
           message: isProductBlocked(product)
-            ? `Product "${product.name}" was saved to your Products tab, but it is blocked because ${product.blockedReason || product.moderationReason}. Customers cannot see it until you edit it with real product details.`
-            : `${conversionNotice}Product "${product.name}" added to your store "${store.storeName}" at ${await formatMoneyWithCode(product.price, productEntryCurrency)}!`,
+            ? `${requiredDisclosure ? `${requiredDisclosure}\n` : ''}Product "${product.name}" was saved to your Products tab, but it is blocked because ${product.blockedReason || product.moderationReason}. Customers cannot see it until you edit it with real product details.`
+            : `${requiredDisclosure ? `${requiredDisclosure}\n` : ''}Product "${product.name}" added to your store "${store.storeName}" at ${await formatMoneyWithCode(product.price, productEntryCurrency)}!`,
         };
       }
 
@@ -3908,6 +3932,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
             _lastUserText: args._lastUserText,
             _imageContextMessages: args._imageContextMessages,
             _requireExplicitSellerInputs: args._requireExplicitSellerInputs,
+            _storeCurrencyChangedThisTurn: args._storeCurrencyChangedThisTurn,
             _sourceProductNames: productsToAdd.map(product => product.name).filter(Boolean),
             createdVia: 'import',
             confirmDuplicate: item.confirmDuplicate === true || args.confirmDuplicate === true,
@@ -3920,16 +3945,19 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
             error: result.success === true ? '' : (result.error || result.message || 'Failed to add product.'),
             blocked: result.blocked === true,
             duplicate: result.duplicate === true,
+            requiredDisclosure: result.requiredDisclosure || '',
             data: result.data,
           });
         }
 
         const added = results.filter(r => r.success).length;
         const failed = results.length - added;
+        const requiredDisclosure = results.filter(row => row.success).map(row => row.requiredDisclosure).filter(Boolean).join('\n');
 
         return {
           success: added > 0 && failed === 0,
           blocked: failed > 0,
+          requiredDisclosure,
           data: {
             added,
             failed,
@@ -4346,8 +4374,17 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
             console.error('[aiActionExecutor] product blocked notification failed:', err.message)
           );
         }
+        const conversionNotice = sourcePriceAmount !== undefined ? await buildProductCurrencyConversionNotice({
+          sourceAmount: sourcePriceAmount, sourceCurrency: priceSourceCurrency,
+          savedAmount: product.price, productCurrency: nextCurrency, productName: product.name,
+        }) : '';
+        const saleConversionNotice = sourceDiscountAmount > 0 ? await buildProductCurrencyConversionNotice({
+          sourceAmount: sourceDiscountAmount, sourceCurrency: discountSourceCurrency,
+          savedAmount: product.discountedPrice, productCurrency: nextCurrency, productName: product.name, field: 'sale price',
+        }) : '';
         return {
           success: true,
+          requiredDisclosure: [conversionNotice, saleConversionNotice].filter(Boolean).join('\n').trim(),
           data: product,
           blocked: isProductBlocked(product),
           message: isProductBlocked(product)
@@ -5158,6 +5195,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
         if (!store) return { success: false, error: 'You don\'t have a store yet.' };
 
         const productCount = await Product.countDocuments({ seller: userId });
+        const productCurrencySettings = await getSellerProductCurrencyState(userId, { store });
         const storeUrl = store.storeSlug ? `https://${store.storeSlug}.rozare.com/` : null;
         const verificationStatus = store.verification?.isVerified
           ? 'verified'
@@ -5183,7 +5221,8 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
             socialLinks: store.socialLinks,
             returnPolicy: store.returnPolicy,
             paymentPolicy: store.paymentPolicy || 'online_and_cod',
-            productCurrency: store.productCurrency || 'USD',
+            productCurrency: productCurrencySettings.activeCurrency,
+            productCurrencySettings,
             productCount,
             changeLimits: storeChangeLimits(store),
             createdAt: store.createdAt,
@@ -5192,9 +5231,22 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
         };
       }
 
+      case 'preview_store_currency_change': {
+        if (!userId || !['seller', 'admin'].includes(role)) return { success: false, error: 'Only an authenticated store owner can preview this change.' };
+        return await previewStoreCurrencyChange(userId, args);
+      }
+
+      case 'change_store_currency': {
+        if (!userId || !['seller', 'admin'].includes(role)) return { success: false, error: 'Only an authenticated store owner can confirm this change.' };
+        return await changeStoreCurrency(userId, args);
+      }
+
       case 'update_store': {
         if (!userId) return { success: false, error: 'Authentication required.' };
         const normalizedRaw = Object.keys(pickObject(args.updates)).length ? { ...args.updates } : { ...args };
+        if (['currency', 'productCurrency', 'pendingProductCurrency'].some(field => normalizedRaw[field] !== undefined)) {
+          return { success: false, code: 'AI_CURRENCY_PREVIEW_REQUIRED', error: 'Store currency requires a separate reviewed conversion and confirmation. Use the store-currency preview; no store settings were changed.' };
+        }
         const allowedStoreFields = ['storeName', 'storeSlug', 'description', 'logo', 'banner', 'socialLinks', 'address', 'returnPolicy', 'sellerType', 'paymentPolicy'];
         const normalizedUpdates = {};
         let pendingSlugChange = null;
@@ -5374,7 +5426,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
             { seller: userId },
             { $set: normalizedUpdates },
             { new: true, runValidators: true }
-          ).select('storeName storeSlug description paymentPolicy lastNameChangeAt lastSlugChangeAt lastTypeChangeAt').lean();
+          ).select('storeName storeSlug description paymentPolicy lastNameChangeAt lastSlugChangeAt lastTypeChangeAt lastProductCurrencyChangeAt').lean();
         }
 
         const updatedFields = [

@@ -49,6 +49,30 @@ async function runChannel(channel, text, messages) {
 
 beforeEach(() => jest.clearAllMocks());
 
+test.each(['web', 'mobile', 'whatsapp'])('%s always includes the actual product conversion disclosure even when model prose omits it', async channel => {
+  const disclosure = 'Your store uses PKR. You supplied $10.00 USD; I converted it to Rs2,800.00 PKR and saved that as the product price. Your store currency remains PKR.';
+  executeToolCall.mockResolvedValue({ success: true, message: 'Product updated.', requiredDisclosure: disclosure, data: { name: 'Travel Cup', price: 2800, currency: 'PKR' } });
+  const result = await runChannel(channel, 'make my travel cup ten dollars please', [
+    toolMessage('edit_product', { productName: 'Travel Cup', updates: { price: 10, currency: 'USD' } }),
+    { role: 'assistant', content: 'Done.' },
+  ]);
+  expect(result.visible).toContain(disclosure);
+  expect(result.visible).toContain('Done.');
+});
+
+test.each(['web', 'mobile', 'whatsapp'])('%s always shows store-wide conversion consequences and sixty-day wait before confirmation', async channel => {
+  const notice = 'Change store currency from PKR to USD? All 3 product prices will be converted and saved. You cannot change it again for 60 days. Past orders and balances stay unchanged. Confirm or say no.';
+  executeToolCall.mockResolvedValue({ success: true, previewOnly: true, requiresConfirmation: true, requiredDisclosure: notice, message: notice, data: { quoteToken: `aic1.${'a'.repeat(64)}`, targetCurrency: 'USD', cooldownDays: 60 } });
+  const result = await runChannel(channel, 'I want USD for my store long term', [
+    toolMessage('preview_store_currency_change', { currency: 'USD' }),
+    { role: 'assistant', content: 'Would you like to proceed?' },
+  ]);
+  expect(result.visible).toContain(notice);
+  expect(result.visible).not.toContain('aic1.');
+  expect(executeToolCall).toHaveBeenCalledTimes(1);
+  expect(result.requests.at(-1).messages.filter(message => message.role === 'tool').every(message => !message.content.includes('aic1.'))).toBe(true);
+});
+
 test.each(['web', 'mobile', 'whatsapp'])('%s searches before asking for an exact name and does not leak IDs in the reply', async channel => {
   executeToolCall.mockResolvedValue({ success: true, data: { products: [{ _id: '6a9b77adb0befe27bd10f25d', name: 'Alpine Vacuum Lunch Jar', stock: 16 }] }, message: 'Found one product.' });
   const result = await runChannel(channel, 'can you find my lunch jarr and tell me the stock?', [

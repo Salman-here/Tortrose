@@ -1,6 +1,7 @@
 import {
   canonicalProductCurrency,
   inspectSellerProductCurrencyState,
+  isValidCurrencyChangeLimit,
 } from '../../src/utils/productCurrencyState';
 
 const state = overrides => ({
@@ -17,6 +18,14 @@ const state = overrides => ({
 });
 
 describe('seller product currency state', () => {
+  test('validates the sixty-day waiting period without trusting malformed metadata', () => {
+    const limit = { cooldownDays: 60, canChange: false, daysRemaining: 60, lastChangedAt: '2026-09-09T00:00:00.000Z', nextAllowedAt: '2026-11-08T00:00:00.000Z' };
+    expect(inspectSellerProductCurrencyState(state({ changeLimit: limit }))).toMatchObject({ valid: true, changeLimit: limit });
+    expect(isValidCurrencyChangeLimit(undefined)).toBe(true);
+    for (const invalid of [null, {}, { ...limit, cooldownDays: '60' }, { ...limit, daysRemaining: -1 }, { ...limit, canChange: true }, { ...limit, nextAllowedAt: 'invalid' }, { ...limit, nextAllowedAt: '2026-11-09T00:00:00.000Z' }]) {
+      expect(inspectSellerProductCurrencyState(state({ changeLimit: invalid })).valid).toBe(false);
+    }
+  });
   test('accepts only canonical supported product currencies', () => {
     expect(canonicalProductCurrency('PKR')).toBe('PKR');
     ['pkr', ' PKR ', 'JPY', '', true, null].forEach(value => {

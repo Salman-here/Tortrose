@@ -6,6 +6,15 @@ const base = { name: 'Cedar Trail Cup', price: 10, stock: 10, currency: 'PKR' };
 const request = user('For testing, add this to my store as Cedar Trail Cup. It is a reusable cup with a lid. [Attached product image: https://example.com/price10-stock10.png]');
 const assess = messages => assessSellerCreationInputs({ ...base, messages });
 
+test('store-wide confirmation does not approve an example as a new product price', () => {
+  const messages = [request, user('price 10, stock 3'), assistant('Change your store product currency from PKR to USD? Existing product price 100 USD. You cannot change it again for 60 days. Confirm?'), user('yes')];
+  expect(assess(messages)).toMatchObject({ ok: true, price: 10, stock: 3, explicitPriceCurrency: false });
+  messages.push(assistant('Your store product currency is now USD.'), user('add it now'));
+  expect(assess(messages)).toMatchObject({ ok: false, missing: expect.arrayContaining(['price currency after the store currency change']) });
+  messages.push(user('price 10 USD, stock 3'));
+  expect(assess(messages)).toMatchObject({ ok: true, price: 10, currency: 'USD', explicitPriceCurrency: true });
+});
+
 test('testing wording, image URLs, identifiers and assistant guesses cannot supply commercial facts', () => {
   expect(assess([request])).toMatchObject({ ok: false, missing: ['selling price', 'stock quantity'] });
   expect(assess([request, assistant('The price is Rs10 and stock is 10.'), user('write a short description')]).ok).toBe(false);

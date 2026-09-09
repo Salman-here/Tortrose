@@ -97,9 +97,26 @@ export const inspectProductFormSubmission = (product, accountCurrency = 'USD') =
   }
 };
 
+export const isValidCurrencyChangeLimit = limit => {
+  // Older deployments may omit this metadata; present values must be exact.
+  if (limit === undefined) return true;
+  if (!limit || typeof limit !== 'object' || Array.isArray(limit)
+    || !Number.isSafeInteger(limit.cooldownDays) || limit.cooldownDays < 1 || limit.cooldownDays > 365
+    || typeof limit.canChange !== 'boolean' || !Number.isSafeInteger(limit.daysRemaining)
+    || limit.daysRemaining < 0 || limit.daysRemaining > limit.cooldownDays
+    || limit.canChange !== (limit.daysRemaining === 0)) return false;
+  if (limit.lastChangedAt === null) return limit.nextAllowedAt === null && limit.canChange;
+  const last = new Date(limit.lastChangedAt), next = new Date(limit.nextAllowedAt);
+  return typeof limit.lastChangedAt === 'string' && typeof limit.nextAllowedAt === 'string'
+    && Number.isFinite(last.getTime()) && Number.isFinite(next.getTime())
+    && last.toISOString() === limit.lastChangedAt && next.toISOString() === limit.nextAllowedAt
+    && next.getTime() - last.getTime() === limit.cooldownDays * 86400000;
+};
+
 export const inspectSellerProductCurrencyState = (state) => {
   try {
     if (!state || typeof state !== 'object' || Array.isArray(state)) return { valid: false };
+    if (!isValidCurrencyChangeLimit(state.changeLimit)) return { valid: false };
     if (typeof state.hasStore !== 'boolean' || typeof state.canAddProduct !== 'boolean') {
       return { valid: false };
     }

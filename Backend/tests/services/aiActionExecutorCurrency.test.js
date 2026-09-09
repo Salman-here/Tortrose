@@ -61,8 +61,9 @@ describe('aiActionExecutor product currency conversion notice', () => {
       productCurrency: 'PKR',
     });
 
-    expect(notice).toContain('Your selected product currency is PKR');
-    expect(notice).toContain("can't save this product in USD");
+    expect(notice).toContain('Your store uses PKR');
+    expect(notice).toContain('You supplied $10.00 USD');
+    expect(notice).toContain('Rs2,846.00 PKR');
     expect(notice).toContain('converted');
     expect(notice).toContain('saved that as the product price');
   });

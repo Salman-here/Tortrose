@@ -1010,7 +1010,7 @@ const StoreSettings = () => {
                             <select
                                 value={productCurrencyDraft || ''}
                                 onChange={(e) => handleProductCurrencySelect(e.target.value)}
-                                disabled={productCurrencySaving || productCurrencyLoading || blockedInfo.blocked || (hasStore && (!productCurrencyInfo || !!productCurrencyError))}
+                                disabled={productCurrencySaving || productCurrencyLoading || blockedInfo.blocked || productCurrencyInfo?.changeLimit?.canChange === false || (hasStore && (!productCurrencyInfo || !!productCurrencyError))}
                                 className="glass-input cursor-pointer font-semibold min-w-[180px]"
                             >
                                 {!productCurrencyDraft && <option value="">Currency unavailable</option>}
@@ -1022,6 +1022,12 @@ const StoreSettings = () => {
                         <p className="text-sm" style={{ color: 'hsl(var(--muted-foreground))' }}>
                             New product prices are saved in this currency. Buyers can still view prices in their own selected currency.
                         </p>
+                        {productCurrencyInfo?.changeLimit && (
+                            <p className="text-xs mt-2" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                                Store currency changes have a {productCurrencyInfo.changeLimit.cooldownDays}-day waiting period after completion. Existing regular and sale prices are converted; past orders and balances stay unchanged.
+                                {productCurrencyInfo.changeLimit.canChange === false && ` You can change it again on ${new Date(productCurrencyInfo.changeLimit.nextAllowedAt).toLocaleString()}.`}
+                            </p>
+                        )}
 
                         {hasStore && productCurrencyError && (
                             <div className="mt-4 rounded-xl p-4" style={{ background: 'rgba(239,68,68,0.07)', border: '1px solid rgba(239,68,68,0.22)' }}>

@@ -751,8 +751,24 @@ const sellerTools = [
   {
     type: 'function',
     function: {
+      name: 'preview_store_currency_change',
+      description: 'Preview a long-term change to the seller own store product currency. Shows existing regular/sale price conversions and the authoritative cooldown. Does NOT change the store or prices. Use only when discussing a whole-store currency change, not just because a new product price was supplied in a different currency.',
+      parameters: { type: 'object', properties: { currency: { type: 'string', enum: ['USD', 'PKR', 'EUR', 'GBP'] } }, required: ['currency'] },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'change_store_currency',
+      description: 'Apply the previously reviewed store-wide currency conversion ONLY after the seller explicitly confirms in a subsequent message. The server retains the conversion quote; never supply a token or invented rates. No means keep the current store currency. Questions are not confirmation. A changed/expired quote needs a fresh preview and another confirmation.',
+      parameters: { type: 'object', properties: { currency: { type: 'string', enum: ['USD', 'PKR', 'EUR', 'GBP'], description: 'The same target currency that was reviewed and confirmed.' } }, required: ['currency'] },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'add_product',
-      description: "Add a new product to the seller's store. Supports tags, colors, optionGroups, image URL(s), return policy, and descriptions. REQUIRED: name, price, category, brand, stock. Never invent price or stock, even for testing. Obtain commercial values from the seller or uploaded rows; ask for missing values or confirmation of a clearly displayed proposal.",
+      description: "Add a new product to the seller's store. Supports tags, colors, optionGroups, image URL(s), return policy, and descriptions. REQUIRED: name, price, category, brand, stock. Never invent price or stock, even for testing. Pass the seller's original stated price/currency; the server converts to store currency and returns a mandatory conversion disclosure. This does not change store currency. Obtain commercial values from the seller or uploaded rows; ask for missing values or confirmation of a clearly displayed proposal.",
       parameters: {
         type: 'object',
         properties: {
@@ -1592,12 +1608,14 @@ function groundedAssistantResponseText(responseText = '', completedToolResults =
     .filter(entry => entry.result);
   const successful = results.filter(({ result }) => result?.success === true);
   const failed = results.filter(({ result }) => result?.success !== true);
+  const requiredDisclosures = [...new Set(results.map(({ result }) => result.requiredDisclosure).filter(value => typeof value === 'string' && value.trim()))];
+  const withDisclosures = text => [text, ...requiredDisclosures.filter(disclosure => !String(text || '').includes(disclosure))].filter(Boolean).join('\n\n');
   const contradictsSuccessfulReceipts = (
     successful.length > 0
     && failed.length === 0
     && /\b(?:could(?:n't| not)|can(?:not|'t)|unable|failed)\b[^\n.!?]{0,80}\b(?:process|complete|perform|place|update|add|remove|create|cancel|submit|do)\b/i.test(visibleText)
   );
-  if (visibleText && !contradictsSuccessfulReceipts) return visibleText;
+  if (visibleText && !contradictsSuccessfulReceipts) return withDisclosures(visibleText);
   if (results.length === 0) return visibleText;
 
   // A tool receipt is authoritative even when the model's final prose is
@@ -1609,7 +1627,7 @@ function groundedAssistantResponseText(responseText = '', completedToolResults =
     .map(message => sanitizeAssistantVisibleText(String(message || '')).trim())
     .filter(Boolean)
     .filter((message, index, all) => all.indexOf(message) === index);
-  if (receiptMessages.length > 0) return receiptMessages.join('\n\n');
+  if (receiptMessages.length > 0) return withDisclosures(receiptMessages.join('\n\n'));
 
   if (successful.length > 0 && failed.length === 0) {
     return successful.length === 1
@@ -1640,9 +1658,12 @@ function explicitToolReceiptSummary(explicitlyRequestedTools = [], completedTool
     if (!entry) return '';
     const result = entry.result || {};
     const label = toolName.replace(/_/g, ' ').replace(/\b\w/g, letter => letter.toUpperCase());
-    const detail = result.message
+    const baseDetail = result.message
       || result.error
       || (result.success === true ? 'Completed.' : 'Failed.');
+    const detail = result.requiredDisclosure && !baseDetail.includes(result.requiredDisclosure)
+      ? `${baseDetail}\n${result.requiredDisclosure}`
+      : baseDetail;
     return `- **${label}:** ${detail}`;
   }).filter(Boolean);
   return lines.length === requested.length
@@ -1672,7 +1693,7 @@ function prepareIncomingChatMessages(incomingMessages = []) {
       ? message.content
       : JSON.stringify(message.content ?? '');
     const { visible, internal } = splitInternalAssistantContent(rawContent);
-    if (internal) internalBlocks.push(internal.replace(/\baip1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, '[order preview retained by server]'));
+    if (internal) internalBlocks.push(internal.replace(/\baip1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, '[order preview retained by server]').replace(/\baic1\.[a-f0-9]{64}\b/g, '[store currency preview retained by server]'));
 
     const nextMessage = {
       role: message.role,
@@ -1872,9 +1893,12 @@ async function executeToolCallForChat(toolName, args, userObj, lastUserText = ''
     ? { ...normalizedArgs, _lastUserText: lastUserText, ...turnContext, _requireOrderPreview: true }
     : { _lastUserText: lastUserText, ...turnContext, _requireOrderPreview: true };
   if (['add_product', 'bulk_add_products'].includes(toolName)) argsWithContext._requireExplicitSellerInputs = true;
+  // Never accept a model-supplied conversation or approval context.
+  argsWithContext._chatConversationId = turnContext._chatConversationId || null;
 
   if (toolName !== 'update_store') {
     const result = await executeToolCall(toolName, argsWithContext, userObj);
+    if (toolName === 'change_store_currency' && result?.success) turnContext._storeCurrencyChangedThisTurn = true;
     return {
       ...result,
       ...(result?.message ? { message: sanitizeCommerceReply(result.message) } : {}),
@@ -2335,7 +2359,7 @@ async function buildUserContext(userId, role) {
     // Seller-specific enrichment
     if (role === 'seller') {
       try {
-        const store = await Store.findOne({ seller: userId }).select('storeName storeSlug verification trustCount isActive lastNameChangeAt lastSlugChangeAt lastTypeChangeAt');
+        const store = await Store.findOne({ seller: userId }).select('storeName storeSlug verification trustCount isActive productCurrency productCurrencyStatus pendingProductCurrency lastProductCurrencyChangeAt lastNameChangeAt lastSlugChangeAt lastTypeChangeAt');
         if (store) {
           ctx.store = {
             name: store.storeName,
@@ -2344,6 +2368,9 @@ async function buildUserContext(userId, role) {
             isVerified: store.verification?.isVerified || false,
             trustCount: store.trustCount || 0,
             isActive: store.isActive,
+            productCurrency: store.productCurrency || null,
+            productCurrencyStatus: store.productCurrencyStatus,
+            pendingProductCurrency: store.pendingProductCurrency || null,
             changeLimits: storeChangeLimits(store),
           };
         }
@@ -2391,6 +2418,8 @@ function formatContextBlock(ctx, role) {
   if (role === 'seller' && ctx.store) {
     s += `- Store: "${ctx.store.name}" (${ctx.store.slug}) - ${ctx.store.isVerified ? 'verified' : 'not verified'} - ${ctx.productCount ?? 0} products - ${ctx.store.trustCount} trust\n`;
     if (ctx.store.url) s += `- Store URL: ${ctx.store.url}\n`;
+    if (ctx.store.productCurrency) s += `- Store product currency: ${requireAIContextCurrency(ctx.store.productCurrency)} (separate from account/display currency).\n`;
+    if (ctx.store.productCurrencyStatus === 'pending_conversion') s += `- A product-currency change to ${ctx.store.pendingProductCurrency} is pending conversion.\n`;
   }
   if (role === 'seller' && ctx.store?.changeLimits) {
     const limits = ctx.store.changeLimits;
@@ -2399,6 +2428,9 @@ function formatContextBlock(ctx, role) {
     }
     if (limits.subdomain) {
       s += `- Subdomain change: ${limits.subdomain.canChange ? 'available now' : `available in ${limits.subdomain.daysRemaining} day(s) on ${String(limits.subdomain.nextAllowedAt).slice(0, 10)}`}\n`;
+    }
+    if (limits.productCurrency) {
+      s += `- Store currency change: ${limits.productCurrency.canChange ? 'available after preview and confirmation' : `available again on ${limits.productCurrency.nextAllowedAt}`}; waiting period after a completed change: ${limits.productCurrency.cooldownDays} days. Individual foreign-currency price inputs are still converted and saved in the current store currency.\n`;
     }
   }
   if (role === 'admin' && ctx.platform) {
@@ -2540,6 +2572,7 @@ async function processAIChatMessage(userObj, incomingMessages, options = {}) {
   const toolTurnContext = {
     _chatRequestKey: buildChatToolRequestKey(options.requestKey, mode, userId),
     _imageContextMessages: incomingMessages,
+    _chatConversationId: options.conversationId || null,
   };
   const mutationSlotForIntent = createDurableMutationSlotAllocator();
   let systemContent = await getSystemPrompt(effectiveRole, isWhatsApp ? 'whatsapp' : 'web');
@@ -2759,6 +2792,7 @@ async function processAIChatMessage(userObj, incomingMessages, options = {}) {
           ...toolTurnContext,
           _chatToolOrdinal: mutationSlotForIntent(toolName, args),
         });
+        if (toolName === 'change_store_currency' && result?.success) toolTurnContext._storeCurrencyChangedThisTurn = true;
         toolResults.push({ tool: toolName, result, id: tc.id });
         const transportFailure = durableMutationTransportFailure(toolName, result);
         if (transportFailure) {
@@ -2919,6 +2953,7 @@ exports.streamChat = async (req, res) => {
     const toolTurnContext = {
       _chatRequestKey: getHttpChatToolRequestKey(req, 'stream', userId),
       _imageContextMessages: incoming,
+      _chatConversationId: req.body?.conversationId || null,
     };
     const mutationSlotForIntent = createDurableMutationSlotAllocator();
 
@@ -3118,6 +3153,7 @@ exports.streamChat = async (req, res) => {
             _chatToolOrdinal: mutationSlotForIntent(toolName, args),
           });
 
+          if (toolName === 'change_store_currency' && result?.success) toolTurnContext._storeCurrencyChangedThisTurn = true;
           send({ type: 'tool_result', tool: toolName, result, id: tc.id });
           turnToolEvents.push({ type: 'tool_result', tool: toolName, result });
 
@@ -3257,6 +3293,7 @@ exports.chatOnce = async (req, res) => {
     const toolTurnContext = {
       _chatRequestKey: getHttpChatToolRequestKey(req, 'once', userId),
       _imageContextMessages: incoming,
+      _chatConversationId: body.conversationId || null,
     };
     const mutationSlotForIntent = createDurableMutationSlotAllocator();
 
@@ -3390,6 +3427,7 @@ exports.chatOnce = async (req, res) => {
             ...toolTurnContext,
             _chatToolOrdinal: mutationSlotForIntent(toolName, args),
           });
+          if (toolName === 'change_store_currency' && result?.success) toolTurnContext._storeCurrencyChangedThisTurn = true;
           toolResults.push({ tool: toolName, result, id: tc.id });
           const transportFailure = durableMutationTransportFailure(toolName, result);
           if (transportFailure) {

@@ -194,6 +194,8 @@ const summarizeToolEventsForPrompt = (toolEvents = []) => {
     } else if (event.tool === 'search_products' && result.success && Array.isArray(data.products)) {
       const products = data.products.slice(0, 12).map(p => `${p._id || p.productId}:${p.name}; store=${p.storeName || ''}; slug=${p.storeSlug || ''}; price=${p.discountedPrice || p.price || ''}; stock=${p.stock ?? ''}; colors=${JSON.stringify(p.colors || [])}; options=${JSON.stringify(p.optionGroups || [])}`);
       lines.push(`[Tool memory: search_products returned ${data.count ?? data.products.length} products. Internal product lookup for shopper follow-ups: ${products.join(' | ')}. Use these ids internally only; do not show raw product IDs.]`);
+    } else if (event.tool === 'preview_store_currency_change' && result.success && data.quoteToken) {
+      lines.push(`[Tool memory: store currency preview only; nothing changed. ${JSON.stringify({ quoteToken: data.quoteToken, targetCurrency: data.targetCurrency, cooldownDays: data.cooldownDays })}. Wait for a subsequent explicit confirmation before change_store_currency. Never display the token.]`);
     } else if (event.tool === 'preview_order' && result.success && data.quoteToken) {
       lines.push(`[Tool memory: preview_order did NOT place an order. Approved-preview candidate: ${JSON.stringify({ quoteToken: data.quoteToken, orderRequest: data.orderRequest, currency: data.currency, summary: data.summary })}. Only after the buyer confirms in their next message, copy the orderRequest fields into place_order. The server retains the token; never generate or display it.]`);
     } else if (['view_cart', 'add_to_cart', 'update_cart_item', 'remove_from_cart'].includes(event.tool) && result.success && Array.isArray(data.items)) {
@@ -309,7 +311,7 @@ const ActionResultCard = ({ result, actionName, icon: Icon = Package, color = 'h
   const isBlocked = result?.blocked || result?.requiresConfirmation;
   const isSuccess = result?.success !== false && !isBlocked;
   const StatusIcon = isSuccess ? CheckCircle : isBlocked ? AlertCircle : XCircle;
-  const statusLabel = isSuccess ? (actionName === 'preview_order' ? 'Ready to review' : 'Action completed') : isBlocked ? 'Action needs review' : 'Action failed';
+  const statusLabel = result?.previewOnly && result?.success ? 'Ready to review' : isSuccess ? (actionName === 'preview_order' ? 'Ready to review' : 'Action completed') : isBlocked ? 'Action needs review' : 'Action failed';
   const detail = result?.message || result?.error || `${formatToolDisplayName(actionName)} completed`;
   return (
     <motion.div initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }}
