@@ -94,15 +94,9 @@ function pauseNextStoreCurrencyMutation() {
 describe('store product-currency transition serialization', () => {
   test('a product insert lock makes a stale zero-product currency switch fail closed', async () => {
     const { seller } = await createSellerAndStore();
-    const gate = pauseNextStoreCurrencyMutation();
-    const currencyChange = requestProductCurrencyChange(seller._id, 'USD', { confirm: true });
-    await gate.entered;
-
-    await withProductCurrencyWriteLock(seller._id, 'PKR', session => (
-      Product.create([productData(seller._id)], { session })
-    ));
-    gate.release();
-
+    const preview = await requestProductCurrencyChange(seller._id, 'USD');
+    await withProductCurrencyWriteLock(seller._id, 'PKR', session => Product.create([productData(seller._id)], { session }));
+    const currencyChange = requestProductCurrencyChange(seller._id, 'USD', { confirm: true, quoteToken: preview.quoteToken });
     await expect(currencyChange).rejects.toMatchObject({
       status: 409,
       code: 'PRODUCT_CURRENCY_CONVERSION_CONFLICT',
@@ -123,12 +117,13 @@ describe('store product-currency transition serialization', () => {
   test('a completed conversion makes a stale cancellation fail without reverting the store', async () => {
     const { seller } = await createSellerAndStore();
     const product = await Product.create(productData(seller._id));
-    await requestProductCurrencyChange(seller._id, 'USD', { confirm: true });
+    await Store.updateOne({ seller: seller._id }, { $set: { pendingProductCurrency: 'USD', previousProductCurrency: 'PKR', productCurrencyStatus: 'pending_conversion' } });
+    const preview = await requestProductCurrencyChange(seller._id, 'USD');
 
     const gate = pauseNextStoreCurrencyMutation();
     const cancellation = cancelPendingProductCurrencyChange(seller._id);
     await gate.entered;
-    const conversion = await convertPendingProductPrices(seller._id);
+    const conversion = await convertPendingProductPrices(seller._id, { confirm: true, quoteToken: preview.quoteToken });
     gate.release();
 
     expect(conversion.converted).toBe(1);

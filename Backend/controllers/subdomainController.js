@@ -187,6 +187,7 @@ exports.getSellerSubdomainAnalytics = async (req, res) => {
             const sellerMoney = sellerOrderSummaryForItems(order, sellerId, sellerItems);
             const native = sellerCurrencyMoneyPresentation(order, sellerId, sellerItems);
             return {
+                order,
                 amount: native?.summary?.totalAmount ?? sellerMoney.totalAmount,
                 currency: native?.currency || order.currency,
             };
@@ -306,7 +307,8 @@ exports.getAllSubdomains = async (req, res) => {
                 const sellerMoney = sellerOrderSummaryForItems(order, sellerId, sellerItems);
                 const native = sellerCurrencyMoneyPresentation(order, sellerId, sellerItems);
                 return {
-                    amount: native?.summary?.totalAmount ?? sellerMoney.totalAmount,
+                    order,
+                amount: native?.summary?.totalAmount ?? sellerMoney.totalAmount,
                     currency: native?.currency || order.currency,
                 };
             });

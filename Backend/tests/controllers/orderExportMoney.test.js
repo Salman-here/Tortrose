@@ -39,6 +39,7 @@ const response = () => ({
 const createOrder = (orderId, currency, orderSummary) => Order.create({
   orderId,
   currency,
+  exchangeRateSnapshot: LIVE_SNAPSHOT,
   orderItems: [{
     productId: new mongoose.Types.ObjectId(),
     seller: new mongoose.Types.ObjectId(),
@@ -114,7 +115,7 @@ describe('order export money calculations', () => {
     }, res);
 
     expect(res.statusCode).toBe(200);
-    expect(mockGetExchangeRateSnapshot).toHaveBeenCalledTimes(1);
+    expect(mockGetExchangeRateSnapshot).not.toHaveBeenCalled();
     expect(res.body).toContain('Coupon Discount (EUR),Reconciliation Adjustment (EUR),Total (EUR)');
     expect(res.body).toContain('8.01,0.82,0.02,0.03,0.00,8.82');
     expect(res.body).toContain('1.00,0.00,0.00,0.00,0.00,1.00');
@@ -135,15 +136,16 @@ describe('order export money calculations', () => {
       fallback: true,
     });
 
+    await Order.collection.updateOne({ orderId: 'EXPORT-STALE' }, { $set: { 'exchangeRateSnapshot.fallback': true } });
     const res = response();
     await exportOrders({
       user: { role: 'admin', id: new mongoose.Types.ObjectId() },
       query: { format: 'csv', currency: 'PKR' },
     }, res);
 
-    expect(res.statusCode).toBe(503);
-    expect(res.body).toMatchObject({ code: 'EXCHANGE_RATES_UNAVAILABLE' });
-    expect(mockGetExchangeRateSnapshot).toHaveBeenCalledTimes(1);
+    expect(res.statusCode).toBe(409);
+    expect(res.body).toMatchObject({ code: 'SELLER_SETTLEMENT_HISTORICAL_RATE_MISSING' });
+    expect(mockGetExchangeRateSnapshot).not.toHaveBeenCalled();
   });
 
   test('allows a same-currency report during an FX outage because no conversion occurs', async () => {
@@ -368,7 +370,7 @@ describe('order export money calculations', () => {
       sourceCurrency: 'USD',
       reportCurrency: 'PKR',
       rateSnapshot: snapshot,
-    })).toThrow(expect.objectContaining({ code: 'EXCHANGE_RATES_UNAVAILABLE' }));
+    })).toThrow(expect.objectContaining({ code: 'SELLER_SETTLEMENT_HISTORICAL_RATE_MISSING' }));
   });
 
   test.each([

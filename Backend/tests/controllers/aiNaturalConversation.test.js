@@ -182,3 +182,14 @@ test.each(['web', 'mobile', 'whatsapp'])('%s enforces seller input evidence even
   expect(executeToolCall.mock.calls[0][1]._requireExplicitSellerInputs).toBe(true);
   expect(result.visible).toBe('What selling price and stock quantity should I use?');
 });
+
+test.each(['web', 'mobile', 'whatsapp'])('%s supplies the real server clock for relative dates and immediate coupon starts', async channel => {
+  const before = Date.now();
+  const result = await runChannel(channel, 'what date is it today?', [{ role: 'assistant', content: 'I can use the current server date.' }]);
+  const system = result.requests[0].messages.find(message => message.role === 'system').content;
+  const timestamp = system.match(/Current server time \(UTC\): ([0-9T:.-]+Z)/)?.[1];
+  expect(timestamp).toBeTruthy();
+  expect(new Date(timestamp).getTime()).toBeGreaterThanOrEqual(before);
+  expect(new Date(timestamp).getTime()).toBeLessThanOrEqual(Date.now());
+  expect(system).toContain('omit startDate so the server sets the actual current time');
+});

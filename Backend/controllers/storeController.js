@@ -436,6 +436,7 @@ exports.updateProductCurrencySettings = async (req, res) => {
     try {
         const state = await requestProductCurrencyChange(req.user.id, req.body.currency, {
             confirm: req.body.confirm === true,
+            quoteToken: req.body.quoteToken,
         });
         const statusCode = state.requiresConfirmation ? 409 : 200;
         res.status(statusCode).json({
@@ -453,7 +454,8 @@ exports.updateProductCurrencySettings = async (req, res) => {
 
 exports.convertProductCurrencyPrices = async (req, res) => {
     try {
-        const result = await convertPendingProductPrices(req.user.id);
+        const result = await convertPendingProductPrices(req.user.id, { confirm: req.body.confirm === true, quoteToken: req.body.quoteToken });
+        if (result.state.requiresConfirmation) return res.status(409).json({ msg: result.state.msg, requiresConfirmation: true, productCurrency: result.state });
         res.status(200).json({
             msg: result.converted > 0
                 ? `Converted ${result.converted} product price${result.converted === 1 ? '' : 's'} to ${result.state.activeCurrency}.`
@@ -1173,7 +1175,8 @@ exports.getStoreAnalytics = async (req, res) => {
                 const native = sellerCurrencyMoneyPresentation(order, sellerId, sellerItems);
                 const fallback = sellerOrderSummary(order, sellerProductIdSet, sellerId);
                 return {
-                    amount: native?.summary?.totalAmount ?? fallback.totalAmount,
+                    order,
+                amount: native?.summary?.totalAmount ?? fallback.totalAmount,
                     currency: native?.currency || order.currency,
                 };
             }),

@@ -72,6 +72,7 @@ const canTransitionWithdrawalStatus = (fromStatus, toStatus) => (
     WITHDRAWAL_TRANSITIONS[fromStatus]?.has(toStatus) || false
 );
 const MIN_WITHDRAWAL_USD = 5;
+const { buildNativeSellerPaymentSummary, WITHDRAWAL_MINIMUMS } = require('../services/sellerNativeAccountingService');
 
 const toId = (value) => value?._id?.toString?.() || value?.toString?.() || '';
 const isDelivered = (order) => order?.orderStatus === 'delivered' || order?.isDelivered === true;
@@ -595,6 +596,13 @@ const payoutSnapshotMetadata = (snapshot) => ({
 
 const withdrawalAuthorizationContext = (request) => {
     const doc = request?.toObject ? request.toObject() : request;
+    if (doc?.balanceVersion === 2) return {
+        balanceVersion: 2, idempotencyKey: String(doc.idempotencyKey || ''),
+        amountMinor: toMinorUnits(doc.amount), currency: doc.currency,
+        minimumAmountMinor: toMinorUnits(doc.minimumAmount),
+        requestedAmountMinor: toMinorUnits(doc.requestedAmount), requestedCurrency: doc.requestedCurrency,
+        payoutAmountMinor: toMinorUnits(doc.payoutAmount), payoutCurrency: doc.payoutCurrency,
+    };
     const capturedAt = doc?.exchangeRateSnapshot?.capturedAt;
     const capturedDate = capturedAt ? new Date(capturedAt) : null;
     if (!capturedDate || Number.isNaN(capturedDate.getTime())) {
@@ -639,6 +647,20 @@ const assertFrozenPayoutAuthorization = (request, snapshot, authorization) => {
         const raw = String(value || '');
         return isSupportedCurrency(raw) && raw === normalizeCurrency(raw);
     };
+    if (authorization.balanceVersion === 2) {
+        const nativeValid = request.balanceVersion === 2 && exactCurrency(authorization.currency)
+            && authorization.minimumAmountMinor > 0 && authorization.amountMinor >= authorization.minimumAmountMinor
+            && authorization.requestedCurrency === authorization.currency && authorization.payoutCurrency === authorization.currency
+            && authorization.requestedAmountMinor === authorization.amountMinor && authorization.payoutAmountMinor === authorization.amountMinor
+            && snapshot.currency === authorization.currency;
+        const metadata = request.paymentAccountSnapshot;
+        if (!nativeValid || metadata && (metadata.currency !== snapshot.currency
+            || String(metadata.accountNumberLast4 || '') !== lastFourDestinationCharacters(snapshot.accountNumber)
+            || String(metadata.ibanLast4 || '') !== lastFourDestinationCharacters(snapshot.iban))) {
+            throw invalidDestinationError('WITHDRAWAL_PAYOUT_AUTHORIZATION_INVALID');
+        }
+        return;
+    }
     if (
         authorization.currency !== 'USD'
         || authorization.amountUSDMinor < toMinorUnits(MIN_WITHDRAWAL_USD)
@@ -1245,7 +1267,7 @@ const buildSellerOrderGroups = (order, sellerIdSet, productSellerById) => {
     return grouped;
 };
 
-const buildSellerPaymentSummary = async (sellerId, {
+const buildLegacySellerPaymentSummary = async (sellerId, {
     session = null,
     displayCurrency = 'USD',
     rates: suppliedRates = null,
@@ -1469,7 +1491,13 @@ const buildSellerPaymentSummary = async (sellerId, {
     };
 };
 
+const buildSellerPaymentSummary = async (sellerId, options = {}) => {
+    const summary = await buildNativeSellerPaymentSummary(sellerId, options);
+    return { ...summary, paymentAccount: serializePaymentAccount(summary.paymentAccount),
+        withdrawals: summary.withdrawals.map(request => serializeWithdrawalRequest(request)) };
+};
 exports.buildSellerPaymentSummary = buildSellerPaymentSummary;
+exports.buildLegacySellerPaymentSummary = buildLegacySellerPaymentSummary;
 exports.quoteWithdrawalAmount = quoteWithdrawalAmount;
 exports.quotePayoutAmount = quotePayoutAmount;
 exports.minimumRequestedAmountForUSD = minimumRequestedAmountForUSD;
@@ -1589,6 +1617,12 @@ exports.createWithdrawalRequest = async (req, res) => {
             });
         }
         const idempotencyKey = rawIdempotencyKey;
+        const rawNativeAmount = parseStrictFiniteNumber(req.body?.requestedAmount ?? req.body?.amount);
+        let validNativeAmount = false;
+        try { validNativeAmount = rawNativeAmount !== null && rawNativeAmount > 0 && roundMoney(rawNativeAmount) === rawNativeAmount; } catch (_) {}
+        if (!validNativeAmount) {
+            return res.status(400).json({ code: 'WITHDRAWAL_AMOUNT_INVALID', msg: 'Enter a positive exact amount with no more than two decimal places.' });
+        }
         {
             const existingRequest = await SellerWithdrawalRequest.findOne({
                 seller: sellerId,
@@ -1608,7 +1642,7 @@ exports.createWithdrawalRequest = async (req, res) => {
                     success: true,
                     reused: true,
                     msg: 'Withdrawal request already submitted',
-                    amountUSD: existingRequest.amount,
+                    ...(existingRequest.balanceVersion === 2 ? { amount: existingRequest.amount, currency: existingRequest.currency } : { amountUSD: existingRequest.amount }),
                     requestedAmount: existingRequest.requestedAmount,
                     requestedCurrency: existingRequest.requestedCurrency,
                     payoutAmount: existingRequest.payoutAmount,
@@ -1617,53 +1651,17 @@ exports.createWithdrawalRequest = async (req, res) => {
                 });
             }
         }
-        const rateSnapshot = await getExchangeRateSnapshot();
-        const rawRequestedCurrency = req.body?.requestedCurrency
-            || req.body?.currency
-            || req.user.currency
-            || 'USD';
-        if (!isSupportedCurrency(rawRequestedCurrency)) {
-            return res.status(400).json({ msg: 'Choose a supported withdrawal currency.' });
-        }
-        const requestedCurrencyForQuote = normalizeCurrency(rawRequestedCurrency);
-        const account = await SellerPaymentAccount.findOne({ seller: sellerId, isActive: true }).lean();
-        if (!account) {
-            return res.status(400).json({ msg: 'Add your bank account before requesting a withdrawal' });
-        }
-        const payoutCurrencyForQuote = account.currency || requestedCurrencyForQuote;
-        if (!isSupportedCurrency(payoutCurrencyForQuote)) {
-            return res.status(400).json({ msg: 'The saved payout account has an unsupported currency.' });
-        }
-        assertWithdrawalQuoteCanUseSnapshot(
-            rateSnapshot,
-            requestedCurrencyForQuote,
-            payoutCurrencyForQuote
-        );
-
-        const rates = rateSnapshot.rates;
-        const quote = quoteWithdrawalAmount({
-            body: req.body,
-            userCurrency: req.user.currency,
-            rates,
+        const rawRequestedCurrency = req.body?.requestedCurrency || req.body?.currency;
+        if (!isSupportedCurrency(rawRequestedCurrency)) return res.status(400).json({ msg: 'Choose the balance currency to withdraw.' });
+        const requestedCurrency = normalizeCurrency(rawRequestedCurrency);
+        const requestedAmount = normalizeWithdrawalAmount(req.body?.requestedAmount ?? req.body?.amount);
+        const minimumRequestedAmount = WITHDRAWAL_MINIMUMS[requestedCurrency];
+        if (requestedAmount < minimumRequestedAmount) return res.status(400).json({
+            msg: `Minimum withdrawal amount is ${formatNativeMoney(minimumRequestedAmount, requestedCurrency)}.`,
+            minimumRequestedAmount, requestedCurrency, code: 'WITHDRAWAL_MINIMUM_NOT_MET',
         });
-        const { requestedCurrency, requestedAmount } = quote;
-        const quotedAmountUSD = quote.amountUSD;
-        if (quotedAmountUSD < MIN_WITHDRAWAL_USD) {
-            const minimumRequestedAmount = minimumRequestedAmountForUSD(
-                MIN_WITHDRAWAL_USD,
-                requestedCurrency,
-                rates
-            );
-            return res.status(400).json({
-                msg: `Minimum withdrawal amount is ${formatNativeMoney(minimumRequestedAmount, requestedCurrency)}.`,
-                minimumAmountUSD: MIN_WITHDRAWAL_USD,
-                minimumRequestedAmount,
-                requestedCurrency,
-            });
-        }
 
         const withdrawalResult = await runInTransaction(async (session) => {
-            let settlementAmountUSD = quotedAmountUSD;
             // Withdrawals and return refunds share this lock. A transaction that
             // loses the race is retried and sees the newly reserved/debited funds.
             await SellerSettlementLock.findOneAndUpdate(
@@ -1704,16 +1702,14 @@ exports.createWithdrawalRequest = async (req, res) => {
                 throw error;
             }
             const fullPayoutAccountSnapshot = completePayoutAccountSnapshot(frozenAccount);
-            assertWithdrawalQuoteCanUseSnapshot(
-                rateSnapshot,
-                requestedCurrency,
-                fullPayoutAccountSnapshot.currency
+            if (fullPayoutAccountSnapshot.currency !== requestedCurrency) throw withdrawalActionError(
+                'The bank account must accept this balance currency. No balance conversion is available.',
+                'WITHDRAWAL_BANK_CURRENCY_MISMATCH', 400
             );
 
             const summary = await buildSellerPaymentSummary(sellerId, {
                 session,
                 displayCurrency: requestedCurrency,
-                rateSnapshot,
             });
             if (summary.paymentRiskPending) {
                 const error = new Error(
@@ -1723,75 +1719,28 @@ exports.createWithdrawalRequest = async (req, res) => {
                 error.code = 'SELLER_PAYMENT_RISK_PENDING';
                 throw error;
             }
-            const availableDisplayAmount = summary.withdrawalLimits.availableDisplayAmount;
-            const withdrawableBalanceMinor = toMinorUnits(summary.revenue.withdrawableBalance);
-            const isDisplayedFullBalance = toMinorUnits(requestedAmount)
-                === toMinorUnits(availableDisplayAmount);
-            if (
-                isDisplayedFullBalance
-                && Math.abs(
-                    toMinorUnits(settlementAmountUSD) - withdrawableBalanceMinor
-                ) <= 1
-            ) {
-                // A selected-currency full balance can round one cent above or
-                // below the canonical USD ledger when converted back. Reserve
-                // the exact canonical balance in either direction so no cent
-                // is stranded and no cent is over-reserved. Partial requests
-                // never enter this branch.
-                settlementAmountUSD = fromMinorUnits(withdrawableBalanceMinor);
-            }
-            if (toMinorUnits(settlementAmountUSD) < toMinorUnits(MIN_WITHDRAWAL_USD)) {
-                // A display-currency round trip can very rarely quote $5.00
-                // for a canonical $4.99 full balance. Do not let the clamp
-                // bypass the minimum or fall through to a model validation 500.
-                const error = new Error(`Minimum withdrawal amount is ${formatNativeMoney(
-                    summary.withdrawalLimits.minimumDisplayAmount,
-                    requestedCurrency
-                )}.`);
-                error.statusCode = 400;
-                error.code = 'WITHDRAWAL_MINIMUM_NOT_MET';
-                throw error;
-            }
-            if (toMinorUnits(settlementAmountUSD) > withdrawableBalanceMinor) {
-                const error = new Error(`You can withdraw up to ${formatNativeMoney(availableDisplayAmount, requestedCurrency)} right now.`);
-                error.statusCode = 400;
-                error.availableBalance = summary.revenue.withdrawableBalance;
-                error.availableBalanceCurrency = 'USD';
-                error.availableDisplayAmount = availableDisplayAmount;
-                error.displayCurrency = requestedCurrency;
-                throw error;
-            }
-
-            const payoutQuote = quotePayoutAmount(
-                settlementAmountUSD,
-                fullPayoutAccountSnapshot.currency,
-                rates
+            const nativeBalance = summary.balanceByCurrency[requestedCurrency];
+            const availableDisplayAmount = nativeBalance.withdrawableBalance;
+            if (toMinorUnits(requestedAmount) > toMinorUnits(availableDisplayAmount)) throw withdrawalActionError(
+                `You can withdraw up to ${formatNativeMoney(availableDisplayAmount, requestedCurrency)} right now.`,
+                'INSUFFICIENT_SELLER_BALANCE', 400, { availableBalance: availableDisplayAmount, availableBalanceCurrency: requestedCurrency }
             );
+            const payoutQuote = { payoutAmount: requestedAmount, payoutCurrency: requestedCurrency };
             const withdrawalId = new mongoose.Types.ObjectId();
             const withdrawalDocument = {
                 _id: withdrawalId,
                 seller: sellerId,
                 idempotencyKey,
-                amount: settlementAmountUSD,
-                currency: 'USD',
+                amount: requestedAmount,
+                currency: requestedCurrency,
+                balanceVersion: 2,
+                minimumAmount: minimumRequestedAmount,
                 requestedAmount: roundMoney(requestedAmount),
                 requestedCurrency,
                 payoutAmount: payoutQuote.payoutAmount,
                 payoutCurrency: payoutQuote.payoutCurrency,
                 payoutWorkflowVersion: 1,
-                exchangeRateSnapshot: {
-                    base: 'USD',
-                    // No foreign rate was used by an outage-safe USD -> USD
-                    // withdrawal. Keep fallback values out of the permanent
-                    // settlement snapshot so they cannot be mistaken for a
-                    // trusted quote by future code.
-                    rates: rateSnapshot.fallback
-                        ? { USD: 1, PKR: null, EUR: null, GBP: null }
-                        : rates,
-                    capturedAt: new Date(rateSnapshot.capturedAt),
-                    source: rateSnapshot.source,
-                    fallback: rateSnapshot.fallback,
-                },
+                exchangeRateSnapshot: null, // No FX is used by a native same-currency bank withdrawal.
                 sellerNote: cleanText(req.body?.sellerNote, 500),
                 paymentAccountSnapshot: payoutSnapshotMetadata(fullPayoutAccountSnapshot),
                 paymentAccountSnapshotVersion: PAYOUT_ACCOUNT_SNAPSHOT_VERSION,
@@ -1847,7 +1796,7 @@ exports.createWithdrawalRequest = async (req, res) => {
             success: true,
             reused,
             msg: reused ? 'Withdrawal request already submitted' : 'Withdrawal request submitted',
-            amountUSD: request.amount,
+            amount: request.amount, currency: request.currency,
             requestedAmount: request.requestedAmount,
             requestedCurrency: request.requestedCurrency,
             payoutAmount: request.payoutAmount,
@@ -1891,7 +1840,7 @@ exports.getSellerWithdrawals = async (req, res) => {
     }
 };
 
-const buildAdminPaymentsOverviewData = async () => {
+const buildLegacyAdminPaymentsOverviewData = async () => {
     const sellers = await User.find({ role: 'seller' }).select('_id username email currency sellerInfo createdAt').lean();
     const sellerIds = sellers.map((seller) => seller._id);
     const sellerIdSet = new Set(sellerIds.map(toId));
@@ -2083,7 +2032,49 @@ const buildAdminPaymentsOverviewData = async () => {
     };
 };
 
+const buildAdminPaymentsOverviewData = async () => {
+    const sellers = await User.find({ role: 'seller' }).select('_id username email currency sellerInfo createdAt').lean();
+    const rows = [], errors = [];
+    const totalsByCurrency = Object.fromEntries(Object.keys(WITHDRAWAL_MINIMUMS).map(currency => [currency, { ...emptyRevenueSummary(), currency }]));
+    // Small bounded batches avoid a connection-pool burst on a large marketplace.
+    for (let offset = 0; offset < sellers.length; offset += 10) {
+        await Promise.all(sellers.slice(offset, offset + 10).map(async seller => {
+            try {
+                const store = await Store.findOne({ seller: seller._id }).select('storeName storeSlug productCurrency').lean();
+                const reportCurrency = store?.productCurrency || seller.currency;
+                const summary = await buildNativeSellerPaymentSummary(seller._id, { displayCurrency: reportCurrency });
+                const row = { seller: { ...seller, currency: reportCurrency }, store,
+                    paymentAccount: serializePaymentAccount(await SellerPaymentAccount.findOne({ seller: seller._id }).select('+accountNumber +iban').lean(), { includeSensitive: true }),
+                    revenue: summary.displayRevenue, balances: summary.balances,
+                    paymentRiskPending: summary.paymentRiskPending,
+                    paymentRiskHoldCount: summary.paymentRiskPending ? 1 : 0,
+                    legacyWithdrawalHold: summary.legacyWithdrawalHold };
+                const proposedTotals = Object.fromEntries(Object.entries(totalsByCurrency).map(([code, total]) => [code, { ...total }]));
+                for (const balance of summary.balances) {
+                    for (const field of REVENUE_MONEY_FIELDS) proposedTotals[balance.currency][field] = roundMoney(proposedTotals[balance.currency][field] + balance[field]);
+                    for (const field of Object.keys(emptyRevenueSummary()).filter(field => !REVENUE_MONEY_FIELDS.includes(field))) {
+                        const total = proposedTotals[balance.currency][field] + balance[field];
+                        if (!Number.isSafeInteger(total)) throw new Error('Seller payment order count is invalid.');
+                        proposedTotals[balance.currency][field] = total;
+                    }
+                }
+                Object.assign(totalsByCurrency, proposedTotals);
+                rows.push(row);
+            } catch (error) { errors.push({ sellerId: toId(seller._id), sellerName: seller.username, code: error.code, message: error.message }); }
+        }));
+    }
+    const withdrawals = await SellerWithdrawalRequest.find().select('+paymentAccountSnapshotEnvelope')
+        .sort({ createdAt: -1 }).limit(100).lean();
+    return { accountingVersion: 2, summaryByCurrency: totalsByCurrency,
+        summary: totalsByCurrency.USD, sellers: rows.sort((a, b) => toId(a.seller).localeCompare(toId(b.seller))),
+        withdrawals: withdrawals.map(request => ({
+            ...serializeWithdrawalRequest(request, { includeSensitivePayout: true }),
+            seller: sellers.find(seller => toId(seller) === toId(request.seller))
+                || { _id: request.seller, username: 'Deleted seller', currency: request.currency, deleted: true },
+        })), errors };
+};
 exports.buildAdminPaymentsOverviewData = buildAdminPaymentsOverviewData;
+exports.buildLegacyAdminPaymentsOverviewData = buildLegacyAdminPaymentsOverviewData;
 
 exports.getAdminPaymentsOverview = async (req, res) => {
     try {
@@ -2167,7 +2158,7 @@ exports.updateWithdrawalRequestStatus = async (req, res) => {
         }
 
         const checksNewPayoutAuthority = ['approved', 'processing'].includes(action.status);
-        const transitionRateSnapshot = checksNewPayoutAuthority
+        const transitionRateSnapshot = checksNewPayoutAuthority && existing.balanceVersion !== 2
             ? await getExchangeRateSnapshot()
             : null;
 
@@ -2226,9 +2217,9 @@ exports.updateWithdrawalRequestStatus = async (req, res) => {
                 // which new payout authority is granted. They require the exact
                 // frozen destination and a currently covered reservation.
                 readFrozenPayoutDestination(current);
-                const summary = await buildSellerPaymentSummary(current.seller, {
+                const summary = await (current.balanceVersion === 2 ? buildSellerPaymentSummary : buildLegacySellerPaymentSummary)(current.seller, {
                     session,
-                    displayCurrency: 'USD',
+                    displayCurrency: current.balanceVersion === 2 ? current.currency : 'USD',
                     rateSnapshot: transitionRateSnapshot,
                 });
                 if (summary.paymentRiskPending) {
@@ -2239,6 +2230,7 @@ exports.updateWithdrawalRequestStatus = async (req, res) => {
                     );
                 }
                 if (
+                    current.balanceVersion === 2 ? summary.revenue.deficit > 0 :
                     toMinorUnits(summary.revenue.totalReservedOrWithdrawn)
                     > toMinorUnits(summary.revenue.onlineDeliveredRevenue)
                 ) {

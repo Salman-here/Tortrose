@@ -174,7 +174,7 @@ const seedPayoutAccount = (seller, overrides = {}) => SellerPaymentAccount.creat
     ibanLast4: '4455',
     swiftCode: 'FROZPKKA',
     country: 'Pakistan',
-    currency: 'PKR',
+    currency: 'USD',
     payoutInstructions: 'Frozen account only',
     isActive: true,
     ...overrides,
@@ -254,7 +254,7 @@ describe('withdrawal payout destination snapshots', () => {
             ibanLast4: '1234',
             swiftCode: 'AAAAPKKA',
             country: 'Pakistan',
-            currency: 'PKR',
+            currency: 'USD',
             payoutInstructions: 'Account A branch 001',
             isActive: true,
         });
@@ -345,7 +345,8 @@ describe('withdrawal payout destination snapshots', () => {
             payoutAmount: protectedRead.payoutAmount,
             payoutCurrency: protectedRead.payoutCurrency,
         });
-        expect(financialImmutableRead.exchangeRateSnapshot.source).toBe('snapshot-test');
+        expect(financialImmutableRead.exchangeRateSnapshot).toBeNull();
+        expect(financialImmutableRead.balanceVersion).toBe(2);
 
         const accountUpdateResponse = responseRecorder();
         await upsertSellerPaymentAccount(sellerRequest(seller, {
@@ -383,7 +384,7 @@ describe('withdrawal payout destination snapshots', () => {
             accountNumber: accountANumber,
             iban: accountAIBAN,
             swiftCode: 'AAAAPKKA',
-            currency: 'PKR',
+            currency: 'USD',
             payoutInstructions: 'Account A branch 001',
             snapshotStatus: 'complete',
             payoutBlocked: false,
@@ -442,7 +443,7 @@ describe('withdrawal payout destination snapshots', () => {
                     amount: 999,
                     payoutAmount: 279720,
                     payoutCurrency: 'PKR',
-                    'exchangeRateSnapshot.rates.PKR': 999,
+                    exchangeRateSnapshot: { base: 'USD', rates: { USD: 1, PKR: 999 }, capturedAt: new Date(), fallback: false },
                 },
             }
         );
@@ -479,7 +480,7 @@ describe('withdrawal payout destination snapshots', () => {
         expect(await SellerWithdrawalRequest.countDocuments({ seller: seller._id })).toBe(0);
     });
 
-    test('refuses to freeze a positive USD reservation to a zero-cent bank payout', async () => {
+    test('refuses cross-currency bank payouts even when a rate table would round them to zero', async () => {
         getExchangeRateSnapshot.mockResolvedValue({
             ...trustedRates,
             rates: { USD: 1, PKR: 280, EUR: 0.0001, GBP: 0.8 },
@@ -494,8 +495,8 @@ describe('withdrawal payout destination snapshots', () => {
             requestedCurrency: 'USD',
         }, { idempotencyKey: 'zero-cent-payout-quote' }), createResponse.res);
 
-        expect(createResponse.statusCode).toBe(503);
-        expect(createResponse.body.code).toBe('WITHDRAWAL_PAYOUT_QUOTE_INVALID');
+        expect(createResponse.statusCode).toBe(400);
+        expect(createResponse.body.code).toBe('WITHDRAWAL_BANK_CURRENCY_MISMATCH');
         expect(await SellerWithdrawalRequest.countDocuments({ seller: seller._id })).toBe(0);
     });
 
@@ -739,7 +740,7 @@ describe('withdrawal payout destination snapshots', () => {
             && event.payload.title === 'Withdrawal Paid'
         ))?.money).toEqual(expect.arrayContaining([
             expect.objectContaining({ key: 'requested_amount', amountMinor: 1000, currency: 'USD' }),
-            expect.objectContaining({ key: 'payout_amount', amountMinor: 280000, currency: 'PKR' }),
+            expect.objectContaining({ key: 'payout_amount', amountMinor: 1000, currency: 'USD' }),
         ]));
 
         const replay = await adminTransition(admin, withdrawalId, paidBody, paidKey);

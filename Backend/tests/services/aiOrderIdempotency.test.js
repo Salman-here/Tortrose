@@ -634,7 +634,7 @@ describe('AI COD order idempotency', () => {
     await expect(Product.findById(product._id).lean()).resolves.toMatchObject({ stock: 5, totalSales: 0 });
   });
 
-  test('does not require FX for an exact-zero foreign fixed tax', async () => {
+  test('requires a complete trusted order snapshot even with zero tax and USD-only prices', async () => {
     const { buyer, product } = await createCatalog();
     await TaxConfig.create({
       type: 'fixed',
@@ -656,10 +656,9 @@ describe('AI COD order idempotency', () => {
       buyer,
     );
 
-    expect(result).toMatchObject({ success: true, data: { total: 12.34, currency: 'USD' } });
-    await expect(Order.findOne().lean()).resolves.toMatchObject({
-      orderSummary: expect.objectContaining({ tax: 0, totalAmount: 12.34 }),
-    });
+    expect(result).toMatchObject({ success: false, code: 'EXCHANGE_RATES_UNAVAILABLE' });
+    expect(await Order.countDocuments()).toBe(0);
+    expect((await Product.findById(product._id)).stock).toBe(5);
   });
 
   test('still requires trusted FX for one positive foreign source cent even when target rounds to zero', async () => {

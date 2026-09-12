@@ -21,6 +21,7 @@ const {
   requireStoredProductDiscountPrice,
 } = require('./productPricingService');
 const { runInTransaction } = require('./walletService');
+const { readStoreCurrencyTerms, convertStoreCurrencyTerms, commitStoreCurrencyTerms } = require('./storeCurrencyTermsService');
 
 const PRODUCT_CURRENCY_PENDING_STATUS = 'pending_conversion';
 const PRODUCT_CURRENCY_ACTIVE_STATUS = 'active';
@@ -286,100 +287,28 @@ async function ensureStoreProductCurrencyInitialized(sellerId, options = {}) {
   return getSellerProductCurrencyState(sellerId, { store, seller });
 }
 
-async function requestProductCurrencyChange(sellerId, requestedCurrency, { confirm = false } = {}) {
-  if (typeof requestedCurrency !== 'string' || !requestedCurrency.trim() || !isSupportedCurrency(requestedCurrency)) {
-    const error = new Error('Choose a supported product currency: USD, PKR, EUR, or GBP.');
-    error.status = 400;
-    throw error;
+async function requestProductCurrencyChange(sellerId, requestedCurrency, { confirm = false, quoteToken = null } = {}) {
+  if (typeof requestedCurrency !== 'string' || !requestedCurrency.trim() || !isSupportedCurrency(requestedCurrency)) throw Object.assign(new Error('Choose USD, PKR, EUR or GBP.'), { status: 400, code: 'PRODUCT_CURRENCY_METADATA_INVALID' });
+  const targetCurrency = normalizeProductCurrency(requestedCurrency, null);
+  const state = await ensureStoreProductCurrencyInitialized(sellerId);
+  if (!state.hasStore) throw Object.assign(new Error('Create your store first.'), { status: 404 });
+  if (targetCurrency === state.activeCurrency && state.status === 'active') return state;
+  // All UI and AI entry points share the same persisted, owner-bound review.
+  const service = require('./aiStoreCurrencyService');
+  if (confirm && typeof quoteToken === 'string') {
+    const result = await service.changeStoreCurrency(sellerId, {
+      currency: targetCurrency, _chatRequestKey: 'settings-confirm-' + crypto.randomUUID(),
+      _lastUserText: 'yes', _imageContextMessages: [{ role: 'assistant', content: quoteToken }],
+    });
+    if (!result.success) throw Object.assign(new Error(result.error || result.message), { status: 409, code: result.code });
+    return { ...await getSellerProductCurrencyState(sellerId), msg: result.message, converted: result.data.converted };
   }
-  const targetCurrency = normalizeProductCurrency(requestedCurrency);
-  let store = await Store.findOne({ seller: sellerId });
-  if (!store) {
-    const error = new Error('Store not found. Please create a store first.');
-    error.status = 404;
-    throw error;
-  }
-
-  await ensureStoreProductCurrencyInitialized(sellerId, { store });
-  // Initialization itself is an optimistic write. Re-read its exact version so
-  // a following request mutation never relies on a stale __v/updatedAt token.
-  store = await Store.findOne({ seller: sellerId });
-  const state = await getSellerProductCurrencyState(sellerId, { store });
-  if (state.status === PRODUCT_CURRENCY_PENDING_STATUS) {
-    if (targetCurrency === state.activeCurrency && confirm) return cancelPendingProductCurrencyChange(sellerId);
-    assertStoreCurrencyChangeAllowed(store);
-    if (!confirm && targetCurrency !== state.pendingCurrency) {
-      return {
-        ...state,
-        requiresConfirmation: true,
-        requestedCurrency: targetCurrency,
-        msg: `You already have a pending product currency change from ${state.previousCurrency} to ${state.pendingCurrency}. Confirm to replace it with ${targetCurrency}, or cancel the current change first. After conversion, you must wait ${state.changeLimit.cooldownDays} days before changing currency again.`,
-      };
-    }
-
-    if (confirm && targetCurrency !== state.pendingCurrency) {
-      store = await updateStoreCurrencyState(store, sellerId, {
-        pendingProductCurrency: targetCurrency,
-        previousProductCurrency: state.previousCurrency || state.activeCurrency,
-        productCurrencyStatus: PRODUCT_CURRENCY_PENDING_STATUS,
-        productCurrencyChangedAt: new Date(),
-      });
-    }
-    return getSellerProductCurrencyState(sellerId, { store });
-  }
-
-  if (targetCurrency === state.activeCurrency) {
-    if (
-      store.productCurrency !== targetCurrency
-      || store.productCurrencyStatus !== PRODUCT_CURRENCY_ACTIVE_STATUS
-      || store.pendingProductCurrency
-      || store.previousProductCurrency
-    ) {
-      store = await updateStoreCurrencyState(store, sellerId, {
-        productCurrency: targetCurrency,
-        productCurrencyStatus: PRODUCT_CURRENCY_ACTIVE_STATUS,
-        pendingProductCurrency: null,
-        previousProductCurrency: null,
-      });
-    }
-    return getSellerProductCurrencyState(sellerId, { store });
-  }
-
-  const changeLimit = assertStoreCurrencyChangeAllowed(store);
-  if (!confirm) {
-    return {
-      ...state,
-      requiresConfirmation: true,
-      requestedCurrency: targetCurrency,
-      msg: `Change your store product currency from ${state.activeCurrency} to ${targetCurrency}? ${state.productCount > 0 ? `Your ${state.productCount} existing product(s), including sale prices, must be converted and saved in ${targetCurrency} from the Products tab before adding more products.` : `New products will be priced and saved in ${targetCurrency}.`} After the change completes, you cannot change it again for ${changeLimit.cooldownDays} days. Past orders and balances stay unchanged.`,
-    };
-  }
-
-  if (state.productCount === 0) {
-    store = await updateStoreCurrencyState(
-      store,
-      sellerId,
-      {
-        productCurrency: targetCurrency,
-        productCurrencyStatus: PRODUCT_CURRENCY_ACTIVE_STATUS,
-        pendingProductCurrency: null,
-        previousProductCurrency: null,
-        productCurrencyChangedAt: new Date(),
-        lastProductCurrencyChangeAt: new Date(),
-      },
-      'A product or product-currency setting changed at the same time. Nothing was saved; refresh and retry.'
-    );
-    return getSellerProductCurrencyState(sellerId, { store });
-  }
-
-  store = await updateStoreCurrencyState(store, sellerId, {
-    productCurrency: state.activeCurrency,
-    previousProductCurrency: state.activeCurrency,
-    pendingProductCurrency: targetCurrency,
-    productCurrencyStatus: PRODUCT_CURRENCY_PENDING_STATUS,
-    productCurrencyChangedAt: new Date(),
+  const preview = await service.previewStoreCurrencyChange(sellerId, {
+    currency: targetCurrency, _chatRequestKey: 'settings-preview-' + crypto.randomUUID(),
   });
-  return getSellerProductCurrencyState(sellerId, { store });
+  if (!preview.success) throw Object.assign(new Error(preview.error || preview.message), { status: 409, code: preview.code });
+  return { ...state, requiresConfirmation: true, requestedCurrency: targetCurrency,
+    quoteToken: preview.data.quoteToken, preview: preview.data, msg: preview.message };
 }
 
 async function cancelPendingProductCurrencyChange(sellerId) {
@@ -407,27 +336,11 @@ async function cancelPendingProductCurrencyChange(sellerId) {
   return getSellerProductCurrencyState(sellerId, { store });
 }
 
-async function convertPendingProductPrices(sellerId) {
-  const store = await Store.findOne({ seller: sellerId });
-  if (!store) {
-    const error = new Error('Store not found. Please create a store first.');
-    error.status = 404;
-    throw error;
-  }
-  const state = await getSellerProductCurrencyState(sellerId, { store });
-  if (state.status !== PRODUCT_CURRENCY_PENDING_STATUS || !state.pendingCurrency) {
-    return { converted: 0, state };
-  }
-
-  const targetCurrency = state.pendingCurrency;
-  assertStoreCurrencyChangeAllowed(store);
-  const plan = await buildProductCurrencyConversionPlan(sellerId, store, targetCurrency);
-  await commitProductCurrencyConversion(sellerId, plan);
-  const updatedStore = await Store.findOne({ seller: sellerId });
-  return {
-    converted: plan.operations.length,
-    state: await getSellerProductCurrencyState(sellerId, { store: updatedStore }),
-  };
+async function convertPendingProductPrices(sellerId, options = {}) {
+  const state = await getSellerProductCurrencyState(sellerId);
+  if (state.status !== PRODUCT_CURRENCY_PENDING_STATUS || !state.pendingCurrency) return { converted: 0, state };
+  const result = await requestProductCurrencyChange(sellerId, state.pendingCurrency, options);
+  return { converted: result.converted || 0, state: result };
 }
 
 function productCurrencyCatalogFingerprint(products) {
@@ -463,13 +376,16 @@ async function buildProductCurrencyConversionPlan(sellerId, store, targetCurrenc
       ) !== targetCurrency
     )
   ));
-  const rateSnapshot = needsConversion ? await getExchangeRateSnapshot() : null;
+  const terms = await readStoreCurrencyTerms(sellerId);
+  const rateSnapshot = (needsConversion || store.productCurrency !== targetCurrency || terms.shipping || terms.coupons.length)
+    ? await getExchangeRateSnapshot() : null;
   if (rateSnapshot?.fallback) {
     const error = new Error('Live exchange rates are temporarily unavailable. No product prices were changed. Please retry shortly.');
     error.status = 503;
     error.code = 'EXCHANGE_RATES_UNAVAILABLE';
     throw error;
   }
+  const moneyTerms = await convertStoreCurrencyTerms(terms, targetCurrency, rateSnapshot);
   const operations = [];
   for (const product of products) {
     const sourceCurrency = requireStoredProductCurrency(product, 'USD');
@@ -525,6 +441,7 @@ async function buildProductCurrencyConversionPlan(sellerId, store, targetCurrenc
     expectedStatus: store.productCurrencyStatus,
     expectedPendingCurrency: store.pendingProductCurrency || null,
     catalogFingerprint: productCurrencyCatalogFingerprint(products),
+    moneyTerms,
     targetCurrency,
     operations,
     rateSnapshot,
@@ -560,6 +477,7 @@ async function commitProductCurrencyConversion(sellerId, plan, { afterWrite } = 
     if (matchedCount(lockResult) !== 1) {
       throw productCurrencyConflict('Product currency settings changed during conversion. No prices were changed; refresh and retry.');
     }
+    await commitStoreCurrencyTerms(sellerId, plan.moneyTerms, session);
     const currentProducts = await Product.find({ seller: sellerId }).session(session);
     if (productCurrencyCatalogFingerprint(currentProducts) !== plan.catalogFingerprint) {
       throw productCurrencyConflict('Your products changed since the conversion was reviewed. No prices were changed; request a fresh preview.');

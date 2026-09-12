@@ -1,3 +1,4 @@
+const { withProductCurrencyWriteLock } = require('../services/storeProductCurrencyService');
 const ShippingMethod = require('../models/ShippingMethod');
 const Product = require('../models/Product');
 const User = require('../models/User');
@@ -353,18 +354,12 @@ const updateShippingMethods = async (req, res) => {
       });
     }
     
-    // Find existing or create new
-    let shippingMethods = await ShippingMethod.findOne({ seller: sellerId });
-    
-    if (shippingMethods) {
-      shippingMethods.methods = normalizedMethods;
-      await shippingMethods.save();
-    } else {
-      shippingMethods = await ShippingMethod.create({
-        seller: sellerId,
-        methods: normalizedMethods
-      });
-    }
+    const shippingMethods = await withProductCurrencyWriteLock(sellerId, sellerCurrency, async session => {
+      let document = await ShippingMethod.findOne({ seller: sellerId }).session(session);
+      if (!document) document = new ShippingMethod({ seller: sellerId });
+      document.methods = normalizedMethods;
+      return document.save({ session });
+    });
     
     res.status(200).json({
       success: true,

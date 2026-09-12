@@ -457,20 +457,10 @@ const SellerDashboard = () => {
     };
 
     const handleConvertProductCurrency = async () => {
-        try {
-            const token = getAuthToken();
-            const res = await axios.post(`${import.meta.env.VITE_API_URL}api/stores/product-currency/convert`, {}, {
-                headers: { Authorization: `Bearer ${token}` }
-            });
-            toast.success(res.data.msg || 'Product prices converted');
-            const state = inspectSellerProductCurrencyState(res.data?.productCurrency);
-            if (!state.valid) throw new Error('The converted product currency state is unavailable. Refresh before changing products.');
-            setProductCurrencyState(state);
-            fetchProducts();
-            fetchOverviewData();
-        } catch (error) {
-            toast.error(error.response?.data?.msg || 'Failed to convert product prices');
-        }
+        // Resume legacy pending requests in the same reviewed settings flow.
+        // The new currency policy never converts prices without a quote.
+        navigate('/seller-dashboard/store-settings');
+        toast.info('Review the pending currency change in Store Settings before confirming.');
     };
 
     const handleCancelProductCurrencyChange = async () => {

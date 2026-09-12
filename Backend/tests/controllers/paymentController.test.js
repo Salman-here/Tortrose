@@ -1,8 +1,9 @@
+// Native accounting is covered in sellerNativeAccounting and storeCurrencyAndNativeWithdrawal.
 const mongoose = require('mongoose');
 const { MongoMemoryServer } = require('mongodb-memory-server');
 const {
-    buildSellerPaymentSummary,
-    buildAdminPaymentsOverviewData,
+    buildLegacySellerPaymentSummary: buildSellerPaymentSummary,
+    buildLegacyAdminPaymentsOverviewData: buildAdminPaymentsOverviewData,
     quoteWithdrawalAmount,
     quotePayoutAmount,
     assertWithdrawalQuoteCanUseSnapshot,
@@ -129,7 +130,7 @@ beforeEach(async () => {
     ]);
 });
 
-describe('PaymentController buildSellerPaymentSummary', () => {
+describe('PaymentController retained legacy USD accounting compatibility', () => {
     test('only resolves processing through proof, definitive failure, or retained manual review', () => {
         expect(canTransitionWithdrawalStatus('processing', 'paid')).toBe(true);
         expect(canTransitionWithdrawalStatus('processing', 'failed')).toBe(true);

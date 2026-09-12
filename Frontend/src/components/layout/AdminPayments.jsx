@@ -317,14 +317,13 @@ const AdminPayments = () => {
         );
     }
 
-    const summary = data.summary;
+    const summary = data.summaryByCurrency?.[currency] || data.summary;
     const sellers = data.sellers;
     const withdrawals = data.withdrawals;
     const loadErrors = data.errors;
-    const selectedCurrencyUnavailable = currency !== 'USD' && (exchangeRatesLoading || exchangeRatesFallback);
-    const formatLedgerAmount = (amount) => selectedCurrencyUnavailable
-        ? formatAmount(amount, { targetCurrency: 'USD', showCode: true })
-        : formatPrice(amount, { sourceCurrency: 'USD' });
+    const selectedCurrencyUnavailable = false;
+    const formatLedgerAmount = (amount, amountCurrency = currency) => formatAmount(amount, { targetCurrency: amountCurrency, showCode: true });
+
 
     return (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="px-3 py-4 sm:p-6 max-w-7xl mx-auto space-y-6 overflow-hidden">
@@ -343,8 +342,9 @@ const AdminPayments = () => {
                 </button>
             </div>
 
+            {data.errors?.length > 0 && <div role="alert" className="glass-card p-4 mb-4 text-amber-700">Some seller money is unavailable and excluded from these totals: {data.errors.map(error => `${error.sellerName || error.sellerId}: ${error.message}`).join('; ')}</div>}
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-6 gap-4">
-                <StatCard label="Platform Online Balance" value={formatLedgerAmount(summary.withdrawableBalance)} icon={<Wallet size={22} />} color="hsl(150,60%,45%)" bg="rgba(16,185,129,0.12)" />
+                <StatCard label={`Seller Online Balances (${currency})`} value={formatLedgerAmount(summary.withdrawableBalance)} icon={<Wallet size={22} />} color="hsl(150,60%,45%)" bg="rgba(16,185,129,0.12)" />
                 <StatCard label="Risk-held Balance" value={formatLedgerAmount(summary.paymentRiskHeldAmount)} icon={<AlertTriangle size={22} />} color="hsl(0,72%,55%)" bg="rgba(239,68,68,0.12)" />
                 <StatCard label="Delivered COD Revenue" value={formatLedgerAmount(summary.codDeliveredRevenue)} icon={<Banknote size={22} />} color="hsl(30,90%,50%)" bg="rgba(249,115,22,0.12)" />
                 <StatCard label="Estimated Revenue" value={formatLedgerAmount(summary.estimatedRevenue)} icon={<TrendingUp size={22} />} color="hsl(220,70%,55%)" bg="rgba(99,102,241,0.12)" />
@@ -434,15 +434,17 @@ const AdminPayments = () => {
                                         )}
                                     </td>
                                     <td className="py-3 pr-4 font-semibold whitespace-nowrap" style={{ color: 'hsl(150,60%,45%)' }}>
-                                        <p>{formatLedgerAmount(row.revenue.withdrawableBalance)}</p>
+                                        <div>{row.balances?.filter(balance => balance.withdrawableBalance || balance.paymentRiskHeldAmount || balance.deficit).map(balance => (
+                                            <p key={balance.currency}>{formatLedgerAmount(balance.withdrawableBalance, balance.currency)}{balance.deficit > 0 ? ' · balance deficit' : ''}</p>
+                                        ))}</div>
                                         {row.paymentRiskPending && (
                                             <p className="text-xs mt-1" style={{ color: 'hsl(0,72%,55%)' }}>
-                                                Held: {formatLedgerAmount(row.revenue.paymentRiskHeldAmount)}
+                                                Held: {formatLedgerAmount(row.revenue.paymentRiskHeldAmount, row.seller.currency)}
                                             </p>
                                         )}
                                     </td>
-                                    <td className="py-3 pr-4 whitespace-nowrap" style={{ color: 'hsl(var(--foreground))' }}>{formatLedgerAmount(row.revenue.codDeliveredRevenue)}</td>
-                                    <td className="py-3 pr-4 whitespace-nowrap" style={{ color: 'hsl(var(--foreground))' }}>{formatLedgerAmount(row.revenue.estimatedRevenue)}</td>
+                                    <td className="py-3 pr-4 whitespace-nowrap" style={{ color: 'hsl(var(--foreground))' }}>{formatLedgerAmount(row.revenue.codDeliveredRevenue, row.seller.currency)}</td>
+                                    <td className="py-3 pr-4 whitespace-nowrap" style={{ color: 'hsl(var(--foreground))' }}>{formatLedgerAmount(row.revenue.estimatedRevenue, row.seller.currency)}</td>
                                 </tr>
                             ))}
                         </tbody>
@@ -511,7 +513,7 @@ const AdminPayments = () => {
                                                     Legacy request: no frozen bank payout amount is available. Reconcile it manually; do not estimate a transfer from live or fallback FX.
                                                 </p>
                                             )}
-                                            {presentationMoney.requested.currency !== 'USD' && (
+                                            {request.balanceVersion !== 2 && presentationMoney.requested.currency !== 'USD' && (
                                                 <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
                                                     Reserved ledger amount: {formatPrice(presentationMoney.ledger.amount, { sourceCurrency: 'USD', targetCurrency: 'USD', showCode: true })}
                                                 </p>

@@ -1,3 +1,4 @@
+const { withProductCurrencyWriteLock } = require('../services/storeProductCurrencyService');
 const Coupon = require('../models/Coupon');
 const { deleteCouponIfUnreserved } = require('../services/couponUsageService');
 const Product = require('../models/Product');
@@ -304,7 +305,7 @@ exports.createCoupon = async (req, res) => {
         storedMinOrderAmount = convertedMoney.minOrderAmount;
         if (storedMaxDiscountAmount !== null) storedMaxDiscountAmount = convertedMoney.maxDiscountAmount;
 
-        const coupon = await Coupon.create({
+        const coupon = await withProductCurrencyWriteLock(sellerId, couponCurrency, async session => (await Coupon.create([{
             seller: sellerId,
             code: normalizedCode,
             discountType,
@@ -319,7 +320,7 @@ exports.createCoupon = async (req, res) => {
             startDate: startsAt,
             expiryDate: expiresAt,
             description: description || '',
-        });
+        }], { session }))[0]);
 
         res.status(201).json({ msg: 'Coupon created successfully!', coupon });
     } catch (error) {
@@ -901,11 +902,11 @@ exports.getCouponAnalytics = async (req, res) => {
 
             const [totalRevenue, totalDiscount] = await Promise.all([
                 sumCurrencyAmountsInCurrency(
-                    attributedOrders.flatMap(({ sellerSubtotalEntries }) => sellerSubtotalEntries),
+                    attributedOrders.flatMap(({ order, sellerSubtotalEntries }) => sellerSubtotalEntries.map(entry => ({ ...entry, order }))),
                     targetCurrency,
                 ),
                 sumCurrencyAmountsInCurrency(
-                    attributedOrders.map(({ sellerDiscountEntry }) => sellerDiscountEntry),
+                    attributedOrders.map(({ order, sellerDiscountEntry }) => ({ ...sellerDiscountEntry, order })),
                     targetCurrency,
                 ),
             ]);

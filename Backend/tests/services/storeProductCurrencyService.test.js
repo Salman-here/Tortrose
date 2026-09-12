@@ -54,6 +54,15 @@ jest.mock('../../models/Store', () => ({
 }));
 
 jest.mock('../../models/User', () => ({ findById: jest.fn() }));
+jest.mock('../../services/storeCurrencyTermsService', () => ({
+  readStoreCurrencyTerms: jest.fn(async () => ({ shipping: null, coupons: [], fingerprint: 'empty' })),
+  convertStoreCurrencyTerms: jest.fn(async () => ({ fingerprint: 'empty', shipping: null, coupons: [] })),
+  commitStoreCurrencyTerms: jest.fn(async () => {}),
+}));
+jest.mock('../../services/aiStoreCurrencyService', () => ({
+  previewStoreCurrencyChange: jest.fn(async () => ({ success: true, data: { quoteToken: 'aic1.' + 'a'.repeat(64) }, message: 'Review prices, shipping and coupons.' })),
+  changeStoreCurrency: jest.fn(),
+}));
 
 const Product = require('../../models/Product');
 const Store = require('../../models/Store');
@@ -67,12 +76,23 @@ const {
   requestProductCurrencyChange,
   cancelPendingProductCurrencyChange,
   assertProductCreationAllowed,
-  convertPendingProductPrices,
+  buildProductCurrencyConversionPlan,
+  commitProductCurrencyConversion,
   getSellerProductCurrencyState,
   normalizeProductCurrency,
   requireSellerProductCurrency,
   sellerDefaultProductCurrency,
 } = require('../../services/storeProductCurrencyService');
+
+// Unit coverage targets the shared plan/transaction core. Public request and
+// confirmation integration is exercised against Mongo in the companion suite.
+const convertPendingProductPrices = async sellerId => {
+  const store = await Store.findOne({ seller: sellerId });
+  const state = await getSellerProductCurrencyState(sellerId, { store });
+  const plan = await buildProductCurrencyConversionPlan(sellerId, store, state.pendingCurrency);
+  await commitProductCurrencyConversion(sellerId, plan);
+  return { converted: plan.operations.length, state: await getSellerProductCurrencyState(sellerId) };
+};
 
 const liveSnapshot = {
   rates: { USD: 1, PKR: 284.6, EUR: 0.92, GBP: 0.79 },
@@ -233,73 +253,27 @@ describe('storeProductCurrencyService', () => {
     expect(store.save).not.toHaveBeenCalled();
   });
 
-  test('confirmed change creates a pending conversion state and blocks new products', async () => {
-    const store = {
-      _id: 'store-1',
-      seller: 'seller-1',
-      __v: 2,
-      productCurrency: 'PKR',
-      productCurrencyStatus: 'active',
-      pendingProductCurrency: null,
-      previousProductCurrency: null,
-      save: jest.fn(),
-    };
+  test('confirmation without the reviewed token returns a fresh preview and makes no writes', async () => {
+    const store = { _id: 'store-1', productCurrency: 'PKR', productCurrencyStatus: 'active' };
     Store.findOne.mockResolvedValue(store);
-    Store.findOneAndUpdate.mockImplementation(async (_filter, update) => {
-      Object.assign(store, update.$set);
-      store.__v += 1;
-      return store;
-    });
     Product.aggregate.mockResolvedValue([{ _id: 'PKR', count: 1 }]);
-
-    const state = await requestProductCurrencyChange('seller-1', 'USD', { confirm: true });
-
-    expect(state).toMatchObject({
-      activeCurrency: 'PKR',
-      previousCurrency: 'PKR',
-      pendingCurrency: 'USD',
-      status: 'pending_conversion',
-    });
-    expect(Store.findOneAndUpdate).toHaveBeenCalledWith(
-      expect.objectContaining({ _id: 'store-1', seller: 'seller-1', __v: 2 }),
-      expect.objectContaining({
-        $set: expect.objectContaining({
-          productCurrency: 'PKR',
-          previousProductCurrency: 'PKR',
-          pendingProductCurrency: 'USD',
-          productCurrencyStatus: 'pending_conversion',
-        }),
-        $inc: { __v: 1 },
-      }),
-      { new: true, runValidators: true }
-    );
-    expect(state.canAddProduct).toBe(false);
-    await expect(assertProductCreationAllowed('seller-1')).rejects.toMatchObject({ status: 409 });
+    const result = await requestProductCurrencyChange('seller-1', 'USD', { confirm: true });
+    expect(result).toMatchObject({ requiresConfirmation: true, activeCurrency: 'PKR', requestedCurrency: 'USD' });
+    expect(result.quoteToken).toMatch(/^aic1\./);
+    expect(Store.findOneAndUpdate).not.toHaveBeenCalled();
+    expect(Product.bulkWrite).not.toHaveBeenCalled();
   });
 
-  test('fails a stale zero-product currency change instead of racing a product insert lock', async () => {
-    const store = {
-      _id: 'store-1',
-      seller: 'seller-1',
-      __v: 7,
-      productCurrency: 'PKR',
-      productCurrencyStatus: 'active',
-      pendingProductCurrency: null,
-      previousProductCurrency: null,
-    };
-    Store.findOne.mockResolvedValue(store);
-    Store.findOneAndUpdate.mockResolvedValue(null);
+  test('a rejected or stale reviewed confirmation cannot activate the store', async () => {
+    Store.findOne.mockResolvedValue({ _id: 'store-1', productCurrency: 'PKR', productCurrencyStatus: 'active' });
     Product.aggregate.mockResolvedValue([]);
-
-    await expect(requestProductCurrencyChange('seller-1', 'USD', { confirm: true })).rejects.toMatchObject({
-      status: 409,
-      code: 'PRODUCT_CURRENCY_CONVERSION_CONFLICT',
+    require('../../services/aiStoreCurrencyService').changeStoreCurrency.mockResolvedValueOnce({
+      success: false, code: 'PRODUCT_CURRENCY_CONVERSION_CONFLICT', error: 'The reviewed prices changed.',
     });
-    expect(Store.findOneAndUpdate).toHaveBeenCalledWith(
-      expect.objectContaining({ _id: 'store-1', seller: 'seller-1', __v: 7 }),
-      expect.any(Object),
-      { new: true, runValidators: true }
-    );
+    await expect(requestProductCurrencyChange('seller-1', 'USD', { confirm: true, quoteToken: 'aic1.' + 'a'.repeat(64) }))
+      .rejects.toMatchObject({ status: 409, code: 'PRODUCT_CURRENCY_CONVERSION_CONFLICT' });
+    expect(Store.findOneAndUpdate).not.toHaveBeenCalled();
+    expect(Product.bulkWrite).not.toHaveBeenCalled();
   });
 
   test('fails a stale cancellation after conversion wins the store version race', async () => {

@@ -1,3 +1,4 @@
+import { nativeBalancesAreValid } from '../../utils/nativeBalanceSafety';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import axios from 'axios';
@@ -154,6 +155,9 @@ const SellerPayments = () => {
     const [accountForm, setAccountForm] = useState(defaultAccountForm);
     const [showAccountForm, setShowAccountForm] = useState(false);
     const [withdrawAmount, setWithdrawAmount] = useState('');
+    const [balanceCurrency, setBalanceCurrency] = useState(null);
+    const accountIdentity = String(currentUser?._id || currentUser?.id || '');
+    useEffect(() => { setBalanceCurrency(null); }, [accountIdentity]);
     const summaryRef = useRef(null);
     const summaryRequestRef = useRef({ id: 0, controller: null });
     const activeWithdrawalAttemptRef = useRef(null);
@@ -183,7 +187,7 @@ const SellerPayments = () => {
     useEffect(() => {
         void retireActiveWithdrawalAttempt();
         setWithdrawAmount('');
-    }, [sellerCurrency, retireActiveWithdrawalAttempt]);
+    }, [sellerCurrency, balanceCurrency, retireActiveWithdrawalAttempt]);
 
     const fetchSummary = useCallback(async () => {
         const requestId = summaryRequestRef.current.id + 1;
@@ -216,7 +220,7 @@ const SellerPayments = () => {
             });
             if (summaryRequestRef.current.id !== requestId) return;
             const responseCurrency = exactCurrencyCode(res.data?.displayCurrency);
-            if (responseCurrency !== requestCurrency) {
+            if (responseCurrency !== requestCurrency || res.data?.sellerId !== accountIdentity) {
                 throw new Error('Payment summary returned in an unexpected currency. Please retry.');
             }
             const displayRevenue = res.data?.displayRevenue || {};
@@ -226,11 +230,10 @@ const SellerPayments = () => {
                 isExactNonNegativeJsonMoney(displayRevenue[field])
             )) && isExactNonNegativeJsonMoney(limits.availableDisplayAmount)
                 && isExactNonNegativeJsonMoney(limits.minimumDisplayAmount)
-                && isExactNonNegativeJsonMoney(limits.availableUSD)
-                && isExactNonNegativeJsonMoney(limits.minimumUSD)
+                && nativeBalancesAreValid(res.data)
                 && exactCurrencyCode(limits.displayCurrency) === requestCurrency
-                && exactCurrencyCode(limits.baseCurrency) === 'USD'
-                && typeof res.data?.exchangeRateStatus?.fallback === 'boolean'
+                && exactCurrencyCode(limits.baseCurrency) === requestCurrency
+                && res.data?.exchangeRateStatus?.fallback === false
                 && Array.isArray(res.data?.withdrawals)
                 && (!account || exactCurrencyCode(account.currency) !== null);
             if (!completeMoneySummary) {
@@ -240,6 +243,7 @@ const SellerPayments = () => {
             const nextSummary = { ...res.data, displayCurrency: responseCurrency };
             summaryRef.current = nextSummary;
             setSellerCurrency(requestCurrency);
+            setBalanceCurrency(current => current || requestCurrency);
             setSummary(nextSummary);
             setLoadError('');
             setAccountForm({
@@ -265,7 +269,7 @@ const SellerPayments = () => {
                 setRefreshingSummary(false);
             }
         }
-    }, []);
+    }, [accountIdentity]);
 
     useEffect(() => {
         fetchSummary();
@@ -276,6 +280,7 @@ const SellerPayments = () => {
     }, [fetchSummary]);
 
     const summaryMatchesCurrency = Boolean(summary)
+        && summary.sellerId === accountIdentity
         && Boolean(sellerCurrency)
         && String(summary.displayCurrency).toUpperCase() === sellerCurrency;
     const activeSummary = summaryMatchesCurrency ? summary : null;
@@ -283,13 +288,14 @@ const SellerPayments = () => {
     const displayValue = (field) => displayRevenue[field];
     const withdrawalLimits = activeSummary?.withdrawalLimits || {};
     const paymentAccount = activeSummary?.paymentAccount;
-    const exchangeRatesAreFallback = activeSummary?.exchangeRateStatus?.fallback !== false;
-    const withdrawalRequiresLiveFx = withdrawalNeedsLiveFx(sellerCurrency, paymentAccount?.currency);
-    const withdrawalBlockedByFallback = exchangeRatesAreFallback && withdrawalRequiresLiveFx;
-    const displayMoneyIsApproximate = exchangeRatesAreFallback && sellerCurrency !== 'USD';
-    const formatDisplayMoney = (amount) => `${displayMoneyIsApproximate ? '≈' : ''}${formatAmount(amount, { targetCurrency: sellerCurrency })}`;
-    const availableInCurrentCurrency = withdrawalLimits.availableDisplayAmount;
-    const minimumWithdrawalInCurrentCurrency = withdrawalLimits.minimumDisplayAmount;
+
+    const selectedBalance = activeSummary?.balanceByCurrency?.[balanceCurrency];
+    const withdrawalIsBlocked = Boolean(paymentAccount && paymentAccount.currency !== balanceCurrency) || activeSummary?.paymentRiskPending === true;
+    const formatBalanceMoney = amount => formatAmount(amount, { targetCurrency: balanceCurrency, showCode: true });
+
+    const formatDisplayMoney = (amount) => formatAmount(amount, { targetCurrency: sellerCurrency });
+    const availableInCurrentCurrency = selectedBalance?.withdrawableBalance ?? 0;
+    const minimumWithdrawalInCurrentCurrency = selectedBalance?.minimumWithdrawal ?? 0;
     const withdrawalInput = parseExactMoneyInput(withdrawAmount, { allowZero: false });
     const withdrawalInputError = withdrawAmount && !withdrawalInput
         ? 'Enter a positive amount with no more than 2 decimal places.'
@@ -323,8 +329,8 @@ const SellerPayments = () => {
             toast.error('Refresh the live payment summary before requesting a withdrawal.');
             return;
         }
-        if (withdrawalBlockedByFallback) {
-            toast.error('Live exchange rates are unavailable. Refresh and retry before requesting a withdrawal.');
+        if (withdrawalIsBlocked) {
+            toast.error('Choose a bank account matching this balance currency and resolve any payment holds before withdrawing. Balances are not converted.');
             return;
         }
         if (!paymentAccount) {
@@ -336,7 +342,7 @@ const SellerPayments = () => {
             return;
         }
         if (toCurrencyMinorUnits(availableInCurrentCurrency) < toCurrencyMinorUnits(minimumWithdrawalInCurrentCurrency)) {
-            toast.error(`Minimum withdrawal amount is ${formatAmount(minimumWithdrawalInCurrentCurrency, { targetCurrency: sellerCurrency })}`);
+            toast.error(`Minimum withdrawal amount is ${formatAmount(minimumWithdrawalInCurrentCurrency, { targetCurrency: balanceCurrency })}`);
             return;
         }
         if (!withdrawalInput) {
@@ -345,16 +351,16 @@ const SellerPayments = () => {
         }
         const amount = withdrawalInput.amount;
         if (toCurrencyMinorUnits(amount) < toCurrencyMinorUnits(minimumWithdrawalInCurrentCurrency)) {
-            toast.error(`Minimum withdrawal amount is ${formatAmount(minimumWithdrawalInCurrentCurrency, { targetCurrency: sellerCurrency })}`);
+            toast.error(`Minimum withdrawal amount is ${formatAmount(minimumWithdrawalInCurrentCurrency, { targetCurrency: balanceCurrency })}`);
             return;
         }
         if (toCurrencyMinorUnits(amount) > toCurrencyMinorUnits(availableInCurrentCurrency)) {
-            toast.error(`You can withdraw up to ${formatAmount(availableInCurrentCurrency, { targetCurrency: sellerCurrency })}`);
+            toast.error(`You can withdraw up to ${formatAmount(availableInCurrentCurrency, { targetCurrency: balanceCurrency })}`);
             return;
         }
 
         setRequesting(true);
-        const fingerprint = `${currentUser?._id || currentUser?.id || 'guest'}:${sellerCurrency}:${amount.toFixed(2)}`;
+        const fingerprint = `${currentUser?._id || currentUser?.id || 'guest'}:${balanceCurrency}:${amount.toFixed(2)}`;
         let attemptKey = '';
         try {
             await withdrawalAttemptResetRef.current;
@@ -375,7 +381,7 @@ const SellerPayments = () => {
                 `${API}/seller/withdrawals`,
                 {
                     amount,
-                    currency: sellerCurrency,
+                    currency: balanceCurrency,
                 },
                 { headers: { Authorization: `Bearer ${token}`, 'Idempotency-Key': attempt.key } }
             );
@@ -452,21 +458,10 @@ const SellerPayments = () => {
                 </motion.button>
             </div>
 
-            {exchangeRatesAreFallback && (
-                <div className="glass-panel p-4 flex items-start gap-3" role="alert">
-                    <AlertTriangle size={18} className="shrink-0 mt-0.5" style={{ color: 'hsl(30,90%,50%)' }} />
-                    <p className="text-sm" style={{ color: 'hsl(var(--foreground))' }}>
-                        {withdrawalBlockedByFallback
-                            ? 'Live FX is temporarily unavailable. Cross-currency totals are estimates and this withdrawal needs a conversion, so it is paused until a trusted rate refresh succeeds.'
-                            : 'Live FX is temporarily unavailable. This USD-to-USD withdrawal does not require conversion and remains available.'}
-                    </p>
-                </div>
-            )}
-
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
                 <PaymentStat
-                    label="Withdrawable Online Balance"
-                    value={formatDisplayMoney(displayValue('withdrawableBalance'))}
+                    label={`Withdrawable Online Balance (${balanceCurrency})`}
+                    value={formatBalanceMoney(availableInCurrentCurrency)}
                     description="Delivered card and Wallet orders minus withdrawals and return-refund reserves."
                     icon={<Wallet size={22} />}
                     color="hsl(150,60%,45%)"
@@ -597,8 +592,15 @@ const SellerPayments = () => {
                         <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
                             <div className="min-w-0">
                                 <h2 className="text-lg font-bold" style={{ color: 'hsl(var(--foreground))' }}>Request Withdrawal</h2>
+                                <label className="block mt-3 text-sm">Balance currency
+                                    <select aria-label="Withdrawal balance currency" className="glass-inner rounded-lg p-2 ml-2" value={balanceCurrency || ''} disabled={requesting} onChange={event => setBalanceCurrency(event.target.value)}>
+                                        {activeSummary.balances.map(balance => <option key={balance.currency} value={balance.currency}>{balance.currency} — {formatAmount(balance.withdrawableBalance, { targetCurrency: balance.currency })} available</option>)}
+                                    </select>
+                                </label>
+                                <p className="text-xs mt-2">Balances remain in their earned currencies. Manual bank payouts use that same currency.</p>
+                                {withdrawalIsBlocked && <p role="alert" className="text-amber-700 mt-2">Withdrawals are held, or the saved bank account currency does not match {balanceCurrency}. No automatic conversion is available.</p>}
                                 <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                                    Available now: {formatDisplayMoney(availableInCurrentCurrency)}. Minimum: {formatDisplayMoney(minimumWithdrawalInCurrentCurrency)}
+                                    Available now: {formatBalanceMoney(availableInCurrentCurrency)}. Minimum: {formatBalanceMoney(minimumWithdrawalInCurrentCurrency)}
                                 </p>
                             </div>
                             <div className="p-3 rounded-2xl" style={{ background: 'rgba(16,185,129,0.12)', color: 'hsl(150,60%,45%)' }}>
@@ -617,16 +619,16 @@ const SellerPayments = () => {
 
                         <div className="grid sm:grid-cols-[1fr_auto] gap-3">
                             <label className="space-y-1.5">
-                                <span className="text-xs font-semibold" style={{ color: 'hsl(var(--muted-foreground))' }}>Amount in {sellerCurrency}</span>
-                                <input type="number" min={minimumWithdrawalInCurrentCurrency.toFixed(2)} step="0.01" disabled={requesting || withdrawalBlockedByFallback || refreshingSummary} aria-invalid={!!withdrawalInputError} className="w-full min-w-0 glass-inner rounded-xl px-3 py-2.5 text-sm outline-none disabled:opacity-60" value={withdrawAmount} onChange={(e) => updateWithdrawAmount(e.target.value)} placeholder="0.00" />
+                                <span className="text-xs font-semibold" style={{ color: 'hsl(var(--muted-foreground))' }}>Amount in {balanceCurrency}</span>
+                                <input type="number" min={minimumWithdrawalInCurrentCurrency.toFixed(2)} step="0.01" disabled={requesting || withdrawalIsBlocked || refreshingSummary} aria-invalid={!!withdrawalInputError} className="w-full min-w-0 glass-inner rounded-xl px-3 py-2.5 text-sm outline-none disabled:opacity-60" value={withdrawAmount} onChange={(e) => updateWithdrawAmount(e.target.value)} placeholder="0.00" />
                                 {!!withdrawalInputError && <span className="block text-xs mt-1.5" style={{ color: 'hsl(0,72%,55%)' }}>{withdrawalInputError}</span>}
                             </label>
-                            <button type="button" disabled={requesting || withdrawalBlockedByFallback || refreshingSummary} className="w-full sm:w-auto sm:self-end px-4 py-2.5 rounded-xl text-sm font-semibold glass-inner disabled:opacity-60" style={{ color: 'hsl(var(--foreground))' }} onClick={() => updateWithdrawAmount(availableInCurrentCurrency.toFixed(2))}>
+                            <button type="button" disabled={requesting || withdrawalIsBlocked || refreshingSummary} className="w-full sm:w-auto sm:self-end px-4 py-2.5 rounded-xl text-sm font-semibold glass-inner disabled:opacity-60" style={{ color: 'hsl(var(--foreground))' }} onClick={() => updateWithdrawAmount(availableInCurrentCurrency.toFixed(2))}>
                                 Full balance
                             </button>
                         </div>
 
-                        <button disabled={requesting || withdrawalBlockedByFallback || refreshingSummary || !paymentAccount || !withdrawalInput} className="w-full sm:w-auto px-5 py-3 rounded-xl text-sm font-semibold text-white inline-flex items-center justify-center gap-2 disabled:opacity-60" style={{ background: 'linear-gradient(135deg, hsl(150,60%,45%), hsl(200,80%,45%))' }}>
+                        <button disabled={requesting || withdrawalIsBlocked || refreshingSummary || !paymentAccount || !withdrawalInput} className="w-full sm:w-auto px-5 py-3 rounded-xl text-sm font-semibold text-white inline-flex items-center justify-center gap-2 disabled:opacity-60" style={{ background: 'linear-gradient(135deg, hsl(150,60%,45%), hsl(200,80%,45%))' }}>
                             {requesting ? <RefreshCw size={16} className="animate-spin" /> : <Send size={16} />}
                             Send withdrawal request
                         </button>
@@ -636,18 +638,26 @@ const SellerPayments = () => {
                         <h2 className="text-lg font-bold mb-4" style={{ color: 'hsl(var(--foreground))' }}>Balance Details</h2>
                         <div className="space-y-3">
                             {[
-                                ['Card delivered revenue', displayValue('stripeDeliveredRevenue')],
-                                ['Wallet delivered revenue', displayValue('walletDeliveredRevenue')],
-                                ['Pending online estimate', displayValue('onlinePendingRevenue')],
-                                ['Pending withdrawals', displayValue('pendingWithdrawalAmount')],
-                                ['Processing withdrawals', displayValue('processingWithdrawalAmount')],
-                                ['Already paid out', displayValue('totalWithdrawn')],
-                                ['Return-refund reserve', displayValue('returnRefundDebits')],
-                                ['Pending COD estimate', displayValue('codPendingRevenue')],
+                                ['Card delivered revenue', selectedBalance?.stripeDeliveredRevenue ?? 0],
+                                ['Wallet delivered revenue', selectedBalance?.walletDeliveredRevenue ?? 0],
+                                ['Pending online estimate', selectedBalance?.onlinePendingRevenue ?? 0],
+                                ['Pending withdrawals', selectedBalance?.pendingWithdrawalAmount ?? 0],
+                                ['Processing withdrawals', selectedBalance?.processingWithdrawalAmount ?? 0],
+                                ['Already paid out', selectedBalance?.totalWithdrawn ?? 0],
+                                ['Return-refund reserve', selectedBalance?.returnRefundDebits ?? 0],
+                                ['Pending COD estimate', selectedBalance?.codPendingRevenue ?? 0],
+                                ...[
+                                    ['Approved withdrawals', selectedBalance?.approvedWithdrawalAmount ?? 0],
+                                    ['Payouts under review', selectedBalance?.manualReviewWithdrawalAmount ?? 0],
+                                    ['Payment reversals', selectedBalance?.paymentReversalDebits ?? 0],
+                                    ['Balance credits', selectedBalance?.balanceAdjustmentCredits ?? 0],
+                                    ['Risk-held funds', selectedBalance?.paymentRiskHeldAmount ?? 0],
+                                    ['Balance deficit', selectedBalance?.deficit ?? 0],
+                                ].filter(([, amount]) => amount > 0),
                             ].map(([label, amount]) => (
                                 <div key={label} className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 sm:gap-3 text-sm">
                                     <span style={{ color: 'hsl(var(--muted-foreground))' }}>{label}</span>
-                                    <span className="font-semibold" style={{ color: 'hsl(var(--foreground))' }}>{formatDisplayMoney(amount)}</span>
+                                    <span className="font-semibold" style={{ color: 'hsl(var(--foreground))' }}>{formatBalanceMoney(amount)}</span>
                                 </div>
                             ))}
                         </div>

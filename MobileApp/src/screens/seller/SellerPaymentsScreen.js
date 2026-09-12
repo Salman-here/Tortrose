@@ -1,3 +1,5 @@
+import { nativeBalancesAreValid } from '../../utils/nativeBalanceSafety';
+import { Picker } from '@react-native-picker/picker';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -126,6 +128,9 @@ export default function SellerPaymentsScreen({ navigation }) {
   const [requesting, setRequesting] = useState(false);
   const [summary, setSummary] = useState(null);
   const [sellerCurrency, setSellerCurrency] = useState(null);
+  const [balanceCurrency, setBalanceCurrency] = useState(null);
+  const accountIdentity = String(currentUser?._id || currentUser?.id || '');
+  useEffect(() => { setBalanceCurrency(null); }, [accountIdentity]);
   const [loadError, setLoadError] = useState('');
   const [showAccountForm, setShowAccountForm] = useState(false);
   const [accountForm, setAccountForm] = useState(defaultAccountForm);
@@ -160,7 +165,7 @@ export default function SellerPaymentsScreen({ navigation }) {
   useEffect(() => {
     void retireActiveWithdrawalAttempt();
     setWithdrawAmount('');
-  }, [sellerCurrency, retireActiveWithdrawalAttempt]);
+  }, [sellerCurrency, balanceCurrency, retireActiveWithdrawalAttempt]);
 
   const fetchSummary = useCallback(async () => {
     const requestId = summaryRequestRef.current.id + 1;
@@ -192,7 +197,7 @@ export default function SellerPaymentsScreen({ navigation }) {
       if (summaryRequestRef.current.id !== requestId) return;
       const next = res.data || {};
       const responseCurrency = exactCurrencyCode(next.displayCurrency);
-      if (responseCurrency !== requestCurrency) {
+      if (responseCurrency !== requestCurrency || next.sellerId !== accountIdentity) {
         throw new Error('Payment summary returned in an unexpected currency. Please retry.');
       }
       const displayRevenue = next.displayRevenue || {};
@@ -202,11 +207,10 @@ export default function SellerPaymentsScreen({ navigation }) {
         isExactNonNegativeJsonMoney(displayRevenue[field])
       )) && isExactNonNegativeJsonMoney(limits.availableDisplayAmount)
         && isExactNonNegativeJsonMoney(limits.minimumDisplayAmount)
-        && isExactNonNegativeJsonMoney(limits.availableUSD)
-        && isExactNonNegativeJsonMoney(limits.minimumUSD)
+        && nativeBalancesAreValid(next)
         && exactCurrencyCode(limits.displayCurrency) === requestCurrency
-        && exactCurrencyCode(limits.baseCurrency) === 'USD'
-        && typeof next.exchangeRateStatus?.fallback === 'boolean'
+        && exactCurrencyCode(limits.baseCurrency) === requestCurrency
+        && next.exchangeRateStatus?.fallback === false
         && Array.isArray(next.withdrawals)
         && (!account || exactCurrencyCode(account.currency) !== null);
       if (!completeMoneySummary) {
@@ -215,6 +219,7 @@ export default function SellerPaymentsScreen({ navigation }) {
       const normalizedNext = { ...next, displayCurrency: responseCurrency };
       summaryRef.current = normalizedNext;
       setSellerCurrency(requestCurrency);
+      setBalanceCurrency(current => current || requestCurrency);
       setSummary(normalizedNext);
       setLoadError('');
       setAccountForm({
@@ -238,7 +243,7 @@ export default function SellerPaymentsScreen({ navigation }) {
         setRefreshing(false);
       }
     }
-  }, []);
+  }, [accountIdentity]);
 
   useEffect(() => {
     fetchSummary();
@@ -254,6 +259,7 @@ export default function SellerPaymentsScreen({ navigation }) {
   }, [fetchSummary]);
 
   const summaryMatchesCurrency = Boolean(summary)
+    && summary.sellerId === accountIdentity
     && Boolean(sellerCurrency)
     && String(summary.displayCurrency).toUpperCase() === sellerCurrency;
   const activeSummary = summaryMatchesCurrency ? summary : null;
@@ -261,14 +267,15 @@ export default function SellerPaymentsScreen({ navigation }) {
   const displayValue = (field) => displayRevenue[field];
   const withdrawalLimits = activeSummary?.withdrawalLimits || {};
   const paymentAccount = activeSummary?.paymentAccount;
-  const exchangeRatesAreFallback = activeSummary?.exchangeRateStatus?.fallback !== false;
-  const withdrawalRequiresLiveFx = withdrawalNeedsLiveFx(sellerCurrency, paymentAccount?.currency);
-  const withdrawalBlockedByFallback = exchangeRatesAreFallback && withdrawalRequiresLiveFx;
-  const displayMoneyIsApproximate = exchangeRatesAreFallback && sellerCurrency !== 'USD';
-  const formatDisplayMoney = (amount) => `${displayMoneyIsApproximate ? '≈' : ''}${formatAmount(amount, { targetCurrency: sellerCurrency })}`;
+
+  const selectedBalance = activeSummary?.balanceByCurrency?.[balanceCurrency];
+  const withdrawalIsBlocked = Boolean(paymentAccount && paymentAccount.currency !== balanceCurrency) || activeSummary?.paymentRiskPending === true;
+  const formatBalanceMoney = amount => formatAmount(amount, { targetCurrency: balanceCurrency, showCode: true });
+
+  const formatDisplayMoney = (amount) => formatAmount(amount, { targetCurrency: sellerCurrency });
   const withdrawals = activeSummary?.withdrawals || [];
-  const availableInCurrentCurrency = withdrawalLimits.availableDisplayAmount;
-  const minimumWithdrawalInCurrentCurrency = withdrawalLimits.minimumDisplayAmount;
+  const availableInCurrentCurrency = selectedBalance?.withdrawableBalance ?? 0;
+  const minimumWithdrawalInCurrentCurrency = selectedBalance?.minimumWithdrawal ?? 0;
   const withdrawalInput = parseExactMoneyInput(withdrawAmount, { allowZero: false });
   const withdrawalInputError = withdrawAmount && !withdrawalInput
     ? 'Enter a positive amount with no more than 2 decimal places.'
@@ -315,7 +322,7 @@ export default function SellerPaymentsScreen({ navigation }) {
       Alert.alert('Refresh required', 'Refresh the live payment summary before requesting a withdrawal.');
       return;
     }
-    if (withdrawalBlockedByFallback) {
+    if (withdrawalIsBlocked) {
       Alert.alert('Live rates unavailable', 'Refresh and retry before requesting a withdrawal.');
       return;
     }
@@ -328,7 +335,7 @@ export default function SellerPaymentsScreen({ navigation }) {
       return;
     }
     if (toCurrencyMinorUnits(availableInCurrentCurrency) < toCurrencyMinorUnits(minimumWithdrawalInCurrentCurrency)) {
-      Alert.alert('Minimum withdrawal', `Minimum withdrawal amount is ${formatDisplayMoney(minimumWithdrawalInCurrentCurrency)}`);
+      Alert.alert('Minimum withdrawal', `Minimum withdrawal amount is ${formatBalanceMoney(minimumWithdrawalInCurrentCurrency)}`);
       return;
     }
     if (!withdrawalInput) {
@@ -338,17 +345,17 @@ export default function SellerPaymentsScreen({ navigation }) {
     const amount = withdrawalInput.amount;
 
     if (toCurrencyMinorUnits(amount) < toCurrencyMinorUnits(minimumWithdrawalInCurrentCurrency)) {
-      Alert.alert('Minimum withdrawal', `Minimum withdrawal amount is ${formatDisplayMoney(minimumWithdrawalInCurrentCurrency)}`);
+      Alert.alert('Minimum withdrawal', `Minimum withdrawal amount is ${formatBalanceMoney(minimumWithdrawalInCurrentCurrency)}`);
       return;
     }
     if (toCurrencyMinorUnits(amount) > toCurrencyMinorUnits(availableInCurrentCurrency)) {
-      Alert.alert('Too high', `You can withdraw up to ${formatDisplayMoney(availableInCurrentCurrency)}`);
+      Alert.alert('Too high', `You can withdraw up to ${formatBalanceMoney(availableInCurrentCurrency)}`);
       return;
     }
 
     withdrawalSubmissionRef.current = true;
     setRequesting(true);
-    const fingerprint = `${currentUser?._id || currentUser?.id || 'guest'}:${sellerCurrency}:${amount.toFixed(2)}`;
+    const fingerprint = `${currentUser?._id || currentUser?.id || 'guest'}:${balanceCurrency}:${amount.toFixed(2)}`;
     let attemptKey = '';
     try {
       await withdrawalAttemptResetRef.current;
@@ -366,7 +373,7 @@ export default function SellerPaymentsScreen({ navigation }) {
       };
       await api.post(API_ENDPOINTS.PAYMENTS.SELLER_WITHDRAWALS, {
         amount,
-        currency: sellerCurrency,
+        currency: balanceCurrency,
       }, {
         headers: { 'Idempotency-Key': attempt.key },
       });
@@ -422,16 +429,6 @@ export default function SellerPaymentsScreen({ navigation }) {
 
         {!!activeSummary && (
         <>
-        {exchangeRatesAreFallback && (
-          <View style={styles.warningBox}>
-            <Ionicons name="alert-circle-outline" size={18} color={palette.colors.warning} />
-            <Text style={styles.warningText}>
-              {withdrawalBlockedByFallback
-                ? 'Live FX is temporarily unavailable. Cross-currency totals are estimates and this withdrawal needs a conversion, so it is paused until rates refresh.'
-                : 'Live FX is temporarily unavailable. This USD-to-USD withdrawal does not require conversion and remains available.'}
-            </Text>
-          </View>
-        )}
         <GlassPanel variant="strong" style={styles.hero}>
           <LinearGradient
             colors={['rgba(99,102,241,0.22)', 'rgba(14,165,233,0.10)', 'rgba(16,185,129,0.12)']}
@@ -443,7 +440,7 @@ export default function SellerPaymentsScreen({ navigation }) {
           <View style={styles.heroIcon}><Ionicons name="wallet" size={24} color="#fff" /></View>
           <View style={styles.heroCopy}>
             <Text style={styles.heroEyebrow}>AVAILABLE TO WITHDRAW</Text>
-            <Text style={styles.heroValue} numberOfLines={1} adjustsFontSizeToFit>{formatDisplayMoney(displayValue('withdrawableBalance'))}</Text>
+            <Text style={styles.heroValue} numberOfLines={1} adjustsFontSizeToFit>{formatBalanceMoney(availableInCurrentCurrency)}</Text>
             <Text style={styles.heroText}>Delivered card and Rozare Wallet revenue after payout reservations and return-refund debits.</Text>
           </View>
         </GlassPanel>
@@ -522,32 +519,38 @@ export default function SellerPaymentsScreen({ navigation }) {
           <View style={styles.sectionHeader}>
             <View>
               <Text style={styles.sectionTitle}>Request Withdrawal</Text>
-              <Text style={styles.sectionSubtitle}>Available: {formatDisplayMoney(availableInCurrentCurrency)} - Minimum: {formatDisplayMoney(minimumWithdrawalInCurrentCurrency)}</Text>
+              <Text style={styles.sectionSubtitle}>Available: {formatBalanceMoney(availableInCurrentCurrency)} - Minimum: {formatBalanceMoney(minimumWithdrawalInCurrentCurrency)}</Text>
             </View>
             <View style={[styles.statIcon, { backgroundColor: `${palette.colors.success}18` }]}>
               <Ionicons name="card-outline" size={20} color={palette.colors.success} />
             </View>
           </View>
+          <Text style={styles.inputLabel}>Balance currency</Text>
+          <Picker style={{ color: palette.colors.text }} accessibilityLabel="Withdrawal balance currency" selectedValue={balanceCurrency} enabled={!requesting} onValueChange={setBalanceCurrency}>
+            {activeSummary.balances.map(balance => <Picker.Item key={balance.currency} value={balance.currency} label={`${balance.currency} — ${formatAmount(balance.withdrawableBalance, { targetCurrency: balance.currency })} available`} />)}
+          </Picker>
+          <Text style={styles.sectionSubtitle}>Balances remain in their earned currencies. Bank payouts use that same currency.</Text>
+          {withdrawalIsBlocked && <Text style={styles.fieldError}>Withdrawals are held, or your bank account currency does not match this balance. No automatic conversion is available.</Text>}
           <View style={styles.amountRow}>
             <View style={{ flex: 1 }}>
-              <Text style={styles.inputLabel}>Amount in {sellerCurrency}</Text>
+              <Text style={styles.inputLabel}>Amount in {balanceCurrency}</Text>
               <TextInput
                 style={[styles.input, !!withdrawalInputError && styles.inputInvalid]}
                 value={withdrawAmount}
                 onChangeText={updateWithdrawAmount}
-                editable={!requesting && !withdrawalBlockedByFallback && !refreshing}
+                editable={!requesting && !withdrawalIsBlocked && !refreshing}
                 keyboardType="decimal-pad"
                 placeholder="0.00"
                 placeholderTextColor={palette.colors.textSecondary}
-                accessibilityLabel={`Withdrawal amount in ${sellerCurrency}`}
+                accessibilityLabel={`Withdrawal amount in ${balanceCurrency}`}
               />
               {!!withdrawalInputError && <Text style={styles.fieldError}>{withdrawalInputError}</Text>}
             </View>
-            <TouchableOpacity style={[styles.fullButton, (requesting || withdrawalBlockedByFallback || refreshing) && styles.disabledButton]} disabled={requesting || withdrawalBlockedByFallback || refreshing} onPress={() => updateWithdrawAmount(availableInCurrentCurrency.toFixed(2))} activeOpacity={0.8}>
+            <TouchableOpacity style={[styles.fullButton, (requesting || withdrawalIsBlocked || refreshing) && styles.disabledButton]} disabled={requesting || withdrawalIsBlocked || refreshing} onPress={() => updateWithdrawAmount(availableInCurrentCurrency.toFixed(2))} activeOpacity={0.8}>
               <Text style={styles.fullButtonText}>Full</Text>
             </TouchableOpacity>
           </View>
-          <TouchableOpacity style={[styles.primaryButton, (requesting || !paymentAccount || withdrawalBlockedByFallback || refreshing || !withdrawalInput) && styles.disabledButton]} onPress={requestWithdrawal} disabled={requesting || !paymentAccount || withdrawalBlockedByFallback || refreshing || !withdrawalInput} activeOpacity={0.85} accessibilityRole="button">
+          <TouchableOpacity style={[styles.primaryButton, (requesting || !paymentAccount || withdrawalIsBlocked || refreshing || !withdrawalInput) && styles.disabledButton]} onPress={requestWithdrawal} disabled={requesting || !paymentAccount || withdrawalIsBlocked || refreshing || !withdrawalInput} activeOpacity={0.85} accessibilityRole="button">
             {requesting ? <ActivityIndicator size="small" color="#fff" /> : <Ionicons name="send-outline" size={18} color="#fff" />}
             <Text style={styles.primaryButtonText}>Send withdrawal request</Text>
           </TouchableOpacity>
@@ -556,21 +559,29 @@ export default function SellerPaymentsScreen({ navigation }) {
         <GlassPanel variant="card" style={styles.section}>
           <SellerSectionHeader title="Balance details" subtitle="How your available amount is calculated" icon="calculator-outline" />
           {[
-            ['Card delivered revenue', displayValue('stripeDeliveredRevenue'), 'card-outline'],
-            ['Wallet delivered revenue', displayValue('walletDeliveredRevenue'), 'wallet-outline'],
-            ['Pending online estimate', displayValue('onlinePendingRevenue'), 'hourglass-outline'],
-            ['Pending withdrawals', displayValue('pendingWithdrawalAmount'), 'paper-plane-outline'],
-            ['Processing withdrawals', displayValue('processingWithdrawalAmount'), 'sync-outline'],
-            ['Paid out', displayValue('totalWithdrawn'), 'checkmark-done-outline'],
-            ['Return-refund reserve', displayValue('returnRefundDebits'), 'return-down-back-outline'],
-            ['Pending COD estimate', displayValue('codPendingRevenue'), 'cash-outline'],
+            ['Card delivered revenue', selectedBalance?.stripeDeliveredRevenue ?? 0, 'card-outline'],
+            ['Wallet delivered revenue', selectedBalance?.walletDeliveredRevenue ?? 0, 'wallet-outline'],
+            ['Pending online estimate', selectedBalance?.onlinePendingRevenue ?? 0, 'hourglass-outline'],
+            ['Pending withdrawals', selectedBalance?.pendingWithdrawalAmount ?? 0, 'paper-plane-outline'],
+            ['Processing withdrawals', selectedBalance?.processingWithdrawalAmount ?? 0, 'sync-outline'],
+            ['Paid out', selectedBalance?.totalWithdrawn ?? 0, 'checkmark-done-outline'],
+            ['Return-refund reserve', selectedBalance?.returnRefundDebits ?? 0, 'return-down-back-outline'],
+            ['Pending COD estimate', selectedBalance?.codPendingRevenue ?? 0, 'cash-outline'],
+            ...[
+              ['Approved withdrawals', selectedBalance?.approvedWithdrawalAmount ?? 0, 'checkmark-circle-outline'],
+              ['Payouts under review', selectedBalance?.manualReviewWithdrawalAmount ?? 0, 'time-outline'],
+              ['Payment reversals', selectedBalance?.paymentReversalDebits ?? 0, 'return-down-back-outline'],
+              ['Balance credits', selectedBalance?.balanceAdjustmentCredits ?? 0, 'add-circle-outline'],
+              ['Risk-held funds', selectedBalance?.paymentRiskHeldAmount ?? 0, 'lock-closed-outline'],
+              ['Balance deficit', selectedBalance?.deficit ?? 0, 'alert-circle-outline'],
+            ].filter(([, amount]) => amount > 0),
           ].map(([label, amount, icon], index, rows) => (
             <View key={label} style={[styles.balanceRow, index === rows.length - 1 && styles.lastRow]}>
               <View style={styles.balanceLabelRow}>
                 <Ionicons name={icon} size={16} color={palette.colors.textSecondary} />
                 <Text style={styles.balanceLabel}>{label}</Text>
               </View>
-              <Text style={styles.balanceValue}>{formatDisplayMoney(amount)}</Text>
+              <Text style={styles.balanceValue}>{formatBalanceMoney(amount)}</Text>
             </View>
           ))}
         </GlassPanel>

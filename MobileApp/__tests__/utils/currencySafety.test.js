@@ -97,7 +97,7 @@ describe('currency safety', () => {
   it('requires a trusted settlement snapshot for every non-USD checkout', () => {
     expect(checkoutRequiresTrustedRates(['PKR'], 'PKR')).toBe(true);
     expect(checkoutRequiresTrustedRates(['EUR'], 'EUR')).toBe(true);
-    expect(checkoutRequiresTrustedRates(['USD'], 'USD')).toBe(false);
+    expect(checkoutRequiresTrustedRates(['USD'], 'USD')).toBe(true);
     expect(checkoutRequiresTrustedRates(['PKR'], 'USD')).toBe(true);
   });
 

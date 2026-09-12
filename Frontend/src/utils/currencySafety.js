@@ -100,10 +100,9 @@ export const checkoutRequiresCurrencyConversion = (sourceCurrencies, targetCurre
     .some((sourceCurrency) => currencyConversionRequiresRates(sourceCurrency, targetCurrency))
 );
 
-export const checkoutRequiresTrustedRates = (sourceCurrencies, targetCurrency) => (
-  normalizeCurrencyCode(targetCurrency) !== 'USD'
-  || checkoutRequiresCurrencyConversion(sourceCurrencies, targetCurrency)
-);
+// Every new order records the full table for future historical reporting.
+// This does not convert a same-currency price; display conversion is separate.
+export const checkoutRequiresTrustedRates = () => true;
 
 const MAX_DECIMAL_EXPONENT = 100;
 

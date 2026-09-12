@@ -718,10 +718,12 @@ function DocsPage() {
                 <h3>For sellers: receiving payments</h3>
                 <p>Sellers do not need to configure online payments for their stores. Rozare provides Stripe card and Wallet checkout. Sellers only choose whether COD is also allowed. Paid order revenue is tracked in Seller Dashboard - Payments.</p>
                 <ul>
-                  <li><strong>Online balance</strong> - Delivered Stripe- and Wallet-paid order revenue becomes withdrawable after existing withdrawals and completed return-refund debits are reserved.</li>
+                  <li><strong>Online balances</strong> - Delivered Stripe- and Wallet-paid earnings remain separately withdrawable in the seller currency frozen on each order. Changing store currency does not convert existing balances. Refunds, payment-risk holds and withdrawal reservations affect availability.</li>
                   <li><strong>COD revenue</strong> - Cash on Delivery payments and shipping are handled by the seller directly. Rozare shows delivered COD revenue for reporting, but it is not withdrawn through Rozare.</li>
                   <li><strong>Estimated revenue</strong> - Delivered revenue plus pending Stripe and COD order revenue, so sellers can see what may be coming next.</li>
-                  <li><strong>Withdrawals</strong> - Sellers add a bank account in the Payments tab, enter an amount, and send a withdrawal request. Admins review and mark requests approved, processing, paid, rejected, or cancelled.</li>
+                  <li><strong>Withdrawals</strong> - Choose a native balance and a bank account accepting the same currency. Minimums are USD 5, PKR 2,000, EUR 5 and GBP 5. No balance conversion is offered. Requests reserve funds once; admins approve, transfer manually, then record payment evidence. An uncertain transfer stays reserved for review.</li>
+                  <li><strong>Historical revenue</strong> - Charts and sales reports use each order's saved exchange rates when shown in another store currency. Reporting equivalents are not additional withdrawable money.</li>
+                  <li><strong>Store currency changes</strong> - Review the product count and three examples, shipping fees and coupon money conversions at one rate snapshot. Confirmation converts and saves these together; percentage discounts and admin tax settings stay unchanged. A completed change starts a 60-day waiting period. Existing orders and balances keep their original currencies.</li>
                 </ul>
               </DocSection>
 

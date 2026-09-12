@@ -139,6 +139,8 @@ const sellerWithdrawalRequestSchema = new mongoose.Schema(
             default: undefined,
             immutable: true,
         },
+        balanceVersion: { type: Number, enum: [0, 2], default: 0, immutable: true },
+        minimumAmount: { type: Number, default: null, immutable: true, set: strictMoneySetter },
         amount: {
             type: Number,
             required: true,
@@ -147,14 +149,13 @@ const sellerWithdrawalRequestSchema = new mongoose.Schema(
             set: strictMoneySetter,
             validate: {
                 validator: isExactNonNegativeMoney,
-                message: 'Withdrawal USD amount must be finite, safe, and exact to cents',
+                message: 'Withdrawal amount must be finite, safe, and exact to cents',
             },
         },
         currency: {
             type: String,
-            // Balance reservation is canonical USD. Seller-selected and bank
-            // payout currencies are frozen separately below.
-            enum: ['USD'],
+            // Version 2 reserves exact native money; version 0 retains legacy USD terms.
+            enum: ['USD', 'PKR', 'EUR', 'GBP'],
             default: 'USD',
             immutable: true,
         },
@@ -175,9 +176,9 @@ const sellerWithdrawalRequestSchema = new mongoose.Schema(
             default: 'USD',
             immutable: true,
         },
-        // Canonical balance reservation remains in amount/USD. These fields
-        // freeze what an admin must actually transfer to the saved bank
-        // account, even when the seller viewed/requested another currency.
+        // Freeze the amount an admin must actually transfer. Native version 2
+        // uses the same balance, request and bank currency; legacy version 0
+        // preserves its originally signed USD reservation and payout quote.
         payoutAmount: {
             type: Number,
             required: true,
@@ -328,6 +329,15 @@ sellerWithdrawalRequestSchema.index(
 );
 
 sellerWithdrawalRequestSchema.pre('validate', function validateVersionedMoneySnapshots() {
+    if (this.balanceVersion === 2) {
+        const minima = require('../services/sellerWithdrawalPolicy').WITHDRAWAL_MINIMUMS;
+        if (!isExactNonNegativeMoney(this.minimumAmount) || this.minimumAmount <= 0
+            || this.isNew && this.minimumAmount !== minima[this.currency]
+            || !(this.amount >= this.minimumAmount) || this.requestedCurrency !== this.currency || this.payoutCurrency !== this.currency
+            || this.requestedAmount !== this.amount || this.payoutAmount !== this.amount || this.paymentAccountSnapshot?.currency !== this.currency) {
+            this.invalidate('amount', 'Native withdrawal must meet its minimum and keep balance, request and bank amounts/currencies identical.');
+        }
+    } else if (this.currency !== 'USD') this.invalidate('currency', 'Legacy withdrawal accounting currency must remain USD.');
     if (
         this.paymentAccountSnapshotVersion === 1
         && (!(this.requestedAmount > 0) || !(this.payoutAmount > 0))

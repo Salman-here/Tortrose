@@ -1,7 +1,7 @@
 const request = require('supertest');
 const express = require('express');
 const mongoose = require('mongoose');
-const { MongoMemoryServer } = require('mongodb-memory-server');
+const { MongoMemoryReplSet } = require('mongodb-memory-server');
 const jwt = require('jsonwebtoken');
 
 const shippingRoutes = require('../../routes/shippingRoutes');
@@ -27,7 +27,7 @@ const createSeller = () =>
 
 beforeAll(async () => {
   process.env.JWT_SECRET = process.env.JWT_SECRET || 'shipping-currency-test-secret';
-  mongoServer = await MongoMemoryServer.create();
+  mongoServer = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
   await mongoose.connect(mongoServer.getUri());
 
   app = express();
@@ -56,6 +56,7 @@ afterAll(async () => {
 describe('shipping currency', () => {
   test('stores seller shipping cost in the seller selected currency', async () => {
     const seller = await createSeller();
+    await Store.create({ seller: seller._id, storeName: 'Shipping Store', storeSlug: `shipping-${seller._id}`, productCurrency: 'PKR', productCurrencyStatus: 'active' });
 
     const res = await request(app)
       .put('/api/shipping/methods')
@@ -88,6 +89,7 @@ describe('shipping currency', () => {
   test('returns native shipping currency for checkout', async () => {
     const seller = await createSeller();
     await Store.create({
+      productCurrency: 'PKR', productCurrencyStatus: 'active',
       seller: seller._id,
       storeName: 'Advance Bags',
       storeSlug: `advance-bags-${Date.now()}`,
@@ -138,6 +140,7 @@ describe('shipping currency', () => {
 
   test('stores disabled unconfigured paid slots without exposing them at checkout', async () => {
     const seller = await createSeller();
+    await Store.create({ seller: seller._id, storeName: 'Shipping Store', storeSlug: `shipping-${seller._id}`, productCurrency: 'PKR', productCurrencyStatus: 'active' });
     const product = await Product.create({
       name: 'Inactive Shipping Slot Product',
       description: 'Regression fixture for dashboard shipping configuration',
@@ -185,6 +188,7 @@ describe('shipping currency', () => {
   test('returns a raw currency-less legacy shipping cost as canonical USD', async () => {
     const seller = await createSeller();
     await Store.create({
+      productCurrency: 'PKR', productCurrencyStatus: 'active',
       seller: seller._id,
       storeName: 'PKR Store With Legacy Shipping',
       storeSlug: `legacy-shipping-${Date.now()}`,
@@ -251,6 +255,7 @@ describe('shipping currency', () => {
       currency: 'USD',
     });
     await Store.create({
+      productCurrency: 'PKR', productCurrencyStatus: 'active',
       seller: seller._id,
       storeName: 'PKR Shipping Store',
       storeSlug: `pkr-shipping-${Date.now()}`,
@@ -280,6 +285,7 @@ describe('shipping currency', () => {
   test('preserves an explicit supported shipping currency different from the store currency', async () => {
     const seller = await createSeller();
     await Store.create({
+      productCurrency: 'PKR', productCurrencyStatus: 'active',
       seller: seller._id,
       storeName: 'PKR Store With USD Shipping',
       storeSlug: `pkr-store-usd-shipping-${Date.now()}`,

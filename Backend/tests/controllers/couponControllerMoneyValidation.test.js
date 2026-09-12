@@ -27,6 +27,7 @@ jest.mock('../../services/currencyService', () => {
 });
 jest.mock('../../services/storeProductCurrencyService', () => ({
   assertProductCreationAllowed: mockAssertProductCreationAllowed,
+  withProductCurrencyWriteLock: jest.fn(async (_seller, _currency, work) => work({ id: 'coupon-session' })),
 }));
 
 const { createCoupon, updateCoupon } = require('../../controllers/couponController');
@@ -146,11 +147,11 @@ describe('coupon money input boundary', () => {
       user: { id: 'seller-1', currency: 'PKR' },
     }, res);
 
-    expect(mockCouponCreate).toHaveBeenCalledWith(expect.objectContaining({
+    expect(mockCouponCreate).toHaveBeenCalledWith([expect.objectContaining({
       discountValue: 1.01,
       currency: 'PKR',
       minOrderAmount: 0,
-    }));
+    })], { session: { id: 'coupon-session' } });
     expect(res.status).toHaveBeenCalledWith(201);
   });
 
@@ -207,10 +208,10 @@ describe('coupon money input boundary', () => {
       user: { id: 'seller-1', currency: 'USD' },
     }, res);
 
-    expect(mockCouponCreate).toHaveBeenCalledWith(expect.objectContaining({
+    expect(mockCouponCreate).toHaveBeenCalledWith([expect.objectContaining({
       discountValue: 500,
       currency: 'PKR',
-    }));
+    })], { session: { id: 'coupon-session' } });
     expect(res.status).toHaveBeenCalledWith(201);
   });
 
@@ -228,12 +229,12 @@ describe('coupon money input boundary', () => {
       user: { id: 'seller-1', currency: 'PKR' },
     }, res);
 
-    expect(mockCouponCreate).toHaveBeenCalledWith(expect.objectContaining({
+    expect(mockCouponCreate).toHaveBeenCalledWith([expect.objectContaining({
       discountValue: 2800,
       minOrderAmount: 5600,
       maxDiscountAmount: 1400,
       currency: 'PKR',
-    }));
+    })], { session: { id: 'coupon-session' } });
     expect(mockGetExchangeRateSnapshot).toHaveBeenCalledTimes(1);
     expect(res.status).toHaveBeenCalledWith(201);
   });

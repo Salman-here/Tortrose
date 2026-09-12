@@ -1,3 +1,4 @@
+const { verifyOrderPricingAtCommit } = require('../services/orderPricingCommitGuard');
 const mongoose = require('mongoose');
 const Cart = require('../models/Cart');
 const Order = require('../models/Order');
@@ -1221,11 +1222,10 @@ exports.placeOrder = async (req, res) => {
         const exchangeRateSnapshot = await getExchangeRateSnapshot();
         const checkoutRates = exchangeRateSnapshot.rates;
         const trustedCheckoutRates = snapshotIsTrustedForConversion(exchangeRateSnapshot);
-        // Seller accounting is USD-denominated even when the buyer and every
-        // product use the same non-USD currency. Freeze that conversion at the
-        // checkout boundary; otherwise a later summary, return, withdrawal, or
-        // reversal could value one PKR/EUR/GBP order using a different day's FX.
-        if (orderCurrency !== 'USD' && !trustedCheckoutRates) {
+        // Every order needs a complete trusted historical reporting table,
+        // even when checkout itself does not require a conversion. Native
+        // seller balances remain in the seller currency frozen at placement.
+        if (!trustedCheckoutRates) {
             const err = new Error('Live exchange rates are temporarily unavailable. Please retry checkout shortly.');
             err.statusCode = 503;
             err.code = 'EXCHANGE_RATES_UNAVAILABLE';
@@ -1636,6 +1636,7 @@ exports.placeOrder = async (req, res) => {
             // coupon capacity, and every local immediate-payment mutation
             // commit or roll back together.
             await mongoose.connection.transaction(async session => {
+                await verifyOrderPricingAtCommit(newOrder, session);
                 await newOrder.save({ session });
                 if (newOrder.appliedCoupons.length > 0) {
                     await reserveOrderCoupons({ orderId: newOrder._id, userId, session });
@@ -2437,9 +2438,9 @@ const buildOrderExportMoney = ({ summary = {}, sourceCurrency, reportCurrency, r
     const target = normalizeCurrency(reportCurrency);
     if (source !== target && !snapshotIsTrustedForConversion(rateSnapshot)) {
         throw exportMoneyError(
-            'Live exchange rates are temporarily unavailable. Please retry the export shortly.',
-            'EXCHANGE_RATES_UNAVAILABLE',
-            503,
+            'This historical order is missing a trusted checkout exchange-rate snapshot. Its report cannot use current rates.',
+            'SELLER_SETTLEMENT_HISTORICAL_RATE_MISSING',
+            409,
         );
     }
 
@@ -2571,10 +2572,7 @@ exports.exportOrders = async (req, res) => {
             orders = await Order.find(query).sort({ createdAt: -1 }).lean();
         }
 
-        // Freeze one rate table for the complete report. A multi-currency
-        // export must never mix rates fetched at different moments.
-        const rateSnapshot = await getExchangeRateSnapshot();
-
+        // Each historical row uses its own checkout rate table, never today's FX.
         // Normalize orders to plain objects
         const rows = [];
         for (const order of orders) {
@@ -2588,7 +2586,7 @@ exports.exportOrders = async (req, res) => {
                 summary: exportSummary,
                 sourceCurrency,
                 reportCurrency,
-                rateSnapshot,
+                rateSnapshot: o.exchangeRateSnapshot,
             });
             if (!Array.isArray(o.orderItems)) {
                 throw exportMoneyError(

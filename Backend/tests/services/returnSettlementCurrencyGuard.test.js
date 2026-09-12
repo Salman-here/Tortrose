@@ -47,6 +47,10 @@ jest.mock('../../services/orderMoneyService', () => ({
   sellerSettlementUsdTargetForSource: jest.fn(),
   sellerOrderSummaryForItems: jest.fn(),
 }));
+jest.mock('../../services/sellerNativeAccountingService', () => ({
+  ...jest.requireActual('../../services/sellerNativeAccountingService'),
+  nativeSellerEntitlement: jest.fn(order => ({ currency: 'PKR', summary: { totalAmount: order.nativeAmount || 280 }, buyerSummary: { totalAmount: order.nativeAmount || 280 } })),
+}));
 jest.mock('../../controllers/PaymentController', () => ({
   buildSellerPaymentSummary: jest.fn(),
 }));
@@ -91,7 +95,7 @@ describe('seller-balance return settlement currency guard', () => {
     ensureOrderSellerSettlement.mockReset();
     sellerSettlementUsdTargetForSource.mockReset();
     SellerSettlementLock.findOneAndUpdate.mockResolvedValue({});
-    buildSellerPaymentSummary.mockResolvedValue({ revenue: { withdrawableBalance: 100 } });
+    buildSellerPaymentSummary.mockResolvedValue({ balanceByCurrency: { PKR: { withdrawableBalance: 10000 } } });
     ReturnRequest.find.mockReturnValue(mockSelectLeanSessionQuery([]));
     SellerBalanceTransaction.find.mockReturnValue(mockSelectLeanSessionQuery([]));
   });
@@ -186,7 +190,7 @@ describe('seller-balance return settlement currency guard', () => {
     const request = makeRequest();
     request._id = 'return-2';
     request.refund.totalAmount = 2;
-    const order = { _id: 'order-1', currency: 'PKR' };
+    const order = { _id: 'order-1', currency: 'PKR', nativeAmount: 4 };
     ReturnRequest.findOne.mockReturnValue(mockSessionQuery(request));
     ReturnRequest.find.mockReturnValue(mockSelectLeanSessionQuery([
       { _id: 'return-1', refund: { totalAmount: 2 } },

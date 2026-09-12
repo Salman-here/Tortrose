@@ -1549,9 +1549,11 @@ describe('seller Stripe reversal accounting', () => {
         displayCurrency: 'USD',
         rateSnapshot,
       });
-      expect(Math.round(summary.revenue.onlineDeliveredRevenue * 100)).toBe(entry.amountUSDMinor);
-      expect(Math.round(summary.revenue.paymentReversalDebits * 100)).toBe(entry.amountUSDMinor);
-      expect(summary.revenue.withdrawableBalance).toBe(0);
+      const native = summary.balanceByCurrency.PKR;
+      expect(Math.round(native.onlineDeliveredRevenue * 100)).toBe(entry.sourceAmountMinor);
+      expect(Math.round(native.paymentReversalDebits * 100)).toBe(entry.sourceAmountMinor);
+      expect(native.withdrawableBalance).toBe(0);
+      expect(summary.balanceByCurrency.USD.withdrawableBalance).toBe(0);
     }
   });
 

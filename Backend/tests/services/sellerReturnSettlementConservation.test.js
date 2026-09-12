@@ -200,9 +200,10 @@ test('sequential PKR seller-balance returns exactly zero the frozen USD credit, 
     displayCurrency: 'USD',
     rateSnapshot: rates,
   });
-  expect(summary.revenue.onlineDeliveredRevenue).toBe(0.01);
-  expect(summary.revenue.returnRefundDebits).toBe(0.01);
-  expect(summary.revenue.withdrawableBalance).toBe(0);
+  expect(summary.balanceByCurrency.PKR.onlineDeliveredRevenue).toBe(4);
+  expect(summary.balanceByCurrency.PKR.returnRefundDebits).toBe(4);
+  expect(summary.balanceByCurrency.PKR.withdrawableBalance).toBe(0);
+  expect(summary.balanceByCurrency.USD.withdrawableBalance).toBe(0);
   expect((await Wallet.findOne({ user: fixture.buyer }).lean()).balances.PKR).toBe(4);
 });
 

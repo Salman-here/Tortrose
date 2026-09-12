@@ -383,10 +383,10 @@ describe('orderMoneyService exact seller allocation', () => {
     }
   });
 
-  test('rounds mixed foreign-currency reporting totals once globally', async () => {
+  test('rounds historical per-order contributions using their own saved snapshots', async () => {
     const entries = [
-      { order: { currency: 'PKR' }, amount: 1 },
-      { order: { currency: 'GBP' }, amount: 0.01 },
+      { order: { _id: 'a', currency: 'PKR', exchangeRateSnapshot: { rates: { USD: 1, PKR: 284.6, EUR: 0.92, GBP: 0.79 }, fallback: false } }, amount: 1 },
+      { order: { _id: 'b', currency: 'GBP', exchangeRateSnapshot: { rates: { USD: 1, PKR: 284.6, EUR: 0.92, GBP: 0.79 }, fallback: false } }, amount: 0.01 },
     ];
 
     await expect(sumOrderAmountsInCurrency(entries, 'USD', {
@@ -394,7 +394,7 @@ describe('orderMoneyService exact seller allocation', () => {
         rates: { USD: 1, PKR: 284.6, EUR: 0.92, GBP: 0.79 },
         fallback: false,
       },
-    })).resolves.toBe(0.02);
+    })).resolves.toBe(0.01);
   });
 
   test('refuses fallback rates for authoritative cross-currency order totals', async () => {
@@ -405,8 +405,8 @@ describe('orderMoneyService exact seller allocation', () => {
         fallback: true,
       },
     })).rejects.toMatchObject({
-      statusCode: 503,
-      code: 'EXCHANGE_RATES_UNAVAILABLE',
+      statusCode: 409,
+      code: 'SELLER_SETTLEMENT_HISTORICAL_RATE_MISSING',
     });
   });
 

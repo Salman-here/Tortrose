@@ -113,6 +113,7 @@ const makeCheckout = async paymentMethod => {
     currency: 'USD',
   });
   await Store.create({
+    productCurrency: 'USD', productCurrencyStatus: 'active',
     seller: seller._id,
     storeName: `Free ${paymentMethod} Store`,
     storeSlug: `free-${slugToken}-store`,
@@ -446,7 +447,7 @@ describe('initial zero-value and provider-minimum checkout boundaries', () => {
     expect((await Product.findById(fixture.product._id)).stock).toBe(5);
   });
 
-  test('does not require FX for an exact-zero foreign fixed tax', async () => {
+  test('requires a complete trusted snapshot even for USD-only prices with zero tax', async () => {
     const fixture = await makeCheckout('cash_on_delivery');
     await TaxConfig.create({ type: 'fixed', value: 0, currency: 'PKR', isActive: true });
     mockGetExchangeRateSnapshot.mockResolvedValueOnce({
@@ -464,9 +465,10 @@ describe('initial zero-value and provider-minimum checkout boundaries', () => {
       user: { id: fixture.buyer._id.toString(), role: 'user' },
     }, res);
 
-    expect(res.status).toHaveBeenCalledWith(200);
-    const stored = await Order.findOne({ checkoutIdempotencyKey: fixture.key }).lean();
-    expect(stored.orderSummary.tax).toBe(0);
+    expect(res.status).toHaveBeenCalledWith(503);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ code: 'EXCHANGE_RATES_UNAVAILABLE' }));
+    expect(await Order.countDocuments()).toBe(0);
+    expect((await Product.findById(fixture.product._id)).stock).toBe(5);
   });
 
   test('still requires trusted FX for a foreign source cent that converts below one checkout cent', async () => {

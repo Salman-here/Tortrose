@@ -115,8 +115,12 @@ async function previewStoreCurrencyChange(sellerId, args = {}) {
     `Change your store product currency from ${state.activeCurrency} to ${targetCurrency}?`,
     `${count} existing product${count === 1 ? '' : 's'}${count ? ', including regular and sale prices, will be converted and saved' : '; new products will be saved'} in ${targetCurrency}.`,
     ...examples,
+    ...(plan.rateSnapshot ? [`Conversion rate: 1 ${state.activeCurrency} = ${plan.rateSnapshot.rates[targetCurrency] / plan.rateSnapshot.rates[state.activeCurrency]} ${targetCurrency}.`] : []),
+    ...plan.moneyTerms.shippingExamples.map(row => `${row.type} shipping${row.isActive === false ? ' (inactive)' : ''}: ${money(row.fromAmount, row.fromCurrency)} → ${money(row.toAmount, targetCurrency)}`),
+    `${plan.moneyTerms.coupons.length} coupon(s): fixed discounts, minimum spending and maximum caps convert; percentage discounts stay unchanged.`,
+    ...plan.moneyTerms.couponExamples.map(row => `${row.code}: ${row.discountType === 'fixed' ? `${money(row.from.discountValue, row.fromCurrency)} → ${money(row.changes.discountValue, targetCurrency)}` : `${row.changes.discountValue}% unchanged`}; minimum ${money(row.from.minOrderAmount || 0, row.fromCurrency)} → ${money(row.changes.minOrderAmount, targetCurrency)}; cap ${row.from.maxDiscountAmount == null ? 'none' : `${money(row.from.maxDiscountAmount, row.fromCurrency)} → ${money(row.changes.maxDiscountAmount, targetCurrency)}`}`),
     `This is a long-term pricing choice: after it completes, you cannot change store currency again for ${limit.cooldownDays} days.`,
-    'Past orders and balances stay unchanged. Shipping, tax and coupon settings keep their own saved currencies.',
+    'Past orders and balances stay unchanged. Shipping fees and coupon money convert with products; admin tax settings stay unchanged.',
     'These conversion prices are held for 10 minutes. No store currency or product prices have changed yet. Confirm this store-wide change, or say no to keep your current store currency.',
   ].join('\n');
   const expiresAt = new Date(Date.now() + PREVIEW_TTL_MS);
@@ -128,7 +132,7 @@ async function previewStoreCurrencyChange(sellerId, args = {}) {
   });
   return {
     success: true, previewOnly: true, requiresConfirmation: true,
-    data: { quoteToken: token, targetCurrency, sourceCurrency: state.activeCurrency, productCount: count, cooldownDays: limit.cooldownDays, examples: plan.examples, expiresAt: expiresAt.toISOString() },
+    data: { quoteToken: token, targetCurrency, sourceCurrency: state.activeCurrency, productCount: count, cooldownDays: limit.cooldownDays, examples: plan.examples, shippingExamples: plan.moneyTerms.shippingExamples, couponCount: plan.moneyTerms.coupons.length, couponExamples: plan.moneyTerms.couponExamples, exchangeRateSnapshot: plan.rateSnapshot, expiresAt: expiresAt.toISOString() },
     message: notice, requiredDisclosure: notice,
   };
 }
@@ -158,7 +162,7 @@ async function changeStoreCurrency(sellerId, args = {}) {
       afterWrite: async session => {
         const updated = await Store.findOne({ seller: sellerId }).session(session);
         const changeLimit = storeCurrencyChangeLimit(updated);
-        const message = `Your store product currency is now ${preview.targetCurrency}. Converted and saved ${preview.plan.operations.length} existing product(s), including sale prices. You can change store currency again on ${formatCurrencyChangeDate(changeLimit.nextAllowedAt)} after the ${changeLimit.cooldownDays}-day waiting period. Past orders and balances are unchanged.`;
+        const message = `Your store product currency is now ${preview.targetCurrency}. Converted and saved ${preview.plan.operations.length} existing product(s), including sale prices, shipping fees and coupon amounts. You can change store currency again on ${formatCurrencyChangeDate(changeLimit.nextAllowedAt)} after the ${changeLimit.cooldownDays}-day waiting period. Past orders and balances are unchanged.`;
         const result = {
           success: true,
           data: { currency: preview.targetCurrency, previousCurrency: preview.sourceCurrency, converted: preview.plan.operations.length, changeLimit },

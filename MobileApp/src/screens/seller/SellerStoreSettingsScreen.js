@@ -418,7 +418,7 @@ export default function SellerStoreSettingsScreen({ navigation }) {
     finally { setSaving(false); }
   };
 
-  const updateProductCurrency = async (nextCurrency, confirm = false) => {
+  const updateProductCurrency = async (nextCurrency, confirm = false, quoteToken = null) => {
     const requestedCurrency = canonicalProductCurrency(nextCurrency);
     const currentState = inspectSellerProductCurrencyState(productCurrencyInfo);
     if (!requestedCurrency || !currentState.valid || currentState.hasStore !== true || productCurrencyError) {
@@ -431,7 +431,7 @@ export default function SellerStoreSettingsScreen({ navigation }) {
     setProductCurrencySaving(true);
     setProductCurrencyLoading(false);
     try {
-      const res = await api.patch(API_ENDPOINTS.STORES.PRODUCT_CURRENCY, { currency: requestedCurrency, confirm });
+      const res = await api.patch(API_ENDPOINTS.STORES.PRODUCT_CURRENCY, { currency: requestedCurrency, confirm, quoteToken });
       const info = inspectSellerProductCurrencyState(res.data?.productCurrency);
       const requestWasApplied = info.valid
         && info.hasStore === true
@@ -471,7 +471,7 @@ export default function SellerStoreSettingsScreen({ navigation }) {
           body.msg || info.msg || `Change product currency to ${requestedCurrency}? Existing products may need conversion.`,
           [
             { text: 'Cancel', style: 'cancel', onPress: () => setProductCurrencyDraft(info.pendingCurrency || info.activeCurrency) },
-            { text: `Change to ${requestedCurrency}`, style: 'destructive', onPress: () => updateProductCurrency(requestedCurrency, true) },
+            { text: `Change to ${requestedCurrency}`, style: 'destructive', onPress: () => updateProductCurrency(requestedCurrency, true, body.productCurrency?.quoteToken) },
           ]
         );
       } else {
@@ -486,38 +486,8 @@ export default function SellerStoreSettingsScreen({ navigation }) {
   };
 
   const convertProductCurrency = async () => {
-    const currentState = inspectSellerProductCurrencyState(productCurrencyInfo);
-    if (!currentState.valid || currentState.status !== 'pending_conversion') {
-      Alert.alert('Product currency unavailable', 'Refresh the pending product currency change before converting prices.');
-      return;
-    }
-    const requestId = productCurrencyRequestRef.current + 1;
-    productCurrencyRequestRef.current = requestId;
-    setProductCurrencySaving(true);
-    try {
-      const res = await api.post(API_ENDPOINTS.STORES.PRODUCT_CURRENCY_CONVERT, {});
-      const info = inspectSellerProductCurrencyState(res.data?.productCurrency);
-      if (
-        !info.valid
-        || info.hasStore !== true
-        || info.status !== 'active'
-        || info.activeCurrency !== currentState.pendingCurrency
-        || !Number.isSafeInteger(res.data?.converted)
-        || res.data.converted !== currentState.productCount
-      ) throw new Error('The converted product currency response is inconsistent.');
-      if (productCurrencyRequestRef.current !== requestId) return;
-      setProductCurrencyInfo(info);
-      setProductCurrencyDraft(info.activeCurrency);
-      setProductCurrencyError('');
-      Alert.alert('Product currency', res.data?.msg || 'Product prices converted');
-    } catch (error) {
-      setProductCurrencyInfo(null);
-      setProductCurrencyDraft(null);
-      setProductCurrencyError('Product currency state is unavailable after the conversion attempt. Refresh before retrying.');
-      Alert.alert('Product currency', error.response?.data?.msg || error.message || 'Failed to convert product prices');
-    } finally {
-      setProductCurrencySaving(false);
-    }
+    const state = inspectSellerProductCurrencyState(productCurrencyInfo);
+    if (state.valid && state.pendingCurrency) await updateProductCurrency(state.pendingCurrency, true);
   };
 
   const cancelProductCurrencyChange = async () => {

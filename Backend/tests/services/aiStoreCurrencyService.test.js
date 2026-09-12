@@ -60,18 +60,20 @@ describe('reviewed store-wide currency changes', () => {
     expect(await requestProductCurrencyChange(seller._id, 'USD')).toMatchObject({ activeCurrency: 'USD' });
   });
 
-  test('historical orders, account preferences and shipping terms remain byte-for-byte unchanged', async () => {
+  test('historical orders and account preferences remain unchanged while shipping converts', async () => {
     const { seller } = await fixture();
     const Order = require('../../models/Order');
     const ShippingMethod = require('../../models/ShippingMethod');
     const orderId = new mongoose.Types.ObjectId();
     const shippingId = new mongoose.Types.ObjectId();
     await Order.collection.insertOne({ _id: orderId, userId: seller._id, currency: 'PKR', orderSummary: { totalAmount: 28000 }, sellerCurrencyMoney: { immutable: 'original-snapshot' } });
-    await ShippingMethod.collection.insertOne({ _id: shippingId, seller: seller._id, cost: 280, currency: 'PKR' });
+    await ShippingMethod.create({ _id: shippingId, seller: seller._id, methods: [{ type: 'standard', cost: 280, costInputAmount: 280, currency: 'PKR', costCurrency: 'PKR', deliveryDays: 3, isActive: true }] });
     const before = await Promise.all([Order.collection.findOne({ _id: orderId }), ShippingMethod.collection.findOne({ _id: shippingId }), User.findById(seller._id).lean()]);
     await changeStoreCurrency(seller._id, approval(await preview(seller, 'USD')));
     const after = await Promise.all([Order.collection.findOne({ _id: orderId }), ShippingMethod.collection.findOne({ _id: shippingId }), User.findById(seller._id).lean()]);
-    expect(after).toEqual(before);
+    expect(after[0]).toEqual(before[0]);
+    expect(after[2]).toEqual(before[2]);
+    expect(after[1].methods[0]).toMatchObject({ cost: 1, currency: 'USD', costCurrency: 'USD', costInputAmount: 1, deliveryDays: 3 });
     await Order.collection.deleteOne({ _id: orderId });
     await ShippingMethod.collection.deleteOne({ _id: shippingId });
   });

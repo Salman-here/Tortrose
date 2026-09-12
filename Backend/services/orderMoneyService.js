@@ -571,9 +571,9 @@ const ensureOrderExchangeRateSnapshot = async (
   return persistedRates;
 };
 
-// Presentation/reporting uses the current shared rate table. Amounts already
-// in the selected currency remain untouched, but a malformed persisted unit
-// of account must never be relabelled as USD in a financial report.
+// Presentation/reporting uses the order's saved rate table. Matching-currency
+// amounts stay untouched; historical money is never revalued at current rates
+// or silently relabelled as USD.
 const convertOrderAmount = async (order, amount, targetCurrency = 'USD') => {
   if (!isSupportedCurrency(targetCurrency)) {
     throw sellerSettlementError(
@@ -581,11 +581,7 @@ const convertOrderAmount = async (order, amount, targetCurrency = 'USD') => {
       'ORDER_CURRENCY_INVALID',
     );
   }
-  return convertAmount(
-    requireStoredOrderMoney(amount, 'order reporting amount'),
-    getAccountingOrderCurrency(order, targetCurrency),
-    normalizeCurrency(targetCurrency),
-  );
+  return convertOrderAmountAtCheckout(order, amount, targetCurrency);
 };
 
 // Settlement/refund accounting must use the rate captured when the buyer was
@@ -617,110 +613,48 @@ const convertOrderTotal = async (order, targetCurrency = 'USD') =>
     targetCurrency,
   );
 
-// Aggregate each source currency before conversion so many small orders do not
-// lose (or gain) cents by being converted and rounded independently.
-const sumOrderAmountsInCurrency = async (
-  entries = [],
-  targetCurrency = 'USD',
-  { rateSnapshot = null, requireTrusted = true } = {},
-) => {
-  if (!isSupportedCurrency(targetCurrency)) {
-    throw sellerSettlementError(
-      'The requested reporting currency is unsupported.',
-      'ORDER_CURRENCY_INVALID',
-    );
-  }
+// Historical reports never consult today's rate table. Group by immutable
+// order before rounding so day totals and the all-period total use the same cents.
+const sumCurrencyAmountsInCurrency = async (entries = [], targetCurrency = 'USD') => {
+  if (!isSupportedCurrency(targetCurrency)) throw sellerSettlementError('Unsupported reporting currency.', 'ORDER_CURRENCY_INVALID');
   const target = normalizeCurrency(targetCurrency);
-  const liveBuckets = new Map();
-  for (const entry of entries) {
-    const amount = parseStrictFiniteNumber(entry?.amount);
-    if (amount === null || amount < 0) {
-      throw sellerSettlementError(
-        'A stored reporting amount is invalid.',
-        'ORDER_MONEY_INVALID',
-      );
-    }
-    try {
-      // Reports intentionally aggregate sub-cent values before rounding, but
-      // they must still fit the supported six-decimal accounting range.
-      toMinorUnits(amount, 6);
-    } catch (_) {
-      throw sellerSettlementError(
-        'A stored reporting amount is outside the supported money range.',
-        'ORDER_MONEY_INVALID',
-      );
-    }
-    const source = getAccountingOrderCurrency(entry?.order, target);
-    if (amount === 0) continue;
-    if (!liveBuckets.has(source)) liveBuckets.set(source, []);
-    liveBuckets.get(source).push(amount);
-  }
-  if (!liveBuckets.size) return 0;
-  if ([...liveBuckets.keys()].every(source => source === target)) {
-    return roundMoney(sumMoney([...liveBuckets.values()].flat(), 6));
-  }
-  const snapshot = await (rateSnapshot || getExchangeRateSnapshot());
-  if (requireTrusted && snapshot?.fallback) {
-    throw exchangeRatesUnavailableError();
-  }
-  const rates = normalizeRates(snapshot?.rates);
-  if (!rates) throw exchangeRatesUnavailableError();
-  const converted = allocateConvertedMinorUnitsByRates(
-    [...liveBuckets.entries()].map(([source, sourceAmounts]) => ({
-      key: source,
-      amount: sumMoney(sourceAmounts, 6),
-      sourceRate: rates[source],
-    })),
-    rates[target],
-  );
-  return fromMinorUnits(converted.totalMinorUnits);
+  const groups = new Map();
+  entries.forEach((entry, index) => {
+    const value = parseStrictFiniteNumber(entry?.amount);
+    if (value === null || value < 0) throw sellerSettlementError('Invalid historical reporting amount.', 'ORDER_MONEY_INVALID');
+    try { toMinorUnits(value, 6); } catch (_) { throw sellerSettlementError('Invalid historical reporting amount.', 'ORDER_MONEY_INVALID'); }
+    const source = requireCanonicalSellerCurrency(entry.currency, 'historical reporting currency');
+    if (!value) return;
+    const orderKey = source === target ? 'same-currency' : toId(entry.order?._id) || 'entry:' + index;
+    const key = orderKey + ':' + source;
+    if (!groups.has(key)) groups.set(key, { order: entry.order, source, amounts: [] });
+    groups.get(key).amounts.push(value);
+  });
+  return fromMinorUnits(sumOrderMinorUnits([...groups.values()].map(group => {
+    const value = sumMoney(group.amounts, 6);
+    if (group.source === target) return toMinorUnits(value);
+    const rates = getOrderExchangeRates(group.order);
+    if (!rates) throw sellerSettlementError('Historical reporting requires this order’s saved exchange rates.', 'SELLER_SETTLEMENT_HISTORICAL_RATE_MISSING');
+    return toMinorUnits(convertAmountWithRates(value, group.source, target, rates));
+  }), 'historical reporting total'));
 };
 
-// Seller-native reporting entries carry their own frozen source currency.
-// Keeping this separate from order-currency reporting prevents a seller total
-// from being reinterpreted as the buyer's currency before conversion.
-const sumCurrencyAmountsInCurrency = async (
-  entries = [],
-  targetCurrency = 'USD',
-  { rateSnapshot = null, requireTrusted = true } = {},
-) => {
-  if (!isSupportedCurrency(targetCurrency)) {
-    throw sellerSettlementError('The requested reporting currency is unsupported.', 'ORDER_CURRENCY_INVALID');
-  }
-  const target = normalizeCurrency(targetCurrency);
-  const buckets = new Map();
-  for (const entry of entries) {
-    const amount = parseStrictFiniteNumber(entry?.amount);
-    if (amount === null || amount < 0) {
-      throw sellerSettlementError('A stored reporting amount is invalid.', 'ORDER_MONEY_INVALID');
-    }
-    try {
-      toMinorUnits(amount, 6);
-    } catch (_) {
-      throw sellerSettlementError('A stored reporting amount is outside the supported money range.', 'ORDER_MONEY_INVALID');
-    }
-    const source = requireCanonicalSellerCurrency(entry?.currency, 'reporting source currency');
-    if (amount === 0) continue;
-    if (!buckets.has(source)) buckets.set(source, []);
-    buckets.get(source).push(amount);
-  }
-  if (!buckets.size) return 0;
-  if ([...buckets.keys()].every(source => source === target)) {
-    return roundMoney(sumMoney([...buckets.values()].flat(), 6));
-  }
-  const snapshot = await (rateSnapshot || getExchangeRateSnapshot());
-  if (requireTrusted && snapshot?.fallback) throw exchangeRatesUnavailableError();
-  const rates = normalizeRates(snapshot?.rates);
-  if (!rates) throw exchangeRatesUnavailableError();
-  const converted = allocateConvertedMinorUnitsByRates(
-    [...buckets.entries()].map(([source, sourceAmounts]) => ({
-      key: source,
-      amount: sumMoney(sourceAmounts, 6),
-      sourceRate: rates[source],
-    })),
-    rates[target],
-  );
-  return fromMinorUnits(converted.totalMinorUnits);
+const sumOrderAmountsInCurrency = async (entries = [], targetCurrency = 'USD') =>
+  sumCurrencyAmountsInCurrency(entries.map(entry => ({
+    ...entry, currency: getAccountingOrderCurrency(entry.order, targetCurrency),
+  })), targetCurrency);
+
+const sellerReportingItemAllocations = (order, sellerId, sellerItems, targetCurrency) => {
+  const native = buildSellerCurrencyItemMoneyAllocations(order, sellerId, sellerItems);
+  const original = native || buildOrderItemMoneyAllocations(order);
+  const source = native?.currency || getAccountingOrderCurrency(order);
+  const entries = sellerItems.map((item, fallbackIndex) => {
+    const index = resolveOrderItemIndex(order.orderItems, item, fallbackIndex);
+    const key = original.itemKeys[index];
+    return { key, amount: original.total.get(key) || 0, sourceCurrency: source };
+  });
+  return { currency: targetCurrency, itemKeys: original.itemKeys,
+    total: allocateFrozenAmountsToCurrency(order, entries, targetCurrency) };
 };
 
 const sellerOrderSubtotal = (order, sellerProductIds, sellerId) => {
@@ -1698,6 +1632,7 @@ module.exports = {
   ensureOrderExchangeRateSnapshot,
   sumOrderAmountsInCurrency,
   sumCurrencyAmountsInCurrency,
+  sellerReportingItemAllocations,
   sellerOrderSubtotal,
   sellerOrderUnits,
   sellerShippingAmount,

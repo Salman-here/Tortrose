@@ -90,7 +90,7 @@ const shippingMethodSchema = mongoose.Schema({
       }
     }
   ],
-}, { timestamps: true });
+}, { timestamps: true, optimisticConcurrency: true });
 
 shippingMethodSchema.path('methods').validate(
   methods => Array.isArray(methods)

@@ -59,11 +59,11 @@ describe('seller client money safety', () => {
     expect(source).toMatch(/summaryRef\.current = null;\s*setSummary\(null\);/);
     expect(source).toMatch(/API_ENDPOINTS\.STORES\.PRODUCT_CURRENCY/);
     expect(source).toMatch(/inspectSellerProductCurrencyState/);
-    expect(source).toMatch(/currency: sellerCurrency/);
+    expect(source).toMatch(/currency: balanceCurrency/);
     expect(source).toMatch(/targetCurrency: sellerCurrency/);
     expect(source).not.toMatch(/const \{ currency, currencies, formatAmount \} = useCurrency\(\)/);
     expect(source).toMatch(/isExactNonNegativeJsonMoney\(displayRevenue\[field\]\)/);
-    expect(source).toMatch(/withdrawalBlockedByFallback = exchangeRatesAreFallback && withdrawalRequiresLiveFx/);
+    expect(source).toMatch(/paymentAccount\.currency !== balanceCurrency/);
     expect(source).toMatch(/if \(value !== withdrawAmount\) void retireActiveWithdrawalAttempt\(\)/);
     expect(source).toMatch(/if \(!shouldRetainWithdrawalAttempt\(error\) && attemptKey\)/);
     expect(source).not.toMatch(/Number\(request\.(?:requestedAmount|payoutAmount)\)/);

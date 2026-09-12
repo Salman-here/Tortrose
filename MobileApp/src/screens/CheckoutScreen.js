@@ -1159,7 +1159,7 @@ export default function CheckoutScreen({ navigation }) {
                         ? exchangeRatesLoading
                           ? 'Refreshing rates. Converted values are estimates and checkout is paused.'
                           : 'Converted values are estimates because only fallback rates are available. Retry before paying.'
-                        : `Amounts already in ${currency} remain exact. Checkout is paused until a live rate can freeze the USD settlement snapshot.`}
+                        : `Amounts already in ${currency} remain exact. Checkout is paused until trusted rates can save the order’s complete exchange-rate snapshot.`}
                   </Text>
                 </View>
               </View>

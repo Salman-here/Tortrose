@@ -753,7 +753,7 @@ const sellerTools = [
     type: 'function',
     function: {
       name: 'preview_store_currency_change',
-      description: 'Preview a long-term change to the seller own store product currency. Shows existing regular/sale price conversions and the authoritative cooldown. Does NOT change the store or prices. Use only when discussing a whole-store currency change, not just because a new product price was supplied in a different currency.',
+      description: 'Preview a long-term change to the seller own store product currency. Shows a compact preview: product count, three regular/sale price examples, shipping fees, fixed coupon amounts/thresholds/caps, one rate snapshot and the authoritative cooldown. Percentages and admin tax stay unchanged. Does NOT change the store or prices. Use only when discussing a whole-store currency change, not just because a new product price was supplied in a different currency.',
       parameters: { type: 'object', properties: { currency: { type: 'string', enum: ['USD', 'PKR', 'EUR', 'GBP'] } }, required: ['currency'] },
     },
   },
@@ -1040,7 +1040,7 @@ const sellerTools = [
     type: 'function',
     function: {
       name: 'get_seller_payments',
-      description: "Get the seller's payment summary: Stripe withdrawable balance, COD revenue, estimated revenue, payment account status, and recent withdrawal requests.",
+      description: "Get exact native Stripe/Wallet balances separately for USD, PKR, EUR and GBP, pending funds, historical sales reporting, bank details and withdrawals. Never merge or convert withdrawable balances. Store currency changes affect future orders only; existing balances retain their earned currencies. Withdrawals go to admin for manual same-currency bank transfer; approval is not payment. Static minimums: USD 5, PKR 2000, EUR 5, GBP 5. Quote only the returned authoritative amounts.",
       parameters: { type: 'object', properties: {} },
     },
   },
@@ -1204,7 +1204,7 @@ const sellerTools = [
               maxDiscountAmount: { type: 'number' },
               maxUses: { type: 'integer' },
               maxUsesPerUser: { type: 'integer' },
-              startDate: { type: 'string', description: 'ISO date/time.' },
+              startDate: { type: 'string', description: 'ISO date/time. Omit to start immediately; the server uses its current time. Do not invent a date for today.' },
               expiryDate: { type: 'string', description: 'ISO date/time.' },
               applicableTo: { type: 'string', enum: ['all', 'specific'] },
               applicableProducts: { type: 'array', items: { type: 'string' } },
@@ -1745,8 +1745,10 @@ function prepareIncomingChatMessages(incomingMessages = []) {
 // aiPromptService, so dashboard edits apply live (no deploy). Falls back to
 // the code defaults if the prompt store is unreachable.
 async function getSystemPrompt(role, channel = 'web') {
+  const clockContext = '\n\nCurrent server time (UTC): ' + new Date().toISOString()
+    + '. Resolve relative dates from this time, never from training knowledge. Respect an explicitly supplied timezone. For a coupon that starts immediately, omit startDate so the server sets the actual current time. Never invent a past start date.';
   try {
-    return (await aiPromptService.getSystemPromptForRole(role, { channel })) + NATURAL_COMMERCE_ADDENDUM;
+    return (await aiPromptService.getSystemPromptForRole(role, { channel })) + NATURAL_COMMERCE_ADDENDUM + clockContext;
   } catch (err) {
     console.warn('[ai-chat] prompt service failed, using code defaults:', err.message);
     let base;
@@ -1767,7 +1769,8 @@ async function getSystemPrompt(role, channel = 'web') {
       + COMMERCE_POLICY_ADDENDUM
       + whatsapp
       + FINANCIAL_TRUTH_ADDENDUM
-      + NATURAL_COMMERCE_ADDENDUM;
+      + NATURAL_COMMERCE_ADDENDUM
+      + clockContext;
   }
 }
 

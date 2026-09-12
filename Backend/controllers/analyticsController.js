@@ -15,6 +15,7 @@ const {
     isSellerRevenueRecognized,
     sumOrderAmountsInCurrency,
     sumCurrencyAmountsInCurrency,
+    sellerReportingItemAllocations,
     toId,
 } = require('../services/orderMoneyService');
 const { fromMinorUnits } = require('../services/moneyMath');
@@ -179,6 +180,7 @@ exports.getSellerAnalytics = async (req, res) => {
                 dayBuckets[key].orders++;
                 if (isSellerRevenueRecognized(o, userId)) {
                     dayBuckets[key].moneyEntries.push({
+                        order: o,
                         amount: o.sellerRevenue,
                         currency: o.sellerRevenueCurrency,
                     });
@@ -187,7 +189,7 @@ exports.getSellerAnalytics = async (req, res) => {
         }
         const recognizedMoneyEntries = sellerOrders
             .filter(order => isSellerRevenueRecognized(order, userId))
-            .map(order => ({ amount: order.sellerRevenue, currency: order.sellerRevenueCurrency }));
+            .map(order => ({ order, amount: order.sellerRevenue, currency: order.sellerRevenueCurrency }));
         await Promise.all(Object.values(dayBuckets).map(async bucket => {
             bucket.revenue = await sumCurrencyAmountsInCurrency(bucket.moneyEntries, targetCurrency);
             delete bucket.moneyEntries;
@@ -196,11 +198,7 @@ exports.getSellerAnalytics = async (req, res) => {
         const productMap = {};
         for (const o of sellerOrders) {
             if (!isSellerRevenueRecognized(o, userId)) continue;
-            const nativeAllocations = buildSellerCurrencyItemMoneyAllocations(
-                o,
-                userId,
-                o.sellerItems,
-            );
+            const nativeAllocations = sellerReportingItemAllocations(o, userId, o.sellerItems, targetCurrency);
             const allocations = nativeAllocations || buildOrderItemMoneyAllocations(o);
             for (const item of o.sellerItems) {
                 const id = String(item.productId);
@@ -216,6 +214,7 @@ exports.getSellerAnalytics = async (req, res) => {
                     orderItemKey(item, orderIndex, allocations.itemKeys),
                 );
                 productMap[id].moneyEntries.push({
+                    order: o,
                     amount: itemRevenue,
                     currency: nativeAllocations?.currency || o.currency,
                 });
@@ -233,9 +232,7 @@ exports.getSellerAnalytics = async (req, res) => {
             catMap[p.category].count++;
         });
 
-        // The chart rounds each day for presentation. Compute the summary from
-        // the complete unrounded currency buckets so daily rounding cannot lose
-        // or create a cent relative to payment reporting.
+        // Sum the same per-order historical amounts used by the daily chart.
         const totalRevenue = await sumCurrencyAmountsInCurrency(recognizedMoneyEntries, targetCurrency);
         const paidOrders = sellerOrders.filter(o => isSellerRevenueRecognized(o, userId)).length;
         const totalUnitsSold = sellerOrders.reduce(

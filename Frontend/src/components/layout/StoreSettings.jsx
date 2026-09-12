@@ -572,7 +572,7 @@ const StoreSettings = () => {
             setProductCurrencyLoading(false);
             const token = getAuthToken();
             const res = await axios.patch(`${import.meta.env.VITE_API_URL}api/stores/product-currency`,
-                { currency: requestedCurrency, confirm },
+                { currency: requestedCurrency, confirm, quoteToken: confirm ? productCurrencyConfirm?.quoteToken : undefined },
                 { headers: { Authorization: `Bearer ${token}` } });
             const inspected = inspectSellerProductCurrencyState(res.data?.productCurrency);
             const requestWasApplied = inspected.valid
@@ -590,6 +590,8 @@ const StoreSettings = () => {
             setProductCurrencyConfirm(null);
             setProductCurrencyError('');
             outletContext.fetchProductCurrencyState?.();
+            outletContext.fetchProducts?.();
+            outletContext.refreshOverview?.();
             toast.success(res.data.msg || 'Product currency updated');
         } catch (error) {
             const body = error.response?.data;
@@ -608,6 +610,7 @@ const StoreSettings = () => {
                 setProductCurrencyInfo(inspected);
                 setProductCurrencyConfirm({
                     requestedCurrency,
+                    quoteToken: body.productCurrency?.quoteToken,
                     msg: body.msg || inspected.msg || `Confirm product currency change to ${requestedCurrency}.`,
                 });
                 setProductCurrencyDraft(requestedCurrency);
@@ -1049,8 +1052,12 @@ const StoreSettings = () => {
                                     <AlertTriangle size={15} /> Conversion required
                                 </p>
                                 <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                                    You changed the product currency to {productCurrencyInfo.pendingCurrency}, but your existing products still need conversion. Go to Products and either convert all prices or keep {productCurrencyInfo.previousCurrency || productCurrencyInfo.activeCurrency}. You cannot add new products until then.
+                                    A change to {productCurrencyInfo.pendingCurrency} is pending. Review product, shipping and coupon conversions together, or keep {productCurrencyInfo.previousCurrency || productCurrencyInfo.activeCurrency}.
                                 </p>
+                                <div className="flex flex-wrap gap-2 mt-3">
+                                    <button type="button" disabled={productCurrencySaving} className="glass-inner rounded-lg px-3 py-2 text-xs" onClick={() => requestProductCurrencyChange(productCurrencyInfo.pendingCurrency, false)}>Review conversion</button>
+                                    <button type="button" disabled={productCurrencySaving} className="glass-inner rounded-lg px-3 py-2 text-xs" onClick={async () => { setProductCurrencyConfirm(null); await outletContext.handleCancelProductCurrencyChange?.(); await fetchProductCurrencySettings(); }}>Keep current currency</button>
+                                </div>
                             </div>
                         )}
 
@@ -1059,7 +1066,7 @@ const StoreSettings = () => {
                                 <p className="text-sm font-semibold flex items-center gap-2" style={{ color: 'hsl(0, 72%, 50%)' }}>
                                     <AlertTriangle size={15} /> Confirm currency change
                                 </p>
-                                <p className="text-xs mt-1 mb-3" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                                <p className="text-xs mt-1 mb-3 whitespace-pre-line leading-relaxed" style={{ color: 'hsl(var(--muted-foreground))' }}>
                                     {productCurrencyConfirm.msg}
                                 </p>
                                 <div className="flex flex-wrap gap-2">

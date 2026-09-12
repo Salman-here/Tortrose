@@ -1,3 +1,4 @@
+const { verifyOrderPricingAtCommit } = require('./orderPricingCommitGuard');
 /**
  * AI Action Executor — Server-Side Tool Execution
  * ─────────────────────────────────────────────────
@@ -74,6 +75,8 @@ const {
   sumCurrencyAmountsInCurrency,
   sumOrderAmountsInCurrency,
   SELLER_SETTLEMENT_VERSION,
+  SELLER_CURRENCY_MONEY_VERSION,
+  buildOrderSellerCurrencyMoney,
   buildOrderSellerSettlement,
   getAccountingOrderCurrency,
   requireStoredOrderMoney,
@@ -2788,13 +2791,17 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
         const orderRates = normalizeRates(orderExchangeRateSnapshot?.rates);
         const hasTrustedOrderRates = Boolean(
           orderRates
-          && orderExchangeRateSnapshot?.fallback !== true
+          && orderExchangeRateSnapshot?.base === 'USD'
+          && Boolean(orderExchangeRateSnapshot?.capturedAt)
+          && orderExchangeRateSnapshot?.fallback === false
+          && typeof orderExchangeRateSnapshot?.source === 'string'
+          && !['fallback', 'stale', ''].includes(orderExchangeRateSnapshot.source)
+          && Number.isFinite(new Date(orderExchangeRateSnapshot.capturedAt).getTime())
         );
-        // Even a same-currency non-USD checkout needs a trusted USD conversion
-        // snapshot: seller settlement, returns, reversals, and withdrawals are
-        // all USD-denominated. Without this guard the amount can be revalued at
-        // a future exchange rate instead of the rate accepted at checkout.
-        if (preferredCurrency !== 'USD' && !hasTrustedOrderRates) {
+        // Every order saves the complete supported rate table, including
+        // same-currency orders. Native balances do not use USD conversion;
+        // historical reports use this checkout snapshot, never future rates.
+        if (!hasTrustedOrderRates) {
           throw exchangeRatesUnavailableError();
         }
         if (!orderRates) throw exchangeRatesUnavailableError();
@@ -3245,6 +3252,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
               store: store?._id || null,
               storeName: store?.storeName || '',
               storeLogo: store?.logo || '',
+              productCurrency: store?.productCurrency || 'USD',
               paymentPolicy: store?.paymentPolicy || 'online_and_cod',
               returnPolicy: normalizeReturnPolicy(store?.returnPolicy || {}),
             };
@@ -3260,6 +3268,9 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
           requireOrderTotal: true,
         });
 
+        newOrder.sellerCurrencyMoneyVersion = SELLER_CURRENCY_MONEY_VERSION;
+        newOrder.sellerCurrencyMoney = buildOrderSellerCurrencyMoney(newOrder);
+
         newOrder.confirmation = {
           ...generateConfirmationToken(),
           confirmedAt: null,
@@ -3272,6 +3283,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
           // A crash or transaction abort can therefore never expose a normal
           // COD order whose inventory was not committed.
           await mongoose.connection.transaction(async session => {
+            await verifyOrderPricingAtCommit(newOrder, session);
             await newOrder.save({ session });
             await commitAIOrderForVisibility({
               orderId: newOrder._id,
@@ -4952,6 +4964,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
           const sellerMoney = sellerOrderSummaryForItems(order, userId, items);
           const native = sellerCurrencyMoneyPresentation(order, userId, items);
           return {
+            order,
             amount: native?.summary?.totalAmount ?? sellerMoney.totalAmount,
             currency: native?.currency || order.currency,
           };
@@ -5020,16 +5033,19 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
           data: {
             revenue,
             currency: reportingCurrency,
+            balances: paymentSummary.balances,
+            balancePolicy: 'Amounts remain separately withdrawable in their earned currencies; no balance conversion.',
             paymentAccountLinked: !!paymentSummary.paymentAccount,
             paymentAccount: paymentSummary.paymentAccount,
             recentWithdrawals: (paymentSummary.withdrawals || []).slice(0, 5).map(w => ({
-              amount: w.amount,
+              amount: w.requestedAmount || w.amount,
+              currency: w.requestedCurrency || w.currency,
               status: w.status,
               requestedAt: w.createdAt,
               adminNote: w.adminNote || '',
             })),
           },
-          message: `Payments summary: withdrawable online balance ${await formatMoney(withdrawableBalance, reportingCurrency, { sourceCurrency: reportingCurrency })}, delivered COD revenue ${await formatMoney(codDeliveredRevenue, reportingCurrency, { sourceCurrency: reportingCurrency })}, total delivered revenue ${await formatMoney(totalDeliveredRevenue, reportingCurrency, { sourceCurrency: reportingCurrency })}, estimated revenue ${await formatMoney(estimatedRevenue, reportingCurrency, { sourceCurrency: reportingCurrency })}.`,
+          message: `Native online balances: ${(paymentSummary.balances || []).map(balance => `${balance.currency} ${balance.withdrawableBalance.toFixed(2)} available, ${balance.onlinePendingRevenue.toFixed(2)} pending; minimum ${balance.minimumWithdrawal}`).join('; ')}. Each balance is withdrawn in the same currency via an admin-reviewed manual bank transfer, without conversion. Historical sales reporting in ${reportingCurrency}: delivered COD revenue ${await formatMoney(codDeliveredRevenue, reportingCurrency, { sourceCurrency: reportingCurrency })}, total delivered revenue ${await formatMoney(totalDeliveredRevenue, reportingCurrency, { sourceCurrency: reportingCurrency })}, estimated revenue ${await formatMoney(estimatedRevenue, reportingCurrency, { sourceCurrency: reportingCurrency })}.`,
         };
       }
 
@@ -5599,7 +5615,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
         if (!shipping.methods.some(entry => entry.isActive !== false)) {
           return { success: false, error: 'At least one shipping method must remain active.' };
         }
-        await shipping.save();
+        await withProductCurrencyWriteLock(userId, sellerCurrencyState.activeCurrency, session => shipping.save({ session }));
 
         return { success: true, message: `Shipping method "${method}" updated! 🚚` };
       }
@@ -5711,7 +5727,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
         if (maxDiscountAmount !== null) maxDiscountAmount = convertedCreateMoney.maxDiscountAmount;
         const code = await uniqueCouponCode(userId, { ...c, discountType: inferredDiscountType, discountValue });
 
-        const coupon = await Coupon.create({
+        const coupon = await withProductCurrencyWriteLock(userId, storedCouponCurrency, async session => (await Coupon.create([{
           seller: userId,
           code,
           discountType: inferredDiscountType,
@@ -5726,7 +5742,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
           startDate,
           expiryDate,
           description: c.description || '',
-        });
+        }], { session }))[0]);
 
         return {
           success: true,

@@ -168,11 +168,12 @@ describe('checkout fixed-tax FX safety', () => {
 });
 
 describe('seller balance fallback-rate labeling', () => {
-  it('marks every converted balance-detail amount as approximate during an FX outage', () => {
+  it('formats native balance details without live FX conversion', () => {
     const payments = read('../../src/screens/seller/SellerPaymentsScreen.js');
 
-    expect(payments).toContain("const formatDisplayMoney = (amount) => `${displayMoneyIsApproximate ? '≈' : ''}${formatAmount(amount, { targetCurrency: sellerCurrency })}`;");
-    expect(payments).toContain('<Text style={styles.balanceValue}>{formatDisplayMoney(amount)}</Text>');
+    expect(payments).toContain("const formatDisplayMoney = (amount) => formatAmount(amount, { targetCurrency: sellerCurrency });");
+    expect(payments).toContain('<Text style={styles.balanceValue}>{formatBalanceMoney(amount)}</Text>');
+    expect(payments).toContain('nativeBalancesAreValid(next)');
   });
 });
 

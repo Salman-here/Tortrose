@@ -35,7 +35,9 @@ test('web seller reports request and retain the store product currency', () => {
 
   assert.match(payments, /seller\/summary\?currency=\$\{encodeURIComponent\(requestCurrency\)\}/);
   assert.match(payments, /setSellerCurrency\(requestCurrency\)/);
-  assert.match(payments, /currency: sellerCurrency/);
+  assert.match(payments, /currency: balanceCurrency/);
+  assert.match(payments, /nativeBalancesAreValid/);
+  assert.match(payments, /Withdrawal balance currency/);
   assert.doesNotMatch(payments, /const \{ formatAmount, currency,/);
 
   assert.match(coupons, /api\/coupons\/analytics\?currency=\$\{requestedCurrency\}/);

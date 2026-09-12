@@ -201,58 +201,13 @@ describe('PaymentController withdrawal fallback behavior', () => {
         expect(await SellerWithdrawalRequest.countDocuments({ seller: seller._id })).toBe(0);
     });
 
-    test('clamps a displayed full balance one cent under to the exact canonical USD balance', async () => {
-        getExchangeRateSnapshot.mockResolvedValue({
-            base: 'USD',
-            rates: { USD: 1, PKR: 280, EUR: 0.92, GBP: 0.8 },
-            capturedAt: new Date().toISOString(),
-            source: 'live-test',
-            fallback: false,
-        });
+    test.each([5.19, 5])('withdraws exact native USD %s without a currency round trip', async amount => {
         const seller = await seedSellerOrder({ orderAmount: 5.19 });
-
-        const response = await invokeWithdrawal(seller, {
-            requestedAmount: 4.77,
-            requestedCurrency: 'EUR',
-        });
-
+        const response = await invokeWithdrawal(seller, { requestedAmount: amount, requestedCurrency: 'USD' });
         expect(response.statusCode).toBe(201);
-        expect(response.body).toMatchObject({
-            amountUSD: 5.19,
-            requestedAmount: 4.77,
-            requestedCurrency: 'EUR',
-            payoutAmount: 5.19,
-            payoutCurrency: 'USD',
-        });
+        expect(response.body).toMatchObject({ amount, currency: 'USD', requestedAmount: amount, requestedCurrency: 'USD', payoutAmount: amount, payoutCurrency: 'USD' });
         const saved = await SellerWithdrawalRequest.findOne({ seller: seller._id }).lean();
-        expect(saved.amount).toBe(5.19);
-    });
-
-    test('does not clamp a nearby partial selected-currency withdrawal', async () => {
-        getExchangeRateSnapshot.mockResolvedValue({
-            base: 'USD',
-            rates: { USD: 1, PKR: 280, EUR: 0.92, GBP: 0.8 },
-            capturedAt: new Date().toISOString(),
-            source: 'live-test',
-            fallback: false,
-        });
-        const seller = await seedSellerOrder({ orderAmount: 5.19 });
-
-        const response = await invokeWithdrawal(seller, {
-            requestedAmount: 4.76,
-            requestedCurrency: 'EUR',
-        });
-
-        expect(response.statusCode).toBe(201);
-        expect(response.body).toMatchObject({
-            amountUSD: 5.17,
-            requestedAmount: 4.76,
-            requestedCurrency: 'EUR',
-            payoutAmount: 5.17,
-            payoutCurrency: 'USD',
-        });
-        const saved = await SellerWithdrawalRequest.findOne({ seller: seller._id }).lean();
-        expect(saved.amount).toBe(5.17);
+        expect(saved).toMatchObject({ amount, currency: 'USD', balanceVersion: 2, exchangeRateSnapshot: null });
     });
 
     test('does not let full-balance round-trip clamping bypass the canonical USD minimum', async () => {
@@ -275,39 +230,15 @@ describe('PaymentController withdrawal fallback behavior', () => {
         expect(await SellerWithdrawalRequest.countDocuments({ seller: seller._id })).toBe(0);
     });
 
-    test('advertises a requested-currency minimum that round-trips to at least five USD', async () => {
-        getExchangeRateSnapshot.mockResolvedValue({
-            base: 'USD',
-            rates: { USD: 1, PKR: 280, EUR: 0.92, GBP: 0.7709279972542675 },
-            capturedAt: new Date().toISOString(),
-            source: 'live-test',
-            fallback: false,
-        });
+    test('advertises a fixed GBP minimum independent of rate movements, with no automatic conversion', async () => {
         const seller = await seedSellerOrder({ orderAmount: 10 });
-
-        const belowMinimum = await invokeWithdrawal(seller, {
-            requestedAmount: 3.85,
-            requestedCurrency: 'GBP',
-        });
-
-        expect(belowMinimum.statusCode).toBe(400);
-        expect(belowMinimum.body).toMatchObject({
-            minimumAmountUSD: 5,
-            minimumRequestedAmount: 3.86,
-            requestedCurrency: 'GBP',
-        });
-
-        const atAdvertisedMinimum = await invokeWithdrawal(seller, {
-            requestedAmount: belowMinimum.body.minimumRequestedAmount,
-            requestedCurrency: 'GBP',
-        });
-
-        expect(atAdvertisedMinimum.statusCode).toBe(201);
-        expect(atAdvertisedMinimum.body).toMatchObject({
-            requestedAmount: 3.86,
-            requestedCurrency: 'GBP',
-            amountUSD: 5.01,
-        });
+        const below = await invokeWithdrawal(seller, { requestedAmount: 4.99, requestedCurrency: 'GBP' });
+        expect(below.statusCode).toBe(400);
+        expect(below.body).toMatchObject({ minimumRequestedAmount: 5, requestedCurrency: 'GBP' });
+        const mismatch = await invokeWithdrawal(seller, { requestedAmount: 5, requestedCurrency: 'GBP' });
+        expect(mismatch.statusCode).toBe(400);
+        expect(mismatch.body.code).toBe('WITHDRAWAL_BANK_CURRENCY_MISMATCH');
+        expect(await SellerWithdrawalRequest.countDocuments({})).toBe(0);
     });
 
     test('creates a USD-requested, USD-payout withdrawal during a provider outage', async () => {
@@ -321,7 +252,8 @@ describe('PaymentController withdrawal fallback behavior', () => {
         expect(response.statusCode).toBe(201);
         expect(response.body).toMatchObject({
             success: true,
-            amountUSD: 10,
+            amount: 10,
+            currency: 'USD',
             requestedAmount: 10,
             requestedCurrency: 'USD',
             payoutAmount: 10,
@@ -332,14 +264,10 @@ describe('PaymentController withdrawal fallback behavior', () => {
             amount: 10,
             requestedCurrency: 'USD',
             payoutCurrency: 'USD',
-            exchangeRateSnapshot: { fallback: true },
+            exchangeRateSnapshot: null,
+            balanceVersion: 2,
         });
-        expect(saved.exchangeRateSnapshot.rates).toMatchObject({
-            USD: 1,
-            PKR: null,
-            EUR: null,
-            GBP: null,
-        });
+
     });
 
     test('does not reserve a withdrawal when a legacy PKR order needs audited FX backfill', async () => {
@@ -351,7 +279,7 @@ describe('PaymentController withdrawal fallback behavior', () => {
         });
 
         expect(response.statusCode).toBe(409);
-        expect(response.body).toMatchObject({ code: 'LEGACY_ORDER_FX_BACKFILL_REQUIRED' });
+        expect(response.body).toMatchObject({ code: 'SELLER_SETTLEMENT_EXCHANGE_RATE_MISSING' });
         expect(await SellerWithdrawalRequest.countDocuments({ seller: seller._id })).toBe(0);
     });
 
@@ -363,8 +291,8 @@ describe('PaymentController withdrawal fallback behavior', () => {
             requestedCurrency: 'USD',
         });
 
-        expect(response.statusCode).toBe(503);
-        expect(response.body).toMatchObject({ code: 'EXCHANGE_RATES_UNAVAILABLE' });
+        expect(response.statusCode).toBe(400);
+        expect(response.body).toMatchObject({ code: 'WITHDRAWAL_BANK_CURRENCY_MISMATCH' });
         expect(await SellerWithdrawalRequest.countDocuments({ seller: seller._id })).toBe(0);
     });
 
@@ -376,8 +304,8 @@ describe('PaymentController withdrawal fallback behavior', () => {
             requestedCurrency: 'PKR',
         });
 
-        expect(response.statusCode).toBe(503);
-        expect(response.body).toMatchObject({ code: 'EXCHANGE_RATES_UNAVAILABLE' });
+        expect(response.statusCode).toBe(400);
+        expect(response.body).toMatchObject({ code: 'WITHDRAWAL_BANK_CURRENCY_MISMATCH' });
         expect(await SellerWithdrawalRequest.countDocuments({ seller: seller._id })).toBe(0);
     });
 });

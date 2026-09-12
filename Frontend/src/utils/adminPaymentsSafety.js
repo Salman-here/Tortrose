@@ -1,3 +1,4 @@
+import { nativeBalancesAreValid } from './nativeBalanceSafety.js';
 import {
   exactCurrencyCode,
   isExactNonNegativeJsonMoney,
@@ -74,12 +75,15 @@ export const selectAdminWithdrawalPresentationMoney = request => {
   if (
     ![0, 1].includes(workflowVersion)
     || request.payoutWorkflow?.version !== workflowVersion
-    || request.currency !== 'USD'
+    || (request.balanceVersion === 2 ? exactCurrencyCode(request.currency) === null : request.currency !== 'USD')
     || !isExactPositiveJsonMoney(request.amount)
-    || request.amount < 5
+    || (request.balanceVersion === 2 ? !isExactPositiveJsonMoney(request.minimumAmount) || request.amount < request.minimumAmount : request.amount < 5)
+    || ![0, 2].includes(request.balanceVersion ?? 0)
     || !WITHDRAWAL_STATUSES.has(request.status)
   ) return null;
 
+  if (request.balanceVersion === 2 && (request.amount !== request.requestedAmount || request.amount !== request.payoutAmount
+    || request.currency !== request.requestedCurrency || request.currency !== request.payoutCurrency)) return null;
   const money = selectWithdrawalHistoryMoney(request);
   if (money.status === 'unavailable' || !money.requested) return null;
   if (workflowVersion === 1 && (money.status !== 'complete' || !money.payout)) return null;
@@ -104,7 +108,7 @@ export const selectAdminWithdrawalPresentationMoney = request => {
   if (request.activePayoutAttemptId && !attemptIds.includes(request.activePayoutAttemptId)) return null;
 
   return {
-    ledger: { amount: request.amount, currency: 'USD' },
+    ledger: { amount: request.amount, currency: request.currency },
     requested: money.requested,
     payout: money.payout,
     showPayout: money.showPayout,
@@ -114,6 +118,41 @@ export const selectAdminWithdrawalPresentationMoney = request => {
 };
 
 export const adminPaymentsOverviewIsValid = overview => {
+  if (overview?.accountingVersion === 2) {
+    if (overview.success !== true || !Array.isArray(overview.sellers) || !Array.isArray(overview.errors) || !Array.isArray(overview.withdrawals)) return false;
+    const codes = ['USD', 'PKR', 'EUR', 'GBP'];
+    if (!codes.every(code => overview.summaryByCurrency?.[code]?.currency === code && revenueSummaryIsValid(overview.summaryByCurrency[code]))) return false;
+    const sellerIds = new Set(), withdrawalIds = new Set();
+    for (const row of overview.sellers) {
+      const sellerId = row.seller?._id, reportCurrency = row.seller?.currency;
+      if (!idString(sellerId) || sellerIds.has(sellerId) || !exactCurrencyCode(reportCurrency)
+          || !revenueSummaryIsValid(row.revenue) || !Array.isArray(row.balances)
+          || typeof row.paymentRiskPending !== 'boolean' || !isCount(row.paymentRiskHoldCount)
+          || row.paymentRiskPending !== (row.paymentRiskHoldCount > 0)) return false;
+      sellerIds.add(sellerId);
+      const balanceByCurrency = Object.fromEntries(row.balances.map(balance => [balance.currency, balance]));
+      const selected = balanceByCurrency[reportCurrency];
+      if (!nativeBalancesAreValid({ accountingVersion: 2, balances: row.balances, balanceByCurrency,
+        displayCurrency: reportCurrency, withdrawalLimits: { currency: reportCurrency,
+          availableDisplayAmount: selected?.withdrawableBalance, minimumDisplayAmount: selected?.minimumWithdrawal } })) return false;
+      if (row.balances.some(balance => !revenueSummaryIsValid(balance))) return false;
+    }
+    for (const code of codes) {
+      for (const field of REVENUE_MONEY_FIELDS) {
+        if (minorUnits(overview.summaryByCurrency[code][field]) !== sumMinor(overview.sellers.map(row => row.balances.find(b => b.currency === code)?.[field]))) return false;
+      }
+      for (const field of REVENUE_COUNT_FIELDS) {
+        const total = overview.sellers.reduce((sum, row) => sum + row.balances.find(b => b.currency === code)[field], 0);
+        if (!Number.isSafeInteger(total) || overview.summaryByCurrency[code][field] !== total) return false;
+      }
+    }
+    return overview.withdrawals.every(request => {
+      if (!idString(request._id) || withdrawalIds.has(request._id) || selectAdminWithdrawalPresentationMoney(request) === null) return false;
+      withdrawalIds.add(request._id);
+      return true;
+    });
+  }
+
   if (
     !isObject(overview)
     || overview.success !== true

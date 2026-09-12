@@ -62,7 +62,7 @@ test('seller payment screen clears stale authority and wires terminal-attempt re
   const source = readFileSync(new URL('../src/components/layout/SellerPayments.jsx', import.meta.url), 'utf8');
   assert.match(source, /summaryRef\.current = null;\s*setSummary\(null\);/);
   assert.match(source, /isExactNonNegativeJsonMoney\(displayRevenue\[field\]\)/);
-  assert.match(source, /withdrawalBlockedByFallback = exchangeRatesAreFallback && withdrawalRequiresLiveFx/);
+  assert.match(source, /paymentAccount\.currency !== balanceCurrency/);
   assert.match(source, /if \(value !== withdrawAmount\) void retireActiveWithdrawalAttempt\(\)/);
   assert.match(source, /if \(!shouldRetainWithdrawalAttempt\(error\) && attemptKey\)/);
   assert.doesNotMatch(source, /Showing the last successfully loaded balances/);

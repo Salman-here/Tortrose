@@ -1262,16 +1262,20 @@ const settleFromSellerBalance = async ({ returnRequestId, sellerId }) => runInTr
   const amountUsdMinor = cumulativeUsdMinor - priorDebitedUsdMinor;
   const amountUSD = fromMinorUnits(amountUsdMinor);
   const { buildSellerPaymentSummary } = require('../controllers/PaymentController');
-  const summary = await buildSellerPaymentSummary(sellerId, { session });
-  const withdrawableBalanceUSD = requireExactReturnMoney(
-    summary?.revenue?.withdrawableBalance,
-    'seller withdrawable balance',
-  );
-  if (amountUSD > withdrawableBalanceUSD) {
-    const error = new Error('Your available seller balance is not enough for this refund. Pay by card instead.');
-    error.statusCode = 400;
-    error.code = 'INSUFFICIENT_SELLER_BALANCE';
-    error.availableBalanceUSD = withdrawableBalanceUSD;
+  const { nativeSellerEntitlement, nativeLiabilityMinor } = require('./sellerNativeAccountingService');
+  const nativeMoney = nativeSellerEntitlement(order, sellerId);
+  if (!nativeMoney) throw returnFinancialDataError('The original seller currency cannot be verified.');
+  const nativeTotalMinor = toMinorUnits(nativeMoney.summary.totalAmount);
+  const buyerTotalMinor = toMinorUnits(nativeMoney.buyerSummary.totalAmount);
+  const beforeSourceMinor = cumulativeSourceMinor - toMinorUnits(request.refund.totalAmount);
+  const nativeDebitMinor = nativeLiabilityMinor(cumulativeSourceMinor, buyerTotalMinor, nativeTotalMinor)
+    - nativeLiabilityMinor(beforeSourceMinor, buyerTotalMinor, nativeTotalMinor);
+  const summary = await buildSellerPaymentSummary(sellerId, { session, displayCurrency: nativeMoney.currency });
+  const available = requireExactReturnMoney(summary.balanceByCurrency?.[nativeMoney.currency]?.withdrawableBalance, 'native seller balance');
+  if (nativeDebitMinor > toMinorUnits(available)) {
+    const error = new Error(`Your available ${nativeMoney.currency} balance is not enough for this refund. Pay by card instead; other currency balances are unchanged.`);
+    error.statusCode = 400; error.code = 'INSUFFICIENT_SELLER_BALANCE';
+    error.availableBalance = available; error.currency = nativeMoney.currency;
     throw error;
   }
 
@@ -1283,6 +1287,7 @@ const settleFromSellerBalance = async ({ returnRequestId, sellerId }) => runInTr
       amountUSD,
       sourceAmount: request.refund.totalAmount,
       sourceCurrency,
+      order: order._id,
       referenceType: 'return_request',
       referenceId: String(request._id),
       description: `Wallet refund for return ${request.returnNumber}`,
