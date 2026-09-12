@@ -635,6 +635,7 @@ const StoreSettings = () => {
     };
 
     const cancelProductCurrencyConfirmation = () => {
+        if (productCurrencySaving) return;
         setProductCurrencyConfirm(null);
         setProductCurrencyDraft(productCurrencyInfo?.pendingCurrency || productCurrencyInfo?.activeCurrency || null);
     };
@@ -1070,8 +1071,8 @@ const StoreSettings = () => {
                                     {productCurrencyConfirm.msg}
                                 </p>
                                 <div className="flex flex-wrap gap-2">
-                                    <button type="button" onClick={cancelProductCurrencyConfirmation}
-                                        className="px-4 py-2 rounded-lg text-xs font-semibold"
+                                    <button type="button" disabled={productCurrencySaving} onClick={cancelProductCurrencyConfirmation}
+                                        className="px-4 py-2 rounded-lg text-xs font-semibold disabled:opacity-60"
                                         style={{ background: 'var(--glass-inner)', color: 'hsl(var(--foreground))', border: '1px solid var(--glass-border)' }}>
                                         Cancel
                                     </button>
