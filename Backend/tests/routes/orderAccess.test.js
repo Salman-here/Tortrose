@@ -37,7 +37,7 @@ const createProduct = (seller, suffix, price = 100) =>
     seller: seller._id,
   });
 
-const createOrder = ({ buyer, sellerProduct, otherProduct }) =>
+const createOrder = ({ buyer, sellerProduct, otherProduct, appliedCoupons = [] }) =>
   Order.create({
     user: buyer._id,
     orderId: `ORD-${Date.now()}-${Math.random().toString(36).slice(2)}`,
@@ -87,11 +87,13 @@ const createOrder = ({ buyer, sellerProduct, otherProduct }) =>
       { seller: sellerProduct.seller, storeName: 'Seller Store' },
       { seller: otherProduct.seller, storeName: 'Other Store' },
     ],
+    appliedCoupons,
     orderSummary: {
       subtotal: sellerProduct.price * 2 + otherProduct.price,
       shippingCost: 15,
       tax: 25,
-      totalAmount: sellerProduct.price * 2 + otherProduct.price + 40,
+      couponDiscount: appliedCoupons.reduce((sum,coupon)=>sum+coupon.appliedDiscountAmount,0),
+      totalAmount: sellerProduct.price * 2 + otherProduct.price + 40 - appliedCoupons.reduce((sum,coupon)=>sum+coupon.appliedDiscountAmount,0),
     },
     paymentMethod: 'cash_on_delivery',
     isPaid: true,
@@ -125,6 +127,44 @@ beforeEach(async () => {
 });
 
 describe('Order access isolation', () => {
+  test('seller views contain only their coupon and settlement metadata while the buyer retains both sellers', async () => {
+    const seller=await createUser('coupon-scope-one','seller');
+    const otherSeller=await createUser('coupon-scope-two','seller');
+    const buyer=await createUser('coupon-scope-buyer','user');
+    const sellerProduct=await createProduct(seller,'coupon-one',100);
+    const otherProduct=await createProduct(otherSeller,'coupon-two',50);
+    const order=await createOrder({buyer,sellerProduct,otherProduct,appliedCoupons:[{couponId:new mongoose.Types.ObjectId(),seller:otherSeller._id,code:'OTHER10',discountType:'fixed',discountValue:10,appliedDiscountAmount:10,currency:'USD',applicableProductIds:[otherProduct._id]}]});
+    const {buildOrderSellerSettlement}=require('../../services/orderMoneyService');
+    await Order.collection.updateOne({_id:order._id},{$set:{sellerSettlementVersion:1,sellerSettlement:buildOrderSellerSettlement(order,{requireOrderTotal:true})}});
+    const before=await Order.collection.findOne({_id:order._id});
+    const [own,other,customer]=await Promise.all([seller,otherSeller,buyer].map(actor=>request(app).get(`/api/order/detail/${order._id}`).set('Authorization',tokenFor(actor))));
+    expect(own.status).toBe(200); expect(other.status).toBe(200); expect(customer.status).toBe(200);
+    expect(own.body.order.appliedCoupons).toEqual([]);
+    expect(own.body.order.sellerSettlement).toHaveLength(1);
+    expect(String(own.body.order.sellerSettlement[0].seller)).toBe(String(seller._id));
+    expect(own.body.order.orderSummary).toMatchObject({couponDiscount:0,totalAmount:230});
+    expect(other.body.order.appliedCoupons.map(c=>c.code)).toEqual(['OTHER10']);
+    expect(other.body.order.sellerSettlement).toHaveLength(1);
+    expect(other.body.order.orderSummary).toMatchObject({couponDiscount:10,totalAmount:50});
+    expect(customer.body.order.orderItems).toHaveLength(2);
+    expect(customer.body.order.appliedCoupons.map(c=>c.code)).toEqual(['OTHER10']);
+    expect(await Order.collection.findOne({_id:order._id})).toEqual(before);
+  });
+
+  test.each(['owned','shared'])('legacy %s coupon scopes do not expose another seller metadata', async scope => {
+    const seller=await createUser('legacy-coupon-own','seller');
+    const otherSeller=await createUser('legacy-coupon-other','seller');
+    const buyer=await createUser('legacy-coupon-buyer','user');
+    const sellerProduct=await createProduct(seller,'legacy-own',100);
+    const otherProduct=await createProduct(otherSeller,'legacy-other',50);
+    const applicableProductIds=scope==='owned'?[sellerProduct._id]:[sellerProduct._id,otherProduct._id];
+    const order=await createOrder({buyer,sellerProduct,otherProduct,appliedCoupons:[{couponId:new mongoose.Types.ObjectId(),seller:null,code:'LEGACY10',discountType:'fixed',discountValue:10,appliedDiscountAmount:10,currency:'USD',applicableProductIds}]});
+    const response=await request(app).get(`/api/order/detail/${order._id}`).set('Authorization',tokenFor(seller));
+    expect(response.status).toBe(200);
+    expect(response.body.order.appliedCoupons.map(c=>c.code)).toEqual(scope==='owned'?['LEGACY10']:[]);
+    expect(response.body.order.orderSummary.couponDiscount).toBe(scope==='owned'?10:8);
+  });
+
   test('rejects anonymous order placement before processing checkout data', async () => {
     const res = await request(app)
       .post('/api/order/place')

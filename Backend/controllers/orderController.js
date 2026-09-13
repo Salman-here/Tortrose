@@ -1007,6 +1007,17 @@ const buildSellerOrderView = (order, sellerProductIds, sellerId) => {
     );
 
     const obj = order.toObject ? order.toObject() : { ...order };
+    const ownedProductIds = new Set(sellerOrderItems.map(item => toId(item.productId)));
+    const ownsWholeOrder = sellerOrderItems.length > 0 && sellerOrderItems.length === (order.orderItems || []).length;
+    const visibleCoupons = (obj.appliedCoupons || []).filter(coupon => {
+        if (coupon.seller !== null && coupon.seller !== undefined) return toId(coupon.seller) === toId(sellerId);
+        // Retain legacy labels only when their entire frozen scope is ours.
+        // Discount totals remain separately computed from the original order.
+        const scope = coupon.applicableProductIds;
+        return Array.isArray(scope) && scope.length > 0
+            ? scope.every(productId => ownedProductIds.has(toId(productId)))
+            : ownsWholeOrder;
+    });
     const sellerFulfillment = sellerFulfillmentFor(order, sellerId);
     const sellerPolicy = (order.sellerPolicies || []).find(
         entry => toId(entry.seller) === toId(sellerId)
@@ -1017,6 +1028,8 @@ const buildSellerOrderView = (order, sellerProductIds, sellerId) => {
         isDelivered: sellerFulfillment ? sellerFulfillment.status === 'delivered' : obj.isDelivered,
         deliveredAt: sellerFulfillment?.deliveredAt || obj.deliveredAt,
         orderItems: sellerOrderItems,
+        appliedCoupons: visibleCoupons,
+        sellerSettlement: (obj.sellerSettlement || []).filter(entry => toId(entry.seller) === toId(sellerId)),
         // Strip other sellers' shipping selections from the seller's view
         sellerShipping: sellerShippingInfo ? [sellerShippingInfo] : [],
         shippingMethod: sellerShippingInfo
