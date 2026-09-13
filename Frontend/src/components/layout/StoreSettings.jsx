@@ -589,6 +589,7 @@ const StoreSettings = () => {
             setProductCurrencyDraft(inspected.pendingCurrency || inspected.activeCurrency);
             setProductCurrencyConfirm(null);
             setProductCurrencyError('');
+            fetchAnalytics();
             outletContext.fetchProductCurrencyState?.();
             outletContext.fetchProducts?.();
             outletContext.refreshOverview?.();
@@ -803,7 +804,7 @@ const StoreSettings = () => {
         { label: 'Total Views', value: analytics?.views ?? 'Unavailable', icon: <BarChart3 size={18} />, color: 'hsl(220, 70%, 55%)' },
         { label: 'Products', value: analytics?.productCount ?? 'Unavailable', icon: <ShoppingBag size={18} />, color: 'hsl(150, 60%, 45%)' },
         { label: 'Trusters', value: analytics?.trustCount ?? 'Unavailable', icon: <Heart size={18} />, color: 'hsl(330, 70%, 55%)' },
-        { label: 'Recognized Sales', value: analytics ? formatCompactPrice(analytics.totalSales, analytics.currency) : 'Unavailable', icon: <DollarSign size={18} />, color: 'hsl(200, 80%, 50%)' },
+        { label: 'Recognized Sales', value: analytics && analytics.currency === productCurrencyInfo?.activeCurrency ? formatCompactPrice(analytics.totalSales, analytics.currency) : 'Unavailable', icon: <DollarSign size={18} />, color: 'hsl(200, 80%, 50%)' },
     ];
 
     return (
