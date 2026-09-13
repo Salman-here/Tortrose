@@ -196,3 +196,19 @@ test('each shipping/coupon source currency converts directly instead of being re
   expect((await ShippingMethod.findOne({seller:seller._id})).methods[0]).toMatchObject({cost:1.6,currency:'GBP',deliveryDays:5});
   expect(await Coupon.findById(coupon._id).lean()).toMatchObject({currency:'GBP',discountValue:0.8,minOrderAmount:8,maxDiscountAmount:4});
 });
+
+test('a bare legacy withdrawal remains blocked but does not invalidate the native admin overview', async () => {
+  const {seller,products}=await fixture('PKR'); await earned(seller,products[0]);
+  const legacy={_id:new mongoose.Types.ObjectId(),seller:seller._id,amount:200,currency:'USD',requestedAmount:55636,requestedCurrency:'PKR',status:'pending',createdAt:new Date()};
+  await SellerWithdrawalRequest.collection.insertOne(legacy);
+  const before=await SellerWithdrawalRequest.collection.findOne({_id:legacy._id});
+  const overview={success:true,...await buildAdminPaymentsOverviewData()};
+  const row=overview.withdrawals[0];
+  expect(row).toMatchObject({amount:200,currency:'USD',requestedAmount:55636,requestedCurrency:'PKR',payoutWorkflowVersion:0,paymentAccountSnapshotVersion:0,payoutWorkflow:{version:0},paymentAccountSnapshot:{snapshotStatus:'missing',payoutBlocked:true}});
+  expect(row.payoutAmount).toBeUndefined(); expect(row.payoutCurrency).toBeUndefined();
+  expect(await SellerWithdrawalRequest.collection.findOne({_id:legacy._id})).toEqual(before);
+  const {pathToFileURL}=require('url'),path=require('path');
+  const url=pathToFileURL(path.resolve(__dirname,'../../../Frontend/src/utils/adminPaymentsSafety.js')).href;
+  const result=require('child_process').execFileSync(process.execPath,['--input-type=module','-e',"import {readFileSync} from 'node:fs';const m=await import(process.argv[1]);if(!m.adminPaymentsOverviewIsValid(JSON.parse(readFileSync(0,'utf8'))))process.exit(1);console.log('legacy row safely presented');",url],{input:JSON.stringify(overview),encoding:'utf8'});
+  expect(result.trim()).toBe('legacy row safely presented');
+});

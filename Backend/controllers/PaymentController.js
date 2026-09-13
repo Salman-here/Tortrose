@@ -786,6 +786,10 @@ const serializeWithdrawalRequest = (request, { includeSensitivePayout = false } 
         doc.payoutWorkflowVersion,
         'withdrawal payout workflow version'
     );
+    // Lean legacy rows omit schema defaults. Normalize only response metadata;
+    // never rewrite the stored request or invent missing bank payout terms.
+    doc.paymentAccountSnapshotVersion = snapshotVersion;
+    doc.payoutWorkflowVersion = payoutWorkflowVersion;
     let snapshotStatus = snapshotVersion === PAYOUT_ACCOUNT_SNAPSHOT_VERSION
         ? 'complete'
         : 'missing';

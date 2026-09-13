@@ -175,11 +175,10 @@ const StatusPill = ({ status }) => (
 const AdminPayments = () => {
     const {
         currency,
-        exchangeRatesFallback,
-        exchangeRatesLoading,
-        formatPrice,
         formatAmount,
     } = useCurrency();
+    const [summaryCurrencyChoice, setSummaryCurrencyChoice] = useState(null);
+    const summaryCurrency = summaryCurrencyChoice || currency;
     const [loading, setLoading] = useState(true);
     const [savingId, setSavingId] = useState('');
     const [data, setData] = useState(null);
@@ -203,7 +202,7 @@ const AdminPayments = () => {
                 signal: controller.signal,
             });
             if (overviewRequestRef.current.id !== requestId) return;
-            if (!adminPaymentsOverviewIsValid(res.data)) {
+            if (res.data?.accountingVersion !== 2 || !adminPaymentsOverviewIsValid(res.data)) {
                 throw new Error('Admin payments returned incomplete or internally inconsistent financial data.');
             }
             setData(res.data);
@@ -317,12 +316,11 @@ const AdminPayments = () => {
         );
     }
 
-    const summary = data.summaryByCurrency?.[currency] || data.summary;
+    const summary = data.summaryByCurrency[summaryCurrency];
     const sellers = data.sellers;
     const withdrawals = data.withdrawals;
     const loadErrors = data.errors;
-    const selectedCurrencyUnavailable = false;
-    const formatLedgerAmount = (amount, amountCurrency = currency) => formatAmount(amount, { targetCurrency: amountCurrency, showCode: true });
+    const formatLedgerAmount = (amount, amountCurrency = summaryCurrency) => formatAmount(amount, { targetCurrency: amountCurrency, showCode: true });
 
 
     return (
@@ -336,44 +334,40 @@ const AdminPayments = () => {
                     <p className="text-sm mt-1 max-w-2xl" style={{ color: 'hsl(var(--muted-foreground))' }}>
                         Review seller payout accounts, online withdrawable balances, COD revenue, and withdrawal requests.
                     </p>
+                    <p className="text-xs mt-2 max-w-2xl" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                        Summary cards show money earned in the selected currency. Seller sales rows use each store's current currency at the original order rates; balances remain separate.
+                    </p>
                 </div>
-                <button onClick={fetchOverview} className="w-full sm:w-auto px-4 py-2.5 rounded-xl text-sm font-semibold glass-inner inline-flex items-center justify-center gap-2" style={{ color: 'hsl(var(--foreground))' }}>
-                    <RefreshCw size={16} /> Refresh
-                </button>
+                <div className="flex flex-wrap items-end gap-3">
+                    <label className="text-xs font-semibold space-y-1">
+                        <span className="block">Summary currency</span>
+                        <select aria-label="Admin summary currency" className="glass-inner rounded-xl px-3 py-2.5" value={summaryCurrency} onChange={event => setSummaryCurrencyChoice(event.target.value)}>
+                            {['USD', 'PKR', 'EUR', 'GBP'].map(code => <option key={code} value={code}>{code}</option>)}
+                        </select>
+                    </label>
+                    <button onClick={fetchOverview} className="px-4 py-2.5 rounded-xl text-sm font-semibold glass-inner inline-flex items-center justify-center gap-2" style={{ color: 'hsl(var(--foreground))' }}>
+                        <RefreshCw size={16} /> Refresh
+                    </button>
+                </div>
             </div>
 
-            {data.errors?.length > 0 && <div role="alert" className="glass-card p-4 mb-4 text-amber-700">Some seller money is unavailable and excluded from these totals: {data.errors.map(error => `${error.sellerName || error.sellerId}: ${error.message}`).join('; ')}</div>}
+            {loadErrors.length > 0 && (
+                <details className="glass-inner rounded-2xl p-4" style={{ border: '1px solid rgba(249,115,22,0.35)' }}>
+                    <summary className="cursor-pointer text-sm font-semibold">{loadErrors.length} seller accounting records need review and are excluded from these totals.</summary>
+                    <p className="text-xs mt-2">Original records were not changed or revalued using current exchange rates. Review the missing historical information before including these sellers.</p>
+                    <ul className="mt-3 space-y-2 text-xs">
+                        {loadErrors.map(error => <li key={error.sellerId}>{error.sellerName || error.sellerId}: {error.message}</li>)}
+                    </ul>
+                </details>
+            )}
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-6 gap-4">
-                <StatCard label={`Seller Online Balances (${currency})`} value={formatLedgerAmount(summary.withdrawableBalance)} icon={<Wallet size={22} />} color="hsl(150,60%,45%)" bg="rgba(16,185,129,0.12)" />
+                <StatCard label={`Seller Online Balances (${summaryCurrency})`} value={formatLedgerAmount(summary.withdrawableBalance)} icon={<Wallet size={22} />} color="hsl(150,60%,45%)" bg="rgba(16,185,129,0.12)" />
                 <StatCard label="Risk-held Balance" value={formatLedgerAmount(summary.paymentRiskHeldAmount)} icon={<AlertTriangle size={22} />} color="hsl(0,72%,55%)" bg="rgba(239,68,68,0.12)" />
                 <StatCard label="Delivered COD Revenue" value={formatLedgerAmount(summary.codDeliveredRevenue)} icon={<Banknote size={22} />} color="hsl(30,90%,50%)" bg="rgba(249,115,22,0.12)" />
                 <StatCard label="Estimated Revenue" value={formatLedgerAmount(summary.estimatedRevenue)} icon={<TrendingUp size={22} />} color="hsl(220,70%,55%)" bg="rgba(99,102,241,0.12)" />
                 <StatCard label="Paid Out" value={formatLedgerAmount(summary.totalWithdrawn)} icon={<CreditCard size={22} />} color="hsl(200,80%,50%)" bg="rgba(14,165,233,0.12)" />
                 <StatCard label="Open Requests" value={pendingRequests} icon={<AlertTriangle size={22} />} color="hsl(0,72%,55%)" bg="rgba(239,68,68,0.12)" />
             </div>
-
-            {selectedCurrencyUnavailable && (
-                <div className="glass-inner rounded-2xl p-4 flex items-start gap-3" role="alert" style={{ border: '1px solid rgba(249,115,22,0.35)' }}>
-                    <AlertTriangle size={18} className="shrink-0 mt-0.5" style={{ color: 'hsl(30,90%,50%)' }} />
-                    <p className="text-xs leading-relaxed" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                        Live {currency} exchange rates are unavailable. Canonical ledger totals remain shown in USD; frozen bank payout amounts below are unchanged.
-                    </p>
-                </div>
-            )}
-
-            {loadErrors.length > 0 && (
-                <div className="glass-inner rounded-2xl p-4 flex items-start gap-3" style={{ border: '1px solid rgba(249,115,22,0.35)' }}>
-                    <AlertTriangle size={18} className="shrink-0 mt-0.5" style={{ color: 'hsl(30,90%,50%)' }} />
-                    <div className="min-w-0">
-                        <p className="text-sm font-semibold" style={{ color: 'hsl(var(--foreground))' }}>
-                            Some seller payment rows could not be loaded.
-                        </p>
-                        <p className="text-xs mt-1 break-words" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                            Refresh after a moment. Loaded rows and withdrawal requests below are still usable.
-                        </p>
-                    </div>
-                </div>
-            )}
 
             <section className="glass-panel water-shimmer p-4 sm:p-6 min-w-0">
                 <div className="flex items-start justify-between gap-3 mb-4">
@@ -434,12 +428,17 @@ const AdminPayments = () => {
                                         )}
                                     </td>
                                     <td className="py-3 pr-4 font-semibold whitespace-nowrap" style={{ color: 'hsl(150,60%,45%)' }}>
-                                        <div>{row.balances?.filter(balance => balance.withdrawableBalance || balance.paymentRiskHeldAmount || balance.deficit).map(balance => (
-                                            <p key={balance.currency}>{formatLedgerAmount(balance.withdrawableBalance, balance.currency)}{balance.deficit > 0 ? ' · balance deficit' : ''}</p>
+                                        <div>{row.balances.filter(balance => balance.withdrawableBalance || balance.paymentRiskHeldAmount || balance.deficit).map(balance => (
+                                            <div key={balance.currency}>
+                                                <p>{formatLedgerAmount(balance.withdrawableBalance, balance.currency)} available</p>
+                                                {balance.paymentRiskHeldAmount > 0 && <p className="text-xs">Held: {formatLedgerAmount(balance.paymentRiskHeldAmount, balance.currency)}</p>}
+                                                {balance.deficit > 0 && <p className="text-xs">Deficit: {formatLedgerAmount(balance.deficit, balance.currency)}</p>}
+                                            </div>
                                         ))}</div>
+                                        {row.balances.every(balance => !balance.withdrawableBalance && !balance.paymentRiskHeldAmount && !balance.deficit) && <p>{formatLedgerAmount(0, row.seller.currency)}</p>}
                                         {row.paymentRiskPending && (
                                             <p className="text-xs mt-1" style={{ color: 'hsl(0,72%,55%)' }}>
-                                                Held: {formatLedgerAmount(row.revenue.paymentRiskHeldAmount, row.seller.currency)}
+                                                Payouts blocked pending review
                                             </p>
                                         )}
                                     </td>
@@ -515,7 +514,7 @@ const AdminPayments = () => {
                                             )}
                                             {request.balanceVersion !== 2 && presentationMoney.requested.currency !== 'USD' && (
                                                 <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                                                    Reserved ledger amount: {formatPrice(presentationMoney.ledger.amount, { sourceCurrency: 'USD', targetCurrency: 'USD', showCode: true })}
+                                                    Reserved ledger amount: {formatLedgerAmount(presentationMoney.ledger.amount, 'USD')}
                                                 </p>
                                             )}
                                             <p className="text-xs mt-1 break-words" style={{ color: 'hsl(var(--muted-foreground))' }}>
