@@ -174,7 +174,7 @@ const sendResponseMessage = async (phone, isConfirmed, orderId, buyerName) => {
                 ``,
                 `Your order *#${orderId}* is confirmed! ✅`,
                 ``,
-                `We're packing it up now — you'll get updates here as it moves to shipping.`,
+                `You'll get updates here as each seller prepares and ships your items.`,
                 ``,
                 `Need anything? Just reply to this chat. Thanks for shopping with Rozare! 💙`,
             ].join('\n')
@@ -183,7 +183,7 @@ const sendResponseMessage = async (phone, isConfirmed, orderId, buyerName) => {
                 ``,
                 `Order *#${orderId}* has been cancelled. ❌`,
                 ``,
-                `No problem at all — nothing is charged, and your cart is still saved if you change your mind.`,
+                `If you change your mind, you can place a new order at rozare.com.`,
                 ``,
                 `Hope to see you again soon! 💙  — Rozare`,
             ].join('\n');
