@@ -1,5 +1,6 @@
 import React from 'react';
-import { fireEvent, render, waitFor } from '@testing-library/react-native';
+import { Alert } from 'react-native';
+import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import SellerPaymentsScreen from '../../../src/screens/seller/SellerPaymentsScreen';
 import api from '../../../src/config/api';
 
@@ -44,6 +45,43 @@ beforeEach(()=>{
   api.get.mockImplementation(async url=>({data:url==='/currency'?{productCurrency:currencyState}:nativeResponse()}));
   api.post.mockResolvedValue({data:{success:true}});
 });
+afterEach(() => jest.restoreAllMocks());
+
+test.each([
+  ['bank currency mismatch', false, 'PKR'],
+  ['payment hold', true, 'USD'],
+  ['payment hold and bank currency mismatch', true, 'PKR'],
+])('blocked withdrawal explains %s without claiming an FX outage', async (_reason, held, bankCurrency) => {
+  const summary = nativeResponse();
+  summary.paymentAccount.currency = bankCurrency;
+  summary.paymentRiskPending = held;
+  if (held) {
+    summary.balances.forEach(balance => {
+      balance.paymentRiskHeldAmount = balance.withdrawableBalance;
+      balance.withdrawableBalance = 0;
+    });
+    summary.displayRevenue.withdrawableBalance = 0;
+    summary.displayRevenue.paymentRiskHeldAmount = 50;
+    summary.withdrawalLimits.availableDisplayAmount = 0;
+  }
+  api.get.mockImplementation(async url => ({ data: url === '/currency' ? { productCurrency: currencyState } : summary }));
+  const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+  const screen = render(<SellerPaymentsScreen navigation={{ navigate: jest.fn() }} />);
+  await screen.findByText('Withdrawals are held, or your bank account currency does not match this balance. No automatic conversion is available.');
+  let button = screen.getByText('Send withdrawal request');
+  while (button && typeof button.props.onPress !== 'function') button = button.parent;
+  expect(button).not.toBeNull();
+  expect(button.props.disabled).toBe(true);
+  expect(alert).not.toHaveBeenCalled();
+  // The UI disables this button; invoke the handler to cover its defensive guard.
+  await act(async () => { await button.props.onPress(); });
+  expect(alert).toHaveBeenCalledWith(
+    'Withdrawal unavailable',
+    'Withdrawals are held, or your bank account currency does not match this balance. No automatic conversion is available.',
+  );
+  expect(api.post).not.toHaveBeenCalled();
+}, 30000);
+
 test('selects an old PKR balance, shows Rs2000 minimum and submits PKR without changing store currency',async()=>{
   const screen=render(<SellerPaymentsScreen navigation={{navigate:jest.fn()}}/>);
   const picker=await screen.findByLabelText('Withdrawal balance currency');

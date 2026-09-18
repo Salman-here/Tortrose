@@ -3,6 +3,8 @@
     "/assets/react-vendor-BfHIaHDi.js"
   ],
   "scripts/docs-ssr-entry.jsx": [],
+  "src/components/common/TestPhaseNotice.css": [],
+  "src/components/common/TestPhaseNotice.jsx": [],
   "src/pages/DocsPage.jsx": [],
   "src/utils/subscriptionPricing.js": []
 }

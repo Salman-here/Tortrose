@@ -1,5 +1,13 @@
 # React + Vite
 
+## Temporary testing notice
+
+The notice appears across the website, including sign-in, storefronts, dashboards,
+and the prerendered home and documentation pages. To remove it, set
+`SHOW_TEST_PHASE_NOTICE` to `false` in `src/config/siteNotice.js`, then rebuild and
+deploy. Navigation offsets automatically return to their normal positions.
+The notice is informational; it does not change payments or delete account data.
+
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 
 Currently, two official plugins are available:

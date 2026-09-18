@@ -688,6 +688,7 @@ const AdminSidebar = ({ activeTab, setActiveTab, isSidebarOpen, setIsSidebarOpen
                 animate={isMobile ? { x: isSidebarOpen ? 0 : '-100%' } : { x: 0 }}
                 transition={{ type: 'tween', ease: 'easeInOut', duration: 0.28 }}
                 className="fixed top-0 left-0 h-full w-64 z-50 shadow-2xl overflow-hidden"
+                style={{ top: 'var(--test-phase-notice-offset, 0px)', height: 'calc(100% - var(--test-phase-notice-offset, 0px))' }}
             >
                 <div className={`flex flex-col h-full glass-panel-strong water-shimmer ${isMobile ? 'sidebar-mobile-solid' : ''}`} style={{ borderRadius: '0 28px 28px 0' }}>
                     {/* Logo / Brand */}

@@ -3,5 +3,7 @@
     "/assets/react-vendor-BfHIaHDi.js"
   ],
   "scripts/home-ssr-entry.jsx": [],
-  "src/components/common/SEOHead.jsx": []
+  "src/components/common/SEOHead.jsx": [],
+  "src/components/common/TestPhaseNotice.css": [],
+  "src/components/common/TestPhaseNotice.jsx": []
 }

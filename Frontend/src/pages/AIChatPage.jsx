@@ -247,7 +247,7 @@ function AIChatPage() {
 
   return (
     <div className="flex h-[100dvh] overflow-hidden relative"
-      style={{ background: 'hsl(var(--background))' }}>
+      style={{ background: 'hsl(var(--background))', height: 'calc(100dvh - var(--test-phase-notice-offset, 0px))' }}>
       {/* Background decorative blobs */}
       <div className="fixed top-0 left-0 w-64 h-64 rounded-full blur-[150px] opacity-15 pointer-events-none"
         style={{ background: '#14B8A6' }} />

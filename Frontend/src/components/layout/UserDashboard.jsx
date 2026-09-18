@@ -228,7 +228,7 @@ const Sidebar = ({ activeTab, setActiveTab }) => {
         <>
             {/* Mobile expanding header (replaces drawer) */}
             {isMobile && (
-                <div className="fixed top-4 left-4 right-4 z-50 glass-panel-strong" style={{ borderRadius: 20 }}>
+                <div className="fixed top-4 left-4 right-4 z-50 glass-panel-strong" style={{ borderRadius: 20, top: 'calc(var(--test-phase-notice-offset, 0px) + 1rem)' }}>
                     <div className="flex items-center justify-between px-4 py-3">
                         <div className="flex items-center gap-3">
                             <div className="w-9 h-9 rounded-xl flex items-center justify-center font-bold text-sm border"
@@ -285,7 +285,8 @@ const Sidebar = ({ activeTab, setActiveTab }) => {
                     initial={false}
                     animate={{ x: 0 }}
                     transition={{ type: 'tween', ease: 'easeInOut', duration: 0.28 }}
-                    className="fixed top-0 left-0 h-full w-64 z-50 shadow-2xl overflow-hidden">
+                    className="fixed top-0 left-0 h-full w-64 z-50 shadow-2xl overflow-hidden"
+                    style={{ top: 'var(--test-phase-notice-offset, 0px)', height: 'calc(100% - var(--test-phase-notice-offset, 0px))' }}>
                     <SidebarContent />
                 </motion.div>
             )}

@@ -323,7 +323,7 @@ export default function SellerPaymentsScreen({ navigation }) {
       return;
     }
     if (withdrawalIsBlocked) {
-      Alert.alert('Live rates unavailable', 'Refresh and retry before requesting a withdrawal.');
+      Alert.alert('Withdrawal unavailable', 'Withdrawals are held, or your bank account currency does not match this balance. No automatic conversion is available.');
       return;
     }
     if (!paymentAccount) {

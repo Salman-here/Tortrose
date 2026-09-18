@@ -72,6 +72,8 @@ function Navbar() {
                 : 'top-4 left-3 right-3 sm:left-4 sm:right-4 glass-panel backdrop-blur-sm'
             }`}
             style={{
+                top: `calc(var(--test-phase-notice-offset, 0px) + ${isScrolled ? '0px' : '1rem'})`,
+                transitionProperty: 'background-color, border-color, border-radius, box-shadow, color',
                 borderRadius: isScrolled ? '0' : '24px',
                 background: 'var(--store-theme-nav-bg, var(--glass-bg))',
                 borderColor: 'var(--store-theme-nav-border, var(--glass-border))',

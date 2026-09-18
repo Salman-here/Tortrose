@@ -6,6 +6,7 @@ import { renderToString } from 'react-dom/server';
 import { StaticRouter } from 'react-router-dom';
 import { HelmetProvider } from 'react-helmet-async';
 import SEOHead from '../src/components/common/SEOHead.jsx';
+import TestPhaseNotice from '../src/components/common/TestPhaseNotice.jsx';
 
 // Minimal home page shell for SSR
 function HomePageShell() {
@@ -55,6 +56,7 @@ function HomePageShell() {
         canonical="/"
         jsonLd={[schemaData, breadcrumbSchema]}
       />
+      <TestPhaseNotice />
       <div className="min-h-screen">
         {/* SSR shell - React will hydrate this on client */}
         <div id="products-loading" style={{ 

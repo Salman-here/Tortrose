@@ -7,12 +7,14 @@ import { renderToString } from 'react-dom/server';
 import { StaticRouter } from 'react-router-dom';
 import { HelmetProvider } from 'react-helmet-async';
 import DocsPage from '../src/pages/DocsPage.jsx';
+import TestPhaseNotice from '../src/components/common/TestPhaseNotice.jsx';
 
 export function renderDocs(url = '/') {
   const helmetContext = {};
   const html = renderToString(
     <HelmetProvider context={helmetContext}>
       <StaticRouter location={url}>
+        <TestPhaseNotice />
         <DocsPage />
       </StaticRouter>
     </HelmetProvider>
