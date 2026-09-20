@@ -53,3 +53,12 @@ test('mobile resets numeric thresholds when currency changes and preserves a gen
   assert.match(source, /requestFilters\.priceRange\.max \?\? 'Infinity'/);
   assert.match(source, /priceFilterError\(filterDraft\.priceRange\)/);
 });
+
+test('storefront controls remain mounted after zero matches and store totals are not filtered totals', () => {
+  for (const file of ['../src/pages/StorePage.jsx', '../../MobileApp/src/screens/StoreScreen.js']) {
+    const source = read(file);
+    assert.doesNotMatch(source, /\{\(?products\.length > 0/);
+    assert.match(source, /setCatalogTotal\(Number\.isSafeInteger\(res\.data\.catalogTotal\)/);
+    assert.match(source, /catalogTotal \?\? '—'/);
+  }
+});

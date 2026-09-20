@@ -918,7 +918,10 @@ exports.getStoreProducts = async (req, res) => {
             ];
         }
 
-        const allCategories = await Product.distinct('category', publicProductFilter({ seller: store.seller }));
+        const [allCategories, catalogTotal] = await Promise.all([
+            Product.distinct('category', publicProductFilter({ seller: store.seller })),
+            Product.countDocuments(publicProductFilter({ seller: store.seller })),
+        ]);
 
         // Pagination
         const skip = (pageNum - 1) * limitNum;
@@ -938,6 +941,7 @@ exports.getStoreProducts = async (req, res) => {
             msg: 'Products fetched successfully',
             products,
             categories: cleanList(allCategories),
+            catalogTotal,
             pagination: {
                 total,
                 page: pageNum,

@@ -110,6 +110,18 @@ test('equal sort values have a deterministic id tie-break across pages', async (
   expect(new Set(ids).size).toBe(6); expect(one.body.pagination.total).toBe(6);
 });
 
+test('store catalog counts and categories survive empty results and remain tenant-scoped', async () => {
+  for (const endpoint of ['/stores/catalog-primary/products', '/subdomain/catalog-primary/products']) {
+    const result = await request(app).get(endpoint).query({ ...area, search: 'no-such-fixture' });
+    expect(result.status).toBe(200);
+    expect(result.body.products).toEqual([]);
+    expect(result.body.pagination.total).toBe(0);
+    expect(result.body.catalogTotal).toBe(6);
+    expect(result.body.categories).toContain('Books');
+    expect(result.body.categories).not.toContain('Other');
+  }
+});
+
 test('verification/trust/search/type filter the whole Marketplace before paging and counts', async () => {
   for (let i = 0; i < 13; i++) await makeStore(`ordinary-${i}`);
   const match = await makeStore('z-match-brand', { sellerType: 'brand', trustCount: 100, verification: { isVerified: true } });

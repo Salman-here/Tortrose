@@ -57,6 +57,7 @@ const StorePage = ({ slugOverride = null }) => {
     const [productPage, setProductPage] = useState(1);
     const [productPagination, setProductPagination] = useState({ total: 0, page: 1, pages: 1, limit: STORE_PRODUCTS_PER_PAGE });
     const [storeCategories, setStoreCategories] = useState([]);
+    const [catalogTotal, setCatalogTotal] = useState(null);
     const [storeRating, setStoreRating] = useState({ average: 0, count: 0 });
     const [safetyVisible, setSafetyVisible] = useState(false);
     const isOwnStore = Boolean(
@@ -98,7 +99,7 @@ const StorePage = ({ slugOverride = null }) => {
     }, [slug, locationQueryString]);
 
     useEffect(() => { const timer = setTimeout(() => setDebouncedSearch(productSearch.trim()), 300); return () => clearTimeout(timer); }, [productSearch]);
-    useEffect(() => { setSelectedCategory('all'); setProductSearch(''); setDebouncedSearch(''); setProductPage(1); setStoreCategories([]); }, [slug]);
+    useEffect(() => { setSelectedCategory('all'); setProductSearch(''); setDebouncedSearch(''); setProductPage(1); setStoreCategories([]); setCatalogTotal(null); }, [slug]);
 
     useEffect(() => {
         const key = JSON.stringify([slug, locationQueryString, selectedCategory, debouncedSearch, currency]);
@@ -223,6 +224,7 @@ const StorePage = ({ slugOverride = null }) => {
             setProducts(res.data.products || []);
             setProductPagination(res.data.pagination || { total: res.data.products?.length || 0, page: productPage, pages: 1, limit: STORE_PRODUCTS_PER_PAGE });
             setStoreCategories(res.data.categories || []);
+            setCatalogTotal(Number.isSafeInteger(res.data.catalogTotal) ? res.data.catalogTotal : null);
         } catch (error) {
             if (requestId !== productRequestRef.current) return;
             console.error('Error fetching products:', error);
@@ -535,7 +537,7 @@ const StorePage = ({ slugOverride = null }) => {
 
                                 <div className="flex flex-wrap gap-2 text-xs">
                                     <span className="tag-pill flex items-center gap-1.5" style={chipStyle}>
-                                        <Package size={13} />{products.length} Products
+                                        <Package size={13} />{catalogTotal ?? '—'} Products
                                     </span>
                                     <span className="tag-pill flex items-center gap-1.5" style={isDefaultTheme ? { background: 'rgba(56, 189, 248, 0.1)', color: 'hsl(200, 80%, 50%)', borderColor: 'rgba(56, 189, 248, 0.18)' } : chipStyle}>
                                         <Eye size={13} />{store?.views || 0} Views
@@ -731,7 +733,7 @@ const StorePage = ({ slugOverride = null }) => {
                     </div>
 
                     {/* Search + Categories */}
-                    {products.length > 0 && (
+                    {/* Keep controls available during loading and after zero matches. */}
                         <div className="glass-panel p-3 sm:p-4 mb-5 space-y-3" style={themedPanelStyle}>
                             <div className="search-input-wrapper">
                                 <div className="search-input-icon"><Search size={16} /></div>
@@ -764,8 +766,6 @@ const StorePage = ({ slugOverride = null }) => {
                                 </div>
                             )}
                         </div>
-                    )}
-
                     {productsLoading ? (
                         <div className="flex justify-center items-center h-64">
                             <Loader />

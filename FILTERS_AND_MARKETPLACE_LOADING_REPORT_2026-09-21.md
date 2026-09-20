@@ -22,6 +22,7 @@ The current shopping rule remains unchanged: Global includes Global stores plus 
 10. **Error states:** loading errors are distinct from genuine no-match/empty results, with retry controls. A filtered storefront with no matches no longer claims the seller has never added products.
 11. **Mobile Marketplace loading:** the header/search/filter controls remain mounted. The results area uses a two-column store-card skeleton with banner, logo, name and metadata placeholders; pagination uses a smaller skeleton. Cards appear immediately when data arrives instead of starting invisible with progressively longer entrance delays. An odd last card retains its column width.
 12. **Subdomain consistency:** subdomain product requests use the same storefront filtering, visibility, currency and pagination implementation while preserving the middleware-resolved store identity.
+13. **Live-discovered empty-result trap:** a storefront search returning zero products hid the web search/category controls. The controls now remain mounted on both clients during loading and empty results. Store header product totals also remain the full public catalog count rather than shrinking to the filtered page size; the results count still reflects the current filters.
 
 ## Automated verification
 

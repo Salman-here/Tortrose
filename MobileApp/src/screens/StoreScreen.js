@@ -87,6 +87,7 @@ export default function StoreScreen({ route, navigation }) {
   const [trustInfo, setTrustInfo] = useState({ isTrusted: false, count: 0 });
   const [products, setProducts] = useState([]);
   const [storeCategories, setStoreCategories] = useState([]);
+  const [catalogTotal, setCatalogTotal] = useState(null);
   const [productPagination, setProductPagination] = useState({ total: 0, page: 1, pages: 1 });
   const [isLoading, setIsLoading] = useState(true);
   const [productsLoading, setProductsLoading] = useState(true);
@@ -113,7 +114,7 @@ export default function StoreScreen({ route, navigation }) {
     return () => clearTimeout(t);
   }, [search]);
 
-  useEffect(() => { setProductPage(1); setActiveCategory('all'); setSearch(''); setDebouncedSearch(''); setStoreCategories([]); }, [slug]);
+  useEffect(() => { setProductPage(1); setActiveCategory('all'); setSearch(''); setDebouncedSearch(''); setStoreCategories([]); setCatalogTotal(null); }, [slug]);
 
   const fetchStore = useCallback(async () => {
     if (selectionRequired) return;
@@ -148,6 +149,7 @@ export default function StoreScreen({ route, navigation }) {
       setProducts(res.data.products || []);
       setProductPagination(res.data.pagination || { total: res.data.products?.length || 0, page: productPage, pages: 1 });
       setStoreCategories(res.data.categories || []);
+      setCatalogTotal(Number.isSafeInteger(res.data.catalogTotal) ? res.data.catalogTotal : null);
     } catch (error) { if (requestId !== productRequestRef.current) return; console.error('Error fetching store products:', error); setProductsError(true); setProducts([]); setProductPagination({ total: 0, page: productPage, pages: 1 }); }
     finally { if (requestId === productRequestRef.current) setProductsLoading(false); }
   }, [slug, productPage, activeCategory, debouncedSearch, locationKey, selectionRequired, currency]);
@@ -306,7 +308,7 @@ export default function StoreScreen({ route, navigation }) {
           <View style={styles.pillsRow}>
             <View style={styles.statPill}>
               <Ionicons name="cube-outline" size={13} color={palette.colors.primary} />
-              <Text style={styles.statPillText}>{totalProducts} Products</Text>
+              <Text style={styles.statPillText}>{catalogTotal ?? '—'} Products</Text>
             </View>
             <View style={[styles.statPill, { backgroundColor: 'rgba(56,189,248,0.1)', borderColor: 'rgba(56,189,248,0.18)' }]}>
               <Ionicons name="eye-outline" size={13} color="#0ea5e9" />
@@ -402,7 +404,7 @@ export default function StoreScreen({ route, navigation }) {
       </View>
 
       {/* Search + Category chips */}
-      {(products.length > 0 || debouncedSearch || activeCategory !== 'all') && (
+      {/* Keep controls mounted when results are empty or reloading. */}
         <View style={{ paddingHorizontal: spacing.md, marginTop: spacing.sm }}>
           <GlassPanel variant="card" style={styles.searchWrap}>
             <Ionicons name="search" size={16} color={palette.colors.textSecondary} />
@@ -435,8 +437,6 @@ export default function StoreScreen({ route, navigation }) {
             </ScrollView>
           )}
         </View>
-      )}
-
       {productsLoading && (
         <View style={{ paddingVertical: spacing.lg, alignItems: 'center' }}>
           <Text style={{ fontSize: fontSize.sm, color: palette.colors.textSecondary }}>Loading products...</Text>
