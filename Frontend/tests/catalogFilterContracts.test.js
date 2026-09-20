@@ -62,3 +62,11 @@ test('storefront controls remain mounted after zero matches and store totals are
     assert.match(source, /catalogTotal \?\? '—'/);
   }
 });
+
+test('phone-width filter drawer is portalled above navigation and has an accessible close button', () => {
+  const source = read('../src/components/Products.jsx');
+  assert.match(source, /createPortal\(<AnimatePresence>/);
+  assert.match(source, /z-\[71\]/);
+  assert.match(source, /aria-label='Close product filters'/);
+  assert.match(source, /100dvh - 24px/);
+});

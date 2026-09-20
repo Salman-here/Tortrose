@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
+import { createPortal } from 'react-dom'
 import { useForm } from 'react-hook-form'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { AnimatePresence, motion } from "framer-motion"
@@ -320,7 +321,7 @@ function Products() {
           )}
         </div>
         {onClose && (
-          <button onClick={onClose} className='p-1.5 rounded-xl glass-button'>
+          <button onClick={onClose} aria-label='Close product filters' className='p-1.5 rounded-xl glass-button'>
             <X size={20} />
           </button>
         )}
@@ -539,22 +540,23 @@ function Products() {
         </button>
       </div>
 
-      {/* Mobile Filter Drawer — floating glass panel that sits BELOW the navbar */}
-      <AnimatePresence>
+      {/* Portal above navigation/chat so the testing notice cannot obscure controls. */}
+      {typeof document !== 'undefined' && createPortal(<AnimatePresence>
         {isFilterOpen && (
           <>
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-              className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[40] lg:hidden"
+              className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[70] lg:hidden"
               onClick={() => setIsFilterOpen(false)} />
             <motion.aside
               initial={{ x: '-110%', opacity: 0 }}
               animate={{ x: 0, opacity: 1 }}
               exit={{ x: '-110%', opacity: 0 }}
               transition={{ type: 'spring', stiffness: 320, damping: 34 }}
-              className='fixed left-3 sm:left-4 w-[86vw] max-w-[340px] glass-panel-strong z-[45] overflow-y-auto lg:hidden flex flex-col filter-sb'
+              aria-label='Product filters'
+              className='fixed left-3 sm:left-4 w-[86vw] max-w-[340px] glass-panel-strong z-[71] overflow-y-auto overscroll-contain lg:hidden flex flex-col filter-sb'
               style={{
-                top: 'calc(90px + env(safe-area-inset-top))',
-                maxHeight: 'calc(100dvh - 110px - env(safe-area-inset-top) - env(safe-area-inset-bottom))',
+                top: 'calc(12px + env(safe-area-inset-top))',
+                maxHeight: 'calc(100dvh - 24px - env(safe-area-inset-top) - env(safe-area-inset-bottom))',
                 borderRadius: '24px',
                 boxShadow: '0 20px 50px -12px rgba(0,0,0,0.45)',
               }}>
@@ -562,7 +564,7 @@ function Products() {
             </motion.aside>
           </>
         )}
-      </AnimatePresence>
+      </AnimatePresence>, document.body)}
 
 
       {/* Desktop Filter Sidebar */}
