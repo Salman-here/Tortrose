@@ -43,9 +43,18 @@ export async function resolveBuyerCountrySuggestion() {
   if (detectedSuggestion) return detectedSuggestion;
   if (!detectionInflight) {
     const generation = detectionVersion;
-    const pending = axios.get(API_BASE_URL + '/api/currency/detect', { timeout: 8000 })
-      .then(response => shoppingLocationFromDetection(response.data))
-      .catch(() => null)
+    const pending = (async () => {
+      // The server's upstream lookup can itself take eight seconds. Allow
+      // transport overhead and one retry, without blocking the Global catalog.
+      for (let attempt = 0; attempt < 2 && generation === detectionVersion; attempt += 1) {
+        try {
+          const response = await axios.get(API_BASE_URL + '/api/currency/detect', { timeout: 12000 });
+          const suggestion = shoppingLocationFromDetection(response.data);
+          if (suggestion) return suggestion;
+        } catch (_) {}
+      }
+      return null;
+    })()
       .then(value => { if (value && generation === detectionVersion) detectedSuggestion = value; return value || profileSuggestion; })
       .finally(() => { if (detectionInflight === pending) detectionInflight = null; });
     detectionInflight = pending;

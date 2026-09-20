@@ -85,6 +85,21 @@ test('a returning Global shopper gets their current country, not a stale saved o
   mockStored.set(key, JSON.stringify({ version: 2, confirmed: true, mode: 'global', country: 'United States', countryCode: 'US' }));
   expect(await location.getBuyerLocationParams()).toEqual({ buyerMode: 'global', buyerCountry: 'Pakistan', buyerCountryCode: 'PK' });
 });
+
+test.each(['network', 'provider'])('an old Global choice recovers automatically from a transient %s lookup failure', async reason => {
+  mockStored.set(key, JSON.stringify({ version: 2, confirmed: true, mode: 'global' }));
+  if (reason === 'network') axios.get.mockRejectedValueOnce(new Error('temporary timeout'));
+  else axios.get.mockResolvedValueOnce({ data: { detected: false, country: 'US' } });
+  expect(await location.getBuyerLocationParams()).toEqual({ buyerMode: 'global', buyerCountry: 'Pakistan', buyerCountryCode: 'PK' });
+  expect(axios.get).toHaveBeenCalledTimes(2);
+});
+
+test('persistent detection failure stops after two attempts without guessing the fallback US country', async () => {
+  mockStored.set(key, JSON.stringify({ version: 2, confirmed: true, mode: 'global' }));
+  axios.get.mockResolvedValue({ data: { detected: false, country: 'US' } });
+  expect(await location.getBuyerLocationParams()).toEqual({ buyerMode: 'global' });
+  expect(axios.get).toHaveBeenCalledTimes(2);
+});
 test('invalid country choice is not saved and subscribers are removable', async () => {
   const listener = jest.fn(), unsubscribe = location.subscribeBuyerLocation(listener);
   await expect(location.setBuyerLocation({ mode: 'country' })).rejects.toThrow(/country/);

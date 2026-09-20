@@ -26,5 +26,31 @@ Global adds country-wide visibility. It does not indiscriminately expose all cit
 - Backend focused regression: **4 suites, 46 tests passed**. Covers Global + Pakistan, Global + US, unknown country, duplicates, product/filter parity, direct-link parity, invalid country pairs, blocked/unknown stores, AI discovery and existing order access.
 - Web: **250 tests passed**, including web/mobile helper parity, actual-country precedence over a browsed country, Canada/Japan country support, shared-subdomain persistence, and existing financial/presentation checks.
 - Mobile focused regression: **4 suites, 35 tests passed**, including old Global preferences, late detection, returning shoppers, manual-choice protection, Global + actual-country serialization and the rendered chooser.
+- Full mobile regression: **95 suites, 1,123 tests passed**.
+- Website production client build, documentation/home SSR and prerender completed successfully. Deployment builds also validate the published revision.
 
-Release and live observations will be appended after publication. Automated country cases are not represented as physical visits from those countries.
+## Release
+
+- Application commit: `07592a37` (`fix: include buyer home country in global shopping`), pushed to both GitHub repositories.
+- Vercel deployment `8HVda2BMeg2vZXZnVMuYLqPyp6a1` succeeded for the new code.
+- Railway deployment `52db9e76-8d26-431b-a5ee-6506d806b61a` was confirmed SUCCESS with full commit `07592a37b98f0d43f8e5560adc06da82435afe06`.
+- Android/iOS production OTA published successfully for runtime `1.0.11`: group `fd0a76a3-7dea-4e52-9b2f-95d8a5deecf4`; Android update `01a0bfbf-9ff1-7abb-874a-ecadbc2798a3`; iOS update `01a0bfbf-9ff1-72e0-88ec-05313eb79f23`.
+
+## Live browser checks
+
+1. Opened the deployed selector and saw the revised Global description: “Global stores + stores in your country.”
+2. Deliberately selected United States in Country mode while the real detected country was Pakistan. The live US-only test catalog showed 0 products.
+3. Switched to Global. The dialog said “Includes Global stores and stores serving Pakistan,” not United States.
+4. Saved it: the filter displayed **Global + Pakistan** and the live catalog showed **14 products**, including Yoga Mat, Minimalist Wallet and Rexine Top Handle Bag for Girls. Pakistan products were no longer hidden merely because Global was selected. **PASS.**
+5. The live Marketplace displayed **Global + Pakistan** and **4 stores**: Juniper Trails 90901, FaishonAura, Atlas Aura Goods and Pulse Peak Gear. **PASS.**
+6. Reloaded Marketplace: Global + Pakistan and the four stores remained. Opened the previously country-only Yoga Mat direct link while Global was selected: the product and Pulse Peak store identity were visible. **PASS.**
+
+Automated country cases are not represented as physical visits from those countries. Mobile publication and installed-app observations are recorded below after completion.
+
+## Country-lookup resilience follow-up
+
+The installed Android app initially loaded the new Global description but did not resolve its country on the first lookup. Reapplying Global retried the lookup and the local catalog returned. This was a transient lookup failure, not treated as a successful first-start migration.
+
+Added one automatic retry on both clients and a 12-second client timeout per attempt (the backend's upstream timeout is eight seconds). The Global catalog remains usable during the background lookup. Two unsuccessful attempts stop without inventing a country. Manual Country selections and cleared sessions still reject late results.
+
+Follow-up validation: **4 mobile suites, 27 tests passed**, including simulated network failure, unsuccessful geolocation response followed by success, and permanent failure bounded to two attempts. The 14 web location/persistence checks also passed.

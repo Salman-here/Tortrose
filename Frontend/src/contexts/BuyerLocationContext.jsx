@@ -29,8 +29,16 @@ export const BuyerLocationProvider = ({ children }) => {
     const controller = new AbortController();
     setDetecting(!detectedCountryRef.current);
     const countryLookup = detectedCountryRef.current ? Promise.resolve(detectedCountryRef.current)
-      : axios.get(`${import.meta.env.VITE_API_URL}api/currency/detect`, { timeout: 8000, signal: controller.signal })
-        .then(response => shoppingLocationFromDetection(response.data)).catch(() => null);
+      : (async () => {
+        for (let attempt = 0; attempt < 2 && active; attempt += 1) {
+          try {
+            const response = await axios.get(`${import.meta.env.VITE_API_URL}api/currency/detect`, { timeout: 12000, signal: controller.signal });
+            const suggestion = shoppingLocationFromDetection(response.data);
+            if (suggestion) return suggestion;
+          } catch (_) {}
+        }
+        return null;
+      })();
     countryLookup
       .then(detected => {
         if (!active) return;
