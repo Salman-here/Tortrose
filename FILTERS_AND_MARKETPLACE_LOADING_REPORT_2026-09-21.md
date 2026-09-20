@@ -27,8 +27,8 @@ The current shopping rule remains unchanged: Global includes Global stores plus 
 
 ## Automated verification
 
-- Backend: **13 suites, 198 tests passed**. Includes actual controller queries against isolated MongoDB fixtures, mixed USD/PKR/EUR/GBP product prices, discounts, zero/boundary ranges, ascending/descending sorting, deterministic pagination, punctuation, case variants, Other brands, seller isolation, review sorting, legacy store types, verified/trust matches beyond the first unfiltered page, shopping visibility and subdomain authorization.
-- Web: **257 tests passed** in the initial full run. After the storefront follow-up, 249 `.test.js` checks plus 9 SEO `.test.mjs` checks passed; the subsequent drawer regression test passed with all 9 catalog contract tests. Includes query parsing, selected-currency resets, single-brand array handling and source-contract regression checks. Source checks are not represented as browser interaction tests.
+- Backend: **13 suites, 199 tests passed** in the final regression run. Includes actual controller queries against isolated MongoDB fixtures, mixed USD/PKR/EUR/GBP product prices, discounts, zero/boundary ranges, ascending/descending sorting, deterministic pagination, punctuation, case variants, Other brands, seller isolation, review sorting, legacy store types, verified/trust matches beyond the first unfiltered page, shopping visibility and subdomain authorization.
+- Web: **259 tests passed** in the final full run, including the two live-discovered follow-ups and SEO tests. Includes query parsing, selected-currency resets, single-brand array handling and source-contract regression checks. Source checks are not represented as browser interaction tests.
 - Mobile: **97 suites, 1,135 tests passed**. New rendered-component tests exercise Marketplace skeleton/header, Apply versus dismiss, server parameters, request races, retry/load-more and price entry/validation.
 - Web production build, documentation/home server rendering and prerender passed.
 - Targeted web lint, changed-file parsing and `git diff --check` passed.
@@ -38,7 +38,9 @@ The current shopping rule remains unchanged: Global includes Global stores plus 
 
 - `32cb2ea5`: principal catalog/filter/skeleton fixes, pushed to both repositories. Vercel `CxwtM8FWYRSnjhfeScMtbRn2mnB7` and Railway `00a0078c-3549-4e9b-98da-3c2c9178ce10` succeeded; Railway reported the matching full commit.
 - `bcc9aee8`: live-discovered storefront empty-result recovery and stable catalog totals, pushed to both repositories. Vercel `CMcnf7TcPv1MWe8jk75RXgcthLia` and Railway `c30d9ec5-5f9d-4d0d-a07d-0422320c667e` succeeded for this revision. All 17 backend catalog tests passed after this follow-up, including a new empty-result/count/tenant test; targeted web lint and JSX parsing passed.
-- Initial Android/iOS production OTA: group `ccb0c86e-fd51-48ca-81ef-3fc9ddb05b05`, runtime `1.0.11`, based on `32cb2ea5`. A newer storefront follow-up is recorded below after publication.
+- Initial Android/iOS production OTA: group `ccb0c86e-fd51-48ca-81ef-3fc9ddb05b05`, runtime `1.0.11`, based on `32cb2ea5`; superseded by the storefront follow-up below.
+- Latest Android/iOS production OTA: group `281009fb-009f-40df-ae6e-f8b49656cf5c`, Android `01a0c0c3-aa69-7c5a-94d1-42e83dee3b39`, iOS `01a0c0c3-aa69-7455-b30f-1f3c11c47e69`, runtime `1.0.11`, based on `bcc9aee8`. Both native bundles exported and published successfully. No native dependency or runtime change required a new binary.
+- `230678ed`: phone-width web filter drawer correction, pushed to both repositories. Full web production/SSR/prerender build and targeted lint passed. Vercel `Fe2jMouXrTzcunf8yKQzfcXvFw85` and Railway `5f7d58ae-f0db-4d50-a603-6da493f2b755` reported success for this revision. This commit does not change native-app code.
 
 Automated fixtures cover large-catalog pagination and deliberately differentiated sort values; the small live catalog cannot independently demonstrate every such case.
 
@@ -51,12 +53,33 @@ Automated fixtures cover large-catalog pagination and deliberately differentiate
 5. **Marketplace:** All/Stores showed three current stores and Brands showed zero. Search `atlas` showed only Atlas Aura Goods with matching All/Stores counts of 1. A nonexistent store search showed zero and a no-match explanation; clearing with the keyboard restored three. Name A–Z ordered Atlas, Juniper, Pulse; Most Viewed ordered Pulse (4), Juniper (3), Atlas (1 at that observation). Highest Rated loaded the tied unrated stores. **PASS.**
 6. **Seller storefront:** Atlas's Electronics filter returned two items; adding search `pouch` returned Travel Tech Pouch. Searching `[` returned zero without a backend error. The first live attempt exposed disappearing controls; after `bcc9aee8`, the same search retained the search field and categories, displayed 0 items, and kept the store header at 5 Products. Clearing restored all five without a reload. **FIXED AND RETESTED PASS.**
 7. **Location regression:** selecting United States in Country mode showed zero stores. Switching back to Global explicitly said it includes Pakistan, then restored three stores. A manually browsed US country was not mistaken for the buyer's detected home country. **PASS.**
-8. **Phone-width web:** tested the filter drawer at 390×844. The first visual check exposed navigation overlapping search; the corrective release and retest are recorded below.
+8. **Phone-width web:** tested the filter drawer at 390×844. The first visual check exposed navigation overlapping search. After `230678ed`, the drawer was visibly above navigation/chat, its search field was unobstructed, and submitting `wallet` closed the drawer and returned the one correct product. Restored normal viewport afterwards. **FIXED AND RETESTED PASS.**
 
-The browser's empty-string `fill` helper did not clear one input on its first attempt; keyboard Select All/Backspace did. This was distinguished from the genuine storefront bug by reading the actual input value. No live accounts, products, orders or visibility settings were created/changed; ordinary public page visits can increment store-view counters.
+Browser left with its original USD display currency, Global + Pakistan and no active product filters. The final browser console check returned no captured error entries.
+
+The browser's empty-string `fill` helper did not clear one input on its first attempt; keyboard Select All/Backspace did. This was distinguished from the genuine storefront bug by reading the actual input value. No accounts, products or orders were created, and no seller visibility rule was changed. The existing test buyer's normal shopping/currency preferences were exercised and the initial selections restored; ordinary public page visits can increment store-view counters.
+
+## Installed Android observations
+
+Used the existing release app on the RozareQA Android emulator, as a guest, against the live backend. The release app was restarted after checking for the published update; the new skeleton and stable full-store count were visibly present.
+
+1. **Marketplace loading:** captured the actual loading state. Header, search and type controls stayed mounted; counts showed a dash and six two-column store-shaped skeletons were visible. These resolved into three live cards. The third card stayed half-width instead of stretching across the row. **PASS.**
+2. **Draft versus applied filters:** enabled Verified Stores Only then closed the sheet. Three stores remained. Reopening showed verification off, confirming the draft was discarded. **PASS.**
+3. **Trust and verification:** applied 5+ trusters and saw zero results with matching zero counts and an active filter chip. Clear all restored three. Separately applied Verified Stores Only and saw zero; the current three stores are unverified. Reset in the sheet cleared the draft flag, and applying the reset restored them. Positive verification/trust matches beyond page 1 are covered by the isolated backend fixtures; no live store status was changed for the test. **PASS.**
+4. **Store sort/search/type:** A–Z visibly ordered Atlas Aura Goods, Juniper Trails 90901, Pulse Peak Gear. On-screen keyboard search `J` returned only Juniper and counts of 1. Clearing restored three. Brands returned zero; Stores restored three. **PASS.**
+5. **Storefront categories:** opened Atlas. Electronics showed exactly Portable Stand and Travel Tech Pouch, with 2 result items while the header retained 5 Products. Search `Zz` returned no matches while the input and categories remained available. Clearing the field restored those two; All restored five. **PASS.**
+6. **Combined Home filters:** selected Lowest price + Electronics + Atlas Aura + Up to Rs6,965.75. The sole result was Travel Tech Pouch at **Rs6,962.96**, below the selected maximum. Portable Stand at **Rs7,798.85** was excluded. **PASS.**
+7. **Currency change:** while those filters were active, changed PKR to USD. The price-range chip disappeared, category/brand/sort stayed selected, and two items returned in ascending order: Travel Tech Pouch **$24.99**, Portable Stand **$27.99**. The old PKR threshold was not reused as a USD amount. **PASS.**
+8. **Cleanup/reset:** Clear all restored 10 products and Everything selected; restored the Android guest's original PKR currency. No orders or account mutations were required. **PASS.**
+
+The emulator's handwriting input mode did not accept the automation tool's injected text; its ordinary on-screen keyboard was used successfully. This was not recorded as an application search failure. Invalid/reversed/decimal/zero range entry, network failures and concurrent/paginated request races are covered by rendered-component/controller tests rather than claimed as manually reproduced on the live device.
+
+## Result
+
+The identified filter and loading defects are fixed, released and covered by automated checks plus the live UI observations above. No unresolved defect was observed in these exercised flows. This is scoped evidence, not a claim that every possible combination or every device has been tested.
 
 ## Boundaries
 
 - Existing controls were repaired, not expanded into a new filtering feature set. Storefront UI exposes search/category; its API also supports brand, range and sort. Web Home retains its existing minimum-price slider; the default full range is now explicitly labelled No price limit. Mobile retains its minimum/maximum inputs.
 - No payment, withdrawal, order-money or historical exchange-rate calculation was modified.
-- iOS publication and manual physical-device verification are separate facts and will be reported separately.
+- iOS exported and published successfully, but no physical iPhone/iPad was used for manual verification. Android manual checks used an emulator, not a physical handset.
