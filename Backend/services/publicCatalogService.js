@@ -2,6 +2,11 @@
 
 const Store = require('../models/Store');
 const User = require('../models/User');
+const { AsyncLocalStorage } = require('node:async_hooks');
+const { findVisibleStores, isStoreVisibleToBuyer, normalizeBuyerLocation } = require('./storeVisibilityService');
+const buyerCatalogScope = new AsyncLocalStorage();
+const withBuyerCatalogLocation = (location, work) => buyerCatalogScope.run(normalizeBuyerLocation(location), work);
+const storeMatchesBuyerCatalogScope = store => !buyerCatalogScope.getStore() || isStoreVisibleToBuyer(store, buyerCatalogScope.getStore());
 const {
   PROTECTED_STORE_SLUG_PATTERN,
   STORE_SLUG_PATTERN,
@@ -25,6 +30,10 @@ const normalizeId = (value) => {
 };
 
 async function getActiveSellerIds(extraStoreFilter = {}) {
+  if (buyerCatalogScope.getStore()) {
+    const stores = await findVisibleStores(Store, activeStoreQuery(extraStoreFilter), buyerCatalogScope.getStore(), { select: 'seller' });
+    return stores.map(store => store.seller).filter(Boolean);
+  }
   const stores = await Store.find(activeStoreQuery(extraStoreFilter))
     .select('seller')
     .lean();
@@ -53,8 +62,8 @@ function activeStoreQuery(extra = {}) {
 function applyActiveSellerProductFilter(productFilter = {}, activeSellerIds = []) {
   const visibilityFilter = {
     $or: [
-      { seller: null },
-      { seller: { $exists: false } },
+      ...(!buyerCatalogScope.getStore() || buyerCatalogScope.getStore().mode === 'global'
+        ? [{ seller: null }, { seller: { $exists: false } }] : []),
       { seller: { $in: activeSellerIds } },
     ],
   };
@@ -74,12 +83,14 @@ async function publicProductFilterWithActiveStores(productFilter = {}, extraStor
 
 async function isProductSellerPubliclyActive(sellerId) {
   const id = normalizeId(sellerId);
-  if (!id) return true;
+  if (!id) return !buyerCatalogScope.getStore() || buyerCatalogScope.getStore().mode === 'global';
   const [store, seller] = await Promise.all([
-    Store.exists(activeStoreQuery({ seller: id })),
+    buyerCatalogScope.getStore()
+      ? Store.findOne(activeStoreQuery({ seller: id })).select('visibility address').lean()
+      : Store.exists(activeStoreQuery({ seller: id })),
     User.exists({ _id: id, role: 'seller', status: 'active' }),
   ]);
-  return Boolean(store && seller);
+  return Boolean(store && seller && storeMatchesBuyerCatalogScope(store));
 }
 
 async function findActiveStore(filter = {}, options = {}) {
@@ -97,6 +108,8 @@ async function findActiveStore(filter = {}, options = {}) {
 }
 
 module.exports = {
+  withBuyerCatalogLocation,
+  storeMatchesBuyerCatalogScope,
   ACTIVE_STORE_QUERY,
   PUBLIC_STORE_SLUG_CLAUSE,
   activeStoreQuery,

@@ -409,7 +409,8 @@ function DocsPage() {
                 <ul>
                   <li><strong>AI search</strong> — Ask the AI: "Show me wireless earbuds under $30" or "Find a birthday gift for my sister".</li>
                   <li><strong>Category filters</strong> — On the home page, use the category checkboxes (Electronics, Fashion, Home &amp; Kitchen, etc.) plus the "Other" group for custom categories.</li>
-                  <li><strong>Store pages</strong> — Visit /stores to browse all stores or /stores/trusted for verified ones. Each store page has its own search bar and category filter.</li>
+                  <li><strong>Shopping location</strong> — On your first marketplace visit, choose your detected country, another country, or Global. Country shopping shows stores targeting that country and matching local areas; Global shopping shows only Global stores and platform-owned products. Change your selection any time in Filters. Your currency and delivery address stay separate.</li>
+                  <li><strong>Store pages</strong> — Visit /stores to browse stores available in your selected shopping location. Each store page has its own search bar and category filter.</li>
                   <li><strong>Direct search</strong> — The search bar at the top of the products grid filters by name, brand, description, and tags.</li>
                 </ul>
 
@@ -724,6 +725,7 @@ function DocsPage() {
                   <li><strong>Withdrawals</strong> - Choose a native balance and a bank account accepting the same currency. Minimums are USD 5, PKR 2,000, EUR 5 and GBP 5. No balance conversion is offered. Requests reserve funds once; admins approve, transfer manually, then record payment evidence. An uncertain transfer stays reserved for review.</li>
                   <li><strong>Historical revenue</strong> - Charts and sales reports use each order's saved exchange rates when shown in another store currency. Reporting equivalents are not additional withdrawable money.</li>
                   <li><strong>Store currency changes</strong> - Review the product count and three examples, shipping fees and coupon money conversions at one rate snapshot. Confirmation converts and saves these together; percentage discounts and admin tax settings stay unchanged. A completed change starts a 60-day waiting period. Existing orders and balances keep their original currencies.</li>
+                  <li><strong>Store visibility</strong> - During seller setup, choose Global, Country, State, City or Town before WhatsApp verification. Your store country is selected by default. Choose Global only if you can ship globally; Global stores appear in Global shopping. You can change visibility later in Store Settings without changing the store address or currency.</li>
                 </ul>
               </DocSection>
 

@@ -9,6 +9,7 @@ const MAX_RADIUS_KM = 500;
 const {
   countryCodeFromName,
   countryNameFromCode,
+  stateInfoFromLocation,
 } = require('./locationCatalogService');
 
 const VISIBILITY_MODES = new Set(['global', 'country', 'region', 'city', 'town', 'radius']);
@@ -28,12 +29,9 @@ const COUNTRY_CODES_BY_KEY = Object.entries(COUNTRY_NAMES_BY_CODE).reduce((acc, 
   return acc;
 }, {});
 
-const CURRENCY_COUNTRY = {
-  PKR: { country: 'Pakistan', countryCode: 'PK' },
-  USD: { country: 'United States', countryCode: 'US' },
-  GBP: { country: 'United Kingdom', countryCode: 'GB' },
-  EUR: { country: 'Germany', countryCode: 'DE' },
-};
+const visibilityError = message => Object.assign(new Error(message), {
+  status: 400, statusCode: 400, code: 'STORE_VISIBILITY_INVALID',
+});
 
 function cleanText(value, max = 80) {
   return String(value || '').trim().replace(/\s+/g, ' ').slice(0, max);
@@ -91,19 +89,24 @@ function fallbackSellerCountry({ store = null, seller = null } = {}) {
   const storeCountry = store?.address?.country;
   if (storeCountry || store?.address?.countryCode) return normalizeCountry(storeCountry, store?.address?.countryCode);
 
-  const sellerCountry = seller?.sellerInfo?.country || seller?.savedShippingInfo?.country;
-  const sellerCountryCode = seller?.sellerInfo?.countryCode || seller?.savedShippingInfo?.countryCode;
+  const savedAddress = seller?.savedShippingInfo?.address || seller?.savedShippingInfo?.city ? seller.savedShippingInfo : null;
+  const sellerCountry = seller?.sellerInfo?.country || savedAddress?.country;
+  const sellerCountryCode = seller?.sellerInfo?.countryCode || savedAddress?.countryCode;
   if (sellerCountry || sellerCountryCode) return normalizeCountry(sellerCountry, sellerCountryCode);
 
-  const mapped = CURRENCY_COUNTRY[String(seller?.currency || '').toUpperCase()];
-  if (mapped) return normalizeCountry(mapped.country, mapped.countryCode);
-
-  return normalizeCountry('United States', 'US');
+  // A price currency is not evidence of a physical country.
+  return normalizeCountry('', '');
 }
 
 function normalizeStoreVisibility(input = {}, options = {}) {
+  if (input !== undefined && input !== null && (typeof input !== 'object' || Array.isArray(input))) {
+    throw visibilityError('Choose a valid store visibility area.');
+  }
   const source = input && typeof input === 'object' ? input : {};
   const fallbackCountry = fallbackSellerCountry(options);
+  if (source.mode !== undefined && !VISIBILITY_MODES.has(String(source.mode).toLowerCase())) {
+    throw visibilityError('Choose Global, Country, State, City or Town visibility.');
+  }
   const mode = VISIBILITY_MODES.has(String(source.mode || '').toLowerCase())
     ? String(source.mode).toLowerCase()
     : 'country';
@@ -113,12 +116,24 @@ function normalizeStoreVisibility(input = {}, options = {}) {
     explicitCountry || fallbackCountry.country,
     source.countryCode || (explicitCountry ? '' : fallbackCountry.countryCode)
   );
-  const region = cleanText(source.region ?? source.state ?? source.province, 80);
-  const regionCode = cleanText(source.regionCode ?? source.stateCode, 12).toUpperCase();
+  if (mode !== 'global') {
+    const namedCode = explicitCountry ? countryCodeFromName(explicitCountry) : '';
+    if (!countryInfo.countryCode || !countryNameFromCode(countryInfo.countryCode)
+        || (source.countryCode && namedCode && normalizeCountryCode(source.countryCode) !== namedCode)) {
+      throw visibilityError('Select a valid, matching country for your store visibility.');
+    }
+  }
+  let region = cleanText(source.region ?? source.state ?? source.province, 80);
+  let regionCode = cleanText(source.regionCode || source.stateCode || source.cityStateCode || source.townStateCode, 12).toUpperCase();
+  if (['region', 'city', 'town'].includes(mode)) {
+    const state = stateInfoFromLocation(countryInfo.countryCode, regionCode, region);
+    if (regionCode && !state) throw visibilityError('Select a state belonging to the selected country.');
+    if (state) { region = state.name; regionCode = state.code; }
+  }
   const city = cleanText(source.city, 80);
-  const cityStateCode = cleanText(source.cityStateCode ?? source.cityState ?? regionCode, 12).toUpperCase();
+  const cityStateCode = cleanText(source.cityStateCode || source.cityState || regionCode, 12).toUpperCase();
   const town = cleanText(source.town ?? source.area ?? source.neighborhood, 80);
-  const townStateCode = cleanText(source.townStateCode ?? source.townState ?? cityStateCode, 12).toUpperCase();
+  const townStateCode = cleanText(source.townStateCode || source.townState || cityStateCode, 12).toUpperCase();
   const coords = coordinatesFrom(source);
   const radiusKm = clampRadiusKm(source.radiusKm ?? source.radius);
 
@@ -138,7 +153,7 @@ function normalizeStoreVisibility(input = {}, options = {}) {
     townKey: '',
     radiusKm: null,
     location: undefined,
-    label: cleanText(source.label, 120),
+    label: '',
     updatedAt: new Date(),
   };
 
@@ -197,9 +212,8 @@ function normalizeStoreVisibility(input = {}, options = {}) {
     visibility.townKey = normalizeAreaKey(town);
   }
 
-  if (!visibility.label) {
-    visibility.label = describeVisibility(visibility);
-  }
+  // Labels describe the saved rule, not a stale label echoed by settings.
+  visibility.label = describeVisibility(visibility);
 
   return visibility;
 }
@@ -207,6 +221,7 @@ function normalizeStoreVisibility(input = {}, options = {}) {
 async function ensureStoreVisibilityInitialized(store, seller = null) {
   if (!store) return null;
   if (store.visibility?.mode) return store.visibility;
+  if (!fallbackSellerCountry({ store, seller }).countryCode) return null;
 
   store.visibility = normalizeStoreVisibility({}, { store, seller });
   store.markModified?.('visibility');
@@ -220,17 +235,20 @@ function buyerLocationFromRequest(req = {}) {
   const savedAddress = Array.isArray(user.savedAddresses)
     ? user.savedAddresses.find(a => a.isDefault) || user.savedAddresses[0]
     : null;
+  const savedShipping = user.savedShippingInfo?.address || user.savedShippingInfo?.city ? user.savedShippingInfo : null;
   const defaultCountry = source.country
     || source.buyerCountry
     || savedAddress?.country
-    || user.savedShippingInfo?.country
+    || savedShipping?.country
     || user.sellerInfo?.country
     || '';
 
   return normalizeBuyerLocation({
+    mode: req.body?.buyerLocation?.mode ?? source.buyerMode,
     country: defaultCountry,
     countryCode: source.countryCode || source.buyerCountryCode,
     region: source.region || source.state || source.province || source.buyerRegion,
+    regionCode: source.regionCode || source.stateCode || source.buyerRegionCode || source.buyerCityStateCode || source.buyerTownStateCode,
     city: source.city || source.buyerCity,
     town: source.town || source.area || source.buyerTown,
     lat: source.lat || source.latitude || source.buyerLat,
@@ -242,12 +260,34 @@ function normalizeBuyerLocation(input = {}) {
   const explicitCountry = cleanText(input.country, 80);
   const countryInfo = normalizeCountry(explicitCountry, explicitCountry ? '' : input.countryCode);
   const coords = coordinatesFrom(input);
+  const requestedMode = input.mode ?? input.buyerMode;
+  if (requestedMode !== undefined && !['country', 'global'].includes(requestedMode)) {
+    throw Object.assign(new Error('Choose Country or Global shopping.'), {
+      status: 400, statusCode: 400, code: 'BUYER_LOCATION_INVALID',
+    });
+  }
+  const mode = requestedMode || (countryInfo.countryKey || coords ? 'country' : 'global');
+  if (mode === 'global') return {
+    mode, country: '', countryCode: '', countryKey: '', region: '', regionKey: '',
+    city: '', cityKey: '', town: '', townKey: '', lat: null, lng: null, hasCountry: false, hasGeo: false,
+  };
+  if ((explicitCountry || input.countryCode) && (!countryInfo.countryCode
+      || !countryNameFromCode(countryInfo.countryCode)
+      || (explicitCountry && input.countryCode && normalizeCountryCode(input.countryCode) !== countryInfo.countryCode))) {
+    throw Object.assign(new Error('Select a valid, matching shopping country.'), {
+      status: 400, statusCode: 400, code: 'BUYER_LOCATION_INVALID',
+    });
+  }
+  const state = stateInfoFromLocation(countryInfo.countryCode, input.regionCode || input.stateCode || input.cityStateCode || input.townStateCode,
+    input.region || input.state || input.province);
+  const region = state?.name || cleanText(input.region ?? input.state ?? input.province, 80);
   return {
+    mode,
     country: countryInfo.country,
     countryCode: countryInfo.countryCode,
     countryKey: countryInfo.countryKey,
-    region: cleanText(input.region ?? input.state ?? input.province, 80),
-    regionKey: normalizeAreaKey(input.region ?? input.state ?? input.province),
+    region, regionCode: state?.code || '',
+    regionKey: normalizeAreaKey(region),
     city: cleanText(input.city, 80),
     cityKey: normalizeAreaKey(input.city),
     town: cleanText(input.town ?? input.area ?? input.neighborhood, 80),
@@ -269,14 +309,22 @@ function legacyVisibilityClauses() {
 
 function nonRadiusVisibilityFilter(buyerLocation = {}, { includeLegacy = true } = {}) {
   const location = normalizeBuyerLocation(buyerLocation);
-  const or = [{ 'visibility.mode': 'global' }];
-  if (includeLegacy) or.push(...legacyVisibilityClauses());
+  if (location.mode === 'global') return { 'visibility.mode': 'global' };
+  const or = [];
 
   if (location.countryKey) {
     or.push({
       'visibility.mode': 'country',
       'visibility.countryKey': location.countryKey,
     });
+    // Legacy rows may be scoped from their real store address, never treated
+    // as global because a setting is missing. This is read-only compatibility.
+    if (includeLegacy) {
+      const escapedCountry = location.country.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const addressCountries = [{ 'address.countryCode': { $in: [null, ''] }, 'address.country': { $regex: `^${escapedCountry}$`, $options: 'i' } }];
+      if (location.countryCode) addressCountries.push({ 'address.countryCode': { $regex: `^${location.countryCode}$`, $options: 'i' } });
+      or.push({ $and: [{ $or: legacyVisibilityClauses() }, { $or: addressCountries }] });
+    }
   }
 
   if (location.countryKey && location.regionKey) {
@@ -292,6 +340,10 @@ function nonRadiusVisibilityFilter(buyerLocation = {}, { includeLegacy = true } 
       'visibility.mode': 'city',
       'visibility.countryKey': location.countryKey,
       'visibility.cityKey': location.cityKey,
+      $or: [
+        { 'visibility.regionKey': { $in: [null, ''] } },
+        ...(location.regionKey ? [{ 'visibility.regionKey': location.regionKey }] : []),
+      ],
     });
   }
 
@@ -300,11 +352,14 @@ function nonRadiusVisibilityFilter(buyerLocation = {}, { includeLegacy = true } 
       'visibility.mode': 'town',
       'visibility.countryKey': location.countryKey,
       'visibility.townKey': location.townKey,
-      ...(location.cityKey ? { 'visibility.cityKey': location.cityKey } : {}),
+      $and: [
+        { $or: [{ 'visibility.regionKey': { $in: [null, ''] } }, ...(location.regionKey ? [{ 'visibility.regionKey': location.regionKey }] : [])] },
+        { $or: [{ 'visibility.cityKey': { $in: [null, ''] } }, ...(location.cityKey ? [{ 'visibility.cityKey': location.cityKey }] : [])] },
+      ],
     });
   }
 
-  return { $or: or };
+  return or.length ? { $or: or } : { _id: { $in: [] } };
 }
 
 function mergeAndFilter(baseFilter, visibilityFilter) {
@@ -339,12 +394,21 @@ function storeRadiusLocation(store = {}) {
   return { lat, lng };
 }
 
-function isStoreVisibleToBuyer(store = {}, buyerLocation = {}) {
-  const visibility = store.visibility || {};
-  if (!visibility.mode) return true;
-  if (visibility.mode === 'global') return true;
+function effectiveStoreVisibility(store = {}) {
+  if (store.visibility?.mode) return store.visibility;
+  try {
+    return normalizeStoreVisibility({}, { store });
+  } catch (_) {
+    return null;
+  }
+}
 
+function isStoreVisibleToBuyer(store = {}, buyerLocation = {}) {
+  const visibility = effectiveStoreVisibility(store);
+  if (!visibility) return false;
   const location = normalizeBuyerLocation(buyerLocation);
+  if (location.mode === 'global') return visibility.mode === 'global';
+  if (visibility.mode === 'global') return false;
   if (!location.hasCountry && visibility.mode !== 'radius') return false;
 
   if (visibility.mode === 'country') {
@@ -354,12 +418,14 @@ function isStoreVisibleToBuyer(store = {}, buyerLocation = {}) {
     return visibility.countryKey === location.countryKey && visibility.regionKey === location.regionKey;
   }
   if (visibility.mode === 'city') {
-    return visibility.countryKey === location.countryKey && visibility.cityKey === location.cityKey;
+    return visibility.countryKey === location.countryKey && visibility.cityKey === location.cityKey
+      && (!visibility.regionKey || visibility.regionKey === location.regionKey);
   }
   if (visibility.mode === 'town') {
     return visibility.countryKey === location.countryKey
       && visibility.townKey === location.townKey
-      && (!visibility.cityKey || !location.cityKey || visibility.cityKey === location.cityKey);
+      && (!visibility.regionKey || visibility.regionKey === location.regionKey)
+      && (!visibility.cityKey || visibility.cityKey === location.cityKey);
   }
   if (visibility.mode === 'radius') {
     if (!location.hasGeo) return false;
@@ -370,6 +436,15 @@ function isStoreVisibleToBuyer(store = {}, buyerLocation = {}) {
   }
 
   return false;
+}
+
+// Discovery preference and delivery eligibility are different. A Global store
+// can deliver to a country address; local stores must match that actual address.
+function isStoreAvailableForDelivery(store = {}, deliveryLocation = {}) {
+  const visibility = effectiveStoreVisibility(store);
+  if (!visibility) return false;
+  if (visibility.mode === 'global') return true;
+  return isStoreVisibleToBuyer(store, { ...deliveryLocation, mode: 'country' });
 }
 
 function applyQueryOptions(query, options = {}) {
@@ -391,7 +466,7 @@ async function findVisibleStores(StoreModel, baseFilter = {}, buyerLocation = {}
   applyQueryOptions(nonRadiusQuery, options);
   let stores = await nonRadiusQuery.lean(options.lean !== false);
 
-  if (location.hasGeo) {
+  if (location.mode === 'country' && location.hasGeo) {
     const radiusBase = {
       ...(baseFilter || {}),
       'visibility.mode': 'radius',
@@ -442,7 +517,7 @@ async function findVisibleStores(StoreModel, baseFilter = {}, buyerLocation = {}
 
 function describeVisibility(visibility = {}) {
   const mode = visibility.mode || 'country';
-  if (mode === 'global') return 'Visible globally';
+  if (mode === 'global') return 'Visible in Global shopping';
   if (mode === 'country') return `Visible in ${visibility.country || 'selected country'}`;
   if (mode === 'region') return `Visible in ${visibility.region || 'selected region'}, ${visibility.country || ''}`.trim();
   if (mode === 'city') return `Visible in ${visibility.city || 'selected city'}, ${visibility.country || ''}`.trim();
@@ -456,11 +531,13 @@ module.exports = {
   VISIBILITY_MODES,
   buyerLocationFromRequest,
   describeVisibility,
+  effectiveStoreVisibility,
   ensureStoreVisibilityInitialized,
   findVisibleStores,
   fallbackSellerCountry,
   haversineKm,
   isStoreVisibleToBuyer,
+  isStoreAvailableForDelivery,
   nonRadiusVisibilityFilter,
   normalizeAreaKey,
   normalizeBuyerLocation,

@@ -14,6 +14,8 @@
  */
 
 const crypto = require('crypto');
+const { buyerLocationFromRequest } = require('../services/storeVisibilityService');
+const chatBuyerLocation = req => buyerLocationFromRequest(req);
 const User = require('../models/User');
 const Order = require('../models/Order');
 const Product = require('../models/Product');
@@ -2919,6 +2921,7 @@ exports.streamChat = async (req, res) => {
       ...(userId ? { _id: userId, id: userId } : {}),
       role: effectiveRole,
       currency: selectedCurrency,
+      _buyerLocation: chatBuyerLocation(req),
     };
 
     let systemContent = await getSystemPrompt(effectiveRole);
@@ -3288,6 +3291,7 @@ exports.chatOnce = async (req, res) => {
       ...(userId ? { _id: userId, id: userId } : {}),
       role: effectiveRole,
       currency: selectedCurrency,
+      _buyerLocation: chatBuyerLocation(req),
     };
     let systemContent = await getSystemPrompt(effectiveRole);
     systemContent += formatContextBlock({

@@ -35,6 +35,9 @@ import RozareLogo from '../components/common/RozareLogo';
 import { useAuth } from '../contexts/AuthContext';
 import { useGlobal } from '../contexts/GlobalContext';
 import { useCurrency } from '../contexts/CurrencyContext';
+import { useBuyerLocation } from '../contexts/BuyerLocationContext';
+import ShoppingLocationFields from '../components/common/ShoppingLocationFields';
+import { shoppingLocationIsValid, shoppingLocationLabel } from '../utils/shoppingLocation';
 import { spacing, fontSize, borderRadius, shadows, fontWeight } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 import { PRESET_CATEGORIES, isPresetCategory } from '../utils/categories';
@@ -66,6 +69,7 @@ export default function HomeScreen({ navigation }) {
   const { currentUser } = useAuth();
   const { fetchCart, unreadNotifCount } = useGlobal();
   const { currency } = useCurrency();
+  const { buyerLocation, locationKey, updateBuyerLocation } = useBuyerLocation();
 
   const [products, setProducts] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -79,6 +83,7 @@ export default function HomeScreen({ navigation }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [appliedSearchQuery, setAppliedSearchQuery] = useState('');
   const [showFilters, setShowFilters] = useState(false);
+  const [savingLocation, setSavingLocation] = useState(false);
 
   const [categories, setCategories] = useState([]);
   const [brands, setBrands] = useState([]);
@@ -90,6 +95,7 @@ export default function HomeScreen({ navigation }) {
   const [sortBy, setSortBy] = useState('relevance');
   const [sortOrder, setSortOrder] = useState('desc');
   const [filterDraft, setFilterDraft] = useState({
+    shoppingLocation: buyerLocation,
     categories: [],
     brands: [],
     priceRange: DEFAULT_PRICE_RANGE,
@@ -102,6 +108,7 @@ export default function HomeScreen({ navigation }) {
   const baseLoadingRef = useRef(false);
   const loadingMoreRef = useRef(false);
   const previousCurrencyRef = useRef(currency);
+  const previousLocationRef = useRef(locationKey);
   const searchBlurTimerRef = useRef(null);
 
   // Animation for header — use ref to avoid re-creating on every render
@@ -223,7 +230,7 @@ export default function HomeScreen({ navigation }) {
         }
       }
     }
-  }, [selectedCategories, selectedBrands, appliedSearchQuery, priceRange, sortBy, sortOrder, currency]);
+  }, [selectedCategories, selectedBrands, appliedSearchQuery, priceRange, sortBy, sortOrder, currency, locationKey]);
 
   const fetchFilters = async () => {
     try {
@@ -255,6 +262,14 @@ export default function HomeScreen({ navigation }) {
   }, [currentUser]);
 
   // Currency affects comparable prices, price filters and price sorting.
+  useEffect(() => {
+    if (previousLocationRef.current === locationKey) return;
+    previousLocationRef.current = locationKey;
+    setPage(1); setHasMore(true);
+    fetchProducts(1);
+    fetchFilters();
+  }, [locationKey, fetchProducts]);
+
   useEffect(() => {
     if (previousCurrencyRef.current === currency) return;
     previousCurrencyRef.current = currency;
@@ -371,6 +386,7 @@ export default function HomeScreen({ navigation }) {
 
   const openFilters = useCallback(() => {
     setFilterDraft({
+      shoppingLocation: buyerLocation,
       categories: [...selectedCategories],
       brands: [...selectedBrands],
       priceRange: { ...priceRange },
@@ -379,9 +395,13 @@ export default function HomeScreen({ navigation }) {
       sortOrder,
     });
     setShowFilters(true);
-  }, [selectedCategories, selectedBrands, priceRange, appliedSearchQuery, sortBy, sortOrder]);
+  }, [selectedCategories, selectedBrands, priceRange, appliedSearchQuery, sortBy, sortOrder, buyerLocation]);
 
-  const applyFilters = useCallback(() => {
+  const applyFilters = useCallback(async () => {
+    if (savingLocation || !shoppingLocationIsValid(filterDraft.shoppingLocation)) return;
+    setSavingLocation(true);
+    try { await updateBuyerLocation(filterDraft.shoppingLocation); }
+    catch (_) { setSavingLocation(false); return; }
     const canonicalCategories = canonicalizeCategories(filterDraft.categories);
     const appliedDraft = { ...filterDraft, categories: canonicalCategories, search: filterDraft.search.trim() };
     setSelectedCategories(canonicalCategories);
@@ -395,7 +415,8 @@ export default function HomeScreen({ navigation }) {
     setPage(1);
     setHasMore(true);
     fetchProducts(1, appliedDraft);
-  }, [canonicalizeCategories, fetchProducts, filterDraft]);
+    setSavingLocation(false);
+  }, [canonicalizeCategories, fetchProducts, filterDraft, savingLocation, updateBuyerLocation]);
 
   const hasActiveFilters = selectedCategories.length > 0
     || selectedBrands.length > 0
@@ -588,6 +609,7 @@ export default function HomeScreen({ navigation }) {
 
       {/* Search Autocomplete Overlay */}
       <SearchAutocomplete
+        key={'search-' + locationKey}
         visible={showAutocomplete}
         query={searchQuery}
         navigation={navigation}
@@ -696,11 +718,11 @@ export default function HomeScreen({ navigation }) {
       )}
 
       {/* Trusted Stores Slider */}
-      <TrustedStoresSection navigation={navigation} />
+      <TrustedStoresSection key={'trusted-' + locationKey} navigation={navigation} />
 
       {/* Personalized Sliders (collapsible — matches website) */}
       {!hasActiveFilters && !appliedSearchQuery && (
-        <PersonalizedSliders navigation={navigation} />
+        <PersonalizedSliders key={'personalized-' + locationKey} navigation={navigation} />
       )}
 
       {/* Browse Stores Banner — glass surface with on-brand gradient accent */}
@@ -914,6 +936,12 @@ export default function HomeScreen({ navigation }) {
               </View>
 
               <View style={styles.filterSection}>
+                <Text style={styles.filterSectionTitle}>SHOPPING LOCATION</Text>
+                <Text style={styles.filterSectionHint}>{shoppingLocationLabel(buyerLocation)} · Change your selection any time in Filters.</Text>
+                <ShoppingLocationFields value={filterDraft.shoppingLocation || buyerLocation} disabled={savingLocation} onChange={shoppingLocation => setFilterDraft(previous => ({ ...previous, shoppingLocation }))} />
+              </View>
+
+              <View style={styles.filterSection}>
                 <View style={styles.filterSectionHeader}>
                   <View style={styles.filterSectionIcon}>
                     <Ionicons name="swap-vertical-outline" size={17} color={palette.colors.primary} />
@@ -1070,6 +1098,7 @@ export default function HomeScreen({ navigation }) {
               <TouchableOpacity
                 style={styles.resetButton}
                 onPress={() => setFilterDraft({
+                  shoppingLocation: buyerLocation,
                   categories: [],
                   brands: [],
                   priceRange: DEFAULT_PRICE_RANGE,
@@ -1086,6 +1115,7 @@ export default function HomeScreen({ navigation }) {
               <TouchableOpacity
                 style={styles.applyButton}
                 onPress={applyFilters}
+                disabled={savingLocation || !shoppingLocationIsValid(filterDraft.shoppingLocation)}
                 accessibilityLabel="Apply filters"
                 activeOpacity={0.86}
               >

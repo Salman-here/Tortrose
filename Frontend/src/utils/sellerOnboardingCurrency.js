@@ -66,7 +66,8 @@ export function sellerCountryFromProfile(user) {
     user?.savedShippingInfo,
     ...addresses,
   ];
-  const location = candidates.find(value => clean(value?.country) || clean(value?.countryCode));
+  const location = candidates.find(value => (clean(value?.country) || clean(value?.countryCode))
+    && (clean(value?.address) || clean(value?.street) || clean(value?.city)));
   return location ? { country: clean(location.country), countryCode: clean(location.countryCode).toUpperCase() } : null;
 }
 

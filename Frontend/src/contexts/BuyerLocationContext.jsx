@@ -1,178 +1,99 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
 import { useAuth } from './AuthContext';
+import {
+  EMPTY_SHOPPING_LOCATION, SHOPPING_LOCATION_STORAGE_KEY,
+  normalizeShoppingLocation, shoppingLocationIsValid, shoppingLocationFromDetection,
+  shoppingLocationFromProfile, shoppingLocationParams,
+} from '../utils/shoppingLocation';
+import { readShoppingPreference, writeShoppingPreference } from '../utils/shoppingLocationPersistence';
 
 const BuyerLocationContext = createContext(null);
-
-const STORAGE_KEY = 'rozare:buyer-location';
-const GPS_RADIUS_LOCATION_ENABLED = false;
-
-const emptyLocation = {
-  country: '',
-  countryCode: '',
-  region: '',
-  regionCode: '',
-  city: '',
-  cityStateCode: '',
-  town: '',
-  townStateCode: '',
-  lat: '',
-  lng: '',
-};
-
-const clean = (value) => String(value || '').trim().replace(/\s+/g, ' ');
-
-const readStoredLocation = () => {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    return { ...emptyLocation, ...parsed };
-  } catch (_) {
-    return null;
-  }
-};
-
-const writeStoredLocation = (location) => {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(location));
-  } catch (_) {}
-};
-
-const defaultFromUser = (user) => {
-  const defaultAddress = Array.isArray(user?.savedAddresses)
-    ? user.savedAddresses.find(address => address.isDefault) || user.savedAddresses[0]
-    : null;
-  return {
-    ...emptyLocation,
-    country: clean(defaultAddress?.country || user?.savedShippingInfo?.country || user?.sellerInfo?.country),
-    countryCode: clean(defaultAddress?.countryCode || user?.savedShippingInfo?.countryCode || user?.sellerInfo?.countryCode),
-    region: clean(defaultAddress?.state || user?.savedShippingInfo?.state),
-    regionCode: clean(defaultAddress?.stateCode || user?.savedShippingInfo?.stateCode),
-    city: clean(defaultAddress?.city || user?.savedShippingInfo?.city || user?.sellerInfo?.city),
-  };
-};
+const confirmedStored = () => readShoppingPreference();
 
 export const BuyerLocationProvider = ({ children }) => {
   const { currentUser } = useAuth();
-  const [buyerLocation, setBuyerLocation] = useState(() => readStoredLocation() || emptyLocation);
+  const [buyerLocation, setBuyerLocation] = useState(() => confirmedStored() || { ...EMPTY_SHOPPING_LOCATION });
+  const locationRef = useRef(buyerLocation);
+  const revisionRef = useRef(0);
+  const [recommendedLocation, setRecommendedLocation] = useState({ ...EMPTY_SHOPPING_LOCATION });
   const [detecting, setDetecting] = useState(false);
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [persistenceWarning, setPersistenceWarning] = useState('');
 
   useEffect(() => {
-    const stored = readStoredLocation();
-    if (stored?.country) return;
-
-    const fromUser = defaultFromUser(currentUser);
-    if (fromUser.country) {
-      setBuyerLocation(fromUser);
-      writeStoredLocation(fromUser);
-      return;
-    }
-
-    let cancelled = false;
-    (async () => {
-      try {
-        setDetecting(true);
-        const res = await axios.get(`${import.meta.env.VITE_API_URL}api/currency/detect`);
-        if (cancelled) return;
-        const detected = {
-          ...emptyLocation,
-          country: clean(res.data?.countryName) || (res.data?.country === 'PK' ? 'Pakistan' : res.data?.country === 'US' ? 'United States' : ''),
-          countryCode: clean(res.data?.country),
-        };
-        if (detected.country || detected.countryCode) {
-          setBuyerLocation(detected);
-          writeStoredLocation(detected);
-        }
-      } catch (_) {
-      } finally {
-        if (!cancelled) setDetecting(false);
-      }
-    })();
-
-    return () => { cancelled = true; };
+    if (locationRef.current.confirmed) return;
+    let active = true;
+    const revision = revisionRef.current;
+    const controller = new AbortController();
+    setDetecting(true);
+    axios.get(`${import.meta.env.VITE_API_URL}api/currency/detect`, { timeout: 8000, signal: controller.signal })
+      .then(response => shoppingLocationFromDetection(response.data))
+      .catch(() => null)
+      .then(detected => {
+        if (!active || revision !== revisionRef.current || locationRef.current.confirmed) return;
+        const suggestion = detected || shoppingLocationFromProfile(currentUser)
+          || { ...EMPTY_SHOPPING_LOCATION };
+        const next = { ...suggestion, confirmed: false };
+        setRecommendedLocation(next);
+        locationRef.current = next;
+        setBuyerLocation(next);
+      })
+      .finally(() => { if (active) setDetecting(false); });
+    return () => { active = false; controller.abort(); };
   }, [currentUser]);
 
-  const updateBuyerLocation = useCallback((updates) => {
-    setBuyerLocation(prev => {
-      const next = { ...prev, ...updates };
-      Object.keys(next).forEach(key => {
-        next[key] = key === 'lat' || key === 'lng' ? String(next[key] || '') : clean(next[key]);
-      });
-      writeStoredLocation(next);
-      return next;
-    });
+  useEffect(() => {
+    const sync = event => {
+      if (event.type === 'storage' && event.key !== SHOPPING_LOCATION_STORAGE_KEY && event.key !== null) return;
+      const saved = confirmedStored();
+      if (!saved && event.type !== 'storage') return;
+      const next = saved || { ...EMPTY_SHOPPING_LOCATION };
+      if (JSON.stringify(next) === JSON.stringify(locationRef.current)) return;
+      revisionRef.current += 1;
+      locationRef.current = next;
+      setBuyerLocation(next);
+    };
+    window.addEventListener('storage', sync);
+    window.addEventListener('focus', sync);
+    window.addEventListener('pageshow', sync);
+    return () => { window.removeEventListener('storage', sync); window.removeEventListener('focus', sync); window.removeEventListener('pageshow', sync); };
   }, []);
 
-  const resetBuyerLocation = useCallback(() => {
-    const next = defaultFromUser(currentUser);
+  const updateBuyerLocation = useCallback(updates => {
+    if (!shoppingLocationIsValid({ ...locationRef.current, ...updates })) return false;
+    const next = normalizeShoppingLocation({ ...locationRef.current, ...updates, version: 2, confirmed: true, updatedAt: Date.now() });
+    if (!shoppingLocationIsValid(next)) return false;
+    revisionRef.current += 1;
+    locationRef.current = next;
     setBuyerLocation(next);
-    writeStoredLocation(next);
-  }, [currentUser]);
+    setDetecting(false);
+    setEditorOpen(false);
+    setPersistenceWarning(writeShoppingPreference(next));
+    return true;
+  }, []);
 
-  const useCurrentPosition = useCallback(() => new Promise((resolve, reject) => {
-    if (!navigator.geolocation) {
-      reject(new Error('Location is not available in this browser.'));
-      return;
-    }
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        const next = {
-          lat: String(position.coords.latitude),
-          lng: String(position.coords.longitude),
-        };
-        updateBuyerLocation(next);
-        resolve(next);
-      },
-      (error) => reject(error),
-      { enableHighAccuracy: true, timeout: 12000, maximumAge: 5 * 60 * 1000 }
-    );
-  }), [updateBuyerLocation]);
-
-  const locationQueryString = useMemo(() => {
-    const params = new URLSearchParams();
-    if (buyerLocation.country) params.set('buyerCountry', buyerLocation.country);
-    if (buyerLocation.countryCode) params.set('buyerCountryCode', buyerLocation.countryCode);
-    if (buyerLocation.region) params.set('buyerRegion', buyerLocation.region);
-    if (buyerLocation.regionCode) params.set('buyerRegionCode', buyerLocation.regionCode);
-    if (buyerLocation.city) params.set('buyerCity', buyerLocation.city);
-    if (buyerLocation.cityStateCode) params.set('buyerCityStateCode', buyerLocation.cityStateCode);
-    if (buyerLocation.town) params.set('buyerTown', buyerLocation.town);
-    if (buyerLocation.townStateCode) params.set('buyerTownStateCode', buyerLocation.townStateCode);
-    if (GPS_RADIUS_LOCATION_ENABLED && buyerLocation.lat && buyerLocation.lng) {
-      params.set('buyerLat', buyerLocation.lat);
-      params.set('buyerLng', buyerLocation.lng);
-    }
-    return params.toString();
-  }, [buyerLocation]);
-
-  const appendLocationParams = useCallback((params) => {
-    const locationParams = new URLSearchParams(locationQueryString);
-    locationParams.forEach((value, key) => params.set(key, value));
+  const openLocationSelector = useCallback(() => setEditorOpen(true), []);
+  const closeLocationSelector = useCallback(() => setEditorOpen(false), []);
+  const locationQueryString = useMemo(() => new URLSearchParams(shoppingLocationParams(buyerLocation)).toString(), [buyerLocation]);
+  const appendLocationParams = useCallback(params => {
+    ['buyerMode', 'buyerCountry', 'buyerCountryCode', 'buyerRegion', 'buyerRegionCode', 'buyerCity',
+      'buyerCityStateCode', 'buyerTown', 'buyerTownStateCode', 'buyerLat', 'buyerLng'].forEach(key => params.delete(key));
+    new URLSearchParams(locationQueryString).forEach((value, key) => params.set(key, value));
     return params;
   }, [locationQueryString]);
 
   const value = useMemo(() => ({
-    buyerLocation,
-    detecting,
-    updateBuyerLocation,
-    resetBuyerLocation,
-    useCurrentPosition,
-    locationQueryString,
-    appendLocationParams,
-  }), [buyerLocation, detecting, updateBuyerLocation, resetBuyerLocation, useCurrentPosition, locationQueryString, appendLocationParams]);
-
-  return (
-    <BuyerLocationContext.Provider value={value}>
-      {children}
-    </BuyerLocationContext.Provider>
-  );
+    buyerLocation, recommendedLocation, detecting, selectionRequired: !buyerLocation.confirmed,
+    editorOpen, openLocationSelector, closeLocationSelector, persistenceWarning,
+    updateBuyerLocation, resetBuyerLocation: openLocationSelector, locationQueryString, appendLocationParams,
+  }), [buyerLocation, recommendedLocation, detecting, editorOpen, openLocationSelector, closeLocationSelector,
+    persistenceWarning, updateBuyerLocation, locationQueryString, appendLocationParams]);
+  return <BuyerLocationContext.Provider value={value}>{children}</BuyerLocationContext.Provider>;
 };
 
 export const useBuyerLocation = () => {
   const context = useContext(BuyerLocationContext);
-  if (!context) {
-    throw new Error('useBuyerLocation must be used within BuyerLocationProvider');
-  }
+  if (!context) throw new Error('useBuyerLocation must be used within BuyerLocationProvider');
   return context;
 };

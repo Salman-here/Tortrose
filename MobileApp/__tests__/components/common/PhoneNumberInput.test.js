@@ -2,7 +2,7 @@ import React from 'react';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import PhoneNumberInput, { fetchPhoneCountries } from '../../../src/components/common/PhoneNumberInput';
 import api from '../../../src/config/api';
-import { resolveBuyerLocation } from '../../../src/utils/buyerLocation';
+import { resolveBuyerCountrySuggestion } from '../../../src/utils/buyerLocation';
 
 jest.mock('@expo/vector-icons', () => {
   const ReactModule = require('react');
@@ -22,7 +22,7 @@ jest.mock('../../../src/config/api', () => ({
 }));
 
 jest.mock('../../../src/utils/buyerLocation', () => ({
-  resolveBuyerLocation: jest.fn(() => Promise.resolve({ country: 'Pakistan', countryCode: 'PK' })),
+  resolveBuyerCountrySuggestion: jest.fn(() => Promise.resolve({ country: 'Pakistan', countryCode: 'PK' })),
 }));
 
 jest.mock('../../../src/contexts/ThemeContext', () => ({
@@ -41,8 +41,8 @@ jest.mock('../../../src/contexts/ThemeContext', () => ({
 
 describe('PhoneNumberInput', () => {
   beforeEach(() => {
-    resolveBuyerLocation.mockReset();
-    resolveBuyerLocation.mockResolvedValue({ country: 'Pakistan', countryCode: 'PK' });
+    resolveBuyerCountrySuggestion.mockReset();
+    resolveBuyerCountrySuggestion.mockResolvedValue({ country: 'Pakistan', countryCode: 'PK' });
     api.get.mockResolvedValue({
       data: { countries: [{ name: 'Pakistan', isoCode: 'PK', phonecode: '92' }] },
     });
@@ -80,7 +80,7 @@ describe('PhoneNumberInput', () => {
   });
 
   it('selects the detected country when no saved or explicit country exists', async () => {
-    resolveBuyerLocation.mockResolvedValueOnce({ country: 'United Kingdom', countryCode: 'GB' });
+    resolveBuyerCountrySuggestion.mockResolvedValueOnce({ country: 'United Kingdom', countryCode: 'GB' });
     api.get.mockResolvedValue({
       data: { countries: [{ name: 'United Kingdom', isoCode: 'GB', phonecode: '44' }] },
     });
@@ -96,7 +96,7 @@ describe('PhoneNumberInput', () => {
 
   it('uses detected country but never overwrites an explicit in-flight selection', async () => {
     let finishDetection;
-    resolveBuyerLocation.mockImplementationOnce(() => new Promise(resolve => { finishDetection = resolve; }));
+    resolveBuyerCountrySuggestion.mockImplementationOnce(() => new Promise(resolve => { finishDetection = resolve; }));
     api.get.mockImplementation((url, config = {}) => {
       const query = config.params?.q;
       if (query === 'United Kingdom') {

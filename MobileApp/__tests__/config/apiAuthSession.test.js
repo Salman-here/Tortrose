@@ -61,6 +61,19 @@ describe('authenticated API session policy', () => {
     expect(result.headers.Authorization).toBe('Bearer new-account-token');
   });
 
+  it.each(['/api/stores', '/api/stores/all?page=1', '/api/products/get-products', '/api/ai-chat/once'])('includes the chosen Global scope on %s', async url => {
+    const { getBuyerLocationParams } = require('../../src/utils/buyerLocation');
+    getBuyerLocationParams.mockResolvedValueOnce({ buyerMode: 'global' });
+    const result = await requestInterceptor({ url, headers: {}, params: { currency: 'PKR' } });
+    expect(result.params).toEqual({ buyerMode: 'global', currency: 'PKR' });
+  });
+
+  it.each(['/api/locations/countries', '/api/stores/my-store', '/api/auth/login'])('does not resolve the shopping area for private or setup route %s', async url => {
+    const { getBuyerLocationParams } = require('../../src/utils/buyerLocation');
+    await requestInterceptor({ url, headers: {} });
+    expect(getBuyerLocationParams).not.toHaveBeenCalled();
+  });
+
   it('runs durable logout only for a protected invalid-session response', async () => {
     mockGetItemAsync.mockResolvedValue('expired-token');
     const error = {

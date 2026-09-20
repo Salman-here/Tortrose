@@ -18,6 +18,7 @@ import api from '../config/api';
 import { useAuth } from '../contexts/AuthContext';
 import { useGlobal } from '../contexts/GlobalContext';
 import { resolveProductPresentationMoney, useCurrency } from '../contexts/CurrencyContext';
+import { useBuyerLocation } from '../contexts/BuyerLocationContext';
 import { Loader, InlineLoader } from '../components/common';
 import VerifiedBadge from '../components/VerifiedBadge';
 import ProductCard from '../components/ProductCard';
@@ -67,6 +68,8 @@ export default function ProductDetailScreen({ route, navigation }) {
   const { currentUser } = useAuth();
   const { wishlistItems, handleAddToWishlist, handleDeleteFromWishlist, cartItems, handleAddToCart, handleQtyInc, handleQtyDec, qtyUpdateId, isCartLoading, loadingProductId } = useGlobal();
   const { formatProductPrice, formatPrice } = useCurrency();
+  const { locationKey, selectionRequired, openLocationSelector } = useBuyerLocation();
+  const productRequestRef = useRef(0);
 
   const [product, setProduct] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -125,13 +128,15 @@ export default function ProductDetailScreen({ route, navigation }) {
   }, [navigation]);
 
   useEffect(() => {
+    if (selectionRequired) { setProduct(null); setIsLoading(true); return; }
     selectedImageIndexRef.current = 0;
     setSelectedImageIndex(0);
     flatListRef.current?.scrollToOffset?.({ offset: 0, animated: false });
     fetchProduct();
     if (productId) trackProductView(productId);
     Animated.spring(bottomBarAnim, { toValue: 1, friction: 8, tension: 40, useNativeDriver: true }).start();
-  }, [productId]);
+    return () => { productRequestRef.current += 1; };
+  }, [productId, locationKey, selectionRequired]);
 
   const handleShare = async () => {
     if (!product) return;
@@ -139,11 +144,14 @@ export default function ProductDetailScreen({ route, navigation }) {
   };
 
   const fetchProduct = async () => {
+    if (selectionRequired) return;
+    const requestId = ++productRequestRef.current;
     setIsLoading(true);
     setStoreData(null);
     setStoreProductCount(null);
     try {
       const res = await api.get(`/api/products/get-single-product/${productId}`);
+      if (requestId !== productRequestRef.current) return;
       const prod = res.data.product;
       setProduct(prod);
       const initialSelection = getInitialProductSelections(prod);
@@ -155,6 +163,7 @@ export default function ProductDetailScreen({ route, navigation }) {
       if (sellerId) {
         try {
           const storeRes = await api.get(`/api/stores/seller/${sellerId}`);
+          if (requestId !== productRequestRef.current) return;
           const fetchedStore = storeRes.data.store;
           setStoreData(fetchedStore);
 
@@ -178,6 +187,7 @@ export default function ProductDetailScreen({ route, navigation }) {
               const productsRes = await api.get(
                 `/api/stores/${encodeURIComponent(storeSlug)}/products?page=1&limit=1`
               );
+              if (requestId !== productRequestRef.current) return;
               const rawCatalogTotal = productsRes.data?.pagination?.total;
               const catalogTotal = rawCatalogTotal === null
                 || rawCatalogTotal === undefined
@@ -192,33 +202,37 @@ export default function ProductDetailScreen({ route, navigation }) {
                     : null
               );
             } catch {
+              if (requestId !== productRequestRef.current) return;
               setStoreProductCount(Number.isFinite(fallbackCount) ? fallbackCount : null);
             }
           } else {
             setStoreProductCount(Number.isFinite(fallbackCount) ? fallbackCount : null);
           }
         } catch {
+          if (requestId !== productRequestRef.current) return;
           setStoreData(null);
           setStoreProductCount(null);
         }
         // Coupons applicable to this product (matches website behavior)
         try {
           const couponRes = await api.get(`/api/coupons/store/${sellerId}`);
+          if (requestId !== productRequestRef.current) return;
           const coupons = (couponRes.data.coupons || []).filter(c =>
             c.applicableTo === 'all' || (c.applicableProducts || []).some(pid => (pid?._id || pid) === prod._id)
           );
           setAvailableCoupons(coupons);
-        } catch { setAvailableCoupons([]); }
+        } catch { if (requestId === productRequestRef.current) setAvailableCoupons([]); }
       }
       // Related products from the same category
       if (prod.category) {
         try {
           const relRes = await api.get(`/api/products/get-products?categories=${encodeURIComponent(prod.category)}&limit=6`);
+          if (requestId !== productRequestRef.current) return;
           setRelatedProducts((relRes.data.products || []).filter(p => p._id !== prod._id).slice(0, 4));
-        } catch { setRelatedProducts([]); }
+        } catch { if (requestId === productRequestRef.current) setRelatedProducts([]); }
       }
-    } catch { Feedback.show({ type: 'error', text1: 'Error', text2: 'Product not found' }); handleBack(); }
-    finally { setIsLoading(false); setRefreshing(false); }
+    } catch { if (requestId === productRequestRef.current) { setProduct(null); } }
+    finally { if (requestId === productRequestRef.current) { setIsLoading(false); setRefreshing(false); } }
   };
 
   const copyCouponCode = async (code) => {
@@ -231,7 +245,7 @@ export default function ProductDetailScreen({ route, navigation }) {
   const onRefresh = useCallback(() => {
     setRefreshing(true);
     fetchProduct();
-  }, [productId]);
+  }, [productId, locationKey, selectionRequired]);
 
   const storedProductPrice = product ? resolveProductPresentationMoney(product, 'price') : 0;
   const storedDiscountedPrice = product ? resolveProductPresentationMoney(product, 'discountedPrice') : 0;
@@ -416,7 +430,8 @@ export default function ProductDetailScreen({ route, navigation }) {
               <Ionicons name="bag-remove-outline" size={36} color={palette.colors.primary} />
             </View>
             <Text style={styles.missingTitle}>Product unavailable</Text>
-            <Text style={styles.missingText}>This item may have moved or is no longer available.</Text>
+            <Text style={styles.missingText}>This item may be unavailable in your selected shopping location or no longer public.</Text>
+            <TouchableOpacity style={[styles.missingButton, { backgroundColor: palette.colors.primary }]} onPress={openLocationSelector} accessibilityRole="button"><Text style={styles.missingButtonText}>Change shopping location</Text></TouchableOpacity>
             <TouchableOpacity style={styles.missingButton} onPress={() => navigation.navigate('MainTabs', { screen: 'Marketplace' })} activeOpacity={0.85}>
               <LinearGradient colors={palette.gradients.cta} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
               <Ionicons name="storefront-outline" size={17} color="#fff" />

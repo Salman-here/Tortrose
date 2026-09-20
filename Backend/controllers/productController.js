@@ -823,7 +823,7 @@ exports.getProducts = async (req, res) => {
         // Include products with no seller (admin products) + products from active sellers
         const visibilityFilter = {
             $or: [
-            { seller: null },
+            ...(buyerLocation.mode === 'global' ? [{ seller: null }] : []),
             { seller: { $in: activeSellerIds } },
             ],
         };
@@ -897,6 +897,7 @@ exports.getProducts = async (req, res) => {
             }
         })
     } catch (error) {
+        if (error.code === 'BUYER_LOCATION_INVALID') return res.status(400).json({ msg: error.message, code: error.code });
         console.error('Server error while fetching products:::', error.message);
         res.status(500).json({ msg: 'Server error while fetching products.' })
     }
@@ -915,6 +916,9 @@ exports.getSingleProduct = async (req, res) => {
 
         // Check if seller's store is active (hide products from blocked sellers)
         let storePolicy = null;
+        if (!singleProduct.seller && buyerLocationFromRequest(req).mode !== 'global') {
+            return res.status(404).json({ msg: 'This platform product is available in Global shopping.' });
+        }
         if (singleProduct.seller) {
             if (await isUserBlocked(req, singleProduct.seller)) {
                 return res.status(404).json({ msg: 'Product not available' });
@@ -954,6 +958,7 @@ exports.getSingleProduct = async (req, res) => {
             storePolicy,
         })
     } catch (err) {
+        if (err.code === 'BUYER_LOCATION_INVALID') return res.status(400).json({ msg: err.message, code: err.code });
         console.error(err)
         res.status(500).json({ msg: 'Server error' })
     }
@@ -974,7 +979,7 @@ exports.getFilters = async (req, res) => {
             .filter(sellerId => sellerId && !blockedSellers.has(String(sellerId)));
         const productScope = publicProductFilter({
             $or: [
-                { seller: null },
+                ...(buyerLocation.mode === 'global' ? [{ seller: null }] : []),
                 { seller: { $in: activeSellerIds } },
             ],
         });
@@ -1002,6 +1007,7 @@ exports.getFilters = async (req, res) => {
             },
         })
     } catch (err) {
+        if (err.code === 'BUYER_LOCATION_INVALID') return res.status(400).json({ msg: err.message, code: err.code });
         console.error(err)
         res.status(500).json({ error: err })
     }

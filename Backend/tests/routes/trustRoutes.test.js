@@ -49,10 +49,12 @@ beforeEach(async () => {
   });
 
   // Create test store
+  const firstSeller = await User.create({ username: 'firstseller', email: 'firstseller@example.com', role: 'seller', status: 'active' });
   testStore = await Store.create({
     storeName: 'Test Store',
     storeSlug: 'test-store',
-    seller: testUser._id,
+    seller: firstSeller._id,
+    visibility: { mode: 'global' },
     trustCount: 0
   });
 
@@ -199,6 +201,7 @@ describe('Trust API Routes', () => {
         storeName: 'Test Store 2',
         storeSlug: 'test-store-2',
         seller: secondSeller._id,
+        visibility: { mode: 'global' },
         trustCount: 0
       });
 

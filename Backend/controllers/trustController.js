@@ -3,6 +3,7 @@ const mongoose = require('mongoose');
 const StoreTrust = require('../models/StoreTrust');
 const Store = require('../models/Store');
 const { attachStoreReviewSummaries } = require('../services/storeReviewService');
+const { buyerLocationFromRequest, findVisibleStores } = require('../services/storeVisibilityService');
 
 // @desc    Trust a store
 // @route   POST /api/stores/:storeId/trust
@@ -152,8 +153,12 @@ const getTrustedStores = asyncHandler(async (req, res) => {
     .sort({ createdAt: -1 });
 
   // Filter out any trusts where the store was deleted
+  const visibleStores = await findVisibleStores(Store, {
+    _id: { $in: trusts.filter(trust => trust.store).map(trust => trust.store._id) }, isActive: true,
+  }, buyerLocationFromRequest(req), { select: '_id seller storeSlug' });
+  const visibleIds = new Set(visibleStores.map(store => String(store._id)));
   const trustedStores = trusts
-    .filter(trust => trust.store)
+    .filter(trust => trust.store && visibleIds.has(String(trust.store._id)))
     .map(trust => ({
       _id: trust.store._id,
       storeName: trust.store.storeName,

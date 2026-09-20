@@ -29,7 +29,7 @@ import {
 } from '../../utils/productCurrencyState';
 
 const VISIBILITY_MODES = [
-  { mode: 'global', label: 'Global', icon: 'earth-outline', desc: 'Visible to all buyers' },
+  { mode: 'global', label: 'Global', icon: 'earth-outline', desc: 'Appear in Global shopping' },
   { mode: 'country', label: 'Country', icon: 'flag-outline', desc: 'Visible in one country' },
   { mode: 'region', label: 'State', icon: 'map-outline', desc: 'Visible in one state or province' },
   { mode: 'city', label: 'City', icon: 'business-outline', desc: 'Visible in one city' },
@@ -1058,6 +1058,7 @@ export default function SellerStoreSettingsScreen({ navigation }) {
             })}
           </View>
 
+          {visibility.mode === 'global' && <Text style={styles.helperText}>Only choose Global if you can ship your products globally. Your store and products will appear in Global shopping.</Text>}
           {visibility.mode !== 'global' && (
             <View style={styles.visibilityFields}>
               <LocationAutocomplete

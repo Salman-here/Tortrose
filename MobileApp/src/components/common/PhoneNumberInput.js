@@ -14,7 +14,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import api from '../../config/api';
-import { resolveBuyerLocation } from '../../utils/buyerLocation';
+import { resolveBuyerCountrySuggestion } from '../../utils/buyerLocation';
 import {
   allFallbackCountryOptions,
   countryCodeFromLocale,
@@ -129,7 +129,7 @@ async function resolveCountryOption({
   }
 
   if (!code) {
-    const detected = await resolveBuyerLocation().catch(() => null);
+    const detected = await resolveBuyerCountrySuggestion().catch(() => null);
     code = normalizeCountryCode(detected?.countryCode);
   }
   if (!code) code = getDeviceCountryCode();

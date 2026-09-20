@@ -77,6 +77,7 @@ exports.getSubdomainStore = async (req, res) => {
         });
     } catch (error) {
         console.error('Get subdomain store error:', error);
+        if (error.code === 'BUYER_LOCATION_INVALID') return res.status(400).json({ msg: error.message, code: error.code });
         res.status(500).json({ msg: 'Server error while fetching store' });
     }
 };
@@ -151,6 +152,7 @@ exports.getSubdomainProducts = async (req, res) => {
         });
     } catch (error) {
         console.error('Get subdomain products error:', error);
+        if (error.code === 'BUYER_LOCATION_INVALID') return res.status(400).json({ msg: error.message, code: error.code });
         res.status(500).json({ msg: 'Server error while fetching products' });
     }
 };

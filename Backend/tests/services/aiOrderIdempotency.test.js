@@ -98,6 +98,7 @@ async function createCatalog() {
   await Store.create({
     seller: seller._id,
     storeName: 'AI Order Store',
+    visibility: { mode: 'global' },
     storeSlug: `ai-order-${seller._id}`,
     logo: 'https://example.com/ai-order-store-logo.png',
     productCurrency: 'USD',

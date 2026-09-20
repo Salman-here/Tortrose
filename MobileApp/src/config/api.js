@@ -159,13 +159,12 @@ api.interceptors.request.use(
       console.log('Error getting token from storage:', error);
     }
 
-    // Attach the buyer's location so the backend's store/product visibility
-    // filter returns the same catalog the website shows. Without it, only
-    // `global` stores are visible and country-scoped stores/products vanish.
-    // Existing per-request params win, so callers can still override.
+    // Location catalog/auth/private seller calls must not wait for IP detection.
+    // Public shopping and AI calls carry the explicit browsing mode.
     try {
-      const locationParams = await getBuyerLocationParams();
-      if (locationParams && Object.keys(locationParams).length) {
+      if (/\/api\/(products|stores|subdomain|ai)(\/|[-?]|$)/.test(config.url || '')
+          && !/\/stores\/(my-store|analytics|product-currency|verification|update|create|delete)/.test(config.url || '')) {
+        const locationParams = await getBuyerLocationParams();
         config.params = { ...locationParams, ...(config.params || {}) };
       }
     } catch (_) {}

@@ -4,6 +4,13 @@ const verifyToken = require('../middleware/authMiddleware');
 const { optionalAuth } = require('../middleware/authMiddleware');
 const ai = require('../controllers/aiActionController');
 const aiRateLimit = require('../controllers/aiRateLimitController');
+const { withBuyerCatalogLocation } = require('../services/publicCatalogService');
+const { buyerLocationFromRequest } = require('../services/storeVisibilityService');
+const catalogScope = (req, res, next) => {
+  if (req.user?.role === 'admin') return next();
+  try { return withBuyerCatalogLocation(buyerLocationFromRequest(req), next); }
+  catch (error) { return res.status(error.statusCode || 400).json({ msg: error.message, code: error.code }); }
+};
 
 // Rate Limit
 router.get('/rate-limit', optionalAuth, aiRateLimit.getRateLimit);
@@ -73,11 +80,11 @@ router.get('/broadcasts', verifyToken, ai.getBroadcasts);
 router.post('/cancel-broadcast', verifyToken, ai.cancelBroadcast);
 router.get('/all-subscriptions', verifyToken, ai.getAllSubscriptions);
 router.get('/verified-stores', verifyToken, ai.getVerifiedStores);
-router.get('/store-details', verifyToken, ai.getStoreDetails);
-router.get('/search-stores', verifyToken, ai.searchStores);
+router.get('/store-details', verifyToken, catalogScope, ai.getStoreDetails);
+router.get('/search-stores', verifyToken, catalogScope, ai.searchStores);
 
 // Public route (no auth required)
-router.get('/search-products', ai.searchProducts);
+router.get('/search-products', optionalAuth, catalogScope, ai.searchProducts);
 router.get('/subscription-catalog', ai.getSubscriptionCatalog);
 
 module.exports = router;

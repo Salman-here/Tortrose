@@ -122,15 +122,15 @@ function Products() {
 
   const fetchProducts = useCallback(async () => {
     setLoading(true); setError(null)
+    const query = serializeFilters()
     try {
-      const query = serializeFilters()
       navigate(query ? `${location.pathname}?${query}` : location.pathname, { replace: true })
       const res = await axios.get(`${import.meta.env.VITE_API_URL}api/products/get-products?${query}`)
       setProducts(res.data.products || [])
       setTotalPages(res.data.pagination?.totalPages || 1)
       setTotalProducts(res.data.pagination?.totalProducts || 0)
       setServiceNotice(null)
-      writeProductsCache(res.data)
+      writeProductsCache({ ...res.data, queryKey: query })
       if (searchRef.current?.trim()) {
         trackSearch({
           searchString: searchRef.current.trim(),
@@ -140,7 +140,7 @@ function Products() {
     } catch (err) {
       console.log(err)
       const cached = readProductsCache()
-      if (cached?.products?.length) {
+      if (cached?.queryKey === query && cached?.products?.length) {
         setProducts(cached.products || [])
         setTotalPages(cached.pagination?.totalPages || 1)
         setTotalProducts(cached.pagination?.totalProducts || cached.products.length || 0)

@@ -56,7 +56,7 @@ const normalizeVisibilityForm = (visibility = {}, address = {}) => {
 };
 
 const visibilityModes = [
-    { mode: 'global', label: 'Global', desc: 'Visible to every buyer' },
+    { mode: 'global', label: 'Global', desc: 'Appear in Global shopping' },
     { mode: 'country', label: 'Country', desc: 'Visible in one country' },
     { mode: 'region', label: 'State', desc: 'Visible in one province or state' },
     { mode: 'city', label: 'City', desc: 'Visible in one city' },
@@ -202,23 +202,9 @@ const StoreVisibilitySettings = ({
                             />
                         )}
                         {visibility.mode === 'town' && (
-                            <LocationAutocomplete
-                                type="city"
-                                label="Town/Area"
-                                value={visibility.town}
-                                code={visibility.townStateCode}
-                                countryCode={visibility.countryCode}
-                                countryName={visibility.country}
-                                stateCode={visibility.regionCode || visibility.cityStateCode}
-                                stateName={visibility.region}
-                                placeholder="Select town or area"
-                                disabled={disabled || (!visibility.country && !visibility.countryCode)}
-                                onSelect={(option) => handleVisibilityPatch({
-                                    town: option.name,
-                                    townStateCode: option.stateCode || visibility.regionCode || visibility.cityStateCode,
-                                })}
-                                onClear={() => handleVisibilityPatch({ town: '', townStateCode: '' })}
-                            />
+                            <label className="block text-sm font-medium">Town / Area
+                                <input className="glass-input mt-2 w-full" value={visibility.town} maxLength={80} placeholder="For example, Johar Town" disabled={disabled || !visibility.city} onChange={event => handleVisibilityPatch({ town: event.target.value, townStateCode: visibility.cityStateCode || visibility.regionCode })} />
+                            </label>
                         )}
                     </div>
 
@@ -255,7 +241,7 @@ const StoreVisibilitySettings = ({
 
             {visibility.mode === 'global' && (
                 <div className="rounded-2xl p-5" style={{ background: 'rgba(14,165,233,0.08)', border: '1px solid rgba(14,165,233,0.22)' }}>
-                    <p className="text-sm font-semibold" style={{ color: 'hsl(var(--foreground))' }}>Your store will be visible globally.</p>
+                    <p className="text-sm font-semibold" style={{ color: 'hsl(var(--foreground))' }}>Only choose Global if you can ship your products globally. Your store and products will appear in Global shopping.</p>
                 </div>
             )}
         </div>

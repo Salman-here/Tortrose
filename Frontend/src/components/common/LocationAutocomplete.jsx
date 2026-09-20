@@ -44,6 +44,7 @@ const LocationAutocomplete = ({
   required = false,
   onSelect,
   onClear,
+  onInteraction,
   className = '',
   inputClassName = 'glass-input w-full',
 }) => {
@@ -124,8 +125,9 @@ const LocationAutocomplete = ({
           placeholder={placeholder}
           className={`${inputClassName} pr-16 min-w-0`}
           autoComplete="off"
-          onFocus={() => setOpen(true)}
+          onFocus={() => { onInteraction?.(); setOpen(true); }}
           onChange={(event) => {
+            onInteraction?.();
             setQuery(event.target.value);
             setOpen(true);
           }}

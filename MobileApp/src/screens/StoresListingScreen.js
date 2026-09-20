@@ -3,7 +3,7 @@
  * With filter sheet (sort + verified-only) for full feature parity with web.
  */
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { View, Text, FlatList, StyleSheet, TouchableOpacity, TextInput, RefreshControl, Modal, ScrollView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -18,6 +18,9 @@ import GlassPanel from '../components/common/GlassPanel';
 import GlassBlurFill from '../components/common/GlassBlurFill';
 import { spacing, fontSize, borderRadius, fontWeight, shadows } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
+import { useBuyerLocation } from '../contexts/BuyerLocationContext';
+import ShoppingLocationFields from '../components/common/ShoppingLocationFields';
+import { shoppingLocationIsValid } from '../utils/shoppingLocation';
 
 const SORT_OPTIONS = [
   { key: 'newest', label: 'Newest', icon: 'time-outline' },
@@ -45,6 +48,11 @@ export default function StoresListingScreen({ navigation }) {
   const styles = buildStyles(palette);
 
   const { currentUser } = useAuth();
+  const { buyerLocation, locationKey, updateBuyerLocation } = useBuyerLocation();
+  const [locationDraft, setLocationDraft] = useState(buyerLocation);
+  const [savingLocation, setSavingLocation] = useState(false);
+  const requestRef = useRef(0);
+  const previousLocationRef = useRef(locationKey);
   const [stores, setStores] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -57,6 +65,7 @@ export default function StoresListingScreen({ navigation }) {
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [sortBy, setSortBy] = useState('newest');
   const [showFilters, setShowFilters] = useState(false);
+  useEffect(() => { if (showFilters) setLocationDraft(buyerLocation); }, [showFilters]);
   const [verifiedOnly, setVerifiedOnly] = useState(false);
   const [minTrust, setMinTrust] = useState(0);
   const [typeFilter, setTypeFilter] = useState('all'); // all | brand | store
@@ -70,12 +79,14 @@ export default function StoresListingScreen({ navigation }) {
   }, [searchQuery]);
 
   const fetchStores = useCallback(async (pageNum = 1, append = false) => {
+    const requestId = ++requestRef.current;
     if (append) setLoadingMore(true);
     try {
       const params = new URLSearchParams({ sort: sortBy, page: String(pageNum), limit: String(STORES_PER_PAGE) });
       if (typeFilter !== 'all') params.set('type', typeFilter);
       if (debouncedSearch) params.set('search', debouncedSearch);
       const res = await api.get(`/api/stores/all?${params.toString()}`);
+      if (requestId !== requestRef.current) return;
       const newStores = res.data.stores || [];
       if (append) {
         setStores(prev => {
@@ -90,11 +101,18 @@ export default function StoresListingScreen({ navigation }) {
       setTotalPages(Math.max(1, res.data.pagination?.pages || 1));
       setPage(pageNum);
     } catch (e) { console.error('Error fetching stores:', e); }
-    finally { setIsLoading(false); setRefreshing(false); setLoadingMore(false); }
-  }, [sortBy, typeFilter, debouncedSearch]);
+    finally { if (requestId === requestRef.current) { setIsLoading(false); setRefreshing(false); setLoadingMore(false); } }
+  }, [sortBy, typeFilter, debouncedSearch, locationKey]);
 
   // Refetch from page 1 whenever server-side filters change
-  useEffect(() => { fetchStores(1, false); }, [fetchStores]);
+  useEffect(() => {
+    if (previousLocationRef.current !== locationKey) {
+      previousLocationRef.current = locationKey;
+      setStores([]); setPage(1); setTotalStores(0); setIsLoading(true);
+    }
+    fetchStores(1, false);
+    return () => { requestRef.current += 1; };
+  }, [fetchStores, locationKey]);
 
   const hasMore = page < totalPages;
   const loadMore = useCallback(() => {
@@ -285,6 +303,8 @@ export default function StoresListingScreen({ navigation }) {
               </View>
 
               <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: spacing.lg }}>
+                <Text style={styles.sectionLabel}>Shopping location</Text>
+                <ShoppingLocationFields value={locationDraft} disabled={savingLocation} onChange={setLocationDraft} />
                 {/* Sort */}
                 <Text style={styles.sectionLabel}>Sort by</Text>
                 <View style={styles.optionGrid}>
@@ -332,8 +352,8 @@ export default function StoresListingScreen({ navigation }) {
                 <TouchableOpacity style={styles.resetBtn} onPress={resetFilters} activeOpacity={0.85}>
                   <Text style={styles.resetBtnText}>Reset</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.applyBtn} onPress={() => setShowFilters(false)} activeOpacity={0.85}>
-                  <Text style={styles.applyBtnText}>Show {filteredStores.length} stores</Text>
+                <TouchableOpacity style={styles.applyBtn} disabled={savingLocation || !shoppingLocationIsValid(locationDraft)} onPress={async () => { if (savingLocation) return; setSavingLocation(true); try { await updateBuyerLocation(locationDraft); setShowFilters(false); } finally { setSavingLocation(false); } }} activeOpacity={0.85}>
+                  <Text style={styles.applyBtnText}>{savingLocation ? 'Saving…' : 'Apply filters'}</Text>
                 </TouchableOpacity>
               </View>
             </GlassPanel>

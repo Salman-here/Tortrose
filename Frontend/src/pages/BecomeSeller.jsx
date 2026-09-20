@@ -9,6 +9,8 @@ import { useCurrency } from '../contexts/CurrencyContext';
 import SEOHead from '../components/common/SEOHead';
 import PhoneField, { isValidPhone } from '../components/common/PhoneField';
 import LocationAutocomplete from '../components/common/LocationAutocomplete';
+import StoreVisibilityPicker from '../components/common/StoreVisibilityPicker';
+import { defaultStoreVisibility, storeVisibilityError, storeVisibilityPayload } from '../utils/storeVisibilityForm';
 import {
   SELLER_PRODUCT_CURRENCY_CODES,
   normalizeSellerProductCurrency,
@@ -32,10 +34,15 @@ export default function BecomeSeller() {
   const { currentUser, setCurrentUser, fetchAndUpdateCurrentUser } = useAuth();
   const { currencies } = useCurrency();
   const [loading, setLoading] = useState(false);
-  // Steps: 0=landing, 0.5=guest signup, 0.6=OTP verify, 1=seller info, 2=store setup, 3=WhatsApp verify
+  // Steps: 0=landing, 0.5=signup, 0.6=email OTP, 1=details, 2=store, 3=visibility, 4=WhatsApp
   const [formStep, setFormStep] = useState(0);
   const [formData, setFormData] = useState({ phoneNumber: '', address: '', city: '', state: '', stateCode: '', country: '', countryCode: '', businessName: '' });
   const countryTouchedRef = useRef(false);
+  const visibilityTouchedRef = useRef(false);
+  const [storeVisibility, setStoreVisibility] = useState(() => defaultStoreVisibility());
+  useEffect(() => {
+    if (!visibilityTouchedRef.current) setStoreVisibility(defaultStoreVisibility(formData));
+  }, [formData.country, formData.countryCode, formData.state, formData.stateCode, formData.city]);
   const [productCurrencyChanged, setProductCurrencyChanged] = useState(false);
   const currencyRecommendation = sellerCurrencyRecommendation(formData);
   const [storeData, setStoreData] = useState({
@@ -379,12 +386,20 @@ export default function BecomeSeller() {
     if (storeNameChecking) {
       setFormError('Please wait — checking store name availability'); return;
     }
-    // Go to WhatsApp verification step
+    // Review visibility before WhatsApp verification and activation.
     setFormStep(3);
+  };
+
+  const handleVisibilityNext = () => {
+    const error = storeVisibilityError(storeVisibility);
+    setFormError(error);
+    if (!error) setFormStep(4);
   };
 
   const handleBecomeSeller = async () => {
     setFormError('');
+    const visibilityError = storeVisibilityError(storeVisibility);
+    if (visibilityError) { setFormError(visibilityError); setFormStep(3); return; }
     if (!whatsappVerified) { setFormError('Please verify your WhatsApp number first'); return; }
     setLoading(true);
     try {
@@ -411,6 +426,7 @@ export default function BecomeSeller() {
         storeName: storeData.storeName?.trim() || '',
         storeDescription: storeData.storeDescription?.trim() || '',
         productCurrency: storeData.productCurrency,
+        visibility: storeVisibilityPayload(storeVisibility),
         socialLinks: Object.keys(socialLinks).length > 0 ? socialLinks : undefined,
         tracking: {
           ...getTikTokTrackingContext(),
@@ -783,6 +799,7 @@ export default function BecomeSeller() {
                 <LocationAutocomplete
                   type="country"
                   label="Country"
+                  onInteraction={() => { countryTouchedRef.current = true; }}
                   value={formData.country}
                   code={formData.countryCode}
                   placeholder="Select country"
@@ -993,14 +1010,22 @@ export default function BecomeSeller() {
                 disabled={storeNameChecking || storeNameAvailable === false}
                 className="w-full py-3 px-6 rounded-xl font-bold text-white flex items-center justify-center gap-2 disabled:opacity-50"
                 style={{ background: 'linear-gradient(135deg, hsl(220, 70%, 55%), hsl(200, 80%, 50%))', boxShadow: '0 0 20px -4px hsl(220, 70%, 55%, 0.3)' }}>
-                Next: Verify WhatsApp <ArrowRight size={18} />
+                Next: Store Visibility <ArrowRight size={18} />
               </motion.button>
             </div>
           </motion.div>
         )}
 
-        {/* Step 3: WhatsApp Verification (MANDATORY) */}
-        {formStep === 3 && (
+        {formStep === 3 && <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="glass-panel p-5 sm:p-8">
+          <h2 className="text-2xl font-bold mb-2 flex items-center gap-2"><MapPin size={23} /> Store Visibility</h2>
+          <p className="text-sm mb-5" style={{ color: 'hsl(var(--muted-foreground))' }}>Choose where your store and products appear. We selected your store country by default; you can change it now or later in Store Settings.</p>
+          <StoreVisibilityPicker value={storeVisibility} onChange={next => { visibilityTouchedRef.current = true; setStoreVisibility(next); setFormError(''); }} disabled={loading} />
+          {formError && <p role="alert" className="text-sm mt-4" style={{ color: 'hsl(0,72%,55%)' }}>{formError}</p>}
+          <button type="button" onClick={handleVisibilityNext} className="w-full mt-6 py-3 px-6 rounded-xl font-bold text-white flex items-center justify-center gap-2" style={{ background: 'hsl(var(--primary))' }}>Next: Verify WhatsApp <ArrowRight size={18} /></button>
+        </motion.div>}
+
+        {/* Step 4: WhatsApp Verification (MANDATORY) */}
+        {formStep === 4 && (
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="glass-panel p-8 max-w-md mx-auto">
             <div className="text-center mb-4">
               <div className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-3"
@@ -1051,7 +1076,7 @@ export default function BecomeSeller() {
                   <CheckCircle2 size={32} className="mx-auto mb-2" style={{ color: 'hsl(150, 70%, 40%)' }} />
                   <p className="text-sm font-bold" style={{ color: 'hsl(150, 70%, 40%)' }}>WhatsApp Verified!</p>
                 </div>
-                {formError && formStep === 3 && (
+                {formError && formStep === 4 && (
                   <div className="p-3 rounded-lg text-sm font-medium mb-3" style={{ background: 'hsla(0, 72%, 55%, 0.08)', color: 'hsl(0, 72%, 55%)', border: '1px solid hsla(0, 72%, 55%, 0.15)' }}>{formError}</div>
                 )}
                 <motion.button onClick={handleBecomeSeller} disabled={loading} whileHover={{ scale: loading ? 1 : 1.02 }} whileTap={{ scale: loading ? 1 : 0.98 }}

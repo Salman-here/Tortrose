@@ -124,7 +124,7 @@ describe('seller currency recommendation in the actual onboarding screen', () =>
     expect(screen.getByText(/local currency is not currently supported/)).toBeTruthy();
   });
 
-  test.each(['PKR', 'USD'])('seller activation submits the visible %s selection after verification', async selectedCurrency => {
+  test.each([['PKR', 'country'], ['USD', 'country'], ['PKR', 'global']])('seller activation submits %s currency and %s visibility after verification', async (selectedCurrency, visibilityMode) => {
     const screen = render(<BecomeSellerScreen navigation={navigation} />);
     fireEvent.press(screen.getByText('Start seller setup'));
     await screen.findByText('Pakistan');
@@ -133,6 +133,14 @@ describe('seller currency recommendation in the actual onboarding screen', () =>
     fireEvent.changeText(screen.getByPlaceholderText('My Awesome Store'), 'Currency Verification Store');
     fireEvent.changeText(screen.getByPlaceholderText('Describe what you sell and what makes your store special'), 'Everyday home and travel accessories.');
     await screen.findByText('This store name is available');
+    fireEvent.press(screen.getByText('Continue to store visibility'));
+    await screen.findByText('Store Visibility');
+    expect(screen.getByLabelText('Store visibility: Country').props.accessibilityState.checked).toBe(true);
+    expect(screen.getByText('Pakistan')).toBeTruthy();
+    if (visibilityMode === 'global') {
+      fireEvent.press(screen.getByLabelText('Store visibility: Global'));
+      expect(screen.getByText('Only choose Global if you can ship your products globally. Your store and products will appear in Global shopping.')).toBeTruthy();
+    }
     fireEvent.press(screen.getByText('Continue to verification'));
     fireEvent.press(screen.getByText('Send verification code'));
     await screen.findByPlaceholderText('000000');
@@ -142,6 +150,7 @@ describe('seller currency recommendation in the actual onboarding screen', () =>
     fireEvent.press(screen.getByText('Activate seller account'));
     await waitFor(() => expect(api.post).toHaveBeenCalledWith('/api/user/become-seller', expect.objectContaining({
       countryCode: 'PK', productCurrency: selectedCurrency,
+      visibility: visibilityMode === 'global' ? { mode: 'global' } : { mode: 'country', country: 'Pakistan', countryCode: 'PK' },
     })));
   });
 

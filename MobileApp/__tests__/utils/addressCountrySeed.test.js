@@ -25,7 +25,7 @@ describe('addressCountrySeed', () => {
       path.join(__dirname, '../../src/screens/ProfileScreen.js'),
       'utf8',
     );
-    expect(source).toContain('resolveBuyerLocation()');
+    expect(source).toContain('resolveBuyerCountrySuggestion()');
     expect(source).toContain('addressCountrySeed(null, detectedLocation)');
     expect(source).toContain('onCountryChange={(option) => setShippingForm');
     expect(source).not.toMatch(/country:\s*['"]Pakistan['"],\s*countryCode:\s*['"]PK/);

@@ -29,7 +29,7 @@ function ProductDetailPage() {
     const navigate = useNavigate();
     const { currentUser } = useAuth();
     const { formatPrice } = useCurrency();
-    const { appendLocationParams, locationQueryString } = useBuyerLocation();
+    const { appendLocationParams, locationQueryString, selectionRequired, openLocationSelector } = useBuyerLocation();
     const {
         wishlistItems,
         handleAddToWishlist,
@@ -206,12 +206,13 @@ function ProductDetailPage() {
     };
 
     useEffect(() => {
+        if (selectionRequired) return;
         fetchProduct();
         fetchProductCoupons();
         // Product identity and buyer location are the authoritative request
         // keys; render-created fetcher identities must not retrigger requests.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [id, locationQueryString]);
+    }, [id, locationQueryString, selectionRequired]);
 
     useEffect(() => {
         if (product?._id) trackProductView(product);
@@ -313,7 +314,8 @@ function ProductDetailPage() {
                 <Package size={46} style={{ color: 'hsl(var(--muted-foreground))' }} />
                 <h1 className="mt-4 text-2xl font-bold" style={{ color: 'hsl(var(--foreground))' }}>Product unavailable</h1>
                 <p className="mt-2 text-sm" style={{ color: 'hsl(var(--muted-foreground))' }}>This product does not exist or is no longer public.</p>
-                <Link to="/products" className="glass-button mt-6 rounded-xl px-5 py-2.5 font-semibold">Browse products</Link>
+                <button type="button" onClick={openLocationSelector} className="glass-button mt-6 rounded-xl px-5 py-2.5 font-semibold">Change shopping location</button>
+                <Link to="/products" className="glass-button mt-3 rounded-xl px-5 py-2.5 font-semibold">Browse products</Link>
             </div>
         </>
     );

@@ -24,7 +24,7 @@ const {
     requireStoredProductDiscountCurrency,
     requireStoredProductEffectivePrice,
 } = require('../services/productPricingService');
-const { isStoreVisibleToBuyer, normalizeBuyerLocation } = require('../services/storeVisibilityService');
+const { isStoreAvailableForDelivery } = require('../services/storeVisibilityService');
 const { storeAllowsCashOnDelivery } = require('../services/storePaymentPolicyService');
 const { normalizeReturnPolicy } = require('../services/returnPolicyService');
 const { payOrderWithWallet } = require('../services/walletService');
@@ -1257,22 +1257,18 @@ exports.placeOrder = async (req, res) => {
         const sellerIdsInOrder = [...new Set(orderItems.map(product => toId(product.seller)).filter(Boolean))];
         let codRestrictedSellerNames = [];
         let storeBySeller = new Map();
+        const deliveryLocation = {
+            country: order.shippingInfo?.country, countryCode: order.shippingInfo?.countryCode,
+            region: order.shippingInfo?.state, city: order.shippingInfo?.city,
+            town: order.buyerLocation?.town,
+        };
         if (sellerIdsInOrder.length > 0) {
             const stores = await Store.find({ seller: { $in: sellerIdsInOrder }, isActive: true })
-                .select('seller storeName logo visibility paymentPolicy returnPolicy productCurrency');
+                .select('seller storeName logo address visibility paymentPolicy returnPolicy productCurrency');
             storeBySeller = new Map(stores.map(store => [toId(store.seller), store]));
-            const buyerLocation = normalizeBuyerLocation({
-                ...(order.buyerLocation || {}),
-                country: order.buyerLocation?.country || order.shippingInfo?.country,
-                region: order.buyerLocation?.region || order.shippingInfo?.state,
-                city: order.buyerLocation?.city || order.shippingInfo?.city,
-                town: order.buyerLocation?.town,
-                lat: order.buyerLocation?.lat,
-                lng: order.buyerLocation?.lng,
-            });
             for (const sellerId of sellerIdsInOrder) {
                 const store = storeBySeller.get(sellerId);
-                if (!store || !isStoreVisibleToBuyer(store, buyerLocation)) {
+                if (!store || !isStoreAvailableForDelivery(store, deliveryLocation)) {
                     return res.status(400).json({
                         msg: 'One or more products in this order are not available in your selected delivery area.',
                     });
@@ -1649,7 +1645,7 @@ exports.placeOrder = async (req, res) => {
             // coupon capacity, and every local immediate-payment mutation
             // commit or roll back together.
             await mongoose.connection.transaction(async session => {
-                await verifyOrderPricingAtCommit(newOrder, session);
+                await verifyOrderPricingAtCommit(newOrder, session, deliveryLocation);
                 await newOrder.save({ session });
                 if (newOrder.appliedCoupons.length > 0) {
                     await reserveOrderCoupons({ orderId: newOrder._id, userId, session });

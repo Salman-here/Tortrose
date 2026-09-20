@@ -123,6 +123,7 @@ function serializeCity(city) {
     name: city.name,
     countryCode: city.countryCode,
     stateCode: city.stateCode,
+    stateName: State.getStatesOfCountry(city.countryCode).find(state => state.isoCode === city.stateCode)?.name || '',
     latitude: coords.latitude,
     longitude: coords.longitude,
   };
@@ -164,6 +165,16 @@ function countryCodeFromName(country) {
   return resolveCountryCode({ country });
 }
 
+function stateInfoFromLocation(countryCode, stateCode = '', stateName = '') {
+  if (!Country.getCountryByCode(countryCode)) return null;
+  const code = cleanText(stateCode, 12).toUpperCase();
+  const name = normalizeKey(stateName);
+  const states = State.getStatesOfCountry(countryCode);
+  const match = code ? states.find(state => state.isoCode === code)
+    : states.find(state => normalizeKey(state.name) === name || state.isoCode.toUpperCase() === String(stateName).trim().toUpperCase());
+  return match ? { name: match.name, code: match.isoCode } : null;
+}
+
 module.exports = {
   cleanText,
   countryCodeFromName,
@@ -174,4 +185,5 @@ module.exports = {
   normalizeKey,
   resolveCountryCode,
   resolveStateCode,
+  stateInfoFromLocation,
 };

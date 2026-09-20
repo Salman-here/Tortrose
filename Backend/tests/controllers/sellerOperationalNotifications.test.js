@@ -133,6 +133,7 @@ describe('durable seller operational notifications', () => {
 
     await createStore(sellerRequest(seller, {
       storeName: 'Durable Seller Store',
+      address: { country: 'Pakistan', countryCode: 'PK' },
       description: 'A production store for durable event testing.',
     }), createResponse.res);
 

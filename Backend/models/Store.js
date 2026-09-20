@@ -441,6 +441,11 @@ storeSchema.index({
 // not provide a slug. Public creation controllers still perform uniqueness
 // checks and normally provide the final slug explicitly.
 storeSchema.pre('validate', function(next) {
+  if (this.isNew && !this.visibility?.mode && (this.address?.country || this.address?.countryCode)) {
+    try {
+      this.visibility = require('../services/storeVisibilityService').normalizeStoreVisibility({}, { store: this });
+    } catch (error) { return next(error); }
+  }
   if (this.isModified('storeName') && !this.storeSlug) {
     const generated = slugifyStoreName(this.storeName);
     this.storeSlug = validateStoreSlug(generated).valid

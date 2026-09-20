@@ -151,6 +151,28 @@ beforeEach(() => {
 });
 
 describe('seller onboarding currency controllers', () => {
+  test.each(['country', 'global', 'region', 'city', 'town'])('becomeSeller saves reviewed %s visibility with the initial store', async mode => {
+    const user = { _id: 'existing-user-1', role: 'user', currency: 'PKR', save: jest.fn() };
+    mockUserFindById.mockResolvedValue(user);
+    const response = responseRecorder();
+    await becomeSeller({ user: { id: user._id, role: 'user' }, body: validSellerRequest({ visibility: { mode, country: 'Pakistan', countryCode: 'PK', regionCode: 'PB', city: 'Lahore', town: 'Gulberg' } }), get: () => '' }, response.res);
+    expect(response.statusCode).toBe(200);
+    expect(mockStoreCreate.mock.calls[0][0][0].visibility).toMatchObject({ mode, countryCode: mode === 'global' ? '' : 'PK' });
+    expect(mockStoreCreate.mock.calls[0][0][0].address.country).toBe('Pakistan');
+  });
+
+  test('invalid visibility cannot consume WhatsApp verification or promote the buyer', async () => {
+    const user = { _id: 'existing-user-1', role: 'user', currency: 'PKR', save: jest.fn() };
+    mockUserFindById.mockResolvedValue(user);
+    const response = responseRecorder();
+    await becomeSeller({ user: { id: user._id, role: 'user' }, body: validSellerRequest({ visibility: { mode: 'country', country: 'Pakistan', countryCode: 'US' } }), get: () => '' }, response.res);
+    expect(response.statusCode).toBe(400);
+    expect(user.role).toBe('user');
+    expect(mockConsumeWhatsApp).not.toHaveBeenCalled();
+    expect(mockRunInTransaction).not.toHaveBeenCalled();
+    expect(mockStoreCreate).not.toHaveBeenCalled();
+  });
+
   test('sendSellerOTP validates and freezes the canonical product currency before sending', async () => {
     const response = responseRecorder();
     await sendSellerOTP({ body: validSellerRequest({ productCurrency: 'pkr' }) }, response.res);

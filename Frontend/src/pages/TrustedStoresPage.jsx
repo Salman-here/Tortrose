@@ -6,6 +6,8 @@ import axios from 'axios';
 import { toast } from 'react-toastify';
 import Loader from '../components/common/Loader';
 import { useAuth } from '../contexts/AuthContext';
+import { useBuyerLocation } from '../contexts/BuyerLocationContext';
+import BuyerLocationSelector from '../components/common/BuyerLocationSelector';
 import VerifiedBadge from '../components/common/VerifiedBadge';
 import SEOHead from '../components/common/SEOHead';
 import { navigateToStore } from '../utils/subdomainHelper';
@@ -16,6 +18,7 @@ const TrustedStoresPage = () => {
     const [loading, setLoading] = useState(true);
     const navigate = useNavigate();
     const { currentUser } = useAuth();
+    const { appendLocationParams, locationQueryString } = useBuyerLocation();
 
     useEffect(() => {
         if (!currentUser) {
@@ -24,13 +27,14 @@ const TrustedStoresPage = () => {
             return;
         }
         fetchTrustedStores();
-    }, [currentUser, navigate]);
+    }, [currentUser, navigate, locationQueryString]);
 
     const fetchTrustedStores = async () => {
         try {
             setLoading(true);
             const token = getAuthToken();
             const config = {
+                params: Object.fromEntries(appendLocationParams(new URLSearchParams())),
                 headers: {
                     Authorization: `Bearer ${token}`
                 }
@@ -69,6 +73,7 @@ const TrustedStoresPage = () => {
             transition={{ duration: 0.5 }}
         >
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                <BuyerLocationSelector />
                 <SEOHead
                     title="My Trusted Stores"
                     description="Your personal list of trusted independent stores on Rozare."

@@ -56,6 +56,7 @@ export default function LocationAutocomplete({
   error = '',
   onSelect,
   onClear,
+  onInteraction,
   containerStyle,
 }) {
   const { palette } = useTheme();
@@ -134,10 +135,11 @@ export default function LocationAutocomplete({
           style={styles.input}
           value={query}
           onChangeText={(text) => {
+            onInteraction?.();
             setQuery(text);
             setOpen(true);
           }}
-          onFocus={() => !disabled && setOpen(true)}
+          onFocus={() => { if (!disabled) { onInteraction?.(); setOpen(true); } }}
           placeholder={placeholder}
           placeholderTextColor={palette.colors.textLight}
           editable={!disabled}

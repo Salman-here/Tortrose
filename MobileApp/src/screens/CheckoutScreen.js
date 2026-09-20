@@ -29,7 +29,7 @@ import { trackCheckoutStep, trackPaymentEvent, trackError } from '../utils/bread
 import { spacing, fontSize, fontWeight } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 import { isValidPhoneNumber } from '../utils/phoneNumber';
-import { resolveBuyerLocation } from '../utils/buyerLocation';
+import { resolveBuyerCountrySuggestion, getCachedBuyerLocation } from '../utils/buyerLocation';
 import {
   buildSellerShipping,
   cancelOrderPaymentAttempt,
@@ -317,7 +317,7 @@ export default function CheckoutScreen({ navigation }) {
       } catch {}
       const location = shippingInfo?.countryCode || shippingInfo?.country
         ? shippingInfo
-        : await resolveBuyerLocation().catch(() => null) || { country: 'Pakistan', countryCode: 'PK' };
+        : await resolveBuyerCountrySuggestion().catch(() => null) || { country: 'Pakistan', countryCode: 'PK' };
       if (active && (location?.countryCode || location?.country)) {
         setFormData(previous => previous.countryCode || previous.country ? previous : {
           ...previous,
@@ -328,7 +328,7 @@ export default function CheckoutScreen({ navigation }) {
     };
     if (currentUser) fetchShippingInfo();
     else {
-      resolveBuyerLocation().then((location) => {
+      resolveBuyerCountrySuggestion().then((location) => {
         const resolved = location || { country: 'Pakistan', countryCode: 'PK' };
         if (active && (resolved.countryCode || resolved.country)) {
           setFormData(previous => previous.countryCode || previous.country ? previous : {
@@ -613,6 +613,10 @@ export default function CheckoutScreen({ navigation }) {
   };
 
   const buildOrder = (idempotencyKey) => {
+    const shoppingLocation = getCachedBuyerLocation();
+    const matchesDelivery = shoppingLocation?.mode === 'country'
+      && shoppingLocation.countryCode === formData.countryCode
+      && String(shoppingLocation.city || '').trim().toLowerCase() === String(formData.city || '').trim().toLowerCase();
     const primaryShipping = sellerShipping[0]?.shippingMethod || {
       name: shippingCost === 0 ? 'free' : 'standard',
       price: shippingCost,
@@ -642,8 +646,8 @@ export default function CheckoutScreen({ navigation }) {
         regionCode: formData.stateCode || '',
         city: formData.city || '',
         cityStateCode: formData.stateCode || '',
-        town: '',
-        townStateCode: '',
+        town: matchesDelivery ? shoppingLocation.town || '' : '',
+        townStateCode: matchesDelivery ? shoppingLocation.townStateCode || '' : '',
         lat: '',
         lng: '',
       },

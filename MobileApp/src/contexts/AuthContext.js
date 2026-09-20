@@ -7,7 +7,8 @@ import axios from 'axios';
 import Feedback from '../utils/feedback';
 import api, { API_BASE_URL } from '../config/api';
 import { trackAuthEvent, trackError, setUserContext } from '../utils/breadcrumbs';
-import { setBuyerLocation } from '../utils/buyerLocation';
+import { suggestBuyerLocation } from '../utils/buyerLocation';
+import { shoppingLocationFromProfile } from '../utils/shoppingLocation';
 import {
   clearAllNotifications,
   preparePushTokenLogout,
@@ -17,22 +18,11 @@ import { registerUnauthorizedSessionHandler } from '../services/authSessionEvent
 
 const AuthContext = createContext();
 
-// Seed the buyer location from the signed-in user's saved address so their
-// catalog matches their shipping country even when their device IP differs.
-// No-op when the user has no country on file (IP auto-detection then wins).
+// A real saved address may suggest a country, but login never overrides an
+// explicit Global/Country shopping preference on this device.
 const seedBuyerLocationFromUser = (user) => {
-  if (!user) return;
-  const defaultAddress = Array.isArray(user.savedAddresses)
-    ? user.savedAddresses.find((a) => a?.isDefault) || user.savedAddresses[0]
-    : null;
-  const country = defaultAddress?.country || user.savedShippingInfo?.country || user.sellerInfo?.country;
-  if (!country) return;
-  setBuyerLocation({
-    country,
-    countryCode: defaultAddress?.countryCode || user.savedShippingInfo?.countryCode || user.sellerInfo?.countryCode,
-    region: defaultAddress?.state || user.savedShippingInfo?.state,
-    city: defaultAddress?.city || user.savedShippingInfo?.city || user.sellerInfo?.city,
-  }).catch(() => {});
+  const suggestion = shoppingLocationFromProfile(user);
+  if (suggestion) suggestBuyerLocation(suggestion).catch(() => {});
 };
 
 // Secure storage helpers — SecureStore on native, AsyncStorage fallback on web

@@ -771,6 +771,7 @@ exports.searchStores = async (req, res) => {
         });
     } catch (error) {
         console.error('Search stores error:', error);
+        if (error.code === 'BUYER_LOCATION_INVALID') return res.status(400).json({ msg: error.message, code: error.code });
         res.status(500).json({ msg: 'Server error while searching stores' });
     }
 };
@@ -801,6 +802,7 @@ exports.getStoreSuggestions = async (req, res) => {
         res.status(200).json({ suggestions });
     } catch (error) {
         console.error('Get store suggestions error:', error);
+        if (error.code === 'BUYER_LOCATION_INVALID') return res.status(400).json({ msg: error.message, code: error.code });
         res.status(500).json({ msg: 'Server error while fetching suggestions' });
     }
 };
@@ -833,6 +835,7 @@ exports.getStoreBySlug = async (req, res) => {
         });
     } catch (error) {
         console.error('Get store by slug error:', error);
+        if (error.code === 'BUYER_LOCATION_INVALID') return res.status(400).json({ msg: error.message, code: error.code });
         res.status(500).json({ msg: 'Server error while fetching store' });
     }
 };
@@ -866,6 +869,7 @@ exports.getStoreBySellerId = async (req, res) => {
         });
     } catch (error) {
         console.error('Get store by seller ID error:', error);
+        if (error.code === 'BUYER_LOCATION_INVALID') return res.status(400).json({ msg: error.message, code: error.code });
         res.status(500).json({ msg: 'Server error while fetching store' });
     }
 };
@@ -959,6 +963,7 @@ exports.getStoreProducts = async (req, res) => {
         });
     } catch (error) {
         console.error('Get store products error:', error);
+        if (error.code === 'BUYER_LOCATION_INVALID') return res.status(400).json({ msg: error.message, code: error.code });
         res.status(500).json({ msg: 'Server error while fetching store products' });
     }
 };
@@ -1080,6 +1085,7 @@ exports.getAllStores = async (req, res) => {
         });
     } catch (error) {
         console.error('Get all stores error:', error);
+        if (error.code === 'BUYER_LOCATION_INVALID') return res.status(400).json({ msg: error.message, code: error.code });
         res.status(500).json({ msg: 'Server error while fetching stores' });
     }
 };

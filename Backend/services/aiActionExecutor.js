@@ -131,8 +131,11 @@ const {
   applyActiveSellerProductFilter,
   getActiveSellerIds,
   isProductSellerPubliclyActive,
+  withBuyerCatalogLocation,
+  storeMatchesBuyerCatalogScope,
 } = require('./publicCatalogService');
 const { storeAllowsCashOnDelivery } = require('./storePaymentPolicyService');
+const { isStoreAvailableForDelivery } = require('./storeVisibilityService');
 const { multiplyMoney, percentageOfMoney, sumMoney, toMinorUnits } = require('./moneyMath');
 const { commitOrderInventory } = require('./orderInventoryService');
 const { cancelOrderSafely } = require('./orderCancellationService');
@@ -1658,7 +1661,16 @@ async function commitAIOrderForVisibility({
 //  MAIN DISPATCHER
 // ═══════════════════════════════════════════════════════════════════
 
-async function executeToolCallUnprotected(toolName, args = {}, user, { propagateErrors = false } = {}) {
+async function executeToolCallUnprotected(toolName, args = {}, user, { propagateErrors = false, catalogScoped = false } = {}) {
+  // Also scope internal name lookups (for example "add the blue mug"), not
+  // just discovery tools directly selected by the model. Keep private history,
+  // mutation receipts and settlement outside this read-only catalog scope.
+  if (!catalogScoped && user?._buyerLocation && user.role !== 'admin'
+      && ['search_products', 'get_product_detail', 'search_stores', 'get_store_details', 'get_available_coupons'].includes(toolName)) {
+    return withBuyerCatalogLocation(user._buyerLocation, () => executeToolCallUnprotected(
+      toolName, args, user, { propagateErrors, catalogScoped: true }
+    ));
+  }
   const userId = user?._id || user?.id || null;
   const role = user?.role || 'guest';
 
@@ -2956,9 +2968,13 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
         if (orderItems.length === 0) return { success: false, error: 'No items to order.' };
         const sellerIds = [...new Set(productItems.map(p => normalizeObjectIdString(p.seller)).filter(Boolean))];
         const sellerStores = await Store.find({ seller: { $in: sellerIds }, isActive: true })
-          .select('seller storeName logo paymentPolicy returnPolicy productCurrency')
+          .select('seller storeName logo address visibility paymentPolicy returnPolicy productCurrency')
           .lean();
         const sellerStoreById = new Map(sellerStores.map(store => [normalizeObjectIdString(store.seller), store]));
+        const deliveryLocation = { country: shipping.country, countryCode: shipping.countryCode, region: shipping.state, city: shipping.city, town: shipping.town };
+        if (sellerIds.some(sellerId => !sellerStoreById.has(sellerId) || !isStoreAvailableForDelivery(sellerStoreById.get(sellerId), deliveryLocation))) {
+          return { success: false, code: 'STORE_DELIVERY_UNAVAILABLE', error: 'One or more products are not available in your delivery area. Review your delivery address or choose another store.' };
+        }
         for (const item of orderItems) {
           const product = productItems.find(
             candidate => normalizeObjectIdString(candidate._id) === normalizeObjectIdString(item.productId),
@@ -3283,7 +3299,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
           // A crash or transaction abort can therefore never expose a normal
           // COD order whose inventory was not committed.
           await mongoose.connection.transaction(async session => {
-            await verifyOrderPricingAtCommit(newOrder, session);
+            await verifyOrderPricingAtCommit(newOrder, session, deliveryLocation);
             await newOrder.save({ session });
             await commitAIOrderForVisibility({
               orderId: newOrder._id,
@@ -6835,7 +6851,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
           .populate('seller', 'username email status role')
           .lean();
 
-        if (!store) return { success: false, error: 'Store not found.' };
+        if (!store || !storeMatchesBuyerCatalogScope(store)) return { success: false, error: 'Store not available in your selected shopping location.' };
 
         const productCount = await Product.countDocuments(publicProductFilter({ seller: store.seller?._id }));
         const productPreview = await Product.find(publicProductFilter({ seller: store.seller?._id, stock: { $gt: 0 } }))

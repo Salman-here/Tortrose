@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Animated } from 'react-native';
-import { NavigationContainer } from '@react-navigation/native';
+import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar as ExpoStatusBar } from 'expo-status-bar';
 import * as SplashScreen from 'expo-splash-screen';
@@ -11,6 +11,8 @@ import * as Sentry from '@sentry/react-native';
 import { AuthProvider } from './src/contexts/AuthContext';
 import { GlobalProvider } from './src/contexts/GlobalContext';
 import { CurrencyProvider } from './src/contexts/CurrencyContext';
+import { BuyerLocationProvider } from './src/contexts/BuyerLocationContext';
+import ShoppingLocationPrompt from './src/components/common/ShoppingLocationPrompt';
 import { StripeBootstrapProvider } from './src/contexts/StripeContext';
 import { ThemeProvider, useTheme } from './src/contexts/ThemeContext';
 import AppNavigator from './src/navigation/AppNavigator';
@@ -346,6 +348,9 @@ const biometricStyles = StyleSheet.create({
 
 function App() {
   const [showOnboarding, setShowOnboarding] = useState(null);
+  const navigationRef = React.useRef(createNavigationContainerRef()).current;
+  const [activeRoute, setActiveRoute] = useState(null);
+  const updateActiveRoute = () => setActiveRoute(navigationRef.getCurrentRoute()?.name || null);
 
   useEffect(() => {
     shouldShowOnboarding().then(setShowOnboarding);
@@ -378,15 +383,18 @@ function App() {
             <StripeBootstrapProvider>
               <BiometricGate>
                 <AuthProvider>
+                  <BuyerLocationProvider>
                   <GlobalProvider>
                     <CurrencyProvider>
-                      <NavigationContainer linking={linking}>
+                      <NavigationContainer linking={linking} ref={navigationRef} onReady={updateActiveRoute} onStateChange={updateActiveRoute}>
                         <NotificationInitializer />
                         <AppNavigator />
+                        <ShoppingLocationPrompt routeName={activeRoute} enabled={['Home', 'Marketplace', 'Stores', 'StoresListing', 'ProductDetail', 'Store', 'AIChat'].includes(activeRoute)} />
                       </NavigationContainer>
                       <OfflineBanner />
                     </CurrencyProvider>
                   </GlobalProvider>
+                  </BuyerLocationProvider>
                 </AuthProvider>
               </BiometricGate>
             </StripeBootstrapProvider>

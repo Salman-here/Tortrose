@@ -40,7 +40,7 @@ const StorePage = ({ slugOverride = null }) => {
     const slug = slugOverride || slugFromParams;
     const { currentUser } = useAuth();
     const { formatPrice } = useCurrency();
-    const { appendLocationParams, locationQueryString } = useBuyerLocation();
+    const { appendLocationParams, locationQueryString, openLocationSelector } = useBuyerLocation();
     const [store, setStore] = useState(null);
     const [products, setProducts] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -273,9 +273,10 @@ const StorePage = ({ slugOverride = null }) => {
                 </div>
                 <h1 className="text-2xl font-bold mb-2" style={{ color: 'hsl(var(--foreground))' }}>Store Not Found</h1>
                 <p className="text-sm mb-6 text-center" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                    The store you're looking for doesn't exist or has been removed.
+                    This store may be unavailable in your selected shopping location or no longer public.
                 </p>
-                <div className="flex gap-3">
+                <div className="flex flex-wrap justify-center gap-3">
+                    <button type="button" className="glass-button px-6 py-2.5 rounded-xl font-semibold text-sm" onClick={openLocationSelector}>Change shopping location</button>
                     <motion.button whileHover={{ y: -1 }} whileTap={{ scale: 0.97 }}
                         onClick={(e) => { e.preventDefault(); navigateToMainDomainPath('/stores'); }}
                         className="px-6 py-2.5 rounded-xl font-semibold text-sm"

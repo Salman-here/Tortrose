@@ -41,10 +41,11 @@ test('recommends the supported local currency for country codes and legacy count
 
 test('uses country instead of a newly registered account USD default', () => {
   const country = sellerCountryFromProfile({
-    currency: 'USD', savedShippingInfo: { country: 'Pakistan', countryCode: 'PK' },
+    currency: 'USD', savedShippingInfo: { country: 'Pakistan', countryCode: 'PK', city: 'Lahore' },
   });
   assert.equal(sellerCurrencyRecommendation(country).currency, 'PKR');
   assert.equal(sellerCountryFromProfile({ currency: 'USD' }), null);
+  assert.equal(sellerCountryFromProfile({ savedShippingInfo: { country: 'Pakistan', countryCode: 'PK' } }), null);
 });
 
 test('distinguishes an unsupported local currency and a missing country', () => {

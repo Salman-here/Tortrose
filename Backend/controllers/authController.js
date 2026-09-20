@@ -470,6 +470,10 @@ exports.verifySellerOTPAndRegister = async (req, res) => {
         // retry update a User row that never committed.
         const newUserId = new mongoose.Types.ObjectId();
         const shouldCreateStore = Boolean(storeName && storeName.trim().length >= 3);
+        const { normalizeStoreVisibility } = require('../services/storeVisibilityService');
+        const storeVisibility = shouldCreateStore ? normalizeStoreVisibility(req.body.visibility, {
+            store: { address: normalizeStoreVisibility({ mode: 'country', country, countryCode }) },
+        }) : undefined;
         const requestedStoreName = shouldCreateStore ? storeName.trim() : '';
         const sellerWelcomeOccurredAt = new Date();
         const sellerInfo = {
@@ -544,6 +548,7 @@ exports.verifySellerOTPAndRegister = async (req, res) => {
                     sellerType: sellerType === 'brand' ? 'brand' : 'store',
                     description: storeDescription?.trim() || '',
                     productCurrency: sellerProductCurrency,
+                    visibility: storeVisibility,
                     socialLinks: normalizeSocialLinks(socialLinks),
                     address: {
                         street: address?.trim() || '',

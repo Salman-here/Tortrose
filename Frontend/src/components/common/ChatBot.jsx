@@ -10,6 +10,8 @@ import {
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
+import { useBuyerLocation } from '../../contexts/BuyerLocationContext';
+import { shoppingLocationParams } from '../../utils/shoppingLocation';
 import { useGlobal } from '../../contexts/GlobalContext';
 import {
   requireCanonicalPresentationCurrency,
@@ -470,6 +472,7 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
     currentUser?._id || currentUser?.id || 'guest'
   );
   const { formatPrice, currency } = useCurrency();
+  const { buyerLocation } = useBuyerLocation();
 
   // State
   const [isOpen, setIsOpen] = useState(embedded);
@@ -932,7 +935,8 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
         });
       }
 
-      const resp = await fetch(AI_CHAT_URL, {
+      const shoppingQuery = new URLSearchParams(shoppingLocationParams(buyerLocation));
+      const resp = await fetch(AI_CHAT_URL + '?' + shoppingQuery.toString(), {
         method: 'POST',
         headers: requestBody
           ? {

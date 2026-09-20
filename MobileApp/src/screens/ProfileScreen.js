@@ -23,7 +23,7 @@ import { spacing, fontSize, borderRadius, fontWeight, typography } from '../styl
 import { useTheme } from '../contexts/ThemeContext';
 import Constants from 'expo-constants';
 import { isValidPhoneNumber } from '../utils/phoneNumber';
-import { resolveBuyerLocation } from '../utils/buyerLocation';
+import { resolveBuyerCountrySuggestion } from '../utils/buyerLocation';
 import { addressCountrySeed } from '../utils/addressCountrySeed';
 
 const APP_VERSION = Constants.expoConfig?.version || '1.0.3';
@@ -74,7 +74,7 @@ export default function ProfileScreen({ navigation }) {
     if (!currentUser) return undefined;
     let active = true;
     fetchShippingInfo();
-    resolveBuyerLocation()
+    resolveBuyerCountrySuggestion()
       .catch(() => null)
       .then((detectedLocation) => {
         if (!active) return;

@@ -32,6 +32,8 @@ import GlassPanel from '../components/common/GlassPanel';
 import AuthTopHeader from '../components/common/AuthTopHeader';
 import GoogleSignInButton from '../components/common/GoogleSignInButton';
 import LocationAutocomplete from '../components/common/LocationAutocomplete';
+import StoreVisibilityPicker from '../components/common/StoreVisibilityPicker';
+import { defaultStoreVisibility, storeVisibilityError, storeVisibilityPayload } from '../utils/storeVisibilityForm';
 import KeyboardAwareFormScrollView from '../components/common/KeyboardAwareFormScrollView';
 import PhoneNumberInput from '../components/common/PhoneNumberInput';
 import { borderRadius, fontSize, fontWeight, spacing } from '../styles/theme';
@@ -49,6 +51,7 @@ import useOtpCountdown from '../hooks/useOtpCountdown';
 const SELLER_STEPS = [
   { key: 'details', label: 'Details' },
   { key: 'store', label: 'Store' },
+  { key: 'visibility', label: 'Visibility' },
   { key: 'whatsapp', label: 'Verify' },
 ];
 
@@ -92,6 +95,11 @@ export default function BecomeSellerScreen({ navigation }) {
     businessName: '',
   });
   const countryTouchedRef = useRef(false);
+  const visibilityTouchedRef = useRef(false);
+  const [storeVisibility, setStoreVisibility] = useState(() => defaultStoreVisibility());
+  useEffect(() => {
+    if (!visibilityTouchedRef.current) setStoreVisibility(defaultStoreVisibility(formData));
+  }, [formData.country, formData.countryCode, formData.state, formData.stateCode, formData.city]);
   const [productCurrencyChanged, setProductCurrencyChanged] = useState(false);
   const [productCurrencyOpen, setProductCurrencyOpen] = useState(false);
   const currencyRecommendation = sellerCurrencyRecommendation(formData);
@@ -211,7 +219,8 @@ export default function BecomeSellerScreen({ navigation }) {
     else if (flowStep === 'emailOtp') setFlowStep('account');
     else if (flowStep === 'details') setFlowStep('landing');
     else if (flowStep === 'store') setFlowStep('details');
-    else if (flowStep === 'whatsapp') setFlowStep('store');
+    else if (flowStep === 'visibility') setFlowStep('store');
+    else if (flowStep === 'whatsapp') setFlowStep('visibility');
   };
 
   const handleGetStarted = () => {
@@ -316,7 +325,13 @@ export default function BecomeSellerScreen({ navigation }) {
       setFormError(storeNameError || 'Choose an available store name before continuing.');
       return;
     }
-    setFlowStep('whatsapp');
+    setFlowStep('visibility');
+  };
+
+  const handleVisibilityNext = () => {
+    const error = storeVisibilityError(storeVisibility);
+    setFormError(error);
+    if (!error) setFlowStep('whatsapp');
   };
 
   const resetWhatsAppVerification = () => {
@@ -373,6 +388,8 @@ export default function BecomeSellerScreen({ navigation }) {
   };
 
   const handleBecomeSeller = async () => {
+    const visibilityError = storeVisibilityError(storeVisibility);
+    if (visibilityError) { setFormError(visibilityError); setFlowStep('visibility'); return; }
     if (!whatsappVerified) {
       setFormError('Verify your WhatsApp number before activating your seller account.');
       return;
@@ -399,6 +416,7 @@ export default function BecomeSellerScreen({ navigation }) {
         storeName: storeData.storeName.trim(),
         storeDescription: storeData.storeDescription.trim(),
         productCurrency: storeData.productCurrency,
+        visibility: storeVisibilityPayload(storeVisibility),
         socialLinks: Object.keys(socialLinks).length ? socialLinks : undefined,
       };
 
@@ -695,6 +713,7 @@ export default function BecomeSellerScreen({ navigation }) {
       <LocationAutocomplete
         type="country"
         label="Country"
+        onInteraction={() => { countryTouchedRef.current = true; }}
         required
         value={formData.country}
         code={formData.countryCode}
@@ -877,7 +896,7 @@ export default function BecomeSellerScreen({ navigation }) {
         }))}
         <TouchableOpacity style={styles.primaryButton} onPress={handleStoreNext} activeOpacity={0.85}>
           <LinearGradient colors={palette.gradients.cta} style={StyleSheet.absoluteFill} />
-          <Text style={styles.primaryButtonText}>Continue to verification</Text>
+          <Text style={styles.primaryButtonText}>Continue to store visibility</Text>
           <Ionicons name="arrow-forward" size={18} color="#fff" />
         </TouchableOpacity>
       </GlassPanel>
@@ -1017,6 +1036,13 @@ export default function BecomeSellerScreen({ navigation }) {
           {flowStep === 'emailOtp' && renderEmailOtp()}
           {flowStep === 'details' && renderDetails()}
           {flowStep === 'store' && renderStore()}
+          {flowStep === 'visibility' && <GlassPanel variant="strong" style={styles.formCard}>
+            <Text style={styles.formTitle}>Store Visibility</Text>
+            <Text style={styles.formSubtitle}>Choose where your store and products appear. Your store country is selected by default. You can change this later in Store Settings.</Text>
+            {renderError()}
+            <StoreVisibilityPicker value={storeVisibility} disabled={loading} onChange={next => { visibilityTouchedRef.current = true; setStoreVisibility(next); setFormError(''); }} />
+            <TouchableOpacity style={[styles.primaryButton, { marginTop: 20 }]} onPress={handleVisibilityNext} accessibilityRole="button"><Text style={styles.primaryButtonText}>Continue to verification</Text><Ionicons name="arrow-forward" size={18} color="#fff" /></TouchableOpacity>
+          </GlassPanel>}
           {flowStep === 'whatsapp' && renderWhatsApp()}
       </KeyboardAwareFormScrollView>
     </GlassBackground>

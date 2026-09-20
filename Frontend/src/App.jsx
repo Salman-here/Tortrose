@@ -6,8 +6,15 @@ import { ToastContainer } from 'react-toastify'
 import { HelmetProvider } from 'react-helmet-async';
 import Analytics from './components/common/Analytics'
 import TestPhaseNotice from './components/common/TestPhaseNotice'
+import ShoppingLocationPrompt from './components/common/ShoppingLocationPrompt'
+import { useLocation } from 'react-router-dom'
+import { useBuyerLocation } from './contexts/BuyerLocationContext'
  
 function App() {  
+  const { pathname } = useLocation();
+  const { locationQueryString, selectionRequired } = useBuyerLocation();
+  const catalogRoute = pathname === '/' || /^\/(products|stores|store|single-product|marketplace|trusted-stores)(\/|$)/.test(pathname);
+  const catalogKey = catalogRoute ? locationQueryString + ':' + selectionRequired : 'non-catalog';
   // Reserved system subdomain: docs.rozare.com
   const onDocs = isDocsSubdomain(); 
   // Store subdomain (storename.rozare.com) — full app routes still work,
@@ -39,7 +46,8 @@ function App() {
         }}
       />
       <TestPhaseNotice />
-      {onDocs ? <DocsPage /> : <AppRoutes subdomainSlug={subdomainSlug} />}
+      {!onDocs && <ShoppingLocationPrompt />}
+      {onDocs ? <DocsPage /> : <AppRoutes key={catalogKey} subdomainSlug={subdomainSlug} />}
     </HelmetProvider>
   )
 }

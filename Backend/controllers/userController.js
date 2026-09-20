@@ -372,6 +372,11 @@ exports.becomeSeller = async (req, res) => {
         if (!storeDescription || storeDescription.trim().length < 10) {
             return res.status(400).json({ message: 'Store description is required (at least 10 characters)' })
         }
+        const { normalizeStoreVisibility } = require('../services/storeVisibilityService')
+        const physicalCountry = normalizeStoreVisibility({ mode: 'country', country, countryCode })
+        const storeVisibility = normalizeStoreVisibility(req.body.visibility, {
+            store: { address: physicalCountry }, seller: user,
+        })
 
         // Check store name uniqueness before proceeding
         const StoreModel = require('../models/Store')
@@ -450,6 +455,7 @@ exports.becomeSeller = async (req, res) => {
                 storeSlug: desiredSlug,
                 description: storeDescription.trim(),
                 productCurrency: sellerProductCurrency,
+                visibility: storeVisibility,
                 socialLinks: normalizeSocialLinks(socialLinks),
                 address: {
                     street: address?.trim() || '',
