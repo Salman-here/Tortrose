@@ -38,6 +38,7 @@ import { useCurrency } from '../contexts/CurrencyContext';
 import { useBuyerLocation } from '../contexts/BuyerLocationContext';
 import ShoppingLocationFields from '../components/common/ShoppingLocationFields';
 import { shoppingLocationIsValid, shoppingLocationLabel } from '../utils/shoppingLocation';
+import { priceFilterError } from '../utils/priceFilters';
 import { spacing, fontSize, borderRadius, shadows, fontWeight } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 import { PRESET_CATEGORIES, isPresetCategory } from '../utils/categories';
@@ -109,6 +110,8 @@ export default function HomeScreen({ navigation }) {
   const loadingMoreRef = useRef(false);
   const previousCurrencyRef = useRef(currency);
   const previousLocationRef = useRef(locationKey);
+  const filterRequestRef = useRef(0);
+  useEffect(() => () => { productRequestRef.current += 1; filterRequestRef.current += 1; }, []);
   const searchBlurTimerRef = useRef(null);
 
   // Animation for header — use ref to avoid re-creating on every render
@@ -156,10 +159,10 @@ export default function HomeScreen({ navigation }) {
       if (requestFilters.search?.trim()) {
         params.append('search', requestFilters.search.trim());
       }
-      if (requestFilters.priceRange.min > 0 || (requestFilters.priceRange.max && requestFilters.priceRange.max > 0)) {
+      if (requestFilters.priceRange.min > 0 || requestFilters.priceRange.max != null) {
         // The API parses an empty max as zero; Infinity intentionally becomes
         // an unbounded max so min-only price filters keep returning products.
-        params.append('priceRange', `${requestFilters.priceRange.min || 0},${requestFilters.priceRange.max || 'Infinity'}`);
+        params.append('priceRange', `${requestFilters.priceRange.min || 0},${requestFilters.priceRange.max ?? 'Infinity'}`);
       }
       params.append('sortBy', requestFilters.sortBy);
       params.append('sortOrder', requestFilters.sortOrder);
@@ -233,8 +236,10 @@ export default function HomeScreen({ navigation }) {
   }, [selectedCategories, selectedBrands, appliedSearchQuery, priceRange, sortBy, sortOrder, currency, locationKey]);
 
   const fetchFilters = async () => {
+    const requestId = ++filterRequestRef.current;
     try {
       const res = await api.get('/api/products/get-filters');
+      if (requestId !== filterRequestRef.current) return;
       setCategories(res.data.categories || []);
       setBrands(res.data.brands || []);
       setOtherBrandsCount(Number(res.data.otherBrandsCount) || 0);
@@ -273,9 +278,11 @@ export default function HomeScreen({ navigation }) {
   useEffect(() => {
     if (previousCurrencyRef.current === currency) return;
     previousCurrencyRef.current = currency;
+    setPriceRange(DEFAULT_PRICE_RANGE);
+    setFilterDraft(previous => ({ ...previous, priceRange: DEFAULT_PRICE_RANGE }));
     setPage(1);
     setHasMore(true);
-    fetchProducts(1);
+    fetchProducts(1, { priceRange: DEFAULT_PRICE_RANGE });
   }, [currency, fetchProducts]);
 
   const cancelAutocompleteBlur = useCallback(() => {
@@ -398,7 +405,7 @@ export default function HomeScreen({ navigation }) {
   }, [selectedCategories, selectedBrands, priceRange, appliedSearchQuery, sortBy, sortOrder, buyerLocation]);
 
   const applyFilters = useCallback(async () => {
-    if (savingLocation || !shoppingLocationIsValid(filterDraft.shoppingLocation)) return;
+    if (savingLocation || !shoppingLocationIsValid(filterDraft.shoppingLocation) || priceFilterError(filterDraft.priceRange)) return;
     setSavingLocation(true);
     try { await updateBuyerLocation(filterDraft.shoppingLocation); }
     catch (_) { setSavingLocation(false); return; }
@@ -421,13 +428,13 @@ export default function HomeScreen({ navigation }) {
   const hasActiveFilters = selectedCategories.length > 0
     || selectedBrands.length > 0
     || priceRange.min > 0
-    || (priceRange.max && priceRange.max > 0)
+    || priceRange.max != null
     || sortBy !== 'relevance'
     || sortOrder !== 'desc';
 
   const activeFilterCount = selectedCategories.length
     + selectedBrands.length
-    + ((priceRange.min > 0 || (priceRange.max && priceRange.max > 0)) ? 1 : 0)
+    + ((priceRange.min > 0 || priceRange.max != null) ? 1 : 0)
     + ((sortBy !== 'relevance' || sortOrder !== 'desc') ? 1 : 0);
 
   const otherCategories = useMemo(
@@ -779,11 +786,11 @@ export default function HomeScreen({ navigation }) {
                 <Ionicons name="close" size={14} color={palette.colors.primary} />
               </TouchableOpacity>
             ))}
-            {(priceRange.min > 0 || (priceRange.max && priceRange.max > 0)) && (
+            {(priceRange.min > 0 || priceRange.max != null) && (
               <TouchableOpacity style={styles.activeFilterChip} onPress={clearPriceFilter}>
                 <Ionicons name="cash-outline" size={13} color={palette.colors.primary} />
                 <Text style={styles.activeFilterText}>
-                  {priceRange.min || 0}–{priceRange.max || 'Any'} {currency}
+                  {priceRange.min || 0}–{priceRange.max ?? 'Any'} {currency}
                 </Text>
                 <Ionicons name="close" size={14} color={palette.colors.primary} />
               </TouchableOpacity>
@@ -815,7 +822,7 @@ export default function HomeScreen({ navigation }) {
       });
     const draftFilterCount = filterDraft.categories.length
       + filterDraft.brands.length
-      + ((filterDraft.priceRange.min > 0 || (filterDraft.priceRange.max && filterDraft.priceRange.max > 0)) ? 1 : 0)
+      + ((filterDraft.priceRange.min > 0 || filterDraft.priceRange.max != null) ? 1 : 0)
       + ((filterDraft.sortBy !== 'relevance' || filterDraft.sortOrder !== 'desc') ? 1 : 0);
 
     const toggleDraftCategory = (category) => {
@@ -1113,9 +1120,9 @@ export default function HomeScreen({ navigation }) {
                 <Text style={styles.resetButtonText}>Reset</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={styles.applyButton}
+                style={[styles.applyButton, (savingLocation || !shoppingLocationIsValid(filterDraft.shoppingLocation) || !!priceFilterError(filterDraft.priceRange)) && { opacity: 0.5 }]}
                 onPress={applyFilters}
-                disabled={savingLocation || !shoppingLocationIsValid(filterDraft.shoppingLocation)}
+                disabled={savingLocation || !shoppingLocationIsValid(filterDraft.shoppingLocation) || !!priceFilterError(filterDraft.priceRange)}
                 accessibilityLabel="Apply filters"
                 activeOpacity={0.86}
               >

@@ -17,6 +17,8 @@ const StoresListing = () => {
     const initialType = ['brand', 'store', 'all'].includes(searchParams.get('type')) ? searchParams.get('type') : 'all';
     const [stores, setStores] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [loadError, setLoadError] = useState(false);
+    const requestRef = useRef(0), previousQueryRef = useRef(null);
     const [searchQuery, setSearchQuery] = useState('');
     const [debouncedSearch, setDebouncedSearch] = useState('');
     const [sortBy, setSortBy] = useState('newest');
@@ -34,9 +36,14 @@ const StoresListing = () => {
         const params = new URLSearchParams(searchParams);
         if (typeFilter === 'all') params.delete('type');
         else params.set('type', typeFilter);
-        setSearchParams(params, { replace: true });
+        if (params.toString() !== searchParams.toString()) setSearchParams(params, { replace: true });
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [typeFilter]);
+
+    useEffect(() => {
+        const value = ['brand', 'store', 'all'].includes(searchParams.get('type')) ? searchParams.get('type') : 'all';
+        setTypeFilter(value);
+    }, [searchParams]);
 
     useEffect(() => {
         const timer = setTimeout(() => {
@@ -103,17 +110,20 @@ const StoresListing = () => {
     }, []);
 
     useEffect(() => {
-        setCurrentPage(1);
-    }, [sortBy, typeFilter]);
-
-    useEffect(() => {
+        const queryKey = JSON.stringify([sortBy, typeFilter, debouncedSearch, locationQueryString]);
+        if (queryKey !== previousQueryRef.current) {
+            previousQueryRef.current = queryKey;
+            if (currentPage !== 1) { setCurrentPage(1); return; }
+        }
         fetchStores();
+        return () => { requestRef.current += 1; };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [sortBy, typeFilter, currentPage, debouncedSearch, locationQueryString]);
 
     const fetchStores = async () => {
+        const requestId = ++requestRef.current;
         try {
-            setLoading(true);
+            setLoading(true); setLoadError(false);
             const params = new URLSearchParams({
                 sort: sortBy,
                 page: String(currentPage),
@@ -125,17 +135,20 @@ const StoresListing = () => {
             const res = await axios.get(
                 `${import.meta.env.VITE_API_URL}api/stores/all?${params.toString()}`
             );
+            if (requestId !== requestRef.current) return;
             setStores(res.data.stores || []);
             setStoreCounts(res.data.counts || { all: 0, brand: 0, store: 0 });
             setTotalStores(res.data.pagination?.total || 0);
             setTotalPages(Math.max(1, res.data.pagination?.pages || 1));
         } catch (error) {
+            if (requestId !== requestRef.current) return;
             console.error('Error fetching stores:', error);
+            setLoadError(true);
             setStores([]);
             setTotalStores(0);
             setTotalPages(1);
         } finally {
-            setLoading(false);
+            if (requestId === requestRef.current) setLoading(false);
         }
     };
 
@@ -353,6 +366,8 @@ const StoresListing = () => {
                     <div className="flex justify-center items-center h-64">
                         <Loader text="Loading stores..." />
                     </div>
+                ) : loadError ? (
+                    <div role="alert" className="glass-panel p-8 text-center"><p>Could not load stores. Please check your connection.</p><button className="glass-button px-5 py-2 mt-4" onClick={fetchStores}>Retry loading stores</button></div>
                 ) : stores.length === 0 ? (
                     <motion.div
                         className="flex flex-col items-center justify-center h-64 glass-panel"

@@ -4,8 +4,6 @@ const Product = require('../models/Product');
 const Order = require('../models/Order');
 const User = require('../models/User');
 const { publicProductFilter } = require('../services/productModerationService');
-const { convertAmountSync } = require('../services/currencyService');
-const { getProductCurrency, getProductEffectivePrice } = require('../services/productPricingService');
 const {
     resolveRequestedCurrency,
     sellerCurrencyMoneyPresentation,
@@ -20,8 +18,6 @@ const {
 const { attachStoreReviewSummaries } = require('../services/storeReviewService');
 const { changeStoreSlug } = require('../services/subdomainSlugMutationService');
 
-const comparablePriceUSD = (product) =>
-    convertAmountSync(getProductEffectivePrice(product), getProductCurrency(product), 'USD');
 
 const idString = (value) => String(value?._id || value || '');
 
@@ -84,77 +80,12 @@ exports.getSubdomainStore = async (req, res) => {
 
 // Get products for subdomain store
 exports.getSubdomainProducts = async (req, res) => {
-    try {
-        if (!req.subdomainStore) {
-            return res.status(404).json({ msg: 'Store not found' });
-        }
-
-        const { categories, brands, priceRange, search, page = 1, limit = 20 } = req.query;
-        const store = req.subdomainStore;
-        if (!isStoreVisibleToBuyer(store, buyerLocationFromRequest(req))) {
-            return res.status(404).json({ msg: 'Store products are not available in your selected area.' });
-        }
-
-        // Build query for products
-        let query = publicProductFilter({ seller: store.seller });
-
-        // Apply filters
-        if (categories) {
-            const categoryArray = Array.isArray(categories) ? categories : [categories];
-            query.category = { $in: categoryArray };
-        }
-
-        if (brands) {
-            const brandArray = Array.isArray(brands) ? brands : [brands];
-            query.brand = { $in: brandArray };
-        }
-
-        let priceMinUSD = null;
-        let priceMaxUSD = null;
-        if (priceRange) {
-            const [min, max] = priceRange.split(',').map(Number);
-            priceMinUSD = Number.isFinite(min) ? min : null;
-            priceMaxUSD = Number.isFinite(max) ? max : null;
-        }
-
-        if (search) {
-            query.$or = [
-                { name: { $regex: search, $options: 'i' } },
-                { description: { $regex: search, $options: 'i' } }
-            ];
-        }
-
-        // Pagination
-        const skip = (page - 1) * limit;
-
-        let products = await Product.find(query).sort({ createdAt: -1 });
-
-        if (priceMinUSD !== null || priceMaxUSD !== null) {
-            products = products.filter((p) => {
-                const v = comparablePriceUSD(p);
-                if (priceMinUSD !== null && v < priceMinUSD) return false;
-                if (priceMaxUSD !== null && v > priceMaxUSD) return false;
-                return true;
-            });
-        }
-
-        const total = products.length;
-        products = products.slice(skip, skip + parseInt(limit));
-
-        res.status(200).json({
-            msg: 'Products fetched successfully',
-            products,
-            pagination: {
-                total,
-                page: parseInt(page),
-                pages: Math.ceil(total / limit)
-            }
-        });
-    } catch (error) {
-        console.error('Get subdomain products error:', error);
-        if (error.code === 'BUYER_LOCATION_INVALID') return res.status(400).json({ msg: error.message, code: error.code });
-        res.status(500).json({ msg: 'Server error while fetching products' });
-    }
+    if (!req.subdomainStore?.storeSlug) return res.status(404).json({ msg: 'Store not found' });
+    // Use the same filtering, currency, visibility and pagination contract as
+    // the regular storefront, while preserving the middleware-resolved tenant.
+    const request = Object.create(req);
+    request.params = { ...req.params, slug: req.subdomainStore.storeSlug };
+    return require('./storeController').getStoreProducts(request, res);
 };
 
 // ============================

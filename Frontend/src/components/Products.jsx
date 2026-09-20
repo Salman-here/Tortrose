@@ -15,33 +15,11 @@ import SEOHead from './common/SEOHead'
 import { PRESET_CATEGORIES, isPresetCategory } from '../utils/categories'
 import { trackSearch } from '../utils/tiktokPixel'
 import BuyerLocationSelector from './common/BuyerLocationSelector'
+import { getPriceFilterMax, parseQueryParams, filterValues, filterValueSelected, toggleFilterValue } from '../utils/catalogFilterQuery'
 
 const PRODUCTS_PER_PAGE = 24
 const PRODUCTS_CACHE_KEY = 'rozare:last-products-response'
 const DEFAULT_OTHER_BRANDS_FILTER = '__other_brands__'
-const PRICE_FILTER_MAX = Object.freeze({
-  USD: 5000,
-  PKR: 1500000,
-  EUR: 5000,
-  GBP: 5000,
-})
-
-const getPriceFilterMax = (currency) => PRICE_FILTER_MAX[currency] || PRICE_FILTER_MAX.USD
-
-const parseQueryParams = (search, activeCurrency) => {
-  const params = new URLSearchParams(search)
-  const queryCurrency = String(params.get('currency') || '').trim().toUpperCase()
-  const priceFilterMax = getPriceFilterMax(activeCurrency)
-  const savedRangeBelongsToCurrency = !queryCurrency || queryCurrency === activeCurrency
-  return {
-    categories: params.getAll('categories'),
-    brands: params.getAll('brands'),
-    search: params.get('search') || '',
-    priceRange: params.get('priceRange') && savedRangeBelongsToCurrency
-      ? params.get('priceRange').split(',')
-      : ['0', String(priceFilterMax)]
-  }
-}
 
 const readProductsCache = () => {
   try {
@@ -70,14 +48,13 @@ function Products() {
   const [sortBy, setSortBy] = useState('relevance')
   const [sortOrder, setSortOrder] = useState('desc')
 
-  const priceRangeRef = useRef(null)
   const navigate = useNavigate()
   const location = useLocation()
   const { currency, getCurrencySymbol } = useCurrency()
   const { appendLocationParams, locationQueryString } = useBuyerLocation()
   const priceFilterMax = getPriceFilterMax(currency)
 
-  const { register, reset, watch, setValue } = useForm({
+  const { reset, watch, setValue } = useForm({
     defaultValues: { categories: [], brands: [], priceRange: ['0', String(priceFilterMax)] }
   })
 
@@ -95,6 +72,10 @@ function Products() {
   const currencyRef = useRef(currency)
   const fetchProductsRef = useRef(null)
   const initialFetchDone = useRef(false)
+  const productRequestRef = useRef(0), filterRequestRef = useRef(0)
+  const lastWrittenQueryRef = useRef(null), urlObservedRef = useRef(false)
+  const previousLocationRef = useRef(locationQueryString)
+  useEffect(() => () => { productRequestRef.current += 1; filterRequestRef.current += 1 }, [])
 
   const serializeFilters = useCallback(() => {
     const f = filtersRef.current
@@ -121,11 +102,14 @@ function Products() {
   }, [appendLocationParams, currency, priceFilterMax])
 
   const fetchProducts = useCallback(async () => {
+    const requestId = ++productRequestRef.current
     setLoading(true); setError(null)
     const query = serializeFilters()
     try {
+      lastWrittenQueryRef.current = query
       navigate(query ? `${location.pathname}?${query}` : location.pathname, { replace: true })
       const res = await axios.get(`${import.meta.env.VITE_API_URL}api/products/get-products?${query}`)
+      if (requestId !== productRequestRef.current) return
       setProducts(res.data.products || [])
       setTotalPages(res.data.pagination?.totalPages || 1)
       setTotalProducts(res.data.pagination?.totalProducts || 0)
@@ -138,6 +122,7 @@ function Products() {
         })
       }
     } catch (err) {
+      if (requestId !== productRequestRef.current) return
       console.log(err)
       const cached = readProductsCache()
       if (cached?.queryKey === query && cached?.products?.length) {
@@ -150,26 +135,28 @@ function Products() {
         setError(err)
       }
     }
-    finally { setLoading(false) }
+    finally { if (requestId === productRequestRef.current) setLoading(false) }
   }, [serializeFilters, navigate, location.pathname])
   fetchProductsRef.current = fetchProducts
 
   const fetchFilters = useCallback(async () => {
+    const requestId = ++filterRequestRef.current
     try {
       const params = new URLSearchParams()
       appendLocationParams(params)
       const suffix = params.toString()
       const res = await axios.get(`${import.meta.env.VITE_API_URL}api/products/get-filters${suffix ? `?${suffix}` : ''}`)
+      if (requestId !== filterRequestRef.current) return
       setCategories(res.data.categories || [])
       setBrands(res.data.brands || [])
       setOtherBrandsCount(res.data.otherBrandsCount || 0)
       setOtherBrandsValue(res.data.brandFilter?.otherValue || DEFAULT_OTHER_BRANDS_FILTER)
-    } catch (error) { setCategories([]); setBrands([]); setOtherBrandsCount(0) }
+    } catch (error) { if (requestId === filterRequestRef.current) { setCategories([]); setBrands([]); setOtherBrandsCount(0) } }
   }, [appendLocationParams])
 
   useEffect(() => {
     searchRef.current = search
-    if (initialFetchDone.current && search === '') fetchProductsRef.current?.()
+    if (initialFetchDone.current && search === '') { currentPageRef.current = 1; setCurrentPage(1); fetchProductsRef.current?.() }
   }, [search])
 
   const serializedFilters = JSON.stringify(filters || {})
@@ -179,6 +166,7 @@ function Products() {
     filtersRef.current = nextFilters
     if (initialFetchDone.current && prev !== serializedFilters) {
       setCurrentPage(1) // Reset to page 1 when filters change
+      currentPageRef.current = 1
       fetchProductsRef.current?.()
     }
   }, [serializedFilters])
@@ -197,9 +185,11 @@ function Products() {
     fetchFilters()
     const parsedFilters = parseQueryParams(location.search, currency)
     const params = new URLSearchParams(location.search)
-    const parsedPage = Math.max(1, parseInt(params.get('page'), 10) || 1)
-    const parsedSortBy = params.get('sortBy') || 'relevance'
-    const parsedSortOrder = params.get('sortOrder') || 'desc'
+    const scope = new URLSearchParams(locationQueryString)
+    const scopeChanged = [...params.keys()].filter(key => key.startsWith('buyer')).some(key => params.get(key) !== scope.get(key))
+    const parsedPage = scopeChanged ? 1 : Math.max(1, parseInt(params.get('page'), 10) || 1)
+    const parsedSortBy = ['relevance', 'price', 'rating', 'newest', 'popular', 'sales'].includes(params.get('sortBy')) ? params.get('sortBy') : 'relevance'
+    const parsedSortOrder = params.get('sortOrder') === 'asc' ? 'asc' : 'desc'
     filtersRef.current = parsedFilters
     searchRef.current = parsedFilters.search || ''
     currentPageRef.current = parsedPage
@@ -218,7 +208,25 @@ function Products() {
   }, [])
 
   useEffect(() => {
-    if (!initialFetchDone.current) return
+    if (!urlObservedRef.current) { urlObservedRef.current = true; return }
+    const query = location.search.replace(/^\?/, '')
+    if (!initialFetchDone.current || query === lastWrittenQueryRef.current) return
+    const parsed = parseQueryParams(location.search, currency)
+    const params = new URLSearchParams(query)
+    const page = Math.max(1, parseInt(params.get('page'), 10) || 1)
+    const field = ['relevance', 'price', 'rating', 'newest', 'popular', 'sales'].includes(params.get('sortBy')) ? params.get('sortBy') : 'relevance'
+    const order = params.get('sortOrder') === 'asc' ? 'asc' : 'desc'
+    filtersRef.current = parsed; searchRef.current = parsed.search; currentPageRef.current = page
+    sortByRef.current = field; sortOrderRef.current = order
+    reset(parsed); setSearch(parsed.search); setCurrentPage(page); setSortBy(field); setSortOrder(order)
+    fetchProductsRef.current?.()
+    // URL changes from navigation are distinct from this component's own writes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.search])
+
+  useEffect(() => {
+    if (!initialFetchDone.current || previousLocationRef.current === locationQueryString) return
+    previousLocationRef.current = locationQueryString
     setCurrentPage(1)
     currentPageRef.current = 1
     fetchFilters()
@@ -237,7 +245,6 @@ function Products() {
     }
     filtersRef.current = nextFilters
     setValue('priceRange', nextFilters.priceRange, { shouldDirty: false })
-    if (priceRangeRef.current) priceRangeRef.current.value = 0
     setCurrentPage(1)
     currentPageRef.current = 1
     fetchProducts()
@@ -263,6 +270,19 @@ function Products() {
     setSortBy(sortField)
     setSortOrder(order || 'desc')
     setCurrentPage(1) // Reset to page 1 when sorting changes
+    currentPageRef.current = 1; sortByRef.current = sortField; sortOrderRef.current = order || 'desc'
+  }
+
+  const submitSearch = () => {
+    currentPageRef.current = 1; setCurrentPage(1); searchRef.current = search.trim()
+    fetchProductsRef.current?.()
+  }
+  const resetAllFilters = () => {
+    const defaults = { categories: [], brands: [], search: '', priceRange: ['0', String(priceFilterMax)] }
+    filtersRef.current = defaults; searchRef.current = ''; currentPageRef.current = 1
+    sortByRef.current = 'relevance'; sortOrderRef.current = 'desc'
+    reset(defaults); setSearch(''); setCurrentPage(1); setSortBy('relevance'); setSortOrder('desc')
+    fetchProductsRef.current?.()
   }
 
   if (error) return (
@@ -279,13 +299,15 @@ function Products() {
   )
 
   const filterCategories = filters.categories || []
-  const filterBrands = filters.brands || []
+  const filterBrands = filterValues(filters.brands)
   const filterPriceRange = filters.priceRange || ['0', String(priceFilterMax)]
 
   const activeFilterCount = filterCategories.length + filterBrands.length +
     (filterPriceRange[0] !== '0' || String(filterPriceRange[1]) !== String(priceFilterMax) ? 1 : 0)
 
-  const FilterSidebarContent = ({ onClose }) => (
+  // Render function, not a new component type on every keystroke: this keeps
+  // search focus and slider state stable while the parent filter state changes.
+  const renderFilterSidebarContent = ({ onClose }) => (
     <div className='flex flex-col gap-6 p-6'>
       <div className='flex justify-between items-center'>
         <div className='flex items-center gap-2'>
@@ -309,7 +331,7 @@ function Products() {
       {/* Search */}
       <div>
         <label className='block text-xs font-semibold uppercase tracking-wider mb-2' style={{ color: 'hsl(var(--muted-foreground))' }}>Search</label>
-        <form onSubmit={(e) => { e.preventDefault(); fetchProducts(); onClose && onClose(); }}>
+        <form onSubmit={(e) => { e.preventDefault(); submitSearch(); onClose && onClose(); }}>
           <input className='glass-input' placeholder='Search products...' type='text' value={search} onChange={(e) => setSearch(e.target.value)} />
         </form>
       </div>
@@ -392,7 +414,7 @@ function Products() {
             {brands.map(brand => (
               <label key={brand} className='glass-checkbox-label flex items-center gap-3 cursor-pointer py-2 px-3 rounded-xl transition-all hover:bg-white/10'>
                 <span className='glass-checkbox-box relative w-5 h-5 rounded-lg border border-white/25 bg-white/8 backdrop-blur-sm flex items-center justify-center shrink-0 transition-all'>
-                  <input type='checkbox' value={brand} {...register('brands')}
+                  <input type='checkbox' value={brand} checked={filterValueSelected(filterBrands, brand)} onChange={() => setValue('brands', toggleFilterValue(filterBrands, brand), { shouldDirty: true })}
                     className='absolute inset-0 opacity-0 cursor-pointer peer' />
                   <svg className='w-3 h-3 hidden peer-checked:block' style={{ color: 'hsl(200, 80%, 55%)' }} viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                     <polyline points="2 6 5 9 10 3" />
@@ -404,7 +426,7 @@ function Products() {
             {otherBrandsCount > 0 && (
               <label className='glass-checkbox-label flex items-center gap-3 cursor-pointer py-2 px-3 rounded-xl transition-all hover:bg-white/10'>
                 <span className='glass-checkbox-box relative w-5 h-5 rounded-lg border border-white/25 bg-white/8 backdrop-blur-sm flex items-center justify-center shrink-0 transition-all'>
-                  <input type='checkbox' value={otherBrandsValue} {...register('brands')}
+                  <input type='checkbox' value={otherBrandsValue} checked={filterValueSelected(filterBrands, otherBrandsValue)} onChange={() => setValue('brands', toggleFilterValue(filterBrands, otherBrandsValue), { shouldDirty: true })}
                     className='absolute inset-0 opacity-0 cursor-pointer peer' />
                   <svg className='w-3 h-3 hidden peer-checked:block' style={{ color: 'hsl(200, 80%, 55%)' }} viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                     <polyline points="2 6 5 9 10 3" />
@@ -421,15 +443,15 @@ function Products() {
       {/* Price Range */}
       <div>
         <label className='block text-xs font-semibold uppercase tracking-wider mb-3' style={{ color: 'hsl(var(--muted-foreground))' }}>Price Range</label>
-        <input type='range' min={0} max={priceFilterMax} defaultValue={0}
-          {...register('priceRange')} ref={priceRangeRef}
+        <input type='range' min={0} max={priceFilterMax} value={Number(filterPriceRange[0]) || 0}
+          aria-label='Minimum price'
           onChange={(e) => setValue('priceRange', [e.target.value, String(priceFilterMax)])}
           className='w-full h-2 rounded-full appearance-none cursor-pointer accent-indigo-600'
           style={{ background: 'rgba(255,255,255,0.15)' }}
         />
         <div className='flex justify-between mt-2'>
           <span className='tag-pill text-xs font-semibold'>{getCurrencySymbol()}{filterPriceRange[0]} {currency}</span>
-          <span className='tag-pill text-xs font-semibold'>{getCurrencySymbol()}{filterPriceRange[1]} {currency}</span>
+          <span className='tag-pill text-xs font-semibold'>{Number(filterPriceRange[0]) === 0 && String(filterPriceRange[1]) === String(priceFilterMax) ? 'No price limit' : `${getCurrencySymbol()}${filterPriceRange[1]} ${currency}`}</span>
         </div>
       </div>
 
@@ -447,12 +469,7 @@ function Products() {
 
       {/* Reset Button */}
       <button
-        onClick={() => {
-          reset({ categories: [], brands: [], search: '', priceRange: ['0', String(priceFilterMax)] })
-          setSearch('')
-          setCurrentPage(1)
-          if (priceRangeRef.current) priceRangeRef.current.value = 0
-        }}
+        onClick={resetAllFilters}
         className='w-full py-2.5 rounded-xl glass-button font-semibold text-sm transition-transform active:scale-[0.97] hover:scale-[1.02]' style={{ color: 'hsl(var(--primary))' }}>
         Reset All Filters
       </button>
@@ -541,7 +558,7 @@ function Products() {
                 borderRadius: '24px',
                 boxShadow: '0 20px 50px -12px rgba(0,0,0,0.45)',
               }}>
-              <FilterSidebarContent onClose={() => setIsFilterOpen(false)} />
+              {renderFilterSidebarContent({ onClose: () => setIsFilterOpen(false) })}
             </motion.aside>
           </>
         )}
@@ -550,7 +567,7 @@ function Products() {
 
       {/* Desktop Filter Sidebar */}
       <aside className='hidden lg:block m-5 glass-panel w-72 shrink-0 self-start sticky top-24 overflow-y-auto max-h-[calc(100vh-7rem)] filter-sb'>
-        <FilterSidebarContent onClose={null} />
+        {renderFilterSidebarContent({ onClose: null })}
       </aside>
 
       {/* Product Grid */}
@@ -574,7 +591,7 @@ function Products() {
         <div className='mb-6 mt-8 flex flex-col gap-4'>
           {/* Product search */}
           <form
-            onSubmit={(e) => { e.preventDefault(); fetchProducts(); }}
+            onSubmit={(e) => { e.preventDefault(); submitSearch(); }}
             className='relative w-full'
           >
             <Search size={18} className='absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none' style={{ color: 'hsl(var(--muted-foreground))' }} />

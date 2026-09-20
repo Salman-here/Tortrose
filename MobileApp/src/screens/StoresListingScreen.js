@@ -3,7 +3,7 @@
  * With filter sheet (sort + verified-only) for full feature parity with web.
  */
 
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { View, Text, FlatList, StyleSheet, TouchableOpacity, TextInput, RefreshControl, Modal, ScrollView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -11,7 +11,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import api from '../config/api';
 import { useAuth } from '../contexts/AuthContext';
 import StoreCard from '../components/common/StoreCard';
-import { ProductCardSkeleton } from '../components/common/Skeleton';
+import { StoreGridSkeleton } from '../components/common/Skeleton';
 import { EmptyStores, EmptySearch } from '../components/common/EmptyState';
 import GlassBackground from '../components/common/GlassBackground';
 import GlassPanel from '../components/common/GlassPanel';
@@ -51,7 +51,10 @@ export default function StoresListingScreen({ navigation }) {
   const { buyerLocation, locationKey, updateBuyerLocation } = useBuyerLocation();
   const [locationDraft, setLocationDraft] = useState(buyerLocation);
   const [savingLocation, setSavingLocation] = useState(false);
+  const [filterError, setFilterError] = useState('');
   const requestRef = useRef(0);
+  const baseLoadingRef = useRef(false), appendLoadingRef = useRef(false);
+  const [loadError, setLoadError] = useState(false), [loadMoreError, setLoadMoreError] = useState(false);
   const previousLocationRef = useRef(locationKey);
   const [stores, setStores] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -65,9 +68,10 @@ export default function StoresListingScreen({ navigation }) {
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [sortBy, setSortBy] = useState('newest');
   const [showFilters, setShowFilters] = useState(false);
-  useEffect(() => { if (showFilters) setLocationDraft(buyerLocation); }, [showFilters]);
   const [verifiedOnly, setVerifiedOnly] = useState(false);
   const [minTrust, setMinTrust] = useState(0);
+  const [optionsDraft, setOptionsDraft] = useState({ sortBy: 'newest', verifiedOnly: false, minTrust: 0 });
+  useEffect(() => { if (showFilters) { setLocationDraft(buyerLocation); setOptionsDraft({ sortBy, verifiedOnly, minTrust }); } }, [showFilters]);
   const [typeFilter, setTypeFilter] = useState('all'); // all | brand | store
 
   const STORES_PER_PAGE = 12; // matches website
@@ -79,12 +83,17 @@ export default function StoresListingScreen({ navigation }) {
   }, [searchQuery]);
 
   const fetchStores = useCallback(async (pageNum = 1, append = false) => {
+    if (append && (baseLoadingRef.current || appendLoadingRef.current)) return;
+    if (append) { appendLoadingRef.current = true; setLoadingMore(true); }
+    else { baseLoadingRef.current = true; appendLoadingRef.current = false; setLoadingMore(false); setIsLoading(true); setStores([]); }
+    setLoadError(false); setLoadMoreError(false);
     const requestId = ++requestRef.current;
-    if (append) setLoadingMore(true);
     try {
       const params = new URLSearchParams({ sort: sortBy, page: String(pageNum), limit: String(STORES_PER_PAGE) });
       if (typeFilter !== 'all') params.set('type', typeFilter);
       if (debouncedSearch) params.set('search', debouncedSearch);
+      if (verifiedOnly) params.set('verifiedOnly', 'true');
+      if (minTrust > 0) params.set('minTrust', String(minTrust));
       const res = await api.get(`/api/stores/all?${params.toString()}`);
       if (requestId !== requestRef.current) return;
       const newStores = res.data.stores || [];
@@ -100,54 +109,57 @@ export default function StoresListingScreen({ navigation }) {
       setTotalStores(res.data.pagination?.total || newStores.length);
       setTotalPages(Math.max(1, res.data.pagination?.pages || 1));
       setPage(pageNum);
-    } catch (e) { console.error('Error fetching stores:', e); }
-    finally { if (requestId === requestRef.current) { setIsLoading(false); setRefreshing(false); setLoadingMore(false); } }
-  }, [sortBy, typeFilter, debouncedSearch, locationKey]);
+    } catch (e) {
+      if (requestId !== requestRef.current) return;
+      console.error('Error fetching stores:', e);
+      if (append) setLoadMoreError(true);
+      else { setLoadError(true); setTotalStores(0); setTotalPages(1); }
+    } finally {
+      if (requestId === requestRef.current) { baseLoadingRef.current = false; appendLoadingRef.current = false; setIsLoading(false); setRefreshing(false); setLoadingMore(false); }
+    }
+  }, [sortBy, typeFilter, debouncedSearch, locationKey, verifiedOnly, minTrust]);
 
   // Refetch from page 1 whenever server-side filters change
   useEffect(() => {
+    if (savingLocation) return;
     if (previousLocationRef.current !== locationKey) {
       previousLocationRef.current = locationKey;
       setStores([]); setPage(1); setTotalStores(0); setIsLoading(true);
     }
     fetchStores(1, false);
     return () => { requestRef.current += 1; };
-  }, [fetchStores, locationKey]);
+  }, [fetchStores, locationKey, savingLocation]);
 
   const hasMore = page < totalPages;
   const loadMore = useCallback(() => {
-    if (!loadingMore && !isLoading && hasMore) fetchStores(page + 1, true);
-  }, [loadingMore, isLoading, hasMore, page, fetchStores]);
+    if (!loadingMore && !isLoading && !loadMoreError && hasMore) fetchStores(page + 1, true);
+  }, [loadingMore, isLoading, loadMoreError, hasMore, page, fetchStores]);
 
   const onRefresh = useCallback(() => { setRefreshing(true); fetchStores(1, false); }, [fetchStores]);
-  const filteredStores = useMemo(() => {
-    // Search + type are server-side now; keep the extra client-side filters
-    return filterStores(stores, { query: '', verifiedOnly, minTrust });
-  }, [stores, verifiedOnly, minTrust]);
+  // Refine before server pagination, so matches and totals cover the catalog.
+  const filteredStores = stores;
 
   const counts = storeCounts;
 
   const activeFilterCount = (verifiedOnly ? 1 : 0) + (minTrust > 0 ? 1 : 0) + (sortBy !== 'newest' ? 1 : 0);
 
   const resetFilters = () => { setVerifiedOnly(false); setMinTrust(0); setSortBy('newest'); };
-
-  if (isLoading) return (
-    <GlassBackground>
-      <SafeAreaView style={styles.container} edges={Platform.OS === 'android' ? [] : ['top']}>
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', padding: spacing.sm, paddingTop: spacing.xl }}>
-          {[0,1,2,3,4,5].map((i) => (
-            <View key={i} style={{ width: '50%', padding: spacing.xs }}><ProductCardSkeleton /></View>
-          ))}
-        </View>
-      </SafeAreaView>
-    </GlassBackground>
-  );
+  const applyFilters = async () => {
+    if (savingLocation || !shoppingLocationIsValid(locationDraft)) return;
+    setSavingLocation(true); setFilterError('');
+    try {
+      await updateBuyerLocation(locationDraft);
+      setVerifiedOnly(optionsDraft.verifiedOnly); setMinTrust(optionsDraft.minTrust); setSortBy(optionsDraft.sortBy);
+      setShowFilters(false);
+    } catch (_) { setFilterError('Could not apply the shopping location. Please try again.'); }
+    finally { setSavingLocation(false); }
+  };
 
   return (
     <GlassBackground>
       <SafeAreaView style={styles.container} edges={Platform.OS === 'android' ? [] : ['top']}>
         <FlatList
-          data={filteredStores}
+          data={isLoading ? [] : filteredStores}
           keyExtractor={(item) => item._id}
           numColumns={2}
           columnWrapperStyle={styles.row}
@@ -199,7 +211,7 @@ export default function StoresListingScreen({ navigation }) {
                         <Ionicons name={t.icon} size={13} color={active ? '#fff' : palette.colors.primary} />
                         <Text style={[styles.typeTabText, active && styles.typeTabTextActive]}>{t.label}</Text>
                         <View style={[styles.typeTabCount, active && styles.typeTabCountActive]}>
-                          <Text style={[styles.typeTabCountText, active && { color: '#fff' }]}>{counts[t.k]}</Text>
+                          <Text style={[styles.typeTabCountText, active && { color: '#fff' }]}>{isLoading || loadError ? '—' : counts[t.k]}</Text>
                         </View>
                       </TouchableOpacity>
                     );
@@ -260,25 +272,21 @@ export default function StoresListingScreen({ navigation }) {
               )}
 
               <View style={styles.resultsRow}>
-                <Text style={styles.resultsText}>{searchQuery ? 'Found ' : ''}<Text style={styles.resultsCount}>{totalStores}</Text> {totalStores === 1 ? 'store' : 'stores'}{searchQuery ? '' : ' available'}</Text>
+                <Text style={styles.resultsText}>{isLoading ? 'Loading stores…' : loadError ? 'Stores unavailable' : `${debouncedSearch ? 'Found ' : ''}${totalStores} ${totalStores === 1 ? 'store' : 'stores'}${debouncedSearch ? '' : ' available'}`}</Text>
               </View>
             </View>
           }
           renderItem={({ item, index }) => (
             <View style={styles.cardWrapper}>
-              <StoreCard store={{ _id: item._id, storeName: item.storeName, storeSlug: item.storeSlug, sellerType: item.sellerType || 'store', description: item.storeDescription || item.description, logo: item.storeLogo || item.logo, banner: item.storeBanner || item.banner, trustCount: item.trustCount || 0, verification: { isVerified: item.isVerified || item.verification?.isVerified }, productCount: item.productCount || 0, views: item.views || 0, ratingAverage: item.ratingAverage || 0, ratingCount: item.ratingCount || 0 }} index={index} showTrustButton={!!currentUser} showDescription={true} showStats={true} />
+              <StoreCard animateEntrance={false} store={{ _id: item._id, storeName: item.storeName, storeSlug: item.storeSlug, sellerType: item.sellerType || 'store', description: item.storeDescription || item.description, logo: item.storeLogo || item.logo, banner: item.storeBanner || item.banner, trustCount: item.trustCount || 0, verification: { isVerified: item.isVerified || item.verification?.isVerified }, productCount: item.productCount || 0, views: item.views || 0, ratingAverage: item.ratingAverage || 0, ratingCount: item.ratingCount || 0 }} index={index} showTrustButton={!!currentUser} showDescription={true} showStats={true} />
             </View>
           )}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[palette.colors.primary]} tintColor={palette.colors.primary} />}
-          ListEmptyComponent={searchQuery ? <EmptySearch query={searchQuery} onClear={() => setSearchQuery('')} /> : <EmptyStores onRefresh={onRefresh} />}
+          ListEmptyComponent={isLoading ? <StoreGridSkeleton /> : loadError ? <View style={styles.footerLoading}><Text style={styles.resultsText}>Could not load stores. Check your connection and retry.</Text><TouchableOpacity accessibilityRole="button" accessibilityLabel="Retry loading stores" onPress={onRefresh} style={styles.loadMoreBtn}><Text style={styles.resultsText}>Retry</Text></TouchableOpacity></View> : debouncedSearch ? <EmptySearch query={debouncedSearch} onClear={() => setSearchQuery('')} /> : <EmptyStores onRefresh={onRefresh} />}
           onEndReached={loadMore}
           onEndReachedThreshold={0.4}
           ListFooterComponent={
-            loadingMore ? (
-              <View style={styles.footerLoading}>
-                <Text style={styles.footerLoadingText}>Loading more stores...</Text>
-              </View>
-            ) : hasMore ? (
+            isLoading || loadError ? null : loadingMore ? <StoreGridSkeleton count={2} /> : loadMoreError ? <TouchableOpacity accessibilityRole="button" accessibilityLabel="Retry loading more stores" onPress={() => fetchStores(page + 1, true)} style={styles.loadMoreBtn}><Text style={styles.resultsText}>Could not load more stores. Tap to retry.</Text></TouchableOpacity> : hasMore ? (
               <TouchableOpacity style={styles.loadMoreBtn} onPress={loadMore} activeOpacity={0.85}>
                 <LinearGradient colors={palette.gradients.cta} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
                 <Text style={styles.loadMoreText}>Load More Stores</Text>
@@ -309,9 +317,9 @@ export default function StoresListingScreen({ navigation }) {
                 <Text style={styles.sectionLabel}>Sort by</Text>
                 <View style={styles.optionGrid}>
                   {SORT_OPTIONS.map((opt) => {
-                    const active = sortBy === opt.key;
+                    const active = optionsDraft.sortBy === opt.key;
                     return (
-                      <TouchableOpacity key={opt.key} style={[styles.optionTile, active && styles.optionTileActive]} onPress={() => setSortBy(opt.key)} activeOpacity={0.85}>
+                      <TouchableOpacity key={opt.key} accessibilityRole="radio" accessibilityLabel={opt.label} accessibilityState={{ checked: active }} disabled={savingLocation} style={[styles.optionTile, active && styles.optionTileActive]} onPress={() => setOptionsDraft(previous => ({ ...previous, sortBy: opt.key }))} activeOpacity={0.85}>
                         <Ionicons name={opt.icon} size={18} color={active ? '#fff' : palette.colors.primary} />
                         <Text style={[styles.optionTileText, active && styles.optionTileTextActive]}>{opt.label}</Text>
                       </TouchableOpacity>
@@ -323,9 +331,9 @@ export default function StoresListingScreen({ navigation }) {
                 <Text style={styles.sectionLabel}>Trust threshold</Text>
                 <View style={styles.presetRow}>
                   {[0, 5, 10, 50, 100].map((n) => {
-                    const active = minTrust === n;
+                    const active = optionsDraft.minTrust === n;
                     return (
-                      <TouchableOpacity key={n} style={[styles.preset, active && styles.presetActive]} onPress={() => setMinTrust(n)} activeOpacity={0.85}>
+                      <TouchableOpacity key={n} accessibilityRole="radio" accessibilityLabel={n === 0 ? 'Any trust count' : `${n}+ trusters`} accessibilityState={{ checked: active }} disabled={savingLocation} style={[styles.preset, active && styles.presetActive]} onPress={() => setOptionsDraft(previous => ({ ...previous, minTrust: n }))} activeOpacity={0.85}>
                         <Text style={[styles.presetText, active && styles.presetTextActive]}>{n === 0 ? 'Any' : `${n}+`}</Text>
                       </TouchableOpacity>
                     );
@@ -333,7 +341,7 @@ export default function StoresListingScreen({ navigation }) {
                 </View>
 
                 {/* Verified toggle */}
-                <TouchableOpacity style={styles.toggleRow} onPress={() => setVerifiedOnly(!verifiedOnly)} activeOpacity={0.85}>
+                <TouchableOpacity accessibilityRole="switch" accessibilityLabel="Verified Stores Only" accessibilityState={{ checked: optionsDraft.verifiedOnly }} disabled={savingLocation} style={styles.toggleRow} onPress={() => setOptionsDraft(previous => ({ ...previous, verifiedOnly: !previous.verifiedOnly }))} activeOpacity={0.85}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm, flex: 1 }}>
                     <Ionicons name="shield-checkmark" size={18} color={palette.colors.info} />
                     <View>
@@ -341,18 +349,19 @@ export default function StoresListingScreen({ navigation }) {
                       <Text style={styles.toggleSubLabel}>Show only verified merchants</Text>
                     </View>
                   </View>
-                  <View style={[styles.switch, verifiedOnly && styles.switchActive]}>
-                    <View style={[styles.switchKnob, verifiedOnly && styles.switchKnobActive]} />
+                  <View style={[styles.switch, optionsDraft.verifiedOnly && styles.switchActive]}>
+                    <View style={[styles.switchKnob, optionsDraft.verifiedOnly && styles.switchKnobActive]} />
                   </View>
                 </TouchableOpacity>
               </ScrollView>
 
               {/* Footer */}
+              {!!filterError && <Text accessibilityRole="alert" style={{ color: palette.colors.error }}>{filterError}</Text>}
               <View style={styles.sheetFooter}>
-                <TouchableOpacity style={styles.resetBtn} onPress={resetFilters} activeOpacity={0.85}>
+                <TouchableOpacity style={styles.resetBtn} disabled={savingLocation} onPress={() => { setOptionsDraft({ sortBy: 'newest', minTrust: 0, verifiedOnly: false }); setLocationDraft(buyerLocation); setFilterError(''); }} activeOpacity={0.85}>
                   <Text style={styles.resetBtnText}>Reset</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.applyBtn} disabled={savingLocation || !shoppingLocationIsValid(locationDraft)} onPress={async () => { if (savingLocation) return; setSavingLocation(true); try { await updateBuyerLocation(locationDraft); setShowFilters(false); } finally { setSavingLocation(false); } }} activeOpacity={0.85}>
+                <TouchableOpacity accessibilityRole="button" accessibilityLabel="Apply marketplace filters" style={styles.applyBtn} disabled={savingLocation || !shoppingLocationIsValid(locationDraft)} onPress={applyFilters} activeOpacity={0.85}>
                   <Text style={styles.applyBtnText}>{savingLocation ? 'Saving…' : 'Apply filters'}</Text>
                 </TouchableOpacity>
               </View>
@@ -398,7 +407,7 @@ const buildStyles = (p) => StyleSheet.create({
   loadMoreBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.xs, marginHorizontal: spacing.lg, marginTop: spacing.md, paddingVertical: spacing.md, borderRadius: borderRadius.xl, overflow: 'hidden', shadowColor: '#0EA5E9', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.35, shadowRadius: 16, elevation: 6 },
   loadMoreText: { color: '#fff', fontSize: fontSize.md, fontWeight: fontWeight.bold },
   row: { paddingHorizontal: spacing.sm, gap: spacing.sm },
-  cardWrapper: { flex: 1, marginBottom: spacing.sm },
+  cardWrapper: { flex: 1, maxWidth: '50%', marginBottom: spacing.sm },
   typeTabsRow: { flexDirection: 'row', gap: spacing.xs, marginBottom: spacing.sm },
   typeTab: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 8, borderRadius: borderRadius.lg, backgroundColor: p.glass.bgSubtle, borderWidth: 1, borderColor: p.glass.borderSubtle },
   typeTabActive: { backgroundColor: p.colors.primary, borderColor: p.colors.primary },

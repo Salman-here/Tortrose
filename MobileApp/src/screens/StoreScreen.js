@@ -70,11 +70,12 @@ async function getStoreVisitorId() {
 export default function StoreScreen({ route, navigation }) {
   const { palette } = useTheme();
   const styles = buildStyles(palette);
-  const { formatPrice } = useCurrency();
+  const { formatPrice, currency } = useCurrency();
 
   const { currentUser } = useAuth();
   const { locationKey, selectionRequired, openLocationSelector } = useBuyerLocation();
   const storeRequestRef = useRef(0), productRequestRef = useRef(0);
+  const productQueryRef = useRef(null);
   const { cartItems } = useGlobal();
   const cartCount = Array.isArray(cartItems?.cart)
     ? cartItems.cart.reduce((total, item) => total + (item.qty || 1), 0)
@@ -89,6 +90,7 @@ export default function StoreScreen({ route, navigation }) {
   const [productPagination, setProductPagination] = useState({ total: 0, page: 1, pages: 1 });
   const [isLoading, setIsLoading] = useState(true);
   const [productsLoading, setProductsLoading] = useState(true);
+  const [productsError, setProductsError] = useState(false), [storeError, setStoreError] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [bannerError, setBannerError] = useState(false);
   const [logoError, setLogoError] = useState(false);
@@ -111,13 +113,13 @@ export default function StoreScreen({ route, navigation }) {
     return () => clearTimeout(t);
   }, [search]);
 
-  useEffect(() => { setProductPage(1); }, [debouncedSearch, activeCategory, locationKey]);
+  useEffect(() => { setProductPage(1); setActiveCategory('all'); setSearch(''); setDebouncedSearch(''); setStoreCategories([]); }, [slug]);
 
   const fetchStore = useCallback(async () => {
     if (selectionRequired) return;
     const requestId = ++storeRequestRef.current;
     if (!slug) { setIsLoading(false); return; }
-    setIsLoading(true); setStore(null); setStoreCoupons([]);
+    setIsLoading(true); setStoreError(false); setStore(null); setStoreCoupons([]);
     try {
       const res = await api.get(`/api/stores/${slug}`);
       if (requestId !== storeRequestRef.current) return;
@@ -127,7 +129,7 @@ export default function StoreScreen({ route, navigation }) {
         average: Number(res.data.store?.ratingAverage) || 0,
         count: Number(res.data.store?.ratingCount) || 0,
       });
-    } catch (error) { console.error('Error fetching store:', error); }
+    } catch (error) { if (requestId !== storeRequestRef.current) return; setStoreError(error.response?.status !== 404); console.error('Error fetching store:', error); }
     finally { if (requestId === storeRequestRef.current) { setIsLoading(false); setRefreshing(false); } }
   }, [slug, locationKey, selectionRequired]);
 
@@ -135,9 +137,10 @@ export default function StoreScreen({ route, navigation }) {
     if (selectionRequired) return;
     const requestId = ++productRequestRef.current;
     if (!slug) return;
-    setProductsLoading(true);
+    setProductsLoading(true); setProductsError(false);
     try {
       const params = new URLSearchParams({ page: String(productPage), limit: String(PRODUCTS_PER_PAGE) });
+      params.set('currency', currency);
       if (activeCategory !== 'all') params.set('categories', activeCategory);
       if (debouncedSearch) params.set('search', debouncedSearch);
       const res = await api.get(`/api/stores/${slug}/products?${params.toString()}`);
@@ -145,9 +148,9 @@ export default function StoreScreen({ route, navigation }) {
       setProducts(res.data.products || []);
       setProductPagination(res.data.pagination || { total: res.data.products?.length || 0, page: productPage, pages: 1 });
       setStoreCategories(res.data.categories || []);
-    } catch (error) { console.error('Error fetching store products:', error); }
+    } catch (error) { if (requestId !== productRequestRef.current) return; console.error('Error fetching store products:', error); setProductsError(true); setProducts([]); setProductPagination({ total: 0, page: productPage, pages: 1 }); }
     finally { if (requestId === productRequestRef.current) setProductsLoading(false); }
-  }, [slug, productPage, activeCategory, debouncedSearch, locationKey, selectionRequired]);
+  }, [slug, productPage, activeCategory, debouncedSearch, locationKey, selectionRequired, currency]);
 
   const fetchStoreCoupons = useCallback(async (sellerId) => {
     if (!sellerId || typeof sellerId !== 'string') { setStoreCoupons([]); return; }
@@ -166,7 +169,15 @@ export default function StoreScreen({ route, navigation }) {
   }, [slug]);
 
   useEffect(() => { fetchStore(); if (!selectionRequired) incrementViewCount(); return () => { storeRequestRef.current += 1; }; }, [fetchStore, incrementViewCount, selectionRequired]);
-  useEffect(() => { setProducts([]); fetchProducts(); return () => { productRequestRef.current += 1; }; }, [fetchProducts]);
+  useEffect(() => {
+    const key = JSON.stringify([slug, activeCategory, debouncedSearch, locationKey, currency]);
+    if (key !== productQueryRef.current) {
+      productQueryRef.current = key;
+      if (productPage !== 1) { setProductPage(1); return; }
+    }
+    setProducts([]); fetchProducts();
+    return () => { productRequestRef.current += 1; };
+  }, [fetchProducts]);
   useEffect(() => {
     const sellerId = getEntityId(store?.seller);
     if (sellerId) fetchStoreCoupons(sellerId);
@@ -218,8 +229,9 @@ export default function StoreScreen({ route, navigation }) {
     <GlassBackground>
       <View style={styles.center}>
         <Ionicons name="storefront-outline" size={64} color={palette.colors.textLight} />
-        <Text style={styles.notFoundTitle}>Store Not Found</Text>
-        <Text style={styles.notFoundSub}>This store may be unavailable in your selected shopping location or no longer public.</Text>
+        <Text style={styles.notFoundTitle}>{storeError ? 'Could not load store' : 'Store Not Found'}</Text>
+        <Text style={styles.notFoundSub}>{storeError ? 'Check your connection and try again.' : 'This store may be unavailable in your selected shopping location or no longer public.'}</Text>
+        {storeError && <TouchableOpacity style={styles.goBackBtn} onPress={() => { fetchStore(); fetchProducts(); }} accessibilityRole="button"><Text style={{ color: palette.colors.primary }}>Retry loading store</Text></TouchableOpacity>}
         <TouchableOpacity style={styles.goBackBtn} onPress={openLocationSelector} accessibilityRole="button"><Text style={{ color: palette.colors.primary, fontWeight: fontWeight.semibold }}>Change shopping location</Text></TouchableOpacity>
         <TouchableOpacity style={styles.goBackBtn} onPress={() => navigation.goBack()} activeOpacity={0.85}>
           <LinearGradient colors={palette.gradients.cta} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
@@ -492,7 +504,7 @@ export default function StoreScreen({ route, navigation }) {
             </View>
           </GlassPanel>
         ) : null}
-        ListEmptyComponent={productsLoading ? null : () => (
+        ListEmptyComponent={productsLoading ? <View style={styles.emptyBox}><Text style={styles.emptySub}>Loading products…</Text></View> : productsError ? <View style={styles.emptyBox}><Text style={styles.emptyTitle}>Could not load products</Text><TouchableOpacity onPress={fetchProducts} accessibilityRole="button"><Text style={styles.emptySub}>Retry loading products</Text></TouchableOpacity></View> : () => (
           <View style={styles.emptyBox}>
             <View style={styles.emptyIcon}><Ionicons name="cube-outline" size={40} color={palette.colors.textSecondary} /></View>
             <Text style={styles.emptyTitle}>{debouncedSearch || activeCategory !== 'all' ? 'No products match your filters' : 'No products yet'}</Text>

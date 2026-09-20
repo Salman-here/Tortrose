@@ -22,17 +22,18 @@ const TYPE_STYLE = {
 };
 const CARD_SHEEN = ['rgba(20,184,166,0.08)', 'rgba(14,165,233,0.025)', 'rgba(99,102,241,0.11)'];
 
-const StoreCard = ({ store, index = 0, onPress, showTrustButton = true, showDescription = true, showStats = true, compact = false, style }) => {
+const StoreCard = ({ store, index = 0, onPress, showTrustButton = true, showDescription = true, showStats = true, compact = false, animateEntrance = true, style }) => {
   const navigation = useNavigation();
   const { palette } = useTheme();
   const c = palette.colors;
   const g = palette.glass;
   const [bannerError, setBannerError] = useState(false);
   const [logoError, setLogoError] = useState(false);
-  const scaleAnim = useRef(new Animated.Value(0.95)).current;
-  const opacityAnim = useRef(new Animated.Value(0)).current;
+  const scaleAnim = useRef(new Animated.Value(animateEntrance ? 0.95 : 1)).current;
+  const opacityAnim = useRef(new Animated.Value(animateEntrance ? 0 : 1)).current;
 
   useEffect(() => {
+    if (!animateEntrance) { scaleAnim.setValue(1); opacityAnim.setValue(1); return undefined; }
     const t = setTimeout(() => {
       Animated.parallel([
         Animated.spring(scaleAnim, { toValue: 1, friction: 8, tension: 40, useNativeDriver: true }),
@@ -40,7 +41,7 @@ const StoreCard = ({ store, index = 0, onPress, showTrustButton = true, showDesc
       ]).start();
     }, index * 80);
     return () => clearTimeout(t);
-  }, [index]);
+  }, [index, animateEntrance]);
 
   if (!store) return null;
 

@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Store, Package, Eye, Share2, ChevronRight, ChevronLeft, Home, Globe, MapPin, Users, Ticket, Copy, Check, Calendar, Percent, DollarSign, Search, Tag, Star, Flag } from 'lucide-react';
@@ -39,17 +39,20 @@ const StorePage = ({ slugOverride = null }) => {
     const { slug: slugFromParams } = useParams();
     const slug = slugOverride || slugFromParams;
     const { currentUser } = useAuth();
-    const { formatPrice } = useCurrency();
+    const { formatPrice, currency } = useCurrency();
     const { appendLocationParams, locationQueryString, openLocationSelector } = useBuyerLocation();
     const [store, setStore] = useState(null);
     const [products, setProducts] = useState([]);
     const [loading, setLoading] = useState(true);
     const [productsLoading, setProductsLoading] = useState(true);
+    const [productsError, setProductsError] = useState(false);
+    const storeRequestRef = useRef(0), productRequestRef = useRef(0), productQueryRef = useRef(null);
     const [notFound, setNotFound] = useState(false);
     const [trustStatus, setTrustStatus] = useState({ isTrusted: false, trustCount: 0 });
     const [storeCoupons, setStoreCoupons] = useState([]);
     const [copiedCoupon, setCopiedCoupon] = useState(null);
     const [productSearch, setProductSearch] = useState('');
+    const [debouncedSearch, setDebouncedSearch] = useState('');
     const [selectedCategory, setSelectedCategory] = useState('all');
     const [productPage, setProductPage] = useState(1);
     const [productPagination, setProductPagination] = useState({ total: 0, page: 1, pages: 1, limit: STORE_PRODUCTS_PER_PAGE });
@@ -88,20 +91,26 @@ const StorePage = ({ slugOverride = null }) => {
         }
         fetchStore();
         incrementViewCount();
+        return () => { storeRequestRef.current += 1; };
         // Slug and buyer location own this request lifecycle; including the
         // render-created fetch functions would re-run on every render.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [slug, locationQueryString]);
 
-    useEffect(() => {
-        setProductPage(1);
-    }, [slug, locationQueryString, selectedCategory, productSearch]);
+    useEffect(() => { const timer = setTimeout(() => setDebouncedSearch(productSearch.trim()), 300); return () => clearTimeout(timer); }, [productSearch]);
+    useEffect(() => { setSelectedCategory('all'); setProductSearch(''); setDebouncedSearch(''); setProductPage(1); setStoreCategories([]); }, [slug]);
 
     useEffect(() => {
+        const key = JSON.stringify([slug, locationQueryString, selectedCategory, debouncedSearch, currency]);
+        if (key !== productQueryRef.current) {
+            productQueryRef.current = key;
+            if (productPage !== 1) { setProductPage(1); return; }
+        }
         fetchProducts();
+        return () => { productRequestRef.current += 1; };
         // The explicit query state above is the authoritative request key.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [slug, locationQueryString, productPage, selectedCategory, productSearch]);
+    }, [slug, locationQueryString, productPage, selectedCategory, debouncedSearch, currency]);
 
     useEffect(() => {
         if (store?._id) {
@@ -170,12 +179,14 @@ const StorePage = ({ slugOverride = null }) => {
     };
 
     const fetchStore = async () => {
+        const requestId = ++storeRequestRef.current;
         try {
             setLoading(true);
             const params = new URLSearchParams();
             appendLocationParams(params);
             const suffix = params.toString();
             const res = await axios.get(`${import.meta.env.VITE_API_URL}api/stores/${slug}${suffix ? `?${suffix}` : ''}`);
+            if (requestId !== storeRequestRef.current) return;
             setStore(res.data.store);
             setStoreRating({
                 average: Number(res.data.store?.ratingAverage) || 0,
@@ -183,6 +194,7 @@ const StorePage = ({ slugOverride = null }) => {
             });
             setNotFound(false);
         } catch (error) {
+            if (requestId !== storeRequestRef.current) return;
             console.error('Error fetching store:', error);
             if (error.response?.status === 404) {
                 setNotFound(true);
@@ -190,28 +202,33 @@ const StorePage = ({ slugOverride = null }) => {
                 toast.error('Failed to load store');
             }
         } finally {
-            setLoading(false);
+            if (requestId === storeRequestRef.current) setLoading(false);
         }
     };
 
     const fetchProducts = async () => {
+        const requestId = ++productRequestRef.current;
         try {
-            setProductsLoading(true);
+            setProductsLoading(true); setProductsError(false); setProducts([]);
             const params = new URLSearchParams();
             appendLocationParams(params);
             params.set('page', String(productPage));
             params.set('limit', String(STORE_PRODUCTS_PER_PAGE));
+            params.set('currency', currency);
             if (selectedCategory !== 'all') params.set('categories', selectedCategory);
-            if (productSearch.trim()) params.set('search', productSearch.trim());
+            if (debouncedSearch) params.set('search', debouncedSearch);
             const suffix = params.toString();
             const res = await axios.get(`${import.meta.env.VITE_API_URL}api/stores/${slug}/products${suffix ? `?${suffix}` : ''}`);
+            if (requestId !== productRequestRef.current) return;
             setProducts(res.data.products || []);
             setProductPagination(res.data.pagination || { total: res.data.products?.length || 0, page: productPage, pages: 1, limit: STORE_PRODUCTS_PER_PAGE });
             setStoreCategories(res.data.categories || []);
         } catch (error) {
+            if (requestId !== productRequestRef.current) return;
             console.error('Error fetching products:', error);
+            setProductsError(true); setProducts([]); setProductPagination({ total: 0, page: productPage, pages: 1 });
         } finally {
-            setProductsLoading(false);
+            if (requestId === productRequestRef.current) setProductsLoading(false);
         }
     };
 
@@ -753,6 +770,8 @@ const StorePage = ({ slugOverride = null }) => {
                         <div className="flex justify-center items-center h-64">
                             <Loader />
                         </div>
+                    ) : productsError ? (
+                        <div role="alert" className="glass-panel p-8 text-center"><p>Could not load products. Please check your connection.</p><button className="glass-button px-5 py-2 mt-4" onClick={fetchProducts}>Retry loading products</button></div>
                     ) : filteredProducts.length === 0 ? (
                         <motion.div
                             className="flex flex-col items-center justify-center h-64 glass-panel"
@@ -765,10 +784,10 @@ const StorePage = ({ slugOverride = null }) => {
                                 <Package size={40} style={{ color: 'hsl(var(--muted-foreground))' }} />
                             </div>
                             <p className="text-base font-semibold" style={{ color: themeForeground }}>
-                                {products.length === 0 ? 'No products yet' : 'No products match your filters'}
+                                {debouncedSearch || selectedCategory !== 'all' ? 'No products match your filters' : 'No products yet'}
                             </p>
                             <p className="text-sm mt-1" style={{ color: themeMuted }}>
-                                {products.length === 0 ? "This store hasn't added any products" : 'Try a different search or category'}
+                                {debouncedSearch || selectedCategory !== 'all' ? 'Try a different search or category' : "This store hasn't added any products"}
                             </p>
                         </motion.div>
                     ) : (

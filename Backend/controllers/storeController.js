@@ -1,11 +1,11 @@
 const Store = require('../models/Store');
 const User = require('../models/User');
 const crypto = require('crypto');
+const { parsePriceRange, attachComparablePrices, productFieldComparator, stableId, exactValues, escapeRegex, storeRefinements, uniqueFilterLabels: cleanList } = require('../services/catalogFilterService');
 const { initializeSubscription } = require('./subscriptionController');
 const { publicProductFilter } = require('../services/productModerationService');
 const { activeStoreQuery } = require('../services/publicCatalogService');
-const { convertAmountSync, isSupportedCurrency } = require('../services/currencyService');
-const { getProductCurrency, getProductEffectivePrice } = require('../services/productPricingService');
+const { isSupportedCurrency } = require('../services/currencyService');
 const {
     resolveRequestedCurrency,
     sellerOrderSummary,
@@ -65,8 +65,6 @@ const {
     isUserBlocked,
 } = require('../services/userBlockService');
 
-const comparablePriceUSD = (product) =>
-    convertAmountSync(getProductEffectivePrice(product), getProductCurrency(product), 'USD');
 const hideBlockedStores = async (req, stores) => {
     const blocked = blockedIdSet(await getBlockedUserIds(req));
     return blocked.size
@@ -136,12 +134,6 @@ const optionalVerificationReason = (value, fallback) => {
     return reason;
 };
 
-const cleanList = (items) => [...new Set(
-    (items || [])
-        .filter(Boolean)
-        .map(item => String(item).trim())
-        .filter(Boolean)
-)].sort((a, b) => a.localeCompare(b));
 
 // Helper function to generate unique slug
 const generateUniqueSlug = async (storeName) => {
@@ -878,7 +870,7 @@ exports.getStoreBySellerId = async (req, res) => {
 exports.getStoreProducts = async (req, res) => {
     try {
         const { slug } = req.params;
-        const { categories, brands, priceRange, search, page = 1, limit = 20 } = req.query;
+        const { categories, brands, priceRange, search, currency = 'USD', sortBy = 'newest', sortOrder = 'desc', page = 1, limit = 20 } = req.query;
         const buyerLocation = buyerLocationFromRequest(req);
         const pageNum = Math.max(1, parseInt(page, 10) || 1);
         const limitNum = Math.min(48, Math.max(1, parseInt(limit, 10) || 20));
@@ -905,28 +897,24 @@ exports.getStoreProducts = async (req, res) => {
 
         // Apply filters
         if (categories) {
-            const categoryArray = Array.isArray(categories) ? categories : [categories];
-            query.category = { $in: categoryArray };
+            query.category = { $in: exactValues(categories) };
         }
 
         if (brands) {
-            const brandArray = Array.isArray(brands) ? brands : [brands];
-            query.brand = { $in: brandArray };
+            query.brand = { $in: exactValues(brands) };
         }
 
-        // priceRange is interpreted as USD for this legacy endpoint.
-        let priceMinUSD = null;
-        let priceMaxUSD = null;
-        if (priceRange) {
-            const [min, max] = priceRange.split(',').map(Number);
-            priceMinUSD = Number.isFinite(min) ? min : null;
-            priceMaxUSD = Number.isFinite(max) ? max : null;
-        }
+        // Omitted currency retains the legacy USD contract. Modern clients
+        // provide the buyer currency so price filtering matches that unit.
+        const range = parsePriceRange(priceRange);
 
         if (search) {
             query.$or = [
-                { name: { $regex: search, $options: 'i' } },
-                { description: { $regex: search, $options: 'i' } }
+                { name: { $regex: escapeRegex(String(search).trim()), $options: 'i' } },
+                { description: { $regex: escapeRegex(String(search).trim()), $options: 'i' } },
+                { brand: { $regex: escapeRegex(String(search).trim()), $options: 'i' } },
+                { category: { $regex: escapeRegex(String(search).trim()), $options: 'i' } },
+                { tags: { $regex: escapeRegex(String(search).trim()), $options: 'i' } },
             ];
         }
 
@@ -935,17 +923,13 @@ exports.getStoreProducts = async (req, res) => {
         // Pagination
         const skip = (pageNum - 1) * limitNum;
 
-        let products = await Product.find(query)
-            .sort({ createdAt: -1 });
-
-        if (priceMinUSD !== null || priceMaxUSD !== null) {
-            products = products.filter((p) => {
-                const v = comparablePriceUSD(p);
-                if (priceMinUSD !== null && v < priceMinUSD) return false;
-                if (priceMaxUSD !== null && v > priceMaxUSD) return false;
-                return true;
-            });
+        let products = await Product.find(query).lean();
+        if (range || sortBy === 'price') {
+            products = await attachComparablePrices(products, currency);
+            products = products.filter(p => (!range || range.min === null || p._comparablePrice >= range.min)
+                && (!range || range.max === null || p._comparablePrice <= range.max));
         }
+        products.sort(productFieldComparator(sortBy, sortOrder) || productFieldComparator('newest', 'desc'));
 
         const total = products.length;
         products = products.slice(skip, skip + limitNum);
@@ -963,7 +947,7 @@ exports.getStoreProducts = async (req, res) => {
         });
     } catch (error) {
         console.error('Get store products error:', error);
-        if (error.code === 'BUYER_LOCATION_INVALID') return res.status(400).json({ msg: error.message, code: error.code });
+        if (['BUYER_LOCATION_INVALID', 'CATALOG_FILTER_INVALID'].includes(error.code)) return res.status(400).json({ msg: error.message, code: error.code });
         res.status(500).json({ msg: 'Server error while fetching store products' });
     }
 };
@@ -977,7 +961,7 @@ exports.getAllStores = async (req, res) => {
         const limitNum = Math.min(48, Math.max(1, parseInt(limit, 10) || 12));
 
         const sortStores = (items) => {
-            const sorted = [...items];
+            const sorted = [...items].sort(stableId);
             switch (sort) {
                 case 'views':
                 case 'popular':
@@ -997,13 +981,14 @@ exports.getAllStores = async (req, res) => {
                     break;
                 case 'newest':
                 default:
-                    sorted.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+                    sorted.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0) || stableId(b, a));
                     break;
             }
             return sorted;
         };
 
-        const filter = activeStoreQuery();
+        const refinements = storeRefinements(req.query);
+        const filter = activeStoreQuery(refinements);
         const searchText = String(search || '').trim();
         if (searchText) {
             const safeSearch = searchText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -1013,11 +998,12 @@ exports.getAllStores = async (req, res) => {
                 { description: { $regex: safeSearch, $options: 'i' } },
             ];
         }
-        if (type === 'store' || type === 'brand') filter.sellerType = type;
+        if (type === 'brand') filter.sellerType = 'brand';
+        if (type === 'store') filter.$and.push({ $or: [{ sellerType: 'store' }, { sellerType: null }, { sellerType: '' }] });
 
         const skip = (pageNum - 1) * limitNum;
 
-        const countBaseFilter = activeStoreQuery();
+        const countBaseFilter = activeStoreQuery(refinements);
         if (searchText && filter.$or) countBaseFilter.$or = filter.$or;
 
         const [allFilteredStores, visibleCountStores] = await Promise.all([
@@ -1085,7 +1071,7 @@ exports.getAllStores = async (req, res) => {
         });
     } catch (error) {
         console.error('Get all stores error:', error);
-        if (error.code === 'BUYER_LOCATION_INVALID') return res.status(400).json({ msg: error.message, code: error.code });
+        if (['BUYER_LOCATION_INVALID', 'CATALOG_FILTER_INVALID'].includes(error.code)) return res.status(400).json({ msg: error.message, code: error.code });
         res.status(500).json({ msg: 'Server error while fetching stores' });
     }
 };

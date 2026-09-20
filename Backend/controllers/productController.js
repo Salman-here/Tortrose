@@ -2,6 +2,7 @@
 const mongoose = require('mongoose')
 const Product = require("../models/Product")
 const Fuse = require('fuse.js')
+const { parsePriceRange, attachComparablePrices, productFieldComparator, stableId, exactValues, uniqueFilterLabels: cleanList } = require('../services/catalogFilterService');
 const {
     buildModerationFields,
     isProductBlocked,
@@ -73,9 +74,6 @@ const POPULAR_BRAND_MIN_PRODUCTS = Math.max(2, parseInt(process.env.POPULAR_BRAN
 const MAX_BULK_PRODUCT_MUTATIONS = 250;
 const CANONICAL_PRODUCT_ID_PATTERN = /^[0-9a-f]{24}$/;
 
-const cleanList = (items) => [...new Set(
-    (items || []).map(item => String(item || '').trim()).filter(Boolean)
-)].sort((a, b) => a.localeCompare(b));
 
 const PRODUCT_CURRENCY_INPUT_FIELDS = [
     'currency',
@@ -439,32 +437,6 @@ function serializeProductCurrencyMetadata(product, fallbackCurrency = 'USD') {
     };
 }
 
-const parsePriceRange = (priceRange) => {
-    if (!priceRange) return null;
-    const [min, max] = String(priceRange).split(',');
-    const minValue = Number(min);
-    const maxValue = Number(max);
-    return {
-        min: Number.isFinite(minValue) ? minValue : null,
-        max: Number.isFinite(maxValue) ? maxValue : null,
-    };
-};
-
-async function attachComparablePrices(products, targetCurrency = 'USD') {
-    const currency = normalizeCurrency(targetCurrency);
-    return Promise.all(products.map(async (product) => {
-        const plainProduct = product?.toObject ? product.toObject() : product;
-        return {
-            ...plainProduct,
-            _comparablePrice: await convertAmount(
-                requireStoredProductEffectivePrice(plainProduct),
-                requireStoredProductCurrency(plainProduct, 'USD'),
-                currency
-            ),
-        };
-    }));
-}
-
 const ADMIN_RECOVERABLE_PRODUCT_DATA_CODES = new Set([
     'PRODUCT_PRICE_INVALID',
     'PRODUCT_CURRENCY_METADATA_INVALID',
@@ -537,7 +509,7 @@ async function getBrandStats(productScope) {
     ]);
 
     const byName = new Map();
-    for (const row of rows) {
+    for (const row of rows.sort((a, b) => String(a._id || '').localeCompare(String(b._id || '')))) {
         const name = String(row._id || '').trim();
         if (!name) continue;
         const key = name.toLowerCase();
@@ -647,54 +619,12 @@ const calculateRelevanceScore = (product, sellerProductCounts, totalSellers) => 
  * Apply intelligent sorting based on sort parameter
  */
 const applySorting = (products, sortBy, sortOrder, sellerProductCounts, totalSellers) => {
-    const order = sortOrder === 'asc' ? 1 : -1;
-
-    switch(sortBy) {
-        case 'price':
-            return products.sort((a, b) => {
-                const invalidA = a?.adminDataIssue?.scope === 'money';
-                const invalidB = b?.adminDataIssue?.scope === 'money';
-                if (invalidA !== invalidB) return invalidA ? 1 : -1;
-                const priceA = a._comparablePrice ?? convertAmountSync(requireStoredProductEffectivePrice(a), requireStoredProductCurrency(a, 'USD'), 'USD');
-                const priceB = b._comparablePrice ?? convertAmountSync(requireStoredProductEffectivePrice(b), requireStoredProductCurrency(b, 'USD'), 'USD');
-                return (priceA - priceB) * order;
-            });
-
-        case 'rating':
-            return products.sort((a, b) => {
-                const scoreA = (a.rating || 0) * 100 + (a.numReviews || 0);
-                const scoreB = (b.rating || 0) * 100 + (b.numReviews || 0);
-                return (scoreB - scoreA) * order;
-            });
-
-        case 'newest':
-            return products.sort((a, b) => {
-                const dateA = new Date(a.createdAt).getTime();
-                const dateB = new Date(b.createdAt).getTime();
-                return (dateB - dateA) * order;
-            });
-
-        case 'popular':
-            return products.sort((a, b) => {
-                return ((b.views || 0) - (a.views || 0)) * order;
-            });
-
-        case 'sales':
-            return products.sort((a, b) => {
-                return ((b.totalSales || 0) - (a.totalSales || 0)) * order;
-            });
-
-        case 'relevance':
-        default:
-            // Calculate relevance scores for all products
-            const productsWithScores = products.map(product => ({
-                ...product,
-                _relevanceScore: calculateRelevanceScore(product, sellerProductCounts, totalSellers)
-            }));
-
-            // Sort by relevance score
-            return productsWithScores.sort((a, b) => b._relevanceScore - a._relevanceScore);
-    }
+    const comparator = productFieldComparator(sortBy, sortOrder);
+    if (comparator) return products.sort(comparator);
+    return products.map(product => ({
+        ...product,
+        _relevanceScore: calculateRelevanceScore(product, sellerProductCounts, totalSellers),
+    })).sort((a, b) => b._relevanceScore - a._relevanceScore || stableId(a, b));
 };
 
 const compactProductSearchText = (value) =>
@@ -723,7 +653,7 @@ const fuzzyRankProducts = (products, search) => {
         const text = compactProductSearchText(getProductSearchText(product));
         return compactSearch && (
             text.includes(compactSearch) ||
-            searchParts.every(part => text.includes(part))
+            (searchParts.length > 0 && searchParts.every(part => text.includes(part)))
         );
     });
 
@@ -797,7 +727,7 @@ exports.getProducts = async (req, res) => {
 
     try {
         let query = publicProductFilter()
-        if (categories) query.category = Array.isArray(categories) ? { $in: categories } : categories
+        if (categories) query.category = { $in: exactValues(categories) }
         const productIdFilter = parseProductIdsFilter(ids, productIds);
         if (productIdFilter.requested) {
             query._id = { $in: productIdFilter.ids };
@@ -837,11 +767,11 @@ exports.getProducts = async (req, res) => {
             if (includeOtherBrands) {
                 const popularBrandNames = await getPopularBrandNames(publicProductFilter(visibilityFilter));
                 const brandFilters = [];
-                if (selectedBrands.length) brandFilters.push({ brand: { $in: selectedBrands } });
-                brandFilters.push({ brand: { $nin: popularBrandNames } });
+                if (selectedBrands.length) brandFilters.push({ brand: { $in: exactValues(selectedBrands) } });
+                brandFilters.push({ brand: { $nin: exactValues(popularBrandNames) } });
                 query.$and.push({ $or: brandFilters });
             } else if (selectedBrands.length) {
-                query.brand = selectedBrands.length === 1 ? selectedBrands[0] : { $in: selectedBrands };
+                query.brand = { $in: exactValues(selectedBrands) };
             }
         }
 
@@ -897,7 +827,7 @@ exports.getProducts = async (req, res) => {
             }
         })
     } catch (error) {
-        if (error.code === 'BUYER_LOCATION_INVALID') return res.status(400).json({ msg: error.message, code: error.code });
+        if (['BUYER_LOCATION_INVALID', 'CATALOG_FILTER_INVALID'].includes(error.code)) return res.status(400).json({ msg: error.message, code: error.code });
         console.error('Server error while fetching products:::', error.message);
         res.status(500).json({ msg: 'Server error while fetching products.' })
     }
@@ -1876,6 +1806,7 @@ exports.getSellerProducts = async (req, res) => {
         })
     } catch (error) {
         console.error('Server error while fetching seller products:::', error.message);
+        if (error.code === 'CATALOG_FILTER_INVALID') return res.status(400).json({ msg: error.message, code: error.code });
         res.status(500).json({ msg: 'Server error while fetching seller products.' })
     }
 }
@@ -1941,6 +1872,7 @@ exports.getAdminProducts = async (req, res) => {
         })
     } catch (error) {
         console.error('Server error while fetching admin products:::', error.message)
+        if (error.code === 'CATALOG_FILTER_INVALID') return res.status(400).json({ msg: error.message, code: error.code });
         res.status(500).json({ msg: 'Server error while fetching admin products.' })
     }
 }

@@ -1,12 +1,13 @@
 /**
  * PriceRangeFilter — themed dual-input price range selector with quick presets.
  */
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useCurrency } from '../../contexts/CurrencyContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import { spacing, fontSize, fontWeight, borderRadius } from '../../styles/theme';
+import { parsePriceFilterInput, priceFilterError } from '../../utils/priceFilters';
 
 // Product filtering is performed in the buyer's selected currency. Keep the
 // useful USD buying-power bands, then localize the submitted thresholds.
@@ -17,7 +18,7 @@ const USD_PRESETS = [
   { kind: 'over', minUsd: 500, maxUsd: null },
 ];
 
-export default function PriceRangeFilter({ min, max, onChange }) {
+export default function PriceRangeFilter({ min = 0, max = null, onChange }) {
   const { palette } = useTheme();
   const colors = palette.colors;
   const styles = makeStyles(palette);
@@ -29,7 +30,8 @@ export default function PriceRangeFilter({ min, max, onChange }) {
     formatAmount,
   } = useCurrency();
   const [minStr, setMinStr] = useState(min ? String(min) : '');
-  const [maxStr, setMaxStr] = useState(max ? String(max) : '');
+  const [maxStr, setMaxStr] = useState(max == null ? '' : String(max));
+  const lastEmitted = useRef({ min, max });
   const presets = useMemo(() => USD_PRESETS.map(preset => ({
     ...preset,
     min: convertAmount(preset.minUsd, 'USD', currency),
@@ -39,14 +41,16 @@ export default function PriceRangeFilter({ min, max, onChange }) {
     && (exchangeRatesLoading || exchangeRatesFallback);
 
   useEffect(() => {
+    if (Object.is(min, lastEmitted.current.min) && Object.is(max, lastEmitted.current.max)) return;
     setMinStr(min ? String(min) : '');
-    setMaxStr(max ? String(max) : '');
+    setMaxStr(max == null ? '' : String(max));
+    lastEmitted.current = { min, max };
   }, [min, max]);
 
   const commit = (newMin, newMax) => {
-    const m = parseFloat(newMin) || 0;
-    const x = parseFloat(newMax) || 0;
-    onChange?.({ min: m, max: x > 0 ? x : null });
+    const next = { min: parsePriceFilterInput(newMin, { minimum: true }), max: parsePriceFilterInput(newMax) };
+    lastEmitted.current = next;
+    onChange?.(next);
   };
 
   const applyPreset = (preset) => {
@@ -55,29 +59,34 @@ export default function PriceRangeFilter({ min, max, onChange }) {
     commit(preset.min, preset.max);
   };
 
+  const error = priceFilterError({ min, max });
+  const amountLabel = amount => formatAmount(amount, { decimals: Number.isInteger(amount) ? 0 : 2, targetCurrency: currency });
+
   return (
     <View>
       <View style={styles.inputRow}>
         <View style={styles.inputBox}>
           <Text style={styles.inputLabel}>Min</Text>
-          <TextInput value={minStr} onChangeText={(v) => { setMinStr(v); commit(v, maxStr); }} keyboardType="numeric" placeholder="0" placeholderTextColor={colors.textLight} style={styles.input} accessibilityLabel="Minimum price" />
+          <TextInput value={minStr} onChangeText={(v) => { setMinStr(v); commit(v, maxStr); }} keyboardType="decimal-pad" placeholder="0" placeholderTextColor={colors.textLight} style={styles.input} accessibilityLabel="Minimum price" />
         </View>
         <View style={styles.dash}><Ionicons name="remove" size={16} color={colors.textSecondary} /></View>
         <View style={styles.inputBox}>
           <Text style={styles.inputLabel}>Max</Text>
-          <TextInput value={maxStr} onChangeText={(v) => { setMaxStr(v); commit(minStr, v); }} keyboardType="numeric" placeholder="Any" placeholderTextColor={colors.textLight} style={styles.input} accessibilityLabel="Maximum price" />
+          <TextInput value={maxStr} onChangeText={(v) => { setMaxStr(v); commit(minStr, v); }} keyboardType="decimal-pad" placeholder="Any" placeholderTextColor={colors.textLight} style={styles.input} accessibilityLabel="Maximum price" />
         </View>
       </View>
 
+      {!!error && <Text accessibilityRole="alert" style={{ color: colors.error, marginBottom: spacing.sm }}>{error}</Text>}
+
       <View style={styles.presetRow}>
         {presets.map((p) => {
-          const active = Number(min || 0) === Number(p.min || 0)
+          const active = !error && Number(min || 0) === Number(p.min || 0)
             && (p.max == null ? max == null : Number(max) === Number(p.max));
           const convertedLabel = p.kind === 'under'
-            ? `Under ${formatAmount(p.max, { decimals: 0, targetCurrency: currency })}`
+            ? `Up to ${amountLabel(p.max)}`
             : p.kind === 'over'
-              ? `Over ${formatAmount(p.min, { decimals: 0, targetCurrency: currency })}`
-              : `${formatAmount(p.min, { decimals: 0, targetCurrency: currency })} - ${formatAmount(p.max, { decimals: 0, targetCurrency: currency })}`;
+              ? `${amountLabel(p.min)} and above`
+              : `${amountLabel(p.min)} - ${amountLabel(p.max)}`;
           const label = `${presetIsApproximate ? '≈' : ''}${convertedLabel}`;
           return (
             <TouchableOpacity key={`${p.minUsd}-${p.maxUsd ?? 'up'}`} style={[styles.presetChip, active && styles.presetChipActive]} onPress={() => applyPreset(p)} accessibilityLabel={label}>

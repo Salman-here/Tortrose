@@ -68,6 +68,23 @@ export function CartItemSkeleton() {
   );
 }
 
+export function StoreGridSkeleton({ count = 6 }) {
+  const { palette } = useTheme();
+  return <View testID="store-grid-skeleton" accessibilityLabel="Loading stores" accessibilityState={{ busy: true }} style={skeletonStyles.grid}>
+    {Array.from({ length: count }, (_, index) => <View key={index} style={{ width: '50%', padding: 5 }} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+      <View style={{ minHeight: 224, borderRadius: 22, overflow: 'hidden', borderWidth: 1, borderColor: palette.glass.border, backgroundColor: palette.glass.bg }}>
+        <Skeleton width="100%" height={72} radius={0} />
+        <View style={{ padding: 12, gap: 9 }}>
+          <Skeleton width={42} height={42} radius={13} style={{ marginTop: -28 }} />
+          <Skeleton width="84%" height={15} /><Skeleton width="58%" height={10} />
+          <Skeleton width="96%" height={11} /><Skeleton width="75%" height={11} />
+          <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}><Skeleton width="36%" height={12} /><Skeleton width="36%" height={12} /></View>
+        </View>
+      </View>
+    </View>)}
+  </View>;
+}
+
 export function SliderSkeleton({ count = 4 }) {
   const { palette } = useTheme();
   const cardStyle = { backgroundColor: palette.glass.bg, borderColor: palette.glass.border };
