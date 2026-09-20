@@ -60,12 +60,13 @@ export default function ShoppingLocationPrompt() {
           {!selectionRequired && <button type="button" onClick={closeLocationSelector} aria-label="Close shopping location" className="glass-button p-2 rounded-full"><X size={18} /></button>}
         </div>
         <div role="radiogroup" aria-label="Shopping location mode" className="grid grid-cols-2 gap-3 mt-5">
-          {[{ mode: 'country', icon: MapPin, title: 'Country', detail: 'Stores serving your selected country' }, { mode: 'global', icon: Globe, title: 'Global', detail: 'Only stores marked Global' }].map(({ mode, icon: Icon, title, detail }) => (
+          {[{ mode: 'country', icon: MapPin, title: 'Country', detail: 'Stores serving your selected country' }, { mode: 'global', icon: Globe, title: 'Global', detail: 'Global stores + stores in your country' }].map(({ mode, icon: Icon, title, detail }) => (
             <button key={mode} type="button" role="radio" aria-checked={draft.mode === mode} onClick={() => change({ mode })} className="text-left min-w-0 rounded-2xl p-4 border-2 transition-colors" style={{ borderColor: draft.mode === mode ? 'hsl(var(--primary))' : 'hsl(var(--border))', background: draft.mode === mode ? 'hsl(var(--primary) / 0.09)' : 'transparent' }}>
               <Icon size={22} /><span className="block font-semibold mt-2">{title}</span><span className="block text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>{detail}</span>
             </button>
           ))}
         </div>
+        {draft.mode === 'global' && <p className="text-xs mt-4" style={{ color: 'hsl(var(--muted-foreground))' }}>{detecting ? 'Detecting your country to include local stores…' : recommendedLocation.country ? `Includes Global stores and stores serving ${recommendedLocation.country}.` : 'If your country cannot be identified, only Global stores are shown.'}</p>}
         {draft.mode === 'country' && <div className="mt-5 space-y-4">
           <p className="text-xs" role="status">{detecting ? 'Detecting your country… You can also choose it below.' : recommendedLocation.country ? 'Suggested country: ' + recommendedLocation.country + '. You can choose another country.' : selectionRequired ? 'We could not reliably detect your country. Choose a country below or select Global.' : 'Choose a country below.'}</p>
           <LocationAutocomplete type="country" label="Country" value={draft.country} code={draft.countryCode} placeholder="Choose a country" onSelect={option => change(shoppingCountryPatch(option))} onClear={() => change(shoppingCountryPatch(null))} />

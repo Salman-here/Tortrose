@@ -25,10 +25,10 @@ test('rejects fallback US and ignores the old unconfirmed cached US location', a
   axios.get.mockResolvedValue({ data: { country: 'US', detected: false } });
   expect(await location.resolveBuyerLocation()).toMatchObject({ mode: 'country', country: '', confirmed: false });
 });
-test('restores confirmed Global without requiring a country or calling detection', async () => {
-  mockStored.set(key, JSON.stringify({ version: 2, confirmed: true, mode: 'global', country: 'Pakistan', countryCode: 'PK' }));
-  expect(await location.getBuyerLocationParams()).toEqual({ buyerMode: 'global' });
-  expect(axios.get).not.toHaveBeenCalled();
+test('restores an old Global preference and adds the newly detected country', async () => {
+  mockStored.set(key, JSON.stringify({ version: 2, confirmed: true, mode: 'global' }));
+  expect(await location.getBuyerLocationParams()).toEqual({ buyerMode: 'global', buyerCountry: 'Pakistan', buyerCountryCode: 'PK' });
+  expect(axios.get).toHaveBeenCalledTimes(1);
 });
 test('an explicit Global choice wins a late successful country lookup', async () => {
   let finish;
@@ -37,13 +37,14 @@ test('an explicit Global choice wins a late successful country lookup', async ()
   expect(finish).toEqual(expect.any(Function));
   await location.setBuyerLocation({ mode: 'global' });
   finish({ data: { country: 'US', countryName: 'United States', detected: true } });
-  expect(await pending).toMatchObject({ mode: 'global', confirmed: true, country: '' });
+  await pending; await flush();
+  expect(location.getCachedBuyerLocation()).toMatchObject({ mode: 'global', confirmed: true, country: 'United States' });
   expect(JSON.parse(mockStored.get(key)).mode).toBe('global');
 });
 test('login suggestions do not replace an explicit choice', async () => {
   await location.setBuyerLocation({ mode: 'global' });
   await location.suggestBuyerLocation(pakistan);
-  expect(await location.getBuyerLocationParams()).toEqual({ buyerMode: 'global' });
+  expect(await location.getBuyerLocationParams()).toEqual({ buyerMode: 'global', buyerCountry: 'Pakistan', buyerCountryCode: 'PK' });
 });
 test('rapid choices are persisted in order and cannot restore an older country', async () => {
   let release;
@@ -57,9 +58,32 @@ test('rapid choices are persisted in order and cannot restore an older country',
   expect(JSON.parse(mockStored.get(key)).mode).toBe('global');
 });
 test('storage failure keeps the in-session choice and reports the save limitation', async () => {
+  axios.get.mockResolvedValue({ data: { country: 'US', detected: false } });
   storage.setItem.mockRejectedValueOnce(new Error('storage denied'));
   expect(await location.setBuyerLocation({ mode: 'global' })).toMatchObject({ mode: 'global', persistenceWarning: expect.any(String) });
   expect(await location.getBuyerLocationParams()).toEqual({ buyerMode: 'global' });
+});
+
+test('Global uses detected Pakistan after manually browsing another country', async () => {
+  await location.resolveBuyerLocation();
+  await location.setBuyerLocation({ mode: 'country', country: 'United States', countryCode: 'US' });
+  await location.setBuyerLocation({ mode: 'global', country: 'United States', countryCode: 'US' });
+  expect(await location.getBuyerLocationParams()).toEqual({ buyerMode: 'global', buyerCountry: 'Pakistan', buyerCountryCode: 'PK' });
+});
+
+test('late Global enrichment cannot replace a newer manual Country selection', async () => {
+  let finish;
+  axios.get.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  await location.setBuyerLocation({ mode: 'global' });
+  await location.setBuyerLocation({ mode: 'country', country: 'Japan', countryCode: 'JP' });
+  finish({ data: { detected: true, country: 'PK', countryName: 'Pakistan' } });
+  await flush();
+  expect(await location.getBuyerLocationParams()).toEqual({ buyerMode: 'country', buyerCountry: 'Japan', buyerCountryCode: 'JP' });
+});
+
+test('a returning Global shopper gets their current country, not a stale saved one', async () => {
+  mockStored.set(key, JSON.stringify({ version: 2, confirmed: true, mode: 'global', country: 'United States', countryCode: 'US' }));
+  expect(await location.getBuyerLocationParams()).toEqual({ buyerMode: 'global', buyerCountry: 'Pakistan', buyerCountryCode: 'PK' });
 });
 test('invalid country choice is not saved and subscribers are removable', async () => {
   const listener = jest.fn(), unsubscribe = location.subscribeBuyerLocation(listener);

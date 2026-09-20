@@ -44,7 +44,7 @@ test('Global is selectable and a late detector cannot change that draft or saved
   expect(screen.queryByTestId('location-country')).toBeNull();
   fireEvent.press(screen.getByLabelText('Start shopping'));
   await waitFor(() => expect(screen.queryByText('Where would you like to shop?')).toBeNull());
-  expect(JSON.parse(await AsyncStorage.getItem('rozare:shopping-location:v2'))).toMatchObject({ mode: 'global', country: '', confirmed: true });
+  expect(JSON.parse(await AsyncStorage.getItem('rozare:shopping-location:v2'))).toMatchObject({ mode: 'global', country: 'Pakistan', confirmed: true });
 });
 
 test('a failed detector does not preselect the US and another country can be chosen', async () => {

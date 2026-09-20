@@ -2,6 +2,8 @@
 
 Date: 20 September 2026. Application commit: `63231e1e`.
 
+> Later requirement update: the Global-only rule recorded in this original report has been superseded by **Global + the buyer's own country**. See `GLOBAL_PLUS_COUNTRY_REPORT_2026-09-20.md` for the new behavior and verification. The observations below remain a historical record of the original release.
+
 ## Scope and intended behavior
 
 This release implements the requested seller visibility step and explicit buyer Country/Global shopping choice on the website and mobile app. It does not change historical orders, exchange rates, store currencies, balances or payment calculations.

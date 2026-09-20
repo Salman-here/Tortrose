@@ -14,8 +14,8 @@ export function normalizeShoppingLocation(value) {
   const mode = value.mode === 'global' ? 'global' : 'country';
   const next = { ...EMPTY_SHOPPING_LOCATION, mode };
   if (Number.isSafeInteger(value.updatedAt) && value.updatedAt >= 0 && value.updatedAt <= Date.now() + 86400000) next.updatedAt = value.updatedAt;
-  if (mode === 'country') {
-    fields.forEach(field => { next[field] = clean(value[field]); });
+  {
+    (mode === 'global' ? ['country', 'countryCode'] : fields).forEach(field => { next[field] = clean(value[field]); });
     next.countryCode = countryCode(value.countryCode);
     if (!next.country && next.countryCode) next.country = next.countryCode;
     if (!next.country || !next.countryCode) {
@@ -59,7 +59,6 @@ export function shoppingLocationFromProfile(user) {
 export function shoppingLocationParams(value) {
   const location = normalizeShoppingLocation(value);
   const params = { buyerMode: location.mode };
-  if (location.mode === 'global') return params;
   const mappings = {
     country: 'buyerCountry', countryCode: 'buyerCountryCode', region: 'buyerRegion',
     regionCode: 'buyerRegionCode', city: 'buyerCity', cityStateCode: 'buyerCityStateCode',
@@ -70,8 +69,15 @@ export function shoppingLocationParams(value) {
 }
 
 export function shoppingLocationLabel(value) {
-  if (value?.mode === 'global') return 'Global';
+  if (value?.mode === 'global') return value.country ? `Global + ${value.country}` : 'Global';
   return value?.town || value?.city || value?.region || value?.country || 'Choose a country';
+}
+
+// Global's local catalog follows the detected/profile country, not a country
+// the shopper previously chose to browse. Never infer geography from currency.
+export function withGlobalShoppingCountry(value, suggestion) {
+  return normalizeShoppingLocation({ ...value, mode: 'global',
+    country: suggestion?.country || '', countryCode: suggestion?.countryCode || '' });
 }
 
 export function shoppingCountryPatch(option) {

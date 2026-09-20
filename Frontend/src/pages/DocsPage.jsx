@@ -409,7 +409,7 @@ function DocsPage() {
                 <ul>
                   <li><strong>AI search</strong> — Ask the AI: "Show me wireless earbuds under $30" or "Find a birthday gift for my sister".</li>
                   <li><strong>Category filters</strong> — On the home page, use the category checkboxes (Electronics, Fashion, Home &amp; Kitchen, etc.) plus the "Other" group for custom categories.</li>
-                  <li><strong>Shopping location</strong> — On your first marketplace visit, choose your detected country, another country, or Global. Country shopping shows stores targeting that country and matching local areas; Global shopping shows only Global stores and platform-owned products. Change your selection any time in Filters. Your currency and delivery address stay separate.</li>
+                  <li><strong>Shopping location</strong> — On your first marketplace visit, choose your detected country, another country, or Global. Country shopping shows stores targeting that country and matching local areas. Global shopping includes Global stores, platform-owned products, and country-wide stores serving your detected country (or a real saved-address country if detection is unavailable). If no country can be identified, only the Global catalog is shown. Change your selection any time in Filters. Your currency and delivery address stay separate.</li>
                   <li><strong>Store pages</strong> — Visit /stores to browse stores available in your selected shopping location. Each store page has its own search bar and category filter.</li>
                   <li><strong>Direct search</strong> — The search bar at the top of the products grid filters by name, brand, description, and tags.</li>
                 </ul>

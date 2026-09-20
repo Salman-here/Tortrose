@@ -267,10 +267,6 @@ function normalizeBuyerLocation(input = {}) {
     });
   }
   const mode = requestedMode || (countryInfo.countryKey || coords ? 'country' : 'global');
-  if (mode === 'global') return {
-    mode, country: '', countryCode: '', countryKey: '', region: '', regionKey: '',
-    city: '', cityKey: '', town: '', townKey: '', lat: null, lng: null, hasCountry: false, hasGeo: false,
-  };
   if ((explicitCountry || input.countryCode) && (!countryInfo.countryCode
       || !countryNameFromCode(countryInfo.countryCode)
       || (explicitCountry && input.countryCode && normalizeCountryCode(input.countryCode) !== countryInfo.countryCode))) {
@@ -278,6 +274,11 @@ function normalizeBuyerLocation(input = {}) {
       status: 400, statusCode: 400, code: 'BUYER_LOCATION_INVALID',
     });
   }
+  if (mode === 'global') return {
+    mode, ...countryInfo, region: '', regionCode: '', regionKey: '',
+    city: '', cityKey: '', town: '', townKey: '', lat: null, lng: null,
+    hasCountry: !!countryInfo.countryKey, hasGeo: false,
+  };
   const state = stateInfoFromLocation(countryInfo.countryCode, input.regionCode || input.stateCode || input.cityStateCode || input.townStateCode,
     input.region || input.state || input.province);
   const region = state?.name || cleanText(input.region ?? input.state ?? input.province, 80);
@@ -309,7 +310,9 @@ function legacyVisibilityClauses() {
 
 function nonRadiusVisibilityFilter(buyerLocation = {}, { includeLegacy = true } = {}) {
   const location = normalizeBuyerLocation(buyerLocation);
-  if (location.mode === 'global') return { 'visibility.mode': 'global' };
+  if (location.mode === 'global') return location.hasCountry
+    ? { $or: [{ 'visibility.mode': 'global' }, nonRadiusVisibilityFilter({ ...location, mode: 'country' }, { includeLegacy })] }
+    : { 'visibility.mode': 'global' };
   const or = [];
 
   if (location.countryKey) {
@@ -407,7 +410,8 @@ function isStoreVisibleToBuyer(store = {}, buyerLocation = {}) {
   const visibility = effectiveStoreVisibility(store);
   if (!visibility) return false;
   const location = normalizeBuyerLocation(buyerLocation);
-  if (location.mode === 'global') return visibility.mode === 'global';
+  if (location.mode === 'global') return visibility.mode === 'global'
+    || (visibility.mode === 'country' && location.hasCountry && visibility.countryKey === location.countryKey);
   if (visibility.mode === 'global') return false;
   if (!location.hasCountry && visibility.mode !== 'radius') return false;
 

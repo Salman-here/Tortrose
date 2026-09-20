@@ -80,19 +80,20 @@ describe('storeVisibilityService', () => {
     expect(isStoreVisibleToBuyer(town, { country: 'Pakistan', town: 'Johar Town' })).toBe(false);
   });
 
-  test('Global and Country shopping are separate, even with stale country fields', () => {
+  test('Global adds the buyer country while Country stays country-only', () => {
     const globalRule = normalizeStoreVisibility({ mode: 'global', label: 'Pakistan', country: 'Pakistan' });
     expect(globalRule.label).toBe('Visible in Global shopping');
     const globalStore = { visibility: normalizeStoreVisibility({ mode: 'global' }) };
     const pkStore = { visibility: normalizeStoreVisibility({ mode: 'country', country: 'Pakistan', countryCode: 'PK' }) };
     const pkBuyer = buyerLocationFromRequest({ query: { buyerMode: 'country', buyerCountry: 'Pakistan', buyerCountryCode: 'PK' } });
     const globalBuyer = buyerLocationFromRequest({ query: { buyerMode: 'global', buyerCountry: 'Pakistan', buyerCity: 'Lahore' }, user: { savedShippingInfo: { country: 'Pakistan' } } });
-    expect(globalBuyer).toMatchObject({ mode: 'global', country: '', city: '', hasCountry: false });
+    expect(globalBuyer).toMatchObject({ mode: 'global', country: 'Pakistan', city: '', hasCountry: true });
     expect(isStoreVisibleToBuyer(pkStore, pkBuyer)).toBe(true);
     expect(isStoreVisibleToBuyer(globalStore, pkBuyer)).toBe(false);
     expect(isStoreVisibleToBuyer(globalStore, globalBuyer)).toBe(true);
-    expect(isStoreVisibleToBuyer(pkStore, globalBuyer)).toBe(false);
-    expect(nonRadiusVisibilityFilter(globalBuyer)).toEqual({ 'visibility.mode': 'global' });
+    expect(isStoreVisibleToBuyer(pkStore, globalBuyer)).toBe(true);
+    expect(isStoreVisibleToBuyer(pkStore, { mode: 'global', country: 'United States' })).toBe(false);
+    expect(nonRadiusVisibilityFilter({ mode: 'global' })).toEqual({ 'visibility.mode': 'global' });
   });
 
   test('missing visibility uses a real legacy address, never unrestricted visibility or currency geography', () => {

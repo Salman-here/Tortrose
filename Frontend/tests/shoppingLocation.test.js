@@ -2,15 +2,24 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { normalizeShoppingLocation, shoppingLocationIsValid, shoppingLocationFromDetection,
-  shoppingLocationFromProfile, shoppingLocationParams, shoppingCountryPatch } from '../src/utils/shoppingLocation.js';
+  shoppingLocationFromProfile, shoppingLocationParams, shoppingCountryPatch, withGlobalShoppingCountry, shoppingLocationLabel } from '../src/utils/shoppingLocation.js';
 import { defaultStoreVisibility, storeVisibilityError, storeVisibilityPayload } from '../src/utils/storeVisibilityForm.js';
 
-test('explicit Global shopping clears stale geography and serializes only Global mode', () => {
+test('Global retains its detected country and clears local-area filters', () => {
   const value = normalizeShoppingLocation({ version: 2, confirmed: true, mode: 'global', country: 'Pakistan', countryCode: 'PK', city: 'Lahore', lat: '31' });
   assert.equal(value.confirmed, true);
-  assert.equal(value.country, '');
+  assert.equal(value.country, 'Pakistan');
   assert.equal(value.city, '');
-  assert.deepEqual(shoppingLocationParams(value), { buyerMode: 'global' });
+  assert.deepEqual(shoppingLocationParams(value), { buyerMode: 'global', buyerCountry: 'Pakistan', buyerCountryCode: 'PK' });
+  assert.equal(shoppingLocationLabel(value), 'Global + Pakistan');
+});
+
+test('Global uses actual-country suggestion instead of a previously browsed country', () => {
+  for (const [code, country] of [['PK', 'Pakistan'], ['US', 'United States'], ['JP', 'Japan'], ['CA', 'Canada']]) {
+    const choice = withGlobalShoppingCountry({ mode: 'country', country: 'Germany', countryCode: 'DE', city: 'Berlin' }, { country, countryCode: code });
+    assert.deepEqual(shoppingLocationParams(choice), { buyerMode: 'global', buyerCountry: country, buyerCountryCode: code });
+  }
+  assert.deepEqual(shoppingLocationParams(withGlobalShoppingCountry({ country: 'Germany', countryCode: 'DE' }, null)), { buyerMode: 'global' });
 });
 
 test('country selection and local areas are canonical, separate from currency/delivery', () => {

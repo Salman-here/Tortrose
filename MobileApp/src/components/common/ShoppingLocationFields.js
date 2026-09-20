@@ -11,7 +11,7 @@ export default function ShoppingLocationFields({ value, onChange, advanced = tru
   const input = { countryCode: value.countryCode, countryName: value.country, disabled: disabled || !value.countryCode };
   return <View style={styles.container}>
     <View style={styles.cards}>
-      {[{ mode: 'country', label: 'Country', icon: 'location-outline', detail: 'Stores serving your selected country' }, { mode: 'global', label: 'Global', icon: 'earth-outline', detail: 'Only stores marked Global' }].map(option => {
+      {[{ mode: 'country', label: 'Country', icon: 'location-outline', detail: 'Stores serving your selected country' }, { mode: 'global', label: 'Global', icon: 'earth-outline', detail: 'Global stores + stores in your country' }].map(option => {
         const active = value.mode === option.mode;
         return <TouchableOpacity key={option.mode} accessibilityRole="radio" accessibilityLabel={'Shop from: ' + option.label} accessibilityState={{ checked: active, disabled }} disabled={disabled} onPress={() => patch({ mode: option.mode })} style={[styles.card, { borderColor: active ? palette.colors.primary : palette.glass.borderSubtle, backgroundColor: active ? palette.colors.primarySubtle : palette.glass.bgSubtle }]}>
           <Ionicons name={option.icon} size={22} color={palette.colors.primary} /><Text style={[styles.label, { color: palette.colors.text }]}>{option.label}</Text><Text style={[styles.detail, { color: palette.colors.textSecondary }]}>{option.detail}</Text>

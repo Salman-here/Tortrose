@@ -4,7 +4,7 @@ import { useAuth } from './AuthContext';
 import {
   EMPTY_SHOPPING_LOCATION, SHOPPING_LOCATION_STORAGE_KEY,
   normalizeShoppingLocation, shoppingLocationIsValid, shoppingLocationFromDetection,
-  shoppingLocationFromProfile, shoppingLocationParams,
+  shoppingLocationFromProfile, shoppingLocationParams, withGlobalShoppingCountry,
 } from '../utils/shoppingLocation';
 import { readShoppingPreference, writeShoppingPreference } from '../utils/shoppingLocationPersistence';
 
@@ -16,26 +16,43 @@ export const BuyerLocationProvider = ({ children }) => {
   const [buyerLocation, setBuyerLocation] = useState(() => confirmedStored() || { ...EMPTY_SHOPPING_LOCATION });
   const locationRef = useRef(buyerLocation);
   const revisionRef = useRef(0);
+  const countrySuggestionRef = useRef(null);
+  const detectedCountryRef = useRef(null);
   const [recommendedLocation, setRecommendedLocation] = useState({ ...EMPTY_SHOPPING_LOCATION });
   const [detecting, setDetecting] = useState(false);
   const [editorOpen, setEditorOpen] = useState(false);
   const [persistenceWarning, setPersistenceWarning] = useState('');
 
   useEffect(() => {
-    if (locationRef.current.confirmed) return;
     let active = true;
     const revision = revisionRef.current;
     const controller = new AbortController();
-    setDetecting(true);
-    axios.get(`${import.meta.env.VITE_API_URL}api/currency/detect`, { timeout: 8000, signal: controller.signal })
-      .then(response => shoppingLocationFromDetection(response.data))
-      .catch(() => null)
+    setDetecting(!detectedCountryRef.current);
+    const countryLookup = detectedCountryRef.current ? Promise.resolve(detectedCountryRef.current)
+      : axios.get(`${import.meta.env.VITE_API_URL}api/currency/detect`, { timeout: 8000, signal: controller.signal })
+        .then(response => shoppingLocationFromDetection(response.data)).catch(() => null);
+    countryLookup
       .then(detected => {
-        if (!active || revision !== revisionRef.current || locationRef.current.confirmed) return;
+        if (!active) return;
+        if (detected) detectedCountryRef.current = detected;
         const suggestion = detected || shoppingLocationFromProfile(currentUser)
           || { ...EMPTY_SHOPPING_LOCATION };
+        countrySuggestionRef.current = suggestion;
+        setRecommendedLocation(suggestion);
+        if (locationRef.current.confirmed) {
+          if (locationRef.current.mode === 'global') {
+            const next = withGlobalShoppingCountry(locationRef.current, suggestion);
+            if (next.country !== locationRef.current.country || next.countryCode !== locationRef.current.countryCode) {
+              next.updatedAt = Date.now();
+              locationRef.current = next;
+              setBuyerLocation(next);
+              setPersistenceWarning(writeShoppingPreference(next));
+            }
+          }
+          return;
+        }
+        if (revision !== revisionRef.current) return;
         const next = { ...suggestion, confirmed: false };
-        setRecommendedLocation(next);
         locationRef.current = next;
         setBuyerLocation(next);
       })
@@ -48,7 +65,9 @@ export const BuyerLocationProvider = ({ children }) => {
       if (event.type === 'storage' && event.key !== SHOPPING_LOCATION_STORAGE_KEY && event.key !== null) return;
       const saved = confirmedStored();
       if (!saved && event.type !== 'storage') return;
-      const next = saved || { ...EMPTY_SHOPPING_LOCATION };
+      const next = saved?.mode === 'global' && countrySuggestionRef.current
+        ? withGlobalShoppingCountry(saved, countrySuggestionRef.current)
+        : saved || { ...EMPTY_SHOPPING_LOCATION };
       if (JSON.stringify(next) === JSON.stringify(locationRef.current)) return;
       revisionRef.current += 1;
       locationRef.current = next;
@@ -62,7 +81,10 @@ export const BuyerLocationProvider = ({ children }) => {
 
   const updateBuyerLocation = useCallback(updates => {
     if (!shoppingLocationIsValid({ ...locationRef.current, ...updates })) return false;
-    const next = normalizeShoppingLocation({ ...locationRef.current, ...updates, version: 2, confirmed: true, updatedAt: Date.now() });
+    const requested = { ...locationRef.current, ...updates, version: 2, confirmed: true, updatedAt: Date.now() };
+    const next = requested.mode === 'global'
+      ? withGlobalShoppingCountry(requested, countrySuggestionRef.current)
+      : normalizeShoppingLocation(requested);
     if (!shoppingLocationIsValid(next)) return false;
     revisionRef.current += 1;
     locationRef.current = next;

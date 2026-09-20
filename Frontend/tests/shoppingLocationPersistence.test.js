@@ -13,7 +13,7 @@ test('an explicit choice survives navigation from the marketplace to a store sub
   assert.equal(writeShoppingPreference(choice('global'), main), '');
   assert.equal(readShoppingPreference(store).mode, 'global');
   assert.match(jar.attributes, /Domain=\.rozare\.com; Path=\/;.*SameSite=Lax; Secure/);
-  assert.equal(readShoppingPreference(store).country, '');
+  assert.equal(readShoppingPreference(store).country, 'Pakistan');
 });
 test('the newer explicit choice wins over an old local cache on another origin', () => {
   const jar = { value: '' }, main = environment('rozare.com', jar), store = environment('seller.rozare.com', jar);

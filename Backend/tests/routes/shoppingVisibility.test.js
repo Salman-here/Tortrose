@@ -47,7 +47,7 @@ beforeEach(async () => {
   fixture.platform = await Product.create({ name: 'Scope platform item', description: 'Platform global catalog product', price: 8, currency: 'USD', stock: 10, image: 'https://example.com/item.png', category: 'Platform', brand: 'Platform' });
 }, 30000);
 
-test('Country lists only country/local matches; Global excludes country, unknown and blocked sellers', async () => {
+test('Global adds only the buyer country while excluding unknown and blocked sellers', async () => {
   const country = await request(app).get('/stores').query(pk);
   expect(country.status).toBe(200);
   expect(country.body.stores.map(store => store.storeSlug).sort()).toEqual(['scope-legacy', 'scope-pk']);
@@ -55,7 +55,9 @@ test('Country lists only country/local matches; Global excludes country, unknown
   expect(local.body.stores.map(store => store.storeSlug).sort()).toEqual(['scope-city', 'scope-legacy', 'scope-pk']);
   const worldwide = await request(app).get('/stores').query({ ...globalQuery, buyerCountry: 'Pakistan', buyerCity: 'Lahore' });
   expect(worldwide.status).toBe(200);
-  expect(worldwide.body.stores.map(store => store.storeSlug)).toEqual(['scope-global']);
+  expect(worldwide.body.stores.map(store => store.storeSlug).sort()).toEqual(['scope-global', 'scope-legacy', 'scope-pk']);
+  const usGlobal = await request(app).get('/stores').query({ ...globalQuery, buyerCountry: 'United States', buyerCountryCode: 'US' });
+  expect(usGlobal.body.stores.map(store => store.storeSlug).sort()).toEqual(['scope-global', 'scope-us']);
 });
 
 test('products, filters and counts inherit the selected store visibility; platform products are Global', async () => {
@@ -68,11 +70,17 @@ test('products, filters and counts inherit the selected store visibility; platfo
   const filters = await request(app).get('/filters').query(pk);
   expect(filters.status).toBe(200);
   expect(filters.body.categories.sort()).toEqual(['Category legacy', 'Category pk']);
+  const localGlobal = { ...pk, ...globalQuery, currency: 'USD', limit: 50 };
+  const both = await request(app).get('/products').query(localGlobal);
+  expect(both.body.products.map(product => product.name).sort()).toEqual(['Scope item global', 'Scope item legacy', 'Scope item pk', 'Scope platform item']);
+  expect(new Set(both.body.products.map(product => product._id)).size).toBe(4);
+  const bothFilters = await request(app).get('/filters').query(localGlobal);
+  expect(bothFilters.body.categories.sort()).toEqual(['Category global', 'Category legacy', 'Category pk', 'Platform']);
 });
 
 test('direct product/store links enforce the same scope and do not modify legacy records', async () => {
   const before = await Store.collection.findOne({ _id: fixture.legacy.store._id });
-  for (const [key, query, status] of [['pk', pk, 200], ['global', globalQuery, 200], ['pk', globalQuery, 404], ['global', pk, 404], ['us', pk, 404], ['unknown', globalQuery, 404], ['legacy', pk, 200]]) {
+  for (const [key, query, status] of [['pk', pk, 200], ['global', globalQuery, 200], ['pk', globalQuery, 404], ['pk', { ...pk, ...globalQuery }, 200], ['global', { ...pk, ...globalQuery }, 200], ['us', { ...pk, ...globalQuery }, 404], ['global', pk, 404], ['us', pk, 404], ['unknown', globalQuery, 404], ['legacy', pk, 200]]) {
     expect((await request(app).get('/stores/' + fixture[key].store.storeSlug).query(query)).status).toBe(status);
     expect((await request(app).get('/products/' + fixture[key].product._id).query(query)).status).toBe(status);
     expect((await request(app).get('/stores/' + fixture[key].store.storeSlug + '/products').query(query)).status).toBe(status);
@@ -85,6 +93,7 @@ test('direct product/store links enforce the same scope and do not modify legacy
 test.each(['/stores', '/products', '/filters'])('%s rejects invalid buyer modes/country pairs as client errors', async url => {
   expect((await request(app).get(url).query({ buyerMode: 'everything' })).status).toBe(400);
   expect((await request(app).get(url).query({ ...pk, buyerCountryCode: 'US' })).status).toBe(400);
+  expect((await request(app).get(url).query({ ...pk, ...globalQuery, buyerCountryCode: 'US' })).status).toBe(400);
 });
 
 test('parallel AI discovery scopes stay isolated and cannot be overridden by model arguments', async () => {
@@ -100,6 +109,8 @@ test('parallel AI discovery scopes stay isolated and cannot be overridden by mod
   expect(result.data.products.map(product => product.name).sort()).toEqual(['Scope item legacy', 'Scope item pk']);
   const hidden = await executeToolCall('get_store_details', { slug: 'scope-global' }, { _id: buyer._id, role: 'user', currency: 'USD', _buyerLocation: { mode: 'country', country: 'Pakistan' } });
   expect(hidden.success).toBe(false);
+  const both = await executeToolCall('search_products', { query: 'Scope', currency: 'USD', limit: 50 }, { _id: buyer._id, role: 'user', currency: 'USD', _buyerLocation: { mode: 'global', country: 'Pakistan' } });
+  expect(both.data.products.map(product => product.name).sort()).toEqual(['Scope item global', 'Scope item legacy', 'Scope item pk', 'Scope platform item']);
   const named = await executeToolCall('add_to_cart', { productName: 'Scope item global', quantity: 1 }, { _id: buyer._id, role: 'user', currency: 'USD', _buyerLocation: { mode: 'country', country: 'Pakistan' } });
   expect(named.success).toBe(false);
   expect(named.needsProductSelection).toBe(true);

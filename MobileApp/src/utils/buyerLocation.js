@@ -2,7 +2,7 @@ import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   EMPTY_SHOPPING_LOCATION, SHOPPING_LOCATION_STORAGE_KEY,
-  normalizeShoppingLocation, shoppingLocationIsValid, shoppingLocationFromDetection, shoppingLocationParams,
+  normalizeShoppingLocation, shoppingLocationIsValid, shoppingLocationFromDetection, shoppingLocationParams, withGlobalShoppingCountry,
 } from './shoppingLocation';
 
 // Use bare axios: the shared API interceptor calls this module.
@@ -20,6 +20,24 @@ const publish = next => { memoryCache = next; listeners.forEach(listener => list
 const readStored = async key => {
   try { return normalizeShoppingLocation(JSON.parse(await AsyncStorage.getItem(key))); } catch (_) { return null; }
 };
+
+const persist = next => {
+  const write = storageWrite.catch(() => {}).then(() => AsyncStorage.setItem(SHOPPING_LOCATION_STORAGE_KEY, JSON.stringify(next)));
+  storageWrite = write;
+  return write;
+};
+
+async function refreshGlobalCountry() {
+  const generation = detectionVersion;
+  const suggestion = await resolveBuyerCountrySuggestion();
+  if (generation !== detectionVersion || memoryCache?.mode !== 'global' || !memoryCache.confirmed) return memoryCache;
+  const next = withGlobalShoppingCountry(memoryCache, suggestion);
+  if (next.country === memoryCache.country && next.countryCode === memoryCache.countryCode) return memoryCache;
+  next.updatedAt = Date.now();
+  publish(next);
+  await persist(next).catch(() => {});
+  return memoryCache;
+}
 
 export async function resolveBuyerCountrySuggestion() {
   if (detectedSuggestion) return detectedSuggestion;
@@ -42,7 +60,14 @@ export async function resolveBuyerLocation() {
   const pending = (async () => {
     const stored = await readStored(SHOPPING_LOCATION_STORAGE_KEY);
     if (startedAt !== revision) return memoryCache;
-    if (stored?.confirmed) return publish(stored);
+    if (stored?.confirmed) {
+      publish(stored);
+      if (stored.mode === 'global') return refreshGlobalCountry();
+      // Prime actual-country detection even when another country was selected
+      // for browsing, so a later Global selection does not use that country.
+      void resolveBuyerCountrySuggestion();
+      return stored;
+    }
     const suggestion = await resolveBuyerCountrySuggestion();
     if (startedAt !== revision) return memoryCache;
     return publish({ ...(suggestion || profileSuggestion || EMPTY_SHOPPING_LOCATION), confirmed: false });
@@ -53,13 +78,16 @@ export async function resolveBuyerLocation() {
 
 export async function setBuyerLocation(value) {
   if (!shoppingLocationIsValid(value)) throw new Error('Choose Global or select a country.');
-  const next = normalizeShoppingLocation({ ...value, version: 2, confirmed: true, updatedAt: Date.now() });
+  const requested = { ...value, version: 2, confirmed: true, updatedAt: Date.now() };
+  const next = value.mode === 'global'
+    ? withGlobalShoppingCountry(requested, detectedSuggestion || profileSuggestion)
+    : normalizeShoppingLocation(requested);
   if (!shoppingLocationIsValid(next)) throw new Error('Choose Global or select a country.');
   revision += 1;
   publish(next);
   // Keep the explicit in-session selection even if device storage is unavailable.
-  const write = storageWrite.catch(() => {}).then(() => AsyncStorage.setItem(SHOPPING_LOCATION_STORAGE_KEY, JSON.stringify(next)));
-  storageWrite = write;
+  const write = persist(next);
+  if (next.mode === 'global') void refreshGlobalCountry();
   try { await write; }
   catch (_) { return { ...next, persistenceWarning: 'Your selection applies now, but could not be saved on this device.' }; }
   return next;
@@ -69,7 +97,10 @@ export async function suggestBuyerLocation(value) {
   const suggestion = normalizeShoppingLocation(value);
   if (!shoppingLocationIsValid(suggestion) || suggestion.mode !== 'country') return;
   profileSuggestion = { ...suggestion, confirmed: false };
-  if (memoryCache?.confirmed) return memoryCache;
+  if (memoryCache?.confirmed) {
+    if (memoryCache.mode === 'global') return refreshGlobalCountry();
+    return memoryCache;
+  }
   if (memoryCache && !shoppingLocationIsValid(memoryCache)) publish(profileSuggestion);
   return memoryCache;
 }
