@@ -1,6 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react'
-import { Minus, Plus } from 'lucide-react'
-import { readPriceRange, stepPriceRange } from '../../utils/priceFilters'
+import { readPriceRange } from '../../utils/priceFilters'
 
 export default function PriceRangeFilter({ value, onChange, currency, sliderMax }) {
   const [draft, setDraft] = useState(value)
@@ -28,20 +27,12 @@ export default function PriceRangeFilter({ value, onChange, currency, sliderMax 
     <div className='grid grid-cols-1 gap-3'>
       {['min', 'max'].map((field, index) => {
         const label = index === 0 ? 'Minimum' : 'Maximum'
-        const minusDisabled = !!error || (index === 0 ? min === 0 : max === null || max <= min)
-        const plusDisabled = !!error || (index === 0 && max !== null && min >= max)
         return <div key={field}>
           <label className='block text-xs font-medium mb-1' htmlFor={`${inputId}-${field}`}>{label} ({currency})</label>
-          <div className='flex items-center gap-2 min-w-0'>
-            <button type='button' aria-label={`Decrease ${label.toLowerCase()} price`} disabled={minusDisabled}
-              onClick={() => setDraft(current => stepPriceRange(current, field, -1))} className='glass-button rounded-xl shrink-0 w-9 h-10 flex items-center justify-center disabled:opacity-35'><Minus size={15} /></button>
-            <input id={`${inputId}-${field}`} aria-label={`${label} price`} inputMode='decimal' type='text'
-              value={draft[index]} placeholder={index === 0 ? '0' : 'No limit'} aria-invalid={!!error}
-              onChange={event => { const text = event.target.value; setDraft(current => current.map((old, i) => i === index ? text : old)) }}
-              className='glass-input w-full min-w-0 text-sm text-center' />
-            <button type='button' aria-label={`Increase ${label.toLowerCase()} price`} disabled={plusDisabled}
-              onClick={() => setDraft(current => stepPriceRange(current, field, 1))} className='glass-button rounded-xl shrink-0 w-9 h-10 flex items-center justify-center disabled:opacity-35'><Plus size={15} /></button>
-          </div>
+          <input id={`${inputId}-${field}`} aria-label={`${label} price`} inputMode='decimal' type='text'
+            value={draft[index]} placeholder={index === 0 ? '0' : 'No limit'} aria-invalid={!!error}
+            onChange={event => { const text = event.target.value; setDraft(current => current.map((old, i) => i === index ? text : old)) }}
+            className='glass-input w-full min-w-0 text-sm text-center' />
         </div>
       })}
     </div>

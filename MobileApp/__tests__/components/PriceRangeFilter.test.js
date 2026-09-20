@@ -34,21 +34,14 @@ test('threshold validation never converts invalid or partial text to an unrelate
   expect(priceFilterError({ min: 5, max: 4 })).toMatch(/exceed/); expect(priceFilterError({ min: 5, max: null })).toBe('');
 });
 
-test('plus/minus buttons preserve decimals, clamp boundaries and leave an empty maximum unbounded', () => {
+test('only editable price inputs remain, without increase or decrease buttons', () => {
   const screen = render(<Harness />);
-  fireEvent.press(screen.getByLabelText('Increase minimum price'));
-  expect(screen.getByTestId('range').props.children).toBe('{"min":1,"max":null}');
-  fireEvent.press(screen.getByLabelText('Decrease minimum price'));
-  expect(screen.getByTestId('range').props.children).toBe('{"min":0,"max":null}');
-  expect(screen.getByLabelText('Decrease minimum price').props.accessibilityState.disabled).toBe(true);
-  expect(screen.getByLabelText('Decrease maximum price').props.accessibilityState.disabled).toBe(true);
+  for (const name of ['Increase minimum price', 'Decrease minimum price', 'Increase maximum price', 'Decrease maximum price']) {
+    expect(screen.queryByLabelText(name)).toBeNull();
+  }
   fireEvent.changeText(screen.getByLabelText('Minimum price'), '1.25');
-  fireEvent.press(screen.getByLabelText('Increase maximum price'));
+  fireEvent.changeText(screen.getByLabelText('Maximum price'), '2.25');
   expect(screen.getByTestId('range').props.children).toBe('{"min":1.25,"max":2.25}');
-  fireEvent.press(screen.getByLabelText('Increase minimum price'));
-  expect(screen.getByTestId('range').props.children).toBe('{"min":2.25,"max":2.25}');
-  expect(screen.getByLabelText('Increase minimum price').props.accessibilityState.disabled).toBe(true);
-  expect(screen.getByLabelText('Decrease maximum price').props.accessibilityState.disabled).toBe(true);
   fireEvent.changeText(screen.getByLabelText('Maximum price'), '');
-  expect(screen.getByTestId('range').props.children).toBe('{"min":2.25,"max":null}');
+  expect(screen.getByTestId('range').props.children).toBe('{"min":1.25,"max":null}');
 });

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { parseQueryParams, filterValues, filterValueSelected, toggleFilterValue } from '../src/utils/catalogFilterQuery.js';
-import { readPriceRange, stepPriceRange } from '../src/utils/priceFilters.js';
+import { readPriceRange } from '../src/utils/priceFilters.js';
 import { verifiedBrandOptions, verifiedBrandLabel } from '../src/utils/verifiedBrandFilters.js';
 const read = relative => readFileSync(new URL(relative, import.meta.url), 'utf8');
 
@@ -36,18 +36,13 @@ test('Home uses stable filter content, controlled slider state and full reset/se
   assert.match(source, /const resetAllFilters = [\s\S]*?sortByRef\.current = 'relevance'/);
 });
 
-test('price fields support min-only, max-only, zero, decimals and safe stepper boundaries', () => {
+test('price fields support min-only, max-only, zero and decimals without stepper buttons', () => {
   assert.deepEqual(readPriceRange(['', '']), { min: 0, max: null, error: '' });
   assert.deepEqual(readPriceRange(['1.25', '']), { min: 1.25, max: null, error: '' });
   assert.deepEqual(readPriceRange(['1,000.50', '2,000']), { min: 1000.5, max: 2000, error: '' });
   assert.deepEqual(readPriceRange(['', '0']), { min: 0, max: 0, error: '' });
   for (const values of [['2', '1'], ['-1', '2'], ['oops', ''], ['Infinity', ''], ['1e2', '']]) assert.ok(readPriceRange(values).error);
-  assert.deepEqual(stepPriceRange(['0', ''], 'min', -1), ['0', '']);
-  assert.deepEqual(stepPriceRange(['1.25', ''], 'min', 1), ['2.25', '']);
-  assert.deepEqual(stepPriceRange(['2', '2.5'], 'min', 1), ['2.5', '2.5']);
-  assert.deepEqual(stepPriceRange(['2', '2.5'], 'max', -1), ['2', '2']);
-  assert.deepEqual(stepPriceRange(['2', ''], 'max', 1), ['2', '3']);
-  assert.deepEqual(stepPriceRange(['0', ''], 'max', -1), ['0', '']);
+  assert.doesNotMatch(read('../src/components/common/PriceRangeFilter.jsx'), /<button|stepPriceRange/);
 });
 
 test('both clients bind brand choices to verified profile IDs, with no Other brands escape', () => {

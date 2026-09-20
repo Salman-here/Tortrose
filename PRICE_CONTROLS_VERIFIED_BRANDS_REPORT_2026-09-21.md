@@ -2,6 +2,10 @@
 
 Date: 21 September 2026. Follow-up to the catalog-filter release.
 
+## Later user-requested adjustment
+
+The plus/minus buttons and their unused stepping helpers were removed from web and mobile. Minimum/maximum inputs, validation, the web slider, mobile presets and verified-brand filtering remain. The user will perform the web/mobile UI checks; no manual UI retest was performed for this removal. The sections below record the earlier release before this adjustment.
+
 ## Changes
 
 - Web and mobile minimum/maximum price inputs each have plus/minus buttons. Each click changes the chosen bound by one unit of the displayed currency. Decimal input is supported; the buttons clamp at zero and at the opposite bound.
