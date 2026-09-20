@@ -33,3 +33,22 @@ test('threshold validation never converts invalid or partial text to an unrelate
   for (const value of ['1abc', '-1', '1,20', 'Infinity', 'NaN']) expect(Number.isNaN(parsePriceFilterInput(value))).toBe(true);
   expect(priceFilterError({ min: 5, max: 4 })).toMatch(/exceed/); expect(priceFilterError({ min: 5, max: null })).toBe('');
 });
+
+test('plus/minus buttons preserve decimals, clamp boundaries and leave an empty maximum unbounded', () => {
+  const screen = render(<Harness />);
+  fireEvent.press(screen.getByLabelText('Increase minimum price'));
+  expect(screen.getByTestId('range').props.children).toBe('{"min":1,"max":null}');
+  fireEvent.press(screen.getByLabelText('Decrease minimum price'));
+  expect(screen.getByTestId('range').props.children).toBe('{"min":0,"max":null}');
+  expect(screen.getByLabelText('Decrease minimum price').props.accessibilityState.disabled).toBe(true);
+  expect(screen.getByLabelText('Decrease maximum price').props.accessibilityState.disabled).toBe(true);
+  fireEvent.changeText(screen.getByLabelText('Minimum price'), '1.25');
+  fireEvent.press(screen.getByLabelText('Increase maximum price'));
+  expect(screen.getByTestId('range').props.children).toBe('{"min":1.25,"max":2.25}');
+  fireEvent.press(screen.getByLabelText('Increase minimum price'));
+  expect(screen.getByTestId('range').props.children).toBe('{"min":2.25,"max":2.25}');
+  expect(screen.getByLabelText('Increase minimum price').props.accessibilityState.disabled).toBe(true);
+  expect(screen.getByLabelText('Decrease maximum price').props.accessibilityState.disabled).toBe(true);
+  fireEvent.changeText(screen.getByLabelText('Maximum price'), '');
+  expect(screen.getByTestId('range').props.children).toBe('{"min":2.25,"max":null}');
+});

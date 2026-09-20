@@ -4,7 +4,15 @@ export function parsePriceFilterInput(value, { minimum = false } = {}) {
   if (!text) return minimum ? 0 : null;
   if (!/^(?:\d+(?:\.\d*)?|\.\d+|\d{1,3}(?:,\d{3})+(?:\.\d*)?)$/.test(text)) return NaN;
   const result = Number(text.replace(/,/g, ''));
-  return Number.isFinite(result) && result >= 0 ? result : NaN;
+  return Number.isFinite(result) && result >= 0 && result <= Number.MAX_SAFE_INTEGER / 100 ? result : NaN;
+}
+
+export function stepPriceFilterRange(range, field, direction) {
+  if (priceFilterError(range)) return range;
+  const step = amount => Math.max(0, Math.min(Number.MAX_SAFE_INTEGER / 100, Math.round((amount + direction) * 100) / 100));
+  if (field === 'min') return { ...range, min: Math.min(range.max ?? Infinity, step(range.min)) };
+  if (range.max === null && direction < 0) return range;
+  return { ...range, max: Math.max(range.min, step(range.max ?? range.min)) };
 }
 
 export function priceFilterError(range) {

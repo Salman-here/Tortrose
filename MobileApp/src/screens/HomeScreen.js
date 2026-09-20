@@ -39,6 +39,7 @@ import { useBuyerLocation } from '../contexts/BuyerLocationContext';
 import ShoppingLocationFields from '../components/common/ShoppingLocationFields';
 import { shoppingLocationIsValid, shoppingLocationLabel } from '../utils/shoppingLocation';
 import { priceFilterError } from '../utils/priceFilters';
+import { verifiedBrandOptions, verifiedBrandLabel } from '../utils/verifiedBrandFilters';
 import { spacing, fontSize, borderRadius, shadows, fontWeight } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 import { PRESET_CATEGORIES, isPresetCategory } from '../utils/categories';
@@ -48,18 +49,15 @@ import { ProductCardSkeleton } from '../components/common/Skeleton';
 // Subtle brand aurora (teal → sky → indigo) laid over glass surfaces for depth.
 const HERO_SHEEN = ['rgba(20,184,166,0.13)', 'rgba(14,165,233,0.06)', 'rgba(99,102,241,0.15)'];
 const STORE_SHEEN = ['rgba(20,184,166,0.10)', 'rgba(14,165,233,0.05)', 'rgba(99,102,241,0.13)'];
-const OTHER_BRANDS_FILTER = '__other_brands__';
 const DEFAULT_PRICE_RANGE = { min: 0, max: null };
 const PRODUCT_SORT_OPTIONS = [
   { key: 'relevance-desc', field: 'relevance', order: 'desc', label: 'Recommended', helper: 'Balanced discovery', icon: 'sparkles-outline' },
   { key: 'price-asc', field: 'price', order: 'asc', label: 'Lowest price', helper: 'Budget first', icon: 'arrow-up-outline' },
   { key: 'price-desc', field: 'price', order: 'desc', label: 'Highest price', helper: 'Premium first', icon: 'arrow-down-outline' },
-  // The backend's non-price comparators are already descending, so `asc`
-  // preserves the user-facing "highest/newest/most" direction.
-  { key: 'rating-desc', field: 'rating', order: 'asc', label: 'Highest rated', helper: 'Buyer favourites', icon: 'star-outline' },
-  { key: 'newest-desc', field: 'newest', order: 'asc', label: 'Newest first', helper: 'Fresh arrivals', icon: 'time-outline' },
-  { key: 'popular-desc', field: 'popular', order: 'asc', label: 'Most popular', helper: 'Trending now', icon: 'flame-outline' },
-  { key: 'sales-desc', field: 'sales', order: 'asc', label: 'Best selling', helper: 'Most purchased', icon: 'trophy-outline' },
+  { key: 'rating-desc', field: 'rating', order: 'desc', label: 'Highest rated', helper: 'Buyer favourites', icon: 'star-outline' },
+  { key: 'newest-desc', field: 'newest', order: 'desc', label: 'Newest first', helper: 'Fresh arrivals', icon: 'time-outline' },
+  { key: 'popular-desc', field: 'popular', order: 'desc', label: 'Most popular', helper: 'Trending now', icon: 'flame-outline' },
+  { key: 'sales-desc', field: 'sales', order: 'desc', label: 'Best selling', helper: 'Most purchased', icon: 'trophy-outline' },
 ];
 
 export default function HomeScreen({ navigation }) {
@@ -88,8 +86,6 @@ export default function HomeScreen({ navigation }) {
 
   const [categories, setCategories] = useState([]);
   const [brands, setBrands] = useState([]);
-  const [otherBrandsCount, setOtherBrandsCount] = useState(0);
-  const [otherBrandsValue, setOtherBrandsValue] = useState(OTHER_BRANDS_FILTER);
   const [selectedCategories, setSelectedCategories] = useState([]);
   const [selectedBrands, setSelectedBrands] = useState([]);
   const [priceRange, setPriceRange] = useState(DEFAULT_PRICE_RANGE);
@@ -154,7 +150,7 @@ export default function HomeScreen({ navigation }) {
         requestFilters.categories.forEach(cat => params.append('categories', cat));
       }
       if (requestFilters.brands.length > 0) {
-        requestFilters.brands.forEach(brand => params.append('brands', brand));
+        requestFilters.brands.forEach(brand => params.append('brandStores', brand));
       }
       if (requestFilters.search?.trim()) {
         params.append('search', requestFilters.search.trim());
@@ -241,10 +237,9 @@ export default function HomeScreen({ navigation }) {
       const res = await api.get('/api/products/get-filters');
       if (requestId !== filterRequestRef.current) return;
       setCategories(res.data.categories || []);
-      setBrands(res.data.brands || []);
-      setOtherBrandsCount(Number(res.data.otherBrandsCount) || 0);
-      setOtherBrandsValue(res.data.brandFilter?.otherValue || OTHER_BRANDS_FILTER);
+      setBrands(verifiedBrandOptions(res.data.verifiedBrands));
     } catch (error) {
+      if (requestId === filterRequestRef.current) setBrands([]);
       console.error('Error fetching filters:', error);
     }
   };
@@ -782,7 +777,7 @@ export default function HomeScreen({ navigation }) {
             ))}
             {selectedBrands.map(brand => (
               <TouchableOpacity key={brand} style={styles.activeFilterChip} onPress={() => removeBrand(brand)}>
-                <Text style={styles.activeFilterText}>{brand === otherBrandsValue ? 'Other brands' : brand}</Text>
+                <Text style={styles.activeFilterText}>{verifiedBrandLabel(brands, brand)}</Text>
                 <Ionicons name="close" size={14} color={palette.colors.primary} />
               </TouchableOpacity>
             ))}
@@ -1041,44 +1036,34 @@ export default function HomeScreen({ navigation }) {
                   </View>
                   <View>
                     <Text style={styles.filterSectionTitle}>BRANDS</Text>
-                    <Text style={styles.filterSectionHint}>Shop names you already trust</Text>
+                    <Text style={styles.filterSectionHint}>Brands with a verified badge</Text>
                   </View>
                 </View>
-                {brands.length === 0 && !otherBrandsCount ? (
+                {brands.length === 0 ? (
                   <View style={styles.noFilterBox}>
                     <Ionicons name="information-circle-outline" size={18} color={palette.colors.textSecondary} />
-                    <Text style={styles.noFilterText}>No brand filters are available yet</Text>
+                    <Text style={styles.noFilterText}>No verified brands available</Text>
                   </View>
                 ) : (
                   <View style={styles.filterOptionsGrid}>
                     {brands.map(brand => {
-                      const active = filterDraft.brands.includes(brand);
+                      const active = filterDraft.brands.includes(brand.value);
                       return (
                         <TouchableOpacity
-                          key={brand}
+                          key={brand.value}
                           style={[styles.filterChip, active && styles.filterChipSelectedBlue]}
-                          onPress={() => toggleDraftBrand(brand)}
+                          onPress={() => toggleDraftBrand(brand.value)}
+                          accessibilityRole="checkbox"
+                          accessibilityLabel={brand.label}
+                          accessibilityState={{ checked: active }}
                           activeOpacity={0.82}
                         >
-                          <Ionicons name="ribbon-outline" size={15} color={active ? '#fff' : palette.colors.info} />
-                          <Text style={[styles.filterChipText, active && styles.filterChipTextSelected]} numberOfLines={1}>{brand}</Text>
+                          <Ionicons name="checkmark-circle" size={15} color={active ? '#fff' : palette.colors.info} />
+                          <Text style={[styles.filterChipText, active && styles.filterChipTextSelected]} numberOfLines={1}>{brand.label}</Text>
                           {active && <Ionicons name="checkmark" size={13} color="#fff" />}
                         </TouchableOpacity>
                       );
                     })}
-                    {otherBrandsCount > 0 && (
-                      <TouchableOpacity
-                        style={[styles.filterChip, filterDraft.brands.includes(otherBrandsValue) && styles.filterChipSelectedBlue]}
-                        onPress={() => toggleDraftBrand(otherBrandsValue)}
-                        activeOpacity={0.82}
-                      >
-                        <Ionicons name="layers-outline" size={15} color={filterDraft.brands.includes(otherBrandsValue) ? '#fff' : palette.colors.info} />
-                        <Text style={[styles.filterChipText, filterDraft.brands.includes(otherBrandsValue) && styles.filterChipTextSelected]}>Other brands</Text>
-                        <View style={[styles.optionCount, filterDraft.brands.includes(otherBrandsValue) && styles.optionCountActive]}>
-                          <Text style={[styles.optionCountText, filterDraft.brands.includes(otherBrandsValue) && styles.optionCountTextActive]}>{otherBrandsCount}</Text>
-                        </View>
-                      </TouchableOpacity>
-                    )}
                   </View>
                 )}
               </View>

@@ -710,6 +710,7 @@ exports.getProducts = async (req, res) => {
     const {
         categories,
         brands,
+        brandStores,
         priceRange,
         search,
         page = 1,
@@ -739,7 +740,7 @@ exports.getProducts = async (req, res) => {
         // Only show products from active stores (hides blocked/expired seller products)
         const Store = require('../models/Store');
         const activeStores = await findVisibleStores(Store, { isActive: true }, buyerLocation, {
-            select: 'seller verification visibility',
+            select: 'seller verification visibility sellerType',
             populate: { path: 'seller', select: '_id' },
         });
         const blockedSellers = blockedIdSet(await getBlockedUserIds(req));
@@ -758,6 +759,20 @@ exports.getProducts = async (req, res) => {
             ],
         };
         query.$and = [...(query.$and || []), visibilityFilter];
+
+        // Verified brand discovery is bound to the brand profile, never to a
+        // seller-entered product.brand string that another seller can copy.
+        if (brandStores !== undefined) {
+            const selectedStoreIds = toArray(brandStores);
+            if (!selectedStoreIds.length || selectedStoreIds.some(id => typeof id !== 'string' || !/^[a-f\d]{24}$/i.test(id))) {
+                return res.status(400).json({ code: 'CATALOG_FILTER_INVALID', msg: 'Choose a valid verified brand.' });
+            }
+            const selected = new Set(selectedStoreIds.map(id => id.toLowerCase()));
+            const verifiedSellerIds = activeStores.filter(store => selected.has(String(store._id))
+                && store.sellerType === 'brand' && store.verification?.isVerified === true)
+                .map(store => store.seller?._id || store.seller);
+            query.$and.push({ seller: { $in: verifiedSellerIds } });
+        }
 
         if (brands) {
             const brandValues = toArray(brands).map(brand => String(brand || '').trim()).filter(Boolean);
@@ -900,7 +915,7 @@ exports.getFilters = async (req, res) => {
         const Store = require('../models/Store');
         const buyerLocation = buyerLocationFromRequest(req);
         const activeStores = await findVisibleStores(Store, { isActive: true }, buyerLocation, {
-            select: 'seller visibility',
+            select: 'seller visibility verification sellerType storeName storeSlug',
             populate: { path: 'seller', select: '_id' },
         });
         const blockedSellers = blockedIdSet(await getBlockedUserIds(req));
@@ -914,26 +929,29 @@ exports.getFilters = async (req, res) => {
             ],
         });
 
-        const [categories, brandStats] = await Promise.all([
+        const verifiedStores = activeStores.filter(store => store.sellerType === 'brand'
+            && store.verification?.isVerified === true
+            && !blockedSellers.has(String(store.seller?._id || store.seller)));
+        const [categories, stockedBrandSellers] = await Promise.all([
             Product.distinct('category', productScope),
-            getBrandStats(productScope),
+            Product.distinct('seller', publicProductFilter({ seller: { $in: verifiedStores.map(store => store.seller?._id || store.seller) } })),
         ]);
-
-        const popularBrands = brandStats
-            .filter(brand => brand.count >= POPULAR_BRAND_MIN_PRODUCTS)
-            .map(brand => brand.name)
-            .sort((a, b) => a.localeCompare(b));
-        const otherBrandsCount = brandStats
-            .filter(brand => brand.count < POPULAR_BRAND_MIN_PRODUCTS)
-            .reduce((sum, brand) => sum + brand.count, 0);
+        const stocked = new Set(stockedBrandSellers.map(String));
+        const verifiedBrands = verifiedStores.filter(store => stocked.has(String(store.seller?._id || store.seller)))
+            .map(store => ({ value: String(store._id), label: store.storeName, slug: store.storeSlug, verified: true }))
+            .sort((a, b) => a.label.localeCompare(b.label) || a.value.localeCompare(b.value));
 
         res.status(200).json({
             categories: cleanList(categories),
-            brands: popularBrands,
-            otherBrandsCount,
+            // Old clients cannot bind a verified profile by ID. Fail closed
+            // instead of presenting arbitrary product labels as verified.
+            brands: [],
+            otherBrandsCount: 0,
+            verifiedBrands,
             brandFilter: {
-                otherValue: OTHER_BRANDS_FILTER,
-                minProducts: POPULAR_BRAND_MIN_PRODUCTS,
+                kind: 'verified-brand-stores',
+                verifiedOnly: true,
+                minProducts: 1,
             },
         })
     } catch (err) {

@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { parseQueryParams, getPriceFilterMax, filterValues, filterValueSelected, toggleFilterValue } from '../src/utils/catalogFilterQuery.js';
+import { parseQueryParams, filterValues, filterValueSelected, toggleFilterValue } from '../src/utils/catalogFilterQuery.js';
+import { readPriceRange, stepPriceRange } from '../src/utils/priceFilters.js';
+import { verifiedBrandOptions, verifiedBrandLabel } from '../src/utils/verifiedBrandFilters.js';
 const read = relative => readFileSync(new URL(relative, import.meta.url), 'utf8');
 
 test('one-brand and Other-only checkboxes retain array semantics and case-insensitive selection', () => {
@@ -15,20 +17,55 @@ test('one-brand and Other-only checkboxes retain array semantics and case-insens
 });
 
 test('URL filters preserve arrays, punctuation, zero prices and the owning buyer currency', () => {
-  assert.deepEqual(parseQueryParams('?categories=Home&categories=Books&brands=A%2BB&search=%5B&priceRange=0,0&currency=PKR', 'PKR'), {
-    categories: ['Home', 'Books'], brands: ['A+B'], search: '[', priceRange: ['0', '0'],
+  assert.deepEqual(parseQueryParams('?categories=Home&categories=Books&brandStores=1234567890abcdef12345678&search=%5B&priceRange=0,0&currency=PKR', 'PKR'), {
+    categories: ['Home', 'Books'], brands: ['1234567890abcdef12345678'], search: '[', priceRange: ['0', '0'],
   });
-  assert.deepEqual(parseQueryParams('?priceRange=1000,2000&currency=PKR', 'USD').priceRange, ['0', String(getPriceFilterMax('USD'))]);
+  assert.deepEqual(parseQueryParams('?priceRange=1000,2000&currency=PKR', 'USD').priceRange, ['0', '']);
+  assert.deepEqual(parseQueryParams('?priceRange=10,&currency=USD', 'USD').priceRange, ['10', '']);
+  assert.deepEqual(parseQueryParams('?brands=Unverified&brandStores=bogus', 'USD').brands, []);
 });
 test('invalid URL ranges are reset rather than silently interpreted as unrelated prices', () => {
-  for (const range of ['-1,2', '3,2', 'word,5', '1,2,3']) assert.deepEqual(parseQueryParams('?priceRange=' + range, 'PKR').priceRange, ['0', '1500000']);
+  for (const range of ['-1,2', '3,2', 'word,5', '1,2,3']) assert.deepEqual(parseQueryParams('?priceRange=' + range, 'PKR').priceRange, ['0', '']);
 });
 test('Home uses stable filter content, controlled slider state and full reset/search page resets', () => {
   const source = read('../src/components/Products.jsx');
   assert.match(source, /const renderFilterSidebarContent/); assert.doesNotMatch(source, /<FilterSidebarContent/);
-  assert.match(source, /value=\{Number\(filterPriceRange\[0\]\) \|\| 0\}/);
+  assert.match(source, /<PriceRangeFilter key=\{`\$\{currency\}-\$\{priceResetKey\}`\}/);
+  assert.match(read('../src/components/common/PriceRangeFilter.jsx'), /step='0.01' value=\{min\}/);
   assert.match(source, /const submitSearch = [\s\S]*?currentPageRef\.current = 1/);
   assert.match(source, /const resetAllFilters = [\s\S]*?sortByRef\.current = 'relevance'/);
+});
+
+test('price fields support min-only, max-only, zero, decimals and safe stepper boundaries', () => {
+  assert.deepEqual(readPriceRange(['', '']), { min: 0, max: null, error: '' });
+  assert.deepEqual(readPriceRange(['1.25', '']), { min: 1.25, max: null, error: '' });
+  assert.deepEqual(readPriceRange(['1,000.50', '2,000']), { min: 1000.5, max: 2000, error: '' });
+  assert.deepEqual(readPriceRange(['', '0']), { min: 0, max: 0, error: '' });
+  for (const values of [['2', '1'], ['-1', '2'], ['oops', ''], ['Infinity', ''], ['1e2', '']]) assert.ok(readPriceRange(values).error);
+  assert.deepEqual(stepPriceRange(['0', ''], 'min', -1), ['0', '']);
+  assert.deepEqual(stepPriceRange(['1.25', ''], 'min', 1), ['2.25', '']);
+  assert.deepEqual(stepPriceRange(['2', '2.5'], 'min', 1), ['2.5', '2.5']);
+  assert.deepEqual(stepPriceRange(['2', '2.5'], 'max', -1), ['2', '2']);
+  assert.deepEqual(stepPriceRange(['2', ''], 'max', 1), ['2', '3']);
+  assert.deepEqual(stepPriceRange(['0', ''], 'max', -1), ['0', '']);
+});
+
+test('both clients bind brand choices to verified profile IDs, with no Other brands escape', () => {
+  const verified = { value: '1234567890abcdef12345678', label: 'Verified example', verified: true };
+  assert.deepEqual(verifiedBrandOptions([verified, { ...verified, verified: false }, { value: 'fake', label: 'Fake', verified: true }, verified]), [verified]);
+  assert.equal(verifiedBrandLabel([verified], verified.value), 'Verified example');
+  assert.equal(verifiedBrandLabel([], verified.value), 'Unavailable brand');
+  for (const file of ['../src/components/Products.jsx', '../../MobileApp/src/screens/HomeScreen.js']) {
+    const source = read(file);
+    assert.match(source, /verifiedBrandOptions\(res\.data\.verifiedBrands\)/);
+    assert.match(source, /brandStores/);
+    assert.doesNotMatch(source, /otherBrandsCount|__other_brands__/);
+  }
+});
+
+test('native highest/newest/most sorting matches the corrected descending API direction', () => {
+  const source = read('../../MobileApp/src/screens/HomeScreen.js');
+  for (const field of ['rating', 'newest', 'popular', 'sales']) assert.match(source, new RegExp(`field: '${field}', order: 'desc'`));
 });
 test('all web catalog screens discard obsolete responses and distinguish request failures', () => {
   for (const relative of ['../src/components/Products.jsx', '../src/pages/StoresListing.jsx', '../src/pages/StorePage.jsx']) {

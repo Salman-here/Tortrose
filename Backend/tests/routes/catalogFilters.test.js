@@ -122,6 +122,40 @@ test('store catalog counts and categories survive empty results and remain tenan
   }
 });
 
+test('brand choices require an active visible verified brand profile with public products, even just one', async () => {
+  expect((await request(app).get('/filters').query(area)).body.verifiedBrands).toEqual([]);
+  await Store.updateOne({ _id: primary._id }, { $set: { sellerType: 'brand', 'verification.isVerified': true } });
+  // A verified ordinary store is not a verified brand business.
+  await Store.updateOne({ _id: secondary._id }, { $set: { 'verification.isVerified': true } });
+  const first = await request(app).get('/filters').query(area);
+  expect(first.body.verifiedBrands.map(b => b.value)).toEqual([String(primary._id)]);
+  expect(first.body.verifiedBrands[0]).toMatchObject({ label: 'catalog-primary', verified: true });
+  expect(first.body.brands).toEqual([]); expect(first.body.otherBrandsCount).toBe(0);
+  await Store.updateOne({ _id: secondary._id }, { $set: { sellerType: 'brand' } });
+  const two = await request(app).get('/filters').query(area);
+  expect(two.body.verifiedBrands).toHaveLength(2);
+  await makeStore('verified-empty', { sellerType: 'brand', verification: { isVerified: true } });
+  expect((await request(app).get('/filters').query(area)).body.verifiedBrands).toHaveLength(2);
+  await Store.updateOne({ _id: secondary._id }, { $set: { visibility: normalizeStoreVisibility({ mode: 'country', country: 'United States' }) } });
+  expect((await request(app).get('/filters').query(area)).body.verifiedBrands.map(b => b.value)).toEqual([String(primary._id)]);
+  await Store.updateOne({ _id: primary._id }, { $set: { isActive: false } });
+  expect((await request(app).get('/filters').query(area)).body.verifiedBrands).toEqual([]);
+});
+
+test('verified brand selection is profile-bound, combines with prices and fails closed after revocation', async () => {
+  await Store.updateOne({ _id: primary._id }, { $set: { sellerType: 'brand', 'verification.isVerified': true } });
+  await Product.updateOne({ seller: secondary.seller }, { $set: { brand: primary.storeName } });
+  const selected = { ...area, brandStores: String(primary._id) };
+  expect(names(await request(app).get('/products').query(selected))).not.toContain('Other seller only');
+  expect(names(await request(app).get('/products').query(selected))).toHaveLength(6);
+  expect(names(await request(app).get('/products').query({ ...selected, categories: 'Books', priceRange: '0,0' }))).toEqual(['Free Card']);
+  expect(names(await request(app).get('/products').query({ ...area, brandStores: String(secondary._id) }))).toEqual([]);
+  expect((await request(app).get('/products').query({ ...area, brandStores: 'invalid' })).status).toBe(400);
+  await Store.updateOne({ _id: primary._id }, { $set: { 'verification.isVerified': false } });
+  expect(names(await request(app).get('/products').query(selected))).toEqual([]);
+  expect((await request(app).get('/products').query(area)).body.pagination.totalProducts).toBe(7);
+});
+
 test('verification/trust/search/type filter the whole Marketplace before paging and counts', async () => {
   for (let i = 0; i < 13; i++) await makeStore(`ordinary-${i}`);
   const match = await makeStore('z-match-brand', { sellerType: 'brand', trustCount: 100, verification: { isVerified: true } });

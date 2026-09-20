@@ -16,11 +16,13 @@ import SEOHead from './common/SEOHead'
 import { PRESET_CATEGORIES, isPresetCategory } from '../utils/categories'
 import { trackSearch } from '../utils/tiktokPixel'
 import BuyerLocationSelector from './common/BuyerLocationSelector'
+import PriceRangeFilter from './common/PriceRangeFilter'
+import VerifiedBadge from './common/VerifiedBadge'
+import { verifiedBrandOptions, verifiedBrandLabel } from '../utils/verifiedBrandFilters'
 import { getPriceFilterMax, parseQueryParams, filterValues, filterValueSelected, toggleFilterValue } from '../utils/catalogFilterQuery'
 
 const PRODUCTS_PER_PAGE = 24
 const PRODUCTS_CACHE_KEY = 'rozare:last-products-response'
-const DEFAULT_OTHER_BRANDS_FILTER = '__other_brands__'
 
 const readProductsCache = () => {
   try {
@@ -51,20 +53,19 @@ function Products() {
 
   const navigate = useNavigate()
   const location = useLocation()
-  const { currency, getCurrencySymbol } = useCurrency()
+  const { currency } = useCurrency()
   const { appendLocationParams, locationQueryString } = useBuyerLocation()
   const priceFilterMax = getPriceFilterMax(currency)
 
   const { reset, watch, setValue } = useForm({
-    defaultValues: { categories: [], brands: [], priceRange: ['0', String(priceFilterMax)] }
+    defaultValues: { categories: [], brands: [], priceRange: ['0', ''] }
   })
 
   const filters = watch()
   const [categories, setCategories] = useState([])
   const [search, setSearch] = useState("")
   const [brands, setBrands] = useState([])
-  const [otherBrandsCount, setOtherBrandsCount] = useState(0)
-  const [otherBrandsValue, setOtherBrandsValue] = useState(DEFAULT_OTHER_BRANDS_FILTER)
+  const [priceResetKey, setPriceResetKey] = useState(0)
   const filtersRef = useRef(filters)
   const searchRef = useRef(search)
   const currentPageRef = useRef(currentPage)
@@ -86,10 +87,10 @@ function Products() {
       if (Array.isArray(value)) {
         if (key === 'priceRange') {
           const min = String(value[0] ?? '0')
-          const max = String(value[1] ?? priceFilterMax)
-          if (min !== '0' || max !== String(priceFilterMax)) params.append(key, `${min},${max}`)
+          const max = String(value[1] ?? '')
+          if (Number(min) !== 0 || max !== '') params.append(key, `${min},${max}`)
         }
-        else value.forEach(item => params.append(key, item))
+        else value.forEach(item => params.append(key === 'brands' ? 'brandStores' : key, item))
       }
     })
     if (searchRef.current !== '') params.append('search', searchRef.current)
@@ -100,7 +101,7 @@ function Products() {
     params.append('currency', currency)
     appendLocationParams(params)
     return params.toString()
-  }, [appendLocationParams, currency, priceFilterMax])
+  }, [appendLocationParams, currency])
 
   const fetchProducts = useCallback(async () => {
     const requestId = ++productRequestRef.current
@@ -149,10 +150,8 @@ function Products() {
       const res = await axios.get(`${import.meta.env.VITE_API_URL}api/products/get-filters${suffix ? `?${suffix}` : ''}`)
       if (requestId !== filterRequestRef.current) return
       setCategories(res.data.categories || [])
-      setBrands(res.data.brands || [])
-      setOtherBrandsCount(res.data.otherBrandsCount || 0)
-      setOtherBrandsValue(res.data.brandFilter?.otherValue || DEFAULT_OTHER_BRANDS_FILTER)
-    } catch (error) { if (requestId === filterRequestRef.current) { setCategories([]); setBrands([]); setOtherBrandsCount(0) } }
+      setBrands(verifiedBrandOptions(res.data.verifiedBrands))
+    } catch (error) { if (requestId === filterRequestRef.current) { setCategories([]); setBrands([]) } }
   }, [appendLocationParams])
 
   useEffect(() => {
@@ -242,14 +241,14 @@ function Products() {
     currencyRef.current = currency
     const nextFilters = {
       ...filtersRef.current,
-      priceRange: ['0', String(priceFilterMax)],
+      priceRange: ['0', ''],
     }
     filtersRef.current = nextFilters
     setValue('priceRange', nextFilters.priceRange, { shouldDirty: false })
     setCurrentPage(1)
     currentPageRef.current = 1
     fetchProducts()
-  }, [currency, fetchProducts, priceFilterMax, setValue])
+  }, [currency, fetchProducts, setValue])
 
   const goToPage = (page) => {
     setCurrentPage(page)
@@ -279,7 +278,8 @@ function Products() {
     fetchProductsRef.current?.()
   }
   const resetAllFilters = () => {
-    const defaults = { categories: [], brands: [], search: '', priceRange: ['0', String(priceFilterMax)] }
+    const defaults = { categories: [], brands: [], search: '', priceRange: ['0', ''] }
+    setPriceResetKey(key => key + 1)
     filtersRef.current = defaults; searchRef.current = ''; currentPageRef.current = 1
     sortByRef.current = 'relevance'; sortOrderRef.current = 'desc'
     reset(defaults); setSearch(''); setCurrentPage(1); setSortBy('relevance'); setSortOrder('desc')
@@ -301,10 +301,10 @@ function Products() {
 
   const filterCategories = filters.categories || []
   const filterBrands = filterValues(filters.brands)
-  const filterPriceRange = filters.priceRange || ['0', String(priceFilterMax)]
+  const filterPriceRange = filters.priceRange || ['0', '']
 
   const activeFilterCount = filterCategories.length + filterBrands.length +
-    (filterPriceRange[0] !== '0' || String(filterPriceRange[1]) !== String(priceFilterMax) ? 1 : 0)
+    (Number(filterPriceRange[0]) !== 0 || filterPriceRange[1] !== '' ? 1 : 0)
 
   // Render function, not a new component type on every keystroke: this keeps
   // search focus and slider state stable while the parent filter state changes.
@@ -409,34 +409,21 @@ function Products() {
       {/* Brands */}
       <div>
         <label className='block text-xs font-semibold uppercase tracking-wider mb-3' style={{ color: 'hsl(var(--muted-foreground))' }}>Brands</label>
-        {(!brands || brands.length === 0) && !otherBrandsCount
-          ? <p className='text-sm italic' style={{ color: 'hsl(var(--muted-foreground))' }}>No brands available</p>
+        {brands.length === 0
+          ? <p className='text-sm italic' style={{ color: 'hsl(var(--muted-foreground))' }}>No verified brands available</p>
           : <div className='flex flex-col gap-1'>
             {brands.map(brand => (
-              <label key={brand} className='glass-checkbox-label flex items-center gap-3 cursor-pointer py-2 px-3 rounded-xl transition-all hover:bg-white/10'>
+              <label key={brand.value} className='glass-checkbox-label flex items-center gap-3 cursor-pointer py-2 px-3 rounded-xl transition-all hover:bg-white/10'>
                 <span className='glass-checkbox-box relative w-5 h-5 rounded-lg border border-white/25 bg-white/8 backdrop-blur-sm flex items-center justify-center shrink-0 transition-all'>
-                  <input type='checkbox' value={brand} checked={filterValueSelected(filterBrands, brand)} onChange={() => setValue('brands', toggleFilterValue(filterBrands, brand), { shouldDirty: true })}
+                  <input type='checkbox' value={brand.value} checked={filterValueSelected(filterBrands, brand.value)} onChange={() => setValue('brands', toggleFilterValue(filterBrands, brand.value), { shouldDirty: true })}
                     className='absolute inset-0 opacity-0 cursor-pointer peer' />
                   <svg className='w-3 h-3 hidden peer-checked:block' style={{ color: 'hsl(200, 80%, 55%)' }} viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                     <polyline points="2 6 5 9 10 3" />
                   </svg>
                 </span>
-                <span className='text-sm font-medium'>{brand}</span>
+                <span className='text-sm font-medium'>{brand.label}</span><VerifiedBadge size='sm' />
               </label>
             ))}
-            {otherBrandsCount > 0 && (
-              <label className='glass-checkbox-label flex items-center gap-3 cursor-pointer py-2 px-3 rounded-xl transition-all hover:bg-white/10'>
-                <span className='glass-checkbox-box relative w-5 h-5 rounded-lg border border-white/25 bg-white/8 backdrop-blur-sm flex items-center justify-center shrink-0 transition-all'>
-                  <input type='checkbox' value={otherBrandsValue} checked={filterValueSelected(filterBrands, otherBrandsValue)} onChange={() => setValue('brands', toggleFilterValue(filterBrands, otherBrandsValue), { shouldDirty: true })}
-                    className='absolute inset-0 opacity-0 cursor-pointer peer' />
-                  <svg className='w-3 h-3 hidden peer-checked:block' style={{ color: 'hsl(200, 80%, 55%)' }} viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                    <polyline points="2 6 5 9 10 3" />
-                  </svg>
-                </span>
-                <span className='text-sm font-medium'>Other brands</span>
-                <span className='text-[10px] ml-auto opacity-70'>{otherBrandsCount}</span>
-              </label>
-            )}
           </div>
         }
       </div>
@@ -444,16 +431,8 @@ function Products() {
       {/* Price Range */}
       <div>
         <label className='block text-xs font-semibold uppercase tracking-wider mb-3' style={{ color: 'hsl(var(--muted-foreground))' }}>Price Range</label>
-        <input type='range' min={0} max={priceFilterMax} value={Number(filterPriceRange[0]) || 0}
-          aria-label='Minimum price'
-          onChange={(e) => setValue('priceRange', [e.target.value, String(priceFilterMax)])}
-          className='w-full h-2 rounded-full appearance-none cursor-pointer accent-indigo-600'
-          style={{ background: 'rgba(255,255,255,0.15)' }}
-        />
-        <div className='flex justify-between mt-2'>
-          <span className='tag-pill text-xs font-semibold'>{getCurrencySymbol()}{filterPriceRange[0]} {currency}</span>
-          <span className='tag-pill text-xs font-semibold'>{Number(filterPriceRange[0]) === 0 && String(filterPriceRange[1]) === String(priceFilterMax) ? 'No price limit' : `${getCurrencySymbol()}${filterPriceRange[1]} ${currency}`}</span>
-        </div>
+        <PriceRangeFilter key={`${currency}-${priceResetKey}`} value={filterPriceRange} currency={currency} sliderMax={priceFilterMax}
+          onChange={value => setValue('priceRange', value, { shouldDirty: true })} />
       </div>
 
       {/* Active Filters */}
@@ -463,7 +442,7 @@ function Products() {
             <span key={c} className='tag-pill text-xs font-medium'>{c}</span>
           ))}
           {filterBrands.map(b => (
-            <span key={b} className='tag-pill text-xs font-medium' style={{ background: 'rgba(56, 189, 248, 0.1)', color: 'hsl(200, 80%, 50%)' }}>{b === otherBrandsValue ? 'Other brands' : b}</span>
+            <span key={b} className='tag-pill text-xs font-medium' style={{ background: 'rgba(56, 189, 248, 0.1)', color: 'hsl(200, 80%, 50%)' }}>{verifiedBrandLabel(brands, b)}</span>
           ))}
         </div>
       )}

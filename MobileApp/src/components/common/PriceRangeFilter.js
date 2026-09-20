@@ -7,7 +7,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useCurrency } from '../../contexts/CurrencyContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import { spacing, fontSize, fontWeight, borderRadius } from '../../styles/theme';
-import { parsePriceFilterInput, priceFilterError } from '../../utils/priceFilters';
+import { parsePriceFilterInput, priceFilterError, stepPriceFilterRange } from '../../utils/priceFilters';
 
 // Product filtering is performed in the buyer's selected currency. Keep the
 // useful USD buying-power bands, then localize the submitted thresholds.
@@ -61,19 +61,28 @@ export default function PriceRangeFilter({ min = 0, max = null, onChange }) {
 
   const error = priceFilterError({ min, max });
   const amountLabel = amount => formatAmount(amount, { decimals: Number.isInteger(amount) ? 0 : 2, targetCurrency: currency });
+  const adjust = (field, direction) => {
+    const next = stepPriceFilterRange({ min, max }, field, direction);
+    setMinStr(String(next.min)); setMaxStr(next.max === null ? '' : String(next.max));
+    lastEmitted.current = next; onChange?.(next);
+  };
 
   return (
     <View>
       <View style={styles.inputRow}>
-        <View style={styles.inputBox}>
-          <Text style={styles.inputLabel}>Min</Text>
-          <TextInput value={minStr} onChangeText={(v) => { setMinStr(v); commit(v, maxStr); }} keyboardType="decimal-pad" placeholder="0" placeholderTextColor={colors.textLight} style={styles.input} accessibilityLabel="Minimum price" />
-        </View>
-        <View style={styles.dash}><Ionicons name="remove" size={16} color={colors.textSecondary} /></View>
-        <View style={styles.inputBox}>
-          <Text style={styles.inputLabel}>Max</Text>
-          <TextInput value={maxStr} onChangeText={(v) => { setMaxStr(v); commit(minStr, v); }} keyboardType="decimal-pad" placeholder="Any" placeholderTextColor={colors.textLight} style={styles.input} accessibilityLabel="Maximum price" />
-        </View>
+        {['min', 'max'].map((field, index) => {
+          const label = index === 0 ? 'Minimum' : 'Maximum';
+          const minusDisabled = !!error || (index === 0 ? min <= 0 : max === null || max <= min);
+          const plusDisabled = !!error || (index === 0 && max !== null && min >= max);
+          return <View key={field} style={styles.inputBox}>
+            <Text style={styles.inputLabel}>{label} ({currency})</Text>
+            <View style={styles.stepperRow}>
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Decrease ${label.toLowerCase()} price`} disabled={minusDisabled} accessibilityState={{ disabled: minusDisabled }} onPress={() => adjust(field, -1)} style={[styles.stepButton, minusDisabled && { opacity: 0.35 }]}><Ionicons name="remove" size={18} color={colors.primary} /></TouchableOpacity>
+              <TextInput value={index === 0 ? minStr : maxStr} onChangeText={v => { if (index === 0) { setMinStr(v); commit(v, maxStr); } else { setMaxStr(v); commit(minStr, v); } }} keyboardType="decimal-pad" placeholder={index === 0 ? '0' : 'No limit'} placeholderTextColor={colors.textLight} style={styles.input} accessibilityLabel={`${label} price`} />
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Increase ${label.toLowerCase()} price`} disabled={plusDisabled} accessibilityState={{ disabled: plusDisabled }} onPress={() => adjust(field, 1)} style={[styles.stepButton, plusDisabled && { opacity: 0.35 }]}><Ionicons name="add" size={18} color={colors.primary} /></TouchableOpacity>
+            </View>
+          </View>;
+        })}
       </View>
 
       {!!error && <Text accessibilityRole="alert" style={{ color: colors.error, marginBottom: spacing.sm }}>{error}</Text>}
@@ -100,11 +109,12 @@ export default function PriceRangeFilter({ min = 0, max = null, onChange }) {
 }
 
 const makeStyles = (palette) => { const colors = palette.colors; return StyleSheet.create({
-  inputRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginBottom: spacing.md },
-  inputBox: { flex: 1, backgroundColor: colors.primarySubtle, borderRadius: borderRadius.lg, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderWidth: 1, borderColor: colors.primaryLighter },
+  inputRow: { gap: spacing.sm, marginBottom: spacing.md },
+  inputBox: { backgroundColor: colors.primarySubtle, borderRadius: borderRadius.lg, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderWidth: 1, borderColor: colors.primaryLighter },
   inputLabel: { fontSize: 10, color: colors.textSecondary, fontWeight: fontWeight.semibold, letterSpacing: 0.5 },
-  input: { fontSize: fontSize.lg, color: colors.text, fontWeight: fontWeight.semibold, padding: 0, paddingTop: 2 },
-  dash: { paddingHorizontal: spacing.xs },
+  input: { flex: 1, minWidth: 0, textAlign: 'center', fontSize: fontSize.lg, color: colors.text, fontWeight: fontWeight.semibold, padding: 0, paddingTop: 2 },
+  stepperRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginTop: spacing.xs },
+  stepButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', borderRadius: borderRadius.md, backgroundColor: palette.glass.bgSubtle },
   presetRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
   presetChip: { paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: borderRadius.full, backgroundColor: palette.glass.bgSubtle, borderWidth: 1, borderColor: palette.glass.borderSubtle },
   presetChipActive: { backgroundColor: colors.primary, borderColor: colors.primary },

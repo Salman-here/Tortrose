@@ -1,3 +1,5 @@
+import { readPriceRange } from './priceFilters.js'
+
 const PRICE_FILTER_MAX = Object.freeze({
   USD: 5000,
   PKR: 1500000,
@@ -16,17 +18,15 @@ export const toggleFilterValue = (values, value) => filterValueSelected(values, 
 export const parseQueryParams = (search, activeCurrency) => {
   const params = new URLSearchParams(search)
   const queryCurrency = String(params.get('currency') || '').trim().toUpperCase()
-  const priceFilterMax = getPriceFilterMax(activeCurrency)
   const savedRangeBelongsToCurrency = !queryCurrency || queryCurrency === activeCurrency
   const rawRange = params.get('priceRange')?.split(',')
-  const validRange = rawRange?.length === 2 && rawRange.every(v => Number.isFinite(Number(v)) && Number(v) >= 0)
-    && Number(rawRange[0]) <= Number(rawRange[1])
+  const validRange = rawRange?.length === 2 && !readPriceRange(rawRange).error
   return {
     categories: params.getAll('categories'),
-    brands: params.getAll('brands'),
+    brands: [...new Set(params.getAll('brandStores').filter(id => /^[a-f\d]{24}$/i.test(id)).map(id => id.toLowerCase()))],
     search: params.get('search') || '',
     priceRange: validRange && savedRangeBelongsToCurrency
       ? rawRange
-      : ['0', String(priceFilterMax)]
+      : ['0', '']
   }
 }
