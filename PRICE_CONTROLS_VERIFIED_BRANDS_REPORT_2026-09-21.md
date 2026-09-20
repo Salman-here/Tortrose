@@ -21,4 +21,15 @@ Date: 21 September 2026. Follow-up to the catalog-filter release.
 
 ## Release and live checks
 
-Pending publication and live verification. No store was verified or otherwise modified just to manufacture a positive live brand example; those cases use isolated fixtures.
+- Application commit `dea0c500`, pushed to both GitHub repositories. Vercel deployment `EsnL1B1N27fY6MmpPjdRxnQNBf75` succeeded. Railway deployment `34fcf0d6-2cc4-4067-94c3-761e694c638c` reported SUCCESS with matching full commit `dea0c50043ccb0abac7667acc49a2757e3eed57d`.
+- Android/iOS production OTA published successfully for runtime `1.0.11`: group `0e015022-cfa3-4aff-81fe-096c3ba97a73`, Android `01a0c124-5bfb-7437-955d-102be3e4bc13`, iOS `01a0c124-5bfb-7331-ba11-52ce1d1a68d8`, based on `dea0c500`. No new native build was required.
+- Live web: minimum $24 and maximum $25 returned only Travel Tech Pouch ($24.99). Minimum + changed the range to $25–$25 and returned zero; its + and maximum's − buttons were disabled at the shared bound. Minimum − restored the matching product. Maximum − produced $24–$24 with zero matches, and maximum + restored $24–$25 and the product. **PASS.**
+- Typed maximum 23 while minimum was 24: validation was visible and the last valid product result was retained. Reset cleared the invalid draft and restored all 10 products. Maximum 0 correctly returned zero free-product matches; clearing maximum restored No price limit and 10 products. Exact $24.99–$24.99 matched Travel Tech Pouch. **PASS.**
+- Switched to PKR, then typed grouped inputs `1,000` and `2,000`: exactly Resistance Band Set Rs1,890, Jump Rope Rs1,590 and Steel Shaker Rs1,450 remained. Native product and converted display amounts were not relabelled as a different currency. **PASS.**
+- Phone-width web at 390×844: both inputs and four buttons fit the drawer; buttons changed the range to $1–$26, producing six matching items. Reset and close worked. Restored the normal viewport, USD currency, Global + Pakistan and unfiltered catalog. **PASS.**
+- The current live catalog has no eligible verified Brand-type profiles, so the UI displayed No verified brands available instead of listing Atlas/Pulse's unverified product labels. Their products remained available in the unfiltered catalog. Positive verified-profile, single-product, spoofed-name and revoked-verification cases passed isolated backend tests. No store was verified or otherwise modified just to manufacture a positive live example.
+- Installed Android release app: after its OTA restart, visually confirmed Minimum/Maximum PKR inputs, four plus/minus buttons, No limit for an empty maximum, and the verified-brand empty state. Minimum + changed 0 to 1; minimum − restored 0. Maximum + changed No limit to 1; maximum − changed 1 to 0. At 0–0 the crossing controls were disabled; Show products returned 0 items with the 0–0 PKR chip. Clear All removed the test filter. **PASS.** Android was checked through the computer-use skill on the RozareQA emulator; no physical handset or iOS device was used.
+
+## Boundaries
+
+No order, payment, balance, shipping or stored product-price calculation was changed. The verified-brand filter is a discovery filter, not a restriction on shopping from unverified sellers. iOS native export/publication is separate from physical-device verification; no iPhone/iPad was manually used.
