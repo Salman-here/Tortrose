@@ -2,6 +2,8 @@
 
 Date: 20 September 2026. This supersedes the Global-only discovery rule from the earlier visibility report.
 
+Final retry publication and resumed device verification completed on 21 September after a host interruption.
+
 ## New rule
 
 - Buyer detected in Pakistan + Global: Global stores/products **plus Pakistan-wide stores/products**.
@@ -45,7 +47,7 @@ Global adds country-wide visibility. It does not indiscriminately expose all cit
 5. The live Marketplace displayed **Global + Pakistan** and **4 stores**: Juniper Trails 90901, FaishonAura, Atlas Aura Goods and Pulse Peak Gear. **PASS.**
 6. Reloaded Marketplace: Global + Pakistan and the four stores remained. Opened the previously country-only Yoga Mat direct link while Global was selected: the product and Pulse Peak store identity were visible. **PASS.**
 
-Automated country cases are not represented as physical visits from those countries. Mobile publication and installed-app observations are recorded below after completion.
+Automated country cases are not represented as physical visits from those countries. Mobile publication and installed-app observations are recorded below.
 
 ## Country-lookup resilience follow-up
 
@@ -54,3 +56,17 @@ The installed Android app initially loaded the new Global description but did no
 Added one automatic retry on both clients and a 12-second client timeout per attempt (the backend's upstream timeout is eight seconds). The Global catalog remains usable during the background lookup. Two unsuccessful attempts stop without inventing a country. Manual Country selections and cleared sessions still reject late results.
 
 Follow-up validation: **4 mobile suites, 27 tests passed**, including simulated network failure, unsuccessful geolocation response followed by success, and permanent failure bounded to two attempts. The 14 web location/persistence checks also passed.
+
+Follow-up commit: `f210e823` (`fix: retry transient shopper country lookups`). Its full website production/SSR build passed and its Vercel deployment `9NLyW1cSqrtrMR9Q2HdFshB9MFQZ` succeeded.
+
+The host interrupted the first follow-up mobile publication. After resuming on 21 September, Expo's update list was checked before retrying: the main Global + country update was present, but the retry follow-up was not. The resumed publication succeeded: group `ed0ecd40-97b3-44cc-a37e-d57077022054`, Android `01a0c032-e09f-7ea0-9e80-64ee305d0ed4`, iOS `01a0c032-e09f-713e-aca9-690331494fd5`, runtime `1.0.11`, commit `f210e823`. Railway also reported SUCCESS for `f210e823` in deployment `549aca62-1328-41e6-bc28-0fa00097db16`.
+
+## Installed Android observations
+
+The installed release app received the new Global wording. Following the initial lookup recovery described above, Filters displayed **Global + Pakistan** with Global selected and the local product catalog returned. The first failed lookup was retained in this report instead of being marked as a first-attempt pass. The automatic recovery paths were then tested with controlled failures.
+
+The host interruption also stopped the emulator. Its first restart encountered an Android “System UI isn't responding” dialog. After allowing Android to recover, Marketplace was checked again: **3 stores** and their cards were visible — Juniper Trails 90901, Atlas Aura Goods and Pulse Peak Gear. This matched a contemporaneous anonymous live API check with Global + Pakistan. The earlier empty device list was not recorded as a successful filter check. The earlier browser observation of four stores remains a time-specific observation; the live catalog returned three during this later check.
+
+Opened the Android Marketplace filter sheet after those cards loaded and confirmed **Global was selected**, with the new Global + country description. The store-list check therefore was not merely a Country-only result. **PASS.**
+
+No seller visibility, orders, payments, balances or account roles were changed during this follow-up. iOS was exported/published, but no physical iOS device was used for a manual test. The US/Canada/Japan cases use automated country fixtures; the live device/browser location was Pakistan.
