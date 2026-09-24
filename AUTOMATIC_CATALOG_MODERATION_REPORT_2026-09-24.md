@@ -1,5 +1,7 @@
 # Automatic catalog moderation — 24 September 2026
 
+> Historical report: the AI moderation and image-copying implementation described below was subsequently removed at the user's request. See [the local-rules correction report](LOCAL_RULES_MODERATION_CORRECTION_2026-09-24.md) for the replacement. Existing AI tags/descriptions, chat and voice features are retained.
+
 ## Requested behavior
 
 Seller products and store profiles must be checked automatically. Clean content should publish without waiting for an administrator. Prohibited content must remain hidden, with an actionable reason and a seller notification.

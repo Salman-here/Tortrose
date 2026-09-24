@@ -12,7 +12,7 @@ async function ensureCatalogModerationNotification(kind, entity, { session = nul
   // Do not repeat a rejected title/name (or an offensive image caption) in
   // email subjects, notification banners or WhatsApp messages.
   const body = notice.noticeStatus === 'approved'
-    ? `Your ${kind} passed the content checks. You can view its current status in your seller dashboard.`
+    ? `Your ${kind} passed the local content rules. You can view its current status in your seller dashboard.`
     : `${notice.noticeReason} ${notice.noticeStatus === 'blocked' ? 'Edit the flagged content to submit it for automatic checks again.' : 'It remains hidden while we retry automatically.'}`.slice(0, 1000);
   const linkTo = kind === 'store' ? '/seller-dashboard/store-settings' : '/seller-dashboard/product-management';
   const id = String(entity._id);

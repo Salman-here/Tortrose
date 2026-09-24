@@ -2,7 +2,10 @@
 
 const crypto = require('node:crypto');
 const net = require('node:net');
-const POLICY_VERSION = 'catalog-safety-2026-09-v1';
+const POLICY_VERSION = 'catalog-rules-2026-09-v2';
+// Preserve existing approvals without re-reviewing or hiding the catalog on
+// removal of the former AI reviewer. Every subsequent edit uses local rules.
+const APPROVED_POLICY_VERSIONS = [POLICY_VERSION, 'catalog-safety-2026-09-v1'];
 const HOLD_STATUSES = ['pending', 'blocked'];
 const POLICY_CODES = ['profanity', 'sexual_goods', 'explicit_sexual_content', 'hate_or_threats', 'insufficient_details', 'image_invalid', 'content_limit'];
 const PRODUCT_INPUT_FIELDS = new Set([
@@ -17,13 +20,13 @@ const STORE_CONTENT_FIELDS = ['storeName', 'storeSlug', 'description', 'logo', '
 // an explicit rollout choice because it temporarily removes unreviewed rows.
 const reviewExistingCatalog = () => process.env.CATALOG_REVIEW_EXISTING === 'true';
 const publicContentClause = () => {
-  const approved = { moderationStatus: 'approved', moderationPolicyVersion: POLICY_VERSION, moderationReviewedAt: { $type: 'date' } };
+  const approved = { moderationStatus: 'approved', moderationPolicyVersion: { $in: APPROVED_POLICY_VERSIONS }, moderationReviewedAt: { $type: 'date' } };
   return reviewExistingCatalog() ? approved : { $or: [approved, {
     moderationPolicyVersion: { $in: ['', null] }, moderationStatus: { $in: ['approved', null] },
   }] };
 };
 const isContentHeld = entity => HOLD_STATUSES.includes(entity?.moderationStatus);
-const isContentApproved = entity => Boolean(entity) && ((entity.moderationStatus === 'approved' && entity.moderationPolicyVersion === POLICY_VERSION
+const isContentApproved = entity => Boolean(entity) && ((entity.moderationStatus === 'approved' && APPROVED_POLICY_VERSIONS.includes(entity.moderationPolicyVersion)
   && Boolean(entity.moderationReviewedAt) && Number.isFinite(new Date(entity.moderationReviewedAt).getTime())
   || !reviewExistingCatalog() && !entity.moderationPolicyVersion && [undefined, null, 'approved'].includes(entity.moderationStatus)));
 const pickProductInput = value => Object.fromEntries(Object.entries(value && typeof value === 'object' && !Array.isArray(value) ? value : {})
@@ -46,7 +49,7 @@ const bounded = expression => new RegExp(`(?:^|[^\\p{L}\\p{N}])(?:${expression})
 // Deliberately narrow high-confidence rules. Context-sensitive words such as
 // "sex", "breast", "cocktail" and industrial "vibrator" are NOT word-banned.
 const SEVERE_LANGUAGE = bounded('f[\\W_]{0,3}(?:u|\\*)[\\W_]{0,3}c?[\\W_]{0,3}k(?:ing|er|ers|ed|s)?|mother[\\W_]{0,3}fuck(?:er|ers|ing)?|s[\\W_]{0,3}h[\\W_]{0,3}i[\\W_]{0,3}t(?:ty|ting|s)?|c[\\W_]{0,3}u[\\W_]{0,3}n[\\W_]{0,3}t(?:s)?|asshole(?:s)?|madarchod|bhenchod|behenchod|chutiya');
-const SEXUAL_GOODS = bounded('sex[\\s_-]*toys?|sex[\\s_-]*dolls?|dildos?|fleshlights?|masturbators?|butt[\\s_-]*plugs?|anal[\\s_-]*beads?');
+const SEXUAL_GOODS = bounded('sex[\\s_-]*toys?|sex[\\s_-]*dolls?|dildos?|fleshlights?|masturbators?|butt[\\s_-]*plugs?|anal[\\s_-]*beads?|(?:adult|sexual|personal)[\\s_-]*pleasure[\\s_-]*(?:devices?|toys?)');
 
 function publicImageUrl(value) {
   try {
@@ -90,18 +93,19 @@ function contentSnapshot(kind, entity = {}) {
 
 function inspectContent(snapshot) {
   if (snapshot.images.length > 12 || snapshot.text.reduce((sum, entry) => sum + entry.value.length, 0) > 20000 || JSON.stringify(snapshot.text).length > 64000) {
-    return [{ field: 'content', code: 'content_limit', reason: 'Reduce excessive text or option values and use at most 12 images so every part can be checked.' }];
+    return [{ field: 'content', code: 'content_limit', reason: 'Reduce excessive text or option values and use at most 12 images.' }];
   }
   const violations = [];
   for (const entry of snapshot.text) {
     const value = normalizeForSafety(entry.value);
     if (SEVERE_LANGUAGE.test(value)) violations.push({ field: entry.field, code: 'profanity', reason: 'Remove offensive or profane wording from this field.' });
-    const contextualReference = /\b(?:book|guide|education|educational|research|manual)\b|\bnot\s+(?:a\s+)?sex[\s_-]*toy/i.test(value);
-    if (SEXUAL_GOODS.test(value) && !contextualReference) violations.push({ field: entry.field, code: 'sexual_goods', reason: 'Sex toys and products intended for sexual activity are not permitted on Rozare.' });
+    // A local word filter cannot reliably infer context. Never treat words
+    // such as "guide" elsewhere in a listing as an approval bypass.
+    if (SEXUAL_GOODS.test(value)) violations.push({ field: entry.field, code: 'sexual_goods', reason: 'Sex toys and products intended for sexual activity are not permitted on Rozare.' });
   }
   for (const entry of snapshot.images) if (!publicImageUrl(entry.url)) violations.push({ field: entry.field, code: 'image_invalid', reason: 'Use a publicly accessible HTTPS image uploaded for this listing.' });
   return violations.slice(0, 20);
 }
 
 const contentHash = snapshot => crypto.createHash('sha256').update(JSON.stringify({ policy: POLICY_VERSION, ...snapshot })).digest('hex');
-module.exports = { POLICY_VERSION, POLICY_CODES, PRODUCT_CONTENT_FIELDS, STORE_CONTENT_FIELDS, contentHash, contentSnapshot, inspectContent, isContentApproved, isContentHeld, normalizeForSafety, pickProductInput, publicContentClause, publicImageUrl, reviewExistingCatalog };
+module.exports = { POLICY_VERSION, APPROVED_POLICY_VERSIONS, POLICY_CODES, PRODUCT_CONTENT_FIELDS, STORE_CONTENT_FIELDS, contentHash, contentSnapshot, inspectContent, isContentApproved, isContentHeld, normalizeForSafety, pickProductInput, publicContentClause, publicImageUrl, reviewExistingCatalog };

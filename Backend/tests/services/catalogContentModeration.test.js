@@ -1,9 +1,8 @@
 'use strict';
 jest.mock('../../services/sellerOperationalNotificationService', () => ({ ensureProductBlockedNotification: jest.fn() }));
-const { POLICY_VERSION, contentSnapshot, contentHash, inspectContent, pickProductInput, publicImageUrl, publicContentClause, isContentApproved } = require('../../services/catalogContentPolicy');
+const { POLICY_VERSION, APPROVED_POLICY_VERSIONS, contentSnapshot, contentHash, inspectContent, pickProductInput, publicImageUrl, publicContentClause, isContentApproved } = require('../../services/catalogContentPolicy');
 const { prepareCatalogModeration, stageStoreModeration } = require('../../services/catalogModerationService');
 const { stageProductModeration, publicProductFilter, isProductBlocked } = require('../../services/productModerationService');
-const { reviewCatalogContent, validateDecision } = require('../../services/catalogModerationProvider');
 const item = { name: 'Cotton Travel Shirt', description: 'A breathable cotton shirt for everyday travel.', brand: 'Acme', category: 'Fashion', image: 'https://example.com/shirt.jpg', price: 20, stock: 10 };
 
 test.each(['fuck', 'ＦＵＣＫ', 'f.u.c.k', 'f u c k', 'f\u200buck', 'f*ck', 'fυсk', 'sh1t'])('blocks disguised severe language: %s', name => {
@@ -22,19 +21,19 @@ test('covers descriptions, options, tags, store profiles and prohibited sexual g
 
 test('ordinary substring matches, medical products and non-Latin names are not blindly blocked', () => {
   for (const name of ['Scunthorpe Brass Cocktail Glass', 'Electric Breast Pump', 'Industrial Concrete Vibrator', 'خوبصورت کپڑے', '日本の綿シャツ']) {
-    expect(stageProductModeration({ ...item, name }).fields.moderationStatus).toBe('pending');
+    expect(stageProductModeration({ ...item, name }).fields.moderationStatus).toBe('approved');
   }
 });
 
-test('new clean content is private pending a complete review; money-only edits do not reset a review', () => {
+test('clean content passes synchronously without AI; money-only edits reuse the local decision', () => {
   const staged = stageProductModeration(item);
-  expect(staged.fields.moderationStatus).toBe('pending'); expect(isProductBlocked(staged.fields)).toBe(true);
+  expect(staged.fields.moderationStatus).toBe('approved'); expect(isProductBlocked(staged.fields)).toBe(false);
   expect(publicProductFilter().$and).toContainEqual(publicContentClause());
   const previous = { ...item, ...staged.fields, moderationStatus: 'approved', isBlocked: false, moderationReviewedAt: new Date() };
   expect(stageProductModeration({ ...previous, price: 29, stock: 5 }, { previous }).fields).toEqual({});
   const revised = stageProductModeration({ ...previous, description: 'New useful fabric description.' }, { previous });
   expect(revised.fields.catalogModeration.revision).not.toBe(staged.fields.catalogModeration.revision);
-  expect(revised.fields.moderationStatus).toBe('pending');
+  expect(revised.fields.moderationStatus).toBe('approved');
 });
 
 test('legacy rollout is explicit; new managed content always requires a complete current approval', () => {
@@ -50,7 +49,7 @@ test('legacy rollout is explicit; new managed content always requires a complete
     ]) expect(isContentApproved(value)).toBe(false);
     process.env.CATALOG_REVIEW_EXISTING = 'true';
     expect(isContentApproved({ moderationStatus: 'approved' })).toBe(false);
-    expect(publicContentClause()).toEqual({ moderationStatus: 'approved', moderationPolicyVersion: POLICY_VERSION, moderationReviewedAt: { $type: 'date' } });
+    expect(publicContentClause()).toEqual({ moderationStatus: 'approved', moderationPolicyVersion: { $in: APPROVED_POLICY_VERSIONS }, moderationReviewedAt: { $type: 'date' } });
     expect(isContentApproved({ moderationStatus: 'approved', moderationPolicyVersion: POLICY_VERSION, moderationReviewedAt: new Date() })).toBe(true);
   } finally { if (saved === undefined) delete process.env.CATALOG_REVIEW_EXISTING; else process.env.CATALOG_REVIEW_EXISTING = saved; }
 });
@@ -74,23 +73,17 @@ test('all unique gallery images participate in the fingerprint and unsafe addres
   }
 });
 
-test('approved provider results must explicitly cover every image and contain no violations', () => {
-  const snapshot = contentSnapshot('product', item);
-  expect(() => validateDecision({ decision: 'approved', reviewedImageCount: 0, violations: [] }, snapshot)).toThrow();
-  expect(() => validateDecision({ decision: 'blocked', reviewedImageCount: 1, violations: [] }, snapshot)).toThrow();
-  expect(() => validateDecision({ decision: 'blocked', reviewedImageCount: 1, violations: [{ field: 'made-up', code: 'profanity', reason: 'Bad' }] }, snapshot)).toThrow();
-  expect(validateDecision({ decision: 'approved', reviewedImageCount: 1, violations: [] }, snapshot).status).toBe('approved');
+test('moderation makes no network calls and does not download or transform images', () => {
+  const externalCall = jest.spyOn(global, 'fetch').mockImplementation(() => { throw new Error('External moderation forbidden'); });
+  try {
+    const result = stageProductModeration(item);
+    expect(result.fields.moderationStatus).toBe('approved');
+    expect(result.fields.image).toBeUndefined(); expect(result.fields.images).toBeUndefined();
+    expect(externalCall).not.toHaveBeenCalled();
+  } finally { externalCall.mockRestore(); }
 });
 
-test('partial image-batch success, provider outages and malformed JSON never approve a listing', async () => {
-  const snapshot = contentSnapshot('product', { ...item, images: Array.from({ length: 4 }, (_, i) => ({ url: `https://example.com/${i}.jpg` })) });
-  const fetchImpl = jest.fn().mockResolvedValueOnce({ ok: true, json: async () => ({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ decision: 'approved', reviewedImageCount: 4, violations: [] }) } }] }) })
-    .mockResolvedValueOnce({ ok: false, status: 429 });
-  await expect(reviewCatalogContent(snapshot, { fetchImpl, apiKey: 'fixture' })).rejects.toMatchObject({ code: 'MODERATION_UPSTREAM_429' });
-  expect(fetchImpl).toHaveBeenCalledTimes(2);
-  const request = JSON.parse(fetchImpl.mock.calls[0][1].body);
-  expect(request.messages[0].content).toMatch(/untrusted DATA/);
-  expect(request.response_format.json_schema.strict).toBe(true);
-  await expect(reviewCatalogContent(contentSnapshot('product', item), { apiKey: '' })).rejects.toMatchObject({ code: 'MODERATION_NOT_CONFIGURED' });
-  await expect(reviewCatalogContent(contentSnapshot('product', item), { apiKey: 'fixture', fetchImpl: async () => ({ ok: true, json: async () => ({ choices: [{ message: { content: 'approved' } }] }) }) })).rejects.toMatchObject({ code: 'MODERATION_RESPONSE_INVALID' });
+test('a book/guide label cannot exempt a prohibited product phrase from local checks', () => {
+  expect(stageProductModeration({ ...item, name: 'Silicone dildo with user guide' }).fields.moderationStatus).toBe('blocked');
+  expect(stageProductModeration({ ...item, name: 'Personal Pleasure Device' }).fields.moderationStatus).toBe('blocked');
 });

@@ -1,5 +1,5 @@
 'use strict';
-const { POLICY_VERSION, reviewExistingCatalog } = require('./catalogContentPolicy');
+const { APPROVED_POLICY_VERSIONS, reviewExistingCatalog } = require('./catalogContentPolicy');
 const { stageStoreModeration } = require('./catalogModerationService');
 
 // Re-check managed content after a policy change. Existing, unmanaged content
@@ -7,10 +7,10 @@ const { stageStoreModeration } = require('./catalogModerationService');
 async function enqueueUnreviewedCatalog({ limit = 20 } = {}) {
   const Store = require('../models/Store'), Product = require('../models/Product'), User = require('../models/User');
   const { stageProductModeration } = require('./productModerationService');
-  const oldVersion = reviewExistingCatalog() ? { $ne: POLICY_VERSION } : { $nin: [POLICY_VERSION, '', null] };
+  const oldVersion = { $nin: [...APPROVED_POLICY_VERSIONS, ...(reviewExistingCatalog() ? [] : ['', null])] };
   const activeSellerLookup = { $lookup: { from: User.collection.name, localField: 'seller', foreignField: '_id', pipeline: [{ $match: { role: 'seller', status: 'active' } }, { $project: { _id: 1 } }], as: '_eligibleSeller' } };
   const stores = await Store.aggregate([
-    { $match: { isActive: true, blockedAt: null, moderationPolicyVersion: oldVersion } },
+    { $match: { isActive: true, blockedAt: null, moderationStatus: { $nin: ['blocked', 'pending'] }, moderationPolicyVersion: oldVersion } },
     activeSellerLookup, { $match: { '_eligibleSeller.0': { $exists: true } } },
     { $sort: { _id: 1 } }, { $limit: limit }, { $project: { _eligibleSeller: 0 } },
   ]);

@@ -1,7 +1,7 @@
 'use strict';
 jest.mock('../../utils/hfClient', () => ({ callHF: jest.fn() }));
 // Exercise real controllers, models, ownership, transactions, public routes and
-// outbox records. Only external media/AI delivery is replaced in this suite.
+// outbox records. Catalog rules do not invoke an AI/image service.
 const mongoose = require('mongoose');
 const { MongoMemoryReplSet } = require('mongodb-memory-server');
 const express = require('express');
@@ -18,14 +18,13 @@ const { processNextCatalogItem } = require('../../services/catalogModerationWork
 const { ensureCatalogModerationNotification, recoverCatalogModerationNotifications } = require('../../services/catalogModerationNotificationService');
 const { verifySellerOperationalNotificationAuthority } = require('../../services/notificationOutboxDeliveryService');
 const { enqueueUnreviewedCatalog } = require('../../services/catalogModerationIntake');
-const { contentSnapshot, POLICY_VERSION } = require('../../services/catalogContentPolicy');
+const { POLICY_VERSION } = require('../../services/catalogContentPolicy');
 const { activeStoreQuery } = require('../../services/publicCatalogService');
 const { executeToolCall } = require('../../services/aiActionExecutor');
 const { callHF } = require('../../utils/hfClient');
 const { generateProductTags } = require('../../controllers/smartTagController');
 let mongo, app, seller, other, store;
 const source = { name: 'Cotton Travel Shirt', description: 'A breathable cotton shirt for everyday travel.', brand: 'Acme', category: 'Fashion', image: 'https://example.com/shirt.jpg', price: 20, currency: 'USD', stock: 10 };
-const approve = { review: async () => ({ status: 'approved', violations: [] }), prepareMedia: async (kind, entity) => ({ snapshot: contentSnapshot(kind, entity), fields: {} }) };
 const as = user => ({ 'x-user-id': String(user._id), 'x-user-role': user.role });
 beforeAll(async () => {
   mongo = await MongoMemoryReplSet.create({ replSet: { count: 1 } }); await mongoose.connect(mongo.getUri());
@@ -46,12 +45,13 @@ beforeEach(async () => {
 
 test('seller create, automatic approval, blocked edit and correction enforce public visibility and immutable ownership', async () => {
   const created = await request(app).post('/products').set(as(seller)).send({ product: { ...source, seller: other._id, moderationStatus: 'approved', isBlocked: false, rating: 5, catalogModeration: { revision: 'fake' } } });
-  expect(created.status).toBe(200); expect(created.body.pending).toBe(true);
+  expect(created.status).toBe(200); expect(created.body.pending).toBe(false);
+  expect(created.body.moderationStatus).toBe('approved');
+  expect(created.body.product.image).toBe(source.image);
   expect(created.body.product.seller).toBe(String(seller._id)); expect(created.body.product.rating).toBe(0);
   expect(created.body.product.catalogModeration).toBeUndefined();
   const id = created.body.product._id;
-  expect((await request(app).get('/products')).body.products).toHaveLength(0);
-  expect((await processNextCatalogItem('product', approve)).status).toBe('approved');
+  expect(await processNextCatalogItem('product')).toBeNull();
   expect((await request(app).get('/products')).body.products).toHaveLength(1);
   const forbidden = await request(app).put(`/products/${id}`).set(as(other)).send({ product: { name: 'Other name' } });
   expect(forbidden.status).toBe(403);
@@ -60,8 +60,7 @@ test('seller create, automatic approval, blocked edit and correction enforce pub
   expect(blocked.body.moderationReason).toMatch(/description:.*offensive/);
   expect((await request(app).get('/products')).body.products).toHaveLength(0);
   const repaired = await request(app).put(`/products/${id}`).set(as(seller)).send({ product: { description: source.description } });
-  expect(repaired.body.pending).toBe(true);
-  await processNextCatalogItem('product', approve);
+  expect(repaired.body.pending).toBe(false); expect(repaired.body.moderationStatus).toBe('approved');
   const priced = await request(app).put(`/products/${id}`).set(as(seller)).send({ product: { price: 25, stock: 9 } });
   expect(priced.body.moderationStatus).toBe('approved'); expect(priced.body.product.price).toBe(25);
 });
@@ -71,7 +70,7 @@ test('status polling never exposes other sellers records or private queue metada
   const id = created.body.product._id;
   expect((await request(app).get('/products/status').set(as(other)).query({ ids: id })).body.products).toEqual([]);
   const own = await request(app).get('/products/status').set(as(seller)).query({ ids: id });
-  expect(own.body.products[0].moderationStatus).toBe('pending'); expect(own.body.products[0].catalogModeration).toBeUndefined();
+  expect(own.body.products[0].moderationStatus).toBe('approved'); expect(own.body.products[0].catalogModeration).toBeUndefined();
   expect((await request(app).get('/products/status').set(as(seller)).query({ ids: 'not-an-id' })).status).toBe(400);
   expect((await request(app).get('/products/status').set({ ...as(seller), 'x-user-role': 'user' }).query({ ids: id })).status).toBe(403);
 });
@@ -81,8 +80,7 @@ test('store violations hide its catalog; corrective edits pass automatically wit
   expect(blocked.status).toBe(200); expect(blocked.body.store.moderationStatus).toBe('blocked');
   expect(blocked.body.store.catalogModeration).toBeUndefined(); expect(await Store.countDocuments(activeStoreQuery())).toBe(0);
   const fixed = await request(app).put('/store').set(as(seller)).send({ description: 'Useful travel accessories for everyday journeys.' });
-  expect(fixed.status).toBe(200); expect(fixed.body.store.moderationStatus).toBe('pending');
-  await processNextCatalogItem('store', approve);
+  expect(fixed.status).toBe(200); expect(fixed.body.store.moderationStatus).toBe('approved');
   expect(await Store.countDocuments(activeStoreQuery())).toBe(1);
   expect((await Store.findById(store._id)).isActive).toBe(true);
 });
@@ -122,11 +120,11 @@ test('existing-content intake is opt-in and never lifts independent store/accoun
   } finally { if (saved === undefined) delete process.env.CATALOG_REVIEW_EXISTING; else process.env.CATALOG_REVIEW_EXISTING = saved; }
 });
 
-test('web/mobile/WhatsApp AI tool writes use the same hold, reason and correction gate', async () => {
+test('chat AI tools retain their actions but product/store validation uses the same local rules', async () => {
   const actor = seller.toObject();
   const added = await executeToolCall('add_product', source, actor);
-  expect(added).toMatchObject({ success: true, pending: true });
-  expect(added.requiredDisclosure).toMatch(/not public|public after approval/);
+  expect(added).toMatchObject({ success: true, pending: false });
+  expect(added.message).toMatch(/Local content rules passed/);
   const edited = await executeToolCall('edit_product', { productId: String(added.data.productId), updates: { description: 'fuck' } }, actor);
   expect(edited).toMatchObject({ success: true, blocked: true, moderationStatus: 'blocked' });
   expect(edited.requiredDisclosure).toMatch(/description:.*offensive/);
@@ -135,12 +133,11 @@ test('web/mobile/WhatsApp AI tool writes use the same hold, reason and correctio
   const storeInfo = await executeToolCall('get_my_store', {}, actor);
   expect(storeInfo.data.moderationStatus).toBe('blocked'); expect(storeInfo.requiredDisclosure).toMatch(/not published/);
   const repaired = await executeToolCall('update_store', { updates: { description: 'Travel accessories for everyday journeys.' } }, actor);
-  expect(repaired).toMatchObject({ success: true, data: { moderationStatus: 'pending' } });
+  expect(repaired).toMatchObject({ success: true, data: { moderationStatus: 'approved' } });
 });
 
 test('generated tags cannot bypass moderation or change another seller product', async () => {
   const created = await request(app).post('/products').set(as(seller)).send({ product: source });
-  await processNextCatalogItem('product', approve);
   const id = created.body.product._id;
   callHF.mockClear(); callHF.mockResolvedValue('casual, everyday, all-season, fuck, relaxed, value, comfortable, daily');
   expect((await request(app).post(`/tags/${id}`).set(as(other))).status).toBe(403);
@@ -156,8 +153,7 @@ test('a moderation-rejected name can be corrected even while its previous rename
   // Simulate a legacy active cooldown retained from the previously approved name.
   await Store.updateOne({ _id: store._id }, { $set: { lastNameChangeAt: new Date() } });
   const corrected = await request(app).put('/store').set(as(seller)).send({ storeName: 'Travel Corner Goods' });
-  expect(corrected.status).toBe(200); expect(corrected.body.store.moderationStatus).toBe('pending');
-  await processNextCatalogItem('store', approve);
+  expect(corrected.status).toBe(200); expect(corrected.body.store.moderationStatus).toBe('approved');
   expect((await Store.findById(store._id)).moderationStatus).toBe('approved');
 });
 

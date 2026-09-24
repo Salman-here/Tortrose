@@ -847,6 +847,7 @@ app.get('/health', (req, res) => {
     mongoConnected: mongoose.connection.readyState === 1,
     notificationOutboxWorkerStarted: isNotificationOutboxWorkerRunning(),
     catalogModerationWorkerStarted: require('./services/catalogModerationWorker').isCatalogModerationWorkerRunning(),
+    catalogModerationMode: 'local-rules',
   });
 });
 
