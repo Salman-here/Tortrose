@@ -61,7 +61,7 @@ This work does not moderate buyer reviews/private conversations, alter order mon
 - Existing Cloudinary credentials are required for image-copy review.
 - `/health` exposes `catalogModerationWorkerStarted` alongside the existing database/outbox status.
 
-## Verification so far
+## Verification
 
 - Real production-configured OpenRouter preflight: ordinary store approved, medical-product wording approved, sexual-goods euphemism blocked.
 - Real Cloudinary + provider preflight: separate immutable copy of an existing public Travel Tech Pouch image was created and approved. No product/store/order records were changed by this preflight.
@@ -72,7 +72,36 @@ This work does not moderate buyer reviews/private conversations, alter order mon
 - Full backend regression: **224 suites / 3,326 tests executed; 3,325 passed in the parallel run**. One existing currency-migration test counted retried bulk-write attempts as extra batches. Its committed checkpoint assertions passed; an isolated serial rerun passed both tests. No migration/payment code was changed to make this test pass. This is an explicit test-run caveat, not a claim that the original parallel run was entirely green.
 - A session interruption stopped an earlier full run before a final result was written. Only the completed rerun above is counted.
 - Final mobile subdomain/polling/routing rerun: **3 suites / 65 tests passed**.
-- Release verification remains in progress at this report revision.
+- Backend/frontend release, live API checks and Android/iOS update publication completed as detailed below.
+
+## Live verification
+
+These checks used the real production API and the existing Atlas Aura Goods test seller, not a mock database. The session's browser-control tool became unavailable after its runtime interruption, so this is **not** a claim of a fresh browser/native-screen walkthrough. Website deployment was additionally checked by fetching the live seller-settings asset containing the new status UI.
+
+Dedicated disposable product: `6ab50454493d3b8cfdf05a1e`. Stock was kept at zero throughout; no purchases or payments were made.
+
+| Live action | Observed result | Result |
+| --- | --- | --- |
+| Submitted the explicit profanity example as a product name | HTTP 200 saved the product as blocked with a name-specific reason; private moderation metadata absent from response | PASS |
+| Requested that product publicly | HTTP 404 while blocked | PASS |
+| Replaced the name with Compact Zipper Cable Pouch | Saved as pending; public URL remained 404 while review ran | PASS |
+| Waited for automatic review | Approved without admin intervention; public detail returned 200 | PASS |
+| Checked approved media/money | Published image used the reviewed versioned PNG; price remained USD 12.75 and stock 0 | PASS |
+| Added a prohibited value to a product option | Blocked with an `optionGroups.0.values.1` reason | PASS |
+| Used contextual sexual-goods wording without the direct keyword | Initially pending; the real model then blocked name/description with the sexual-goods reason | PASS |
+| Restored ordinary name/description/options | Automatically approved again | PASS |
+| Changed price only | USD 13.25 saved; existing content approval remained valid | PASS |
+| Changed the test store description to advertise prohibited goods | Store content blocked; account/subscription `isActive` remained true; public store and its product-list endpoints returned 404 | PASS |
+| Restored Atlas's exact original description | Automatic approval completed, store endpoint returned 200 again; currency remained USD | PASS |
+| Read seller notification inbox | Product/store needs-changes and content-approved notices were present with the correct aggregate IDs | PASS |
+| Inspected delivery records for the test product | In-app/email/WhatsApp records marked delivered. Superseded notices were skipped rather than sent late | PASS at transport/outbox level |
+| Matched WhatsApp deliveries to the admin test inbox | Four delivered notification message IDs matched four captured outbound test-inbox records: two needs-changes and two approved notices | PASS for test transport |
+| Push for this test seller | Skipped with `PUSH_DESTINATION_UNAVAILABLE` because the account has no registered push destination | NOT a physical-device delivery test |
+| Cleanup | Only the newly created disposable product was deleted (HTTP 200); its public URL returned 404. Existing products/orders were not deleted | PASS |
+
+The deleted fixture is not recoverable through a normal product restore UI. Its purpose and test ID are retained here; outbox/test-channel evidence and separate review-image copies remain. Atlas's original text/settings were restored, and approved logo/banner copies now use the reviewed media URLs.
+
+Email delivery records establish provider acceptance, not that a human opened Mailinator. The WhatsApp destination is the existing test-number pool, not a physical handset. No physical-device push-delivery claim is made.
 
 ## Important limits
 
@@ -87,4 +116,14 @@ Automatic moderation is not infallible. The layered rules, image review and fail
 
 ## Release record
 
-Not released at this report revision. Commit/push, backend/frontend deployment and mobile update status will be recorded separately after verification.
+- Application commit: `2897f1ce9b6615f370f790cda2a87f6094f39ce9` — automatic catalog moderation, shared write gates, seller status UI, notifications, tests and operational preflight.
+- Pushed to `main` on both `ishanShahzad/hello-friend` and `Salman-here/Tortrose`.
+- Railway deployment: `223d12bf-e330-4cd1-b0b6-51a1fc27ba8f` — **SUCCESS**. Live `/health` reported the exact application commit, Mongo connected, notification outbox running, and catalog moderation worker running.
+- Vercel: [deployment 8FDRTdpnV7y8QqGnqkghxxB9mVrx](https://vercel.com/metaverse-project/rozare/8FDRTdpnV7y8QqGnqkghxxB9mVrx) — **SUCCESS**. Live homepage referenced `index-DIG88DMD.js`; live seller settings contained the new Under review/Blocked UI.
+- Mobile production update: **PUBLISHED** to branch `production`, Android and iOS, runtime `1.0.11`.
+  - Group: `91e4377e-c09a-4ce6-8388-64fd0f0c50d8`.
+  - Android: `01a0d31c-a29e-77b3-a2fa-1509ba757d1d`.
+  - iOS: `01a0d31c-a29e-7522-b08c-d0c13ac616e6`.
+  - [Expo release](https://expo.dev/accounts/rozare/projects/rozare/updates/91e4377e-c09a-4ce6-8388-64fd0f0c50d8).
+  - No new native binary/build was made. Publication is verified; installation on a physical device is not claimed.
+  - Expo's commit marker included `*` because this report was being updated during publication. Application sources were unchanged from `2897f1ce`.
