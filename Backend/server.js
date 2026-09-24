@@ -5,6 +5,10 @@ const cors = require('cors')
 const rateLimit = require('express-rate-limit')
 const express = require('express')
 const app = express()
+// Raw, signed Safepay callbacks are independent of the existing Stripe route.
+app.post('/api/safepay/webhook', rateLimit({ windowMs: 60000, limit: 600, standardHeaders: 'draft-7', legacyHeaders: false }),
+  express.raw({ type: 'application/json', limit: '512kb' }),
+  require('./controllers/safepayWebhookController').receiveSafepayWebhook);
 app.set('trust proxy', Number(process.env.TRUST_PROXY_HOPS || 1))
 const {
   createWhatsAppWebhookIngress,
