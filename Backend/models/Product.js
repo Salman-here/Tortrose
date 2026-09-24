@@ -147,13 +147,17 @@ const productSchema = mongoose.Schema(
         blockedReason: { type: String, default: '' },
         moderationStatus: {
             type: String,
-            enum: ['approved', 'blocked'],
+            enum: ['approved', 'blocked', 'pending'],
             default: 'approved',
             index: true,
         },
         moderationReason: { type: String, default: '' },
         moderationSignals: [{ type: String }],
+        moderationFields: [{ type: String }],
+        moderationRevision: { type: String, default: '' },
+        moderationPolicyVersion: { type: String, default: '' },
         moderationReviewedAt: { type: Date, default: null },
+        catalogModeration: { type: require('./schemas/catalogModerationFields').catalogModerationSchema, default: null, select: false },
         // Frozen source marker for a newly-blocked transition. Notification
         // delivery is recovered from this marker if a request exits after the
         // Product write but before the outbox insert.
@@ -199,6 +203,9 @@ const productSchema = mongoose.Schema(
 );
 
 productSchema.index({ moderationStatus: 1, isBlocked: 1 });
+productSchema.index({ moderationPolicyVersion: 1, isBlocked: 1, _id: 1 });
+productSchema.index({ moderationStatus: 1, 'catalogModeration.nextAttemptAt': 1, 'catalogModeration.leaseUntil': 1 });
+productSchema.index({ 'catalogModeration.noticeEnqueuedAt': 1, 'catalogModeration.noticeAt': 1 });
 productSchema.index(
     {
         isBlocked: 1,

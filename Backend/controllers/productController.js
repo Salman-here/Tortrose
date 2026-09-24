@@ -2,9 +2,11 @@
 const mongoose = require('mongoose')
 const Product = require("../models/Product")
 const Fuse = require('fuse.js')
+const { pickProductInput } = require('../services/catalogContentPolicy');
+const { moderationMessage } = require('../services/catalogModerationService');
 const { parsePriceRange, attachComparablePrices, productFieldComparator, stableId, exactValues, uniqueFilterLabels: cleanList } = require('../services/catalogFilterService');
 const {
-    buildModerationFields,
+    stageProductModeration,
     isProductBlocked,
     notifyProductBlocked,
     publicProductFilter,
@@ -429,8 +431,10 @@ function serializeProductCurrencyMetadata(product, fallbackCurrency = 'USD') {
         throw error;
     }
 
+    const publicProduct = { ...plainProduct };
+    delete publicProduct.catalogModeration;
     return {
-        ...plainProduct,
+        ...publicProduct,
         currency: productCurrency,
         priceCurrency: productCurrency,
         discountedPriceCurrency: discountCurrency,
@@ -1158,7 +1162,7 @@ exports.editProduct = async (req, res) => {
             return res.status(403).json({ msg: 'Unauthorized to edit product' })
         }
 
-        const existingProduct = await Product.findById(id)
+        const existingProduct = await Product.findById(id).select('+catalogModeration')
 
         if (!existingProduct) {
             return res.status(404).json({ msg: 'Product not found' })
@@ -1169,7 +1173,7 @@ exports.editProduct = async (req, res) => {
             return res.status(403).json({ msg: 'You can only edit your own products' })
         }
 
-        const sanitizedProduct = sanitizeProductPayload({ ...product });
+        const sanitizedProduct = sanitizeProductPayload(pickProductInput(product));
         const invalidCurrencyField = invalidProductCurrencyField(sanitizedProduct);
         if (invalidCurrencyField) {
             return res.status(400).json({ msg: `${invalidCurrencyField} must be USD, PKR, EUR, or GBP.` });
@@ -1259,13 +1263,13 @@ exports.editProduct = async (req, res) => {
             }
         }
 
-        const wasBlocked = isProductBlocked(existingProduct);
         const mergedProduct = {
             ...existingProduct.toObject(),
             ...safeProduct,
         };
-        const { fields: moderationFields } = buildModerationFields(mergedProduct, {
-            previouslyBlocked: wasBlocked,
+        const { fields: moderationFields } = stageProductModeration(mergedProduct, {
+            previous: existingProduct,
+            rawInput: pickProductInput(product),
         });
         Object.assign(safeProduct, moderationFields);
 
@@ -1301,22 +1305,20 @@ exports.editProduct = async (req, res) => {
             });
         }
 
-        if (isProductBlocked(updatedProduct) && !wasBlocked) {
+        if (isProductBlocked(updatedProduct)) {
             notifyProductBlocked({ sellerId: updatedProduct.seller, product: updatedProduct }).catch(err =>
                 console.error('[productController] product blocked notification failed:', err.message)
             );
         }
 
-        const msg = isProductBlocked(updatedProduct)
-            ? `Product updated, but it is blocked because ${updatedProduct.blockedReason || updatedProduct.moderationReason}. Customers cannot see it until it has real product details.`
-            : wasBlocked
-                ? 'Product updated successfully. It is available to customers again.'
-                : 'Product updated successfully.';
+        const msg = moderationMessage('product', updatedProduct);
 
         res.status(200).json({
             msg,
             product: serializeProductCurrencyMetadata(updatedProduct, 'USD'),
             blocked: isProductBlocked(updatedProduct),
+            moderationStatus: updatedProduct.moderationStatus,
+            pending: updatedProduct.moderationStatus === 'pending',
             moderationReason: updatedProduct.moderationReason || updatedProduct.blockedReason || '',
         })
 
@@ -1345,7 +1347,7 @@ exports.addProduct = async (req, res) => {
             await assertProductCreationAllowed(userId);
         }
 
-        const sanitizedProduct = sanitizeProductPayload({ ...product });
+        const sanitizedProduct = sanitizeProductPayload(pickProductInput(product));
         const invalidCurrencyField = invalidProductCurrencyField(sanitizedProduct);
         if (invalidCurrencyField) {
             return res.status(400).json({ msg: `${invalidCurrencyField} must be USD, PKR, EUR, or GBP.` });
@@ -1389,10 +1391,11 @@ exports.addProduct = async (req, res) => {
             }
         }
 
-        const { fields: moderationFields } = buildModerationFields(safeProduct);
+        const { fields: moderationFields } = stageProductModeration(safeProduct, { rawInput: pickProductInput(product) });
         const newProduct = new Product({
             ...safeProduct,
             ...moderationFields,
+            createdVia: req.productCreatedVia === 'ai' ? 'ai' : role === 'admin' ? 'admin' : 'manual',
             seller: role === 'seller' ? userId : null // Only set seller for seller role
         })
         if (role === 'seller') {
@@ -1414,15 +1417,15 @@ exports.addProduct = async (req, res) => {
             await newProduct.save()
         }
         if (isProductBlocked(newProduct)) {
-            await notifyProductBlocked({ sellerId: newProduct.seller, product: newProduct });
+            await notifyProductBlocked({ sellerId: newProduct.seller, product: newProduct }).catch(error => console.error('[catalog-moderation] notice deferred:', error.code || 'OUTBOX_ERROR'));
         }
 
         res.status(200).json({
-            msg: isProductBlocked(newProduct)
-                ? `Product added, but it was blocked because ${newProduct.blockedReason || newProduct.moderationReason}. Customers cannot see it until you edit it with real product details.`
-                : 'Product added successfully.',
+            msg: moderationMessage('product', newProduct),
             product: serializeProductCurrencyMetadata(newProduct, 'USD'),
             blocked: isProductBlocked(newProduct),
+            moderationStatus: newProduct.moderationStatus,
+            pending: newProduct.moderationStatus === 'pending',
             moderationReason: newProduct.moderationReason || newProduct.blockedReason || '',
         })
 

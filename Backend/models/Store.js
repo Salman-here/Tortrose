@@ -122,6 +122,14 @@ const storeSchema = new mongoose.Schema({
     default: 'store',
     index: true
   },
+  moderationStatus: { type: String, enum: ['approved', 'pending', 'blocked'], default: 'approved', index: true },
+  moderationReason: { type: String, default: '' },
+  moderationSignals: [{ type: String }],
+  moderationFields: [{ type: String }],
+  moderationRevision: { type: String, default: '' },
+  moderationPolicyVersion: { type: String, default: '' },
+  moderationReviewedAt: { type: Date, default: null },
+  catalogModeration: { type: require('./schemas/catalogModerationFields').catalogModerationSchema, default: null, select: false },
   description: {
     type: String,
     maxlength: [500, 'Description cannot exceed 500 characters'],
@@ -427,6 +435,9 @@ const storeSchema = new mongoose.Schema({
 storeSchema.index({ storeName: 'text', description: 'text' }); // Text search
 storeSchema.index({ storeSlug: 1 }, { unique: true }); // Fast slug lookup with uniqueness
 storeSchema.index({ seller: 1 }, { unique: true }); // Fast seller lookup with uniqueness (one store per seller)
+storeSchema.index({ moderationPolicyVersion: 1, isActive: 1, _id: 1 });
+storeSchema.index({ moderationStatus: 1, 'catalogModeration.nextAttemptAt': 1, 'catalogModeration.leaseUntil': 1 });
+storeSchema.index({ 'catalogModeration.noticeEnqueuedAt': 1, 'catalogModeration.noticeAt': 1 });
 storeSchema.index({ 'visibility.location': '2dsphere' });
 storeSchema.index({
   isActive: 1,
@@ -481,6 +492,7 @@ storeSchema.pre('findOneAndUpdate', async function(next) {
   next();
 });
 
+storeSchema.set('toJSON', { transform: (_document, value) => { delete value.catalogModeration; return value; } });
 const Store = mongoose.model('Store', storeSchema);
 
 module.exports = Store;

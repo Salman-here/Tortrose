@@ -232,7 +232,7 @@ describe('productController currency write helpers', () => {
       price: 10, stock: 1, category: 'Other', brand: 'Test', image: 'https://example.com/p.jpg',
       currency: 'USD', seller: null,
     });
-    const findSpy = jest.spyOn(Product, 'findById').mockResolvedValue(existing);
+    const findSpy = jest.spyOn(Product, 'findById').mockReturnValue({ select: jest.fn().mockResolvedValue(existing) });
     const updateSpy = jest.spyOn(Product, 'findOneAndUpdate');
     const req = {
       params: { id: existing._id.toString() },
@@ -265,7 +265,7 @@ describe('productController currency write helpers', () => {
       image: 'https://example.com/p.jpg',
       seller: null,
     });
-    const findSpy = jest.spyOn(Product, 'findById').mockResolvedValue(existing);
+    const findSpy = jest.spyOn(Product, 'findById').mockReturnValue({ select: jest.fn().mockResolvedValue(existing) });
     const updateSpy = jest.spyOn(Product, 'findOneAndUpdate').mockImplementation(async (_filter, update) => {
       expect(update.$set).not.toHaveProperty('price');
       expect(update.$set).not.toHaveProperty('discountedPrice');
@@ -311,7 +311,7 @@ describe('productController currency write helpers', () => {
       image: 'https://example.com/p.jpg',
       seller: null,
     });
-    const findSpy = jest.spyOn(Product, 'findById').mockResolvedValue(existing);
+    const findSpy = jest.spyOn(Product, 'findById').mockReturnValue({ select: jest.fn().mockResolvedValue(existing) });
     const updateSpy = jest.spyOn(Product, 'findOneAndUpdate').mockImplementation(async (_filter, update) => {
       expect(update.$set).toMatchObject({ price: 10, discountedPrice: 8 });
       existing.set(update.$set);
@@ -392,7 +392,7 @@ describe('productController currency write helpers', () => {
       brand: 'Test',
       image: 'https://example.com/p.jpg',
     });
-    const findSpy = jest.spyOn(Product, 'findById').mockResolvedValue(existing);
+    const findSpy = jest.spyOn(Product, 'findById').mockReturnValue({ select: jest.fn().mockResolvedValue(existing) });
     const aggregateSpy = jest.spyOn(Product, 'aggregate').mockResolvedValue([{ _id: 'USD', count: 1 }]);
     const storeSpy = jest.spyOn(Store, 'findOne').mockResolvedValue({
       productCurrency: 'PKR',

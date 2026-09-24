@@ -1,3 +1,4 @@
+const { moderatedStoreInput } = require('../services/catalogModerationService');
 const User = require("../models/User");
 const OTP = require("../models/OTP");
 const mongoose = require('mongoose');
@@ -541,7 +542,7 @@ exports.verifySellerOTPAndRegister = async (req, res) => {
             await transactionUser.save({ session });
             newUser = transactionUser;
             if (shouldCreateStore) {
-                [newStore] = await Store.create([{
+                [newStore] = await Store.create([moderatedStoreInput({
                     seller: transactionUser._id,
                     storeName: requestedStoreName,
                     storeSlug: slug,
@@ -558,7 +559,7 @@ exports.verifySellerOTPAndRegister = async (req, res) => {
                         country: country?.trim() || '',
                         countryCode: countryCode?.trim() || ''
                     }
-                }], { session });
+                })], { session });
                 await enqueueStoreCreatedNotification(newStore, { session });
             }
         });

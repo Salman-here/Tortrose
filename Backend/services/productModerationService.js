@@ -3,6 +3,9 @@
 const {
   ensureProductBlockedNotification,
 } = require('./sellerOperationalNotificationService');
+const { prepareCatalogModeration } = require('./catalogModerationService');
+const { publicContentClause, isContentApproved, isContentHeld, contentSnapshot, inspectContent } = require('./catalogContentPolicy');
+const { sanitizeProductPayload } = require('./productTextService');
 
 const PLACEHOLDER_PHRASES = new Set([
   'test',
@@ -96,7 +99,7 @@ const normalize = (value) =>
   String(value || '')
     .toLowerCase()
     .replace(/https?:\/\/\S+/g, ' ')
-    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
     .trim()
     .replace(/\s+/g, ' ');
 
@@ -177,10 +180,6 @@ function looksLikePlaceholder(value, { allowProductHints = false } = {}) {
     return true;
   }
 
-  if (tokens.length <= 2 && tokens.every(token => token.length <= 2 || PLACEHOLDER_WORDS.has(token))) {
-    return true;
-  }
-
   return false;
 }
 
@@ -255,21 +254,37 @@ function publicProductFilter(extra = {}) {
   return {
     ...extra,
     isBlocked: { $ne: true },
-    moderationStatus: { $ne: 'blocked' },
+    $and: [...(Array.isArray(extra.$and) ? extra.$and : []), publicContentClause()],
   };
 }
 
 function isProductBlocked(product = {}) {
-  return product?.isBlocked === true || product?.moderationStatus === 'blocked';
+  return product?.isBlocked === true || isContentHeld(product) || !isContentApproved(product);
+}
+
+function stageProductModeration(product = {}, { previous = null, rawInput = product } = {}) {
+  const normalized = sanitizeProductPayload(product);
+  const authenticity = moderateProductAuthenticity(normalized);
+  const extraViolations = authenticity.signals.map(signal => ({
+    field: signal.endsWith('_name') ? 'name' : 'description', code: 'insufficient_details',
+    reason: signal.startsWith('gibberish') ? 'Replace random text with accurate product details.' : 'Replace test or placeholder text with accurate product details.',
+  }));
+  return prepareCatalogModeration('product', normalized, { previous, extraViolations: [...extraViolations, ...inspectContent(contentSnapshot('product', rawInput))] });
 }
 
 async function notifyProductBlocked({ sellerId, product }) {
   if (!sellerId || !product || !isProductBlocked(product)) return;
+  const managed = product.catalogModeration?.revision ? product : product._id
+    ? await require('../models/Product').findById(product._id).select('seller +catalogModeration').lean() : null;
+  if (managed?.catalogModeration?.revision) {
+    return require('./catalogModerationNotificationService').ensureCatalogModerationNotification('product', managed);
+  }
   return ensureProductBlockedNotification(product, { stageIfMissing: true });
 }
 
 module.exports = {
   buildModerationFields,
+  stageProductModeration,
   isProductBlocked,
   moderateProductAuthenticity,
   notifyProductBlocked,

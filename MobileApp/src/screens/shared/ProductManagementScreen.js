@@ -3,6 +3,7 @@
  */
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import useProductModerationUpdates from '../../hooks/useProductModerationUpdates';
 import {
   View, Text, FlatList, TouchableOpacity, StyleSheet, Alert,
   RefreshControl, TextInput, Modal, ScrollView, ActivityIndicator, Platform,
@@ -68,6 +69,7 @@ export default function ProductManagementScreen({ navigation, route }) {
 
   const { isAdmin } = route.params || {};
   const [products, setProducts] = useState([]);
+  useProductModerationUpdates(products, setProducts);
   const [pagination, setPagination] = useState(null);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -551,7 +553,7 @@ export default function ProductManagementScreen({ navigation, route }) {
             {isHidden && (
               <View style={styles.hiddenProductBadge}>
                 <Ionicons name="eye-off-outline" size={12} color={palette.colors.error} />
-                <Text style={styles.hiddenProductText}>Hidden from customers</Text>
+                <Text style={styles.hiddenProductText}>{item.moderationStatus === 'pending' ? 'Under review' : 'Blocked — hidden from customers'}</Text>
               </View>
             )}
             <View style={styles.priceRow}>

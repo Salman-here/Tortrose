@@ -1,6 +1,18 @@
 const Product = require('../models/Product')
 const { callHF } = require('../utils/hfClient')
 const { getProductCurrency } = require('../services/productPricingService')
+const { stageProductModeration, notifyProductBlocked } = require('../services/productModerationService');
+const { moderationMessage } = require('../services/catalogModerationService');
+
+async function saveModeratedTags(product, tags) {
+  const previous = product.toObject();
+  const fields = stageProductModeration({ ...previous, tags }, { previous }).fields;
+  const updated = await Product.findOneAndUpdate({ _id: product._id, seller: product.seller,
+    ...(product.updatedAt ? { updatedAt: product.updatedAt } : {}) }, { $set: { tags, ...fields } }, { new: true, runValidators: true });
+  if (!updated) throw Object.assign(new Error('Product changed during tag generation. Refresh and try again.'), { status: 409 });
+  await notifyProductBlocked({ sellerId: updated.seller, product: updated }).catch(() => {});
+  return updated;
+}
 
 // Auto-generate tags for a product using AI
 exports.generateProductTags = async (req, res) => {
@@ -12,10 +24,11 @@ exports.generateProductTags = async (req, res) => {
   }
 
   try {
-    const product = await Product.findById(productId)
+    const product = await Product.findById(productId).select('+catalogModeration')
     if (!product) {
       return res.status(404).json({ msg: 'Product not found' })
     }
+    if (role === 'seller' && String(product.seller) !== String(req.user.id || req.user._id)) return res.status(403).json({ msg: 'You can only change your own products.' });
 
     // Build prompt for AI tag generation
     const prompt = `<s>[INST] You are a product tagging expert. Given a product, generate relevant tags.
@@ -75,18 +88,18 @@ Example: casual, everyday, all-season, unisex, relaxed, value, comfortable, dail
     const allTags = [...new Set([...existingTags, ...generatedTags])].slice(0, 15)
 
     // Update product
-    product.tags = allTags
-    await product.save()
+    const updated = await saveModeratedTags(product, allTags);
 
     res.status(200).json({
-      msg: 'Tags generated successfully',
+      msg: moderationMessage('product', updated),
+      moderationStatus: updated.moderationStatus,
       tags: allTags,
       newTags: generatedTags
     })
 
   } catch (error) {
     console.error('Error generating tags:', error)
-    res.status(500).json({ msg: 'Error generating tags' })
+    res.status(error.status || 500).json({ msg: error.status === 409 ? error.message : 'Error generating tags' })
   }
 }
 
@@ -105,7 +118,7 @@ exports.bulkGenerateTags = async (req, res) => {
       query.seller = userId
     }
 
-    const products = await Product.find(query)
+    const products = await Product.find(query).select('+catalogModeration')
 
     if (products.length === 0) {
       return res.status(404).json({ msg: 'No products found' })
@@ -119,10 +132,8 @@ exports.bulkGenerateTags = async (req, res) => {
         const existingTags = product.tags || []
         const allTags = [...new Set([...existingTags, ...tags])].slice(0, 12)
 
-        product.tags = allTags
-        await product.save()
-
-        results.push({ productId: product._id, tags: allTags, success: true })
+        const updated = await saveModeratedTags(product, allTags);
+        results.push({ productId: product._id, tags: allTags, success: true, moderationStatus: updated.moderationStatus, moderationReason: updated.moderationReason });
       } catch (err) {
         results.push({ productId: product._id, success: false, error: err.message })
       }

@@ -69,6 +69,7 @@ const SELLER_OPERATION_NOTIFICATION_TYPES = new Set([
   'low_stock',
   'new_review',
   'product_blocked',
+  'catalog_moderation',
   'seller_account_created',
   'store_created',
   'store_verified',
@@ -307,6 +308,9 @@ export function resolveNotificationTarget(notification, roleOrUser) {
   if (type === 'low_stock' && role === 'seller') return { screen: 'SellerProductManagement', params: {} };
   if (type === 'product_blocked' && role === 'seller') {
     return { screen: 'SellerProductManagement', params: {} };
+  }
+  if (type === 'catalog_moderation' && role === 'seller') {
+    return { screen: data.catalogKind === 'store' ? 'SellerStoreSettings' : 'SellerProductManagement', params: {} };
   }
   if (type === 'seller_account_created' && role === 'seller') {
     return { screen: 'SellerStoreOverview', params: {} };

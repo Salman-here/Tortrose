@@ -1,5 +1,6 @@
 'use strict';
 const mongoose = require('mongoose');
+const approvedCatalogFixture = require('../helpers/approvedCatalogFixture');
 const express = require('express');
 const request = require('supertest');
 const { MongoMemoryServer } = require('mongodb-memory-server');
@@ -32,7 +33,7 @@ beforeAll(async () => {
 afterAll(async () => { await mongoose.disconnect(); await mongo?.stop(); }, 60000);
 const makeStore = async (suffix, extra = {}) => {
   const seller = await User.create({ username: suffix, email: suffix + '@example.com', role: 'seller', status: 'active' });
-  return Store.create({ seller: seller._id, storeName: suffix, storeSlug: suffix, isActive: true, visibility: normalizeStoreVisibility({ mode: 'country', country: 'Pakistan' }), ...extra });
+  return Store.create({ ...approvedCatalogFixture(), seller: seller._id, storeName: suffix, storeSlug: suffix, isActive: true, visibility: normalizeStoreVisibility({ mode: 'country', country: 'Pakistan' }), ...extra });
 };
 beforeEach(async () => {
   await Promise.all([Product, Store, User, StoreReview].map(Model => Model.deleteMany({})));
@@ -46,11 +47,11 @@ beforeEach(async () => {
     ['Bracket [A]', 2, 'USD', 'A+B', 'Books', 1, 40, 5, 5, null],
     ['Free Card', 0, 'USD', 'Beta', 'Books', 0, 0, 0, 6, null],
   ]) {
-    items.push(await Product.create({ seller: primary.seller, name, description: 'Catalog fixture', price, currency, priceCurrency: currency,
+    items.push(await Product.create({ ...approvedCatalogFixture(), seller: primary.seller, name, description: 'Catalog fixture', price, currency, priceCurrency: currency,
       brand, category, rating, numReviews: 1, views, totalSales: sales, createdAt: new Date(`2026-09-0${day}T00:00:00Z`), stock: 20,
       image: 'https://example.com/item.png', ...(discount == null ? {} : { discountedPrice: discount, discountedPriceCurrency: currency }) }));
   }
-  await Product.create({ seller: secondary.seller, name: 'Other seller only', description: 'Catalog fixture', price: 100, currency: 'USD', stock: 1, category: 'Other', brand: 'Separate', image: 'https://example.com/other.png' });
+  await Product.create({ ...approvedCatalogFixture(), seller: secondary.seller, name: 'Other seller only', description: 'Catalog fixture', price: 100, currency: 'USD', stock: 1, category: 'Other', brand: 'Separate', image: 'https://example.com/other.png' });
 });
 
 test.each([

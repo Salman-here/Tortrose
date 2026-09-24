@@ -3,6 +3,8 @@ const Store = require('../models/Store');
 const Product = require('../models/Product');
 const ShippingMethod = require('../models/ShippingMethod');
 const { isStoreAvailableForDelivery } = require('./storeVisibilityService');
+const { publicContentClause } = require('./catalogContentPolicy');
+const { isProductBlocked } = require('./productModerationService');
 const { requireStoredProductCurrency, requireStoredProductEffectivePrice } = require('./productPricingService');
 const changed = () => Object.assign(new Error('Store prices or shipping changed during checkout. Refresh the order preview and confirm the current total.'), { statusCode: 409, code: 'CHECKOUT_REPRICE_REQUIRED' });
 
@@ -12,7 +14,7 @@ async function verifyOrderPricingAtCommit(order, session, deliveryLocation = nul
   const policies = [...(order.sellerPolicies || [])].sort((a,b) => String(a.seller).localeCompare(String(b.seller)));
   for (const policy of policies) {
     const lock = await Store.updateOne({ seller: policy.seller, productCurrency: policy.productCurrency,
-      productCurrencyStatus: 'active', isActive: { $ne: false } }, { $inc: { __v: 1 } }, { session });
+      productCurrencyStatus: 'active', isActive: { $ne: false }, ...publicContentClause() }, { $inc: { __v: 1 } }, { session });
     if (lock.matchedCount !== 1) throw changed();
   }
   const stores = await Store.find({ seller: { $in: policies.map(policy => policy.seller) } }).select('seller address visibility').session(session).lean();
@@ -29,7 +31,7 @@ async function verifyOrderPricingAtCommit(order, session, deliveryLocation = nul
   const byId = new Map(products.map(product => [String(product._id), product]));
   for (const item of order.orderItems) {
     const product = byId.get(String(item.productId));
-    if (!product || String(product.seller) !== String(item.seller)
+    if (!product || isProductBlocked(product) || String(product.seller) !== String(item.seller)
         || requireStoredProductCurrency(product, 'USD') !== item.sourceCurrency
         || requireStoredProductEffectivePrice(product) !== item.sourcePrice) throw changed();
   }

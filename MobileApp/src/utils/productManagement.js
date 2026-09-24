@@ -95,7 +95,7 @@ export const getManagedProductImage = (product) => {
 };
 
 export const isProductHiddenByModeration = (product) => (
-  product?.isBlocked === true || product?.moderationStatus === 'blocked'
+  product?.isBlocked === true || ['pending', 'blocked'].includes(product?.moderationStatus)
 );
 
 export const getProductModerationReason = (product) => (

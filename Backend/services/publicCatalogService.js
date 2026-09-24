@@ -4,6 +4,7 @@ const Store = require('../models/Store');
 const User = require('../models/User');
 const { AsyncLocalStorage } = require('node:async_hooks');
 const { findVisibleStores, isStoreVisibleToBuyer, normalizeBuyerLocation } = require('./storeVisibilityService');
+const { publicContentClause } = require('./catalogContentPolicy');
 const buyerCatalogScope = new AsyncLocalStorage();
 const withBuyerCatalogLocation = (location, work) => buyerCatalogScope.run(normalizeBuyerLocation(location), work);
 const storeMatchesBuyerCatalogScope = store => !buyerCatalogScope.getStore() || isStoreVisibleToBuyer(store, buyerCatalogScope.getStore());
@@ -55,6 +56,7 @@ function activeStoreQuery(extra = {}) {
     $and: [
       ...(Array.isArray(extraAnd) ? extraAnd : [extraAnd]).filter(Boolean),
       PUBLIC_STORE_SLUG_CLAUSE,
+      publicContentClause(),
     ],
   };
 }

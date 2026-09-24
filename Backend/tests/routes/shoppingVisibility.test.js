@@ -1,5 +1,6 @@
 'use strict';
 const mongoose = require('mongoose');
+const approvedCatalogFixture = require('../helpers/approvedCatalogFixture');
 const express = require('express');
 const request = require('supertest');
 const { MongoMemoryReplSet } = require('mongodb-memory-server');
@@ -39,12 +40,12 @@ beforeEach(async () => {
     ['legacy', null, 'Pakistan', 'PK'], ['unknown', null, '', ''], ['blocked', 'global', 'Pakistan', 'PK'],
   ]) {
     const seller = await User.create({ username: 'Scope ' + key, email: key + '@example.com', role: 'seller', status: key === 'blocked' ? 'blocked' : 'active' });
-    const store = await Store.create({ seller: seller._id, storeName: 'Scope ' + key, storeSlug: 'scope-' + key, isActive: true, productCurrency: 'USD', productCurrencyStatus: 'active', address: { country, countryCode: code }, ...(mode ? { visibility: normalizeStoreVisibility({ mode, country, countryCode: code, city: 'Lahore' }) } : {}) });
+    const store = await Store.create({ ...approvedCatalogFixture(), seller: seller._id, storeName: 'Scope ' + key, storeSlug: 'scope-' + key, isActive: true, productCurrency: 'USD', productCurrencyStatus: 'active', address: { country, countryCode: code }, ...(mode ? { visibility: normalizeStoreVisibility({ mode, country, countryCode: code, city: 'Lahore' }) } : {}) });
     if (key === 'legacy') await Store.collection.updateOne({ _id: store._id }, { $unset: { visibility: '' } });
-    const product = await Product.create({ seller: seller._id, name: 'Scope item ' + key, description: 'A visibility test product', price: 10, currency: 'USD', stock: 10, image: 'https://example.com/item.png', category: 'Category ' + key, brand: 'Brand ' + key });
+    const product = await Product.create({ ...approvedCatalogFixture(), seller: seller._id, name: 'Scope item ' + key, description: 'A visibility test product', price: 10, currency: 'USD', stock: 10, image: 'https://example.com/item.png', category: 'Category ' + key, brand: 'Brand ' + key });
     fixture[key] = { seller, store, product };
   }
-  fixture.platform = await Product.create({ name: 'Scope platform item', description: 'Platform global catalog product', price: 8, currency: 'USD', stock: 10, image: 'https://example.com/item.png', category: 'Platform', brand: 'Platform' });
+  fixture.platform = await Product.create({ ...approvedCatalogFixture(), name: 'Scope platform item', description: 'Platform global catalog product', price: 8, currency: 'USD', stock: 10, image: 'https://example.com/item.png', category: 'Platform', brand: 'Platform' });
 }, 30000);
 
 test('Global adds only the buyer country while excluding unknown and blocked sellers', async () => {

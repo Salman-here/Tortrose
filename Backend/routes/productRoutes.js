@@ -5,6 +5,7 @@ const verifyToken = require('../middleware/authMiddleware')
 const { optionalAuth } = require('../middleware/authMiddleware')
 const { addToWishlist, getWishlist, deleteFromWishlist } = require('../controllers/wishlistController')
 const router = express.Router()
+router.get('/moderation-status', verifyToken, require('../controllers/catalogModerationController').getProductModerationStatus);
 
 router.get('/get-single-product/:id', optionalAuth, getSingleProduct)
 router.get('/get-filters', optionalAuth, getFilters)

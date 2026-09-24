@@ -653,6 +653,7 @@ const {
 } = require('./services/notificationOutboxWorker');
 const ensureNotificationOutboxWorkerStarted = () => {
   if (mongoose.connection.readyState !== 1) return false;
+  require('./services/catalogModerationWorker').startCatalogModerationWorker();
   const worker = startNotificationOutboxWorker();
   if (worker.started) {
     console.log(`[notification-outbox] worker started (${worker.workerId})`);
@@ -845,6 +846,7 @@ app.get('/health', (req, res) => {
     buildMarker: 'whatsapp-unified-gateway-v1',
     mongoConnected: mongoose.connection.readyState === 1,
     notificationOutboxWorkerStarted: isNotificationOutboxWorkerRunning(),
+    catalogModerationWorkerStarted: require('./services/catalogModerationWorker').isCatalogModerationWorkerRunning(),
   });
 });
 
@@ -874,6 +876,7 @@ if (require.main === module) {
     try {
       await Promise.all([
         stopNotificationOutboxWorker(),
+        require('./services/catalogModerationWorker').stopCatalogModerationWorker(),
         new Promise(resolve => httpServer.close(resolve)),
       ]);
       if (mongoose.connection.readyState !== 0) {

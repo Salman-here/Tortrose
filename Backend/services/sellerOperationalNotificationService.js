@@ -176,6 +176,10 @@ const enqueueStoreCreatedNotification = async (store, {
   const storeSlug = requiredText(store?.storeSlug, 'Store slug', 120);
   const occurredAt = requiredDate(store?.createdAt, 'Store creation timestamp');
   const publicPath = `/store/${encodeURIComponent(storeSlug)}`;
+  const contentHeld = ['pending', 'blocked'].includes(store?.moderationStatus);
+  const creationMessage = store?.moderationStatus === 'blocked'
+    ? 'Your store was saved with content requiring changes. Open Seller Dashboard > Store Settings to see the reason and correct it.'
+    : 'Your store was saved and submitted for automatic content checks. Open Seller Dashboard > Store Settings to see its current status. Clean content publishes automatically after the checks pass.';
 
   return enqueueNotificationEvent({
     eventKey: `store:${storeId}:created:seller:v1`,
@@ -203,6 +207,14 @@ const enqueueStoreCreatedNotification = async (store, {
       whatsapp: {
         message: `Store Created\n\n${storeName} was created. Store path: ${publicPath}.\n\nOpen Seller Dashboard > Store Settings to finish setup. Visibility follows your current account and subscription status.`,
       },
+      // Unreviewed names and subdomains must not be copied into outbound
+      // messages before the content decision, including the welcome flow.
+      ...(contentHeld ? {
+        inapp: { title: 'Your store was created', body: creationMessage },
+        push: { title: 'Your store was created', body: creationMessage },
+        email: { subject: 'Your store was created', text: creationMessage, html: `<p>${escapeHtml(creationMessage)}</p>` },
+        whatsapp: { message: `Store Created\n\n${creationMessage}` },
+      } : {}),
     },
     metadata: sellerMetadata({
       linkTo: '/seller-dashboard/store-settings',

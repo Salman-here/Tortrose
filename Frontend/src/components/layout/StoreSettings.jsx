@@ -16,6 +16,7 @@ import LocationAutocomplete from '../common/LocationAutocomplete';
 import { selectAuthoritativeStoreAnalytics } from '../../utils/storeAnalyticsSafety';
 import { normalizeCurrencyCode } from '../../utils/currencySafety';
 import { inspectSellerProductCurrencyState } from '../../utils/productFormCurrency';
+import StoreModerationNotice from '../common/StoreModerationNotice';
 
 const GPS_RADIUS_VISIBILITY_ENABLED = false;
 
@@ -261,6 +262,7 @@ const StoreSettings = () => {
     const [showCooldownModal, setShowCooldownModal] = useState(false);
     const [pendingChanges, setPendingChanges] = useState([]); // [{ field, label, days }]
     const [originals, setOriginals] = useState({ storeName: '', storeSlug: '', sellerType: 'store' });
+    const [storeModeration, setStoreModeration] = useState(null);
     const [blockedInfo, setBlockedInfo] = useState({ blocked: false, daysUntilRemoval: null, isPurchased: false });
     const [productCurrencyInfo, setProductCurrencyInfo] = useState(null);
     const [productCurrencyDraft, setProductCurrencyDraft] = useState(() => normalizeCurrencyCode(currency, '') || null);
@@ -343,6 +345,18 @@ const StoreSettings = () => {
         }
     };
 
+    const moderationStoreRef = useRef(storeModeration);
+    moderationStoreRef.current = storeModeration;
+    const handleModerationChange = useCallback(next => {
+        if (!next) return;
+        const previous = moderationStoreRef.current;
+        setStoreData(current => ({ ...current,
+            logo: current.logo === previous?.logo ? next.logo || '' : current.logo,
+            banner: current.banner === previous?.banner ? next.banner || '' : current.banner,
+        }));
+        setStoreModeration(next);
+    }, []);
+
     const fetchStoreData = async () => {
         try {
             setLoading(true);
@@ -352,6 +366,7 @@ const StoreSettings = () => {
             const defaultAddress = { street: '', city: '', state: '', stateCode: '', country: '', countryCode: '', postalCode: '' };
             const defaultReturnPolicy = { returnsEnabled: false, returnDuration: 0, refundType: 'none', warrantyEnabled: false, warrantyDuration: 0, warrantyDescription: '', policyDescription: '' };
             const slug = res.data.store.storeSlug || '';
+            setStoreModeration(res.data.store);
             const sName = res.data.store.storeName || '';
             const sType = res.data.store.sellerType || 'store';
             const address = { ...defaultAddress, ...(res.data.store.address || {}) };
@@ -753,7 +768,8 @@ const StoreSettings = () => {
             if (!refreshedCurrency) {
                 throw new Error('Store settings were saved, but the authoritative product currency could not be reloaded. Refresh before adding or changing products.');
             }
-            toast.success(res.data.msg || 'Store settings saved');
+            setStoreModeration(res.data.store);
+            (res.data.store?.moderationStatus === 'blocked' ? toast.warning : res.data.store?.moderationStatus === 'pending' ? toast.info : toast.success)(res.data.msg || 'Store settings saved');
             outletContext.fetchProductCurrencyState?.();
             fetchAnalytics();
         } catch (error) {
@@ -807,6 +823,7 @@ const StoreSettings = () => {
             </div>
 
             {/* Blocked Banner */}
+            <StoreModerationNotice store={storeModeration} onChange={handleModerationChange} />
             {hasStore && blockedInfo.blocked && (
                 <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }}
                     className="rounded-2xl p-4 md:p-5 mb-6 flex items-start gap-3"

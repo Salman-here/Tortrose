@@ -8,6 +8,12 @@ const seller = { _id: 'seller-1', role: 'seller' };
 const admin = { _id: 'admin-1', role: 'admin' };
 
 describe('financial notification category and tap routing', () => {
+  test('catalog alerts take sellers to the affected management screen and never route buyers there', () => {
+    expect(inferNotificationCategory('catalog_moderation')).toBe('seller');
+    expect(resolveNotificationTarget({ type: 'catalog_moderation', catalogKind: 'store' }, seller)).toEqual({ screen: 'SellerStoreSettings', params: {} });
+    expect(resolveNotificationTarget({ type: 'catalog_moderation', catalogKind: 'product' }, seller)).toEqual({ screen: 'SellerProductManagement', params: {} });
+    expect(resolveNotificationTarget({ type: 'catalog_moderation', catalogKind: 'store' }, buyer)).toBeNull();
+  });
   test.each([
     ['order_paid', 'order'],
     ['paid_order_received', 'seller'],

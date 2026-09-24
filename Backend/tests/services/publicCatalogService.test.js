@@ -9,6 +9,7 @@ jest.mock('../../models/User', () => ({
 
 const Store = require('../../models/Store');
 const User = require('../../models/User');
+const { publicContentClause } = require('../../services/catalogContentPolicy');
 const {
   activeStoreQuery,
   applyActiveSellerProductFilter,
@@ -27,7 +28,7 @@ describe('publicCatalogService', () => {
       isActive: true,
       blockedAt: null,
       seller: 'seller-1',
-      $and: [PUBLIC_STORE_SLUG_CLAUSE],
+      $and: [PUBLIC_STORE_SLUG_CLAUSE, publicContentClause()],
     });
   });
 
@@ -35,7 +36,7 @@ describe('publicCatalogService', () => {
     expect(activeStoreQuery({ isActive: false, blockedAt: new Date('2026-01-01') })).toMatchObject({
       isActive: true,
       blockedAt: null,
-      $and: [PUBLIC_STORE_SLUG_CLAUSE],
+      $and: [PUBLIC_STORE_SLUG_CLAUSE, publicContentClause()],
     });
   });
 
@@ -67,7 +68,7 @@ describe('publicCatalogService', () => {
       isActive: true,
       blockedAt: null,
       'verification.isVerified': true,
-      $and: [PUBLIC_STORE_SLUG_CLAUSE],
+      $and: [PUBLIC_STORE_SLUG_CLAUSE, publicContentClause()],
     });
     expect(select).toHaveBeenCalledWith('seller');
     expect(User.find).toHaveBeenCalledWith({
@@ -87,7 +88,7 @@ describe('publicCatalogService', () => {
       isActive: true,
       blockedAt: null,
       seller: 'blocked-seller',
-      $and: [PUBLIC_STORE_SLUG_CLAUSE],
+      $and: [PUBLIC_STORE_SLUG_CLAUSE, publicContentClause()],
     });
 
     Store.exists.mockResolvedValueOnce(true);

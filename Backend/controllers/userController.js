@@ -1,3 +1,4 @@
+const { moderatedStoreInput } = require('../services/catalogModerationService');
 const crypto = require('crypto')
 const User = require('../models/User')
 const { sendEmail } = require('./mailController')
@@ -449,7 +450,7 @@ exports.becomeSeller = async (req, res) => {
             await transactionUser.save({ session })
 
             const Store = require('../models/Store')
-            const [newStore] = await Store.create([{
+            const [newStore] = await Store.create([moderatedStoreInput({
                 seller: transactionUser._id,
                 storeName: storeName.trim(),
                 storeSlug: desiredSlug,
@@ -465,7 +466,7 @@ exports.becomeSeller = async (req, res) => {
                     country: country?.trim() || '',
                     countryCode: countryCode?.trim() || ''
                 }
-            }], { session })
+            })], { session })
             await enqueueStoreCreatedNotification(newStore, { session })
             user = transactionUser
         })

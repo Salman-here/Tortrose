@@ -177,7 +177,9 @@ const summarizeToolEventsForPrompt = (toolEvents = []) => {
     if (event?.type !== 'tool_result') continue;
     const result = event.result || {};
     const data = result.data || {};
-    if (event.tool === 'add_product' && result.success && result.blocked && data.productId) {
+    if (event.tool === 'add_product' && result.success && (result.pending || data.pending) && data.productId) {
+      lines.push(`[Tool memory: productId=${data.productId} was saved and awaits automatic content checks. Do not claim it is live or ask for duplicate creation. Query current status for later questions.]`);
+    } else if (event.tool === 'add_product' && result.success && result.blocked && data.productId) {
       lines.push(`[Tool memory: add_product saved but blocked. productId=${data.productId}; name="${data.name || ''}"; reason="${data.moderationReason || result.message || ''}". Tell the seller it is blocked and ask them to edit the real product details; do not add it again.]`);
     } else if (event.tool === 'add_product' && result.success && data.productId) {
       lines.push(`[Tool memory: add_product succeeded. productId=${data.productId}; name="${data.name || ''}"; brand="${data.brand || ''}"; price=${data.price ?? ''}; tags=${JSON.stringify(data.tags || [])}; colors=${JSON.stringify(data.colors || [])}. Use this productId for follow-up edits; do not add it again unless explicitly asked for a duplicate.]`);

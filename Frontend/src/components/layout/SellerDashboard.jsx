@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import useProductModerationUpdates from '../../hooks/useProductModerationUpdates';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createPortal } from 'react-dom';
 import {
@@ -132,6 +133,7 @@ const SellerDashboard = () => {
         : 0;
     const [activeTab, setActiveTab] = useState('overview');
     const [products, setProducts] = useState([]);
+    useProductModerationUpdates(products, setProducts);
     const [orders, setOrders] = useState([]);
     const [overviewProducts, setOverviewProducts] = useState(null);
     const [overviewOrders, setOverviewOrders] = useState(null);
@@ -432,13 +434,13 @@ const SellerDashboard = () => {
                 const token = getAuthToken();
                 const res = await axios.put(`${import.meta.env.VITE_API_URL}api/products/edit/${productToSave._id}`,
                     { product: productToSave }, { headers: { Authorization: `Bearer ${token}` } });
-                toast.success(res.data.msg);
+                (res.data.pending ? toast.info : res.data.blocked ? toast.warning : toast.success)(res.data.msg);
                 fetchProducts(); fetchFilters(); fetchFeaturedStats(); fetchOverviewData();
             } else {
                 const token = getAuthToken();
                 const res = await axios.post(`${import.meta.env.VITE_API_URL}api/products/add`,
                     { product: productToSave }, { headers: { Authorization: `Bearer ${token}` } });
-                toast.success(res.data.msg);
+                (res.data.pending ? toast.info : res.data.blocked ? toast.warning : toast.success)(res.data.msg);
                 fetchProducts(); fetchFilters(); fetchFeaturedStats(); fetchProductCurrencyState(); fetchOverviewData();
             }
             setIsFormOpen(false);

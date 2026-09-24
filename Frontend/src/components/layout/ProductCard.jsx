@@ -23,9 +23,10 @@ const ProductCard = ({ product, index, onEditProduct, setDeleteConfirm, displayN
     const canEdit = presentation.managementSafe && presentation.valid && typeof onEditProduct === 'function';
     const canDelete = presentation.managementSafe && typeof setDeleteConfirm === 'function';
     const animationIndex = Number.isSafeInteger(index) && index >= 0 ? index : 0;
-    const isBlocked = safeProduct.isBlocked === true || safeProduct.moderationStatus === "blocked";
+    const isPending = safeProduct.moderationStatus === 'pending';
+    const isBlocked = isPending || safeProduct.isBlocked === true || safeProduct.moderationStatus === 'blocked';
     const addedByAi = safeProduct.createdVia === "ai";
-    const blockedReason = displayText(safeProduct.blockedReason, displayText(safeProduct.moderationReason, "This looks like test or placeholder product details."));
+    const blockedReason = displayText(safeProduct.moderationReason, displayText(safeProduct.blockedReason, isPending ? 'Automatic content checks are in progress. This product is not public yet.' : 'Edit the flagged content to meet the catalog policy.'));
     const image = displayText(safeProduct.image, displayText(safeProduct.images?.[0]?.url, ''));
     const name = displayText(safeProduct.name, 'Untitled product');
 
@@ -60,9 +61,9 @@ const ProductCard = ({ product, index, onEditProduct, setDeleteConfirm, displayN
                 {isBlocked && (
                     <div className="absolute inset-0 flex items-center justify-center" style={{ background: 'rgba(15,23,42,0.62)' }}>
                         <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold text-white"
-                            style={{ background: 'hsl(0, 72%, 55%)' }}>
+                            style={{ background: isPending ? 'hsl(38, 80%, 40%)' : 'hsl(0, 72%, 55%)' }}>
                             <ShieldAlert size={14} />
-                            Blocked
+                            {isPending ? 'Under review' : 'Blocked'}
                         </span>
                     </div>
                 )}
@@ -112,7 +113,7 @@ const ProductCard = ({ product, index, onEditProduct, setDeleteConfirm, displayN
                             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold shrink-0"
                                 style={{ background: 'rgba(239, 68, 68, 0.12)', color: 'hsl(0, 72%, 55%)' }}>
                                 <ShieldAlert size={10} />
-                                Blocked
+                                {isPending ? 'Under review' : 'Blocked'}
                             </span>
                         )}
                     </div>

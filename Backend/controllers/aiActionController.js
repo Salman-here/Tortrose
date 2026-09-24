@@ -43,6 +43,7 @@ const taxController = require('./taxController');
 
 const productRouteRequest = (req, { id, product } = {}) => {
     const adapted = Object.create(req);
+    adapted.productCreatedVia = 'ai';
     adapted.params = { ...(req.params || {}), ...(id ? { id } : {}) };
     adapted.body = { ...(req.body || {}), ...(product !== undefined ? { product } : {}) };
     return adapted;
@@ -184,7 +185,7 @@ exports.listMyProducts = async (req, res) => {
         }
 
         const skip = (parseInt(page) - 1) * parseInt(limit);
-        const products = await Product.find(query).skip(skip).limit(parseInt(limit)).select('name price stock category brand discountedPrice image isBlocked blockedReason moderationStatus moderationReason');
+        const products = await Product.find(query).skip(skip).limit(parseInt(limit)).select('name price stock category brand discountedPrice image isBlocked blockedReason moderationStatus moderationPolicyVersion moderationReviewedAt moderationReason');
         const total = await Product.countDocuments(query);
 
         res.json({ products, total, page: parseInt(page), totalPages: Math.ceil(total / parseInt(limit)) });

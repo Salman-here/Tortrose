@@ -348,12 +348,15 @@ export default function ProductFormScreen({ navigation, route }) {
         : await api.post(API_ENDPOINTS.PRODUCTS.CREATE, { product: productData });
       setImages(uploadedImages);
       const blocked = response.data?.blocked === true;
+      const pending = response.data?.pending === true || response.data?.product?.moderationStatus === 'pending';
       const serverMessage = response.data?.msg;
       const moderationReason = response.data?.moderationReason
         || response.data?.product?.blockedReason
         || response.data?.product?.moderationReason;
 
-      if (blocked) {
+      if (pending) {
+        Alert.alert('Product saved — under review', serverMessage || 'Automatic content checks are in progress. The product will become public after it passes.', [{ text: 'View Products', onPress: handleBack }]);
+      } else if (blocked) {
         const savedProduct = response.data?.product;
         const keepEditing = () => {
           if (isEditMode || !savedProduct?._id) return;

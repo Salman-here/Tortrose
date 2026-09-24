@@ -15,6 +15,8 @@ const { verifyOrderPricingAtCommit } = require('./orderPricingCommitGuard');
 'use strict';
 
 const crypto = require('crypto');
+const { moderationMessage, stageStoreModeration, catalogWriteGuard } = require('./catalogModerationService');
+const { ensureCatalogModerationNotification } = require('./catalogModerationNotificationService');
 const mongoose = require('mongoose');
 const Fuse = require('fuse.js');
 const User = require('../models/User');
@@ -48,7 +50,7 @@ const {
   getSubscriptionCatalog,
 } = require('./subscriptionPresentationService');
 const {
-  buildModerationFields,
+  stageProductModeration,
   isProductBlocked,
   notifyProductBlocked,
   publicProductFilter,
@@ -291,9 +293,10 @@ function cooldownStatus(field, lastAt) {
 }
 
 function storeChangeLimits(store) {
+  const correcting = field => store?.moderationStatus === 'blocked' && store?.moderationFields?.includes(field);
   return {
-    storeName: cooldownStatus('storeName', store?.lastNameChangeAt),
-    subdomain: cooldownStatus('storeSlug', store?.lastSlugChangeAt),
+    storeName: cooldownStatus('storeName', correcting('storeName') ? null : store?.lastNameChangeAt),
+    subdomain: cooldownStatus('storeSlug', correcting('storeSlug') ? null : store?.lastSlugChangeAt),
     sellerType: cooldownStatus('sellerType', store?.lastTypeChangeAt),
     productCurrency: storeCurrencyChangeLimit(store),
   };
@@ -802,7 +805,7 @@ function productLookupBaseFilter(role, userId, args = {}) {
 
 async function resolveProductCandidates({ role, userId, args = {}, productId, productIds, productName, productNames, excludeProductId, keepProductId }) {
   const filter = productLookupBaseFilter(role, userId, args);
-  const productCandidateSelect = 'name brand price currency priceCurrency priceInputAmount priceVersion discountedPrice discountedPriceCurrency discountedPriceInputAmount stock category isFeatured isBlocked blockedReason moderationStatus moderationReason createdAt updatedAt tags description';
+  const productCandidateSelect = 'name brand price currency priceCurrency priceInputAmount priceVersion discountedPrice discountedPriceCurrency discountedPriceInputAmount stock category isFeatured isBlocked blockedReason moderationStatus moderationPolicyVersion moderationReviewedAt moderationReason createdAt updatedAt tags description';
   const ids = [
     ...(Array.isArray(productIds) ? productIds : []),
     ...(productId ? [productId] : []),
@@ -890,6 +893,8 @@ function formatProductCandidate(product) {
     category: product.category,
     isFeatured: !!product.isFeatured,
     blocked: isProductBlocked(product),
+    pending: product.moderationStatus === 'pending',
+    moderationStatus: product.moderationStatus,
     moderationReason: product.moderationReason || product.blockedReason || '',
     createdAt: product.createdAt,
   };
@@ -2456,7 +2461,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
         if (!productId) return { success: false, error: 'Please provide a product ID.' };
 
         const product = await Product.findOne(publicProductFilter({ _id: toId(productId) }))
-          .select('name image images price discountedPrice currency priceCurrency stock seller')
+          .select('name image images price discountedPrice currency priceCurrency stock seller isBlocked moderationStatus moderationPolicyVersion moderationReviewedAt')
           .lean();
         if (!product) return { success: false, error: 'Product not found.' };
         if (!(await isProductSellerPubliclyActive(product.seller))) {
@@ -3839,7 +3844,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
           ...(productReturnPolicy ? { returnPolicy: productReturnPolicy } : {}),
           seller: targetSellerId,
         };
-        const { fields: moderationFields } = buildModerationFields(productData);
+        const { fields: moderationFields } = stageProductModeration(productData, { rawInput: p });
         const product = await withProductCurrencyWriteLock(
           targetSellerId,
           productEntryCurrency,
@@ -3858,7 +3863,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
           }
         );
         if (isProductBlocked(product)) {
-          await notifyProductBlocked({ sellerId: targetSellerId, product });
+          await notifyProductBlocked({ sellerId: targetSellerId, product }).catch(error => console.error('[catalog-moderation] notice deferred:', error.code || 'OUTBOX_ERROR'));
         }
         const conversionNotice = await buildProductCurrencyConversionNotice({
           sourceAmount: rawPrice,
@@ -3872,11 +3877,13 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
           savedAmount: product.discountedPrice, productCurrency: productEntryCurrency,
           productName: product.name, field: 'sale price',
         }) : '';
-        const requiredDisclosure = [conversionNotice, saleConversionNotice].filter(Boolean).join('\n').trim();
+        const requiredDisclosure = [conversionNotice, saleConversionNotice, isProductBlocked(product) ? moderationMessage('product', product) : ''].filter(Boolean).join('\n').trim();
 
         return {
           success: true,
           requiredDisclosure,
+          blocked: isProductBlocked(product),
+          pending: product.moderationStatus === 'pending',
           data: {
             productId: product._id,
             name: product.name,
@@ -3901,17 +3908,17 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
             createdVia: product.createdVia,
             returnPolicy: product.returnPolicy,
             blocked: isProductBlocked(product),
+            moderationStatus: product.moderationStatus,
+            pending: product.moderationStatus === 'pending',
             moderationReason: product.moderationReason || product.blockedReason || '',
-            ...(requiredDisclosure ? { priceConversion: {
+            ...((conversionNotice || saleConversionNotice) ? { priceConversion: {
               suppliedPrice: rawPrice, suppliedCurrency: priceInput.currency,
               savedPrice: product.price, storeCurrency: productEntryCurrency,
               suppliedSalePrice: rawDiscountedPrice, suppliedSaleCurrency: discountInput.currency,
               savedSalePrice: product.discountedPrice,
             } } : {}),
           },
-          message: isProductBlocked(product)
-            ? `${requiredDisclosure ? `${requiredDisclosure}\n` : ''}Product "${product.name}" was saved to your Products tab, but it is blocked because ${product.blockedReason || product.moderationReason}. Customers cannot see it until you edit it with real product details.`
-            : `${requiredDisclosure ? `${requiredDisclosure}\n` : ''}Product "${product.name}" added to your store "${store.storeName}" at ${await formatMoneyWithCode(product.price, productEntryCurrency)}!`,
+          message: requiredDisclosure || moderationMessage('product', product),
         };
       }
 
@@ -3972,6 +3979,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
             name: result.data?.name || item.name || '',
             error: result.success === true ? '' : (result.error || result.message || 'Failed to add product.'),
             blocked: result.blocked === true,
+            pending: result.pending === true,
             duplicate: result.duplicate === true,
             requiredDisclosure: result.requiredDisclosure || '',
             data: result.data,
@@ -3995,7 +4003,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
           },
           message: failed
             ? `Imported ${added} of ${results.length} products. ${failed} row${failed !== 1 ? 's' : ''} need attention.`
-            : `Imported ${added} product${added !== 1 ? 's' : ''} successfully.`,
+            : `Saved ${added} product${added !== 1 ? 's' : ''}. ${results.filter(row => row.pending).length} awaiting automatic content checks; ${results.filter(row => row.success && row.blocked && !row.pending).length} blocked for content changes.`,
         };
       }
 
@@ -4180,6 +4188,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
         }
 
         const existingForModeration = await Product.findOne(filter)
+          .select('+catalogModeration')
           .sort({ updatedAt: -1, createdAt: -1 })
           .lean();
         if (!existingForModeration) return { success: false, error: 'Product not found or you don\'t own it.' };
@@ -4352,12 +4361,12 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
           updates.price = finalPrice;
         }
 
-        const wasBlocked = isProductBlocked(existingForModeration);
-        const { fields: moderationFields } = buildModerationFields({
+        const { fields: moderationFields } = stageProductModeration({
           ...existingForModeration,
           ...updates,
         }, {
-          previouslyBlocked: wasBlocked,
+          previous: existingForModeration,
+          rawInput: incomingUpdates,
         });
         Object.assign(updates, moderationFields);
 
@@ -4384,7 +4393,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
               sort: { updatedAt: -1, createdAt: -1 },
               ...(session ? { session } : {}),
             }
-          ).select('name price discountedPrice currency priceCurrency priceInputAmount discountedPriceCurrency discountedPriceInputAmount stock category brand image images tags colors optionGroups returnPolicy isFeatured seller isBlocked blockedReason moderationStatus moderationReason').lean();
+          ).select('name price discountedPrice currency priceCurrency priceInputAmount discountedPriceCurrency discountedPriceInputAmount stock category brand image images tags colors optionGroups returnPolicy isFeatured seller isBlocked blockedReason moderationStatus moderationPolicyVersion moderationReviewedAt moderationReason').lean();
         };
         const product = existingForModeration.seller && ownerCurrencyState?.hasStore
           ? await withProductCurrencyWriteLock(existingForModeration.seller, nextCurrency, updateProduct)
@@ -4397,7 +4406,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
             error: 'This product changed while your edit was being prepared. Refresh it and try again.',
           };
         }
-        if (isProductBlocked(product) && !wasBlocked) {
+        if (isProductBlocked(product)) {
           notifyProductBlocked({ sellerId: product.seller, product }).catch(err =>
             console.error('[aiActionExecutor] product blocked notification failed:', err.message)
           );
@@ -4412,14 +4421,12 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
         }) : '';
         return {
           success: true,
-          requiredDisclosure: [conversionNotice, saleConversionNotice].filter(Boolean).join('\n').trim(),
+          requiredDisclosure: [conversionNotice, saleConversionNotice, isProductBlocked(product) ? moderationMessage('product', product) : ''].filter(Boolean).join('\n').trim(),
           data: product,
           blocked: isProductBlocked(product),
-          message: isProductBlocked(product)
-            ? `Product "${product.name}" was updated, but it is blocked because ${product.blockedReason || product.moderationReason}. Customers cannot see it until it has real product details.`
-            : wasBlocked
-              ? `Product "${product.name}" updated successfully and is available to customers again.`
-              : `Product "${product.name}" updated successfully! ✅`,
+          moderationStatus: product.moderationStatus,
+          pending: product.moderationStatus === 'pending',
+          message: moderationMessage('product', product),
         };
       }
 
@@ -4540,7 +4547,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
             filter,
             { $set: { isFeatured: featured } },
             { new: true, runValidators: true, ...(session ? { session } : {}) }
-          ).select('name brand price currency priceCurrency stock category isFeatured createdAt').lean();
+          ).select('name brand price currency priceCurrency stock category isFeatured createdAt isBlocked moderationStatus moderationPolicyVersion moderationReviewedAt moderationReason').lean();
         };
         const updated = role === 'seller'
           ? await withProductCurrencyWriteLock(
@@ -4571,7 +4578,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
 
         const skip = (safePage(page) - 1) * safeLimit(limit, 20);
         let matchingProducts = await Product.find(filter).sort(sort)
-          .select('name price discountedPrice currency priceCurrency category brand stock image rating numReviews isFeatured tags colors optionGroups description isBlocked blockedReason moderationStatus moderationReason createdAt')
+          .select('name price discountedPrice currency priceCurrency category brand stock image rating numReviews isFeatured tags colors optionGroups description isBlocked blockedReason moderationStatus moderationPolicyVersion moderationReviewedAt moderationReason createdAt')
           .lean();
         if (search) matchingProducts = fuzzyProductMatches(matchingProducts, search, 100);
         if (['price_low', 'price_high'].includes(sortBy)) {
@@ -5247,6 +5254,9 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
             logo: store.logo,
             banner: store.banner,
             isActive: store.isActive,
+            moderationStatus: store.moderationStatus,
+            moderationReason: store.moderationReason || '',
+            moderationFields: store.moderationFields || [],
             views: store.views,
             trustCount: store.trustCount,
             verification: store.verification,
@@ -5260,6 +5270,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
             createdAt: store.createdAt,
           },
           message: `Your store "${store.storeName}" - ${verificationStatus} - ${productCount} products, ${store.views} views${storeUrl ? ` - ${storeUrl}` : ''}.`,
+          ...(['pending', 'blocked'].includes(store.moderationStatus) ? { requiredDisclosure: moderationMessage('store', store) } : {}),
         };
       }
 
@@ -5286,7 +5297,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
           if (normalizedRaw[field] !== undefined) normalizedUpdates[field] = normalizedRaw[field];
         }
 
-        const existingStore = await Store.findOne({ seller: userId });
+        const existingStore = await Store.findOne({ seller: userId }).select('+catalogModeration');
         if (!existingStore) return { success: false, error: 'Store not found.' };
 
         if (existingStore.isActive === false) {
@@ -5305,7 +5316,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
             delete normalizedUpdates.storeName;
           } else {
             const cd = cooldownStatus('storeName', existingStore.lastNameChangeAt);
-            if (!cd.canChange) {
+            if (!cd.canChange && !(existingStore.moderationStatus === 'blocked' && existingStore.catalogModeration?.violations?.some(v => v.field === 'storeName'))) {
               return {
                 success: false,
                 error: `You can change your ${STORE_FIELD_LABELS.storeName} again in ${cd.daysRemaining} day(s). Store names can only be changed once every 7 days.`,
@@ -5362,7 +5373,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
             delete normalizedUpdates.storeSlug;
           } else {
             const cd = cooldownStatus('storeSlug', existingStore.lastSlugChangeAt);
-            if (!cd.canChange) {
+            if (!cd.canChange && !(existingStore.moderationStatus === 'blocked' && existingStore.catalogModeration?.violations?.some(v => v.field === 'storeSlug'))) {
               return {
                 success: false,
                 error: `You can change your ${STORE_FIELD_LABELS.storeSlug} again in ${cd.daysRemaining} day(s). Subdomains can only be changed once every 30 days.`,
@@ -5434,6 +5445,11 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
         if (Object.keys(normalizedUpdates).length === 0 && !pendingSlugChange) {
           return { success: false, error: 'No changes to apply.' };
         }
+        const publicUpdatedFields = Object.keys(normalizedUpdates).filter(k => !k.startsWith('last'));
+        Object.assign(normalizedUpdates, stageStoreModeration({
+          ...existingStore.toObject(), ...normalizedUpdates,
+          ...(pendingSlugChange ? { storeSlug: pendingSlugChange.newSlug } : {}),
+        }, { previous: existingStore }).fields);
 
         let updatedStore;
         let forfeitedPurchasedOwnership = false;
@@ -5445,6 +5461,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
             newSlug: pendingSlugChange.newSlug,
             confirmPurchasedForfeit: pendingSlugChange.confirmPurchasedForfeit,
             additionalSet: normalizedUpdates,
+            requiredStoreFilter: catalogWriteGuard(existingStore),
             actor: {
               type: 'ai',
               id: userId,
@@ -5455,22 +5472,27 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
           forfeitedPurchasedOwnership = result.forfeitedPurchasedOwnership;
         } else {
           updatedStore = await Store.findOneAndUpdate(
-            { seller: userId },
-            { $set: normalizedUpdates },
+            { seller: userId, ...catalogWriteGuard(existingStore) },
+            { $set: normalizedUpdates, $inc: { __v: 1 } },
             { new: true, runValidators: true }
-          ).select('storeName storeSlug description paymentPolicy lastNameChangeAt lastSlugChangeAt lastTypeChangeAt lastProductCurrencyChangeAt').lean();
+          ).select('seller storeName storeSlug description paymentPolicy moderationStatus moderationReason moderationFields lastNameChangeAt lastSlugChangeAt lastTypeChangeAt lastProductCurrencyChangeAt').lean();
         }
+        if (!updatedStore) return { success: false, code: 'STORE_CONTENT_CONFLICT', error: 'Store content changed while this edit was prepared. Refresh and try again.' };
+        await ensureCatalogModerationNotification('store', updatedStore).catch(error => console.error('[catalog-moderation] notice deferred:', error.code || 'OUTBOX_ERROR'));
 
         const updatedFields = [
-          ...Object.keys(normalizedUpdates).filter(k => !k.startsWith('last')),
+          ...publicUpdatedFields,
           ...(pendingSlugChange ? ['storeSlug'] : []),
         ];
 
         return {
           success: true,
-          message: `Store "${updatedStore.storeName}" updated successfully.`,
+          message: moderationMessage('store', updatedStore),
+          requiredDisclosure: moderationMessage('store', updatedStore),
           data: {
             storeName: updatedStore.storeName,
+            moderationStatus: updatedStore.moderationStatus,
+            moderationReason: updatedStore.moderationReason || '',
             slug: updatedStore.storeSlug,
             paymentPolicy: updatedStore.paymentPolicy || 'online_and_cod',
             updatedFields,

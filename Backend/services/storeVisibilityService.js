@@ -407,6 +407,7 @@ function effectiveStoreVisibility(store = {}) {
 }
 
 function isStoreVisibleToBuyer(store = {}, buyerLocation = {}) {
+  if (require('./catalogContentPolicy').isContentHeld(store)) return false;
   const visibility = effectiveStoreVisibility(store);
   if (!visibility) return false;
   const location = normalizeBuyerLocation(buyerLocation);
@@ -445,6 +446,7 @@ function isStoreVisibleToBuyer(store = {}, buyerLocation = {}) {
 // Discovery preference and delivery eligibility are different. A Global store
 // can deliver to a country address; local stores must match that actual address.
 function isStoreAvailableForDelivery(store = {}, deliveryLocation = {}) {
+  if (require('./catalogContentPolicy').isContentHeld(store)) return false;
   const visibility = effectiveStoreVisibility(store);
   if (!visibility) return false;
   if (visibility.mode === 'global') return true;
@@ -462,6 +464,7 @@ function applyQueryOptions(query, options = {}) {
 }
 
 async function findVisibleStores(StoreModel, baseFilter = {}, buyerLocation = {}, options = {}) {
+  baseFilter = mergeAndFilter(baseFilter, require('./catalogContentPolicy').publicContentClause());
   const location = normalizeBuyerLocation(buyerLocation);
   const includeLegacy = options.includeLegacy !== false;
   const nonRadiusFilter = mergeAndFilter(baseFilter, nonRadiusVisibilityFilter(location, { includeLegacy }));

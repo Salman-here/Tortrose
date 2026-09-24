@@ -593,6 +593,19 @@ const verifySellerOperationalNotificationAuthority = async record => {
   const recipientId = String(record.recipient?.user || '');
   if (record.recipient?.audienceRole !== 'seller') return null;
 
+  if (record.eventType === 'catalog.moderation') {
+    if (!['Product', 'Store'].includes(record.aggregateType)) return notificationNoLongerActionable('The content alert has an invalid source.');
+    const Model = record.aggregateType === 'Product' ? Product : Store;
+    const entity = await Model.findById(record.aggregateId).select('seller moderationStatus catalogModeration').lean();
+    const notice = entity?.catalogModeration;
+    if (!entity || String(entity.seller || '') !== recipientId || !notice?.noticeId
+      || notice.noticeId !== record.payload?.data?.noticeId || entity.moderationStatus !== notice.noticeStatus
+      || !sameInstant(notice.noticeAt, record.occurredAt)) {
+      return notificationNoLongerActionable('The content status has changed since this alert was prepared.');
+    }
+    return null;
+  }
+
   if (record.eventType === 'product.blocked') {
     if (record.aggregateType !== 'Product') {
       return notificationNoLongerActionable('The blocked-product alert has an invalid aggregate owner.');

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import useProductModerationUpdates from '../../hooks/useProductModerationUpdates';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createPortal } from 'react-dom';
 import {
@@ -74,6 +75,7 @@ const AdminDashboard = () => {
 
     const [activeTab, setActiveTab] = useState('overview');
     const [products, setProducts] = useState([]);
+    useProductModerationUpdates(products, setProducts);
     const [orders, setOrders] = useState([]);
     const [editingProduct, setEditingProduct] = useState(null);
     const [isFormOpen, setIsFormOpen] = useState(false);

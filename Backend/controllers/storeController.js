@@ -1,6 +1,8 @@
 const Store = require('../models/Store');
 const User = require('../models/User');
 const crypto = require('crypto');
+const { stageStoreModeration, catalogWriteGuard, moderationMessage } = require('../services/catalogModerationService');
+const { ensureCatalogModerationNotification } = require('../services/catalogModerationNotificationService');
 const { parsePriceRange, attachComparablePrices, productFieldComparator, stableId, exactValues, escapeRegex, storeRefinements, uniqueFilterLabels: cleanList } = require('../services/catalogFilterService');
 const { initializeSubscription } = require('./subscriptionController');
 const { publicProductFilter } = require('../services/productModerationService');
@@ -278,7 +280,7 @@ exports.createStore = async (req, res) => {
 
         // Check if store name already exists (case-insensitive)
         const duplicateStore = await Store.findOne({
-            storeName: { $regex: new RegExp(`^${storeName.trim()}$`, 'i') }
+            storeName: { $regex: new RegExp(`^${escapeRegex(storeName.trim())}$`, 'i') }
         });
         if (duplicateStore) {
             return res.status(409).json({ msg: 'A store with this name already exists. Please choose a different name.' });
@@ -346,6 +348,7 @@ exports.createStore = async (req, res) => {
             returnPolicy: normalizeReturnPolicy(returnPolicy || {}, { strict: returnPolicy !== undefined })
         };
 
+        Object.assign(storeData, stageStoreModeration(storeData).fields);
         let newStore;
         await runInTransaction(async session => {
             [newStore] = await Store.create([storeData], { session });
@@ -359,8 +362,9 @@ exports.createStore = async (req, res) => {
             console.error('Initialize subscription error:', subErr.message);
         }
 
+        await ensureCatalogModerationNotification('store', newStore).catch(error => console.error('[catalog-moderation] notice deferred:', error.code || 'OUTBOX_ERROR'));
         res.status(201).json({
-            msg: 'Store created successfully',
+            msg: moderationMessage('store', newStore),
             store: newStore
         });
     } catch (error) {
@@ -482,11 +486,12 @@ exports.updateStore = async (req, res) => {
         const { storeName, storeSlug, description, logo, banner, socialLinks, address, returnPolicy, sellerType, storeTheme, visibility, paymentPolicy } = req.body;
 
         // Find seller's store
-        let store = await Store.findOne({ seller: sellerId });
+        let store = await Store.findOne({ seller: sellerId }).select('+catalogModeration');
 
         if (!store) {
             return res.status(404).json({ msg: 'Store not found. Please create a store first.' });
         }
+        const moderationBefore = store.toObject();
 
         // Detect intended changes (against current values) before applying
         const wantsNameChange = !!storeName && storeName.trim().toLowerCase() !== store.storeName.toLowerCase();
@@ -520,6 +525,8 @@ exports.updateStore = async (req, res) => {
             [wantsTypeChange, 'sellerType'],
         ]) {
             if (!want) continue;
+            if (['storeName', 'storeSlug'].includes(field) && store.moderationStatus === 'blocked'
+                && store.catalogModeration?.violations?.some(violation => violation.field === field)) continue;
             const lastAt = field === 'storeName' ? store.lastNameChangeAt
                 : field === 'storeSlug' ? store.lastSlugChangeAt
                 : store.lastTypeChangeAt;
@@ -544,7 +551,7 @@ exports.updateStore = async (req, res) => {
             // Check if store name already exists (case-insensitive), excluding current store
             if (wantsNameChange) {
                 const duplicateStore = await Store.findOne({
-                    storeName: { $regex: new RegExp(`^${storeName.trim()}$`, 'i') },
+                    storeName: { $regex: new RegExp(`^${escapeRegex(storeName.trim())}$`, 'i') },
                     _id: { $ne: store._id }
                 });
                 if (duplicateStore) {
@@ -660,6 +667,8 @@ exports.updateStore = async (req, res) => {
         // CAS. The canonical service then serializes the slug against Stripe
         // Checkout, snapshots any legacy paid ownership into its immutable
         // old-slug ledger, and records the actor audit entry.
+        const moderationCandidate = { ...store.toObject(), ...(pendingSlugChange ? { storeSlug: pendingSlugChange.newSlug } : {}) };
+        Object.assign(store, stageStoreModeration(moderationCandidate, { previous: moderationBefore }).fields);
         await store.validate();
         if (pendingSlugChange) {
             const protectedSlugPaths = new Set([
@@ -682,6 +691,7 @@ exports.updateStore = async (req, res) => {
                 newSlug: pendingSlugChange.newSlug,
                 confirmPurchasedForfeit: pendingSlugChange.confirmPurchasedForfeit,
                 additionalSet,
+                requiredStoreFilter: catalogWriteGuard(moderationBefore),
                 actor: {
                     type: 'seller',
                     id: sellerId,
@@ -690,12 +700,19 @@ exports.updateStore = async (req, res) => {
             });
             store = slugResult.store;
         } else {
-            await store.save();
+            const set = {};
+            for (const path of new Set(store.modifiedPaths().map(field => field.split('.')[0]))) {
+                if (!['_id', '__v', 'createdAt', 'updatedAt'].includes(path)) set[path] = store.get(path);
+            }
+            store = await Store.findOneAndUpdate({ _id: store._id, seller: sellerId, ...catalogWriteGuard(moderationBefore) },
+                { $set: set, $inc: { __v: 1 } }, { new: true, runValidators: true });
+            if (!store) return res.status(409).json({ msg: 'Store content changed while this edit was prepared. Refresh and try again.', code: 'STORE_CONTENT_CONFLICT' });
         }
+        await ensureCatalogModerationNotification('store', store).catch(error => console.error('[catalog-moderation] notice deferred:', error.code || 'OUTBOX_ERROR'));
         console.log('Store saved with socialLinks:', store.socialLinks);
 
         res.status(200).json({
-            msg: 'Store updated successfully',
+            msg: moderationMessage('store', store),
             store,
             paymentPolicyLabel: PAYMENT_POLICY_LABELS[normalizeStorePaymentPolicy(store.paymentPolicy)],
         });

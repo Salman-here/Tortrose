@@ -242,7 +242,7 @@ export default function SellerSubdomainManagementScreen({ navigation, route }) {
   const ownershipState = ownership?.ownership || {};
   const ownershipTerms = resolveSubdomainOwnershipTerms(ownership);
   const isOwned = Boolean(ownershipState.isOwned);
-  const cooldown = getSubdomainCooldown(subdomain?.lastSlugChangeAt);
+  const cooldown = getSubdomainCooldown(subdomain?.moderationStatus === 'blocked' && subdomain?.moderationFields?.includes('storeSlug') ? null : subdomain?.lastSlugChangeAt);
   const currentUrl = subdomain?.url ? `https://${subdomain.url}` : '';
 
   useEffect(() => {

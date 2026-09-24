@@ -3,6 +3,7 @@
  */
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import StoreModerationNotice from '../../components/common/StoreModerationNotice';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView,
   Alert, RefreshControl, Modal, Platform, ActivityIndicator, Switch, Linking,
@@ -94,6 +95,15 @@ export default function SellerStoreSettingsScreen({ navigation }) {
   });
   const [logo, setLogo] = useState(null);
   const [banner, setBanner] = useState(null);
+  const moderationStoreRef = useRef(store);
+  moderationStoreRef.current = store;
+  const handleModerationChange = useCallback(next => {
+    if (!next) return;
+    const previous = moderationStoreRef.current;
+    setLogo(current => current === previous?.logo ? next.logo || null : current);
+    setBanner(current => current === previous?.banner ? next.banner || null : current);
+    setStore(next);
+  }, []);
   const [errors, setErrors] = useState({});
   const [verification, setVerification] = useState(null);
   const [showVerificationModal, setShowVerificationModal] = useState(false);
@@ -413,7 +423,7 @@ export default function SellerStoreSettingsScreen({ navigation }) {
           throw new Error('The store was created, but its authoritative product currency could not be reloaded. Refresh before adding products.');
         }
       }
-      Alert.alert('Saved', creatingStore ? 'Your store is ready.' : 'Store settings updated successfully.');
+      Alert.alert(savedStore.moderationStatus === 'pending' ? 'Store saved — under review' : savedStore.moderationStatus === 'blocked' ? 'Store content blocked' : 'Saved', response.data?.msg || 'Store settings saved.');
     } catch (error) { Alert.alert('Could not save store', error.response?.data?.msg || error.message || 'Failed to save settings'); }
     finally { setSaving(false); }
   };
@@ -604,7 +614,7 @@ export default function SellerStoreSettingsScreen({ navigation }) {
   const daysUntilRemoval = storeBlocked && !purchasedSubdomain && removalAt
     ? Math.max(0, Math.ceil((new Date(removalAt).getTime() - Date.now()) / 86400000))
     : null;
-  const nameCooldownDays = cooldownDaysRemaining(store?.lastNameChangeAt, 7);
+  const nameCooldownDays = store?.moderationStatus === 'blocked' && store?.moderationFields?.includes('storeName') ? 0 : cooldownDaysRemaining(store?.lastNameChangeAt, 7);
   const typeCooldownDays = cooldownDaysRemaining(store?.lastTypeChangeAt, 30);
 
   const previewStore = async () => {
@@ -678,6 +688,7 @@ export default function SellerStoreSettingsScreen({ navigation }) {
           )}
         </GlassPanel>
 
+        <StoreModerationNotice store={store} onChange={handleModerationChange} />
         {/* Images */}
         <GlassPanel variant="card" style={styles.section}>
           <Text style={styles.sectionTitle}>Store Images</Text>

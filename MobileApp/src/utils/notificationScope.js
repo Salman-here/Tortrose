@@ -6,6 +6,7 @@ const SELLER_TYPES = new Set([
   'low_stock',
   'new_review',
   'product_blocked',
+  'catalog_moderation',
   'seller_account_created',
   'store_created',
   'store_verified',

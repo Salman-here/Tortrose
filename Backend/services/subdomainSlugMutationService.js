@@ -9,6 +9,7 @@ const {
   releaseSubdomainResourceLock,
 } = require('./subdomainResourceLockService');
 const { validateStoreSlug } = require('../utils/storeSlug');
+const { stageStoreModeration } = require('./catalogModerationService');
 
 const slugMutationError = (message, code, statusCode, details = {}) => Object.assign(
   new Error(message),
@@ -108,7 +109,7 @@ const changeStoreSlug = async ({
     };
     const store = await Store.findOne({
       $and: [lockedStoreIdentity, requiredStoreFilter],
-    });
+    }).select('+catalogModeration');
     if (!store) {
       throw slugMutationError(
         'The store changed while this update was being prepared. Refresh and try again.',
@@ -183,6 +184,8 @@ const changeStoreSlug = async ({
       'subdomainPurchase.removalScheduledAt': null,
     });
 
+    // Slug edits from admin/AI routes use this same publication gate.
+    Object.assign(set, stageStoreModeration({ ...store.toObject(), ...set }, { previous: store }).fields);
     const updated = await Store.findOneAndUpdate({
       $and: [lockedStoreIdentity, requiredStoreFilter],
     }, {

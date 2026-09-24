@@ -202,7 +202,11 @@ const summarizeToolResultsForPrompt = (toolResults = []) => {
   for (const event of toolResults || []) {
     const result = event.result || {};
     const data = result.data || {};
-    if (event.name === 'add_product' && result.success && data.productId) {
+    if (event.name === 'add_product' && result.success && (result.pending || data.pending) && data.productId) {
+      lines.push(`[Tool memory: productId=${data.productId} was saved and awaits automatic content checks. Do not claim it is live or create a duplicate. Query current status for later questions.]`);
+    } else if (event.name === 'add_product' && result.success && (result.blocked || data.blocked) && data.productId) {
+      lines.push(`[Tool memory: productId=${data.productId} was saved but blocked for content changes. Explain the saved moderation reason; edit this listing instead of creating a duplicate.]`);
+    } else if (event.name === 'add_product' && result.success && data.productId) {
       lines.push(`[Tool memory: add_product succeeded. productId=${data.productId}; name="${data.name || ''}"; brand="${data.brand || ''}"; price=${data.price ?? ''}; tags=${JSON.stringify(data.tags || [])}; colors=${JSON.stringify(data.colors || [])}. Use this productId for follow-up edits; do not add it again unless explicitly asked for a duplicate.]`);
     } else if (event.name === 'edit_product' && result.success && (data._id || data.productId)) {
       lines.push(`[Tool memory: edit_product succeeded. productId=${data._id || data.productId}; name="${data.name || ''}".]`);
