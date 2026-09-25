@@ -1,10 +1,12 @@
 'use strict';
 
 const crypto = require('crypto');
+const mongoose = require('mongoose');
 const Store = require('../models/Store');
 const SellerSubscription = require('../models/SellerSubscription');
 const SellerCheckoutClaim = require('../models/SellerCheckoutClaim');
 const StripeEntitlementPayment = require('../models/StripeEntitlementPayment');
+const SafepaySubdomainGrant = require('../models/SafepaySubdomainGrant');
 const { stripe } = require('../config/stripe');
 const { PLAN_PRICING, buildPlanPricing } = require('./subscriptionPricingService');
 const {
@@ -1462,6 +1464,8 @@ const ensureSubdomainLegacyLedger = async storeInput => {
     resourceKey: store.storeSlug,
   });
   if (existing.length) return existing;
+  // Never turn provider-owned Safepay time into an irreversible legacy grant.
+  if (await SafepaySubdomainGrant.exists({ store: store._id, resourceKey: store.storeSlug })) return [];
 
   const purchase = store.subdomainPurchase || {};
   const expiryMs = purchase.expiresAt ? new Date(purchase.expiresAt).getTime() : NaN;
@@ -1570,19 +1574,25 @@ const aggregateSubdomainPayments = payments => {
   };
 };
 
-const recomputeSubdomainEntitlement = async storeId => {
-  const store = await Store.findById(storeId);
+const loadSubdomainGrants = async (store, { session = null } = {}) => {
+  const stripeGrants = await StripeEntitlementPayment.find({ entitlementType: 'subdomain', store: store._id,
+    resourceKey: store.storeSlug, completionState: 'confirmed' }).session(session);
+  const safepayGrants = await SafepaySubdomainGrant.find({ store: store._id, resourceKey: store.storeSlug,
+    completionState: 'confirmed' }).session(session);
+  return [...stripeGrants, ...safepayGrants];
+};
+
+const recomputeSubdomainEntitlement = async (storeId, { session = null } = {}) => {
+  if (!session) {
+    let result;
+    await mongoose.connection.transaction(async owned => { result = await recomputeSubdomainEntitlement(storeId, { session: owned }); });
+    return result;
+  }
+  const store = await Store.findById(storeId).session(session);
   if (!store) return null;
-  const payments = await StripeEntitlementPayment.find({
-    entitlementType: 'subdomain',
-    store: store._id,
-    resourceKey: store.storeSlug,
-    completionState: 'confirmed',
-  });
+  const payments = await loadSubdomainGrants(store, { session });
   const aggregate = aggregateSubdomainPayments(payments);
-  await Promise.all(payments
-    .filter(payment => payment.isModified('effectiveGrantEnd'))
-    .map(payment => payment.save()));
+  for (const payment of payments) if (payment.isModified('effectiveGrantEnd')) await payment.save({ session });
 
   const now = new Date();
   const hasOpenRisk = payments.some(payment => (
@@ -1622,7 +1632,7 @@ const recomputeSubdomainEntitlement = async storeId => {
       'subdomainPurchase.paymentRiskUpdatedAt': (hasOpenRisk || hasTerminalLoss) ? now : null,
       'subdomainPurchase.removalScheduledAt': removalScheduledAt,
     },
-  }, { new: true });
+  }, { new: true, session });
   return updated;
 };
 
@@ -1726,12 +1736,7 @@ const recordSubdomainCheckoutPayment = async session => {
   }
 
   await ensureSubdomainLegacyLedger(store);
-  const beforePayments = await StripeEntitlementPayment.find({
-    entitlementType: 'subdomain',
-    store: store._id,
-    resourceKey: store.storeSlug,
-    completionState: 'confirmed',
-  });
+  const beforePayments = await loadSubdomainGrants(store);
   const before = aggregateSubdomainPayments(beforePayments);
   const now = new Date();
   const grantStart = before.expiresAt && before.expiresAt > now ? before.expiresAt : now;
@@ -2766,6 +2771,7 @@ const recomputeSubscriptionEntitlement = async (subscriptionId, options = {}) =>
   if (!subscriptionId) return null;
   let subscription = await SellerSubscription.findById(subscriptionId);
   if (!subscription) return null;
+  if (subscription.billingProvider === 'safepay') return subscription;
   const stripeSubscriptionId = stringId(subscription.stripeSubscriptionId);
   const payments = stripeSubscriptionId
     ? await StripeEntitlementPayment.find({
@@ -4549,6 +4555,7 @@ module.exports = {
   LEGACY_SUBDOMAIN_GRANT_MS,
   SUBDOMAIN_PRICE_MINOR,
   aggregateSubdomainPayments,
+  loadSubdomainGrants,
   effectiveDurationMs,
   ensureSubdomainLegacyLedger,
   flagStripeEntitlementPaymentRisk,

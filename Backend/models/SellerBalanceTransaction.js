@@ -83,7 +83,7 @@ const sellerBalanceTransactionSchema = new mongoose.Schema(
         },
         referenceType: {
             type: String,
-            enum: ['return_request', 'stripe_payment', 'admin', 'system'],
+            enum: ['return_request', 'stripe_payment', 'safepay_payment', 'admin', 'system'],
             required: true,
         },
         referenceId: { type: String, required: true, trim: true },
@@ -92,6 +92,9 @@ const sellerBalanceTransactionSchema = new mongoose.Schema(
         stripeEventType: { type: String, default: '' },
         stripeChargeId: { type: String, default: null, index: true },
         stripePaymentIntentId: { type: String, default: null, index: true },
+        safepayPaymentId: { type: mongoose.Schema.Types.ObjectId, ref: 'SafepayPayment', default: null, index: true },
+        safepayTrackerId: { type: String, default: null, index: true },
+        safepayEnvironment: { type: String, enum: ['sandbox', 'production', null], default: null },
         description: { type: String, trim: true, maxlength: 300, default: '' },
         completedAt: { type: Date, default: Date.now },
         metadata: { type: mongoose.Schema.Types.Mixed, default: {} },

@@ -9,6 +9,9 @@ export const nativeBalancesAreValid = summary => {
   if (new Set(codes).size !== 4 || codes.some(code => !exactCurrencyCode(code))) return false;
   for (const balance of summary.balances) {
     if (fields.some(field => !isExactNonNegativeJsonMoney(balance[field]))) return false;
+    for (const field of ['safepayDeliveredRevenue', 'safepayPendingRevenue']) {
+      if (Object.prototype.hasOwnProperty.call(balance, field) && !isExactNonNegativeJsonMoney(balance[field])) return false;
+    }
     if (balance.minimumWithdrawal !== WITHDRAWAL_MINIMUMS[balance.currency]) return false;
     const lookup = summary.balanceByCurrency?.[balance.currency];
     if (!lookup || lookup.currency !== balance.currency || fields.some(field => lookup[field] !== balance[field])) return false;

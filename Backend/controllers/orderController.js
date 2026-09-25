@@ -5,6 +5,8 @@ const Order = require('../models/Order');
 const Product = require('../models/Product')
 const crypto = require('crypto');
 const { stripe, STRIPE_MODE } = require('../config/stripe');
+const SafepayPayment = require('../models/SafepayPayment');
+const safepayPayments = require('../services/safepayPaymentService');
 const TaxConfig = require('../models/TaxConfig');
 const Store = require('../models/Store');
 const { calculateTax } = require('./taxController');
@@ -475,6 +477,12 @@ const respondWithExistingCheckout = async (res, existingOrder) => {
         return res.status(200).json(noChargeCheckoutResponse(existingOrder, {
             idempotentReplay: true,
         }));
+    }
+    if (existingOrder.paymentMethod === 'safepay') {
+        res.set('Cache-Control', 'no-store, private, max-age=0');
+        const checkout = await safepayPayments.prepareCheckout(existingOrder.safepayPaymentId);
+        return res.status(200).json({ ...checkout, orderId: existingOrder.orderId,
+            order: orderResponseSummary(existingOrder), idempotentReplay: true });
     }
     if (existingOrder.paymentMethod === 'stripe') {
         if (existingOrder.isPaid && !existingOrder.awaitingPayment) {
@@ -1133,7 +1141,7 @@ exports.placeOrder = async (req, res) => {
                 code: 'GUEST_CHECKOUT_EMAIL_REQUIRED',
             });
         }
-        if (!['checkout_session', 'payment_sheet'].includes(rawPaymentFlow)) {
+        if (!['checkout_session', 'payment_sheet', 'safepay_hosted'].includes(rawPaymentFlow)) {
             return res.status(400).json({ msg: 'Choose a valid payment flow.', code: 'INVALID_PAYMENT_FLOW' });
         }
         if (!['web', 'mobile'].includes(rawClientSurface)) {
@@ -1198,12 +1206,18 @@ exports.placeOrder = async (req, res) => {
         // domestic number is resolved only from the selected shipping country;
         // there is deliberately no Pakistan (or any other) default guess.
         const shippingPhoneSnapshot = canonicalizeShippingPhone(order.shippingInfo);
-        const normalizedPaymentMethod = ['stripe', 'cash_on_delivery', 'wallet'].includes(order.paymentMethod)
+        const normalizedPaymentMethod = ['stripe', 'cash_on_delivery', 'wallet', 'safepay'].includes(order.paymentMethod)
             ? order.paymentMethod
             : null;
         if (!normalizedPaymentMethod) {
             return res.status(400).json({ msg: 'Choose a valid payment method.' });
         }
+        const safepayConfig = normalizedPaymentMethod === 'safepay'
+            ? safepayPayments.requireMobileSafepay(rawClientSurface) : null;
+        if ((rawPaymentFlow === 'safepay_hosted') !== (normalizedPaymentMethod === 'safepay')) {
+            return res.status(400).json({ msg: 'Choose the matching secure payment flow.', code: 'PAYMENT_FLOW_METHOD_MISMATCH' });
+        }
+        if (safepayConfig) await SafepayPayment.init();
         const isNativeStripePayment = normalizedPaymentMethod === 'stripe' && rawPaymentFlow === 'payment_sheet';
         if (rawPaymentFlow === 'payment_sheet' && !isNativeStripePayment) {
             return res.status(400).json({
@@ -1228,6 +1242,9 @@ exports.placeOrder = async (req, res) => {
                 msg: 'Log in to pay with Rozare Wallet.',
                 code: 'WALLET_LOGIN_REQUIRED',
             });
+        }
+        if (normalizedPaymentMethod === 'safepay' && !userId) {
+            return res.status(401).json({ msg: 'Log in to pay securely with Safepay.', code: 'SAFEPAY_LOGIN_REQUIRED' });
         }
 
         // console.log(order.orderItems);
@@ -1591,9 +1608,10 @@ exports.placeOrder = async (req, res) => {
 
             // ✅ Schema expects just string ("stripe" | "cash_on_delivery")
             paymentMethod: normalizedPaymentMethod,
-            paymentFlow: isNativeStripePayment ? 'payment_sheet' : 'checkout_session',
+            paymentFlow: safepayConfig ? 'safepay_hosted' : isNativeStripePayment ? 'payment_sheet' : 'checkout_session',
             clientSurface: rawClientSurface,
-            paymentSetupState: normalizedPaymentMethod === 'stripe' ? 'not_started' : 'closed',
+            paymentSetupState: ['stripe', 'safepay'].includes(normalizedPaymentMethod) ? 'not_started' : 'closed',
+            ...(safepayConfig ? { safepayEnvironment: safepayConfig.environment } : {}),
             ...(normalizedPaymentMethod === 'stripe' ? {
                 stripeMode: STRIPE_MODE,
                 paymentExpiresAt: isNativeStripePayment
@@ -1647,7 +1665,7 @@ exports.placeOrder = async (req, res) => {
             await mongoose.connection.transaction(async session => {
                 await verifyOrderPricingAtCommit(newOrder, session, deliveryLocation);
                 await newOrder.save({ session });
-                if (newOrder.appliedCoupons.length > 0) {
+                if (newOrder.appliedCoupons.length > 0 && (newOrder.paymentMethod !== 'safepay' || noPaymentRequired)) {
                     await reserveOrderCoupons({ orderId: newOrder._id, userId, session });
                 }
                 if (isCOD) {
@@ -1660,6 +1678,16 @@ exports.placeOrder = async (req, res) => {
                     noChargeOrder = completion.order;
                 } else if (newOrder.paymentMethod === 'wallet') {
                     paidOrder = await payOrderWithWallet({ orderId: newOrder._id, userId, session });
+                } else if (newOrder.paymentMethod === 'safepay') {
+                    // Freeze ownership and money, but reserve inventory and
+                    // coupon capacity only when the payment is verified.
+                    const payment = await safepayPayments.ensurePayment({ user: userId, purpose: 'order',
+                        requestKey: checkoutIdempotencyKey, reference: `order:${newOrder._id}`, order: newOrder._id,
+                        amountMinor: getExpectedStripeTotalMinor(newOrder), currency: newOrder.currency,
+                        terms: { settlementPolicy: 'revalidate-on-payment-v1' },
+                    }, { session });
+                    await Order.updateOne({ _id: newOrder._id }, { $set: { safepayPaymentId: payment._id } }, { session });
+                    newOrder.safepayPaymentId = payment._id;
                 }
                 const immediateFulfilledOrder = isCOD
                     ? newOrder
@@ -1806,6 +1834,11 @@ exports.placeOrder = async (req, res) => {
             });
         }
 
+        if (newOrder.paymentMethod === 'safepay') {
+            const checkout = await safepayPayments.prepareCheckout(newOrder.safepayPaymentId);
+            res.set('Cache-Control', 'no-store, private, max-age=0');
+            return res.status(200).json({ ...checkout, orderId: newOrder.orderId, order: orderResponseSummary(newOrder) });
+        }
         if (!STRIPE_SUPPORTED_CURRENCIES.has(newOrder.currency)) {
             await deleteUnpaidCheckoutOrder({ _id: newOrder._id });
             return res.status(400).json({
@@ -2046,6 +2079,14 @@ exports.getPaymentStatus = async (req, res) => {
 
         if (role !== 'admin' && toId(order.user) !== toId(userId)) {
             return res.status(403).json({ msg: 'You can only verify your own payment.' });
+        }
+        if (order.paymentMethod === 'safepay') {
+            res.set('Cache-Control', 'no-store, private, max-age=0');
+            if (isNoChargeOnlineOrder(order) && isPaymentFulfilled(order)) {
+                return res.status(200).json({ paymentMethod: 'safepay', isPaid: true, status: 'paid', webhookProcessed: true, orderId: order.orderId, mongoOrderId: order._id });
+            }
+            const payment = await safepayPayments.reconcilePayment(order.safepayPaymentId);
+            return res.status(200).json({ ...safepayPayments.paymentResponse(payment), orderId: order.orderId });
         }
         if (order.paymentMethod !== 'stripe') {
             return res.status(400).json({

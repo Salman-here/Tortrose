@@ -44,11 +44,10 @@ describe('EAS Update release contract', () => {
     expect(packageConfig.scripts['update:preview']).toContain('--platform android');
   });
 
-  it('pins Stripe Android to the compatible exact release used by Stripe React Native', () => {
-    expect(appConfig.plugins).toContainEqual([
-      './plugins/withPinnedStripeAndroid',
-      { version: '23.3.0' },
-    ]);
+  it('ships Safepay hosted checkout without a native Stripe SDK or bootstrap', () => {
+    expect(packageConfig.dependencies['@stripe/stripe-react-native']).toBeUndefined();
+    expect(JSON.stringify(appConfig.plugins)).not.toMatch(/stripe/i);
+    expect(fs.readFileSync(path.resolve(__dirname, '../../App.js'), 'utf8')).not.toContain('StripeBootstrapProvider');
   });
 
   it('binds the production Android package to the public Firebase client only', () => {

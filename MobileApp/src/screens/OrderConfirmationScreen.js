@@ -212,6 +212,7 @@ export default function OrderConfirmationScreen({ navigation, route }) {
                   ? 'Rozare Wallet'
                   : order.paymentMethod === 'stripe'
                     ? 'Card (Stripe)'
+                    : order.paymentMethod === 'safepay' ? 'Card (Safepay)'
                     : 'Cash on Delivery'}
               </Text>
             </GlassPanel>

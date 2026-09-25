@@ -192,7 +192,7 @@ exports.purchaseSubdomain = async (req, res) => {
         const purchase = store.subdomainPurchase || {};
         if (purchase.paymentRiskState === 'open') {
             return res.status(423).json({
-                msg: 'This subdomain has an unresolved Stripe payment dispute. Renewal is temporarily frozen.',
+                msg: 'This subdomain has an unresolved payment dispute. Renewal is temporarily frozen.',
                 code: 'SUBDOMAIN_PAYMENT_RISK_OPEN',
             });
         }

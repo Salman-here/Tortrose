@@ -12,13 +12,12 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import Feedback from '../utils/feedback';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useStripe } from '@stripe/stripe-react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import api, { API_ENDPOINTS } from '../config/api';
 import { useAuth } from '../contexts/AuthContext';
 import { useGlobal } from '../contexts/GlobalContext';
 import { useCurrency } from '../contexts/CurrencyContext';
-import { useStripeConfig } from '../contexts/StripeContext';
+import { openSafepayCheckout } from '../utils/safepayCheckout';
 import { Loader, InlineLoader } from '../components/common';
 import GlassBackground from '../components/common/GlassBackground';
 import GlassPanel from '../components/common/GlassPanel';
@@ -32,7 +31,6 @@ import { isValidPhoneNumber } from '../utils/phoneNumber';
 import { resolveBuyerCountrySuggestion, getCachedBuyerLocation } from '../utils/buyerLocation';
 import {
   buildSellerShipping,
-  cancelOrderPaymentAttempt,
   calculateCouponPricing,
   clearCheckoutAttempt,
   createCheckoutFingerprint,
@@ -48,17 +46,9 @@ import {
   parseCheckoutShippingMethodsResponse,
   parseCheckoutTaxConfigResponse,
   parseValidatedCheckoutCouponResponse,
-  prepareStripeAfterOrderResponse,
   reconcileAppliedCheckoutCoupons,
-  runOrderPaymentSheetAttempt,
   selectDefaultShippingMethods,
-  verifyOrderPayment,
 } from '../utils/checkout';
-import {
-  assertPaymentSheetPayload,
-  buildPaymentSheetOptions,
-  normalizePaymentSheetPayload,
-} from '../utils/stripePaymentSheet';
 import {
   addCurrencyAmounts,
   checkoutHasUnsupportedCurrency,
@@ -80,8 +70,6 @@ const CHECKOUT_ATTEMPT_STORAGE_KEY = 'rozare_checkout_attempt_v1';
 export default function CheckoutScreen({ navigation }) {
   const { palette, isDark } = useTheme();
   const styles = buildStyles(palette);
-  const { initPaymentSheet, presentPaymentSheet } = useStripe();
-  const { ensureReady: ensureStripeReady } = useStripeConfig();
 
   const { currentUser } = useAuth();
   const checkoutAttemptStorageKey = createScopedMutationStorageKey(
@@ -668,12 +656,12 @@ export default function CheckoutScreen({ navigation }) {
         applicableProductIds: coupon.applicableProductIds,
       })),
       paymentMethod: paymentMethod === 'card'
-        ? 'stripe'
+        ? 'safepay'
         : paymentMethod === 'wallet'
           ? 'wallet'
           : 'cash_on_delivery',
       platform: paymentMethod === 'card' ? 'mobile' : undefined,
-      paymentFlow: paymentMethod === 'card' ? 'payment_sheet' : undefined,
+      paymentFlow: paymentMethod === 'card' ? 'safepay_hosted' : undefined,
       clientSurface: 'mobile',
       ...(instructions.trim() ? { instructions: instructions.trim() } : {}),
       idempotencyKey,
@@ -806,7 +794,6 @@ export default function CheckoutScreen({ navigation }) {
     submittingRef.current = true;
     setIsProcessing(true);
     let paymentAttempt = null;
-    let paymentCleanupAttempted = false;
     try {
       const draftOrder = buildOrder('');
       const actorId = String(currentUser?._id || currentUser?.id || 'guest');
@@ -827,147 +814,49 @@ export default function CheckoutScreen({ navigation }) {
       trackCheckoutStep('order_built', { itemCount: order.orderItems.length });
       const res = await api.post('/api/order/place', {
         order,
-        ...(paymentMethod === 'card' ? { paymentFlow: 'payment_sheet', clientSurface: 'mobile' } : {}),
+        ...(paymentMethod === 'card' ? { paymentFlow: 'safepay_hosted', clientSurface: 'mobile' } : {}),
       }, {
         headers: { 'X-Idempotency-Key': idempotencyKey },
       });
       trackCheckoutStep('order_api_success', { orderId: res.data?.orderId });
       if (paymentMethod === 'card') {
-        const payment = normalizePaymentSheetPayload(res);
-        const orderId = payment.orderId || res.data?.orderId || res.data?.order?.orderId;
-        paymentAttempt = {
-          orderId,
-          paymentIntentId: payment.paymentIntentId,
-          ...attemptCorrelation,
-        };
-        const stripePreparation = await prepareStripeAfterOrderResponse({
-          response: res,
-          normalizedPayment: payment,
-          ensureStripeReady,
-        });
-        if (!stripePreparation.paymentRequired) {
-          navigation.replace('PaymentSuccess', {
-            orderId,
-            noPaymentRequired: true,
-            checkoutAttemptStorageKey,
-            checkoutAttemptFingerprint: fingerprint,
-            checkoutAttemptKey: checkoutAttempt.key,
-          });
+        const payment = res.data || res;
+        const orderId = payment.orderId || payment.order?.orderId;
+        if (!orderId) throw new Error('Secure checkout did not return an order reference.');
+        paymentAttempt = { orderId, safepay: true, paymentId: payment.paymentId, ...attemptCorrelation };
+        // Safepay cancellation must be verified against its tracker. Never
+        // invoke the legacy PaymentSheet cleanup on this payment.
+        if (payment.noPaymentRequired === true && payment.isPaid === true) {
+          navigation.replace('PaymentSuccess', { orderId, noPaymentRequired: true,
+            checkoutAttemptStorageKey, checkoutAttemptFingerprint: fingerprint, checkoutAttemptKey: checkoutAttempt.key });
           return;
         }
-        const stripeConfig = stripePreparation.stripeConfig;
-        if (!orderId) throw new Error('Secure checkout did not return an order reference.');
-        const verifiedPayment = assertPaymentSheetPayload(res, 'payment');
-        trackPaymentEvent('payment_sheet_initialized', { orderId });
-        const sheetResult = await runOrderPaymentSheetAttempt({
-          initPaymentSheet,
-          presentPaymentSheet,
-          apiClient: api,
-          orderId,
-          paymentIntentId: verifiedPayment.paymentIntentId,
-          options: buildPaymentSheetOptions({
-            payment: verifiedPayment,
-            config: stripeConfig,
-            currentUser,
-            billingDetails: {
-              name: formData.fullName,
-              email: formData.email,
-              phone: formData.phone,
-              address: {
-                line1: formData.address,
-                city: formData.city,
-                state: formData.state,
-                postalCode: formData.postalCode,
-                country: formData.countryCode,
-              },
-            },
-            currency,
-            palette,
-            isDark,
-            intentType: 'payment',
-          }),
-        });
-        paymentCleanupAttempted = sheetResult.status !== 'presented';
-
+        const verified = await openSafepayCheckout({ apiClient: api, response: res });
         if (!savedShippingInfo?.fullName || hasShippingInfoChanged()) {
           try {
             await api.patch('/api/user/shipping-info', { shippingInfo: formData });
             setSavedShippingInfo(formData);
           } catch {}
         }
-
-        if (sheetResult.status === 'cancelled' || sheetResult.status === 'failed') {
-          const cancellation = sheetResult.cancellation;
-          if (cancellation.status === 'payment_received') {
-            navigation.replace('PaymentSuccess', {
-              orderId,
-              payment_intent: verifiedPayment.paymentIntentId,
-              checkoutAttemptStorageKey,
-              checkoutAttemptFingerprint: fingerprint,
-              checkoutAttemptKey: checkoutAttempt.key,
-            });
-            return;
-          }
-          if (cancellation.status === 'cancelled') {
-            await resetCheckoutAttempt();
-            setPaymentNotice({
-              type: sheetResult.status === 'failed' ? 'error' : 'cancelled',
-              title: sheetResult.status === 'failed'
-                ? 'Secure payment could not open'
-                : 'Payment cancelled safely',
-              orderId,
-              paymentIntentId: verifiedPayment.paymentIntentId,
-              checkoutAttemptStorageKey,
-              checkoutAttemptFingerprint: fingerprint,
-              checkoutAttemptKey: checkoutAttempt.key,
-              text: sheetResult.status === 'failed'
-                ? 'Rozare closed the failed payment immediately and released the reserved stock. Your cart is unchanged.'
-                : 'Rozare confirmed the payment attempt is closed. Your cart is safe, and Retry will start a fresh secure payment.',
-            });
-            return;
-          }
-          setPaymentNotice({
-            type: 'pending',
-            title: 'Checking payment status',
-            orderId,
-            paymentIntentId: verifiedPayment.paymentIntentId,
-            checkoutAttemptStorageKey,
-            checkoutAttemptFingerprint: fingerprint,
-            checkoutAttemptKey: checkoutAttempt.key,
-            text: 'Rozare could not confirm cleanup yet. Use Check before retrying so another payable payment is not created.',
-          });
-          return;
-        }
-
-        const verification = await verifyOrderPayment({
-          apiClient: api,
-          orderId,
-          paymentIntentId: verifiedPayment.paymentIntentId,
-          attempts: sheetResult.status === 'presented' ? 2 : 1,
-          delayMs: 650,
-        });
-        if (verification.status === 'paid') {
+        if (verified.status === 'paid') {
           await resetCheckoutAttempt();
-          navigation.replace('PaymentSuccess', {
-            orderId,
-            payment_intent: verifiedPayment.paymentIntentId,
-            checkoutAttemptStorageKey,
-            checkoutAttemptFingerprint: fingerprint,
-            checkoutAttemptKey: checkoutAttempt.key,
-          });
+          navigation.replace('PaymentSuccess', { orderId,
+            checkoutAttemptStorageKey, checkoutAttemptFingerprint: fingerprint, checkoutAttemptKey: checkoutAttempt.key });
           return;
         }
-        if (sheetResult.status === 'presented') {
-          trackPaymentEvent('payment_sheet_presented', { orderId });
-          navigation.replace('PaymentSuccess', {
-            orderId,
-            payment_intent: verifiedPayment.paymentIntentId,
-            checkoutAttemptStorageKey,
-            checkoutAttemptFingerprint: fingerprint,
-            checkoutAttemptKey: checkoutAttempt.key,
-          });
+        if (['cancelled', 'failed', 'refunded'].includes(verified.status)) {
+          await resetCheckoutAttempt();
+          setPaymentNotice({ type: 'cancelled', title: 'Payment not completed', orderId,
+            text: 'Safepay confirmed that this payment is closed. Your cart is unchanged.' });
           return;
         }
+        setPaymentNotice({ type: 'pending', title: verified.status === 'refund_pending' ? 'Refund being verified' : verified.status === 'manual_review' ? 'Payment needs review' : 'Check your payment',
+          orderId, paymentId: payment.paymentId, safepay: true,
+          checkoutAttemptStorageKey, checkoutAttemptFingerprint: fingerprint, checkoutAttemptKey: checkoutAttempt.key,
+          text: verified.status === 'refund_pending' ? 'This order could no longer be fulfilled. Rozare is verifying a full refund to your original card. Use Check for its status.' : verified.status === 'manual_review'
+            ? 'Please contact support with this order reference. Do not pay again while it is being reviewed.'
+            : 'Payment is not confirmed yet. Use Check or resume this same checkout; do not start another payment.' });
+        return;
       } else {
         // Check if info changed
         if (savedShippingInfo?.fullName && hasShippingInfoChanged()) {
@@ -1001,47 +890,10 @@ export default function CheckoutScreen({ navigation }) {
         });
         return;
       }
-      if (paymentMethod === 'card' && paymentAttempt?.orderId && !paymentCleanupAttempted) {
-        const cancellation = await cancelOrderPaymentAttempt({
-          apiClient: api,
-          orderId: paymentAttempt.orderId,
-          paymentIntentId: paymentAttempt.paymentIntentId,
-        });
-        paymentCleanupAttempted = true;
-        if (cancellation.status === 'payment_received') {
-          navigation.replace('PaymentSuccess', {
-            orderId: paymentAttempt.orderId,
-            payment_intent: paymentAttempt.paymentIntentId,
-            checkoutAttemptStorageKey: paymentAttempt.storageKey,
-            checkoutAttemptFingerprint: paymentAttempt.fingerprint,
-            checkoutAttemptKey: paymentAttempt.attemptKey,
-          });
-          return;
-        }
-        if (cancellation.status === 'cancelled') {
-          await resetCheckoutAttempt();
-          setPaymentNotice({
-            type: 'error',
-            title: 'Secure payment could not open',
-            orderId: paymentAttempt.orderId,
-            paymentIntentId: paymentAttempt.paymentIntentId,
-            checkoutAttemptStorageKey: paymentAttempt.storageKey,
-            checkoutAttemptFingerprint: paymentAttempt.fingerprint,
-            checkoutAttemptKey: paymentAttempt.attemptKey,
-            text: 'Rozare closed the failed payment immediately and released the reserved stock. Your cart is unchanged.',
-          });
-          return;
-        }
-        setPaymentNotice({
-          type: 'pending',
-          title: 'Closing the failed payment',
-          orderId: paymentAttempt.orderId,
-          paymentIntentId: paymentAttempt.paymentIntentId,
-          checkoutAttemptStorageKey: paymentAttempt.storageKey,
-          checkoutAttemptFingerprint: paymentAttempt.fingerprint,
-          checkoutAttemptKey: paymentAttempt.attemptKey,
-          text: 'Rozare could not confirm cleanup yet. Use Check before retrying so another payable payment is not created.',
-        });
+      if (paymentAttempt?.safepay) {
+        setPaymentNotice({ type: 'pending', title: 'Check your payment', orderId: paymentAttempt.orderId,
+          paymentId: paymentAttempt.paymentId, safepay: true,
+          text: 'Payment verification was interrupted. Use Check before retrying so you do not create another payment.' });
         return;
       }
       const code = error.response?.data?.code;
@@ -1475,7 +1327,8 @@ export default function CheckoutScreen({ navigation }) {
                 {!!paymentNotice.orderId && (
                   <TouchableOpacity
                     style={styles.verifyPaymentButton}
-                    onPress={() => navigation.navigate('PaymentSuccess', {
+                    onPress={() => navigation.navigate(paymentNotice.safepay ? 'SafepayReturn' : 'PaymentSuccess', {
+                      paymentId: paymentNotice.paymentId,
                       orderId: paymentNotice.orderId,
                       payment_intent: paymentNotice.paymentIntentId,
                       checkoutAttemptStorageKey: paymentNotice.checkoutAttemptStorageKey,
@@ -1527,7 +1380,7 @@ export default function CheckoutScreen({ navigation }) {
               <Ionicons name="card-outline" size={22} color={palette.colors.primary} />
               <View style={{ flex: 1 }}>
                 <Text style={styles.paymentTitle}>Credit / Debit Card</Text>
-                <Text style={styles.paymentSub}>Secure payment via Stripe</Text>
+                <Text style={styles.paymentSub}>Secure payment via Safepay</Text>
               </View>
               <Ionicons name="shield-checkmark-outline" size={16} color={palette.colors.success} />
             </TouchableOpacity>

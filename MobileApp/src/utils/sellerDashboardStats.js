@@ -8,7 +8,7 @@ import {
 } from './orderPresentation';
 
 const ORDER_STATUSES = new Set(['pending', 'confirmed', 'processing', 'shipped', 'delivered', 'cancelled']);
-const PAYMENT_METHODS = new Set(['stripe', 'wallet', 'cash_on_delivery']);
+const PAYMENT_METHODS = new Set(['stripe', 'safepay', 'wallet', 'cash_on_delivery']);
 
 const hasOwn = (value, key) => Boolean(value)
   && typeof value === 'object'
@@ -142,7 +142,7 @@ export const isRecognizedSellerOrder = (order) => {
 
   const paymentMethod = order.paymentMethod;
   if (paymentMethod === 'cash_on_delivery') return status === 'delivered';
-  if (paymentMethod === 'stripe' || paymentMethod === 'wallet') return order.isPaid === true;
+  if (['stripe', 'safepay', 'wallet'].includes(paymentMethod)) return order.isPaid === true;
   return false;
 };
 

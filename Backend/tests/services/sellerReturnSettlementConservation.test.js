@@ -23,6 +23,8 @@ const SellerBalanceTransaction = require('../../models/SellerBalanceTransaction'
 const SellerSettlementLock = require('../../models/SellerSettlementLock');
 const Wallet = require('../../models/Wallet');
 const WalletTransaction = require('../../models/WalletTransaction');
+const SafepayPayment = require('../../models/SafepayPayment');
+const safepayPayments = require('../../services/safepayPaymentService');
 const { buildSellerPaymentSummary } = require('../../controllers/PaymentController');
 const { buildOrderSellerSettlement, SELLER_SETTLEMENT_VERSION } = require('../../services/orderMoneyService');
 const {
@@ -30,6 +32,9 @@ const {
   createReturnSettlementCheckout,
   failReturnCardSettlement,
   settleFromSellerBalance,
+  createSafepayReturnSettlement,
+  completeSafepayReturnSettlement,
+  closeSafepayReturnSettlement,
 } = require('../../services/returnService');
 
 let replSet;
@@ -150,6 +155,7 @@ beforeAll(async () => {
     ReturnRequest.syncIndexes(),
     Wallet.syncIndexes(),
     WalletTransaction.syncIndexes(),
+    SafepayPayment.syncIndexes(),
   ]);
 }, 120000);
 
@@ -171,7 +177,69 @@ beforeEach(async () => {
     SellerSettlementLock.deleteMany({}),
     Wallet.deleteMany({}),
     WalletTransaction.deleteMany({}),
+    SafepayPayment.deleteMany({}),
   ]);
+});
+
+describe('Safepay card-funded return settlement', () => {
+  let checkout;
+  beforeEach(() => {
+    Object.assign(process.env, { SAFEPAY_ENV: 'sandbox', SAFEPAY_SANDBOX_PUBLIC_KEY: 'sec_test-returns',
+      SAFEPAY_SANDBOX_SECRET_KEY: 'private-returns-secret', SAFEPAY_SANDBOX_WEBHOOK_SECRET: 'private-returns-webhook', SAFEPAY_SANDBOX_WEBHOOK_SCHEME: 'sha512-raw' });
+    checkout = jest.spyOn(safepayPayments, 'prepareCheckout').mockImplementation(async paymentId => ({ paymentId: String(paymentId) }));
+  });
+  afterEach(() => checkout.mockRestore());
+  const pay = async (request, seller, key) => {
+    const result = await createSafepayReturnSettlement({ returnRequestId: request._id, sellerId: seller, requestKey: key });
+    const payment = await SafepayPayment.findById(result.paymentId);
+    await mongoose.connection.transaction(session => completeSafepayReturnSettlement(payment, { state: 'TRACKER_ENDED' }, session));
+    return payment;
+  };
+
+  test('partial returns retain PKR amounts and the final return alone receives shipping', async () => {
+    const f = await createFixture({ shippingPrice: 3 });
+    const first = await f.createReturn('sf-first', 2), second = await f.createReturn('sf-second', 2);
+    const p1 = await pay(first, f.seller, 'safepay-return-first');
+    const p2 = await pay(second, f.seller, 'safepay-return-second');
+    expect(p1.currency).toBe('PKR'); expect(p1.amountMinor).toBe(200);
+    expect(p2.amountMinor).toBe(500);
+    expect((await Wallet.findOne({ user: f.buyer })).balances.PKR).toBe(7);
+    expect((await ReturnRequest.findById(second._id)).refund.shippingAmount).toBe(3);
+    expect(mockStripeSessionsCreate).not.toHaveBeenCalled();
+  });
+
+  test('duplicate provider reconciliation cannot credit the buyer twice', async () => {
+    const f = await createFixture(); const request = await f.createReturn('sf-repeat', 2);
+    const payment = await pay(request, f.seller, 'safepay-return-repeat');
+    await mongoose.connection.transaction(session => completeSafepayReturnSettlement(payment, { state: 'TRACKER_ENDED' }, session));
+    expect((await Wallet.findOne({ user: f.buyer })).balances.PKR).toBe(2);
+    expect(await WalletTransaction.countDocuments({ referenceId: String(request._id), type: 'return_refund' })).toBe(1);
+  });
+
+  test('parallel keys resume the same pending return rather than create two payable checkouts', async () => {
+    const f = await createFixture(); const request = await f.createReturn('sf-key', 2);
+    const first = await createSafepayReturnSettlement({ returnRequestId: request._id, sellerId: f.seller, requestKey: 'safepay-return-original' });
+    const again = await createSafepayReturnSettlement({ returnRequestId: request._id, sellerId: f.seller, requestKey: 'safepay-return-different' });
+    expect(again.paymentId).toBe(first.paymentId); expect(await SafepayPayment.countDocuments()).toBe(1);
+  });
+
+  test('a provider-confirmed expired checkout releases its shipping reservation without credit', async () => {
+    const f = await createFixture(); const request = await f.createReturn('sf-close', 2);
+    const result = await createSafepayReturnSettlement({ returnRequestId: request._id, sellerId: f.seller, requestKey: 'safepay-return-closed' });
+    const payment = await SafepayPayment.findById(result.paymentId);
+    await mongoose.connection.transaction(session => closeSafepayReturnSettlement(payment, session));
+    expect((await ReturnRequest.findById(request._id)).status).toBe('under_review');
+    expect(await WalletTransaction.countDocuments({ referenceId: String(request._id) })).toBe(0);
+  });
+
+  test('a mismatched capture cannot credit or complete a return', async () => {
+    const f = await createFixture(); const request = await f.createReturn('sf-wrong-money', 2);
+    const result = await createSafepayReturnSettlement({ returnRequestId: request._id, sellerId: f.seller, requestKey: 'safepay-return-wrong-money' });
+    const payment = (await SafepayPayment.findById(result.paymentId)).toObject(); payment.amountMinor = 201;
+    await expect(mongoose.connection.transaction(session => completeSafepayReturnSettlement(payment, { state: 'TRACKER_ENDED' }, session)))
+      .rejects.toMatchObject({ code: 'SAFEPAY_RETURN_BINDING_INVALID' });
+    expect(await WalletTransaction.countDocuments({ referenceId: String(request._id) })).toBe(0);
+  });
 });
 
 test('sequential PKR seller-balance returns exactly zero the frozen USD credit, including a zero-USD source row', async () => {

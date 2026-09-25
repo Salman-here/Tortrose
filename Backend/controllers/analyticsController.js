@@ -97,7 +97,7 @@ const recognizedOrderItemEntries = (order, productSellerById = new Map()) => {
         const method = order?.paymentMethod || 'cash_on_delivery';
         const globallyRecognized = method === 'cash_on_delivery'
             ? (order?.orderStatus === 'delivered' || order?.isDelivered === true)
-            : (['stripe', 'wallet'].includes(method) && order?.isPaid === true);
+            : (['stripe', 'wallet', 'safepay'].includes(method) && order?.isPaid === true);
         const recognized = sellerId
             ? isSellerRevenueRecognized(order, sellerId)
             : globallyRecognized;

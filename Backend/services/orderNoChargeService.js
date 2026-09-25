@@ -15,7 +15,7 @@ const {
   enqueueNoChargeOrderSellerNotifications,
 } = require('./financialNotificationOutboxService');
 
-const ONLINE_PAYMENT_METHODS = new Set(['stripe', 'wallet']);
+const ONLINE_PAYMENT_METHODS = new Set(['stripe', 'wallet', 'safepay']);
 
 const noChargeError = (message, code, statusCode = 409) => {
   const error = new Error(message);
@@ -34,6 +34,8 @@ const isNoChargeOnlineOrder = order => (
   && hasExactlyZeroOrderTotal(order)
   && !order?.stripePaymentIntentId
   && !order?.stripeSessionId
+  && !order?.safepayPaymentId
+  && !order?.safepayTrackerId
 );
 
 const enqueueNoChargeOrderNotifications = async (order, session) => {
@@ -94,7 +96,7 @@ const completeNoChargeOrder = async ({ orderId, session, at = new Date() }) => {
       500,
     );
   }
-  if (order.stripePaymentIntentId || order.stripeSessionId) {
+  if (order.stripePaymentIntentId || order.stripeSessionId || order.safepayPaymentId || order.safepayTrackerId) {
     throw noChargeError(
       'A no-charge order cannot have a Stripe payment reference.',
       'NO_CHARGE_EXTERNAL_REFERENCE_CONFLICT',
@@ -143,7 +145,7 @@ const completeNoChargeOrder = async ({ orderId, session, at = new Date() }) => {
   order.confirmation.confirmedAt = order.confirmation.confirmedAt || at;
   order.confirmation.confirmedVia = order.paymentMethod === 'wallet'
     ? 'wallet_payment'
-    : 'stripe_payment';
+    : order.paymentMethod === 'safepay' ? 'safepay_payment' : 'stripe_payment';
 
   order.paymentResult = order.paymentResult || {};
   order.paymentResult.emailAddress = order.paymentResult.emailAddress

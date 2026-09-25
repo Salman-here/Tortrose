@@ -1,5 +1,5 @@
 const mongoose = require('mongoose');
-const { MongoMemoryServer } = require('mongodb-memory-server');
+const { MongoMemoryReplSet } = require('mongodb-memory-server');
 
 jest.mock('../../controllers/mailController', () => ({
   sendEmail: jest.fn().mockResolvedValue(undefined),
@@ -51,7 +51,7 @@ const checkoutSession = ({ sellerId, storeId, storeSlug, paymentReference, renew
 });
 
 beforeAll(async () => {
-  mongoServer = await MongoMemoryServer.create();
+  mongoServer = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
   await mongoose.connect(mongoServer.getUri());
   await NotificationOutbox.init();
 });

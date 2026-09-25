@@ -80,7 +80,7 @@ const walletTransactionSchema = new mongoose.Schema(
         description: { type: String, trim: true, maxlength: 300, default: '' },
         referenceType: {
             type: String,
-            enum: ['stripe_checkout', 'stripe_payment_intent', 'stripe_dispute', 'stripe_refund', 'order', 'return_request', 'admin', 'system'],
+            enum: ['stripe_checkout', 'stripe_payment_intent', 'stripe_dispute', 'stripe_refund', 'safepay_payment', 'safepay_refund', 'safepay_dispute', 'order', 'return_request', 'admin', 'system'],
             required: true,
         },
         referenceId: { type: String, required: true, trim: true, index: true },
@@ -90,7 +90,10 @@ const walletTransactionSchema = new mongoose.Schema(
         stripeCustomerId: { type: String, default: null, index: true },
         stripeChargeId: { type: String, default: null, index: true },
         stripeMode: { type: String, enum: ['test', 'live'], default: null },
-        paymentFlow: { type: String, enum: ['checkout_session', 'payment_sheet'], default: 'checkout_session' },
+        safepayPaymentId: { type: mongoose.Schema.Types.ObjectId, ref: 'SafepayPayment', default: null },
+        safepayEnvironment: { type: String, enum: ['sandbox', 'production'], default: null },
+        safepayTrackerId: { type: String, default: null },
+        paymentFlow: { type: String, enum: ['checkout_session', 'payment_sheet', 'safepay_hosted'], default: 'checkout_session' },
         // Durable boundary around Stripe object creation. `creating` means the
         // deterministic Stripe request may already have succeeded even if the
         // returned ID was not persisted, so cleanup must recover instead of
@@ -119,6 +122,13 @@ walletTransactionSchema.pre('validate', function validateTopUpSetupState(next) {
 
     const hasSession = typeof this.stripeSessionId === 'string' && this.stripeSessionId.length > 0;
     const hasIntent = typeof this.stripePaymentIntentId === 'string' && this.stripePaymentIntentId.length > 0;
+    if (this.paymentFlow === 'safepay_hosted') {
+        if (hasSession || hasIntent || !this.safepayPaymentId || !this.safepayEnvironment || !this.safepayTrackerId
+            || this.referenceType !== 'safepay_payment' || this.status !== 'completed' || this.paymentSetupState !== 'complete') {
+            this.invalidate('paymentSetupState', 'A Safepay Wallet credit requires its verified provider binding.');
+        }
+        return next();
+    }
     const isHostedRiskBlocked = (
         this.paymentFlow === 'checkout_session'
         && this.status === 'reversed'

@@ -929,7 +929,7 @@ export default function SellerStoreSettingsScreen({ navigation }) {
               />
               <View style={styles.refundNotice}>
                 <Ionicons name="shield-checkmark-outline" size={18} color={palette.colors.info} />
-                <Text style={styles.refundNoticeText}>A wallet refund is issued only after you fund the exact approved amount from seller balance or by card through Stripe.</Text>
+                <Text style={styles.refundNoticeText}>A wallet refund is issued only after you fund the exact approved amount from seller balance or by card through Safepay.</Text>
               </View>
             </>
           )}

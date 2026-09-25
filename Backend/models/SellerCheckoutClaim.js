@@ -18,6 +18,7 @@ const sellerCheckoutClaimSchema = new mongoose.Schema({
         enum: ['subscription', 'subdomain'],
         required: true,
     },
+    provider: { type: String, enum: ['stripe', 'safepay'], default: 'stripe' },
     requestFingerprint: { type: String, required: true },
     token: { type: String, required: true },
     sessionId: { type: String, default: '' },

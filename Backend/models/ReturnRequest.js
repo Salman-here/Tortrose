@@ -167,6 +167,10 @@ const returnRequestSchema = new mongoose.Schema(
             },
         },
         settlement: {
+            provider: { type: String, enum: ['stripe', 'safepay', null], default: null },
+            safepayPaymentId: { type: mongoose.Schema.Types.ObjectId, ref: 'SafepayPayment', default: null },
+            safepayEnvironment: { type: String, enum: ['sandbox', 'production', null], default: null },
+            safepayTrackerId: { type: String, default: null },
             attempt: {
                 type: Number,
                 default: 0,

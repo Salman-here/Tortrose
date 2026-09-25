@@ -860,6 +860,8 @@ const sellerRevenueForOrder = (order, sellerId, sellerProductIdSet) => {
 };
 
 const emptyRevenueSummary = () => ({
+    safepayDeliveredRevenue: 0,
+    safepayPendingRevenue: 0,
     stripeDeliveredRevenue: 0,
     stripePendingRevenue: 0,
     walletDeliveredRevenue: 0,
@@ -882,6 +884,8 @@ const emptyRevenueSummary = () => ({
     paymentReversalDebits: 0,
     deliveredStripeOrders: 0,
     pendingStripeOrders: 0,
+    deliveredSafepayOrders: 0,
+    pendingSafepayOrders: 0,
     deliveredWalletOrders: 0,
     pendingWalletOrders: 0,
     deliveredCodOrders: 0,
@@ -890,6 +894,8 @@ const emptyRevenueSummary = () => ({
 });
 
 const REVENUE_MONEY_FIELDS = [
+    'safepayDeliveredRevenue',
+    'safepayPendingRevenue',
     'stripeDeliveredRevenue',
     'stripePendingRevenue',
     'walletDeliveredRevenue',
@@ -1005,6 +1011,11 @@ const materializeRevenueBuckets = (buckets, targetCurrency, rates, { useOrderSna
 const orderRevenueClassification = (order, sellerId = null) => {
     const delivered = sellerId ? isDeliveredForSeller(order, sellerId) : isDelivered(order);
     const paymentMethod = order.paymentMethod || 'cash_on_delivery';
+    if (paymentMethod === 'safepay' && order.isPaid) {
+        return delivered
+            ? { moneyField: 'safepayDeliveredRevenue', countField: 'deliveredSafepayOrders' }
+            : { moneyField: 'safepayPendingRevenue', countField: 'pendingSafepayOrders' };
+    }
     if (paymentMethod === 'stripe' && order.isPaid) {
         return delivered
             ? { moneyField: 'stripeDeliveredRevenue', countField: 'deliveredStripeOrders' }
@@ -1181,6 +1192,8 @@ const addWithdrawalTotalsToSummary = (revenue, withdrawals = [], { stored = true
 };
 
 const finalizeRevenueSummary = (revenue) => {
+    revenue.safepayDeliveredRevenue = roundMoney(revenue.safepayDeliveredRevenue || 0);
+    revenue.safepayPendingRevenue = roundMoney(revenue.safepayPendingRevenue || 0);
     revenue.stripeDeliveredRevenue = roundMoney(revenue.stripeDeliveredRevenue);
     revenue.stripePendingRevenue = roundMoney(revenue.stripePendingRevenue);
     revenue.walletDeliveredRevenue = roundMoney(revenue.walletDeliveredRevenue);
@@ -1188,12 +1201,12 @@ const finalizeRevenueSummary = (revenue) => {
     revenue.codDeliveredRevenue = roundMoney(revenue.codDeliveredRevenue);
     revenue.codPendingRevenue = roundMoney(revenue.codPendingRevenue);
     revenue.onlineDeliveredRevenue = fromMinorUnits(addSafeMinorUnits(
-        toMinorUnits(revenue.stripeDeliveredRevenue),
+        addSafeMinorUnits(toMinorUnits(revenue.stripeDeliveredRevenue), toMinorUnits(revenue.safepayDeliveredRevenue), 'online card revenue'),
         toMinorUnits(revenue.walletDeliveredRevenue),
         'online delivered revenue',
     ));
     revenue.onlinePendingRevenue = fromMinorUnits(addSafeMinorUnits(
-        toMinorUnits(revenue.stripePendingRevenue),
+        addSafeMinorUnits(toMinorUnits(revenue.stripePendingRevenue), toMinorUnits(revenue.safepayPendingRevenue), 'pending online card revenue'),
         toMinorUnits(revenue.walletPendingRevenue),
         'online pending revenue',
     ));
@@ -1358,7 +1371,7 @@ const buildLegacySellerPaymentSummary = async (sellerId, {
             const delivered = isDeliveredForSeller(order, sellerIdStr);
             const paymentMethod = order.paymentMethod || 'cash_on_delivery';
 
-            if (['stripe', 'wallet'].includes(paymentMethod) && order.isPaid) {
+            if (['stripe', 'wallet', 'safepay'].includes(paymentMethod) && order.isPaid) {
                 addOrderRevenueToBuckets(
                     revenue,
                     revenueBuckets,

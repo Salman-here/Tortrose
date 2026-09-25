@@ -171,6 +171,15 @@ const cancelUnpaidOrderLocally = async ({
   const previousOrderStatus = order.orderStatus;
   const wasAlreadyCancelled = previousOrderStatus === 'cancelled';
 
+  if (order.paymentMethod === 'safepay' && !externalPaymentClosed
+      && (order.safepayPaymentId || order.safepayTrackerId || !['not_started', 'closed'].includes(order.paymentSetupState))) {
+    const intent = await require('../models/SafepayPayment').findById(order.safepayPaymentId).session(transactionSession);
+    if (!intent?.localCancelledAt || intent.terms?.settlementPolicy !== 'revalidate-on-payment-v1'
+      || String(intent.order) !== String(order._id) || intent.appliedAt) {
+      throw cancellationError('This payment must be reconciled before cancellation.', 'SAFEPAY_PAYMENT_STILL_OPEN');
+    }
+  }
+
   const hasExternalStripeReference = order.paymentMethod === 'stripe'
     && Boolean(order.stripePaymentIntentId || order.stripeSessionId);
   if (hasExternalStripeReference && !externalPaymentClosed) {
@@ -214,7 +223,7 @@ const cancelUnpaidOrderLocally = async ({
   setAllSellerFulfillmentStatus(order, 'cancelled', at);
   if (order.sellerFulfillment?.length) syncAggregateDeliveryState(order);
   order.orderStatus = 'cancelled';
-  if (order.paymentMethod === 'stripe') {
+  if (['stripe', 'safepay'].includes(order.paymentMethod)) {
     order.paymentCancelledAt = order.paymentCancelledAt || at;
     order.paymentSetupState = 'closed';
   }
@@ -363,6 +372,20 @@ const cancelOrderSafely = async ({
   if (!order) throw cancellationError('Order not found.', 'ORDER_NOT_FOUND', 404);
   assertConfirmationTokenValid(order, token, at);
   assertCancellationAllowed(order);
+
+  if (order.paymentMethod === 'safepay' && order.safepayPaymentId) {
+    return runInTransaction(async session => {
+      const Payment = require('../models/SafepayPayment');
+      const payment = await Payment.findById(order.safepayPaymentId).session(session);
+      if (payment?.terms?.settlementPolicy !== 'revalidate-on-payment-v1' || payment.appliedAt || payment.purpose !== 'order'
+        || String(payment.order) !== String(order._id)) throw cancellationError('This payment needs reconciliation before cancellation.', 'SAFEPAY_PAYMENT_STILL_OPEN');
+      payment.localCancelledAt = payment.localCancelledAt || at;
+      payment.nextReconcileAt = at;
+      await payment.save({ session });
+      return cancelUnpaidOrderLocally({ orderId, token, reason, confirmationFields, allowedExistingDecisionChannels,
+        cancellationActorRole, at, session });
+    });
+  }
 
   let externalPaymentClosed = false;
   if (

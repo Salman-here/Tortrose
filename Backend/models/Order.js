@@ -512,7 +512,7 @@ const orderSchema = mongoose.Schema(
         paymentMethod: {
             type: String,
             required: true,
-            enum: ["cash_on_delivery", "stripe", "wallet"],
+            enum: ["cash_on_delivery", "stripe", "wallet", "safepay"],
             default: 'stripe'
         },
 
@@ -555,7 +555,7 @@ const orderSchema = mongoose.Schema(
 
         paymentFlow: {
             type: String,
-            enum: ['checkout_session', 'payment_sheet'],
+            enum: ['checkout_session', 'payment_sheet', 'safepay_hosted'],
             default: 'checkout_session',
             index: true,
         },
@@ -577,6 +577,9 @@ const orderSchema = mongoose.Schema(
             default: 'unknown',
         },
         stripeMode: { type: String, enum: ['test', 'live'], default: null },
+        safepayEnvironment: { type: String, enum: ['sandbox', 'production'], default: null, immutable: true },
+        safepayPaymentId: { type: mongoose.Schema.Types.ObjectId, ref: 'SafepayPayment', default: null },
+        safepayTrackerId: { type: String, default: null },
         stripeCustomerId: { type: String, default: null, index: true },
         stripePaymentIntentId: { type: String, default: null },
         // Freeze every hosted-create parameter that can otherwise change
@@ -632,7 +635,7 @@ const orderSchema = mongoose.Schema(
             // (e.g., 'whatsapp' for a WhatsApp decline, 'email' for an email decline). The actual
             // action (confirm vs decline) is determined by checking confirmedAt vs declinedAt.
             // The `decidedVia` field below is more semantically clear for new code.
-            confirmedVia: { type: String, enum: ['email', 'whatsapp', 'manual', 'dashboard', 'admin', 'stripe_payment', 'wallet_payment', null], default: null },
+            confirmedVia: { type: String, enum: ['email', 'whatsapp', 'manual', 'dashboard', 'admin', 'stripe_payment', 'wallet_payment', 'safepay_payment', null], default: null },
             declinedAt: { type: Date, default: null },
             voteChangeCount: { type: Number, default: 0 },
             lockMessageSent: { type: Boolean, default: false },

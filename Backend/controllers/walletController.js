@@ -2,6 +2,9 @@ const mongoose = require('mongoose');
 const WalletTransaction = require('../models/WalletTransaction');
 const Notification = require('../models/Notification');
 const { stripe, STRIPE_MODE } = require('../config/stripe');
+const SafepayPayment = require('../models/SafepayPayment');
+const safepayPayments = require('../services/safepayPaymentService');
+const { toMinorUnits } = require('../services/moneyMath');
 const { convertAmountUsingTrustedRates } = require('../services/currencyService');
 const {
     getWalletSummary,
@@ -139,7 +142,8 @@ exports.createTopUpCheckout = async (req, res) => {
     let transaction = null;
     try {
         const amount = parseWalletTopUpAmount(req.body?.amount);
-        if (!stripe) {
+        const usesSafepay = req.body?.paymentFlow === 'safepay_hosted';
+        if (!stripe && !usesSafepay) {
             return res.status(503).json({ msg: 'Card payments are not configured.' });
         }
 
@@ -155,7 +159,7 @@ exports.createTopUpCheckout = async (req, res) => {
         }
 
         const requestedFlow = req.body?.paymentFlow || req.body?.payment_flow;
-        const paymentFlow = requestedFlow === 'payment_sheet' ? 'payment_sheet' : 'checkout_session';
+        const paymentFlow = usesSafepay ? 'safepay_hosted' : requestedFlow === 'payment_sheet' ? 'payment_sheet' : 'checkout_session';
         const clientSurface = ['mobile', 'web'].includes(req.body?.clientSurface)
             ? req.body.clientSurface
             : req.body?.platform === 'mobile' ? 'mobile' : 'web';
@@ -180,6 +184,26 @@ exports.createTopUpCheckout = async (req, res) => {
             return res.status(400).json({ msg: 'Invalid Wallet top-up requestKey.', code: 'INVALID_IDEMPOTENCY_KEY' });
         }
         const idempotencyKey = `wallet-topup:${req.user.id}:${requestKey}`;
+        if (usesSafepay) {
+            safepayPayments.requireMobileSafepay(clientSurface);
+            if (await WalletTransaction.exists({ idempotencyKey })) {
+                return res.status(409).json({ msg: 'This top-up attempt already belongs to another payment flow. Check its status before starting a new payment.', code: 'IDEMPOTENCY_CONFLICT' });
+            }
+            const wallet = await ensureWallet(req.user.id);
+            if (wallet.status !== 'active') {
+                const risk = await getWalletPaymentRiskSummary(wallet._id);
+                if (!isWalletPaymentRiskLock(wallet) || (risk.byCurrency[currency]?.outstanding || 0) <= 0) {
+                    return res.status(423).json({ msg: 'Your Wallet is locked for payment review. Please contact support.', code: 'WALLET_LOCKED' });
+                }
+            }
+            await SafepayPayment.init();
+            const payment = await safepayPayments.ensurePayment({ user: req.user.id, purpose: 'wallet_top_up',
+                requestKey, reference: `wallet:${req.user.id}:${safepayPayments.fingerprint(requestKey).slice(0, 24)}`,
+                amountMinor: toMinorUnits(amount), currency });
+            const checkout = await safepayPayments.prepareCheckout(payment._id);
+            res.set('Cache-Control', 'no-store, private, max-age=0');
+            return res.status(200).json({ ...checkout, success: true, topUpId: payment._id, completed: checkout.isPaid });
+        }
         const existing = await WalletTransaction.findOne({ idempotencyKey });
         transaction = existing || null;
         if (existing && (

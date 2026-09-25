@@ -26,9 +26,10 @@ const claimSellerCheckout = async ({
     sellerId,
     flow,
     requestFingerprint,
+    provider = 'stripe',
     durationMinutes = DEFAULT_CHECKOUT_CLAIM_MINUTES,
 }) => {
-    if (!sellerId || !['subscription', 'subdomain'].includes(flow) || !requestFingerprint) {
+    if (!sellerId || !['subscription', 'subdomain'].includes(flow) || !requestFingerprint || !['stripe', 'safepay'].includes(provider)) {
         throw new Error('A seller, billing flow, and request fingerprint are required.');
     }
 
@@ -56,6 +57,7 @@ const claimSellerCheckout = async ({
                     seller: sellerId,
                     flow,
                     requestFingerprint,
+                    provider,
                     token,
                     sessionId: '',
                     sessionUrl: '',
@@ -80,7 +82,7 @@ const claimSellerCheckout = async ({
     if (!claim) {
         // A TTL deletion can race the duplicate-key read. Retry once against
         // the now-empty slot rather than exposing a spurious server error.
-        return claimSellerCheckout({ sellerId, flow, requestFingerprint, durationMinutes });
+        return claimSellerCheckout({ sellerId, flow, requestFingerprint, provider, durationMinutes });
     }
     if (
         claim.requestFingerprint === requestFingerprint

@@ -508,6 +508,7 @@ export const normalizeSavedCards = (payload = {}) => {
         funding: String(card?.funding || entry?.funding || ''),
         country: String(card?.country || entry?.country || ''),
         isDefault: entry?.isDefault === true || id === defaultPaymentMethodId,
+        ...(typeof entry?.usable === 'boolean' ? { usable: entry.usable } : {}),
       };
     }).filter((card) => card.id && card.last4),
   };

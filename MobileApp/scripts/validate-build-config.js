@@ -227,11 +227,13 @@ function validatePlugins(expoConfig) {
     fail(`Duplicate Expo config plugins: ${[...new Set(duplicates)].join(', ')}`);
   }
 
-  const pinnedStripePlugin = (expoConfig.plugins || []).find(
-    (plugin) => Array.isArray(plugin) && plugin[0] === './plugins/withPinnedStripeAndroid'
-  );
-  if (pinnedStripePlugin?.[1]?.version !== '23.3.0') {
-    fail('Stripe Android must be pinned to exact version 23.3.0 for deterministic Gradle resolution');
+  const packageConfig = readJson('package.json');
+  if (pluginNames.some(name => /stripe/i.test(name)) || packageConfig.dependencies?.['@stripe/stripe-react-native']) {
+    fail('The Safepay mobile build must not include the retired native Stripe SDK');
+  }
+  const supportedWebView = require('expo/bundledNativeModules.json')['react-native-webview'];
+  if (packageConfig.dependencies?.['react-native-webview'] !== supportedWebView) {
+    fail('Safepay embedded checkout requires the Expo-supported WebView version');
   }
 }
 

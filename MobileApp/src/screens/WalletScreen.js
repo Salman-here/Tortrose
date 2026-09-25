@@ -14,7 +14,6 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useStripe } from '@stripe/stripe-react-native';
 import api from '../config/api';
 import GlassBackground from '../components/common/GlassBackground';
 import GlassPanel from '../components/common/GlassPanel';
@@ -22,17 +21,9 @@ import KeyboardAwareFormScrollView from '../components/common/KeyboardAwareFormS
 import PremiumBackHeader from '../components/common/PremiumBackHeader';
 import { useCurrency } from '../contexts/CurrencyContext';
 import { useAuth } from '../contexts/AuthContext';
-import { useStripeConfig } from '../contexts/StripeContext';
+import { openSafepayCheckout } from '../utils/safepayCheckout';
 import { useTheme } from '../contexts/ThemeContext';
 import { fontSize, fontWeight, shadows, spacing, typography } from '../styles/theme';
-import {
-  assertPaymentSheetPayload,
-  buildPaymentSheetOptions,
-  cancelWalletTopUpPaymentAttempt,
-  normalizePaymentSheetPayload,
-  runWalletPaymentSheetAttempt,
-  verifyWalletTopUp,
-} from '../utils/stripePaymentSheet';
 import { trackError, trackPaymentEvent } from '../utils/breadcrumbs';
 import {
   canTopUpWalletCurrency,
@@ -96,12 +87,6 @@ const formatActivityDate = (value) => {
   });
 };
 
-const paymentSheetFailureMessage = (error) => (
-  error?.localizedMessage
-  || error?.message
-  || 'Stripe could not open the secure card sheet. Please try again.'
-);
-
 const getTopUpCompletionNotice = (transaction, formatAmount) => {
   const breakdown = getTopUpCompletionBreakdown(transaction);
   if (!breakdown) {
@@ -145,8 +130,6 @@ export default function WalletScreen({ navigation, route }) {
     TOP_UP_ATTEMPT_STORAGE_KEY,
     currentUser?._id || currentUser?.id || 'guest'
   );
-  const { initPaymentSheet, presentPaymentSheet } = useStripe();
-  const { ensureReady: ensureStripeReady } = useStripeConfig();
   const { currency, formatAmount } = useCurrency();
   const [wallet, setWallet] = useState(null);
   const [transactions, setTransactions] = useState([]);
@@ -345,173 +328,49 @@ export default function WalletScreen({ navigation, route }) {
     topUpSubmissionRef.current = true;
     setSubmitting(true);
     let topUpReference = null;
-    let paymentCleanupAttempted = false;
     let attemptCorrelation = null;
     try {
-      const stripeConfig = await ensureStripeReady();
-      trackPaymentEvent('wallet_top_up_started', {
-        currency: topUpCurrency,
-        googlePayEnabled: !!stripeConfig.googlePayEnabled,
-      });
-      const fingerprint = `${currentUser?._id || currentUser?.id || 'guest'}:${String(topUpCurrency).toUpperCase()}:${normalizedAmount.toFixed(2)}`;
+      trackPaymentEvent('wallet_top_up_started', { currency: topUpCurrency, provider: 'safepay' });
+      const fingerprint = `safepay:${currentUser?._id || currentUser?.id || 'guest'}:${String(topUpCurrency).toUpperCase()}:${normalizedAmount.toFixed(2)}`;
       const attempt = await getOrCreatePersistedMutationAttemptInLedger({
-        storage: AsyncStorage,
-        storageKey: topUpAttemptStorageKey,
-        fingerprint,
-        keyPrefix: 'mobile-wallet',
+        storage: AsyncStorage, storageKey: topUpAttemptStorageKey, fingerprint, keyPrefix: 'mobile-wallet-safepay',
       });
-      attemptCorrelation = {
-        storageKey: topUpAttemptStorageKey,
-        fingerprint,
-        attemptKey: attempt.key,
-      };
+      attemptCorrelation = { storageKey: topUpAttemptStorageKey, fingerprint, attemptKey: attempt.key };
       activeTopUpAttemptRef.current = attemptCorrelation;
-      const requestKey = attempt.key;
       const response = await api.post('/api/wallet/top-ups', {
-        amount: normalizedAmount,
-        currency: topUpCurrency,
-        platform: 'mobile',
-        paymentFlow: 'payment_sheet',
-        clientSurface: 'mobile',
-        requestKey,
-      }, {
-        headers: { 'X-Idempotency-Key': requestKey },
-      });
-      if (response.data?.completed) {
-        const refreshedWallet = await loadWallet({ quiet: true });
-        if (!refreshedWallet) {
-          const integrityError = new Error('The completed top-up could not be reconciled with a verified Wallet balance. Refresh before retrying.');
-          integrityError.code = 'WALLET_PRESENTATION_DATA_INVALID';
-          throw integrityError;
-        }
-        await clearTopUpAttempt(attemptCorrelation);
-        setAmount('');
-        setNotice({
-          type: 'success',
-          ...getTopUpCompletionNotice(response.data?.transaction, formatAmount),
-        });
-        return;
-      }
-      const reference = normalizePaymentSheetPayload(response);
-      topUpReference = reference;
-      trackPaymentEvent('wallet_top_up_reference_created', {
-        hasTopUpId: !!reference.topUpId,
-        hasPaymentIntent: !!reference.paymentIntentId,
-      });
-      if (!reference.topUpId) {
-        throw new Error('Rozare did not return a secure top-up reference. Your Wallet has not been credited.');
-      }
-      const payment = assertPaymentSheetPayload(response, 'payment');
-      const sheetResult = await runWalletPaymentSheetAttempt({
-        initPaymentSheet,
-        presentPaymentSheet,
-        apiClient: api,
-        topUpId: reference.topUpId,
-        paymentIntentId: reference.paymentIntentId,
-        options: buildPaymentSheetOptions({
-          payment,
-          config: stripeConfig,
-          currentUser,
-          currency: topUpCurrency,
-          palette,
-          isDark,
-          intentType: 'payment',
-        }),
-      });
-      paymentCleanupAttempted = sheetResult.status !== 'presented';
-      trackPaymentEvent(`wallet_top_up_sheet_${sheetResult.status}`, {
-        stage: sheetResult.stage,
-        code: sheetResult.error?.code,
-      });
-      const cancellationError = sheetResult.cleanupError;
-      const verification = await verifyWalletTopUp({
-        apiClient: api,
-        topUpId: reference.topUpId,
-        paymentIntentId: reference.paymentIntentId,
-        currency: topUpCurrency,
-        startingBalance: selectedBalance,
-        amount: normalizedAmount,
-        attempts: sheetResult.status === 'presented' || cancellationError?.response?.data?.code === 'PAYMENT_ALREADY_SUCCEEDED' ? 8 : 2,
-        delayMs: 900,
-      });
+        amount: normalizedAmount, currency: topUpCurrency, platform: 'mobile',
+        paymentFlow: 'safepay_hosted', clientSurface: 'mobile', requestKey: attempt.key,
+      }, { headers: { 'X-Idempotency-Key': attempt.key } });
+      topUpReference = { paymentId: response.data?.paymentId, safepay: true };
+      const verification = await openSafepayCheckout({ apiClient: api, response });
       if (verification.status === 'paid') {
-        const refreshedWallet = await loadWallet({ quiet: true });
-        if (!refreshedWallet) {
-          const integrityError = new Error('Stripe confirmed the payment, but the verified Wallet balance is not available yet. Refresh before retrying.');
-          integrityError.code = 'WALLET_PRESENTATION_DATA_INVALID';
-          throw integrityError;
+        const transaction = verification.transaction;
+        if (transaction?.amount !== normalizedAmount || transaction?.currency !== topUpCurrency
+          || transaction?.status !== 'completed' || !getTopUpCompletionBreakdown(transaction)) {
+          throw Object.assign(new Error('The top-up details are still being reconciled. Check the payment before retrying.'), { code: 'WALLET_PRESENTATION_DATA_INVALID' });
         }
+        const refreshed = await loadWallet({ quiet: true });
+        if (!refreshed) throw Object.assign(new Error('Payment was verified, but the Wallet balance could not be refreshed yet.'), { code: 'WALLET_PRESENTATION_DATA_INVALID' });
         await clearTopUpAttempt(attemptCorrelation);
         setAmount('');
-        const completedTransaction = findWalletTransaction(verification.payload, reference.topUpId);
-        setNotice({
-          type: 'success',
-          ...getTopUpCompletionNotice(completedTransaction, formatAmount),
-        });
-      } else if (verification.status === 'failed') {
+        setNotice({ type: 'success', ...getTopUpCompletionNotice(transaction, formatAmount) });
+      } else if (['cancelled', 'failed', 'refunded'].includes(verification.status)) {
         await loadWallet({ quiet: true });
         await clearTopUpAttempt(attemptCorrelation);
-        setNotice({
-          type: 'error',
-          title: 'Top-up was not completed',
-          message: 'Stripe did not complete this payment. Your wallet was not credited.',
-        });
-      } else if (verification.status === 'cancelled') {
-        await loadWallet({ quiet: true });
-        await clearTopUpAttempt(attemptCorrelation);
-        setNotice({
-          type: sheetResult.status === 'failed' ? 'error' : 'info',
-          title: sheetResult.status === 'failed' ? 'Secure payment could not open' : 'Top-up cancelled',
-          message: sheetResult.status === 'failed'
-            ? `${paymentSheetFailureMessage(sheetResult.error)} Rozare closed the failed attempt and your Wallet was not credited.`
-            : 'Rozare confirmed that this payment attempt is closed. Your Wallet was not credited.',
-        });
-      } else if (sheetResult.status === 'failed') {
-        await loadWallet({ quiet: true });
-        setNotice({
-          type: 'error',
-          title: sheetResult.stage === 'initialize' ? 'Secure payment could not open' : 'Top-up could not be completed',
-          message: cancellationError
-            ? 'The payment could not open and Rozare is still confirming cleanup. No Wallet balance has been added.'
-            : paymentSheetFailureMessage(sheetResult.error),
-        });
-      } else if (sheetResult.status === 'cancelled') {
-        await loadWallet({ quiet: true });
-        setNotice({
-          type: 'info',
-          title: cancellationError ? 'Closing your top-up' : 'Top-up closing',
-          message: 'No balance has been added. Rozare is confirming the final status with the payment server.',
-        });
+        setNotice({ type: 'info', title: 'Top-up not completed', message: 'Safepay confirmed that this payment is closed.' });
       } else {
-        setNotice({
-          type: 'info',
-          title: 'Confirming your top-up',
-          message: 'Stripe accepted the payment. Rozare will show the balance only after backend confirmation.',
-        });
+        setNotice({ type: 'pending', title: verification.status === 'manual_review' ? 'Payment needs review' : 'Checking your top-up',
+          paymentId: topUpReference.paymentId,
+          message: verification.status === 'manual_review'
+            ? 'Please contact support with your payment reference. Do not make another payment while this is being reviewed.'
+            : 'Payment is not confirmed yet. Check its status or retry this same amount to resume the existing checkout.' });
       }
     } catch (error) {
       trackError('wallet_top_up', error, { currency: topUpCurrency });
-      if (topUpReference?.topUpId && !paymentCleanupAttempted) {
-        let cleanupError = null;
-        try {
-          await cancelWalletTopUpPaymentAttempt({
-            apiClient: api,
-            topUpId: topUpReference.topUpId,
-            paymentIntentId: topUpReference.paymentIntentId,
-            closeReason: 'payment_sheet_preparation_failed',
-          });
-          await clearTopUpAttempt(attemptCorrelation);
-        } catch (nextError) {
-          cleanupError = nextError;
-        }
+      if (topUpReference?.safepay) {
         await loadWallet({ quiet: true });
-        setNotice({
-          type: 'error',
-          title: 'Secure payment could not open',
-          message: cleanupError
-            ? 'Rozare is still confirming cleanup. No Wallet balance has been added.'
-            : 'Rozare closed the failed payment attempt. Your Wallet was not credited.',
-        });
+        setNotice({ type: 'pending', title: 'Check your top-up', paymentId: topUpReference.paymentId,
+          message: error.message || 'Payment verification was interrupted. Check this payment before starting another one.' });
         return;
       }
       if (!topUpReference?.topUpId && !shouldRetainWalletTopUpAttempt(error)) {
@@ -609,6 +468,9 @@ export default function WalletScreen({ navigation, route }) {
                     <View style={styles.noticeCopy}>
                       <Text style={styles.noticeTitle}>{notice.title}</Text>
                       <Text style={styles.noticeText}>{notice.message}</Text>
+                      {!!notice.paymentId && <TouchableOpacity accessibilityRole="button" onPress={() => navigation.navigate('SafepayReturn', { paymentId: notice.paymentId })}>
+                        <Text style={[styles.noticeText, { color: palette.colors.primary, fontWeight: '700' }]}>Check payment</Text>
+                      </TouchableOpacity>}
                     </View>
                     <TouchableOpacity onPress={() => setNotice(null)} hitSlop={8}>
                       <Ionicons name="close" size={16} color={palette.colors.textSecondary} />
@@ -741,7 +603,7 @@ export default function WalletScreen({ navigation, route }) {
                       <Text style={styles.topUpTitle}>{isRiskSettlement ? `Settle ${topUpCurrency} liability` : `Add ${topUpCurrency} balance`}</Text>
                       <Text style={styles.topUpSubtitle}>{isRiskSettlement
                         ? `${formatAmount(selectedRisk.outstanding, { targetCurrency: topUpCurrency })} is outstanding. Any valid top-up reduces it first; a partial payment leaves the Wallet locked, while surplus after full clearance becomes available.`
-                        : 'Complete a secure Stripe card payment.'}</Text>
+                        : 'Complete a secure Safepay card payment.'}</Text>
                     </View>
                     <Ionicons name="card-outline" size={20} color={palette.colors.textSecondary} />
                   </View>

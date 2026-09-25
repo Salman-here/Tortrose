@@ -128,7 +128,7 @@ async function reserveFounderSlot(sellerId) {
     // Session awaiting its webhook must remain protected.
     await SubscriptionPromotion.updateOne(
         { code: FOUNDER_PROMOTION.code },
-        { $pull: { reservations: { seller: sellerObjectId, checkoutSessionId: null } } }
+        { $pull: { reservations: { seller: sellerObjectId, checkoutSessionId: null, safepayOperationId: null } } }
     );
 
     const promotion = await SubscriptionPromotion.findOneAndUpdate(

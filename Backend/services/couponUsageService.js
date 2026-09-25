@@ -568,6 +568,9 @@ const deleteUnpaidOrderAndReleaseCoupons = async ({
   if (requireAwaitingPayment) filter.awaitingPayment = true;
   const order = await Order.findOne(filter).session(transactionSession);
   if (!order) return { deleted: false, released: 0 };
+  if (order.paymentMethod === 'safepay' && (order.safepayPaymentId || order.safepayTrackerId)) {
+    throw usageError('A Safepay-backed order must be reconciled, not deleted.', 'SAFEPAY_PAYMENT_STILL_OPEN');
+  }
   await restoreOrderInventory(order._id, { session: transactionSession });
   const released = await releaseOrderCouponsInSession(order, transactionSession, reason);
   // Inventory restoration intentionally changes `inventoryCommitted`, so the

@@ -3,6 +3,12 @@ const express = require('express');
 const mongoose = require('mongoose');
 const { MongoMemoryServer } = require('mongodb-memory-server');
 const jwt = require('jsonwebtoken');
+// This test exercises the seller's COD policy, not an external FX service.
+jest.mock('../../services/currencyService', () => ({
+  ...jest.requireActual('../../services/currencyService'),
+  getExchangeRateSnapshot: jest.fn(async () => ({ base: 'USD', rates: { USD: 1, PKR: 280, EUR: 0.9, GBP: 0.8 },
+    capturedAt: new Date(), source: 'payment-policy-fixture', fallback: false })),
+}));
 
 const orderRoutes = require('../../routes/orderRoutes');
 const Order = require('../../models/Order');

@@ -32,6 +32,7 @@ const add = (a, b) => {
   return n;
 };
 const nativeFields = ['stripeDeliveredRevenue', 'stripePendingRevenue', 'walletDeliveredRevenue', 'walletPendingRevenue',
+  'safepayDeliveredRevenue', 'safepayPendingRevenue',
   'codDeliveredRevenue', 'codPendingRevenue', 'pendingWithdrawalAmount', 'approvedWithdrawalAmount',
   'processingWithdrawalAmount', 'manualReviewWithdrawalAmount', 'totalWithdrawn', 'returnRefundDebits', 'paymentReversalDebits', 'balanceAdjustmentCredits'];
 const empty = currency => Object.fromEntries([['currency', currency], ...nativeFields.map(field => [field, 0])]);
@@ -66,8 +67,8 @@ function computeNativeSellerAccounting({ sellerId, orders, productIds = new Set(
   const buckets = Object.fromEntries(Object.keys(CURRENCIES).map(currency => [currency, empty(currency)]));
   const report = empty(reportingCurrency);
   const entitlements = new Map();
-  const recentOrders = { stripe: [], wallet: [], cod: [] };
-  const counts = { deliveredStripeOrders: 0, pendingStripeOrders: 0, deliveredWalletOrders: 0, pendingWalletOrders: 0, deliveredCodOrders: 0, pendingCodOrders: 0, totalRelevantOrders: 0 };
+  const recentOrders = { stripe: [], safepay: [], wallet: [], cod: [] };
+  const counts = { deliveredStripeOrders: 0, pendingStripeOrders: 0, deliveredSafepayOrders: 0, pendingSafepayOrders: 0, deliveredWalletOrders: 0, pendingWalletOrders: 0, deliveredCodOrders: 0, pendingCodOrders: 0, totalRelevantOrders: 0 };
   const countsByCurrency = Object.fromEntries(Object.keys(CURRENCIES).map(currency => [currency, { ...counts }]));
   const reportAmount = (order, valueMinor, source) => {
     if (source === reportingCurrency || !valueMinor) return valueMinor;
@@ -88,15 +89,15 @@ function computeNativeSellerAccounting({ sellerId, orders, productIds = new Set(
     const status = fulfillment?.status || order.orderStatus;
     if (order.awaitingPayment || status === 'cancelled' || order.orderStatus === 'cancelled') continue;
     const method = order.paymentMethod === 'cash_on_delivery' ? 'cod' : order.paymentMethod;
-    if (!['stripe', 'wallet', 'cod'].includes(method)) throw fault('Unsupported stored order payment method.');
+    if (!['stripe', 'wallet', 'safepay', 'cod'].includes(method)) throw fault('Unsupported stored order payment method.');
     if (method !== 'cod' && order.isPaid !== true) continue;
     const delivered = fulfillment ? status === 'delivered' : status === 'delivered' || order.isDelivered === true;
     const field = method + (delivered ? 'DeliveredRevenue' : 'PendingRevenue');
     buckets[currency][field] = add(buckets[currency][field], total);
     report[field] = add(report[field], reportAmount(order, total, currency));
-    counts[(delivered ? 'delivered' : 'pending') + (method === 'cod' ? 'Cod' : method === 'stripe' ? 'Stripe' : 'Wallet') + 'Orders']++;
+    counts[(delivered ? 'delivered' : 'pending') + (method === 'cod' ? 'Cod' : method === 'stripe' ? 'Stripe' : method === 'safepay' ? 'Safepay' : 'Wallet') + 'Orders']++;
     counts.totalRelevantOrders++;
-    const countField = (delivered ? 'delivered' : 'pending') + (method === 'cod' ? 'Cod' : method === 'stripe' ? 'Stripe' : 'Wallet') + 'Orders';
+    const countField = (delivered ? 'delivered' : 'pending') + (method === 'cod' ? 'Cod' : method === 'stripe' ? 'Stripe' : method === 'safepay' ? 'Safepay' : 'Wallet') + 'Orders';
     countsByCurrency[currency][countField]++;
     countsByCurrency[currency].totalRelevantOrders++;
     if (recentOrders[method].length < 5) recentOrders[method].push({ _id: order._id, orderId: order.orderId,
@@ -154,8 +155,8 @@ function computeNativeSellerAccounting({ sellerId, orders, productIds = new Set(
   }
   const held = pendingRiskHolds.length > 0 || legacyWithdrawalHold;
   const finish = b => {
-    b.onlineDeliveredRevenue = add(b.stripeDeliveredRevenue, b.walletDeliveredRevenue);
-    b.onlinePendingRevenue = add(b.stripePendingRevenue, b.walletPendingRevenue);
+    b.onlineDeliveredRevenue = add(add(b.stripeDeliveredRevenue, b.safepayDeliveredRevenue), b.walletDeliveredRevenue);
+    b.onlinePendingRevenue = add(add(b.stripePendingRevenue, b.safepayPendingRevenue), b.walletPendingRevenue);
     b.totalDeliveredRevenue = add(b.onlineDeliveredRevenue, b.codDeliveredRevenue);
     b.estimatedRevenue = add(add(b.totalDeliveredRevenue, b.onlinePendingRevenue), b.codPendingRevenue);
     b.totalReservedOrWithdrawn = ['pendingWithdrawalAmount', 'approvedWithdrawalAmount', 'processingWithdrawalAmount', 'manualReviewWithdrawalAmount', 'totalWithdrawn', 'returnRefundDebits', 'paymentReversalDebits'].reduce((sum, field) => add(sum, b[field]), 0);

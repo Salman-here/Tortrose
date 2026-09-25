@@ -49,6 +49,8 @@ const isValidCheckoutSessionId = value => value === null || value === undefined 
 );
 
 const claimSchema = new mongoose.Schema({
+    provider: { type: String, enum: ['stripe', 'safepay'], default: 'stripe', immutable: true },
+    safepayOperationId: { type: mongoose.Schema.Types.ObjectId, ref: 'SafepayBillingOperation', default: null, immutable: true },
     seller: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User',
@@ -85,6 +87,8 @@ const claimSchema = new mongoose.Schema({
 }, { _id: false });
 
 const reservationSchema = new mongoose.Schema({
+    provider: { type: String, enum: ['stripe', 'safepay'], default: 'stripe' },
+    safepayOperationId: { type: mongoose.Schema.Types.ObjectId, ref: 'SafepayBillingOperation', default: null },
     seller: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User',

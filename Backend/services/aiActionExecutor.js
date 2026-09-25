@@ -2697,13 +2697,13 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
         const { productId, shippingInfo, paymentMethod, selectedColor, selectedOptions } = args;
         const normalizedPaymentMethod = paymentMethod || 'cash_on_delivery';
         if (!['cash_on_delivery', 'stripe'].includes(normalizedPaymentMethod)) {
-          return { success: false, error: 'Choose Cash on Delivery here, or use secure checkout for Stripe card or Rozare Wallet.' };
+          return { success: false, error: 'Choose Cash on Delivery here, or use secure checkout for card or Rozare Wallet.' };
         }
         if (normalizedPaymentMethod === 'stripe') {
           return {
             success: false,
             needsPaymentCheckout: true,
-            error: 'Stripe card and Rozare Wallet payment use the secure checkout page. I can add the product to your cart and take you there, or place the order here with Cash on Delivery when every seller allows it.',
+            error: 'Card and Rozare Wallet payments use secure checkout. I can add the product to your cart and take you there, or place the order here with Cash on Delivery when every seller allows it.',
             data: { checkoutRoute: '/checkout' },
           };
         }
@@ -6383,7 +6383,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
             const method = order.paymentMethod || 'cash_on_delivery';
             const globallyRecognized = method === 'cash_on_delivery'
               ? (order.orderStatus === 'delivered' || order.isDelivered === true)
-              : (['stripe', 'wallet'].includes(method) && order.isPaid === true);
+              : (['stripe', 'wallet', 'safepay'].includes(method) && order.isPaid === true);
             if (!(sellerId ? isSellerRevenueRecognized(order, sellerId) : globallyRecognized)) return;
             const allocationKey = orderItemKey(item, index, allocations.itemKeys);
             if (!allocations.total.has(allocationKey)) {

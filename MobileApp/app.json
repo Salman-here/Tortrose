@@ -2,7 +2,7 @@
   "expo": {
     "name": "Rozare",
     "slug": "rozare",
-    "version": "1.0.11",
+    "version": "1.0.12",
     "runtimeVersion": {
       "policy": "appVersion"
     },
@@ -28,7 +28,7 @@
         "backgroundColor": "#0EA5E9"
       },
       "package": "com.rozare.app",
-      "versionCode": 13,
+      "versionCode": 14,
       "googleServicesFile": "./google-services.json",
       "permissions": [
         "RECORD_AUDIO",
@@ -62,7 +62,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.rozare.app",
-      "buildNumber": "12",
+      "buildNumber": "14",
       "associatedDomains": [
         "applinks:rozare.com"
       ],
@@ -114,19 +114,7 @@
       "expo-system-ui",
       "expo-asset",
       "expo-image",
-      "expo-sharing",
-      [
-        "@stripe/stripe-react-native",
-        {
-          "enableGooglePay": true
-        }
-      ],
-      [
-        "./plugins/withPinnedStripeAndroid",
-        {
-          "version": "23.3.0"
-        }
-      ]
+      "expo-sharing"
     ],
     "updates": {
       "url": "https://u.expo.dev/21e1e6b1-bb29-47bc-a337-236fb17314cf",

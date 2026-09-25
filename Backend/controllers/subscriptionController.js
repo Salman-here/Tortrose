@@ -2936,11 +2936,12 @@ const getSellerSubscriptionStatusData = async (sellerId) => {
         // Check and update status if trial expired
         sub = await checkAndUpdateStatus(sub);
 
-        if (!sub.cancelledAt && !sub.pendingDowngrade?.toPlan) {
+        if (sub.billingProvider !== 'safepay' && !sub.cancelledAt && !sub.pendingDowngrade?.toPlan) {
             sub = await reconcileExistingPendingPlanChange(sub);
         }
         if (
-            sub.planChangeAttempt?.state === 'applied'
+            sub.billingProvider !== 'safepay'
+            && sub.planChangeAttempt?.state === 'applied'
             && ['pending', 'partial'].includes(sub.planChangeAttempt?.notificationState)
             && sub.planChangeAttempt?.idempotencyToken
         ) {
@@ -3003,6 +3004,7 @@ exports.getSubscriptionStatus = async (req, res) => {
 
 // Check and update subscription status
 async function checkAndUpdateStatus(sub) {
+    if (sub.billingProvider === 'safepay') return require('../services/safepayBillingLifecycleService').refreshStatus(sub._id);
     const now = new Date();
 
     if (sub.status === 'trial' && now > sub.trialEndDate) {
@@ -3094,6 +3096,9 @@ exports.createCheckout = async (req, res) => {
     let stripeCreateStarted = false;
     let stripeCreateCompleted = false;
     try {
+        if (await SellerSubscription.exists({ seller: req.user.id, billingProvider: 'safepay' })) {
+            return res.status(409).json({ msg: 'Manage the existing Safepay subscription in the mobile app before starting another billing agreement.', code: 'SUBSCRIPTION_ALREADY_ACTIVE' });
+        }
         // Guard: Stripe must be configured. In live mode this is the most common
         // cause of a 500 here (e.g. STRIPE_LIVE_SECRET_KEY missing in env).
         if (!stripe) {
@@ -4034,6 +4039,7 @@ exports.handleWebhook = async (event) => {
                 const claimed = await SellerSubscription.findOneAndUpdate(
                     {
                         seller: sellerId,
+                        billingProvider: { $ne: 'safepay' },
                         $or: [
                             { stripeSubscriptionId: null },
                             { stripeSubscriptionId: { $exists: false } },
@@ -4939,6 +4945,11 @@ exports.handleWebhook = async (event) => {
 // Cancel subscription
 exports.cancelSubscription = async (req, res) => {
     try {
+        if (await SellerSubscription.exists({ seller: req.user.id, billingProvider: 'safepay' })) {
+            return res.json(await require('../services/safepayBillingLifecycleService').cancel(req.user.id));
+        }
+    } catch (error) { return res.status(error.statusCode || 503).json({ msg: error.message, code: error.code }); }
+    try {
         const sellerId = req.user.id;
         let sub = await SellerSubscription.findOne({ seller: sellerId });
 
@@ -5593,6 +5604,11 @@ exports.upgradeToElite = async (req, res) => {
 // Downgrade from Elite to Starter (Starter starts after Elite period ends)
 exports.downgradeToStarter = async (req, res) => {
     try {
+        if (await SellerSubscription.exists({ seller: req.user.id, billingProvider: 'safepay' })) {
+            return res.json(await require('../services/safepayBillingLifecycleService').scheduleDowngrade(req.user.id));
+        }
+    } catch (error) { return res.status(error.statusCode || 503).json({ msg: error.message, code: error.code }); }
+    try {
         const sellerId = req.user.id;
         let sub = await SellerSubscription.findOne({ seller: sellerId });
 
@@ -5739,6 +5755,11 @@ exports.downgradeToStarter = async (req, res) => {
 
 // Cancel a pending downgrade (keep Elite)
 exports.cancelDowngrade = async (req, res) => {
+    try {
+        if (await SellerSubscription.exists({ seller: req.user.id, billingProvider: 'safepay' })) {
+            return res.json(await require('../services/safepayBillingLifecycleService').cancelDowngrade(req.user.id));
+        }
+    } catch (error) { return res.status(error.statusCode || 503).json({ msg: error.message, code: error.code }); }
     try {
         const sellerId = req.user.id;
         const sub = await SellerSubscription.findOne({ seller: sellerId });
@@ -6157,6 +6178,11 @@ exports.migrateHasUsedFreePeriod = async () => {
 
 // Undo a scheduled cancellation before Stripe ends the subscription.
 exports.resumeSubscription = async (req, res) => {
+    try {
+        if (await SellerSubscription.exists({ seller: req.user.id, billingProvider: 'safepay' })) {
+            return res.json(await require('../services/safepayBillingLifecycleService').resume(req.user.id));
+        }
+    } catch (error) { return res.status(error.statusCode || 503).json({ msg: error.message, code: error.code }); }
     try {
         const sellerId = req.user.id;
         const sub = await SellerSubscription.findOne({ seller: sellerId });

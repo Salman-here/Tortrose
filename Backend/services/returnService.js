@@ -2524,7 +2524,117 @@ const failReturnCardSettlement = async (stripeSession, reason = 'Card payment ex
   );
 };
 
+// Safepay uses the same immutable return calculation, seller transaction
+// fence, shipping allocator and Wallet credit as the existing card flow.
+// Provider identities remain separate; no Stripe-shaped objects are forged.
+const createSafepayReturnSettlement = async ({ returnRequestId, sellerId, requestKey }) => {
+  const payments = require('./safepayPaymentService');
+  const Payment = require('../models/SafepayPayment');
+  const config = require('../config/safepay').readSafepayConfig(process.env, { requireWebhook: true });
+  if (typeof requestKey !== 'string' || !/^[A-Za-z0-9:_-]{8,160}$/.test(requestKey)) {
+    throw returnSettlementError('A reusable payment attempt key is required.', 'INVALID_IDEMPOTENCY_KEY', 400);
+  }
+  await Payment.init();
+  const previous = await Payment.findOne({ user: sellerId, purpose: 'return_settlement', environment: config.environment, requestKey });
+  if (previous) {
+    if (toId(previous.returnRequest) !== toId(returnRequestId)) throw returnSettlementError('This payment key belongs to another return.', 'IDEMPOTENCY_CONFLICT', 409);
+    if (['cancelled', 'failed', 'manual_review', 'refunded'].includes(previous.status)) return payments.paymentResponse(previous);
+    return payments.prepareCheckout(previous._id);
+  }
+  const payment = await runInTransaction(async session => {
+    await SellerSettlementLock.findOneAndUpdate({ seller: sellerId }, { $inc: { version: 1 } }, { upsert: true, new: true, session });
+    let request = await ReturnRequest.findOne({ _id: returnRequestId, seller: sellerId }).session(session);
+    if (!request) throw returnSettlementError('Return request not found.', 'RETURN_REQUEST_NOT_FOUND', 404);
+    if (request.status === 'accepted_pending_payment' && request.settlement.provider === 'safepay') {
+      const existing = await Payment.findOne({ _id: request.settlement.safepayPaymentId, user: sellerId, environment: config.environment,
+        purpose: 'return_settlement', returnRequest: request._id }).session(session);
+      if (!existing) throw returnSettlementError('The existing return checkout requires review.', 'RETURN_SETTLEMENT_RECOVERY_REQUIRED', 409);
+      return existing;
+    }
+    if (request.status !== 'under_review' || request.policySnapshot?.refundType === 'replacement_only') {
+      throw returnSettlementError('This return is not ready for a new card payment. Resolve any existing checkout first.', 'RETURN_NOT_UNDER_REVIEW', 409);
+    }
+    requireReturnSettlementAttemptCounter(request, { allowZero: true });
+    await assertWalletOrderFundingReturnable({ orderId: request.order, session });
+    const { order, sellerEntitlement } = await assertReturnRequestFinancialIdentity(request, { session });
+    const shipping = await buildSettlementShippingAllocation({ request, order, sellerEntitlement, session });
+    request = await ReturnRequest.findOneAndUpdate({ _id: request._id, seller: sellerId, status: 'under_review',
+      ...(shipping ? { 'refund.shippingAmount': shipping.previousShippingAmount, 'refund.totalAmount': shipping.previousTotalAmount } : {}) },
+    { $set: { ...(shipping?.set || {}), status: 'accepted_pending_payment', 'settlement.provider': 'safepay',
+      'settlement.fundingSource': 'card', 'settlement.status': 'pending_payment', 'settlement.setupState': 'creating',
+      'settlement.clientSurface': 'mobile', 'settlement.safepayEnvironment': config.environment, 'settlement.failureReason': '',
+      'settlement.safepayTrackerId': null }, $inc: { 'settlement.attempt': 1 },
+      $push: { statusHistory: { status: 'accepted_pending_payment', note: 'Seller accepted the return and is funding the wallet refund with Safepay.',
+        changedBy: sellerId, actorRole: 'seller', changedAt: new Date() } } },
+    { new: true, session, runValidators: true, overwriteImmutable: Boolean(shipping) });
+    if (!request) throw returnSettlementError('This return changed. Refresh before paying.', 'RETURN_SETTLEMENT_CONFLICT', 409);
+    await assertReturnRequestFinancialIdentity(request, { session });
+    const saved = await payments.ensurePayment({ user: sellerId, purpose: 'return_settlement', requestKey,
+      reference: `return:${request._id}:${request.settlement.attempt}`, returnRequest: request._id,
+      amountMinor: returnSettlementMinor(request), currency: requireStoredReturnCurrency(request.currency),
+      terms: { returnRequestId: toId(request), orderId: toId(request.order), buyerId: toId(request.buyer), attempt: request.settlement.attempt } }, { session });
+    request.settlement.safepayPaymentId = saved._id;
+    await request.save({ session });
+    return saved;
+  });
+  return payments.prepareCheckout(payment._id);
+};
+
+const requireSafepayReturnBinding = (request, payment) => {
+  if (!request || payment.purpose !== 'return_settlement' || toId(request._id) !== toId(payment.returnRequest)
+    || toId(request.seller) !== toId(payment.user) || request.settlement?.provider !== 'safepay'
+    || toId(request.settlement.safepayPaymentId) !== toId(payment) || request.settlement.safepayEnvironment !== payment.environment
+    || request.settlement.attempt !== payment.terms.attempt || toId(request.buyer) !== payment.terms.buyerId
+    || toId(request.order) !== payment.terms.orderId || requireStoredReturnCurrency(request.currency) !== payment.currency
+    || returnSettlementMinor(request) !== payment.amountMinor) {
+    throw returnSettlementError('The Safepay charge does not match the frozen return settlement.', 'SAFEPAY_RETURN_BINDING_INVALID', 409);
+  }
+};
+
+const completeSafepayReturnSettlement = async (payment, tracker, session) => {
+  await SellerSettlementLock.findOneAndUpdate({ seller: payment.user }, { $inc: { version: 1 } }, { upsert: true, new: true, session });
+  const request = await ReturnRequest.findById(payment.returnRequest).session(session);
+  requireSafepayReturnBinding(request, payment);
+  const { order } = await assertReturnRequestFinancialIdentity(request, { session });
+  if (request.status === 'returned' && request.settlement.status === 'completed') {
+    await enqueueReturnSettlementNotifications(request, order, { session });
+    return request;
+  }
+  if (request.status !== 'accepted_pending_payment' || request.settlement.status !== 'pending_payment') {
+    throw returnSettlementError('This paid return no longer owns its refund reservation.', 'RETURN_SETTLEMENT_STATE_MISMATCH', 409);
+  }
+  await assertWalletOrderFundingReturnable({ orderId: request.order, session });
+  const walletTransaction = await creditWalletInSession({ userId: request.buyer, amount: request.refund.totalAmount,
+    currency: request.currency, type: 'return_refund', referenceType: 'return_request', referenceId: request._id,
+    idempotencyKey: `return-refund:${request._id}`, description: `Refund for return ${request.returnNumber}`,
+    metadata: { orderId: request.orderId, sellerId: String(request.seller), provider: 'safepay',
+      safepayPaymentId: toId(payment), safepayEnvironment: payment.environment }, allowLocked: true }, session);
+  await attachReturnedWalletFundingProvenance({ walletTransaction, orderId: request.order, sellerId: request.seller,
+    returnRequestId: request._id, refundAmount: request.refund.totalAmount, currency: request.currency, session });
+  request.status = 'returned'; request.settlement.status = 'completed'; request.settlement.setupState = 'complete';
+  request.settlement.safepayTrackerId = payment.tracker;
+  request.settlement.walletTransaction = walletTransaction._id; request.settlement.settledAt = new Date();
+  request.statusHistory.push({ status: 'returned', note: 'Seller Safepay payment was verified and the buyer wallet was credited.', changedBy: null, actorRole: 'system' });
+  await request.save({ session });
+  await enqueueReturnSettlementNotifications(request, order, { session, walletTransaction });
+  return request;
+};
+
+const closeSafepayReturnSettlement = async (payment, session) => {
+  await SellerSettlementLock.findOneAndUpdate({ seller: payment.user }, { $inc: { version: 1 } }, { upsert: true, new: true, session });
+  const request = await ReturnRequest.findById(payment.returnRequest).session(session);
+  requireSafepayReturnBinding(request, payment);
+  if (request.status !== 'accepted_pending_payment' || request.settlement.status !== 'pending_payment') return;
+  request.status = 'under_review'; request.settlement.status = 'failed'; request.settlement.setupState = 'closed';
+  request.settlement.failureReason = 'Safepay confirmed that this unpaid checkout is cancelled or expired.';
+  request.statusHistory.push({ status: 'under_review', note: request.settlement.failureReason, changedBy: null, actorRole: 'system' });
+  await request.save({ session });
+};
+
 module.exports = {
+  createSafepayReturnSettlement,
+  completeSafepayReturnSettlement,
+  closeSafepayReturnSettlement,
   CLOSED_WITHOUT_CONSUMING_QUANTITY,
   BUYER_CANCELLABLE_STATUSES,
   UNRESOLVED_RETURN_STATUSES,

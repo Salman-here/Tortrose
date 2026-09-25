@@ -658,6 +658,8 @@ const {
 const ensureNotificationOutboxWorkerStarted = () => {
   if (mongoose.connection.readyState !== 1) return false;
   require('./services/catalogModerationWorker').startCatalogModerationWorker();
+  require('./services/safepayWebhookWorker').startSafepayWebhookWorker();
+  require('./services/safepayBillingLifecycleService').startBillingWorker();
   const worker = startNotificationOutboxWorker();
   if (worker.started) {
     console.log(`[notification-outbox] worker started (${worker.workerId})`);
@@ -754,6 +756,7 @@ app.use('/api/coupons', couponRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/payment-methods', paymentMethodRoutes);
 app.use('/api/wallet', walletRoutes);
+app.use('/api/safepay', require('./routes/safepayRoutes'));
 app.use('/api/returns', returnRoutes);
 app.use('/api/ads', sellerAdRoutes);
 app.use('/api/store-reviews', storeReviewRoutes);
@@ -882,6 +885,8 @@ if (require.main === module) {
       await Promise.all([
         stopNotificationOutboxWorker(),
         require('./services/catalogModerationWorker').stopCatalogModerationWorker(),
+        require('./services/safepayWebhookWorker').stopSafepayWebhookWorker(),
+        require('./services/safepayBillingLifecycleService').stopBillingWorker(),
         new Promise(resolve => httpServer.close(resolve)),
       ]);
       if (mongoose.connection.readyState !== 0) {

@@ -226,6 +226,7 @@ export default function OrderDetailManagementScreen({ route, navigation }) {
   const paymentMethodLabel = {
     cash_on_delivery: 'Cash on delivery',
     stripe: 'Card / Stripe',
+    safepay: 'Card / Safepay',
     wallet: 'Rozare Wallet',
   }[order.paymentMethod] || order.paymentMethod || 'Payment method unavailable';
   const displayOrderId = order.orderId || `#${String(order._id || '').slice(-8).toUpperCase()}`;

@@ -64,6 +64,21 @@ test('admin payments accept exact reconciled ledger and frozen payout money', ()
   });
 });
 
+test('Safepay revenue is included without relabelling it as Stripe or changing legacy summaries', () => {
+  const value = overview();
+  for (const summary of [value.summary, value.sellers[0].revenue]) {
+    summary.safepayDeliveredRevenue = 5;
+    summary.safepayPendingRevenue = 0;
+    summary.onlineDeliveredRevenue = 15;
+    summary.totalDeliveredRevenue = 15;
+    summary.estimatedRevenue = 15;
+    summary.withdrawableBalance = 15;
+  }
+  assert.equal(adminPaymentsOverviewIsValid(value), true);
+  value.summary.safepayDeliveredRevenue = null;
+  assert.equal(adminPaymentsOverviewIsValid(value), false);
+});
+
 test('admin payments reject corrupt, sub-cent, relabelled, or unreconciled money', () => {
   for (const mutate of [
     value => { value.summary.withdrawableBalance = 9.999; },

@@ -456,7 +456,17 @@ const applySellerStripeRiskLedger = async ({
   directTrackTargets = false,
   directSellerTargets = null,
   directSellerUsdTargets = null,
+  provider = 'stripe',
+  safepayPaymentId = null,
+  safepayTrackerId = null,
+  safepayEnvironment = null,
 }) => {
+  const isSafepay = provider === 'safepay';
+  if (!['stripe', 'safepay'].includes(provider) || (isSafepay && (eventType !== 'charge.refunded'
+    || !safepayPaymentId || !/^track_[a-zA-Z0-9-]+$/.test(safepayTrackerId || '')
+    || !['sandbox', 'production'].includes(safepayEnvironment)))) {
+    throw riskError('Invalid provider binding for seller reversal accounting.', 'PAYMENT_RISK_PROVIDER_INVALID', 409);
+  }
   const normalizedEntitlements = normalizeRiskSellerEntitlements({
     sellerEntitlements,
     sourceCurrency,
@@ -464,8 +474,8 @@ const applySellerStripeRiskLedger = async ({
   });
   const scope = {
     type: 'reversal',
-    referenceType: 'stripe_payment',
-    stripePaymentIntentId: paymentIntentId,
+    referenceType: isSafepay ? 'safepay_payment' : 'stripe_payment',
+    ...(isSafepay ? { safepayPaymentId, safepayTrackerId, safepayEnvironment } : { stripePaymentIntentId: paymentIntentId }),
     'metadata.sourceType': sourceType,
     'metadata.sourceReferenceId': String(sourceReferenceId),
   };
@@ -833,18 +843,17 @@ const applySellerStripeRiskLedger = async ({
           amountUSD: fromMinorUnits(component.usdMinor),
           sourceAmount: fromMinorUnits(component.sourceMinor),
           sourceCurrency,
-          referenceType: 'stripe_payment',
+          referenceType: isSafepay ? 'safepay_payment' : 'stripe_payment',
           referenceId: components.length === 1
             ? `${eventId}:${track.trackKey}`
             : `${eventId}:${track.trackKey}:${component.key}`,
-          stripeEventId: eventId,
-          stripeEventType: eventType,
-          stripeChargeId: chargeId,
-          stripePaymentIntentId: paymentIntentId,
+          ...(isSafepay ? { safepayPaymentId, safepayTrackerId, safepayEnvironment } : {
+            stripeEventId: eventId, stripeEventType: eventType, stripeChargeId: chargeId, stripePaymentIntentId: paymentIntentId,
+          }),
           description: component.direction === 'credit'
-            ? `Stripe reversal allocation adjustment for ${orderLabel}`
+            ? `${isSafepay ? 'Safepay' : 'Stripe'} reversal allocation adjustment for ${orderLabel}`
             : track.riskTrack === 'refund'
-              ? `Stripe refund reversal for ${orderLabel}`
+              ? `${isSafepay ? 'Safepay' : 'Stripe'} refund reversal for ${orderLabel}`
               : `Stripe dispute reserve for ${orderLabel}`,
           completedAt: track.riskTrack === 'refund' || completedDispute ? new Date() : null,
           metadata: {

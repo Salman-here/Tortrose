@@ -32,10 +32,8 @@ jest.mock('../../../src/components/seller/SellerUI', () => ({
 
 jest.mock('../../../src/components/common/GlassBackground', () => 'GlassBackground');
 jest.mock('../../../src/components/common/GlassPanel', () => 'GlassPanel');
-jest.mock('../../../src/contexts/StripeContext', () => ({
-  useStripeConfig: () => ({ ensureReady: jest.fn() }),
-}));
 jest.mock('../../../src/contexts/ThemeContext', () => ({ useTheme: jest.fn() }));
+jest.mock('../../../src/contexts/AuthContext', () => ({ useAuth: () => ({ currentUser: { _id: 'seller-fixture' } }) }));
 jest.mock('../../../src/contexts/CurrencyContext', () => ({ useCurrency: jest.fn() }));
 
 const { getSubscriptionViewModel } = require('../../../src/screens/seller/SellerSubscriptionScreen');

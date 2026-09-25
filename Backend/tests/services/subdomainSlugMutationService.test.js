@@ -1,7 +1,7 @@
 'use strict';
 
 const mongoose = require('mongoose');
-const { MongoMemoryServer } = require('mongodb-memory-server');
+const { MongoMemoryReplSet } = require('mongodb-memory-server');
 const Store = require('../../models/Store');
 const User = require('../../models/User');
 const StripeEntitlementPayment = require('../../models/StripeEntitlementPayment');
@@ -35,7 +35,7 @@ const makeSellerStore = async (overrides = {}) => {
 };
 
 beforeAll(async () => {
-  mongoServer = await MongoMemoryServer.create();
+  mongoServer = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
   await mongoose.connect(mongoServer.getUri());
   await Promise.all([Store.syncIndexes(), StripeEntitlementPayment.syncIndexes()]);
 }, 60000);

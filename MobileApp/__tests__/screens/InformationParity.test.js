@@ -59,7 +59,7 @@ describe('website and mobile information parity', () => {
       .toEqual(withoutIcons(readStaticConstant(websitePrivacy, 'sections')));
   });
 
-  it('keeps FAQ questions, answers, and About content aligned with the website', () => {
+  it('keeps FAQ and About aligned apart from the approved mobile-only payment provider migration', () => {
     const websiteFaqData = readStaticConstant(websiteFaq, 'faqCategories');
     const mobileFaqData = readStaticConstant(mobileFaq, 'faqCategories');
     expect(mobileFaqData.map(({ category, questions }) => ({
@@ -67,7 +67,9 @@ describe('website and mobile information parity', () => {
       questions: questions.map(({ q, a }) => ({ q, a })),
     }))).toEqual(websiteFaqData.map(({ category, questions }) => ({
       category,
-      questions: questions.map(({ q, a }) => ({ q, a })),
+      questions: questions.map(({ q, a }) => ({ q, a: a
+        .replace('Checkout supports Stripe card', 'Checkout supports Safepay card')
+        .replace('Payments are processed through Stripe', 'Mobile card payments are processed through Safepay') })),
     })));
 
     expect(withoutIcons(readStaticConstant(mobileAbout, 'values')))
@@ -111,7 +113,7 @@ describe('website and mobile information parity', () => {
     expect(docsText).toContain('up to 15 products during that trial');
     expect(docsText).toContain('one 30-day introductory period');
     expect(docsText).toContain('one 45-day introductory period');
-    expect(docsText).toContain('rate is claimed only after Stripe confirms completion');
+    expect(docsText).toContain('rate is claimed only after Rozare verifies subscription activation');
     expect(docsText).toContain('extra 40% founder discount');
     expect(docsText).toContain('reserves a place for 35 minutes');
     expect(docsText).toContain('permanently forfeited if the subscription ends');

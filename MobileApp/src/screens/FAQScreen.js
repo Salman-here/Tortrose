@@ -35,9 +35,9 @@ const faqCategories = [
     category: 'Payments',
     icon: 'card-outline',
     questions: [
-      { q: 'What payment methods are accepted?', a: 'Checkout supports Stripe card, Rozare Wallet, and Cash on Delivery. One order uses one payment method. COD is available only when every seller allows it; if any seller accepts online payment only, use card or a sufficient Wallet balance in the checkout currency.' },
+      { q: 'What payment methods are accepted?', a: 'Checkout supports Safepay card, Rozare Wallet, and Cash on Delivery. One order uses one payment method. COD is available only when every seller allows it; if any seller accepts online payment only, use card or a sufficient Wallet balance in the checkout currency.' },
       { q: 'How does Rozare Wallet work?', a: 'Open Wallet from your account to add balance securely by card and view transactions. USD, PKR, EUR, and GBP balances stay separate, so Wallet checkout requires enough balance in the exact order currency.' },
-      { q: 'Is my payment information secure?', a: 'Payments are processed through Stripe, and Rozare does not store your card details on its servers.' },
+      { q: 'Is my payment information secure?', a: 'Mobile card payments are processed through Safepay, and Rozare does not store your card details on its servers.' },
       { q: 'Are there any hidden fees?', a: 'No hidden fees. The price you see includes all applicable taxes (calculated at checkout). Shipping costs are shown before you confirm your order.' },
     ],
   },

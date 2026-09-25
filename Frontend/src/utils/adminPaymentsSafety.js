@@ -53,11 +53,19 @@ const revenueSummaryIsValid = summary => {
   if (!isObject(summary)) return false;
   if (REVENUE_MONEY_FIELDS.some(field => !isExactNonNegativeJsonMoney(summary[field]))) return false;
   if (REVENUE_COUNT_FIELDS.some(field => !isCount(summary[field]))) return false;
+  for (const field of ['safepayDeliveredRevenue', 'safepayPendingRevenue']) {
+    if (Object.hasOwn(summary, field) && !isExactNonNegativeJsonMoney(summary[field])) return false;
+  }
+  for (const field of ['deliveredSafepayOrders', 'pendingSafepayOrders']) {
+    if (Object.hasOwn(summary, field) && !isCount(summary[field])) return false;
+  }
   return sameMoney(summary.onlineDeliveredRevenue, [
     summary.stripeDeliveredRevenue,
+    summary.safepayDeliveredRevenue === undefined ? 0 : summary.safepayDeliveredRevenue,
     summary.walletDeliveredRevenue,
   ]) && sameMoney(summary.onlinePendingRevenue, [
     summary.stripePendingRevenue,
+    summary.safepayPendingRevenue === undefined ? 0 : summary.safepayPendingRevenue,
     summary.walletPendingRevenue,
   ]) && sameMoney(summary.totalDeliveredRevenue, [
     summary.onlineDeliveredRevenue,

@@ -45,6 +45,7 @@ const formatDate = (value, options = {}) => {
 
 const paymentLabel = (method) => ({
   stripe: 'Paid online',
+  safepay: 'Card (Safepay)',
   wallet: 'Rozare Wallet',
   cash_on_delivery: 'Cash on delivery',
 }[method] || 'Payment');

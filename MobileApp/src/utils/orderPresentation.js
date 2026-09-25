@@ -520,7 +520,7 @@ export const assertOrderDetailPresentation = (order) => {
   if (hasOwn(order, 'isDelivered') && typeof order.isDelivered !== 'boolean') {
     throw orderPresentationIntegrityError('order delivery state');
   }
-  if (!['cash_on_delivery', 'stripe', 'wallet'].includes(order.paymentMethod)) {
+  if (!['cash_on_delivery', 'stripe', 'wallet', 'safepay'].includes(order.paymentMethod)) {
     throw orderPresentationIntegrityError('order payment method');
   }
   if (!Array.isArray(order.orderItems) || order.orderItems.length === 0) {

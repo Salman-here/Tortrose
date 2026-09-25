@@ -13,7 +13,7 @@ import { GlobalProvider } from './src/contexts/GlobalContext';
 import { CurrencyProvider } from './src/contexts/CurrencyContext';
 import { BuyerLocationProvider } from './src/contexts/BuyerLocationContext';
 import ShoppingLocationPrompt from './src/components/common/ShoppingLocationPrompt';
-import { StripeBootstrapProvider } from './src/contexts/StripeContext';
+import SafepayCheckoutProvider from './src/components/SafepayCheckoutProvider';
 import { ThemeProvider, useTheme } from './src/contexts/ThemeContext';
 import AppNavigator from './src/navigation/AppNavigator';
 import OnboardingWalkthrough, { shouldShowOnboarding } from './src/components/OnboardingWalkthrough';
@@ -286,6 +286,7 @@ const linking = {
       Wallet: 'wallet',
       PaymentMethods: 'payment-methods',
       PaymentSuccess: 'payment-success',
+      SafepayReturn: 'safepay-return',
       PaymentCancel: 'payment-cancel',
       FAQ: 'faq',
       Contact: 'contact',
@@ -380,9 +381,9 @@ function App() {
             navigationBarTranslucent
             preserveEdgeToEdge
           >
-            <StripeBootstrapProvider>
               <BiometricGate>
                 <AuthProvider>
+                  <SafepayCheckoutProvider>
                   <BuyerLocationProvider>
                   <GlobalProvider>
                     <CurrencyProvider>
@@ -395,9 +396,9 @@ function App() {
                     </CurrencyProvider>
                   </GlobalProvider>
                   </BuyerLocationProvider>
+                  </SafepayCheckoutProvider>
                 </AuthProvider>
               </BiometricGate>
-            </StripeBootstrapProvider>
           </KeyboardProvider>
         </ThemeProvider>
       </SafeAreaProvider>

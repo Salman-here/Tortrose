@@ -16,7 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Clipboard from 'expo-clipboard';
-import * as WebBrowser from 'expo-web-browser';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import api from '../../config/api';
 import GlassBackground from '../../components/common/GlassBackground';
 import GlassPanel from '../../components/common/GlassPanel';
@@ -30,10 +30,12 @@ import {
 } from '../../components/seller/SellerUI';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useCurrency } from '../../contexts/CurrencyContext';
+import { useAuth } from '../../contexts/AuthContext';
+import { openSafepayCheckout } from '../../utils/safepayCheckout';
+import { createScopedMutationStorageKey, getOrCreatePersistedMutationAttemptInLedger, clearPersistedMutationAttemptFromLedger } from '../../utils/persistedMutationAttempt';
 import { borderRadius, fontSize, fontWeight, spacing } from '../../styles/theme';
 import { subdomainAnalyticsResponseIsValid } from '../../utils/subdomainAnalyticsSafety';
 
-const SUBDOMAIN_RETURN_URL = 'rozare://seller-subdomain';
 const SLUG_COOLDOWN_DAYS = 30;
 
 export const sanitizeSubdomain = (value) => String(value || '')
@@ -131,6 +133,8 @@ function MetricCard({ icon, label, value, color, styles }) {
 }
 
 export default function SellerSubdomainManagementScreen({ navigation, route }) {
+  const { currentUser } = useAuth();
+  const purchaseBusyRef = useRef(false);
   const { palette } = useTheme();
   const { currency, formatPrice } = useCurrency();
   const styles = useMemo(() => buildStyles(palette), [palette]);
@@ -229,7 +233,7 @@ export default function SellerSubdomainManagementScreen({ navigation, route }) {
     if (!purchaseResult || handledReturnRef.current === purchaseResult) return;
     handledReturnRef.current = purchaseResult;
     if (purchaseResult === 'success') {
-      Alert.alert('Purchase processing', 'Payment completed. Ownership will refresh as soon as Stripe confirms it.');
+      Alert.alert('Purchase processing', 'Rozare is verifying the payment. Ownership changes only after backend confirmation.');
       refreshAfterCheckout();
     } else if (purchaseResult === 'cancelled') {
       Alert.alert('Checkout cancelled', 'No charge was made and your current subdomain remains unchanged.');
@@ -383,27 +387,43 @@ export default function SellerSubdomainManagementScreen({ navigation, route }) {
       [
         { text: 'Not now', style: 'cancel' },
         {
-          text: isRenewal ? 'Continue to Stripe' : 'Buy securely',
+          text: 'Continue to Safepay',
           onPress: async () => {
+            if (purchaseBusyRef.current) return;
+            purchaseBusyRef.current = true;
             setOperation('purchase');
             try {
-              const response = await api.post('/api/subscription/subdomain/purchase', { checkoutClient: 'mobile' });
-              if (!response.data?.url) throw new Error('Checkout URL was not returned.');
+              const storageKey = createScopedMutationStorageKey('rozare_safepay_subdomain_v1', currentUser?._id || currentUser?.id);
+              // Retain the same attempt across app restarts and uncertain
+              // browser outcomes; a new key is allowed only after it closes.
+              const fingerprint = JSON.stringify({ slug: subdomain?.slug });
+              const attempt = await getOrCreatePersistedMutationAttemptInLedger({ storage: AsyncStorage, storageKey, fingerprint, keyPrefix: 'mobile-subdomain' });
+              const response = await api.post('/api/safepay/subdomain/purchase', { clientSurface: 'mobile', requestKey: attempt.key, storeSlug: subdomain?.slug });
               checkoutOpenRef.current = true;
-              const result = await WebBrowser.openAuthSessionAsync(response.data.url, SUBDOMAIN_RETURN_URL);
+              const result = ['cancelled', 'failed', 'refunded', 'manual_review'].includes(response.data?.status)
+                ? response.data : await openSafepayCheckout({ apiClient: api, response });
               checkoutOpenRef.current = false;
-              if (result?.type === 'success') refreshAfterCheckout();
+              if (['paid', 'cancelled', 'failed', 'refunded'].includes(result.status)) {
+                await clearPersistedMutationAttemptFromLedger(AsyncStorage, storageKey, fingerprint, attempt.key);
+              }
+              Alert.alert(result.status === 'paid' ? 'Ownership updated' : 'Payment status', result.status === 'paid'
+                ? 'Rozare verified your payment and updated the subdomain ownership.'
+                : result.status === 'manual_review' ? 'This payment needs support review. Do not pay again.'
+                  : ['cancelled', 'failed', 'refunded'].includes(result.status) ? 'This payment is closed. No ownership was granted by this attempt.'
+                    : 'Your payment is still being checked. Use the purchase button again to resume the same checkout.');
+              refreshAfterCheckout();
             } catch (requestError) {
               checkoutOpenRef.current = false;
               Alert.alert('Checkout unavailable', requestError.response?.data?.msg || requestError.message || 'Please try again.');
             } finally {
+              purchaseBusyRef.current = false;
               setOperation('');
             }
           },
         },
       ],
     );
-  }, [isOwned, ownershipTerms, refreshAfterCheckout, subdomain?.url]);
+  }, [currentUser, isOwned, ownershipTerms, refreshAfterCheckout, subdomain?.url, subdomain?.slug]);
 
   if (loading) {
     return (
@@ -630,7 +650,7 @@ export default function SellerSubdomainManagementScreen({ navigation, route }) {
                   >
                     <Ionicons name="refresh-outline" size={17} color="#fff" />
                     <Text style={styles.primaryButtonText}>
-                      {operation === 'purchase' ? 'Opening Stripe…' : `Renew for ${ownershipTerms?.priceLabel || 'price unavailable'}`}
+                      {operation === 'purchase' ? 'Opening Safepay…' : `Renew for ${ownershipTerms?.priceLabel || 'price unavailable'}`}
                     </Text>
                   </TouchableOpacity>
                 )}
@@ -672,7 +692,7 @@ export default function SellerSubdomainManagementScreen({ navigation, route }) {
                   <Ionicons name="card-outline" size={17} color="#fff" />
                   <Text style={styles.primaryButtonText}>
                     {operation === 'purchase'
-                      ? 'Opening Stripe…'
+                      ? 'Opening Safepay…'
                       : `Protect for ${ownershipTerms?.priceLabel || 'price unavailable'} · one time`}
                   </Text>
                 </TouchableOpacity>

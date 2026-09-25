@@ -2,6 +2,7 @@
 
 const SellerBalanceTransaction = require('../models/SellerBalanceTransaction');
 const WalletTransaction = require('../models/WalletTransaction');
+const SafepayPayment = require('../models/SafepayPayment');
 const { toMinorUnits } = require('./moneyMath');
 
 const withSession = (query, session) => (session ? query.session(session) : query);
@@ -34,6 +35,11 @@ const roundProductRatio = (left, right, denominator) => {
  * Wallet return refund would otherwise pay the buyer twice and debit a seller
  * whose original revenue has already been removed/reserved. */
 const assertWalletOrderFundingReturnable = async ({ orderId, session = null }) => {
+  // The provider-neutral return boundary also protects direct Safepay orders
+  // and spent Safepay top-ups while a refund/dispute is under reconciliation.
+  const directRisk = await withSession(SafepayPayment.exists({ order: orderId, purpose: 'order',
+    $or: [{ riskPending: true }, { status: { $in: ['manual_review', 'refund_pending', 'refunded'] } }] }), session);
+  if (directRisk) throw provenanceError('The original card payment was reversed or is under payment review. A second refund is blocked.', 'RETURN_EXTERNAL_FUNDING_REVERSAL');
   const orderPayment = await withSession(WalletTransaction.findOne({
     type: 'order_payment',
     direction: 'debit',
@@ -46,8 +52,10 @@ const assertWalletOrderFundingReturnable = async ({ orderId, session = null }) =
     .filter(Boolean))];
   if (!sourceIds.length) return { returnable: true, sourceIds: [] };
 
-  const [buyerRisk, sellerRisk] = await Promise.all([
-    withSession(WalletTransaction.exists({
+  const safepaySources = await withSession(WalletTransaction.find({ _id: { $in: sourceIds }, safepayPaymentId: { $ne: null } }).select('safepayPaymentId'), session);
+  const safepayRisk = safepaySources.length && await withSession(SafepayPayment.exists({ _id: { $in: safepaySources.map(row => row.safepayPaymentId) },
+    $or: [{ riskPending: true }, { status: { $in: ['manual_review', 'refund_pending', 'refunded'] } }] }), session);
+  const buyerRisk = await withSession(WalletTransaction.exists({
       type: 'reversal',
       direction: 'debit',
       status: { $in: ['pending', 'completed'] },
@@ -57,17 +65,16 @@ const assertWalletOrderFundingReturnable = async ({ orderId, session = null }) =
         { 'metadata.refundExposureMinor': { $gt: 0 } },
         { 'metadata.riskTrack': 'dispute' },
       ],
-    }), session),
-    withSession(SellerBalanceTransaction.exists({
+    }), session);
+  const sellerRisk = await withSession(SellerBalanceTransaction.exists({
       type: 'reversal',
       status: { $in: ['reserved', 'completed'] },
       'metadata.sourceType': 'wallet_top_up',
       'metadata.sourceReferenceId': { $in: sourceIds },
-    }), session),
-  ]);
-  if (buyerRisk || sellerRisk) {
+    }), session);
+  if (buyerRisk || sellerRisk || safepayRisk) {
     const error = new Error(
-      'This order was funded by a card top-up that Stripe has reversed. A second Wallet refund is blocked for payment review.',
+      'This order was funded by a card top-up that was reversed or is under payment review. A second Wallet refund is blocked.',
     );
     error.statusCode = 409;
     error.code = 'RETURN_EXTERNAL_FUNDING_REVERSAL';

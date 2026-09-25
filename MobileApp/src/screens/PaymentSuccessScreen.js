@@ -111,7 +111,7 @@ export default function PaymentSuccessScreen({ navigation, route }) {
     : pending
       ? noPaymentRequired
         ? 'Rozare is confirming the completed order before showing success.'
-        : 'Stripe may take a few moments to report back. We will not clear your cart or claim success early.'
+        : 'Your payment provider may take a few moments to report back. We will not clear your cart or claim success early.'
       : 'We could not verify a successful charge. Your cart has been kept safely.';
 
   return (

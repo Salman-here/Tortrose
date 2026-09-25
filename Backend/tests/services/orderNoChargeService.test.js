@@ -169,6 +169,7 @@ describe('atomic no-charge online checkout', () => {
   test.each([
     ['stripe', 'stripe_payment'],
     ['wallet', 'wallet_payment'],
+    ['safepay', 'safepay_payment'],
   ])('completes a 100%% coupon %s order with exact-once inventory/coupon state and no payment rail', async (paymentMethod, confirmationVia) => {
     const fixture = await createFixture(paymentMethod);
     expect(isNoChargeOnlineOrder(fixture.order)).toBe(true);

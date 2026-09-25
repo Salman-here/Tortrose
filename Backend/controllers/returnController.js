@@ -213,6 +213,16 @@ exports.acceptReturn = async (req, res) => {
             });
         }
         if (fundingSource === 'card') {
+            if (req.body?.paymentProvider === 'safepay') {
+                require('../services/safepayPaymentService').requireMobileSafepay(req.body?.platform);
+                const payment = await require('../services/returnService').createSafepayReturnSettlement({
+                    returnRequestId: existing._id, sellerId: req.user.id, requestKey: req.body.requestKey,
+                });
+                return res.status(200).json({ ...payment, success: true, requiresPayment: true });
+            }
+            if (existing.settlement?.provider === 'safepay' && existing.status === 'accepted_pending_payment') {
+                return res.status(409).json({ msg: 'Resume this Safepay payment in the mobile app.', code: 'RETURN_PROVIDER_MISMATCH' });
+            }
             const result = await createReturnSettlementCheckout({
                 returnRequestId: existing._id,
                 sellerId: req.user.id,

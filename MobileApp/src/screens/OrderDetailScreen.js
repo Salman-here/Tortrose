@@ -70,6 +70,7 @@ const paymentMethodLabel = (method) => ({
   cash_on_delivery: 'Cash on Delivery',
   wallet: 'Rozare Wallet',
   stripe: 'Online Card Payment',
+  safepay: 'Card (Safepay)',
 }[method] || 'Payment');
 
 const getConfirmationNotice = (order) => {

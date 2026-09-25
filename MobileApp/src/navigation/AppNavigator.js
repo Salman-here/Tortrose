@@ -146,6 +146,7 @@ import StoreOverviewScreen from '../screens/shared/StoreOverviewScreen';
 
 // Payment Screens
 import PaymentSuccessScreen from '../screens/PaymentSuccessScreen';
+import SafepayReturnScreen from '../screens/SafepayReturnScreen';
 import PaymentCancelScreen from '../screens/PaymentCancelScreen';
 
 // New Feature Screens
@@ -692,6 +693,11 @@ export default function AppNavigator() {
       <Stack.Screen name="Docs" component={DocsScreen} options={{ headerShown: false }} />
 
       {/* Payment Result Screens */}
+      <Stack.Screen
+        name="SafepayReturn"
+        component={SafepayReturnScreen}
+        options={{ headerShown: false }}
+      />
       <Stack.Screen
         name="PaymentSuccess"
         component={PaymentSuccessScreen}

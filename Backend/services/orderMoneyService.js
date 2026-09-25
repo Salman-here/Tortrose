@@ -1591,7 +1591,7 @@ const isSellerRevenueRecognized = (order, sellerId) => {
   if (!isSellerOrderLive(order, sellerId)) return false;
   const method = order?.paymentMethod || 'cash_on_delivery';
   if (method === 'cash_on_delivery') return isSellerOrderDelivered(order, sellerId);
-  if (method === 'stripe' || method === 'wallet') return order?.isPaid === true;
+  if (['stripe', 'wallet', 'safepay'].includes(method)) return order?.isPaid === true;
   return false;
 };
 

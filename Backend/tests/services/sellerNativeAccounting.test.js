@@ -37,6 +37,25 @@ test('store change keeps old PKR and new USD earnings separately withdrawable', 
   expect(s.displayRevenue.withdrawableBalance).toBe(10);
   expect(s.withdrawalLimits.availableDisplayAmount).toBe(10);
 });
+
+test.each(Object.keys(rates).flatMap(native => Object.keys(rates).map(buyer => [native, buyer])))('Safepay preserves %s seller earnings when buyer pays %s', (native, buyer) => {
+  const sale = order(native, buyer, 10, { paymentMethod: 'safepay' });
+  const result = summary([sale], { reportingCurrency: native });
+  expect(result.balanceByCurrency[native].withdrawableBalance).toBe(10 * rates[native]);
+  expect(result.balanceByCurrency[native].safepayDeliveredRevenue).toBe(10 * rates[native]);
+  expect(result.balanceByCurrency[native].stripeDeliveredRevenue).toBe(0);
+  expect(result.recentOrders.safepay).toHaveLength(1);
+  expect(getExchangeRateSnapshot).not.toHaveBeenCalled();
+});
+
+test('all online providers sum exactly; unpaid Safepay orders add no revenue', () => {
+  const result = summary([order('PKR'), order('PKR', 'USD', 10, { paymentMethod: 'safepay' }),
+    order('PKR', 'EUR', 10, { paymentMethod: 'wallet' }),
+    order('PKR', 'GBP', 10, { paymentMethod: 'safepay', isPaid: false })]);
+  expect(result.revenue.onlineDeliveredRevenue).toBe(8400);
+  expect(result.revenue.withdrawableBalance).toBe(8400);
+  expect(result.revenue.deliveredSafepayOrders).toBe(1);
+});
 test('pending and delivered eligibility, unpaid online and COD separation', () => {
   const pending = order('PKR', 'PKR', 10, { sellerFulfillment: [{ seller, status: 'processing' }] });
   const cod = order('USD', 'PKR', 10, { paymentMethod: 'cash_on_delivery', isPaid: false });

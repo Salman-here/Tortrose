@@ -14,7 +14,9 @@ import {
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import * as WebBrowser from 'expo-web-browser';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { openSafepayCheckout } from '../utils/safepayCheckout';
+import { createScopedMutationStorageKey, getOrCreatePersistedMutationAttemptInLedger, clearPersistedMutationAttemptFromLedger } from '../utils/persistedMutationAttempt';
 import Feedback from '../utils/feedback';
 import api from '../config/api';
 import GlassPanel from './common/GlassPanel';
@@ -190,6 +192,7 @@ export default function SellerReturnsPanel({ header, route, navigation }) {
   const styles = useMemo(() => buildStyles(palette), [palette]);
   const { formatAmount } = useCurrency();
   const requestSequence = useRef(0);
+  const fundingBusyRef = useRef(false);
   const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
   const [hasLoaded, setHasLoaded] = useState(false);
@@ -248,7 +251,7 @@ export default function SellerReturnsPanel({ header, route, navigation }) {
       type: route.params.return_payment === 'success' ? 'success' : 'info',
       text1: route.params.return_payment === 'success' ? 'Payment submitted' : 'Payment cancelled',
       text2: route.params.return_payment === 'success'
-        ? 'The return will complete after Stripe confirms the payment.'
+        ? 'The return completes after Rozare verifies the seller payment and credits the buyer wallet.'
         : 'The return remains open and its payment can be resumed later.',
     });
     load();
@@ -301,6 +304,7 @@ export default function SellerReturnsPanel({ header, route, navigation }) {
   };
 
   const accept = async (request, fundingSource) => {
+    if (fundingBusyRef.current) return;
     const snapshot = inspectReturnPresentationSnapshot(request);
     if (!snapshot.valid) {
       Feedback.show({ type: 'error', text1: 'Return unavailable', text2: 'Refresh this return before accepting it.' });
@@ -319,20 +323,32 @@ export default function SellerReturnsPanel({ header, route, navigation }) {
       setDialog(null);
       return;
     }
+    fundingBusyRef.current = true;
     setSubmitting(true);
     setSubmittingRequestId(String(request._id));
     try {
+      const storageKey = createScopedMutationStorageKey('rozare_safepay_return_v1', String(request.seller?._id || request.seller));
+      const fingerprint = JSON.stringify({ returnRequestId: String(request._id) });
+      const attempt = fundingSource === 'card'
+        ? await getOrCreatePersistedMutationAttemptInLedger({ storage: AsyncStorage, storageKey, fingerprint, keyPrefix: 'mobile-return' }) : null;
       const response = await api.post(`/api/returns/${request._id}/accept`, {
         ...(fundingSource ? { fundingSource } : {}),
+        ...(attempt ? { paymentProvider: 'safepay', requestKey: attempt.key } : {}),
         platform: 'mobile',
       });
       if (response.data?.requiresPayment) {
-        if (!response.data.url) throw new Error('The secure payment page is unavailable. Please try again.');
         setDialog(null);
-        await WebBrowser.openBrowserAsync(response.data.url, {
-          dismissButtonStyle: 'cancel',
-          presentationStyle: WebBrowser.WebBrowserPresentationStyle.FULL_SCREEN,
-        });
+        const result = ['cancelled', 'failed', 'refunded', 'manual_review'].includes(response.data.status)
+          ? response.data : await openSafepayCheckout({ apiClient: api, response });
+        if (attempt && ['paid', 'cancelled', 'failed', 'refunded'].includes(result.status)) {
+          await clearPersistedMutationAttemptFromLedger(AsyncStorage, storageKey, fingerprint, attempt.key);
+        }
+        Feedback.show({ type: result.status === 'paid' ? 'success' : 'info',
+          text1: result.status === 'paid' ? 'Return refund completed' : 'Payment status',
+          text2: result.status === 'paid' ? 'The verified seller payment funded the buyer wallet refund.'
+            : result.status === 'manual_review' ? 'The payment needs support review. Do not pay again.'
+              : ['cancelled', 'failed', 'refunded'].includes(result.status) ? 'This payment is closed. Refresh the return before trying again.'
+                : 'Payment is still being verified. Resume this return to check the same payment.' });
         await load();
         return;
       }
@@ -350,6 +366,7 @@ export default function SellerReturnsPanel({ header, route, navigation }) {
         text2: `${getApiError(error, 'Try again.')}${availableText}`,
       });
     } finally {
+      fundingBusyRef.current = false;
       setSubmitting(false);
       setSubmittingRequestId('');
     }
@@ -374,7 +391,7 @@ export default function SellerReturnsPanel({ header, route, navigation }) {
       [
         { text: 'Cancel', style: 'cancel' },
         { text: 'Seller Balance', onPress: () => accept(request, 'seller_balance') },
-        { text: 'Card via Stripe', onPress: () => accept(request, 'card') },
+        { text: 'Card via Safepay', onPress: () => accept(request, 'card') },
       ]
     );
   };
@@ -506,7 +523,7 @@ export default function SellerReturnsPanel({ header, route, navigation }) {
               activeOpacity={0.78}
               accessibilityRole="button"
               accessibilityLabel="Resume refund payment"
-              accessibilityHint="Opens the secure Stripe payment page"
+              accessibilityHint="Opens the secure Safepay payment page"
               accessibilityState={{ disabled: submitting, busy: requestBusy }}
             >
               {requestBusy

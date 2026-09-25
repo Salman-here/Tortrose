@@ -170,6 +170,27 @@ const sellerSubscriptionSchema = new mongoose.Schema({
     bonusGraceNotificationSent: { type: Boolean, default: false }, // Track if grace period notification was sent
 
     // Stripe
+    billingProvider: { type: String, enum: ['stripe', 'safepay', null], default: null },
+    safepayBilling: {
+        environment: { type: String, enum: ['sandbox', 'production', null], default: null },
+        contractId: { type: String, default: null },
+        customerId: { type: String, default: null },
+        cardId: { type: String, default: null, select: false },
+        version: { type: Number, default: 0, min: 0, validate: Number.isSafeInteger },
+        autoRenew: { type: Boolean, default: false },
+        anchorAt: { type: Date, default: null },
+        cycle: { type: Number, default: 0, min: 0, validate: Number.isSafeInteger },
+        monthlyMinor: nullableMinorUnitField({ positive: true }),
+        currency: { type: String, enum: ['USD'], default: 'USD' },
+        creditMinor: { type: Number, default: 0, min: 0, validate: Number.isSafeInteger },
+        nextChargeAt: { type: Date, default: null, index: true },
+        pendingOperation: { type: mongoose.Schema.Types.ObjectId, ref: 'SafepayBillingOperation', default: null },
+        lastFailedOperation: { type: mongoose.Schema.Types.ObjectId, ref: 'SafepayBillingOperation', default: null },
+        consentVersion: { type: String, default: '' },
+        consentedAt: { type: Date, default: null },
+        lastFailureCode: { type: String, default: '' },
+        endedAt: { type: Date, default: null },
+    },
     stripeCustomerId: { type: String },
     stripeSubscriptionId: { type: String },
     stripeProductId: { type: String },

@@ -166,7 +166,15 @@ function buildSubscriptionStatusPresentation(subscription, {
     aiMessagesUnlimited: true,
     metaAdsIncluded: Boolean(subscription.metaAdsIncluded),
     metaAdsAddonCents: getPricingCatalog().metaAdsAddonCents,
-    currentMonthlyAmountCents: currentPricing?.unitAmount ?? null,
+    currentMonthlyAmountCents: subscription.billingProvider === 'safepay'
+      ? subscription.safepayBilling?.monthlyMinor ?? null : currentPricing?.unitAmount ?? null,
+    billingProvider: subscription.billingProvider || (subscription.stripeSubscriptionId ? 'stripe' : null),
+    billingVersion: subscription.billingProvider === 'safepay' ? subscription.safepayBilling?.version || 0 : 0,
+    pendingBillingOperation: subscription.billingProvider === 'safepay' ? subscription.safepayBilling?.pendingOperation || null : null,
+    failedBillingOperation: subscription.billingProvider === 'safepay' ? subscription.safepayBilling?.lastFailedOperation || null : null,
+    billingFailureCode: subscription.billingProvider === 'safepay' ? subscription.safepayBilling?.lastFailureCode || null : null,
+    automaticRenewal: subscription.billingProvider === 'safepay' ? subscription.safepayBilling?.autoRenew === true : null,
+    requiresExternalPaymentAccount: subscription.billingProvider === 'safepay' ? false : null,
     cancelledAt: subscription.cancelledAt || null,
     blockedReason: subscription.blockedReason || null,
     bonusFeaturesActive: Boolean(subscription.bonusFeaturesActive),
@@ -180,7 +188,9 @@ function buildSubscriptionStatusPresentation(subscription, {
     pendingDowngrade: subscription.pendingDowngrade?.toPlan || null,
     hasUsedFreePeriod: Boolean(subscription.hasUsedFreePeriod),
     pricing: getPricingCatalog(),
-    catalog: getSubscriptionCatalog(),
+    catalog: subscription.billingProvider === 'safepay'
+      ? { ...getSubscriptionCatalog(), billing: { ...getSubscriptionCatalog().billing, checkoutProvider: 'Safepay', requiresExternalAccount: false } }
+      : getSubscriptionCatalog(),
     founderOffer: {
       active: Boolean(subscription.founderOffer?.active),
       code: subscription.founderOffer?.code || null,

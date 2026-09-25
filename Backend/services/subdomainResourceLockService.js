@@ -32,7 +32,7 @@ const acquireLock = async ({ storeId, sellerId, expectedSlug, kind, token, expir
   }, { new: true });
 };
 
-const acquireSubdomainCheckoutLock = async ({ storeId, sellerId, storeSlug, token, checkoutClaimExpiry: claimExpiry }) => {
+const acquireSubdomainCheckoutLock = async ({ storeId, sellerId, storeSlug, token, checkoutClaimExpiry: claimExpiry, provider = 'stripe' }) => {
   if (!token) throw new Error('Subdomain Checkout lock requires its claim token.');
   return acquireLock({
     storeId,
@@ -40,7 +40,9 @@ const acquireSubdomainCheckoutLock = async ({ storeId, sellerId, storeSlug, toke
     expectedSlug: storeSlug,
     kind: 'checkout',
     token,
-    expiresAt: checkoutLockExpiry(claimExpiry),
+    // Safepay does not promise the same 35-minute hosted-checkout expiry as
+    // Stripe. Release only after a verified provider outcome, not by guessing.
+    expiresAt: provider === 'safepay' ? new Date('9999-12-31T00:00:00.000Z') : checkoutLockExpiry(claimExpiry),
   });
 };
 

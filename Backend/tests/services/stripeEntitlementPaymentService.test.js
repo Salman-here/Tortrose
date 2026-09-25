@@ -1,5 +1,5 @@
 const mongoose = require('mongoose');
-const { MongoMemoryServer } = require('mongodb-memory-server');
+const { MongoMemoryReplSet } = require('mongodb-memory-server');
 
 jest.mock('../../config/stripe', () => ({
   stripe: {
@@ -178,7 +178,7 @@ const appliedSubscriptionUpdateResponse = (id, params) => ({
 });
 
 beforeAll(async () => {
-  mongoServer = await MongoMemoryServer.create();
+  mongoServer = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
   await mongoose.connect(mongoServer.getUri());
   await SellerCheckoutClaim.init();
   await StripeEntitlementPayment.init();

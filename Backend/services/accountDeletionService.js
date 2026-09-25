@@ -88,6 +88,7 @@ async function deleteAccountCascade(userId, { allowAdminDeletion = false } = {})
 
     const now = new Date();
     const sellerId = user._id;
+    await require('./safepayAccountLifecycleService').stopAccountBilling(sellerId);
     const [stores, subscription] = await Promise.all([
         Store.find({ seller: sellerId }).select('_id').lean(),
         SellerSubscription.findOne({ seller: sellerId })

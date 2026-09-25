@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Alert,
   AppState,
+  Modal,
   Platform,
   RefreshControl,
   StyleSheet,
@@ -15,7 +16,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as WebBrowser from 'expo-web-browser';
-import { useStripe } from '@stripe/stripe-react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Picker } from '@react-native-picker/picker';
 import api from '../../config/api';
 import GlassBackground from '../../components/common/GlassBackground';
 import GlassPanel from '../../components/common/GlassPanel';
@@ -26,10 +28,10 @@ import {
   SellerScreenSkeleton,
   SellerSectionHeader,
 } from '../../components/seller/SellerUI';
-import { useStripeConfig } from '../../contexts/StripeContext';
+import { useAuth } from '../../contexts/AuthContext';
+import { createScopedMutationStorageKey, getOrCreatePersistedMutationAttemptInLedger, clearPersistedMutationAttemptFromLedger } from '../../utils/persistedMutationAttempt';
 import { useTheme } from '../../contexts/ThemeContext';
 import { borderRadius, fontSize, fontWeight, spacing } from '../../styles/theme';
-import { runSubscriptionPlanChange } from '../../utils/subscriptionPlanChange';
 
 const SUBSCRIPTION_RETURN_URL = 'rozare://seller-subscription';
 
@@ -257,14 +259,19 @@ function FeatureList({ items, styles, palette, accent, available = true }) {
 
 export default function SellerSubscriptionScreen({ navigation, route }) {
   const { palette } = useTheme();
-  const { handleNextAction } = useStripe();
-  const { ensureReady: ensureStripeReady } = useStripeConfig();
+  const { currentUser } = useAuth();
   const styles = useMemo(() => buildStyles(palette), [palette]);
   const [subscription, setSubscription] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [operation, setOperation] = useState('');
+  const [billingQuote, setBillingQuote] = useState(null);
+  const [billingCards, setBillingCards] = useState([]);
+  const [billingCardId, setBillingCardId] = useState('');
+  const [billingConsent, setBillingConsent] = useState(false);
+  const billingAttemptRef = useRef(null);
+  const billingBusyRef = useRef(false);
   const [eliteMetaAds, setEliteMetaAds] = useState(false);
   const [couponCode, setCouponCode] = useState(
     String(route?.params?.coupon || route?.params?.couponCode || '').trim().toUpperCase(),
@@ -349,7 +356,7 @@ export default function SellerSubscriptionScreen({ navigation, route }) {
     if (!checkoutResult || handledReturnRef.current === checkoutResult) return;
     handledReturnRef.current = checkoutResult;
     if (checkoutResult === 'success') {
-      Alert.alert('Subscription processing', 'Payment completed. Your plan will refresh as soon as Stripe confirms it.');
+      Alert.alert('Subscription processing', 'Rozare is checking the payment outcome. Your plan changes only after backend verification.');
       refreshAfterCheckout();
     } else if (checkoutResult === 'cancelled') {
       Alert.alert('Checkout cancelled', 'No charge was made. You can choose a plan whenever you are ready.');
@@ -386,25 +393,119 @@ export default function SellerSubscriptionScreen({ navigation, route }) {
     }
   }, [fetchSubscription]);
 
-  const openCheckout = useCallback(async (plan) => {
+  const checkBillingOperation = useCallback(async (operationId) => {
+    const response = await api.get(`/api/safepay/subscription/operations/${operationId}`);
+    if (response.data?.completed) {
+      const attempt = billingAttemptRef.current;
+      if (attempt) await clearPersistedMutationAttemptFromLedger(AsyncStorage, attempt.storageKey, attempt.fingerprint, attempt.key);
+      setBillingQuote(null);
+      Alert.alert('Subscription updated', response.data.msg || 'Your subscription is ready.');
+    } else {
+      Alert.alert('Billing status', response.data?.status === 'failed'
+        ? 'The payment was not completed. Review your payment card before trying again.'
+        : 'Your exact payment is still being verified. No extra payment will be started by checking its status.');
+    }
+    await fetchSubscription();
+    return response.data;
+  }, [fetchSubscription]);
+
+  const openCheckout = useCallback(async (plan, kind = 'enrollment') => {
+    if (billingBusyRef.current) return;
+    if (subscription?.billingProvider === 'stripe' && ['active', 'free_period', 'past_due'].includes(subscription.status)) {
+      Alert.alert('Existing subscription', 'This existing plan is still billed through Stripe. Manage it on the website until it ends, so you are not subscribed twice.',
+        [{ text: 'Close' }, { text: 'Open website', onPress: () => WebBrowser.openBrowserAsync('https://rozare.com/seller-dashboard/subscription') }]);
+      return;
+    }
+    billingBusyRef.current = true;
     setOperation(`checkout-${plan}`);
     try {
-      const payload = { plan, checkoutClient: 'mobile' };
-      if (plan === 'elite') payload.includeMetaAds = eliteMetaAds;
-      if (founderCouponApplied) payload.couponCode = subscription?.founderPromotion?.code;
-      const response = await api.post('/api/subscription/create-checkout', payload);
-      if (!response.data?.url) throw new Error('Checkout URL was not returned.');
-      checkoutOpenRef.current = true;
-      const result = await WebBrowser.openAuthSessionAsync(response.data.url, SUBSCRIPTION_RETURN_URL);
-      checkoutOpenRef.current = false;
-      if (result?.type === 'success') refreshAfterCheckout();
+      if (subscription?.pendingBillingOperation) {
+        await checkBillingOperation(subscription.pendingBillingOperation);
+        return;
+      }
+      const cardResponse = await api.get('/api/safepay/cards');
+      const cards = Array.isArray(cardResponse.data?.cards) ? cardResponse.data.cards.filter(card => card.usable !== false) : null;
+      if (!Array.isArray(cards) || !cards.length) {
+        Alert.alert('Add a payment card', 'Add a card with Safepay first. You will then review and approve your subscription here. No Safepay account is needed.',
+          [{ text: 'Not now', style: 'cancel' }, { text: 'Add card', onPress: () => navigation.navigate('PaymentMethods') }]);
+        return;
+      }
+      const coupon = kind === 'enrollment' && founderCouponApplied ? subscription?.founderPromotion?.code || '' : '';
+      const includeMetaAds = plan === 'elite' && eliteMetaAds;
+      const storageKey = createScopedMutationStorageKey('rozare_safepay_billing_v1', currentUser?._id || currentUser?.id);
+      const fingerprint = JSON.stringify({ kind, plan, includeMetaAds, coupon, version: subscription?.billingVersion || 0 });
+      const attempt = await getOrCreatePersistedMutationAttemptInLedger({ storage: AsyncStorage, storageKey, fingerprint, keyPrefix: 'mobile-billing' });
+      billingAttemptRef.current = { ...attempt, storageKey, fingerprint };
+      const response = await api.post(kind === 'retry' ? '/api/safepay/subscription/retry-quote' : '/api/safepay/subscription/quote', {
+        clientSurface: 'mobile', kind, plan, includeMetaAds, couponCode: coupon, requestKey: attempt.key,
+        ...(kind === 'retry' ? { failedOperation: subscription?.failedBillingOperation } : {}),
+      });
+      const quote = response.data;
+      if (!quote?.quoteId || !isSafeMinor(quote.monthlyAmountMinor) || !isSafeMinor(quote.dueNowMinor, { positive: false }) || quote.currency !== 'USD') {
+        throw new Error('The billing quote could not be verified.');
+      }
+      if (['accepted', 'awaiting_payment', 'applied'].includes(quote.status)) {
+        await checkBillingOperation(quote.quoteId);
+        return;
+      }
+      if (quote.status !== 'quoted' || new Date(quote.expiresAt).getTime() <= Date.now()) {
+        await clearPersistedMutationAttemptFromLedger(AsyncStorage, storageKey, fingerprint, attempt.key);
+        throw new Error('This quote expired. Tap the plan again to review a fresh quote.');
+      }
+      setBillingCards(cards);
+      setBillingCardId(cards.some(card => card.id === cardResponse.data.defaultPaymentMethodId) ? cardResponse.data.defaultPaymentMethodId : cards[0].id);
+      setBillingConsent(false);
+      setBillingQuote(quote);
     } catch (requestError) {
-      checkoutOpenRef.current = false;
-      Alert.alert('Checkout unavailable', requestError.response?.data?.msg || requestError.message || 'Please try again.');
+      Alert.alert('Checkout unavailable', requestError.response?.data?.msg || requestError.message || 'Please retry the same billing attempt.');
     } finally {
+      billingBusyRef.current = false;
       setOperation('');
     }
-  }, [eliteMetaAds, founderCouponApplied, refreshAfterCheckout, subscription?.founderPromotion?.code]);
+  }, [currentUser, eliteMetaAds, founderCouponApplied, subscription, navigation, checkBillingOperation]);
+
+  const changeSubscriptionCard = useCallback(async () => {
+    if (billingBusyRef.current) return;
+    billingBusyRef.current = true; setOperation('change-card');
+    try {
+      const response = await api.get('/api/safepay/cards');
+      const cards = Array.isArray(response.data?.cards) ? response.data.cards.filter(card => card.usable !== false) : [];
+      if (!cards.length) {
+        Alert.alert('Add a payment card', 'Save a card first, then choose it for subscription billing.',
+          [{ text: 'Close' }, { text: 'Add card', onPress: () => navigation.navigate('PaymentMethods') }]);
+        return;
+      }
+      if (!isSafeMinor(subscription?.currentMonthlyAmountCents)) throw new Error('Refresh your subscription to verify its billing price.');
+      setBillingCards(cards); setBillingCardId(cards[0].id); setBillingConsent(false);
+      setBillingQuote({ kind: 'card_change', planName: subscription.planName, dueNowMinor: 0,
+        monthlyAmountMinor: subscription.currentMonthlyAmountCents, billingVersion: subscription.billingVersion,
+        consentVersion: 'rozare-safepay-recurring-v1',
+        terms: `Authorize this card for your existing ${formatUsd(subscription.currentMonthlyAmountCents)} USD/month agreement. Changing the card does not collect a payment or change your renewal date.` });
+    } catch (requestError) {
+      Alert.alert('Could not load billing cards', requestError.response?.data?.msg || requestError.message);
+    } finally { billingBusyRef.current = false; setOperation(''); }
+  }, [subscription, navigation]);
+
+  const acceptBillingQuote = useCallback(async () => {
+    if (billingBusyRef.current || !billingQuote || !billingConsent || !billingCardId) return;
+    billingBusyRef.current = true;
+    setOperation('confirm-billing');
+    try {
+      if (billingQuote.kind === 'card_change') {
+        const response = await api.patch('/api/safepay/subscription/card', { clientSurface: 'mobile', cardId: billingCardId,
+          billingVersion: billingQuote.billingVersion, consentAccepted: true, consentVersion: billingQuote.consentVersion });
+        setBillingQuote(null); Alert.alert('Subscription card updated', response.data?.msg);
+        await fetchSubscription();
+        return;
+      }
+      await api.post('/api/safepay/subscription/accept', { clientSurface: 'mobile', quoteId: billingQuote.quoteId,
+        cardId: billingCardId, consentAccepted: true, consentVersion: billingQuote.consentVersion });
+      await checkBillingOperation(billingQuote.quoteId);
+    } catch (requestError) {
+      Alert.alert('Billing not confirmed', requestError.response?.data?.msg || 'Check your subscription before retrying. Your exact billing attempt is retained.');
+      await fetchSubscription();
+    } finally { billingBusyRef.current = false; setOperation(''); }
+  }, [billingQuote, billingConsent, billingCardId, checkBillingOperation, fetchSubscription]);
 
   const confirmCancel = useCallback(() => {
     const founderWarning = model.founderRateActive
@@ -427,34 +528,7 @@ export default function SellerSubscriptionScreen({ navigation, route }) {
     );
   }, [model.founderRateActive, runMutation, subscription]);
 
-  const confirmUpgrade = useCallback(() => {
-    const metaText = eliteMetaAds
-      ? ` with Meta ads (+${formatUsd(metaAdsAddonCents)}/month)`
-      : '';
-    Alert.alert(
-      model.isElite ? 'Update Elite plan?' : 'Upgrade to Elite?',
-      model.isElite
-        ? `Apply your Meta ads change${metaText}? Stripe may prorate the billing difference immediately.`
-        : `Switch to Elite${metaText}? Stripe may prorate the billing difference immediately. Your founder rate stays locked while your subscription remains uninterrupted.`,
-      [
-        { text: 'Not now', style: 'cancel' },
-        {
-          text: model.isElite ? 'Apply change' : 'Upgrade',
-          onPress: () => runMutation(
-            'upgrade',
-            () => runSubscriptionPlanChange({
-              request: () => api.post('/api/subscription/upgrade-to-elite', { includeMetaAds: eliteMetaAds }),
-              handleNextAction: async (clientSecret) => {
-                await ensureStripeReady();
-                return handleNextAction(clientSecret);
-              },
-            }),
-            'Your Elite plan is active.',
-          ),
-        },
-      ],
-    );
-  }, [eliteMetaAds, ensureStripeReady, handleNextAction, metaAdsAddonCents, model.isElite, runMutation]);
+  const confirmUpgrade = useCallback(() => openCheckout('elite', 'upgrade'), [openCheckout]);
 
   const confirmDowngrade = useCallback(() => {
     Alert.alert(
@@ -622,6 +696,36 @@ export default function SellerSubscriptionScreen({ navigation, route }) {
 
   return (
     <GlassBackground>
+      <Modal visible={!!billingQuote} transparent animationType="slide" onRequestClose={() => { if (!billingBusyRef.current) setBillingQuote(null); }}>
+        <View style={{ flex: 1, justifyContent: 'center', padding: spacing.lg, backgroundColor: 'rgba(0,0,0,0.6)' }}>
+          <GlassPanel style={{ maxHeight: '92%', padding: spacing.lg, backgroundColor: palette.colors.background }}>
+            <KeyboardAwareFormScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ gap: spacing.md }}>
+              <Text style={{ color: palette.colors.text, fontSize: fontSize.xl, fontWeight: '700' }}>Review your subscription</Text>
+              <Text style={{ color: palette.colors.text, fontSize: fontSize.lg }}>{billingQuote?.planName}</Text>
+              <Text style={{ color: palette.colors.text }}>Due now: {formatUsd(billingQuote?.dueNowMinor)} USD</Text>
+              <Text style={{ color: palette.colors.text }}>Recurring price: {formatUsd(billingQuote?.monthlyAmountMinor)} USD/month</Text>
+              {!!billingQuote?.freePeriodDays && <Text style={{ color: palette.colors.textSecondary }}>First {billingQuote.freePeriodDays} days free.</Text>}
+              {!!billingQuote?.creditMinor && <Text style={{ color: palette.colors.textSecondary }}>Credit toward future billing: {formatUsd(billingQuote.creditMinor)} USD</Text>}
+              <Text style={{ color: palette.colors.textSecondary }}>Payment card</Text>
+              <Picker selectedValue={billingCardId} onValueChange={setBillingCardId} enabled={!operation} style={{ color: palette.colors.text }}>
+                {billingCards.map(card => <Picker.Item key={card.id} label={`${String(card.brand || 'Card').toUpperCase()} •••• ${card.last4}`} value={card.id} />)}
+              </Picker>
+              <Text style={{ color: palette.colors.textSecondary, lineHeight: 21 }}>{billingQuote?.terms}</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm }}>
+                <Switch value={billingConsent} onValueChange={setBillingConsent} disabled={!!operation} accessibilityLabel="Agree to the displayed subscription price and automatic renewal terms" />
+                <Text style={{ flex: 1, color: palette.colors.text }}>I agree to this price and automatic renewal terms.</Text>
+              </View>
+              <TouchableOpacity accessibilityRole="button" disabled={!billingConsent || !billingCardId || !!operation} onPress={acceptBillingQuote}
+                style={{ backgroundColor: palette.colors.primary, opacity: !billingConsent || operation ? 0.5 : 1, borderRadius: 14, padding: spacing.md, alignItems: 'center' }}>
+                <Text style={{ color: '#fff', fontWeight: '700' }}>{operation ? 'Verifying…' : billingQuote?.kind === 'card_change' ? 'Confirm card change' : 'Confirm subscription'}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity accessibilityRole="button" disabled={!!operation} onPress={() => setBillingQuote(null)} style={{ padding: spacing.md, alignItems: 'center' }}>
+                <Text style={{ color: palette.colors.textSecondary }}>Not now</Text>
+              </TouchableOpacity>
+            </KeyboardAwareFormScrollView>
+          </GlassPanel>
+        </View>
+      </Modal>
       <SafeAreaView
         style={styles.safeArea}
         edges={Platform.OS === 'android' ? [] : ['top']}
@@ -686,7 +790,7 @@ export default function SellerSubscriptionScreen({ navigation, route }) {
               <View style={styles.bannerCopy}>
                 <Text style={styles.bannerTitle}>Payment needs attention</Text>
                 <Text style={styles.bannerText}>
-                  Stripe could not collect your renewal. Follow the secure payment-update link sent to your account email or contact support.
+                  Your renewal is not confirmed. Review your saved card and the billing status before starting another payment, or contact support.
                 </Text>
               </View>
             </GlassPanel>
@@ -727,7 +831,7 @@ export default function SellerSubscriptionScreen({ navigation, route }) {
               </View>
               <View style={styles.heroMetaItem}>
                 <Ionicons name="shield-checkmark-outline" size={15} color="rgba(255,255,255,0.9)" />
-                <Text style={styles.heroMetaText}>Stripe secured</Text>
+                <Text style={styles.heroMetaText}>{subscription?.billingProvider === 'stripe' ? 'Existing Stripe plan' : 'Safepay secured'}</Text>
               </View>
             </View>
           </LinearGradient>
@@ -797,6 +901,23 @@ export default function SellerSubscriptionScreen({ navigation, route }) {
                   </View>
                 </View>
               )}
+            </GlassPanel>
+          )}
+
+          {subscription?.billingProvider === 'safepay' && (
+            <GlassPanel variant="card" style={{ padding: spacing.md, gap: spacing.sm }}>
+              {!!subscription.pendingBillingOperation && <ActionButton label="Check billing status" styles={styles} palette={palette}
+                disabled={!!operation} onPress={() => openCheckout(subscription.plan, 'retry')} />}
+              {!subscription.pendingBillingOperation && !!subscription.failedBillingOperation && subscription.automaticRenewal && (
+                <ActionButton label="Review and retry renewal" styles={styles} palette={palette} disabled={!!operation}
+                  onPress={() => openCheckout(subscription.plan, 'retry')} />
+              )}
+              {subscription.automaticRenewal && !subscription.pendingBillingOperation && (
+                <ActionButton label="Change subscription card" icon="card-outline" tone="muted" styles={styles} palette={palette}
+                  disabled={!!operation} onPress={changeSubscriptionCard} />
+              )}
+              {model.isPastDue && <ActionButton label="Cancel automatic renewal" tone="muted" styles={styles} palette={palette}
+                disabled={!!operation} onPress={confirmCancel} />}
             </GlassPanel>
           )}
 
@@ -947,7 +1068,7 @@ export default function SellerSubscriptionScreen({ navigation, route }) {
               <Text style={styles.couponNote}>
                 Use {founderCode}{founderDiscountPercent ? ` for an extra ${founderDiscountPercent}% off` : ''}: Starter becomes {formatUsd(model.pricing.starter.founderAmountCents)}/month and Elite becomes {formatUsd(model.pricing.elite.founderAmountCents)}/month. {founderReservationMinutes
                   ? `Checkout reserves a place for ${founderReservationMinutes} minutes.`
-                  : 'Checkout reserves your place temporarily.'} The founder price is claimed only after Stripe confirms payment.
+                  : 'Checkout reserves your place temporarily.'} The founder price is claimed only after Rozare verifies the completed subscription activation.
               </Text>
             </GlassPanel>
           )}
@@ -1170,7 +1291,7 @@ export default function SellerSubscriptionScreen({ navigation, route }) {
               icon="calendar-outline"
             />
             {[
-              ['shield-checkmark-outline', 'Checkout and recurring payments are processed by Stripe.'],
+              ['shield-checkmark-outline', 'New mobile payments use Safepay. No separate Safepay account is required.'],
               ['calendar-clear-outline', model.getsIntroductoryFreePeriod
                 ? `The first paid subscription includes one introductory free period: ${model.pricing.starter.freePeriodDays} days on Starter or ${model.pricing.elite.freePeriodDays} days on Elite.`
                 : 'Your one-time introductory free period has already been used.'],
@@ -1207,7 +1328,7 @@ export default function SellerSubscriptionScreen({ navigation, route }) {
               },
               {
                 title: 'Monthly billing',
-                text: 'Stripe bills the active recurring price. Immediate upgrades and add-on changes may be prorated; downgrades begin at period end.',
+                text: 'Your agreed recurring price is billed through your payment provider. Review exact charges before upgrades or add-on changes; downgrades begin at period end.',
               },
               {
                 title: 'Bonus features',

@@ -8,28 +8,26 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import * as Crypto from 'expo-crypto';
-import { useStripe } from '@stripe/stripe-react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import api from '../config/api';
 import GlassBackground from '../components/common/GlassBackground';
 import GlassPanel from '../components/common/GlassPanel';
 import PremiumBackHeader from '../components/common/PremiumBackHeader';
 import { useAuth } from '../contexts/AuthContext';
-import { useStripeConfig } from '../contexts/StripeContext';
+import { openSafepayCheckout } from '../utils/safepayCheckout';
+import { createScopedMutationStorageKey, getOrCreatePersistedMutationAttemptInLedger, clearPersistedMutationAttemptFromLedger } from '../utils/persistedMutationAttempt';
+import LocationAutocomplete from '../components/common/LocationAutocomplete';
+import PhoneNumberInput from '../components/common/PhoneNumberInput';
 import { useTheme } from '../contexts/ThemeContext';
 import {
-  assertPaymentSheetPayload,
-  buildPaymentSheetOptions,
-  cancelSetupIntentPaymentAttempt,
-  normalizePaymentSheetPayload,
   normalizeSavedCards,
-  runSetupIntentPaymentSheetAttempt,
 } from '../utils/stripePaymentSheet';
 import { trackError, trackPaymentEvent } from '../utils/breadcrumbs';
 import { fontSize, fontWeight, shadows, spacing } from '../styles/theme';
@@ -79,8 +77,9 @@ export default function PaymentMethodsScreen({ navigation }) {
   const { palette, isDark } = useTheme();
   const styles = buildStyles(palette);
   const { currentUser } = useAuth();
-  const { config, ensureReady } = useStripeConfig();
-  const { initPaymentSheet, presentPaymentSheet } = useStripe();
+  const addingRef = useRef(false);
+  const [needsBillingContact, setNeedsBillingContact] = useState(false);
+  const [billingContact, setBillingContact] = useState({ fullName: currentUser?.savedShippingInfo?.fullName || currentUser?.username || '', phone: '', country: '', countryCode: '' });
   const [cards, setCards] = useState([]);
   const [defaultPaymentMethodId, setDefaultPaymentMethodId] = useState('');
   const [loading, setLoading] = useState(true);
@@ -94,7 +93,7 @@ export default function PaymentMethodsScreen({ navigation }) {
   const loadCards = useCallback(async ({ quiet = false } = {}) => {
     if (!quiet) setLoading(true);
     try {
-      const response = await api.get('/api/payment-methods');
+      const response = await api.get('/api/safepay/cards');
       const normalized = normalizeSavedCards(response);
       setCards(normalized.cards);
       setDefaultPaymentMethodId(normalized.defaultPaymentMethodId);
@@ -117,112 +116,43 @@ export default function PaymentMethodsScreen({ navigation }) {
   }, [loadCards, navigation]);
 
   const addCard = async () => {
-    if (adding) return;
+    if (addingRef.current || adding) return;
     if (!consentToSave) {
-      setNotice({
-        type: 'info',
-        title: 'Your permission is required',
-        text: 'Confirm that Stripe may save this card for future purchases. You will still approve every charge.',
-      });
+      setNotice({ type: 'info', title: 'Your permission is required',
+        text: 'Confirm that Safepay may securely save this card. Adding a card does not start automatic payments.' });
       return;
     }
+    addingRef.current = true;
     setAdding(true);
     setNotice(null);
-    let setupReference = null;
-    let setupCleanupAttempted = false;
+    let attempt = null;
+    const storageKey = createScopedMutationStorageKey('rozare_safepay_card_setup_v1', currentUser?._id || currentUser?.id);
     try {
-      const stripeConfig = await ensureReady();
-      trackPaymentEvent('saved_card_setup_started', {
-        googlePayEnabled: !!stripeConfig.googlePayEnabled,
-      });
-      const requestKey = Crypto.randomUUID();
-      const response = await api.post('/api/payment-methods/setup', {
-        paymentFlow: 'payment_sheet',
-        clientSurface: 'mobile',
-        consentAccepted: true,
-        consentVersion: '2026-08-01',
-        requestKey,
-      }, {
-        headers: { 'X-Idempotency-Key': requestKey },
-      });
-      setupReference = normalizePaymentSheetPayload(response);
-      const payment = assertPaymentSheetPayload(response, 'setup');
-      trackPaymentEvent('saved_card_setup_reference_created', {
-        hasSetupIntent: !!payment.setupIntentClientSecret,
-      });
-      const result = await runSetupIntentPaymentSheetAttempt({
-        initPaymentSheet,
-        presentPaymentSheet,
-        apiClient: api,
-        setupIntentId: payment.setupIntentId,
-        options: buildPaymentSheetOptions({
-          payment,
-          config: stripeConfig,
-          currentUser,
-          currency: 'USD',
-          palette,
-          isDark,
-          intentType: 'setup',
-        }),
-      });
-      setupCleanupAttempted = result.status !== 'presented';
-      trackPaymentEvent(`saved_card_setup_sheet_${result.status}`, {
-        stage: result.stage,
-        code: result.error?.code,
-      });
-
-      if (result.status === 'cancelled') {
-        setNotice({
-          type: result.cleanupError ? 'error' : 'info',
-          title: result.cleanupError ? 'Closing card setup' : 'Nothing changed',
-          text: result.cleanupError
-            ? 'The setup was closed, and Rozare is still confirming cleanup with Stripe.'
-            : 'Card setup was closed and the incomplete SetupIntent was cancelled.',
-        });
-        return;
+      attempt = await getOrCreatePersistedMutationAttemptInLedger({ storage: AsyncStorage, storageKey,
+        fingerprint: 'safepay-card-storage-v1', keyPrefix: 'mobile-safepay-card' });
+      const response = await api.post('/api/safepay/cards/setup', { clientSurface: 'mobile', consentToSave: true,
+        requestKey: attempt.key, ...(needsBillingContact ? { billingContact } : {}) });
+      const result = await openSafepayCheckout({ apiClient: api, response });
+      if (result.status === 'authorized') {
+        const refreshed = await loadCards({ quiet: true });
+        await clearPersistedMutationAttemptFromLedger(AsyncStorage, storageKey, 'safepay-card-storage-v1', attempt.key);
+        setConsentToSave(false);
+        setNotice(refreshed.cards.length
+          ? { type: 'success', title: 'Card saved securely', text: 'Your reusable cards are listed below. Subscription billing requires a separate agreement.' }
+          : { type: 'info', title: 'Choose reusable card storage', text: 'Verification completed, but no reusable card was saved. Add it again and select “Securely save this card” on the Safepay form.' });
+      } else if (['cancelled', 'failed'].includes(result.status)) {
+        await clearPersistedMutationAttemptFromLedger(AsyncStorage, storageKey, 'safepay-card-storage-v1', attempt.key);
+        setNotice({ type: 'info', title: 'Card setup closed', text: 'Safepay confirmed that this card setup did not complete.' });
+      } else {
+        setNotice({ type: 'info', title: 'Card setup is being verified', text: 'The same setup is retained. Refresh your cards or retry to resume it.' });
       }
-      if (result.status !== 'presented') {
-        setNotice({
-          type: 'error',
-          title: 'Card setup could not open',
-          text: result.cleanupError
-            ? 'Rozare is still confirming cleanup with Stripe. No card was saved.'
-            : 'The failed SetupIntent was cancelled immediately. No card was saved.',
-        });
-        return;
-      }
-
-      await loadCards({ quiet: true });
-      setConsentToSave(false);
-      setNotice({ type: 'success', title: 'Card saved securely', text: 'It is now ready for faster checkout.' });
     } catch (error) {
       trackError('saved_card_setup', error);
-      if (setupReference?.setupIntentId && !setupCleanupAttempted) {
-        let cleanupError = null;
-        try {
-          await cancelSetupIntentPaymentAttempt({
-            apiClient: api,
-            setupIntentId: setupReference.setupIntentId,
-            closeReason: 'payment_sheet_preparation_failed',
-          });
-        } catch (nextError) {
-          cleanupError = nextError;
-        }
-        setNotice({
-          type: 'error',
-          title: 'Card setup could not open',
-          text: cleanupError
-            ? 'Rozare is still confirming cleanup with Stripe. No card was saved.'
-            : 'The failed SetupIntent was cancelled immediately. No card was saved.',
-        });
-        return;
-      }
-      setNotice({
-        type: 'error',
-        title: 'Card was not saved',
-        text: error.response?.data?.msg || error.localizedMessage || error.message || 'Please try again.',
-      });
+      if (error.response?.data?.code === 'SAFEPAY_BILLING_PROFILE_REQUIRED') setNeedsBillingContact(true);
+      setNotice({ type: 'error', title: 'Card setup needs attention',
+        text: error.response?.data?.msg || error.message || 'Please retry the same setup.' });
     } finally {
+      addingRef.current = false;
       setAdding(false);
     }
   };
@@ -232,7 +162,7 @@ export default function PaymentMethodsScreen({ navigation }) {
     setBusyId(card.id);
     setNotice(null);
     try {
-      await api.patch(`/api/payment-methods/${encodeURIComponent(card.id)}/default`);
+      await api.patch(`/api/safepay/cards/${encodeURIComponent(card.id)}/default`, { clientSurface: 'mobile' });
       setDefaultPaymentMethodId(card.id);
       setCards((previous) => previous.map((item) => ({ ...item, isDefault: item.id === card.id })));
       setNotice({ type: 'success', title: 'Default card updated', text: `Card ending in ${card.last4} will be offered first at checkout.` });
@@ -248,7 +178,7 @@ export default function PaymentMethodsScreen({ navigation }) {
     setBusyId(card.id);
     setNotice(null);
     try {
-      await api.delete(`/api/payment-methods/${encodeURIComponent(card.id)}`);
+      await api.delete(`/api/safepay/cards/${encodeURIComponent(card.id)}`, { data: { clientSurface: 'mobile' } });
       const remaining = cards.filter((item) => item.id !== card.id);
       setCards(remaining);
       if (defaultPaymentMethodId === card.id) {
@@ -332,12 +262,12 @@ export default function PaymentMethodsScreen({ navigation }) {
               </View>
               <View style={styles.heroBadge}>
                 <View style={[styles.statusDot, { backgroundColor: config ? palette.colors.success : palette.colors.warning }]} />
-                <Text style={styles.heroBadgeText}>{config?.mode === 'live' ? 'LIVE PAYMENTS' : 'SECURE MODE'}</Text>
+                <Text style={styles.heroBadgeText}>SECURE CARDS</Text>
               </View>
             </View>
-            <Text style={styles.heroTitle}>Your cards, protected by Stripe</Text>
+            <Text style={styles.heroTitle}>Your cards, protected by Safepay</Text>
             <Text style={styles.heroText}>
-              Rozare receives only a card brand and last four digits. Full card details stay encrypted with Stripe.
+              Safepay handles your card details securely. Rozare uses a saved-card reference and masked card details.
             </Text>
             <View style={styles.trustRow}>
               <View style={styles.trustChip}><Ionicons name="lock-closed-outline" size={13} color={palette.colors.primary} /><Text style={styles.trustText}>Encrypted</Text></View>
@@ -395,7 +325,7 @@ export default function PaymentMethodsScreen({ navigation }) {
                 <Ionicons name="card-outline" size={34} color={palette.colors.primary} />
               </View>
               <Text style={styles.emptyTitle}>No card saved yet</Text>
-              <Text style={styles.emptyText}>Add a card once, then choose it securely inside Stripe PaymentSheet during checkout.</Text>
+              <Text style={styles.emptyText}>Add a card securely with Safepay. No separate Safepay account is needed.</Text>
             </GlassPanel>
           ) : cards.map((card) => {
             const brand = getBrandMeta(card.brand);
@@ -450,6 +380,17 @@ export default function PaymentMethodsScreen({ navigation }) {
             );
           })}
 
+          {needsBillingContact && <GlassPanel style={{ padding: spacing.lg, gap: spacing.md, marginBottom: spacing.lg }}>
+            <Text style={{ color: palette.colors.text, fontWeight: '700' }}>Billing contact</Text>
+            <TextInput accessibilityLabel="Billing full name" placeholder="Full name" value={billingContact.fullName}
+              onChangeText={fullName => setBillingContact(previous => ({ ...previous, fullName }))}
+              placeholderTextColor={palette.colors.textSecondary} style={{ color: palette.colors.text, padding: spacing.md, borderWidth: 1, borderColor: palette.glass.borderStrong, borderRadius: 12 }} />
+            <PhoneNumberInput label="Phone number" value={billingContact.phone}
+              onChangeText={phone => setBillingContact(previous => ({ ...previous, phone }))} />
+            <LocationAutocomplete type="country" label="Country" value={billingContact.country} code={billingContact.countryCode}
+              onSelect={option => setBillingContact(previous => ({ ...previous, country: option.name, countryCode: option.isoCode }))}
+              onClear={() => setBillingContact(previous => ({ ...previous, country: '', countryCode: '' }))} />
+          </GlassPanel>}
           <View style={styles.consentCard}>
             <TouchableOpacity
               style={styles.consentChoice}
@@ -457,7 +398,7 @@ export default function PaymentMethodsScreen({ navigation }) {
               activeOpacity={0.78}
               accessibilityRole="checkbox"
               accessibilityState={{ checked: consentToSave }}
-              accessibilityLabel="Consent to save this card securely with Stripe"
+              accessibilityLabel="Consent to save this card securely with Safepay"
             >
               <View style={[styles.checkbox, consentToSave && styles.checkboxChecked]}>
                 {consentToSave && <Ionicons name="checkmark" size={15} color="#fff" />}
@@ -465,7 +406,7 @@ export default function PaymentMethodsScreen({ navigation }) {
               <View style={styles.consentCopy}>
                 <Text style={styles.consentTitle}>Save with my permission</Text>
                 <Text style={styles.consentText}>
-                  I choose to save this card with Stripe for future purchases and Wallet top-ups that I start and approve. Rozare will not charge it automatically, and I can remove it anytime.
+                  I authorize Safepay to save this card for purchases I approve. Automatic subscription renewals require my separate agreement. Adding a card does not start a subscription.
                 </Text>
               </View>
             </TouchableOpacity>
@@ -514,7 +455,7 @@ export default function PaymentMethodsScreen({ navigation }) {
             <Ionicons name="shield-checkmark-outline" size={20} color={palette.colors.success} />
             <View style={styles.securityCopy}>
               <Text style={styles.securityTitle}>Built for safe checkout</Text>
-              <Text style={styles.securityText}>Adding a card does not charge it. You approve every payment inside Stripe’s secure sheet.</Text>
+              <Text style={styles.securityText}>Card verification uses a zero-amount authorization. Subscription charges require a separate agreement.</Text>
             </View>
           </GlassPanel>
         </ScrollView>
