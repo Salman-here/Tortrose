@@ -59,3 +59,14 @@ The earlier account-free capability probe completed two sandbox recurring paymen
 - Unpaid subdomain/return settlement locks remain resumable but require further abandonment/expiry coverage.
 - Compatible dependency patches removed the high-severity npm findings. Four moderate audit entries remain in the existing navigation dependency chain (`decode-uri-component`); npm proposes a breaking navigation upgrade. No unrelated major upgrade was applied.
 - No real card charge, real bank payout, Play Store publication or physical-device push delivery is claimed.
+
+## Live verification update — 26 September
+
+- Commit `8a46920d` was pushed to both configured GitHub repositories using the existing repository account. Railway deployed it successfully; `/health` reported that revision and a connected database.
+- Safepay is enabled **in sandbox only**. The website card checkout remains Stripe.
+- Fresh buyer `rozare-safepay-buyer-20260925@mailinator.com` was created through the normal browser signup and actual emailed OTP. Its authenticated config response confirmed Safepay sandbox enabled. No admin account was used as the buyer.
+- A second fresh account, `rozare-safepay-seller-20260925@mailinator.com`, entered the seller-onboarding flow and received its real email OTP; store completion is still being verified.
+- Live logs exposed a provider-adapter bug missed by the earlier plain-object mocks: spreading a Mongoose payment document dropped getter-backed amount/currency/ownership fields during provider validation. Explicit immutable-field extraction fixes this while keeping every merchant/environment/reference/money check enforced.
+- Checkout retry errors could also escape the Express handler because its async recovery helper was returned without `await`. Both ordinary replay and duplicate-key recovery now return controlled errors.
+- Regression tests exercise an actual Mongoose payment document and the async controller failure path. **52 focused tests passed** for that fix; **45 service tests passed** before the controller extension.
+- Android UI verification still requires the emulator to be reopened and the fresh test buyer signed in after the PC/session interruption. The installed signed APK is preserved; this is not a claim that its full payment UI has passed yet.

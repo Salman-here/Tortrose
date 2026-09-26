@@ -20,6 +20,11 @@ const trackerReference = tracker => {
   const reference = metadata?.order_id;
   return typeof reference === 'string' ? reference : reference?.value;
 };
+// Mongoose document fields are getters, not enumerable own properties.
+// Select the immutable contract explicitly instead of spreading a document.
+const trackerExpectation = (expected, tracker) => ({ tracker, amountMinor: expected.amountMinor,
+  currency: expected.currency, reference: expected.reference, providerMode: expected.providerMode,
+  customerId: expected.customerId });
 
 function requireTracker(data, expected, config) {
   const tracker = data?.tracker || data;
@@ -88,7 +93,7 @@ function createSafepayClient({ config = readSafepayConfig(), fetchImpl = fetch }
     async getTracker(tracker, expected) {
       requireId(tracker, 'track'); requireMoney(expected.amountMinor, expected.currency, { allowZero: expected.providerMode === 'instrument' });
       const data = await request('GET', `/reporter/api/v1/payments/${encodeURIComponent(tracker)}`);
-      return requireTracker(data, { ...expected, tracker }, config);
+      return requireTracker(data, trackerExpectation(expected, tracker), config);
     },
     async createAuthToken() {
       const token = await request('POST', '/client/passport/v1/token', {});
@@ -174,7 +179,7 @@ function createSafepayClient({ config = readSafepayConfig(), fetchImpl = fetch }
       const data = await request('POST', `/order/payments/v3/${trackerId}`, { payload: {
         authorization: { do_capture: true }, payment_method: { tokenized_card: { token: card.token } },
       }, use_action_chaining: true });
-      try { return requireTracker(data, { ...expected, tracker: trackerId }, config); }
+      try { return requireTracker(data, trackerExpectation(expected, trackerId), config); }
       catch (error) { error.outcomeUnknown = true; throw error; }
     },
     async getSubscription(subscriptionId) {
@@ -192,7 +197,7 @@ function createSafepayClient({ config = readSafepayConfig(), fetchImpl = fetch }
         throw providerError('The remaining original-currency refund could not be verified.', 'SAFEPAY_REFUND_EVIDENCE_INVALID', 409);
       }
       const data = await request('POST', `/order/payments/v3/${trackerId}/refund`, { amount: readMinor(charge.balance.amount), currency: expected.currency });
-      try { return requireTracker(data, { ...expected, tracker: trackerId }, config); }
+      try { return requireTracker(data, trackerExpectation(expected, trackerId), config); }
       catch (error) { error.outcomeUnknown = true; throw error; }
     },
     async getPlan(planId) {

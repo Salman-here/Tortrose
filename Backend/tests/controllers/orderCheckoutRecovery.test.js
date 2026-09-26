@@ -14,6 +14,11 @@ const mockOrderFindById = jest.fn();
 const mockResolveOrderReference = jest.fn();
 const mockEnsureStripeCustomerForUser = jest.fn();
 const mockRemoveFulfilledOrderItemsFromCart = jest.fn().mockResolvedValue({ removed: true });
+const mockSafepayCheckout = jest.fn();
+const mockOrderFindOne = jest.fn();
+const mockUserFindById = jest.fn();
+jest.mock('../../services/safepayPaymentService', () => ({ prepareCheckout: mockSafepayCheckout }));
+jest.mock('../../models/User', () => ({ findById: mockUserFindById }));
 
 jest.mock('../../config/stripe', () => ({
   stripe: {
@@ -47,6 +52,7 @@ jest.mock('../../services/stripeCustomerService', () => ({
 }));
 
 jest.mock('../../models/Order', () => ({
+  findOne: mockOrderFindOne,
   findOneAndUpdate: mockOrderFindOneAndUpdate,
   findById: mockOrderFindById,
 }));
@@ -84,7 +90,21 @@ jest.mock('../../services/stripeOrderPaymentService', () => ({
 const {
   _respondWithExistingCheckout,
   getPaymentStatus,
+  placeOrder,
 } = require('../../controllers/orderController');
+
+test('a Safepay checkout retry returns a controlled failure instead of an unhandled promise rejection', async () => {
+  mockUserFindById.mockReturnValue({ select: () => ({ lean: async () => ({ currency: 'USD' }) }) });
+  mockOrderFindOne.mockReturnValue({ select: async () => ({ _id: 'retry-order', orderId: 'ORD-RETRY', user: 'buyer', currency: 'USD',
+    paymentMethod: 'safepay', safepayPaymentId: 'retry-payment', isPaid: false, awaitingPayment: true }) });
+  mockSafepayCheckout.mockRejectedValue(Object.assign(new Error('Payment verification is unavailable.'), { code: 'SAFEPAY_PAYMENT_MISMATCH', statusCode: 409 }));
+  const res = { status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis(), set: jest.fn().mockReturnThis() };
+  await expect(placeOrder({ user: { id: 'buyer' }, headers: { 'idempotency-key': 'retry-fixture-00001' }, body: {
+    clientSurface: 'mobile', paymentFlow: 'safepay_hosted', order: { currency: 'USD', paymentMethod: 'safepay', orderItems: [] },
+  } }, res)).resolves.toBe(res);
+  expect(res.status).toHaveBeenCalledWith(409);
+  expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ code: 'SAFEPAY_PAYMENT_MISMATCH' }));
+});
 
 const response = () => ({
   status: jest.fn().mockReturnThis(),

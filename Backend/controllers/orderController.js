@@ -1182,7 +1182,7 @@ exports.placeOrder = async (req, res) => {
                         code: 'IDEMPOTENCY_CONFLICT',
                     });
                 }
-                return respondWithExistingCheckout(res, existingOrder);
+                return await respondWithExistingCheckout(res, existingOrder);
             }
         }
         if (
@@ -2043,7 +2043,8 @@ exports.placeOrder = async (req, res) => {
                         code: 'IDEMPOTENCY_CONFLICT',
                     });
                 }
-                return respondWithExistingCheckout(res, existingOrder);
+                try { return await respondWithExistingCheckout(res, existingOrder); }
+                catch (recoveryError) { error = recoveryError; }
             }
         }
         console.error('Order checkout error:', error);

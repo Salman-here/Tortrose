@@ -48,6 +48,15 @@ test('requires the immutable checkout reference, including reporter metadata sha
   expect(() => requireTracker({ ...tracker, mode: 'instrument' }, expected, config)).toThrow();
 });
 
+test('validates a persisted Mongoose payment without losing getter-backed money and owner fields', async () => {
+  const Payment = require('../../models/SafepayPayment');
+  const payment = new Payment({ user: new (require('mongoose').Types.ObjectId)(), environment: 'sandbox',
+    purpose: 'order', reference: 'order:fixture123', requestKey: 'checkout-fixture', amountMinor: 10000,
+    currency: 'PKR', tracker: tracker.token, fingerprint: 'a'.repeat(64) });
+  const fetchImpl = jest.fn(async () => ({ ok: true, json: async () => ({ data: tracker }) }));
+  await expect(createSafepayClient({ config, fetchImpl }).getTracker(tracker.token, payment)).resolves.toEqual(tracker);
+});
+
 test('recovery only adopts an exact owned reference and does not create a new tracker', async () => {
   const fetchImpl = jest.fn()
     .mockResolvedValueOnce({ ok: true, json: async () => ({ data: { list: [{ token: tracker.token, metadata: { order_id: 'order:fixture123' } }] } }) })
