@@ -4,9 +4,19 @@
 
 Implementation and live verification are still in progress. Do not interpret a successful APK build or unit-test run as proof that every live flow is complete.
 
-**Build checkpoint:** Android 1.0.13 (15), build `e71545ef-5137-4ccc-886c-c59ff0c140bc`, finished successfully on 27 September. Later live tests found a clock-correction retry-key issue and a Payment Methods opening crash. Build **17** is being prepared with both corrections; builds 15/16 are superseded as the final download recommendation. Payment verification is still being completed; this is not a production-payment release.
+**Build checkpoint:** Android **1.0.13 (17)**, build `3e1f80b0-5f42-4f6f-b9d4-ab18baa6ccf3`, finished successfully with the clock-correction retry-key and Payment Methods fixes. The downloaded APK's signature/package checks passed, it installed successfully on the emulator without clearing data, and the home screen, retained seller login and saved-card screen passed the installed-build smoke check. Build 16 was cancelled, and builds 15/16 are superseded as the final download recommendation. The Payment Methods fix is also published as a compatible Android update and verified on the emulator for both buyer and seller. Payment verification is still being completed; this is not a production-payment release.
 
 The website checkout remains Stripe. All new mobile card purchases are routed to Safepay sandbox; real Safepay production payments are not enabled.
+
+## Current sandbox APK — 17
+
+- [Download Android APK 1.0.13 (17)](https://expo.dev/artifacts/eas/n1aVqph68KuXKBGUvCnO9ywFqFlVdY_6RGJlXWfB1W8.apk)
+- [Expo build details](https://expo.dev/accounts/rozare/projects/rozare/builds/3e1f80b0-5f42-4f6f-b9d4-ab18baa6ccf3)
+- Package `com.rozare.app`, version **1.0.13**, Android version code **17**, runtime **1.0.13**.
+- Built from commit `7530c0b4`. Minimum Android SDK 24, target SDK 36; includes arm64-v8a, armeabi-v7a, x86 and x86_64.
+- Local artifact: `test-assets/rozare-safepay-1.0.13-17.apk`, **112,795,359 bytes**.
+- SHA-256: `eab9f8992d9d4d73ffe0eb389e198ead4bfcdd3d077dd8e373562120b3865f0d`.
+- Android APK Signature Scheme v2 verification passed with one signer. No Play Store release or production card charge was performed.
 
 ## Earlier verified build — 14 (historical checkpoint)
 
@@ -41,16 +51,17 @@ Safepay's hosted Cancel button was observed returning to Rozare while leaving an
 
 | Check | Observed result |
 | --- | --- |
-| Full mobile tests, including clock-recovery fix | **101 suites, 1,162 tests passed** |
+| Full mobile tests, including clock-recovery and Payment Methods fixes | **102 suites, 1,166 tests passed** |
 | Full backend regression | **232 suites, 3,445 tests passed** |
 | Notification authority/recovery regression | **77 targeted tests passed**, plus four worker tests after rolling-deployment recovery adjustment |
 | Android Hermes export | **Passed**, 2,304 modules |
 | Native build configuration | **Passed** |
-| EAS signed APK build | Build 15 **passed**; replacement build 16 is in progress |
-| Emulator install and initial home screen | **Passed** for builds 14/15; build 16 pending |
+| EAS signed APK build | Build 17 **passed**, downloaded and signature-verified; build 16 cancelled |
+| Emulator install and initial home screen | **Passed** for build 17; seller login and saved card preserved |
+| Payment Methods opening and refresh | **Passed on Android** with the latest runtime-1.0.13 update; buyer empty-card state loads and refreshes without the render exception |
 | Actual embedded sandbox wallet payment | USD 1.00 **paid and displayed**; the separate clock-recovery issue found during retry is fixed and regression-tested |
 | Product payment, delivery accounting, full refund | **Passed via live API + provider browser**, exact PKR 1,200.00 flow; not claimed as native order-entry coverage |
-| Saved card, Starter trial, cancel/resume, subdomain purchase | **Passed via live API + provider browser**; seller native UI/push pending sign-in |
+| Saved card, Starter trial, cancel/resume, subdomain purchase | **Passed via live API + provider browser**; native seller card/Starter display and actual subscription push also verified |
 
 Test examples already passing locally: valid late payment reserves stock once; sold-out late payment schedules one refund; changed native price leaves the frozen order untouched and takes the refund path; explicitly cancelled order stays cancelled; refund timeout does not issue another refund; partial/final return shipping is refunded once; multi-currency order refunds conserve original seller-native money.
 
@@ -59,7 +70,10 @@ The earlier account-free capability probe completed two sandbox recurring paymen
 ## Remaining release checks and limitations
 
 - Current backend is deployed with sandbox credentials. Complete actual mobile payment flows before declaring readiness.
+- Still not established by live native tests: full product-order entry/checkout from the app, declined-card and interactive 3DS challenge paths, paid plan renewal/upgrade/Meta add-on/downgrade, and the full mixed-currency/multi-seller payment matrix. Automated coverage and API/provider-browser checks are identified separately above.
 - Complete provider-refund, reversal, dispute and recovery coverage. Some Wallet/return-funding/provider-risk cases deliberately hold money for review; they are not silently cleared or represented as automatically reconciled.
+- The refunded test order retains its historical paid/delivered status in the order view; refund notifications and the seller payment-reversal ledger reflect the refund, but a dedicated order-detail refund summary has not been implemented or verified in this phase.
+- **Separate mobile display issue observed:** Store Subdomain's “Recognized revenue” tile follows the shopping currency instead of the store currency. With this PKR store and USD shopping preference it displayed **USD 4.33**, while seller Dashboard/Payments correctly displayed **PKR 1,200.00** historical revenue. The screen requests subdomain analytics using `CurrencyContext.currency`. Ownership and payout balances were unaffected. This is not marked PASS or changed by the Payment Methods crash fix.
 - Unpaid subdomain/return settlement locks remain resumable but require further abandonment/expiry coverage.
 - Compatible dependency patches removed the high-severity npm findings. Four moderate audit entries remain in the existing navigation dependency chain (`decode-uri-component`); npm proposes a breaking navigation upgrade. No unrelated major upgrade was applied.
 - No real card charge, real bank payout, Play Store publication or physical-device push delivery is claimed.
@@ -173,3 +187,25 @@ Subscription email/WhatsApp delivery, additional payment currencies, late-paymen
 - Android logs confirmed `ReferenceError: Property 'config' doesn't exist` at `PaymentMethodsScreen`. Its status indicator still referenced removed Stripe configuration state; this happened during rendering, before saved-card loading could finish.
 - Replaced that indicator with the actual card-loading/error state. Added real screen-render tests for buyer/seller roles, empty cards, masked saved-card details/default selection, and load-error/retry behavior. **Four new screen tests passed.** A scope-based JavaScript identifier check across 26 migration-modified mobile source files found no remaining unbound identifiers.
 - Requested cancellation of in-progress build 16 because it did not contain this late-reported fix; replacement build 17 and an Android runtime-1.0.13 update will include it. Native re-verification is required before marking this screen fixed live. No saved card or account data was deleted.
+
+### Payment Methods correction verified on Android — 27 September
+
+- Commit `7530c0b4` is pushed to both repositories, and the backend health response reports that exact revision with MongoDB connected. No change to website checkout was made for this fix.
+- The complete mobile regression run passed **102 suites / 1,166 tests**, zero failures (`test-assets/safepay-final-mobile-cardsfix-20260927.json`).
+- Android update group `856eb976-6f76-40c4-ab83-cbe62b37cda5`, update `01a0e078-f370-7e94-a3b9-6e1eedd086b6`, was published to production channel for runtime **1.0.13**. The installed build 15 downloaded it; the app was reopened to activate it without clearing data.
+- **Native opening PASS:** using the fresh buyer account, opened Profile → Payment Methods. The actual screen displayed “Your cards, protected by Safepay”, “0 cards ready” and “No card saved yet”. It no longer displayed the `config` ReferenceError or an error boundary.
+- **Native refresh PASS:** tapped the header refresh button, observed the loading skeleton, then the correct empty-card state returned. Adding a new card remained disabled until explicit save-card consent; no card was added, deleted or charged during this retest.
+- Build **1.0.13 (17)** is running from the committed correction, so the replacement APK will contain the fix even before an over-the-air update is downloaded. Seller native saved-card display still requires seller sign-in; the seller-role screen rendering and masked-card/default behavior are covered by the new regression tests, not presented as native seller verification.
+
+### Seller Android verification after sign-in
+
+- The user signed in to the fresh seller test account. **Native saved-card display PASS:** Profile → Payment Methods showed one Visa ending **1111**, expiry **12/30**, matching the live owned-card API. There was no opening/render error. The card had no default preference yet, so “Make default” was correctly offered. No card or billing preference was changed during this display check.
+- **Account-switch push isolation PASS:** scoped read-only database checks showed the signed-out buyer with zero registered push tokens and the signed-in seller with one. This establishes registration ownership, not delivery by itself.
+- **Seller Dashboard display PASS:** the native screen showed Safepay QA Store, historical revenue **PKR 1,200.00**, one order, one product, one delivered order and zero pending/processing orders, matching the saved test sale.
+- **Native Payments & Revenue PASS:** available to withdraw **PKR 0.00**, historical Safepay delivered revenue **PKR 1,200.00**, and a separate **PKR 1,200.00 Payment reversals** deduction. All other revenue/deduction buckets were zero. The PKR balance stayed PKR, the minimum withdrawal displayed **PKR 2,000.00**, and withdrawal was disabled with no available amount/bank account. No withdrawal or payout was submitted.
+- **Native Starter display PASS:** the Subscription screen showed “Rozare Starter”, “Introductory Period”, “Safepay secured”, and the correct **26 October 2026** period end.
+- **Seller subscription push PASS on emulator:** used the normal seller-authorized API to cancel sandbox automatic renewal, retaining Starter access and the exact existing period end. The Android notification tray later showed “Subscription renewal cancelled” and the correct **USD 9.99/month** amount. Tapping it opened the Subscription screen. Device arrival was delayed by roughly two to three minutes after provider acceptance; it was not immediate. The corresponding in-app, email and test WhatsApp records also delivered. This verifies an API-triggered lifecycle event reaching native UI, not the native cancel button.
+- Restored automatic renewal through the normal seller API. The response independently showed `automaticRenewal: true`, `status: free_period`, and unchanged end `2026-10-26T06:58:14.833Z`. No charge, new plan or trial extension was created by this cancel/resume check.
+- Resume notices also reached the in-app/email/test WhatsApp delivery states and push-provider acceptance. A scoped database check found **zero new seller payment records** during this cycle. Only the cancellation notification was visually confirmed in Android; do not count provider acceptance alone as a second observed device receipt.
+- **Installed APK 17 smoke PASS:** Android package inspection confirmed version code **17** / version **1.0.13** after successful `install -r`. The app opened, the same seller remained signed in, and Payment Methods again showed the existing Visa ending 1111 without an exception. No account/app data was wiped.
+- **Native subdomain ownership PASS:** APK 17's Store Subdomain screen showed `safepay-qa-store.rozare.com`, LIVE, OWNED, **1,096 days** remaining, purchase **27 September 2026**, and expiry **27 September 2029**. These match the live ownership API and single three-year Safepay grant. This verifies ownership rendering, not a native purchase-button checkout. The separate revenue-currency display issue on this screen is listed under remaining checks above.
