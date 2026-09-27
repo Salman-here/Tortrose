@@ -5,7 +5,6 @@ import {
   Animated,
   Platform,
   RefreshControl,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -19,6 +18,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import api from '../config/api';
 import GlassBackground from '../components/common/GlassBackground';
 import GlassPanel from '../components/common/GlassPanel';
+import KeyboardAwareFormScrollView from '../components/common/KeyboardAwareFormScrollView';
 import PremiumBackHeader from '../components/common/PremiumBackHeader';
 import { useAuth } from '../contexts/AuthContext';
 import { openSafepayCheckout } from '../utils/safepayCheckout';
@@ -47,6 +47,29 @@ const getBrandMeta = (brand) => BRAND_META[brand] || {
   label: String(brand || 'CARD').toUpperCase(),
   color: '#6366F1',
   tint: 'rgba(99,102,241,0.10)',
+};
+
+const clean = value => typeof value === 'string' ? value.trim() : '';
+const initialBillingContact = user => {
+  const shipping = user?.savedShippingInfo || {};
+  const seller = user?.sellerInfo || {};
+  const fromShipping = Boolean(shipping.fullName && shipping.phone);
+  return {
+    fullName: clean(fromShipping ? shipping.fullName : user?.username),
+    phone: clean(fromShipping ? shipping.phone : seller.phoneNumber || seller.whatsappNumber),
+    country: clean(fromShipping ? shipping.country : seller.country),
+    countryCode: clean(fromShipping ? shipping.countryCode : seller.countryCode).toUpperCase(),
+  };
+};
+
+const billingContactProblem = contact => {
+  const name = clean(contact.fullName);
+  if (name.length > 160 || name.split(/\s+/).filter(Boolean).length < 2) {
+    return 'Enter your billing first and last name as shown on your card. Safepay requires both names.';
+  }
+  if (!clean(contact.phone)) return 'Enter your billing phone number.';
+  if (!clean(contact.country) && !clean(contact.countryCode)) return 'Select your billing country.';
+  return '';
 };
 
 function SkeletonCard({ palette }) {
@@ -78,8 +101,10 @@ export default function PaymentMethodsScreen({ navigation }) {
   const styles = buildStyles(palette);
   const { currentUser } = useAuth();
   const addingRef = useRef(false);
+  const billingContactEditedRef = useRef(false);
   const [needsBillingContact, setNeedsBillingContact] = useState(false);
-  const [billingContact, setBillingContact] = useState({ fullName: currentUser?.savedShippingInfo?.fullName || currentUser?.username || '', phone: '', country: '', countryCode: '' });
+  const [billingContact, setBillingContact] = useState(() => initialBillingContact(currentUser));
+  const [retrySeconds, setRetrySeconds] = useState(0);
   const [cards, setCards] = useState([]);
   const [defaultPaymentMethodId, setDefaultPaymentMethodId] = useState('');
   const [loading, setLoading] = useState(true);
@@ -89,6 +114,18 @@ export default function PaymentMethodsScreen({ navigation }) {
   const [busyId, setBusyId] = useState('');
   const [loadError, setLoadError] = useState('');
   const [notice, setNotice] = useState(null);
+  const waitingForRetry = retrySeconds > 0;
+  const addDisabled = adding || !!busyId || !consentToSave || loading || !!loadError || waitingForRetry;
+  const updateBillingContact = patch => {
+    billingContactEditedRef.current = true;
+    setBillingContact(previous => ({ ...previous, ...patch }));
+  };
+
+  useEffect(() => {
+    if (!waitingForRetry) return undefined;
+    const timer = setInterval(() => setRetrySeconds(previous => Math.max(0, previous - 1)), 1000);
+    return () => clearInterval(timer);
+  }, [waitingForRetry]);
 
   const loadCards = useCallback(async ({ quiet = false } = {}) => {
     if (!quiet) setLoading(true);
@@ -97,6 +134,14 @@ export default function PaymentMethodsScreen({ navigation }) {
       const normalized = normalizeSavedCards(response);
       setCards(normalized.cards);
       setDefaultPaymentMethodId(normalized.defaultPaymentMethodId);
+      if (typeof response.data?.billingProfileReady === 'boolean') {
+        setNeedsBillingContact(!response.data.billingProfileReady);
+      }
+      if (!billingContactEditedRef.current && response.data?.billingContact) {
+        const draft = response.data.billingContact;
+        setBillingContact({ fullName: clean(draft.fullName), phone: clean(draft.phone),
+          country: clean(draft.country), countryCode: clean(draft.countryCode).toUpperCase() });
+      }
       setLoadError('');
       return normalized;
     } catch (error) {
@@ -116,10 +161,15 @@ export default function PaymentMethodsScreen({ navigation }) {
   }, [loadCards, navigation]);
 
   const addCard = async () => {
-    if (addingRef.current || adding) return;
+    if (addingRef.current || adding || waitingForRetry || loading || loadError) return;
     if (!consentToSave) {
       setNotice({ type: 'info', title: 'Your permission is required',
         text: 'Confirm that Safepay may securely save this card. Adding a card does not start automatic payments.' });
+      return;
+    }
+    const problem = needsBillingContact ? billingContactProblem(billingContact) : '';
+    if (problem) {
+      setNotice({ type: 'info', title: 'Check your billing details', text: problem });
       return;
     }
     addingRef.current = true;
@@ -148,8 +198,13 @@ export default function PaymentMethodsScreen({ navigation }) {
       }
     } catch (error) {
       trackError('saved_card_setup', error);
-      if (error.response?.data?.code === 'SAFEPAY_BILLING_PROFILE_REQUIRED') setNeedsBillingContact(true);
-      setNotice({ type: 'error', title: 'Card setup needs attention',
+      const failure = error.response?.data || {};
+      if (failure.code === 'SAFEPAY_BILLING_PROFILE_REQUIRED') setNeedsBillingContact(true);
+      const seconds = Number(failure.retryAfterSeconds);
+      const waiting = ['CHECKOUT_IN_PROGRESS', 'SAFEPAY_CUSTOMER_UNCERTAIN'].includes(failure.code)
+        && Number.isInteger(seconds) && seconds > 0;
+      setRetrySeconds(waiting ? Math.min(90, seconds) : 0);
+      setNotice({ type: waiting ? 'info' : 'error', title: waiting ? 'Please wait before retrying' : 'Card setup needs attention',
         text: error.response?.data?.msg || error.message || 'Please retry the same setup.' });
     } finally {
       addingRef.current = false;
@@ -237,7 +292,7 @@ export default function PaymentMethodsScreen({ navigation }) {
           style={styles.header}
         />
 
-        <ScrollView
+        <KeyboardAwareFormScrollView
           contentContainerStyle={styles.scroll}
           showsVerticalScrollIndicator={false}
           refreshControl={(
@@ -383,14 +438,18 @@ export default function PaymentMethodsScreen({ navigation }) {
 
           {needsBillingContact && <GlassPanel style={{ padding: spacing.lg, gap: spacing.md, marginBottom: spacing.lg }}>
             <Text style={{ color: palette.colors.text, fontWeight: '700' }}>Billing contact</Text>
-            <TextInput accessibilityLabel="Billing full name" placeholder="Full name" value={billingContact.fullName}
-              onChangeText={fullName => setBillingContact(previous => ({ ...previous, fullName }))}
+            <Text style={{ color: palette.colors.textSecondary, fontSize: fontSize.sm }}>
+              Use the name shown on your card. Safepay requires both first and last names.
+            </Text>
+            <TextInput accessibilityLabel="Billing full name" placeholder="First and last name" value={billingContact.fullName}
+              maxLength={160} autoCapitalize="words" autoComplete="name"
+              onChangeText={fullName => updateBillingContact({ fullName })}
               placeholderTextColor={palette.colors.textSecondary} style={{ color: palette.colors.text, padding: spacing.md, borderWidth: 1, borderColor: palette.glass.borderStrong, borderRadius: 12 }} />
             <PhoneNumberInput label="Phone number" value={billingContact.phone}
-              onChangeText={phone => setBillingContact(previous => ({ ...previous, phone }))} />
+              onChangeText={phone => updateBillingContact({ phone })} />
             <LocationAutocomplete type="country" label="Country" value={billingContact.country} code={billingContact.countryCode}
-              onSelect={option => setBillingContact(previous => ({ ...previous, country: option.name, countryCode: option.isoCode }))}
-              onClear={() => setBillingContact(previous => ({ ...previous, country: '', countryCode: '' }))} />
+              onSelect={option => updateBillingContact({ country: option.name, countryCode: option.isoCode })}
+              onClear={() => updateBillingContact({ country: '', countryCode: '' })} />
           </GlassPanel>}
           <View style={styles.consentCard}>
             <TouchableOpacity
@@ -433,12 +492,13 @@ export default function PaymentMethodsScreen({ navigation }) {
           </View>
 
           <TouchableOpacity
-            style={[styles.addButton, (adding || !consentToSave) && styles.disabled]}
+            style={[styles.addButton, addDisabled && styles.disabled]}
             onPress={addCard}
-            disabled={adding || !!busyId || !consentToSave}
+            disabled={addDisabled}
             activeOpacity={0.86}
             accessibilityRole="button"
             accessibilityLabel="Add a payment card"
+            accessibilityState={{ disabled: addDisabled }}
           >
             <LinearGradient colors={palette.gradients.cta} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
             {adding ? (
@@ -446,7 +506,7 @@ export default function PaymentMethodsScreen({ navigation }) {
             ) : (
               <>
                 <Ionicons name="add-circle-outline" size={20} color="#fff" />
-                <Text style={styles.addButtonText}>Add a new card</Text>
+                <Text style={styles.addButtonText}>{waitingForRetry ? `Retry in ${retrySeconds}s` : 'Add a new card'}</Text>
                 <Ionicons name="arrow-forward" size={18} color="#fff" />
               </>
             )}
@@ -459,7 +519,7 @@ export default function PaymentMethodsScreen({ navigation }) {
               <Text style={styles.securityText}>Card verification uses a zero-amount authorization. Subscription charges require a separate agreement.</Text>
             </View>
           </GlassPanel>
-        </ScrollView>
+        </KeyboardAwareFormScrollView>
       </SafeAreaView>
     </GlassBackground>
   );

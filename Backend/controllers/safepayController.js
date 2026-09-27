@@ -12,10 +12,18 @@ async function ownedPayment(req) {
   // order or wallet. Even polling and reopening require the signed-in owner.
   return Payment.findOne({ _id: id, user: req.user.id });
 }
-const reportError = (res, error) => res.status(error.statusCode || 503).json({
-  msg: error.statusCode ? error.message : 'Payment verification is temporarily unavailable. Please retry.',
-  code: error.code || 'SAFEPAY_UNAVAILABLE',
-});
+const reportError = (res, error) => {
+  const retryAfterSeconds = Number.isInteger(error.retryAfterSeconds) && error.retryAfterSeconds > 0
+    ? Math.min(90, error.retryAfterSeconds) : null;
+  if (retryAfterSeconds) res.set('Retry-After', String(retryAfterSeconds));
+  return res.status(error.statusCode || 503).json({
+    msg: error.statusCode ? error.message : 'Payment verification is temporarily unavailable. Please retry.',
+    code: error.code || 'SAFEPAY_UNAVAILABLE',
+    ...(retryAfterSeconds ? { retryAfterSeconds } : {}),
+    ...(error.code === 'SAFEPAY_BILLING_PROFILE_REQUIRED' && Array.isArray(error.fields)
+      ? { fields: error.fields.filter(field => ['fullName', 'phone', 'country'].includes(field)) } : {}),
+  });
+};
 
 exports.getConfig = (req, res) => {
   res.set('Cache-Control', 'no-store');

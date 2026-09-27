@@ -11,25 +11,70 @@ const { canonicalizeShippingPhone } = require('./orderBuyerContactService');
 const { ensurePayment, prepareCheckout, fingerprint } = require('./safepayPaymentService');
 const fail = (message, code, statusCode = 409) => Object.assign(new Error(message), { code, statusCode });
 const clean = value => typeof value === 'string' ? value.trim() : '';
+const CUSTOMER_LEASE_MS = 90000;
+const CONTACT_FIELDS = ['first_name', 'last_name', 'email', 'phone_number', 'country'];
+const billingError = (message, fields = []) => Object.assign(
+  fail(message, 'SAFEPAY_BILLING_PROFILE_REQUIRED', 400), { fields }
+);
 
-function billingContact(user, supplied = {}) {
+function billingContactDraft(user) {
   const shipping = user.savedShippingInfo || {};
   const seller = user.sellerInfo || {};
   const fromShipping = Boolean(shipping.phone && shipping.fullName);
-  const fullName = clean(supplied.fullName || (fromShipping ? shipping.fullName : user.username));
-  const phone = clean(supplied.phone || (fromShipping ? shipping.phone : seller.phoneNumber || seller.whatsappNumber));
-  const countryCode = clean(supplied.countryCode || (fromShipping ? shipping.countryCode : seller.countryCode)).toUpperCase();
-  const country = clean(supplied.country || (fromShipping ? shipping.country : seller.country));
-  if (!fullName || fullName.length > 160 || !clean(user.email) || !phone || (!countryCode && !country)) {
-    throw fail('Add your name, phone number and country in your Rozare billing contact before saving a card.', 'SAFEPAY_BILLING_PROFILE_REQUIRED', 400);
+  return {
+    fullName: clean(fromShipping ? shipping.fullName : user.username),
+    phone: clean(fromShipping ? shipping.phone : seller.phoneNumber || seller.whatsappNumber),
+    countryCode: clean(fromShipping ? shipping.countryCode : seller.countryCode).toUpperCase(),
+    country: clean(fromShipping ? shipping.country : seller.country),
+  };
+}
+
+function billingContact(user, supplied = {}) {
+  if (!supplied || typeof supplied !== 'object' || Array.isArray(supplied)) {
+    throw billingError('Enter your billing name, phone number and country.');
+  }
+  const draft = billingContactDraft(user);
+  // An explicitly cleared/invalid input must not fall back to stale profile data.
+  const value = key => clean(Object.prototype.hasOwnProperty.call(supplied, key) ? supplied[key] : draft[key]);
+  const fullName = value('fullName').replace(/\s+/g, ' ');
+  const [first, ...last] = fullName.split(' ');
+  if (!first || !last.join(' ') || fullName.length > 160) {
+    throw billingError('Enter your billing first and last name as shown on your card. Safepay requires both names.', ['fullName']);
+  }
+  const phone = value('phone');
+  const countryCode = value('countryCode').toUpperCase();
+  const country = value('country');
+  if (!clean(user.email)) throw fail('Verify your account email before saving a card.', 'SAFEPAY_BILLING_EMAIL_REQUIRED', 400);
+  if (!phone || (!countryCode && !country)) {
+    throw billingError('Enter your billing phone number and select your country.', [!phone ? 'phone' : 'country']);
   }
   let normalized;
   try { normalized = canonicalizeShippingPhone({ phone, countryCode, country }); }
-  catch (_) { throw fail('Enter a valid billing phone number and country.', 'SAFEPAY_BILLING_PROFILE_REQUIRED', 400); }
-  if (!/^[A-Z]{2}$/.test(normalized.countryCode || '')) throw fail('Choose your billing country.', 'SAFEPAY_BILLING_PROFILE_REQUIRED', 400);
-  const [first, ...last] = fullName.split(/\s+/);
+  catch (_) { throw billingError('Enter a valid billing phone number and country.', ['phone', 'country']); }
+  if (!/^[A-Z]{2}$/.test(normalized.countryCode || '')) throw billingError('Choose your billing country.', ['country']);
   return { first_name: first, last_name: last.join(' '), email: clean(user.email).toLowerCase(),
     phone_number: normalized.e164, country: normalized.countryCode };
+}
+
+function profileWaitError(link, uncertain = false) {
+  const remaining = Math.ceil((new Date(link?.leaseUntil || 0).getTime() - Date.now()) / 1000);
+  const retryAfterSeconds = Math.min(90, Math.max(1, remaining || 1));
+  return Object.assign(fail(uncertain
+    ? 'Safepay has not confirmed your payment profile yet. Wait before retrying; no card setup has started.'
+    : 'Another request is already setting up your payment profile. Please wait before retrying.',
+  uncertain ? 'SAFEPAY_CUSTOMER_UNCERTAIN' : 'CHECKOUT_IN_PROGRESS', uncertain ? 503 : 409), { retryAfterSeconds });
+}
+
+function customerFailureForUser(error) {
+  const fields = error.providerValidationFields || [];
+  if (fields.includes('first_name') || fields.includes('last_name')) {
+    return billingError('Enter your billing first and last name as shown on your card. Safepay requires both names.', ['fullName']);
+  }
+  if (fields.includes('email')) return fail('Safepay did not accept your account email. Check the email in your Profile before trying again.', 'SAFEPAY_BILLING_EMAIL_REJECTED', 400);
+  if (fields.includes('phone_number')) return billingError('Safepay did not accept this billing phone number. Check the country code and number.', ['phone']);
+  if (fields.includes('country')) return billingError('Safepay did not accept this billing country. Select your country again.', ['country']);
+  if ([400, 422].includes(error.providerStatus)) return billingError('Safepay did not accept the billing details. Review your name, phone number and country before trying again.');
+  return fail('Card setup is temporarily unavailable. Please try again later.', 'SAFEPAY_CUSTOMER_UNAVAILABLE', 503);
 }
 
 async function ensureCustomer(userId, contact = {}) {
@@ -49,14 +94,38 @@ async function ensureCustomer(userId, contact = {}) {
   const lease = crypto.randomUUID();
   const claim = await Customer.findOneAndUpdate({ ...identity, customerId: null, status: { $ne: 'deleted' },
     $or: [{ leaseUntil: null }, { leaseUntil: { $lte: new Date() } }] },
-  { $set: { status: 'creating', leaseToken: lease, leaseUntil: new Date(Date.now() + 90000) } }, { new: true });
-  if (!claim) throw fail('Your payment profile is being prepared. Please retry shortly.', 'CHECKOUT_IN_PROGRESS');
+  { $set: { status: 'creating', leaseToken: lease, leaseUntil: new Date(Date.now() + CUSTOMER_LEASE_MS), lastSetupError: null } }, { new: true });
+  if (!claim) {
+    const current = await Customer.findOne(identity).select('+defaultCardId');
+    if (current?.status === 'deleted') throw fail('This payment profile has been closed.', 'SAFEPAY_CUSTOMER_CLOSED', 423);
+    if (current?.customerId) return current;
+    throw profileWaitError(current, current?.lastSetupError?.outcomeUnknown === true);
+  }
   // No payment, card, subscription or checkout can exist through an unknown
   // customer id. Retrying an expired *customer creation* lease can at most
   // leave an unused contact record, never a duplicate payable transaction.
-  const created = await createSafepayClient({ config }).createCustomer(details);
-  const saved = await Customer.findOneAndUpdate({ _id: claim._id, leaseToken: lease, customerId: null },
-    { $set: { customerId: created.token, status: 'ready', leaseToken: '', leaseUntil: null } }, { new: true }).select('+defaultCardId');
+  let created;
+  try {
+    created = await createSafepayClient({ config }).createCustomer(details);
+  } catch (error) {
+    // Only a definite provider rejection may unlock immediately. Timeouts,
+    // unreadable successes and identity mismatches retain the bounded lease.
+    const definite = error.code === 'SAFEPAY_REQUEST_FAILED' && error.outcomeUnknown === false
+      && error.providerStatus >= 400 && error.providerStatus < 500 && error.providerStatus !== 408;
+    const providerStatus = Number.isInteger(error.providerStatus) && error.providerStatus >= 100 && error.providerStatus <= 599
+      ? error.providerStatus : null;
+    const fields = Array.isArray(error.providerValidationFields)
+      ? error.providerValidationFields.filter(field => CONTACT_FIELDS.includes(field)) : [];
+    await Customer.updateOne({ _id: claim._id, leaseToken: lease, customerId: null, status: 'creating' }, {
+      $set: { lastSetupError: {
+        code: definite ? 'SAFEPAY_CUSTOMER_REJECTED' : 'SAFEPAY_CUSTOMER_UNCERTAIN', providerStatus,
+        fields, outcomeUnknown: !definite, at: new Date(),
+      }, ...(definite ? { status: 'new', leaseToken: '', leaseUntil: null } : {}) },
+    });
+    throw definite ? customerFailureForUser(error) : profileWaitError(claim, true);
+  }
+  const saved = await Customer.findOneAndUpdate({ _id: claim._id, leaseToken: lease, customerId: null, status: 'creating' },
+    { $set: { customerId: created.token, status: 'ready', leaseToken: '', leaseUntil: null, lastSetupError: null } }, { new: true }).select('+defaultCardId');
   if (!saved) throw fail('Payment profile recovery is required.', 'SAFEPAY_CUSTOMER_RECOVERY_PENDING', 503);
   return saved;
 }
@@ -73,11 +142,15 @@ const cardPresentation = card => ({ id: card.token, brand: card.cybersource?.sch
 
 async function listCards(userId) {
   const { config, link, client } = await ownedCustomer(userId);
-  if (!link) return { cards: [], defaultPaymentMethodId: null, provider: 'safepay', environment: config.environment };
+  if (!link) {
+    const user = await User.findById(userId).select('username savedShippingInfo sellerInfo').lean();
+    return { cards: [], defaultPaymentMethodId: null, provider: 'safepay', environment: config.environment,
+      billingProfileReady: false, billingContact: billingContactDraft(user || {}) };
+  }
   const all = await client.listCards(link.customerId);
   const cards = all.filter(card => card.max_usage === -1 && card.cybersource && /^\d{4}$/.test(card.cybersource.last_four || '')).map(cardPresentation);
   const selected = cards.some(card => card.id === link.defaultCardId && card.usable) ? link.defaultCardId : null;
-  return { cards, defaultPaymentMethodId: selected, provider: 'safepay', environment: config.environment };
+  return { cards, defaultPaymentMethodId: selected, provider: 'safepay', environment: config.environment, billingProfileReady: true };
 }
 async function requireOwnedReusableCard(userId, cardId) {
   const { link, client, config } = await ownedCustomer(userId);
@@ -124,4 +197,4 @@ async function deleteCard(userId, cardId) {
   await Customer.updateOne({ _id: link._id, deletingCardId: cardId }, { $set: { deletingCardId: null, deletionStartedAt: null } });
   return { success: true };
 }
-module.exports = { billingContact, ensureCustomer, ownedCustomer, listCards, requireOwnedReusableCard, startCardSetup, setDefaultCard, deleteCard, cardPresentation };
+module.exports = { billingContact, billingContactDraft, ensureCustomer, ownedCustomer, listCards, requireOwnedReusableCard, startCardSetup, setDefaultCard, deleteCard, cardPresentation };

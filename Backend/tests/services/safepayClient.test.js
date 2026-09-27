@@ -87,6 +87,26 @@ test('merchant-managed customer creation never creates or forwards a password', 
   expect(body.password).toBeUndefined();
 });
 
+test('customer rejection retains only recognized field names, not Safepay error text or contact data', async () => {
+  const fetchImpl = jest.fn(async () => ({ ok: false, status: 400, json: async () => ({ status: { errors: [
+    'last_name: cannot be blank.', 'email: private@example.com rejected',
+    { field: 'phone_number', message: '+923001234567 rejected' },
+    `merchant_secret: ${config.secretKey}`, { field: 'unknown_private_field', message: config.secretKey },
+  ] } }) }));
+  let failure;
+  try { await createSafepayClient({ config, fetchImpl }).createCustomer({ first_name: 'SingleName', last_name: '' }); }
+  catch (error) { failure = error; }
+  expect(failure).toMatchObject({ code: 'SAFEPAY_REQUEST_FAILED', providerStatus: 400, outcomeUnknown: false,
+    providerValidationFields: ['last_name', 'email', 'phone_number'] });
+  expect(`${failure.message}${JSON.stringify(failure)}`).not.toMatch(/private@example|923001234567|private-test-secret/);
+});
+
+test('customer 5xx is uncertain even if its body mentions a validation field', async () => {
+  const fetchImpl = jest.fn(async () => ({ ok: false, status: 500, json: async () => ({ status: { errors: ['last_name: cannot be blank.'] } }) }));
+  await expect(createSafepayClient({ config, fetchImpl }).createCustomer({ first_name: 'Test', last_name: 'Seller' }))
+    .rejects.toMatchObject({ outcomeUnknown: true, providerStatus: 500 });
+});
+
 test('zero-value instrument setup binds its merchant customer and cannot be mistaken for a paid order', async () => {
   const instrument = { ...tracker, mode: 'instrument', customer: 'cus_owned-fixture', purchase_totals: { quote_amount: { amount: 0, currency: 'PKR' } } };
   const fetchImpl = jest.fn(async () => ({ ok: true, json: async () => ({ data: { tracker: instrument } }) }));

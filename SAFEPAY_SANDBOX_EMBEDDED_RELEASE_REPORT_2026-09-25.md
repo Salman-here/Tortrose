@@ -51,8 +51,8 @@ Safepay's hosted Cancel button was observed returning to Rozare while leaving an
 
 | Check | Observed result |
 | --- | --- |
-| Full mobile tests, including clock-recovery and Payment Methods fixes | **102 suites, 1,166 tests passed** |
-| Full backend regression | **232 suites, 3,445 tests passed** |
+| Full mobile tests, including clock-recovery, Payment Methods and billing-contact fixes | **102 suites, 1,173 tests passed** |
+| Full backend regression, including billing-contact recovery | **234 suites, 3,472 tests passed** |
 | Notification authority/recovery regression | **77 targeted tests passed**, plus four worker tests after rolling-deployment recovery adjustment |
 | Android Hermes export | **Passed**, 2,304 modules |
 | Native build configuration | **Passed** |
@@ -209,3 +209,13 @@ Subscription email/WhatsApp delivery, additional payment currencies, late-paymen
 - Resume notices also reached the in-app/email/test WhatsApp delivery states and push-provider acceptance. A scoped database check found **zero new seller payment records** during this cycle. Only the cancellation notification was visually confirmed in Android; do not count provider acceptance alone as a second observed device receipt.
 - **Installed APK 17 smoke PASS:** Android package inspection confirmed version code **17** / version **1.0.13** after successful `install -r`. The app opened, the same seller remained signed in, and Payment Methods again showed the existing Visa ending 1111 without an exception. No account/app data was wiped.
 - **Native subdomain ownership PASS:** APK 17's Store Subdomain screen showed `safepay-qa-store.rozare.com`, LIVE, OWNED, **1,096 days** remaining, purchase **27 September 2026**, and expiry **27 September 2029**. These match the live ownership API and single three-year Safepay grant. This verifies ownership rendering, not a native purchase-button checkout. The separate revenue-currency display issue on this screen is listed under remaining checks above.
+
+### Fresh-account billing-contact rejection and retry-lock correction
+
+- The user reported “Safepay could not complete this request” followed by “Your payment profile is being prepared” while adding a first card on a different test seller account.
+- **Root cause reproduced against Safepay sandbox:** HTTP **400**, validation **`last_name: cannot be blank.`** The saved billing name contained one word. The old code accepted that name, sent an empty `last_name`, discarded the field-specific rejection, and retained its 90-second customer-creation lease after the definite failure. No card-setup payment existed for that failed account.
+- The backend now requires billing first and last names before acquiring a lease or sending a customer request. Explicitly cleared fields cannot silently fall back to old profile data. The separate payment-profile contact does not rewrite the account, store name or saved shipping details.
+- The first-card response supplies the signed-in account's own billing-contact draft. Mobile presents the fields before setup, prefills the existing phone/country, explains the first/last-name requirement, validates incomplete names locally, and preserves edits when refreshed. The form uses the existing keyboard-aware scroller.
+- Provider validation is mapped to whitelisted field names and fixed safe messages; raw upstream errors/contact details/secrets are not persisted or returned. Definite 4xx rejections release only the originating lease immediately. Timeouts, 5xx and uncertain/mismatched responses retain the bounded protective lease and return a retry duration; the app shows a countdown and retains the same setup attempt.
+- Added concurrency and safety regressions: simultaneous requests create once; stale failures cannot unlock another worker; delayed success cannot reopen a closed profile; missing consent cannot start provider work; existing profiles do not require contact entry again.
+- Targeted checks: **50 backend tests** and **74 mobile tests passed**. Complete reruns: **234 backend suites / 3,472 tests** and **102 mobile suites / 1,173 tests passed**, zero failures. Android export also passed, 2,304 modules. Deployment/native verification is pending at this checkpoint.

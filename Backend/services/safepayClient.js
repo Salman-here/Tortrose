@@ -3,6 +3,22 @@ const { readSafepayConfig } = require('../config/safepay');
 
 const CURRENCIES = new Set(['USD', 'PKR', 'EUR', 'GBP']);
 const providerError = (message, code, statusCode = 502, extra = {}) => Object.assign(new Error(message), { code, statusCode, ...extra });
+const CUSTOMER_FIELDS = new Set(['first_name', 'last_name', 'email', 'phone_number', 'country']);
+// Preserve useful validation metadata, never the upstream text: error bodies
+// can contain contact data, credentials or provider implementation details.
+const customerValidationFields = body => {
+  const errors = Array.isArray(body?.status?.errors) ? body.status.errors : [];
+  const fields = errors.map(error => {
+    if (typeof error === 'string') return error.match(/^\s*(first_name|last_name|email|phone_number|country)\s*:/i)?.[1]?.toLowerCase();
+    if (!error || typeof error !== 'object') return null;
+    const field = typeof error.field === 'string' ? error.field.toLowerCase() : '';
+    if (CUSTOMER_FIELDS.has(field)) return field;
+    return typeof error.message === 'string'
+      ? error.message.match(/^\s*(first_name|last_name|email|phone_number|country)\s*:/i)?.[1]?.toLowerCase()
+      : null;
+  }).filter(field => CUSTOMER_FIELDS.has(field));
+  return [...new Set(fields)];
+};
 const requireId = (value, prefix) => {
   if (typeof value !== 'string' || !new RegExp(`^${prefix}_[a-zA-Z0-9-]{8,100}$`).test(value)) throw providerError('Invalid Safepay reference.', 'SAFEPAY_REFERENCE_INVALID', 400);
   return value;
@@ -61,7 +77,9 @@ function createSafepayClient({ config = readSafepayConfig(), fetchImpl = fetch }
     try { body = await response.json(); } catch (_) { throw providerError('Safepay returned an unreadable response.', 'SAFEPAY_RESPONSE_INVALID', 502, { outcomeUnknown: method !== 'GET' }); }
     if (!response.ok || body?.status?.errors?.length || body?.ok === false) {
       throw providerError('Safepay could not complete this request.', 'SAFEPAY_REQUEST_FAILED', response.status >= 500 ? 503 : 502,
-        { providerStatus: response.status, outcomeUnknown: method !== 'GET' && (response.status >= 500 || response.status === 408) });
+        { providerStatus: response.status, outcomeUnknown: method !== 'GET' && (response.status >= 500 || response.status === 408),
+          ...(method === 'POST' && path === '/user/customers/v1/' && [400, 422].includes(response.status)
+            ? { providerValidationFields: customerValidationFields(body) } : {}) });
     }
     if (body?.data === undefined) throw providerError('Safepay response was incomplete.', 'SAFEPAY_RESPONSE_INVALID', 502, { outcomeUnknown: method !== 'GET' });
     return body.data;

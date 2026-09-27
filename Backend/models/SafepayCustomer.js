@@ -10,6 +10,16 @@ const schema = new mongoose.Schema({
   status: { type: String, enum: ['new', 'creating', 'ready', 'deleted'], default: 'new' },
   leaseToken: { type: String, default: '', select: false },
   leaseUntil: { type: Date, default: null },
+  lastSetupError: {
+    type: new mongoose.Schema({
+      code: { type: String, required: true, maxlength: 80 },
+      providerStatus: { type: Number, default: null, min: 100, max: 599 },
+      fields: [{ type: String, enum: ['first_name', 'last_name', 'email', 'phone_number', 'country'] }],
+      outcomeUnknown: { type: Boolean, required: true },
+      at: { type: Date, required: true },
+    }, { _id: false, strict: 'throw' }),
+    default: null,
+  },
   createdForCardConsentAt: { type: Date, default: null },
 }, { timestamps: true, optimisticConcurrency: true });
 schema.index({ environment: 1, user: 1 }, { unique: true });
