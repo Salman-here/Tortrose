@@ -102,6 +102,40 @@ describe('order fulfillment transition boundaries', () => {
     mockProductFind.mockReturnValue(sellerProductsQuery([{ _id: '64d000000000000000000001' }]));
   });
 
+  test('a seller can cancel their own purchase through the ordinary buyer cancellation safeguards', async () => {
+    const order = { ...orderFixture({ sellers: [otherSellerId] }), user: sellerId };
+    mockOrderFindById.mockResolvedValue(order);
+    mockCancelOrderSafely.mockResolvedValue({ status: 'cancelled', order: { ...order, orderStatus: 'cancelled' } });
+    const res = response();
+    await cancelOrder({ params: { id: order._id }, user: { role: 'seller', id: sellerId } }, res);
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(mockCancelOrderSafely).toHaveBeenCalledWith(expect.objectContaining({
+      orderId: order._id, cancellationActorRole: 'buyer',
+      confirmationFields: expect.objectContaining({ cancelledVia: 'dashboard' }),
+    }));
+    expect(order.save).not.toHaveBeenCalled();
+  });
+
+  test('selling an item does not authorize cancelling another buyer purchase from the buyer endpoint', async () => {
+    const order = { ...orderFixture(), user: otherSellerId };
+    mockOrderFindById.mockResolvedValue(order);
+    const res = response();
+    await cancelOrder({ params: { id: order._id }, user: { role: 'seller', id: sellerId }, query: { view: 'buyer' } }, res);
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(mockCancelOrderSafely).not.toHaveBeenCalled();
+  });
+
+  test('seller-account purchasers cannot bypass paid/shipped cancellation restrictions', async () => {
+    const order = { ...orderFixture({ isPaid: true, orderStatus: 'shipped', sellers: [otherSellerId] }), user: sellerId };
+    mockOrderFindById.mockResolvedValue(order);
+    mockCancelOrderSafely.mockRejectedValue(Object.assign(new Error('A refund is required.'), { statusCode: 409, code: 'ORDER_CANCEL_NOT_ALLOWED' }));
+    const res = response();
+    await cancelOrder({ params: { id: order._id }, user: { role: 'seller', id: sellerId } }, res);
+    expect(res.status).toHaveBeenCalledWith(409);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ code: 'ORDER_CANCEL_NOT_ALLOWED' }));
+    expect(order.save).not.toHaveBeenCalled();
+  });
+
   test('routes a single-seller seller cancellation through the shared atomic cancellation service', async () => {
     const order = orderFixture();
     const cancelledOrder = {

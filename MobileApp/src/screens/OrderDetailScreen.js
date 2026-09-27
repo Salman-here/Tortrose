@@ -166,7 +166,7 @@ export default function OrderDetailScreen({ route, navigation }) {
   const fetchOrderDetail = useCallback(async () => {
     try {
       setError(null);
-      const res = await api.get(`/api/order/detail/${orderId}`);
+      const res = await api.get(`/api/order/detail/${orderId}?view=buyer`);
       const nextOrder = res.data?.order;
       assertOrderDetailPresentation(nextOrder);
       setOrder(nextOrder);

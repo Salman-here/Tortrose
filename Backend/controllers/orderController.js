@@ -3177,20 +3177,35 @@ exports.updateStatus = async (req, res) => {
 exports.getOrderDetail = async (req, res) => {
     const { id } = req.params
     const { role, id: userId } = req.user
+    const requestedView = req.query?.view
+
+    if (requestedView !== undefined && !['buyer', 'seller'].includes(requestedView)) {
+        return res.status(400).json({ msg: 'Invalid order view', code: 'ORDER_VIEW_INVALID' })
+    }
+    if (requestedView === 'seller' && role !== 'seller') {
+        return res.status(403).json({ msg: 'Seller access required', code: 'ORDER_VIEW_FORBIDDEN' })
+    }
+    // Account role and the purpose of this request are different. A seller
+    // still owns purchases made before or after becoming a seller. Explicit
+    // buyer requests are scoped by purchaser id, never by a client role claim.
+    // Keep the legacy management view unchanged when no view is requested.
+    const buyerView = requestedView === 'buyer'
+    const sellerView = role === 'seller' && !buyerView
 
     try {
         const order = await Order.findOne({
             _id: id,
+            ...(buyerView ? { user: userId } : {}),
             // Do not expose buyer shipping PII from an unpaid Checkout to a
             // seller who learned or guessed its database id.
-            ...(role === 'seller' ? { awaitingPayment: { $ne: true } } : {}),
+            ...(sellerView ? { awaitingPayment: { $ne: true } } : {}),
         })
 
         if (!order) {
             return res.status(404).json({ msg: 'Order not found' })
         }
 
-        if (role === 'seller') {
+        if (sellerView) {
             const sellerProductIds = await getSellerProductIds(userId)
             if (!orderHasSellerProduct(order, sellerProductIds, userId)) {
                 return res.status(403).json({ msg: 'You can only view orders containing your products' })
@@ -3201,13 +3216,13 @@ exports.getOrderDetail = async (req, res) => {
             return res.status(200).json({ msg: 'Order fetched successfully.', order: presentedOrder })
         }
 
-        if (role !== 'admin' && toId(order.user) !== toId(userId)) {
+        if ((buyerView || role !== 'admin') && toId(order.user) !== toId(userId)) {
             return res.status(403).json({ msg: 'You can only view your own orders' })
         }
 
         const storeLogosBySeller = await loadStoreLogosBySeller(order)
         const buyerOrder = buildBuyerOrderView(order, { storeLogosBySeller })
-        const presentedOrder = role === 'admin'
+        const presentedOrder = role === 'admin' && !buyerView
             ? await withAuthoritativeOrderConfirmationDelivery(buyerOrder)
             : buyerOrder
         res.status(200).json({ msg: 'Order fetched successfully.', order: presentedOrder })
@@ -3260,14 +3275,11 @@ exports.cancelOrder = async (req, res) => {
     const { role, id: userId } = req.user
 
     try {
-        // Only admin and customers can cancel orders, not sellers
-        if (role === 'seller') {
-            return res.status(403).json({ msg: 'Sellers cannot cancel orders. Only customers and admins can cancel orders.' })
-        }
-
         const order = await Order.findById(_id);
         if (!order) return res.status(404).json({ msg: 'Order not found' })
 
+        // This is the purchaser's cancellation action, not seller fulfilment.
+        // Becoming a seller does not remove ownership of personal purchases.
         if (role !== 'admin' && toId(order.user) !== toId(userId)) {
             return res.status(403).json({ msg: 'You can only cancel your own orders' })
         }

@@ -127,6 +127,116 @@ beforeEach(async () => {
 });
 
 describe('Order access isolation', () => {
+  test.each(['USD', 'PKR', 'EUR'])('purchases before and after a seller upgrade retain the full frozen %s buyer view', async currency => {
+    const seller = await createUser(`upgrade-merchant-${currency}`, 'seller');
+    const otherSeller = await createUser(`upgrade-other-${currency}`, 'seller');
+    const buyer = await createUser(`upgrading-buyer-${currency}`, 'user');
+    const sellerProduct = await createProduct(seller, `upgrade-one-${currency}`, 100);
+    const otherProduct = await createProduct(otherSeller, `upgrade-two-${currency}`, 50);
+    const oldOrder = await createOrder({ buyer, sellerProduct, otherProduct });
+    oldOrder.currency = currency;
+    await oldOrder.save();
+    const originalToken = tokenFor(buyer);
+    const before = await request(app).get(`/api/order/detail/${oldOrder._id}?view=buyer`).set('Authorization', originalToken);
+    expect(before.status).toBe(200);
+
+    buyer.role = 'seller';
+    await buyer.save();
+    const newOrder = await createOrder({ buyer, sellerProduct, otherProduct });
+    newOrder.currency = currency;
+    await newOrder.save();
+    for (const order of [oldOrder, newOrder]) {
+      const rawBefore = await Order.collection.findOne({ _id: order._id });
+      const response = await request(app).get(`/api/order/detail/${order._id}?view=buyer`).set('Authorization', originalToken);
+      expect(response.status).toBe(200);
+      expect(response.body.order).toMatchObject({ currency, buyerPresentationVersion: 1, orderSummary: { totalAmount: 290 } });
+      expect(response.body.order.orderItems).toHaveLength(2);
+      expect(response.body.order.sellerGroups).toHaveLength(2);
+      expect(response.body.order.sellerGroups.map(group => group.summary.totalAmount)).toEqual([230, 60]);
+      expect(await Order.collection.findOne({ _id: order._id })).toEqual(rawBefore);
+    }
+    const listed = await request(app).get('/api/order/user-orders').set('Authorization', originalToken);
+    expect(listed.status).toBe(200);
+    expect(listed.body.orders).toHaveLength(2);
+    const invoice = await request(app).get(`/api/order/invoice/${oldOrder._id}`).set('Authorization', originalToken);
+    expect(invoice.status).toBe(200);
+    expect(invoice.body.html).toContain(currency);
+  });
+
+  test('a seller who buys their own and another store product has separate buyer and seller views', async () => {
+    const seller = await createUser('self-purchase', 'seller');
+    const otherSeller = await createUser('self-purchase-other', 'seller');
+    const sellerProduct = await createProduct(seller, 'self-owned', 100);
+    const otherProduct = await createProduct(otherSeller, 'self-other', 50);
+    const order = await createOrder({ buyer: seller, sellerProduct, otherProduct });
+    const buyerView = await request(app).get(`/api/order/detail/${order._id}?view=buyer`).set('Authorization', tokenFor(seller));
+    expect(buyerView.status).toBe(200);
+    expect(buyerView.body.order.orderItems).toHaveLength(2);
+    expect(buyerView.body.order.orderSummary.totalAmount).toBe(290);
+    for (const query of ['', '?view=seller']) {
+      const managed = await request(app).get(`/api/order/detail/${order._id}${query}`).set('Authorization', tokenFor(seller));
+      expect(managed.status).toBe(200);
+      expect(managed.body.order.orderItems).toHaveLength(1);
+      expect(managed.body.order.orderItems[0].productId).toBe(String(sellerProduct._id));
+      expect(managed.body.order.orderSummary.totalAmount).toBe(230);
+    }
+  });
+
+  test('buyer view cannot expose another customer order, even to a merchant selling one of its products', async () => {
+    const seller = await createUser('view-merchant', 'seller');
+    const otherSeller = await createUser('view-other', 'seller');
+    const buyer = await createUser('view-owner', 'user');
+    const stranger = await createUser('view-stranger', 'user');
+    const admin = await createUser('view-admin', 'admin');
+    const sellerProduct = await createProduct(seller, 'view-one', 100);
+    const otherProduct = await createProduct(otherSeller, 'view-two', 50);
+    const order = await createOrder({ buyer, sellerProduct, otherProduct });
+    for (const actor of [seller, otherSeller, stranger, admin]) {
+      const response = await request(app).get(`/api/order/detail/${order._id}?view=buyer`).set('Authorization', tokenFor(actor));
+      expect(response.status).toBe(404);
+      expect(response.body).toEqual({ msg: 'Order not found' });
+    }
+    const adminView = await request(app).get(`/api/order/detail/${order._id}`).set('Authorization', tokenFor(admin));
+    expect(adminView.status).toBe(200);
+    expect(adminView.body.order.orderItems).toHaveLength(2);
+  });
+
+  test('seller-account buyers can read their own unpaid checkout while merchant privacy remains enforced', async () => {
+    const seller = await createUser('unpaid-merchant', 'seller');
+    const otherSeller = await createUser('unpaid-other', 'seller');
+    const buyer = await createUser('unpaid-seller-buyer', 'seller');
+    const sellerProduct = await createProduct(seller, 'unpaid-one', 100);
+    const otherProduct = await createProduct(otherSeller, 'unpaid-two', 50);
+    const order = await createOrder({ buyer, sellerProduct, otherProduct });
+    order.awaitingPayment = true;
+    order.isPaid = false;
+    await order.save();
+    const own = await request(app).get(`/api/order/detail/${order._id}?view=buyer`).set('Authorization', tokenFor(buyer));
+    expect(own.status).toBe(200);
+    expect(own.body.order.orderItems).toHaveLength(2);
+    for (const query of ['', '?view=seller', '?view=buyer']) {
+      const foreign = await request(app).get(`/api/order/detail/${order._id}${query}`).set('Authorization', tokenFor(seller));
+      expect(foreign.status).toBe(404);
+      expect(foreign.body).not.toHaveProperty('order');
+    }
+  });
+
+  test.each(['admin', 'unknown', 'buyer&view=seller', 'buyer&view[]=seller'])('invalid view %s cannot change authorization', async query => {
+    const buyer = await createUser(`bad-view-${Math.random()}`, 'user');
+    const response = await request(app).get(`/api/order/detail/${new mongoose.Types.ObjectId()}?view=${query}`)
+      .set('Authorization', tokenFor(buyer));
+    expect(response.status).toBe(400);
+    expect(response.body.code).toBe('ORDER_VIEW_INVALID');
+  });
+
+  test('a buyer cannot acquire seller management access through the view selector', async () => {
+    const buyer = await createUser('seller-view-forbidden', 'user');
+    const response = await request(app).get(`/api/order/detail/${new mongoose.Types.ObjectId()}?view=seller`)
+      .set('Authorization', tokenFor(buyer));
+    expect(response.status).toBe(403);
+    expect(response.body.code).toBe('ORDER_VIEW_FORBIDDEN');
+  });
+
   test('seller views contain only their coupon and settlement metadata while the buyer retains both sellers', async () => {
     const seller=await createUser('coupon-scope-one','seller');
     const otherSeller=await createUser('coupon-scope-two','seller');

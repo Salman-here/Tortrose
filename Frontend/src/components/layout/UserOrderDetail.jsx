@@ -69,7 +69,7 @@ const OrderDetail = () => {
     const fetchOrderDetail = useCallback(async () => {
         const token = getAuthToken();
         try {
-            const res = await axios.get(`${import.meta.env.VITE_API_URL}api/order/detail/${id}`, { headers: { Authorization: `Bearer ${token}` } });
+            const res = await axios.get(`${import.meta.env.VITE_API_URL}api/order/detail/${id}?view=buyer`, { headers: { Authorization: `Bearer ${token}` } });
             setOrder(res.data.order);
         } catch (error) { toast.error(error.response?.data?.msg || "Server error while fetching order detail"); }
     }, [id]);
