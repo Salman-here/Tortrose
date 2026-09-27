@@ -159,13 +159,16 @@ function startNotificationOutboxWorker({
     intervalMs: recoveryIntervalMs,
     batchSize: recoveryBatchSize,
   });
-  let safepayRecoveryAttempted = false;
+  let nextSafepayRecoveryAt = 0;
 
   const tick = () => {
     if (activeTick) return activeTick;
     activeTick = (async () => {
-      if (!safepayRecoveryAttempted) {
-        safepayRecoveryAttempted = true;
+      // Rolling deployments briefly overlap old and new workers. Retry this
+      // narrowly scoped repair periodically in case an old worker reclaimed
+      // and rejected a requeued receipt before its shutdown completed.
+      if (Date.now() >= nextSafepayRecoveryAt) {
+        nextSafepayRecoveryAt = Date.now() + 60_000;
         try {
           const result = await require('./safepayNotificationRecoveryService').recoverSkippedSafepayNotifications();
           if (result.recovered) console.log(`[notification-outbox] recovered ${result.recovered} verified Safepay receipt(s)`);
