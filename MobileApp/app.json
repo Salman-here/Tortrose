@@ -2,7 +2,7 @@
   "expo": {
     "name": "Rozare",
     "slug": "rozare",
-    "version": "1.0.12",
+    "version": "1.0.13",
     "runtimeVersion": {
       "policy": "appVersion"
     },
@@ -28,7 +28,7 @@
         "backgroundColor": "#0EA5E9"
       },
       "package": "com.rozare.app",
-      "versionCode": 14,
+      "versionCode": 15,
       "googleServicesFile": "./google-services.json",
       "permissions": [
         "RECORD_AUDIO",
@@ -62,7 +62,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.rozare.app",
-      "buildNumber": "14",
+      "buildNumber": "15",
       "associatedDomains": [
         "applinks:rozare.com"
       ],
