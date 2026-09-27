@@ -780,6 +780,40 @@ describe('checkout production contracts', () => {
     })).rejects.toThrow('could not be confirmed');
   });
 
+  it('keeps the same unresolved wallet key when a corrected device clock moves backwards', async () => {
+    const values = new Map();
+    const storage = {
+      getAllKeys: jest.fn(async () => [...values.keys()]),
+      getItem: jest.fn(async key => values.get(key) || null),
+      setItem: jest.fn(async (key, value) => { values.set(key, value); }),
+      removeItem: jest.fn(async key => { values.delete(key); }),
+    };
+    const options = { storage, storageKey: 'wallet-clock:buyer-1', fingerprint: 'safepay:buyer-1:USD:1.00', keyPrefix: 'mobile-wallet-safepay' };
+    const correctNow = 1_800_000_000_000;
+    const first = await getOrCreatePersistedMutationAttemptForFingerprint({ ...options, now: correctNow + 3 * 60 * 60 * 1000 });
+    const afterClockCorrection = await getOrCreatePersistedMutationAttemptForFingerprint({ ...options, now: correctNow });
+    expect(afterClockCorrection).toEqual(first);
+    await clearPersistedMutationAttemptForFingerprint(storage, options.storageKey, options.fingerprint, first.key, correctNow + 1);
+    const nextIntent = await getOrCreatePersistedMutationAttemptForFingerprint({ ...options, now: correctNow + 2 });
+    expect(nextIntent.key).not.toBe(first.key);
+    expect(nextIntent.key.endsWith(':1')).toBe(true);
+  });
+
+  it('preserves a legacy retry key during migration after a backwards clock correction', async () => {
+    const now = 1_800_000_000_000;
+    const saved = { key: 'legacy-wallet-key', fingerprint: 'USD:1.00', createdAt: now + 10_800_000 };
+    const values = new Map([['legacy-wallet', JSON.stringify(saved)]]);
+    const storage = {
+      getItem: jest.fn(async key => values.get(key) || null),
+      setItem: jest.fn(async (key, value) => { values.set(key, value); }),
+      removeItem: jest.fn(async key => { values.delete(key); }),
+    };
+    expect(await getOrCreatePersistedMutationAttempt({ storage, storageKey: 'legacy-wallet', fingerprint: saved.fingerprint,
+      keyPrefix: 'wallet', randomUUID: () => 'must-not-use', now })).toEqual(saved);
+    expect(await getOrCreatePersistedMutationAttemptForFingerprint({ storage, storageKey: 'legacy-wallet',
+      fingerprint: saved.fingerprint, keyPrefix: 'wallet', now })).toEqual(saved);
+  });
+
   it('uses independent collision-free chat records and rotates only a terminal intent', async () => {
     const values = new Map();
     const storage = {

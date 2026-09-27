@@ -197,8 +197,8 @@ describe('native branding assets', () => {
     );
 
     expect(appConfig.version).toBe('1.0.13');
-    expect(appConfig.android.versionCode).toBe(15);
-    expect(appConfig.ios.buildNumber).toBe('15');
+    expect(appConfig.android.versionCode).toBe(16);
+    expect(appConfig.ios.buildNumber).toBe('16');
     expect(appConfig.android.blockedPermissions).toEqual(
       expect.arrayContaining([
         'android.permission.CAMERA',

@@ -76,8 +76,12 @@ export const isFreshMutationAttempt = (attempt, now = Date.now()) => (
   typeof attempt?.key === 'string'
   && attempt.key.length > 0
   && typeof attempt?.fingerprint === 'string'
+  && Number.isSafeInteger(attempt?.createdAt)
+  && attempt.createdAt > 0
   && Number(attempt?.createdAt) > now - MUTATION_ATTEMPT_MAX_AGE_MS
-  && Number(attempt?.createdAt) <= now
+  // A corrected device clock can move backwards. A future timestamp is not
+  // evidence that the payment failed: keep its exact key until the caller
+  // records a terminal outcome, instead of creating another payable attempt.
 );
 
 const parseStoredValue = (raw) => {

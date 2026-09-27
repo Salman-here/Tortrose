@@ -4,6 +4,8 @@
 
 Implementation and live verification are still in progress. Do not interpret a successful APK build or unit-test run as proof that every live flow is complete.
 
+**Build checkpoint:** Android 1.0.13 (15), build `e71545ef-5137-4ccc-886c-c59ff0c140bc`, finished successfully on 27 September. A later live test found a clock-correction retry-key issue; build **16** is being prepared with that correction. Build 15 is superseded as the final download recommendation. Payment verification is still being completed; this is not a production-payment release.
+
 The website checkout remains Stripe. All new mobile card purchases are routed to Safepay sandbox; real Safepay production payments are not enabled.
 
 ## Confirmed build
@@ -116,3 +118,33 @@ Subscription email/WhatsApp delivery, additional payment currencies, late-paymen
 - **Completion BLOCKED / NOT PASS:** both native USD and browser PKR forms remained processing after submission. Safepay's authentication-setup API returned HTTP 200, with next action `PAYER_AUTH_ENROLLMENT`. Its external Cardinal device-collection request to `cas.client.cardinaltrusted.com/centinelapi/V1/Cruise/Collect` did not report completion in the browser network trace. The generated authentication token was still within its validity period. A read-only HTTPS connectivity check reached that host, but that does not prove the actual POST/authentication flow works.
 - Independent Rozare status checks continued to report `TRACKER_STARTED`, pending/unpaid for both exact payment IDs. There was **no USD wallet credit, no stock reduction, and no fake paid state**. No duplicate payment was created to work around the pause. No 3DS step was bypassed or mocked. The provider/network cause is not conclusively identified, so native success/3DS completion, paid product fulfillment and late-paid refund coverage remain unverified live.
 - An updated sandbox APK **1.0.13 (15)** is being prepared with the checked-in fixes. Build configuration and 18 release-configuration tests passed. This is a test build, not a claim of payment-completion readiness.
+
+### Additional final checks
+
+- **Cross-account isolation PASS:** the fresh seller requested the buyer's USD payment-status URL while authenticated as the seller; the backend returned HTTP 404, without payment details.
+- **Live subscription cancel/resume PASS (API, not mobile UI):** cancellation set automatic renewal false, resumption restored it, and both retained Starter/free-period status and the exact original funded period end. No payment was collected or trial extended by those actions.
+- **Unpaid-state conservation PASS:** the buyer still has USD 0.00 and PKR 2,000.00, with one completed wallet transaction. The new unpaid product order has no stock reduction. This does not substitute for a completed native charge/fulfillment test.
+- The laptop exhibited an intermittent DNS failure for Railway's control-plane domain during diagnostics. The Cardinal host was reachable by an independent browser GET, so the reason its actual authentication POST did not finish cannot be attributed confidently to DNS alone. The emulator clock was also observed about three hours ahead of host UTC; browser UTC matched the host and its checkout still stalled. Neither observation establishes a complete root cause.
+- Restarting the virtual phone corrected its clock to within two seconds of host UTC without clearing app data. This fixes that testing-environment issue; it does not establish payment completion.
+- New APK build `e71545ef-5137-4ccc-886c-c59ff0c140bc` is running from commit `f8c217dc`, version **1.0.13**, version code **15**, runtime **1.0.13**. [Build status](https://expo.dev/accounts/rozare/projects/rozare/builds/e71545ef-5137-4ccc-886c-c59ff0c140bc). The preceding APK 14 remains preserved.
+- The new build subsequently **finished** and was downloaded as `test-assets/rozare-safepay-1.0.13-15.apk` (112,795,243 bytes). SHA-256: `d7c37e384e7616e60bc2bef4744db5404d546fbd6f80f8834b60b18a89a694ed`.
+
+### Successful product-payment retry (supersedes the PKR blocker above)
+
+- Reopened **the same** PKR payment through the authenticated reopen endpoint, which issued a fresh checkout link without a second payment record. Submitted the provider's browser form again. Safepay then showed "Paid successfully"; the backend independently returned `paid`, `TRACKER_ENDED`, PKR 120,000 minor units. This establishes success on retry, not the exact cause of the first provider pause.
+- Buyer and seller authenticated order-detail APIs both showed **PKR 1,000.00 subtotal + PKR 200.00 shipping = PKR 1,200.00**, with zero tax, discount and reconciliation adjustment. The seller's persisted native summary matched exactly. Product stock went **12 → 11** and `totalSales` became **1**.
+- The test seller progressed this test order through processing, shipped and delivered using the normal seller-authorized API. No real shipment was made. After delivery, the seller payment summary showed **PKR 1,200.00 Safepay delivered revenue and PKR 1,200.00 available balance** in the PKR bucket. Its USD bucket remained zero. PKR analytics showed one paid/delivered order, one unit sold, revenue and average order value PKR 1,200.00.
+- The paid-order notification outbox recorded delivered **buyer in-app, push-provider acceptance, email and test WhatsApp**, plus **seller in-app, email and test WhatsApp**. Seller push remained skipped for no registered installation. Push-provider acceptance is not a claim of physical-device receipt.
+- The original USD 1 native top-up remains a separate pending attempt and is being retried on the corrected emulator clock. No successful native charge is claimed yet.
+
+### Full card refund and real notification display
+
+- Submitted **one full sandbox refund** of the paid PKR 1,200.00 order through the existing verified Safepay client. The provider returned `TRACKER_REFUNDED`; the normal backend reconciliation independently reported `refundedMinor: 120000`, currency PKR.
+- Seller accounting preserved the historical PKR 1,200.00 delivered sale and recorded exactly **PKR 1,200.00 payment-reversal debit**. Available/withdrawable PKR balance became **zero**, with zero deficit and no unresolved payment-risk hold. The original order money was not rewritten into another currency.
+- Both the buyer and seller test WhatsApp inboxes received their own PKR 1,200.00 refund message. The actual Android emulator displayed a **"Card refund completed" push banner** from Rozare, with the PKR 1,200.00 amount. This confirms emulator receipt, not physical-device delivery.
+
+### Native USD success and discovered clock-correction edge case
+
+- **Native form → payment → wallet display PASS on retry:** Safepay completed a USD 1.00 payment within Rozare; the sheet closed automatically and Wallet showed **"Balance added" / USD 1.00**, with PKR 2,000.00 unchanged. The completed transaction is `6ab86a7d92df1ae933c1df35`, payment `6ab867c892df1ae933c1cd45`, tracker `track_9051e6a5-d77d-4391-8a39-1dd6af511866`.
+- **Important correction to the expected replay:** database inspection showed that this was a second local attempt, not the original pending USD attempt. Only one USD transaction was charged/credited; original `6ab85be8f1585bb38340cf17` remains unpaid. The emulator clock had moved backwards by three hours; the shared retry helper rejected an existing key with a future `createdAt` and generated the next key. This is a real edge-case bug, not a successful idempotent replay.
+- Corrected the retry helper to retain a structurally valid unresolved key after a backwards clock correction, while keeping terminal markers and the existing age window. Added tests for the exact three-hour rollback, legacy-key migration, and rotation only after an explicit terminal marker. **62 targeted tests passed.** A replacement build 16 will include the correction; no retroactive claim is made that the original live retry used it.
