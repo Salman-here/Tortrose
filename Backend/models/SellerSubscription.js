@@ -190,6 +190,13 @@ const sellerSubscriptionSchema = new mongoose.Schema({
         consentedAt: { type: Date, default: null },
         lastFailureCode: { type: String, default: '' },
         endedAt: { type: Date, default: null },
+        notification: {
+            kind: { type: String, default: null },
+            occurredAt: { type: Date, default: null },
+            contractId: { type: String, default: null },
+            version: { type: Number, default: null, validate: value => value === null || Number.isSafeInteger(value) },
+            monthlyMinor: nullableMinorUnitField({ positive: true }),
+        },
     },
     stripeCustomerId: { type: String },
     stripeSubscriptionId: { type: String },

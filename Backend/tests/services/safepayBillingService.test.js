@@ -1,5 +1,7 @@
 'use strict';
 const mockCard = jest.fn();
+const mockNotifySeller = jest.fn();
+jest.mock('../../services/whatsapp/sellerNotificationService', () => ({ notifySeller: (...args) => mockNotifySeller(...args) }));
 jest.mock('../../services/safepayCustomerService', () => ({ requireOwnedReusableCard: mockCard }));
 const mongoose = require('mongoose');
 const { MongoMemoryReplSet } = require('mongodb-memory-server');
@@ -16,6 +18,9 @@ const billing = require('../../services/safepayBillingService');
 const lifecycle = require('../../services/safepayBillingLifecycleService');
 const payments = require('../../services/safepayPaymentService');
 const recovery = require('../../services/safepayBillingRecoveryService');
+const { verifySafepayNotificationAuthority } = require('../../services/safepayNotificationAuthority');
+const { deliverNotificationRecord } = require('../../services/notificationOutboxDeliveryService');
+const { recoverSkippedSafepayNotifications } = require('../../services/safepayNotificationRecoveryService');
 let replica, seller, sub, customer, submit;
 beforeAll(async () => {
   Object.assign(process.env, { SAFEPAY_ENV: 'sandbox', SAFEPAY_SANDBOX_PUBLIC_KEY: 'sec_test-billing',
@@ -28,7 +33,7 @@ beforeAll(async () => {
 afterAll(async () => { submit.mockRestore(); await mongoose.disconnect(); await replica?.stop(); });
 beforeEach(async () => {
   for (const model of [User, Store, Subscription, Operation, Payment, Customer, Promotion, Claim, Outbox]) await model.deleteMany({});
-  submit.mockClear(); mockCard.mockReset();
+  submit.mockClear(); mockCard.mockReset(); mockNotifySeller.mockReset();
   seller = await User.create({ username: 'Safepay Seller Fixture', email: 'safepay-billing@example.com', role: 'seller', status: 'active' });
   await Store.create({ seller: seller._id, storeName: 'Safepay Billing Fixture', storeSlug: 'safepay-billing-fixture',
     logo: 'https://example.com/logo.png', productCurrency: 'PKR', productCurrencyStatus: 'active', isActive: true, moderationStatus: 'approved' });
@@ -71,6 +76,62 @@ test('FIRST100 uses the shared capacity and records a Safepay claim without fake
   expect(promotion.claims[0].provider).toBe('safepay'); expect(promotion.claims[0].checkoutSessionId).toBeNull();
   expect(String(promotion.claims[0].safepayOperationId)).toBe(q.quoteId);
   expect((await Subscription.findById(sub._id)).founderOffer.active).toBe(true);
+});
+
+test('a real Safepay trial receipt passes delivery authority and cannot leak to another seller', async () => {
+  const q = await quote();
+  await accept(q.quoteId);
+  const receipt = await Outbox.findOne({ aggregateType: 'SafepayBillingOperation', channel: 'inapp' }).lean();
+  expect(await verifySafepayNotificationAuthority(receipt)).toBeNull();
+  expect(await deliverNotificationRecord(receipt)).toMatchObject({ outcome: 'delivered' });
+  const wrongSeller = { ...receipt, recipient: { ...receipt.recipient, user: new mongoose.Types.ObjectId() } };
+  expect(await deliverNotificationRecord(wrongSeller)).toMatchObject({ outcome: 'skipped' });
+  const wrongMoney = { ...receipt, money: [{ ...receipt.money[0], amountMinor: 999 }] };
+  expect(await deliverNotificationRecord(wrongMoney)).toMatchObject({ outcome: 'skipped' });
+  const wrongEvent = { ...receipt, eventType: 'order.paid' };
+  expect(await deliverNotificationRecord(wrongEvent)).toMatchObject({ outcome: 'skipped' });
+});
+
+test('Safepay lifecycle notices pass real delivery, and a resume supersedes queued cancellation', async () => {
+  await accept((await quote()).quoteId);
+  await lifecycle.cancel(seller._id);
+  const cancelled = await Outbox.findOne({ eventType: 'subscription.cancelled', channel: 'inapp' }).lean();
+  expect(await verifySafepayNotificationAuthority(cancelled)).toBeNull();
+  expect(await deliverNotificationRecord(cancelled)).toMatchObject({ outcome: 'delivered' });
+  await lifecycle.resume(seller._id);
+  expect(await verifySafepayNotificationAuthority(cancelled)).toMatchObject({ outcome: 'skipped' });
+  const resumed = await Outbox.findOne({ aggregateType: 'SellerSubscription', eventType: 'subscription.payment_received', channel: 'inapp' }).lean();
+  expect(await deliverNotificationRecord(resumed)).toMatchObject({ outcome: 'delivered' });
+  const wrongVersion = { ...resumed, payload: { ...resumed.payload,
+    data: { ...resumed.payload.data, billingVersion: resumed.payload.data.billingVersion - 1 } } };
+  expect(await deliverNotificationRecord(wrongVersion)).toMatchObject({ outcome: 'skipped' });
+});
+
+test('recovery requeues only proven receipts rejected by the old provider validator, once', async () => {
+  await accept((await quote()).quoteId);
+  const rows = await Outbox.find().lean();
+  const oldRejection = { status: 'skipped', lastErrorCode: 'NOTIFICATION_NO_LONGER_ACTIONABLE',
+    lastError: 'The entitlement payment receipt has an invalid durable payment owner.' };
+  await Outbox.updateOne({ _id: rows[0]._id }, { $set: oldRejection });
+  await Outbox.updateOne({ _id: rows[1]._id }, { $set: { ...oldRejection, status: 'delivered', deliveredAt: new Date() } });
+  await Outbox.updateOne({ _id: rows[2]._id }, { $set: { ...oldRejection, lastError: 'The recipient no longer owns this notice.' } });
+  expect(await recoverSkippedSafepayNotifications()).toEqual({ inspected: 1, recovered: 1 });
+  expect((await Outbox.findById(rows[0]._id)).status).toBe('pending');
+  expect((await Outbox.findById(rows[1]._id)).status).toBe('delivered');
+  expect((await Outbox.findById(rows[2]._id)).status).toBe('skipped');
+  expect(await recoverSkippedSafepayNotifications()).toEqual({ inspected: 0, recovered: 0 });
+});
+
+test('Safepay seller WhatsApp receipts use supported categories including early immutable envelopes', async () => {
+  await accept((await quote()).quoteId);
+  mockNotifySeller.mockResolvedValue({ sent: true, messageId: 'sandbox-message' });
+  const receipt = await Outbox.findOne({ aggregateType: 'SafepayBillingOperation', channel: 'whatsapp' }).lean();
+  expect(receipt.payload.whatsappCategory).toBe('subscription_activated');
+  expect(await deliverNotificationRecord(receipt)).toMatchObject({ outcome: 'delivered' });
+  expect(mockNotifySeller).toHaveBeenLastCalledWith(seller._id, 'subscription_activated', receipt.payload.message);
+  expect(await deliverNotificationRecord({ ...receipt, payload: { ...receipt.payload, whatsappCategory: 'subscriptionAlerts' } }))
+    .toMatchObject({ outcome: 'delivered' });
+  expect(mockNotifySeller).toHaveBeenLastCalledWith(seller._id, 'subscription_activated', receipt.payload.message);
 });
 test('rejoining cannot receive a second introductory period and stays unfunded until exact payment settles', async () => {
   sub.hasUsedFreePeriod = true; await sub.save();

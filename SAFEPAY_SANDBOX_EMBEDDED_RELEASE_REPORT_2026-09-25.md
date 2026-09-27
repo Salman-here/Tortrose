@@ -54,7 +54,7 @@ The earlier account-free capability probe completed two sandbox recurring paymen
 
 ## Remaining release checks and limitations
 
-- Deploy the current backend with sandbox credentials, then verify actual mobile flows before declaring readiness.
+- Current backend is deployed with sandbox credentials. Complete actual mobile payment flows before declaring readiness.
 - Complete provider-refund, reversal, dispute and recovery coverage. Some Wallet/return-funding/provider-risk cases deliberately hold money for review; they are not silently cleared or represented as automatically reconciled.
 - Unpaid subdomain/return settlement locks remain resumable but require further abandonment/expiry coverage.
 - Compatible dependency patches removed the high-severity npm findings. Four moderate audit entries remain in the existing navigation dependency chain (`decode-uri-component`); npm proposes a breaking navigation upgrade. No unrelated major upgrade was applied.
@@ -70,3 +70,32 @@ The earlier account-free capability probe completed two sandbox recurring paymen
 - Checkout retry errors could also escape the Express handler because its async recovery helper was returned without `await`. Both ordinary replay and duplicate-key recovery now return controlled errors.
 - Regression tests exercise an actual Mongoose payment document and the async controller failure path. **52 focused tests passed** for that fix; **45 service tests passed** before the controller extension.
 - Android UI verification still requires the emulator to be reopened and the fresh test buyer signed in after the PC/session interruption. The installed signed APK is preserved; this is not a claim that its full payment UI has passed yet.
+
+## Further verified results — 26 September
+
+- Commit `cc8c0677` was pushed to both repositories and deployed successfully. Live health reported `cc8c06777a79ed882806fd2bee6d07b4c24c1433`.
+- Final complete backend rerun: **232 suites, 3,441 tests passed, zero failures** (`test-assets/safepay-final-backend-20260926.json`).
+- **Wallet top-up PASS (live API + provider browser, not an embedded Android payment):** the fresh buyer completed a **PKR 2,000.00** sandbox card checkout. Payment `6ab7696cf1585bb3833ae3c8`, provider tracker `track_969e462f-a5e7-4137-a190-d8c99b03994d`, reached `paid` / `TRACKER_ENDED`; the status API reported `webhookProcessed: true`. Wallet transaction `6ab76b53f1585bb3833aefe2` credited exactly PKR 2,000.00. A later status poll and wallet reload returned the same transaction, one credit only, PKR 2,000.00 and USD/EUR/GBP zero.
+- **Fresh seller onboarding PASS:** `rozare-safepay-seller-20260925@mailinator.com` verified email and WhatsApp through the normal browser flow. Reserved test WhatsApp number `+12025550120` received its OTP in the admin test inbox. Store `6ab76b67f1585bb3833af082` / `safepay-qa-store` is PKR with Pakistan visibility. No admin account was used to buy or sell.
+- **Catalog/shipping setup PASS:** created the test-only Safepay QA Travel Mug, product `6ab76c69f1585bb3833af7d9`, with a previously generated image, PKR 1,000.00 price and 12 stock. The backend returned approved moderation and the correct native currency. Free delivery and standard delivery at PKR 200.00 / 5 days were saved and independently read back. No order against this product has yet been verified in this phase.
+- **Reusable card setup PASS (live API + provider browser):** payment `6ab76c3df1585bb3833af686` authorized card storage without a charge. The explicit provider save-card checkbox was selected. The owned card API returned a usable Visa ending 1111, expiry December 2030. No separate Safepay signup was requested.
+- **Starter enrollment PASS (live API):** operation `6ab76cd8f1585bb3833afacb` applied exactly once with zero due now, 30 free days, USD 9.99 monthly afterward and Safepay automatic renewal. The subscription status independently showed a free period ending `2026-10-26T06:58:14.833Z`. Attempting to delete its active billing card returned HTTP 409 `CARD_IN_USE`; no card was removed. This does not yet verify a paid renewal or the mobile subscription UI.
+- **Android balance display PASS:** after the user signed in on the reopened emulator, the actual Wallet screen displayed PKR 2,000.00 and USD 0.00 separately, matching the API.
+
+### Android input/startup interruption — not yet resolved end to end
+
+The wallet amount field did not accept automated or user laptop-keyboard input, and no on-screen keyboard appeared. No payment was submitted from that field. The emulator later stopped. No host emulator crash report was found; the exact reason it stopped is unconfirmed. The app amount field is a normal editable `TextInput`, without an explicit disabled or hidden-keyboard prop.
+
+The AVD had `hw.keyboard=no`. It was changed locally to `yes` to enable hardware-keyboard support; this is an emulator configuration change, not an app/backend change. A restart and input verification are still required. Android Studio's restart also encountered a stale startup socket/owner lock referencing nonexistent PID 21204. The obsolete `.pid` file was preserved as `.pid.stale-20260926-165708`; moving the stale `.port` socket failed, and automated removal was blocked. No emulator data, APK or saved accounts were wiped. Native checkout testing remains pending until the emulator can be reopened and input works.
+
+Subscription email/WhatsApp delivery, additional payment currencies, late-payment/refund flows and actual embedded completion still need live verification. API/test passes above must not be presented as proof that these remaining UI flows passed.
+
+## Recovery and notification fixes — 27 September
+
+- Android Studio startup was recovered by stopping only the verified hung Studio startup processes and using a fresh IDE cache directory. Its setup wizard detected the existing SDK and reported "Nothing to do! Android SDK is up to date." No SDK download, emulator wipe or app reinstall was needed. Previous Studio settings were backed up by Studio under `AndroidStudio2026.1.3-backup/2026-09-26-17-14`.
+- The preserved RozareQA emulator reopened with APK 1.0.12 (14) and the buyer still signed in. Hardware-keyboard support was enabled. The floating Android keyboard menu's "Show on-screen keyboard" option restored the normal numeric keypad; the actual wallet field retained the entered `1`.
+- **Native payment check found an issue, not PASS:** opening a USD 1 top-up showed the in-app secure-payment sheet, then "Payment screen interrupted" before card entry. Closing it safely checked backend status, retained the unpaid attempt, and left USD balance zero and PKR balance 2,000. No native payment was submitted.
+- Mobile recovery handling now blocks unsupported links without tearing down a still-valid card form. Native loading failures retain an error category/numeric code without logging or displaying provider auth URLs. **19 targeted mobile tests passed.** Live retry remains necessary.
+- Live subscription verification found a genuine missing-notification bug: Safepay billing/subdomain/refund notices shared event names with Stripe, but the delivery authority validator accepted only Stripe aggregates. Dedicated Safepay validation now checks the original owner, exact immutable amount, source record, timestamp, environment/binding and current lifecycle state. Existing Stripe validation is preserved.
+- Seller lifecycle notifications now retain the exact transition/version and are suppressed after a conflicting change such as cancel then resume. Safepay messages use recognized WhatsApp sender categories, not preference-key names; the proven early immutable subscription envelopes are mapped safely during delivery. Buyer refund messages now contain the authoritative related order required by WhatsApp delivery.
+- A bounded startup recovery requeues only verified receipts that the old provider-specific validator rejected; delivered and unrelated skipped notifications stay untouched. **77 targeted backend tests passed** covering real settlement/outbox records, delivery, stale-state suppression, altered recipient/money rejection and single requeue. Broader backend rerun is in progress. Deployment and notification delivery will be verified separately.

@@ -21,6 +21,11 @@ let running = false;
 
 async function notify(sub, kind, at, title, message, session) {
   const value = minor(sub.safepayBilling.monthlyMinor);
+  // Lifecycle notices describe current state. Freeze their authority with the
+  // transition, so a queued cancellation cannot be delivered after a resume.
+  sub.safepayBilling.notification = { kind, occurredAt: date(at),
+    contractId: sub.safepayBilling.contractId, version: sub.safepayBilling.version, monthlyMinor: value };
+  await sub.save({ session });
   return enqueueNotificationEvent({ eventKey: `safepay-sub:${sub._id}:${sub.safepayBilling.contractId}:${kind}:${date(at).getTime()}`,
     eventType: kind === 'ended' || kind === 'cancel_scheduled' ? 'subscription.cancelled' : 'subscription.payment_received',
     aggregateType: 'SellerSubscription', aggregateId: sub._id, occurredAt: at, financial: true,
@@ -28,9 +33,11 @@ async function notify(sub, kind, at, title, message, session) {
     channels: ['inapp', 'push', 'email', 'whatsapp'],
     templates: { inapp: { title, body: message }, push: { title, body: message }, email: { subject: title, text: message }, whatsapp: { message: `${title}\n\n${message}` } },
     money: [snapshotMinorMoney({ key: 'monthly', label: 'Monthly subscription rate', amountMinor: value, currency: 'USD',
-      sourceModel: 'SellerSubscription', sourceDocumentId: sub._id, sourcePath: 'safepayBilling.monthlyMinor' })],
-    metadata: { category: 'subscription', channelId: 'seller', whatsappCategory: 'subscriptionAlerts',
-      linkTo: '/seller-dashboard/subscription', data: { type: 'subscription_updated', subscriptionId: id(sub) } }, session });
+      sourceModel: 'SellerSubscription', sourceDocumentId: sub._id, sourcePath: 'safepayBilling.notification.monthlyMinor' })],
+    metadata: { category: 'subscription', channelId: 'seller', whatsappCategory: kind === 'downgrade_scheduled' ? 'downgrade_scheduled'
+      : ['ended', 'cancel_scheduled'].includes(kind) ? 'subscription_ending' : 'subscription_activated',
+      linkTo: '/seller-dashboard/subscription', data: { type: 'subscription_updated', subscriptionId: id(sub),
+        contractId: sub.safepayBilling.contractId, billingVersion: sub.safepayBilling.version, lifecycleKind: kind } }, session });
 }
 
 async function scopedSubscription(sellerId, session) {

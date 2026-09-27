@@ -15,6 +15,15 @@ export default function SafepayCheckoutProvider({ children }) {
   const [checkout, setCheckout] = useState(null);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
+  const [failureCode, setFailureCode] = useState('');
+  const [blockedLink, setBlockedLink] = useState(false);
+  const interrupt = useCallback(code => {
+    // Provider links contain authentication tokens. Log only a fixed category
+    // and numeric native error code, never a URL or provider error description.
+    const safeCode = /^[a-z_-]+(?::-?\d+)?$/.test(code) ? code : 'load_error';
+    console.warn(`[SafepaySheet] ${safeCode}`);
+    setFailureCode(safeCode); setLoading(false); setFailed(true);
+  }, []);
   const finish = useCallback((type = 'dismiss') => {
     const request = active.current;
     active.current = null; setCheckout(null); request?.resolve({ type });
@@ -29,7 +38,7 @@ export default function SafepayCheckoutProvider({ children }) {
       let resolve;
       const promise = new Promise(done => { resolve = done; });
       active.current = { paymentId: payment.paymentId, owner, resolve, promise };
-      setFailed(false); setLoading(true); setCheckout(payment);
+      setFailed(false); setFailureCode(''); setBlockedLink(false); setLoading(true); setCheckout(payment);
       return promise;
     });
     return () => { unregister(); const request = active.current; active.current = null; request?.resolve({ type: 'dismiss' }); };
@@ -38,7 +47,12 @@ export default function SafepayCheckoutProvider({ children }) {
   const allowNavigation = request => {
     const action = safepayNavigationAction(request.url, checkout?.environment);
     if (action === 'complete') { finish('return'); return false; }
-    if (action === 'block') { setFailed(true); return false; }
+    if (action === 'block') {
+      // Blocking an unsupported link must not destroy the still-valid card
+      // form or its in-progress 3DS state (providers may probe app-only links).
+      console.warn('[SafepaySheet] unsupported_navigation_blocked');
+      setBlockedLink(true); return false;
+    }
     return true;
   };
   return <>{children}<Modal visible={!!checkout} animationType="slide" presentationStyle="fullScreen" onRequestClose={() => finish('dismiss')}>
@@ -53,6 +67,7 @@ export default function SafepayCheckoutProvider({ children }) {
         </TouchableOpacity>
       </View>
       <Text style={[styles.notice, { color: palette.colors.textSecondary }]}>Closing this screen does not confirm cancellation. Rozare will check your payment status.</Text>
+      {blockedLink && !failed && <Text accessibilityRole="alert" style={[styles.notice, { color: palette.colors.textSecondary }]}>An unsupported link was blocked. You can continue with the card form below or close this screen to check payment status.</Text>}
       {!!checkout && !failed && <View style={styles.container}>
         {/* Our navigation policy handles every scheme; unapproved links must not be handed to the OS. */}
         <WebView key={checkout.paymentId} source={{ uri: checkout.checkoutUrl }} testID="safepay-webview"
@@ -60,10 +75,10 @@ export default function SafepayCheckoutProvider({ children }) {
           onShouldStartLoadWithRequest={allowNavigation}
           onNavigationStateChange={state => { if (safepayNavigationAction(state.url, checkout.environment) === 'complete') finish('return'); }}
           onLoadStart={() => setLoading(true)} onLoadEnd={() => setLoading(false)}
-          onError={() => { setLoading(false); setFailed(true); }}
-          onHttpError={event => { if (event.nativeEvent.statusCode >= 400 && event.nativeEvent.url === checkout.checkoutUrl) setFailed(true); }}
-          onContentProcessDidTerminate={() => { setLoading(false); setFailed(true); }}
-          onRenderProcessGone={() => { setLoading(false); setFailed(true); }}
+          onError={event => interrupt(`load_error${Number.isInteger(event.nativeEvent?.code) ? `:${event.nativeEvent.code}` : ''}`)}
+          onHttpError={event => { if (event.nativeEvent.statusCode >= 400 && event.nativeEvent.url === checkout.checkoutUrl) interrupt(`http_error:${event.nativeEvent.statusCode}`); }}
+          onContentProcessDidTerminate={() => interrupt('content_process_terminated')}
+          onRenderProcessGone={() => interrupt('render_process_gone')}
           javaScriptEnabled domStorageEnabled sharedCookiesEnabled={false} thirdPartyCookiesEnabled
           incognito cacheEnabled={false} mixedContentMode="never" allowFileAccess={false}
           allowFileAccessFromFileURLs={false} allowUniversalAccessFromFileURLs={false}
@@ -76,6 +91,7 @@ export default function SafepayCheckoutProvider({ children }) {
         <Ionicons name="alert-circle-outline" size={40} color={palette.colors.textSecondary} />
         <Text style={[styles.title, { color: palette.colors.text }]}>Payment screen interrupted</Text>
         <Text style={[styles.message, { color: palette.colors.textSecondary }]}>Return to Rozare to check this payment. We will keep the same payment attempt so you are not asked to pay twice.</Text>
+        {!!failureCode && <Text style={{ color: palette.colors.textSecondary }}>Reference: {failureCode}</Text>}
         <TouchableOpacity accessibilityRole="button" onPress={() => finish('dismiss')} style={[styles.button, { backgroundColor: palette.colors.primary }]}>
           <Text style={styles.buttonText}>Check payment status</Text>
         </TouchableOpacity>

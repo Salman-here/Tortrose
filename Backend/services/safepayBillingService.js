@@ -181,7 +181,7 @@ async function notifyOperation(operation, { session, type = 'subscription.paymen
     channels: ['inapp', 'push', 'email', 'whatsapp'],
     templates: { inapp: { title, body }, push: { title, body }, email: { subject: title, text: body }, whatsapp: { message: `${title}\n\n${body}` } },
     money: [snapshotMinorMoney({ key: 'charged', amountMinor, currency: 'USD', sourceModel: 'SafepayBillingOperation', sourceDocumentId: operation._id, sourcePath: 'terms.dueMinor', label: 'Subscription charge' })],
-    metadata: { category: 'subscription', channelId: 'seller', whatsappCategory: 'subscriptionAlerts',
+    metadata: { category: 'subscription', channelId: 'seller', whatsappCategory: type === 'subscription.payment_failed' ? 'payment_failed' : 'subscription_activated',
       linkTo: '/seller-dashboard/subscription', data: { type: 'subscription_updated', operationId: id(operation) } }, session });
 }
 

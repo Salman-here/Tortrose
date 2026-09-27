@@ -57,7 +57,7 @@ async function notifyRefund({ payment, order, evidence, record, sellerIndex = nu
     money: [snapshotMinorMoney({ key: 'refund', label: sellerId ? 'Seller refund share in order currency' : 'Card refund', amountMinor,
       currency: payment.currency, sourceModel: 'SafepayRefundEvent', sourceDocumentId: record._id,
       sourcePath: sellerId ? `sellerAllocations[${sellerIndex}].amountMinor` : 'deltaMinor' })],
-    metadata: { category: 'payment', channelId: sellerId ? 'seller' : 'buyer', whatsappCategory: 'orderUpdates',
+      metadata: { category: 'payment', channelId: sellerId ? 'seller' : 'buyer', whatsappCategory: 'payment_risk', relatedOrder: order._id,
       linkTo: sellerId ? `/seller-dashboard/order/${order._id}` : `/user-dashboard/order/detail/${order._id}`,
       data: { type: 'order_refund', orderId: String(order._id) } }, session });
 }

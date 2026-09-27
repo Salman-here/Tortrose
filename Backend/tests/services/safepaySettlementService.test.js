@@ -18,6 +18,7 @@ const { createSafepayPaymentService } = require('../../services/safepayPaymentSe
 const { commitOrderInventory } = require('../../services/orderInventoryService');
 const { buildOrderSellerSettlement, buildOrderSellerCurrencyMoney } = require('../../services/orderMoneyService');
 const { getWalletSummary } = require('../../services/walletService');
+const { verifySafepayNotificationAuthority } = require('../../services/safepayNotificationAuthority');
 let replica;
 let service;
 let providerState;
@@ -174,6 +175,15 @@ test('partial then full USD refunds cancel exact native PKR seller revenue with 
   expect(summary.balanceByCurrency.PKR.withdrawableBalance).toBe(0);
   expect((await Payment.findById(f.payment._id)).status).toBe('refunded');
   expect(await RefundEvent.countDocuments()).toBe(2);
+  const receipts = await NotificationOutbox.find({ aggregateType: 'SafepayRefundEvent' }).select('+recipient.email +recipient.phone').lean();
+  expect(receipts.length).toBeGreaterThan(0);
+  for (const receipt of receipts) expect(await verifySafepayNotificationAuthority(receipt)).toBeNull();
+  const buyerReceipt = receipts.find(row => row.recipient.audienceRole === 'buyer');
+  expect(await verifySafepayNotificationAuthority({ ...buyerReceipt, recipient: { ...buyerReceipt.recipient, email: 'other@example.com' } }))
+    .toMatchObject({ outcome: 'skipped' });
+  const sellerReceipt = receipts.find(row => row.recipient.audienceRole === 'seller');
+  expect(await verifySafepayNotificationAuthority({ ...sellerReceipt, money: [{ ...sellerReceipt.money[0], amountMinor: 9999 }] }))
+    .toMatchObject({ outcome: 'skipped' });
 });
 
 test('refunds expressed in the settlement currency instead of original payment currency remain on hold', async () => {

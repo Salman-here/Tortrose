@@ -34,11 +34,25 @@ test('a provider return only resolves navigation for subsequent backend verifica
   })).toBe(false); });
   await expect(done).resolves.toEqual({ type: 'return' });
 });
-test('unsafe navigation displays recovery, never opens another app', () => {
+test('unsafe navigation is blocked without destroying the valid card form or opening another app', () => {
   const screen = render(<SafepayCheckoutProvider />);
   act(() => { presentSafepaySheet(payment); });
   const webview = screen.getByTestId('safepay-webview');
   expect(webview.props.originWhitelist).toEqual(['*']);
   act(() => { expect(webview.props.onShouldStartLoadWithRequest({ url: 'intent://unknown-app' })).toBe(false); });
+  expect(screen.queryByText('Payment screen interrupted')).toBeNull();
+  expect(screen.getByTestId('safepay-webview')).toBeTruthy();
+  expect(screen.getByText(/An unsupported link was blocked/)).toBeTruthy();
+});
+
+test('a native loading failure offers verification without leaking a provider token', () => {
+  const screen = render(<SafepayCheckoutProvider />);
+  act(() => { presentSafepaySheet(payment); });
+  act(() => screen.getByTestId('safepay-webview').props.onError({ nativeEvent: {
+    code: -2, url: payment.checkoutUrl, description: 'Private details must not be rendered',
+  } }));
   expect(screen.getByText('Payment screen interrupted')).toBeTruthy();
+  expect(screen.getByText('Reference: load_error:-2')).toBeTruthy();
+  expect(screen.queryByText(/private-test-token|Private details/)).toBeNull();
+  expect(screen.getByText('Check payment status')).toBeTruthy();
 });

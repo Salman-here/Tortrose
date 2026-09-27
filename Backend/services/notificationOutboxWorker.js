@@ -159,10 +159,20 @@ function startNotificationOutboxWorker({
     intervalMs: recoveryIntervalMs,
     batchSize: recoveryBatchSize,
   });
+  let safepayRecoveryAttempted = false;
 
   const tick = () => {
     if (activeTick) return activeTick;
     activeTick = (async () => {
+      if (!safepayRecoveryAttempted) {
+        safepayRecoveryAttempted = true;
+        try {
+          const result = await require('./safepayNotificationRecoveryService').recoverSkippedSafepayNotifications();
+          if (result.recovered) console.log(`[notification-outbox] recovered ${result.recovered} verified Safepay receipt(s)`);
+        } catch (error) {
+          console.error('[notification-outbox] Safepay receipt recovery failed:', error.code || error.message);
+        }
+      }
       try {
         const recovery = await recoverOperationalIfDue();
         if (recovery.ran) {

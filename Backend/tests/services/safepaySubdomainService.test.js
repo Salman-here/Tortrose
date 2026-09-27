@@ -11,6 +11,8 @@ const Claim = require('../../models/SellerCheckoutClaim');
 const { createSafepayPaymentService } = require('../../services/safepayPaymentService');
 const { recomputeSubdomainEntitlement, ensureSubdomainLegacyLedger } = require('../../services/stripeEntitlementPaymentService');
 const { acquireSubdomainCheckoutLock, acquireSubdomainSlugChangeLock } = require('../../services/subdomainResourceLockService');
+const { deliverNotificationRecord } = require('../../services/notificationOutboxDeliveryService');
+const { verifySafepayNotificationAuthority } = require('../../services/safepayNotificationAuthority');
 let replica, service, store, seller, providerState;
 beforeAll(async () => {
   replica = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
@@ -50,6 +52,12 @@ test('verified payment grants exactly three calendar years once and sends one du
   expect(await Outbox.countDocuments()).toBe(4); // One receipt per channel, not per replay.
   expect(first.isActive).toBe(false); // Ownership is not a paid store subscription.
   expect((await Store.findById(store._id)).subdomainPurchase.expiresAt).toEqual(first.subdomainPurchase.expiresAt);
+  const receipt = await Outbox.findOne({ channel: 'inapp' }).select('+dedupeKey').lean();
+  expect(await deliverNotificationRecord(receipt)).toMatchObject({ outcome: 'delivered' });
+  expect(await verifySafepayNotificationAuthority({ ...receipt, money: [{ ...receipt.money[0], currency: 'PKR' }] }))
+    .toMatchObject({ outcome: 'skipped' });
+  expect(await verifySafepayNotificationAuthority({ ...receipt, recipient: { ...receipt.recipient, user: new mongoose.Types.ObjectId() } }))
+    .toMatchObject({ outcome: 'skipped' });
 });
 
 test('shared website/cron recomputation neither drops Safepay ownership nor creates an irreversible legacy grant', async () => {

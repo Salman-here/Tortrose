@@ -12,6 +12,7 @@ const StripePaymentRiskReview = require('../models/StripePaymentRiskReview');
 const StripeSubscriptionCleanup = require('../models/StripeSubscriptionCleanup');
 const User = require('../models/User');
 const WalletTransaction = require('../models/WalletTransaction');
+const { isSafepayNotification, verifySafepayNotificationAuthority } = require('./safepayNotificationAuthority');
 const { sendEmail } = require('../controllers/mailController');
 const { sendExpoPushStrict } = require('../utils/expoPush');
 const {
@@ -1064,9 +1065,19 @@ const TRANSIENT_SELLER_WHATSAPP_REASONS = new Set([
 ]);
 
 const deliverSellerWhatsApp = async (record, user) => {
+  // Early Safepay envelopes used preference keys instead of sender categories.
+  // Derive the legacy alias only after Safepay authority has been verified,
+  // retaining immutable payloads/dedupe keys and respecting seller preferences.
+  let category = record.payload.whatsappCategory;
+  if (isSafepayNotification(record)) {
+    if (category === 'subscriptionAlerts') {
+      category = record.eventType === 'subscription.payment_failed' ? 'payment_failed'
+        : record.eventType === 'subscription.cancelled' ? 'subscription_ending' : 'subscription_activated';
+    } else if (category === 'orderUpdates' && record.eventType === 'order.payment_refund_completed') category = 'payment_risk';
+  }
   const result = await notifySeller(
     user._id,
-    record.payload.whatsappCategory,
+    category,
     record.payload.message
   );
   if (result?.sent) return delivered(result.messageId);
@@ -1269,18 +1280,25 @@ const deliverWhatsApp = (record, user) => {
 };
 
 async function deliverNotificationRecord(record) {
-  const stripeRiskAuthority = await verifyStripeRiskNotificationAuthority(record);
-  if (stripeRiskAuthority?.outcome === 'skipped') return stripeRiskAuthority;
-  const entitlementRiskAuthority = await verifyEntitlementRiskNotificationAuthority(record);
-  if (entitlementRiskAuthority?.outcome === 'skipped') return entitlementRiskAuthority;
-  const entitlementReceiptAuthority = await verifyEntitlementPaymentReceiptAuthority(record);
-  if (entitlementReceiptAuthority?.outcome === 'skipped') return entitlementReceiptAuthority;
-  const stripeRiskReviewAuthority = await verifyStripeRiskReviewNotificationAuthority(record);
-  if (stripeRiskReviewAuthority?.outcome === 'skipped') return stripeRiskReviewAuthority;
-  const cleanupAuthority = await verifySubscriptionCleanupNotificationAuthority(record);
-  if (cleanupAuthority?.outcome === 'skipped') return cleanupAuthority;
-  const authority = await verifySubscriptionNotificationAuthority(record);
-  if (authority?.outcome === 'skipped') return authority;
+  // Shared event names are not provider identity. Validate each provider's own
+  // immutable payment/transition records before applying ordinary role/channel rules.
+  if (isSafepayNotification(record)) {
+    const safepayAuthority = await verifySafepayNotificationAuthority(record);
+    if (safepayAuthority?.outcome === 'skipped') return safepayAuthority;
+  } else {
+    const stripeRiskAuthority = await verifyStripeRiskNotificationAuthority(record);
+    if (stripeRiskAuthority?.outcome === 'skipped') return stripeRiskAuthority;
+    const entitlementRiskAuthority = await verifyEntitlementRiskNotificationAuthority(record);
+    if (entitlementRiskAuthority?.outcome === 'skipped') return entitlementRiskAuthority;
+    const entitlementReceiptAuthority = await verifyEntitlementPaymentReceiptAuthority(record);
+    if (entitlementReceiptAuthority?.outcome === 'skipped') return entitlementReceiptAuthority;
+    const stripeRiskReviewAuthority = await verifyStripeRiskReviewNotificationAuthority(record);
+    if (stripeRiskReviewAuthority?.outcome === 'skipped') return stripeRiskReviewAuthority;
+    const cleanupAuthority = await verifySubscriptionCleanupNotificationAuthority(record);
+    if (cleanupAuthority?.outcome === 'skipped') return cleanupAuthority;
+    const authority = await verifySubscriptionNotificationAuthority(record);
+    if (authority?.outcome === 'skipped') return authority;
+  }
   const sellerOperationalAuthority = await verifySellerOperationalNotificationAuthority(record);
   if (sellerOperationalAuthority?.outcome === 'skipped') return sellerOperationalAuthority;
   const resolved = await loadRecipientUser(record);
