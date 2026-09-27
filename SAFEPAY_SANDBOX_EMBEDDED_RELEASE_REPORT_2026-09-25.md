@@ -52,7 +52,7 @@ Safepay's hosted Cancel button was observed returning to Rozare while leaving an
 
 | Check | Observed result |
 | --- | --- |
-| Full mobile tests, including clock-recovery, Payment Methods and billing-contact fixes | **102 suites, 1,173 tests passed** |
+| Full mobile tests, including billing-contact and subscription-review dialog fixes | **104 suites, 1,189 tests passed** |
 | Full backend regression, including billing-contact recovery | **234 suites, 3,472 tests passed** |
 | Notification authority/recovery regression | **77 targeted tests passed**, plus four worker tests after rolling-deployment recovery adjustment |
 | Android Hermes export | **Passed**, 2,304 modules |
@@ -227,3 +227,11 @@ Subscription email/WhatsApp delivery, additional payment currencies, late-paymen
 - The user authorized any test name. Entered **Rozare Test Seller** into the billing-name input only, selected the requested save-card consent, and pressed Add a new card through the Android UI.
 - **Corrected live setup PASS:** the same previously failing account opened the embedded **Safepay sandbox card-entry form**, showing card number, expiry, CVC and billing-address inputs without a separate Safepay signup. The backend independently showed its customer profile **ready**, lease cleared, and no retained setup error. Exactly one zero-amount **PKR instrument/card-setup** record exists, `6ab884c70c2cdd21e7270de1`, status `ready`.
 - This verifies customer creation and reaching card entry, **not completed card storage**. No card number was entered, no card was saved, and no payment or subscription charge was submitted. The existing account name and saved shipping name were independently checked and remained unchanged. The card form was left open for the user's own next test.
+
+### Empty Android subscription-review dialog
+
+- The user saved a card, returned to Subscription and tapped the Starter enrollment button. The overlay appeared as an empty narrow horizontal bar. The same failure was reproduced in the emulator.
+- The modal panel had only `maxHeight`, while its keyboard-aware scroll child used `flex: 1`; Android laid out the panel at its padding height and clipped the review content. This was a display/layout issue, not evidence of a declined card.
+- Replaced the modal's presentation with a dedicated review component that gives the panel a definite, safe-area-bounded height and tablet width cap. Its regular scroll body has a bounded parent. The header close button and bottom actions stay outside the scrolling content. Android's separate modal window no longer depends on the main screen's blur target.
+- Plan prices, due-now amount, free days, credits, card selection, consent and the existing acceptance/reconciliation handlers are preserved. No backend/payment logic or native dependency was changed.
+- Added actual component and screen interaction tests for the reported no-card → add-card → review sequence, card/consent gating, dismissal without subscribing, pending-action locks, billing-card change, and compact/landscape height changes. **29 targeted tests passed; the complete mobile run passed 104 suites / 1,189 tests.** Publication and updated native verification are pending at this checkpoint.

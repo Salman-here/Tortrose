@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Alert,
   AppState,
-  Modal,
   Platform,
   RefreshControl,
   StyleSheet,
@@ -17,11 +16,11 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as WebBrowser from 'expo-web-browser';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Picker } from '@react-native-picker/picker';
 import api from '../../config/api';
 import GlassBackground from '../../components/common/GlassBackground';
 import GlassPanel from '../../components/common/GlassPanel';
 import KeyboardAwareFormScrollView from '../../components/common/KeyboardAwareFormScrollView';
+import SubscriptionBillingModal from '../../components/seller/SubscriptionBillingModal';
 import {
   SellerInlineError,
   SellerScreenHeader,
@@ -696,36 +695,10 @@ export default function SellerSubscriptionScreen({ navigation, route }) {
 
   return (
     <GlassBackground>
-      <Modal visible={!!billingQuote} transparent animationType="slide" onRequestClose={() => { if (!billingBusyRef.current) setBillingQuote(null); }}>
-        <View style={{ flex: 1, justifyContent: 'center', padding: spacing.lg, backgroundColor: 'rgba(0,0,0,0.6)' }}>
-          <GlassPanel style={{ maxHeight: '92%', padding: spacing.lg, backgroundColor: palette.colors.background }}>
-            <KeyboardAwareFormScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ gap: spacing.md }}>
-              <Text style={{ color: palette.colors.text, fontSize: fontSize.xl, fontWeight: '700' }}>Review your subscription</Text>
-              <Text style={{ color: palette.colors.text, fontSize: fontSize.lg }}>{billingQuote?.planName}</Text>
-              <Text style={{ color: palette.colors.text }}>Due now: {formatUsd(billingQuote?.dueNowMinor)} USD</Text>
-              <Text style={{ color: palette.colors.text }}>Recurring price: {formatUsd(billingQuote?.monthlyAmountMinor)} USD/month</Text>
-              {!!billingQuote?.freePeriodDays && <Text style={{ color: palette.colors.textSecondary }}>First {billingQuote.freePeriodDays} days free.</Text>}
-              {!!billingQuote?.creditMinor && <Text style={{ color: palette.colors.textSecondary }}>Credit toward future billing: {formatUsd(billingQuote.creditMinor)} USD</Text>}
-              <Text style={{ color: palette.colors.textSecondary }}>Payment card</Text>
-              <Picker selectedValue={billingCardId} onValueChange={setBillingCardId} enabled={!operation} style={{ color: palette.colors.text }}>
-                {billingCards.map(card => <Picker.Item key={card.id} label={`${String(card.brand || 'Card').toUpperCase()} •••• ${card.last4}`} value={card.id} />)}
-              </Picker>
-              <Text style={{ color: palette.colors.textSecondary, lineHeight: 21 }}>{billingQuote?.terms}</Text>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm }}>
-                <Switch value={billingConsent} onValueChange={setBillingConsent} disabled={!!operation} accessibilityLabel="Agree to the displayed subscription price and automatic renewal terms" />
-                <Text style={{ flex: 1, color: palette.colors.text }}>I agree to this price and automatic renewal terms.</Text>
-              </View>
-              <TouchableOpacity accessibilityRole="button" disabled={!billingConsent || !billingCardId || !!operation} onPress={acceptBillingQuote}
-                style={{ backgroundColor: palette.colors.primary, opacity: !billingConsent || operation ? 0.5 : 1, borderRadius: 14, padding: spacing.md, alignItems: 'center' }}>
-                <Text style={{ color: '#fff', fontWeight: '700' }}>{operation ? 'Verifying…' : billingQuote?.kind === 'card_change' ? 'Confirm card change' : 'Confirm subscription'}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity accessibilityRole="button" disabled={!!operation} onPress={() => setBillingQuote(null)} style={{ padding: spacing.md, alignItems: 'center' }}>
-                <Text style={{ color: palette.colors.textSecondary }}>Not now</Text>
-              </TouchableOpacity>
-            </KeyboardAwareFormScrollView>
-          </GlassPanel>
-        </View>
-      </Modal>
+      {billingQuote && <SubscriptionBillingModal quote={billingQuote} cards={billingCards}
+        cardId={billingCardId} onCardChange={setBillingCardId} consent={billingConsent} onConsentChange={setBillingConsent}
+        busy={!!operation} formatUsd={formatUsd} onConfirm={acceptBillingQuote}
+        onClose={() => { if (!billingBusyRef.current) setBillingQuote(null); }} />}
       <SafeAreaView
         style={styles.safeArea}
         edges={Platform.OS === 'android' ? [] : ['top']}
