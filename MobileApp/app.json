@@ -28,7 +28,7 @@
         "backgroundColor": "#0EA5E9"
       },
       "package": "com.rozare.app",
-      "versionCode": 16,
+      "versionCode": 17,
       "googleServicesFile": "./google-services.json",
       "permissions": [
         "RECORD_AUDIO",
@@ -62,7 +62,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.rozare.app",
-      "buildNumber": "16",
+      "buildNumber": "17",
       "associatedDomains": [
         "applinks:rozare.com"
       ],

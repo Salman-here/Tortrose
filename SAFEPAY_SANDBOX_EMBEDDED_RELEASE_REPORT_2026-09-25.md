@@ -4,11 +4,11 @@
 
 Implementation and live verification are still in progress. Do not interpret a successful APK build or unit-test run as proof that every live flow is complete.
 
-**Build checkpoint:** Android 1.0.13 (15), build `e71545ef-5137-4ccc-886c-c59ff0c140bc`, finished successfully on 27 September. A later live test found a clock-correction retry-key issue; build **16** is being prepared with that correction. Build 15 is superseded as the final download recommendation. Payment verification is still being completed; this is not a production-payment release.
+**Build checkpoint:** Android 1.0.13 (15), build `e71545ef-5137-4ccc-886c-c59ff0c140bc`, finished successfully on 27 September. Later live tests found a clock-correction retry-key issue and a Payment Methods opening crash. Build **17** is being prepared with both corrections; builds 15/16 are superseded as the final download recommendation. Payment verification is still being completed; this is not a production-payment release.
 
 The website checkout remains Stripe. All new mobile card purchases are routed to Safepay sandbox; real Safepay production payments are not enabled.
 
-## Confirmed build
+## Earlier verified build — 14 (historical checkpoint)
 
 - Android app version: **1.0.12**, version code **14**, runtime **1.0.12**.
 - Expo build: `8740a7f2-131e-4e40-89fd-255a3c5221e2`, completed successfully.
@@ -37,18 +37,20 @@ Safepay's hosted Cancel button was observed returning to Rozare while leaving an
 - An explicit URL policy blocks insecure/custom-app links, while HTTPS bank authentication can proceed. No app bearer token is injected into payment content.
 - The native Stripe SDK and its Android pinning plugin were removed; historical Stripe records remain readable.
 
-## Verification checkpoints
+## Latest verification checkpoints
 
 | Check | Observed result |
 | --- | --- |
-| Full mobile tests | **101 suites, 1,159 tests passed** |
-| Full backend tests after embedded/deferred-stock work | **232 suites, 3,439 tests passed** |
-| Later account-deletion/recurring ownership guards | **37 targeted tests passed**; final broader rerun still needed after subsequent edits |
+| Full mobile tests, including clock-recovery fix | **101 suites, 1,162 tests passed** |
+| Full backend regression | **232 suites, 3,445 tests passed** |
+| Notification authority/recovery regression | **77 targeted tests passed**, plus four worker tests after rolling-deployment recovery adjustment |
 | Android Hermes export | **Passed**, 2,304 modules |
 | Native build configuration | **Passed** |
-| EAS signed APK build | **Passed** |
-| Emulator install and initial home screen | **Passed** |
-| Actual embedded sandbox payment, subscription and seller flows | **Pending** |
+| EAS signed APK build | Build 15 **passed**; replacement build 16 is in progress |
+| Emulator install and initial home screen | **Passed** for builds 14/15; build 16 pending |
+| Actual embedded sandbox wallet payment | USD 1.00 **paid and displayed**; the separate clock-recovery issue found during retry is fixed and regression-tested |
+| Product payment, delivery accounting, full refund | **Passed via live API + provider browser**, exact PKR 1,200.00 flow; not claimed as native order-entry coverage |
+| Saved card, Starter trial, cancel/resume, subdomain purchase | **Passed via live API + provider browser**; seller native UI/push pending sign-in |
 
 Test examples already passing locally: valid late payment reserves stock once; sold-out late payment schedules one refund; changed native price leaves the frozen order untouched and takes the refund path; explicitly cancelled order stays cancelled; refund timeout does not issue another refund; partial/final return shipping is refunded once; multi-currency order refunds conserve original seller-native money.
 
@@ -148,3 +150,26 @@ Subscription email/WhatsApp delivery, additional payment currencies, late-paymen
 - **Native form → payment → wallet display PASS on retry:** Safepay completed a USD 1.00 payment within Rozare; the sheet closed automatically and Wallet showed **"Balance added" / USD 1.00**, with PKR 2,000.00 unchanged. The completed transaction is `6ab86a7d92df1ae933c1df35`, payment `6ab867c892df1ae933c1cd45`, tracker `track_9051e6a5-d77d-4391-8a39-1dd6af511866`.
 - **Important correction to the expected replay:** database inspection showed that this was a second local attempt, not the original pending USD attempt. Only one USD transaction was charged/credited; original `6ab85be8f1585bb38340cf17` remains unpaid. The emulator clock had moved backwards by three hours; the shared retry helper rejected an existing key with a future `createdAt` and generated the next key. This is a real edge-case bug, not a successful idempotent replay.
 - Corrected the retry helper to retain a structurally valid unresolved key after a backwards clock correction, while keeping terminal markers and the existing age window. Added tests for the exact three-hour rollback, legacy-key migration, and rotation only after an explicit terminal marker. **62 targeted tests passed.** A replacement build 16 will include the correction; no retroactive claim is made that the original live retry used it.
+- The complete mobile rerun after that fix passed **101 suites / 1,162 tests**. Commit `0a1168b1` is pushed to both repositories; the live backend health reports that revision. Build **1.0.13 (16)** is queued/running as `9e3254c0-e1e9-4091-ada2-068f69c9a142`. Android OTA group `2f12d40a-4ba5-4940-9f51-cf1a2fbe265c` was published for runtime 1.0.13 with the same fix.
+- APK 15's package/version and v2 signing verification passed, and it installed successfully over the existing app with data preserved. Build 16 remains the intended final sandbox artifact because it bundles the clock correction directly.
+
+### Seller subdomain purchase
+
+- **PASS (live API + Safepay browser):** payment `6ab86c8ac44c5358f05e659f` charged exactly **USD 15.00** in sandbox. Safepay returned `TRACKER_ENDED`, and the authenticated ownership endpoint showed the existing `safepay-qa-store.rozare.com` owned for exactly three calendar years, from `2026-09-27T01:12:00.532Z` to `2029-09-27T01:12:00.532Z`.
+- The database contains one confirmed Safepay ownership grant (`6ab86d60c44c5358f05e6b33`), currency USD, captured minor amount 1500. This purchase is independent of the store's PKR product currency and does not create product-sale revenue.
+- Seller-side native UI and push verification still requires signing the fresh seller account into Android; the buyer account has been used for all buyer payment checks. No admin account was used as a purchaser.
+- Its in-app, email and WhatsApp ownership receipts were recorded delivered; seller push was skipped because that account has no registered app installation.
+
+### Live negative-path checks
+
+- Negative Wallet top-up: HTTP 400 `WALLET_TOP_UP_AMOUNT_INVALID`.
+- Unsupported CAD Wallet top-up: HTTP 400 `WALLET_CURRENCY_NOT_SUPPORTED` (supported currencies remain USD/PKR/EUR/GBP).
+- Buyer attempting seller-subscription enrollment: HTTP 403 `SELLER_REQUIRED`.
+- Buyer attempting to delete the seller's saved card: HTTP 404 `CARD_NOT_FOUND`; the seller's card remained intact.
+- Re-reading the completed refund left one refund record, PKR 120,000 minor units, one seller allocation and one corresponding PKR 1,200.00 reversal debit. Both recipient notification sets delivered except the seller's unregistered push channel.
+
+### User-reported Payment Methods crash
+
+- Android logs confirmed `ReferenceError: Property 'config' doesn't exist` at `PaymentMethodsScreen`. Its status indicator still referenced removed Stripe configuration state; this happened during rendering, before saved-card loading could finish.
+- Replaced that indicator with the actual card-loading/error state. Added real screen-render tests for buyer/seller roles, empty cards, masked saved-card details/default selection, and load-error/retry behavior. **Four new screen tests passed.** A scope-based JavaScript identifier check across 26 migration-modified mobile source files found no remaining unbound identifiers.
+- Requested cancellation of in-progress build 16 because it did not contain this late-reported fix; replacement build 17 and an Android runtime-1.0.13 update will include it. Native re-verification is required before marking this screen fixed live. No saved card or account data was deleted.

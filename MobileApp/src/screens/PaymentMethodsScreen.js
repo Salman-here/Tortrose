@@ -74,7 +74,7 @@ function SkeletonCard({ palette }) {
 }
 
 export default function PaymentMethodsScreen({ navigation }) {
-  const { palette, isDark } = useTheme();
+  const { palette } = useTheme();
   const styles = buildStyles(palette);
   const { currentUser } = useAuth();
   const addingRef = useRef(false);
@@ -261,7 +261,8 @@ export default function PaymentMethodsScreen({ navigation }) {
                 <Ionicons name="shield-checkmark" size={26} color="#fff" />
               </View>
               <View style={styles.heroBadge}>
-                <View style={[styles.statusDot, { backgroundColor: config ? palette.colors.success : palette.colors.warning }]} />
+                <View testID="saved-cards-status" accessibilityLabel={loading ? 'Loading saved cards' : loadError ? 'Saved cards unavailable' : 'Saved cards ready'}
+                  style={[styles.statusDot, { backgroundColor: !loading && !loadError ? palette.colors.success : palette.colors.warning }]} />
                 <Text style={styles.heroBadgeText}>SECURE CARDS</Text>
               </View>
             </View>
