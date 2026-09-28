@@ -10,6 +10,7 @@ const Wallet = require('../models/Wallet');
 const WalletTransaction = require('../models/WalletTransaction');
 const Order = require('../models/Order');
 const Operation = require('../models/SafepayBillingOperation');
+const Subscription = require('../models/SellerSubscription');
 
 async function main() {
   const email = String(process.argv[2] || '').toLowerCase();
@@ -22,7 +23,7 @@ async function main() {
   await mongoose.connect(process.env.MONGO_URI, { serverSelectionTimeoutMS: 10000, autoIndex: false, autoCreate: false });
   const user = await User.findOne({ email }).select('_id email role').lean();
   if (!user) throw Object.assign(new Error('QA account not found.'), { code: 'QA_ACCOUNT_NOT_FOUND' });
-  const [wallet, payments, transactions, orders, billing] = await Promise.all([
+  const [wallet, payments, transactions, orders, billing, subscription] = await Promise.all([
     Wallet.findOne({ user: user._id }).select('balances status').lean(),
     Payment.find({ user: user._id, environment: 'sandbox', createdAt: { $gte: since } })
       .select('_id purpose status currency amountMinor tracker providerState appliedAt paidAt order refundedMinor lastErrorCode lastReconciledAt updatedAt')
@@ -36,10 +37,13 @@ async function main() {
     Operation.find({ seller: user._id, environment: 'sandbox', createdAt: { $gte: since } })
       .select('_id kind status appliedAt payment terms.plan terms.monthlyMinor terms.dueMinor terms.currency terms.trialDays')
       .sort({ createdAt: -1 }).limit(30).lean(),
+    Subscription.findOne({ seller: user._id, 'safepayBilling.environment': 'sandbox' })
+      .select('plan status billingProvider currentPeriodStart currentPeriodEnd cancelledAt safepayBilling.environment safepayBilling.version safepayBilling.autoRenew safepayBilling.monthlyMinor safepayBilling.currency safepayBilling.nextChargeAt safepayBilling.consentedAt safepayBilling.consentVersion safepayBilling.pendingOperation safepayBilling.lastFailureCode')
+      .lean(),
   ]);
   const walletCreditCounts = transactions.filter(row => row.type === 'top_up' && row.status === 'completed')
     .reduce((counts, row) => { const key = String(row.safepayPaymentId); counts[key] = (counts[key] || 0) + 1; return counts; }, {});
-  console.log(JSON.stringify({ account: user, since, wallet, payments, transactions, walletCreditCounts, orders, billing }, null, 2));
+  console.log(JSON.stringify({ account: user, since, wallet, payments, transactions, walletCreditCounts, orders, billing, subscription }, null, 2));
 }
 main().catch(error => { console.error(JSON.stringify({ error: error.code || error.name || 'AUDIT_FAILED' })); process.exitCode = 1; })
   .finally(() => mongoose.disconnect());

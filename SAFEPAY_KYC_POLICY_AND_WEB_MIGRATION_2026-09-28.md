@@ -2,9 +2,9 @@
 
 Date: 28 September 2026
 
-## Release status: website/backend deployed; sandbox verification in progress
+## Release status: website/backend deployed; core web sandbox payments verified; Android update published
 
-At the initial checkpoint, the website and installed mobile application had **not** been updated by this work. The last verified production website deployment before this release was `0d988e6cf34f0061c1576ba31d36ea987ca58de4` (`dpl_EeBNEKG42o2sm6uA9Lx3CgpNdPxD`, READY). The approved release is being prepared; deployment and sandbox end-to-end evidence will be recorded separately below after verification.
+The approved policies and Safepay website cutover are deployed. Android runtime **1.0.13** has a published production-channel JavaScript update. Live-site sandbox Wallet and product payments completed successfully with embedded bank authentication and independently verified records. Installed-native-screen verification and the extended payment matrix remain explicitly separate from those completed checks.
 
 The merchant supplied and confirmed the following details after the initial local verification:
 
@@ -20,7 +20,7 @@ The policy config at `MobileApp/src/content/commercePolicyConfig.json` now has `
 
 ### Approved release progress
 
-- Source commit: `52e8c2266f753987ccb11c5ff4e5bf83ceb7adbc` — approved merchant policies and Safepay website checkout. Saved locally; both remote branches still matched the prior release before this commit.
+- Source commit: `52e8c2266f753987ccb11c5ff4e5bf83ceb7adbc` — approved merchant policies and Safepay website checkout. Pushed to both repository remotes and deployed, followed by the two corrections below.
 - Android production-channel OTA published for runtime **1.0.13**: group `d82dcd1a-cee6-4a2c-b128-eaacabc50bc3`, update `01a0e8b9-51f1-78ca-b74d-7ea4d245b006`. [Expo release](https://expo.dev/accounts/rozare/projects/rozare/updates/d82dcd1a-cee6-4a2c-b128-eaacabc50bc3). No new native APK is required for compatible 1.0.13 installations. Installed-app verification is in progress.
 - Web pre-release browser checks confirmed the exact address, Lahore/Punjab jurisdiction, both public email addresses, support phone and 2/7/3-business-day commitments. The draft notice is absent; phone-width policy pages had no horizontal overflow.
 - Railway access was restored as `mzohaibiqbal00@gmail.com` in Ishan's workspace. Verified project `independent-vision`, service `hello-friend`, and sandbox credentials/webhook configuration. Enabled `SAFEPAY_WEB_ENABLED=true` without changing `SAFEPAY_ENV=sandbox` or the mobile flag.
@@ -28,10 +28,13 @@ The policy config at `MobileApp/src/content/commercePolicyConfig.json` now has `
 - Live testing found a Wallet display contract omission: valid `safepay_payment` transactions were rejected by the website's reference-type allowlist. The account API returned HTTP 200 with USD 1.00 and PKR 2,000, but the page correctly hid unverified data. Added the three exact backend Safepay reference types and regression coverage, including enum parity and rejection of invented references and malformed money. No balances or historical records were changed by this correction. Release/retest evidence follows when complete.
 - Wallet correction commit `90d131fc493a556380e3020986e21a7a20749405` is pushed to both remotes; Vercel deployment `dpl_AwHD2tMFybNLRiq3R1KrSXmrJRoB` is READY. Retesting the live Wallet showed **USD 1.00 and PKR 2,000.00**, with both earlier Safepay top-ups correctly displayed. All **278 website tests** passed after this correction.
 - The live embedded Safepay form loaded **$1.00 USD**, showed the sandbox label, accepted test contact/card fields and required no separate Safepay account. Closing it before payment left balances unchanged. Reopening, including after the test browser session restarted, retained the same payment `6aba9232ed31475fad8c5722` and tracker `track_4dad3b5e-506e-4059-98e4-c3c258a6c22f`; no duplicate tracker or Wallet credit was created.
-- **Payment completion is not verified.** The browser automation session restarted during submission, then subsequent browser attempts became unreliable. The backend's authenticated status query still reported `pending`, `TRACKER_STARTED`, USD 100 minor units and `isPaid: false`. The read-only database audit also showed no completed Wallet transaction and unchanged balances. Do not label this a completed payment test or submit a different payment to replace this unresolved attempt.
+- The initial payment check was interrupted by browser automation/network problems. It remained unpaid at that checkpoint, and no replacement payment was created. After browser access recovered, the **same $1.00 attempt completed successfully**, including Safepay's embedded sandbox 3-D Secure challenge. At **2026-09-28 17:07:50 UTC**, payment `6aba9232ed31475fad8c5722` became `paid` / `TRACKER_ENDED`, with `paidAt` and `appliedAt` set. The browser displayed **USD 2.00**; the read-only audit found exactly **one** completed USD 1.00 credit (`6aba9ee77592a530139ab8ba`). PKR remained **2,000.00**. Result: **PASS** for web Wallet payment, provider authentication, close/resume and single-credit reconciliation.
 - A concrete local network issue was reproduced: Windows default DNS lookup for `rozare.com` returned **DNS server failure**, while querying resolver `1.1.1.1` returned public Vercel IP addresses. Both sidebar and Chrome browser navigation reported **ERR_NAME_NOT_RESOLVED**. No Windows DNS/security settings or certificate protections were changed. Public policy HTTP checks had already returned 200, and backend health confirmed the deployed commit and MongoDB connection.
 - Code review also found that shared Safepay reconciliation and renewal workers were gated only by the mobile switch. They now run when either the web or mobile Safepay switch is enabled, so disabling mobile checkout does not stop web financial processing. Targeted regression: **4 suites / 40 tests PASS**. Added `Backend/scripts/auditSafepaySandboxAccount.js`, a read-only, QA-account-scoped audit that never exports checkout URLs, access tokens or card details.
-- Rechecked publication preflight, website production build and all 276 web tests: **PASS**. Final legal/native parity and navigation tests: **34 PASS**.
+- Worker correction commit `2d12235e4bcbffeb628a0bdff4e93373d73ff08d` is pushed to both remotes. Vercel deployment `dpl_AtPNuHmib4az7h6k5jTD9AWy1Rco` is READY; Railway deployment `5ca48c79-7ebd-4e0a-9d5e-df1cd623e3e9` is SUCCESS. Live health confirmed that commit with MongoDB and the notification worker connected. The user confirmed that the site opened, and the in-app browser then recovered without changing system DNS/security settings.
+- **Web product purchase PASS:** bought one QA Travel Mug through the normal live cart, selected Standard Shipping and card payment, then completed Safepay's embedded sandbox 3-D Secure challenge. Order **`ORD-1790615546588`** (`6aba9ffa7592a530139abfff`) and payment `6aba9ffb7592a530139ac00d` reconcile: **USD 3.61 product + USD 0.72 shipping = USD 4.33**, no tax/discount. The provider payment is `paid` / `TRACKER_ENDED`, applied at **17:16:11 UTC**; the order is paid and confirmed. Buyer order details show **Card (Safepay)** and the same USD 4.33 total. Signed into the owning seller and observed **PKR 1,000 product + PKR 200 shipping - PKR 0.98 existing frozen FX/cent adjustment = PKR 1,199.02**, with buyer equivalent USD 4.33. These exactly match the saved seller money snapshot. This release did not change the existing FX reconciliation rule. The card purchase left the buyer's USD 2.00 / PKR 2,000 Wallet balances unchanged.
+- **Web subscription card-management PASS:** on the existing QA seller, the live review displayed the owned masked Visa ending 1111, **USD 0.00 due now** and **USD 9.99/month**. Confirmation was disabled without consent. After explicit sandbox consent, Confirm card change returned success. A read-only database audit confirmed billing version **6**, refreshed consent at **17:22:57 UTC**, sandbox provider, unchanged Starter/free-period status, unchanged USD 999 minor-unit monthly amount and **2026-10-26 06:58:14.833 UTC** next charge date; no payment or billing operation was created. A requested Elite upgrade was safely rejected with HTTP 409 under the existing rule that paid upgrades cannot be added during the introductory free period. It did not charge or change the plan. This is not a new subscription enrollment or paid upgrade test.
+- Publication preflight and website production build: **PASS**. Final website suite after the Wallet correction: **278 PASS**. Final legal/native parity and navigation checks: **34 PASS**.
 
 ## Scope and source material
 
@@ -82,11 +85,11 @@ The website was still creating transactions with the previous provider. New clie
 5. **Subdomain purchases:** use Safepay with a durable retry key and verify payment before refreshing ownership. An incoming `purchase=success` query no longer claims ownership by itself.
 6. **Seller return funding:** card-funded Wallet refunds use Safepay, the existing immutable return calculation and the same verification-before-credit rules.
 
-The shared web payment dialog embeds the allowlisted Safepay secure form and polls the authenticated backend. If a bank/browser needs it, a link opens that same secure form in a separate tab. This presentation still requires a real web sandbox charge and bank-authentication check after deployment; it is not claimed fully verified here.
+The shared web payment dialog embeds the allowlisted Safepay secure form and polls the authenticated backend. If a bank/browser needs it, a link opens that same secure form in a separate tab. A live-site sandbox Wallet charge and embedded bank-authentication challenge completed successfully, as recorded above; that is not a claim of coverage of every bank/browser combination.
 
 ### Backend/security boundaries
 
-- Added independent web enablement through `SAFEPAY_WEB_ENABLED`; mobile retains `SAFEPAY_MOBILE_ENABLED`. No runtime flag was changed in this task.
+- Added independent web enablement through `SAFEPAY_WEB_ENABLED`; mobile retains `SAFEPAY_MOBILE_ENABLED`. Enabled the web flag during the verified deployment; `SAFEPAY_ENV=sandbox` and mobile enablement were preserved.
 - Preserved the sandbox/production separation and exact amount, currency, ownership, idempotency and settlement checks.
 - Web returns use a fixed `https://rozare.com/safepay/return` destination. Incoming query parameters cannot mark a payment paid or redirect to a caller-provided site.
 - Reopening a payment requires the authenticated owner. Web/mobile presentation changes do not create a second tracker.
@@ -108,11 +111,11 @@ Updated AI payment knowledge and its non-overridable financial guidance. Online 
 | Initial Safepay regression suite | **PASS:** 11 suites, 124 tests. |
 | Full backend regression | **PASS:** 235 suites, 3,493 tests at that checkpoint. |
 | Final targeted backend checks after cutover guard and AI additions | **PASS:** 20 suites, 299 tests, including provider cutover, web ownership/return safety, billing, settlement, top-up recovery and AI routing/idempotency. This is a targeted rerun, not a second full-suite run. |
-| Website tests | **PASS:** 276 tests, including exact-money/payment contracts, retry-key behavior, subscription verification and public/private SEO routing. |
+| Website tests | **PASS:** 278 tests after the Wallet correction, including exact-money/payment contracts, retry-key behavior, subscription verification and public/private SEO routing. |
 | Full mobile regression | **PASS:** 106 suites, 1,197 tests at that checkpoint. |
-| Final native policy/navigation tests | **PASS:** 3 suites, 33 tests after the additional policy-route mappings. |
+| Final legal/native policy/navigation checks | **PASS:** 34 tests after the final policy-route and approved-content changes. |
 | Website production build | **PASS:** client and SSR bundles, including pre-rendered policy HTML. |
-| Android JavaScript export | **PASS:** Expo generated the Android Hermes bundle. This is not a new APK or OTA publication. |
+| Android JavaScript export and OTA | **PASS:** Hermes export completed and Android production-channel update `01a0e8b9-51f1-78ca-b74d-7ea4d245b006` was published for runtime 1.0.13. This is not a new native APK or installed-screen verification. |
 | Policy publication guard | **PASS after merchant confirmation:** exact business/contact details, Lahore jurisdiction and approved service commitments are present. It correctly blocked the earlier incomplete draft. |
 
 Initial test failures were stale assertions expecting the former provider SDK/copy or separate static legal arrays. They were updated to test the new Safepay/shared-policy behavior, then rerun successfully. Negative-path test logs about intentionally invalid state or unavailable local integrations are not evidence of production failures.
@@ -136,17 +139,18 @@ Evidence is under the ignored `test-assets/` directory:
 - `safepay-kyc-refunds-mobile-web-20260928.png`.
 - `safepay-kyc-web-saved-cards-20260928.png`.
 - `safepay-kyc-web-subscription-review-20260928.png`.
+- `safepay-web-wallet-success-20260928.jpg`.
+- `safepay-web-order-paid-20260928.jpg`.
+- `safepay-web-seller-order-paid-20260928.jpg`.
 - Backend/mobile JSON test reports and the website JUnit report named `safepay-kyc-*20260928*`.
 - `safepay-kyc-android-export-20260928/`.
 
-## Remaining before release
+## Coverage limits and remaining verification
 
-1. **Completed:** merchant supplied all business details and approved the timelines; the shared policy config and publication preflight are finalized.
-2. Recheck the final legal wording, refund destinations and service promises with the merchant; Safepay may require further changes after review.
-3. Run the publication preflight with the confirmed config. Ensure Vercel includes the shared policy source under `MobileApp` when building `Frontend`; the project-details connector had conflicting parameter schemas during this check, so that project setting was not verified.
-4. Commit and push the reviewed source, deploy the backend/frontend in a controlled cutover, enable **web Safepay sandbox**, and verify the published policy URLs and Safepay frame/security headers. Keep live-mode activation separate from sandbox enablement.
-5. Complete real sandbox web purchase, top-up, card setup/removal/default, subscription enrollment/change/retry/cancel, subdomain and return-funding checks, including close/resume, failed payment and provider authentication. Tests and read-only UI checks above do not replace those payment submissions.
-6. Publish the approved mobile JavaScript update and verify the new policy screens on the installed app. No new native dependency was added, but release validation is still required.
-7. Give Safepay the final public policy links/screenshots and updated recording when requested. The merchant supplies any transaction-history explanation directly.
+1. **Completed:** approved legal content, publication preflight, both repository pushes, backend/frontend deployment, web sandbox enablement, public policy HTTP checks, and Android OTA publication. Actual Vercel production builds successfully included the shared `MobileApp` policy source; the earlier project-settings connector ambiguity did not block builds.
+2. **Completed payment checks:** web Wallet top-up, product purchase, embedded sandbox bank authentication, unpaid close/resume without another tracker, one-time Wallet credit, buyer/seller saved-money agreement, and subscription billing-card management. These used only QA accounts and Safepay sandbox.
+3. **Not rerun end-to-end in this release:** new saved-card setup/removal/default, new subscription enrollment, paid upgrade/renewal/retry/cancellation, new subdomain purchase, and return funding. Existing backend/mobile regressions cover related contracts, but are not substitutes for fresh live UI payment tests. EUR/GBP provider acceptance, all bank/browser combinations, and a deliberate card-decline matrix were not established by the two successful USD payments.
+4. **Native UI verification:** the Android update is published, but the current emulator is stalled at the Google startup screen and reports its package service unavailable. A data-preserving emulator restart was attempted. Do not claim the newly installed mobile policy screens were visually verified until Android recovers. No data wipe, reinstall or native dependency change was performed.
+5. **Merchant next step:** provide Safepay the final public policy links/screenshots and any updated recording requested. Safepay may request wording changes and remains responsible for merchant approval. The merchant handles the three-month transaction-history explanation.
 
 No real card charge, bank payout, production Safepay activation, test-data migration or old-record cleanup was performed. The pre-existing `.gitignore` change was left untouched. Generated local build output is not a deployment.
