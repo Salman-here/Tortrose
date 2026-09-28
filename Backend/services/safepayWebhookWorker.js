@@ -4,6 +4,7 @@ const mongoose = require('mongoose');
 const Event = require('../models/SafepayWebhookEvent');
 const Payment = require('../models/SafepayPayment');
 const { readSafepayConfig } = require('../config/safepay');
+const { safepayWorkersEnabled } = require('./safepayFeatureFlags');
 const { reconcilePayment } = require('./safepayPaymentService');
 let timer = null;
 let running = false;
@@ -40,7 +41,7 @@ async function processEvent(event) {
 }
 
 async function runSafepayWebhookWorker() {
-  if (running || mongoose.connection.readyState !== 1 || process.env.SAFEPAY_MOBILE_ENABLED !== 'true') return;
+  if (running || mongoose.connection.readyState !== 1 || !safepayWorkersEnabled()) return;
   running = true;
   try {
     const config = readSafepayConfig(process.env, { requireWebhook: true });
@@ -71,7 +72,7 @@ async function runSafepayWebhookWorker() {
   } finally { running = false; }
 }
 function startSafepayWebhookWorker() {
-  if (timer || process.env.SAFEPAY_MOBILE_ENABLED !== 'true') return;
+  if (timer || !safepayWorkersEnabled()) return;
   timer = setInterval(runSafepayWebhookWorker, 10000);
   timer.unref?.();
   runSafepayWebhookWorker().catch(() => {});

@@ -10,6 +10,7 @@ const User = require('../models/User');
 const billing = require('./safepayBillingService');
 const payments = require('./safepayPaymentService');
 const { readSafepayConfig } = require('../config/safepay');
+const { safepayWorkersEnabled } = require('./safepayFeatureFlags');
 const { buildPlanPricing } = require('./subscriptionPricingService');
 const { applyBillingCredit, renewalPeriod } = require('./safepayBillingMath');
 const { requireOwnedReusableCard } = require('./safepayCustomerService');
@@ -215,7 +216,7 @@ async function refreshStatus(subscriptionId) {
 }
 
 async function runBillingWorker() {
-  if (running || process.env.SAFEPAY_MOBILE_ENABLED !== 'true' || mongoose.connection.readyState !== 1) return;
+  if (running || !safepayWorkersEnabled() || mongoose.connection.readyState !== 1) return;
   running = true;
   try {
     const config = readSafepayConfig(process.env, { requireWebhook: true });
@@ -243,7 +244,7 @@ async function runBillingWorker() {
   } finally { running = false; }
 }
 function startBillingWorker() {
-  if (workerTimer || process.env.SAFEPAY_MOBILE_ENABLED !== 'true') return;
+  if (workerTimer || !safepayWorkersEnabled()) return;
   workerTimer = setInterval(() => runBillingWorker().catch(error => console.error('[safepay-billing] deferred:', error.code || 'BILLING_UNAVAILABLE')), 30000);
   workerTimer.unref?.();
   runBillingWorker().catch(() => {});
