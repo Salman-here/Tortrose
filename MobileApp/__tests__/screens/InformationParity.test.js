@@ -53,13 +53,19 @@ describe('website and mobile information parity', () => {
   const mobileDocs = read('../../src/screens/DocsScreen.js');
 
   it('keeps the legal Terms and Privacy sections word-for-word aligned', () => {
-    expect(withoutIcons(readStaticConstant(mobileTerms, 'sections')))
-      .toEqual(withoutIcons(readStaticConstant(websiteTerms, 'sections')));
+    expect(mobileTerms).toContain("from './CommercePolicyScreen'");
+    expect(websiteTerms).toContain('<CommercePolicyPage policy="terms"');
+    const webPolicies = read('../../../Frontend/src/pages/CommercePolicyPage.jsx');
+    const mobilePolicies = read('../../src/screens/CommercePolicyScreen.js');
+    expect(webPolicies).toContain("MobileApp/src/content/commercePolicies'");
+    expect(mobilePolicies).toContain("from '../content/commercePolicies'");
+    expect(webPolicies).toContain('document.sections.map');
+    expect(mobilePolicies).toContain('document.sections.map');
     expect(withoutIcons(readStaticConstant(mobilePrivacy, 'sections')))
       .toEqual(withoutIcons(readStaticConstant(websitePrivacy, 'sections')));
   });
 
-  it('keeps FAQ and About aligned apart from the approved mobile-only payment provider migration', () => {
+  it('keeps FAQ and About aligned after both surfaces switch to Safepay', () => {
     const websiteFaqData = readStaticConstant(websiteFaq, 'faqCategories');
     const mobileFaqData = readStaticConstant(mobileFaq, 'faqCategories');
     expect(mobileFaqData.map(({ category, questions }) => ({
@@ -67,9 +73,7 @@ describe('website and mobile information parity', () => {
       questions: questions.map(({ q, a }) => ({ q, a })),
     }))).toEqual(websiteFaqData.map(({ category, questions }) => ({
       category,
-      questions: questions.map(({ q, a }) => ({ q, a: a
-        .replace('Checkout supports Stripe card', 'Checkout supports Safepay card')
-        .replace('Payments are processed through Stripe', 'Mobile card payments are processed through Safepay') })),
+      questions: questions.map(({ q, a }) => ({ q, a })),
     })));
 
     expect(withoutIcons(readStaticConstant(mobileAbout, 'values')))

@@ -2527,7 +2527,7 @@ const failReturnCardSettlement = async (stripeSession, reason = 'Card payment ex
 // Safepay uses the same immutable return calculation, seller transaction
 // fence, shipping allocator and Wallet credit as the existing card flow.
 // Provider identities remain separate; no Stripe-shaped objects are forged.
-const createSafepayReturnSettlement = async ({ returnRequestId, sellerId, requestKey }) => {
+const createSafepayReturnSettlement = async ({ returnRequestId, sellerId, requestKey, clientSurface = 'mobile' }) => {
   const payments = require('./safepayPaymentService');
   const Payment = require('../models/SafepayPayment');
   const config = require('../config/safepay').readSafepayConfig(process.env, { requireWebhook: true });
@@ -2539,7 +2539,7 @@ const createSafepayReturnSettlement = async ({ returnRequestId, sellerId, reques
   if (previous) {
     if (toId(previous.returnRequest) !== toId(returnRequestId)) throw returnSettlementError('This payment key belongs to another return.', 'IDEMPOTENCY_CONFLICT', 409);
     if (['cancelled', 'failed', 'manual_review', 'refunded'].includes(previous.status)) return payments.paymentResponse(previous);
-    return payments.prepareCheckout(previous._id);
+    return payments.prepareCheckout(previous._id, { clientSurface });
   }
   const payment = await runInTransaction(async session => {
     await SellerSettlementLock.findOneAndUpdate({ seller: sellerId }, { $inc: { version: 1 } }, { upsert: true, new: true, session });
@@ -2562,7 +2562,7 @@ const createSafepayReturnSettlement = async ({ returnRequestId, sellerId, reques
       ...(shipping ? { 'refund.shippingAmount': shipping.previousShippingAmount, 'refund.totalAmount': shipping.previousTotalAmount } : {}) },
     { $set: { ...(shipping?.set || {}), status: 'accepted_pending_payment', 'settlement.provider': 'safepay',
       'settlement.fundingSource': 'card', 'settlement.status': 'pending_payment', 'settlement.setupState': 'creating',
-      'settlement.clientSurface': 'mobile', 'settlement.safepayEnvironment': config.environment, 'settlement.failureReason': '',
+      'settlement.clientSurface': clientSurface, 'settlement.safepayEnvironment': config.environment, 'settlement.failureReason': '',
       'settlement.safepayTrackerId': null }, $inc: { 'settlement.attempt': 1 },
       $push: { statusHistory: { status: 'accepted_pending_payment', note: 'Seller accepted the return and is funding the wallet refund with Safepay.',
         changedBy: sellerId, actorRole: 'seller', changedAt: new Date() } } },
@@ -2577,7 +2577,7 @@ const createSafepayReturnSettlement = async ({ returnRequestId, sellerId, reques
     await request.save({ session });
     return saved;
   });
-  return payments.prepareCheckout(payment._id);
+  return payments.prepareCheckout(payment._id, { clientSurface });
 };
 
 const requireSafepayReturnBinding = (request, payment) => {

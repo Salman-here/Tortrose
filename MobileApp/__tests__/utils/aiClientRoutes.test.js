@@ -10,6 +10,9 @@ describe('AI client routes', () => {
     ['/seller-dashboard/subscription', 'SellerSubscription'],
     ['/user-dashboard/orders', 'Orders'],
     ['/user-dashboard/wallet', 'Wallet'],
+    ['/shipping-policy', 'ShippingPolicy'],
+    ['/refund-policy', 'RefundPolicy'],
+    ['/cancellation-policy', 'CancellationPolicy'],
   ])('maps %s to the native %s screen', (route, expectedName) => {
     expect(resolveAIClientRoute(route)).toEqual(expect.objectContaining({
       type: 'stack',

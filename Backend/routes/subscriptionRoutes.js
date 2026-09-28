@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const verifyToken = require('../middleware/authMiddleware');
 const { admin, seller } = require('../middleware/authMiddleware');
+const { legacyCheckoutGuard } = require('../middleware/safepayCutoverGuard');
 const {
     getSubscriptionCatalog,
     getSubscriptionStatus,
@@ -25,16 +26,16 @@ router.get('/mobile-return', mobileCheckoutReturn);
 router.get('/catalog', getSubscriptionCatalog);
 
 router.get('/status', verifyToken, seller, getSubscriptionStatus);
-router.post('/create-checkout', verifyToken, seller, createCheckout);
+router.post('/create-checkout', verifyToken, seller, legacyCheckoutGuard, createCheckout);
 router.post('/cancel', verifyToken, seller, cancelSubscription);
 router.post('/resume', verifyToken, seller, resumeSubscription);
-router.post('/upgrade-to-elite', verifyToken, seller, upgradeToElite);
+router.post('/upgrade-to-elite', verifyToken, seller, legacyCheckoutGuard, upgradeToElite);
 router.post('/downgrade-to-starter', verifyToken, seller, downgradeToStarter);
 router.post('/cancel-downgrade', verifyToken, seller, cancelDowngrade);
 
 // Subdomain purchase routes
 router.get('/subdomain/ownership', verifyToken, seller, getSubdomainOwnership);
-router.post('/subdomain/purchase', verifyToken, seller, purchaseSubdomain);
+router.post('/subdomain/purchase', verifyToken, seller, legacyCheckoutGuard, purchaseSubdomain);
 
 // Admin-only: overview of every seller subscription
 router.get('/admin/all', verifyToken, admin, getAllSubscriptionsForAdmin);

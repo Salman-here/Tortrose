@@ -2696,10 +2696,10 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
         const previewOnly = toolName === 'preview_order';
         const { productId, shippingInfo, paymentMethod, selectedColor, selectedOptions } = args;
         const normalizedPaymentMethod = paymentMethod || 'cash_on_delivery';
-        if (!['cash_on_delivery', 'stripe'].includes(normalizedPaymentMethod)) {
+        if (!['cash_on_delivery', 'stripe', 'safepay', 'wallet'].includes(normalizedPaymentMethod)) {
           return { success: false, error: 'Choose Cash on Delivery here, or use secure checkout for card or Rozare Wallet.' };
         }
-        if (normalizedPaymentMethod === 'stripe') {
+        if (normalizedPaymentMethod !== 'cash_on_delivery') {
           return {
             success: false,
             needsPaymentCheckout: true,
@@ -2996,7 +2996,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
             success: false,
             needsPaymentCheckout: true,
             requiresAdvancePayment: true,
-            error: `Cash on Delivery is not available because ${names.join(', ')} ${names.length === 1 ? 'accepts' : 'accept'} online payment only. Please use secure checkout with Stripe card or a sufficient same-currency Rozare Wallet balance.`,
+            error: `Cash on Delivery is not available because ${names.join(', ')} ${names.length === 1 ? 'accepts' : 'accept'} online payment only. Please use secure checkout with Safepay card or a sufficient same-currency Rozare Wallet balance.`,
             data: { checkoutRoute: '/checkout', advanceOnlySellers: names },
           };
         }

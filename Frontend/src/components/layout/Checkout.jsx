@@ -10,6 +10,7 @@ import axios from "axios";
 import { toast } from "react-toastify";
 import { useNavigate } from "react-router-dom";
 import Loader from "../common/Loader";
+import CheckoutPolicyLinks from '../common/CheckoutPolicyLinks';
 import PhoneField, { isValidPhone } from "../common/PhoneField";
 import LocationAutocomplete from "../common/LocationAutocomplete";
 import { getAuthToken } from "../../utils/cookieHelper";
@@ -59,6 +60,7 @@ import {
 import { requireWalletSummaryResponse } from '../../utils/walletPaymentRisk';
 import { getCartPresentationProductCurrency } from '../../utils/cartPresentation';
 import StoreAvatar from '../common/StoreAvatar';
+import { openSafepayCheckout } from '../../utils/safepay';
 
 const CHECKOUT_ATTEMPT_STORAGE_KEY = 'rozare_checkout_attempt_v1';
 const ORDER_SUCCESS_STORAGE_KEY = 'rozare_order_success_v1';
@@ -648,7 +650,7 @@ export default function Checkout() {
       shippingMethod: "standard",
       instructions: "",
       // Payment
-      paymentMethod: "stripe", // Default to Stripe
+      paymentMethod: "safepay",
       // Billing address (optional)
       billingSameAsShipping: true,
       billingAddress: "",
@@ -672,7 +674,7 @@ export default function Checkout() {
       const parsed = JSON.parse(saved);
       if (parsed.formValues) {
         Object.entries(parsed.formValues).forEach(([key, value]) => {
-          if (value !== undefined && value !== null) setValue(key, value);
+          if (value !== undefined && value !== null) setValue(key, key === 'paymentMethod' && value === 'stripe' ? 'safepay' : value);
         });
       }
       if (parsed.selectedShippingPerSeller) {
@@ -835,13 +837,13 @@ export default function Checkout() {
 
   useEffect(() => {
     if (!isCashOnDeliveryAvailable && paymentMethod === 'cash_on_delivery') {
-      setValue('paymentMethod', 'stripe', { shouldDirty: true, shouldValidate: true });
+      setValue('paymentMethod', 'safepay', { shouldDirty: true, shouldValidate: true });
     }
   }, [isCashOnDeliveryAvailable, paymentMethod, setValue]);
 
   useEffect(() => {
     if (paymentMethod === 'wallet' && !canPayWithWallet) {
-      setValue('paymentMethod', 'stripe', { shouldDirty: true, shouldValidate: true });
+      setValue('paymentMethod', 'safepay', { shouldDirty: true, shouldValidate: true });
     }
   }, [canPayWithWallet, paymentMethod, setValue]);
 
@@ -1087,8 +1089,8 @@ export default function Checkout() {
       paymentMethod:
         data.paymentMethod === 'wallet'
           ? 'wallet'
-          : data.paymentMethod === "stripe"
-            ? "stripe"
+          : data.paymentMethod === "safepay"
+            ? "safepay"
             : "cash_on_delivery",
 
       tracking: {
@@ -1104,7 +1106,8 @@ export default function Checkout() {
     let fingerprint = '';
     let attemptKey = '';
     try {
-      const intentFingerprint = createCheckoutFingerprint(order, 'checkout_session', 'web');
+      const paymentFlow = order.paymentMethod === 'safepay' ? 'safepay_hosted' : 'checkout_session';
+      const intentFingerprint = createCheckoutFingerprint(order, paymentFlow, 'web');
       const actorId = String(currentUser?._id || currentUser?.id || 'guest');
       fingerprint = `${actorId}:${intentFingerprint}`;
       const attempt = await getOrCreatePersistedMutationAttemptInLedger({
@@ -1122,7 +1125,7 @@ export default function Checkout() {
       };
       const res = await axios.post(
         `${import.meta.env.VITE_API_URL}api/order/place`,
-        { order, paymentFlow: 'checkout_session', clientSurface: 'web' },
+        { order, paymentFlow, clientSurface: 'web' },
         { headers }
       );
       const authoritativeEventCurrency = res.data?.order?.currency || currency;
@@ -1217,57 +1220,25 @@ export default function Checkout() {
         eventId: tiktokPlaceOrderEventId,
       });
 
-      if (res.data?.isPaid === true && res.data?.orderId) {
-        if (
-          res.data.noPaymentRequired === true
-          && rememberConfirmedOrder(res.data.orderId, 'stripe', {
-            noPaymentRequired: true,
-            attemptStorageKey: checkoutAttemptStorageKey,
-            attemptFingerprint: fingerprint,
-            attemptKey,
-          })
-        ) {
-          navigate(`/success?payment=stripe&orderId=${encodeURIComponent(res.data.orderId)}`, { replace: true });
-        } else if (rememberStripeCheckoutReturn(
-          res.data.orderId,
-          res.data.id,
-          checkoutAttemptStorageKey,
-          fingerprint,
-          attemptKey,
-        )) {
-          navigate(`/success?orderId=${encodeURIComponent(res.data.orderId)}`, { replace: true });
-        } else {
-          toast.warning(
-            'Payment is complete, but this tab could not save its secure confirmation. Open My Orders to view it safely.',
-            { autoClose: 9000 },
-          );
-          navigate('/user-dashboard/orders', { replace: true });
+      const result = res.data?.noPaymentRequired === true && res.data?.isPaid === true
+        ? { status: 'paid', mongoOrderId: res.data.order?._id }
+        : await openSafepayCheckout(res);
+      setIsProcessing(false);
+      if (result.status === 'paid') {
+        await clearPersistedMutationAttemptFromLedger(localStorage, checkoutAttemptStorageKey, fingerprint, attemptKey);
+        await fetchCart();
+        try { sessionStorage.removeItem(CHECKOUT_STORAGE_KEY); } catch { /* confirmation remains on server */ }
+        toast.success('Payment verified. Your order is confirmed.');
+        const mongoId = result.mongoOrderId || res.data.order?._id;
+        navigate(mongoId ? `/user-dashboard/order/detail/${mongoId}` : '/user-dashboard/orders', { replace: true });
+      } else {
+        if (['failed', 'cancelled', 'refunded'].includes(result.status)) {
+          await clearPersistedMutationAttemptFromLedger(localStorage, checkoutAttemptStorageKey, fingerprint, attemptKey);
         }
-        return;
+        toast.info(result.status === 'refund_pending' || result.status === 'refunded'
+          ? 'This purchase could not be fulfilled. Check your refund status in My Orders or contact support.'
+          : 'Payment is not confirmed. Your same checkout attempt is retained; you can resume it here.');
       }
-
-      if (!res.data?.url) {
-        throw new Error('Stripe did not return a secure checkout URL. Please try again.');
-      }
-      const stripeOrderId = res.data.orderId || res.data.order?.orderId;
-      if (!rememberStripeCheckoutReturn(
-        stripeOrderId,
-        res.data.id,
-        checkoutAttemptStorageKey,
-        fingerprint,
-        attemptKey,
-      )) {
-        // The Stripe session is recoverable with this same backend key. Do not
-        // open it unless the return page can authenticate the exact order and
-        // clear only this exact durable attempt after signed verification.
-        setIsProcessing(false);
-        toast.error(
-          'Secure payment could not start because this tab cannot save its payment return. Enable site storage, then try again.',
-          { autoClose: 9000 },
-        );
-        return;
-      }
-      window.location.assign(res.data.url);
 
 
     } catch (error) {
@@ -1323,7 +1294,7 @@ export default function Checkout() {
         navigate('/login?redirect=%2Fcheckout');
         return;
       }
-      if (order.paymentMethod === 'stripe') {
+      if (order.paymentMethod === 'safepay') {
         console.error("Checkout session creation error:", error);
         toast.error(error.response?.data?.msg || "Server error while creating checkout session. Try again!");
       }
@@ -2061,11 +2032,11 @@ export default function Checkout() {
 
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
                       <PaymentOption
-                        value="stripe"
+                        value="safepay"
                         title="Credit/Debit Card"
-                        description="Pay securely with Stripe"
+                        description="Pay securely with Safepay"
                         icon={<CreditCardIcon className="w-6 h-6" />}
-                        selected={paymentMethod === "stripe"}
+                        selected={paymentMethod === "safepay"}
                         {...register("paymentMethod")}
                       />
                       <PaymentOption
@@ -2094,7 +2065,7 @@ export default function Checkout() {
                       />
                     </div>
 
-                    {paymentMethod === "stripe" && (
+                    {paymentMethod === "safepay" && (
                       <motion.div
                         initial={{ opacity: 0, height: 0 }}
                         animate={{ opacity: 1, height: "auto" }}
@@ -2105,7 +2076,7 @@ export default function Checkout() {
                         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                           <div>
                             <p className="text-sm font-semibold" style={{ color: 'hsl(220, 70%, 55%)' }}>
-                              Continue to Stripe's secure checkout.
+                              Continue to Safepay's secure checkout.
                             </p>
                             <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
                               Choose a saved card or securely save a new card for purchases and wallet top-ups you initiate.
@@ -2322,6 +2293,7 @@ export default function Checkout() {
                 )}
               </div>
             )}
+            <CheckoutPolicyLinks />
           </form>
 
           {/* Order Summary */}

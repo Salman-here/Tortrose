@@ -57,6 +57,9 @@ function Footer() {
               <ul className="space-y-2">
                 <li><Link to="/terms" onClick={(e) => handleNavClick(e, '/terms')} className="text-xs hover:opacity-80 transition-opacity" style={{ color: 'hsl(var(--muted-foreground))' }}>Terms of Service</Link></li>
                 <li><Link to="/privacy" onClick={(e) => handleNavClick(e, '/privacy')} className="text-xs hover:opacity-80 transition-opacity" style={{ color: 'hsl(var(--muted-foreground))' }}>Privacy Policy</Link></li>
+                <li><Link to="/shipping-policy" onClick={(e) => handleNavClick(e, '/shipping-policy')} className="text-xs hover:opacity-80 transition-opacity" style={{ color: 'hsl(var(--muted-foreground))' }}>Shipping and Delivery</Link></li>
+                <li><Link to="/refund-policy" onClick={(e) => handleNavClick(e, '/refund-policy')} className="text-xs hover:opacity-80 transition-opacity" style={{ color: 'hsl(var(--muted-foreground))' }}>Returns and Refunds</Link></li>
+                <li><Link to="/cancellation-policy" onClick={(e) => handleNavClick(e, '/cancellation-policy')} className="text-xs hover:opacity-80 transition-opacity" style={{ color: 'hsl(var(--muted-foreground))' }}>Cancellation Policy</Link></li>
               </ul>
             </div>
           </div>

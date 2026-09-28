@@ -26,7 +26,7 @@ async function startPurchase(sellerId, body) {
   if (previous) {
     if (body.storeSlug !== previous.terms.storeSlug) throw fail('This attempt belongs to a different subdomain.', 'IDEMPOTENCY_CONFLICT');
     if (['cancelled', 'failed', 'refunded', 'manual_review'].includes(previous.status)) return payments.paymentResponse(previous);
-    return payments.prepareCheckout(previous._id);
+    return payments.prepareCheckout(previous._id, { clientSurface: body.clientSurface || 'mobile' });
   }
   const store = await Store.findOne({ seller: sellerId, storeSlug: body.storeSlug });
   if (!store) throw fail('Refresh the current store subdomain before paying.', 'SUBDOMAIN_CHECKOUT_STORE_MISMATCH');
@@ -48,7 +48,7 @@ async function startPurchase(sellerId, body) {
       requestKey: body.requestKey, reference: `subdomain:${store._id}:${payments.fingerprint(body.requestKey).slice(0, 24)}`,
       amountMinor: SUBDOMAIN_PRICE_MINOR, currency: 'USD', terms: { storeSlug: store.storeSlug,
         ownershipYears: 3, checkoutClaimToken: claim.claim.token } });
-    return await payments.prepareCheckout(saved._id);
+    return await payments.prepareCheckout(saved._id, { clientSurface: body.clientSurface || 'mobile' });
   } catch (error) {
     // Before a durable payment exists no provider checkout could have been
     // created. After that point retain the lock until a verified outcome.

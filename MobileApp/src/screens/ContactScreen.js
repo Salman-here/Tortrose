@@ -13,11 +13,13 @@ import KeyboardAwareFormScrollView from '../components/common/KeyboardAwareFormS
 import PremiumBackHeader from '../components/common/PremiumBackHeader';
 import { spacing, fontSize, fontWeight, borderRadius } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
+import { policyConfig, supportTimeline } from '../content/commercePolicies';
 
 const getContactMethods = (palette) => [
   { icon: 'mail-outline', title: 'Email Us', value: 'support@rozare.com', desc: 'For order, account, and seller questions', color: palette.colors.primary },
+  { icon: 'business-outline', title: 'Company inquiries', value: policyConfig.companyEmail, desc: 'General and business inquiries', color: palette.colors.primary },
   { icon: 'chatbubbles-outline', title: 'AI Chat', value: 'Available on platform', desc: 'Use Rozare AI for product and account help', color: palette.colors.success },
-  { icon: 'location-outline', title: 'Operations', value: 'Online / Remote', desc: 'Supporting buyers and sellers digitally', color: palette.colors.info },
+  { icon: 'location-outline', title: 'Registered business', value: policyConfig.legalName, desc: policyConfig.registeredAddress || 'Pakistan', color: palette.colors.info },
 ];
 
 export default function ContactScreen({ navigation }) {
@@ -69,6 +71,16 @@ export default function ContactScreen({ navigation }) {
               </GlassPanel>
             ))}
 
+            <GlassPanel variant="card" style={styles.formCard}>
+              <Text style={styles.formTitle}>Complaints and payment support</Text>
+              <Text style={styles.ctaText}>{supportTimeline}</Text>
+              <Text style={styles.ctaText}>Include your order or subscription reference. Never send passwords, full card numbers, CVV or OTPs.</Text>
+              <TouchableOpacity accessibilityRole="link" onPress={() => Linking.openURL(`mailto:${policyConfig.companyEmail}`).catch(() => Alert.alert('Company email', policyConfig.companyEmail))}><Text style={styles.ctaLink}>{policyConfig.companyEmail}</Text></TouchableOpacity>
+              {!!policyConfig.supportPhone && <TouchableOpacity accessibilityRole="link" onPress={() => Linking.openURL(`tel:${policyConfig.supportPhone.replace(/[^+\d]/g, '')}`).catch(() => Alert.alert('Support phone', policyConfig.supportPhone))}><Text style={styles.ctaLink}>{policyConfig.supportPhone}</Text></TouchableOpacity>}
+              {policyConfig.sameOperatingAddress === false && !!policyConfig.operatingAddress && <Text style={styles.ctaText}>Operating address: {policyConfig.operatingAddress}</Text>}
+              <TouchableOpacity accessibilityRole="link" onPress={() => navigation.navigate('RefundPolicy')}><Text style={styles.ctaLink}>Refund policy and processing times →</Text></TouchableOpacity>
+              <TouchableOpacity accessibilityRole="link" onPress={() => navigation.navigate('CancellationPolicy')}><Text style={styles.ctaLink}>Cancellation policy →</Text></TouchableOpacity>
+            </GlassPanel>
             {/* Contact Form */}
             <GlassPanel variant="card" style={styles.formCard}>
               <Text style={styles.formTitle}>Email support</Text>

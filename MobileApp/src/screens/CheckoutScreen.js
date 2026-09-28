@@ -1443,6 +1443,13 @@ export default function CheckoutScreen({ navigation }) {
             <View style={styles.divider} />
             <View style={styles.summaryRow}><Text style={styles.totalLabel}>Total</Text><Text style={styles.totalValue}>{checkoutMoney(totalAmount)}</Text></View>
           </GlassPanel>
+          <GlassPanel variant="card" style={styles.section}>
+            <Text style={styles.summaryLabel}>Before placing your order, review our policies. Standard approved product returns are credited to your Rozare Wallet after funding is verified, not automatically to your original card. Review each item’s return eligibility before purchase.</Text>
+            {[
+              ['Terms and Conditions', 'TermsOfService'], ['Shipping and Delivery', 'ShippingPolicy'],
+              ['Return and Refund', 'RefundPolicy'], ['Cancellation', 'CancellationPolicy'], ['Privacy Policy', 'PrivacyPolicy'],
+            ].map(([label, screen]) => <TouchableOpacity key={screen} accessibilityRole="link" style={{ paddingVertical: 10 }} onPress={() => navigation.navigate(screen)}><Text style={{ color: palette.colors.primary }}>{label} →</Text></TouchableOpacity>)}
+          </GlassPanel>
         </KeyboardAwareFormScrollView>
 
         {/* Footer */}

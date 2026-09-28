@@ -11,6 +11,7 @@ import GlassPanel from '../components/common/GlassPanel';
 import PremiumBackHeader from '../components/common/PremiumBackHeader';
 import { spacing, fontSize, fontWeight, borderRadius } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
+import { policyConfig } from '../content/commercePolicies';
 
 const sections = [
   { icon: 'server-outline', title: '1. Information We Collect', content: 'We collect account and profile details such as your name, email address, avatar, phone or WhatsApp number, saved shipping addresses, preferences, and seller business or store information. We collect order, cart, Wallet, payment-status, refund, return, product, review, support, report, and account-blocking records created when you use Rozare. Payment card details are handled by our payment processors; Rozare receives transaction references and payment status needed to complete and support a purchase.' },
@@ -36,7 +37,7 @@ export default function PrivacyPolicyScreen({ navigation }) {
       <SafeAreaView style={styles.container} edges={Platform.OS === 'android' ? [] : ['top']}>
         <PremiumBackHeader
           title="Privacy Policy"
-          subtitle="Last updated: August 29, 2026"
+          subtitle={`Last updated: ${policyConfig.updatedAt}`}
           icon="shield-checkmark-outline"
           onBack={() => navigation.goBack()}
           rightIcon="lock-closed-outline"
@@ -51,6 +52,7 @@ export default function PrivacyPolicyScreen({ navigation }) {
             </Text>
           </GlassPanel>
 
+          <GlassPanel variant="card" style={styles.sectionCard}><Text style={styles.sectionTitle}>Who operates Rozare and handles payments</Text><Text style={styles.sectionContent}>{policyConfig.legalName} operates Rozare.{policyConfig.registeredAddress ? ` Registered address: ${policyConfig.registeredAddress}.` : ''} Contact privacy@rozare.com for privacy requests. Online card payments and card storage use Safepay. Safepay receives the payment and billing details needed to process the transaction; Rozare holds provider references, masked card details, billing contacts, consent records and payment outcomes, not your full card number or CVV. Recurring subscription consent is separate from permission to save a card.</Text></GlassPanel>
           {sections.map((s, i) => (
             <GlassPanel key={i} variant="card" style={styles.sectionCard}>
               <View style={styles.sectionHeader}>

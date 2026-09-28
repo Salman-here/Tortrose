@@ -225,7 +225,7 @@ export default function OrderDetailManagementScreen({ route, navigation }) {
   const canVerifyOnWhatsApp = hasWhatsAppPhone(order) && !isOrderConfirmedByBuyer(order);
   const paymentMethodLabel = {
     cash_on_delivery: 'Cash on delivery',
-    stripe: 'Card / Stripe',
+    stripe: 'Card',
     safepay: 'Card / Safepay',
     wallet: 'Rozare Wallet',
   }[order.paymentMethod] || order.paymentMethod || 'Payment method unavailable';

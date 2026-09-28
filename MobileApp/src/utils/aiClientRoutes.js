@@ -14,6 +14,9 @@ const STATIC_CLIENT_ROUTES = {
   terms: stack('TermsOfService'),
   'terms-of-service': stack('TermsOfService'),
   privacy: stack('PrivacyPolicy'),
+  'shipping-policy': stack('ShippingPolicy'),
+  'refund-policy': stack('RefundPolicy'),
+  'cancellation-policy': stack('CancellationPolicy'),
   'privacy-policy': stack('PrivacyPolicy'),
   'ai-chat': stack('AIChat'),
   notifications: stack('Notifications'),
@@ -107,4 +110,3 @@ export const resolveAIClientRoute = (rawRoute) => {
   }
   return null;
 };
-

@@ -9,6 +9,7 @@ import TestPhaseNotice from './components/common/TestPhaseNotice'
 import ShoppingLocationPrompt from './components/common/ShoppingLocationPrompt'
 import { useLocation } from 'react-router-dom'
 import { useBuyerLocation } from './contexts/BuyerLocationContext'
+import SafepayCheckoutProvider from './components/common/SafepayCheckoutProvider'
  
 function App() {  
   const { pathname } = useLocation();
@@ -22,7 +23,7 @@ function App() {
   const subdomainSlug = !onDocs && isSubdomain() ? getSubdomain() : null;
 
   return (
-    <HelmetProvider> 
+    <HelmetProvider><SafepayCheckoutProvider>
       <Analytics />
       <ToastContainer
         position='bottom-right'
@@ -48,7 +49,7 @@ function App() {
       <TestPhaseNotice />
       {!onDocs && <ShoppingLocationPrompt />}
       {onDocs ? <DocsPage /> : <AppRoutes key={catalogKey} subdomainSlug={subdomainSlug} />}
-    </HelmetProvider>
+    </SafepayCheckoutProvider></HelmetProvider>
   )
 }
 

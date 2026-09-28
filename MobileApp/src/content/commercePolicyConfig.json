@@ -1,0 +1,22 @@
+{
+  "publicationApproved": true,
+  "updatedAt": "September 28, 2026",
+  "legalName": "ROZARE (SMC-PRIVATE) LIMITED",
+  "tradingName": "Rozare",
+  "website": "https://rozare.com",
+  "registeredAddress": "House/Plot No. 143, Street 8, Jinnah Block, Bahria Town, Lahore, Punjab 54000, Pakistan",
+  "operatingAddress": "House/Plot No. 143, Street 8, Jinnah Block, Bahria Town, Lahore, Punjab 54000, Pakistan",
+  "sameOperatingAddress": true,
+  "country": "Pakistan",
+  "province": "Punjab",
+  "city": "Lahore",
+  "postalCode": "54000",
+  "jurisdictionCity": "Lahore",
+  "jurisdictionProvince": "Punjab",
+  "supportEmail": "support@rozare.com",
+  "companyEmail": "hello@rozare.com",
+  "supportPhone": "+92 320 1166402",
+  "complaintAcknowledgementBusinessDays": 2,
+  "complaintResolutionTargetBusinessDays": 7,
+  "approvedRefundInitiationBusinessDays": 3
+}

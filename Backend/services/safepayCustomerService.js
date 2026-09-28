@@ -168,7 +168,7 @@ async function startCardSetup(userId, body) {
   const payment = await ensurePayment({ user: userId, purpose: 'card_setup', requestKey,
     reference: `card:${userId}:${fingerprint(requestKey).slice(0, 24)}`, amountMinor: 0, currency: 'PKR', customerId: link.customerId,
     terms: { consentVersion: 'safepay-card-storage-v1', reusableRequired: true } });
-  return prepareCheckout(payment._id);
+  return prepareCheckout(payment._id, { clientSurface: body.clientSurface || 'mobile' });
 }
 async function setDefaultCard(userId, cardId) {
   const { link } = await requireOwnedReusableCard(userId, cardId);

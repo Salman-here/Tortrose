@@ -216,13 +216,14 @@ exports.acceptReturn = async (req, res) => {
             if (req.body?.paymentProvider === 'safepay') {
                 require('../services/safepayPaymentService').requireMobileSafepay(req.body?.platform);
                 const payment = await require('../services/returnService').createSafepayReturnSettlement({
-                    returnRequestId: existing._id, sellerId: req.user.id, requestKey: req.body.requestKey,
+                    returnRequestId: existing._id, sellerId: req.user.id, requestKey: req.body.requestKey, clientSurface: req.body.platform,
                 });
                 return res.status(200).json({ ...payment, success: true, requiresPayment: true });
             }
             if (existing.settlement?.provider === 'safepay' && existing.status === 'accepted_pending_payment') {
-                return res.status(409).json({ msg: 'Resume this Safepay payment in the mobile app.', code: 'RETURN_PROVIDER_MISMATCH' });
+                return res.status(409).json({ msg: 'Resume this return using the same Safepay payment attempt.', code: 'RETURN_PROVIDER_MISMATCH' });
             }
+            require('../middleware/safepayCutoverGuard').assertCurrentCardProvider('stripe');
             const result = await createReturnSettlementCheckout({
                 returnRequestId: existing._id,
                 sellerId: req.user.id,

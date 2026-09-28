@@ -143,6 +143,7 @@ exports.createTopUpCheckout = async (req, res) => {
     try {
         const amount = parseWalletTopUpAmount(req.body?.amount);
         const usesSafepay = req.body?.paymentFlow === 'safepay_hosted';
+        require('../middleware/safepayCutoverGuard').assertCurrentCardProvider(usesSafepay ? 'safepay' : 'stripe');
         if (!stripe && !usesSafepay) {
             return res.status(503).json({ msg: 'Card payments are not configured.' });
         }
@@ -200,7 +201,7 @@ exports.createTopUpCheckout = async (req, res) => {
             const payment = await safepayPayments.ensurePayment({ user: req.user.id, purpose: 'wallet_top_up',
                 requestKey, reference: `wallet:${req.user.id}:${safepayPayments.fingerprint(requestKey).slice(0, 24)}`,
                 amountMinor: toMinorUnits(amount), currency });
-            const checkout = await safepayPayments.prepareCheckout(payment._id);
+            const checkout = await safepayPayments.prepareCheckout(payment._id, { clientSurface });
             res.set('Cache-Control', 'no-store, private, max-age=0');
             return res.status(200).json({ ...checkout, success: true, topUpId: payment._id, completed: checkout.isPaid });
         }

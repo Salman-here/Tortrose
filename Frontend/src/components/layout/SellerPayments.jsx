@@ -639,7 +639,7 @@ const SellerPayments = () => {
                         <div className="space-y-3">
                             {[
                                 ['Safepay delivered revenue', selectedBalance?.safepayDeliveredRevenue ?? 0],
-                                ['Stripe delivered revenue', selectedBalance?.stripeDeliveredRevenue ?? 0],
+                                ...(selectedBalance?.stripeDeliveredRevenue > 0 ? [['Previous card payments', selectedBalance.stripeDeliveredRevenue]] : []),
                                 ['Wallet delivered revenue', selectedBalance?.walletDeliveredRevenue ?? 0],
                                 ['Pending online estimate', selectedBalance?.onlinePendingRevenue ?? 0],
                                 ['Pending withdrawals', selectedBalance?.pendingWithdrawalAmount ?? 0],

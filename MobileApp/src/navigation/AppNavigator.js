@@ -166,6 +166,7 @@ import FAQScreen from '../screens/FAQScreen';
 import ContactScreen from '../screens/ContactScreen';
 import AboutScreen from '../screens/AboutScreen';
 import TermsOfServiceScreen from '../screens/TermsOfServiceScreen';
+import CommercePolicyScreen from '../screens/CommercePolicyScreen';
 import PrivacyPolicyScreen from '../screens/PrivacyPolicyScreen';
 import TrackOrderScreen from '../screens/TrackOrderScreen';
 import NotificationPreferencesScreen from '../screens/NotificationPreferencesScreen';
@@ -689,6 +690,9 @@ export default function AppNavigator() {
       <Stack.Screen name="Contact" component={ContactScreen} options={{ headerShown: false }} />
       <Stack.Screen name="About" component={AboutScreen} options={{ headerShown: false }} />
       <Stack.Screen name="TermsOfService" component={TermsOfServiceScreen} options={{ headerShown: false }} />
+      <Stack.Screen name="ShippingPolicy" component={CommercePolicyScreen} options={{ headerShown: false }} />
+      <Stack.Screen name="RefundPolicy" component={CommercePolicyScreen} options={{ headerShown: false }} />
+      <Stack.Screen name="CancellationPolicy" component={CommercePolicyScreen} options={{ headerShown: false }} />
       <Stack.Screen name="PrivacyPolicy" component={PrivacyPolicyScreen} options={{ headerShown: false }} />
       <Stack.Screen name="Docs" component={DocsScreen} options={{ headerShown: false }} />
 

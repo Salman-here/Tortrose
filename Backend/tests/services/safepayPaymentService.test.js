@@ -52,6 +52,20 @@ test('simultaneous setup creates only one payable tracker', async () => {
   expect(results.some(row => row.status === 'fulfilled' && row.value.checkoutUrl)).toBe(true);
   expect((await Payment.findById(payment._id)).status).toBe('ready');
 });
+test('web checkout uses the hosted source and fixed web bridge without creating a second tracker on reopen', async () => {
+  const payment = await service.ensurePayment(input());
+  const mobile = await service.prepareCheckout(payment._id);
+  const web = await service.prepareCheckout(payment._id, { clientSurface: 'web' });
+  expect(mobile.paymentId).toBe(web.paymentId);
+  expect(client.createTracker).toHaveBeenCalledTimes(1);
+  const url = new URL(web.checkoutUrl);
+  expect(url.searchParams.get('source')).toBe('hosted');
+  const redirect = new URL(url.searchParams.get('redirect_url'));
+  expect(redirect.hostname).toBe('rozare.up.railway.app');
+  expect(redirect.searchParams.get('surface')).toBe('web');
+  expect(redirect.searchParams.get('attempt')).toBe(String(payment._id));
+  expect(new URL(mobile.checkoutUrl).searchParams.get('source')).toBe('mobile');
+});
 test('unknown create outcome is recovered by reference without another mutation', async () => {
   const payment = await service.ensurePayment(input());
   client.createTracker.mockRejectedValueOnce(Object.assign(new Error('timeout'), { code: 'SAFEPAY_REQUEST_UNCERTAIN' }));

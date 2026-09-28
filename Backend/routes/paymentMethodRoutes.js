@@ -3,6 +3,7 @@
 const express = require('express');
 const verifyToken = require('../middleware/authMiddleware');
 const { cardSetupCreationLimiter } = require('../middleware/paymentCreationLimiter');
+const { legacyCheckoutGuard } = require('../middleware/safepayCutoverGuard');
 const {
   getConfig,
   listPaymentMethods,
@@ -16,7 +17,7 @@ const router = express.Router();
 router.get('/config', getConfig);
 router.use(verifyToken);
 router.get('/', listPaymentMethods);
-router.post('/setup', cardSetupCreationLimiter, createSetup);
+router.post('/setup', legacyCheckoutGuard, cardSetupCreationLimiter, createSetup);
 router.post('/setup/:setupIntentId/cancel', cancelSetup);
 router.delete('/:id', deletePaymentMethod);
 router.patch('/:id/default', setDefaultPaymentMethod);

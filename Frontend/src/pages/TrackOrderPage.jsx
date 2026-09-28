@@ -286,7 +286,7 @@ function TrackOrderContent() {
                       ? "Cash on Delivery"
                       : order.paymentMethod === "wallet"
                         ? "Rozare Wallet"
-                        : "Card (Stripe)"} •{" "}
+                        : order.paymentMethod === 'safepay' ? 'Card (Safepay)' : 'Card'} •{" "}
                     <span style={{ color: order.isPaid ? "#22c55e" : "#f59e0b" }}>
                       {order.isPaid ? "Paid" : "Unpaid"}
                     </span>

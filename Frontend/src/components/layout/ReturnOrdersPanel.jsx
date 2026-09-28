@@ -4,6 +4,9 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { ArrowRight, CheckCircle, CreditCard, Loader2, RefreshCw, RotateCcw, Search, WalletCards, X, XCircle } from 'lucide-react';
 import { toast } from 'react-toastify';
 import { getAuthToken } from '../../utils/cookieHelper';
+import { useAuth } from '../../contexts/AuthContext';
+import { openSafepayCheckout } from '../../utils/safepay';
+import { createScopedMutationStorageKey, getOrCreatePersistedMutationAttemptInLedger, clearPersistedMutationAttemptFromLedger } from '../../utils/persistedMutationAttempt';
 import { RETURN_STATUS_LABELS, RETURN_STATUS_TRANSITIONS, returnResolutionLabel, returnStatusTone } from '../../utils/returns';
 import { inspectReturnPresentationSnapshot } from '../../utils/returnPresentationSafety';
 import { isExactNonNegativeJsonMoney } from '../../utils/sellerMoneySafety';
@@ -33,6 +36,7 @@ const formatDateTime = (value) => {
 };
 
 export default function ReturnOrdersPanel({ formatPrice }) {
+  const { currentUser } = useAuth();
   const loadSequence = useRef(0);
   const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -132,10 +136,18 @@ export default function ReturnOrdersPanel({ formatPrice }) {
     }
     setSubmitting(true);
     try {
-      const response = await axios.post(`${API}/${request._id}/accept`, fundingSource ? { fundingSource } : {}, { headers: authHeaders() });
-      if (response.data?.requiresPayment && response.data.url) {
-        window.location.assign(response.data.url);
-        return;
+      let attempt, storageKey, fingerprint;
+      if (fundingSource === 'card') {
+        storageKey = createScopedMutationStorageKey('rozare_safepay_return_v1', currentUser?._id || currentUser?.id);
+        fingerprint = `return:${request._id}`;
+        attempt = await getOrCreatePersistedMutationAttemptInLedger({ storage: localStorage, storageKey, fingerprint, keyPrefix: 'web-return' });
+      }
+      const response = await axios.post(`${API}/${request._id}/accept`, fundingSource ? { fundingSource,
+        ...(attempt ? { paymentProvider: 'safepay', platform: 'web', requestKey: attempt.key } : {}) } : {}, { headers: authHeaders() });
+      if (response.data?.requiresPayment) {
+        const result = await openSafepayCheckout(response);
+        if (result.status === 'paid') await clearPersistedMutationAttemptFromLedger(localStorage, storageKey, fingerprint, attempt.key);
+        else { toast.info('Funding is not confirmed. Resume this same return payment later.'); await load(); return; }
       }
       toast.success(response.data?.msg || 'Return completed and buyer notified.');
       setDialog(null);
@@ -330,7 +342,7 @@ export default function ReturnOrdersPanel({ formatPrice }) {
                     </button>
                     <button type="button" onClick={() => acceptReturn(dialog.request, 'card')} disabled={submitting} className="glass-button p-4 rounded-xl text-left inline-flex items-start gap-3 disabled:opacity-50">
                       <CreditCard size={19} className="mt-0.5 shrink-0" style={{ color: 'hsl(220, 70%, 55%)' }} />
-                      <span><strong className="block text-sm" style={{ color: 'hsl(var(--foreground))' }}>Pay by card</strong><span className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>Stripe verifies the exact amount before wallet credit.</span></span>
+                      <span><strong className="block text-sm" style={{ color: 'hsl(var(--foreground))' }}>Pay by card</strong><span className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>Safepay verifies the exact amount before wallet credit.</span></span>
                     </button>
                   </div>
                 </>

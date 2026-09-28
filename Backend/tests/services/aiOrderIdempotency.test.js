@@ -131,6 +131,12 @@ const placeArgs = (product, overrides = {}) => ({
 });
 
 describe('AI COD order idempotency', () => {
+  test.each(['safepay', 'wallet', 'stripe'])('%s requests go to secure checkout without creating a chat order', async paymentMethod => {
+    const { buyer, product } = await createCatalog();
+    const result = await executeToolCall('place_order', placeArgs(product, { paymentMethod }), buyer);
+    expect(result).toMatchObject({ success: false, needsPaymentCheckout: true, data: { checkoutRoute: '/checkout' } });
+    expect(await Order.countDocuments()).toBe(0);
+  });
   test('requires a server-provided logical request key before any order is written', async () => {
     const { buyer, product } = await createCatalog();
     const args = placeArgs(product);

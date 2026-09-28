@@ -472,7 +472,7 @@ export default function BecomeSeller() {
   const benefits = [
     { icon: <Bot size={28} />, title: 'Run Your Store with AI', description: 'Add products, set prices, and manage supported order workflows by chatting on the app or WhatsApp.', color: 'hsl(280, 70%, 60%)' },
     { icon: <TrendingUp size={28} />, title: 'Reach Global Buyers', description: 'Multi-currency checkout, mobile + web storefronts, and SEO baked in to help you scale fast.', color: 'hsl(220, 70%, 55%)' },
-    { icon: <Shield size={28} />, title: 'Secure & Trusted', description: 'Stripe-powered payments, verified store badges, and a built-in trust system that protects buyers and sellers.', color: 'hsl(200, 80%, 50%)' },
+    { icon: <Shield size={28} />, title: 'Secure & Trusted', description: 'Safepay-powered payments, verified store badges, and a built-in trust system that protects buyers and sellers.', color: 'hsl(200, 80%, 50%)' },
   ];
 
   const aiSuperpowers = [
@@ -490,7 +490,7 @@ export default function BecomeSeller() {
     'AI product description & smart tagging',
     'WhatsApp store management with AI',
     'Voice-powered AI assistant',
-    'Stripe-powered secure checkout',
+    'Safepay-powered secure checkout',
     'Multi-currency support (USD, EUR, GBP, PKR)',
     'Custom store subdomain (yourstore.rozare.com)',
     'Order management & shipping tools',

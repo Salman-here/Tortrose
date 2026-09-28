@@ -17,8 +17,9 @@ const PAID_PURPOSES = new Set(['order', 'wallet_top_up', 'subdomain', 'return_se
 const SETUP_PURPOSES = new Set([...PAID_PURPOSES, 'card_setup', 'subscription']);
 
 function requireMobileSafepay(surface) {
-  if (surface !== 'mobile') throw fail('Safepay checkout is currently available in the mobile app.', 'SAFEPAY_MOBILE_ONLY', 400);
-  if (process.env.SAFEPAY_MOBILE_ENABLED !== 'true') throw fail('The new mobile payment service is not enabled yet.', 'SAFEPAY_NOT_ENABLED', 503);
+  if (!['mobile', 'web'].includes(surface)) throw fail('Choose a supported checkout surface.', 'SAFEPAY_SURFACE_INVALID', 400);
+  const enabled = surface === 'web' ? process.env.SAFEPAY_WEB_ENABLED : process.env.SAFEPAY_MOBILE_ENABLED;
+  if (enabled !== 'true') throw fail('Card payments are temporarily unavailable on this surface.', 'SAFEPAY_NOT_ENABLED', 503);
   return readSafepayConfig(process.env, { requireWebhook: true });
 }
 
@@ -129,7 +130,8 @@ function createSafepayPaymentService({
     return payment;
   }
 
-  async function prepareCheckout(paymentId) {
+  async function prepareCheckout(paymentId, { clientSurface = 'mobile' } = {}) {
+    if (!['mobile', 'web'].includes(clientSurface)) throw fail('Invalid checkout surface.', 'SAFEPAY_SURFACE_INVALID', 400);
     let payment = await Payment.findById(paymentId);
     if (!payment) throw fail('Payment not found.', 'PAYMENT_NOT_FOUND', 404);
     const config = ownedConfig(payment);
@@ -148,10 +150,12 @@ function createSafepayPaymentService({
     if (bridge.protocol !== 'https:') throw fail('The payment return service requires HTTPS.', 'SAFEPAY_RETURN_URL_INVALID', 503);
     bridge.searchParams.set('attempt', String(payment._id));
     bridge.searchParams.set('purpose', payment.purpose);
+    if (clientSurface === 'web') bridge.searchParams.set('surface', 'web');
     const cancelUrl = new URL(bridge);
     cancelUrl.searchParams.set('outcome', 'cancel');
     const checkoutUrl = client.buildPaymentCheckoutUrl({ tracker: payment.tracker, authToken, reference: payment.reference,
-      redirectUrl: bridge.toString(), cancelUrl: cancelUrl.toString(), customerId: payment.customerId, source: 'mobile' });
+      redirectUrl: bridge.toString(), cancelUrl: cancelUrl.toString(), customerId: payment.customerId,
+      source: clientSurface === 'web' ? 'hosted' : 'mobile' });
     // The URL is returned only to the authenticated owner; it is neither
     // logged nor included in order serializers/notification payloads.
     return { ...paymentResponse(payment), checkoutPresentation: 'embedded', checkoutUrl, url: checkoutUrl };

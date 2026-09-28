@@ -23,6 +23,8 @@ const TrustedStoresPage = lazy(() => import('../pages/TrustedStoresPage'))
 const BecomeSeller = lazy(() => import('../pages/BecomeSeller'))
 const TermsOfService = lazy(() => import('../pages/TermsOfService'))
 const PrivacyPolicy = lazy(() => import('../pages/PrivacyPolicy'))
+const SafepayReturnPage = lazy(() => import('../pages/SafepayReturnPage'))
+const CommercePolicyPage = lazy(() => import('../pages/CommercePolicyPage'))
 const AboutPage = lazy(() => import('../pages/AboutPage'))
 const ContactPage = lazy(() => import('../pages/ContactPage'))
 const FAQPage = lazy(() => import('../pages/FAQPage'))
@@ -145,6 +147,10 @@ function AppRoutes({ subdomainSlug = null }) {
                     {/* INFO & LEGAL PAGES */}
                     <Route path='/terms' element={<TermsOfService />} />
                     <Route path='/privacy' element={<PrivacyPolicy />} />
+                    <Route path='/safepay/return' element={<SafepayReturnPage />} />
+                    <Route path='/shipping-policy' element={<CommercePolicyPage policy="shipping" />} />
+                    <Route path='/refund-policy' element={<CommercePolicyPage policy="refunds" />} />
+                    <Route path='/cancellation-policy' element={<CommercePolicyPage policy="cancellation" />} />
                     <Route path='/account-deletion' element={<AccountDeletionPage />} />
                     <Route path='/about' element={<AboutPage />} />
                     <Route path='/contact' element={<ContactPage />} />

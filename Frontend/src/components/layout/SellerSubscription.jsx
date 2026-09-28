@@ -6,56 +6,15 @@ import {
     Users, Award, Star, MessageCircle, Gem, Bell, Palette, Megaphone, Tag
 } from 'lucide-react';
 import axios from 'axios';
-import { loadStripe } from '@stripe/stripe-js';
+import { useSafepaySubscriptionBilling } from '../subscription/SafepayBillingReview';
 import { toast } from 'react-toastify';
 import { useSearchParams } from 'react-router-dom';
 import { getAuthToken } from "../../utils/cookieHelper";
 import { formatUsdCents, getSubscriptionPricing } from '../../utils/subscriptionPricing';
 import {
     calendarMonthsRemaining,
-    canRetryPlanChangeAfterStripeAction,
-    getPlanChangeActionClientSecret,
-    isPlanChangeActionRequired,
-    isStripePublishableKey,
     subscriptionStatusConfirmsEntitlement,
 } from '../../utils/subscriptionPlanChange';
-
-const resolvePlanChangePaymentAction = async (error, token) => {
-    const clientSecret = getPlanChangeActionClientSecret(error);
-    if (!clientSecret) {
-        throw new Error('Stripe returned an invalid payment-authentication reference. No plan features were changed.');
-    }
-
-    const configResponse = await axios.get(
-        `${import.meta.env.VITE_API_URL}api/payment-methods/config`,
-        { headers: { Authorization: `Bearer ${token}` } }
-    );
-    const publishableKey = configResponse.data?.config?.publishableKey
-        || configResponse.data?.publishableKey;
-    if (!isStripePublishableKey(publishableKey)) {
-        throw new Error('Stripe payment authentication is temporarily unavailable. No plan features were changed.');
-    }
-
-    const stripe = await loadStripe(publishableKey);
-    if (!stripe) {
-        throw new Error('Stripe payment authentication could not be loaded. No plan features were changed.');
-    }
-
-    let result = await stripe.handleNextAction({ clientSecret });
-    if (!result?.error && result?.paymentIntent?.status === 'requires_confirmation') {
-        result = await stripe.confirmPayment({
-            clientSecret,
-            redirect: 'if_required',
-            confirmParams: { return_url: window.location.href },
-        });
-    }
-    if (!canRetryPlanChangeAfterStripeAction(result)) {
-        throw new Error(
-            result?.error?.message
-            || 'Stripe did not confirm the plan-change payment. No plan features were changed.'
-        );
-    }
-};
 
 const SellerSubscription = () => {
     const [subscription, setSubscription] = useState(null);
@@ -122,21 +81,14 @@ const SellerSubscription = () => {
         }
     }, [requestedCouponParam]);
 
+    const safepayBilling = useSafepaySubscriptionBilling(subscription, fetchSubscription);
+
     const handleSubscribe = async (plan = 'starter') => {
         setCheckoutLoading(plan);
         try {
-            const token = getAuthToken();
-            const payload = { plan };
-            if (plan === 'elite') payload.includeMetaAds = eliteMetaAds;
-            if (founderCouponApplied) payload.couponCode = subscription?.founderPromotion?.code;
-            const res = await axios.post(`${import.meta.env.VITE_API_URL}api/subscription/create-checkout`, payload, {
-                headers: { Authorization: `Bearer ${token}` }
-            });
-            window.location.href = res.data.url;
-        } catch (err) {
-            toast.error(err.response?.data?.msg || 'Failed to create checkout');
-            setCheckoutLoading(null);
-        }
+            await safepayBilling.open({ plan, includeMetaAds: plan === 'elite' && eliteMetaAds,
+                couponCode: founderCouponApplied ? subscription?.founderPromotion?.code || '' : '' });
+        } finally { setCheckoutLoading(null); }
     };
 
     const handleCancel = async () => {
@@ -158,37 +110,10 @@ const SellerSubscription = () => {
 
     const handleUpgrade = async () => {
         setUpgradeLoading(true);
-        let paymentActionStarted = false;
         try {
-            const token = getAuthToken();
-            const payload = { includeMetaAds: eliteMetaAds };
-            const submitPlanChange = () => axios.post(
-                `${import.meta.env.VITE_API_URL}api/subscription/upgrade-to-elite`,
-                payload,
-                { headers: { Authorization: `Bearer ${token}` } }
-            );
-            let res;
-            try {
-                res = await submitPlanChange();
-            } catch (error) {
-                if (!isPlanChangeActionRequired(error)) throw error;
-                paymentActionStarted = true;
-                toast.info('Complete Stripe authentication to continue. No plan features are active yet.');
-                await resolvePlanChangePaymentAction(error, token);
-                // Identical endpoint and payload resume the server-owned
-                // planChangeAttempt. Only this authoritative retry may grant
-                // Elite or Meta Ads after Stripe confirms payment.
-                res = await submitPlanChange();
-            }
-            toast.success(res.data.msg || 'Upgraded to Rozare Elite!');
             setShowUpgradeConfirm(false);
-            await fetchSubscription();
-        } catch (err) {
-            if (paymentActionStarted) await fetchSubscription();
-            toast.error(err.response?.data?.msg || err.message || 'Failed to update subscription');
-        } finally {
-            setUpgradeLoading(false);
-        }
+            await safepayBilling.open({ plan: 'elite', kind: 'upgrade', includeMetaAds: eliteMetaAds });
+        } finally { setUpgradeLoading(false); }
     };
 
     const handleDowngrade = async () => {
@@ -240,7 +165,7 @@ const SellerSubscription = () => {
         const verifyCheckoutReturn = async () => {
             if (returnedFromCheckout) {
                 setCheckoutReturnStatus('verifying');
-                toast.info('Stripe checkout returned. Rozare is verifying your subscription before enabling access.');
+                toast.info('Checkout returned. Rozare is verifying your subscription before enabling access.');
             } else if (checkoutWasCancelled) {
                 toast.info('Checkout was cancelled. You can subscribe anytime.');
             }
@@ -468,6 +393,16 @@ const SellerSubscription = () => {
 
     return (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="p-4 sm:p-6 max-w-4xl mx-auto">
+            {safepayBilling.review}
+            {subscription?.billingProvider === 'safepay' && <section className="glass-card p-4 mb-6 space-y-3">
+                <h2 className="font-semibold">Safepay subscription billing</h2>
+                <p className="text-sm text-muted-foreground">Manage the card used for automatic renewals. Updating your default shopping card does not change your subscription card.</p>
+                <div className="flex flex-wrap gap-3">
+                    <button className="glass-button px-4 py-2" disabled={safepayBilling.busy} onClick={safepayBilling.changeCard}>Change billing card</button>
+                    {subscription.pendingBillingOperation && <button className="glass-button px-4 py-2" disabled={safepayBilling.busy} onClick={safepayBilling.checkPending}>Check pending payment</button>}
+                    {subscription.failedBillingOperation && <button className="glass-button px-4 py-2" disabled={safepayBilling.busy} onClick={() => safepayBilling.open({ kind: 'retry', plan: subscription.plan })}>Retry payment</button>}
+                </div>
+            </section>}
 
             {checkoutReturnStatus && checkoutReturnStatus !== 'confirmed' && (
                 <motion.div
@@ -486,7 +421,7 @@ const SellerSubscription = () => {
                                 {checkoutReturnStatus === 'verifying' ? 'Verifying subscription' : 'Subscription confirmation pending'}
                             </h3>
                             <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                                Stripe checkout has returned, but Rozare has not yet confirmed an active entitlement. Your store access will update only after the authenticated subscription status confirms payment.
+                                Checkout has returned, but Rozare has not yet confirmed an active entitlement. Your store access will update only after the authenticated subscription status confirms payment.
                             </p>
                             <button type="button" onClick={recheckCheckoutReturn} disabled={checkoutReturnStatus === 'verifying'} className="text-xs font-semibold mt-2 disabled:opacity-60" style={{ color: 'hsl(200, 80%, 45%)' }}>
                                 Check status again
@@ -544,7 +479,7 @@ const SellerSubscription = () => {
                                 Your last payment could not be processed. Update your payment method to avoid store suspension.
                             </p>
                             <p className="text-[11px] mt-2" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                                Stripe will retry the payment automatically. If it continues to fail, your store will be blocked.
+                                Check your billing card and retry the outstanding payment. Access may be restricted if payment remains unpaid.
                             </p>
                         </div>
                     </div>
@@ -1036,8 +971,8 @@ const SellerSubscription = () => {
                     {founderCouponApplied && !founderRateActive && (
                         <p className="text-[10px] mt-3" style={{ color: 'hsl(var(--muted-foreground))' }}>
                             {founderReservationMinutes
-                                ? `Your slot is reserved for ${founderReservationMinutes} minutes after you continue to Stripe and is permanently claimed when Checkout completes.`
-                                : 'Your slot is reserved after you continue to Stripe and is permanently claimed when Checkout completes.'}
+                                ? `Your slot is reserved for ${founderReservationMinutes} minutes while you review the Safepay billing quote and is permanently claimed when enrollment is verified.`
+                                : 'Your slot is reserved while you review the Safepay billing quote and is permanently claimed when enrollment is verified.'}
                         </p>
                     )}
                 </div>
@@ -1360,7 +1295,7 @@ const SellerSubscription = () => {
 
             {/* Subscription comparison note */}
             <p className="text-center text-[10px] mt-4" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                Secure checkout powered by Stripe. Cancel anytime with one click.
+                Secure payments powered by Safepay. Cancel automatic renewal in your subscription settings.
             </p>
 
             {/* Cancel Confirm Modal */}

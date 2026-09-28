@@ -29,6 +29,7 @@ const PRIVATE_EXACT_PATHS = new Set([
   '/settings/blocked-accounts',
   '/signup',
   '/success',
+  '/safepay/return',
   '/unauthorized',
 ]);
 
@@ -57,6 +58,9 @@ const PUBLIC_EXACT_PATHS = new Set([
   '/stores',
   '/stores/trusted',
   '/terms',
+  '/shipping-policy',
+  '/refund-policy',
+  '/cancellation-policy',
   '/track-order',
 ]);
 

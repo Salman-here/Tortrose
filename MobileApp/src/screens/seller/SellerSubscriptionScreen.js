@@ -411,7 +411,7 @@ export default function SellerSubscriptionScreen({ navigation, route }) {
   const openCheckout = useCallback(async (plan, kind = 'enrollment') => {
     if (billingBusyRef.current) return;
     if (subscription?.billingProvider === 'stripe' && ['active', 'free_period', 'past_due'].includes(subscription.status)) {
-      Alert.alert('Existing subscription', 'This existing plan is still billed through Stripe. Manage it on the website until it ends, so you are not subscribed twice.',
+      Alert.alert('Existing subscription', 'Finish or cancel renewal of your existing card plan on the website before switching to Safepay, so you are not subscribed twice.',
         [{ text: 'Close' }, { text: 'Open website', onPress: () => WebBrowser.openBrowserAsync('https://rozare.com/seller-dashboard/subscription') }]);
       return;
     }
@@ -804,7 +804,7 @@ export default function SellerSubscriptionScreen({ navigation, route }) {
               </View>
               <View style={styles.heroMetaItem}>
                 <Ionicons name="shield-checkmark-outline" size={15} color="rgba(255,255,255,0.9)" />
-                <Text style={styles.heroMetaText}>{subscription?.billingProvider === 'stripe' ? 'Existing Stripe plan' : 'Safepay secured'}</Text>
+                <Text style={styles.heroMetaText}>{subscription?.billingProvider === 'stripe' ? 'Existing card plan' : 'Safepay secured'}</Text>
               </View>
             </View>
           </LinearGradient>

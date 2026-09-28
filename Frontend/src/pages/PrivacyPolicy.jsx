@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { Shield, Eye, Database, Lock, UserCheck, Bell, Trash2, Globe, Bot, MapPin, MessageSquare, Baby } from 'lucide-react';
 import { motion } from 'framer-motion';
 import SEOHead from '../components/common/SEOHead';
+import { policyConfig } from '../../../MobileApp/src/content/commercePolicies';
 
 const sections = [
   {
@@ -92,7 +93,7 @@ function PrivacyPolicy() {
             Privacy Policy
           </h1>
           <p style={{ color: 'hsl(var(--muted-foreground))' }} className="text-sm">
-            Last updated: August 29, 2026
+            Last updated: {policyConfig.updatedAt}
           </p>
         </div>
 
@@ -104,6 +105,7 @@ function PrivacyPolicy() {
           </p>
         </div>
 
+        <section className="glass-panel p-6 mb-5 space-y-3"><h2 className="text-lg font-semibold">Who operates Rozare and handles payments</h2><p className="text-sm leading-relaxed text-muted-foreground">{policyConfig.legalName} operates Rozare.{policyConfig.registeredAddress ? ` Registered address: ${policyConfig.registeredAddress}.` : ''} Contact privacy@rozare.com for privacy requests. Online card payments and card storage use Safepay. Safepay receives the payment and billing details needed to process the transaction; Rozare holds provider references, masked card details, billing contacts, consent records and payment outcomes, not your full card number or CVV. Recurring subscription consent is separate from permission to save a card.</p><a className="text-sm underline" href="mailto:privacy@rozare.com">Contact the privacy team</a></section>
         <div className="space-y-5">
           {sections.map((section, i) => (
             <motion.div

@@ -364,7 +364,7 @@ const OrderDetail = () => {
                             <CreditCard className="w-4 h-4" style={{ color: 'hsl(var(--primary))' }} /> Payment Details
                         </h2>
                         <div className="space-y-3 text-sm">
-                            <div className="flex justify-between"><span style={{ color: 'hsl(var(--muted-foreground))' }}>Method:</span><span className="font-medium" style={{ color: 'hsl(var(--foreground))' }}>{order.paymentMethod === 'cash_on_delivery' ? 'Cash on Delivery' : order.paymentMethod === 'wallet' ? 'Rozare Wallet' : 'Card (Stripe)'}</span></div>
+                            <div className="flex justify-between"><span style={{ color: 'hsl(var(--muted-foreground))' }}>Method:</span><span className="font-medium" style={{ color: 'hsl(var(--foreground))' }}>{order.paymentMethod === 'cash_on_delivery' ? 'Cash on Delivery' : order.paymentMethod === 'wallet' ? 'Rozare Wallet' : order.paymentMethod === 'safepay' ? 'Card (Safepay)' : 'Card'}</span></div>
                             <div className="flex justify-between items-center">
                                 <span style={{ color: 'hsl(var(--muted-foreground))' }}>Status:</span>
                                 {order.isPaid

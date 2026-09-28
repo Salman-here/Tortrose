@@ -6,6 +6,7 @@ import { toast } from 'react-toastify';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { getAuthToken } from '../../utils/cookieHelper';
+import { openSafepayCheckout } from '../../utils/safepay';
 import {
   canTopUpWalletCurrency,
   getTopUpCompletionBreakdown,
@@ -234,8 +235,8 @@ export default function Wallet() {
       setTopUpStatus({
         type: 'pending',
         message: result === 'success'
-          ? 'Stripe returned successfully. Rozare is verifying the signed payment event…'
-          : 'Stripe checkout was closed. Rozare is verifying the exact top-up before deciding its final status…',
+          ? 'Card checkout returned successfully. Rozare is verifying the signed payment event…'
+          : 'Card checkout was closed. Rozare is verifying the exact top-up before deciding its final status…',
       });
       for (let attempt = 0; attempt < 8; attempt += 1) {
         try {
@@ -306,7 +307,7 @@ export default function Wallet() {
         }
         if (attempt < 7) await new Promise(resolve => setTimeout(resolve, 1200));
       }
-      if (active) setTopUpStatus({ type: 'pending', message: 'Confirmation is taking longer than usual. The same top-up key is preserved; your balance will update only after Stripe is verified.' });
+      if (active) setTopUpStatus({ type: 'pending', message: 'Confirmation is taking longer than usual. The same top-up key is preserved; your balance will update only after payment is verified.' });
       clearReturnQuery();
     };
     verify();
@@ -324,7 +325,7 @@ export default function Wallet() {
       return;
     }
     setSubmitting(true);
-    const fingerprint = `${currentUser?._id || currentUser?.id || 'guest'}:${String(currency).toUpperCase()}:${normalizedAmount.toFixed(2)}`;
+    const fingerprint = `safepay:${currentUser?._id || currentUser?.id || 'guest'}:${String(currency).toUpperCase()}:${normalizedAmount.toFixed(2)}`;
     let attemptKey = '';
     try {
       const attempt = await getOrCreatePersistedMutationAttemptInLedger({
@@ -338,64 +339,25 @@ export default function Wallet() {
         amount: normalizedAmount,
         currency,
         requestKey: attempt.key,
-        paymentFlow: 'checkout_session',
+        paymentFlow: 'safepay_hosted',
         clientSurface: 'web',
       }, { headers: { Authorization: `Bearer ${getAuthToken()}` } });
-      const inspected = inspectWalletTopUpCreateResponse(response.data, {
-        amount: normalizedAmount,
-        currency,
-      });
-      if (!inspected.valid) {
-        const presentationError = new Error(`Wallet top-up response could not be verified: ${inspected.errors[0]}`);
-        presentationError.code = 'WALLET_PRESENTATION_DATA_INVALID';
-        throw presentationError;
-      }
-      if (inspected.kind === 'redirect') {
-        // Do not leave for hosted checkout unless this exact ledger generation
-        // can be correlated again on the return page.
-        const returnSaved = rememberWalletTopUpReturn({
-          transactionId: inspected.transactionId,
-          attemptStorageKey: topUpAttemptStorageKey,
-          attemptFingerprint: fingerprint,
-          attemptKey: attempt.key,
-        });
-        if (!returnSaved) {
-          const correlationError = new Error('Secure top-up return correlation could not be saved. Enable site storage and retry.');
-          correlationError.retainMutationAttempt = true;
-          throw correlationError;
+      const inspected = await openSafepayCheckout(response);
+      if (inspected.status === 'paid') {
+        if (inspected.transaction?.amount !== normalizedAmount || inspected.transaction?.currency !== currency
+          || inspected.transaction?.status !== 'completed' || !getTopUpCompletionBreakdown(inspected.transaction)) {
+          throw Object.assign(new Error('The exact Wallet credit could not be verified. Retry the same attempt.'), { retainMutationAttempt: true });
         }
-        window.location.assign(inspected.redirectUrl);
-      }
-      else if (inspected.kind === 'completed') {
         await clearTopUpAttempt(fingerprint, attempt.key);
-        forgetWalletTopUpReturn(inspected.transactionId);
         setTopUpStatus({ type: 'success', message: getTopUpCompletionMessage(inspected.transaction) });
         await load();
-        setSubmitting(false);
-      }
-      else if (inspected.kind === 'payment_received') {
-        if (!rememberWalletTopUpReturn({
-          transactionId: inspected.transactionId,
-          attemptStorageKey: topUpAttemptStorageKey,
-          attemptFingerprint: fingerprint,
-          attemptKey: attempt.key,
-        })) {
-          const correlationError = new Error('Secure top-up return correlation could not be saved.');
-          correlationError.retainMutationAttempt = true;
-          throw correlationError;
+      } else {
+        if (['cancelled', 'failed', 'refunded'].includes(inspected.status)) {
+          await clearTopUpAttempt(fingerprint, attempt.key);
         }
-        setTopUpStatus({ type: 'pending', message: 'Stripe received your payment. Rozare is waiting for the signed confirmation before updating your balance.' });
-        setSubmitting(false);
-        setSearchParams({
-          top_up: 'success',
-          transactionId: inspected.transactionId,
-        }, { replace: true });
+        setTopUpStatus({ type: 'pending', message: 'Payment is not confirmed. Your balance changes only after verification; retry to resume the same top-up.' });
       }
-      else {
-        const responseError = new Error('Stripe checkout URL was not returned.');
-        responseError.retainMutationAttempt = true;
-        throw responseError;
-      }
+      setSubmitting(false);
     } catch (error) {
       if (!error.retainMutationAttempt && !shouldRetainWalletTopUpAttempt(error)) {
         await clearTopUpAttempt(fingerprint, attemptKey);
@@ -451,7 +413,7 @@ export default function Wallet() {
         <div className="rounded-xl p-4 mb-5" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', color: 'hsl(0,72%,52%)' }}>
           Wallet access is locked. {wallet?.lockedReason || 'Contact Rozare support for help.'}
           {wallet?.paymentRisk?.canTopUpForSettlement === true && (
-            <p className="text-xs mt-1">Checkout remains blocked. Stripe top-ups are allowed only for a currency with outstanding payment-risk liability. Each verified payment reduces that liability first; the Wallet stays locked while debt remains, and only surplus after full clearance becomes available.</p>
+            <p className="text-xs mt-1">Checkout remains blocked. Safepay top-ups are allowed only for a currency with outstanding payment-risk liability. Each verified payment reduces that liability first; the Wallet stays locked while debt remains, and only surplus after full clearance becomes available.</p>
           )}
         </div>
       )}
@@ -497,7 +459,7 @@ export default function Wallet() {
           <h2 className="font-semibold flex items-center gap-2" style={{ color: 'hsl(var(--foreground))' }}><CreditCard size={17} style={{ color: 'hsl(var(--primary))' }} /> {isRiskSettlement ? 'Settle liability' : 'Add balance'}</h2>
           <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>{isRiskSettlement
             ? `${formatAmount(selectedRisk.outstanding, currency)} is outstanding. Any valid top-up reduces it first; a partial payment leaves the Wallet locked, while surplus after full clearance becomes available.`
-            : 'Stripe verifies payment before any balance is credited. You can select a saved card at secure checkout.'}</p>
+            : 'Safepay payment is verified before any balance is credited. Enter your card details in the secure payment form.'}</p>
           <Link to="/user-dashboard/payment-methods" className="mt-3 inline-flex items-center gap-2 text-xs font-semibold" style={{ color: 'hsl(var(--primary))' }}>
             <CreditCard size={13} /> Manage saved cards
           </Link>
@@ -514,7 +476,7 @@ export default function Wallet() {
             <p className="text-xs mt-2" style={{ color: 'hsl(0,72%,52%)' }}>Top-up is unavailable for {currency}. Select a currency with an outstanding liability, or contact support if this is not a payment-risk lock.</p>
           )}
           <button type="button" onClick={startTopUp} disabled={submitting || !canTopUpSelectedCurrency} className="mt-4 w-full px-4 py-2.5 rounded-xl text-sm font-semibold text-white inline-flex items-center justify-center gap-2 disabled:opacity-50" style={{ background: 'hsl(var(--primary))' }}>
-            {submitting ? <Loader2 size={15} className="animate-spin" /> : <CreditCard size={15} />} {isRiskSettlement ? 'Pay liability with Stripe' : 'Continue to Stripe'}
+            {submitting ? <Loader2 size={15} className="animate-spin" /> : <CreditCard size={15} />} {isRiskSettlement ? 'Pay liability with Safepay' : 'Continue to Safepay'}
           </button>
         </section>
 

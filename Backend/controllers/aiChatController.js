@@ -696,7 +696,7 @@ const userTools = [
     type: 'function',
     function: {
       name: 'place_order',
-      description: 'Place the Cash-on-Delivery order only after preview_order and the buyer\'s subsequent confirmation. Supply the same top-level order details shown in the preview orderRequest; the server retains its signed preview internally. Can order a specific product or the whole cart; preserve the approved scope and options. A missing/changed/expired preview requires a fresh preview and confirmation. Stripe, Wallet and coupons use secure /checkout.',
+      description: 'Place the Cash-on-Delivery order only after preview_order and the buyer\'s subsequent confirmation. Supply the same top-level order details shown in the preview orderRequest; the server retains its signed preview internally. Can order a specific product or the whole cart; preserve the approved scope and options. A missing/changed/expired preview requires a fresh preview and confirmation. Safepay, Wallet and coupons use secure /checkout.',
       parameters: {
         type: 'object',
         properties: {
@@ -726,7 +726,7 @@ const userTools = [
             required: ['fullName', 'email', 'phone', 'address', 'city', 'state', 'postalCode', 'country'],
             additionalProperties: false,
           },
-          paymentMethod: { type: 'string', enum: ['cash_on_delivery', 'stripe'], description: 'Use cash_on_delivery for chat orders. Stripe card and Rozare Wallet require secure /checkout instead of a chat order.' },
+          paymentMethod: { type: 'string', enum: ['cash_on_delivery', 'safepay', 'wallet'], description: 'Use cash_on_delivery for chat orders. Safepay card and Rozare Wallet require secure /checkout instead of a chat order.' },
         },
       },
     },
@@ -2210,6 +2210,7 @@ const AI_COMMON_ROUTES = new Set([
   '/', '/marketplace', '/marketplace/trusted', '/trusted-stores', '/about',
   '/faq', '/contact', '/docs', '/track-order', '/become-seller', '/terms',
   '/privacy', '/ai-chat', '/login', '/signup', '/cart', '/checkout',
+  '/shipping-policy', '/refund-policy', '/cancellation-policy',
   '/products', '/stores', '/settings/blocked-accounts',
 ]);
 const AI_ROLE_ROUTES = {

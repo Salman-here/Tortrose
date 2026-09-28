@@ -4,11 +4,14 @@ import { motion } from 'framer-motion';
 import { toast } from 'react-toastify';
 import { Link } from 'react-router-dom';
 import SEOHead from '../components/common/SEOHead';
+import { policyConfig, supportTimeline } from '../../../MobileApp/src/content/commercePolicies';
 
 const contactMethods = [
-  { icon: <Mail size={22} />, title: 'Email Us', value: 'support@rozare.com', desc: 'For order, account, and seller questions' },
+  { icon: <Mail size={22} />, title: 'Email Us', value: policyConfig.supportEmail, href: `mailto:${policyConfig.supportEmail}`, desc: 'For order, account, and seller questions' },
+  { icon: <Mail size={22} />, title: 'Company inquiries', value: policyConfig.companyEmail, href: `mailto:${policyConfig.companyEmail}`, desc: 'General and business inquiries' },
   { icon: <MessageSquare size={22} />, title: 'AI Chat', value: 'Available on platform', desc: 'Use Rozare AI for product and account help' },
-  { icon: <MapPin size={22} />, title: 'Operations', value: 'Online / Remote', desc: 'Supporting buyers and sellers digitally' }
+  { icon: <MapPin size={22} />, title: 'Registered business', value: policyConfig.legalName, desc: policyConfig.registeredAddress || 'Pakistan' },
+  ...(policyConfig.supportPhone ? [{ icon: <Phone size={22} />, title: 'Call support', value: policyConfig.supportPhone, href: `tel:${policyConfig.supportPhone.replace(/[^+\d]/g, '')}`, desc: 'Order, payment and account complaints' }] : [])
 ];
 
 function ContactPage() {
@@ -89,12 +92,13 @@ function ContactPage() {
                 {m.icon}
               </div>
               <h3 className="font-semibold mb-1" style={{ color: 'hsl(var(--foreground))' }}>{m.title}</h3>
-              <p className="text-sm font-medium" style={{ color: 'hsl(var(--primary))' }}>{m.value}</p>
+              {m.href ? <a className="text-sm font-medium underline break-words" style={{ color: 'hsl(var(--primary))' }} href={m.href}>{m.value}</a> : <p className="text-sm font-medium" style={{ color: 'hsl(var(--primary))' }}>{m.value}</p>}
               <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>{m.desc}</p>
             </motion.div>
           ))}
         </div>
 
+        <section className="glass-panel p-6 mb-8 space-y-3"><h2 className="font-semibold">Complaints and payment support</h2><p className="text-sm text-muted-foreground">{supportTimeline}</p><p className="text-sm">Include your order or subscription reference and a description of the issue. Do not send passwords, card numbers, CVV or OTPs.</p><a className="underline" href={`mailto:${policyConfig.supportEmail}`}>{policyConfig.supportEmail}</a>{policyConfig.supportPhone && <a className="block underline" href={`tel:${policyConfig.supportPhone.replace(/[^+\d]/g, '')}`}>{policyConfig.supportPhone}</a>}{policyConfig.sameOperatingAddress === false && policyConfig.operatingAddress && <p className="text-sm">Operating address: {policyConfig.operatingAddress}</p>}<p className="text-sm"><Link className="underline" to="/refund-policy">Refund policy and processing times</Link> · <Link className="underline" to="/cancellation-policy">Cancellation policy</Link></p></section>
         {/* Contact Form */}
         <div className="glass-panel-strong p-6 sm:p-8">
           <h2 className="text-xl font-bold mb-6" style={{ color: 'hsl(var(--foreground))' }}>

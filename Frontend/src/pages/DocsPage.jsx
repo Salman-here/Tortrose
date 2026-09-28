@@ -189,7 +189,7 @@ function DocsPage() {
       logo: { '@type': 'ImageObject', url: 'https://rozare.com/rozare-logo.svg' },
     },
     about: ['AI-powered marketplace', 'Conversational commerce', 'WhatsApp store management', 'Seller payments', 'Online selling', 'Online shopping'],
-    keywords: 'Rozare, AI marketplace, AI shopping, AI commerce, sell online, seller payments, Stripe payouts, WhatsApp store management, chat to sell, conversational commerce, Rozare Starter, Rozare Elite, become a seller',
+    keywords: 'Rozare, AI marketplace, AI shopping, AI commerce, sell online, seller payments, seller withdrawals, WhatsApp store management, chat to sell, conversational commerce, Rozare Starter, Rozare Elite, become a seller',
     mainEntity: {
       '@type': 'FAQPage',
       mainEntity: [
@@ -216,7 +216,7 @@ function DocsPage() {
       <Helmet>
         <title>Rozare Docs - AI Shopping, Seller Dashboard & WhatsApp Store Management</title>
         <meta name="description" content="Complete buyer and seller guide for Rozare: shopping, AI chat, seller dashboard, WhatsApp store management, seller payments, withdrawals, subscriptions, coupons, shipping, orders, and trust tools." />
-        <meta name="keywords" content="Rozare, Rozare docs, Rozare documentation, AI marketplace, AI shopping, AI commerce, conversational commerce, sell online, seller payments, Stripe payouts, WhatsApp store management, chat to sell, online marketplace, AI store assistant, Rozare Starter, Rozare Elite, become a seller, Rozare guide, Rozare help" />
+        <meta name="keywords" content="Rozare, Rozare docs, Rozare documentation, AI marketplace, AI shopping, AI commerce, conversational commerce, sell online, seller payments, seller withdrawals, WhatsApp store management, chat to sell, online marketplace, AI store assistant, Rozare Starter, Rozare Elite, become a seller, Rozare guide, Rozare help" />
         <meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1" />
         <link rel="canonical" href={DOCS_URL} />
         <meta property="og:site_name" content="Rozare" />
@@ -433,7 +433,7 @@ function DocsPage() {
                   'Pick variants (size, color) and click "Add to Cart".',
                   'Open the cart, review items, then go to checkout.',
                   'Confirm or edit the shipping address. Apply a coupon if you have one.',
-                  'Choose Cash on Delivery, Stripe card, or Rozare Wallet. The full order uses one payment method.',
+                  'Choose Cash on Delivery, Safepay card, or Rozare Wallet. The full order uses one payment method.',
                   'Place the order. You will receive a confirmation email and notification.',
                 ]} />
 
@@ -481,7 +481,7 @@ function DocsPage() {
                 <FeatureGrid features={[
                   { icon: Store, title: 'Online Storefront', desc: 'A fully customizable storefront with your own slug, optional custom subdomain, logo, banner, description, and social links.' },
                   { icon: Bot, title: 'AI Business Partner', desc: 'A built-in AI assistant that adds products, updates stock, runs analytics, manages orders, creates coupons, and gives growth advice.' },
-                  { icon: CreditCard, title: 'Seller Payments', desc: 'A Payments tab for Stripe balance, COD revenue, total revenue, estimated revenue, bank details, and withdrawal requests.' },
+                  { icon: CreditCard, title: 'Seller Payments', desc: 'A Payments tab for online balance, COD revenue, total revenue, estimated revenue, bank details, and withdrawal requests.' },
                   { icon: BarChart3, title: 'Real-Time Analytics', desc: 'Revenue, top products, order trends, customer insights, low-stock alerts and period comparisons.' },
                   { icon: Smartphone, title: 'WhatsApp Management', desc: 'Manage key store tasks from WhatsApp by chatting with AI. Get instant alerts on every new order.' },
                   { icon: Ticket, title: 'Coupons & Discounts', desc: 'Percent or fixed-amount coupons with min order amount, max uses, expiry, and per-user limits.' },
@@ -507,7 +507,7 @@ function DocsPage() {
                   <li><strong>Overview</strong> — Live revenue, orders, products, store views, trust count, low-stock alerts and pending order badges.</li>
                   <li><strong>Products</strong> — Add, edit, delete, and bulk-update products. Includes bulk discount and bulk price tools.</li>
                   <li><strong>Orders</strong> — Every order containing your products. Update status, view full order detail, contact the customer.</li>
-                  <li><strong>Payments</strong> — Link your bank account, track Stripe withdrawable balance, COD delivered revenue, total revenue, estimated revenue, and withdrawal requests.</li>
+                  <li><strong>Payments</strong> — Link your bank account, track online withdrawable balance, COD delivered revenue, total revenue, estimated revenue, and withdrawal requests.</li>
                   <li><strong>Coupons</strong> — Create, toggle, edit, and delete discount coupons.</li>
                   <li><strong>Analytics</strong> — Revenue charts, order trends, top products, status pie chart, growth metrics with period comparison.</li>
                   <li><strong>Store Settings</strong> — Update store name, description, logo, banner, payment options, return &amp; warranty policy, social links.</li>
@@ -572,7 +572,7 @@ function DocsPage() {
                   <li><strong>On-demand analytics</strong> — "What was my revenue this month?", "Top 5 selling products", "How am I doing vs last month?".</li>
                   <li><strong>Order management</strong> — "Show pending orders", "Mark ORD-1234 as shipped", "Cancel ORD-1235".</li>
                   <li><strong>Coupon creation</strong> — "Create SAVE15 — 15% off, expires in 30 days, max 100 uses".</li>
-                  <li><strong>Payments knowledge</strong> — Explains Stripe payouts, COD handling, withdrawable balance, and where to request withdrawals.</li>
+                  <li><strong>Payments knowledge</strong> — Explains seller withdrawals, COD handling, withdrawable balance, and where to request withdrawals.</li>
                   <li><strong>Growth strategies</strong> — Personalized recommendations based on your real sales data.</li>
                   <li><strong>Stock alerts</strong> — Proactively warns you about low or out-of-stock products.</li>
                   <li><strong>Store updates</strong> — "Update my store description" or "Change my return policy".</li>
@@ -663,7 +663,7 @@ function DocsPage() {
                 </InfoBox>
 
                 <InfoBox type="tip" title={`${founderCode} founder coupon`}>
-                  The first {founderMaxRedemptions} sellers whose subscription Checkout completes using <strong>{founderCode}</strong> receive an extra {founderDiscountPercent}% founder discount: Starter becomes {formatUsdCents(pricing.starter.founderAmountCents)}/month and Elite becomes {formatUsdCents(pricing.elite.founderAmountCents)}/month. Meta ads remain {formatUsdCents(pricing.metaAdsAddonCents)}/month, making founder Elite + Meta {formatUsdCents(pricing.elite.founderAmountCents + pricing.metaAdsAddonCents)}/month. Starting Checkout reserves a place for {founderReservationMinutes} minutes; the rate is claimed only after Stripe confirms completion. It survives renewals and Starter/Elite plan changes while the subscription stays uninterrupted, but is permanently lost when that subscription ends.
+                  The first {founderMaxRedemptions} sellers whose subscription Checkout completes using <strong>{founderCode}</strong> receive an extra {founderDiscountPercent}% founder discount: Starter becomes {formatUsdCents(pricing.starter.founderAmountCents)}/month and Elite becomes {formatUsdCents(pricing.elite.founderAmountCents)}/month. Meta ads remain {formatUsdCents(pricing.metaAdsAddonCents)}/month, making founder Elite + Meta {formatUsdCents(pricing.elite.founderAmountCents + pricing.metaAdsAddonCents)}/month. Starting Checkout reserves a place for {founderReservationMinutes} minutes; the rate is claimed only after Rozare verifies enrollment. It survives renewals and Starter/Elite plan changes while the subscription stays uninterrupted, but is permanently lost when that subscription ends.
                 </InfoBox>
 
                 <InfoBox type="tip" title="Bonus features for Starter">
@@ -678,7 +678,7 @@ function DocsPage() {
                 <ul>
                   <li>Open Seller Dashboard → Subscription.</li>
                   <li>Upgrade Starter → Elite anytime — instant access.</li>
-                  <li>Immediate upgrades and Meta add-on changes may create a prorated Stripe billing difference.</li>
+                  <li>Immediate upgrades and Meta add-on changes may create a prorated Safepay billing difference.</li>
                   <li>Downgrade Elite → Starter — takes effect at the end of your billing cycle.</li>
                   <li>Cancel anytime — your store stays active until the end of your paid period.</li>
                   <li>A scheduled cancellation can be undone before the subscription ends.</li>
@@ -690,13 +690,13 @@ function DocsPage() {
               <DocSection id="payments" title="Payments & Checkout" icon={CreditCard}>
                 <h3>Payment methods</h3>
                 <ul>
-                  <li><strong>Stripe</strong> — Secure card payments via Stripe (Visa, Mastercard, Amex, and more).</li>
+                  <li><strong>Safepay</strong> — Secure card payments via Safepay. The secure form shows supported cards.</li>
                   <li><strong>Rozare Wallet</strong> — Pay instantly from a sufficient Wallet balance in the same currency as the order. Wallet balances are never converted automatically.</li>
                   <li><strong>Cash on Delivery (COD)</strong> — Pay when your order arrives, only when every seller in your cart allows COD.</li>
                 </ul>
                 <p>Sellers control COD from Seller Dashboard → Store Settings → Payment Options. Stores default to both online payment and COD. A seller can switch to online payment only, which means COD is unavailable for that seller's products.</p>
                 <InfoBox type="info" title="Mixed-seller carts">
-                  A checkout has one payment method for the full order. If your cart contains even one seller that accepts online payment only, Cash on Delivery is disabled for the whole checkout. Pay by Stripe card or with a sufficient same-currency Rozare Wallet balance, or remove the online-only seller items to use COD for the remaining sellers.
+                  A checkout has one payment method for the full order. If your cart contains even one seller that accepts online payment only, Cash on Delivery is disabled for the whole checkout. Pay by Safepay card or with a sufficient same-currency Rozare Wallet balance, or remove the online-only seller items to use COD for the remaining sellers.
                 </InfoBox>
 
                 <h3>Rozare Wallet</h3>
@@ -717,11 +717,11 @@ function DocsPage() {
                 <p>Tax is calculated at checkout based on platform settings. Shipping costs come from the seller's chosen shipping method. Both are clearly displayed before you confirm.</p>
 
                 <h3>For sellers: receiving payments</h3>
-                <p>Sellers do not need to configure online payments for their stores. Rozare provides Stripe card and Wallet checkout. Sellers only choose whether COD is also allowed. Paid order revenue is tracked in Seller Dashboard - Payments.</p>
+                <p>Sellers do not need to configure online payments for their stores. Rozare provides Safepay card and Wallet checkout. Sellers only choose whether COD is also allowed. Paid order revenue is tracked in Seller Dashboard - Payments.</p>
                 <ul>
-                  <li><strong>Online balances</strong> - Delivered Stripe- and Wallet-paid earnings remain separately withdrawable in the seller currency frozen on each order. Changing store currency does not convert existing balances. Refunds, payment-risk holds and withdrawal reservations affect availability.</li>
+                  <li><strong>Online balances</strong> - Delivered Safepay- and Wallet-paid earnings remain separately withdrawable in the seller currency frozen on each order. Changing store currency does not convert existing balances. Refunds, payment-risk holds and withdrawal reservations affect availability.</li>
                   <li><strong>COD revenue</strong> - Cash on Delivery payments and shipping are handled by the seller directly. Rozare shows delivered COD revenue for reporting, but it is not withdrawn through Rozare.</li>
-                  <li><strong>Estimated revenue</strong> - Delivered revenue plus pending Stripe and COD order revenue, so sellers can see what may be coming next.</li>
+                  <li><strong>Estimated revenue</strong> - Delivered revenue plus pending Safepay and COD order revenue, so sellers can see what may be coming next.</li>
                   <li><strong>Withdrawals</strong> - Choose a native balance and a bank account accepting the same currency. Minimums are USD 5, PKR 2,000, EUR 5 and GBP 5. No balance conversion is offered. Requests reserve funds once; admins approve, transfer manually, then record payment evidence. An uncertain transfer stays reserved for review.</li>
                   <li><strong>Historical revenue</strong> - Charts and sales reports use each order's saved exchange rates when shown in another store currency. Reporting equivalents are not additional withdrawable money.</li>
                   <li><strong>Store currency changes</strong> - Review the product count and three examples, shipping fees and coupon money conversions at one rate snapshot. Confirmation converts and saves these together; percentage discounts and admin tax settings stay unchanged. A completed change starts a 60-day waiting period. Existing orders and balances keep their original currencies.</li>
@@ -734,9 +734,9 @@ function DocsPage() {
                 <h3>Shipping methods</h3>
                 <p>Each seller configures their own shipping methods. Common options:</p>
                 <ul>
-                  <li><strong>Free shipping</strong> — No cost, typically 5–7 days.</li>
-                  <li><strong>Standard shipping</strong> — Moderate cost, 3–5 days.</li>
-                  <li><strong>Express shipping</strong> — Higher cost, 1–2 days.</li>
+                  <li><strong>Free shipping</strong> — No shipping charge; use the seller’s displayed delivery estimate.</li>
+                  <li><strong>Standard shipping</strong> — Cost and delivery days are set by each seller.</li>
+                  <li><strong>Express shipping</strong> — Available only where offered; review its cost and estimated delivery days.</li>
                 </ul>
 
                 <h3>For sellers</h3>
@@ -750,6 +750,7 @@ function DocsPage() {
 
                 <h3>For buyers</h3>
                 <p>At checkout you'll see every shipping method offered by the sellers in your cart, with cost and ETA. Pick one per seller and continue.</p>
+                <p><a href="https://rozare.com/shipping-policy">Read the Shipping and Delivery Policy</a> for delivery areas, estimates and delay support.</p>
               </DocSection>
 
               {/* ORDERS & RETURNS */}
@@ -769,7 +770,7 @@ function DocsPage() {
                 <ul>
                   <li><strong>Via AI</strong> — "Cancel my order ORD-1234".</li>
                   <li><strong>Via dashboard</strong> — Open the order and click "Cancel" while still cancellable.</li>
-                  <li>Orders that are already Delivered or Cancelled cannot be cancelled again.</li>
+                  <li>Cancellation is available only while unpaid and before any seller’s items are shipped or delivered. Paid orders require refund assistance. See the <a href="https://rozare.com/cancellation-policy">Cancellation Policy</a>.</li>
                 </ul>
 
                 <h3>Seller-specific returns</h3>
@@ -782,8 +783,9 @@ function DocsPage() {
                 </ul>
 
                 <h3>Return tracking and refunds</h3>
+                <p>Read the <a href="https://rozare.com/refund-policy">Return and Refund Policy</a> for the refund destination, processing turnaround time and complaint contacts.</p>
                 <p>Return requests move through approval, pickup, transit to the seller, receipt, and seller review. Every seller status change sends the buyer an in-app, push, and WhatsApp update when those channels are available.</p>
-                <p>When a Wallet refund is accepted, the seller funds the exact approved amount from available seller balance or by Stripe card. Rozare verifies that funding first, then credits the buyer's Wallet in the order currency and marks the return complete. A failed, cancelled, expired, or mismatched payment never credits the Wallet. Replacement-only returns complete without a money transfer.</p>
+                <p>When a Wallet refund is accepted, the seller funds the exact approved amount from available seller balance or by Safepay card. Rozare verifies that funding first, then credits the buyer's Wallet in the order currency and marks the return complete. A failed, cancelled, expired, or mismatched payment never credits the Wallet. Replacement-only returns complete without a money transfer.</p>
 
                 <InfoBox type="info" title="Refund safety">
                   A return request does not itself create money. Rozare caps refunds to the selected seller's remaining item, tax, shipping, and discount allocation, prevents duplicate quantities, and uses idempotent Wallet transactions so retries cannot credit the buyer twice.
@@ -890,7 +892,7 @@ function DocsPage() {
                 <ul>
                   <li><strong>Multi-currency</strong> — Pick USD, EUR, GBP, or PKR as your display currency from the navbar. Prices convert automatically across the site.</li>
                   <li><strong>Conversational AI in your language</strong> — The AI understands English, modern Roman Urdu, and common product slang.</li>
-                  <li><strong>Local checkout</strong> — Prices are shown in your selected currency, while secure card payments are processed through Rozare's Stripe checkout.</li>
+                  <li><strong>Local checkout</strong> — Prices are shown in your selected currency, while secure card payments are processed through Rozare's Safepay checkout.</li>
                 </ul>
               </DocSection>
 
@@ -918,9 +920,9 @@ function DocsPage() {
                 <FAQItem q="Does Rozare have a mobile app?" a="Rozare includes a React Native / Expo mobile app experience for iOS and Android with shopping, selling, AI chat, push notifications, voice search, and the same core marketplace workflows." />
                 <FAQItem q="How does the AI know about my store?" a="The AI calls secure server-side tools that read and write only your store's data. Other sellers cannot see your data, and you cannot see theirs." />
                 <FAQItem q="Is my data safe?" a="Yes. All traffic is encrypted (HTTPS). Authentication uses JWT tokens. Personal data is never sold or shared with third parties outside what's required to fulfil your order." />
-                <FAQItem q="What payment methods are available?" a="Checkout supports Stripe card, Rozare Wallet, and Cash on Delivery. One order uses one payment method. COD is available only when every seller allows it; otherwise use card or a sufficient same-currency Wallet balance." />
+                <FAQItem q="What payment methods are available?" a="Checkout supports Safepay card, Rozare Wallet, and Cash on Delivery. One order uses one payment method. COD is available only when every seller allows it; otherwise use card or a sufficient same-currency Wallet balance." />
                 <FAQItem q="How do returns and refunds work?" a="Return eligibility is seller- and item-specific and opens after that seller portion is delivered. Request it from order details within the saved policy window. The seller tracks pickup and review, then funds an approved refund from seller balance or card. Only verified funding credits your Rozare Wallet and completes the return." />
-                <FAQItem q="How do sellers receive Stripe payments?" a="Sellers add their bank details in Seller Dashboard - Payments. Delivered Stripe-paid order revenue becomes withdrawable, then the seller sends a withdrawal request for admin review. COD payments are handled by the seller directly." />
+                <FAQItem q="How do sellers receive Safepay payments?" a="Sellers add their bank details in Seller Dashboard - Payments. Delivered Safepay-paid order revenue becomes withdrawable, then the seller sends a withdrawal request for admin review. COD payments are handled by the seller directly." />
                 <FAQItem q="What's the difference between Starter and Elite?" a={`Both paid plans include unlimited listings, unlimited seller AI chat, a custom subdomain, WhatsApp store management and core marketplace features. Starter supports ${starterFeaturedLimit} featured products and includes the growth-tool bundle for ${starterBonusMonths} months. Elite supports ${eliteFeaturedLimit} featured products, keeps those growth tools permanently while active, and adds custom themes plus Rozare-run TikTok ads. Meta ads can be added to Elite for ${formatUsdCents(pricing.metaAdsAddonCents)}/month.`} />
                 <FAQItem q={`What happens after my ${trialDays}-day free trial ends?`} a="If you don't subscribe, your store and products are temporarily hidden until you subscribe — your data is preserved. Subscribe to Starter or Elite to reactivate everything, with the account's one-time introductory period applied only if it is still eligible." />
                 <FAQItem q="Can I cancel anytime?" a="Yes. Cancel from Seller Dashboard → Subscription. Your store stays active until the end of your current billing period." />

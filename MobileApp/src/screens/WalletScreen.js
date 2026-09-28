@@ -218,8 +218,8 @@ export default function WalletScreen({ navigation, route }) {
       type: 'pending',
       title: 'Checking top-up status',
       message: route.params.top_up === 'success'
-        ? 'Stripe returned successfully. Rozare is verifying the exact Wallet transaction.'
-        : 'Stripe checkout was closed. Rozare is checking the exact Wallet transaction before showing a final result.',
+        ? 'Card checkout returned successfully. Rozare is verifying the exact Wallet transaction.'
+        : 'Card checkout was closed. Rozare is checking the exact Wallet transaction before showing a final result.',
     });
     let cancelled = false;
     const transactionId = String(route.params?.transactionId || '');

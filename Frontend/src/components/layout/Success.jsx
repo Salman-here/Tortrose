@@ -134,7 +134,7 @@ export default function Success() {
     }
 
     setVerification({ status: 'checking', message: 'Confirming your payment securely…' });
-    let lastMessage = 'Stripe has received your return, but Rozare is still waiting for final confirmation.';
+    let lastMessage = 'Checkout has returned, but Rozare is still waiting for verified payment confirmation.';
     for (let attempt = 0; attempt < 8; attempt += 1) {
       try {
         const response = await axios.get(

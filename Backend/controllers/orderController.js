@@ -480,7 +480,7 @@ const respondWithExistingCheckout = async (res, existingOrder) => {
     }
     if (existingOrder.paymentMethod === 'safepay') {
         res.set('Cache-Control', 'no-store, private, max-age=0');
-        const checkout = await safepayPayments.prepareCheckout(existingOrder.safepayPaymentId);
+        const checkout = await safepayPayments.prepareCheckout(existingOrder.safepayPaymentId, { clientSurface: existingOrder.clientSurface || 'mobile' });
         return res.status(200).json({ ...checkout, orderId: existingOrder.orderId,
             order: orderResponseSummary(existingOrder), idempotentReplay: true });
     }
@@ -1212,6 +1212,7 @@ exports.placeOrder = async (req, res) => {
         if (!normalizedPaymentMethod) {
             return res.status(400).json({ msg: 'Choose a valid payment method.' });
         }
+        require('../middleware/safepayCutoverGuard').assertCurrentCardProvider(normalizedPaymentMethod);
         const safepayConfig = normalizedPaymentMethod === 'safepay'
             ? safepayPayments.requireMobileSafepay(rawClientSurface) : null;
         if ((rawPaymentFlow === 'safepay_hosted') !== (normalizedPaymentMethod === 'safepay')) {
@@ -1835,7 +1836,7 @@ exports.placeOrder = async (req, res) => {
         }
 
         if (newOrder.paymentMethod === 'safepay') {
-            const checkout = await safepayPayments.prepareCheckout(newOrder.safepayPaymentId);
+            const checkout = await safepayPayments.prepareCheckout(newOrder.safepayPaymentId, { clientSurface: rawClientSurface });
             res.set('Cache-Control', 'no-store, private, max-age=0');
             return res.status(200).json({ ...checkout, orderId: newOrder.orderId, order: orderResponseSummary(newOrder) });
         }

@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build && vite build --ssr scripts/docs-ssr-entry.jsx --outDir dist-ssr-docs --ssrManifest false && vite build --ssr scripts/home-ssr-entry.jsx --outDir dist-ssr-home --ssrManifest false && node scripts/prerender-docs.mjs && node scripts/prerender-home.mjs",
+    "build": "vite build && vite build --ssr scripts/docs-ssr-entry.jsx --outDir dist-ssr-docs --ssrManifest false && vite build --ssr scripts/home-ssr-entry.jsx --outDir dist-ssr-home --ssrManifest false && vite build --ssr scripts/policies-ssr-entry.jsx --outDir dist-ssr-policies --ssrManifest false && node scripts/prerender-docs.mjs && node scripts/prerender-home.mjs && node scripts/prerender-policies.mjs",
+    "check:policy-publication": "node scripts/validate-policy-publication.mjs",
     "lint": "eslint .",
     "test:seo": "node --test tests/seoRouting.test.mjs",
     "preview": "vite preview --host 0.0.0.0 --port 4173"
@@ -14,8 +15,6 @@
     "node": ">=18"
   },
   "dependencies": {
-    "@stripe/react-stripe-js": "^4.0.2",
-    "@stripe/stripe-js": "^7.9.0",
     "@tailwindcss/vite": "^4.1.16",
     "@vercel/functions": "^3.9.5",
     "axios": "^1.10.0",

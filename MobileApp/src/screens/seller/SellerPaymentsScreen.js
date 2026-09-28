@@ -560,7 +560,7 @@ export default function SellerPaymentsScreen({ navigation }) {
           <SellerSectionHeader title="Balance details" subtitle="How your available amount is calculated" icon="calculator-outline" />
           {[
             ['Safepay delivered revenue', selectedBalance?.safepayDeliveredRevenue ?? 0, 'card-outline'],
-            ['Stripe delivered revenue', selectedBalance?.stripeDeliveredRevenue ?? 0, 'card-outline'],
+            ...(selectedBalance?.stripeDeliveredRevenue > 0 ? [['Previous card payments', selectedBalance.stripeDeliveredRevenue, 'card-outline']] : []),
             ['Wallet delivered revenue', selectedBalance?.walletDeliveredRevenue ?? 0, 'wallet-outline'],
             ['Pending online estimate', selectedBalance?.onlinePendingRevenue ?? 0, 'hourglass-outline'],
             ['Pending withdrawals', selectedBalance?.pendingWithdrawalAmount ?? 0, 'paper-plane-outline'],

@@ -98,18 +98,20 @@ test('subscription Stripe configuration and next-action results remain fail clos
   }), false);
 });
 
-test('seller subscription resolves Stripe action then retries the identical server intent', () => {
+test('seller subscription reviews Safepay quotes and verifies the exact server-owned operation', () => {
   const source = readFileSync(
     new URL('../src/components/layout/SellerSubscription.jsx', import.meta.url),
     'utf8',
   );
-  assert.match(source, /import \{ loadStripe \} from '@stripe\/stripe-js'/);
-  assert.match(source, /stripe\.handleNextAction\(\{ clientSecret \}\)/);
-  assert.match(source, /stripe\.confirmPayment\(\{/);
-  assert.match(source, /const payload = \{ includeMetaAds: eliteMetaAds \}/);
-  assert.match(source, /const submitPlanChange = \(\) => axios\.post\(/);
-  assert.equal((source.match(/res = await submitPlanChange\(\)/g) || []).length, 2);
-  assert.match(source, /await resolvePlanChangePaymentAction\(error, token\)/);
+  const billing = readFileSync(new URL('../src/components/subscription/SafepayBillingReview.jsx', import.meta.url), 'utf8');
+  assert.match(source, /useSafepaySubscriptionBilling/);
+  assert.doesNotMatch(source, /loadStripe|handleNextAction/);
+  assert.match(billing, /getOrCreatePersistedMutationAttemptForFingerprint/);
+  assert.match(billing, /quoteId: quote\.quoteId/);
+  assert.match(billing, /consentAccepted: true, consentVersion: quote\.consentVersion/);
+  assert.match(billing, /subscription\/operations\/\$\{operationId\}/);
+  assert.match(billing, /data\.completed === true/);
+  assert.match(billing, /!quote \|\| !consent \|\| !cardId/);
   assert.match(source, /await fetchSubscription\(\)/);
   assert.doesNotMatch(source, /setSubscription\(res\.data/);
 });

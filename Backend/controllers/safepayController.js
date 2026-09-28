@@ -29,10 +29,11 @@ exports.getConfig = (req, res) => {
   res.set('Cache-Control', 'no-store');
   try {
     const config = readSafepayConfig(process.env, { requireWebhook: true });
-    return res.json({ provider: 'safepay', enabled: process.env.SAFEPAY_MOBILE_ENABLED === 'true',
+    const surface = req.query?.clientSurface === 'web' ? 'web' : 'mobile';
+    return res.json({ provider: 'safepay', enabled: (surface === 'web' ? process.env.SAFEPAY_WEB_ENABLED : process.env.SAFEPAY_MOBILE_ENABLED) === 'true',
       environment: config.environment, paymentFlow: 'safepay_hosted', currencies: ['PKR', 'USD', 'EUR', 'GBP'] });
   } catch (_) {
-    return res.status(503).json({ provider: 'safepay', enabled: false, msg: 'Mobile card payments are not available yet.' });
+    return res.status(503).json({ provider: 'safepay', enabled: false, msg: 'Card payments are not available yet.' });
   }
 };
 
@@ -58,7 +59,9 @@ exports.reopenPayment = async (req, res) => {
   try {
     const owned = await ownedPayment(req);
     if (!owned) return res.status(404).json({ msg: 'Payment not found.' });
-    return res.json(await prepareCheckout(owned._id));
+    const clientSurface = req.body?.clientSurface || 'mobile';
+    requireMobileSafepay(clientSurface);
+    return res.json(await prepareCheckout(owned._id, { clientSurface }));
   } catch (error) { return reportError(res, error); }
 };
 
@@ -100,6 +103,13 @@ exports.returnToApp = (req, res) => {
   const attempt = String(req.query.attempt || '');
   const purpose = String(req.query.purpose || '');
   if (!mongoose.isValidObjectId(attempt) || !['order', 'wallet_top_up', 'subdomain', 'subscription', 'return_settlement', 'card_setup'].includes(purpose)) return res.sendStatus(400);
+  if (req.query.surface === 'web') {
+    // Fixed origin and path: no caller-supplied redirect or payment success claim.
+    const webUrl = new URL('/safepay/return', 'https://rozare.com');
+    webUrl.searchParams.set('paymentId', attempt);
+    res.set({ 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' });
+    return res.redirect(303, webUrl.toString());
+  }
   const query = new URLSearchParams({ paymentId: attempt, purpose, outcome: req.query.outcome === 'cancel' ? 'cancel' : 'return' });
   const appUrl = `rozare://safepay-return?${query}`;
   res.set({ 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer',

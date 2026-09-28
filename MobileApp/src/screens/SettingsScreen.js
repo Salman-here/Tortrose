@@ -226,6 +226,9 @@ export default function SettingsScreen({ navigation }) {
           <GlassPanel variant="card" style={styles.settingCard}>
             <SettingRow icon="shield-outline" iconColor={palette.colors.secondary} iconBg="rgba(139,92,246,0.15)" title="Privacy Policy" onPress={() => navigation.navigate('PrivacyPolicy')} />
             <SettingRow icon="document-text-outline" iconColor={palette.colors.info} iconBg="rgba(59,130,246,0.15)" title="Terms of Service" onPress={() => navigation.navigate('TermsOfService')} />
+            <SettingRow icon="car-outline" iconColor={palette.colors.info} iconBg="rgba(59,130,246,0.15)" title="Shipping and Delivery Policy" onPress={() => navigation.navigate('ShippingPolicy')} />
+            <SettingRow icon="return-down-back-outline" iconColor={palette.colors.info} iconBg="rgba(59,130,246,0.15)" title="Return and Refund Policy" onPress={() => navigation.navigate('RefundPolicy')} />
+            <SettingRow icon="close-circle-outline" iconColor={palette.colors.info} iconBg="rgba(59,130,246,0.15)" title="Cancellation Policy" onPress={() => navigation.navigate('CancellationPolicy')} />
             <SettingRow icon="person-remove-outline" iconColor={palette.colors.warning} iconBg="rgba(245,158,11,0.15)" title="Account Deletion Information" subtitle="How deletion works and what is retained" onPress={() => Linking.openURL('https://rozare.com/account-deletion')} showBorder={false} />
           </GlassPanel>
 

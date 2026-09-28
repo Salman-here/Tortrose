@@ -8,6 +8,9 @@ import { useCurrency } from '../../contexts/CurrencyContext';
 import Loader from '../common/Loader';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { getAuthToken } from "../../utils/cookieHelper";
+import { useAuth } from '../../contexts/AuthContext';
+import { openSafepayCheckout, safepayApi } from '../../utils/safepay';
+import { createScopedMutationStorageKey, getOrCreatePersistedMutationAttemptInLedger, clearPersistedMutationAttemptFromLedger } from '../../utils/persistedMutationAttempt';
 import {
     resolveSubdomainOwnershipTerms,
     subdomainOwnershipResponseIsValid,
@@ -16,6 +19,7 @@ import { subdomainAnalyticsResponseIsValid } from '../../utils/subdomainAnalytic
 import { inspectSellerProductCurrencyState } from '../../utils/productFormCurrency';
 
 const SellerSubdomainManagement = () => {
+    const { currentUser } = useAuth();
     const { formatPrice } = useCurrency();
     const [loading, setLoading] = useState(true);
     const [data, setData] = useState(null);
@@ -92,7 +96,7 @@ const SellerSubdomainManagement = () => {
     useEffect(() => {
         fetchData();
         if (searchParams.get('purchase') === 'success') {
-            toast.success('Subdomain purchased successfully! Your subdomain is now protected.');
+            toast.info('Checkout returned. Check the verified ownership status below; a return link alone does not confirm payment.');
         }
         if (searchParams.get('purchase') === 'cancelled') {
             toast.info('Subdomain purchase was cancelled.');
@@ -168,15 +172,19 @@ const SellerSubdomainManagement = () => {
         }
         setPurchaseLoading(true);
         try {
-            const token = getAuthToken();
-            const res = await axios.post(`${import.meta.env.VITE_API_URL}api/subscription/subdomain/purchase`, {}, {
-                headers: { Authorization: `Bearer ${token}` }
-            });
-            window.location.href = res.data.url;
+            const storageKey = createScopedMutationStorageKey('rozare_safepay_subdomain_v1', currentUser?._id || currentUser?.id);
+            const fingerprint = `subdomain:${data.subdomain.slug}`;
+            const attempt = await getOrCreatePersistedMutationAttemptInLedger({ storage: localStorage, storageKey, fingerprint, keyPrefix: 'web-subdomain' });
+            const res = await safepayApi.post('/subdomain/purchase', { clientSurface: 'web', requestKey: attempt.key, storeSlug: data.subdomain.slug });
+            const result = await openSafepayCheckout(res);
+            if (result.status === 'paid') {
+                await clearPersistedMutationAttemptFromLedger(localStorage, storageKey, fingerprint, attempt.key);
+                toast.success('Payment verified. Subdomain ownership has been updated.');
+            } else toast.info('Payment is not confirmed. Resume the same subdomain purchase to check it.');
+            await fetchData();
         } catch (err) {
             toast.error(err.response?.data?.msg || 'Failed to create purchase checkout');
-            setPurchaseLoading(false);
-        }
+        } finally { setPurchaseLoading(false); }
     };
 
     const copyToClipboard = (text) => {
