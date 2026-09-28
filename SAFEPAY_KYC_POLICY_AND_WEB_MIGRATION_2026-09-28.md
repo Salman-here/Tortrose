@@ -2,7 +2,7 @@
 
 Date: 28 September 2026
 
-## Release status: merchant details confirmed; release validation in progress
+## Release status: website/backend deployed; sandbox verification in progress
 
 At the initial checkpoint, the website and installed mobile application had **not** been updated by this work. The last verified production website deployment before this release was `0d988e6cf34f0061c1576ba31d36ea987ca58de4` (`dpl_EeBNEKG42o2sm6uA9Lx3CgpNdPxD`, READY). The approved release is being prepared; deployment and sandbox end-to-end evidence will be recorded separately below after verification.
 
@@ -17,6 +17,16 @@ The merchant supplied and confirmed the following details after the initial loca
 The merchant explicitly approved these timelines. Bank/card arrival time is expressly separate from Rozare's initiation time. No registered address, phone number, city, or transaction history was fabricated.
 
 The policy config at `MobileApp/src/content/commercePolicyConfig.json` now has `publicationApproved: true`, and the publication preflight passes. The website deployment command continues to guard against incomplete business details. Safepay remains sandbox-only pending merchant approval.
+
+### Approved release progress
+
+- Source commit: `52e8c2266f753987ccb11c5ff4e5bf83ceb7adbc` — approved merchant policies and Safepay website checkout. Saved locally; both remote branches still matched the prior release before this commit.
+- Android production-channel OTA published for runtime **1.0.13**: group `d82dcd1a-cee6-4a2c-b128-eaacabc50bc3`, update `01a0e8b9-51f1-78ca-b74d-7ea4d245b006`. [Expo release](https://expo.dev/accounts/rozare/projects/rozare/updates/d82dcd1a-cee6-4a2c-b128-eaacabc50bc3). No new native APK is required for compatible 1.0.13 installations. Installed-app verification is in progress.
+- Web pre-release browser checks confirmed the exact address, Lahore/Punjab jurisdiction, both public email addresses, support phone and 2/7/3-business-day commitments. The draft notice is absent; phone-width policy pages had no horizontal overflow.
+- Railway access was restored as `mzohaibiqbal00@gmail.com` in Ishan's workspace. Verified project `independent-vision`, service `hello-friend`, and sandbox credentials/webhook configuration. Enabled `SAFEPAY_WEB_ENABLED=true` without changing `SAFEPAY_ENV=sandbox` or the mobile flag.
+- Commit `52e8c226` was pushed to both remotes. Vercel deployment `dpl_2HFctRWkL9TxHTmpRYvyAf53Y8wa` is READY, and Railway deployment `7b4a333e-8469-46f3-8ed7-03019dfa0af6` is SUCCESS. `/health` confirms this exact commit, MongoDB connected and the notification worker started. The authenticated web payment config reports enabled Safepay **sandbox**. Public `/terms` returns HTTP 200 with the approved address/jurisdiction and no draft notice.
+- Live testing found a Wallet display contract omission: valid `safepay_payment` transactions were rejected by the website's reference-type allowlist. The account API returned HTTP 200 with USD 1.00 and PKR 2,000, but the page correctly hid unverified data. Added the three exact backend Safepay reference types and regression coverage, including enum parity and rejection of invented references and malformed money. No balances or historical records were changed by this correction. Release/retest evidence follows when complete.
+- Rechecked publication preflight, website production build and all 276 web tests: **PASS**. Final legal/native parity and navigation tests: **34 PASS**.
 
 ## Scope and source material
 

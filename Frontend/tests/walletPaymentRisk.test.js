@@ -114,6 +114,32 @@ test('wallet summary accepts complete exact multi-currency balances and transact
   assert.equal(findWalletTransaction(summary(), '507f1f77bcf86cd799439012')?.amount, 12.34);
 });
 
+test('Safepay wallet references render without weakening exact-money and reference validation', () => {
+  const topUp = transaction({ referenceType: 'safepay_payment', currency: 'USD', amount: 1, balanceAfter: 1,
+    creditedAmount: 1, appliedToLiability: 0, remainingLiability: 0 });
+  const value = summary({ transactions: [topUp] });
+  assert.equal(inspectWalletSummaryResponse(value).valid, true);
+  for (const referenceType of ['safepay_refund', 'safepay_dispute']) {
+    const reversal = transaction({ referenceType, type: 'reversal', direction: 'debit', currency: 'USD',
+      amount: 1, balanceAfter: 0, creditedAmount: 0, appliedToLiability: 0, remainingLiability: 0 });
+    assert.equal(inspectWalletSummaryResponse(summary({ transactions: [reversal] })).valid, true);
+  }
+  for (const patch of [{ referenceType: 'safepay_unknown' }, { amount: 1.001 }, { creditedAmount: 0.99 }, { amount: '1' }]) {
+    assert.equal(inspectWalletSummaryResponse(summary({ transactions: [{ ...topUp, ...patch }] })).valid, false);
+  }
+});
+
+test('the website recognizes every backend Wallet transaction reference type', () => {
+  const model = readFileSync(new URL('../../Backend/models/WalletTransaction.js', import.meta.url), 'utf8');
+  const enumeration = model.match(/referenceType:\s*\{[\s\S]*?enum:\s*\[([^\]]+)\]/)?.[1];
+  assert.ok(enumeration, 'Backend reference type enum must be discoverable');
+  const references = [...enumeration.matchAll(/'([^']+)'/g)].map(match => match[1]);
+  for (const referenceType of references) {
+    const result = inspectWalletSummaryResponse(summary({ transactions: [transaction({ referenceType })] }));
+    assert.equal(result.valid, true, `${referenceType}: ${result.errors.join(', ')}`);
+  }
+});
+
 test('wallet summary rejects missing, coerced, sub-cent, unsafe, and relabelled financial data', () => {
   const corruptions = [
     value => { delete value.wallet.balances.USD; },
