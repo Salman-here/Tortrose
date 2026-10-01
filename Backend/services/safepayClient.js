@@ -87,7 +87,8 @@ function createSafepayClient({ config = readSafepayConfig(), fetchImpl = fetch }
 
   return {
     environment: config.environment,
-    async createTracker({ amountMinor, currency, reference, purpose, customerId }) {
+    async createTracker({ amountMinor, currency, reference, purpose, customerId }, { clientSurface = 'mobile' } = {}) {
+      if (!['web', 'mobile'].includes(clientSurface)) throw providerError('Invalid checkout source.', 'SAFEPAY_CHECKOUT_SOURCE_INVALID', 400);
       const mode = purpose === 'card_setup' ? 'instrument' : purpose === 'subscription' ? 'subscription' : 'payment';
       requireMoney(amountMinor, currency, { allowZero: mode === 'instrument' });
       if (mode === 'instrument' && amountMinor !== 0) throw providerError('Card verification must not charge a purchase amount.', 'SAFEPAY_MONEY_INVALID', 400);
@@ -104,7 +105,7 @@ function createSafepayClient({ config = readSafepayConfig(), fetchImpl = fetch }
         currency, include_fees: false, ...(customerId ? { user: customerId } : {}),
         // The current API rejects arbitrary metadata keys with HTTP 500.
         // The immutable reference binds to our own purpose/user/money record.
-        metadata: { order_id: reference, source: 'mobile' },
+        metadata: { order_id: reference, source: clientSurface === 'web' ? 'hosted' : 'mobile' },
       });
       return requireTracker(data, { amountMinor, currency, reference, customerId, providerMode: mode }, config);
     },

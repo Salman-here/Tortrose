@@ -21,6 +21,18 @@ test('valid tracker setup uses exact minor units and owned correlation without a
   expect(JSON.parse(request.body).entry_mode).toBeUndefined();
   expect(request.redirect).toBe('error');
 });
+
+test('web tracker metadata is hosted, not mislabeled mobile', async () => {
+  const fetchImpl = jest.fn(async () => ({ ok: true, status: 200, json: async () => ({ data: { tracker } }) }));
+  await createSafepayClient({ config, fetchImpl }).createTracker({ amountMinor: 10000, currency: 'PKR', reference: 'order:fixture123', purpose: 'order' }, { clientSurface: 'web' });
+  expect(JSON.parse(fetchImpl.mock.calls[0][1].body).metadata).toEqual({ order_id: 'order:fixture123', source: 'hosted' });
+});
+
+test.each(['desktop', 'WEB', null, false])('invalid tracker source %s fails before provider mutation', async clientSurface => {
+  const fetchImpl = jest.fn();
+  await expect(createSafepayClient({ config, fetchImpl }).createTracker({ amountMinor: 10000, currency: 'PKR', reference: 'order:fixture123', purpose: 'order' }, { clientSurface })).rejects.toMatchObject({ code: 'SAFEPAY_CHECKOUT_SOURCE_INVALID' });
+  expect(fetchImpl).not.toHaveBeenCalled();
+});
 test.each([0, -1, 1.5, '100', NaN, Infinity, Number.MAX_SAFE_INTEGER + 1])('rejects invalid minor units %s', amount => {
   expect(() => requireMoney(amount, 'PKR')).toThrow();
 });

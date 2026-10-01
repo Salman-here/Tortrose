@@ -49,6 +49,7 @@ test('simultaneous setup creates only one payable tracker', async () => {
   const payment = await service.ensurePayment(input());
   const results = await Promise.allSettled([service.prepareCheckout(payment._id), service.prepareCheckout(payment._id)]);
   expect(client.createTracker).toHaveBeenCalledTimes(1);
+  expect(client.createTracker.mock.calls[0][1]).toEqual({ clientSurface: 'mobile' });
   expect(results.some(row => row.status === 'fulfilled' && row.value.checkoutUrl)).toBe(true);
   expect((await Payment.findById(payment._id)).status).toBe('ready');
 });
@@ -67,6 +68,14 @@ test('web checkout uses the hosted source and fixed web bridge without creating 
   expect(new URL(url.searchParams.get('cancel_url')).pathname).toBe(`/api/safepay/return/web/wallet_top_up/${payment._id}/cancel`);
   expect(new URL(new URL(mobile.checkoutUrl).searchParams.get('redirect_url')).pathname).toBe(`/api/safepay/return/mobile/wallet_top_up/${payment._id}/return`);
   expect(new URL(mobile.checkoutUrl).searchParams.get('source')).toBe('mobile');
+});
+
+test('initial web tracker creation carries web provenance and reopening never creates another tracker', async () => {
+  const payment = await service.ensurePayment(input());
+  await service.prepareCheckout(payment._id, { clientSurface: 'web' });
+  expect(client.createTracker.mock.calls[0][1]).toEqual({ clientSurface: 'web' });
+  await service.prepareCheckout(payment._id, { clientSurface: 'mobile' });
+  expect(client.createTracker).toHaveBeenCalledTimes(1);
 });
 test('unknown create outcome is recovered by reference without another mutation', async () => {
   const payment = await service.ensurePayment(input());

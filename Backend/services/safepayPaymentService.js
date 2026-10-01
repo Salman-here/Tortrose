@@ -103,7 +103,7 @@ function createSafepayPaymentService({
     return attachTracker(payment, tracker);
   }
 
-  async function prepareTracker(payment) {
+  async function prepareTracker(payment, { clientSurface = 'mobile' } = {}) {
     const config = ownedConfig(payment);
     const client = clientFor(config);
     if (payment.status === 'new') {
@@ -115,7 +115,7 @@ function createSafepayPaymentService({
         { $set: { paymentSetupState: 'creating', paymentSetupStartedAt: now() } });
       let tracker;
       try {
-        tracker = await client.createTracker(payment);
+        tracker = await client.createTracker(payment, { clientSurface });
       } catch (error) {
         // Never retry a provider mutation after a timeout, 5xx, or malformed
         // response. Recovery searches by our immutable correlation instead.
@@ -138,7 +138,7 @@ function createSafepayPaymentService({
     const config = ownedConfig(payment);
     const client = clientFor(config);
     if (!PAID_PURPOSES.has(payment.purpose) && payment.purpose !== 'card_setup') throw fail('Unsupported hosted checkout purpose.', 'SAFEPAY_PURPOSE_INVALID');
-    payment = await prepareTracker(payment);
+    payment = await prepareTracker(payment, { clientSurface });
     if (payment.tracker) payment = await reconcilePayment(payment._id);
     if (['paid', 'authorized'].includes(payment.status) && payment.appliedAt) return paymentResponse(payment);
     if (!['ready'].includes(payment.status)) throw fail('This checkout can no longer accept payment. Check its current status.', 'SAFEPAY_CHECKOUT_CLOSED');
