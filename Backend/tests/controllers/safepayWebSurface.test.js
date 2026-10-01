@@ -12,6 +12,7 @@ const service = require('../../services/safepayPaymentService');
 const Payment = require('../../models/SafepayPayment');
 const cards = require('../../services/safepayCustomerService');
 const controller = require('../../controllers/safepayController');
+const { buildReturnUrl } = require('../../services/safepayReturnNavigation');
 const app = express();
 app.use(express.json(), (req, res, next) => { req.user = { id: '6ab6e12cba71edafe4fc6c5b' }; next(); });
 app.get('/return', controller.returnToApp);
@@ -92,6 +93,15 @@ test('legacy provider-appended callback retains web surface and mobile purpose/c
   expect(mobile.status).toBe(200); expect(mobile.text).toContain('purpose=wallet_top_up');
   const cancel = await request(app).get(`/return?attempt=${id}&purpose=order&surface=mobile&outcome=cancel?order_id=fixture`);
   expect(cancel.text).toContain('outcome=cancel');
+});
+
+test.each(['return', 'cancel'])('new mobile %s URL remains compatible with installed sheets and provider-appended metadata', async outcome => {
+  const url = new URL(buildReturnUrl({ backendOrigin: 'https://rozare.up.railway.app', surface: 'mobile',
+    purpose: 'wallet_top_up', attempt: id, outcome }));
+  expect(url.pathname).toBe('/api/safepay/return');
+  const result = await request(app).get(url.pathname.replace('/api/safepay', '') + url.search + '?order_id=fixture&tracker=fixture');
+  expect(result.status).toBe(200);
+  expect(result.text).toContain(`paymentId=${id}&amp;purpose=wallet_top_up&amp;outcome=${outcome}`);
 });
 
 test.each([

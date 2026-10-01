@@ -9,8 +9,13 @@ function buildReturnUrl({ backendOrigin, attempt, purpose, surface, outcome }) {
     throw Object.assign(new Error('Invalid payment return route.'), { code: 'SAFEPAY_RETURN_URL_INVALID', statusCode: 503 });
   }
   // Safepay appends ?order_id=... to the callback, even when it already has
-  // a query string. Put our navigation context in the path, not that query.
-  const url = new URL(`/api/safepay/return/${surface}/${purpose}/${attempt}/${outcome}`, backendOrigin);
+  // a query string. Put web navigation context in the path, not that query.
+  // Installed Android builds intercept the exact legacy callback pathname.
+  // Keep that contract; the legacy parser safely handles Safepay's appended
+  // query suffix. Website callbacks use the corruption-proof path contract.
+  const url = new URL(surface === 'mobile' ? '/api/safepay/return'
+    : `/api/safepay/return/${surface}/${purpose}/${attempt}/${outcome}`, backendOrigin);
+  if (surface === 'mobile') url.search = new URLSearchParams({ attempt, purpose, surface, outcome }).toString();
   if (url.protocol !== 'https:') {
     throw Object.assign(new Error('The payment return service requires HTTPS.'), { code: 'SAFEPAY_RETURN_URL_INVALID', statusCode: 503 });
   }

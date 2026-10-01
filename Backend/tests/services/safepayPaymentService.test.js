@@ -66,7 +66,12 @@ test('web checkout uses the hosted source and fixed web bridge without creating 
   expect(redirect.pathname).toBe(`/api/safepay/return/web/wallet_top_up/${payment._id}/return`);
   expect(redirect.search).toBe('');
   expect(new URL(url.searchParams.get('cancel_url')).pathname).toBe(`/api/safepay/return/web/wallet_top_up/${payment._id}/cancel`);
-  expect(new URL(new URL(mobile.checkoutUrl).searchParams.get('redirect_url')).pathname).toBe(`/api/safepay/return/mobile/wallet_top_up/${payment._id}/return`);
+  const mobileReturn = new URL(new URL(mobile.checkoutUrl).searchParams.get('redirect_url'));
+  expect(mobileReturn.pathname).toBe('/api/safepay/return');
+  expect(mobileReturn.searchParams.get('attempt')).toBe(String(payment._id));
+  expect(mobileReturn.searchParams.get('purpose')).toBe('wallet_top_up');
+  expect(mobileReturn.searchParams.get('surface')).toBe('mobile');
+  expect(mobileReturn.searchParams.get('outcome')).toBe('return');
   expect(new URL(mobile.checkoutUrl).searchParams.get('source')).toBe('mobile');
 });
 
