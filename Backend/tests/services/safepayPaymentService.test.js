@@ -62,8 +62,10 @@ test('web checkout uses the hosted source and fixed web bridge without creating 
   expect(url.searchParams.get('source')).toBe('hosted');
   const redirect = new URL(url.searchParams.get('redirect_url'));
   expect(redirect.hostname).toBe('rozare.up.railway.app');
-  expect(redirect.searchParams.get('surface')).toBe('web');
-  expect(redirect.searchParams.get('attempt')).toBe(String(payment._id));
+  expect(redirect.pathname).toBe(`/api/safepay/return/web/wallet_top_up/${payment._id}/return`);
+  expect(redirect.search).toBe('');
+  expect(new URL(url.searchParams.get('cancel_url')).pathname).toBe(`/api/safepay/return/web/wallet_top_up/${payment._id}/cancel`);
+  expect(new URL(new URL(mobile.checkoutUrl).searchParams.get('redirect_url')).pathname).toBe(`/api/safepay/return/mobile/wallet_top_up/${payment._id}/return`);
   expect(new URL(mobile.checkoutUrl).searchParams.get('source')).toBe('mobile');
 });
 test('unknown create outcome is recovered by reference without another mutation', async () => {

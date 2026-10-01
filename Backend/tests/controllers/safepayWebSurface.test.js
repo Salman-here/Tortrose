@@ -15,6 +15,7 @@ const controller = require('../../controllers/safepayController');
 const app = express();
 app.use(express.json(), (req, res, next) => { req.user = { id: '6ab6e12cba71edafe4fc6c5b' }; next(); });
 app.get('/return', controller.returnToApp);
+app.get('/return/:surface/:purpose/:attempt/:outcome', controller.returnToApp);
 app.post('/cards/setup', controller.startCardSetup);
 app.post('/payments/:paymentId/reopen', controller.reopenPayment);
 const id = '6ab6e29eba71edafe4fc7596';
@@ -67,4 +68,38 @@ test('bad return references fail; mobile bridge remains an app return', async ()
   const response = await request(app).get('/return').query({ attempt: id, purpose: 'order' });
   expect(response.status).toBe(200); expect(response.text).toContain('rozare://safepay-return?');
   expect(response.text).not.toContain('payment verified');
+});
+
+test.each(['order', 'wallet_top_up', 'subdomain', 'card_setup', 'return_settlement'])('path callback keeps %s on web after provider appends a query', async purpose => {
+  const result = await request(app).get(`/return/web/${purpose}/${id}/return?order_id=fixture&tracker=forged&outcome=success&redirect=https://evil.test`);
+  expect(result.status).toBe(303);
+  expect(result.headers.location).toBe(`https://rozare.com/safepay/return?paymentId=${id}`);
+  expect(Payment.findOne).not.toHaveBeenCalled();
+});
+
+test.each(['return', 'cancel'])('mobile path callback preserves %s without granting payment', async outcome => {
+  const result = await request(app).get(`/return/mobile/order/${id}/${outcome}?order_id=fixture&tracker=forged&surface=web`);
+  expect(result.status).toBe(200);
+  expect(result.text).toContain(`paymentId=${id}&amp;purpose=order&amp;outcome=${outcome}`);
+  expect(result.headers['content-security-policy']).toContain("frame-ancestors 'none'");
+  expect(Payment.findOne).not.toHaveBeenCalled();
+});
+
+test('legacy provider-appended callback retains web surface and mobile purpose/cancel', async () => {
+  const web = await request(app).get(`/return?attempt=${id}&purpose=order&surface=web?order_id=fixture&tracker=fixture`);
+  expect(web.status).toBe(303);
+  const mobile = await request(app).get(`/return?attempt=${id}&purpose=wallet_top_up?order_id=fixture`);
+  expect(mobile.status).toBe(200); expect(mobile.text).toContain('purpose=wallet_top_up');
+  const cancel = await request(app).get(`/return?attempt=${id}&purpose=order&surface=mobile&outcome=cancel?order_id=fixture`);
+  expect(cancel.text).toContain('outcome=cancel');
+});
+
+test.each([
+  `/return/web/order/bad/return`, `/return/desktop/order/${id}/return`,
+  `/return/web/bad/${id}/return`, `/return/web/order/${id}/success`,
+  `/return?attempt=${id}&purpose=order&surface=web?evil=value`,
+  `/return?attempt=${id}&purpose=order&surface=web&surface=mobile`,
+])('invalid callback fails closed: %s', async url => {
+  expect((await request(app).get(url)).status).toBe(400);
+  expect(Payment.findOne).not.toHaveBeenCalled();
 });

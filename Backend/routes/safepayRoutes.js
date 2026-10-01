@@ -5,6 +5,7 @@ const { paymentStatusPollingLimiter, orderPaymentCreationLimiter, cardSetupCreat
 const controller = require('../controllers/safepayController');
 const billing = require('../controllers/safepayBillingController');
 router.get('/return', controller.returnToApp);
+router.get('/return/:surface/:purpose/:attempt/:outcome', controller.returnToApp);
 router.get('/config', auth, controller.getConfig);
 router.get('/cards', auth, paymentStatusPollingLimiter, controller.listCards);
 router.post('/cards/setup', auth, cardSetupCreationLimiter, controller.startCardSetup);

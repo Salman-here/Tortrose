@@ -4,6 +4,7 @@ const Payment = require('../models/SafepayPayment');
 const { readSafepayConfig } = require('../config/safepay');
 const { reconcilePayment, prepareCheckout, paymentResponse, requireMobileSafepay } = require('../services/safepayPaymentService');
 const cards = require('../services/safepayCustomerService');
+const { parseReturnNavigation } = require('../services/safepayReturnNavigation');
 
 async function ownedPayment(req) {
   const id = String(req.params.paymentId || '');
@@ -100,17 +101,17 @@ exports.deleteCard = async (req, res) => {
 exports.returnToApp = (req, res) => {
   // Navigation only. Neither the incoming outcome/tracker nor a return URL
   // updates financial state; the app must poll the authenticated status API.
-  const attempt = String(req.query.attempt || '');
-  const purpose = String(req.query.purpose || '');
-  if (!mongoose.isValidObjectId(attempt) || !['order', 'wallet_top_up', 'subdomain', 'subscription', 'return_settlement', 'card_setup'].includes(purpose)) return res.sendStatus(400);
-  if (req.query.surface === 'web') {
+  const navigation = parseReturnNavigation(req);
+  if (!navigation) return res.sendStatus(400);
+  const { attempt, purpose, surface, outcome } = navigation;
+  if (surface === 'web') {
     // Fixed origin and path: no caller-supplied redirect or payment success claim.
     const webUrl = new URL('/safepay/return', 'https://rozare.com');
     webUrl.searchParams.set('paymentId', attempt);
     res.set({ 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' });
     return res.redirect(303, webUrl.toString());
   }
-  const query = new URLSearchParams({ paymentId: attempt, purpose, outcome: req.query.outcome === 'cancel' ? 'cancel' : 'return' });
+  const query = new URLSearchParams({ paymentId: attempt, purpose, outcome });
   const appUrl = `rozare://safepay-return?${query}`;
   res.set({ 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer',
     'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'" });

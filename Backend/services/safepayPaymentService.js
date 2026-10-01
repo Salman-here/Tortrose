@@ -7,6 +7,7 @@ const Order = require('../models/Order');
 const { readSafepayConfig } = require('../config/safepay');
 const { createSafepayClient, requireMoney } = require('./safepayClient');
 const { safepayPaymentFacts } = require('./safepayPaymentFacts');
+const { buildReturnUrl } = require('./safepayReturnNavigation');
 
 const fail = (message, code, statusCode = 409) => Object.assign(new Error(message), { code, statusCode });
 const stable = value => Array.isArray(value) ? value.map(stable)
@@ -146,15 +147,12 @@ function createSafepayPaymentService({
     }
 
     const authToken = await client.createAuthToken();
-    const bridge = new URL('/api/safepay/return', process.env.PUBLIC_BACKEND_URL || 'https://rozare.up.railway.app');
-    if (bridge.protocol !== 'https:') throw fail('The payment return service requires HTTPS.', 'SAFEPAY_RETURN_URL_INVALID', 503);
-    bridge.searchParams.set('attempt', String(payment._id));
-    bridge.searchParams.set('purpose', payment.purpose);
-    if (clientSurface === 'web') bridge.searchParams.set('surface', 'web');
-    const cancelUrl = new URL(bridge);
-    cancelUrl.searchParams.set('outcome', 'cancel');
+    const returnContext = { backendOrigin: process.env.PUBLIC_BACKEND_URL || 'https://rozare.up.railway.app',
+      attempt: String(payment._id), purpose: payment.purpose, surface: clientSurface };
+    const redirectUrl = buildReturnUrl({ ...returnContext, outcome: 'return' });
+    const cancelUrl = buildReturnUrl({ ...returnContext, outcome: 'cancel' });
     const checkoutUrl = client.buildPaymentCheckoutUrl({ tracker: payment.tracker, authToken, reference: payment.reference,
-      redirectUrl: bridge.toString(), cancelUrl: cancelUrl.toString(), customerId: payment.customerId,
+      redirectUrl, cancelUrl, customerId: payment.customerId,
       source: clientSurface === 'web' ? 'hosted' : 'mobile' });
     // The URL is returned only to the authenticated owner; it is neither
     // logged nor included in order serializers/notification payloads.
