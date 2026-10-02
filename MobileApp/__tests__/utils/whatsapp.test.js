@@ -7,6 +7,19 @@ import {
 jest.mock('../../src/config/api', () => ({ get: jest.fn() }));
 
 describe('seller WhatsApp helpers', () => {
+  it.each([
+    ['safepay_payment', 'Safepay payment'],
+    ['wallet_payment', 'Rozare Wallet payment'],
+    ['stripe_payment', 'card payment'],
+  ])('describes %s as verified payment, not a manual buyer decision', (source, method) => {
+    const label = getConfirmationSourceLabel({
+      confirmation: { confirmedAt: '2026-10-02T06:42:57Z', confirmedVia: source },
+    });
+    expect(label).toBe(`Confirmed after verified ${method}`);
+    expect(label).not.toContain(source);
+    expect(label).not.toContain('by buyer');
+    expect(getConfirmationSourceLabel({ confirmation: { confirmedVia: source } })).toBe('');
+  });
   it('keeps explicit international numbers and uses the actual country code for local numbers', () => {
     expect(sanitizePhone('+442071234567')).toBe('442071234567');
     expect(sanitizePhone('02071234567', '+44')).toBe('442071234567');

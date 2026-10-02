@@ -288,7 +288,7 @@ export default function OrderDetailManagementScreen({ route, navigation }) {
               />
             </View>
             <View style={styles.decisionCopy}>
-              <Text style={styles.decisionEyebrow}>BUYER CONFIRMATION</Text>
+              <Text style={styles.decisionEyebrow}>ORDER CONFIRMATION</Text>
               <Text style={styles.decisionTitle}>{confirmationLabel || 'Waiting for buyer confirmation'}</Text>
               <Text style={styles.decisionSubtitle}>
                 {confirmation.confirmedAt || confirmation.declinedAt

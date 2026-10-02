@@ -89,3 +89,19 @@ test('web order labels preserve the actor who cancelled after buyer confirmation
     },
   }), 'Cancelled by buyer from account (was confirmed via email)');
 });
+
+test('web seller labels describe verified payment and do not infer a manual buyer confirmation', () => {
+  for (const [source, method] of [
+    ['safepay_payment', 'Safepay payment'],
+    ['wallet_payment', 'Rozare Wallet payment'],
+    ['stripe_payment', 'card payment'],
+  ]) {
+    const label = getConfirmationSourceLabel({
+      confirmation: { confirmedAt: '2026-10-02T06:42:57Z', confirmedVia: source },
+    });
+    assert.equal(label, `Confirmed after verified ${method}`);
+    assert.ok(!label.includes(source));
+    assert.ok(!label.includes('by buyer'));
+  }
+  assert.equal(getConfirmationSourceLabel({ confirmation: { confirmedVia: 'safepay_payment' } }), '');
+});

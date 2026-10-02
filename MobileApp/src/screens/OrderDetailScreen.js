@@ -28,6 +28,7 @@ import GlassPanel from '../components/common/GlassPanel';
 import PremiumBackHeader from '../components/common/PremiumBackHeader';
 import StoreAvatar from '../components/common/StoreAvatar';
 import BuyerReturnsSection from '../components/BuyerReturnsSection';
+import { getBuyerConfirmationMessage, getCancellationPaymentMessage, getConfirmationViaLabel } from '../utils/orderConfirmationPresentation';
 import { shareInvoice } from '../utils/invoiceUtils';
 import { useTheme } from '../contexts/ThemeContext';
 import {
@@ -89,30 +90,28 @@ const getConfirmationNotice = (order) => {
       title: confirmation.cancelledByRole === 'system'
         ? 'Cancelled automatically by Rozare'
         : `Cancelled by ${actorLabel}`,
-      body: confirmation.confirmedAt
-        ? `This happened after you confirmed via ${confirmation.confirmedVia || 'Rozare'}. Nothing has been charged.`
-        : 'Nothing has been charged.',
+      body: getCancellationPaymentMessage(),
       date: confirmation.cancelledAt || confirmation.cancelledFromDashboardAt || confirmation.declinedAt,
     };
   }
   if (confirmation.cancelledFromDashboardAt && confirmation.confirmedAt) {
     return {
       type: 'error', icon: 'close-circle-outline', title: 'Cancelled after confirmation',
-      body: `This order was first confirmed via ${confirmation.confirmedVia || 'Rozare'}, then cancelled from your account.`,
+      body: `This order was first confirmed via ${getConfirmationViaLabel(confirmation.confirmedVia)}, then cancelled from your account. ${getCancellationPaymentMessage()}`,
       date: confirmation.cancelledFromDashboardAt,
     };
   }
   if (confirmation.declinedAt) {
     return {
       type: 'error', icon: 'close-circle-outline', title: 'Order declined',
-      body: `The order was declined via ${confirmation.decidedVia || confirmation.confirmedVia || 'your account'}.`,
+      body: `The order was declined via ${getConfirmationViaLabel(confirmation.decidedVia || confirmation.confirmedVia)}. ${getCancellationPaymentMessage()}`,
       date: confirmation.declinedAt,
     };
   }
   if (confirmation.confirmedAt) {
     return {
       type: 'success', icon: 'checkmark-circle-outline', title: 'Order confirmed',
-      body: `Confirmed via ${confirmation.confirmedVia || confirmation.decidedVia || 'Rozare'}. The seller has been notified.`,
+      body: getBuyerConfirmationMessage(order),
       date: confirmation.confirmedAt,
     };
   }

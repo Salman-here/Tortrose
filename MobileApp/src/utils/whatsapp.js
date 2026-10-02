@@ -15,6 +15,7 @@ import {
   getOrderTotal,
 } from './orderPresentation';
 import { currencyCodeIsSupported, roundCurrencyAmount } from './currencySafety';
+import { getAutomaticPaymentConfirmationLabel, getConfirmationViaLabel } from './orderConfirmationPresentation';
 
 const digitsOnly = (value) => String(value || '').replace(/\D/g, '');
 
@@ -206,17 +207,23 @@ export const getConfirmationSourceLabel = (order) => {
     const note = confirmation.cancelledFromDashboardNote || '';
     const cancellationVia = confirmation.cancelledVia
       || (/account|dashboard/i.test(note) ? 'dashboard' : 'email');
-    const confirmedChannel = confirmation.confirmedVia === 'whatsapp'
-      ? 'WhatsApp'
-      : (confirmation.confirmedVia === 'email' ? 'email' : confirmation.confirmedVia || 'Rozare');
+    const confirmedChannel = getConfirmationViaLabel(confirmation.confirmedVia);
+    const automaticLabel = getAutomaticPaymentConfirmationLabel(confirmation.confirmedVia);
+    const history = automaticLabel
+      ? `was ${automaticLabel.replace(/^Confirmed/, 'confirmed')}`
+      : confirmation.confirmedVia === 'manual'
+        ? 'was confirmed manually by seller'
+        : confirmation.confirmedVia === 'admin'
+          ? 'was confirmed by administrator'
+          : `was confirmed by buyer via ${confirmedChannel}`;
     if (cancellationActor === 'admin') {
-      return `Cancelled by administrator (was confirmed by buyer via ${confirmedChannel})`;
+      return `Cancelled by administrator (${history})`;
     }
     if (cancellationActor === 'seller') {
-      return `Cancelled by seller (was confirmed by buyer via ${confirmedChannel})`;
+      return `Cancelled by seller (${history})`;
     }
     if (cancellationActor === 'system') {
-      return `Cancelled automatically by Rozare (was confirmed by buyer via ${confirmedChannel})`;
+      return `Cancelled automatically by Rozare (${history})`;
     }
     const buyerSource = cancellationVia === 'dashboard'
       ? 'from account'
@@ -231,6 +238,8 @@ export const getConfirmationSourceLabel = (order) => {
   }
   if (!via || (!confirmed && !declined)) return '';
   const action = confirmed ? 'Confirmed' : 'Cancelled';
+  const automaticLabel = confirmed && getAutomaticPaymentConfirmationLabel(via);
+  if (automaticLabel) return automaticLabel;
   const channels = {
     whatsapp: 'by buyer via Rozare WhatsApp automation',
     email: 'by buyer via email link',
@@ -238,5 +247,5 @@ export const getConfirmationSourceLabel = (order) => {
     admin: 'by admin',
     dashboard: 'by buyer from account',
   };
-  return `${action} ${channels[via] || 'by buyer'}`;
+  return `${action} ${Object.hasOwn(channels, via) ? channels[via] : 'in Rozare'}`;
 };

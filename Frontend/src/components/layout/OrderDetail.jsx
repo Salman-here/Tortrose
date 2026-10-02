@@ -315,7 +315,7 @@ const OrderDetail = () => {
                                 <>
                                     <CheckCircle className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: 'hsl(150, 60%, 40%)' }} />
                                     <p className="text-xs font-medium" style={{ color: 'hsl(150, 60%, 40%)' }}>
-                                        Buyer confirmed via {order.confirmation.decidedVia || order.confirmation.confirmedVia || 'unknown'} · {timeAgo(order.confirmation.confirmedAt)}
+                                        {getConfirmationSourceLabel(order) || 'Order confirmed'} · {timeAgo(order.confirmation.confirmedAt)}
                                     </p>
                                 </>
                             ) : order.confirmation.declinedAt ? (

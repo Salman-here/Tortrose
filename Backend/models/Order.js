@@ -2,6 +2,7 @@ const mongoose = require("mongoose");
 const { roundMoney } = require('../services/moneyMath');
 const { parseStrictFiniteNumber } = require('../services/numericInputService');
 const { canonicalizeShippingPhone } = require('../services/orderBuyerContactService');
+const { getConfirmationViaLabel, getAutomaticPaymentConfirmationLabel } = require('../services/orderConfirmationPresentationService');
 
 const LONG_PUBLIC_ORDER_ID_PATTERN = /^ORD-\d{13}-[0-9A-F]{6,32}$/;
 const SHORT_PUBLIC_ORDER_ID_PATTERN = /^ORD-\d{13}$/;
@@ -725,7 +726,7 @@ orderSchema.pre('save', function rejectFrozenSettlementMutation(next) {
 //   "Cancelled by buyer via Rozare WhatsApp automation"
 //   "Confirmed by buyer via email link"
 orderSchema.virtual('confirmationSourceLabel').get(function () {
-    const via = this.confirmation?.confirmedVia;
+    const via = this.confirmation?.decidedVia || this.confirmation?.confirmedVia;
     const confirmed = !!this.confirmation?.confirmedAt;
     const declined = !!this.confirmation?.declinedAt;
     const cancelledFromDash = !!this.confirmation?.cancelledFromDashboardAt;
@@ -742,15 +743,23 @@ orderSchema.virtual('confirmationSourceLabel').get(function () {
         const legacyCancelledFrom = note.includes('account') || note.includes('dashboard')
             ? 'dashboard' : 'email';
         const source = cancelledVia || legacyCancelledFrom;
-        const confirmedChannel = via === 'whatsapp' ? 'WhatsApp' : (via === 'email' ? 'email' : via);
+        const confirmedChannel = getConfirmationViaLabel(this.confirmation?.confirmedVia);
+        const automaticLabel = getAutomaticPaymentConfirmationLabel(this.confirmation?.confirmedVia);
+        const history = automaticLabel
+          ? `was ${automaticLabel.replace(/^Confirmed/, 'confirmed')}`
+          : this.confirmation?.confirmedVia === 'manual'
+            ? 'was confirmed manually by seller'
+            : this.confirmation?.confirmedVia === 'admin'
+              ? 'was confirmed by administrator'
+              : `was confirmed by buyer via ${confirmedChannel}`;
         if (cancelledByRole === 'admin') {
-            return `Cancelled by administrator (was confirmed by buyer via ${confirmedChannel})`;
+            return `Cancelled by administrator (${history})`;
         }
         if (cancelledByRole === 'seller') {
-            return `Cancelled by seller (was confirmed by buyer via ${confirmedChannel})`;
+            return `Cancelled by seller (${history})`;
         }
         if (cancelledByRole === 'system') {
-            return `Cancelled automatically by Rozare (was confirmed by buyer via ${confirmedChannel})`;
+            return `Cancelled automatically by Rozare (${history})`;
         }
         const buyerSource = source === 'dashboard'
             ? 'from account'
@@ -764,12 +773,14 @@ orderSchema.virtual('confirmationSourceLabel').get(function () {
     if (!via) return '';
     const action = confirmed ? 'Confirmed' : declined ? 'Cancelled' : '';
     if (!action) return '';
+    const automaticLabel = confirmed && getAutomaticPaymentConfirmationLabel(via);
+    if (automaticLabel) return automaticLabel;
     if (via === 'whatsapp')  return `${action} by buyer via Rozare WhatsApp automation`;
     if (via === 'email')     return `${action} by buyer via email confirmation link`;
     if (via === 'manual')    return `${action} manually`;
     if (via === 'dashboard') return `${action} by buyer from dashboard`;
     if (via === 'admin')     return `${action} by admin`;
-    return `${action} by buyer`;
+    return `${action} in Rozare`;
 });
 
 orderSchema.index({ awaitingPayment: 1, orderStatus: 1, 'orderItems.seller': 1, createdAt: -1 });

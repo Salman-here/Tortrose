@@ -19,6 +19,8 @@ import {
 } from "../../utils/orderItems";
 import BuyerReturnsPanel from "./BuyerReturnsPanel";
 import BuyerSellerFulfillmentGroups from "../order/BuyerSellerFulfillmentGroups";
+import { getConfirmationSourceLabel } from "../../utils/whatsapp";
+import { getBuyerConfirmationMessage, getCancellationPaymentMessage, getConfirmationViaLabel } from "../../utils/orderConfirmationPresentation";
 
 const OrderItemMoney = ({ item, formatMoney, amountClassName }) => {
     const lineSubtotal = getOrderItemLineSubtotal(item);
@@ -155,7 +157,6 @@ const OrderDetail = () => {
                 {(order?.confirmation?.confirmedAt || order?.confirmation?.declinedAt || order?.confirmation?.cancelledAt) && (() => {
                     const cancelledFromDash = !!order.confirmation.cancelledFromDashboardAt;
                     const confirmed = !!order.confirmation.confirmedAt;
-                    const via = order.confirmation.decidedVia || order.confirmation.confirmedVia;
                     const cancellationActor = order.confirmation.cancelledByRole;
                     const cancelledByAnotherActor = order.orderStatus === 'cancelled'
                         && ['admin', 'seller', 'system'].includes(cancellationActor);
@@ -166,11 +167,6 @@ const OrderDetail = () => {
                             : cancellationActor === 'seller'
                                 ? 'the seller'
                                 : 'Rozare automatically';
-                        const confirmedChannel = order.confirmation.confirmedVia === 'whatsapp'
-                            ? 'WhatsApp'
-                            : order.confirmation.confirmedVia === 'email'
-                                ? 'email'
-                                : 'Rozare';
                         return (
                             <div className="mt-4 p-3 rounded-xl flex items-start gap-3"
                                 style={{ background: 'rgba(239, 68, 68, 0.08)', border: '1px solid rgba(239, 68, 68, 0.25)' }}>
@@ -180,9 +176,7 @@ const OrderDetail = () => {
                                         Order cancelled by {actorLabel}
                                     </p>
                                     <p className="text-xs mt-0.5" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                                        {confirmed
-                                            ? `This happened after you confirmed via ${confirmedChannel}. Nothing has been charged.`
-                                            : 'Nothing has been charged.'}
+                                        {getCancellationPaymentMessage()}
                                     </p>
                                 </div>
                             </div>
@@ -191,7 +185,7 @@ const OrderDetail = () => {
 
                     // Cancelled after previously confirming (from account or email page)
                     if (cancelledFromDash && confirmed) {
-                        const confirmedChannel = order.confirmation.confirmedVia === 'whatsapp' ? 'WhatsApp' : 'email';
+                        const confirmedChannel = getConfirmationViaLabel(order.confirmation.confirmedVia);
                         // Determine WHERE they cancelled from using the note
                         const note = order.confirmation.cancelledFromDashboardNote || '';
                         const cancelledFrom = note.includes('account') || note.includes('dashboard')
@@ -206,7 +200,7 @@ const OrderDetail = () => {
                                         Order cancelled
                                     </p>
                                     <p className="text-xs mt-0.5" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                                        You confirmed via {confirmedChannel}, then cancelled from {cancelledFrom} — nothing has been charged.
+                                        This order was confirmed via {confirmedChannel}, then cancelled from {cancelledFrom}. {getCancellationPaymentMessage()}
                                     </p>
                                 </div>
                             </div>
@@ -217,17 +211,6 @@ const OrderDetail = () => {
                     const orderConfirmed = order.orderStatus === 'confirmed' || order.orderStatus === 'processing' || order.orderStatus === 'shipped';
 
                     const verbPast = orderConfirmed ? 'confirmed' : (order.orderStatus === 'cancelled' ? 'cancelled' : (confirmed ? 'confirmed' : 'cancelled'));
-                    const viaLabel = via === 'whatsapp'
-                        ? 'WhatsApp'
-                        : via === 'email'
-                            ? 'email'
-                            : via === 'admin'
-                                ? 'the seller/admin'
-                                : via === 'manual'
-                                    ? 'the seller'
-                                    : via === 'dashboard'
-                                        ? 'your Rozare account'
-                                        : 'the order confirmation flow';
                     const isGood = verbPast === 'confirmed';
                     const palette = isGood
                         ? { bg: 'rgba(16, 185, 129, 0.08)', border: 'rgba(16, 185, 129, 0.25)', title: 'hsl(150, 60%, 35%)' }
@@ -239,12 +222,12 @@ const OrderDetail = () => {
                             <Icon className="w-5 h-5 mt-0.5 shrink-0" style={{ color: palette.title }} />
                             <div className="min-w-0">
                                 <p className="text-sm font-semibold" style={{ color: palette.title }}>
-                                    You {verbPast} this order via {viaLabel}
+                                    {getConfirmationSourceLabel(order) || `Order ${verbPast}`}
                                 </p>
                                 <p className="text-xs mt-0.5" style={{ color: 'hsl(var(--muted-foreground))' }}>
                                     {isGood
-                                        ? 'The seller has been notified and will process your order shortly.'
-                                        : 'Nothing has been charged.'}
+                                        ? getBuyerConfirmationMessage(order)
+                                        : getCancellationPaymentMessage()}
                                 </p>
                             </div>
                         </div>
