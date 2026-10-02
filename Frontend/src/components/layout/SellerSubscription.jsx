@@ -11,12 +11,16 @@ import { toast } from 'react-toastify';
 import { useSearchParams } from 'react-router-dom';
 import { getAuthToken } from "../../utils/cookieHelper";
 import { formatUsdCents, getSubscriptionPricing } from '../../utils/subscriptionPricing';
+import { notifySubscriptionStatusChanged } from '../../utils/subscriptionStatusRefresh';
+import { useAuth } from '../../contexts/AuthContext';
 import {
     calendarMonthsRemaining,
     subscriptionStatusConfirmsEntitlement,
 } from '../../utils/subscriptionPlanChange';
 
 const SellerSubscription = () => {
+    const { currentUser } = useAuth();
+    const subscriptionAccountKey = String(currentUser?._id || currentUser?.id || '');
     const [subscription, setSubscription] = useState(null);
     const [loading, setLoading] = useState(true);
     const [loadError, setLoadError] = useState('');
@@ -57,6 +61,7 @@ const SellerSubscription = () => {
             if (subscriptionRequestRef.current.id !== requestId) return null;
             setSubscription(nextSubscription);
             setEliteMetaAds(Boolean(nextSubscription?.metaAdsIncluded));
+            notifySubscriptionStatusChanged(subscriptionAccountKey);
 
             const requestedCoupon = requestedCouponParam;
             if (
@@ -79,7 +84,7 @@ const SellerSubscription = () => {
         } finally {
             if (subscriptionRequestRef.current.id === requestId) setLoading(false);
         }
-    }, [requestedCouponParam]);
+    }, [requestedCouponParam, subscriptionAccountKey]);
 
     const safepayBilling = useSafepaySubscriptionBilling(subscription, fetchSubscription);
 

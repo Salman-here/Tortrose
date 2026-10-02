@@ -31,6 +31,7 @@ import {
     sellerInventoryOverviewIsValid,
 } from '../../utils/productCardSafety';
 import { useNotificationBellInbox } from '../../hooks/useNotificationBellInbox';
+import { SUBSCRIPTION_STATUS_CHANGED, subscriptionStatusEventMatchesAccount } from '../../utils/subscriptionStatusRefresh';
 
 // Shared menu items (used by desktop sidebar + mobile inline menu)
 const getSellerMenuItems = ({ pendingOrders = 0, lowStockProducts = 0 } = {}) => ([
@@ -97,6 +98,7 @@ const SellerDashboard = () => {
     const navigate = useNavigate();
     const [isMobile, setIsMobile] = useState(false);
     const [subscriptionData, setSubscriptionData] = useState(null);
+    const subscriptionAccountKey = String(currentUser?._id || currentUser?.id || '');
 
     useEffect(() => {
         const checkIsMobile = () => setIsMobile(window.innerWidth < 1024);
@@ -105,19 +107,36 @@ const SellerDashboard = () => {
         return () => window.removeEventListener('resize', checkIsMobile);
     }, []);
 
-    // Fetch subscription status
+    // Refresh the shell after billing changes, navigation and account changes.
     useEffect(() => {
+        setSubscriptionData(null);
+        if (!subscriptionAccountKey) return undefined;
+        let disposed = false;
+        let request;
+        let generation = 0;
         const fetchSub = async () => {
+            request?.abort();
+            const controller = new AbortController();
+            request = controller;
+            const requestId = ++generation;
             try {
                 const token = getAuthToken();
                 const res = await axios.get(`${import.meta.env.VITE_API_URL}api/subscription/status`, {
-                    headers: { Authorization: `Bearer ${token}` }
+                    headers: { Authorization: `Bearer ${token}` },
+                    signal: controller.signal,
                 });
-                setSubscriptionData(res.data.subscription);
+                if (!disposed && requestId === generation && !controller.signal.aborted) setSubscriptionData(res.data.subscription);
             } catch (e) { /* ignore */ }
         };
+        const invalidate = event => {
+            if (!subscriptionStatusEventMatchesAccount(event, subscriptionAccountKey)) return;
+            setSubscriptionData(null);
+            fetchSub();
+        };
+        window.addEventListener(SUBSCRIPTION_STATUS_CHANGED, invalidate);
         fetchSub();
-    }, []);
+        return () => { disposed = true; request?.abort(); window.removeEventListener(SUBSCRIPTION_STATUS_CHANGED, invalidate); };
+    }, [subscriptionAccountKey, location.pathname]);
 
     const isSubBlocked = subscriptionData?.status === 'blocked';
     const isTrialExpiring = subscriptionData?.isTrialExpiringSoon;
