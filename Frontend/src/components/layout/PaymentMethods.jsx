@@ -6,6 +6,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import PhoneField from '../common/PhoneField';
 import LocationAutocomplete from '../common/LocationAutocomplete';
 import { safepayApi, openSafepayCheckout } from '../../utils/safepay';
+import { safepayCardSetupNotice } from '../../utils/safepayCardNotice';
 import { createScopedMutationStorageKey, getOrCreatePersistedMutationAttemptForFingerprint, clearPersistedMutationAttemptForFingerprint } from '../../utils/persistedMutationAttempt';
 
 export default function PaymentMethods() {
@@ -35,7 +36,8 @@ export default function PaymentMethods() {
       setCards(data.cards); setDefaultId(data.defaultPaymentMethodId); setCardsUnavailable(false);
       setProfileReady(data.billingProfileReady === true);
       if (data.billingContact && !editedContact.current) setContact(data.billingContact);
-    } catch (err) { setCardsUnavailable(true); setError(err.response?.data?.msg || err.message || 'Saved cards are unavailable. Please retry.'); }
+      return data.cards;
+    } catch (err) { setCardsUnavailable(true); setError(err.response?.data?.msg || err.message || 'Saved cards are unavailable. Please retry.'); return null; }
     finally { setLoading(false); }
   }, []);
   useEffect(() => { load(); }, [load]);
@@ -68,9 +70,9 @@ export default function PaymentMethods() {
       if (['authorized', 'cancelled', 'failed', 'refunded'].includes(result.status)) {
         await clearPersistedMutationAttemptForFingerprint(localStorage, storageKey, fingerprint, attempt.key);
       }
-      setNotice(result.status === 'authorized' ? 'Card setup verified. Your available cards are listed below.'
-        : 'Card setup is not complete. Retry to check the same attempt; adding a card does not start a subscription.');
-      await load();
+      if (result.status === 'authorized') setConsent(false);
+      const refreshedCards = await load();
+      setNotice(safepayCardSetupNotice(result.status, refreshedCards));
     } catch (err) { report(err); }
     finally { busyRef.current = false; setBusy(false); }
   };
@@ -111,7 +113,7 @@ export default function PaymentMethods() {
       <label className="flex gap-3 items-start text-sm"><input type="checkbox" checked={consent} disabled={busy} onChange={event => setConsent(event.target.checked)} className="mt-1" /><span>I authorize Safepay to save this card for purchases I approve. Automatic subscription renewals require a separate agreement. Adding a card does not start a subscription.</span></label>
       <p className="text-xs text-muted-foreground">By continuing, you agree to Rozare’s <Link className="underline" to="/terms">Terms</Link> and <Link className="underline" to="/privacy">Privacy Policy</Link>.</p>
       <button type="submit" className="glass-button-primary px-5 py-3 flex items-center gap-2 disabled:opacity-50" disabled={!consent || busy || loading || cardsUnavailable || remaining > 0}><Plus size={18} />{busy ? 'Verifying…' : remaining ? `Retry in ${remaining}s` : 'Add a new card'}</button>
-      <p className="text-xs text-muted-foreground flex items-center gap-2"><LockKeyhole size={14} /> Card details are entered only in Safepay’s secure form.</p>
+      <p className="text-xs text-muted-foreground flex items-center gap-2"><LockKeyhole size={14} /> Card details are entered only in Safepay's secure form.</p>
     </form>
     {removeCard && <div className="fixed inset-0 z-[9990] bg-black/50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="remove-card-title"><div className="glass-card safepay-surface p-6 max-w-md space-y-4"><h2 id="remove-card-title" className="font-bold">Remove card ending {removeCard.last4}?</h2><p className="text-sm">A card used for automatic renewals must be replaced in Subscription, or renewal cancelled, before removal.</p><div className="flex gap-3"><button className="glass-button px-4 py-2" disabled={busy} onClick={() => setRemoveCard(null)}>Keep card</button><button className="glass-button-primary px-4 py-2" disabled={busy} onClick={() => mutateCard(removeCard.id, true)}>{busy ? 'Verifying…' : 'Remove card'}</button></div></div></div>}
   </div>;

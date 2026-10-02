@@ -88,6 +88,7 @@ export default function SafepayCheckoutProvider({ children }) {
           <button type="button" aria-label="Close payment and check status" onClick={() => check(true)} disabled={checking} className="p-2"><X /></button>
         </header>
         <p className="text-xs p-3 bg-slate-50">Closing this screen does not cancel a payment. Rozare verifies the result securely.</p>
+        {payment.purpose === 'card_setup' && <p className="text-xs px-3 pb-3 bg-slate-50">Select “Securely save this card” in the Safepay form to keep it for future payments. Card verification alone does not start a subscription.</p>}
         <iframe title="Safepay secure card checkout" src={payment.checkoutUrl} className="w-full flex-1 min-h-0 border-0"
           referrerPolicy="no-referrer" allow="payment *" sandbox="allow-forms allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox" />
         <footer className="p-3 border-t text-xs space-y-2">
