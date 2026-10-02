@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Loader2, ShieldCheck, X } from 'lucide-react';
 import { registerSafepayPresenter, verifySafepayPayment } from '../../utils/safepay';
+import { safepayPollingDelay, safepayRetryAfterMs } from '../../utils/safepayPolling';
 
 export default function SafepayCheckoutProvider({ children }) {
   const [payment, setPayment] = useState(null);
@@ -9,6 +10,7 @@ export default function SafepayCheckoutProvider({ children }) {
   const [notice, setNotice] = useState('');
   const active = useRef(null);
   const checkingRef = useRef(false);
+  const retryNotBefore = useRef(0);
   const panel = useRef(null);
   const finish = useCallback(result => {
     const current = active.current;
@@ -20,16 +22,25 @@ export default function SafepayCheckoutProvider({ children }) {
   const check = useCallback(async (closing = false) => {
     if (!active.current || checkingRef.current) return;
     const current = active.current;
+    if (Date.now() < retryNotBefore.current) {
+      if (closing) finish({ status: 'pending', paymentId: current.payment.paymentId, isPaid: false });
+      else setNotice('Verification is temporarily paused. Rozare will check this same payment again automatically; do not pay twice.');
+      return;
+    }
     checkingRef.current = true; setChecking(true);
     try {
       const result = await verifySafepayPayment(current.payment);
       if (active.current !== current) return;
       if (result.status !== 'pending' || closing) finish(result);
       else setNotice('Payment is not confirmed yet. Complete the secure form or close and resume this same attempt later.');
-    } catch {
+    } catch (error) {
       if (active.current !== current) return;
+      const retryAfter = safepayRetryAfterMs(error);
+      if (retryAfter) retryNotBefore.current = Date.now() + retryAfter;
       if (closing) finish({ status: 'pending', paymentId: current.payment.paymentId, isPaid: false });
-      else setNotice('We could not verify payment yet. Do not start a second payment; check this attempt again.');
+      else setNotice(retryAfter
+        ? 'Verification is temporarily paused. Rozare will check this same payment again automatically; do not pay twice.'
+        : 'We could not verify payment yet. Do not start a second payment; check this attempt again.');
     } finally { checkingRef.current = false; setChecking(false); }
   }, [finish]);
   useEffect(() => registerSafepayPresenter(next => new Promise((resolve, reject) => {
@@ -53,8 +64,17 @@ export default function SafepayCheckoutProvider({ children }) {
       }
     };
     document.addEventListener('keydown', keyboard);
-    const timer = setInterval(() => check(), 4000);
-    return () => { clearInterval(timer); document.removeEventListener('keydown', keyboard); document.body.style.overflow = overflow; previous?.focus?.(); };
+    const startedAt = Date.now();
+    let disposed = false;
+    let timer;
+    const poll = async () => {
+      if (disposed || !active.current) return;
+      await check();
+      if (!disposed && active.current) timer = setTimeout(poll,
+        Math.max(safepayPollingDelay(Date.now() - startedAt), retryNotBefore.current - Date.now()));
+    };
+    timer = setTimeout(poll, Math.max(safepayPollingDelay(0), retryNotBefore.current - Date.now()));
+    return () => { disposed = true; clearTimeout(timer); document.removeEventListener('keydown', keyboard); document.body.style.overflow = overflow; previous?.focus?.(); };
   }, [payment, check]);
   useEffect(() => () => { active.current?.resolve({ status: 'pending', isPaid: false }); active.current = null; }, []);
 

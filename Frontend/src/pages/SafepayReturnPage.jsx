@@ -5,6 +5,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { openSafepayCheckout, safepayApi, verifySafepayPayment } from '../utils/safepay';
 import { validateSafepayPayment } from '../utils/safepayContract';
 import { canResumeSafepayPayment, resumeOwnedSafepayPayment } from '../utils/safepayResume';
+import { safepayPollingDelay, safepayRetryAfterMs } from '../utils/safepayPolling';
 
 export default function SafepayReturnPage() {
   const [params] = useSearchParams();
@@ -14,9 +15,11 @@ export default function SafepayReturnPage() {
   const [error, setError] = useState('');
   const [retry, setRetry] = useState(0);
   const [resuming, setResuming] = useState(false);
+  const [coolingDown, setCoolingDown] = useState(false);
   useEffect(() => {
     let disposed = false;
     let timer;
+    const startedAt = Date.now();
     if (resuming || !currentUser || !/^[a-f\d]{24}$/i.test(paymentId || '')) return undefined;
     const check = async () => {
       try {
@@ -24,15 +27,23 @@ export default function SafepayReturnPage() {
         const result = validateSafepayPayment(data);
         if (result.paymentId !== paymentId) throw new Error('Payment reference could not be verified.');
         if (disposed) return;
-        setPayment(result); setError('');
-        if (result.status === 'pending') timer = setTimeout(check, 4000);
-      } catch (err) { if (!disposed) setError(err.response?.data?.msg || err.message || 'Payment verification is unavailable.'); }
+        setPayment(result); setError(''); setCoolingDown(false);
+        if (result.status === 'pending') timer = setTimeout(check, safepayPollingDelay(Date.now() - startedAt));
+      } catch (err) {
+        if (disposed) return;
+        const retryAfter = safepayRetryAfterMs(err);
+        setCoolingDown(!!retryAfter);
+        setError(retryAfter
+          ? 'Verification is temporarily paused. Rozare will check this same payment again automatically; do not pay twice.'
+          : err.response?.data?.msg || err.message || 'Payment verification is unavailable.');
+        if (retryAfter) timer = setTimeout(check, retryAfter);
+      }
     };
     check();
     return () => { disposed = true; clearTimeout(timer); };
   }, [paymentId, currentUser, retry, resuming]);
   const resume = async () => {
-    if (resuming || !canResumeSafepayPayment(payment)) return;
+    if (resuming || coolingDown || !canResumeSafepayPayment(payment)) return;
     setResuming(true); setError('');
     try {
       const result = await resumeOwnedSafepayPayment(payment, {
@@ -54,8 +65,8 @@ export default function SafepayReturnPage() {
         : error ? <p role="alert">{error}</p>
           : complete ? <p>Your payment outcome has been verified by Rozare. You can close this payment window and return to your previous screen.</p>
             : <p role="status">{payment?.status === 'pending' || !payment ? 'Checking your payment. Please do not start another payment while this attempt is being verified.' : `Payment status: ${payment.status.replace(/_/g, ' ')}. Return to your account for details.`}</p>}
-    {error && <button className="glass-button px-4 py-2 inline-flex gap-2" onClick={() => setRetry(value => value + 1)}><RefreshCw size={16} /> Check again</button>}
-    {currentUser && canResumeSafepayPayment(payment) && <button type="button" disabled={resuming} onClick={resume}
+    {error && <button disabled={coolingDown} className="glass-button px-4 py-2 inline-flex gap-2 disabled:opacity-50" onClick={() => setRetry(value => value + 1)}><RefreshCw size={16} />{coolingDown ? 'Waiting to recheck…' : 'Check again'}</button>}
+    {currentUser && canResumeSafepayPayment(payment) && <button type="button" disabled={resuming || coolingDown} onClick={resume}
       className="glass-button-primary px-5 py-3 block w-full disabled:opacity-50">
       {resuming ? 'Opening secure payment…' : 'Resume secure payment'}
     </button>}
