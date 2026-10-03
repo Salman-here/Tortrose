@@ -18,6 +18,7 @@ import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import api from '../config/api';
+import { getSafetyRefundPresentation } from '../utils/safepaySafetyRefundPresentation';
 import { useCurrency } from '../contexts/CurrencyContext';
 import { useGlobal } from '../contexts/GlobalContext';
 import { spacing, fontSize, fontWeight, statusColors } from '../styles/theme';
@@ -306,6 +307,8 @@ export default function OrderDetailScreen({ route, navigation }) {
     { signed: true },
   );
   const cancellable = !refreshing && canCancelOrder(order);
+  const safetyRefund = getSafetyRefundPresentation(order);
+  const paymentPositive = order.isPaid || safetyRefund?.status === 'refunded';
 
   return (
     <GlassBackground>
@@ -453,7 +456,7 @@ export default function OrderDetailScreen({ route, navigation }) {
             })}
           </Section>}
 
-          <BuyerReturnsSection order={order} formatMoney={orderMoney} />
+          {order.awaitingPayment !== true && <BuyerReturnsSection order={order} formatMoney={orderMoney} />}
 
           <Section title="Delivery details" subtitle="Where this order is going" icon="location-outline" styles={styles}>
             <InfoRow icon="person-outline" label="Recipient" value={order.shippingInfo?.fullName} styles={styles} palette={palette} />
@@ -475,14 +478,19 @@ export default function OrderDetailScreen({ route, navigation }) {
               <View style={{ flex: 1 }}>
                 <Text style={styles.paymentTitle}>{paymentMethodLabel(order.paymentMethod)}</Text>
                 <Text style={styles.paymentSub}>
-                  {order.isPaid ? `Paid${order.paidAt ? ` on ${formatDate(order.paidAt)}` : ''}` : order.paymentMethod === 'cash_on_delivery' ? 'Payment is collected at delivery' : 'Payment has not completed'}
+                  {safetyRefund ? safetyRefund.message : order.isPaid ? `Paid${order.paidAt ? ` on ${formatDate(order.paidAt)}` : ''}` : order.paymentMethod === 'cash_on_delivery' ? 'Payment is collected at delivery' : 'Payment has not completed'}
                 </Text>
               </View>
-              <View style={[styles.paidBadge, { backgroundColor: order.isPaid ? 'rgba(16,185,129,0.13)' : 'rgba(245,158,11,0.13)' }]}>
-                <Ionicons name={order.isPaid ? 'shield-checkmark' : 'time-outline'} size={13} color={order.isPaid ? palette.colors.success : palette.colors.warning} />
-                <Text style={[styles.paidText, { color: order.isPaid ? palette.colors.success : palette.colors.warning }]}>{order.isPaid ? 'PAID' : 'UNPAID'}</Text>
+              <View style={[styles.paidBadge, { backgroundColor: paymentPositive ? 'rgba(16,185,129,0.13)' : 'rgba(245,158,11,0.13)' }]}>
+                <Ionicons name={paymentPositive ? 'shield-checkmark' : 'time-outline'} size={13} color={paymentPositive ? palette.colors.success : palette.colors.warning} />
+                <Text style={[styles.paidText, { color: paymentPositive ? palette.colors.success : palette.colors.warning }]}>{safetyRefund?.label || (order.isPaid ? 'PAID' : 'UNPAID')}</Text>
               </View>
             </View>
+            {safetyRefund?.available && <GlassPanel variant="inner" style={{ padding: spacing.md, marginTop: spacing.sm }}>
+              <Text style={styles.paymentSub}>Original card payment: {orderMoney(safetyRefund.capturedMinor / 100)}</Text>
+              <Text style={styles.paymentSub}>Confirmed refund: {orderMoney(safetyRefund.refundedMinor / 100)}</Text>
+              <Text style={styles.paymentSub}>Refund destination: Original card</Text>
+            </GlassPanel>}
             {order.paymentResult?.paymentIntentId && (
               <Text style={styles.referenceText}>Payment reference: ••••{String(order.paymentResult.paymentIntentId).slice(-8)}</Text>
             )}

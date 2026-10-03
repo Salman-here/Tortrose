@@ -21,6 +21,7 @@ import BuyerReturnsPanel from "./BuyerReturnsPanel";
 import BuyerSellerFulfillmentGroups from "../order/BuyerSellerFulfillmentGroups";
 import { getConfirmationSourceLabel } from "../../utils/whatsapp";
 import { getBuyerConfirmationMessage, getCancellationPaymentMessage, getConfirmationViaLabel } from "../../utils/orderConfirmationPresentation";
+import { getSafetyRefundPresentation } from '../../utils/safepaySafetyRefundPresentation';
 
 const OrderItemMoney = ({ item, formatMoney, amountClassName }) => {
     const lineSubtotal = getOrderItemLineSubtotal(item);
@@ -127,6 +128,7 @@ const OrderDetail = () => {
         : order.paymentMethod === 'cash_on_delivery'
             ? 'Due on delivery'
             : 'Pending';
+    const safetyRefund = getSafetyRefundPresentation(order);
 
     return (
         <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="max-w-full p-4 sm:p-6">
@@ -147,8 +149,8 @@ const OrderDetail = () => {
                             {getStatusIcon(order?.orderStatus)}
                             <span className="hidden sm:inline">{order?.orderStatus?.charAt(0).toUpperCase() + order?.orderStatus.slice(1)}</span>
                         </span>
-                        <span className="px-2.5 py-1 text-xs rounded-full font-medium" style={order?.isPaid ? { background: 'rgba(16, 185, 129, 0.12)', color: 'hsl(150, 60%, 40%)' } : { background: 'rgba(239, 68, 68, 0.12)', color: 'hsl(0, 72%, 55%)' }}>
-                            {order?.isPaid ? "Paid" : "Unpaid"}
+                        <span className="px-2.5 py-1 text-xs rounded-full font-medium" style={order?.isPaid || safetyRefund?.status === 'refunded' ? { background: 'rgba(16, 185, 129, 0.12)', color: 'hsl(150, 60%, 40%)' } : { background: 'rgba(239, 68, 68, 0.12)', color: 'hsl(0, 72%, 55%)' }}>
+                            {safetyRefund?.label || (order?.isPaid ? "Paid" : "Unpaid")}
                         </span>
                     </div>
                 </div>
@@ -350,11 +352,23 @@ const OrderDetail = () => {
                             <div className="flex justify-between"><span style={{ color: 'hsl(var(--muted-foreground))' }}>Method:</span><span className="font-medium" style={{ color: 'hsl(var(--foreground))' }}>{order.paymentMethod === 'cash_on_delivery' ? 'Cash on Delivery' : order.paymentMethod === 'wallet' ? 'Rozare Wallet' : order.paymentMethod === 'safepay' ? 'Card (Safepay)' : 'Card'}</span></div>
                             <div className="flex justify-between items-center">
                                 <span style={{ color: 'hsl(var(--muted-foreground))' }}>Status:</span>
-                                {order.isPaid
+                                {safetyRefund
+                                    ? <span className="font-semibold" style={{ color: 'hsl(var(--primary))' }}>{safetyRefund.label}</span>
+                                    : order.isPaid
                                     ? <span className="flex items-center gap-1 font-semibold" style={{ color: 'hsl(150, 60%, 40%)' }}><CheckCircle className="w-4 h-4" /> Paid</span>
                                     : <span className="flex items-center gap-1 font-semibold" style={{ color: order.orderStatus === 'cancelled' ? 'hsl(0, 72%, 55%)' : 'hsl(30, 90%, 50%)' }}><Clock className="w-4 h-4" /> {unpaidStatusLabel}</span>
                                 }
                             </div>
+                            {safetyRefund && (
+                                <div className="glass-inner rounded-xl p-3 space-y-2">
+                                    <p className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>{safetyRefund.message}</p>
+                                    {safetyRefund.available && <>
+                                        <div className="flex justify-between"><span>Original card payment</span><span>{orderMoney(safetyRefund.capturedMinor / 100)}</span></div>
+                                        <div className="flex justify-between"><span>Confirmed refund</span><span>{orderMoney(safetyRefund.refundedMinor / 100)}</span></div>
+                                        <div className="flex justify-between"><span>Refund destination</span><span>Original card</span></div>
+                                    </>}
+                                </div>
+                            )}
                             {order.paymentResult?.paymentIntentId && (
                                 <div className="flex flex-col gap-1">
                                     <span style={{ color: 'hsl(var(--muted-foreground))' }}>Payment Intent ID:</span>
@@ -411,7 +425,7 @@ const OrderDetail = () => {
                 </div>
             </div>
 
-            <BuyerReturnsPanel order={order} formatMoney={orderMoney} />
+            {order.awaitingPayment !== true && <BuyerReturnsPanel order={order} formatMoney={orderMoney} />}
 
             {/* Cancel Confirmation Modal */}
             <AnimatePresence>

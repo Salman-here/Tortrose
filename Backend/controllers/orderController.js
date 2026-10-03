@@ -7,6 +7,7 @@ const crypto = require('crypto');
 const { stripe, STRIPE_MODE } = require('../config/stripe');
 const SafepayPayment = require('../models/SafepayPayment');
 const safepayPayments = require('../services/safepayPaymentService');
+const { buyerOrderVisibilityFilter, attachSafetyRefundViews } = require('../services/safepaySafetyRefundPresentationService');
 const TaxConfig = require('../models/TaxConfig');
 const Store = require('../models/Store');
 const { calculateTax } = require('./taxController');
@@ -3014,8 +3015,9 @@ exports.getUserOrders = async (req, res) => {
             query.isPaid = paymentStatus === 'paid' ? true : false
         }
         query.user = id
-        // Hide awaiting-payment Stripe orders from buyer "My Orders" until paid.
-        query.awaitingPayment = { $ne: true }
+        // Unfulfilled captured/refunded Safepay checkouts remain visible to
+        // their purchaser for financial tracking, never to seller fulfillment.
+        query.$and = [buyerOrderVisibilityFilter()]
 
         // console.log(query);
         const orders = await Order.find(query)
@@ -3024,9 +3026,10 @@ exports.getUserOrders = async (req, res) => {
 
 
         const storeLogosBySeller = await loadStoreLogosBySeller(orders);
+        const buyerViews = await attachSafetyRefundViews(orders.map(order => buildBuyerOrderView(order, { storeLogosBySeller })));
         res.status(200).json({
             msg: 'User Orders fetched successfully',
-            orders: orders.map(order => buildBuyerOrderView(order, { storeLogosBySeller })),
+            orders: buyerViews,
         })
 
     } catch (error) {
@@ -3222,7 +3225,7 @@ exports.getOrderDetail = async (req, res) => {
         }
 
         const storeLogosBySeller = await loadStoreLogosBySeller(order)
-        const buyerOrder = buildBuyerOrderView(order, { storeLogosBySeller })
+        const [buyerOrder] = await attachSafetyRefundViews([buildBuyerOrderView(order, { storeLogosBySeller })])
         const presentedOrder = role === 'admin' && !buyerView
             ? await withAuthoritativeOrderConfirmationDelivery(buyerOrder)
             : buyerOrder

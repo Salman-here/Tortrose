@@ -8,6 +8,7 @@ import { useCurrency } from '../../contexts/CurrencyContext';
 import { getAuthToken } from "../../utils/cookieHelper";
 import { formatOrderItemOptions, inspectOrderListMoney } from "../../utils/orderItems";
 import { BuyerSellerStatusChips } from '../order/BuyerSellerFulfillmentGroups';
+import { getSafetyRefundPresentation } from '../../utils/safepaySafetyRefundPresentation';
 
 const containerVariants = { hidden: { opacity: 0 }, visible: { opacity: 1, transition: { staggerChildren: 0.08 } } };
 const itemVariants = { hidden: { y: 20, opacity: 0 }, visible: { y: 0, opacity: 1, transition: { type: "spring", stiffness: 100 } } };
@@ -122,6 +123,7 @@ const UserOrdersManagement = () => {
                                 </div>
                                 <div className="flex flex-col sm:flex-row sm:items-center gap-3 mt-4 md:mt-0">
                                     <StatusBadge status={order.orderStatus} />
+                                    {getSafetyRefundPresentation(order) && <span className="tag-pill">{getSafetyRefundPresentation(order).label}</span>}
                                     <div className="text-left sm:text-right">
                                         <p className="text-base font-extrabold" style={{ color: 'hsl(var(--foreground))' }}>
                                             {(() => {

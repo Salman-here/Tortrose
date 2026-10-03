@@ -12,6 +12,7 @@ import GlassPanel from './GlassPanel';
 import { spacing, fontSize, fontWeight, borderRadius, statusColors } from '../../styles/theme';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useCurrency } from '../../contexts/CurrencyContext';
+import { getSafetyRefundPresentation } from '../../utils/safepaySafetyRefundPresentation';
 import {
   ORDER_STAGES,
   formatOrderItemOptions,
@@ -97,6 +98,7 @@ const OrderCard = ({
     )}`
     : '';
   const progress = getOrderProgress(status);
+  const safetyRefund = sellerView ? null : getSafetyRefundPresentation(order);
   const estimate = getEstimatedDeliveryDate(order);
   const customerName = order.user?.name || order.shippingInfo?.fullName;
   const additionalLines = Math.max(0, (order.orderItems?.length || 0) - 1);
@@ -232,7 +234,7 @@ const OrderCard = ({
               <Text style={styles.paymentMethod}>{paymentLabel(order.paymentMethod)}</Text>
             </View>
             <Text style={[styles.paymentState, { color: order.isPaid ? palette.colors.success : palette.colors.warning }]}>
-              {order.isPaid ? 'Payment complete' : order.paymentMethod === 'cash_on_delivery' ? 'Pay on delivery' : 'Payment pending'}
+              {safetyRefund?.label || (order.isPaid ? 'Payment complete' : order.paymentMethod === 'cash_on_delivery' ? 'Pay on delivery' : 'Payment pending')}
             </Text>
           </View>
 
