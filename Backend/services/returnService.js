@@ -447,7 +447,7 @@ const buildOrderReturnEligibility = async (order, { session = null, at = new Dat
     groups.push({
       seller: { _id: sellerId, username: seller?.username || '' },
       store: { _id: policyInfo.storeId, storeName: policyInfo.storeName },
-      policy: eligibleItems[0]?.returnPolicy || policyInfo.policy,
+      policy: selectReturnPolicyForDisplay(evaluatedItems, eligibleItems, policyInfo.policy),
       policyVariants: [...new Set(evaluatedItems.map(item => item.returnPolicy.refundType))],
       policySource: policyInfo.source,
       fulfillment,
@@ -460,6 +460,9 @@ const buildOrderReturnEligibility = async (order, { session = null, at = new Dat
 
   return groups;
 };
+
+const selectReturnPolicyForDisplay = (evaluatedItems, eligibleItems, fallbackPolicy) =>
+  eligibleItems[0]?.returnPolicy || evaluatedItems[0]?.returnPolicy || fallbackPolicy;
 
 const selectedReturnMoney = ({
   order,
@@ -2655,6 +2658,7 @@ module.exports = {
   completeReturnCardSettlement,
   failReturnCardSettlement,
   __private: {
+    selectReturnPolicyForDisplay,
     normalizeReturnRequestKey,
     returnRequestStorageKey,
     normalizeReturnCreationInput,

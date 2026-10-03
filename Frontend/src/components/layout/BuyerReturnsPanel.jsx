@@ -8,6 +8,7 @@ import {
   BUYER_CANCELLABLE_RETURN_STATUSES,
   RETURN_STATUS_LABELS,
   returnResolutionLabel,
+  returnGroupPolicyLabel,
   returnStatusTone,
 } from '../../utils/returns';
 import {
@@ -398,7 +399,7 @@ export default function BuyerReturnsPanel({ order, formatMoney }) {
             <div>
               <p className="font-semibold text-sm" style={{ color: 'hsl(var(--foreground))' }}>{group.store?.storeName || group.seller?.username || 'Seller'}</p>
               <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                {group.policy.returnsEnabled ? `${group.policy.returnDuration}-day returns - ${returnResolutionLabel(group.policy.refundType)}` : 'Returns are not offered by this seller'}
+                {returnGroupPolicyLabel(group)}
               </p>
             </div>
             {group.eligible ? (

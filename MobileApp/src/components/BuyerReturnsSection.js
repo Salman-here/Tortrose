@@ -22,6 +22,7 @@ import {
   BUYER_CANCELLABLE_RETURN_STATUSES,
   RETURN_STATUS_LABELS,
   returnResolutionLabel,
+  returnGroupPolicyLabel,
   returnStatusColor,
 } from '../utils/returns';
 import {
@@ -445,9 +446,7 @@ export default function BuyerReturnsSection({ order, formatMoney }) {
           <View style={{ flex: 1 }}>
             <Text style={styles.cardTitle}>{group.store?.storeName || group.seller?.username || 'Seller'}</Text>
             <Text style={styles.policyText}>
-              {group.policy.returnsEnabled
-                ? `${group.policy.returnDuration}-day returns - ${returnResolutionLabel(group.policy.refundType)}`
-                : 'Returns are not offered by this seller'}
+              {returnGroupPolicyLabel(group)}
             </Text>
             {group.eligibilityDeadline && <Text style={styles.deadline}>Request by {new Date(group.eligibilityDeadline).toLocaleString()}</Text>}
             {!group.eligible && <Text style={styles.unavailableText}>{group.reason}</Text>}

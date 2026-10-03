@@ -1,3 +1,14 @@
+export const returnGroupPolicyLabel = (group) => {
+  const policies = (group?.items || []).map(item => item.returnPolicy || group?.policy).filter(Boolean);
+  const signatures = new Set(policies.map(policy =>
+    JSON.stringify([policy.returnsEnabled, policy.returnDuration, policy.refundType])));
+  if (signatures.size > 1) return 'Item-specific return policies apply';
+  const policy = policies[0] || group?.policy;
+  return policy?.returnsEnabled
+    ? `${policy.returnDuration}-day returns - ${returnResolutionLabel(policy.refundType)}`
+    : 'Returns are not available for these ordered items';
+};
+
 export const RETURN_STATUS_LABELS = Object.freeze({
   requested: 'Return requested',
   approved: 'Return approved',
