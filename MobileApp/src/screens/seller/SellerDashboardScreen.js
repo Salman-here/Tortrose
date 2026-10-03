@@ -61,7 +61,7 @@ export const SELLER_TOOL_GROUPS = [
     title: 'Grow your business',
     subtitle: 'Performance, promotions and campaigns',
     tools: [
-      { id: 'analytics', label: 'Analytics', detail: 'Revenue and conversion', icon: 'bar-chart-outline', color: '#14B8A6', screen: 'SellerAnalytics' },
+      { id: 'analytics', label: 'Analytics', detail: 'Revenue and order trends', icon: 'bar-chart-outline', color: '#14B8A6', screen: 'SellerAnalytics' },
       { id: 'coupons', label: 'Coupons', detail: 'Offers and redemptions', icon: 'pricetag-outline', color: '#F97316', screen: 'SellerCouponManagement' },
       { id: 'ads', label: 'Rozare Ads', detail: 'TikTok and Meta campaigns', icon: 'megaphone-outline', color: '#A855F7', screen: 'SellerAds' },
       { id: 'storefront', label: 'Store Overview', detail: 'Preview store performance', icon: 'eye-outline', color: '#10B981', screen: 'SellerStoreOverview' },
@@ -346,7 +346,7 @@ export default function SellerDashboardScreen({ navigation }) {
     { label: 'Total Revenue', value: authoritativeRevenue === null ? 'Unavailable' : formatDashboardRevenue(authoritativeRevenue), icon: 'cash-outline', color: '#10b981', bg: 'rgba(16,185,129,0.12)' },
     { label: 'Total Orders', value: stats?.totalOrders ?? 'Unavailable', icon: 'bag-handle-outline', color: '#6366f1', bg: 'rgba(99,102,241,0.12)', onPress: () => navigation.navigate('SellerOrderManagement') },
     { label: 'Total Products', value: stats?.totalProducts ?? 'Unavailable', icon: 'cube-outline', color: '#0ea5e9', bg: 'rgba(14,165,233,0.12)', onPress: () => navigation.navigate('SellerProductManagement') },
-    { label: 'Conversion', value: stats === null ? 'Unavailable' : `${stats.conversion}%`, icon: 'trending-up-outline', color: '#8b5cf6', bg: 'rgba(139,92,246,0.12)' },
+    { label: 'Delivered share', value: stats === null ? 'Unavailable' : `${stats.conversion}%`, icon: 'trending-up-outline', color: '#8b5cf6', bg: 'rgba(139,92,246,0.12)' },
   ];
 
   const orderSummary = [

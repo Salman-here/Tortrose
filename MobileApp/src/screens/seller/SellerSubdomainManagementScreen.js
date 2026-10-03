@@ -494,7 +494,7 @@ export default function SellerSubdomainManagementScreen({ navigation, route }) {
     ['eye-outline', 'Store views', analytics.totalViews.toLocaleString(), palette.colors.primary],
     ['receipt-outline', 'Recognized orders', analytics.totalOrders.toLocaleString(), palette.colors.success],
     ['cash-outline', 'Recognized revenue', formatPrice(analytics.totalRevenue, { sourceCurrency: analytics.currency }), palette.colors.info],
-    ['trending-up-outline', 'Conversion', `${analytics.conversionRate.toFixed(2).replace(/\.00$/, '')}%`, palette.colors.secondary],
+    ['trending-up-outline', 'Visitor conversion', 'Not measured', palette.colors.secondary],
   ];
   const traffic = analytics.monthlyTraffic;
   const maxTraffic = Math.max(...traffic.map((item) => item.views), 1);
@@ -611,6 +611,9 @@ export default function SellerSubdomainManagementScreen({ navigation, route }) {
               <MetricCard key={label} icon={icon} label={label} value={value} color={color} styles={styles} />
             ))}
           </View>
+          <Text style={styles.blockedText}>
+            Visitor conversion needs visits linked to completed checkouts. Marketplace and app orders cannot be divided by storefront views to measure it.
+          </Text>
 
           <GlassPanel variant="strong" style={[styles.ownershipCard, isOwned && styles.ownedCard]}>
             <SellerSectionHeader
@@ -836,7 +839,7 @@ export default function SellerSubdomainManagementScreen({ navigation, route }) {
                 title={analytics.totalViews > 0 ? 'Monthly history unavailable' : 'No traffic yet'}
                 message={analytics.totalViews > 0
                   ? 'Your lifetime view total above is accurate. Monthly view history is not available yet.'
-                  : 'Share your storefront link. Views and conversions will appear after shoppers visit.'}
+                  : 'Share your storefront link. Recorded views and recognized sales will appear here.'}
                 actionLabel="Copy store link"
                 onAction={copyUrl}
               />

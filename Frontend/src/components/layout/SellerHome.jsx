@@ -86,7 +86,7 @@ const SellerHome = () => {
         { label: 'Total Revenue', value: totalRevenue === null ? 'Unavailable' : formatCompactPrice(totalRevenue), icon: <DollarSign size={22} />, color: 'hsl(150, 60%, 45%)', bg: 'rgba(16, 185, 129, 0.12)' },
         { label: 'Total Orders', value: totalOrders, icon: <ShoppingBag size={22} />, color: 'hsl(220, 70%, 55%)', bg: 'rgba(99, 102, 241, 0.12)' },
         { label: 'Total Products', value: totalProducts === null ? 'Unavailable' : totalProducts, icon: <Package size={22} />, color: 'hsl(200, 80%, 50%)', bg: 'rgba(14, 165, 233, 0.12)' },
-        { label: 'Conversion', value: totalOrders > 0 ? `${((deliveredOrders / totalOrders) * 100).toFixed(0)}%` : '0%', icon: <TrendingUp size={22} />, color: 'hsl(280, 60%, 55%)', bg: 'rgba(139, 92, 246, 0.12)' },
+        { label: 'Delivered share', value: totalOrders > 0 ? `${((deliveredOrders / totalOrders) * 100).toFixed(0)}%` : '0%', icon: <TrendingUp size={22} />, color: 'hsl(280, 60%, 55%)', bg: 'rgba(139, 92, 246, 0.12)' },
     ];
 
     const quickActions = [

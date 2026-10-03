@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   inspectAdminSubdomainResponse,
   subdomainAnalyticsResponseIsValid,
@@ -23,6 +24,33 @@ test('subdomain analytics require exact requested-currency money and canonical c
   const malformed = response();
   malformed.analytics.totalRevenue = 500.251;
   assert.equal(subdomainAnalyticsResponseIsValid(malformed, 'PKR'), false);
+});
+
+test('explicitly unmeasured conversion keeps verified money readable without inventing a rate', () => {
+  const unmeasured = response();
+  unmeasured.analytics.conversionRate = null;
+  unmeasured.analytics.conversionRateAvailable = false;
+  unmeasured.analytics.conversionRateReason = 'VISIT_CHECKOUT_ATTRIBUTION_UNAVAILABLE';
+  assert.equal(subdomainAnalyticsResponseIsValid(unmeasured, 'PKR'), true);
+  assert.equal(subdomainAnalyticsResponseIsValid({
+    ...unmeasured, analytics: { ...unmeasured.analytics, conversionRateAvailable: true },
+  }, 'PKR'), false);
+  assert.equal(subdomainAnalyticsResponseIsValid({
+    ...unmeasured, analytics: { ...unmeasured.analytics, totalRevenue: 500.251 },
+  }, 'PKR'), false);
+  const legacy = response();
+  legacy.analytics.conversionRate = 233.33;
+  assert.equal(subdomainAnalyticsResponseIsValid(legacy, 'PKR'), true);
+});
+
+test('web and Android do not render old orders/views as visitor conversion', () => {
+  const web = readFileSync(new URL('../src/components/layout/SellerSubdomainManagement.jsx', import.meta.url), 'utf8');
+  const mobile = readFileSync(new URL('../../MobileApp/src/screens/seller/SellerSubdomainManagementScreen.js', import.meta.url), 'utf8');
+  for (const source of [web, mobile]) {
+    assert.match(source, /Visitor conversion/);
+    assert.match(source, /Not measured/);
+    assert.doesNotMatch(source, /analytics\.conversionRate(?:\.toFixed|\}%)/);
+  }
 });
 
 const adminResponse = () => ({

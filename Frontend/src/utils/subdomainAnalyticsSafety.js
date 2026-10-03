@@ -173,10 +173,18 @@ export const subdomainAnalyticsResponseIsValid = (payload, requestedCurrency) =>
     || !count(analytics.trustCount)
     || !exactMoney(analytics.totalRevenue)
     || (analytics.totalOrders === 0 && analytics.totalRevenue !== 0)
-    || typeof analytics.conversionRate !== 'number'
-    || !Number.isFinite(analytics.conversionRate)
-    || analytics.conversionRate < 0
-    || roundCurrencyAmount(analytics.conversionRate) !== analytics.conversionRate
+    || !(
+      (analytics.conversionRate === null
+        && analytics.conversionRateAvailable === false
+        && analytics.conversionRateReason === 'VISIT_CHECKOUT_ATTRIBUTION_UNAVAILABLE')
+      // Older servers returned orders/views. Keep their otherwise-valid money
+      // readable during rollout, but never present this ratio as conversion.
+      || (analytics.conversionRateAvailable === undefined
+        && typeof analytics.conversionRate === 'number'
+        && Number.isFinite(analytics.conversionRate)
+        && analytics.conversionRate >= 0
+        && roundCurrencyAmount(analytics.conversionRate) === analytics.conversionRate)
+    )
     || typeof analytics.trafficHistoryAvailable !== 'boolean'
     || !Array.isArray(analytics.monthlyTraffic)
     || analytics.monthlyTraffic.some(row => (

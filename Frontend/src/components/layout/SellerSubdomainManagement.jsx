@@ -212,7 +212,7 @@ const SellerSubdomainManagement = () => {
         { label: 'Total Views', value: analytics.totalViews, icon: <Eye size={18} />, color: 'hsl(220, 70%, 55%)' },
         { label: 'Total Orders', value: analytics.totalOrders, icon: <ShoppingBag size={18} />, color: 'hsl(150, 60%, 45%)' },
         { label: 'Recognized Revenue', value: formatPrice(analytics.totalRevenue, { sourceCurrency: analytics.currency, targetCurrency: analytics.currency }), icon: <DollarSign size={18} />, color: 'hsl(200, 80%, 50%)' },
-        { label: 'Conversion', value: `${analytics.conversionRate}%`, icon: <TrendingUp size={18} />, color: 'hsl(280, 60%, 55%)' },
+        { label: 'Visitor conversion', value: 'Not measured', icon: <TrendingUp size={18} />, color: 'hsl(280, 60%, 55%)' },
     ];
 
     return (
@@ -506,6 +506,10 @@ const SellerSubdomainManagement = () => {
                     </motion.div>
                 ))}
             </div>
+
+            <p className="text-xs mb-6" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                Visitor conversion needs visits linked to completed checkouts. Marketplace and app orders cannot be divided by storefront views to measure it.
+            </p>
 
             {/* Traffic Chart */}
             <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }} className="glass-panel p-6 mb-6">
