@@ -155,7 +155,7 @@ export default function ReturnOrdersPanel({ formatPrice }) {
     } catch (error) {
       const available = error.response?.data?.availableBalanceUSD;
       const availableText = isExactNonNegativeJsonMoney(available)
-        ? ` Available balance: ${formatPrice(available, { sourceCurrency: 'USD' })}.`
+        ? ` Available balance: ${formatPrice(available, { sourceCurrency: 'USD', targetCurrency: 'USD', showCode: true })}.`
         : '';
       toast.error(`${error.response?.data?.msg || 'Failed to accept return.'}${availableText}`);
     } finally {
@@ -230,7 +230,7 @@ export default function ReturnOrdersPanel({ formatPrice }) {
                 {request.policySnapshot?.refundType !== 'replacement_only' && (
                   <p className="font-extrabold" style={{ color: snapshot.valid ? 'hsl(var(--foreground))' : 'hsl(0, 72%, 55%)' }}>
                     {snapshot.valid
-                      ? formatPrice(snapshot.refund.totalAmount, { sourceCurrency: snapshot.currency })
+                      ? formatPrice(snapshot.refund.totalAmount, { sourceCurrency: snapshot.currency, targetCurrency: snapshot.currency, showCode: true })
                       : 'Amount unavailable'}
                   </p>
                 )}
@@ -247,7 +247,7 @@ export default function ReturnOrdersPanel({ formatPrice }) {
                     <p className="text-sm font-semibold truncate" style={{ color: 'hsl(var(--foreground))' }}>{displayText(item?.name, 'Item unavailable')}</p>
                     <p className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>
                       Quantity {snapshot.items[itemIndex]?.quantity ?? 'unavailable'} - {snapshot.valid
-                        ? formatPrice(snapshot.items[itemIndex].lineSubtotal, { sourceCurrency: snapshot.currency })
+                        ? formatPrice(snapshot.items[itemIndex].lineSubtotal, { sourceCurrency: snapshot.currency, targetCurrency: snapshot.currency, showCode: true })
                         : 'Amount unavailable'}
                     </p>
                   </div>

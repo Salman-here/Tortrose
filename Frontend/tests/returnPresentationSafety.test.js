@@ -300,3 +300,18 @@ test('seller return and product components route formatters/actions through stri
   assert.doesNotMatch(productSource, /Number\(safeProduct\.(?:price|discountedPrice|stock)/);
   assert.doesNotMatch(productSource, /(?:price|discountedPrice|stock)[^\n]*(?:\|\||\?\?)\s*0/);
 });
+
+test('seller return amounts retain their frozen currency instead of the browsing currency', () => {
+  const source = readFileSync(new URL('../src/components/layout/ReturnOrdersPanel.jsx', import.meta.url), 'utf8');
+  for (const amountExpression of ['snapshot.refund.totalAmount', 'snapshot.items[itemIndex].lineSubtotal']) {
+    const escaped = amountExpression.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    assert.match(source, new RegExp(`formatPrice\\(${escaped}, \\{ sourceCurrency: snapshot\\.currency, targetCurrency: snapshot\\.currency, showCode: true \\}\\)`));
+  }
+  assert.match(source, /formatPrice\(available, \{ sourceCurrency: 'USD', targetCurrency: 'USD', showCode: true \}\)/);
+  for (const currency of ['PKR', 'USD', 'EUR', 'GBP']) {
+    const inspected = inspectReturnPresentationSnapshot(makeReturn({ currency }));
+    assert.equal(inspected.valid, true);
+    assert.equal(inspected.currency, currency);
+    assert.equal(inspected.refund.totalAmount, makeReturn().refund.totalAmount);
+  }
+});
