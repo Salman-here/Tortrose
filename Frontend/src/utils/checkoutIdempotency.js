@@ -22,8 +22,10 @@ const canonicalShippingInfo = (shippingInfo) => {
 };
 
 /**
- * Mirrors Backend/services/checkoutIdempotencyService.js, but returns the
- * canonical JSON directly because the client only needs stable equality.
+ * Business intent mirrors Backend/services/checkoutIdempotencyService.js.
+ * Client retry correlation also includes stable cart-line identity when present:
+ * re-adding an identical product after fulfillment is a new purchase, even if
+ * a previous payment completed outside this tab and its local key survived.
  * Server-derived prices, totals, rates, and delivery estimates are excluded.
  */
 export const createCheckoutFingerprint = (
@@ -36,6 +38,8 @@ export const createCheckoutFingerprint = (
     quantity: requestedQuantity(item?.quantity),
     selectedColor: item?.selectedColor || null,
     selectedOptions: canonicalize(item?.selectedOptions || {}),
+    ...(typeof item?.cartLineId === 'string' && item.cartLineId.trim()
+      ? { cartLineId: item.cartLineId.trim() } : {}),
   })).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
 
   const coupons = (Array.isArray(order?.appliedCoupons) ? order.appliedCoupons : []).map((coupon) => ({

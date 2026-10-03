@@ -45,6 +45,18 @@ import {
 } from '../../src/utils/persistedMutationAttempt';
 
 describe('checkout production contracts', () => {
+  it('preserves retries of the same cart but separates an identical newly added purchase', () => {
+    const original = { orderItems: [{ id: 'product-a', cartLineId: 'cart-line-a', quantity: 1, price: 1000 }] };
+    expect(createCheckoutFingerprint({ ...original, orderItems: [{ ...original.orderItems[0], price: 1001 }] }))
+      .toBe(createCheckoutFingerprint(original));
+    expect(createCheckoutFingerprint({ ...original, orderItems: [{ ...original.orderItems[0], cartLineId: 'cart-line-b' }] }))
+      .not.toBe(createCheckoutFingerprint(original));
+    expect(createCheckoutFingerprint({ orderItems: [{ id: 'product-a', quantity: 1 }] }))
+      .toBe(createCheckoutFingerprint({ orderItems: [{ id: 'product-a', cartLineId: null, quantity: 1 }] }));
+    const screenSource = readFileSync(require.resolve('../../src/screens/CheckoutScreen.js'), 'utf8');
+    expect(screenSource).toMatch(/id: item\.product\._id,\s*cartLineId: item\._id,/);
+  });
+
   const shippingMethod = (overrides = {}) => ({
     type: 'standard',
     cost: 5,

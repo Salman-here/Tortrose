@@ -100,6 +100,27 @@ test('web fingerprint rotates for delivery method, payment method, or currency c
   assert.notEqual(createCheckoutFingerprint({ ...checkoutIntent(), currency: 'USD' }, 'checkout_session', 'web'), fingerprint);
 });
 
+test('a newly re-added identical product is not correlated to a completed checkout', () => {
+  const original = checkoutIntent();
+  original.orderItems.forEach((item, index) => { item.cartLineId = `cart-line-${index}`; });
+  const retry = structuredClone(original);
+  retry.orderItems.reverse();
+  retry.orderItems[0].price = 999;
+  assert.equal(createCheckoutFingerprint(original), createCheckoutFingerprint(retry));
+  const newPurchase = structuredClone(original);
+  newPurchase.orderItems[0].cartLineId = 'new-cart-line';
+  assert.notEqual(createCheckoutFingerprint(original), createCheckoutFingerprint(newPurchase));
+});
+
+test('web checkout forwards stable server cart-line identity to retry correlation', () => {
+  const source = readFileSync(new URL('../src/components/layout/Checkout.jsx', import.meta.url), 'utf8');
+  assert.match(source, /id: item\.product\._id,\s*cartLineId: item\._id,/);
+  const original = checkoutIntent();
+  assert.equal(createCheckoutFingerprint(original), createCheckoutFingerprint({ ...original,
+    orderItems: original.orderItems.map(item => ({ ...item, cartLineId: null })),
+  }));
+});
+
 test('web checkout attempts remain eligible for replay for 24 hours', () => {
   const now = Date.now();
   assert.equal(isFreshCheckoutAttempt({ createdAt: now - CHECKOUT_ATTEMPT_MAX_AGE_MS + 1 }, now), true);

@@ -1019,6 +1019,7 @@ export default function Checkout() {
 
         return {
           id: item.product._id,
+          cartLineId: item._id,
           name: item.product.name,
           image: item.product.image,
           price: itemPrice,

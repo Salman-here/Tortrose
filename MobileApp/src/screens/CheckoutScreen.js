@@ -616,6 +616,7 @@ export default function CheckoutScreen({ navigation }) {
         const sourcePrice = getEffectiveProductSourcePrice(item.product);
         return {
           id: item.product._id,
+          cartLineId: item._id,
           name: item.product.name,
           image: item.product.image || item.product.images?.[0]?.url,
           price: productPriceInCheckoutCurrency(item.product, sourcePrice),

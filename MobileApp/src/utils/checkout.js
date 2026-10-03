@@ -720,7 +720,10 @@ export const prepareStripeAfterOrderResponse = async ({
 };
 
 /**
- * Mirrors Backend/services/checkoutIdempotencyService.js. Volatile prices,
+ * Business intent mirrors Backend/services/checkoutIdempotencyService.js.
+ * Stable cart-line identity additionally separates a newly re-added product
+ * from a completed purchase whose local retry key was not cleared.
+ * Volatile prices,
  * totals, exchange-rate conversions, and delivery estimates are deliberately
  * excluded so a lost response can be retried with the original attempt key.
  */
@@ -734,6 +737,8 @@ export const createCheckoutFingerprint = (
     quantity: requestedQuantity(item?.quantity),
     selectedColor: item?.selectedColor || null,
     selectedOptions: canonicalize(item?.selectedOptions || {}),
+    ...(typeof item?.cartLineId === 'string' && item.cartLineId.trim()
+      ? { cartLineId: item.cartLineId.trim() } : {}),
   })).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
 
   const coupons = (Array.isArray(order?.appliedCoupons) ? order.appliedCoupons : []).map((coupon) => ({
