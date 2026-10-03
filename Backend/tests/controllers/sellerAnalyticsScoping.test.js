@@ -152,6 +152,9 @@ describe('seller analytics order isolation', () => {
       paidOrders: 2,
       avgOrderValue: 12.5,
       totalUnitsSold: 3,
+      conversionRate: null,
+      conversionRateAvailable: false,
+      conversionRateReason: 'VISIT_CHECKOUT_ATTRIBUTION_UNAVAILABLE',
     });
     expect(analytics.statusBreakdown).toEqual(expect.arrayContaining([
       { name: 'shipped', value: 1 },

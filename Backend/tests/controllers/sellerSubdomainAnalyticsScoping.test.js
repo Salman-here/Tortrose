@@ -156,6 +156,22 @@ describe('seller subdomain analytics contract', () => {
       trustCount: 8,
       monthlyTraffic: [],
       trafficHistoryAvailable: false,
+      conversionRate: null,
+      conversionRateAvailable: false,
+      conversionRateReason: 'VISIT_CHECKOUT_ATTRIBUTION_UNAVAILABLE',
     });
+    for (const views of [0, 1]) {
+      store.views = views;
+      await store.save();
+      const sparseViewsResponse = responseMock();
+      await getSellerSubdomainAnalytics({
+        user: { id: sellerId.toString(), role: 'seller' },
+        query: { currency: 'USD' },
+      }, sparseViewsResponse);
+      expect(sparseViewsResponse.json.mock.calls[0][0].analytics).toMatchObject({
+        totalViews: views, totalOrders: 2, totalRevenue: 25,
+        conversionRate: null, conversionRateAvailable: false,
+      });
+    }
   });
 });

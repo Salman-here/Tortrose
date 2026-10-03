@@ -269,7 +269,10 @@ exports.getSellerAnalytics = async (req, res) => {
                     paidOrders,
                     avgOrderValue: paidOrders > 0 ? roundMoney(totalRevenue / paidOrders) : 0,
                     totalUnitsSold,
-                    conversionRate: sellerOrders.length > 0 ? Math.round((paidOrders / sellerOrders.length) * 100) : 0,
+                    recognizedOrderSharePercent: sellerOrders.length > 0 ? Math.round((paidOrders / sellerOrders.length) * 100) : 0,
+                    conversionRate: null,
+                    conversionRateAvailable: false,
+                    conversionRateReason: 'VISIT_CHECKOUT_ATTRIBUTION_UNAVAILABLE',
                 },
                 notifications: notifications.sort((a, b) => {
                     const priority = { critical: 0, warning: 1, info: 2, success: 3 };

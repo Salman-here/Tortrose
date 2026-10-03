@@ -173,7 +173,11 @@ exports.getSellerSubdomainAnalytics = async (req, res) => {
                 trustCount: store.trustCount || 0,
                 monthlyTraffic: [],
                 trafficHistoryAvailable: false,
-                conversionRate: totalViews > 0 ? Math.round((totalOrders / totalViews) * 10000) / 100 : 0,
+                // All-channel orders and a lifetime view counter cannot identify
+                // sessions that converted. Unknown is not zero or a capped ratio.
+                conversionRate: null,
+                conversionRateAvailable: false,
+                conversionRateReason: 'VISIT_CHECKOUT_ATTRIBUTION_UNAVAILABLE',
             }
         });
     } catch (error) {
