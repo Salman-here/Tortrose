@@ -172,6 +172,18 @@ describe('Wallet top-up controller deterministic recovery', () => {
     });
     mockPaymentIntentCreate.mockImplementation(async params => buildIntent(params));
     mockCheckoutSessionCreate.mockImplementation(async params => buildSession(params));
+    // Retrieving a concurrently-created object must model the same provider
+    // record, not a return value left behind by a previous test's override.
+    mockPaymentIntentRetrieve.mockImplementation(async id => {
+      const params = mockPaymentIntentCreate.mock.calls.find(([value]) => buildIntent(value).id === id)?.[0];
+      if (!params) throw new Error('Unexpected test PaymentIntent retrieval');
+      return buildIntent(params);
+    });
+    mockCheckoutSessionRetrieve.mockImplementation(async id => {
+      const params = mockCheckoutSessionCreate.mock.calls.find(([value]) => buildSession(value).id === id)?.[0];
+      if (!params) throw new Error('Unexpected test checkout retrieval');
+      return buildSession(params);
+    });
   });
 
   afterEach(async () => {
