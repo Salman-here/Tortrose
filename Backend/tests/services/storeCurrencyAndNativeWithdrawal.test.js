@@ -45,7 +45,7 @@ async function earned(seller,product,currency='PKR',buyerCurrency=currency) {
     shippingInfo:{fullName:'QA Buyer',email:'buyer@example.com',phone:'+12025550101',address:'1 QA Road',city:'Lahore',state:'Punjab',postalCode:'54000',country:'Pakistan'},
     shippingMethod:{name:'free',price:0,estimatedDays:3,seller:seller._id},sellerShipping:[{seller:seller._id,shippingMethod:{name:'free',price:0,sourceCost:0,sourceCurrency:currency,estimatedDays:3}}],
     sellerPolicies:[{seller:seller._id,productCurrency:currency}],orderSummary:{subtotal:value,shippingCost:0,tax:0,couponDiscount:0,totalAmount:value},
-    paymentMethod:'stripe',isPaid:true,isDelivered:true,orderStatus:'delivered',sellerFulfillment:[{seller:seller._id,status:'delivered'}],exchangeRateSnapshot:snapshot()};
+    paymentMethod:'safepay',isPaid:true,isDelivered:true,orderStatus:'delivered',sellerFulfillment:[{seller:seller._id,status:'delivered'}],exchangeRateSnapshot:snapshot()};
   const doc=new Order(data);doc.sellerSettlementVersion=1;doc.sellerSettlement=buildOrderSellerSettlement(doc,{requireOrderTotal:true});doc.sellerCurrencyMoneyVersion=1;doc.sellerCurrencyMoney=buildOrderSellerCurrencyMoney(doc);await doc.save();return doc;
 }
 const bank=(seller,currency)=>SellerPaymentAccount.create({seller:seller._id,accountHolderName:'QA Account Holder',bankName:'QA Test Bank',accountNumber:'001122334455',accountNumberLast4:'4455',country:'Pakistan',countryCode:'PK',currency,isActive:true});
@@ -176,7 +176,7 @@ test('native admin overview and both payment clients agree after a currency chan
   expect((await withdraw(seller, 2000, 'PKR')).statusCode).toBe(201);
   const overview = { success: true, ...await buildAdminPaymentsOverviewData() };
   expect(overview.errors).toEqual([]);
-  expect(overview.summaryByCurrency.PKR).toMatchObject({ withdrawableBalance: 26000, deliveredStripeOrders: 1, totalRelevantOrders: 1 });
+  expect(overview.summaryByCurrency.PKR).toMatchObject({ withdrawableBalance: 26000, deliveredSafepayOrders: 1, totalRelevantOrders: 1 });
   expect(overview.summaryByCurrency.USD).toMatchObject({ withdrawableBalance: 0, totalRelevantOrders: 0 });
   expect(overview.sellers[0].revenue.totalDeliveredRevenue).toBe(100);
   const sellerSummary = await buildSellerPaymentSummary(seller._id, { displayCurrency: 'USD' });

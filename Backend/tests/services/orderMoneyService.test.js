@@ -43,7 +43,7 @@ const makeOrder = ({ tax = 0, shippingCost = 0, couponDiscount = 0 } = {}) => ({
     couponDiscount,
     totalAmount: Math.round((0.03 + shippingCost + tax - couponDiscount) * 100) / 100,
   },
-  paymentMethod: 'stripe',
+  paymentMethod: 'safepay',
   isPaid: true,
   awaitingPayment: false,
   orderStatus: 'confirmed',
@@ -327,13 +327,13 @@ describe('orderMoneyService exact seller allocation', () => {
   });
 
   test('recognizes paid online revenue and delivered COD, never pending/cancelled COD', () => {
-    const stripe = makeOrder();
-    expect(isSellerRevenueRecognized(stripe, 'seller-a')).toBe(true);
+    const safepay = makeOrder();
+    expect(isSellerRevenueRecognized(safepay, 'seller-a')).toBe(true);
 
-    const wallet = { ...stripe, paymentMethod: 'wallet' };
+    const wallet = { ...safepay, paymentMethod: 'wallet' };
     expect(isSellerRevenueRecognized(wallet, 'seller-a')).toBe(true);
 
-    const codPending = { ...stripe, paymentMethod: 'cash_on_delivery', isPaid: false };
+    const codPending = { ...safepay, paymentMethod: 'cash_on_delivery', isPaid: false };
     expect(isSellerRevenueRecognized(codPending, 'seller-a')).toBe(false);
 
     const codDelivered = {

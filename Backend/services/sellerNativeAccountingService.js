@@ -79,6 +79,7 @@ function computeNativeSellerAccounting({ sellerId, orders, productIds = new Set(
     return toMinorUnits(convertAmountWithRates(fromMinorUnits(valueMinor), source, reportingCurrency, rates));
   };
   for (const order of orders) {
+    if (order.paymentMethod === 'stripe' && process.env.STRIPE_ENABLED !== 'true') continue;
     if (order.awaitingPayment === true) continue;
     const money = nativeSellerEntitlement(order, sellerId, productIds);
     if (!money) continue;
@@ -110,6 +111,7 @@ function computeNativeSellerAccounting({ sellerId, orders, productIds = new Set(
   // Aggregate signed source liabilities by order before computing native cents.
   const liabilities = new Map();
   for (const row of transactions) {
+    if (row.order && orders.some(order => id(order) === id(row.order) && order.paymentMethod === 'stripe' && process.env.STRIPE_ENABLED !== 'true')) continue;
     if (!['reserved', 'completed', 'reversed'].includes(row.status) || !['debit', 'credit'].includes(row.direction)) throw fault('Invalid seller balance transaction state.');
     minor(row.amountUSD, 'reference USD amount');
     const sourceAmount = minor(row.sourceAmount, 'transaction source amount');

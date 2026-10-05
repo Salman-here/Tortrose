@@ -4,7 +4,8 @@
 // and reconciliation remain intact; this does not migrate any records.
 const MESSAGE = 'Card payments now use Safepay. Refresh Rozare or update the app and retry from the current checkout.';
 function assertCurrentCardProvider(provider) {
-  if (provider === 'stripe' && process.env.SAFEPAY_WEB_ENABLED === 'true') {
+  if (provider === 'stripe' && (process.env.STRIPE_ENABLED !== 'true'
+    || process.env.SAFEPAY_WEB_ENABLED === 'true' || process.env.SAFEPAY_MOBILE_ENABLED === 'true')) {
     throw Object.assign(new Error(MESSAGE), { code: 'PAYMENT_PROVIDER_CHANGED', statusCode: 409 });
   }
 }

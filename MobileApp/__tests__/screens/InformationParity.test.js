@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { parse } from '@babel/parser';
 
-const read = (...segments) => fs.readFileSync(path.resolve(__dirname, ...segments), 'utf8');
+const read = (...segments) => fs.readFileSync(path.resolve(__dirname, ...segments), 'utf8').replace(/\r\n/g, '\n');
 
 const evaluateStatic = (node) => {
   if (!node) return undefined;

@@ -1590,6 +1590,7 @@ const isSellerOrderDelivered = (order, sellerId) => (
 const isSellerRevenueRecognized = (order, sellerId) => {
   if (!isSellerOrderLive(order, sellerId)) return false;
   const method = order?.paymentMethod || 'cash_on_delivery';
+  if (method === 'stripe' && process.env.STRIPE_ENABLED !== 'true') return false;
   if (method === 'cash_on_delivery') return isSellerOrderDelivered(order, sellerId);
   if (['stripe', 'wallet', 'safepay'].includes(method)) return order?.isPaid === true;
   return false;

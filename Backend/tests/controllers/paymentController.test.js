@@ -19,6 +19,7 @@ const SellerBalanceTransaction = require('../../models/SellerBalanceTransaction'
 const SellerPaymentRiskHold = require('../../models/SellerPaymentRiskHold');
 
 let mongoServer;
+const previousStripeEnabled = process.env.STRIPE_ENABLED;
 
 const createUser = (suffix, role = 'user') =>
     User.create({
@@ -105,11 +106,15 @@ const createOrder = ({
 };
 
 beforeAll(async () => {
+    // This suite exercises the retained integration in an explicit future-switch configuration.
+    process.env.STRIPE_ENABLED = 'true';
     mongoServer = await MongoMemoryServer.create();
     await mongoose.connect(mongoServer.getUri());
 }, 60000);
 
 afterAll(async () => {
+    if (previousStripeEnabled === undefined) delete process.env.STRIPE_ENABLED;
+    else process.env.STRIPE_ENABLED = previousStripeEnabled;
     if (mongoose.connection.readyState !== 0) {
         await mongoose.disconnect();
     }

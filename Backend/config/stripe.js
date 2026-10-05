@@ -52,11 +52,16 @@ const STRIPE_CUSTOMER_SESSION_ENABLED = envFlag(
 );
 const STRIPE_API_VERSION = '2025-08-27.basil';
 
-const stripe = STRIPE_SECRET_KEY
+// Archived integration: merely retaining old keys must never activate it.
+// A future provider switch requires an explicit flag and checkout configuration.
+const STRIPE_ENABLED = process.env.STRIPE_ENABLED === 'true';
+const stripe = STRIPE_ENABLED && STRIPE_SECRET_KEY
   ? require('stripe')(STRIPE_SECRET_KEY, { apiVersion: STRIPE_API_VERSION })
   : null;
 
-if (STRIPE_MODE === 'invalid') {
+if (!STRIPE_ENABLED) {
+  // Safepay is active; no misleading "payment features disabled" warning.
+} else if (STRIPE_MODE === 'invalid') {
   console.error(`Invalid STRIPE_MODE "${requestedStripeMode}". Use "test" or "live".`);
 } else if (stripe) {
   console.log(`✅ Stripe initialized in ${STRIPE_MODE.toUpperCase()} mode`);
@@ -66,6 +71,7 @@ if (STRIPE_MODE === 'invalid') {
 
 module.exports = {
   stripe,
+  STRIPE_ENABLED,
   STRIPE_MODE,
   STRIPE_SECRET_KEY,
   STRIPE_PUBLISHABLE_KEY,

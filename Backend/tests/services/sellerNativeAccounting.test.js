@@ -15,7 +15,7 @@ function order(native = 'PKR', buyer = native, valueUSD = 10, options = {}) {
     orderSummary: { subtotal: price, shippingCost: 0, tax: 0, couponDiscount: 0, totalAmount: price },
     sellerPolicies: [{ seller, productCurrency: native }], sellerShipping: [{ seller, shippingMethod: { name: 'free', price: 0, sourceCost: 0, sourceCurrency: native } }],
     exchangeRateSnapshot: { base: 'USD', rates, capturedAt: new Date('2026-09-01T00:00:00Z'), source: 'test-historical', fallback: false },
-    paymentMethod: 'stripe', isPaid: true, orderStatus: 'delivered', sellerFulfillment: [{ seller, status: 'delivered' }], createdAt: new Date(), ...options };
+    paymentMethod: 'safepay', isPaid: true, orderStatus: 'delivered', sellerFulfillment: [{ seller, status: 'delivered' }], createdAt: new Date(), ...options };
   o.sellerSettlementVersion = 1; o.sellerSettlement = buildOrderSellerSettlement(o, { requireOrderTotal: true });
   o.sellerCurrencyMoneyVersion = 1; o.sellerCurrencyMoney = buildOrderSellerCurrencyMoney(o);
   return o;
@@ -54,7 +54,7 @@ test('all online providers sum exactly; unpaid Safepay orders add no revenue', (
     order('PKR', 'GBP', 10, { paymentMethod: 'safepay', isPaid: false })]);
   expect(result.revenue.onlineDeliveredRevenue).toBe(8400);
   expect(result.revenue.withdrawableBalance).toBe(8400);
-  expect(result.revenue.deliveredSafepayOrders).toBe(1);
+  expect(result.revenue.deliveredSafepayOrders).toBe(2);
 });
 test('pending and delivered eligibility, unpaid online and COD separation', () => {
   const pending = order('PKR', 'PKR', 10, { sellerFulfillment: [{ seller, status: 'processing' }] });
@@ -161,6 +161,15 @@ test('editing store policy does not shorten an order item snapshot', () => {
   const sale = returnableSale(7);
   sale.sellerPolicies[0].returnPolicy = { returnsEnabled: false, returnDuration: 0 };
   expect(summary([sale], { at: new Date('2026-10-05T12:00:00Z') }).revenue.withdrawableBalance).toBe(0);
+});
+test('dormant provider test orders never appear as usable current earnings', () => {
+  const previous = process.env.STRIPE_ENABLED; delete process.env.STRIPE_ENABLED;
+  try {
+    const result = summary([order('PKR', 'PKR', 10, { paymentMethod: 'stripe' })]);
+    expect(result.revenue.withdrawableBalance).toBe(0);
+    expect(result.revenue.totalDeliveredRevenue).toBe(0);
+    expect(result.recentOrders.stripe).toHaveLength(0);
+  } finally { if (previous === undefined) delete process.env.STRIPE_ENABLED; else process.env.STRIPE_ENABLED = previous; }
 });
 test.each(Object.keys(rates).flatMap(native => Object.keys(rates).map(buyer => [native, buyer])))('return holds preserve %s seller money for a %s buyer', (native, buyer) => {
   const sale = order(native, buyer, 10, { paymentMethod: 'safepay', sellerFulfillment: [{ seller, status: 'delivered', deliveredAt: deliveredOn }] });

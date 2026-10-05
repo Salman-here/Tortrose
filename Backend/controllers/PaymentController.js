@@ -1009,6 +1009,7 @@ const materializeRevenueBuckets = (buckets, targetCurrency, rates, { useOrderSna
 };
 
 const orderRevenueClassification = (order, sellerId = null) => {
+    if (order?.paymentMethod === 'stripe' && process.env.STRIPE_ENABLED !== 'true') return null;
     const delivered = sellerId ? isDeliveredForSeller(order, sellerId) : isDelivered(order);
     const paymentMethod = order.paymentMethod || 'cash_on_delivery';
     if (paymentMethod === 'safepay' && order.isPaid) {

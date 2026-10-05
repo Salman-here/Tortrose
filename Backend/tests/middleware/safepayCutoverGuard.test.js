@@ -5,6 +5,11 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { assertCurrentCardProvider, legacyCheckoutGuard } = require('../../middleware/safepayCutoverGuard');
 const previous = process.env.SAFEPAY_WEB_ENABLED;
+const previousStripe = process.env.STRIPE_ENABLED;
+const previousMobile = process.env.SAFEPAY_MOBILE_ENABLED;
+beforeEach(() => { delete process.env.STRIPE_ENABLED; delete process.env.SAFEPAY_MOBILE_ENABLED; });
+afterEach(() => { if (previousStripe === undefined) delete process.env.STRIPE_ENABLED; else process.env.STRIPE_ENABLED = previousStripe;
+  if (previousMobile === undefined) delete process.env.SAFEPAY_MOBILE_ENABLED; else process.env.SAFEPAY_MOBILE_ENABLED = previousMobile; });
 afterEach(() => { if (previous === undefined) delete process.env.SAFEPAY_WEB_ENABLED; else process.env.SAFEPAY_WEB_ENABLED = previous; });
 test('cutover rejects retired creation before a financial write, with a provider-neutral recovery message', async () => {
   process.env.SAFEPAY_WEB_ENABLED = 'true';
@@ -18,8 +23,11 @@ test('cutover rejects retired creation before a financial write, with a provider
 test.each(['safepay', 'wallet', 'cash_on_delivery'])('cutover preserves current %s methods', provider => {
   process.env.SAFEPAY_WEB_ENABLED = 'true'; expect(() => assertCurrentCardProvider(provider)).not.toThrow();
 });
-test('the undeployed cutover flag does not change the previously deployed checkout', () => {
-  delete process.env.SAFEPAY_WEB_ENABLED; expect(() => assertCurrentCardProvider('stripe')).not.toThrow();
+test('retained provider stays dormant unless deliberately re-enabled without Safepay cutover', () => {
+  delete process.env.SAFEPAY_WEB_ENABLED;
+  expect(() => assertCurrentCardProvider('stripe')).toThrow();
+  process.env.STRIPE_ENABLED = 'true'; expect(() => assertCurrentCardProvider('stripe')).not.toThrow();
+  process.env.SAFEPAY_MOBILE_ENABLED = 'true'; expect(() => assertCurrentCardProvider('stripe')).toThrow();
 });
 test('every old creation entry point is guarded without disabling receipts or cancellation', () => {
   const read = file => fs.readFileSync(path.resolve(__dirname, '../..', file), 'utf8');
