@@ -46,6 +46,7 @@ async function runSafepayWebhookWorker() {
   try {
     const config = readSafepayConfig(process.env, { requireWebhook: true });
     await Promise.all([Event.init(), Payment.init()]);
+    await require('./cancellationRefundService').runCancellationRefundWorker();
     for (let count = 0; count < 20; count++) {
       const leaseToken = crypto.randomUUID();
       const at = new Date();

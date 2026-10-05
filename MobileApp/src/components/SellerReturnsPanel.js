@@ -316,7 +316,7 @@ export default function SellerReturnsPanel({ header, route, navigation }) {
       ? !replacementOnly && fundingSource === 'card'
       : request.status === 'under_review' && (
         (replacementOnly && fundingSource === undefined)
-        || (!replacementOnly && ['seller_balance', 'card'].includes(fundingSource))
+        || (!replacementOnly && ['held_order', 'seller_balance', 'card'].includes(fundingSource))
       );
     if (!actionValid) {
       Feedback.show({ type: 'error', text1: 'Refund action unavailable', text2: 'Refresh this return before trying again.' });
@@ -383,6 +383,12 @@ export default function SellerReturnsPanel({ header, route, navigation }) {
         { text: 'Cancel', style: 'cancel' },
         { text: 'Approve', onPress: () => accept(request) },
       ]);
+      return;
+    }
+    if (request.refundFundingPolicy === 'held_order') {
+      Alert.alert('Refund held order funds',
+        `${formatAmount(snapshot.refund.totalAmount, { targetCurrency: snapshot.currency })} will be refunded from this order’s held funds to the buyer’s Rozare Wallet. No additional payment is needed.`,
+        [{ text: 'Keep reviewing', style: 'cancel' }, { text: 'Refund', onPress: () => accept(request, 'held_order') }]);
       return;
     }
     Alert.alert(

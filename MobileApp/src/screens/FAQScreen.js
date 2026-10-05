@@ -56,7 +56,7 @@ const faqCategories = [
     questions: [
       { q: 'What is the return policy?', a: 'Return eligibility is set per seller and can be overridden per product. The policy saved when you order controls the deadline. In a multi-seller order, only items from sellers who allow returns become eligible after their portion is delivered.' },
       { q: 'How do I initiate a return?', a: 'Open the delivered order, select Request Return for an eligible seller, choose item quantities, and provide the reason. The seller then updates pickup, transit, receipt, and review statuses.' },
-      { q: 'When do I receive a return refund?', a: 'The seller must accept the return and fund the approved amount from seller balance or by card. Rozare credits your Wallet in the order currency only after that funding is verified; failed or expired payments cannot complete the return.' },
+      { q: 'When do I receive a return refund?', a: 'After the seller accepts an eligible product return, Rozare credits your Wallet in the saved order currency. Safepay and Wallet orders use held original-order funds; COD returns require verified funding from seller earnings or Safepay. An open return keeps its funds held after the return deadline.' },
     ],
   },
   {

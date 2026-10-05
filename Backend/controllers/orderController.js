@@ -3288,6 +3288,13 @@ exports.cancelOrder = async (req, res) => {
             return res.status(403).json({ msg: 'You can only cancel your own orders' })
         }
 
+        if (role !== 'admin' && order.awaitingPayment !== true && ['wallet', 'safepay', 'cash_on_delivery'].includes(order.paymentMethod)) {
+            const cancelled = await require('../services/buyerCancellationService').cancelBuyerOrder({ orderId: order._id,
+                buyerId: userId, sellerIds: req.body?.sellerIds });
+            return res.status(200).json({ msg: 'Selected unshipped items cancelled. Any paid amount is refunded automatically.',
+                order: buildBuyerOrderView(cancelled) });
+        }
+
         // Track whether the buyer is overriding a prior WhatsApp confirmation.
         // This helps the seller see a clear note:
         //   "Order was confirmed via WhatsApp but buyer changed their mind

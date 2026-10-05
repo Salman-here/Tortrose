@@ -19,6 +19,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import api from '../config/api';
 import { getSafetyRefundPresentation } from '../utils/safepaySafetyRefundPresentation';
+import { cancellationRefundPresentation } from '../utils/orderCancellationPresentation';
 import { useCurrency } from '../contexts/CurrencyContext';
 import { useGlobal } from '../contexts/GlobalContext';
 import { spacing, fontSize, fontWeight, statusColors } from '../styles/theme';
@@ -190,10 +191,10 @@ export default function OrderDetailScreen({ route, navigation }) {
     fetchOrderDetail();
   }, [fetchOrderDetail]);
 
-  const handleCancelOrder = useCallback(() => {
+  const handleCancelOrder = useCallback((sellerId = null) => {
     Alert.alert(
       'Cancel this order?',
-      'The seller will be notified and this action cannot be undone.',
+      `${sellerId ? 'Only this store’s unshipped items will be cancelled. Other stores are unchanged. ' : ''}The seller will be notified. Paid Wallet amounts return to your Wallet; Safepay card amounts are refunded to the original card.`,
       [
         { text: 'Keep Order', style: 'cancel' },
         {
@@ -202,7 +203,7 @@ export default function OrderDetailScreen({ route, navigation }) {
           onPress: async () => {
             try {
               setCancelling(true);
-              const res = await api.patch(`/api/order/cancel/${orderId}`, {});
+              const res = await api.patch(`/api/order/cancel/${orderId}`, sellerId ? { sellerIds: [sellerId] } : {});
               if (res.data?.order) {
                 assertOrderDetailPresentation(res.data.order);
                 setOrder(res.data.order);
@@ -426,6 +427,9 @@ export default function OrderDetailScreen({ route, navigation }) {
                   palette={palette}
                   styles={styles}
                   last={index === sellerGroups.length - 1}
+                  currency={getOrderCurrency(order)}
+                  onCancel={() => handleCancelOrder(group.sellerId)}
+                  cancelling={cancelling}
                 />
               ))}
             </Section>
@@ -530,17 +534,25 @@ export default function OrderDetailScreen({ route, navigation }) {
             <View style={styles.summaryDivider} />
             <View style={styles.totalRow}>
               <View>
-                <Text style={styles.totalLabel}>Total</Text>
+                <Text style={styles.totalLabel}>{sellerGroups.some(group => group.cancellation?.reference) ? 'Original total' : 'Total'}</Text>
                 <Text style={styles.totalCurrency}>
                   {orderCurrency} checkout total
                 </Text>
               </View>
               <Text style={styles.totalValue}>{orderMoney(total)}</Text>
             </View>
+            {sellerGroups.some(group => group.cancellation?.reference) && (() => {
+              const cancelledMinor = sellerGroups.filter(group => group.status === 'cancelled' && group.cancellation?.reference)
+                .reduce((sum, group) => sum + Math.round(group.summary.totalAmount * 100), 0);
+              return <View style={{ marginTop: spacing.md }}>
+                <SummaryRow label="Cancelled items" value={`-${orderMoney(cancelledMinor / 100)}`} styles={styles} />
+                <SummaryRow label={order.paymentMethod === 'cash_on_delivery' ? 'Due on delivery' : 'Remaining purchase'} value={orderMoney((Math.round(total * 100) - cancelledMinor) / 100)} styles={styles} />
+              </View>;
+            })()}
           </Section>
 
           {cancellable && (
-            <TouchableOpacity style={styles.cancelButton} onPress={handleCancelOrder} disabled={cancelling} activeOpacity={0.8}>
+            <TouchableOpacity style={styles.cancelButton} onPress={() => handleCancelOrder()} disabled={cancelling} activeOpacity={0.8}>
               {cancelling ? <Loader size="small" color={palette.colors.error} /> : <Ionicons name="close-circle-outline" size={19} color={palette.colors.error} />}
               <View style={{ flex: 1 }}>
                 <Text style={styles.cancelTitle}>{cancelling ? 'Cancelling…' : 'Cancel this order'}</Text>
@@ -582,13 +594,14 @@ function Section({ title, subtitle, icon, children, styles }) {
   );
 }
 
-function SellerShipmentGroup({ group, formatMoney, palette, styles, last }) {
+function SellerShipmentGroup({ group, formatMoney, palette, styles, last, currency, onCancel, cancelling }) {
   const meta = STATUS_META[group.status] || STATUS_META.pending;
   const tone = group.status === 'confirmed'
     ? { solid: palette.colors.info, bg: palette.colors.infoLight }
     : (statusColors[group.status] || statusColors.pending);
   const activeIndex = Math.max(0, ORDER_STAGES.indexOf(group.status));
   const summary = group.summary;
+  const refund = cancellationRefundPresentation(group.cancellation, currency, summary.totalAmount);
 
   return (
     <View style={[styles.sellerShipment, last && { marginBottom: 0 }]}>
@@ -637,6 +650,16 @@ function SellerShipmentGroup({ group, formatMoney, palette, styles, last }) {
         </View>
       )}
 
+      {refund && <GlassPanel variant="inner" style={{ padding: spacing.md, margin: spacing.sm }}>
+        <Text style={styles.paymentTitle}>{refund.label}</Text>
+        {refund.valid && refund.destination && <Text style={styles.paymentSub}>{formatMoney(refund.amount)} → {refund.destination}</Text>}
+        {!!refund.message && <Text style={styles.paymentSub}>{refund.message}</Text>}
+      </GlassPanel>}
+      {group.canCancel === true && <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Cancel ${group.storeName} items`}
+        disabled={cancelling} onPress={onCancel} style={[styles.cancelButton, { margin: spacing.sm }]}>
+        <Ionicons name="close-circle-outline" size={18} color={palette.colors.error} />
+        <Text style={styles.cancelTitle}>Cancel this store’s items</Text>
+      </TouchableOpacity>}
       <View style={styles.sellerItems}>
         {group.items.map((item, index) => {
           const options = formatOrderItemOptions(item);

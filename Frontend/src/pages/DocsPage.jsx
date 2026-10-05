@@ -770,7 +770,7 @@ function DocsPage() {
                 <ul>
                   <li><strong>Via AI</strong> — "Cancel my order ORD-1234".</li>
                   <li><strong>Via dashboard</strong> — Open the order and click "Cancel" while still cancellable.</li>
-                  <li>Cancellation is available only while unpaid and before any seller’s items are shipped or delivered. Paid orders require refund assistance. See the <a href="https://rozare.com/cancellation-policy">Cancellation Policy</a>.</li>
+                  <li>Cancel before shipment, including paid orders. Cancel each unshipped store portion independently if another store already shipped. COD moves no money; Wallet payments refund to Wallet and Safepay card payments refund to the original card after verification. Seller approval is not required. See the <a href="https://rozare.com/cancellation-policy">Cancellation Policy</a>.</li>
                 </ul>
 
                 <h3>Seller-specific returns</h3>
@@ -785,7 +785,7 @@ function DocsPage() {
                 <h3>Return tracking and refunds</h3>
                 <p>Read the <a href="https://rozare.com/refund-policy">Return and Refund Policy</a> for the refund destination, processing turnaround time and complaint contacts.</p>
                 <p>Return requests move through approval, pickup, transit to the seller, receipt, and seller review. Every seller status change sends the buyer an in-app, push, and WhatsApp update when those channels are available.</p>
-                <p>When a Wallet refund is accepted, the seller funds the exact approved amount from available seller balance or by Safepay card. Rozare verifies that funding first, then credits the buyer's Wallet in the order currency and marks the return complete. A failed, cancelled, expired, or mismatched payment never credits the Wallet. Replacement-only returns complete without a money transfer.</p>
+                <p>Safepay and Wallet order earnings remain pending after delivery until each saved return window ends. A timely open return keeps its affected funds held until resolution. An accepted online-order return refunds the buyer Wallet from the original held funds without another seller payment. COD returns still use seller earnings or verified Safepay funding. A failed or mismatched payment never credits the Wallet. Replacement-only returns complete without a money transfer.</p>
 
                 <InfoBox type="info" title="Refund safety">
                   A return request does not itself create money. Rozare caps refunds to the selected seller's remaining item, tax, shipping, and discount allocation, prevents duplicate quantities, and uses idempotent Wallet transactions so retries cannot credit the buyer twice.

@@ -646,7 +646,8 @@ export const canCancelOrder = (orderOrStatus) => {
   const fulfillmentStarted = (order.sellerFulfillment || []).some((entry) =>
     ['shipped', 'delivered'].includes(normalizeOrderStatus(entry?.status)));
   return ['pending', 'confirmed', 'processing'].includes(status)
-    && !order.isPaid
+    && (!order.isPaid || ['wallet', 'safepay', 'cash_on_delivery'].includes(order.paymentMethod))
+    && !order.awaitingPayment
     && !order.isDelivered
     && !fulfillmentStarted;
 };

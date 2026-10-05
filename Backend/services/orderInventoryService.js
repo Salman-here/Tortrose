@@ -134,7 +134,9 @@ const restoreOrderInventoryInSession = async (orderId, session) => {
   const order = await Order.findById(orderId).session(session);
   if (!order) return null;
   if (!order.inventoryCommitted) return { order, alreadyRestored: true };
-  const inventoryLines = aggregateOrderInventoryLines(order.orderItems || []);
+  // Portion cancellations already restored their stock in the same transaction.
+  const restoredSellers = new Set((order.sellerFulfillment || []).filter(row => row.cancellation?.reference).map(row => String(row.seller)));
+  const inventoryLines = aggregateOrderInventoryLines((order.orderItems || []).filter(item => !restoredSellers.has(String(item.seller))));
   for (const item of inventoryLines) {
     const quantity = item.quantity;
     await Product.updateOne(

@@ -9,6 +9,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import StoreAvatar from '../common/StoreAvatar';
+import { cancellationRefundPresentation } from '../../utils/orderCancellationPresentation';
 import {
   getExactOrderItemUnitAmount,
   getOrderItemLineSubtotal,
@@ -84,8 +85,9 @@ export const BuyerSellerStatusChips = ({ order }) => {
   );
 };
 
-const SellerGroup = ({ group, formatMoney, index }) => {
+const SellerGroup = ({ group, formatMoney, index, onCancel, currency }) => {
   const summary = group.summary;
+  const refund = cancellationRefundPresentation(group.cancellation, currency, summary.totalAmount);
   return (
     <motion.section initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: index * 0.06 }} className="glass-inner rounded-2xl overflow-hidden" data-seller-id={group.sellerId}>
       <div className="p-4 sm:p-5" style={{ borderBottom: '1px solid var(--glass-border-subtle)' }}>
@@ -100,6 +102,15 @@ const SellerGroup = ({ group, formatMoney, index }) => {
           <StatusBadge status={group.status} />
         </div>
         <div className="mt-4"><SellerProgress status={group.status} /></div>
+        {refund && <div className="glass-inner rounded-xl p-3 mt-3 text-sm" role="status">
+          <p className="font-semibold">{refund.label}</p>
+          {refund.valid && refund.destination && <p className="text-xs text-muted-foreground mt-1">{formatMoney(refund.amount)} → {refund.destination}</p>}
+          {refund.message && <p className="text-xs text-muted-foreground mt-1">{refund.message}</p>}
+        </div>}
+        {group.canCancel === true && onCancel && <button type="button" onClick={() => onCancel(group)}
+          className="glass-button rounded-xl px-4 py-2 mt-3 text-xs font-semibold inline-flex items-center gap-2 text-red-600">
+          <XCircle size={14} /> Cancel this store’s items
+        </button>}
       </div>
 
       <div className="p-4 sm:p-5 grid grid-cols-1 xl:grid-cols-[1fr_230px] gap-5">
@@ -151,7 +162,7 @@ const SellerGroup = ({ group, formatMoney, index }) => {
   );
 };
 
-const BuyerSellerFulfillmentGroups = ({ order, formatMoney, showHeading = true }) => {
+const BuyerSellerFulfillmentGroups = ({ order, formatMoney, showHeading = true, onCancel }) => {
   const { groups, error } = readGroups(order);
   if (error) {
     return (
@@ -170,7 +181,7 @@ const BuyerSellerFulfillmentGroups = ({ order, formatMoney, showHeading = true }
           <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>This is one order split into {groups.length} seller shipment{groups.length === 1 ? '' : 's'}. Each store controls only its own status, shipping, and products.</p>
         </div>
       )}
-      {groups.map((group, index) => <SellerGroup key={group.sellerId} group={group} formatMoney={formatMoney} index={index} />)}
+      {groups.map((group, index) => <SellerGroup key={group.sellerId} group={group} formatMoney={formatMoney} index={index} currency={order.currency} onCancel={onCancel} />)}
     </div>
   );
 };

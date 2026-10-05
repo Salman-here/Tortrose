@@ -17,6 +17,14 @@ test('accepts separate native balances without converting old PKR to current sto
   assert.equal(r.balanceByCurrency.USD.withdrawableBalance,0);
   assert.equal(r.balanceByCurrency.PKR.withdrawableBalance,2800);
 });
+test('return holds reconcile without being treated as withdrawable or a second debit', () => {
+  const r = response(), pkr = r.balances.find(row => row.currency === 'PKR');
+  Object.assign(pkr, { returnWindowHeldAmount: 2800, pendingOnlineBalance: 2800, withdrawableBalance: 0 });
+  r.balanceByCurrency.PKR = { ...pkr };
+  assert.equal(nativeBalancesAreValid(r), true);
+  pkr.withdrawableBalance = 1; r.balanceByCurrency.PKR = { ...pkr };
+  assert.equal(nativeBalancesAreValid(r), false);
+});
 test('rejects relabelled, duplicated, incomplete, inexact and inconsistent balance authorities', () => {
   for(const mutate of [r=>r.accountingVersion=1,r=>r.balances.pop(),r=>r.balances[1].currency='USD',r=>r.balances[1].withdrawableBalance=1.001,
     r=>r.balances[1].minimumWithdrawal=1900,r=>r.balanceByCurrency.PKR.withdrawableBalance=3000,

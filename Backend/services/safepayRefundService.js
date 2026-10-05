@@ -71,6 +71,8 @@ async function reconcileOrderRefund(payment, tracker, session) {
   if (!evidence) return null;
   const order = await Order.findById(payment.order).session(session);
   assertSafepayOrderBinding(order, payment, expectedOrderMinor(order));
+  const scopedCancellation = await require('./cancellationRefundService').reconcileCancellationRefund(payment, tracker, session, evidence);
+  if (scopedCancellation) return scopedCancellation;
   const delta = evidence.amountMinor - payment.refundedMinor;
   if (evidence.full && payment.safetyRefund?.requestedAt) payment.safetyRefund.outcome = 'confirmed';
   let sellerImpacts = [];

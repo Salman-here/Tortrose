@@ -100,6 +100,23 @@ describe('seller-balance return settlement currency guard', () => {
     SellerBalanceTransaction.find.mockReturnValue(mockSelectLeanSessionQuery([]));
   });
 
+  test.each(['wallet', 'safepay'])('%s returns use the original held funds even with zero withdrawable earnings', async paymentMethod => {
+    const request = makeRequest();
+    const order = { _id: 'order-1', currency: 'PKR', paymentMethod, isPaid: true };
+    ReturnRequest.findOne.mockReturnValue(mockSessionQuery(request));
+    Order.findById.mockReturnValue({ select: jest.fn(() => mockSessionQuery(order)) });
+    ensureOrderSellerSettlement.mockResolvedValue([{ seller: 'seller-1', sourceCurrency: 'PKR', sourceAmountMinor: 28000, amountUSDMinor: 100 }]);
+    sellerSettlementUsdTargetForSource.mockReturnValue(100);
+    SellerBalanceTransaction.create.mockResolvedValue([{ _id: 'held-debit' }]);
+    creditWalletInSession.mockResolvedValue({ _id: 'wallet-credit' });
+    buildSellerPaymentSummary.mockResolvedValue({ balanceByCurrency: { PKR: { withdrawableBalance: 0 } } });
+    await settleFromSellerBalance({ returnRequestId: request._id, sellerId: request.seller });
+    expect(buildSellerPaymentSummary).not.toHaveBeenCalled();
+    expect(request.settlement.fundingSource).toBe('held_order');
+    expect(request.status).toBe('returned');
+    expect(creditWalletInSession).toHaveBeenCalledWith(expect.objectContaining({ amount: 280, currency: 'PKR' }), expect.anything());
+  });
+
   test('rejects a legacy non-USD settlement before debit when no trustworthy snapshot can be frozen', async () => {
     const request = makeRequest();
     const order = { _id: 'order-1', currency: 'PKR' };

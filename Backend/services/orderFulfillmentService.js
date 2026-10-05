@@ -87,6 +87,7 @@ const setSellerFulfillmentStatus = (order, sellerId, status, at = new Date()) =>
 
 const setAllSellerFulfillmentStatus = (order, status, at = new Date()) => {
     for (const fulfillment of order.sellerFulfillment || []) {
+        if (fulfillment.cancellation?.reference && fulfillment.status === 'cancelled' && status !== 'cancelled') continue;
         fulfillment.status = status;
         fulfillment.updatedAt = at;
         if (status === 'delivered' && !fulfillment.deliveredAt) fulfillment.deliveredAt = at;

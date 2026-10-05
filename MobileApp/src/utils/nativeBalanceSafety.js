@@ -9,16 +9,19 @@ export const nativeBalancesAreValid = summary => {
   if (new Set(codes).size !== 4 || codes.some(code => !exactCurrencyCode(code))) return false;
   for (const balance of summary.balances) {
     if (fields.some(field => !isExactNonNegativeJsonMoney(balance[field]))) return false;
-    for (const field of ['safepayDeliveredRevenue', 'safepayPendingRevenue']) {
+    for (const field of ['safepayDeliveredRevenue', 'safepayPendingRevenue', 'returnWindowHeldAmount', 'pendingOnlineBalance']) {
       if (Object.prototype.hasOwnProperty.call(balance, field) && !isExactNonNegativeJsonMoney(balance[field])) return false;
     }
     if (balance.minimumWithdrawal !== WITHDRAWAL_MINIMUMS[balance.currency]) return false;
     const lookup = summary.balanceByCurrency?.[balance.currency];
     if (!lookup || lookup.currency !== balance.currency || fields.some(field => lookup[field] !== balance[field])) return false;
+    if (['returnWindowHeldAmount', 'pendingOnlineBalance'].some(field => balance[field] !== undefined && lookup[field] !== balance[field])) return false;
     const cents = field => BigInt(parseExactMoneyInput(balance[field]).minorUnits);
     const reserved = ['pendingWithdrawalAmount', 'approvedWithdrawalAmount', 'processingWithdrawalAmount', 'manualReviewWithdrawalAmount', 'totalWithdrawn', 'returnRefundDebits', 'paymentReversalDebits'].reduce((sum, field) => sum + cents(field), 0n);
     if (reserved !== cents('totalReservedOrWithdrawn')) return false;
-    const net = cents('onlineDeliveredRevenue') + cents('balanceAdjustmentCredits') - reserved;
+    const returnHold = balance.returnWindowHeldAmount === undefined ? 0n : cents('returnWindowHeldAmount');
+    const net = cents('onlineDeliveredRevenue') + cents('balanceAdjustmentCredits') - reserved - returnHold;
+    if (balance.pendingOnlineBalance !== undefined && cents('pendingOnlineBalance') !== cents('onlinePendingRevenue') + returnHold) return false;
     if (cents('deficit') !== (net < 0n ? -net : 0n)) return false;
     if (cents('withdrawableBalance') + cents('paymentRiskHeldAmount') !== (net > 0n ? net : 0n)) return false;
     if (balance.withdrawableBalance > 0 && balance.paymentRiskHeldAmount > 0) return false;

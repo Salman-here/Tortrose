@@ -116,3 +116,60 @@ test('administrative credits stay in their source currency without inflating sal
   expect(s.balanceByCurrency.PKR.balanceAdjustmentCredits).toBe(100);
   expect(s.balanceByCurrency.USD.withdrawableBalance).toBe(10);
 });
+
+const deliveredOn = new Date('2026-10-01T12:00:00Z');
+function returnableSale(days = 7, options = {}) {
+  const sale = order('PKR', 'USD', 10, { paymentMethod: 'wallet',
+    sellerFulfillment: [{ seller, status: 'delivered', deliveredAt: deliveredOn }], ...options });
+  sale.orderItems[0].returnPolicySnapshotVersion = 1;
+  sale.orderItems[0].returnPolicy = { returnsEnabled: days > 0, returnDuration: days, refundType: days ? 'full_refund' : 'none' };
+  return sale;
+}
+test.each(['wallet', 'safepay'])('%s money stays pending through the frozen return deadline', paymentMethod => {
+  const sale = returnableSale(7, { paymentMethod });
+  const deadline = new Date('2026-10-08T12:00:00Z');
+  const held = summary([sale], { at: deadline });
+  expect(held.revenue.onlineDeliveredRevenue).toBe(2800);
+  expect(held.revenue.returnWindowHeldAmount).toBe(2800);
+  expect(held.revenue.pendingOnlineBalance).toBe(2800);
+  expect(held.revenue.withdrawableBalance).toBe(0);
+  expect(summary([sale], { at: new Date(deadline.getTime() + 1) }).revenue.withdrawableBalance).toBe(2800);
+});
+test('no-return earnings release on delivery and COD never becomes online balance', () => {
+  expect(summary([returnableSale(0)], { at: deliveredOn }).revenue.withdrawableBalance).toBe(2800);
+  expect(summary([returnableSale(7, { paymentMethod: 'cash_on_delivery', isPaid: false })], { at: deliveredOn }).revenue.returnWindowHeldAmount).toBe(0);
+});
+test('a last-day return stays held after expiry until resolution', () => {
+  const sale = returnableSale(7);
+  const request = { order: sale._id, seller, status: 'under_review', requestedAt: new Date('2026-10-08T11:59:59Z'),
+    items: [{ orderItemId: sale.orderItems[0]._id, quantity: 1 }], refund: { totalAmount: 10 } };
+  const at = new Date('2026-10-09T12:00:00Z');
+  expect(summary([sale], { returns: [request], at }).revenue.withdrawableBalance).toBe(0);
+  expect(summary([sale], { returns: [{ ...request, status: 'rejected' }], at }).revenue.withdrawableBalance).toBe(2800);
+});
+test('an accepted held-fund refund is deducted once, not held and deducted twice', () => {
+  const sale = returnableSale(7);
+  const request = { order: sale._id, seller, status: 'returned', items: [{ orderItemId: sale.orderItems[0]._id, quantity: 1 }], refund: { totalAmount: 10 } };
+  const transaction = { order: sale._id, type: 'return_refund', referenceType: 'return_request', direction: 'debit', status: 'completed',
+    amountUSD: 10, sourceAmount: 10, sourceCurrency: 'USD' };
+  const result = summary([sale, order('PKR')], { returns: [request], transactions: [transaction], at: deliveredOn });
+  expect(result.revenue.returnWindowHeldAmount).toBe(0);
+  expect(result.revenue.returnRefundDebits).toBe(2800);
+  expect(result.revenue.withdrawableBalance).toBe(2800);
+});
+test('editing store policy does not shorten an order item snapshot', () => {
+  const sale = returnableSale(7);
+  sale.sellerPolicies[0].returnPolicy = { returnsEnabled: false, returnDuration: 0 };
+  expect(summary([sale], { at: new Date('2026-10-05T12:00:00Z') }).revenue.withdrawableBalance).toBe(0);
+});
+test.each(Object.keys(rates).flatMap(native => Object.keys(rates).map(buyer => [native, buyer])))('return holds preserve %s seller money for a %s buyer', (native, buyer) => {
+  const sale = order(native, buyer, 10, { paymentMethod: 'safepay', sellerFulfillment: [{ seller, status: 'delivered', deliveredAt: deliveredOn }] });
+  sale.orderItems[0].returnPolicySnapshotVersion = 1;
+  sale.orderItems[0].returnPolicy = { returnsEnabled: true, returnDuration: 7, refundType: 'full_refund' };
+  const saved = JSON.stringify(sale);
+  const held = summary([sale], { reportingCurrency: native, at: deliveredOn });
+  expect(held.balanceByCurrency[native].returnWindowHeldAmount).toBe(10 * rates[native]);
+  expect(held.balanceByCurrency[native].withdrawableBalance).toBe(0);
+  expect(summary([sale], { reportingCurrency: native, at: new Date('2026-10-09T12:00:00Z') }).balanceByCurrency[native].withdrawableBalance).toBe(10 * rates[native]);
+  expect(JSON.stringify(sale)).toBe(saved); expect(getExchangeRateSnapshot).not.toHaveBeenCalled();
+});

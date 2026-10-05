@@ -440,7 +440,7 @@ const releaseOrderCouponsInSession = async (
   session,
   reason,
   at = new Date(),
-  { includeConsumed = false } = {},
+  { includeConsumed = false, sellerIds = null } = {},
 ) => {
   const releasableStatuses = includeConsumed ? ['reserved', 'consumed'] : ['reserved'];
   const redemptions = await CouponRedemption.find({
@@ -450,6 +450,10 @@ const releaseOrderCouponsInSession = async (
     .sort({ coupon: 1 })
     .session(session);
   for (const redemption of redemptions) {
+    if (sellerIds) {
+      const coupon = await Coupon.findById(redemption.coupon).select('seller').session(session);
+      if (!coupon || !sellerIds.map(String).includes(String(coupon.seller))) continue;
+    }
     await decrementCouponUsage(redemption.coupon, redemption.user, session);
     redemption.status = 'released';
     redemption.releasedAt = at;

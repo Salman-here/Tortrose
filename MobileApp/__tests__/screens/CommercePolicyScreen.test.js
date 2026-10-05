@@ -22,7 +22,8 @@ test('refund page distinguishes Wallet and card destinations and initiation from
   const screen = render(<CommercePolicyScreen route={{ name: 'RefundPolicy' }} navigation={navigation} />);
   expect(screen.getByText(refundTimeline)).toBeTruthy();
   expect(refundTimeline).toContain(`${policyConfig.approvedRefundInitiationBusinessDays} business days`);
-  expect(screen.getByText(/not automatically sent to the original card/)).toBeTruthy();
+  expect(screen.getByText(/credited to your Rozare Wallet in the saved order currency/)).toBeTruthy();
+  expect(screen.getByText(/funds held from that original order/)).toBeTruthy();
   expect(screen.getByText(/additional time to appear/)).toBeTruthy();
   fireEvent.press(screen.getByText('Cancellation Policy →'));
   expect(navigation.navigate).toHaveBeenCalledWith('CancellationPolicy');

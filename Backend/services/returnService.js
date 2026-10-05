@@ -838,6 +838,10 @@ const createReturnRequest = async (input) => {
 
   try {
     return await runInTransaction(async (session) => {
+      // Return submission and withdrawals share the seller fence. A request
+      // accepted on the deadline cannot race a withdrawal into releasing funds.
+      await SellerSettlementLock.findOneAndUpdate({ seller: sellerId }, { $inc: { version: 1 } },
+        { upsert: true, new: true, session });
       const existing = await ReturnRequest.findOne({
         requestKey: cleanRequestKey,
         buyer: buyerId,
@@ -990,6 +994,7 @@ const createReturnRequest = async (input) => {
     reasonCategory,
     reasonDetails: cleanReason,
     status: 'requested',
+    refundFundingPolicy: ['wallet', 'safepay'].includes(order.paymentMethod) && order.isPaid === true ? 'held_order' : 'seller_funded',
     statusHistory: [{
       status: 'requested',
       note: cleanReason,
@@ -1151,7 +1156,7 @@ const settleFromSellerBalance = async ({ returnRequestId, sellerId }) => runInTr
 
   const order = await queryWithSession(
     Order.findById(request.order).select(
-      'orderId user shippingInfo currency exchangeRateSnapshot orderItems sellerShipping shippingMethod orderSummary appliedCoupons sellerSettlementVersion sellerSettlement'
+      'orderId user shippingInfo currency exchangeRateSnapshot orderItems sellerShipping shippingMethod orderSummary appliedCoupons sellerSettlementVersion sellerSettlement sellerCurrencyMoneyVersion sellerCurrencyMoney sellerPolicies sellerFulfillment deliveredAt paymentMethod isPaid orderStatus'
     ),
     session
   );
@@ -1273,9 +1278,10 @@ const settleFromSellerBalance = async ({ returnRequestId, sellerId }) => runInTr
   const beforeSourceMinor = cumulativeSourceMinor - toMinorUnits(request.refund.totalAmount);
   const nativeDebitMinor = nativeLiabilityMinor(cumulativeSourceMinor, buyerTotalMinor, nativeTotalMinor)
     - nativeLiabilityMinor(beforeSourceMinor, buyerTotalMinor, nativeTotalMinor);
-  const summary = await buildSellerPaymentSummary(sellerId, { session, displayCurrency: nativeMoney.currency });
-  const available = requireExactReturnMoney(summary.balanceByCurrency?.[nativeMoney.currency]?.withdrawableBalance, 'native seller balance');
-  if (nativeDebitMinor > toMinorUnits(available)) {
+  const heldOrder = ['wallet', 'safepay'].includes(order.paymentMethod) && order.isPaid === true;
+  const summary = heldOrder ? null : await buildSellerPaymentSummary(sellerId, { session, displayCurrency: nativeMoney.currency });
+  const available = heldOrder ? 0 : requireExactReturnMoney(summary.balanceByCurrency?.[nativeMoney.currency]?.withdrawableBalance, 'native seller balance');
+  if (!heldOrder && nativeDebitMinor > toMinorUnits(available)) {
     const error = new Error(`Your available ${nativeMoney.currency} balance is not enough for this refund. Pay by card instead; other currency balances are unchanged.`);
     error.statusCode = 400; error.code = 'INSUFFICIENT_SELLER_BALANCE';
     error.availableBalance = available; error.currency = nativeMoney.currency;
@@ -1325,7 +1331,7 @@ const settleFromSellerBalance = async ({ returnRequestId, sellerId }) => runInTr
   });
 
   request.status = 'returned';
-  request.settlement.fundingSource = 'seller_balance';
+  request.settlement.fundingSource = heldOrder ? 'held_order' : 'seller_balance';
   request.settlement.status = 'completed';
   request.settlement.setupState = 'complete';
   request.settlement.sellerBalanceTransaction = sellerDebit?._id || null;
@@ -1333,7 +1339,7 @@ const settleFromSellerBalance = async ({ returnRequestId, sellerId }) => runInTr
   request.settlement.settledAt = new Date();
   request.statusHistory.push({
     status: 'returned',
-    note: 'Seller balance funded the buyer wallet refund.',
+    note: heldOrder ? 'The original order held funds were refunded to the buyer wallet.' : 'Seller balance funded the buyer wallet refund.',
     changedBy: sellerId,
     actorRole: 'seller',
   });

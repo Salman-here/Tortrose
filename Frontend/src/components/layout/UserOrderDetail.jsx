@@ -51,6 +51,8 @@ const OrderDetail = () => {
     };
     const { id } = useParams();
     const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+    const [cancelSellerIds, setCancelSellerIds] = useState(null);
+    const [cancelling, setCancelling] = useState(false);
 
     const getStatusIcon = (status) => {
         const icons = { pending: <Clock className="w-4 h-4" />, confirmed: <CheckCircle className="w-4 h-4" />, processing: <RefreshCw className="w-4 h-4" />, shipped: <Truck className="w-4 h-4" />, delivered: <CheckCircle className="w-4 h-4" />, cancelled: <XCircle className="w-4 h-4" /> };
@@ -80,17 +82,19 @@ const OrderDetail = () => {
     useEffect(() => { fetchOrderDetail(); }, [fetchOrderDetail]);
 
     const handleCancelOrder = async () => {
+        if (cancelling) return;
+        setCancelling(true);
         try {
             const token = getAuthToken();
-            const res = await axios.patch(`${import.meta.env.VITE_API_URL}api/order/cancel/${id}`, {}, { headers: { Authorization: `Bearer ${token}` } });
+            const res = await axios.patch(`${import.meta.env.VITE_API_URL}api/order/cancel/${id}`, cancelSellerIds ? { sellerIds: cancelSellerIds } : {}, { headers: { Authorization: `Bearer ${token}` } });
             // Use the response order directly for immediate UI update
             if (res.data?.order) {
                 setOrder(res.data.order);
             } else {
                 fetchOrderDetail();
             }
-        } catch (error) { toast.error(error.response?.data?.msg || "Server error while cancelling order"); }
-        finally { setShowCancelConfirm(false); }
+        } catch (error) { toast.error(error.response?.data?.msg || "Server error while cancelling order"); await fetchOrderDetail(); }
+        finally { setShowCancelConfirm(false); setCancelling(false); }
     };
 
     if (!order) return <div className="min-h-screen flex justify-center items-center"><Loader /></div>;
@@ -117,11 +121,14 @@ const OrderDetail = () => {
         }
     })();
     const fulfillmentStartedGroup = sellerGrouping.groups.find(group => ['shipped', 'delivered'].includes(group.status));
+    const cancelledAmount = sellerGrouping.groups.filter(group => group.status === 'cancelled' && group.cancellation?.reference)
+        .reduce((minor, group) => minor + Math.round(group.summary.totalAmount * 100), 0) / 100;
     const canCancelWholeOrder = !sellerGrouping.invalid
         && order.orderStatus !== 'cancelled'
         && order.orderStatus !== 'delivered'
         && order.orderStatus !== 'shipped'
-        && !order.isPaid
+        && !order.awaitingPayment
+        && sellerGrouping.groups.some(group => group.canCancel === true)
         && !fulfillmentStartedGroup;
     const unpaidStatusLabel = order.orderStatus === 'cancelled'
         ? 'Unpaid'
@@ -319,17 +326,21 @@ const OrderDetail = () => {
                                 </div>
                             )}
                             <div className="flex justify-between pt-2" style={{ borderTop: '1px solid var(--glass-border)' }}>
-                                <span className="text-base font-semibold" style={{ color: 'hsl(var(--foreground))' }}>Total</span>
+                                <span className="text-base font-semibold" style={{ color: 'hsl(var(--foreground))' }}>{cancelledAmount ? 'Original total' : 'Total'}</span>
                                 <span className="text-base font-extrabold" style={{ color: 'hsl(var(--foreground))' }}>
                                     {orderMoney(getOrderTotal(order))}
                                 </span>
                             </div>
+                            {cancelledAmount > 0 && <>
+                              <div className="flex justify-between text-sm"><span>Cancelled items</span><span>-{orderMoney(cancelledAmount)}</span></div>
+                              <div className="flex justify-between font-semibold text-sm"><span>{order.paymentMethod === 'cash_on_delivery' ? 'Due on delivery' : 'Remaining purchase'}</span><span>{orderMoney((Math.round(getOrderTotal(order) * 100) - Math.round(cancelledAmount * 100)) / 100)}</span></div>
+                            </>}
                         </div>
 
                         {canCancelWholeOrder && (
                             <div className="mt-4 pt-4" style={{ borderTop: '1px solid var(--glass-border)' }}>
                                 <motion.button whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.97 }}
-                                    onClick={() => setShowCancelConfirm(true)}
+                                    onClick={() => { setCancelSellerIds(null); setShowCancelConfirm(true); }}
                                     className="w-full px-4 py-2.5 rounded-xl font-semibold flex items-center justify-center gap-2 text-sm"
                                     style={{ background: 'rgba(239, 68, 68, 0.1)', color: 'hsl(0, 72%, 55%)', border: '1px solid rgba(239, 68, 68, 0.2)' }}>
                                     <XCircle className="w-4 h-4" /> Cancel Order
@@ -385,7 +396,8 @@ const OrderDetail = () => {
 
                 {/* Seller-owned shipment groups */}
                 <div className="lg:col-span-2 space-y-4">
-                    <BuyerSellerFulfillmentGroups order={order} formatMoney={orderMoney} />
+                    <BuyerSellerFulfillmentGroups order={order} formatMoney={orderMoney}
+                      onCancel={group => { setCancelSellerIds([group.sellerId]); setShowCancelConfirm(true); }} />
                     {sellerGrouping.groups.length === 0 && !sellerGrouping.invalid && (
                     <div className="glass-panel overflow-hidden">
                         <div className="p-4 sm:p-5" style={{ borderBottom: '1px solid var(--glass-border)' }}>
@@ -435,14 +447,17 @@ const OrderDetail = () => {
                         <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
                             className="glass-panel p-6 max-w-md w-full" onClick={(e) => e.stopPropagation()}>
                             <h3 className="text-lg font-semibold mb-2" style={{ color: 'hsl(var(--foreground))' }}>Cancel Order</h3>
-                            <p className="text-sm mb-6" style={{ color: 'hsl(var(--muted-foreground))' }}>Are you sure you want to cancel this order? This action cannot be undone.</p>
+                            <p className="text-sm mb-6" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                              {cancelSellerIds ? 'Cancel only the selected store’s unshipped items? Other stores are unchanged.' : 'Cancel all unshipped items in this order?'}
+                              {' '}{order.paymentMethod === 'wallet' ? 'The cancelled amount returns to your Rozare Wallet automatically.' : order.paymentMethod === 'safepay' ? 'An automatic refund to your original card will be verified.' : 'No payment refund is needed for COD.'}
+                            </p>
                             <div className="flex justify-end gap-3">
                                 <motion.button whileTap={{ scale: 0.97 }} onClick={() => setShowCancelConfirm(false)}
                                     className="px-4 py-2 rounded-xl font-semibold text-sm glass-button">Keep Order</motion.button>
-                                <motion.button whileTap={{ scale: 0.97 }} onClick={handleCancelOrder}
+                                <motion.button whileTap={{ scale: 0.97 }} onClick={handleCancelOrder} disabled={cancelling}
                                     className="px-4 py-2 rounded-xl font-semibold text-sm text-white"
                                     style={{ background: 'linear-gradient(135deg, hsl(0, 72%, 55%), hsl(0, 60%, 45%))', boxShadow: '0 0 15px -4px hsl(0, 72%, 55%, 0.3)' }}>
-                                    Cancel Order
+                                    {cancelling ? 'Cancelling…' : cancelSellerIds ? 'Cancel store items' : 'Cancel Order'}
                                 </motion.button>
                             </div>
                         </motion.div>

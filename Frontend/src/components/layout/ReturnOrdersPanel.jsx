@@ -127,7 +127,7 @@ export default function ReturnOrdersPanel({ formatPrice }) {
       ? !replacementOnly && fundingSource === 'card'
       : request.status === 'under_review' && (
         (replacementOnly && fundingSource === undefined)
-        || (!replacementOnly && ['seller_balance', 'card'].includes(fundingSource))
+        || (!replacementOnly && ['held_order', 'seller_balance', 'card'].includes(fundingSource))
       );
     if (!actionValid) {
       toast.error('This refund action is no longer available. Refresh the return and try again.');
@@ -330,6 +330,17 @@ export default function ReturnOrdersPanel({ formatPrice }) {
                   <p className="text-sm mt-5" style={{ color: 'hsl(var(--muted-foreground))' }}>This policy provides a replacement instead of a wallet refund. Confirm only after reviewing the returned item.</p>
                   <button type="button" onClick={() => acceptReturn(dialog.request)} disabled={submitting} className="mt-4 w-full px-4 py-2.5 rounded-xl text-sm font-semibold text-white inline-flex items-center justify-center gap-2 disabled:opacity-50" style={{ background: 'hsl(150, 60%, 40%)' }}>
                     {submitting && <Loader2 size={14} className="animate-spin" />} Approve replacement
+                  </button>
+                </>
+              ) : dialog.request.refundFundingPolicy === 'held_order' ? (
+                <>
+                  <div className="glass-inner rounded-2xl p-4 mt-5 flex items-start gap-3">
+                    <WalletCards size={22} className="shrink-0 text-emerald-600" />
+                    <p className="text-sm text-muted-foreground">This refund uses the money held from the original order. The buyer receives the approved amount in their Rozare Wallet; no additional card payment or withdrawable earnings are needed.</p>
+                  </div>
+                  <button type="button" onClick={() => acceptReturn(dialog.request, 'held_order')} disabled={submitting}
+                    className="glass-button mt-4 w-full rounded-xl px-4 py-3 font-semibold text-sm inline-flex justify-center items-center gap-2 disabled:opacity-50">
+                    {submitting ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle size={16} />} Refund held order funds
                   </button>
                 </>
               ) : (

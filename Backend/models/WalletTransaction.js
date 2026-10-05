@@ -80,7 +80,7 @@ const walletTransactionSchema = new mongoose.Schema(
         description: { type: String, trim: true, maxlength: 300, default: '' },
         referenceType: {
             type: String,
-            enum: ['stripe_checkout', 'stripe_payment_intent', 'stripe_dispute', 'stripe_refund', 'safepay_payment', 'safepay_refund', 'safepay_dispute', 'order', 'return_request', 'admin', 'system'],
+            enum: ['stripe_checkout', 'stripe_payment_intent', 'stripe_dispute', 'stripe_refund', 'safepay_payment', 'safepay_refund', 'safepay_dispute', 'order', 'order_cancellation', 'return_request', 'admin', 'system'],
             required: true,
         },
         referenceId: { type: String, required: true, trim: true, index: true },

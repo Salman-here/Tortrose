@@ -126,8 +126,8 @@ async function closeSafepayPayment(payment, session) {
   }
 }
 
-async function quarantineSafepayPayment(payment, tracker, session) {
-  const refunded = await require('./safepayRefundService').reconcileOrderRefund(payment, tracker, session);
+async function quarantineSafepayPayment(payment, tracker, session, { skipRefundReconciliation = false } = {}) {
+  const refunded = skipRefundReconciliation ? null : await require('./safepayRefundService').reconcileOrderRefund(payment, tracker, session);
   if (refunded) return refunded;
   if (payment.purpose === 'subdomain') return require('./safepaySubdomainService').hold(payment, tracker, session);
   if (payment.purpose === 'subscription') {

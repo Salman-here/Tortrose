@@ -2038,6 +2038,12 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
         const cancelledAt = new Date();
         let cancellation;
         try {
+          if (order.awaitingPayment !== true && ['wallet', 'safepay', 'cash_on_delivery'].includes(order.paymentMethod)) {
+            const cancelled = await require('./buyerCancellationService').cancelBuyerOrder({ orderId: order._id, buyerId: userId,
+              ...(args.sellerIds ? { sellerIds: args.sellerIds } : {}) });
+            return { success: true, message: `Selected unshipped items in order #${order.orderId} were cancelled. Paid cancellations are refunded automatically to the original payment destination.`,
+              orderId: String(cancelled._id), refundStatus: cancelled.sellerFulfillment.map(row => ({ seller: String(row.seller), status: row.status, cancellation: row.cancellation })) };
+          }
           cancellation = await cancelOrderSafely({
             orderId: order._id,
             reason: reason

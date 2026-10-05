@@ -254,6 +254,15 @@ const orderSchema = mongoose.Schema(
                     default: "pending"
                 },
                 deliveredAt: { type: Date, default: null },
+                cancellation: {
+                    reference: { type: mongoose.Schema.Types.ObjectId, ref: 'OrderCancellation', default: null },
+                    refundStatus: { type: String, enum: ['not_required', 'pending', 'processing', 'refunded', 'manual_review'], default: undefined },
+                    destination: { type: String, enum: ['none', 'wallet', 'original_card'], default: undefined },
+                    amountMinor: { type: Number, min: 0, validate: Number.isSafeInteger, default: undefined },
+                    currency: { type: String, enum: ['PKR', 'USD', 'EUR', 'GBP'], default: undefined },
+                    requestedAt: { type: Date, default: null },
+                    refundedAt: { type: Date, default: null },
+                },
                 updatedAt: { type: Date, default: Date.now }
             }
         ],

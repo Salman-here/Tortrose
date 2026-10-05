@@ -129,6 +129,7 @@ const returnRequestSchema = new mongoose.Schema(
         },
         reasonDetails: { type: String, required: true, trim: true, minlength: 10, maxlength: 1500 },
         status: { type: String, enum: RETURN_STATUSES, default: 'requested', index: true },
+        refundFundingPolicy: { type: String, enum: ['held_order', 'seller_funded'], default: 'seller_funded', immutable: true },
         statusHistory: { type: [statusHistorySchema], default: [] },
         requestedAt: { type: Date, default: Date.now },
         requestedNotificationSentAt: { type: Date, default: null },
@@ -193,7 +194,7 @@ const returnRequestSchema = new mongoose.Schema(
             },
             fundingSource: {
                 type: String,
-                enum: ['seller_balance', 'card', 'replacement', null],
+                enum: ['seller_balance', 'held_order', 'card', 'replacement', null],
                 default: null,
             },
             status: {

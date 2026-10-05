@@ -462,7 +462,7 @@ const SellerPayments = () => {
                 <PaymentStat
                     label={`Withdrawable Online Balance (${balanceCurrency})`}
                     value={formatBalanceMoney(availableInCurrentCurrency)}
-                    description="Delivered card and Wallet orders minus withdrawals and return-refund reserves."
+                    description="Online earnings released after delivery and return-window expiry, less refunds and payout reservations."
                     icon={<Wallet size={22} />}
                     color="hsl(150,60%,45%)"
                     bg="rgba(16,185,129,0.12)"
@@ -496,6 +496,10 @@ const SellerPayments = () => {
                 />
             </div>
 
+            <div className="glass-panel rounded-2xl p-4 mt-4 flex items-center justify-between gap-4">
+              <div><p className="font-semibold text-sm">Pending online funds</p><p className="text-xs text-muted-foreground mt-1">Awaiting delivery, the saved return deadline or resolution of an open return.</p></div>
+              <span className="font-bold shrink-0">{formatBalanceMoney(selectedBalance?.pendingOnlineBalance ?? 0)}</span>
+            </div>
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
                 <motion.section
                     initial={{ opacity: 0, y: 18 }}
@@ -643,6 +647,7 @@ const SellerPayments = () => {
                                 ['Wallet delivered revenue', selectedBalance?.walletDeliveredRevenue ?? 0],
                                 ['Pending online estimate', selectedBalance?.onlinePendingRevenue ?? 0],
                                 ['Pending withdrawals', selectedBalance?.pendingWithdrawalAmount ?? 0],
+                                ['Held for returns', selectedBalance?.returnWindowHeldAmount ?? 0],
                                 ['Processing withdrawals', selectedBalance?.processingWithdrawalAmount ?? 0],
                                 ['Already paid out', selectedBalance?.totalWithdrawn ?? 0],
                                 ['Return-refund reserve', selectedBalance?.returnRefundDebits ?? 0],

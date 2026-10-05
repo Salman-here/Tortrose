@@ -104,6 +104,10 @@ const buildBuyerOrderView = (order, { storeLogosBySeller = new Map() } = {}) => 
       itemCount: summary.itemCount,
       units: summary.units,
       status,
+      canCancel: ['pending', 'confirmed', 'processing'].includes(status)
+        && !order?.awaitingPayment && (order?.isPaid === true || order?.paymentMethod === 'cash_on_delivery')
+        && ['wallet', 'safepay', 'cash_on_delivery'].includes(order?.paymentMethod),
+      cancellation: fulfillment?.cancellation?.reference ? { ...plainOrder(fulfillment.cancellation) } : null,
       deliveredAt: fulfillment?.deliveredAt || null,
       updatedAt: fulfillment?.updatedAt || order?.updatedAt || null,
       shippingMethod: normalizeShippingMethod(shipping, order, grouped.size),

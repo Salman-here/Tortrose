@@ -220,8 +220,21 @@ function createSafepayClient({ config = readSafepayConfig(), fetchImpl = fetch }
       catch (error) { error.outcomeUnknown = true; throw error; }
     },
     async getPlan(planId) {
+      // Retrieval is intentionally separate from payment/refund mutations.
       requireId(planId, 'plan');
       return request('GET', `/client/plans/v1/${encodeURIComponent(planId)}/`);
+    },
+    async refundPaymentAmount(trackerId, expected, amountMinor) {
+      requireMoney(amountMinor, expected.currency);
+      const tracker = await this.getTracker(trackerId, expected);
+      if (!['TRACKER_ENDED', 'TRACKER_PARTIAL_REFUND'].includes(tracker.state)
+          || tracker.charge?.balance?.currency !== expected.currency
+          || readMinor(tracker.charge.balance.amount) < amountMinor) {
+        throw providerError('This cancellation refund exceeds the remaining original payment.', 'SAFEPAY_REFUND_EVIDENCE_INVALID', 409);
+      }
+      const data = await request('POST', `/order/payments/v3/${trackerId}/refund`, { amount: amountMinor, currency: expected.currency });
+      try { return requireTracker(data, trackerExpectation(expected, trackerId), config); }
+      catch (error) { error.outcomeUnknown = true; throw error; }
     },
   };
 }

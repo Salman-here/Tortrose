@@ -106,7 +106,7 @@ const SECTIONS = [
     id: 'orders-returns',
     title: 'Orders, Returns & Refunds',
     icon: 'refresh-outline',
-    body: 'Orders move through Pending, Confirmed, Processing, Shipped, and Delivered, with cancellation only while allowed. Return eligibility is saved per item at checkout from the seller or product policy. In multi-seller orders, each seller manages only their own eligible items. Buyers select quantities and a reason, then track approval, pickup, transit, receipt, and review. An accepted Wallet refund is credited only after the seller funds the exact approved amount from seller balance or card; failed, expired, cancelled, duplicate, excess, or mismatched funding cannot create a refund. Replacement-only returns complete without a money transfer.',
+    body: 'Buyers may cancel each unshipped store portion without seller approval. COD cancellation moves no money, Wallet cancellation refunds to Wallet, and Safepay card cancellation refunds to the original card after verification. Shipped portions stay unchanged. Return eligibility is frozen per item at checkout and begins when that seller delivers. Online earnings stay pending through the saved return window and any timely unresolved return. An accepted online return credits the buyer Wallet using the original held funds; COD returns still require seller earnings or verified Safepay funding. Replacement-only returns do not create a money refund.',
   },
   {
     id: 'coupons-discounts',

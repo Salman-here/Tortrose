@@ -12,6 +12,7 @@ const { toMinorUnits, fromMinorUnits, convertMoneyByRates } = require('./moneyMa
 const { sellerCurrencyMoneyPresentation, getOrderExchangeRates, buildOrderSellerSettlement } = require('./orderMoneyService');
 
 const { WITHDRAWAL_MINIMUMS } = require('./sellerWithdrawalPolicy');
+const { sellerReturnHold } = require('./sellerReturnHoldService');
 const ACTIVE_WITHDRAWAL_STATUSES = new Set(['pending', 'approved', 'processing', 'manual_review']);
 const ALL_WITHDRAWAL_STATUSES = new Set([...ACTIVE_WITHDRAWAL_STATUSES, 'paid', 'failed', 'rejected', 'cancelled']);
 const sellerOrderScope = (sellerId, productIds) => ({ $or: [
@@ -33,7 +34,7 @@ const add = (a, b) => {
 };
 const nativeFields = ['stripeDeliveredRevenue', 'stripePendingRevenue', 'walletDeliveredRevenue', 'walletPendingRevenue',
   'safepayDeliveredRevenue', 'safepayPendingRevenue',
-  'codDeliveredRevenue', 'codPendingRevenue', 'pendingWithdrawalAmount', 'approvedWithdrawalAmount',
+  'codDeliveredRevenue', 'codPendingRevenue', 'returnWindowHeldAmount', 'pendingWithdrawalAmount', 'approvedWithdrawalAmount',
   'processingWithdrawalAmount', 'manualReviewWithdrawalAmount', 'totalWithdrawn', 'returnRefundDebits', 'paymentReversalDebits', 'balanceAdjustmentCredits'];
 const empty = currency => Object.fromEntries([['currency', currency], ...nativeFields.map(field => [field, 0])]);
 
@@ -62,11 +63,12 @@ function nativeLiabilityMinor(sourceMinor, buyerEntitlementMinor, nativeEntitlem
   return toMinorUnits(convertMoneyByRates(fromMinorUnits(sourceMinor), fromMinorUnits(buyerEntitlementMinor), fromMinorUnits(nativeEntitlementMinor)));
 }
 
-function computeNativeSellerAccounting({ sellerId, orders, productIds = new Set(), transactions = [], withdrawals = [], pendingRiskHolds = [], reportingCurrency = 'USD' }) {
+function computeNativeSellerAccounting({ sellerId, orders, productIds = new Set(), transactions = [], withdrawals = [], pendingRiskHolds = [], returns = [], reportingCurrency = 'USD', at = new Date() }) {
   if (!isSupportedCurrency(reportingCurrency)) throw fault('Unsupported reporting currency.');
   const buckets = Object.fromEntries(Object.keys(CURRENCIES).map(currency => [currency, empty(currency)]));
   const report = empty(reportingCurrency);
   const entitlements = new Map();
+  const deliveredOnline = [];
   const recentOrders = { stripe: [], safepay: [], wallet: [], cod: [] };
   const counts = { deliveredStripeOrders: 0, pendingStripeOrders: 0, deliveredSafepayOrders: 0, pendingSafepayOrders: 0, deliveredWalletOrders: 0, pendingWalletOrders: 0, deliveredCodOrders: 0, pendingCodOrders: 0, totalRelevantOrders: 0 };
   const countsByCurrency = Object.fromEntries(Object.keys(CURRENCIES).map(currency => [currency, { ...counts }]));
@@ -92,6 +94,7 @@ function computeNativeSellerAccounting({ sellerId, orders, productIds = new Set(
     if (!['stripe', 'wallet', 'safepay', 'cod'].includes(method)) throw fault('Unsupported stored order payment method.');
     if (method !== 'cod' && order.isPaid !== true) continue;
     const delivered = fulfillment ? status === 'delivered' : status === 'delivered' || order.isDelivered === true;
+    if (delivered && ['wallet', 'safepay'].includes(method)) deliveredOnline.push({ order, currency, total, buyerTotal });
     const field = method + (delivered ? 'DeliveredRevenue' : 'PendingRevenue');
     buckets[currency][field] = add(buckets[currency][field], total);
     report[field] = add(report[field], reportAmount(order, total, currency));
@@ -136,6 +139,13 @@ function computeNativeSellerAccounting({ sellerId, orders, productIds = new Set(
     const native = nativeLiabilityMinor(source, e.buyerTotal, e.total);
     buckets[e.currency][kind] = add(buckets[e.currency][kind], native);
   }
+  for (const e of deliveredOnline) {
+    const refunded = [...liabilities.values()].filter(row => id(row.entitlement.order) === id(e.order))
+      .reduce((sum, row) => add(sum, nativeLiabilityMinor(row.source, e.buyerTotal, e.total)), 0);
+    const hold = sellerReturnHold(e.order, sellerId, { returns, at, remainingMinor: Math.max(0, e.total - refunded) });
+    buckets[e.currency].returnWindowHeldAmount = add(buckets[e.currency].returnWindowHeldAmount, hold.heldMinor);
+    report.returnWindowHeldAmount = add(report.returnWindowHeldAmount, reportAmount(e.order, hold.heldMinor, e.currency));
+  }
   let legacyWithdrawalHold = false;
   for (const request of withdrawals) {
     if (!ALL_WITHDRAWAL_STATUSES.has(request.status)) throw fault('Invalid withdrawal status.');
@@ -160,7 +170,8 @@ function computeNativeSellerAccounting({ sellerId, orders, productIds = new Set(
     b.totalDeliveredRevenue = add(b.onlineDeliveredRevenue, b.codDeliveredRevenue);
     b.estimatedRevenue = add(add(b.totalDeliveredRevenue, b.onlinePendingRevenue), b.codPendingRevenue);
     b.totalReservedOrWithdrawn = ['pendingWithdrawalAmount', 'approvedWithdrawalAmount', 'processingWithdrawalAmount', 'manualReviewWithdrawalAmount', 'totalWithdrawn', 'returnRefundDebits', 'paymentReversalDebits'].reduce((sum, field) => add(sum, b[field]), 0);
-    const net = add(add(b.onlineDeliveredRevenue, b.balanceAdjustmentCredits), -b.totalReservedOrWithdrawn);
+    const net = add(add(add(b.onlineDeliveredRevenue, b.balanceAdjustmentCredits), -b.totalReservedOrWithdrawn), -b.returnWindowHeldAmount);
+    b.pendingOnlineBalance = add(b.onlinePendingRevenue, b.returnWindowHeldAmount);
     b.deficit = Math.max(0, -net);
     b.paymentRiskHeldAmount = held ? Math.max(0, net) : 0;
     b.withdrawableBalance = held ? 0 : Math.max(0, net);
@@ -171,7 +182,7 @@ function computeNativeSellerAccounting({ sellerId, orders, productIds = new Set(
   // the selected native bucket only and must never be converted reporting totals.
   const selected = balances.find(b => b.currency === reportingCurrency);
   const reporting = finish(report);
-  for (const field of ['withdrawableBalance', 'paymentRiskHeldAmount', 'deficit', 'totalReservedOrWithdrawn', 'pendingWithdrawalAmount', 'approvedWithdrawalAmount', 'processingWithdrawalAmount', 'manualReviewWithdrawalAmount', 'totalWithdrawn', 'returnRefundDebits', 'paymentReversalDebits', 'balanceAdjustmentCredits']) reporting[field] = selected[field];
+  for (const field of ['withdrawableBalance', 'returnWindowHeldAmount', 'pendingOnlineBalance', 'paymentRiskHeldAmount', 'deficit', 'totalReservedOrWithdrawn', 'pendingWithdrawalAmount', 'approvedWithdrawalAmount', 'processingWithdrawalAmount', 'manualReviewWithdrawalAmount', 'totalWithdrawn', 'returnRefundDebits', 'paymentReversalDebits', 'balanceAdjustmentCredits']) reporting[field] = selected[field];
   return { sellerId: id(sellerId), accountingVersion: 2, baseCurrency: reportingCurrency, displayCurrency: reportingCurrency,
     balances, balanceByCurrency: Object.fromEntries(balances.map(b => [b.currency, b])),
     revenue: { ...selected, ...counts }, displayRevenue: { ...reporting, ...counts },
@@ -186,12 +197,13 @@ function computeNativeSellerAccounting({ sellerId, orders, productIds = new Set(
 async function buildNativeSellerPaymentSummary(sellerId, { session = null, displayCurrency = 'USD' } = {}) {
   const query = q => session ? q.session(session) : q;
   const products = await query(Product.find({ seller: sellerId }).select('_id')).lean();
-  const [orders, withdrawals, transactions, pendingRiskHolds, paymentAccount] = await Promise.all([
+  const [orders, withdrawals, transactions, pendingRiskHolds, paymentAccount, returns] = await Promise.all([
     query(Order.find(sellerOrderScope(sellerId, products.map(p => p._id))).sort({ createdAt: -1 })).lean(),
     query(SellerWithdrawalRequest.find({ seller: sellerId }).sort({ createdAt: -1 })).lean(),
     query(SellerBalanceTransaction.find({ seller: sellerId })).lean(),
     query(SellerPaymentRiskHold.find({ seller: sellerId, status: 'pending' })).lean(),
     query(SellerPaymentAccount.findOne({ seller: sellerId })).lean(),
+    query(ReturnRequest.find({ seller: sellerId })).lean(),
   ]);
   const refs = transactions.filter(t => !t.order && t.referenceType === 'return_request').map(t => t.referenceId);
   if (refs.length) {
@@ -199,7 +211,7 @@ async function buildNativeSellerPaymentSummary(sellerId, { session = null, displ
     const lineage = new Map(returns.map(r => [id(r), r.order]));
     transactions.forEach(t => { if (!t.order && t.referenceType === 'return_request') t.order = lineage.get(t.referenceId); });
   }
-  return { ...computeNativeSellerAccounting({ sellerId, orders, withdrawals, transactions, pendingRiskHolds,
+  return { ...computeNativeSellerAccounting({ sellerId, orders, withdrawals, transactions, pendingRiskHolds, returns,
     productIds: new Set(products.map(id)), reportingCurrency: displayCurrency }), paymentAccount, withdrawals };
 }
 

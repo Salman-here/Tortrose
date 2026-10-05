@@ -118,6 +118,27 @@ test('concurrent withdrawals cannot reserve the same native funds twice', async 
   const summary = await buildSellerPaymentSummary(seller._id,{displayCurrency:'PKR'});
   expect(summary.balanceByCurrency.PKR.withdrawableBalance).toBe(8000);
 });
+
+test('delivered online funds cannot be withdrawn in the return window or while a timely return is unresolved', async () => {
+  const { seller, products } = await fixture();
+  const order = await earned(seller, products[0]);
+  order.paymentMethod = 'wallet';
+  order.orderItems[0].returnPolicySnapshotVersion = 1;
+  order.orderItems[0].returnPolicy = { returnsEnabled: true, returnDuration: 1, refundType: 'full_refund' };
+  order.sellerFulfillment[0].deliveredAt = new Date(); await order.save(); await bank(seller, 'PKR');
+  expect((await withdraw(seller, 2000, 'PKR', 'held-window')).body.code).toBe('INSUFFICIENT_SELLER_BALANCE');
+  const delivered = new Date(Date.now() - 2 * 86400000);
+  order.sellerFulfillment[0].deliveredAt = delivered; await order.save();
+  await require('../../models/ReturnRequest').create({ returnNumber: 'RET-LATE-QA', requestKey: 'return:last-day', order: order._id,
+    orderId: order.orderId, buyer: order.user, seller: seller._id, currency: 'PKR', reasonCategory: 'damaged', reasonDetails: 'The test item arrived damaged.',
+    status: 'under_review', requestedAt: new Date(delivered.getTime() + 86399000), eligibilityDeadline: new Date(delivered.getTime() + 86400000),
+    policySnapshot: { returnsEnabled: true, returnDuration: 1, refundType: 'full_refund' },
+    items: [{ orderItemId: order.orderItems[0]._id, productId: products[0]._id, name: products[0].name, quantity: 1, purchasedQuantity: 1, unitPrice: 28000, lineSubtotal: 28000 }],
+    refund: { itemSubtotal: 28000, shippingAmount: 0, taxAmount: 0, discountAmount: 0, totalAmount: 28000 } });
+  expect((await withdraw(seller, 2000, 'PKR', 'held-open-return')).body.code).toBe('INSUFFICIENT_SELLER_BALANCE');
+  await require('../../models/ReturnRequest').updateOne({ order: order._id }, { $set: { status: 'rejected' } });
+  expect((await withdraw(seller, 2000, 'PKR', 'released-return')).statusCode).toBe(201);
+});
 test.each([true, [], ' ', -1, 0, 5.001, 1e100])('invalid withdrawal amount %j creates no reservation', async amount => {
   const { seller, products } = await fixture('USD'); await earned(seller,products[0],'USD'); await bank(seller,'USD');
   const result=await withdraw(seller,amount,'USD');

@@ -4,6 +4,7 @@ const mockOrderFindOne = jest.fn();
 const mockOrderFindById = jest.fn();
 const mockProductFind = jest.fn();
 const mockCancelOrderSafely = jest.fn();
+const mockCancelBuyerOrder = jest.fn();
 const mockTransitionOrderFulfillment = jest.fn();
 const mockSendEmail = jest.fn();
 const mockEnqueueTextNotification = jest.fn();
@@ -20,6 +21,8 @@ jest.mock('../../models/Product', () => ({
 jest.mock('../../services/orderCancellationService', () => ({
   cancelOrderSafely: mockCancelOrderSafely,
 }));
+jest.mock('../../services/buyerCancellationService', () => ({ cancelBuyerOrder: mockCancelBuyerOrder }));
+jest.mock('../../services/buyerOrderPresentationService', () => ({ buildBuyerOrderView: order => order }));
 
 jest.mock('../../services/orderStatusTransitionService', () => ({
   transitionOrderFulfillment: mockTransitionOrderFulfillment,
@@ -105,14 +108,11 @@ describe('order fulfillment transition boundaries', () => {
   test('a seller can cancel their own purchase through the ordinary buyer cancellation safeguards', async () => {
     const order = { ...orderFixture({ sellers: [otherSellerId] }), user: sellerId };
     mockOrderFindById.mockResolvedValue(order);
-    mockCancelOrderSafely.mockResolvedValue({ status: 'cancelled', order: { ...order, orderStatus: 'cancelled' } });
+    mockCancelBuyerOrder.mockResolvedValue({ ...order, orderStatus: 'cancelled' });
     const res = response();
     await cancelOrder({ params: { id: order._id }, user: { role: 'seller', id: sellerId } }, res);
     expect(res.status).toHaveBeenCalledWith(200);
-    expect(mockCancelOrderSafely).toHaveBeenCalledWith(expect.objectContaining({
-      orderId: order._id, cancellationActorRole: 'buyer',
-      confirmationFields: expect.objectContaining({ cancelledVia: 'dashboard' }),
-    }));
+    expect(mockCancelBuyerOrder).toHaveBeenCalledWith(expect.objectContaining({ orderId: order._id, buyerId: sellerId }));
     expect(order.save).not.toHaveBeenCalled();
   });
 
@@ -128,7 +128,7 @@ describe('order fulfillment transition boundaries', () => {
   test('seller-account purchasers cannot bypass paid/shipped cancellation restrictions', async () => {
     const order = { ...orderFixture({ isPaid: true, orderStatus: 'shipped', sellers: [otherSellerId] }), user: sellerId };
     mockOrderFindById.mockResolvedValue(order);
-    mockCancelOrderSafely.mockRejectedValue(Object.assign(new Error('A refund is required.'), { statusCode: 409, code: 'ORDER_CANCEL_NOT_ALLOWED' }));
+    mockCancelBuyerOrder.mockRejectedValue(Object.assign(new Error('Shipment already started.'), { statusCode: 409, code: 'ORDER_CANCEL_NOT_ALLOWED' }));
     const res = response();
     await cancelOrder({ params: { id: order._id }, user: { role: 'seller', id: sellerId } }, res);
     expect(res.status).toHaveBeenCalledWith(409);

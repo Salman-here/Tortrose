@@ -441,11 +441,12 @@ export default function SellerPaymentsScreen({ navigation }) {
           <View style={styles.heroCopy}>
             <Text style={styles.heroEyebrow}>AVAILABLE TO WITHDRAW</Text>
             <Text style={styles.heroValue} numberOfLines={1} adjustsFontSizeToFit>{formatBalanceMoney(availableInCurrentCurrency)}</Text>
-            <Text style={styles.heroText}>Delivered card and Rozare Wallet revenue after payout reservations and return-refund debits.</Text>
+            <Text style={styles.heroText}>Online earnings released after delivery and the saved return window, less refunds and payout reservations.</Text>
           </View>
         </GlassPanel>
 
         <View style={styles.statsGrid}>
+          <StatCard styles={styles} icon="lock-closed-outline" label="Pending online funds" value={formatBalanceMoney(selectedBalance?.pendingOnlineBalance ?? 0)} description="Awaiting delivery, return-window expiry or an open return" color={palette.colors.warning} />
           <StatCard styles={styles} icon="card-outline" label="Online delivered" value={formatDisplayMoney(displayValue('onlineDeliveredRevenue'))} description="Delivered card and Wallet revenue" color={palette.colors.success} />
           <StatCard styles={styles} icon="cash-outline" label="Delivered COD" value={formatDisplayMoney(displayValue('codDeliveredRevenue'))} description="Collected directly from buyers" color={palette.colors.warning} />
           <StatCard styles={styles} icon="trending-up-outline" label="Delivered Total" value={formatDisplayMoney(displayValue('totalDeliveredRevenue'))} description="Delivered card, Wallet, and COD revenue" color={palette.colors.primary} />

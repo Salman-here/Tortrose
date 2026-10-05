@@ -32,6 +32,7 @@ const TRANSACTION_REFERENCE_TYPES = new Set([
   'safepay_refund',
   'safepay_dispute',
   'order',
+  'order_cancellation',
   'return_request',
   'admin',
   'system',
