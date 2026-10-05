@@ -16,7 +16,7 @@ const { assertWalletOrderFundingReturnable, attachReturnedWalletFundingProvenanc
 const { enqueueNotificationEvent } = require('./notificationOutboxService');
 const { snapshotMinorMoney } = require('./notificationMoneySnapshotService');
 const { tryOrderBuyerPhoneE164 } = require('./orderBuyerContactService');
-const { escapeHtml } = require('../utils/orderPresentation');
+const { escapeHtml, formatItemOptionsText } = require('../utils/orderPresentation');
 const id = value => String(value?._id || value || '');
 const fail = (message, code = 'ORDER_CANCELLATION_CONFLICT', statusCode = 409) => Object.assign(new Error(message), { code, statusCode });
 const eligible = status => ['pending', 'confirmed', 'processing'].includes(status);
@@ -45,15 +45,16 @@ async function notifyCancellation(row, order, { completed = false, session } = {
   const name = literal((order.sellerPolicies || []).find(entry => id(entry.seller) === id(row.seller))?.storeName || 'Store');
   const items = order.orderItems.filter(item => id(item.seller) === id(row.seller));
   const description = Array.from(items.map(item => {
-    const options = item.selectedOptions instanceof Map ? [...item.selectedOptions.entries()] : Object.entries(item.selectedOptions || {});
-    const selected = [item.selectedColor, ...options.map(([name, value]) => `${name}: ${value}`)].filter(Boolean).join(', ');
+    const selected = formatItemOptionsText(item);
     return literal(`${item.name} × ${item.quantity}${selected ? ` (${selected})` : ''}`);
   }).join(', ')).slice(0, 1800).join('');
   for (const seller of [false, true]) {
     const title = completed ? 'Cancellation refund completed' : 'Order items cancelled';
+    // The shared money renderer already includes non-USD currency codes.
+    const refundAmount = `{{money.refund}}${row.currency === 'USD' ? ' USD' : ''}`;
     const refund = row.refundDestination === 'none' ? 'No payment refund is required.'
-      : completed ? `{{money.refund}} ${row.currency} was refunded to ${row.refundDestination === 'wallet' ? 'the buyer’s Rozare Wallet' : 'the original card'}.`
-        : `An automatic refund of {{money.refund}} ${row.currency} to the original card is being verified.`;
+      : completed ? `${refundAmount} was refunded to ${row.refundDestination === 'wallet' ? 'the buyer’s Rozare Wallet' : 'the original card'}.`
+        : `An automatic refund of ${refundAmount} to the original card is being verified.`;
     const message = `Order ${order.orderId} · ${name}\n${description}\n${completed ? '' : 'The buyer cancelled these items before shipment. '}${refund}${seller ? ' No seller action is required. Other seller portions are unchanged.' : ''}`;
     // In-app/push previews have a smaller limit than email/WhatsApp. Keep the
     // refund sentence intact even when an order contains many product options.

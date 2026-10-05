@@ -23,24 +23,24 @@ beforeAll(async () => {
 afterAll(async () => { await mongoose.disconnect(); if (replica) await replica.stop(); }, 60000);
 afterEach(async () => { await Promise.all(Object.values(mongoose.models).map(model => model.deleteMany({}))); });
 
-async function fixture(method, longNames = false) {
+async function fixture(method, longNames = false, currency = 'USD') {
   const users = await User.create(['user', 'seller', 'seller'].map((role, index) => ({
     username: `notification-${index}`, email: `notification-${index}@example.com`, password: 'test-only-password', role,
   })));
   const [buyer, ...sellers] = users;
   const products = await Product.create(sellers.map((seller, index) => ({ seller: seller._id,
     name: longNames ? `Travel Mug ${'detail '.repeat(38)}` : `Cup ${index}`, description: 'A reusable cup',
-    price: index ? 20 : 10, stock: 4, totalSales: 1, currency: 'USD', priceCurrency: 'USD',
+    price: index ? 20 : 10, stock: 4, totalSales: 1, currency, priceCurrency: currency,
     category: 'Home', brand: 'QA', image: 'https://example.com/cup.png' })));
   const raw = {
-    user: buyer._id, currency: 'USD', orderId: `ORD-NOTIFY-${new mongoose.Types.ObjectId()}`,
+    user: buyer._id, currency, orderId: `ORD-NOTIFY-${new mongoose.Types.ObjectId()}`,
     orderItems: products.map((product, index) => ({ productId: product._id, seller: product.seller,
       name: product.name, image: product.image, quantity: 1, price: index ? 20 : 10,
       lineSubtotal: index ? 20 : 10, sourcePrice: index ? 20 : 10, sourceLineSubtotal: index ? 20 : 10,
-      sourceCurrency: 'USD', selectedOptions: { Color: longNames ? 'Green '.repeat(60) : 'Green' } })),
-    sellerPolicies: sellers.map((seller, index) => ({ seller: seller._id, productCurrency: 'USD', storeName: `Store ${index}` })),
+      sourceCurrency: currency, selectedColor: 'Green', selectedOptions: { Color: longNames ? 'Green '.repeat(60) : 'Green' } })),
+    sellerPolicies: sellers.map((seller, index) => ({ seller: seller._id, productCurrency: currency, storeName: `Store ${index}` })),
     sellerShipping: sellers.map(seller => ({ seller: seller._id, shippingMethod: {
-      name: 'standard', price: 2, sourceCost: 2, sourceCurrency: 'USD', estimatedDays: 3 } })),
+      name: 'standard', price: 2, sourceCost: 2, sourceCurrency: currency, estimatedDays: 3 } })),
     shippingMethod: { name: 'standard', price: 4, estimatedDays: 3 },
     sellerFulfillment: sellers.map((seller, index) => ({ seller: seller._id, status: index ? 'shipped' : 'confirmed' })),
     shippingInfo: { fullName: 'Notification Buyer', email: buyer.email, phone: '+12025550121', address: 'QA Street',
@@ -56,7 +56,7 @@ async function fixture(method, longNames = false) {
   const order = await Order.create(raw);
   if (method === 'safepay') await Payment.create({ _id: order.safepayPaymentId, user: buyer._id, order: order._id,
     purpose: 'order', environment: 'sandbox', status: 'paid', providerState: 'TRACKER_ENDED',
-    amountMinor: 3400, capturedMinor: 3400, currency: 'USD', appliedAt: new Date(), paidAt: new Date(),
+    amountMinor: 3400, capturedMinor: 3400, currency, appliedAt: new Date(), paidAt: new Date(),
     tracker: `track_${new mongoose.Types.ObjectId()}`, reference: `order:${order._id}`, requestKey: `test:${order._id}`,
     fingerprint: 'a'.repeat(64), termsHash: 'test-notification', terms: {}, riskPending: false } );
   return { buyer, sellers, products, order };
@@ -88,6 +88,24 @@ test('large option descriptions keep the refund amount in the bounded push/inapp
   const records = await Outbox.find({ channel: { $in: ['inapp', 'push'] } }).lean();
   expect(records).toHaveLength(4);
   for (const record of records) { expect(record.payload.body.length).toBeLessThanOrEqual(1000); expect(record.payload.body).toContain('$12.00 USD'); }
+});
+
+test.each(['USD', 'PKR', 'EUR', 'GBP'])('%s cancellation messages name the currency and selected option exactly once', async currency => {
+  const f = await fixture('safepay', false, currency);
+  const order = await cancelBuyerOrder({ orderId: f.order._id, buyerId: f.buyer._id, sellerIds: [String(f.sellers[0]._id)] });
+  const row = await Cancellation.findOne({ order: order._id });
+  row.refundStatus = 'refunded'; row.refundedAt = new Date(); await row.save();
+  await notifyCancellation(row, order, { completed: true });
+  const records = await Outbox.find({ aggregateType: 'OrderCancellation' }).lean();
+  expect(records).toHaveLength(16);
+  for (const record of records) {
+    const text = record.payload.body || record.payload.text || record.payload.message;
+    expect(text).toContain(`12.00 ${currency}`);
+    expect(text).not.toContain(`${currency} ${currency}`);
+    expect(text).toContain('(Color: Green)');
+    expect(text).not.toContain('(Green, Color: Green)');
+    if (record.channel === 'email') expect(record.payload.html).not.toContain(`${currency} ${currency}`);
+  }
 });
 
 test('a cancelled store in a live mixed order is not described as awaiting delivery for returns', async () => {
