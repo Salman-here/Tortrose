@@ -1,4 +1,11 @@
-import { cancellationRefundPresentation, hasPendingCancellationRefund, startCancellationRefundRefresh } from '../../src/utils/orderCancellationPresentation';
+import { cancellationRefundPresentation, cancellationSuccessCopy, hasPendingCancellationRefund, startCancellationRefundRefresh } from '../../src/utils/orderCancellationPresentation';
+
+test('a store-only cancellation does not claim the whole purchase was cancelled', () => {
+  expect(cancellationSuccessCopy('seller-a')).toEqual({
+    title: 'Store items cancelled', message: 'Only this store’s unshipped items were cancelled. Other store shipments are unchanged.',
+  });
+  expect(cancellationSuccessCopy().title).toBe('Order cancelled');
+});
 test('card/Wallet cancellation refunds use verified original-currency minor units', () => {
   const row = { reference: 'cancel-1', refundStatus: 'refunded', destination: 'wallet', currency: 'USD', amountMinor: 1200 };
   expect(cancellationRefundPresentation(row, 'USD', 12)).toMatchObject({ valid: true, amount: 12, destination: 'Rozare Wallet', label: 'Refund completed' });

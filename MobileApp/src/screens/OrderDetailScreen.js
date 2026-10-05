@@ -20,7 +20,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import api from '../config/api';
 import { getSafetyRefundPresentation } from '../utils/safepaySafetyRefundPresentation';
-import { cancellationRefundPresentation, hasPendingCancellationRefund, startCancellationRefundRefresh } from '../utils/orderCancellationPresentation';
+import { cancellationRefundPresentation, cancellationSuccessCopy, hasPendingCancellationRefund, startCancellationRefundRefresh } from '../utils/orderCancellationPresentation';
 import { useIsFocused } from '@react-navigation/native';
 import { useCurrency } from '../contexts/CurrencyContext';
 import { useGlobal } from '../contexts/GlobalContext';
@@ -226,7 +226,8 @@ export default function OrderDetailScreen({ route, navigation }) {
               } else {
                 await fetchOrderDetail();
               }
-              Alert.alert('Order cancelled', 'The order has been cancelled successfully.');
+              const success = cancellationSuccessCopy(sellerId);
+              Alert.alert(success.title, success.message);
             } catch (err) {
               if (!err.response || err.code === 'ORDER_PRESENTATION_DATA_INVALID') {
                 setOrder(null);

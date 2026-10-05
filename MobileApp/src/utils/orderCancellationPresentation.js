@@ -1,3 +1,9 @@
+export function cancellationSuccessCopy(sellerId = null) {
+  return sellerId
+    ? { title: 'Store items cancelled', message: 'Only this store’s unshipped items were cancelled. Other store shipments are unchanged.' }
+    : { title: 'Order cancelled', message: 'The order has been cancelled successfully.' };
+}
+
 export function hasPendingCancellationRefund(order) {
   return [...(order?.sellerFulfillment || []), ...(order?.sellerGroups || [])].some(row =>
     row.cancellation?.reference && ['pending', 'processing'].includes(row.cancellation.refundStatus));

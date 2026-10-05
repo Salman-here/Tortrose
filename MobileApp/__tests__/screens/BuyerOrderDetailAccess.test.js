@@ -1,5 +1,6 @@
 import React from 'react';
-import { render, waitFor } from '@testing-library/react-native';
+import { act, render, waitFor } from '@testing-library/react-native';
+import { AppState } from 'react-native';
 import OrderDetailScreen from '../../src/screens/OrderDetailScreen';
 import api from '../../src/config/api';
 
@@ -64,4 +65,32 @@ test('a refused foreign order displays the server error without purchase data', 
   expect(api.get).toHaveBeenCalledWith('/api/order/detail/foreign-order?view=buyer');
   expect(screen.queryByText('Travel Mug')).toBeNull();
   expect(api.patch).not.toHaveBeenCalled();
+});
+
+test('an active buyer detail quietly replaces a pending refund with the verified completed status', async () => {
+  jest.useFakeTimers();
+  const originalState = Object.getOwnPropertyDescriptor(AppState, 'currentState');
+  Object.defineProperty(AppState, 'currentState', { configurable: true, value: 'active' });
+  const cancellation = { reference: 'cancel-a', currency: 'PKR', destination: 'original_card', amountMinor: 110000,
+    refundStatus: 'pending' };
+  const pending = { ...purchase, paymentMethod: 'safepay', isPaid: true, orderStatus: 'delivered',
+    sellerGroups: purchase.sellerGroups.map((group, index) => ({ ...group,
+      status: index ? 'delivered' : 'cancelled', canCancel: false,
+      ...(index ? {} : { cancellation }) })) };
+  const completed = { ...pending, sellerGroups: pending.sellerGroups.map((group, index) => index ? group
+    : { ...group, cancellation: { ...cancellation, refundStatus: 'refunded' } }) };
+  api.get.mockResolvedValueOnce({ data: { order: pending } }).mockResolvedValue({ data: { order: completed } });
+  const screen = render(<OrderDetailScreen route={{ params: { orderId: 'owned-order' } }} navigation={navigation} />);
+  try {
+    await waitFor(() => expect(screen.getByText('Refund in progress')).toBeTruthy());
+    await act(async () => { jest.advanceTimersByTime(5000); });
+    await waitFor(() => expect(screen.getByText('Refund completed')).toBeTruthy());
+    expect(api.get).toHaveBeenCalledTimes(2);
+    expect(screen.getByText('Desk Organizer')).toBeTruthy();
+  } finally {
+    screen.unmount();
+    if (originalState) Object.defineProperty(AppState, 'currentState', originalState);
+    else delete AppState.currentState;
+    jest.useRealTimers();
+  }
 });
