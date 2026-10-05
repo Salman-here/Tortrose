@@ -209,11 +209,9 @@ const OrderDetail = () => {
                     // Cancelled after previously confirming (from account or email page)
                     if (cancelledFromDash && confirmed) {
                         const confirmedChannel = getConfirmationViaLabel(order.confirmation.confirmedVia);
-                        // Determine WHERE they cancelled from using the note
-                        const note = order.confirmation.cancelledFromDashboardNote || '';
-                        const cancelledFrom = note.includes('account') || note.includes('dashboard')
-                            ? 'your Rozare account'
-                            : 'email';
+                        // The structured cancellation source is authoritative.
+                        // An empty legacy note must not invent an email action.
+                        const cancelledFrom = getConfirmationViaLabel(order.confirmation.cancelledVia || 'dashboard');
                         return (
                             <div className="mt-4 p-3 rounded-xl flex items-start gap-3"
                                 style={{ background: 'rgba(239, 68, 68, 0.08)', border: '1px solid rgba(239, 68, 68, 0.25)' }}>

@@ -59,6 +59,10 @@ test('cancellation copy does not promise that no charge happened or that a refun
   assert.doesNotMatch(message, /nothing has been charged|refund.*completed|refunded successfully/i);
 });
 
+test('dashboard cancellation source remains explicit even when no free-text note was saved', () => {
+  assert.equal(getConfirmationViaLabel('dashboard'), 'your Rozare account');
+});
+
 test('never shows confirmed success after an administrator, seller, or system cancellation', () => {
   for (const hasCancellationState of [false, true]) {
     assert.equal(shouldShowGenericConfirmedBanner({
