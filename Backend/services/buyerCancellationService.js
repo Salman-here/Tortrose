@@ -52,9 +52,13 @@ async function notifyCancellation(row, order, { completed = false, session } = {
   for (const seller of [false, true]) {
     const title = completed ? 'Cancellation refund completed' : 'Order items cancelled';
     const refund = row.refundDestination === 'none' ? 'No payment refund is required.'
-      : completed ? `{{money.refund}} was refunded to ${row.refundDestination === 'wallet' ? 'the buyer’s Rozare Wallet' : 'the original card'}.`
-        : `An automatic refund of {{money.refund}} to the original card is being verified.`;
+      : completed ? `{{money.refund}} ${row.currency} was refunded to ${row.refundDestination === 'wallet' ? 'the buyer’s Rozare Wallet' : 'the original card'}.`
+        : `An automatic refund of {{money.refund}} ${row.currency} to the original card is being verified.`;
     const message = `Order ${order.orderId} · ${name}\n${description}\n${completed ? '' : 'The buyer cancelled these items before shipment. '}${refund}${seller ? ' No seller action is required. Other seller portions are unchanged.' : ''}`;
+    // In-app/push previews have a smaller limit than email/WhatsApp. Keep the
+    // refund sentence intact even when an order contains many product options.
+    const preview = description.length > 400 ? `${Array.from(description).slice(0, 400).join('')}…` : description;
+    const body = `Order ${order.orderId} · ${name}\n${preview}\n${completed ? '' : 'The buyer cancelled these items before shipment. '}${refund}${seller ? ' No seller action is required. Other seller portions are unchanged.' : ''}`;
     const link = seller ? `/seller-dashboard/order/${order._id}` : `/user-dashboard/order/detail/${order._id}`;
     const html = `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="margin:0;background:#f4f5fc;font-family:Arial,sans-serif;color:#253149"><table role="presentation" style="width:100%;max-width:600px;margin:32px auto;border:1px solid #e3e7f5;border-radius:22px;background:#ffffff"><tr><td style="padding:28px;background:linear-gradient(125deg,#ecfbf7,#f1edff);border-radius:22px 22px 0 0"><img src="https://rozare.com/favicon-512.png" alt="Rozare" width="42" height="42"><h1 style="font-size:23px;margin:18px 0 0">${escapeHtml(title)}</h1></td></tr><tr><td style="padding:28px;line-height:1.7;font-size:14px">${escapeHtml(message).replace(/\n/g, '<br>')}<p><a href="https://rozare.com${link}" style="display:inline-block;background:#665af2;color:white;padding:12px 22px;border-radius:12px;text-decoration:none">View order details</a></p>${completed && row.refundDestination === 'original_card' ? '<p style="color:#76829b;font-size:12px">Your bank may take additional time to display the refund.</p>' : ''}</td></tr></table></body></html>`;
     const recipient = seller ? { kind: 'user', audienceRole: 'seller', user: row.seller, destinationPolicy: 'current_user', allowBlocked: true }
@@ -63,10 +67,10 @@ async function notifyCancellation(row, order, { completed = false, session } = {
       eventType: completed ? 'order.cancellation_refund_completed' : 'order.seller_portion_cancelled', aggregateType: 'OrderCancellation', aggregateId: row._id,
       occurredAt: completed ? row.refundedAt : row.requestedAt, financial: row.refundDestination !== 'none', recipient,
       channels: ['inapp', 'push', 'email', 'whatsapp'],
-      templates: { inapp: { title, body: message }, push: { title, body: message }, email: { subject: title, text: message, html }, whatsapp: { message } },
+      templates: { inapp: { title, body }, push: { title, body }, email: { subject: title, text: message, html }, whatsapp: { message } },
       money: row.refundDestination === 'none' ? [] : [snapshotMinorMoney({ key: 'refund', label: 'Cancellation refund', amountMinor: row.amountMinor,
         currency: row.currency, sourceModel: 'OrderCancellation', sourceDocumentId: row._id, sourcePath: 'amountMinor' })],
-      metadata: { category: 'order', channelId: seller ? 'seller' : 'buyer', whatsappCategory: 'order_update', relatedOrder: order._id,
+      metadata: { category: 'order', channelId: seller ? 'seller' : 'orders', whatsappCategory: 'order_update', relatedOrder: order._id,
         linkTo: link,
         data: { type: 'order_status', orderId: id(order), sellerId: id(row.seller) } }, session });
   }
