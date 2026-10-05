@@ -100,7 +100,7 @@ const createFixture = async ({ shippingPrice = 0 } = {}) => {
       couponDiscount: 0,
       totalAmount: 4 + shippingPrice,
     },
-    paymentMethod: 'stripe',
+    paymentMethod: 'wallet',
     awaitingPayment: false,
     inventoryCommitted: true,
     isPaid: true,
@@ -263,6 +263,8 @@ test('sequential PKR seller-balance returns exactly zero the frozen USD credit, 
     fixture.order.sellerSettlement[0].amountUSDMinor
   );
   expect(debits.reduce((sum, row) => sum + Math.round(row.sourceAmount * 100), 0)).toBe(400);
+  expect((await ReturnRequest.findById(first._id)).settlement.fundingSource).toBe('held_order');
+  expect((await ReturnRequest.findById(second._id)).settlement.fundingSource).toBe('held_order');
 
   const summary = await buildSellerPaymentSummary(fixture.seller, {
     displayCurrency: 'USD',
@@ -538,7 +540,7 @@ test('shipping settlement is seller-isolated and ignores rejected quantities bef
       { seller: sellerB, status: 'delivered', deliveredAt: new Date() },
     ],
     orderSummary: { subtotal: 7, shippingCost: 0.03, tax: 0, couponDiscount: 0, totalAmount: 7.03 },
-    paymentMethod: 'stripe',
+    paymentMethod: 'wallet',
     awaitingPayment: false,
     inventoryCommitted: true,
     isPaid: true,

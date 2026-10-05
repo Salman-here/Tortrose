@@ -1217,7 +1217,7 @@ const settleFromSellerBalance = async ({ returnRequestId, sellerId }) => runInTr
     order: request.order,
     seller: sellerId,
     status: 'returned',
-    'settlement.fundingSource': 'seller_balance',
+    'settlement.fundingSource': { $in: ['seller_balance', 'held_order'] },
     'settlement.status': 'completed',
   }).select('_id refund.totalAmount').lean(), session);
   const priorReferenceIds = priorBalanceReturns.map(entry => String(entry._id));
