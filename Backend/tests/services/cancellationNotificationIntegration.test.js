@@ -90,6 +90,16 @@ test('large option descriptions keep the refund amount in the bounded push/inapp
   for (const record of records) { expect(record.payload.body.length).toBeLessThanOrEqual(1000); expect(record.payload.body).toContain('$12.00 USD'); }
 });
 
+test('a cancelled store in a live mixed order is not described as awaiting delivery for returns', async () => {
+  const f = await fixture('wallet');
+  const order = await cancelBuyerOrder({ orderId: f.order._id, buyerId: f.buyer._id, sellerIds: [String(f.sellers[0]._id)] });
+  const { buildOrderReturnEligibility } = require('../../services/returnService');
+  const groups = await buildOrderReturnEligibility(order);
+  const cancelled = groups.find(group => String(group.seller._id) === String(f.sellers[0]._id));
+  expect(cancelled.eligible).toBe(false);
+  expect(cancelled.reason).toBe('Cancelled store items cannot be returned.');
+});
+
 test('verified card-refund notifications reach a blocked seller without granting buyer access', async () => {
   const f = await fixture('safepay');
   const order = await cancelBuyerOrder({ orderId: f.order._id, buyerId: f.buyer._id, sellerIds: [String(f.sellers[0]._id)] });

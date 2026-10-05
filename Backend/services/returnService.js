@@ -421,6 +421,7 @@ const buildOrderReturnEligibility = async (order, { session = null, at = new Dat
 
       if (order.awaitingPayment) itemReason = 'This order has not been paid.';
       else if (order.orderStatus === 'cancelled') itemReason = 'Cancelled orders cannot be returned.';
+      else if (fulfillment.status === 'cancelled') itemReason = 'Cancelled store items cannot be returned.';
       else if (!policy.returnsEnabled) itemReason = 'Returns are not available for this item.';
       else if (policy.refundType === 'none') itemReason = 'No return resolution is configured for this item.';
       else if (fulfillment.status !== 'delivered' || !fulfillment.deliveredAt) itemReason = 'Return requests open after this seller portion is delivered.';
