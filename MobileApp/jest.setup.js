@@ -116,6 +116,7 @@ jest.mock('axios', () => ({
 
 // Mock navigation
 jest.mock('@react-navigation/native', () => ({
+  useIsFocused: () => true,
   useNavigation: () => ({
     navigate: jest.fn(),
     goBack: jest.fn(),

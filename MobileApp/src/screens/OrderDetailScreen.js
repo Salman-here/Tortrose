@@ -2,7 +2,7 @@
  * Premium buyer order detail — truthful aggregate and per-seller fulfillment.
  */
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -12,6 +12,7 @@ import {
   Alert,
   RefreshControl,
   Platform,
+  AppState,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
@@ -19,7 +20,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import api from '../config/api';
 import { getSafetyRefundPresentation } from '../utils/safepaySafetyRefundPresentation';
-import { cancellationRefundPresentation } from '../utils/orderCancellationPresentation';
+import { cancellationRefundPresentation, hasPendingCancellationRefund, startCancellationRefundRefresh } from '../utils/orderCancellationPresentation';
+import { useIsFocused } from '@react-navigation/native';
 import { useCurrency } from '../contexts/CurrencyContext';
 import { useGlobal } from '../contexts/GlobalContext';
 import { spacing, fontSize, fontWeight, statusColors } from '../styles/theme';
@@ -147,6 +149,8 @@ export default function OrderDetailScreen({ route, navigation }) {
   const [order, setOrder] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const fetchSequence = useRef(0);
+  const isFocused = useIsFocused();
   const [cancelling, setCancelling] = useState(false);
   const [error, setError] = useState(null);
   const [reordering, setReordering] = useState(false);
@@ -164,27 +168,38 @@ export default function OrderDetailScreen({ route, navigation }) {
     [formatPrice, order],
   );
 
-  const fetchOrderDetail = useCallback(async () => {
+  const fetchOrderDetail = useCallback(async ({ silent = false } = {}) => {
+    const sequence = ++fetchSequence.current;
     try {
-      setError(null);
+      if (!silent) setError(null);
       const res = await api.get(`/api/order/detail/${orderId}?view=buyer`);
       const nextOrder = res.data?.order;
+      if (nextOrder?._id !== orderId) throw new Error('The order response does not match this purchase.');
       assertOrderDetailPresentation(nextOrder);
-      setOrder(nextOrder);
+      if (sequence === fetchSequence.current) setOrder(nextOrder);
     } catch (err) {
-      setOrder(null);
-      setError(
+      if (!silent && sequence === fetchSequence.current) {
+        setOrder(null);
+        setError(
         err.code === 'ORDER_PRESENTATION_DATA_INVALID'
           ? 'This order contains information that could not be verified. Refresh before using any order action.'
           : (err.response?.data?.msg || err.response?.data?.message || 'Failed to load order details'),
-      );
+        );
+      }
     } finally {
-      setIsLoading(false);
-      setRefreshing(false);
+      if (!silent && sequence === fetchSequence.current) {
+        setIsLoading(false);
+        setRefreshing(false);
+      }
     }
   }, [orderId]);
 
-  useEffect(() => { fetchOrderDetail(); }, [fetchOrderDetail]);
+  useEffect(() => { fetchOrderDetail(); return () => { fetchSequence.current += 1; }; }, [fetchOrderDetail]);
+  const refundPending = hasPendingCancellationRefund(order);
+  useEffect(() => {
+    if (!refundPending || cancelling || !isFocused) return;
+    return startCancellationRefundRefresh(() => fetchOrderDetail({ silent: true }), () => AppState.currentState === 'active');
+  }, [refundPending, cancelling, isFocused, fetchOrderDetail]);
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
@@ -203,6 +218,7 @@ export default function OrderDetailScreen({ route, navigation }) {
           onPress: async () => {
             try {
               setCancelling(true);
+              fetchSequence.current += 1;
               const res = await api.patch(`/api/order/cancel/${orderId}`, sellerId ? { sellerIds: [sellerId] } : {});
               if (res.data?.order) {
                 assertOrderDetailPresentation(res.data.order);

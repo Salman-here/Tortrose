@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import axios from "axios";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "react-toastify";
@@ -22,6 +22,7 @@ import BuyerSellerFulfillmentGroups from "../order/BuyerSellerFulfillmentGroups"
 import { getConfirmationSourceLabel } from "../../utils/whatsapp";
 import { getBuyerConfirmationMessage, getCancellationPaymentMessage, getConfirmationViaLabel } from "../../utils/orderConfirmationPresentation";
 import { getSafetyRefundPresentation } from '../../utils/safepaySafetyRefundPresentation';
+import { hasPendingCancellationRefund, startCancellationRefundRefresh } from '../../utils/orderCancellationPresentation';
 
 const OrderItemMoney = ({ item, formatMoney, amountClassName }) => {
     const lineSubtotal = getOrderItemLineSubtotal(item);
@@ -53,6 +54,7 @@ const OrderDetail = () => {
     const [showCancelConfirm, setShowCancelConfirm] = useState(false);
     const [cancelSellerIds, setCancelSellerIds] = useState(null);
     const [cancelling, setCancelling] = useState(false);
+    const fetchSequence = useRef(0);
 
     const getStatusIcon = (status) => {
         const icons = { pending: <Clock className="w-4 h-4" />, confirmed: <CheckCircle className="w-4 h-4" />, processing: <RefreshCw className="w-4 h-4" />, shipped: <Truck className="w-4 h-4" />, delivered: <CheckCircle className="w-4 h-4" />, cancelled: <XCircle className="w-4 h-4" /> };
@@ -71,19 +73,31 @@ const OrderDetail = () => {
         return styles[status] || { bg: 'rgba(255,255,255,0.08)', color: 'hsl(var(--muted-foreground))' };
     };
 
-    const fetchOrderDetail = useCallback(async () => {
+    const fetchOrderDetail = useCallback(async ({ silent = false } = {}) => {
+        const sequence = ++fetchSequence.current;
         const token = getAuthToken();
         try {
             const res = await axios.get(`${import.meta.env.VITE_API_URL}api/order/detail/${id}?view=buyer`, { headers: { Authorization: `Bearer ${token}` } });
-            setOrder(res.data.order);
-        } catch (error) { toast.error(error.response?.data?.msg || "Server error while fetching order detail"); }
+            const nextOrder = res.data?.order;
+            if (nextOrder?._id !== id) throw new Error('The order response does not match this purchase.');
+            getOrderCurrency(nextOrder);
+            getOrderTotal(nextOrder);
+            getOrderSellerGroups(nextOrder);
+            if (sequence === fetchSequence.current) setOrder(nextOrder);
+        } catch (error) { if (!silent && sequence === fetchSequence.current) toast.error(error.response?.data?.msg || "Server error while fetching order detail"); }
     }, [id]);
 
-    useEffect(() => { fetchOrderDetail(); }, [fetchOrderDetail]);
+    useEffect(() => { fetchOrderDetail(); return () => { fetchSequence.current += 1; }; }, [fetchOrderDetail]);
+    const refundPending = hasPendingCancellationRefund(order);
+    useEffect(() => {
+        if (!refundPending || cancelling) return;
+        return startCancellationRefundRefresh(() => fetchOrderDetail({ silent: true }), () => document.visibilityState !== 'hidden');
+    }, [refundPending, cancelling, fetchOrderDetail]);
 
     const handleCancelOrder = async () => {
         if (cancelling) return;
         setCancelling(true);
+        fetchSequence.current += 1;
         try {
             const token = getAuthToken();
             const res = await axios.patch(`${import.meta.env.VITE_API_URL}api/order/cancel/${id}`, cancelSellerIds ? { sellerIds: cancelSellerIds } : {}, { headers: { Authorization: `Bearer ${token}` } });

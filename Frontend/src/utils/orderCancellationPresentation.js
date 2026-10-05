@@ -1,3 +1,22 @@
+export function hasPendingCancellationRefund(order) {
+  return [...(order?.sellerFulfillment || []), ...(order?.sellerGroups || [])].some(row =>
+    row.cancellation?.reference && ['pending', 'processing'].includes(row.cancellation.refundStatus));
+}
+
+// One request at a time; inactive screens do not poll and stopping never
+// schedules another request after an in-flight result returns.
+export function startCancellationRefundRefresh(request, isActive, interval = 5000, timers = globalThis) {
+  let stopped = false;
+  let timer;
+  const tick = async () => {
+    if (stopped) return;
+    try { if (isActive()) await request(); } catch { /* Preserve last verified state. */ }
+    if (!stopped) timer = timers.setTimeout(tick, interval);
+  };
+  timer = timers.setTimeout(tick, interval);
+  return () => { stopped = true; timers.clearTimeout(timer); };
+}
+
 export function cancellationRefundPresentation(value, currency, totalAmount) {
   if (!value?.reference) return null;
   if (!['not_required', 'pending', 'processing', 'refunded', 'manual_review'].includes(value.refundStatus)
