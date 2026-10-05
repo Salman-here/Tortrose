@@ -1,5 +1,8 @@
 'use strict';
 
+const providerFlagKeys = ['STRIPE_ENABLED', 'SAFEPAY_WEB_ENABLED', 'SAFEPAY_MOBILE_ENABLED'];
+const previousProviderFlags = Object.fromEntries(providerFlagKeys.map(key => [key, process.env[key]]));
+
 const mockEnsureStripeCustomerForUser = jest.fn();
 const mockPaymentIntentCreate = jest.fn();
 const mockCheckoutSessionCreate = jest.fn();
@@ -200,6 +203,11 @@ afterAll(async () => {
 }, 120000);
 
 beforeEach(async () => {
+  // This suite preserves and exercises the optional Stripe rail, not the
+  // deployed Safepay cutover. Each fixture explicitly opts into that rail.
+  process.env.STRIPE_ENABLED = 'true';
+  process.env.SAFEPAY_WEB_ENABLED = 'false';
+  process.env.SAFEPAY_MOBILE_ENABLED = 'false';
   jest.clearAllMocks();
   mockGetExchangeRateSnapshot.mockResolvedValue({
     base: 'USD',
@@ -220,6 +228,13 @@ beforeEach(async () => {
     User.deleteMany({}),
     WalletTransaction.deleteMany({}),
   ]);
+});
+
+afterEach(() => {
+  for (const key of providerFlagKeys) {
+    if (previousProviderFlags[key] === undefined) delete process.env[key];
+    else process.env[key] = previousProviderFlags[key];
+  }
 });
 
 describe('initial zero-value and provider-minimum checkout boundaries', () => {

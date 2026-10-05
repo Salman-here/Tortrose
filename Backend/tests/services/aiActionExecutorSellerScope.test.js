@@ -1,3 +1,5 @@
+require('../helpers/retainedStripeTestMode')();
+
 const mongoose = require('mongoose');
 const { MongoMemoryReplSet } = require('mongodb-memory-server');
 const Order = require('../../models/Order');

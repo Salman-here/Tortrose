@@ -1,5 +1,7 @@
 'use strict';
 
+require('../helpers/retainedStripeTestMode')();
+
 const mockPaymentIntentCreate = jest.fn();
 const mockPaymentIntentRetrieve = jest.fn();
 const mockCheckoutSessionCreate = jest.fn();

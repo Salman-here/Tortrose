@@ -1,3 +1,5 @@
+require('../helpers/retainedStripeTestMode')();
+
 jest.mock('../../services/currencyService', () => ({
     ...jest.requireActual('../../services/currencyService'),
     getExchangeRateSnapshot: jest.fn(),

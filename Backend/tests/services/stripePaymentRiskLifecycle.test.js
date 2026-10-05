@@ -51,6 +51,7 @@ const {
 } = require('../../services/walletService');
 
 let replSet;
+const previousStripeEnabled = process.env.STRIPE_ENABLED;
 
 const trustedRates = {
   base: 'USD',
@@ -373,6 +374,9 @@ afterAll(async () => {
 }, 120000);
 
 beforeEach(async () => {
+  // These retained-provider fixtures intentionally exercise Stripe accounting.
+  // Production keeps it disabled; opt in only within this isolated test suite.
+  process.env.STRIPE_ENABLED = 'true';
   jest.clearAllMocks();
   mockGetExchangeRateSnapshot.mockResolvedValue(trustedRates);
   await Promise.all([
@@ -389,6 +393,11 @@ beforeEach(async () => {
     Wallet.deleteMany({}),
     WalletTransaction.deleteMany({}),
   ]);
+});
+
+afterEach(() => {
+  if (previousStripeEnabled === undefined) delete process.env.STRIPE_ENABLED;
+  else process.env.STRIPE_ENABLED = previousStripeEnabled;
 });
 
 describe('seller payment-risk hold fences', () => {
