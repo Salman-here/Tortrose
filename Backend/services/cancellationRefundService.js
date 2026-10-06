@@ -66,6 +66,29 @@ async function processCancellationRefund(paymentId) {
     if (config.environment !== payment.environment) throw fail('The cancellation belongs to a different payment environment.');
     const client = require('./safepayClient').createSafepayClient({ config });
     let row = await Cancellation.findOne({ payment: payment._id, refundStatus: { $in: ['pending', 'processing'] } }).sort({ createdAt: 1 });
+    // Older queued rows can have a seller's entire share consumed by the fixed
+    // deduction even though another seller still has a positive card refund.
+    // Finish only verified, unsubmitted zero-net rows locally, then continue
+    // with the next seller. Never send a zero amount to the payment provider.
+    while (row?.refundStatus === 'pending' && refundMinor(row) === 0) {
+      await mongoose.connection.transaction(async session => {
+        const current = await Cancellation.findOne({ _id: row._id, refundStatus: 'pending', submitStartedAt: null }).session(session);
+        if (!current) throw fail('The zero cancellation refund changed before completion.');
+        if (current.refundDestination !== 'original_card' || current.policyVersion !== 1
+          || current.refundAmountMinor !== 0 || current.amountMinor <= 0 || current.deductionMinor !== current.amountMinor) {
+          throw fail('The zero cancellation refund does not match its deduction.');
+        }
+        const order = await Order.findById(current.order).session(session);
+        const fulfillment = order?.sellerFulfillment.find(value => id(value.seller) === id(current.seller));
+        if (!fulfillment || fulfillment.status !== 'cancelled' || id(fulfillment.cancellation?.reference) !== id(current)) {
+          throw fail('Cancellation ownership changed.');
+        }
+        current.refundStatus = 'not_required'; current.lastErrorCode = '';
+        await current.save({ session });
+        fulfillment.cancellation = cancellationView(current); await order.save({ session });
+      });
+      row = await Cancellation.findOne({ payment: payment._id, refundStatus: { $in: ['pending', 'processing'] } }).sort({ createdAt: 1 });
+    }
     if (!row) return;
     // Back off the whole tracker while an earlier refund is unresolved. A few
     // stalled providers must not occupy the first queue page indefinitely.

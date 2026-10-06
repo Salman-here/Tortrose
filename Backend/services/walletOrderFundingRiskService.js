@@ -3,6 +3,7 @@
 const SellerBalanceTransaction = require('../models/SellerBalanceTransaction');
 const WalletTransaction = require('../models/WalletTransaction');
 const SafepayPayment = require('../models/SafepayPayment');
+const OrderCancellation = require('../models/OrderCancellation');
 const Order = require('../models/Order');
 const { toMinorUnits } = require('./moneyMath');
 
@@ -31,6 +32,30 @@ const roundProductRatio = (left, right, denominator) => {
   return numeric;
 };
 
+const assertDirectCardRefundAccounted = async (payment, session) => {
+  if (!payment.appliedAt || payment.refundedMinor === 0) return;
+  const rows = await withSession(OrderCancellation.find({ payment: payment._id, order: payment.order,
+    buyer: payment.user, environment: payment.environment, currency: payment.currency,
+    refundDestination: 'original_card', refundStatus: 'refunded' }).select('amountMinor refundAmountMinor'), session);
+  let accountedMinor = 0;
+  for (const row of rows) {
+    const amountMinor = row.refundAmountMinor ?? row.amountMinor;
+    if (!Number.isSafeInteger(amountMinor) || amountMinor < 0 || !Number.isSafeInteger(accountedMinor + amountMinor)) {
+      throw provenanceError('The original card refund requires payment review. Please contact support before requesting another refund.',
+        'RETURN_EXTERNAL_FUNDING_REFUND_REVIEW');
+    }
+    accountedMinor += amountMinor;
+  }
+  // An external partial refund can be fully reconciled by the generic seller
+  // risk ledger while still being unrelated to a buyer cancellation. Never
+  // quote or credit that seller's original principal a second time. Known
+  // completed cancellation refunds leave other sellers' refunds available.
+  if (!Number.isSafeInteger(payment.refundedMinor) || payment.refundedMinor < 0 || accountedMinor !== payment.refundedMinor) {
+    throw provenanceError('The original card payment has a refund outside this order\'s cancellation records. Please contact support for payment review before requesting another refund.',
+      'RETURN_EXTERNAL_FUNDING_REFUND_REVIEW');
+  }
+};
+
 /** Fail closed when a Wallet-paid order contains card-top-up principal which
  * Stripe has already refunded or financially disputed. Crediting another
  * Wallet return refund would otherwise pay the buyer twice and debit a seller
@@ -38,9 +63,12 @@ const roundProductRatio = (left, right, denominator) => {
 const assertWalletOrderFundingReturnable = async ({ orderId, session = null }) => {
   // The provider-neutral return boundary also protects direct Safepay orders
   // and spent Safepay top-ups while a refund/dispute is under reconciliation.
-  const directRisk = await withSession(SafepayPayment.exists({ order: orderId, purpose: 'order',
-    $or: [{ riskPending: true }, { status: { $in: ['manual_review', 'refund_pending', 'refunded'] } }] }), session);
-  if (directRisk) throw provenanceError('The original card payment was reversed or is under payment review. A second refund is blocked.', 'RETURN_EXTERNAL_FUNDING_REVERSAL');
+  const directPayments = await withSession(SafepayPayment.find({ order: orderId, purpose: 'order' })
+    .select('_id order user environment currency appliedAt refundedMinor status riskPending'), session);
+  if (directPayments.some(payment => payment.riskPending || ['manual_review', 'refund_pending', 'refunded'].includes(payment.status))) {
+    throw provenanceError('The original card payment was reversed or is under payment review. A second refund is blocked.', 'RETURN_EXTERNAL_FUNDING_REVERSAL');
+  }
+  for (const payment of directPayments) await assertDirectCardRefundAccounted(payment, session);
   const orderPayment = await withSession(WalletTransaction.findOne({
     type: 'order_payment',
     direction: 'debit',

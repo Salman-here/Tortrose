@@ -8,6 +8,7 @@ const Cancellation = require('../../models/OrderCancellation');
 const Payment = require('../../models/SafepayPayment');
 const Wallet = require('../../models/Wallet');
 const WalletTransaction = require('../../models/WalletTransaction');
+const ReturnRequest = require('../../models/ReturnRequest');
 const { buildOrderSellerSettlement, buildOrderSellerCurrencyMoney } = require('../../services/orderMoneyService');
 const { cancelBuyerOrder, chooseCancellationSellers } = require('../../services/buyerCancellationService');
 const { enqueueNotificationEvent } = require('../../services/notificationOutboxService');
@@ -16,21 +17,22 @@ beforeAll(async () => { replica = await MongoMemoryReplSet.create({ replSet: { c
   await Promise.all([Order, Product, Cancellation, Payment, Wallet, WalletTransaction, require('../../models/SellerSettlementLock')].map(model => model.init())); }, 60000);
 afterAll(async () => { await mongoose.disconnect(); if (replica) await replica.stop(); }, 60000);
 afterEach(async () => { await Promise.all(Object.values(mongoose.models).map(model => model.deleteMany({}))); jest.clearAllMocks(); });
-async function fixture(method = 'wallet', statusB = 'confirmed', fees = false) {
+async function fixture(method = 'wallet', statusB = 'confirmed', fees = false, { currency = 'USD', prices = [10, 20], shipping = 2 } = {}) {
   const buyer = new mongoose.Types.ObjectId(), sellers = [new mongoose.Types.ObjectId(), new mongoose.Types.ObjectId()];
   const products = await Product.create(sellers.map((seller, index) => ({ seller, name: `Cup ${index}`, description: 'Reusable cup',
-    price: index ? 20 : 10, currency: 'USD', priceCurrency: 'USD', stock: 4, totalSales: 1,
+    price: prices[index], currency, priceCurrency: currency, stock: 4, totalSales: 1,
     category: 'Home', brand: 'Test', image: 'https://example.com/cup.png' })));
-  const raw = { user: buyer, currency: 'USD', orderId: `ORD-QA-${new mongoose.Types.ObjectId()}`,
+  const subtotal = prices.reduce((sum, value) => sum + value, 0);
+  const raw = { user: buyer, currency, orderId: `ORD-QA-${new mongoose.Types.ObjectId()}`,
     orderItems: products.map((product, index) => ({ productId: product._id, seller: product.seller, name: product.name,
-      price: index ? 20 : 10, lineSubtotal: index ? 20 : 10, sourcePrice: index ? 20 : 10,
-      sourceLineSubtotal: index ? 20 : 10, sourceCurrency: 'USD', quantity: 1, returnPolicySnapshotVersion: 1,
+      price: prices[index], lineSubtotal: prices[index], sourcePrice: prices[index],
+      sourceLineSubtotal: prices[index], sourceCurrency: currency, quantity: 1, returnPolicySnapshotVersion: 1,
       returnPolicy: { returnsEnabled: false, returnDuration: 0, refundType: 'none' } })),
-    sellerPolicies: sellers.map((seller, index) => ({ seller, productCurrency: 'USD', storeName: `Store ${index}` })),
-    sellerShipping: sellers.map(seller => ({ seller, shippingMethod: { name: 'standard', price: 2, sourceCost: 2, sourceCurrency: 'USD', estimatedDays: 3 } })),
-    shippingMethod: { name: 'standard', price: 4, estimatedDays: 3 },
+    sellerPolicies: sellers.map((seller, index) => ({ seller, productCurrency: currency, storeName: `Store ${index}` })),
+    sellerShipping: sellers.map(seller => ({ seller, shippingMethod: { name: 'standard', price: shipping, sourceCost: shipping, sourceCurrency: currency, estimatedDays: 3 } })),
+    shippingMethod: { name: 'standard', price: shipping * sellers.length, estimatedDays: 3 },
     sellerFulfillment: sellers.map((seller, index) => ({ seller, status: index ? statusB : 'confirmed' })),
-    orderSummary: { subtotal: 30, shippingCost: 4, tax: 0, couponDiscount: 0, totalAmount: 34 },
+    orderSummary: { subtotal, shippingCost: shipping * sellers.length, tax: 0, couponDiscount: 0, totalAmount: subtotal + shipping * sellers.length },
     shippingInfo: { fullName: 'QA Buyer', email: 'qa@example.com', phone: '+923001234567', address: 'QA Street', city: 'Lahore', state: 'Punjab', postalCode: '54000', country: 'Pakistan' },
     paymentMethod: method, isPaid: method !== 'cash_on_delivery', inventoryCommitted: true, awaitingPayment: false, orderStatus: 'confirmed',
     exchangeRateSnapshot: { base: 'USD', rates: { USD: 1, PKR: 280, EUR: 0.9, GBP: 0.8 }, capturedAt: new Date(), source: 'test', fallback: false },
@@ -121,14 +123,22 @@ async function cardPayment(f) {
   if (existing) return existing;
   return Payment.create({ _id: f.order.safepayPaymentId, user: f.buyer, order: f.order._id, environment: 'sandbox', purpose: 'order',
     reference: `order:${f.order._id}`, requestKey: 'qa-cancellation-key', fingerprint: 'a'.repeat(64),
-    amountMinor: 3400, currency: 'USD', tracker: `track_${new mongoose.Types.ObjectId()}`, status: 'paid',
-    capturedMinor: 3400, appliedAt: new Date(), paidAt: new Date() });
+    amountMinor: Math.round(f.order.orderSummary.totalAmount * 100), currency: f.order.currency, tracker: `track_${new mongoose.Types.ObjectId()}`, status: 'paid',
+    capturedMinor: Math.round(f.order.orderSummary.totalAmount * 100), appliedAt: new Date(), paidAt: new Date() });
 }
 function trackerRefund(payment, amount = 1200) {
-  return { token: payment.tracker, state: amount === 3400 ? 'TRACKER_REFUNDED' : 'TRACKER_PARTIAL_REFUND',
-    charge: { token: 'charge_qa', tracker: payment.tracker, amount: { currency: 'USD', amount: 3400 },
-      capture: { totals: { currency: 'USD', amount: 3400 } }, balance: { currency: 'USD', amount: 3400 - amount },
-      cybersource_refunds: [{ token: 'refund_qa-cancellation', tracker: payment.tracker, totals: { currency: 'USD', amount }, created_at: { seconds: Math.floor(Date.now() / 1000) } }] } };
+  return { token: payment.tracker, state: amount === payment.amountMinor ? 'TRACKER_REFUNDED' : 'TRACKER_PARTIAL_REFUND',
+    charge: { token: 'charge_qa', tracker: payment.tracker, amount: { currency: payment.currency, amount: payment.amountMinor },
+      capture: { totals: { currency: payment.currency, amount: payment.amountMinor } }, balance: { currency: payment.currency, amount: payment.amountMinor - amount },
+      cybersource_refunds: [{ token: 'refund_qa-cancellation', tracker: payment.tracker, totals: { currency: payment.currency, amount }, created_at: { seconds: Math.floor(Date.now() / 1000) } }] } };
+}
+async function reconcileProviderRefund(payment, amount) {
+  await mongoose.connection.transaction(async session => {
+    const current = await Payment.findById(payment._id).session(session);
+    const result = await require('../../services/safepayRefundService').reconcileOrderRefund(current, trackerRefund(current, amount), session);
+    current.refundedMinor = result.refundedMinor; current.status = result.status; current.riskPending = !result.resolved;
+    await current.save({ session });
+  });
 }
 test('a scoped Safepay refund cannot debit the shipped seller', async () => {
   const f = await fixture('safepay', 'shipped'), payment = await cardPayment(f);
@@ -209,6 +219,63 @@ test('new card-to-Wallet cancellation credits FULL principal exactly once and ca
   expect(await Cancellation.countDocuments()).toBe(1);
   expect(await WalletTransaction.countDocuments()).toBe(1);
 });
+
+test.each([false, true])('an unowned partial card refund blocks preview, stale cancellation and held returns without repricing (fees=%s)', async fees => {
+  const f = await fixture('safepay', 'confirmed', fees);
+  const args = { orderId: f.order._id, buyerId: f.buyer, sellerIds: [String(f.sellers[0])] };
+  const { previewBuyerCancellation } = require('../../services/buyerCancellationService');
+  const quote = await previewBuyerCancellation(args);
+  await reconcileProviderRefund(await cardPayment(f), 680);
+  expect(await require('../../models/SellerBalanceTransaction').countDocuments({ type: 'reversal' })).toBe(2);
+  expect((await Payment.findById(f.order.safepayPaymentId))).toMatchObject({ refundedMinor: 680, status: 'paid', riskPending: false });
+  const review = { code: 'RETURN_EXTERNAL_FUNDING_REFUND_REVIEW', statusCode: 409, message: expect.stringContaining('contact support') };
+  await expect(previewBuyerCancellation(args)).rejects.toMatchObject(review);
+  await expect(cancelBuyerOrder({ ...args, refundDestination: 'wallet', quoteId: quote.quoteId })).rejects.toMatchObject(review);
+  await expect(cancelBuyerOrder({ ...args, refundDestination: 'original_card', quoteId: quote.quoteId, acceptDeduction: true })).rejects.toMatchObject(review);
+  expect(await Cancellation.countDocuments()).toBe(0);
+  expect((await Order.findById(f.order._id)).sellerFulfillment.every(row => row.status === 'confirmed')).toBe(true);
+  expect((await Product.findById(f.products[0]._id)).stock).toBe(4);
+  await Order.updateOne({ _id: f.order._id }, { $set: { orderStatus: 'delivered', isDelivered: true, deliveredAt: new Date(),
+    'sellerFulfillment.0.status': 'delivered', 'sellerFulfillment.0.deliveredAt': new Date() } });
+  const request = await ReturnRequest.create({ returnNumber: `RET-EXTERNAL-${new mongoose.Types.ObjectId()}`,
+    order: f.order._id, orderId: f.order.orderId, buyer: f.buyer, seller: f.sellers[0], currency: 'USD',
+    items: [{ orderItemId: f.order.orderItems[0]._id, productId: f.products[0]._id, name: 'Cup 0', quantity: 1,
+      purchasedQuantity: 1, unitPrice: 10, lineSubtotal: 10 }], reasonCategory: 'defective', reasonDetails: 'Defective cup',
+    status: 'under_review', statusHistory: [{ status: 'under_review', actorRole: 'seller' }],
+    eligibilityDeadline: new Date(Date.now() + 86400000), policySnapshot: { returnsEnabled: true, returnDuration: 7, refundType: 'full_refund' },
+    refund: { itemSubtotal: 10, taxAmount: 0, shippingAmount: 0, discountAmount: 0, totalAmount: 10 } });
+  await expect(require('../../services/returnService').settleFromSellerBalance({ returnRequestId: request._id, sellerId: f.sellers[0] }))
+    .rejects.toMatchObject(review);
+  expect((await ReturnRequest.findById(request._id)).status).toBe('under_review');
+  expect(await require('../../models/SellerBalanceTransaction').countDocuments({ type: 'return_refund' })).toBe(0);
+  expect(await WalletTransaction.countDocuments()).toBe(0);
+  expect(await Wallet.countDocuments()).toBe(0);
+  expect((await Order.findById(f.order._id)).onlineFeeSnapshot).toEqual(f.order.onlineFeeSnapshot);
+});
+
+test.each([false, true])('a verified seller card cancellation still permits another seller full Wallet refund (fees=%s)', async fees => {
+  const f = await fixture('safepay', 'confirmed', fees);
+  const { previewBuyerCancellation } = require('../../services/buyerCancellationService');
+  const first = { orderId: f.order._id, buyerId: f.buyer, sellerIds: [String(f.sellers[0])] };
+  const quote = await previewBuyerCancellation(first);
+  await cancelBuyerOrder({ ...first, refundDestination: 'original_card', quoteId: quote.quoteId, acceptDeduction: true });
+  const row = await Cancellation.findOne({ seller: f.sellers[0] });
+  const amount = row.refundAmountMinor ?? row.amountMinor;
+  await Cancellation.updateOne({ _id: row._id }, { $set: { refundStatus: 'processing', submitStartedAt: new Date(),
+    refundBaselineMinor: 0, refundTargetMinor: amount } });
+  await reconcileProviderRefund(await cardPayment(f), amount);
+  const second = { orderId: f.order._id, buyerId: f.buyer, sellerIds: [String(f.sellers[1])] };
+  const secondQuote = await previewBuyerCancellation(second);
+  expect(secondQuote.options[0]).toMatchObject({ destination: 'wallet', amountMinor: 2200, deductionMinor: 0, available: true });
+  await cancelBuyerOrder({ ...second, refundDestination: 'wallet', quoteId: secondQuote.quoteId });
+  await cancelBuyerOrder({ ...second, refundDestination: 'wallet', quoteId: secondQuote.quoteId });
+  expect((await Wallet.findOne({ user: f.buyer })).balances.USD).toBe(22);
+  expect(await WalletTransaction.countDocuments()).toBe(1);
+  expect(await Cancellation.countDocuments()).toBe(2);
+  expect((await Payment.findById(f.order.safepayPaymentId))).toMatchObject({ refundedMinor: amount, walletRefundMinor: 2200,
+    riskPending: false, status: 'paid' });
+  expect(await require('../../models/SellerBalanceTransaction').countDocuments()).toBe(0);
+});
 test('Wallet-paid cancellation has ONE full refund option and refuses a card destination', async () => {
   const f=await fixture('wallet','confirmed',true), args={orderId:f.order._id,buyerId:f.buyer};
   const quote=await require('../../services/buyerCancellationService').previewBuyerCancellation(args);
@@ -226,6 +293,50 @@ test('full card cancellation conserves gross = actual refund + deduction across 
   expect(rows.reduce((n,r)=>n+r.refundAmountMinor,0)).toBe(3178);
   expect(rows.reduce((n,r)=>n+r.deductionMinor,0)).toBe(222);
   expect(rows.reduce((n,r)=>n+r.amountMinor,0)).toBe(3400);
+});
+
+test.each(['new', 'queued'])('a %s zero-net seller finishes locally while the positive card refund completes exactly once', async mode => {
+  const f = await fixture('safepay', 'confirmed', true, { currency: 'PKR', prices: [1, 31], shipping: 0 });
+  const args = { orderId: f.order._id, buyerId: f.buyer };
+  const quote = await require('../../services/buyerCancellationService').previewBuyerCancellation(args);
+  expect(quote.options[1]).toMatchObject({ amountMinor: 2, deductionMinor: 3198, available: true });
+  await cancelBuyerOrder({ ...args, refundDestination: 'original_card', quoteId: quote.quoteId, acceptDeduction: true });
+  const zero = await Cancellation.findOne({ seller: f.sellers[0] });
+  expect(zero).toMatchObject({ amountMinor: 100, refundAmountMinor: 0, deductionMinor: 100,
+    refundDestination: 'original_card', refundStatus: 'not_required', submitStartedAt: null });
+  expect(enqueueNotificationEvent.mock.calls.filter(([event]) => String(event.recipient.user) === String(f.sellers[0]))
+    .every(([event]) => event.templates.inapp.body.includes('No payment refund is required.'))).toBe(true);
+  if (mode === 'queued') {
+    // Reproduce a zero-net row already queued by the earlier implementation.
+    await Cancellation.updateOne({ _id: zero._id }, { $set: { refundStatus: 'pending' } });
+    await Order.updateOne({ _id: f.order._id }, { $set: { 'sellerFulfillment.0.cancellation.refundStatus': 'pending' } });
+  }
+  const payment = await Payment.findById(f.order.safepayPaymentId);
+  const config = jest.spyOn(require('../../config/safepay'), 'readSafepayConfig').mockReturnValue({ environment: 'sandbox' });
+  const refund = jest.fn(async () => {});
+  const client = { getTracker: jest.fn()
+    .mockResolvedValueOnce({ token: payment.tracker, state: 'TRACKER_ENDED', charge: { cybersource_refunds: [] } })
+    .mockResolvedValue(trackerRefund(payment, 2)), refundPaymentAmount: refund };
+  const factory = jest.spyOn(require('../../services/safepayClient'), 'createSafepayClient').mockReturnValue(client);
+  try {
+    const { processCancellationRefund } = require('../../services/cancellationRefundService');
+    await processCancellationRefund(payment._id);
+    await processCancellationRefund(payment._id);
+    await processCancellationRefund(payment._id);
+    await cancelBuyerOrder({ ...args, refundDestination: 'original_card', quoteId: quote.quoteId, acceptDeduction: true });
+    expect(refund).toHaveBeenCalledTimes(1);
+    expect(refund).toHaveBeenCalledWith(payment.tracker, expect.anything(), 2);
+    expect(await Cancellation.countDocuments()).toBe(2);
+    expect(await Cancellation.countDocuments({ refundStatus: 'manual_review' })).toBe(0);
+    expect((await Cancellation.findById(zero._id)).refundStatus).toBe('not_required');
+    expect((await Cancellation.findOne({ seller: f.sellers[1] })).refundStatus).toBe('refunded');
+    expect((await Order.findById(f.order._id)).sellerFulfillment[0].cancellation.refundStatus).toBe('not_required');
+    expect((await Payment.findById(payment._id))).toMatchObject({ refundedMinor: 2, walletRefundMinor: 0, riskPending: false });
+    expect(await WalletTransaction.countDocuments()).toBe(0);
+    expect(await Wallet.countDocuments()).toBe(0);
+    expect((await Product.findById(f.products[0]._id)).stock).toBe(5);
+    expect((await Product.findById(f.products[1]._id)).stock).toBe(5);
+  } finally { config.mockRestore(); factory.mockRestore(); }
 });
 test('a ship operation after preview refuses cancellation without any refund or inventory mutation', async () => {
   const f=await fixture('safepay','confirmed',true),args={orderId:f.order._id,buyerId:f.buyer,sellerIds:[String(f.sellers[0])]};

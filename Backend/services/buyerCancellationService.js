@@ -55,7 +55,7 @@ async function notifyCancellation(row, order, { completed = false, session } = {
     // The shared money renderer already includes non-USD currency codes.
     const refundAmount = `{{money.refund}}${row.currency === 'USD' ? ' USD' : ''}`;
     const deduction = row.deductionMinor > 0 ? ' Processing fee: {{money.deduction}}.' : '';
-    const refund = (row.refundDestination === 'none' ? 'No payment refund is required.'
+    const refund = (row.refundDestination === 'none' || row.refundStatus === 'not_required' ? 'No payment refund is required.'
       : completed ? `${refundAmount} was refunded to ${row.refundDestination === 'wallet' ? 'the buyer’s Rozare Wallet' : 'the original card'}.`
         : `An automatic refund of ${refundAmount} to the original card is being verified.`) + deduction;
     const message = `Order ${order.orderId} · ${name}\n${description}\n${completed ? '' : 'The buyer cancelled these items before shipment. '}${refund}${seller ? ' No seller action is required. Other seller portions are unchanged.' : ''}`;
@@ -110,6 +110,7 @@ function buildCancellationQuote(order, sellerIds) {
 async function previewBuyerCancellation({ orderId, buyerId, sellerIds }) {
   const order = await Order.findOne({ _id: orderId, user: buyerId });
   if (!order) throw fail('Order not found or it does not belong to you.', 'ORDER_NOT_FOUND', 404);
+  await assertWalletOrderFundingReturnable({ orderId: order._id });
   await ensureOrderSellerFulfillment(order);
   return buildCancellationQuote(order, sellerIds);
 }
@@ -169,7 +170,7 @@ async function cancelBuyerOrder({ orderId, buyerId, sellerIds, refundDestination
         payment: order.safepayPaymentId || null, environment: order.safepayEnvironment || null, currency: order.currency, amountMinor: grossMinor,
         ...(quote.policyVersion || destination === 'wallet' && order.paymentMethod === 'safepay' ? { policyVersion: 1, refundAmountMinor: refundMinor, deductionMinor, quoteId: quote.quoteId } : {}),
         sellerCurrency: nativeMoney.currency, sellerAmountMinor: toMinorUnits(nativeMoney.summary.totalAmount),
-        refundDestination: destination, refundStatus: destination === 'none' ? 'not_required' : destination === 'wallet' ? 'refunded' : 'pending',
+        refundDestination: destination, refundStatus: refundMinor === 0 ? 'not_required' : destination === 'wallet' ? 'refunded' : 'pending',
         requestedAt: new Date(), refundedAt: destination === 'wallet' ? new Date() : null }], { session });
       if (order.inventoryCommitted) for (const line of aggregateOrderInventoryLines(items)) {
         await Product.updateOne({ _id: line.productId }, [{ $set: {
