@@ -882,6 +882,11 @@ const emptyRevenueSummary = () => ({
     totalReservedOrWithdrawn: 0,
     returnRefundDebits: 0,
     paymentReversalDebits: 0,
+    onlineFeeDeductions: 0,
+    pendingOnlineFeeDeductions: 0,
+    onlineGrossEarnings: 0,
+    processingFeeAndTax: 0,
+    pendingOnlineNetBalance: 0,
     deliveredStripeOrders: 0,
     pendingStripeOrders: 0,
     deliveredSafepayOrders: 0,
@@ -916,6 +921,11 @@ const REVENUE_MONEY_FIELDS = [
     'totalReservedOrWithdrawn',
     'returnRefundDebits',
     'paymentReversalDebits',
+    'onlineFeeDeductions',
+    'pendingOnlineFeeDeductions',
+    'onlineGrossEarnings',
+    'processingFeeAndTax',
+    'pendingOnlineNetBalance',
 ];
 
 const emptyRevenueBuckets = () => Object.fromEntries(

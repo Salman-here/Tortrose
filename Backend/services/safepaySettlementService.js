@@ -158,6 +158,19 @@ async function quarantineSafepayPayment(payment, tracker, session, { skipRefundR
     }
   }
   const orders = orderIds.length ? await Order.find({ _id: { $in: orderIds } }).session(session) : [];
+  // A refunded card-funded Wallet credit can be spent on another seller. A
+  // dispute/reversal of its original charge must also fence those new payouts.
+  const refundLots = await WalletTransaction.find({ safepayPaymentId: payment._id, type: 'return_refund',
+    status: 'completed', 'metadata.cardRefundFunding': true }).select('_id user').session(session);
+  if (refundLots.length) {
+    await Wallet.updateMany({ user: { $in: refundLots.map(row => row.user) }, status: 'active' },
+      { $set: { status: 'locked', lockSource: 'system', lockedReason: 'A card-funded Wallet refund needs reconciliation. Please contact support.' } }, { session });
+    const spent = await WalletTransaction.find({ type: 'order_payment', status: 'completed',
+      'metadata.fundingProvenance.sourceTransactionId': { $in: refundLots.map(row => id(row)) } }).select('referenceId').session(session);
+    const related = await Order.find({ _id: { $in: spent.map(row => row.referenceId) } }).session(session);
+    const seen = new Set(orders.map(row => id(row)));
+    for (const row of related) if (!seen.has(id(row))) { orders.push(row); seen.add(id(row)); }
+  }
   const sellers = [...new Set([...orders.flatMap(order => (order.sellerSettlement || []).map(row => id(row.seller))), returnSeller].filter(Boolean))].sort();
   for (const seller of sellers) {
     // Share the withdrawal transaction fence so a payout cannot race an

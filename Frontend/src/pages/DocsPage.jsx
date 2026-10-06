@@ -770,7 +770,8 @@ function DocsPage() {
                 <ul>
                   <li><strong>Via AI</strong> — "Cancel my order ORD-1234".</li>
                   <li><strong>Via dashboard</strong> — Open the order and click "Cancel" while still cancellable.</li>
-                  <li>Cancel before shipment, including paid orders. Cancel each unshipped store portion independently if another store already shipped. COD moves no money; Wallet payments refund to Wallet and Safepay card payments refund to the original card after verification. Seller approval is not required. See the <a href="https://rozare.com/cancellation-policy">Cancellation Policy</a>.</li>
+                  <li>Cancel before shipment, including paid orders. Cancel each unshipped store portion independently if another store already shipped. COD moves no money and Wallet-paid orders refund fully to Wallet. Card-paid orders offer a full Wallet refund or an original-card refund less the displayed processing fee. New orders use 6.2% + PKR30 once per checkout, shared proportionally across sellers. Seller approval is not required. See the <a href="https://rozare.com/cancellation-policy">Cancellation Policy</a>.</li>
+                  <li>Seller online earnings from card and Wallet orders use the fixed processing fee + tax rule once per checkout. Payments separates gross earnings, combined deductions, pending net funds and net withdrawable balance. Sales analytics remain gross; withdrawing does not charge the fee again.</li>
                 </ul>
 
                 <h3>Seller-specific returns</h3>

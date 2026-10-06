@@ -2040,8 +2040,9 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
         try {
           if (order.awaitingPayment !== true && ['wallet', 'safepay', 'cash_on_delivery'].includes(order.paymentMethod)) {
             const cancelled = await require('./buyerCancellationService').cancelBuyerOrder({ orderId: order._id, buyerId: userId,
-              ...(args.sellerIds ? { sellerIds: args.sellerIds } : {}) });
-            return { success: true, message: `Selected unshipped items in order #${order.orderId} were cancelled. Paid cancellations are refunded automatically to the original payment destination.`,
+              ...(args.sellerIds ? { sellerIds: args.sellerIds } : {}), refundDestination: args.refundDestination,
+              quoteId: args.quoteId, acceptDeduction: args.acceptDeduction });
+            return { success: true, message: `Selected unshipped items in order #${order.orderId} were cancelled. Any refund uses the destination and exact amount shown in the cancellation details.`,
               orderId: String(cancelled._id), refundStatus: cancelled.sellerFulfillment.map(row => ({ seller: String(row.seller), status: row.status, cancellation: row.cancellation })) };
           }
           cancellation = await cancelOrderSafely({
@@ -2059,7 +2060,8 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
             at: cancelledAt,
           });
         } catch (error) {
-          return { success: false, error: error.message, code: error.code };
+          return { success: false, error: error.message, code: error.code,
+            ...(error.quote ? { requiresConfirmation: true, cancellationQuote: error.quote } : {}) };
         }
         if (cancellation.status === 'payment_succeeded') {
           return {
@@ -3297,6 +3299,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
 
         newOrder.sellerCurrencyMoneyVersion = SELLER_CURRENCY_MONEY_VERSION;
         newOrder.sellerCurrencyMoney = buildOrderSellerCurrencyMoney(newOrder);
+        newOrder.onlineFeeSnapshot = require('./onlineOrderFeeService').buildOnlineOrderFee(newOrder);
 
         newOrder.confirmation = {
           ...generateConfirmationToken(),
@@ -5074,7 +5077,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
               adminNote: w.adminNote || '',
             })),
           },
-          message: `Native online balances: ${(paymentSummary.balances || []).map(balance => `${balance.currency} ${balance.withdrawableBalance.toFixed(2)} available, ${balance.onlinePendingRevenue.toFixed(2)} pending; minimum ${balance.minimumWithdrawal}`).join('; ')}. Each balance is withdrawn in the same currency via an admin-reviewed manual bank transfer, without conversion. Historical sales reporting in ${reportingCurrency}: delivered COD revenue ${await formatMoney(codDeliveredRevenue, reportingCurrency, { sourceCurrency: reportingCurrency })}, total delivered revenue ${await formatMoney(totalDeliveredRevenue, reportingCurrency, { sourceCurrency: reportingCurrency })}, estimated revenue ${await formatMoney(estimatedRevenue, reportingCurrency, { sourceCurrency: reportingCurrency })}.`,
+          message: `Native online balances: ${(paymentSummary.balances || []).map(balance => `${balance.currency} ${(balance.onlineGrossEarnings ?? balance.onlineDeliveredRevenue ?? 0).toFixed(2)} gross online earnings, ${(balance.processingFeeAndTax ?? 0).toFixed(2)} processing fee + tax, ${balance.withdrawableBalance.toFixed(2)} available, ${(balance.pendingOnlineNetBalance ?? balance.onlinePendingRevenue).toFixed(2)} net pending; minimum ${balance.minimumWithdrawal}`).join('; ')}. The fixed 6.2% + PKR30 deduction applies once per new card or Wallet checkout; multiple sellers share its fixed fee. Withdrawals do not charge it again. Each balance is withdrawn in the same currency via an admin-reviewed manual bank transfer, without conversion. Historical gross sales reporting in ${reportingCurrency}: delivered COD revenue ${await formatMoney(codDeliveredRevenue, reportingCurrency, { sourceCurrency: reportingCurrency })}, total delivered revenue ${await formatMoney(totalDeliveredRevenue, reportingCurrency, { sourceCurrency: reportingCurrency })}, estimated revenue ${await formatMoney(estimatedRevenue, reportingCurrency, { sourceCurrency: reportingCurrency })}.`,
         };
       }
 

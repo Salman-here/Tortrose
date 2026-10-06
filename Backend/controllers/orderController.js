@@ -1016,6 +1016,8 @@ const buildSellerOrderView = (order, sellerProductIds, sellerId) => {
     );
 
     const obj = order.toObject ? order.toObject() : { ...order };
+    // The fee snapshot contains ALL seller allocations and stays server-only.
+    delete obj.onlineFeeSnapshot;
     const ownedProductIds = new Set(sellerOrderItems.map(item => toId(item.productId)));
     const ownsWholeOrder = sellerOrderItems.length > 0 && sellerOrderItems.length === (order.orderItems || []).length;
     const visibleCoupons = (obj.appliedCoupons || []).filter(coupon => {
@@ -1627,6 +1629,7 @@ exports.placeOrder = async (req, res) => {
         });
         newOrder.sellerCurrencyMoneyVersion = SELLER_CURRENCY_MONEY_VERSION;
         newOrder.sellerCurrencyMoney = buildOrderSellerCurrencyMoney(newOrder);
+        newOrder.onlineFeeSnapshot = require('../services/onlineOrderFeeService').buildOnlineOrderFee(newOrder);
         // Enforce Stripe's documented eight-digit charge ceiling before this
         // order, coupon reservation, inventory reservation, Stripe customer,
         // or payment object can be created. Zero remains valid here because it
@@ -3274,6 +3277,17 @@ exports.trackGuestOrder = async (req, res) => {
 };
 
 
+exports.previewCancellation = async (req, res) => {
+    try {
+        const quote = await require('../services/buyerCancellationService').previewBuyerCancellation({
+            orderId: req.params.id, buyerId: req.user.id, sellerIds: req.body?.sellerIds,
+        });
+        return res.json({ success: true, quote });
+    } catch (error) {
+        return res.status(error.statusCode || 500).json({ msg: error.message, ...(error.code ? { code: error.code } : {}) });
+    }
+};
+
 exports.cancelOrder = async (req, res) => {
     const { id: _id } = req.params
     const { role, id: userId } = req.user
@@ -3290,7 +3304,8 @@ exports.cancelOrder = async (req, res) => {
 
         if (role !== 'admin' && order.awaitingPayment !== true && ['wallet', 'safepay', 'cash_on_delivery'].includes(order.paymentMethod)) {
             const cancelled = await require('../services/buyerCancellationService').cancelBuyerOrder({ orderId: order._id,
-                buyerId: userId, sellerIds: req.body?.sellerIds });
+                buyerId: userId, sellerIds: req.body?.sellerIds, refundDestination: req.body?.refundDestination,
+                quoteId: req.body?.quoteId, acceptDeduction: req.body?.acceptDeduction });
             return res.status(200).json({ msg: 'Selected unshipped items cancelled. Any paid amount is refunded automatically.',
                 order: buildBuyerOrderView(cancelled) });
         }

@@ -373,10 +373,14 @@ const userTools = [
     type: 'function',
     function: {
       name: 'cancel_order',
-      description: "Cancel a pending order (user's own only).",
+      description: "Cancel the buyer's own unshipped order or store portions. For card-paid orders call first without refundDestination to obtain a cancellationQuote, explain full Wallet vs net original-card refund and its processing fee, and ask the buyer to choose. Submit quoteId and acceptDeduction=true only after explicit agreement to the quoted card deduction. Wallet-paid cancellations refund fully to Wallet; COD needs no refund. Never invent a quote or refund amount.",
       parameters: {
         type: 'object',
-        properties: { orderId: { type: 'string', description: 'Public ORD- number or internal order ID' } },
+        properties: { orderId: { type: 'string', description: 'Public ORD- number or internal order ID' },
+          sellerIds: { type: 'array', items: { type: 'string' }, description: 'Optional seller portions resolved from order details, never ask the buyer to remember internal IDs' },
+          refundDestination: { type: 'string', enum: ['wallet', 'original_card', 'none'] },
+          quoteId: { type: 'string', description: 'Exact quoteId returned by the preceding cancellationQuote' },
+          acceptDeduction: { type: 'boolean', description: 'True only after the buyer explicitly accepts the displayed processing fee' } },
         required: ['orderId'],
       },
     },

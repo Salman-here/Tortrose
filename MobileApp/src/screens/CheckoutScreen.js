@@ -1446,6 +1446,7 @@ export default function CheckoutScreen({ navigation }) {
           </GlassPanel>
           <GlassPanel variant="card" style={styles.section}>
             <Text style={styles.summaryLabel}>Before placing your order, review our policies. Standard approved product returns are credited to your Rozare Wallet after funding is verified, not automatically to your original card. Review each item’s return eligibility before purchase.</Text>
+            <Text style={[styles.summaryLabel, { marginTop: 10 }]}>For a buyer-requested cancellation before shipment, card-paid orders offer a full Wallet refund or an original-card refund less a processing fee of 6.2% + PKR30 per checkout. Partial cancellations use their allocated share. Wallet-paid cancellations refund fully to Wallet.</Text>
             {[
               ['Terms and Conditions', 'TermsOfService'], ['Shipping and Delivery', 'ShippingPolicy'],
               ['Return and Refund', 'RefundPolicy'], ['Cancellation', 'CancellationPolicy'], ['Privacy Policy', 'PrivacyPolicy'],

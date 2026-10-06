@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import axios from "axios";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import { toast } from "react-toastify";
 import { ArrowLeft, Package, XCircle, Clock, RefreshCw, Truck, CheckCircle, CreditCard } from "lucide-react";
 import { Link, useParams } from "react-router-dom";
@@ -19,6 +19,7 @@ import {
 } from "../../utils/orderItems";
 import BuyerReturnsPanel from "./BuyerReturnsPanel";
 import BuyerSellerFulfillmentGroups from "../order/BuyerSellerFulfillmentGroups";
+import BuyerCancellationDialog from '../order/BuyerCancellationDialog';
 import { getConfirmationSourceLabel } from "../../utils/whatsapp";
 import { getBuyerConfirmationMessage, getCancellationPaymentMessage, getConfirmationViaLabel } from "../../utils/orderConfirmationPresentation";
 import { getSafetyRefundPresentation } from '../../utils/safepaySafetyRefundPresentation';
@@ -93,23 +94,6 @@ const OrderDetail = () => {
         if (!refundPending || cancelling) return;
         return startCancellationRefundRefresh(() => fetchOrderDetail({ silent: true }), () => document.visibilityState !== 'hidden');
     }, [refundPending, cancelling, fetchOrderDetail]);
-
-    const handleCancelOrder = async () => {
-        if (cancelling) return;
-        setCancelling(true);
-        fetchSequence.current += 1;
-        try {
-            const token = getAuthToken();
-            const res = await axios.patch(`${import.meta.env.VITE_API_URL}api/order/cancel/${id}`, cancelSellerIds ? { sellerIds: cancelSellerIds } : {}, { headers: { Authorization: `Bearer ${token}` } });
-            // Use the response order directly for immediate UI update
-            if (res.data?.order) {
-                setOrder(res.data.order);
-            } else {
-                fetchOrderDetail();
-            }
-        } catch (error) { toast.error(error.response?.data?.msg || "Server error while cancelling order"); await fetchOrderDetail(); }
-        finally { setShowCancelConfirm(false); setCancelling(false); }
-    };
 
     if (!order) return <div className="min-h-screen flex justify-center items-center"><Loader /></div>;
 
@@ -451,31 +435,10 @@ const OrderDetail = () => {
 
             {order.awaitingPayment !== true && <BuyerReturnsPanel order={order} formatMoney={orderMoney} />}
 
-            {/* Cancel Confirmation Modal */}
-            <AnimatePresence>
-                {showCancelConfirm && (
-                    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                        className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50" onClick={() => setShowCancelConfirm(false)}>
-                        <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
-                            className="glass-panel p-6 max-w-md w-full" onClick={(e) => e.stopPropagation()}>
-                            <h3 className="text-lg font-semibold mb-2" style={{ color: 'hsl(var(--foreground))' }}>Cancel Order</h3>
-                            <p className="text-sm mb-6" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                              {cancelSellerIds ? 'Cancel only the selected store’s unshipped items? Other stores are unchanged.' : 'Cancel all unshipped items in this order?'}
-                              {' '}{order.paymentMethod === 'wallet' ? 'The cancelled amount returns to your Rozare Wallet automatically.' : order.paymentMethod === 'safepay' ? 'An automatic refund to your original card will be verified.' : 'No payment refund is needed for COD.'}
-                            </p>
-                            <div className="flex justify-end gap-3">
-                                <motion.button whileTap={{ scale: 0.97 }} onClick={() => setShowCancelConfirm(false)}
-                                    className="px-4 py-2 rounded-xl font-semibold text-sm glass-button">Keep Order</motion.button>
-                                <motion.button whileTap={{ scale: 0.97 }} onClick={handleCancelOrder} disabled={cancelling}
-                                    className="px-4 py-2 rounded-xl font-semibold text-sm text-white"
-                                    style={{ background: 'linear-gradient(135deg, hsl(0, 72%, 55%), hsl(0, 60%, 45%))', boxShadow: '0 0 15px -4px hsl(0, 72%, 55%, 0.3)' }}>
-                                    {cancelling ? 'Cancelling…' : cancelSellerIds ? 'Cancel store items' : 'Cancel Order'}
-                                </motion.button>
-                            </div>
-                        </motion.div>
-                    </motion.div>
-                )}
-            </AnimatePresence>
+            {showCancelConfirm && <BuyerCancellationDialog order={order} sellerIds={cancelSellerIds || undefined}
+              formatMoney={orderMoney} onClose={() => setShowCancelConfirm(false)} onBusyChange={value => {
+                setCancelling(value); if (value) fetchSequence.current += 1;
+              }} onCancelled={next => setOrder(next)} />}
         </motion.div>
     );
 };

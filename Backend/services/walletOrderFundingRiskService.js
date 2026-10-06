@@ -3,6 +3,7 @@
 const SellerBalanceTransaction = require('../models/SellerBalanceTransaction');
 const WalletTransaction = require('../models/WalletTransaction');
 const SafepayPayment = require('../models/SafepayPayment');
+const Order = require('../models/Order');
 const { toMinorUnits } = require('./moneyMath');
 
 const withSession = (query, session) => (session ? query.session(session) : query);
@@ -158,6 +159,30 @@ const attachReturnedWalletFundingProvenance = async ({
     }
   }
   if (!originalLots.size) {
+    // A direct Safepay-to-Wallet refund becomes a tracked funding lot. This is
+    // PRINCIPAL provenance for reversals, not a fee carried to future orders.
+    const original = await withSession(Order.findOne({ _id: normalizedOrder, user: walletTransaction.user,
+      paymentMethod: 'safepay', isPaid: true }), session);
+    if (original && (original.safepayPaymentId || original.onlineFeeSnapshot)) {
+      const payment = await withSession(SafepayPayment.findOne({ _id: original.safepayPaymentId, order: original._id,
+        user: original.user, purpose: 'order', environment: original.safepayEnvironment, currency: normalizedCurrency,
+        appliedAt: { $ne: null }, status: 'paid', riskPending: false }), session);
+      if (!payment || payment.amountMinor !== toMinorUnits(original.orderSummary.totalAmount)
+        || !Number.isSafeInteger(payment.walletRefundMinor) || payment.walletRefundMinor < 0
+        || payment.walletRefundMinor + payment.refundedMinor + refundMinor > payment.amountMinor) {
+        throw provenanceError('The original card funding cannot cover this Wallet refund.', 'WALLET_CARD_REFUND_BINDING_INVALID');
+      }
+      const available = walletTransaction.metadata?.availableCreditedMinor;
+      if (!Number.isSafeInteger(available) || available < 0 || available > refundMinor) throw provenanceError('Invalid Wallet refund principal.');
+      const result = await SafepayPayment.updateOne({ _id: payment._id, status: 'paid', riskPending: false },
+        { $inc: { walletRefundMinor: refundMinor } }, { session });
+      if (result.modifiedCount !== 1) throw provenanceError('Card funding changed during the Wallet refund.');
+      walletTransaction.safepayPaymentId = payment._id;
+      walletTransaction.safepayEnvironment = payment.environment;
+      walletTransaction.safepayTrackerId = payment.tracker;
+      walletTransaction.metadata = { ...(walletTransaction.metadata || {}), cardRefundFunding: true,
+        sourceOrderId: normalizedOrder, fundingRemainingMinor: available, fundingOriginalAvailableMinor: available };
+    }
     walletTransaction.metadata = {
       ...(walletTransaction.metadata || {}),
       fundingProvenanceReturns: [],
@@ -262,7 +287,7 @@ const attachReturnedWalletFundingProvenance = async ({
     const source = await withSession(WalletTransaction.findOne({
       _id: movement.sourceTransactionId,
       user: walletTransaction.user,
-      type: 'top_up',
+      $or: [{ type: 'top_up' }, { type: 'return_refund', 'metadata.cardRefundFunding': true }],
       direction: 'credit',
       status: 'completed',
       currency: normalizedCurrency,

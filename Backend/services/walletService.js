@@ -399,7 +399,7 @@ const debitWalletInSession = async ({
   const topUpLots = await WalletTransaction.find({
     user: userId,
     wallet: wallet._id,
-    type: 'top_up',
+    $or: [{ type: 'top_up' }, { type: 'return_refund', 'metadata.cardRefundFunding': true }],
     direction: 'credit',
     status: 'completed',
     currency: normalizedCurrency,

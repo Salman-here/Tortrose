@@ -17,6 +17,7 @@ const { enqueueNotificationEvent } = require('./notificationOutboxService');
 const { snapshotMinorMoney } = require('./notificationMoneySnapshotService');
 const { tryOrderBuyerPhoneE164 } = require('./orderBuyerContactService');
 const { escapeHtml, formatItemOptionsText } = require('../utils/orderPresentation');
+const { getOnlineOrderFee } = require('./onlineOrderFeeService');
 const id = value => String(value?._id || value || '');
 const fail = (message, code = 'ORDER_CANCELLATION_CONFLICT', statusCode = 409) => Object.assign(new Error(message), { code, statusCode });
 const eligible = status => ['pending', 'confirmed', 'processing'].includes(status);
@@ -35,7 +36,8 @@ function chooseCancellationSellers(order, selection) {
 }
 function cancellationView(row) {
   return { reference: row._id, refundStatus: row.refundStatus, destination: row.refundDestination,
-    amountMinor: row.paymentMethod === 'cash_on_delivery' ? 0 : row.amountMinor, currency: row.currency,
+    amountMinor: row.paymentMethod === 'cash_on_delivery' ? 0 : (row.refundAmountMinor ?? row.amountMinor), currency: row.currency,
+    ...(row.policyVersion ? { policyVersion: row.policyVersion, grossAmountMinor: row.amountMinor, deductionMinor: row.deductionMinor } : {}),
     requestedAt: row.requestedAt, refundedAt: row.refundedAt };
 }
 
@@ -52,9 +54,10 @@ async function notifyCancellation(row, order, { completed = false, session } = {
     const title = completed ? 'Cancellation refund completed' : 'Order items cancelled';
     // The shared money renderer already includes non-USD currency codes.
     const refundAmount = `{{money.refund}}${row.currency === 'USD' ? ' USD' : ''}`;
-    const refund = row.refundDestination === 'none' ? 'No payment refund is required.'
+    const deduction = row.deductionMinor > 0 ? ' Processing fee: {{money.deduction}}.' : '';
+    const refund = (row.refundDestination === 'none' ? 'No payment refund is required.'
       : completed ? `${refundAmount} was refunded to ${row.refundDestination === 'wallet' ? 'the buyer’s Rozare Wallet' : 'the original card'}.`
-        : `An automatic refund of ${refundAmount} to the original card is being verified.`;
+        : `An automatic refund of ${refundAmount} to the original card is being verified.`) + deduction;
     const message = `Order ${order.orderId} · ${name}\n${description}\n${completed ? '' : 'The buyer cancelled these items before shipment. '}${refund}${seller ? ' No seller action is required. Other seller portions are unchanged.' : ''}`;
     // In-app/push previews have a smaller limit than email/WhatsApp. Keep the
     // refund sentence intact even when an order contains many product options.
@@ -69,15 +72,49 @@ async function notifyCancellation(row, order, { completed = false, session } = {
       occurredAt: completed ? row.refundedAt : row.requestedAt, financial: row.refundDestination !== 'none', recipient,
       channels: ['inapp', 'push', 'email', 'whatsapp'],
       templates: { inapp: { title, body }, push: { title, body }, email: { subject: title, text: message, html }, whatsapp: { message } },
-      money: row.refundDestination === 'none' ? [] : [snapshotMinorMoney({ key: 'refund', label: 'Cancellation refund', amountMinor: row.amountMinor,
-        currency: row.currency, sourceModel: 'OrderCancellation', sourceDocumentId: row._id, sourcePath: 'amountMinor' })],
+      money: row.refundDestination === 'none' ? [] : [snapshotMinorMoney({ key: 'refund', label: 'Cancellation refund', amountMinor: row.refundAmountMinor ?? row.amountMinor,
+        currency: row.currency, sourceModel: 'OrderCancellation', sourceDocumentId: row._id, sourcePath: row.refundAmountMinor === undefined ? 'amountMinor' : 'refundAmountMinor' }),
+        ...(row.deductionMinor > 0 ? [snapshotMinorMoney({ key: 'deduction', label: 'Processing fee', amountMinor: row.deductionMinor,
+          currency: row.currency, sourceModel: 'OrderCancellation', sourceDocumentId: row._id, sourcePath: 'deductionMinor' })] : [])],
       metadata: { category: 'order', channelId: seller ? 'seller' : 'orders', whatsappCategory: 'order_update', relatedOrder: order._id,
         linkTo: link,
         data: { type: 'order_status', orderId: id(order), sellerId: id(row.seller) } }, session });
   }
 }
 
-async function cancelBuyerOrder({ orderId, buyerId, sellerIds }) {
+function buildCancellationQuote(order, sellerIds) {
+  if (order.awaitingPayment || !['wallet', 'safepay', 'cash_on_delivery'].includes(order.paymentMethod)
+    || order.paymentMethod !== 'cash_on_delivery' && !order.isPaid) throw fail('Payment must be verified before cancellation.', 'ORDER_PAYMENT_STILL_PENDING');
+  const selected = chooseCancellationSellers(order, sellerIds);
+  const snapshot = getOnlineOrderFee(order);
+  const active = selected.filter(seller => order.sellerFulfillment.find(row => id(row.seller) === seller).status !== 'cancelled');
+  let grossMinor = 0, deductionMinor = 0;
+  for (const seller of active) {
+    grossMinor += toMinorUnits(sellerOrderSummaryForItems(order, seller, order.orderItems.filter(row => id(row.seller) === seller)).totalAmount);
+    deductionMinor += snapshot?.sellers.find(row => row.seller === seller)?.buyerFeeMinor || 0;
+  }
+  if (![grossMinor, deductionMinor].every(Number.isSafeInteger) || deductionMinor > grossMinor) throw fail('Cancellation money cannot be verified.');
+  const options = grossMinor === 0 ? [{ destination: 'none', label: 'No refund required', amountMinor: 0, deductionMinor: 0, available: active.length > 0 }]
+    : order.paymentMethod === 'safepay' ? [
+    { destination: 'wallet', label: 'Rozare Wallet', amountMinor: grossMinor, deductionMinor: 0, available: grossMinor > 0 },
+    { destination: 'original_card', label: 'Original card', amountMinor: grossMinor - deductionMinor, deductionMinor, available: grossMinor > deductionMinor },
+  ] : [{ destination: order.paymentMethod === 'wallet' && grossMinor > 0 ? 'wallet' : 'none',
+    label: order.paymentMethod === 'wallet' ? 'Rozare Wallet' : 'No refund required',
+    amountMinor: order.paymentMethod === 'wallet' ? grossMinor : 0, deductionMinor: 0, available: active.length > 0 }];
+  const quote = { version: 1, orderId: id(order), currency: order.currency, paymentMethod: order.paymentMethod,
+    sellerIds: selected, activeSellerIds: active, grossMinor, policyVersion: snapshot?.version || 0,
+    defaultDestination: grossMinor > 0 && (order.paymentMethod === 'safepay' || order.paymentMethod === 'wallet') ? 'wallet' : 'none', options };
+  return { ...quote, quoteId: crypto.createHash('sha256').update(JSON.stringify(quote)).digest('hex') };
+}
+
+async function previewBuyerCancellation({ orderId, buyerId, sellerIds }) {
+  const order = await Order.findOne({ _id: orderId, user: buyerId });
+  if (!order) throw fail('Order not found or it does not belong to you.', 'ORDER_NOT_FOUND', 404);
+  await ensureOrderSellerFulfillment(order);
+  return buildCancellationQuote(order, sellerIds);
+}
+
+async function cancelBuyerOrder({ orderId, buyerId, sellerIds, refundDestination, quoteId, acceptDeduction = false }) {
   await Cancellation.init();
   const result = await mongoose.connection.transaction(async session => {
     const order = await Order.findOne({ _id: orderId, user: buyerId }).session(session);
@@ -86,6 +123,20 @@ async function cancelBuyerOrder({ orderId, buyerId, sellerIds }) {
     if (order.awaitingPayment) throw fail('Use the unfinished checkout cancellation flow for this payment.', 'ORDER_PAYMENT_STILL_PENDING');
     await ensureOrderSellerFulfillment(order);
     const selected = chooseCancellationSellers(order, sellerIds);
+    if (refundDestination !== undefined && !['wallet', 'original_card', 'none'].includes(refundDestination)) throw fail('Choose a valid refund destination.', 'REFUND_DESTINATION_INVALID', 400);
+    const prior = await Cancellation.find({ order: order._id, seller: { $in: selected } }).session(session);
+    if (prior.length === selected.length && prior.some(row => refundDestination !== undefined && row.refundDestination !== refundDestination)) throw fail('These items were already cancelled with a different refund destination.', 'REFUND_DESTINATION_ALREADY_CHOSEN');
+    if (prior.length === selected.length) return order;
+    const quote = buildCancellationQuote(order, selected);
+    if (order.paymentMethod === 'safepay' && quote.grossMinor > 0 && quote.policyVersion && refundDestination === undefined) {
+      const error = fail('Choose a full Wallet refund or a refund to the original card.', 'REFUND_CHOICE_REQUIRED', 400);
+      error.quote = quote; throw error;
+    }
+    const chosenDestination = refundDestination ?? (order.paymentMethod === 'safepay' && quote.grossMinor > 0 ? 'original_card' : quote.defaultDestination);
+    const option = quote.options.find(row => row.destination === chosenDestination);
+    if (!option?.available) throw fail('This refund destination is unavailable. Choose a full Wallet refund.', 'REFUND_DESTINATION_INVALID', 400);
+    if (order.paymentMethod === 'safepay' && quote.grossMinor > 0 && quote.policyVersion && quoteId !== quote.quoteId) throw fail('Refresh the cancellation refund amounts before confirming.', 'CANCELLATION_QUOTE_CHANGED');
+    if (option.deductionMinor > 0 && acceptDeduction !== true) throw fail('Confirm the displayed processing fee before requesting a card refund.', 'REFUND_DEDUCTION_CONSENT_REQUIRED', 400);
     for (const seller of selected) await SellerLock.findOneAndUpdate({ seller }, { $inc: { version: 1 } }, { upsert: true, new: true, session });
     // Same order document is touched by shipment/return transactions. Conflicts
     // retry against current shipment status; a stale buyer screen cannot win.
@@ -93,7 +144,7 @@ async function cancelBuyerOrder({ orderId, buyerId, sellerIds }) {
     if (order.paymentMethod !== 'cash_on_delivery') {
       if (!order.isPaid) throw fail('Payment must be verified before a paid cancellation.', 'ORDER_PAYMENT_STILL_PENDING');
       await assertWalletOrderFundingReturnable({ orderId: order._id, session });
-      if (order.paymentMethod === 'safepay') {
+      if (order.paymentMethod === 'safepay' && toMinorUnits(order.orderSummary.totalAmount) > 0) {
         const payment = await Payment.findOne({ _id: order.safepayPaymentId, order: order._id, user: order.user,
           purpose: 'order', environment: order.safepayEnvironment, currency: order.currency, appliedAt: { $ne: null }, riskPending: false }).session(session);
         if (!payment || payment.amountMinor !== toMinorUnits(order.orderSummary.totalAmount)
@@ -110,9 +161,13 @@ async function cancelBuyerOrder({ orderId, buyerId, sellerIds }) {
       const buyerMoney = sellerOrderSummaryForItems(order, seller, items);
       const nativeMoney = sellerCurrencyMoneyPresentation(order, seller, items);
       if (!nativeMoney) throw fail('The frozen seller money is unavailable.');
-      const destination = buyerMoney.totalAmount === 0 ? 'none' : order.paymentMethod === 'wallet' ? 'wallet' : order.paymentMethod === 'safepay' ? 'original_card' : 'none';
+      const destination = buyerMoney.totalAmount === 0 || order.paymentMethod === 'cash_on_delivery' ? 'none' : chosenDestination;
+      const grossMinor = toMinorUnits(buyerMoney.totalAmount);
+      const deductionMinor = destination === 'original_card' ? getOnlineOrderFee(order)?.sellers.find(entry => entry.seller === seller)?.buyerFeeMinor || 0 : 0;
+      const refundMinor = destination === 'none' ? 0 : grossMinor - deductionMinor;
       const [row] = await Cancellation.create([{ order: order._id, buyer: order.user, seller, paymentMethod: order.paymentMethod,
-        payment: order.safepayPaymentId || null, environment: order.safepayEnvironment || null, currency: order.currency, amountMinor: toMinorUnits(buyerMoney.totalAmount),
+        payment: order.safepayPaymentId || null, environment: order.safepayEnvironment || null, currency: order.currency, amountMinor: grossMinor,
+        ...(quote.policyVersion || destination === 'wallet' && order.paymentMethod === 'safepay' ? { policyVersion: 1, refundAmountMinor: refundMinor, deductionMinor, quoteId: quote.quoteId } : {}),
         sellerCurrency: nativeMoney.currency, sellerAmountMinor: toMinorUnits(nativeMoney.summary.totalAmount),
         refundDestination: destination, refundStatus: destination === 'none' ? 'not_required' : destination === 'wallet' ? 'refunded' : 'pending',
         requestedAt: new Date(), refundedAt: destination === 'wallet' ? new Date() : null }], { session });
@@ -149,4 +204,4 @@ async function cancelBuyerOrder({ orderId, buyerId, sellerIds }) {
   return result;
 }
 
-module.exports = { cancelBuyerOrder, chooseCancellationSellers, cancellationView, notifyCancellation };
+module.exports = { cancelBuyerOrder, chooseCancellationSellers, cancellationView, notifyCancellation, buildCancellationQuote, previewBuyerCancellation };

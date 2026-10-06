@@ -7,6 +7,7 @@ const {
     updateStatus,
     getOrderDetail,
     cancelOrder,
+    previewCancellation,
     getUserOrders,
     trackGuestOrder,
     exportOrders,
@@ -33,5 +34,6 @@ router.get('/invoice/:id', verifyToken, getInvoice)
 router.patch('/update-status/:id', verifyToken, updateStatus)
 router.get('/detail/:id', verifyToken, getOrderDetail)
 router.patch('/cancel/:id', verifyToken, cancelOrder)
+router.post('/cancel/:id/preview', verifyToken, previewCancellation)
 
 module.exports = router

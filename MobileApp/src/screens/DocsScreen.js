@@ -106,7 +106,7 @@ const SECTIONS = [
     id: 'orders-returns',
     title: 'Orders, Returns & Refunds',
     icon: 'refresh-outline',
-    body: 'Buyers may cancel each unshipped store portion without seller approval. COD cancellation moves no money, Wallet cancellation refunds to Wallet, and Safepay card cancellation refunds to the original card after verification. Shipped portions stay unchanged. Return eligibility is frozen per item at checkout and begins when that seller delivers. Online earnings stay pending through the saved return window and any timely unresolved return. An accepted online return credits the buyer Wallet using the original held funds; COD returns still require seller earnings or verified Safepay funding. Replacement-only returns do not create a money refund.',
+    body: 'Buyers may cancel each unshipped store portion without seller approval. COD cancellation moves no money. Wallet-paid cancellations refund fully to Wallet. Card-paid cancellations offer a full Wallet refund or an original-card refund less the displayed processing deduction. New orders use 6.2% + PKR30 per checkout, shared proportionally across sellers. Seller earnings on both card and Wallet orders use the same fixed processing fee + tax rule once; Payments shows gross earnings, deductions and net pending/withdrawable balances. Sales analytics remain gross and withdrawals do not charge it again. Shipped portions stay unchanged. Return eligibility is frozen at checkout and starts at seller delivery. Timely unresolved returns keep their funds pending. Approved online returns credit the eligible full amount to buyer Wallet from the original held order; COD funding is unchanged. Replacement-only returns do not create a money refund.',
   },
   {
     id: 'coupons-discounts',

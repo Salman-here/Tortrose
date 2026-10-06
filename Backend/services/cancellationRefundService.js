@@ -7,6 +7,7 @@ const Payment = require('../models/SafepayPayment');
 const { cancellationView, notifyCancellation } = require('./buyerCancellationService');
 const id = value => String(value?._id || value || '');
 const fail = (message, code = 'ORDER_CANCELLATION_REFUND_MISMATCH') => Object.assign(new Error(message), { code, statusCode: 409 });
+const refundMinor = row => row.refundAmountMinor ?? row.amountMinor;
 
 async function holdUnattributedRefund(payment, tracker, rows, session) {
   for (const row of rows.filter(value => ['pending', 'processing'].includes(value.refundStatus))) {
@@ -31,7 +32,7 @@ async function reconcileCancellationRefund(payment, tracker, session, evidence) 
   }
   const fresh = (tracker.charge?.cybersource_refunds || []).filter(row => !pending.previousRefundTokens.includes(row.token));
   const sum = fresh.reduce((total, row) => total + Number(row.totals?.amount), 0);
-  if (evidence.amountMinor !== pending.refundTargetMinor || sum !== pending.amountMinor
+  if (evidence.amountMinor !== pending.refundTargetMinor || sum !== refundMinor(pending)
     || pending.refundBaselineMinor !== payment.refundedMinor || fresh.some(row => row.tracker !== payment.tracker || row.totals?.currency !== payment.currency)) {
     return holdUnattributedRefund(payment, tracker, rows, session);
   }
@@ -45,8 +46,8 @@ async function reconcileCancellationRefund(payment, tracker, session, evidence) 
   const RefundEvent = require('../models/SafepayRefundEvent');
   await RefundEvent.updateOne({ payment: payment._id, cumulativeMinor: evidence.amountMinor }, { $setOnInsert: {
     payment: payment._id, environment: payment.environment, currency: payment.currency,
-    cumulativeMinor: evidence.amountMinor, deltaMinor: pending.amountMinor, occurredAt: evidence.occurredAt,
-    sellerAllocations: [{ seller: pending.seller, amountMinor: pending.amountMinor }],
+    cumulativeMinor: evidence.amountMinor, deltaMinor: refundMinor(pending), occurredAt: evidence.occurredAt,
+    sellerAllocations: [{ seller: pending.seller, amountMinor: refundMinor(pending) }],
   } }, { upsert: true, session });
   await notifyCancellation(pending, order, { completed: true, session });
   return { resolved: true, status: evidence.full ? 'refunded' : 'paid', refundedMinor: evidence.amountMinor };
@@ -88,14 +89,14 @@ async function processCancellationRefund(paymentId) {
       });
       return;
     }
-    if (baseline !== payment.refundedMinor || baseline + row.amountMinor > payment.amountMinor) throw fail('The refund baseline needs review.');
-    if (row.amountMinor === 0) throw fail('A zero cancellation must not start a card refund.');
+    if (baseline !== payment.refundedMinor || baseline + refundMinor(row) + (payment.walletRefundMinor || 0) > payment.amountMinor) throw fail('The refund baseline needs review.');
+    if (refundMinor(row) === 0) throw fail('A zero cancellation must not start a card refund.');
     row = await Cancellation.findOneAndUpdate({ _id: row._id, refundStatus: 'pending', submitStartedAt: null }, { $set: {
       refundStatus: 'processing', submitStartedAt: new Date(), refundBaselineMinor: baseline,
-      refundTargetMinor: baseline + row.amountMinor, previousRefundTokens: (tracker.charge?.cybersource_refunds || []).map(value => value.token),
+      refundTargetMinor: baseline + refundMinor(row), previousRefundTokens: (tracker.charge?.cybersource_refunds || []).map(value => value.token),
     } }, { new: true });
     if (!row) return;
-    await client.refundPaymentAmount(payment.tracker, payment, row.amountMinor);
+    await client.refundPaymentAmount(payment.tracker, payment, refundMinor(row));
     // The next worker/webhook independently reads the provider evidence. A
     // successful POST response alone does not mark the buyer refund completed.
   } catch (error) {
@@ -118,8 +119,8 @@ async function processCancellationRefund(paymentId) {
           recipient: { kind: 'user', audienceRole: 'admin', user: admin._id, destinationPolicy: 'current_user' }, channels: ['inapp', 'email'],
           templates: { inapp: { title: 'Cancellation refund needs review', body: 'Verify {{money.amount}} against the original Safepay tracker before retrying. No duplicate refund was submitted.' },
             email: { subject: 'Cancellation refund needs review', text: `Order ${order.orderId}: verify {{money.amount}} against Safepay before retrying.` } },
-          money: [require('./notificationMoneySnapshotService').snapshotMinorMoney({ key: 'amount', label: 'Cancellation refund', amountMinor: row.amountMinor,
-            currency: row.currency, sourceModel: 'OrderCancellation', sourceDocumentId: row._id, sourcePath: 'amountMinor' })],
+          money: [require('./notificationMoneySnapshotService').snapshotMinorMoney({ key: 'amount', label: 'Cancellation refund', amountMinor: refundMinor(row),
+            currency: row.currency, sourceModel: 'OrderCancellation', sourceDocumentId: row._id, sourcePath: row.refundAmountMinor === undefined ? 'amountMinor' : 'refundAmountMinor' })],
           metadata: { category: 'payment', linkTo: '/admin-dashboard/payments', data: { type: 'payment_review', orderId: id(order) } }, session });
       }
       await order.save({ session });

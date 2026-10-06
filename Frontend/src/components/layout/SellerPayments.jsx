@@ -458,10 +458,18 @@ const SellerPayments = () => {
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+                <PaymentStat label={`Total Online Earnings (${balanceCurrency})`}
+                    value={formatBalanceMoney(selectedBalance?.onlineGrossEarnings ?? 0)}
+                    description="Gross card and Wallet earnings before deductions and withdrawals; refunded amounts are removed."
+                    icon={<TrendingUp size={22} />} color="hsl(220,70%,55%)" bg="rgba(99,102,241,0.12)" />
+                <PaymentStat label="Processing fee + tax"
+                    value={formatBalanceMoney(selectedBalance?.processingFeeAndTax ?? 0)}
+                    description="One combined deduction for card and Wallet orders. Pending portions remain held."
+                    icon={<CreditCard size={22} />} color="hsl(30,90%,50%)" bg="rgba(249,115,22,0.12)" />
                 <PaymentStat
                     label={`Withdrawable Online Balance (${balanceCurrency})`}
                     value={formatBalanceMoney(availableInCurrentCurrency)}
-                    description="Online earnings released after delivery and return-window expiry, less refunds and payout reservations."
+                    description="Net online earnings after processing fee + tax, delivery, return holds, refunds and payout reservations."
                     icon={<Wallet size={22} />}
                     color="hsl(150,60%,45%)"
                     bg="rgba(16,185,129,0.12)"
@@ -497,8 +505,9 @@ const SellerPayments = () => {
 
             <div className="glass-panel rounded-2xl p-4 mt-4 flex items-center justify-between gap-4">
               <div><p className="font-semibold text-sm">Pending online funds</p><p className="text-xs text-muted-foreground mt-1">Awaiting delivery, the saved return deadline or resolution of an open return.</p></div>
-              <span className="font-bold shrink-0">{formatBalanceMoney(selectedBalance?.pendingOnlineBalance ?? 0)}</span>
+              <span className="font-bold shrink-0">{formatBalanceMoney(selectedBalance?.pendingOnlineNetBalance ?? selectedBalance?.pendingOnlineBalance ?? 0)}</span>
             </div>
+            <p className="text-xs text-muted-foreground">Card and Wallet orders: 6.2% + PKR30 per checkout. Multi-seller orders share the fixed amount proportionally. Other currencies use the saved checkout rate. Withdrawals do not charge this deduction again.</p>
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
                 <motion.section
                     initial={{ opacity: 0, y: 18 }}

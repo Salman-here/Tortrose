@@ -61,6 +61,7 @@ const buildBuyerOrderView = (order, { storeLogosBySeller = new Map() } = {}) => 
   // receive only the frozen checkout-currency order and seller-group totals.
   delete result.sellerCurrencyMoneyVersion;
   delete result.sellerCurrencyMoney;
+  delete result.onlineFeeSnapshot;
   const items = Array.isArray(order?.orderItems) ? order.orderItems : [];
   const grouped = new Map();
 

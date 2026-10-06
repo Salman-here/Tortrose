@@ -44,6 +44,7 @@ const schema = new mongoose.Schema({
   },
   capturedMinor: { type: Number, default: 0, min: 0, set: strictInteger, validate: Number.isSafeInteger },
   refundedMinor: { type: Number, default: 0, min: 0, set: strictInteger, validate: Number.isSafeInteger },
+  walletRefundMinor: { type: Number, default: 0, min: 0, set: strictInteger, validate: Number.isSafeInteger },
   lastErrorCode: { type: String, default: '', maxlength: 120 },
   processingToken: { type: String, default: '', select: false },
   leaseUntil: { type: Date, default: null },

@@ -105,6 +105,7 @@ const SellerGroup = ({ group, formatMoney, index, onCancel, currency }) => {
         {refund && <div className="glass-inner rounded-xl p-3 mt-3 text-sm" role="status">
           <p className="font-semibold">{refund.label}</p>
           {refund.valid && refund.destination && <p className="text-xs text-muted-foreground mt-1">{formatMoney(refund.amount)} → {refund.destination}</p>}
+          {refund.valid && refund.deduction > 0 && <p className="text-xs text-muted-foreground mt-1">Processing fee: {formatMoney(refund.deduction)}</p>}
           {refund.message && <p className="text-xs text-muted-foreground mt-1">{refund.message}</p>}
         </div>}
         {group.canCancel === true && onCancel && <button type="button" onClick={() => onCancel(group)}

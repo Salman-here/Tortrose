@@ -32,6 +32,7 @@ import GlassPanel from '../components/common/GlassPanel';
 import PremiumBackHeader from '../components/common/PremiumBackHeader';
 import StoreAvatar from '../components/common/StoreAvatar';
 import BuyerReturnsSection from '../components/BuyerReturnsSection';
+import BuyerCancellationModal from '../components/BuyerCancellationModal';
 import { getBuyerConfirmationMessage, getCancellationPaymentMessage, getConfirmationViaLabel } from '../utils/orderConfirmationPresentation';
 import { shareInvoice } from '../utils/invoiceUtils';
 import { useTheme } from '../contexts/ThemeContext';
@@ -152,6 +153,7 @@ export default function OrderDetailScreen({ route, navigation }) {
   const fetchSequence = useRef(0);
   const isFocused = useIsFocused();
   const [cancelling, setCancelling] = useState(false);
+  const [cancelSelection, setCancelSelection] = useState(null);
   const [error, setError] = useState(null);
   const [reordering, setReordering] = useState(false);
   const [sharingInvoice, setSharingInvoice] = useState(false);
@@ -207,41 +209,8 @@ export default function OrderDetailScreen({ route, navigation }) {
   }, [fetchOrderDetail]);
 
   const handleCancelOrder = useCallback((sellerId = null) => {
-    Alert.alert(
-      'Cancel this order?',
-      `${sellerId ? 'Only this store’s unshipped items will be cancelled. Other stores are unchanged. ' : ''}The seller will be notified. Paid Wallet amounts return to your Wallet; Safepay card amounts are refunded to the original card.`,
-      [
-        { text: 'Keep Order', style: 'cancel' },
-        {
-          text: 'Cancel Order',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              setCancelling(true);
-              fetchSequence.current += 1;
-              const res = await api.patch(`/api/order/cancel/${orderId}`, sellerId ? { sellerIds: [sellerId] } : {});
-              if (res.data?.order) {
-                assertOrderDetailPresentation(res.data.order);
-                setOrder(res.data.order);
-              } else {
-                await fetchOrderDetail();
-              }
-              const success = cancellationSuccessCopy(sellerId);
-              Alert.alert(success.title, success.message);
-            } catch (err) {
-              if (!err.response || err.code === 'ORDER_PRESENTATION_DATA_INVALID') {
-                setOrder(null);
-                setError('The latest order state could not be verified. Refresh before using another order action.');
-              }
-              Alert.alert('Could not cancel', err.response?.data?.msg || err.response?.data?.message || 'Please try again.');
-            } finally {
-              setCancelling(false);
-            }
-          },
-        },
-      ],
-    );
-  }, [orderId, fetchOrderDetail]);
+    setCancelSelection({ sellerId });
+  }, []);
 
   const handleReorder = useCallback(async () => {
     try {
@@ -573,7 +542,7 @@ export default function OrderDetailScreen({ route, navigation }) {
               {cancelling ? <Loader size="small" color={palette.colors.error} /> : <Ionicons name="close-circle-outline" size={19} color={palette.colors.error} />}
               <View style={{ flex: 1 }}>
                 <Text style={styles.cancelTitle}>{cancelling ? 'Cancelling…' : 'Cancel this order'}</Text>
-                <Text style={styles.cancelSubtitle}>Available before payment or shipment begins</Text>
+                <Text style={styles.cancelSubtitle}>Available for unshipped items</Text>
               </View>
               {!cancelling && <Ionicons name="chevron-forward" size={17} color={palette.colors.error} />}
             </TouchableOpacity>
@@ -591,6 +560,15 @@ export default function OrderDetailScreen({ route, navigation }) {
             <Text style={styles.reorderText}>{reordering ? 'Adding…' : 'Buy Again'}</Text>
           </TouchableOpacity>
         </GlassPanel>
+        {cancelSelection && <BuyerCancellationModal order={order}
+          sellerIds={cancelSelection.sellerId ? [cancelSelection.sellerId] : undefined} formatMoney={orderMoney}
+          onClose={() => setCancelSelection(null)} onBusyChange={value => {
+            setCancelling(value); if (value) fetchSequence.current += 1;
+          }} onCancelled={next => {
+            setOrder(next);
+            const success = cancellationSuccessCopy(cancelSelection.sellerId);
+            Alert.alert(success.title, success.message);
+          }} />}
       </SafeAreaView>
     </GlassBackground>
   );
@@ -670,6 +648,7 @@ function SellerShipmentGroup({ group, formatMoney, palette, styles, last, curren
       {refund && <GlassPanel variant="inner" style={{ padding: spacing.md, margin: spacing.sm }}>
         <Text style={styles.paymentTitle}>{refund.label}</Text>
         {refund.valid && refund.destination && <Text style={styles.paymentSub}>{formatMoney(refund.amount)} → {refund.destination}</Text>}
+        {refund.valid && refund.deduction > 0 && <Text style={styles.paymentSub}>Processing fee: {formatMoney(refund.deduction)}</Text>}
         {!!refund.message && <Text style={styles.paymentSub}>{refund.message}</Text>}
       </GlassPanel>}
       {group.canCancel === true && <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Cancel ${group.storeName} items`}

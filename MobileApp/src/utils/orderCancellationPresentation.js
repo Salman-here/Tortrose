@@ -29,7 +29,12 @@ export function cancellationRefundPresentation(value, currency, totalAmount) {
     || !['none', 'wallet', 'original_card'].includes(value.destination) || value.currency !== currency
     || !Number.isSafeInteger(value.amountMinor) || value.amountMinor < 0 || value.amountMinor > Math.round(totalAmount * 100))
     return { label: 'Refund status unavailable', valid: false };
-  return { valid: true, amount: value.amountMinor / 100,
+  if (value.policyVersion !== undefined && (value.policyVersion !== 1 || !Number.isSafeInteger(value.grossAmountMinor)
+    || !Number.isSafeInteger(value.deductionMinor) || value.grossAmountMinor < 0 || value.deductionMinor < 0
+    || value.grossAmountMinor > Math.round(totalAmount * 100)
+    || value.destination !== 'none' && value.amountMinor + value.deductionMinor !== value.grossAmountMinor
+    || value.destination !== 'original_card' && value.deductionMinor !== 0)) return { label: 'Refund status unavailable', valid: false };
+  return { valid: true, amount: value.amountMinor / 100, deduction: (value.deductionMinor || 0) / 100,
     destination: value.destination === 'wallet' ? 'Rozare Wallet' : value.destination === 'original_card' ? 'original card' : null,
     label: value.refundStatus === 'not_required' ? 'No refund required' : value.refundStatus === 'refunded' ? 'Refund completed'
       : value.refundStatus === 'manual_review' ? 'Refund under review' : 'Refund in progress',

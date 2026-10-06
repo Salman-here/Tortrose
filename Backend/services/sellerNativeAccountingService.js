@@ -13,6 +13,7 @@ const { sellerCurrencyMoneyPresentation, getOrderExchangeRates, buildOrderSeller
 
 const { WITHDRAWAL_MINIMUMS } = require('./sellerWithdrawalPolicy');
 const { sellerReturnHold } = require('./sellerReturnHoldService');
+const { sellerOnlineFee, proportionalMinor } = require('./onlineOrderFeeService');
 const ACTIVE_WITHDRAWAL_STATUSES = new Set(['pending', 'approved', 'processing', 'manual_review']);
 const ALL_WITHDRAWAL_STATUSES = new Set([...ACTIVE_WITHDRAWAL_STATUSES, 'paid', 'failed', 'rejected', 'cancelled']);
 const sellerOrderScope = (sellerId, productIds) => ({ $or: [
@@ -35,7 +36,8 @@ const add = (a, b) => {
 const nativeFields = ['stripeDeliveredRevenue', 'stripePendingRevenue', 'walletDeliveredRevenue', 'walletPendingRevenue',
   'safepayDeliveredRevenue', 'safepayPendingRevenue',
   'codDeliveredRevenue', 'codPendingRevenue', 'returnWindowHeldAmount', 'pendingWithdrawalAmount', 'approvedWithdrawalAmount',
-  'processingWithdrawalAmount', 'manualReviewWithdrawalAmount', 'totalWithdrawn', 'returnRefundDebits', 'paymentReversalDebits', 'balanceAdjustmentCredits'];
+  'processingWithdrawalAmount', 'manualReviewWithdrawalAmount', 'totalWithdrawn', 'returnRefundDebits', 'paymentReversalDebits', 'balanceAdjustmentCredits',
+  'onlineFeeDeductions', 'pendingOnlineFeeDeductions'];
 const empty = currency => Object.fromEntries([['currency', currency], ...nativeFields.map(field => [field, 0])]);
 
 function nativeSellerEntitlement(order, sellerId, productIds = new Set()) {
@@ -95,7 +97,12 @@ function computeNativeSellerAccounting({ sellerId, orders, productIds = new Set(
     if (!['stripe', 'wallet', 'safepay', 'cod'].includes(method)) throw fault('Unsupported stored order payment method.');
     if (method !== 'cod' && order.isPaid !== true) continue;
     const delivered = fulfillment ? status === 'delivered' : status === 'delivered' || order.isDelivered === true;
-    if (delivered && ['wallet', 'safepay'].includes(method)) deliveredOnline.push({ order, currency, total, buyerTotal });
+    const fee = ['wallet', 'safepay'].includes(method) ? sellerOnlineFee(order, sellerId) : null;
+    if (fee && (fee.currency !== currency || fee.grossMinor !== total || fee.buyerGrossMinor !== buyerTotal)) throw fault('Online deduction and seller entitlement disagree.');
+    if (delivered && ['wallet', 'safepay'].includes(method)) deliveredOnline.push({ order, currency, total, buyerTotal, feeMinor: fee?.feeMinor || 0 });
+    if (!delivered && fee) {
+      buckets[currency].pendingOnlineFeeDeductions = add(buckets[currency].pendingOnlineFeeDeductions, fee.feeMinor);
+    }
     const field = method + (delivered ? 'DeliveredRevenue' : 'PendingRevenue');
     buckets[currency][field] = add(buckets[currency][field], total);
     report[field] = add(report[field], reportAmount(order, total, currency));
@@ -106,7 +113,8 @@ function computeNativeSellerAccounting({ sellerId, orders, productIds = new Set(
     countsByCurrency[currency].totalRelevantOrders++;
     if (recentOrders[method].length < 5) recentOrders[method].push({ _id: order._id, orderId: order.orderId,
       status, amount: fromMinorUnits(total), amountCurrency: currency, sourceAmount: fromMinorUnits(buyerTotal),
-      sourceCurrency: money.buyerCurrency, delivered, createdAt: order.createdAt });
+      sourceCurrency: money.buyerCurrency, delivered, createdAt: order.createdAt,
+      ...(fee ? { processingFeeAndTax: fromMinorUnits(fee.feeMinor), netAmount: fromMinorUnits(total - fee.feeMinor) } : {}) });
   }
   // Aggregate signed source liabilities by order before computing native cents.
   const liabilities = new Map();
@@ -147,6 +155,14 @@ function computeNativeSellerAccounting({ sellerId, orders, productIds = new Set(
     const hold = sellerReturnHold(e.order, sellerId, { returns, at, remainingMinor: Math.max(0, e.total - refunded) });
     buckets[e.currency].returnWindowHeldAmount = add(buckets[e.currency].returnWindowHeldAmount, hold.heldMinor);
     report.returnWindowHeldAmount = add(report.returnWindowHeldAmount, reportAmount(e.order, hold.heldMinor, e.currency));
+    // Refunded revenue reverses its proportional deduction. Return holds keep
+    // the corresponding NET earnings pending; neither fee nor funds release
+    // while a timely return is unresolved. Withdrawals never recompute a fee.
+    const remaining = Math.max(0, e.total - refunded);
+    const releasedFee = proportionalMinor(e.feeMinor, remaining - hold.heldMinor, e.total);
+    const remainingFee = proportionalMinor(e.feeMinor, remaining, e.total);
+    buckets[e.currency].onlineFeeDeductions = add(buckets[e.currency].onlineFeeDeductions, releasedFee);
+    buckets[e.currency].pendingOnlineFeeDeductions = add(buckets[e.currency].pendingOnlineFeeDeductions, remainingFee - releasedFee);
   }
   let legacyWithdrawalHold = false;
   for (const request of withdrawals) {
@@ -172,8 +188,12 @@ function computeNativeSellerAccounting({ sellerId, orders, productIds = new Set(
     b.totalDeliveredRevenue = add(b.onlineDeliveredRevenue, b.codDeliveredRevenue);
     b.estimatedRevenue = add(add(b.totalDeliveredRevenue, b.onlinePendingRevenue), b.codPendingRevenue);
     b.totalReservedOrWithdrawn = ['pendingWithdrawalAmount', 'approvedWithdrawalAmount', 'processingWithdrawalAmount', 'manualReviewWithdrawalAmount', 'totalWithdrawn', 'returnRefundDebits', 'paymentReversalDebits'].reduce((sum, field) => add(sum, b[field]), 0);
-    const net = add(add(add(b.onlineDeliveredRevenue, b.balanceAdjustmentCredits), -b.totalReservedOrWithdrawn), -b.returnWindowHeldAmount);
+    const beforeFees = add(add(add(b.onlineDeliveredRevenue, b.balanceAdjustmentCredits), -b.totalReservedOrWithdrawn), -b.returnWindowHeldAmount);
+    const net = add(beforeFees, -b.onlineFeeDeductions);
     b.pendingOnlineBalance = add(b.onlinePendingRevenue, b.returnWindowHeldAmount);
+    b.pendingOnlineNetBalance = add(b.pendingOnlineBalance, -b.pendingOnlineFeeDeductions);
+    b.onlineGrossEarnings = Math.max(0, add(add(add(b.onlineDeliveredRevenue, b.onlinePendingRevenue), -b.returnRefundDebits), -b.paymentReversalDebits));
+    b.processingFeeAndTax = add(b.onlineFeeDeductions, b.pendingOnlineFeeDeductions);
     b.deficit = Math.max(0, -net);
     b.paymentRiskHeldAmount = held ? Math.max(0, net) : 0;
     b.withdrawableBalance = held ? 0 : Math.max(0, net);
@@ -184,11 +204,12 @@ function computeNativeSellerAccounting({ sellerId, orders, productIds = new Set(
   // the selected native bucket only and must never be converted reporting totals.
   const selected = balances.find(b => b.currency === reportingCurrency);
   const reporting = finish(report);
-  for (const field of ['withdrawableBalance', 'returnWindowHeldAmount', 'pendingOnlineBalance', 'paymentRiskHeldAmount', 'deficit', 'totalReservedOrWithdrawn', 'pendingWithdrawalAmount', 'approvedWithdrawalAmount', 'processingWithdrawalAmount', 'manualReviewWithdrawalAmount', 'totalWithdrawn', 'returnRefundDebits', 'paymentReversalDebits', 'balanceAdjustmentCredits']) reporting[field] = selected[field];
+  for (const field of ['withdrawableBalance', 'returnWindowHeldAmount', 'pendingOnlineBalance', 'pendingOnlineNetBalance', 'onlineGrossEarnings', 'processingFeeAndTax', 'onlineFeeDeductions', 'pendingOnlineFeeDeductions', 'paymentRiskHeldAmount', 'deficit', 'totalReservedOrWithdrawn', 'pendingWithdrawalAmount', 'approvedWithdrawalAmount', 'processingWithdrawalAmount', 'manualReviewWithdrawalAmount', 'totalWithdrawn', 'returnRefundDebits', 'paymentReversalDebits', 'balanceAdjustmentCredits']) reporting[field] = selected[field];
   return { sellerId: id(sellerId), accountingVersion: 2, baseCurrency: reportingCurrency, displayCurrency: reportingCurrency,
     balances, balanceByCurrency: Object.fromEntries(balances.map(b => [b.currency, b])),
     revenue: { ...selected, ...counts }, displayRevenue: { ...reporting, ...counts },
     paymentRiskPending: held, legacyWithdrawalHold,
+    deductionPolicy: { version: 1, rateBps: 620, fixedCurrency: 'PKR', fixedMinor: 3000, appliesTo: ['safepay', 'wallet'] },
     exchangeRateStatus: { source: 'order-checkout-snapshots', fallback: false, frozen: true },
     withdrawalLimits: { currency: reportingCurrency, displayCurrency: reportingCurrency, baseCurrency: reportingCurrency,
       minimumAmount: selected.minimumWithdrawal, minimumDisplayAmount: selected.minimumWithdrawal,

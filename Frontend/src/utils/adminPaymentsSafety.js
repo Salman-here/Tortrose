@@ -19,6 +19,7 @@ const REVENUE_MONEY_FIELDS = [
   'totalWithdrawn', 'totalReservedOrWithdrawn',
   'returnRefundDebits', 'paymentReversalDebits',
 ];
+const FEE_MONEY_FIELDS = ['onlineFeeDeductions', 'pendingOnlineFeeDeductions', 'onlineGrossEarnings', 'processingFeeAndTax', 'pendingOnlineNetBalance'];
 const REVENUE_COUNT_FIELDS = [
   'deliveredStripeOrders', 'pendingStripeOrders',
   'deliveredWalletOrders', 'pendingWalletOrders',
@@ -53,6 +54,10 @@ const revenueSummaryIsValid = summary => {
   if (!isObject(summary)) return false;
   if (REVENUE_MONEY_FIELDS.some(field => !isExactNonNegativeJsonMoney(summary[field]))) return false;
   if (REVENUE_COUNT_FIELDS.some(field => !isCount(summary[field]))) return false;
+  if (FEE_MONEY_FIELDS.some(field => Object.hasOwn(summary, field))) {
+    if (FEE_MONEY_FIELDS.some(field => !isExactNonNegativeJsonMoney(summary[field]))) return false;
+    if (!sameMoney(summary.processingFeeAndTax, [summary.onlineFeeDeductions, summary.pendingOnlineFeeDeductions])) return false;
+  }
   for (const field of ['safepayDeliveredRevenue', 'safepayPendingRevenue']) {
     if (Object.hasOwn(summary, field) && !isExactNonNegativeJsonMoney(summary[field])) return false;
   }
@@ -148,6 +153,11 @@ export const adminPaymentsOverviewIsValid = overview => {
     for (const code of codes) {
       for (const field of REVENUE_MONEY_FIELDS) {
         if (minorUnits(overview.summaryByCurrency[code][field]) !== sumMinor(overview.sellers.map(row => row.balances.find(b => b.currency === code)?.[field]))) return false;
+      }
+      for (const field of FEE_MONEY_FIELDS) {
+        if (overview.summaryByCurrency[code][field] !== undefined || overview.sellers.some(row => row.balances.find(b => b.currency === code)?.[field] !== undefined)) {
+          if (minorUnits(overview.summaryByCurrency[code][field]) !== sumMinor(overview.sellers.map(row => row.balances.find(b => b.currency === code)?.[field]))) return false;
+        }
       }
       for (const field of REVENUE_COUNT_FIELDS) {
         const total = overview.sellers.reduce((sum, row) => sum + row.balances.find(b => b.currency === code)[field], 0);

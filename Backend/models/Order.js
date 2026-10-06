@@ -81,6 +81,7 @@ const orderSchema = mongoose.Schema(
         user: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
         guestEmail: { type: String, default: null },
         currency: { type: String, enum: ["USD", "PKR", "EUR", "GBP"], default: "USD" },
+        onlineFeeSnapshot: { type: mongoose.Schema.Types.Mixed, default: null, immutable: true },
         // Immutable checkout-time USD rate table. Transaction accounting uses
         // this snapshot so historical revenue and a later full refund cancel
         // exactly even when live FX rates have changed. Catalog/display
@@ -259,6 +260,9 @@ const orderSchema = mongoose.Schema(
                     refundStatus: { type: String, enum: ['not_required', 'pending', 'processing', 'refunded', 'manual_review'], default: undefined },
                     destination: { type: String, enum: ['none', 'wallet', 'original_card'], default: undefined },
                     amountMinor: { type: Number, min: 0, validate: Number.isSafeInteger, default: undefined },
+                    grossAmountMinor: { type: Number, min: 0, validate: Number.isSafeInteger, default: undefined },
+                    deductionMinor: { type: Number, min: 0, validate: Number.isSafeInteger, default: undefined },
+                    policyVersion: { type: Number, enum: [1], default: undefined },
                     currency: { type: String, enum: ['PKR', 'USD', 'EUR', 'GBP'], default: undefined },
                     requestedAt: { type: Date, default: null },
                     refundedAt: { type: Date, default: null },
@@ -679,6 +683,13 @@ const orderSchema = mongoose.Schema(
 orderSchema.path('sellerSettlement').immutable(true);
 orderSchema.path('sellerCurrencyMoney').immutable(true);
 
+orderSchema.pre('validate', function validateOnlineDeduction(next) {
+    try {
+        if (this.onlineFeeSnapshot !== null && this.onlineFeeSnapshot !== undefined) require('../services/onlineOrderFeeService').getOnlineOrderFee(this);
+        next();
+    } catch (error) { next(error); }
+});
+
 // Every newly persisted order owns an immutable, unambiguous international
 // buyer destination. This protects future writers that bypass the two current
 // checkout controllers and prevents the schema's historical Pakistan default
@@ -703,6 +714,9 @@ orderSchema.pre('validate', function freezeBuyerPhoneDestination(next) {
 });
 
 orderSchema.pre('save', function rejectFrozenSettlementMutation(next) {
+    if (!this.isNew && this.isModified('onlineFeeSnapshot')) {
+        return next(Object.assign(new Error('The frozen online deduction cannot be changed.'), { code: 'ONLINE_FEE_SNAPSHOT_IMMUTABLE' }));
+    }
     if (
         !this.isNew
         && Number(this.sellerSettlementVersion || 0) > 0

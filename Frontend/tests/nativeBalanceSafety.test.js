@@ -46,3 +46,17 @@ test('withdrawal labels, limits, submitted currency and amount use the chosen na
     assert.match(source,/paymentAccount\.currency !== balanceCurrency/);assert.match(source,/Withdrawal balance currency/);
   }
 });
+test('net withdrawals subtract released fees once; incomplete fee authorities are rejected',()=>{
+  const r=response();
+  for(const b of r.balances){
+    Object.assign(b,{returnWindowHeldAmount:0,pendingOnlineBalance:0,onlineFeeDeductions:b.currency==='PKR'?203.6:0,pendingOnlineFeeDeductions:0,
+      onlineGrossEarnings:b.onlineDeliveredRevenue,processingFeeAndTax:b.currency==='PKR'?203.6:0,pendingOnlineNetBalance:0});
+    if(b.currency==='PKR')b.withdrawableBalance=2596.4;
+    r.balanceByCurrency[b.currency]={...b};
+  }
+  r.deductionPolicy={version:1};
+  assert.equal(nativeBalancesAreValid(r),true);
+  r.balanceByCurrency.PKR.onlineFeeDeductions=0;assert.equal(nativeBalancesAreValid(r),false);
+  r.balanceByCurrency.PKR={...r.balances.find(b=>b.currency==='PKR')};
+  delete r.balanceByCurrency.PKR.pendingOnlineFeeDeductions;assert.equal(nativeBalancesAreValid(r),false);
+});

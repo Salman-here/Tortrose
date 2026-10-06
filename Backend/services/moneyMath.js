@@ -642,6 +642,23 @@ const allocateHouseMonotoneMinorUnits = (totalMinorUnits, entries = []) => {
   return new Map(normalized.map(entry => [entry.key, entry.allocation]));
 };
 
+// Round a percentage plus a foreign-currency fixed amount ONCE, after adding
+// their exact rational values. Rounding both components first can overcharge
+// a cent in cross-currency checkouts.
+const percentagePlusConvertedMoney = (amount, percent, fixedAmount, fromRate, toRate, scale = 2) => {
+  const parsedScale = requireMoneyScale(scale);
+  const a = decimalToFraction(amount), p = decimalToFraction(percent), f = decimalToFraction(fixedAmount);
+  const source = decimalToFraction(fromRate), target = decimalToFraction(toRate);
+  if (!a || !p || !f || !source || !target || a.numerator < 0n || p.numerator < 0n || f.numerator < 0n
+    || source.numerator <= 0n || target.numerator <= 0n) throw invalidMoneyInput('Invalid combined percentage and fixed-currency money.');
+  const combined = addFractions({ numerator: a.numerator * p.numerator, denominator: a.denominator * p.denominator * 100n },
+    { numerator: f.numerator * source.denominator * target.numerator,
+      denominator: f.denominator * source.numerator * target.denominator });
+  const minor = divideAndRound(combined.numerator * (10n ** BigInt(parsedScale)), combined.denominator);
+  if (minor < 0n || minor > MAX_SAFE_MINOR_UNITS) throw invalidMoneyInput('Combined money exceeds the supported range.');
+  return fromMinorUnits(Number(minor), parsedScale);
+};
+
 module.exports = {
   toMinorUnits,
   fromMinorUnits,
@@ -651,6 +668,7 @@ module.exports = {
   multiplyMoney,
   convertMoneyByRates,
   percentageOfMoney,
+  percentagePlusConvertedMoney,
   allocateMinorUnitsByWeights,
   allocateConvertedMinorUnitsByRates,
   allocateHouseMonotoneMinorUnits,
