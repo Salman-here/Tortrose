@@ -269,7 +269,7 @@ export default function ProductDetailScreen({ route, navigation }) {
   const handleOptionsConfirm = async ({ selectedColor: nextColor, selectedOptions: nextOptions }) => {
     setSelectedColor(nextColor || null);
     setSelectedOptions(nextOptions || {});
-    const added = await handleAddToCart(product._id, nextColor || null, nextOptions || null, product);
+    const added = await handleAddToCart(product._id, nextColor || null, nextOptions || null, product, 'add');
     if (added) setOptionsModalVisible(false);
   };
 

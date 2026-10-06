@@ -240,14 +240,14 @@ export const CartProvider = ({ children }) => {
   }, [cartOwner, isAuthLoading, retryCartHydration]);
 
   const handleRemoveCartItem = useCallback(async (lineId) => {
-    if (!lineId) return;
+    if (!lineId) return false;
 
     setQtyUpdateId(lineId);
     try {
       if (!currentUserId) {
         await runGuestMutation((items) => removeGuestCartLine(items, lineId));
         Feedback.show({ type: 'info', text1: 'Removed', text2: 'Item removed from your bag' });
-        return;
+        return true;
       }
 
       const response = await api.delete(`/api/cart/remove/${lineId}`);
@@ -257,12 +257,14 @@ export const CartProvider = ({ children }) => {
         text1: 'Removed',
         text2: response.data?.msg || 'Item removed from your bag',
       });
+      return true;
     } catch (error) {
       Feedback.show({
         type: 'error',
         text1: 'Could not remove item',
         text2: error.response?.data?.msg || 'Please try again',
       });
+      return false;
     } finally {
       setQtyUpdateId(null);
     }
@@ -272,7 +274,8 @@ export const CartProvider = ({ children }) => {
     id,
     selectedColor = null,
     selectedOptions = null,
-    productHint = null
+    productHint = null,
+    cartAction = 'toggle'
   ) => {
     if (!id) return false;
 
@@ -301,12 +304,23 @@ export const CartProvider = ({ children }) => {
         applyProductSelection(product);
       }
 
-      const existingLine = cartItemsRef.current.cart.find((item) => (
+      let existingLine = cartItemsRef.current.cart.find((item) => (
         lineMatches(item, id, canonicalColor, canonicalOptions)
       ));
-      if (existingLine) {
-        await handleRemoveCartItem(existingLine._id);
-        return true;
+      // A website purchase may have removed a line while this app stayed open.
+      // Never turn an Add action into a DELETE based only on that cached line.
+      if (existingLine && currentUserId && cartAction !== 'add') {
+        const owner = cartOwnerRef.current;
+        const authoritative = await fetchAuthoritativeCart(owner);
+        if (owner !== cartOwnerRef.current) return false;
+        existingLine = authoritative.cart.find(item => lineMatches(item, id, canonicalColor, canonicalOptions));
+        if (!existingLine) {
+          Feedback.show({ type: 'info', text1: 'Your bag is up to date', text2: 'This item was already removed on another screen or device.' });
+          return true;
+        }
+      }
+      if (existingLine && cartAction !== 'add') {
+        return await handleRemoveCartItem(existingLine._id);
       }
 
       if (!currentUserId) {
@@ -328,7 +342,12 @@ export const CartProvider = ({ children }) => {
               item.selectedColor,
               item.selectedOptions
             ) === identity
-          ))) return items;
+          ))) {
+            const current = items.find(item => cartLineIdentity(item.product?._id, item.selectedColor, item.selectedOptions) === identity);
+            const increased = incrementGuestCartLine(items, current._id);
+            if (increased.reachedStockLimit) throw new Error('You have reached the stock limit');
+            return increased.cart;
+          }
 
           return [
             ...items,
@@ -347,7 +366,7 @@ export const CartProvider = ({ children }) => {
       }
 
       const previousCart = cartItemsRef.current;
-      if (productHint) {
+      if (productHint && !existingLine) {
         const optimisticLine = {
           _id: `__optim_${id}_${Date.now()}`,
           qty: 1,
@@ -393,7 +412,7 @@ export const CartProvider = ({ children }) => {
       setIsCartLoading(false);
       setLoadingProductId(null);
     }
-  }, [currentUserId, handleRemoveCartItem, replaceCart, runGuestMutation]);
+  }, [currentUserId, handleRemoveCartItem, replaceCart, runGuestMutation, fetchAuthoritativeCart]);
 
   const handleQtyInc = useCallback(async (lineId) => {
     if (!lineId) return;

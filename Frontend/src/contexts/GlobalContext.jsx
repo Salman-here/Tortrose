@@ -185,7 +185,7 @@ export const GlobalProvider = ({ children }) => {
     // ===================================
     const [loadingProductId, setLoadingProductId] = useState(null)
     
-    const handleAddToCart = async (id, selectedColor = null, selectedOptions = null, productHint = null) => {
+    const handleAddToCart = async (id, selectedColor = null, selectedOptions = null, productHint = null, cartAction = 'toggle') => {
         try {
             setIsCartLoading(true)
             setLoadingProductId(id)
@@ -209,15 +209,24 @@ export const GlobalProvider = ({ children }) => {
 
             const myKey = optionsKeyOf(canonicalOptions);
 
-            const existingCartItem = cartItems?.cart?.find(item =>
+            const matches = item =>
                 item?.product?._id === id &&
                 (item?.selectedColor || null) === (canonicalColor || null) &&
-                optionsKeyOf(item?.selectedOptions) === myKey
-            ) || null;
+                optionsKeyOf(item?.selectedOptions) === myKey;
+            let existingCartItem = cartItems?.cart?.find(matches) || null;
+            if (existingCartItem && currentUser && cartAction !== 'add') {
+                const owner = cartOwnerRef.current;
+                const authoritative = await fetchAuthoritativeCart(owner);
+                if (owner !== cartOwnerRef.current) return false;
+                existingCartItem = authoritative?.cart?.find(matches) || null;
+                if (!existingCartItem) {
+                    toast.info('Your cart is up to date. This item was already removed on another screen or device.');
+                    return true;
+                }
+            }
 
-            if (existingCartItem) {
-                await handleRemoveCartItem(existingCartItem._id);
-                return true;
+            if (existingCartItem && cartAction !== 'add') {
+                return await handleRemoveCartItem(existingCartItem._id);
             }
 
             if (!currentUser) {
@@ -509,7 +518,7 @@ export const GlobalProvider = ({ children }) => {
                 setCartItems(guestCartState(nextCart));
                 toast.info('Item removed from your cart');
                 setQtyUpdateId(null);
-                return;
+                return true;
             }
 
             const token = getAuthToken()
@@ -524,8 +533,10 @@ export const GlobalProvider = ({ children }) => {
 
             setCartItems(normalizeServerCartPayload(res.data))
             toast.info(res.data?.msg || 'Item removed from your cart')
+            return true;
         } catch (error) {
             console.error(error);
+            return false;
         }
         finally {
             setQtyUpdateId(null)

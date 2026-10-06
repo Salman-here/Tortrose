@@ -133,7 +133,7 @@ function ProductCard({ product, index = 0, onPress, compact = false }) {
   const handleOptionsConfirm = async ({ selectedColor: nextColor, selectedOptions: nextOptions }) => {
     setSelectedColor(nextColor || null);
     setSelectedOptions(nextOptions || {});
-    const added = await handleAddToCart(_id, nextColor || null, nextOptions || null, product);
+    const added = await handleAddToCart(_id, nextColor || null, nextOptions || null, product, 'add');
     if (added) setOptionsModalVisible(false);
   };
   // Some legacy products store a text label instead of a URL — treat those as missing

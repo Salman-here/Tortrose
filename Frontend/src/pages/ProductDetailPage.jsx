@@ -125,7 +125,7 @@ function ProductDetailPage() {
         const normalizedColor = nextColor || null;
         setSelectedOptions(normalizedOptions);
         setSelectedColor(normalizedColor);
-        const added = await handleAddToCart(id, normalizedColor, normalizedOptions, product);
+        const added = await handleAddToCart(id, normalizedColor, normalizedOptions, product, 'add');
         if (added) setIsOptionsModalOpen(false);
     };
 

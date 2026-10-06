@@ -83,7 +83,7 @@ const ProductCard = memo(({
     const normalizedColor = nextColor || null;
     setSelectedOptions(normalizedOptions);
     setSelectedColor(normalizedColor);
-    const added = await handleAddToCart(_id, normalizedColor, normalizedOptions, productForOptions);
+    const added = await handleAddToCart(_id, normalizedColor, normalizedOptions, productForOptions, 'add');
     if (added) setIsOptionsModalOpen(false);
   };
 

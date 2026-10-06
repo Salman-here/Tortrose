@@ -199,4 +199,36 @@ describe('CartContext guest and authenticated ownership', () => {
     expect(mockApi.get).not.toHaveBeenCalled();
     expect(mockApi.post).not.toHaveBeenCalled();
   });
+  it('rechecks a cached removal after a web purchase without deleting or adding a different line', async () => {
+    mockCurrentUser = { _id: '64b000000000000000000099' };
+    const stale = { _id:'stale-line',product,qty:1,selectedColor:'Black',selectedOptions:{Size:'Large'} };
+    const fresh = { ...stale, _id:'new-server-line' };
+    mockApi.get.mockResolvedValue({data:{cart:[stale],totalCartPrice:90,totalCartCurrency:'USD'}});
+    await act(async()=>{root=TestRenderer.create(<CartProvider><CartProbe/></CartProvider>);await flushEffects();});
+    mockApi.get.mockResolvedValue({data:{cart:[],totalCartPrice:0,totalCartCurrency:'USD'}});
+    mockApi.post.mockResolvedValue({data:{cart:[fresh],totalCartPrice:90,totalCartCurrency:'USD'}});
+    let added;
+    await act(async()=>{added=await latestCart.handleAddToCart(product._id,'Black',{Size:'Large'},product);});
+    expect(added).toBe(true);expect(mockApi.delete).not.toHaveBeenCalled();
+    expect(mockApi.post).not.toHaveBeenCalled();expect(latestCart.cartItems.cart).toEqual([]);
+  });
+  it('explicit option confirmation always adds and never toggles an existing variant off', async () => {
+    mockCurrentUser = { _id:'64b000000000000000000099' };
+    const line = {_id:'server-line',product,qty:1,selectedColor:'Black',selectedOptions:{Size:'Large'}};
+    mockApi.get.mockResolvedValue({data:{cart:[line],totalCartPrice:90,totalCartCurrency:'USD'}});
+    await act(async()=>{root=TestRenderer.create(<CartProvider><CartProbe/></CartProvider>);await flushEffects();});
+    mockApi.post.mockResolvedValue({data:{cart:[{...line,qty:2}],totalCartPrice:180,totalCartCurrency:'USD'}});
+    await act(async()=>{await latestCart.handleAddToCart(product._id,'Black',{Size:'Large'},product,'add');});
+    expect(mockApi.delete).not.toHaveBeenCalled();expect(latestCart.cartItems.cart[0].qty).toBe(2);
+    expect(latestCart.cartItems.totalCartPrice).toBe(180);
+  });
+  it('does not claim a successful add when its intentional toggle removal fails',async()=>{
+    mockCurrentUser={_id:'64b000000000000000000099'};
+    const line={_id:'server-line',product,qty:1,selectedColor:'Black',selectedOptions:{Size:'Large'}};
+    mockApi.get.mockResolvedValue({data:{cart:[line],totalCartPrice:90,totalCartCurrency:'USD'}});
+    mockApi.delete.mockRejectedValue({response:{data:{msg:'Cart item not found'},status:404}});
+    await act(async()=>{root=TestRenderer.create(<CartProvider><CartProbe/></CartProvider>);await flushEffects();});
+    let added;await act(async()=>{added=await latestCart.handleAddToCart(product._id,'Black',{Size:'Large'},product);});
+    expect(added).toBe(false);expect(mockApi.post).not.toHaveBeenCalled();
+  });
 });
