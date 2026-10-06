@@ -54,7 +54,8 @@ export default function BuyerCancellationDialog({ order, sellerIds, formatMoney,
     } finally { submitting.current = false; setBusy(false); onBusyChange?.(false); }
   };
   return <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50" onClick={() => !busy && onClose()}>
-    <section role="dialog" aria-modal="true" aria-labelledby="cancel-dialog-title" className="glass-panel p-5 sm:p-6 max-w-md w-full max-h-[85dvh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+    <section role="dialog" aria-modal="true" aria-labelledby="cancel-dialog-title" className="glass-panel p-5 sm:p-6 max-w-md w-full max-h-[85dvh] overflow-y-auto"
+      style={{ background: 'hsl(var(--background) / 0.96)', color: 'hsl(var(--foreground))' }} onClick={e => e.stopPropagation()}>
       <div className="flex items-center justify-between gap-3"><h3 id="cancel-dialog-title" className="text-lg font-bold">Cancel {sellerIds ? 'this store’s items' : 'order'}?</h3>
         <button type="button" disabled={busy} className="glass-button p-2 rounded-xl" aria-label="Close cancellation" onClick={onClose}><X size={17} /></button></div>
       <p className="text-sm text-muted-foreground mt-2 mb-4">{sellerIds ? 'Only this store’s unshipped items will be cancelled. Other stores stay unchanged.' : 'The selected unshipped items will be cancelled and the sellers notified.'}</p>
