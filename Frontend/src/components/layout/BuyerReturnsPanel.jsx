@@ -4,6 +4,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { AlertCircle, CalendarClock, Check, Loader2, Package, RotateCcw, X } from 'lucide-react';
 import { toast } from 'react-toastify';
 import { getAuthToken } from '../../utils/cookieHelper';
+import { startCancellationRefundRefresh } from '../../utils/orderCancellationPresentation';
 import {
   BUYER_CANCELLABLE_RETURN_STATUSES,
   RETURN_STATUS_LABELS,
@@ -32,6 +33,11 @@ const reasonOptions = [
 
 const authHeaders = () => ({ Authorization: `Bearer ${getAuthToken()}` });
 const reasonValues = new Set(reasonOptions.map(([value]) => value));
+const UNRESOLVED_RETURN_STATUSES = new Set([
+  'requested', 'approved', 'pickup_scheduled', 'picked_up',
+  'in_transit_to_seller', 'received_by_seller', 'under_review',
+  'accepted_pending_payment',
+]);
 const canonicalRequestKey = value => (
   typeof value === 'string'
   && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(value)
@@ -39,6 +45,10 @@ const canonicalRequestKey = value => (
     : null
 );
 const createRequestKey = () => canonicalRequestKey(globalThis.crypto?.randomUUID?.());
+const isTransientReadError = error => error?.isAxiosError === true && (
+  !error.response || error.response.status >= 500
+  || error.response.status === 408 || error.response.status === 429
+);
 const responseMessage = (error, fallback) => {
   const value = error?.response?.data?.msg;
   return typeof value === 'string' && value.trim() && value.length <= 500
@@ -59,6 +69,10 @@ export default function BuyerReturnsPanel({ order, formatMoney }) {
   const requestKeyRef = useRef(null);
   const [cancellingId, setCancellingId] = useState(null);
   const loadGenerationRef = useRef(0);
+  const loadInFlightRef = useRef(null);
+  const mutationInProgressRef = useRef(false);
+  const mutationGenerationRef = useRef(0);
+  const mountedRef = useRef(true);
   const orderContext = useMemo(() => inspectBuyerReturnOrderContext(order), [order]);
   const currentOrderIdRef = useRef(null);
   currentOrderIdRef.current = orderContext.valid ? orderContext.orderId : null;
@@ -73,82 +87,136 @@ export default function BuyerReturnsPanel({ order, formatMoney }) {
     }
   }, []);
 
-  const load = useCallback(async ({ notify = true } = {}) => {
+  const load = useCallback(async ({ notify = true, silent = false } = {}) => {
+    if (silent && (loadInFlightRef.current || mutationInProgressRef.current)) {
+      return { valid: false, skipped: true, requests: [], groups: [] };
+    }
+    const previousLoad = loadInFlightRef.current;
     const generation = loadGenerationRef.current + 1;
     loadGenerationRef.current = generation;
-    clearPresentedState();
-    setLoadError('');
-    setLoading(true);
+    if (!silent) {
+      clearPresentedState();
+      setLoadError('');
+      setLoading(true);
+    }
     if (!orderContext.valid) {
       const message = 'Return information is unavailable because this order could not be verified.';
       setLoadError(message);
       setLoading(false);
       return { valid: false, requests: [], groups: [] };
     }
+    // Explicit and mutation reloads supersede a poll, then wait until its
+    // complete eligibility/list snapshot has finished before reading again.
+    if (previousLoad) await previousLoad.done;
+    const isCurrent = () => mountedRef.current
+      && generation === loadGenerationRef.current
+      && currentOrderIdRef.current === orderContext.orderId;
+    if (!isCurrent()) return { valid: false, stale: true, requests: [], groups: [] };
+    let finishLoad;
+    const currentLoad = { done: new Promise(resolve => { finishLoad = resolve; }) };
+    loadInFlightRef.current = currentLoad;
+    const reads = [];
+    const read = (...args) => {
+      const result = axios.get(...args);
+      reads.push(result);
+      return result;
+    };
     try {
-      const [eligibility, existing] = await Promise.all([
-        axios.get(`${API}/order/${orderContext.orderId}/eligibility`, { headers: authHeaders() }),
+      const results = await Promise.allSettled([
+        read(`${API}/order/${orderContext.orderId}/eligibility`, { headers: authHeaders(), timeout: 20000 }),
         fetchCompleteBuyerReturns(async (page, limit) => {
-          const response = await axios.get(`${API}/mine`, {
+          const response = await read(`${API}/mine`, {
             headers: authHeaders(),
             params: { orderId: orderContext.orderId, page, limit },
+            timeout: 20000,
           });
           return response.data;
         }),
       ]);
-      const eligibilityInspection = inspectBuyerReturnEligibilityResponse(
-        eligibility.data,
-        orderContext,
-      );
-      const returnsInspection = inspectBuyerReturnsResponse(
-        existing,
-        orderContext,
-        eligibilityInspection,
-      );
-      if (!eligibilityInspection.valid || !returnsInspection.valid) {
+      const eligibilityInspection = results[0].status === 'fulfilled'
+        ? inspectBuyerReturnEligibilityResponse(results[0].value.data, orderContext)
+        : null;
+      const returnsInspection = results[1].status === 'fulfilled'
+        ? inspectBuyerReturnsResponse(results[1].value, orderContext, eligibilityInspection)
+        : null;
+      // A malformed sibling response must still fail closed when the other
+      // endpoint has a temporary connection failure.
+      if (
+        (eligibilityInspection && !eligibilityInspection.valid)
+        || (returnsInspection && returnsInspection.errors.some(error => error !== 'eligibility'))
+      ) {
         const error = new Error('Unverified return response');
         error.code = 'RETURN_RESPONSE_UNVERIFIED';
         throw error;
       }
-      if (
-        generation !== loadGenerationRef.current
-        || currentOrderIdRef.current !== orderContext.orderId
-      ) {
+      const failed = results.find(result => result.status === 'rejected' && !isTransientReadError(result.reason))
+        || results.find(result => result.status === 'rejected');
+      if (failed) throw failed.reason;
+      if (!isCurrent()) {
         return { valid: false, stale: true, requests: [], groups: [] };
       }
       setGroups(eligibilityInspection.groups);
       setRequests(returnsInspection.requests);
+      setLoadError('');
       return {
         valid: true,
         groups: eligibilityInspection.groups,
         requests: returnsInspection.requests,
       };
     } catch (error) {
-      if (
-        generation !== loadGenerationRef.current
-        || currentOrderIdRef.current !== orderContext.orderId
-      ) {
+      if (!isCurrent()) {
         return { valid: false, stale: true, requests: [], groups: [] };
       }
-      clearPresentedState();
-      const message = error?.code === 'RETURN_RESPONSE_UNVERIFIED'
+      if (silent && isTransientReadError(error)) return { valid: false, requests: [], groups: [] };
+      clearPresentedState({ closeForm: !silent });
+      const message = error?.code === 'RETURN_RESPONSE_UNVERIFIED' || !error?.isAxiosError
         ? 'Return information is temporarily unavailable because the server response could not be verified.'
         : responseMessage(error, 'Could not load verified return information.');
       setLoadError(message);
       if (notify) toast.error(message);
       return { valid: false, requests: [], groups: [] };
     } finally {
-      if (
-        generation === loadGenerationRef.current
-        && currentOrderIdRef.current === orderContext.orderId
-      ) setLoading(false);
+      await Promise.allSettled(reads);
+      if (loadInFlightRef.current === currentLoad) loadInFlightRef.current = null;
+      finishLoad();
+      if (!silent && isCurrent()) setLoading(false);
     }
   }, [clearPresentedState, orderContext]);
 
   useEffect(() => {
+    mountedRef.current = true;
+    mutationInProgressRef.current = false;
+    setSubmitting(false);
     void load();
-    return () => { loadGenerationRef.current += 1; };
+    return () => {
+      mountedRef.current = false;
+      loadGenerationRef.current += 1;
+      mutationGenerationRef.current += 1;
+    };
   }, [load]);
+
+  const returnPending = requests.some(request => UNRESOLVED_RETURN_STATUSES.has(request.status));
+  useEffect(() => {
+    if (!returnPending || submitting || cancellingId) return;
+    const isActive = () => mountedRef.current
+      && document.visibilityState !== 'hidden'
+      && document.hasFocus()
+      && !mutationInProgressRef.current;
+    const refresh = () => {
+      if (isActive()) void load({ notify: false, silent: true });
+    };
+    const stop = startCancellationRefundRefresh(
+      () => load({ notify: false, silent: true }),
+      isActive,
+    );
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', refresh);
+    return () => {
+      stop();
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', refresh);
+    };
+  }, [returnPending, submitting, cancellingId, load]);
 
   const openRequest = (group) => {
     const current = groups.find(entry => entry.seller._id === group?.seller?._id);
@@ -174,7 +242,9 @@ export default function BuyerReturnsPanel({ order, formatMoney }) {
 
   const selection = useMemo(() => {
     if (!selectedGroup) return { valid: false, items: [] };
-    const selectable = selectedGroup.items.filter(
+    const current = groups.find(group => group.seller._id === selectedGroup.seller._id);
+    if (!current?.eligible) return { valid: false, items: [] };
+    const selectable = current.items.filter(
       item => item.eligible && item.remainingReturnableQuantity > 0,
     );
     const selectableIds = new Set(selectable.map(item => item.orderItemId));
@@ -191,15 +261,21 @@ export default function BuyerReturnsPanel({ order, formatMoney }) {
         || quantity < 0
         || quantity > item.remainingReturnableQuantity
       ) return { valid: false, items: [] };
-      if (quantity > 0) items.push({ orderItemId: item.orderItemId, quantity });
+      if (quantity > 0) {
+        const draftItem = selectedGroup.items.find(entry => entry.orderItemId === item.orderItemId);
+        if (draftItem?.returnPolicy?.refundType !== item.returnPolicy?.refundType) {
+          return { valid: false, items: [] };
+        }
+        items.push({ orderItemId: item.orderItemId, quantity });
+      }
     }
     return { valid: true, items };
-  }, [quantities, selectedGroup]);
+  }, [quantities, selectedGroup, groups]);
 
   const selectedItems = selection.items;
 
   const submitReturn = async () => {
-    if (currentOrderIdRef.current !== orderContext.orderId) return;
+    if (mutationInProgressRef.current || !mountedRef.current || loadError || currentOrderIdRef.current !== orderContext.orderId) return;
     if (!selectedGroup || !selection.valid || selectedItems.length === 0) {
       toast.error('Select at least one item and quantity.');
       return;
@@ -216,6 +292,12 @@ export default function BuyerReturnsPanel({ order, formatMoney }) {
     }
     const expectedSellerId = selectedGroup.seller._id;
     const expectedItems = selectedItems.map(item => ({ ...item }));
+    const mutationGeneration = ++mutationGenerationRef.current;
+    const isMutationCurrent = () => mountedRef.current
+      && mutationGeneration === mutationGenerationRef.current
+      && currentOrderIdRef.current === orderContext.orderId;
+    mutationInProgressRef.current = true;
+    loadGenerationRef.current += 1;
     setSubmitting(true);
     setGroups([]);
     setRequests([]);
@@ -234,7 +316,7 @@ export default function BuyerReturnsPanel({ order, formatMoney }) {
           'Idempotency-Key': requestKey,
         },
       });
-      if (currentOrderIdRef.current !== orderContext.orderId) return;
+      if (!isMutationCurrent()) return;
       const mutation = inspectBuyerReturnMutationResponse(response.data, orderContext, {
         mode: 'create',
         expectedSellerId,
@@ -243,7 +325,7 @@ export default function BuyerReturnsPanel({ order, formatMoney }) {
         expectedReasonDetails: cleanReason,
       });
       const refreshed = await load({ notify: false });
-      if (refreshed.stale || currentOrderIdRef.current !== orderContext.orderId) return;
+      if (refreshed.stale || !isMutationCurrent()) return;
       const refetched = mutation.valid
         ? refreshed.requests.find(request => request._id === mutation.request._id)
         : null;
@@ -258,36 +340,46 @@ export default function BuyerReturnsPanel({ order, formatMoney }) {
         ? 'This return request was already received.'
         : 'Return request sent to the seller.');
     } catch (error) {
-      if (currentOrderIdRef.current !== orderContext.orderId) return;
+      if (!isMutationCurrent()) return;
       setGroups([]);
       setRequests([]);
+      setLoadError('Return information must be verified again before retrying this saved request.');
       toast.error(responseMessage(error, 'Failed to submit return request. You can retry this form safely.'));
     } finally {
-      setSubmitting(false);
+      if (mutationGeneration === mutationGenerationRef.current) {
+        mutationInProgressRef.current = false;
+        if (mountedRef.current) setSubmitting(false);
+      }
     }
   };
 
   const cancelReturn = async (requestId) => {
-    if (currentOrderIdRef.current !== orderContext.orderId) return;
+    if (mutationInProgressRef.current || !mountedRef.current || currentOrderIdRef.current !== orderContext.orderId) return;
     const current = requests.find(request => request._id === requestId);
     if (!current || !BUYER_CANCELLABLE_RETURN_STATUSES.has(current.status)) {
       toast.error('This return can no longer be cancelled.');
       return;
     }
+    const mutationGeneration = ++mutationGenerationRef.current;
+    const isMutationCurrent = () => mountedRef.current
+      && mutationGeneration === mutationGenerationRef.current
+      && currentOrderIdRef.current === orderContext.orderId;
+    mutationInProgressRef.current = true;
+    loadGenerationRef.current += 1;
     setCancellingId(requestId);
     setGroups([]);
     setRequests([]);
     setLoadError('');
     try {
       const response = await axios.post(`${API}/${requestId}/cancel`, {}, { headers: authHeaders() });
-      if (currentOrderIdRef.current !== orderContext.orderId) return;
+      if (!isMutationCurrent()) return;
       const mutation = inspectBuyerReturnMutationResponse(response.data, orderContext, {
         mode: 'cancel',
         expectedRequestId: requestId,
         expectedStatus: 'cancelled_by_buyer',
       });
       const refreshed = await load({ notify: false });
-      if (refreshed.stale || currentOrderIdRef.current !== orderContext.orderId) return;
+      if (refreshed.stale || !isMutationCurrent()) return;
       const refetched = refreshed.requests.find(request => request._id === requestId);
       if (!mutation.valid || !refreshed.valid || refetched?.status !== 'cancelled_by_buyer') {
         clearPresentedState();
@@ -297,9 +389,9 @@ export default function BuyerReturnsPanel({ order, formatMoney }) {
       }
       toast.success('Return request cancelled.');
     } catch (error) {
-      if (currentOrderIdRef.current !== orderContext.orderId) return;
+      if (!isMutationCurrent()) return;
       const refreshed = await load({ notify: false });
-      if (refreshed.stale || currentOrderIdRef.current !== orderContext.orderId) return;
+      if (refreshed.stale || !isMutationCurrent()) return;
       const refetched = refreshed.requests.find(request => request._id === requestId);
       if (refreshed.valid && refetched?.status === 'cancelled_by_buyer') {
         toast.success('Return request cancelled.');
@@ -307,7 +399,10 @@ export default function BuyerReturnsPanel({ order, formatMoney }) {
       }
       toast.error(responseMessage(error, 'Return request could not be cancelled.'));
     } finally {
-      setCancellingId(null);
+      if (mutationGeneration === mutationGenerationRef.current) {
+        mutationInProgressRef.current = false;
+        if (mountedRef.current) setCancellingId(null);
+      }
     }
   };
 
@@ -476,9 +571,17 @@ export default function BuyerReturnsPanel({ order, formatMoney }) {
               </select>
               <label className="block text-sm font-medium mt-4 mb-2" style={{ color: 'hsl(var(--foreground))' }}>What happened?</label>
               <textarea value={reasonDetails} onChange={(event) => setReasonDetails(event.target.value)} maxLength={1500} rows={4} className="glass-input w-full resize-none" placeholder="Describe the issue clearly for the seller." />
+              {loadError && (
+                <div className="mt-4 text-xs" role="alert" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                  <p>Return information must be verified again before submitting. Your draft is saved here.</p>
+                  <button type="button" className="glass-button px-3 py-2 rounded-lg mt-2" onClick={() => load({ notify: false, silent: true })} disabled={submitting}>
+                    Retry return information
+                  </button>
+                </div>
+              )}
               <div className="flex justify-end gap-3 mt-5">
                 <button type="button" className="glass-button px-4 py-2 rounded-xl text-sm font-semibold" onClick={() => setSelectedGroup(null)} disabled={submitting}>Cancel</button>
-                <button type="button" onClick={submitReturn} disabled={submitting || !selection.valid} className="px-4 py-2 rounded-xl text-sm font-semibold text-white inline-flex items-center gap-2 disabled:opacity-50" style={{ background: 'hsl(var(--primary))' }}>
+                <button type="button" onClick={submitReturn} disabled={submitting || !selection.valid || Boolean(loadError)} className="px-4 py-2 rounded-xl text-sm font-semibold text-white inline-flex items-center gap-2 disabled:opacity-50" style={{ background: 'hsl(var(--primary))' }}>
                   {submitting && <Loader2 size={14} className="animate-spin" />} Submit request
                 </button>
               </div>

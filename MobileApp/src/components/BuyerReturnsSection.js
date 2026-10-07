@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   Alert,
+  AppState,
   Modal,
   StyleSheet,
   Text,
@@ -12,12 +13,14 @@ import {
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import * as Crypto from 'expo-crypto';
+import { useIsFocused } from '@react-navigation/native';
 import Feedback from '../utils/feedback';
 import api from '../config/api';
 import GlassPanel from './common/GlassPanel';
 import KeyboardAwareFormScrollView from './common/KeyboardAwareFormScrollView';
 import { useTheme } from '../contexts/ThemeContext';
 import { borderRadius, fontSize, fontWeight, spacing } from '../styles/theme';
+import { startCancellationRefundRefresh } from '../utils/orderCancellationPresentation';
 import {
   BUYER_CANCELLABLE_RETURN_STATUSES,
   RETURN_STATUS_LABELS,
@@ -43,6 +46,11 @@ const REASONS = [
   ['other', 'Other'],
 ];
 const REASON_VALUES = new Set(REASONS.map(([value]) => value));
+const UNRESOLVED_RETURN_STATUSES = new Set([
+  'requested', 'approved', 'pickup_scheduled', 'picked_up',
+  'in_transit_to_seller', 'received_by_seller', 'under_review',
+  'accepted_pending_payment',
+]);
 const canonicalRequestKey = value => (
   typeof value === 'string'
   && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(value)
@@ -54,6 +62,10 @@ const responseMessage = (error, fallback) => {
   return typeof value === 'string' && value.trim() && value.length <= 500
     ? value.trim()
     : fallback;
+};
+const transientReadFailure = error => {
+  const status = error?.response?.status;
+  return status === undefined || status >= 500 || [408, 429].includes(status);
 };
 
 export default function BuyerReturnsSection({ order, formatMoney }) {
@@ -71,6 +83,11 @@ export default function BuyerReturnsSection({ order, formatMoney }) {
   const requestKeyRef = useRef(null);
   const [cancellingId, setCancellingId] = useState(null);
   const loadGenerationRef = useRef(0);
+  const loadInFlightRef = useRef(null);
+  const mutationInProgressRef = useRef(false);
+  const mutationGenerationRef = useRef(0);
+  const mountedRef = useRef(true);
+  const isFocused = useIsFocused();
   const orderContext = useMemo(() => inspectBuyerReturnOrderContext(order), [order]);
   const currentOrderIdRef = useRef(null);
   currentOrderIdRef.current = orderContext.valid ? orderContext.orderId : null;
@@ -85,48 +102,81 @@ export default function BuyerReturnsSection({ order, formatMoney }) {
     }
   }, []);
 
-  const load = useCallback(async ({ notify = true } = {}) => {
+  const load = useCallback(async ({ notify = true, silent = false } = {}) => {
+    if (silent && (loadInFlightRef.current || mutationInProgressRef.current)) {
+      return { valid: false, skipped: true, requests: [], groups: [] };
+    }
+    const previousLoad = loadInFlightRef.current;
     const generation = loadGenerationRef.current + 1;
     loadGenerationRef.current = generation;
-    clearPresentedState();
-    setLoadError('');
-    setLoading(true);
+    if (!silent) {
+      clearPresentedState();
+      setLoadError('');
+      setLoading(true);
+    }
     if (!orderContext.valid) {
       const message = 'This order could not be verified, so returns are unavailable.';
       setLoadError(message);
       setLoading(false);
       return { valid: false, requests: [], groups: [] };
     }
+    // A manual/mutation reload supersedes a poll, but waits for its reads to
+    // finish before starting another complete eligibility/list snapshot.
+    if (previousLoad) await previousLoad.done;
+    const isCurrent = () => mountedRef.current
+      && generation === loadGenerationRef.current
+      && currentOrderIdRef.current === orderContext.orderId;
+    if (!isCurrent()) return { valid: false, stale: true, requests: [], groups: [] };
+    let finishLoad;
+    const currentLoad = { done: new Promise(resolve => { finishLoad = resolve; }) };
+    loadInFlightRef.current = currentLoad;
+    const reads = [];
+    const readErrors = new Set();
+    const read = (...args) => {
+      const result = api.get(...args).catch(error => {
+        readErrors.add(error);
+        throw error;
+      });
+      reads.push(result);
+      return result;
+    };
     try {
-      const [eligibility, existing] = await Promise.all([
-        api.get(`/api/returns/order/${orderContext.orderId}/eligibility`),
+      const results = await Promise.allSettled([
+        read(`/api/returns/order/${orderContext.orderId}/eligibility`),
         fetchCompleteBuyerReturns(async (page, limit) => {
-          const response = await api.get('/api/returns/mine', {
+          const response = await read('/api/returns/mine', {
             params: { orderId: orderContext.orderId, page, limit },
           });
-          return response.data;
+          return response?.data;
         }),
       ]);
-      const eligibilityInspection = inspectBuyerReturnEligibilityResponse(
-        eligibility.data,
-        orderContext,
-      );
-      const returnsInspection = inspectBuyerReturnsResponse(
-        existing,
-        orderContext,
-        eligibilityInspection,
-      );
-      if (!eligibilityInspection.valid || !returnsInspection.valid) {
+      const rejectUnverified = () => {
         const error = new Error('Unverified return response');
         error.code = 'RETURN_RESPONSE_UNVERIFIED';
         throw error;
+      };
+      const failures = results.filter(result => result.status === 'rejected');
+      if (failures.some(result => !readErrors.has(result.reason))) rejectUnverified();
+      const eligibilityInspection = results[0].status === 'fulfilled' ? inspectBuyerReturnEligibilityResponse(
+        results[0].value?.data,
+        orderContext,
+      ) : null;
+      if (eligibilityInspection && !eligibilityInspection.valid) rejectUnverified();
+      const returnsInspection = results[1].status === 'fulfilled' ? inspectBuyerReturnsResponse(
+        results[1].value,
+        orderContext,
+        eligibilityInspection,
+      ) : null;
+      if (returnsInspection && returnsInspection.errors.some(error => error !== 'eligibility')) rejectUnverified();
+      const failedRead = failures.find(result => !transientReadFailure(result.reason)) || failures[0];
+      if (failedRead) throw failedRead.reason;
+      if (!eligibilityInspection?.valid || !returnsInspection?.valid) {
+        rejectUnverified();
       }
-      if (
-        generation !== loadGenerationRef.current
-        || currentOrderIdRef.current !== orderContext.orderId
-      ) {
+      if (!isCurrent()) {
         return { valid: false, stale: true, requests: [], groups: [] };
       }
+      setLoadError('');
       setGroups(eligibilityInspection.groups);
       setRequests(returnsInspection.requests);
       return {
@@ -135,13 +185,15 @@ export default function BuyerReturnsSection({ order, formatMoney }) {
         requests: returnsInspection.requests,
       };
     } catch (error) {
-      if (
-        generation !== loadGenerationRef.current
-        || currentOrderIdRef.current !== orderContext.orderId
-      ) {
+      if (!isCurrent()) {
         return { valid: false, stale: true, requests: [], groups: [] };
       }
-      clearPresentedState();
+      // Quiet transport failures keep the verified snapshot. Invalid payloads
+      // still disable actions, while the buyer's unfinished draft is retained.
+      if (silent && error?.code !== 'RETURN_RESPONSE_UNVERIFIED' && transientReadFailure(error)) {
+        return { valid: false, requests: [], groups: [] };
+      }
+      clearPresentedState({ closeForm: !silent });
       const message = error?.code === 'RETURN_RESPONSE_UNVERIFIED'
         ? 'The server response could not be verified.'
         : responseMessage(error, 'Could not load verified return information.');
@@ -149,20 +201,41 @@ export default function BuyerReturnsSection({ order, formatMoney }) {
       if (notify) Feedback.show({ type: 'error', text1: 'Returns unavailable', text2: message });
       return { valid: false, requests: [], groups: [] };
     } finally {
-      if (
-        generation === loadGenerationRef.current
-        && currentOrderIdRef.current === orderContext.orderId
-      ) setLoading(false);
+      // A rejected page must not release the next refresh while sibling reads
+      // from that complete snapshot are still running.
+      await Promise.allSettled(reads);
+      if (loadInFlightRef.current === currentLoad) loadInFlightRef.current = null;
+      finishLoad();
+      if (!silent && isCurrent()) setLoading(false);
     }
   }, [clearPresentedState, orderContext]);
 
   useEffect(() => {
+    mountedRef.current = true;
+    mutationInProgressRef.current = false;
+    setSubmitting(false);
     void load();
-    return () => { loadGenerationRef.current += 1; };
+    return () => {
+      mountedRef.current = false;
+      loadGenerationRef.current += 1;
+      mutationGenerationRef.current += 1;
+    };
   }, [load]);
+
+  const returnPending = requests.some(request => UNRESOLVED_RETURN_STATUSES.has(request.status));
+  useEffect(() => {
+    if (!returnPending || submitting || cancellingId || !isFocused) return;
+    return startCancellationRefundRefresh(
+      () => load({ notify: false, silent: true }),
+      () => AppState.currentState === 'active' && !mutationInProgressRef.current,
+    );
+  }, [returnPending, submitting, cancellingId, isFocused, load]);
 
   const selection = useMemo(() => {
     if (!selectedGroup) return { valid: false, items: [] };
+    const currentGroup = groups.find(group => group.seller._id === selectedGroup.seller._id);
+    if (!currentGroup?.eligible) return { valid: false, items: [] };
+    const currentItems = new Map(currentGroup.items.map(item => [item.orderItemId, item]));
     const selectable = selectedGroup.items.filter(
       item => item.eligible && item.remainingReturnableQuantity > 0,
     );
@@ -180,10 +253,17 @@ export default function BuyerReturnsSection({ order, formatMoney }) {
         || quantity < 0
         || quantity > item.remainingReturnableQuantity
       ) return { valid: false, items: [] };
-      if (quantity > 0) items.push({ orderItemId: item.orderItemId, quantity });
+      if (quantity > 0) {
+        const latest = currentItems.get(item.orderItemId);
+        if (!latest?.eligible || quantity > latest.remainingReturnableQuantity
+          || latest.returnPolicy.refundType !== item.returnPolicy.refundType) {
+          return { valid: false, items: [] };
+        }
+        items.push({ orderItemId: item.orderItemId, quantity });
+      }
     }
     return { valid: true, items };
-  }, [quantities, selectedGroup]);
+  }, [groups, quantities, selectedGroup]);
 
   const selectedItems = selection.items;
 
@@ -226,7 +306,7 @@ export default function BuyerReturnsSection({ order, formatMoney }) {
   };
 
   const submit = async () => {
-    if (currentOrderIdRef.current !== orderContext.orderId) return;
+    if (loadError || mutationInProgressRef.current || !mountedRef.current || currentOrderIdRef.current !== orderContext.orderId) return;
     if (!selectedGroup || !selection.valid || !selectedItems.length) {
       Feedback.show({ type: 'error', text1: 'Select at least one item' });
       return;
@@ -243,6 +323,12 @@ export default function BuyerReturnsSection({ order, formatMoney }) {
     }
     const expectedSellerId = selectedGroup.seller._id;
     const expectedItems = selectedItems.map(item => ({ ...item }));
+    const mutationGeneration = ++mutationGenerationRef.current;
+    const isCurrentMutation = () => mountedRef.current
+      && mutationGeneration === mutationGenerationRef.current
+      && currentOrderIdRef.current === orderContext.orderId;
+    mutationInProgressRef.current = true;
+    loadGenerationRef.current += 1;
     setSubmitting(true);
     setGroups([]);
     setRequests([]);
@@ -258,7 +344,7 @@ export default function BuyerReturnsSection({ order, formatMoney }) {
       }, {
         headers: { 'Idempotency-Key': requestKey },
       });
-      if (currentOrderIdRef.current !== orderContext.orderId) return;
+      if (!isCurrentMutation()) return;
       const mutation = inspectBuyerReturnMutationResponse(response.data, orderContext, {
         mode: 'create',
         expectedSellerId,
@@ -267,7 +353,7 @@ export default function BuyerReturnsSection({ order, formatMoney }) {
         expectedReasonDetails: cleanReason,
       });
       const refreshed = await load({ notify: false });
-      if (refreshed.stale || currentOrderIdRef.current !== orderContext.orderId) return;
+      if (refreshed.stale || !isCurrentMutation()) return;
       const refetched = mutation.valid
         ? refreshed.requests.find(request => request._id === mutation.request._id)
         : null;
@@ -284,12 +370,16 @@ export default function BuyerReturnsSection({ order, formatMoney }) {
         text2: 'The saved request was verified.',
       });
     } catch (error) {
-      if (currentOrderIdRef.current !== orderContext.orderId) return;
+      if (!isCurrentMutation()) return;
       setGroups([]);
       setRequests([]);
+      setLoadError('Return information must be verified again before retrying this saved request.');
       Feedback.show({ type: 'error', text1: 'Request failed', text2: responseMessage(error, 'You can retry this form safely.') });
     } finally {
-      setSubmitting(false);
+      if (isCurrentMutation()) {
+        mutationInProgressRef.current = false;
+        setSubmitting(false);
+      }
     }
   };
 
@@ -299,27 +389,35 @@ export default function BuyerReturnsSection({ order, formatMoney }) {
       Feedback.show({ type: 'error', text1: 'This return can no longer be cancelled' });
       return;
     }
+    const openedGeneration = mutationGenerationRef.current;
     Alert.alert('Cancel return request', `Cancel return #${current.returnNumber}?`, [
       { text: 'Keep Request', style: 'cancel' },
       {
         text: 'Cancel Return',
         style: 'destructive',
         onPress: async () => {
-          if (currentOrderIdRef.current !== orderContext.orderId) return;
+          if (openedGeneration !== mutationGenerationRef.current || mutationInProgressRef.current
+            || !mountedRef.current || currentOrderIdRef.current !== orderContext.orderId) return;
+          const mutationGeneration = ++mutationGenerationRef.current;
+          const isCurrentMutation = () => mountedRef.current
+            && mutationGeneration === mutationGenerationRef.current
+            && currentOrderIdRef.current === orderContext.orderId;
+          mutationInProgressRef.current = true;
+          loadGenerationRef.current += 1;
           setCancellingId(current._id);
           setGroups([]);
           setRequests([]);
           setLoadError('');
           try {
             const response = await api.post(`/api/returns/${current._id}/cancel`, {});
-            if (currentOrderIdRef.current !== orderContext.orderId) return;
+            if (!isCurrentMutation()) return;
             const mutation = inspectBuyerReturnMutationResponse(response.data, orderContext, {
               mode: 'cancel',
               expectedRequestId: current._id,
               expectedStatus: 'cancelled_by_buyer',
             });
             const refreshed = await load({ notify: false });
-            if (refreshed.stale || currentOrderIdRef.current !== orderContext.orderId) return;
+            if (refreshed.stale || !isCurrentMutation()) return;
             const refetched = refreshed.requests.find(candidate => candidate._id === current._id);
             if (!mutation.valid || !refreshed.valid || refetched?.status !== 'cancelled_by_buyer') {
               clearPresentedState();
@@ -329,9 +427,9 @@ export default function BuyerReturnsSection({ order, formatMoney }) {
             }
             Feedback.show({ type: 'success', text1: 'Return request cancelled' });
           } catch (error) {
-            if (currentOrderIdRef.current !== orderContext.orderId) return;
+            if (!isCurrentMutation()) return;
             const refreshed = await load({ notify: false });
-            if (refreshed.stale || currentOrderIdRef.current !== orderContext.orderId) return;
+            if (refreshed.stale || !isCurrentMutation()) return;
             const refetched = refreshed.requests.find(candidate => candidate._id === current._id);
             if (refreshed.valid && refetched?.status === 'cancelled_by_buyer') {
               Feedback.show({ type: 'success', text1: 'Return request cancelled' });
@@ -339,7 +437,10 @@ export default function BuyerReturnsSection({ order, formatMoney }) {
             }
             Feedback.show({ type: 'error', text1: 'Could not cancel', text2: responseMessage(error, 'Try again.') });
           } finally {
-            setCancellingId(null);
+            if (isCurrentMutation()) {
+              mutationInProgressRef.current = false;
+              setCancellingId(null);
+            }
           }
         },
       },
@@ -522,7 +623,16 @@ export default function BuyerReturnsSection({ order, formatMoney }) {
               placeholderTextColor={palette.colors.textSecondary}
               style={styles.reasonInput}
             />
-            <TouchableOpacity style={[styles.submitButton, (submitting || !selection.valid) && styles.disabled]} onPress={submit} disabled={submitting || !selection.valid}>
+            {loadError ? (
+              <View style={styles.unavailableCard}>
+                <Text style={[styles.unavailableText, { flex: 1 }]}>Retry return information before submitting.</Text>
+                <TouchableOpacity style={styles.retryButton} onPress={() => load({ notify: false, silent: true })} accessibilityRole="button" accessibilityLabel="Retry return information">
+                  <Text style={styles.retryText}>Retry</Text>
+                </TouchableOpacity>
+              </View>
+            ) : null}
+            {!loadError && !submitting && !selection.valid ? <Text style={styles.unavailableText}>Return eligibility changed. Review the available items before submitting.</Text> : null}
+            <TouchableOpacity style={[styles.submitButton, (submitting || !selection.valid || !!loadError) && styles.disabled]} onPress={submit} disabled={submitting || !selection.valid || !!loadError}>
               {submitting ? <ActivityIndicator size="small" color="#fff" /> : <Ionicons name="send-outline" size={18} color="#fff" />}
               <Text style={styles.submitText}>{submitting ? 'Sending...' : 'Submit Return Request'}</Text>
             </TouchableOpacity>
