@@ -18,6 +18,7 @@ const schema = new mongoose.Schema({
     setupStartedAt: { type: Date, default: null },
     encryptedContext: { type: String, default: '', select: false },
     expiresAt: { type: Date, default: null },
+    resetStartedAt: { type: Date, default: null },
   },
   customerId: { type: String, default: null, match: /^cus_[a-zA-Z0-9-]+$/, immutable: true },
   cardId: { type: String, default: null, match: /^pm_[a-zA-Z0-9-]+$/, select: false, immutable: true },

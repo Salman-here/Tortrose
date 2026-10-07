@@ -169,6 +169,31 @@ test('saved-card CIT setup initializes 3DS without any capture or recurring auth
   expect(JSON.parse(fetchImpl.mock.calls[2][1].body)).toEqual({ payload: { payment_method: { tokenized_card: { token: card.token } } }, use_action_chaining: false });
 });
 
+test('explicit bank retry resets the same owned, uncaptured tracker using the official Configure API', async () => {
+  const enrolled = { ...tracker, mode: 'payment', entry_mode: 'tms', customer: 'cus_owned-fixture', state: 'TRACKER_ENROLLED',
+    next_actions: { CYBERSOURCE: { kind: 'PAYER_AUTH_VALIDATION' } } };
+  const reset = { ...enrolled, state: 'TRACKER_STARTED', next_actions: { CYBERSOURCE: { kind: 'PAYER_AUTH_SETUP' } } };
+  const fetchImpl = jest.fn()
+    .mockResolvedValueOnce({ ok: true, json: async () => ({ data: enrolled }) })
+    .mockResolvedValueOnce({ ok: true, json: async () => ({ data: { tracker: reset } }) });
+  const expected = { amountMinor: 10000, currency: 'PKR', reference: 'order:fixture123',
+    customerId: 'cus_owned-fixture', providerMode: 'payment', providerEntryMode: 'tms' };
+  expect(await createSafepayClient({ config, fetchImpl }).resetSavedCardAuthentication(tracker.token, expected)).toEqual(reset);
+  expect(fetchImpl.mock.calls[1][0]).toBe(`https://sandbox.api.getsafepay.com/order/payments/v3/${tracker.token}`);
+  expect(fetchImpl.mock.calls[1][1].method).toBe('PUT');
+  expect(JSON.parse(fetchImpl.mock.calls[1][1].body)).toEqual({});
+});
+
+test.each(['TRACKER_STARTED', 'TRACKER_AUTHORIZED', 'TRACKER_ENDED', 'TRACKER_REFUNDED'])('a %s saved-card payment cannot be reset as an incomplete challenge', async state => {
+  const candidate = { ...tracker, entry_mode: 'tms', customer: 'cus_owned-fixture', state,
+    next_actions: { CYBERSOURCE: { kind: 'PAYER_AUTH_VALIDATION' } } };
+  const fetchImpl = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ data: candidate }) });
+  await expect(createSafepayClient({ config, fetchImpl }).resetSavedCardAuthentication(tracker.token,
+    { amountMinor: 10000, currency: 'PKR', reference: 'order:fixture123', customerId: 'cus_owned-fixture',
+      providerMode: 'payment', providerEntryMode: 'tms' })).rejects.toMatchObject({ code: 'SAFEPAY_AUTHENTICATION_IN_PROGRESS' });
+  expect(fetchImpl).toHaveBeenCalledTimes(1);
+});
+
 test('single-use tokens and expired tokens cannot be used for automatic renewals', () => {
   const card = { max_usage: 1, expires_at: { seconds: 2200000000 }, cybersource: { token: 'tms_owned-fixture', last_four: '1111' } };
   expect(() => requireReusableCard(card)).toThrow();

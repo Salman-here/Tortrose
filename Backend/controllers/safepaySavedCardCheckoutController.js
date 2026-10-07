@@ -31,6 +31,6 @@ exports.context = async (req, res) => {
 };
 exports.authenticate = async (req, res) => {
   res.set('Cache-Control', 'no-store, private');
-  try { return res.json(await service.authenticate(req.params.paymentId, req.get('Authorization'), req.body?.billing, req.get('X-Rozare-Checkout-Grant'))); }
+  try { return res.json(await service.authenticate(req.params.paymentId, req.get('Authorization'), req.body?.billing, req.get('X-Rozare-Checkout-Grant'), { restartAuthentication: req.body?.restartAuthentication === true })); }
   catch (error) { return errorResponse(res, error); }
 };

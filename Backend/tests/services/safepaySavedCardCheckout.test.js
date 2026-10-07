@@ -3,7 +3,7 @@ const mongoose = require('mongoose');
 const { MongoMemoryReplSet } = require('mongodb-memory-server');
 const Payment = require('../../models/SafepayPayment');
 const User = require('../../models/User');
-const mockClient = { getTracker: jest.fn(), getCard: jest.fn(), setupSavedCardAuthentication: jest.fn(), createAuthToken: jest.fn() };
+const mockClient = { getTracker: jest.fn(), getCard: jest.fn(), setupSavedCardAuthentication: jest.fn(), resetSavedCardAuthentication: jest.fn(), createAuthToken: jest.fn() };
 jest.mock('../../services/safepayClient', () => ({ ...jest.requireActual('../../services/safepayClient'), createSafepayClient: () => mockClient }));
 jest.mock('../../services/safepayCustomerService', () => ({ requireOwnedReusableCard: jest.fn(async () => ({ card: { cybersource: { scheme: 1, last_four: '1111' } } })) }));
 jest.mock('../../services/safepayPaymentService', () => ({ reconcilePayment: async id => require('../../models/SafepayPayment').findById(id) }));
@@ -38,6 +38,7 @@ beforeEach(async () => {
   mockClient.getTracker.mockResolvedValue({ state: 'TRACKER_STARTED', next_actions: { CYBERSOURCE: { kind: 'PAYER_AUTH_SETUP' } } });
   mockClient.setupSavedCardAuthentication.mockResolvedValue({ deviceDataCollectionJWT: 'private-ddc-fixture-token', deviceDataCollectionURL: 'https://centinelapistag.cardinalcommerce.com/V1/Cruise/Collect' });
   mockClient.createAuthToken.mockResolvedValue('temporary-provider-auth-fixture');
+  mockClient.resetSavedCardAuthentication.mockResolvedValue({ state: 'TRACKER_STARTED', next_actions: { CYBERSOURCE: { kind: 'PAYER_AUTH_SETUP' } } });
 });
 test('ticket is short-lived, fragment-only and restricted to its exact account, payment and environment', async () => {
   const url = new URL(service.buildCheckoutUrl(payment, 'web'));
@@ -83,6 +84,30 @@ test('unknown setup response remains claimed instead of being silently retried',
   await expect(service.authenticate(String(payment._id), `Bearer ${token}`, billing, grant)).rejects.toMatchObject({ code: 'SAFEPAY_REQUEST_UNCERTAIN' });
   await expect(service.authenticate(String(payment._id), `Bearer ${token}`, billing, grant)).rejects.toMatchObject({ code: 'SAFEPAY_AUTHENTICATION_IN_PROGRESS' });
   expect(mockClient.setupSavedCardAuthentication).toHaveBeenCalledTimes(1);
+});
+
+test('explicit retry resets only a completed bank journey, preserves identity and performs a new 3DS setup', async () => {
+  const billing = { street_1: '1 Test Lane', city: 'Lahore', country: 'PK' };
+  await service.authenticate(String(payment._id), `Bearer ${token}`, billing, grant);
+  mockClient.getTracker.mockResolvedValue({ state: 'TRACKER_ENROLLED', next_actions: { CYBERSOURCE: { kind: 'PAYER_AUTH_VALIDATION' } } });
+  expect((await service.viewContext(String(payment._id), `Bearer ${token}`, grant)).canRestartAuthentication).toBe(true);
+  await service.authenticate(String(payment._id), `Bearer ${token}`, billing, grant, { restartAuthentication: true });
+  expect(mockClient.resetSavedCardAuthentication).toHaveBeenCalledTimes(1);
+  expect(mockClient.setupSavedCardAuthentication).toHaveBeenCalledTimes(2);
+  expect(await Payment.countDocuments()).toBe(1);
+  const unchanged = await Payment.findById(payment._id);
+  expect(unchanged.amountMinor).toBe(200); expect(unchanged.tracker).toBe(payment.tracker);
+  expect(unchanged.appliedAt).toBeNull(); expect(unchanged.capturedMinor).toBe(0);
+});
+
+test('unknown reset response is never automatically submitted again', async () => {
+  const billing = { street_1: '1 Test Lane', city: 'Lahore', country: 'PK' };
+  await service.authenticate(String(payment._id), `Bearer ${token}`, billing, grant);
+  mockClient.getTracker.mockResolvedValue({ state: 'TRACKER_ENROLLED', next_actions: { CYBERSOURCE: { kind: 'PAYER_AUTH_VALIDATION' } } });
+  mockClient.resetSavedCardAuthentication.mockRejectedValueOnce(Object.assign(new Error('uncertain'), { outcomeUnknown: true, code: 'SAFEPAY_REQUEST_UNCERTAIN' }));
+  await expect(service.authenticate(String(payment._id), `Bearer ${token}`, billing, grant, { restartAuthentication: true })).rejects.toMatchObject({ code: 'SAFEPAY_REQUEST_UNCERTAIN' });
+  await expect(service.authenticate(String(payment._id), `Bearer ${token}`, billing, grant, { restartAuthentication: true })).rejects.toMatchObject({ code: 'SAFEPAY_AUTHENTICATION_IN_PROGRESS' });
+  expect(mockClient.resetSavedCardAuthentication).toHaveBeenCalledTimes(1);
 });
 test('paid and locally cancelled payments cannot start a second authentication journey', async () => {
   const billing = { street_1: '1 Test Lane', city: 'Lahore', country: 'PK' };

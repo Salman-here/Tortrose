@@ -226,6 +226,20 @@ function createSafepayClient({ config = readSafepayConfig(), fetchImpl = fetch }
         return { deviceDataCollectionJWT: setup.access_token, deviceDataCollectionURL: collectionUrl.toString() };
       } catch (error) { error.outcomeUnknown = true; throw error; }
     },
+    async resetSavedCardAuthentication(trackerId, expected) {
+      if (expected.providerMode !== 'payment' || expected.providerEntryMode !== 'tms' || !expected.customerId) throw providerError('Invalid saved-card recovery binding.', 'SAFEPAY_SAVED_CARD_BINDING_INVALID', 409);
+      const tracker = await this.getTracker(trackerId, expected);
+      if (tracker.state !== 'TRACKER_ENROLLED' || tracker.next_actions?.CYBERSOURCE?.kind !== 'PAYER_AUTH_VALIDATION'
+        || tracker.charge) throw providerError('This payment cannot restart bank verification. Check its status first.', 'SAFEPAY_AUTHENTICATION_IN_PROGRESS', 409);
+      // Official node-core Order.Configure.reset: PUT the existing tracker.
+      // No new tracker, price, customer, capture or MIT authorization is supplied.
+      const data = await request('PUT', `/order/payments/v3/${trackerId}`, {});
+      try {
+        const reset = requireTracker(data, trackerExpectation(expected, trackerId), config);
+        if (reset.state !== 'TRACKER_STARTED' || reset.next_actions?.CYBERSOURCE?.kind !== 'PAYER_AUTH_SETUP') throw providerError('Bank verification reset is still being confirmed.', 'SAFEPAY_AUTHENTICATION_IN_PROGRESS', 409);
+        return reset;
+      } catch (error) { error.outcomeUnknown = true; throw error; }
+    },
     async getSubscription(subscriptionId) {
       requireId(subscriptionId, 'sub');
       return request('GET', `/client/subscriptions/v1/${encodeURIComponent(subscriptionId)}`);

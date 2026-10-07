@@ -91,11 +91,13 @@ async function viewContext(paymentId, authorization, grant) {
   return { paymentId: String(payment._id), amountMinor: payment.amountMinor, currency: payment.currency,
     environment: config.environment, providerState: tracker.state,
     canAuthenticate: payment.status === 'ready' && !payment.localCancelledAt && !payment.appliedAt,
+    canRestartAuthentication: tracker.state === 'TRACKER_ENROLLED' && tracker.next_actions?.CYBERSOURCE?.kind === 'PAYER_AUTH_VALIDATION'
+      && !tracker.charge && !!payment.savedCardAuthentication?.encryptedContext,
     returnUrl: buildReturnUrl({ backendOrigin: origin(), attempt: String(payment._id), purpose: payment.purpose, surface: claims.surface, outcome: 'return' }),
     card: { brand: card.cybersource?.scheme === 1 ? 'Visa' : card.cybersource?.scheme === 2 ? 'Mastercard' : 'Card', last4: card.cybersource.last_four },
     billing: { street_1: address.address || '', city: address.city || '', country: address.countryCode || '', state: address.state || '', postal_code: address.postalCode || '' } };
 }
-async function authenticate(paymentId, authorization, suppliedBilling, grant) {
+async function authenticate(paymentId, authorization, suppliedBilling, grant, { restartAuthentication = false } = {}) {
   let { payment, config, client, claims } = await ownedContext(paymentId, authorization, grant);
   const billing = validateBilling(suppliedBilling);
   await require('./safepayCustomerService').requireOwnedReusableCard(payment.user, payment.cardId);
@@ -104,6 +106,30 @@ async function authenticate(paymentId, authorization, suppliedBilling, grant) {
   payment = await Payment.findById(paymentId).select('+cardId +savedCardAuthentication.encryptedContext');
   if (payment.purpose === 'order' && payment.terms?.settlementPolicy === 'revalidate-on-payment-v1') {
     await mongoose.connection.transaction(session => require('./safepayOrderAvailabilityService').assertOrderAvailable(payment, session));
+  }
+  if (restartAuthentication) {
+    const tracker = await client.getTracker(payment.tracker, payment);
+    const prior = payment.savedCardAuthentication;
+    if (!prior?.encryptedContext) throw fail('The previous bank setup is still being reconciled. Keep this same payment.', 'SAFEPAY_AUTHENTICATION_IN_PROGRESS');
+    const alreadyReset = prior.resetStartedAt && tracker.state === 'TRACKER_STARTED'
+      && tracker.next_actions?.CYBERSOURCE?.kind === 'PAYER_AUTH_SETUP' && !tracker.charge;
+    if (!alreadyReset) {
+      const claim = await Payment.findOneAndUpdate({ _id: payment._id, status: 'ready', appliedAt: null, localCancelledAt: null,
+        'savedCardAuthentication.resetStartedAt': null, 'savedCardAuthentication.encryptedContext': prior.encryptedContext },
+      { $set: { 'savedCardAuthentication.resetStartedAt': new Date() } }, { new: true });
+      if (!claim) throw fail('Bank verification recovery is already being checked. Keep this same payment.', 'SAFEPAY_AUTHENTICATION_IN_PROGRESS');
+      try { await client.resetSavedCardAuthentication(payment.tracker, payment); }
+      catch (error) {
+        if (!error.outcomeUnknown) await Payment.updateOne({ _id: payment._id,
+          'savedCardAuthentication.resetStartedAt': claim.savedCardAuthentication.resetStartedAt },
+        { $set: { 'savedCardAuthentication.resetStartedAt': null } });
+        throw error;
+      }
+    }
+    await Payment.updateOne({ _id: payment._id, status: 'ready', appliedAt: null, localCancelledAt: null },
+    { $set: { 'savedCardAuthentication.setupStartedAt': null, 'savedCardAuthentication.encryptedContext': '',
+      'savedCardAuthentication.expiresAt': null, 'savedCardAuthentication.resetStartedAt': null } });
+    payment = await Payment.findById(payment._id).select('+cardId +savedCardAuthentication.encryptedContext');
   }
   let setup;
   if (payment.savedCardAuthentication?.encryptedContext && payment.savedCardAuthentication.expiresAt > new Date()) {
