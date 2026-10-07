@@ -307,7 +307,7 @@ test('seller return amounts retain their frozen currency instead of the browsing
     const escaped = amountExpression.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     assert.match(source, new RegExp(`formatPrice\\(${escaped}, \\{ sourceCurrency: snapshot\\.currency, targetCurrency: snapshot\\.currency, showCode: true \\}\\)`));
   }
-  assert.match(source, /formatPrice\(available, \{ sourceCurrency: 'USD', targetCurrency: 'USD', showCode: true \}\)/);
+  assert.match(source, /formatPrice\(available, \{ sourceCurrency: availableCurrency, targetCurrency: availableCurrency, showCode: true \}\)/);
   for (const currency of ['PKR', 'USD', 'EUR', 'GBP']) {
     const inspected = inspectReturnPresentationSnapshot(makeReturn({ currency }));
     assert.equal(inspected.valid, true);

@@ -146,16 +146,27 @@ export default function ReturnOrdersPanel({ formatPrice }) {
         ...(attempt ? { paymentProvider: 'safepay', platform: 'web', requestKey: attempt.key } : {}) } : {}, { headers: authHeaders() });
       if (response.data?.requiresPayment) {
         const result = await openSafepayCheckout(response);
-        if (result.status === 'paid') await clearPersistedMutationAttemptFromLedger(localStorage, storageKey, fingerprint, attempt.key);
-        else { toast.info('Funding is not confirmed. Resume this same return payment later.'); await load(); return; }
+        if (['paid', 'cancelled', 'failed', 'refunded'].includes(result.status)) {
+          await clearPersistedMutationAttemptFromLedger(localStorage, storageKey, fingerprint, attempt.key);
+        }
+        if (result.status !== 'paid') {
+          toast.info(['cancelled', 'failed', 'refunded'].includes(result.status)
+            ? 'This payment is closed. Refresh the return before trying again.'
+            : result.status === 'manual_review' ? 'This payment needs support review. Do not pay again.'
+              : 'Funding is not confirmed. Resume this same return payment later.');
+          await load(); return;
+        }
       }
       toast.success(response.data?.msg || 'Return completed and buyer notified.');
       setDialog(null);
       await load();
     } catch (error) {
-      const available = error.response?.data?.availableBalanceUSD;
+      const data = error.response?.data;
+      const nativeCurrency = ['USD', 'PKR', 'EUR', 'GBP'].includes(data?.availableBalanceCurrency) ? data.availableBalanceCurrency : null;
+      const available = nativeCurrency ? data.availableBalance : data?.availableBalanceUSD;
+      const availableCurrency = nativeCurrency || 'USD';
       const availableText = isExactNonNegativeJsonMoney(available)
-        ? ` Available balance: ${formatPrice(available, { sourceCurrency: 'USD', targetCurrency: 'USD', showCode: true })}.`
+        ? ` Available balance: ${formatPrice(available, { sourceCurrency: availableCurrency, targetCurrency: availableCurrency, showCode: true })}.`
         : '';
       toast.error(`${error.response?.data?.msg || 'Failed to accept return.'}${availableText}`);
     } finally {

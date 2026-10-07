@@ -1,5 +1,5 @@
 import React from 'react';
-import { Text, TouchableOpacity, View } from 'react-native';
+import { Alert, Text, TouchableOpacity, View } from 'react-native';
 import { act, fireEvent, render } from '@testing-library/react-native';
 
 const mockFormatAmount = jest.fn(value => `$${Number(value).toFixed(2)}`);
@@ -92,6 +92,7 @@ jest.mock('../../src/contexts/ThemeContext', () => ({
 }));
 
 const api = require('../../src/config/api').default;
+const Feedback = require('../../src/utils/feedback').default;
 const SellerReturnsPanel = require('../../src/components/SellerReturnsPanel').default;
 const { summarizeSellerReturns } = require('../../src/components/SellerReturnsPanel');
 
@@ -129,6 +130,23 @@ describe('SellerReturnsPanel', () => {
   afterEach(() => {
     jest.useRealTimers();
   });
+
+  it.each(['PKR', 'USD'])('formats the insufficient balance in the server frozen %s currency', async currency => {
+    api.get.mockResolvedValue({ data: { returns: [validReturn({ refundFundingPolicy: 'seller_funded' })] } });
+    api.post.mockRejectedValue({ response: { data: { msg: 'Insufficient funds', code: 'INSUFFICIENT_SELLER_BALANCE',
+      availableBalance: 1999.90, availableBalanceCurrency: currency } } });
+    const dialog = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    try {
+      const screen = render(<SellerReturnsPanel />);
+      await act(async () => { jest.runOnlyPendingTimers(); await Promise.resolve(); });
+      fireEvent.press(screen.getByText('Accept return'));
+      const choices = dialog.mock.calls.at(-1)[2];
+      await act(async () => { await choices.find(choice => choice.text === 'Seller Balance').onPress(); });
+      expect(api.post).toHaveBeenCalledWith(expect.stringContaining('/accept'), { fundingSource: 'seller_balance', platform: 'mobile' });
+      expect(mockFormatAmount).toHaveBeenCalledWith(1999.90, { targetCurrency: currency, showCode: true });
+      expect(Feedback.show).toHaveBeenCalledWith(expect.objectContaining({ type: 'error', text1: 'Could not accept return' }));
+    } finally { dialog.mockRestore(); }
+  }, 15000);
 
   it('shows skeletons while the first real request is pending', () => {
     api.get.mockReturnValue(new Promise(() => {}));

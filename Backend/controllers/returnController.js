@@ -245,7 +245,9 @@ exports.acceptReturn = async (req, res) => {
         return res.status(error.statusCode || 500).json({
             msg: error.message || 'Failed to accept return',
             code: error.code,
-            availableBalanceUSD: error.availableBalanceUSD,
+            availableBalance: error.availableBalance,
+            availableBalanceCurrency: error.currency,
+            availableBalanceUSD: error.availableBalanceUSD ?? (error.currency === 'USD' ? error.availableBalance : undefined),
         });
     }
 };

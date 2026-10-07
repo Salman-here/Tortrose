@@ -26,6 +26,7 @@ const {
 } = require('./stripePaymentRiskMarkerService');
 const {
   attachReturnedWalletFundingProvenance,
+  attachSafepayReturnFundingProvenance,
   assertWalletOrderFundingReturnable,
 } = require('./walletOrderFundingRiskService');
 const { buildOrderItemDiscountAllocations } = require('./orderDiscountService');
@@ -2602,11 +2603,16 @@ const requireSafepayReturnBinding = (request, payment) => {
 };
 
 const completeSafepayReturnSettlement = async (payment, tracker, session) => {
+  if (require('./safepayPaymentFacts').safepayPaymentFacts(tracker).outcome !== 'paid') {
+    throw returnSettlementError('Safepay has not confirmed this return payment.', 'RETURN_SETTLEMENT_NOT_PAID', 409);
+  }
   await SellerSettlementLock.findOneAndUpdate({ seller: payment.user }, { $inc: { version: 1 } }, { upsert: true, new: true, session });
   const request = await ReturnRequest.findById(payment.returnRequest).session(session);
   requireSafepayReturnBinding(request, payment);
   const { order } = await assertReturnRequestFinancialIdentity(request, { session });
   if (request.status === 'returned' && request.settlement.status === 'completed') {
+    const walletTransaction = await require('../models/WalletTransaction').findById(request.settlement.walletTransaction).session(session);
+    await attachSafepayReturnFundingProvenance({ walletTransaction, request, payment, session });
     await enqueueReturnSettlementNotifications(request, order, { session });
     return request;
   }
@@ -2619,8 +2625,7 @@ const completeSafepayReturnSettlement = async (payment, tracker, session) => {
     idempotencyKey: `return-refund:${request._id}`, description: `Refund for return ${request.returnNumber}`,
     metadata: { orderId: request.orderId, sellerId: String(request.seller), provider: 'safepay',
       safepayPaymentId: toId(payment), safepayEnvironment: payment.environment }, allowLocked: true }, session);
-  await attachReturnedWalletFundingProvenance({ walletTransaction, orderId: request.order, sellerId: request.seller,
-    returnRequestId: request._id, refundAmount: request.refund.totalAmount, currency: request.currency, session });
+  await attachSafepayReturnFundingProvenance({ walletTransaction, request, payment, session });
   request.status = 'returned'; request.settlement.status = 'completed'; request.settlement.setupState = 'complete';
   request.settlement.safepayTrackerId = payment.tracker;
   request.settlement.walletTransaction = walletTransaction._id; request.settlement.settledAt = new Date();

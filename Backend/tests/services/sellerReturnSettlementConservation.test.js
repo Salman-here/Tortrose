@@ -192,6 +192,7 @@ describe('Safepay card-funded return settlement', () => {
   const pay = async (request, seller, key) => {
     const result = await createSafepayReturnSettlement({ returnRequestId: request._id, sellerId: seller, requestKey: key });
     const payment = await SafepayPayment.findById(result.paymentId);
+    payment.status = 'ready'; payment.tracker = `track_test-return-${payment._id}`; await payment.save();
     await mongoose.connection.transaction(session => completeSafepayReturnSettlement(payment, { state: 'TRACKER_ENDED' }, session));
     return payment;
   };

@@ -113,6 +113,68 @@ const assertWalletOrderFundingReturnable = async ({ orderId, session = null }) =
   return { returnable: true, sourceIds };
 };
 
+// A seller's new card payment funds this refund independently of the original
+// COD sale. Preserve its principal as a spendable lot so provider reversals
+// follow later Wallet purchases; no checkout fee is carried into the lot.
+const attachSafepayReturnFundingProvenance = async ({ walletTransaction, request, payment, session }) => {
+  const id = value => String(value?._id || value || '');
+  const invalid = () => provenanceError('The seller card funding does not match this Wallet refund.', 'WALLET_CARD_REFUND_BINDING_INVALID');
+  const refundMinor = toMinorUnits(request?.refund?.totalAmount);
+  const captureMinor = payment?.capturedMinor === 0 && !payment?.appliedAt ? payment?.amountMinor : payment?.capturedMinor;
+  if (!session?.inTransaction?.() || !walletTransaction || !request || !payment
+      || payment.purpose !== 'return_settlement' || payment.providerMode !== 'payment'
+      || !['sandbox', 'production'].includes(payment.environment)
+      || !/^track_[A-Za-z0-9-]+$/.test(payment.tracker || '')
+      || !['new', 'creating', 'ready', 'paid'].includes(payment.status) || payment.riskPending
+      || !Number.isSafeInteger(refundMinor) || refundMinor <= 0
+      || !Number.isSafeInteger(captureMinor) || captureMinor !== payment.amountMinor || refundMinor !== captureMinor
+      || !Number.isSafeInteger(payment.refundedMinor) || payment.refundedMinor < 0
+      || !Number.isSafeInteger(payment.walletRefundMinor) || payment.walletRefundMinor < 0
+      || id(payment.returnRequest) !== id(request) || id(payment.user) !== id(request.seller)
+      || request.settlement?.provider !== 'safepay' || request.settlement?.fundingSource !== 'card'
+      || id(request.settlement.safepayPaymentId) !== id(payment) || request.settlement.safepayEnvironment !== payment.environment
+      || payment.currency !== request.currency || payment.terms?.buyerId !== id(request.buyer)
+      || payment.terms?.orderId !== id(request.order) || payment.terms?.returnRequestId !== id(request)
+      || payment.terms?.attempt !== request.settlement.attempt
+      || walletTransaction.type !== 'return_refund' || walletTransaction.direction !== 'credit'
+      || walletTransaction.status !== 'completed' || id(walletTransaction.user) !== id(request.buyer)
+      || walletTransaction.referenceType !== 'return_request' || walletTransaction.referenceId !== id(request)
+      || walletTransaction.idempotencyKey !== `return-refund:${id(request)}`
+      || walletTransaction.currency !== payment.currency || toMinorUnits(walletTransaction.amount) !== refundMinor) throw invalid();
+  const availableMinor = walletTransaction.metadata?.availableCreditedMinor;
+  if (!Number.isSafeInteger(availableMinor) || availableMinor < 0 || availableMinor > refundMinor) throw invalid();
+  if (walletTransaction.metadata?.cardRefundFunding === true) {
+    const remaining = walletTransaction.metadata.fundingRemainingMinor;
+    if (id(walletTransaction.safepayPaymentId) !== id(payment) || walletTransaction.safepayEnvironment !== payment.environment
+        || walletTransaction.safepayTrackerId !== payment.tracker
+        || walletTransaction.metadata.fundingOriginalAvailableMinor !== availableMinor
+        || !Number.isSafeInteger(remaining) || remaining < 0 || remaining > availableMinor
+        || payment.walletRefundMinor !== refundMinor || payment.walletRefundMinor + payment.refundedMinor > captureMinor) throw invalid();
+    return walletTransaction;
+  }
+  if (walletTransaction.safepayPaymentId || payment.walletRefundMinor + payment.refundedMinor + refundMinor > captureMinor) throw invalid();
+  const claim = await SafepayPayment.updateOne({ _id: payment._id, purpose: 'return_settlement', user: request.seller,
+    returnRequest: request._id, environment: payment.environment, currency: request.currency,
+    tracker: payment.tracker, amountMinor: refundMinor, walletRefundMinor: payment.walletRefundMinor,
+    refundedMinor: payment.refundedMinor, riskPending: false,
+    status: { $in: ['new', 'creating', 'ready', 'paid'] } }, { $inc: { walletRefundMinor: refundMinor } }, { session });
+  if (claim.modifiedCount !== 1) throw invalid();
+  // Reconciliation saves this same document after its handler returns.
+  payment.walletRefundMinor += refundMinor;
+  walletTransaction.safepayPaymentId = payment._id;
+  walletTransaction.safepayEnvironment = payment.environment;
+  walletTransaction.safepayTrackerId = payment.tracker;
+  walletTransaction.paymentFlow = 'safepay_hosted';
+  walletTransaction.paymentSetupState = 'complete';
+  walletTransaction.paymentSetupCompletedAt = walletTransaction.completedAt;
+  walletTransaction.metadata = { ...(walletTransaction.metadata || {}), cardRefundFunding: true,
+    sourceOrderId: id(request.order), fundingProviderPurpose: 'return_settlement',
+    fundingRemainingMinor: availableMinor, fundingOriginalAvailableMinor: availableMinor, fundingProvenanceReturns: [] };
+  walletTransaction.markModified('metadata');
+  await walletTransaction.save({ session });
+  return walletTransaction;
+};
+
 /**
  * Move exact top-up-funded seller principal back to the buyer when a return is
  * completed. The original order provenance remains append-only; this return
@@ -352,4 +414,5 @@ const attachReturnedWalletFundingProvenance = async ({
 module.exports = {
   assertWalletOrderFundingReturnable,
   attachReturnedWalletFundingProvenance,
+  attachSafepayReturnFundingProvenance,
 };

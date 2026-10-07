@@ -356,9 +356,12 @@ export default function SellerReturnsPanel({ header, route, navigation }) {
       setDialog(null);
       await load();
     } catch (error) {
-      const available = error.response?.data?.availableBalanceUSD;
+      const data = error.response?.data;
+      const nativeCurrency = ['USD', 'PKR', 'EUR', 'GBP'].includes(data?.availableBalanceCurrency) ? data.availableBalanceCurrency : null;
+      const available = nativeCurrency ? data.availableBalance : data?.availableBalanceUSD;
+      const availableCurrency = nativeCurrency || 'USD';
       const availableText = isExactNonNegativeJsonMoney(available)
-        ? ` Available balance: ${formatAmount(available, { targetCurrency: 'USD', showCode: true })}.`
+        ? ` Available balance: ${formatAmount(available, { targetCurrency: availableCurrency, showCode: true })}.`
         : '';
       Feedback.show({
         type: 'error',
