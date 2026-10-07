@@ -35,6 +35,7 @@ import {
   inspectBuyerReturnOrderContext,
   inspectBuyerReturnsResponse,
 } from '../utils/returnPresentationSafety';
+import { getReturnItemVariantLabels } from '../utils/returnItemVariants';
 
 const REASONS = [
   ['damaged', 'Arrived damaged'],
@@ -505,7 +506,10 @@ export default function BuyerReturnsSection({ order, formatMoney }) {
             </View>
             {request.items.map(item => (
               <View key={item.orderItemId} style={styles.returnItemRow}>
-                <Text style={styles.itemName} numberOfLines={1}>{item.name} x {item.quantity}</Text>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={styles.itemName} numberOfLines={1}>{item.name} x {item.quantity}</Text>
+                  {getReturnItemVariantLabels(item).map(label => <Text key={label} style={styles.mutedText}>{label}</Text>)}
+                </View>
                 <Text style={styles.itemAmount}>{moneyLabel(item.lineSubtotal)}</Text>
               </View>
             ))}
@@ -581,6 +585,7 @@ export default function BuyerReturnsSection({ order, formatMoney }) {
                   <Image source={{ uri: item.image || 'https://rozare.com/favicon-512.png' }} style={styles.productImage} contentFit="cover" />
                   <View style={{ flex: 1, minWidth: 0 }}>
                     <Text style={styles.cardTitle} numberOfLines={2}>{item.name}</Text>
+                    {getReturnItemVariantLabels(item).map(label => <Text key={label} style={styles.mutedText}>{label}</Text>)}
                     <Text style={styles.mutedText}>Up to {item.remainingReturnableQuantity} - {returnResolutionLabel(item.returnPolicy?.refundType)}</Text>
                     {item.eligibilityDeadline && <Text style={styles.itemDeadline}>By {new Date(item.eligibilityDeadline).toLocaleString()}</Text>}
                   </View>
@@ -658,7 +663,7 @@ const buildStyles = (p) => StyleSheet.create({
   statusBadge: { maxWidth: '48%', paddingHorizontal: spacing.sm, paddingVertical: 5, borderRadius: borderRadius.full, borderWidth: 1 },
   statusText: { fontSize: 10, fontWeight: fontWeight.bold, textAlign: 'center' },
   returnItemRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.sm, paddingVertical: 5 },
-  itemName: { flex: 1, fontSize: fontSize.sm, color: p.colors.text },
+  itemName: { fontSize: fontSize.sm, color: p.colors.text },
   itemAmount: { fontSize: fontSize.sm, fontWeight: fontWeight.semibold, color: p.colors.text },
   requestFooter: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, borderTopWidth: 1, borderTopColor: p.glass.borderSubtle, marginTop: spacing.sm, paddingTop: spacing.md },
   refundAmount: { fontSize: fontSize.md, fontWeight: fontWeight.bold, color: p.colors.text, marginTop: 2 },

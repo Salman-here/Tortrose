@@ -122,6 +122,17 @@ const validReturn = (overrides = {}) => ({
 });
 
 describe('SellerReturnsPanel', () => {
+  it('shows structured returned-item variants without duplicating the legacy color', async () => {
+    const request = validReturn();
+    Object.assign(request.items[0], { selectedColor: 'Blue', selectedOptions: { Color: 'Blue', Size: 'Large' } });
+    api.get.mockResolvedValue({ data: { returns: [request] } });
+    const screen = render(<SellerReturnsPanel />);
+    await act(async () => { jest.runOnlyPendingTimers(); await Promise.resolve(); });
+    expect(screen.getAllByText('Color: Blue')).toHaveLength(1);
+    expect(screen.getByText('Size: Large')).toBeTruthy();
+    expect(api.post).not.toHaveBeenCalled(); expect(api.patch).not.toHaveBeenCalled();
+  });
+
   beforeEach(() => {
     jest.useFakeTimers();
     jest.clearAllMocks();

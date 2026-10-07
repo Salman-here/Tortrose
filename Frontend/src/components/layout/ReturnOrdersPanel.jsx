@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import axios from 'axios';
 import { AnimatePresence, motion } from 'framer-motion';
 import { ArrowRight, CheckCircle, CreditCard, Loader2, RefreshCw, RotateCcw, Search, WalletCards, X, XCircle } from 'lucide-react';
@@ -10,6 +11,8 @@ import { createScopedMutationStorageKey, getOrCreatePersistedMutationAttemptInLe
 import { RETURN_STATUS_LABELS, RETURN_STATUS_TRANSITIONS, returnResolutionLabel, returnStatusTone } from '../../utils/returns';
 import { inspectReturnPresentationSnapshot } from '../../utils/returnPresentationSafety';
 import { isExactNonNegativeJsonMoney } from '../../utils/sellerMoneySafety';
+import { getReturnItemVariantLabels } from '../../utils/returnItemVariants';
+import { useReturnDialogAccessibility } from '../../utils/returnDialogAccessibility';
 
 const API = `${import.meta.env.VITE_API_URL}api/returns`;
 const actionLabels = {
@@ -46,6 +49,8 @@ export default function ReturnOrdersPanel({ formatPrice }) {
   const [dialog, setDialog] = useState(null);
   const [note, setNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const closeDialog = useCallback(() => { if (!submitting) setDialog(null); }, [submitting]);
+  const dialogPanel = useReturnDialogAccessibility({ open: Boolean(dialog), busy: submitting, onClose: closeDialog });
 
   const load = useCallback(async () => {
     const requestId = ++loadSequence.current;
@@ -256,6 +261,7 @@ export default function ReturnOrdersPanel({ formatPrice }) {
                   </div>
                   <div className="min-w-0 flex-1">
                     <p className="text-sm font-semibold truncate" style={{ color: 'hsl(var(--foreground))' }}>{displayText(item?.name, 'Item unavailable')}</p>
+                    {getReturnItemVariantLabels(item).map(label => <p key={label} className="text-xs break-words" style={{ color: 'hsl(var(--muted-foreground))' }}>{label}</p>)}
                     <p className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>
                       Quantity {snapshot.items[itemIndex]?.quantity ?? 'unavailable'} - {snapshot.valid
                         ? formatPrice(snapshot.items[itemIndex].lineSubtotal, { sourceCurrency: snapshot.currency, targetCurrency: snapshot.currency, showCode: true })
@@ -316,16 +322,16 @@ export default function ReturnOrdersPanel({ formatPrice }) {
         );
       })}
 
-      <AnimatePresence>
+      {typeof document !== 'undefined' && createPortal(<AnimatePresence>
         {dialog && (
-          <motion.div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => !submitting && setDialog(null)}>
-            <motion.div className="glass-panel-strong w-full max-w-md p-5 sm:p-6" initial={{ scale: 0.96, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.96, opacity: 0 }} onClick={(event) => event.stopPropagation()}>
+          <motion.div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={closeDialog}>
+            <motion.div ref={dialogPanel} tabIndex={-1} role="dialog" aria-modal="true" aria-busy={submitting} aria-labelledby="seller-return-dialog-title" className="glass-panel-strong w-full max-w-md max-h-[90dvh] overflow-y-auto p-5 sm:p-6" initial={{ scale: 0.96, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.96, opacity: 0 }} onClick={(event) => event.stopPropagation()}>
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <h3 className="text-lg font-semibold" style={{ color: 'hsl(var(--foreground))' }}>{dialog.type === 'accept' ? 'Accept return' : actionLabels[dialog.status]}</h3>
+                  <h3 id="seller-return-dialog-title" className="text-lg font-semibold" style={{ color: 'hsl(var(--foreground))' }}>{dialog.type === 'accept' ? 'Accept return' : actionLabels[dialog.status]}</h3>
                   <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>Return #{displayText(dialog.request.returnNumber, 'Unavailable')}</p>
                 </div>
-                <button type="button" className="glass-button p-2 rounded-lg" onClick={() => setDialog(null)} aria-label="Close"><X size={16} /></button>
+                <button type="button" className="glass-button p-2 rounded-lg disabled:opacity-50" disabled={submitting} onClick={closeDialog} aria-label="Close return update"><X size={16} /></button>
               </div>
 
               {dialog.type === 'status' ? (
@@ -372,7 +378,7 @@ export default function ReturnOrdersPanel({ formatPrice }) {
             </motion.div>
           </motion.div>
         )}
-      </AnimatePresence>
+      </AnimatePresence>, document.body)}
     </div>
   );
 }

@@ -96,6 +96,24 @@ const completeReturns = (returns) => ({
 });
 
 describe('buyer return presentation safety', () => {
+  test('preserves public variants without changing eligibility or refund math', () => {
+    const context = inspectBuyerReturnOrderContext(makeOrder());
+    const payload = makeEligibility();
+    const variants = { selectedColor: 'Blue', selectedOptions: { Color: 'Blue', Size: 'Large' } };
+    Object.assign(payload.groups[0].items[0], variants);
+    const eligibility = inspectBuyerReturnEligibilityResponse(payload, context);
+    const request = makeRequest(); Object.assign(request.items[0], variants);
+    const history = inspectBuyerReturnsResponse(completeReturns([request]), context, eligibility);
+    expect(eligibility.valid).toBe(true); expect(history.valid).toBe(true);
+    [eligibility.groups[0].items[0], history.requests[0].items[0]].forEach(item => {
+      expect(item.selectedOptions).toEqual(variants.selectedOptions); expect(item.selectedColor).toBe('Blue');
+    });
+    expect(eligibility.groups[0].items[0].remainingReturnableQuantity).toBe(1);
+    expect(eligibility.groups[0].items[0].eligible).toBe(true);
+    expect(history.requests[0].items[0].lineSubtotal).toBe(50);
+    expect(history.requests[0].refund.totalAmount).toBe(60);
+  });
+
   test('binds list and eligibility to exact order identity, currency, quantities, dates, and money', () => {
     ['USD', 'PKR', 'EUR', 'GBP'].forEach((currency) => {
       const context = inspectBuyerReturnOrderContext(makeOrder({ currency }));

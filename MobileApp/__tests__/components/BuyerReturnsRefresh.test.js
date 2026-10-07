@@ -99,6 +99,21 @@ afterEach(() => {
   jest.useRealTimers();
 });
 
+test('buyer history and return-request modal preserve the selected variants read-only', async () => {
+  const value = snapshot();
+  const variants = { selectedColor: 'Blue', selectedOptions: { Color: 'Blue', Size: 'Large' } };
+  Object.assign(value.eligibility.groups[0].items[0], variants);
+  Object.assign(value.requests[0].items[0], variants);
+  installSnapshot(value);
+  const screen = render(<BuyerReturnsSection {...props} />);
+  await flush();
+  expect(screen.getAllByText('Color: Blue')).toHaveLength(1);
+  fireEvent.press(screen.getByText('Request'));
+  expect(screen.getAllByText('Color: Blue')).toHaveLength(2);
+  expect(screen.getAllByText('Size: Large')).toHaveLength(2);
+  expect(api.post).not.toHaveBeenCalled();
+});
+
 test('an active requested return follows pending payment to verified Wallet completion and stops', async () => {
   const screen = render(<BuyerReturnsSection {...props} />);
   await flush();

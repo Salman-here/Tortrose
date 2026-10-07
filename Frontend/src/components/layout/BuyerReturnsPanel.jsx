@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import axios from 'axios';
 import { AnimatePresence, motion } from 'framer-motion';
 import { AlertCircle, CalendarClock, Check, Loader2, Package, RotateCcw, X } from 'lucide-react';
@@ -19,6 +20,8 @@ import {
   inspectBuyerReturnOrderContext,
   inspectBuyerReturnsResponse,
 } from '../../utils/returnPresentationSafety';
+import { getReturnItemVariantLabels } from '../../utils/returnItemVariants';
+import { useReturnDialogAccessibility } from '../../utils/returnDialogAccessibility';
 
 const API = `${import.meta.env.VITE_API_URL}api/returns`;
 const reasonOptions = [
@@ -66,6 +69,8 @@ export default function BuyerReturnsPanel({ order, formatMoney }) {
   const [reasonCategory, setReasonCategory] = useState('damaged');
   const [reasonDetails, setReasonDetails] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const closeDialog = useCallback(() => { if (!submitting) setSelectedGroup(null); }, [submitting]);
+  const dialogPanel = useReturnDialogAccessibility({ open: Boolean(selectedGroup), busy: submitting, onClose: closeDialog });
   const requestKeyRef = useRef(null);
   const [cancellingId, setCancellingId] = useState(null);
   const loadGenerationRef = useRef(0);
@@ -455,7 +460,10 @@ export default function BuyerReturnsPanel({ order, formatMoney }) {
           <div className="mt-4 grid gap-2">
             {request.items.map((item) => (
               <div key={item.orderItemId} className="flex items-center justify-between gap-3 text-sm">
-                <span className="truncate" style={{ color: 'hsl(var(--foreground))' }}>{item.name} x {item.quantity}</span>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate" style={{ color: 'hsl(var(--foreground))' }}>{item.name} x {item.quantity}</p>
+                  {getReturnItemVariantLabels(item).map(label => <p key={label} className="text-xs break-words" style={{ color: 'hsl(var(--muted-foreground))' }}>{label}</p>)}
+                </div>
                 <span className="shrink-0 font-medium" style={{ color: 'hsl(var(--foreground))' }}>{moneyLabel(item.lineSubtotal)}</span>
               </div>
             ))}
@@ -516,16 +524,16 @@ export default function BuyerReturnsPanel({ order, formatMoney }) {
         </article>
       ))}
 
-      <AnimatePresence>
+      {typeof document !== 'undefined' && createPortal(<AnimatePresence>
         {selectedGroup && (
-          <motion.div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => !submitting && setSelectedGroup(null)}>
-            <motion.div className="glass-panel-strong w-full max-w-xl max-h-[90vh] overflow-y-auto p-5 sm:p-6" initial={{ scale: 0.96, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.96, opacity: 0 }} onClick={(event) => event.stopPropagation()}>
+          <motion.div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={closeDialog}>
+            <motion.div ref={dialogPanel} tabIndex={-1} role="dialog" aria-modal="true" aria-busy={submitting} aria-labelledby="buyer-return-dialog-title" className="glass-panel-strong w-full max-w-xl max-h-[90vh] overflow-y-auto p-5 sm:p-6" initial={{ scale: 0.96, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.96, opacity: 0 }} onClick={(event) => event.stopPropagation()}>
               <div className="flex items-start justify-between gap-4 mb-5">
                 <div>
-                  <h3 className="text-lg font-semibold" style={{ color: 'hsl(var(--foreground))' }}>Request a return</h3>
+                  <h3 id="buyer-return-dialog-title" className="text-lg font-semibold" style={{ color: 'hsl(var(--foreground))' }}>Request a return</h3>
                   <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>{selectedGroup.store?.storeName || selectedGroup.seller?.username}</p>
                 </div>
-                <button type="button" className="glass-button p-2 rounded-lg" onClick={() => setSelectedGroup(null)} aria-label="Close"><X size={16} /></button>
+                <button type="button" className="glass-button p-2 rounded-lg disabled:opacity-50" disabled={submitting} onClick={closeDialog} aria-label="Close return request"><X size={16} /></button>
               </div>
 
               <div className="space-y-3">
@@ -544,6 +552,7 @@ export default function BuyerReturnsPanel({ order, formatMoney }) {
                       </div>
                       <div className="min-w-0 flex-1">
                         <p className="text-sm font-semibold truncate" style={{ color: 'hsl(var(--foreground))' }}>{item.name}</p>
+                        {getReturnItemVariantLabels(item).map(label => <p key={label} className="text-xs break-words" style={{ color: 'hsl(var(--muted-foreground))' }}>{label}</p>)}
                         <p className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>Up to {item.remainingReturnableQuantity} - {returnResolutionLabel(item.returnPolicy?.refundType)}</p>
                         {item.eligibilityDeadline && <p className="text-[10px] mt-0.5" style={{ color: 'hsl(var(--muted-foreground))' }}>Request by {new Date(item.eligibilityDeadline).toLocaleString()}</p>}
                       </div>
@@ -580,7 +589,7 @@ export default function BuyerReturnsPanel({ order, formatMoney }) {
                 </div>
               )}
               <div className="flex justify-end gap-3 mt-5">
-                <button type="button" className="glass-button px-4 py-2 rounded-xl text-sm font-semibold" onClick={() => setSelectedGroup(null)} disabled={submitting}>Cancel</button>
+                <button type="button" className="glass-button px-4 py-2 rounded-xl text-sm font-semibold" onClick={closeDialog} disabled={submitting}>Cancel</button>
                 <button type="button" onClick={submitReturn} disabled={submitting || !selection.valid || Boolean(loadError)} className="px-4 py-2 rounded-xl text-sm font-semibold text-white inline-flex items-center gap-2 disabled:opacity-50" style={{ background: 'hsl(var(--primary))' }}>
                   {submitting && <Loader2 size={14} className="animate-spin" />} Submit request
                 </button>
@@ -588,7 +597,7 @@ export default function BuyerReturnsPanel({ order, formatMoney }) {
             </motion.div>
           </motion.div>
         )}
-      </AnimatePresence>
+      </AnimatePresence>, document.body)}
     </section>
   );
 }

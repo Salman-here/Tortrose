@@ -34,6 +34,7 @@ import {
 } from '../utils/returns';
 import { inspectReturnPresentationSnapshot } from '../utils/returnPresentationSafety';
 import { isExactNonNegativeJsonMoney } from '../utils/sellerMoneySafety';
+import { getReturnItemVariantLabels } from '../utils/returnItemVariants';
 
 const STATUS_FILTERS = [
   ['all', 'All'],
@@ -482,7 +483,10 @@ export default function SellerReturnsPanel({ header, route, navigation }) {
               <View style={styles.quantityBadge}>
                 <Text style={styles.quantityText}>{snapshot.items[index]?.quantity === null ? '?' : `${snapshot.items[index]?.quantity}x`}</Text>
               </View>
-              <Text style={styles.itemName} numberOfLines={2}>{displayText(item?.name, 'Item unavailable')}</Text>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={styles.itemName} numberOfLines={2}>{displayText(item?.name, 'Item unavailable')}</Text>
+                {getReturnItemVariantLabels(item).map(label => <Text key={label} style={styles.meta}>{label}</Text>)}
+              </View>
               <Text style={[styles.itemPrice, !snapshot.valid && styles.unavailableMoney]}>{snapshot.valid
                 ? formatAmount(snapshot.items[index].lineSubtotal, { targetCurrency: snapshot.currency })
                 : 'Unavailable'}</Text>
@@ -970,7 +974,7 @@ const buildStyles = (p) => StyleSheet.create({
   itemRowDivider: { borderTopWidth: 1, borderTopColor: p.glass.borderSubtle },
   quantityBadge: { minWidth: 32, height: 28, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 5, borderRadius: 9, backgroundColor: p.colors.primarySubtle },
   quantityText: { color: p.colors.primary, fontSize: 10, fontWeight: fontWeight.extrabold },
-  itemName: { flex: 1, color: p.colors.text, fontSize: fontSize.sm, lineHeight: 18 },
+  itemName: { color: p.colors.text, fontSize: fontSize.sm, lineHeight: 18 },
   itemPrice: { color: p.colors.text, fontSize: fontSize.sm, fontWeight: fontWeight.bold },
   unavailableMoney: { color: p.colors.error },
   refundBox: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: spacing.md, marginTop: spacing.lg, padding: spacing.md, borderRadius: 17, backgroundColor: p.colors.successSubtle, borderWidth: 1, borderColor: p.colors.successLighter },

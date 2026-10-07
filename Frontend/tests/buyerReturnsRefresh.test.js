@@ -22,7 +22,7 @@ const dependencyNames = [
   'getAuthToken', 'fetchCompleteBuyerReturns', 'inspectBuyerReturnEligibilityResponse',
   'inspectBuyerReturnMutationResponse', 'inspectBuyerReturnOrderContext',
   'inspectBuyerReturnsResponse', 'BUYER_CANCELLABLE_RETURN_STATUSES',
-  'startCancellationRefundRefresh', 'window', 'document', 'globalThis',
+  'startCancellationRefundRefresh', 'window', 'document', 'globalThis', 'useReturnDialogAccessibility',
 ];
 const createPanel = new Function(...dependencyNames, `
   const API = '/api/returns';
@@ -173,6 +173,7 @@ const harness = () => {
     inspectBuyerReturnsResponse, BUYER_CANCELLABLE_RETURN_STATUSES,
     (request, active) => startCancellationRefundRefresh(request, active, 5000, timerApi),
     window, document, { crypto: { randomUUID: () => '12345678-1234-4123-8123-123456789abc' } },
+    () => ({ current: null }),
   ];
   const Panel = createPanel(...dependencies);
   const render = () => {

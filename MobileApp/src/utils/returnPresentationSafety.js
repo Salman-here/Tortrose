@@ -9,6 +9,7 @@ import {
   getOrderItemQuantity,
   getOrderTotal,
 } from './orderPresentation';
+import { readReturnItemVariants } from './returnItemVariants';
 
 const RETURN_STATUSES = new Set([
   'requested', 'approved', 'pickup_scheduled', 'picked_up',
@@ -418,6 +419,7 @@ export const inspectBuyerReturnEligibilityResponse = (payload, orderContext) => 
         productId,
         name,
         image,
+        ...readReturnItemVariants(item),
         purchasedQuantity,
         alreadyRequestedQuantity,
         remainingReturnableQuantity,
@@ -540,6 +542,7 @@ export const inspectBuyerReturnRequest = (request, orderContext) => {
       productId,
       name,
       image,
+      ...readReturnItemVariants(item),
       quantity: financial.items[index]?.quantity ?? null,
       purchasedQuantity: item?.purchasedQuantity,
       unitPrice: item?.unitPrice,

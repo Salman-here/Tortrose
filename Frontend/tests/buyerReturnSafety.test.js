@@ -119,6 +119,24 @@ const completeReturns = (returns) => ({
   returns,
 });
 
+test('buyer presentation keeps public variants without altering money, quantity or eligibility', () => {
+  const context = inspectBuyerReturnOrderContext(makeOrder());
+  const payload = makeEligibility();
+  const variants = { selectedColor: 'Blue', selectedOptions: { Color: 'Blue', Size: 'Large' } };
+  Object.assign(payload.groups[0].items[0], variants);
+  const eligibility = inspectBuyerReturnEligibilityResponse(payload, context);
+  const request = makeRequest(); Object.assign(request.items[0], variants);
+  const history = inspectBuyerReturnsResponse(completeReturns([request]), context, eligibility);
+  assert.equal(eligibility.valid, true); assert.equal(history.valid, true);
+  for (const item of [eligibility.groups[0].items[0], history.requests[0].items[0]]) {
+    assert.deepEqual(item.selectedOptions, variants.selectedOptions); assert.equal(item.selectedColor, 'Blue');
+  }
+  assert.equal(eligibility.groups[0].items[0].remainingReturnableQuantity, 1);
+  assert.equal(eligibility.groups[0].items[0].eligible, true);
+  assert.equal(history.requests[0].items[0].lineSubtotal, 50);
+  assert.equal(history.requests[0].refund.totalAmount, 60);
+});
+
 test('buyer return payloads bind exact order identity, currency, quantities, dates, and money', () => {
   for (const currency of ['USD', 'PKR', 'EUR', 'GBP']) {
     const orderContext = inspectBuyerReturnOrderContext(makeOrder({ currency }));
