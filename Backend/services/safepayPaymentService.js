@@ -3,6 +3,7 @@
 const crypto = require('node:crypto');
 const mongoose = require('mongoose');
 const Payment = require('../models/SafepayPayment');
+const Customer = require('../models/SafepayCustomer');
 const Order = require('../models/Order');
 const { readSafepayConfig } = require('../config/safepay');
 const { createSafepayClient, requireMoney } = require('./safepayClient');
@@ -51,18 +52,34 @@ function createSafepayPaymentService({
     if (!/^[a-zA-Z0-9:_-]{8,160}$/.test(input.requestKey || '') || !/^[a-zA-Z0-9:_-]{8,160}$/.test(input.reference || '')) {
       throw fail('A valid payment attempt key is required.', 'INVALID_IDEMPOTENCY_KEY', 400);
     }
+    const identity = { environment: config.environment, user: input.user || null, purpose: input.purpose, requestKey: input.requestKey };
+    let existing = await Payment.findOne(identity).session(session);
+    let customerId = input.customerId || null;
+    if (providerMode === 'payment') {
+      // Hosted checkout, not a background/MIT charge, collects the shopper's
+      // selection and any bank authentication. Only attach a profile that the
+      // same signed-in account created with card-storage consent. Guests and
+      // accounts without a ready profile continue to use the new-card form.
+      // Reopening retains the original binding, including a guest/null binding:
+      // creating a profile later must never change an existing payment attempt.
+      const link = !existing && input.user ? await Customer.findOne({ user: input.user,
+        environment: config.environment, status: 'ready', createdForCardConsentAt: { $ne: null } })
+        .select('customerId').session(session) : null;
+      const ownedId = existing ? existing.customerId : link?.customerId || null;
+      if (customerId && customerId !== ownedId) throw fail('This checkout payment profile does not belong to this account.', 'SAFEPAY_CUSTOMER_MISMATCH');
+      if (input.cardId) throw fail('Choose your card in the secure payment form.', 'SAFEPAY_CARD_SELECTION_INVALID', 400);
+      customerId = ownedId;
+    }
     const terms = { user: String(input.user || ''), purpose: input.purpose, reference: input.reference,
       amountMinor: input.amountMinor, currency: input.currency, order: String(input.order || ''),
       store: String(input.store || ''), returnRequest: String(input.returnRequest || ''), terms: input.terms || {},
-      ...(input.customerId ? { customerId: input.customerId } : {}), ...(input.cardId ? { cardId: input.cardId } : {}) };
+      ...(customerId ? { customerId } : {}), ...(input.cardId ? { cardId: input.cardId } : {}) };
     const expectedFingerprint = fingerprint(terms);
-    const identity = { environment: config.environment, user: input.user || null, purpose: input.purpose, requestKey: input.requestKey };
-    let existing = await Payment.findOne(identity).session(session);
     if (!existing) {
       try {
         const [created] = await Payment.create([{ ...identity, reference: input.reference, amountMinor: input.amountMinor,
           currency: input.currency, order: input.order || null, store: input.store || null, returnRequest: input.returnRequest || null,
-          terms: input.terms || {}, fingerprint: expectedFingerprint, providerMode, customerId: input.customerId || null, cardId: input.cardId || null }], { session });
+          terms: input.terms || {}, fingerprint: expectedFingerprint, providerMode, customerId, cardId: input.cardId || null }], { session });
         existing = created;
       } catch (error) {
         if (error.code !== 11000 || session) throw error;
