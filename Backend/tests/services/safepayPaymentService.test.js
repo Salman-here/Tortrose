@@ -87,7 +87,21 @@ test('an existing checkout retains its profile after profile changes and cannot 
   await Customer.updateOne({ user: buyer }, { $set: { customerId: 'cus_replacement-fixture' } });
   expect(String((await service.ensurePayment(input()))._id)).toBe(String(payment._id));
   await expect(service.ensurePayment({ ...input(), customerId: 'cus_replacement-fixture' })).rejects.toMatchObject({ code: 'SAFEPAY_CUSTOMER_MISMATCH' });
+  client.getCard = jest.fn().mockRejectedValue(Object.assign(new Error('Not owned'), { code: 'SAFEPAY_CARD_MISMATCH' }));
   await expect(service.ensurePayment({ ...input(), cardId: 'pm_unapproved-fixture' })).rejects.toMatchObject({ code: 'SAFEPAY_CARD_SELECTION_INVALID' });
+});
+
+test('an explicitly selected reusable owned card creates a CIT tracker and not a subscription charge', async () => {
+  await Customer.create({ user: buyer, environment: 'sandbox', customerId: 'cus_owned-fixture', status: 'ready', createdForCardConsentAt: clock });
+  client.getCard = jest.fn().mockResolvedValue({ max_usage: -1, cybersource: { token: 'tms_test-fixture', last_four: '1111' }, expires_at: { seconds: 2100000000 } });
+  const payment = await service.ensurePayment({ ...input(), cardId: 'pm_owned-fixture' });
+  expect(payment.providerMode).toBe('payment');
+  expect(payment.providerEntryMode).toBe('tms');
+  expect(payment.cardId).toBe('pm_owned-fixture');
+  expect(client.getCard).toHaveBeenCalledWith('cus_owned-fixture', 'pm_owned-fixture');
+  await service.prepareCheckout(payment._id);
+  expect(client.createTracker.mock.calls[0][0].providerEntryMode).toBe('tms');
+  expect(payment.chargeStartedAt).toBeNull();
 });
 
 test('adding a saved-card profile does not alter an older guest-style payment binding', async () => {

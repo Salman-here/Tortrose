@@ -40,7 +40,7 @@ const trackerReference = tracker => {
 // Select the immutable contract explicitly instead of spreading a document.
 const trackerExpectation = (expected, tracker) => ({ tracker, amountMinor: expected.amountMinor,
   currency: expected.currency, reference: expected.reference, providerMode: expected.providerMode,
-  customerId: expected.customerId });
+  providerEntryMode: expected.providerEntryMode, customerId: expected.customerId });
 
 function requireTracker(data, expected, config) {
   const tracker = data?.tracker || data;
@@ -54,6 +54,7 @@ function requireTracker(data, expected, config) {
     || (expected.reference && trackerReference(tracker) !== expected.reference)
     || !['payment', 'instrument', 'subscription'].includes(expectedMode) || tracker.mode !== expectedMode
     || (expectedMode === 'subscription' && tracker.entry_mode !== 'mit')
+    || (expected.providerEntryMode === 'tms' && tracker.entry_mode !== 'tms')
     || (expected.customerId && customer !== expected.customerId)
     || quote?.currency !== expected.currency || readMinor(quote?.amount) !== expected.amountMinor) {
     throw providerError('Safepay payment identity or amount does not match this checkout.', 'SAFEPAY_PAYMENT_MISMATCH', 409);
@@ -87,7 +88,7 @@ function createSafepayClient({ config = readSafepayConfig(), fetchImpl = fetch }
 
   return {
     environment: config.environment,
-    async createTracker({ amountMinor, currency, reference, purpose, customerId }, { clientSurface = 'mobile' } = {}) {
+    async createTracker({ amountMinor, currency, reference, purpose, customerId, providerEntryMode }, { clientSurface = 'mobile' } = {}) {
       if (!['web', 'mobile'].includes(clientSurface)) throw providerError('Invalid checkout source.', 'SAFEPAY_CHECKOUT_SOURCE_INVALID', 400);
       const mode = purpose === 'card_setup' ? 'instrument' : purpose === 'subscription' ? 'subscription' : 'payment';
       requireMoney(amountMinor, currency, { allowZero: mode === 'instrument' });
@@ -102,12 +103,13 @@ function createSafepayClient({ config = readSafepayConfig(), fetchImpl = fetch }
         merchant_api_key: config.publicKey, intent: 'CYBERSOURCE', mode,
         ...(mode === 'instrument' ? { is_account_verification: true } : { amount: amountMinor }),
         ...(mode === 'subscription' ? { entry_mode: 'mit' } : {}),
+        ...(mode === 'payment' && providerEntryMode === 'tms' ? { entry_mode: 'tms' } : {}),
         currency, include_fees: false, ...(customerId ? { user: customerId } : {}),
         // The current API rejects arbitrary metadata keys with HTTP 500.
         // The immutable reference binds to our own purpose/user/money record.
         metadata: { order_id: reference, source: clientSurface === 'web' ? 'hosted' : 'mobile' },
       });
-      return requireTracker(data, { amountMinor, currency, reference, customerId, providerMode: mode }, config);
+      return requireTracker(data, { amountMinor, currency, reference, customerId, providerMode: mode, providerEntryMode }, config);
     },
     async getTracker(tracker, expected) {
       requireId(tracker, 'track'); requireMoney(expected.amountMinor, expected.currency, { allowZero: expected.providerMode === 'instrument' });

@@ -28,6 +28,16 @@ test('web tracker metadata is hosted, not mislabeled mobile', async () => {
   expect(JSON.parse(fetchImpl.mock.calls[0][1].body).metadata).toEqual({ order_id: 'order:fixture123', source: 'hosted' });
 });
 
+test('a selected saved card uses payment/tms and retains required customer ownership', async () => {
+  const savedTracker = { ...tracker, entry_mode: 'tms', customer: 'cus_owned-fixture' };
+  const fetchImpl = jest.fn(async () => ({ ok: true, json: async () => ({ data: { tracker: savedTracker } }) }));
+  await createSafepayClient({ config, fetchImpl }).createTracker({ amountMinor: 10000, currency: 'PKR',
+    reference: 'order:fixture123', purpose: 'order', customerId: 'cus_owned-fixture', providerEntryMode: 'tms' });
+  expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toMatchObject({ mode: 'payment', entry_mode: 'tms', user: 'cus_owned-fixture' });
+  expect(() => requireTracker({ ...savedTracker, entry_mode: 'flex' }, { amountMinor: 10000, currency: 'PKR',
+    customerId: 'cus_owned-fixture', providerEntryMode: 'tms' }, config)).toThrow();
+});
+
 test.each(['desktop', 'WEB', null, false])('invalid tracker source %s fails before provider mutation', async clientSurface => {
   const fetchImpl = jest.fn();
   await expect(createSafepayClient({ config, fetchImpl }).createTracker({ amountMinor: 10000, currency: 'PKR', reference: 'order:fixture123', purpose: 'order' }, { clientSurface })).rejects.toMatchObject({ code: 'SAFEPAY_CHECKOUT_SOURCE_INVALID' });

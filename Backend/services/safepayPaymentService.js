@@ -6,7 +6,7 @@ const Payment = require('../models/SafepayPayment');
 const Customer = require('../models/SafepayCustomer');
 const Order = require('../models/Order');
 const { readSafepayConfig } = require('../config/safepay');
-const { createSafepayClient, requireMoney } = require('./safepayClient');
+const { createSafepayClient, requireMoney, requireReusableCard } = require('./safepayClient');
 const { safepayPaymentFacts } = require('./safepayPaymentFacts');
 const { buildReturnUrl } = require('./safepayReturnNavigation');
 
@@ -67,8 +67,14 @@ function createSafepayPaymentService({
         .select('customerId').session(session) : null;
       const ownedId = existing ? existing.customerId : link?.customerId || null;
       if (customerId && customerId !== ownedId) throw fail('This checkout payment profile does not belong to this account.', 'SAFEPAY_CUSTOMER_MISMATCH');
-      if (input.cardId) throw fail('Choose your card in the secure payment form.', 'SAFEPAY_CARD_SELECTION_INVALID', 400);
       customerId = ownedId;
+      if (input.cardId) {
+        if (!input.user || !customerId || !/^pm_[a-zA-Z0-9-]{8,100}$/.test(input.cardId)) throw fail('Choose a saved card belonging to your account.', 'SAFEPAY_CARD_SELECTION_INVALID', 400);
+        const cardLink = await Customer.findOne({ user: input.user, environment: config.environment,
+          customerId, status: 'ready' }).select('+deletingCardId').session(session);
+        if (!cardLink || cardLink.deletingCardId === input.cardId) throw fail('This saved card is unavailable. Choose another payment method.', 'SAFEPAY_CARD_SELECTION_INVALID');
+        requireReusableCard(await clientFor(config).getCard(customerId, input.cardId));
+      }
     }
     const terms = { user: String(input.user || ''), purpose: input.purpose, reference: input.reference,
       amountMinor: input.amountMinor, currency: input.currency, order: String(input.order || ''),
@@ -79,7 +85,8 @@ function createSafepayPaymentService({
       try {
         const [created] = await Payment.create([{ ...identity, reference: input.reference, amountMinor: input.amountMinor,
           currency: input.currency, order: input.order || null, store: input.store || null, returnRequest: input.returnRequest || null,
-          terms: input.terms || {}, fingerprint: expectedFingerprint, providerMode, customerId, cardId: input.cardId || null }], { session });
+          terms: input.terms || {}, fingerprint: expectedFingerprint, providerMode,
+          providerEntryMode: providerMode === 'payment' && input.cardId ? 'tms' : '', customerId, cardId: input.cardId || null }], { session });
         existing = created;
       } catch (error) {
         if (error.code !== 11000 || session) throw error;
@@ -150,7 +157,7 @@ function createSafepayPaymentService({
 
   async function prepareCheckout(paymentId, { clientSurface = 'mobile' } = {}) {
     if (!['mobile', 'web'].includes(clientSurface)) throw fail('Invalid checkout surface.', 'SAFEPAY_SURFACE_INVALID', 400);
-    let payment = await Payment.findById(paymentId);
+    let payment = await Payment.findById(paymentId).select('+cardId');
     if (!payment) throw fail('Payment not found.', 'PAYMENT_NOT_FOUND', 404);
     const config = ownedConfig(payment);
     const client = clientFor(config);

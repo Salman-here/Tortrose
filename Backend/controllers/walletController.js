@@ -200,7 +200,7 @@ exports.createTopUpCheckout = async (req, res) => {
             await SafepayPayment.init();
             const payment = await safepayPayments.ensurePayment({ user: req.user.id, purpose: 'wallet_top_up',
                 requestKey, reference: `wallet:${req.user.id}:${safepayPayments.fingerprint(requestKey).slice(0, 24)}`,
-                amountMinor: toMinorUnits(amount), currency });
+                amountMinor: toMinorUnits(amount), currency, cardId: req.body.savedCardId || null });
             const checkout = await safepayPayments.prepareCheckout(payment._id, { clientSurface });
             res.set('Cache-Control', 'no-store, private, max-age=0');
             return res.status(200).json({ ...checkout, success: true, topUpId: payment._id, completed: checkout.isPaid });

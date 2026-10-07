@@ -13,6 +13,7 @@ const schema = new mongoose.Schema({
   amountMinor: { type: Number, required: true, min: 0, set: strictInteger, validate: Number.isSafeInteger, immutable: true },
   currency: { type: String, enum: ['PKR', 'USD', 'EUR', 'GBP'], required: true, immutable: true },
   providerMode: { type: String, enum: ['payment', 'instrument', 'subscription'], default: 'payment', immutable: true },
+  providerEntryMode: { type: String, enum: ['', 'tms'], default: '', immutable: true },
   customerId: { type: String, default: null, match: /^cus_[a-zA-Z0-9-]+$/, immutable: true },
   cardId: { type: String, default: null, match: /^pm_[a-zA-Z0-9-]+$/, select: false, immutable: true },
   chargeStartedAt: { type: Date, default: null },

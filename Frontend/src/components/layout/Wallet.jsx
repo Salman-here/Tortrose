@@ -6,7 +6,7 @@ import { toast } from 'react-toastify';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { getAuthToken } from '../../utils/cookieHelper';
-import { openSafepayCheckout } from '../../utils/safepay';
+import { openSafepayCheckout, safepayApi } from '../../utils/safepay';
 import {
   canTopUpWalletCurrency,
   getTopUpCompletionBreakdown,
@@ -173,6 +173,8 @@ export default function Wallet() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [amount, setAmount] = useState('');
+  const [savedCards, setSavedCards] = useState([]);
+  const [savedCardId, setSavedCardId] = useState('');
   const [currency, setCurrency] = useState('PKR');
   const [topUpStatus, setTopUpStatus] = useState(null);
   const [searchParams, setSearchParams] = useSearchParams();
@@ -211,6 +213,16 @@ export default function Wallet() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    let active = true;
+    safepayApi.get('/cards').then(({ data }) => {
+      if (!active || !Array.isArray(data.cards)) return;
+      const usable = data.cards.filter(card => card.usable === true);
+      setSavedCards(usable);
+      if (usable.some(card => card.id === data.defaultPaymentMethodId)) setSavedCardId(data.defaultPaymentMethodId);
+    }).catch(() => { /* A new card remains available when saved cards cannot be verified. */ });
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
     const result = searchParams.get('top_up');
@@ -325,7 +337,7 @@ export default function Wallet() {
       return;
     }
     setSubmitting(true);
-    const fingerprint = `safepay:${currentUser?._id || currentUser?.id || 'guest'}:${String(currency).toUpperCase()}:${normalizedAmount.toFixed(2)}`;
+    const fingerprint = `safepay:${currentUser?._id || currentUser?.id || 'guest'}:${String(currency).toUpperCase()}:${normalizedAmount.toFixed(2)}${savedCardId ? `:${savedCardId}` : ''}`;
     let attemptKey = '';
     try {
       const attempt = await getOrCreatePersistedMutationAttemptInLedger({
@@ -341,6 +353,7 @@ export default function Wallet() {
         requestKey: attempt.key,
         paymentFlow: 'safepay_hosted',
         clientSurface: 'web',
+        ...(savedCardId ? { savedCardId } : {}),
       }, { headers: { Authorization: `Bearer ${getAuthToken()}` } });
       const inspected = await openSafepayCheckout(response);
       if (inspected.status === 'paid') {
@@ -472,6 +485,12 @@ export default function Wallet() {
           </div>
           <label className="block text-xs font-semibold mt-4 mb-2" style={{ color: 'hsl(var(--muted-foreground))' }}>Amount</label>
           <input type="number" min="0.01" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} className="glass-input w-full" placeholder={`Amount in ${currency}`} />
+          {savedCards.length > 0 && <label className="block text-xs font-semibold mt-4">Payment card
+            <select aria-label="Payment card" className="glass-input w-full mt-2" value={savedCardId} disabled={submitting} onChange={event => setSavedCardId(event.target.value)}>
+              <option value="">Use a new card</option>
+              {savedCards.map(card => <option key={card.id} value={card.id}>{card.brand.toUpperCase()} ending {card.last4}</option>)}
+            </select>
+          </label>}
           {!canTopUpSelectedCurrency && wallet && wallet.status !== 'active' && (
             <p className="text-xs mt-2" style={{ color: 'hsl(0,72%,52%)' }}>Top-up is unavailable for {currency}. Select a currency with an outstanding liability, or contact support if this is not a payment-risk lock.</p>
           )}

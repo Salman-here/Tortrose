@@ -184,7 +184,9 @@ async function deleteCard(userId, cardId) {
     const subscription = await SellerSubscription.exists({ seller: userId, billingProvider: 'safepay', 'safepayBilling.cardId': cardId,
         'safepayBilling.environment': config.environment, 'safepayBilling.autoRenew': true,
         status: { $in: ['free_period', 'active', 'past_due'] } }).session(session);
-    const inFlight = await Payment.exists({ user: userId, environment: config.environment, cardId, purpose: 'subscription', status: { $in: ['new', 'creating', 'ready'] } }).session(session);
+    const inFlight = await Payment.exists({ user: userId, environment: config.environment, cardId,
+      purpose: { $in: ['subscription', 'order', 'wallet_top_up', 'subdomain', 'return_settlement'] },
+      status: { $in: ['new', 'creating', 'ready', 'authorized', 'manual_review'] } }).session(session);
     if (subscription || inFlight) throw fail('Change your subscription card or cancel renewal before removing this card. Pending payments must finish first.', 'CARD_IN_USE');
     locked.deletingCardId = cardId; locked.deletionStartedAt = locked.deletionStartedAt || new Date();
     await locked.save({ session });
