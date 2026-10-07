@@ -38,6 +38,7 @@ import {
   getEffectiveProductSourcePrice,
   getProductSourceAmount,
   hasCurrencyAmount,
+  toCurrencyMinorUnits,
 } from '../utils/currencySafety';
 import {
   CartItemSkeleton,
@@ -336,6 +337,11 @@ export default function CartScreen({ navigation }) {
     const sourcePrice = getEffectiveProductSourcePrice(product);
     const unitPrice = convertAmount(sourcePrice, getProductCurrency(product), currency);
     const lineTotal = cartLineTotals[index] || 0;
+    // FX allocation preserves the complete line's cents, which a rounded
+    // converted unit cannot always reproduce. Match the web cart's wording.
+    const displayedUnitLineMinor = toCurrencyMinorUnits(unitPrice) * quantity;
+    const hasExactUnitPrice = Number.isSafeInteger(displayedUnitLineMinor)
+      && displayedUnitLineMinor === toCurrencyMinorUnits(lineTotal);
     const isUpdating = qtyUpdateId === itemId;
     const isDiscounted = sourcePrice < getProductSourceAmount(product, 'price');
     const selectedOptions = item.selectedOptions
@@ -432,9 +438,11 @@ export default function CartScreen({ navigation }) {
 
             <View style={styles.priceRow}>
               <Text style={styles.itemPrice}>
-                {cartMoney(unitPrice, getProductCurrency(product))}
+                {hasExactUnitPrice
+                  ? cartMoney(unitPrice, getProductCurrency(product))
+                  : 'Complete line price'}
               </Text>
-              <Text style={styles.priceQualifier}>each</Text>
+              {hasExactUnitPrice && <Text style={styles.priceQualifier}>each</Text>}
             </View>
             <Text style={styles.lineTotalText}>
               {cartMoney(lineTotal, getProductCurrency(product))} line total
