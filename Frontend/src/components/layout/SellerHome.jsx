@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import { useOutletContext, Link } from 'react-router-dom';
 import { useCurrency } from '../../contexts/CurrencyContext';
-import { inspectOrderListMoney } from '../../utils/orderItems';
+import { inspectSellerOrderListMoney } from '../../utils/orderItems';
 import { useAuth } from '../../contexts/AuthContext';
 import { isOrderDecidedByBuyer, getConfirmationSourceLabel } from '../../utils/whatsapp';
 import Loader from '../common/Loader';
@@ -256,7 +256,9 @@ const SellerHome = () => {
                                     .sort((left, right) => new Date(right.createdAt || 0) - new Date(left.createdAt || 0))
                                      .slice(0, 5).map((order, i) => {
                                      const ss = getStatusStyle(order.orderStatus);
-                                     const money = inspectOrderListMoney(order);
+                                     const money = order.sellerCurrencyMoney === null || order.sellerCurrencyMoney === undefined
+                                         ? { valid: false }
+                                         : inspectSellerOrderListMoney(order);
                                     return (
                                         <motion.div key={order._id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
                                             transition={{ delay: i * 0.05 }}>
@@ -297,6 +299,15 @@ const SellerHome = () => {
                                                                 })
                                                                 : 'Money unavailable'}
                                                         </p>
+                                                        {money.valid && money.buyerCurrency && money.buyerCurrency !== money.currency && (
+                                                            <p className="text-[10px] mt-1 max-w-[15rem]" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                                                                Buyer ordered in {money.buyerCurrency}: {formatPrice(money.buyerTotal, {
+                                                                    sourceCurrency: money.buyerCurrency,
+                                                                    targetCurrency: money.buyerCurrency,
+                                                                    showCode: true,
+                                                                })}
+                                                            </p>
+                                                        )}
                                                         <span className="text-[10px] font-medium px-2 py-0.5 rounded-full"
                                                             style={order.isPaid
                                                                 ? { background: 'rgba(16, 185, 129, 0.12)', color: 'hsl(150, 60%, 40%)' }
