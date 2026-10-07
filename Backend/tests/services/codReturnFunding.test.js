@@ -11,19 +11,21 @@ const SellerBalanceTransaction = require('../../models/SellerBalanceTransaction'
 const SellerPaymentRiskHold = require('../../models/SellerPaymentRiskHold');
 const SellerSettlementLock = require('../../models/SellerSettlementLock');
 const Withdrawal = require('../../models/SellerWithdrawalRequest');
+const SellerPaymentAccount = require('../../models/SellerPaymentAccount');
+const User = require('../../models/User');
 const NotificationOutbox = require('../../models/NotificationOutbox');
 const RefundEvent = require('../../models/SafepayRefundEvent');
 const payments = require('../../services/safepayPaymentService');
 const { buildOrderSellerSettlement, buildOrderSellerCurrencyMoney } = require('../../services/orderMoneyService');
 const { buildOnlineOrderFee } = require('../../services/onlineOrderFeeService');
-const { buildSellerPaymentSummary } = require('../../controllers/PaymentController');
+const { buildSellerPaymentSummary, createWithdrawalRequest } = require('../../controllers/PaymentController');
 const { settleFromSellerBalance, createSafepayReturnSettlement, completeSafepayReturnSettlement } = require('../../services/returnService');
 const { debitWalletInSession } = require('../../services/walletService');
 const { attachSafepayReturnFundingProvenance } = require('../../services/walletOrderFundingRiskService');
 
 const rates = { USD: 1, PKR: 300, EUR: 0.9, GBP: 0.8 };
 const models = [Order, ReturnRequest, Wallet, WalletTransaction, Payment, SellerBalanceTransaction,
-  SellerPaymentRiskHold, SellerSettlementLock, Withdrawal, NotificationOutbox, RefundEvent];
+  SellerPaymentRiskHold, SellerSettlementLock, Withdrawal, SellerPaymentAccount, User, NotificationOutbox, RefundEvent];
 let replica, prepare;
 beforeAll(async () => {
   replica = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
@@ -226,4 +228,124 @@ test('principal replay validates the durable lot and never replenishes spent cen
   });
   expect((await WalletTransaction.findById(credit._id)).metadata.fundingRemainingMinor).toBe(100);
   expect((await Payment.findById(payment._id)).walletRefundMinor).toBe(1000);
+});
+
+test('an expired attempt followed by a fresh attempt cannot credit old late capture or duplicate new principal', async () => {
+  const original = await order({ total: 10 });
+  const old = await cardAttempt(original);
+  old.setState('TRACKER_EXPIRED');
+  await old.service.reconcilePayment(old.payment._id);
+  expect((await Payment.findById(old.payment._id)).status).toBe('cancelled');
+  expect((await ReturnRequest.findById(old.returned._id)).status).toBe('under_review');
+
+  const setup = await createSafepayReturnSettlement({ returnRequestId: old.returned._id,
+    sellerId: old.returned.seller, requestKey: `fresh-after-expiry:${old.returned._id}` });
+  const fresh = await Payment.findById(setup.paymentId);
+  fresh.status = 'ready'; fresh.tracker = `track_cod-fresh-${fresh._id}`; await fresh.save();
+  expect(String(fresh._id)).not.toBe(String(old.payment._id));
+  expect(fresh.terms.attempt).toBe(2);
+
+  old.setState('TRACKER_ENDED');
+  await old.service.reconcilePayment(old.payment._id);
+  const quarantined = await Payment.findById(old.payment._id);
+  expect(quarantined).toMatchObject({ status: 'manual_review', riskPending: true, walletRefundMinor: 0, refundedMinor: 0 });
+  expect(await RefundEvent.countDocuments()).toBe(0);
+  expect(await WalletTransaction.countDocuments({ type: 'return_refund' })).toBe(0);
+  expect(String((await ReturnRequest.findById(old.returned._id)).settlement.safepayPaymentId)).toBe(String(fresh._id));
+
+  const service = payments.createSafepayPaymentService({ configFor: () => ({ environment: 'sandbox' }),
+    clientFor: () => ({ getTracker: async () => ({ state: 'TRACKER_ENDED' }) }) });
+  await service.reconcilePayment(fresh._id);
+  await old.service.reconcilePayment(old.payment._id);
+  await service.reconcilePayment(fresh._id);
+  const credits = await WalletTransaction.find({ type: 'return_refund' });
+  expect(credits).toHaveLength(1);
+  expect(credits[0]).toMatchObject({ amount: 10, currency: 'PKR',
+    metadata: { cardRefundFunding: true, fundingRemainingMinor: 1000, fundingOriginalAvailableMinor: 1000 } });
+  expect(String(credits[0].safepayPaymentId)).toBe(String(fresh._id));
+  expect((await Wallet.findOne({ user: original.user })).balances.PKR).toBe(10);
+  expect((await Payment.findById(fresh._id))).toMatchObject({ status: 'paid', capturedMinor: 1000, walletRefundMinor: 1000 });
+  expect((await Payment.findById(old.payment._id)).walletRefundMinor).toBe(0);
+  expect(await SellerBalanceTransaction.countDocuments({ type: 'return_refund' })).toBe(0);
+});
+
+test.each([[true, false], [true, true], [false, false], [false, true]])(
+  'concurrent COD refund/withdrawal with existing fence=%s and withdrawal first=%s cannot consume the same funds',
+  async (existingFence, withdrawalFirst) => {
+  const previousEncryptionKey = process.env.PAYOUT_ACCOUNT_ENCRYPTION_KEY;
+  process.env.PAYOUT_ACCOUNT_ENCRYPTION_KEY = Buffer.alloc(32, 23).toString('base64');
+  try {
+    const seller = await User.create({ username: 'COD Race QA Seller', email: 'cod-race-seller@example.com',
+      password: 'test-password', role: 'seller', currency: 'PKR' });
+    await order({ seller: seller._id, method: 'wallet', total: 3000 });
+    const original = await order({ seller: seller._id, total: 2000 });
+    const returned = await request(original);
+    await SellerPaymentAccount.create({ seller: seller._id, accountHolderName: 'QA Race Seller',
+      bankName: 'QA Bank No Real Transfer', accountNumber: 'QA-NO-TRANSFER-0001', accountNumberLast4: '0001',
+      country: 'Pakistan', countryCode: 'PK', currency: 'PKR', isActive: true,
+      payoutInstructions: 'QA only; never send an actual bank transfer.' });
+    if (existingFence) await SellerSettlementLock.create({ seller: seller._id });
+    const before = await buildSellerPaymentSummary(seller._id, { displayCurrency: 'PKR' });
+    expect(before.balanceByCurrency.PKR.withdrawableBalance).toBe(2784);
+    const withdrawal = { statusCode: 200, body: null };
+    const res = { status: code => { withdrawal.statusCode = code; return res; },
+      json: body => { withdrawal.body = body; return res; } };
+    const settleRefund = () => settleFromSellerBalance({ returnRequestId: returned._id, sellerId: seller._id });
+    const submitWithdrawal = () => createWithdrawalRequest({ user: { id: String(seller._id), role: 'seller', currency: 'PKR' },
+      body: { requestedAmount: 2000, requestedCurrency: 'PKR' }, get: () => 'cod-refund-withdrawal-race' }, res);
+    const outcomes = await Promise.allSettled(withdrawalFirst
+      ? [submitWithdrawal(), settleRefund()] : [settleRefund(), submitWithdrawal()]);
+    const refund = outcomes[withdrawalFirst ? 1 : 0], withdraw = outcomes[withdrawalFirst ? 0 : 1];
+    expect(withdraw.status).toBe('fulfilled');
+    const refundWon = refund.status === 'fulfilled';
+    const withdrawalWon = withdrawal.statusCode === 201;
+    expect(Number(refundWon) + Number(withdrawalWon)).toBe(1);
+    if (!refundWon) expect(refund.reason.code).toBe('INSUFFICIENT_SELLER_BALANCE');
+    if (!withdrawalWon) expect(withdrawal.statusCode).toBe(400);
+    const after = await buildSellerPaymentSummary(seller._id, { displayCurrency: 'PKR' });
+    expect(after.balanceByCurrency.PKR).toMatchObject({ withdrawableBalance: 784, deficit: 0,
+      totalReservedOrWithdrawn: 2000, pendingWithdrawalAmount: withdrawalWon ? 2000 : 0,
+      returnRefundDebits: refundWon ? 2000 : 0, processingFeeAndTax: 216 });
+    expect(await Withdrawal.countDocuments({ seller: seller._id })).toBe(withdrawalWon ? 1 : 0);
+    expect(await SellerBalanceTransaction.countDocuments({ referenceId: String(returned._id) })).toBe(refundWon ? 1 : 0);
+    expect(await WalletTransaction.countDocuments({ referenceId: String(returned._id), type: 'return_refund' })).toBe(refundWon ? 1 : 0);
+    expect((await ReturnRequest.findById(returned._id)).status).toBe(refundWon ? 'returned' : 'under_review');
+    expect(await Payment.countDocuments({ purpose: 'return_settlement' })).toBe(0);
+  } finally {
+    if (previousEncryptionKey === undefined) delete process.env.PAYOUT_ACCOUNT_ENCRYPTION_KEY;
+    else process.env.PAYOUT_ACCOUNT_ENCRYPTION_KEY = previousEncryptionKey;
+  }
+});
+
+test('a committed withdrawal reservation blocks the later COD refund without any partial credit or debit', async () => {
+  const previousEncryptionKey = process.env.PAYOUT_ACCOUNT_ENCRYPTION_KEY;
+  process.env.PAYOUT_ACCOUNT_ENCRYPTION_KEY = Buffer.alloc(32, 23).toString('base64');
+  try {
+    const seller = await User.create({ username: 'Reserved COD QA Seller', email: 'reserved-cod-seller@example.com',
+      password: 'test-password', role: 'seller', currency: 'PKR' });
+    await order({ seller: seller._id, method: 'wallet', total: 3000 });
+    const original = await order({ seller: seller._id, total: 2000 });
+    const returned = await request(original);
+    await SellerPaymentAccount.create({ seller: seller._id, accountHolderName: 'QA Reserved Seller',
+      bankName: 'QA Bank No Real Transfer', accountNumber: 'QA-NO-TRANSFER-0001', accountNumberLast4: '0001',
+      country: 'Pakistan', countryCode: 'PK', currency: 'PKR', isActive: true });
+    const withdrawal = { statusCode: 200, body: null };
+    const res = { status: code => { withdrawal.statusCode = code; return res; },
+      json: body => { withdrawal.body = body; return res; } };
+    await createWithdrawalRequest({ user: { id: String(seller._id), role: 'seller', currency: 'PKR' },
+      body: { requestedAmount: 2000, requestedCurrency: 'PKR' }, get: () => 'cod-withdrawal-reserved-first' }, res);
+    expect(withdrawal.statusCode).toBe(201);
+    await expect(settleFromSellerBalance({ returnRequestId: returned._id, sellerId: seller._id }))
+      .rejects.toMatchObject({ code: 'INSUFFICIENT_SELLER_BALANCE', availableBalance: 784, currency: 'PKR' });
+    const after = await buildSellerPaymentSummary(seller._id, { displayCurrency: 'PKR' });
+    expect(after.balanceByCurrency.PKR).toMatchObject({ withdrawableBalance: 784, deficit: 0,
+      totalReservedOrWithdrawn: 2000, pendingWithdrawalAmount: 2000, returnRefundDebits: 0, processingFeeAndTax: 216 });
+    expect(await WalletTransaction.countDocuments({ referenceId: String(returned._id) })).toBe(0);
+    expect(await SellerBalanceTransaction.countDocuments({ referenceId: String(returned._id) })).toBe(0);
+    expect((await ReturnRequest.findById(returned._id)).status).toBe('under_review');
+    expect(await Withdrawal.countDocuments({ seller: seller._id, status: 'pending' })).toBe(1);
+  } finally {
+    if (previousEncryptionKey === undefined) delete process.env.PAYOUT_ACCOUNT_ENCRYPTION_KEY;
+    else process.env.PAYOUT_ACCOUNT_ENCRYPTION_KEY = previousEncryptionKey;
+  }
 });
