@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { motion } from 'framer-motion';
+import { createPortal } from 'react-dom';
+import { AnimatePresence, motion } from 'framer-motion';
 import axios from 'axios';
 import { toast } from 'react-toastify';
 import {
@@ -12,6 +13,7 @@ import {
     CheckCircle,
     AlertTriangle,
     Building2,
+    X,
 } from 'lucide-react';
 import Loader from '../common/Loader';
 import { useCurrency } from '../../contexts/CurrencyContext';
@@ -141,6 +143,84 @@ const transitionInputsComplete = (request, edit) => {
     return true;
 };
 
+const availableWithdrawalStatuses = (request, payoutBlocked) => {
+    const activeAttempt = request.payoutAttempts.find(attempt => attempt.attemptId === request.activePayoutAttemptId);
+    const candidates = request.payoutWorkflow?.legacyProcessingQuarantined === true
+        ? ['manual_review']
+        : (statusTransitions[request.status] || []);
+    return candidates.filter(status => {
+        if (!payoutBlocked) return true;
+        if (['approved', 'processing'].includes(status)) return false;
+        if (status === 'paid' && !activeAttempt?.legacyImported) return false;
+        return true;
+    });
+};
+
+const WithdrawalConfirmation = ({ confirmation, busy, formatAmount, onCancel, onConfirm }) => {
+    const panel = useRef(null);
+    useEffect(() => {
+        if (!confirmation || typeof document === 'undefined') return undefined;
+        const previousFocus = document.activeElement;
+        const previousOverflow = document.body.style.overflow;
+        document.body.style.overflow = 'hidden';
+        panel.current?.focus();
+        const onKey = event => {
+            if (event.key === 'Escape') { event.preventDefault(); onCancel(); }
+            if (event.key !== 'Tab') return;
+            const buttons = [...(panel.current?.querySelectorAll('button:not([disabled])') || [])];
+            if (!buttons.length) { event.preventDefault(); return; }
+            const first = buttons[0], last = buttons[buttons.length - 1];
+            if (event.shiftKey && (document.activeElement === first || document.activeElement === panel.current)) {
+                event.preventDefault(); last.focus();
+            } else if (!event.shiftKey && (document.activeElement === last || document.activeElement === panel.current)) {
+                event.preventDefault(); first.focus();
+            }
+        };
+        document.addEventListener('keydown', onKey);
+        return () => {
+            document.removeEventListener('keydown', onKey);
+            document.body.style.overflow = previousOverflow;
+            previousFocus?.focus?.();
+        };
+    }, [confirmation, onCancel]);
+
+    if (typeof document === 'undefined') return null;
+    return createPortal(
+        <AnimatePresence>
+            {confirmation && <motion.div className="fixed inset-0 z-[10000] bg-slate-950/55 backdrop-blur-sm flex items-center justify-center p-4"
+                initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                onMouseDown={event => { if (event.target === event.currentTarget) onCancel(); }}>
+                <motion.section ref={panel} tabIndex={-1} role="dialog" aria-modal="true" aria-busy={busy} aria-labelledby="withdrawal-confirmation-title" aria-describedby="withdrawal-confirmation-risk"
+                    className="glass-panel-strong w-full max-w-lg rounded-3xl p-5 sm:p-6 max-h-[88dvh] overflow-y-auto outline-none"
+                    style={{ background: 'hsl(var(--background) / 0.98)', color: 'hsl(var(--foreground))' }}
+                    initial={{ opacity: 0, scale: 0.96, y: 16 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.96, y: 16 }}>
+                    <div className="flex items-start gap-3">
+                        <div className="p-3 rounded-2xl shrink-0" style={{ background: 'rgba(249,115,22,0.12)', color: 'hsl(30,90%,50%)' }}><AlertTriangle size={22} /></div>
+                        <h2 id="withdrawal-confirmation-title" className="text-lg font-extrabold flex-1 min-w-0 break-words pt-2">{confirmation.title}</h2>
+                        <button type="button" disabled={busy} onClick={onCancel} aria-label="Close withdrawal confirmation" className="glass-button p-2 rounded-xl disabled:opacity-50"><X size={18} /></button>
+                    </div>
+                    <p id="withdrawal-confirmation-risk" className="text-sm leading-relaxed mt-4">{confirmation.message}</p>
+                    <div className="glass-inner rounded-2xl p-4 mt-4 text-sm space-y-2 min-w-0 break-words">
+                        <p className="font-semibold">{confirmation.sellerName}</p>
+                        <p>{confirmation.payout
+                            ? `Frozen bank payout: ${formatAmount(confirmation.payout.amount, { targetCurrency: confirmation.payout.currency, showCode: true })}`
+                            : 'Original bank payout amount unavailable. Resolve only from verified historical transfer evidence.'}</p>
+                        <p className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>{confirmation.bankName}{confirmation.last4 ? ` · **** ${confirmation.last4}` : ''}</p>
+                        {confirmation.provider && <p className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>Payout provider: {confirmation.provider}</p>}
+                    </div>
+                    <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-3 mt-5">
+                        <button type="button" disabled={busy} onClick={onCancel} className="glass-button px-4 py-2.5 rounded-xl text-sm font-semibold disabled:opacity-50">Cancel</button>
+                        <button type="button" disabled={busy} onClick={onConfirm} className="px-4 py-2.5 rounded-xl text-sm font-semibold text-white inline-flex items-center justify-center gap-2 disabled:opacity-50"
+                            style={{ background: 'linear-gradient(135deg, hsl(220,70%,55%), hsl(200,80%,50%))' }}>
+                            {busy && <RefreshCw size={16} className="animate-spin" />}{busy ? 'Updating withdrawal…' : confirmation.confirmLabel}
+                        </button>
+                    </div>
+                </motion.section>
+            </motion.div>}
+        </AnimatePresence>, document.body,
+    );
+};
+
 const StatCard = ({ label, value, icon, color, bg }) => (
     <div className="glass-card water-shimmer p-4 sm:p-5 min-w-0">
         <div className="flex items-start justify-between gap-3 min-w-0">
@@ -184,6 +264,9 @@ const AdminPayments = () => {
     const [data, setData] = useState(null);
     const [edits, setEdits] = useState({});
     const [loadError, setLoadError] = useState('');
+    const [confirmation, setConfirmation] = useState(null);
+    const pendingConfirmationRef = useRef(null);
+    const withdrawalSubmissionRef = useRef(false);
     const overviewRequestRef = useRef({ id: 0, controller: null });
 
     const fetchOverview = useCallback(async () => {
@@ -191,6 +274,8 @@ const AdminPayments = () => {
         overviewRequestRef.current.controller?.abort();
         const controller = new AbortController();
         overviewRequestRef.current = { id: requestId, controller };
+        pendingConfirmationRef.current = null;
+        setConfirmation(null);
         setLoading(true);
         setData(null);
         setEdits({});
@@ -236,21 +321,27 @@ const AdminPayments = () => {
         setEdits((prev) => ({ ...prev, [id]: { ...(prev[id] || {}), [field]: value } }));
     };
 
-    const updateWithdrawal = async (request) => {
-        const edit = edits[request._id] || withdrawalEdit(request);
-        const confirmationMessages = {
-            processing: 'Start a new bank payout attempt using only this withdrawal\'s frozen destination and frozen payout amount?',
-            manual_review: 'Place this payout attempt in manual review? The entire amount will remain reserved and no retry can start until it is resolved.',
-            failed: 'Confirm that no transfer was completed and release this reservation? Use this only after definitive bank/provider verification.',
-            paid: `Permanently mark this withdrawal paid with transfer reference "${edit.transferReference}"? The recorded proof cannot be replaced.`,
-        };
-        if (confirmationMessages[edit.status] && !window.confirm(confirmationMessages[edit.status])) {
+    const closeWithdrawalConfirmation = useCallback(() => {
+        if (withdrawalSubmissionRef.current) return;
+        pendingConfirmationRef.current = null;
+        setConfirmation(null);
+    }, []);
+
+    const submitWithdrawal = async (operation) => {
+        if (withdrawalSubmissionRef.current) return;
+        const request = data?.withdrawals.find(row => row._id === operation.requestId);
+        const money = selectAdminWithdrawalPresentationMoney(request);
+        if (!request || !money || !availableWithdrawalStatuses(request, money.payoutBlocked).includes(operation.payload.status)
+            || !transitionInputsComplete(request, operation.edit)
+            || JSON.stringify(transitionPayload(request, operation.edit)) !== JSON.stringify(operation.payload)) {
+            closeWithdrawalConfirmation();
+            toast.error('This withdrawal changed or its payout details are unavailable. Refresh before acting.');
             return;
         }
-        const payload = transitionPayload(request, edit);
-        const fingerprint = JSON.stringify({ withdrawalId: request._id, ...payload });
+        withdrawalSubmissionRef.current = true;
+        const { payload, fingerprint } = operation;
         let attempt;
-        setSavingId(request._id);
+        setSavingId(operation.requestId);
         try {
             attempt = await getOrCreatePersistedMutationAttemptInLedger({
                 storage: window.localStorage,
@@ -259,7 +350,7 @@ const AdminPayments = () => {
                 keyPrefix: 'withdrawal-transition',
             });
             const token = getAuthToken();
-            await axios.patch(`${API}/admin/withdrawals/${request._id}`, payload, {
+            await axios.patch(`${API}/admin/withdrawals/${operation.requestId}`, payload, {
                 headers: {
                     Authorization: `Bearer ${token}`,
                     'Idempotency-Key': attempt.key,
@@ -284,8 +375,45 @@ const AdminPayments = () => {
             }
             toast.error(error.response?.data?.msg || 'Failed to update withdrawal');
         } finally {
+            withdrawalSubmissionRef.current = false;
+            if (pendingConfirmationRef.current === operation) closeWithdrawalConfirmation();
             setSavingId('');
         }
+    };
+
+    const updateWithdrawal = async (request) => {
+        if (withdrawalSubmissionRef.current || pendingConfirmationRef.current) return;
+        const edit = Object.freeze({ ...(edits[request._id] || withdrawalEdit(request)) });
+        const money = selectAdminWithdrawalPresentationMoney(request);
+        if (!money || !availableWithdrawalStatuses(request, money.payoutBlocked).includes(edit.status)
+            || !transitionInputsComplete(request, edit)) return;
+        const payload = Object.freeze(transitionPayload(request, edit));
+        const confirmationDetails = {
+            processing: { title: 'Start bank payout attempt', confirmLabel: 'Start payout attempt', message: 'Start a new bank payout attempt using only this withdrawal\'s frozen destination and frozen payout amount?' },
+            manual_review: { title: 'Place payout in manual review', confirmLabel: 'Place in manual review', message: 'Place this payout attempt in manual review? The entire amount will remain reserved and no retry can start until it is resolved.' },
+            failed: { title: 'Confirm definitive payout failure', confirmLabel: 'Mark payout failed', message: 'Confirm that no transfer was completed and release this reservation? Use this only after definitive bank/provider verification.' },
+            paid: { title: 'Confirm withdrawal paid', confirmLabel: 'Mark withdrawal paid', message: `Permanently mark this withdrawal paid with transfer reference "${edit.transferReference}"? The recorded proof cannot be replaced.` },
+        };
+        const operation = Object.freeze({
+            requestId: request._id, edit, payload,
+            fingerprint: JSON.stringify({ withdrawalId: request._id, ...payload }),
+            ...(confirmationDetails[edit.status] || {}),
+            sellerName: request.seller?.username || 'Seller',
+            bankName: request.paymentAccountSnapshot.bankName || 'Bank account',
+            last4: request.paymentAccountSnapshot.accountNumberLast4 || request.paymentAccountSnapshot.ibanLast4 || '',
+            provider: edit.status === 'processing' || request.payoutWorkflow?.legacyProcessingQuarantined === true ? edit.payoutProvider
+                : request.payoutAttempts.find(attempt => attempt.attemptId === request.activePayoutAttemptId)?.provider || '',
+            payout: money.payout ? Object.freeze({ ...money.payout }) : null,
+        });
+        if (confirmationDetails[edit.status]) {
+            pendingConfirmationRef.current = operation;
+            setConfirmation(operation);
+        } else await submitWithdrawal(operation);
+    };
+
+    const confirmWithdrawal = async () => {
+        const operation = pendingConfirmationRef.current;
+        if (operation) await submitWithdrawal(operation);
     };
 
     const pendingRequests = useMemo(
@@ -324,7 +452,7 @@ const AdminPayments = () => {
 
 
     return (
-        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="px-3 py-4 sm:p-6 max-w-7xl mx-auto space-y-6 overflow-hidden">
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="w-full min-w-0 px-3 py-4 sm:p-6 max-w-7xl mx-auto space-y-6" style={{ contain: 'inline-size' }}>
             <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
                 <div className="min-w-0">
                     <div className="tag-pill mb-2"><Wallet size={12} /> Admin Payments</div>
@@ -380,7 +508,7 @@ const AdminPayments = () => {
                     <Users size={20} style={{ color: 'hsl(var(--muted-foreground))' }} />
                 </div>
 
-                <div className="overflow-x-auto -mx-4 sm:mx-0 px-4 sm:px-0">
+                <div className="w-full min-w-0 max-w-full overflow-x-auto">
                     <table className="w-full min-w-[920px] text-sm">
                         <thead>
                             <tr style={{ color: 'hsl(var(--muted-foreground))' }}>
@@ -479,20 +607,12 @@ const AdminPayments = () => {
                                 attempt => attempt.attemptId === request.activePayoutAttemptId
                             );
                             const legacyProcessing = request.payoutWorkflow?.legacyProcessingQuarantined === true;
-                            const candidateStatuses = legacyProcessing
-                                ? ['manual_review']
-                                : (statusTransitions[request.status] || []);
-                            const nextStatuses = candidateStatuses.filter((status) => {
-                                if (!payoutBlocked) return true;
-                                if (['approved', 'processing'].includes(status)) return false;
-                                if (status === 'paid' && !activeAttempt?.legacyImported) return false;
-                                return true;
-                            });
+                            const nextStatuses = availableWithdrawalStatuses(request, payoutBlocked);
                             const isTerminal = nextStatuses.length === 0;
                             const canSubmit = transitionInputsComplete(request, edit);
                             return (
                                 <div key={request._id} className="glass-inner rounded-2xl p-4 min-w-0">
-                                    <div className="grid lg:grid-cols-[1.2fr_1fr_1.5fr_auto] gap-4 items-start">
+                                    <div className="w-full min-w-0 grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,1.5fr)] gap-4 items-start">
                                         <div className="min-w-0">
                                             <div className="flex flex-wrap items-center gap-2 mb-2">
                                                 <StatusPill status={request.status} />
@@ -521,7 +641,7 @@ const AdminPayments = () => {
                                                 {request.seller?.email || ''}{request.sellerNote ? ` - Seller note: ${request.sellerNote}` : ''}
                                             </p>
                                         </div>
-                                        <div className="text-xs leading-relaxed min-w-0" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                                        <div className="text-xs leading-relaxed min-w-0 break-words" style={{ color: 'hsl(var(--muted-foreground))' }}>
                                             <p className="font-semibold text-sm mb-1" style={{ color: 'hsl(var(--foreground))' }}>
                                                 {payoutDestination.bankName || 'Bank account'}
                                             </p>
@@ -602,7 +722,7 @@ const AdminPayments = () => {
                                                 </div>
                                             )}
                                         </div>
-                                        <div className="space-y-3 min-w-0">
+                                        <div className="space-y-3 min-w-0 max-w-full md:col-span-2 2xl:col-span-1 [&_input]:max-w-full [&_select]:max-w-full [&_textarea]:max-w-full">
                                             <select
                                                 className="w-full min-w-0 glass-inner rounded-xl px-3 py-2.5 text-sm outline-none"
                                                 value={edit.status}
@@ -720,16 +840,16 @@ const AdminPayments = () => {
                                                     />
                                                 </>
                                             )}
+                                            <button
+                                                disabled={Boolean(savingId) || Boolean(confirmation) || !canSubmit}
+                                                onClick={() => updateWithdrawal(request)}
+                                                className="w-full sm:w-auto max-w-full px-4 py-2.5 rounded-xl text-sm font-semibold text-white inline-flex items-center justify-center gap-2 disabled:opacity-60"
+                                                style={{ background: 'linear-gradient(135deg, hsl(220,70%,55%), hsl(200,80%,50%))' }}
+                                            >
+                                                {savingId === request._id ? <RefreshCw size={16} className="animate-spin" /> : <CheckCircle size={16} />}
+                                                Update
+                                            </button>
                                         </div>
-                                        <button
-                                            disabled={savingId === request._id || !canSubmit}
-                                            onClick={() => updateWithdrawal(request)}
-                                            className="w-full lg:w-auto px-4 py-2.5 rounded-xl text-sm font-semibold text-white inline-flex items-center justify-center gap-2 disabled:opacity-60"
-                                            style={{ background: 'linear-gradient(135deg, hsl(220,70%,55%), hsl(200,80%,50%))' }}
-                                        >
-                                            {savingId === request._id ? <RefreshCw size={16} className="animate-spin" /> : <CheckCircle size={16} />}
-                                            Update
-                                        </button>
                                     </div>
                                 </div>
                             );
@@ -737,6 +857,8 @@ const AdminPayments = () => {
                     </div>
                 )}
             </section>
+            <WithdrawalConfirmation confirmation={confirmation} busy={Boolean(savingId)} formatAmount={formatAmount}
+                onCancel={closeWithdrawalConfirmation} onConfirm={confirmWithdrawal} />
         </motion.div>
     );
 };
