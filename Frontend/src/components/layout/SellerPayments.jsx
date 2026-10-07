@@ -680,7 +680,7 @@ const SellerPayments = () => {
                                 ['Held for returns', selectedBalance?.returnWindowHeldAmount ?? 0],
                                 ['Processing withdrawals', selectedBalance?.processingWithdrawalAmount ?? 0],
                                 ['Already paid out', selectedBalance?.totalWithdrawn ?? 0],
-                                ['Return-refund reserve', selectedBalance?.returnRefundDebits ?? 0],
+                                ['Return refunds & holds', selectedBalance?.returnRefundDebits ?? 0],
                                 ['Pending COD estimate', selectedBalance?.codPendingRevenue ?? 0],
                                 ...[
                                     ['Approved withdrawals', selectedBalance?.approvedWithdrawalAmount ?? 0],

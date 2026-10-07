@@ -46,6 +46,16 @@ test('withdrawal labels, limits, submitted currency and amount use the chosen na
     assert.match(source,/paymentAccount\.currency !== balanceCurrency/);assert.match(source,/Withdrawal balance currency/);
   }
 });
+test('web and native distinguish return refunds and debit holds from the separate return-window hold', () => {
+  const web = readFileSync(new URL('../src/components/layout/SellerPayments.jsx', import.meta.url), 'utf8');
+  const mobile = readFileSync(new URL('../../MobileApp/src/screens/seller/SellerPaymentsScreen.js', import.meta.url), 'utf8');
+  for (const source of [web, mobile]) {
+    assert.match(source, /\['Return refunds & holds', selectedBalance\?\.returnRefundDebits \?\? 0/);
+    assert.equal((source.match(/'Return refunds & holds'/g) || []).length, 1);
+    assert.match(source, /\['Held for returns', selectedBalance(?:\?\.|\.)returnWindowHeldAmount/);
+    assert.doesNotMatch(source, /Return-refund reserve/);
+  }
+});
 test('net withdrawals subtract released fees once; incomplete fee authorities are rejected',()=>{
   const r=response();
   for(const b of r.balances){

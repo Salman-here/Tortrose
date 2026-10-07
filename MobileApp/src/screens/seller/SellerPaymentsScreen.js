@@ -592,7 +592,7 @@ export default function SellerPaymentsScreen({ navigation }) {
             ['Held for returns', selectedBalance.returnWindowHeldAmount, 'lock-closed-outline'],
             ['Processing withdrawals', selectedBalance?.processingWithdrawalAmount ?? 0, 'sync-outline'],
             ['Paid out', selectedBalance?.totalWithdrawn ?? 0, 'checkmark-done-outline'],
-            ['Return-refund reserve', selectedBalance?.returnRefundDebits ?? 0, 'return-down-back-outline'],
+            ['Return refunds & holds', selectedBalance?.returnRefundDebits ?? 0, 'return-down-back-outline'],
             ['Pending COD estimate', selectedBalance?.codPendingRevenue ?? 0, 'cash-outline'],
             ...[
               ['Approved withdrawals', selectedBalance?.approvedWithdrawalAmount ?? 0, 'checkmark-circle-outline'],
