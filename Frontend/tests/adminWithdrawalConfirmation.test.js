@@ -15,7 +15,7 @@ const helpers = transformSync(source.slice(helpersStart, helpersEnd), {
   loader: 'jsx', jsxFactory: 'React.createElement', jsxFragment: 'React.Fragment',
 }).code;
 const actions = source.slice(actionsStart, actionsEnd);
-const extracted = `${helpers}\n${actions}\n({ update: updateWithdrawal, confirm: confirmWithdrawal, cancel: closeWithdrawalConfirmation, change: updateEdit, createEdit: withdrawalEdit, Modal: WithdrawalConfirmation });`;
+const extracted = `${helpers}\n${actions}\n({ update: updateWithdrawal, confirm: confirmWithdrawal, cancel: closeWithdrawalConfirmation, change: updateEdit, createEdit: withdrawalEdit, availableStatuses: availableWithdrawalStatuses, Modal: WithdrawalConfirmation });`;
 
 function request(status = 'approved') {
   const active = ['processing', 'manual_review'].includes(status);
@@ -121,11 +121,14 @@ function renderCard(f) {
   const render = transformSync(`const renderRow = () => { ${source.slice(start, end)}\n); }; renderRow;`,
     { loader: 'jsx', jsxFactory: 'React.createElement' }).code;
   const presentationMoney = selectAdminWithdrawalPresentationMoney(f.row);
+  const nextStatuses = f.availableStatuses(f.row, presentationMoney.payoutBlocked);
   Object.assign(f.context, {
     request: f.row, edit: f.context.edits[f.row._id] || f.createEdit(f.row), presentationMoney,
     payoutDestination: f.row.paymentAccountSnapshot, payoutBlocked: false, attempts: f.row.payoutAttempts,
-    activeAttempt: f.row.payoutAttempts[0], legacyProcessing: false, nextStatuses: ['paid', 'failed', 'manual_review'],
-    isTerminal: false, canSubmit: true, StatusPill: 'StatusPill', CheckCircle: 'CheckCircle',
+    activeAttempt: f.row.payoutAttempts.find(attempt => attempt.attemptId === f.row.activePayoutAttemptId),
+    paidAttempt: f.row.payoutAttempts.find(attempt => attempt.attemptId === f.row.paidPayoutAttemptId && attempt.status === 'paid'),
+    legacyProcessing: false, nextStatuses, isTerminal: nextStatuses.length === 0,
+    canSubmit: true, StatusPill: 'StatusPill', CheckCircle: 'CheckCircle',
     formatAmount: (amount, { targetCurrency }) => `${targetCurrency} ${amount.toFixed(2)}`,
     formatLedgerAmount: amount => String(amount), updateEdit: f.change, updateWithdrawal: f.update,
   });
@@ -366,3 +369,53 @@ test('a newly typed note survives status selection and is captured for the confi
   assert.equal(f.calls.patches[0].payload.adminNote, currentNote);
   assert.equal(f.row.adminNote, 'Old review note: reservation is still held.');
 });
+
+for (const status of ['paid', 'rejected', 'cancelled']) {
+  test(`${status} terminal card has no action or proof editors and keeps its saved note visible`, () => {
+    const f = fixture('paid', status);
+    f.row.adminNote = 'The saved final admin note.';
+    const card = renderCard(f);
+    const all = nodes(card);
+    assert.equal(all.filter(node => ['input', 'textarea', 'select', 'button'].includes(node.type)).length, 0);
+    assert.ok(all.some(node => node.props.role === 'status'));
+    assert.match(textOf(card), /Last admin noteThe saved final admin note\./);
+    assert.doesNotMatch(textOf(card), /Resolving attempt through|Unique provider transfer reference|Update/);
+  });
+}
+
+test('paid card shows the stored immutable provider, transfer reference, time and actual evidence instead of edit defaults', () => {
+  const f = fixture('paid', 'paid');
+  Object.assign(f.row, {
+    paidPayoutProvider: 'Recorded Bank Rail', paidTransferReference: 'RECORDED-TRANSFER',
+    paidPayoutAttemptId: 'paid-attempt', payoutWorkflow: { version: 1, attemptCount: 1 },
+    payoutAttempts: [{ attemptId: 'paid-attempt', status: 'paid', provider: 'Recorded Bank Rail',
+      transferReference: 'RECORDED-TRANSFER', transferredAt: '2026-10-07T06:30:00.000Z',
+      startedAt: '2026-10-07T06:00:00.000Z', sequence: 1,
+      evidence: { type: 'manual_confirmation', note: 'Verified recorded transfer proof.', url: 'https://example.com/recorded-proof' } }],
+  });
+  const card = renderCard(f);
+  const all = nodes(card);
+  const proof = all.find(node => node.props['aria-label'] === 'Recorded transfer proof');
+  assert.ok(proof);
+  assert.match(textOf(proof), /Paid via Recorded Bank Rail/);
+  assert.match(textOf(proof), /Transfer reference: RECORDED-TRANSFER/);
+  assert.ok(textOf(proof).includes(new Date('2026-10-07T06:30:00.000Z').toLocaleString()));
+  assert.match(textOf(proof), /Evidence: manual confirmation/);
+  assert.match(textOf(proof), /Evidence note: Verified recorded transfer proof\./);
+  const proofLink = nodes(proof).find(node => node.type === 'a');
+  assert.equal(proofLink.props.href, 'https://example.com/recorded-proof');
+  assert.equal(proofLink.props.rel, 'noreferrer noopener');
+  assert.doesNotMatch(textOf(card), /ORIGINAL-REFERENCE|Provider reference|Resolving attempt through/);
+  assert.equal(all.filter(node => ['input', 'textarea', 'select', 'button'].includes(node.type)).length, 0);
+});
+
+for (const status of ['pending', 'approved', 'processing', 'manual_review', 'failed']) {
+  test(`${status} card keeps its existing nonterminal action controls`, () => {
+    const f = fixture('approved', status);
+    const card = renderCard(f);
+    const all = nodes(card);
+    assert.ok(all.some(node => node.type === 'select'));
+    assert.ok(all.some(node => node.type === 'input' && node.props['aria-label'] === 'Note for this action'));
+    assert.ok(all.some(node => node.type === 'button' && textOf(node).trim() === 'Update'));
+  });
+}

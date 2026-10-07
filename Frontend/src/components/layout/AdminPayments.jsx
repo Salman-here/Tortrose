@@ -606,6 +606,9 @@ const AdminPayments = () => {
                             const activeAttempt = attempts.find(
                                 attempt => attempt.attemptId === request.activePayoutAttemptId
                             );
+                            const paidAttempt = attempts.find(
+                                attempt => attempt.attemptId === request.paidPayoutAttemptId && attempt.status === 'paid'
+                            );
                             const legacyProcessing = request.payoutWorkflow?.legacyProcessingQuarantined === true;
                             const nextStatuses = availableWithdrawalStatuses(request, payoutBlocked);
                             const isTerminal = nextStatuses.length === 0;
@@ -718,15 +721,32 @@ const AdminPayments = () => {
                                                 </details>
                                             )}
                                             {request.status === 'paid' && request.paidTransferReference && (
-                                                <div className="mt-2 pt-2 border-t" style={{ borderColor: 'var(--glass-border)' }}>
+                                                <section aria-label="Recorded transfer proof" className="mt-2 pt-2 border-t" style={{ borderColor: 'var(--glass-border)' }}>
                                                     <p className="font-semibold" style={{ color: 'hsl(150,60%,40%)' }}>
                                                         Paid via {request.paidPayoutProvider}
                                                     </p>
                                                     <p className="break-all">Transfer reference: {request.paidTransferReference}</p>
-                                                </div>
+                                                    {paidAttempt?.transferredAt && <p>Transferred: {new Date(paidAttempt.transferredAt).toLocaleString()}</p>}
+                                                    {paidAttempt?.evidence?.type && <p>Evidence: {paidAttempt.evidence.type.replaceAll('_', ' ')}</p>}
+                                                    {paidAttempt?.evidence?.note && <p>Evidence note: {paidAttempt.evidence.note}</p>}
+                                                    {paidAttempt?.evidence?.url && <a href={paidAttempt.evidence.url} target="_blank" rel="noreferrer noopener" className="underline break-all">Open recorded proof</a>}
+                                                </section>
                                             )}
                                         </div>
                                         <div className="space-y-3 min-w-0 max-w-full md:col-span-2 2xl:col-span-1 [&_input]:max-w-full [&_select]:max-w-full [&_textarea]:max-w-full">
+                                            {isTerminal ? (
+                                                <div role="status" className="glass-inner rounded-2xl p-4 text-sm space-y-2 break-words">
+                                                    <p className="font-semibold" style={{ color: 'hsl(var(--foreground))' }}>
+                                                        {request.status === 'paid' ? 'Withdrawal paid' : request.status === 'rejected' ? 'Request rejected' : 'Request cancelled'}
+                                                    </p>
+                                                    <p className="text-xs leading-relaxed" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                                                        {request.status === 'paid'
+                                                            ? 'This withdrawal is complete. Its recorded transfer proof cannot be replaced.'
+                                                            : 'This request is closed. No further status changes are available.'}
+                                                    </p>
+                                                </div>
+                                            ) : (
+                                            <>
                                             <select
                                                 className="w-full min-w-0 glass-inner rounded-xl px-3 py-2.5 text-sm outline-none"
                                                 value={edit.status}
@@ -854,6 +874,8 @@ const AdminPayments = () => {
                                                 {savingId === request._id ? <RefreshCw size={16} className="animate-spin" /> : <CheckCircle size={16} />}
                                                 Update
                                             </button>
+                                            </>
+                                            )}
                                         </div>
                                     </div>
                                 </div>
