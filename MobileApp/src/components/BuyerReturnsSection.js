@@ -52,6 +52,11 @@ const UNRESOLVED_RETURN_STATUSES = new Set([
   'in_transit_to_seller', 'received_by_seller', 'under_review',
   'accepted_pending_payment',
 ]);
+const activeReturnForSeller = (requests, orderId, sellerId) => requests.find(request => (
+  request.order === orderId && request.seller._id === sellerId
+  && UNRESOLVED_RETURN_STATUSES.has(request.status)
+)) || null;
+const activeReturnHint = request => `Return ${request.returnNumber} is in progress. You can request another return from this store after it is resolved.`;
 const canonicalRequestKey = value => (
   typeof value === 'string'
   && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(value)
@@ -232,10 +237,13 @@ export default function BuyerReturnsSection({ order, formatMoney }) {
     );
   }, [returnPending, submitting, cancellingId, isFocused, load]);
 
+  const selectedActiveReturn = selectedGroup
+    ? activeReturnForSeller(requests, orderContext.orderId, selectedGroup.seller._id)
+    : null;
   const selection = useMemo(() => {
     if (!selectedGroup) return { valid: false, items: [] };
     const currentGroup = groups.find(group => group.seller._id === selectedGroup.seller._id);
-    if (!currentGroup?.eligible) return { valid: false, items: [] };
+    if (!currentGroup?.eligible || selectedActiveReturn) return { valid: false, items: [] };
     const currentItems = new Map(currentGroup.items.map(item => [item.orderItemId, item]));
     const selectable = selectedGroup.items.filter(
       item => item.eligible && item.remainingReturnableQuantity > 0,
@@ -264,12 +272,17 @@ export default function BuyerReturnsSection({ order, formatMoney }) {
       }
     }
     return { valid: true, items };
-  }, [groups, quantities, selectedGroup]);
+  }, [groups, quantities, selectedGroup, selectedActiveReturn]);
 
   const selectedItems = selection.items;
 
   const openRequest = (group) => {
     const current = groups.find(entry => entry.seller._id === group?.seller?._id);
+    const activeReturn = current && activeReturnForSeller(requests, orderContext.orderId, current.seller._id);
+    if (activeReturn) {
+      Feedback.show({ type: 'error', text1: 'Return in progress', text2: activeReturnHint(activeReturn) });
+      return;
+    }
     if (!current?.eligible) {
       Feedback.show({ type: 'error', text1: 'Return option unavailable' });
       return;
@@ -308,6 +321,10 @@ export default function BuyerReturnsSection({ order, formatMoney }) {
 
   const submit = async () => {
     if (loadError || mutationInProgressRef.current || !mountedRef.current || currentOrderIdRef.current !== orderContext.orderId) return;
+    if (selectedActiveReturn) {
+      Feedback.show({ type: 'error', text1: 'Return in progress', text2: activeReturnHint(selectedActiveReturn) });
+      return;
+    }
     if (!selectedGroup || !selection.valid || !selectedItems.length) {
       Feedback.show({ type: 'error', text1: 'Select at least one item' });
       return;
@@ -372,6 +389,15 @@ export default function BuyerReturnsSection({ order, formatMoney }) {
       });
     } catch (error) {
       if (!isCurrentMutation()) return;
+      if (error?.response?.status === 409 && error?.response?.data?.code === 'RETURN_REQUEST_ALREADY_OPEN') {
+        requestKeyRef.current = null;
+        setSelectedGroup(null);
+        setQuantities({});
+        const refreshed = await load({ notify: false });
+        if (refreshed.stale || !isCurrentMutation()) return;
+        Feedback.show({ type: 'error', text1: 'Return already in progress', text2: `${responseMessage(error, 'Another return is already in progress for this store.')} ${refreshed.valid ? 'Return information has been refreshed.' : 'Reload return information before starting another request.'}` });
+        return;
+      }
       setGroups([]);
       setRequests([]);
       setLoadError('Return information must be verified again before retrying this saved request.');
@@ -546,7 +572,9 @@ export default function BuyerReturnsSection({ order, formatMoney }) {
         );
       })}
 
-      {groups.map(group => (
+      {groups.map(group => {
+        const activeReturn = activeReturnForSeller(requests, orderContext.orderId, group.seller._id);
+        return (
         <GlassPanel key={group.seller._id} variant="card" style={styles.policyCard}>
           <View style={{ flex: 1 }}>
             <Text style={styles.cardTitle}>{group.store?.storeName || group.seller?.username || 'Seller'}</Text>
@@ -555,15 +583,17 @@ export default function BuyerReturnsSection({ order, formatMoney }) {
             </Text>
             {group.eligibilityDeadline && <Text style={styles.deadline}>Request by {new Date(group.eligibilityDeadline).toLocaleString()}</Text>}
             {!group.eligible && <Text style={styles.unavailableText}>{group.reason}</Text>}
+            {activeReturn && <Text style={styles.unavailableText}>{activeReturnHint(activeReturn)}</Text>}
           </View>
           {group.eligible && (
-            <TouchableOpacity style={styles.requestButton} onPress={() => openRequest(group)}>
+            <TouchableOpacity style={[styles.requestButton, activeReturn && styles.disabled]} onPress={() => openRequest(group)} disabled={Boolean(activeReturn)} accessibilityRole="button" accessibilityLabel={`Request return from ${group.store?.storeName || group.seller.username || 'Seller'}`} accessibilityState={{ disabled: Boolean(activeReturn) }}>
               <Ionicons name="return-down-back-outline" size={16} color="#fff" />
               <Text style={styles.requestButtonText}>Request</Text>
             </TouchableOpacity>
           )}
         </GlassPanel>
-      ))}
+        );
+      })}
 
       <Modal visible={!!selectedGroup} animationType="slide" onRequestClose={() => !submitting && setSelectedGroup(null)}>
         <View style={[styles.modalRoot, { backgroundColor: palette.colors.background }]}>
@@ -636,7 +666,8 @@ export default function BuyerReturnsSection({ order, formatMoney }) {
                 </TouchableOpacity>
               </View>
             ) : null}
-            {!loadError && !submitting && !selection.valid ? <Text style={styles.unavailableText}>Return eligibility changed. Review the available items before submitting.</Text> : null}
+            {!loadError && !submitting && selectedActiveReturn ? <Text style={styles.unavailableText}>{activeReturnHint(selectedActiveReturn)}</Text> : null}
+            {!loadError && !submitting && !selectedActiveReturn && !selection.valid ? <Text style={styles.unavailableText}>Return eligibility changed. Review the available items before submitting.</Text> : null}
             <TouchableOpacity style={[styles.submitButton, (submitting || !selection.valid || !!loadError) && styles.disabled]} onPress={submit} disabled={submitting || !selection.valid || !!loadError}>
               {submitting ? <ActivityIndicator size="small" color="#fff" /> : <Ionicons name="send-outline" size={18} color="#fff" />}
               <Text style={styles.submitText}>{submitting ? 'Sending...' : 'Submit Return Request'}</Text>

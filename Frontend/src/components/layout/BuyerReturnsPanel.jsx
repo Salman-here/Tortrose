@@ -41,6 +41,11 @@ const UNRESOLVED_RETURN_STATUSES = new Set([
   'in_transit_to_seller', 'received_by_seller', 'under_review',
   'accepted_pending_payment',
 ]);
+const activeReturnForSeller = (requests, orderId, sellerId) => requests.find(request => (
+  request.order === orderId && request.seller._id === sellerId
+  && UNRESOLVED_RETURN_STATUSES.has(request.status)
+)) || null;
+const activeReturnHint = request => `Return ${request.returnNumber} is in progress. You can request another return from this store after it is resolved.`;
 const canonicalRequestKey = value => (
   typeof value === 'string'
   && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(value)
@@ -225,6 +230,11 @@ export default function BuyerReturnsPanel({ order, formatMoney }) {
 
   const openRequest = (group) => {
     const current = groups.find(entry => entry.seller._id === group?.seller?._id);
+    const activeReturn = current && activeReturnForSeller(requests, orderContext.orderId, current.seller._id);
+    if (activeReturn) {
+      toast.error(activeReturnHint(activeReturn));
+      return;
+    }
     if (!current?.eligible) {
       toast.error('This return option is no longer available.');
       return;
@@ -245,10 +255,13 @@ export default function BuyerReturnsPanel({ order, formatMoney }) {
     setSelectedGroup(current);
   };
 
+  const selectedActiveReturn = selectedGroup
+    ? activeReturnForSeller(requests, orderContext.orderId, selectedGroup.seller._id)
+    : null;
   const selection = useMemo(() => {
     if (!selectedGroup) return { valid: false, items: [] };
     const current = groups.find(group => group.seller._id === selectedGroup.seller._id);
-    if (!current?.eligible) return { valid: false, items: [] };
+    if (!current?.eligible || selectedActiveReturn) return { valid: false, items: [] };
     const selectable = current.items.filter(
       item => item.eligible && item.remainingReturnableQuantity > 0,
     );
@@ -275,12 +288,16 @@ export default function BuyerReturnsPanel({ order, formatMoney }) {
       }
     }
     return { valid: true, items };
-  }, [quantities, selectedGroup, groups]);
+  }, [quantities, selectedGroup, groups, selectedActiveReturn]);
 
   const selectedItems = selection.items;
 
   const submitReturn = async () => {
     if (mutationInProgressRef.current || !mountedRef.current || loadError || currentOrderIdRef.current !== orderContext.orderId) return;
+    if (selectedActiveReturn) {
+      toast.error(activeReturnHint(selectedActiveReturn));
+      return;
+    }
     if (!selectedGroup || !selection.valid || selectedItems.length === 0) {
       toast.error('Select at least one item and quantity.');
       return;
@@ -346,6 +363,15 @@ export default function BuyerReturnsPanel({ order, formatMoney }) {
         : 'Return request sent to the seller.');
     } catch (error) {
       if (!isMutationCurrent()) return;
+      if (error?.response?.status === 409 && error?.response?.data?.code === 'RETURN_REQUEST_ALREADY_OPEN') {
+        requestKeyRef.current = null;
+        setSelectedGroup(null);
+        setQuantities({});
+        const refreshed = await load({ notify: false });
+        if (refreshed.stale || !isMutationCurrent()) return;
+        toast.error(`${responseMessage(error, 'Another return is already in progress for this store.')} ${refreshed.valid ? 'Return information has been refreshed.' : 'Reload return information before starting another request.'}`);
+        return;
+      }
       setGroups([]);
       setRequests([]);
       setLoadError('Return information must be verified again before retrying this saved request.');
@@ -496,7 +522,9 @@ export default function BuyerReturnsPanel({ order, formatMoney }) {
         </article>
       ))}
 
-      {groups.map((group) => (
+      {groups.map((group) => {
+        const activeReturn = activeReturnForSeller(requests, orderContext.orderId, group.seller._id);
+        return (
         <article key={group.seller._id} className="glass-panel p-4 sm:p-5">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <div>
@@ -504,9 +532,10 @@ export default function BuyerReturnsPanel({ order, formatMoney }) {
               <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
                 {returnGroupPolicyLabel(group)}
               </p>
+              {activeReturn && <p className="text-xs mt-2" style={{ color: 'hsl(var(--muted-foreground))' }}>{activeReturnHint(activeReturn)}</p>}
             </div>
             {group.eligible ? (
-              <button type="button" onClick={() => openRequest(group)} className="px-4 py-2 rounded-xl text-sm font-semibold text-white inline-flex items-center justify-center gap-2"
+              <button type="button" onClick={() => openRequest(group)} disabled={Boolean(activeReturn)} aria-label={`Request return from ${group.store?.storeName || group.seller.username || 'Seller'}`} className="px-4 py-2 rounded-xl text-sm font-semibold text-white inline-flex items-center justify-center gap-2 disabled:opacity-50"
                 style={{ background: 'linear-gradient(135deg, hsl(220, 70%, 55%), hsl(180, 65%, 42%))' }}>
                 <RotateCcw size={15} /> Request return
               </button>
@@ -522,7 +551,8 @@ export default function BuyerReturnsPanel({ order, formatMoney }) {
             </p>
           )}
         </article>
-      ))}
+        );
+      })}
 
       {typeof document !== 'undefined' && createPortal(<AnimatePresence>
         {selectedGroup && (
@@ -588,6 +618,7 @@ export default function BuyerReturnsPanel({ order, formatMoney }) {
                   </button>
                 </div>
               )}
+              {!loadError && !submitting && selectedActiveReturn && <p className="mt-4 text-xs" role="alert" style={{ color: 'hsl(var(--muted-foreground))' }}>{activeReturnHint(selectedActiveReturn)}</p>}
               <div className="flex justify-end gap-3 mt-5">
                 <button type="button" className="glass-button px-4 py-2 rounded-xl text-sm font-semibold" onClick={closeDialog} disabled={submitting}>Cancel</button>
                 <button type="button" onClick={submitReturn} disabled={submitting || !selection.valid || Boolean(loadError)} className="px-4 py-2 rounded-xl text-sm font-semibold text-white inline-flex items-center gap-2 disabled:opacity-50" style={{ background: 'hsl(var(--primary))' }}>

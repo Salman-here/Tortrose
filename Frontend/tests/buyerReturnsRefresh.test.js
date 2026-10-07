@@ -31,7 +31,8 @@ const createPanel = new Function(...dependencyNames, `
     return { load, openRequest, submitReturn, cancelReturn,
       setQuantities, setReasonCategory, setReasonDetails,
       state: { groups, requests, loading, loadError, selectedGroup, quantities,
-        reasonCategory, reasonDetails, submitting, cancellingId, selection, returnPending } };
+        reasonCategory, reasonDetails, submitting, cancellingId, selection, returnPending,
+        requestKey: requestKeyRef.current } };
   }
   return BuyerReturnsPanel;
 `);
@@ -48,6 +49,12 @@ const order = {
     name: 'Verified shoes', image: '', quantity: 2, price: 50, lineSubtotal: 100 }],
   orderSummary: { subtotal: 100, shippingCost: 10, tax: 5, couponDiscount: 5, totalAmount: 110 },
 };
+const OTHER = { item: '64b000000000000000000112', product: '64b000000000000000000113',
+  seller: '64b000000000000000000114', store: '64b000000000000000000116' };
+order.orderItems.push({ _id: OTHER.item, productId: OTHER.product, seller: OTHER.seller,
+  name: 'Other store item', image: '', quantity: 2, price: 1, lineSubtotal: 2 });
+order.orderSummary.subtotal += 2;
+order.orderSummary.totalAmount += 2;
 const policy = { returnsEnabled: true, returnDuration: 14, refundType: 'full_refund' };
 const eligibility = {
   success: true, orderId: order.orderId,
@@ -65,6 +72,13 @@ const eligibility = {
     }],
   }],
 };
+const otherGroup = structuredClone(eligibility.groups[0]);
+otherGroup.seller = { _id: OTHER.seller, username: 'other-seller' };
+otherGroup.store = { _id: OTHER.store, storeName: 'Other Store' };
+Object.assign(otherGroup.items[0], { orderItemId: OTHER.item, productId: OTHER.product,
+  name: 'Other store item', alreadyRequestedQuantity: 0, remainingReturnableQuantity: 2,
+  unitPrice: 1, lineSubtotal: 2 });
+eligibility.groups.push(otherGroup);
 const requested = {
   _id: IDS.request, returnNumber: 'RET-1001-A1B2C3', order: IDS.order, orderId: order.orderId,
   buyer: IDS.buyer, seller: { _id: IDS.seller, username: 'seller' },
@@ -96,6 +110,24 @@ const snapshot = (status = 'requested', purchase = order) => {
     value.eligibility.groups[0].items[0].alreadyRequestedQuantity = 0;
     value.eligibility.groups[0].items[0].remainingReturnableQuantity = 2;
   }
+  return value;
+};
+// Drafts are allowed for the primary store while a different store's return
+// keeps refresh polling active. They must not model a forbidden second return.
+const allowedDraftSnapshot = (status = 'requested') => {
+  const value = snapshot(status);
+  const request = value.requests[0];
+  request.seller = { ...otherGroup.seller };
+  request.store = { ...otherGroup.store };
+  request.storeName = 'Other Store';
+  Object.assign(request.items[0], { orderItemId: OTHER.item, productId: OTHER.product,
+    name: 'Other store item', unitPrice: 1, lineSubtotal: 1 });
+  request.refund = { itemSubtotal: 1, taxAmount: 0, shippingAmount: 0, discountAmount: 0, totalAmount: 1 };
+  value.eligibility.groups[0].items[0].alreadyRequestedQuantity = 0;
+  value.eligibility.groups[0].items[0].remainingReturnableQuantity = 2;
+  const consumes = !['rejected', 'cancelled_by_buyer'].includes(status);
+  value.eligibility.groups[1].items[0].alreadyRequestedQuantity = consumes ? 1 : 0;
+  value.eligibility.groups[1].items[0].remainingReturnableQuantity = consumes ? 1 : 2;
   return value;
 };
 const deferred = () => {
@@ -218,6 +250,9 @@ const harness = () => {
     },
     unmount() { unmounted = true; for (const slot of slots) slot?.cleanup?.(); },
     async draft() {
+      install(allowedDraftSnapshot());
+      await current.load({ notify: false, silent: true });
+      await flush();
       current.openRequest(current.state.groups[0]);
       await flush();
       current.setQuantities({ [IDS.item]: 1 });
@@ -275,7 +310,7 @@ test('quiet success and temporary transport errors preserve the draft and last v
   await app.flush();
   await app.draft();
   const group = app.state.selectedGroup;
-  app.install(snapshot('approved'));
+  app.install(allowedDraftSnapshot('approved'));
   await app.advance(5000);
   assert.equal(app.state.requests[0].status, 'approved');
   for (const status of [undefined, 500, 408, 429]) {
@@ -321,7 +356,7 @@ test('unverified and unauthorized snapshots disable actions and preserve an open
     await app.panel.submitReturn();
     assert.equal(app.posts.length, 0, type);
     assert.deepEqual(app.notifications, [], type);
-    app.install(snapshot());
+    app.install(allowedDraftSnapshot());
     await app.panel.load({ notify: false, silent: true });
     await app.flush();
     assert.equal(app.state.loadError, '', type);
@@ -447,7 +482,7 @@ test('failed creation keeps its idempotent draft recoverable and pauses checks d
   assert.ok(app.state.loadError);
   assert.ok(app.state.selectedGroup);
   assert.equal(app.state.quantities[IDS.item], 1);
-  app.install(snapshot());
+  app.install(allowedDraftSnapshot());
   await app.panel.load({ notify: false, silent: true });
   await app.flush();
   assert.equal(app.state.selection.valid, true);
@@ -473,7 +508,7 @@ test('newly verified eligibility disables a stale draft quantity while retaining
   const app = harness();
   await app.flush();
   await app.draft();
-  const changed = snapshot('approved');
+  const changed = snapshot('returned');
   const item = changed.eligibility.groups[0].items[0];
   item.alreadyRequestedQuantity = 2;
   item.remainingReturnableQuantity = 0;
@@ -504,5 +539,127 @@ test('newly verified eligibility disables a stale draft quantity while retaining
   assert.equal(app.state.selection.valid, false);
   await app.panel.submitReturn();
   assert.equal(app.posts.length, 0);
+  app.unmount();
+});
+
+test('web and native active statuses match the backend order-and-seller guard exactly', () => {
+  const backend = readFileSync(new URL('../../Backend/services/returnService.js', import.meta.url), 'utf8');
+  const native = readFileSync(new URL('../../MobileApp/src/components/BuyerReturnsSection.js', import.meta.url), 'utf8');
+  const literals = text => text.match(/const UNRESOLVED_RETURN_STATUSES = (?:new Set\()?\[([\s\S]*?)\]/)[1];
+  const statuses = text => new Function(`return [${literals(text)}];`)();
+  assert.deepEqual(statuses(source), statuses(backend));
+  assert.deepEqual(statuses(native), statuses(backend));
+  assert.match(source, /disabled=\{Boolean\(activeReturn\)\}/);
+});
+
+for (const status of ['requested', 'approved', 'pickup_scheduled', 'picked_up',
+  'in_transit_to_seller', 'received_by_seller', 'under_review', 'accepted_pending_payment']) {
+  test(`${status} prevents a second same-store request but leaves another store available`, async () => {
+    const app = harness();
+    app.install(snapshot(status));
+    await app.flush();
+    assert.equal(app.state.groups[0].eligible, true);
+    assert.equal(app.state.groups[0].items[0].remainingReturnableQuantity, 1);
+    app.panel.openRequest(app.state.groups[0]);
+    await app.flush();
+    assert.equal(app.state.selectedGroup, null);
+    assert.match(app.notifications[0].message, /RET-1001-A1B2C3 is in progress/);
+    app.panel.openRequest(app.state.groups[1]);
+    await app.flush();
+    assert.equal(app.state.selectedGroup.seller._id, OTHER.seller);
+    assert.equal(app.posts.length, 0);
+    app.unmount();
+  });
+}
+
+for (const status of ['returned', 'replacement_approved', 'rejected', 'cancelled_by_buyer']) {
+  test(`verified ${status} refresh releases only the active-request block`, async () => {
+    const app = harness();
+    await app.flush();
+    app.panel.openRequest(app.state.groups[0]);
+    await app.flush();
+    assert.equal(app.state.selectedGroup, null);
+    const terminal = snapshot(status);
+    if (status === 'replacement_approved') terminal.requests[0].policySnapshot = {
+      ...terminal.requests[0].policySnapshot, refundType: 'replacement_only',
+    };
+    app.install(terminal);
+    await app.advance(5000);
+    assert.equal(app.state.loadError, '');
+    app.panel.openRequest(app.state.groups[0]);
+    await app.flush();
+    assert.equal(app.state.selectedGroup.seller._id, IDS.seller);
+    assert.equal(app.posts.length, 0);
+    app.unmount();
+  });
+}
+
+test('a newly active same-store return disables a saved draft and terminal refresh restores it', async () => {
+  const app = harness();
+  await app.flush();
+  await app.draft();
+  app.install(snapshot('approved'));
+  await app.advance(5000);
+  assert.equal(app.state.selection.valid, false);
+  assert.equal(app.state.quantities[IDS.item], 1);
+  assert.match(app.state.reasonDetails, /Preserve this detailed/);
+  await app.panel.submitReturn();
+  assert.equal(app.posts.length, 0);
+  assert.match(app.notifications.at(-1).message, /is in progress/);
+  app.install(snapshot('returned'));
+  await app.advance(5000);
+  assert.equal(app.state.selection.valid, true);
+  assert.equal(app.state.quantities[IDS.item], 1);
+  assert.match(app.state.reasonDetails, /Preserve this detailed/);
+  app.unmount();
+});
+
+test('a known same-store conflict closes the rejected draft, refreshes and never replays automatically', async () => {
+  const app = harness();
+  await app.flush();
+  await app.draft();
+  app.install(snapshot());
+  app.postWith(async () => { throw { response: { status: 409, data: {
+    code: 'RETURN_REQUEST_ALREADY_OPEN', msg: 'Finish return RET-1001-A1B2C3 before opening another return for this seller.',
+  } } }; });
+  await app.panel.submitReturn();
+  await app.flush();
+  assert.equal(app.posts.length, 1);
+  assert.equal(app.state.selectedGroup, null);
+  assert.equal(app.state.requestKey, null);
+  assert.equal(app.state.loadError, '');
+  assert.equal(app.state.requests[0].status, 'requested');
+  assert.match(app.notifications.at(-1).message, /Finish return RET-1001-A1B2C3.*has been refreshed/);
+  await app.advance(15000);
+  assert.equal(app.posts.length, 1);
+  app.unmount();
+});
+
+test('the blocker is scoped to exact order and seller identities, not shared store names', () => {
+  const find = new Function(`${constants}; return activeReturnForSeller;`)();
+  const request = { order: IDS.order, seller: { _id: IDS.seller }, status: 'requested' };
+  assert.equal(find([request], IDS.order, IDS.seller), request);
+  assert.equal(find([request], '64b000000000000000000999', IDS.seller), null);
+  assert.equal(find([request], IDS.order, OTHER.seller), null);
+});
+
+test('a known conflict with an unavailable refresh remains fail-closed without replay', async () => {
+  const app = harness();
+  await app.flush();
+  await app.draft();
+  app.getWith(async () => { throw networkError(500); });
+  app.postWith(async () => { throw { response: { status: 409, data: {
+    code: 'RETURN_REQUEST_ALREADY_OPEN', msg: 'A return is already open for this store.',
+  } } }; });
+  await app.panel.submitReturn();
+  await app.flush();
+  assert.equal(app.posts.length, 1);
+  assert.equal(app.state.selectedGroup, null);
+  assert.equal(app.state.requestKey, null);
+  assert.equal(app.state.groups.length, 0);
+  assert.ok(app.state.loadError);
+  assert.match(app.notifications.at(-1).message, /already open.*Reload return information/);
+  await app.advance(15000);
+  assert.equal(app.posts.length, 1);
   app.unmount();
 });

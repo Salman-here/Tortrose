@@ -7,7 +7,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { transformSync } from 'esbuild';
 import { getReturnItemVariantLabels } from '../src/utils/returnItemVariants.js';
 import { inspectReturnPresentationSnapshot } from '../src/utils/returnPresentationSafety.js';
-import { RETURN_STATUS_LABELS, RETURN_STATUS_TRANSITIONS, returnResolutionLabel, returnStatusTone } from '../src/utils/returns.js';
+import { RETURN_STATUS_LABELS, RETURN_STATUS_TRANSITIONS, returnResolutionLabel, returnStatusTone, returnGroupPolicyLabel } from '../src/utils/returns.js';
 
 const read = path => readFileSync(new URL(path, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 const sellerSource = read('../src/components/layout/ReturnOrdersPanel.jsx');
@@ -89,6 +89,7 @@ for (const busy of [false, true]) {
     Object.assign(f.context, { selectedGroup: { store: { storeName: 'Test Store' }, items: [{ ...item, eligible: true, remainingReturnableQuantity: 1 }] },
       quantities: { [item.orderItemId]: 1 }, reasonCategory: 'damaged', reasonDetails: '',
       reasonOptions: [['damaged', 'Arrived damaged']], loadError: '', selection: { valid: true }, dialogPanel: { current: null },
+      selectedActiveReturn: null,
       setQuantities() {}, setReasonCategory() {}, setReasonDetails() {}, submitReturn() {}, load() {} });
     const start = buyerSource.indexOf("{typeof document !== 'undefined' && createPortal(");
     const marker = '</AnimatePresence>, document.body)}';
@@ -106,6 +107,32 @@ for (const busy of [false, true]) {
     assert.equal(f.calls.closed.length, busy ? 0 : 1); assert.equal(f.calls.writes.length, 0);
   });
 }
+
+test('actual buyer cards disable only the matching active store and keep its explanatory hint', () => {
+  const f = baseContext();
+  const helperStart = buyerSource.indexOf('const UNRESOLVED_RETURN_STATUSES');
+  const helperEnd = buyerSource.indexOf('const canonicalRequestKey', helperStart);
+  Object.assign(f.context, vm.runInNewContext(`${buyerSource.slice(helperStart, helperEnd)}\n({ activeReturnForSeller, activeReturnHint });`, {}));
+  const group = (id, name) => ({ seller: { _id: id, username: name }, store: { storeName: name },
+    policy: { returnsEnabled: true, returnDuration: 14, refundType: 'full_refund' }, eligible: true, items: [] });
+  const active = { order: 'order-1', seller: { _id: 'seller-1' }, status: 'requested', returnNumber: 'RET-C4-FIRST' };
+  Object.assign(f.context, { groups: [group('seller-1', 'First Store'), group('seller-2', 'Other Store')],
+    requests: [active], orderContext: { orderId: 'order-1' }, returnGroupPolicyLabel, openRequest() {} });
+  const start = buyerSource.indexOf('{groups.map(');
+  const end = buyerSource.indexOf("\n\n      {typeof document", start);
+  const expression = buyerSource.slice(start, end).trim().slice(1, -1);
+  const render = () => vm.runInNewContext(transpile(`(${expression});`), f.context);
+  const trees = render();
+  const buttons = trees.flatMap(allNodes).filter(node => node.type === 'button');
+  assert.equal(buttons[0].props.disabled, true);
+  assert.equal(buttons[1].props.disabled, false);
+  const html = renderToStaticMarkup(React.createElement(React.Fragment, null, trees));
+  assert.match(html, /Return RET-C4-FIRST is in progress\. You can request another return from this store after it is resolved\./);
+  assert.match(html, /aria-label="Request return from First Store"/);
+  active.status = 'returned';
+  assert.ok(render().flatMap(allNodes).filter(node => node.type === 'button').every(node => node.props.disabled === false));
+  assert.equal(f.calls.writes.length, 0);
+});
 
 test('shared return popup hook traps focus, restores it and blocks Escape while busy', () => {
   const source = read('../src/utils/returnDialogAccessibility.js');

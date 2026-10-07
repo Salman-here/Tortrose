@@ -31,6 +31,12 @@ const order = {
     name: 'Verified shoes', image: '', quantity: 2, price: 50, lineSubtotal: 100 }],
   orderSummary: { subtotal: 100, shippingCost: 10, tax: 5, couponDiscount: 5, totalAmount: 110 },
 };
+const OTHER = { item: '64b000000000000000000112', product: '64b000000000000000000113',
+  seller: '64b000000000000000000114', store: '64b000000000000000000116' };
+order.orderItems.push({ _id: OTHER.item, productId: OTHER.product, seller: OTHER.seller,
+  name: 'Other store item', image: '', quantity: 2, price: 1, lineSubtotal: 2 });
+order.orderSummary.subtotal += 2;
+order.orderSummary.totalAmount += 2;
 const eligibility = {
   success: true, orderId: order.orderId,
   groups: [{
@@ -49,6 +55,13 @@ const eligibility = {
     }],
   }],
 };
+const otherGroup = clone(eligibility.groups[0]);
+otherGroup.seller = { _id: OTHER.seller, username: 'other-seller' };
+otherGroup.store = { _id: OTHER.store, storeName: 'Other Store' };
+Object.assign(otherGroup.items[0], { orderItemId: OTHER.item, productId: OTHER.product,
+  name: 'Other store item', alreadyRequestedQuantity: 0, remainingReturnableQuantity: 2,
+  unitPrice: 1, lineSubtotal: 2 });
+eligibility.groups.push(otherGroup);
 const requested = {
   _id: IDS.request, returnNumber: 'RET-1001-A1B2C3', order: IDS.order, orderId: order.orderId,
   buyer: IDS.buyer, seller: { _id: IDS.seller, username: 'seller' },
@@ -70,7 +83,30 @@ const withStatus = status => status === 'requested' ? clone(requested) : {
 };
 const page = requests => ({ success: true, returns: requests,
   pagination: { page: 1, limit: 100, totalReturns: requests.length, totalPages: 1, hasMore: false } });
-const snapshot = (status = 'requested') => ({ eligibility: clone(eligibility), requests: [withStatus(status)] });
+const snapshot = (status = 'requested') => {
+  const value = { eligibility: clone(eligibility), requests: [withStatus(status)] };
+  if (['rejected', 'cancelled_by_buyer'].includes(status)) {
+    value.eligibility.groups[0].items[0].alreadyRequestedQuantity = 0;
+    value.eligibility.groups[0].items[0].remainingReturnableQuantity = 2;
+  }
+  return value;
+};
+const allowedDraftSnapshot = (status = 'requested') => {
+  const value = snapshot(status);
+  const request = value.requests[0];
+  request.seller = { ...otherGroup.seller };
+  request.store = { ...otherGroup.store };
+  request.storeName = 'Other Store';
+  Object.assign(request.items[0], { orderItemId: OTHER.item, productId: OTHER.product,
+    name: 'Other store item', unitPrice: 1, lineSubtotal: 1 });
+  request.refund = { itemSubtotal: 1, taxAmount: 0, shippingAmount: 0, discountAmount: 0, totalAmount: 1 };
+  value.eligibility.groups[0].items[0].alreadyRequestedQuantity = 0;
+  value.eligibility.groups[0].items[0].remainingReturnableQuantity = 2;
+  const consumes = !['rejected', 'cancelled_by_buyer'].includes(status);
+  value.eligibility.groups[1].items[0].alreadyRequestedQuantity = consumes ? 1 : 0;
+  value.eligibility.groups[1].items[0].remainingReturnableQuantity = consumes ? 1 : 2;
+  return value;
+};
 const installSnapshot = value => api.get.mockImplementation(async url => ({
   data: url === '/api/returns/mine' ? page(value.requests) : value.eligibility,
 }));
@@ -100,7 +136,7 @@ afterEach(() => {
 });
 
 test('buyer history and return-request modal preserve the selected variants read-only', async () => {
-  const value = snapshot();
+  const value = snapshot('returned');
   const variants = { selectedColor: 'Blue', selectedOptions: { Color: 'Blue', Size: 'Large' } };
   Object.assign(value.eligibility.groups[0].items[0], variants);
   Object.assign(value.requests[0].items[0], variants);
@@ -108,7 +144,7 @@ test('buyer history and return-request modal preserve the selected variants read
   const screen = render(<BuyerReturnsSection {...props} />);
   await flush();
   expect(screen.getAllByText('Color: Blue')).toHaveLength(1);
-  fireEvent.press(screen.getByText('Request'));
+  fireEvent.press(screen.getByLabelText('Request return from Verified Store'));
   expect(screen.getAllByText('Color: Blue')).toHaveLength(2);
   expect(screen.getAllByText('Size: Large')).toHaveLength(2);
   expect(api.post).not.toHaveBeenCalled();
@@ -152,13 +188,14 @@ test('hidden screens and background apps do not poll; focused foreground screens
 });
 
 test('quiet success and network failures preserve the open form, quantity, reason and verified rows', async () => {
+  installSnapshot(allowedDraftSnapshot());
   const screen = render(<BuyerReturnsSection {...props} />);
   await flush();
-  fireEvent.press(screen.getByText('Request'));
+  fireEvent.press(screen.getByLabelText('Request return from Verified Store'));
   fireEvent.press(screen.UNSAFE_getByProps({ name: 'add' }));
   fireEvent.changeText(screen.getByPlaceholderText('Describe the issue clearly for the seller.'), 'Keep my return details while the seller updates another return.');
   fireEvent.press(screen.getByText('Changed mind'));
-  installSnapshot(snapshot('approved'));
+  installSnapshot(allowedDraftSnapshot('approved'));
   await advance(5000);
   expect(screen.getByText('Request a return')).toBeTruthy();
   expect(screen.getByText('1')).toBeTruthy();
@@ -185,9 +222,10 @@ test('quiet success and network failures preserve the open form, quantity, reaso
 });
 
 test.each(['financial', 'pagination'])('unverified %s responses disable actions without discarding an open draft', async type => {
+  installSnapshot(allowedDraftSnapshot());
   const screen = render(<BuyerReturnsSection {...props} />);
   await flush();
-  fireEvent.press(screen.getByText('Request'));
+  fireEvent.press(screen.getByLabelText('Request return from Verified Store'));
   fireEvent.press(screen.UNSAFE_getByProps({ name: 'add' }));
   fireEvent.changeText(screen.getByPlaceholderText('Describe the issue clearly for the seller.'), 'Keep this draft until verified return information is available.');
   const invalid = snapshot('returned');
@@ -208,7 +246,7 @@ test.each(['financial', 'pagination'])('unverified %s responses disable actions 
   fireEvent.press(screen.getByText('Submit Return Request'));
   expect(api.post).not.toHaveBeenCalled();
   expect(Feedback.show).not.toHaveBeenCalled();
-  installSnapshot(snapshot());
+  installSnapshot(allowedDraftSnapshot());
   fireEvent.press(screen.getByLabelText('Retry return information'));
   await flush();
   expect(screen.getByDisplayValue('Keep this draft until verified return information is available.')).toBeTruthy();
@@ -255,13 +293,14 @@ test.each(['eligibility', 'financial', 'pagination'])('a mixed %s validation fai
 });
 
 test('latest verified eligibility disables an outdated quantity while preserving the draft', async () => {
+  installSnapshot(allowedDraftSnapshot());
   const screen = render(<BuyerReturnsSection {...props} />);
   await flush();
-  fireEvent.press(screen.getByText('Request'));
+  fireEvent.press(screen.getByLabelText('Request return from Verified Store'));
   fireEvent.press(screen.UNSAFE_getByProps({ name: 'add' }));
   fireEvent.changeText(screen.getByPlaceholderText('Describe the issue clearly for the seller.'), 'The draft should remain when the last eligible item was requested elsewhere.');
-  const next = snapshot();
-  const another = { ...clone(requested), _id: '64b000000000000000000108', returnNumber: 'RET-1001-D4E5F6',
+  const next = snapshot('returned');
+  const another = { ...withStatus('returned'), _id: '64b000000000000000000108', returnNumber: 'RET-1001-D4E5F6',
     refund: { itemSubtotal: 50, taxAmount: 2.5, shippingAmount: 0, discountAmount: 2.5, totalAmount: 50 } };
   next.requests.push(another);
   next.eligibility.groups[0].eligible = false;
@@ -281,10 +320,102 @@ test('latest verified eligibility disables an outdated quantity while preserving
   expect(api.post).not.toHaveBeenCalled();
 });
 
-test('a failed creation revalidates and retries the same request key without losing the draft', async () => {
+const requestButton = (screen, store = 'Verified Store') => {
+  let button = screen.getByLabelText(`Request return from ${store}`);
+  while (button && typeof button.props.onPress !== 'function') button = button.parent;
+  return button;
+};
+
+test.each(['requested', 'approved', 'pickup_scheduled', 'picked_up',
+  'in_transit_to_seller', 'received_by_seller', 'under_review', 'accepted_pending_payment'])(
+  '%s disables only the same-store CTA and guards direct opening', async status => {
+    installSnapshot(snapshot(status));
+    const screen = render(<BuyerReturnsSection {...props} />);
+    await flush();
+    const blocked = requestButton(screen);
+    expect(blocked.props.disabled).toBe(true);
+    expect(requestButton(screen, 'Other Store').props.disabled).toBe(false);
+    expect(screen.getByText('Return RET-1001-A1B2C3 is in progress. You can request another return from this store after it is resolved.')).toBeTruthy();
+    await act(async () => blocked.props.onPress());
+    expect(screen.queryByText('Request a return')).toBeNull();
+    expect(Feedback.show).toHaveBeenCalledWith(expect.objectContaining({ text1: 'Return in progress' }));
+    fireEvent.press(screen.getByLabelText('Request return from Other Store'));
+    expect(screen.getByText('Request a return')).toBeTruthy();
+    expect(api.post).not.toHaveBeenCalled();
+  },
+);
+
+test.each(['returned', 'replacement_approved', 'rejected', 'cancelled_by_buyer'])(
+  'verified %s refresh releases the same-store CTA', async status => {
+    const screen = render(<BuyerReturnsSection {...props} />);
+    await flush();
+    expect(requestButton(screen).props.disabled).toBe(true);
+    const terminal = snapshot(status);
+    if (status === 'replacement_approved') terminal.requests[0].policySnapshot.refundType = 'replacement_only';
+    installSnapshot(terminal);
+    await advance(5000);
+    expect(requestButton(screen).props.disabled).toBe(false);
+    expect(screen.queryByText(/is in progress\. You can request/)).toBeNull();
+    fireEvent.press(screen.getByLabelText('Request return from Verified Store'));
+    expect(screen.getByText('Request a return')).toBeTruthy();
+    expect(api.post).not.toHaveBeenCalled();
+  },
+);
+
+test('a newly active same-store return disables an existing draft and terminal refresh restores it', async () => {
+  installSnapshot(allowedDraftSnapshot());
   const screen = render(<BuyerReturnsSection {...props} />);
   await flush();
-  fireEvent.press(screen.getByText('Request'));
+  fireEvent.press(screen.getByLabelText('Request return from Verified Store'));
+  fireEvent.press(screen.UNSAFE_getByProps({ name: 'add' }));
+  fireEvent.changeText(screen.getByPlaceholderText('Describe the issue clearly for the seller.'), 'Preserve my draft during a competing return request.');
+  installSnapshot(snapshot('approved'));
+  await advance(5000);
+  let submit = screen.getByText('Submit Return Request');
+  while (submit && typeof submit.props.onPress !== 'function') submit = submit.parent;
+  expect(submit.props.disabled).toBe(true);
+  expect(screen.getByDisplayValue('Preserve my draft during a competing return request.')).toBeTruthy();
+  expect(screen.getAllByText(/is in progress\. You can request/)).toHaveLength(2);
+  await act(async () => submit.props.onPress());
+  expect(api.post).not.toHaveBeenCalled();
+  expect(Feedback.show).toHaveBeenCalledWith(expect.objectContaining({ text1: 'Return in progress' }));
+  installSnapshot(snapshot('returned'));
+  await advance(5000);
+  submit = screen.getByText('Submit Return Request');
+  while (submit && typeof submit.props.onPress !== 'function') submit = submit.parent;
+  expect(submit.props.disabled).toBe(false);
+  expect(screen.getByDisplayValue('Preserve my draft during a competing return request.')).toBeTruthy();
+  expect(screen.getByText('1')).toBeTruthy();
+});
+
+test('a known same-store conflict refreshes the recorded request without generic retry or automatic POST', async () => {
+  installSnapshot(allowedDraftSnapshot());
+  const screen = render(<BuyerReturnsSection {...props} />);
+  await flush();
+  fireEvent.press(screen.getByLabelText('Request return from Verified Store'));
+  fireEvent.press(screen.UNSAFE_getByProps({ name: 'add' }));
+  fireEvent.changeText(screen.getByPlaceholderText('Describe the issue clearly for the seller.'), 'Another device submitted a return while this form was open.');
+  installSnapshot(snapshot());
+  api.post.mockRejectedValueOnce({ response: { status: 409, data: {
+    code: 'RETURN_REQUEST_ALREADY_OPEN', msg: 'Finish return RET-1001-A1B2C3 before opening another return for this seller.',
+  } } });
+  fireEvent.press(screen.getByText('Submit Return Request'));
+  await flush();
+  expect(api.post).toHaveBeenCalledTimes(1);
+  expect(screen.queryByText('Request a return')).toBeNull();
+  expect(screen.queryByText('Retry return information before submitting.')).toBeNull();
+  expect(requestButton(screen).props.disabled).toBe(true);
+  expect(Feedback.show).toHaveBeenCalledWith({ type: 'error', text1: 'Return already in progress',
+    text2: 'Finish return RET-1001-A1B2C3 before opening another return for this seller. Return information has been refreshed.' });
+  await advance(15000);
+  expect(api.post).toHaveBeenCalledTimes(1);
+});
+
+test('a failed creation revalidates and retries the same request key without losing the draft', async () => {
+  installSnapshot(allowedDraftSnapshot());
+  const screen = render(<BuyerReturnsSection {...props} />);
+  await flush();
+  fireEvent.press(screen.getByLabelText('Request return from Verified Store'));
   fireEvent.press(screen.UNSAFE_getByProps({ name: 'add' }));
   fireEvent.changeText(screen.getByPlaceholderText('Describe the issue clearly for the seller.'), 'The pending request must use the same key after a network failure.');
   api.post.mockRejectedValueOnce(new Error('offline'));

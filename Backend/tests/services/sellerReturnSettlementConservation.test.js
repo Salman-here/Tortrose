@@ -24,6 +24,7 @@ const SellerSettlementLock = require('../../models/SellerSettlementLock');
 const Wallet = require('../../models/Wallet');
 const WalletTransaction = require('../../models/WalletTransaction');
 const SafepayPayment = require('../../models/SafepayPayment');
+const NotificationOutbox = require('../../models/NotificationOutbox');
 const safepayPayments = require('../../services/safepayPaymentService');
 const { buildSellerPaymentSummary } = require('../../controllers/PaymentController');
 const { buildOrderSellerSettlement, SELLER_SETTLEMENT_VERSION } = require('../../services/orderMoneyService');
@@ -35,6 +36,7 @@ const {
   createSafepayReturnSettlement,
   completeSafepayReturnSettlement,
   closeSafepayReturnSettlement,
+  createReturnRequest,
 } = require('../../services/returnService');
 
 let replSet;
@@ -156,6 +158,7 @@ beforeAll(async () => {
     Wallet.syncIndexes(),
     WalletTransaction.syncIndexes(),
     SafepayPayment.syncIndexes(),
+    NotificationOutbox.syncIndexes(),
   ]);
 }, 120000);
 
@@ -178,7 +181,37 @@ beforeEach(async () => {
     Wallet.deleteMany({}),
     WalletTransaction.deleteMany({}),
     SafepayPayment.deleteMany({}),
+    NotificationOutbox.deleteMany({}),
   ]);
+});
+
+test('a second active partial return for the same order and seller is rejected without duplicate writes', async () => {
+  const fixture = await createFixture();
+  fixture.order.orderItems[0].returnPolicySnapshotVersion = 1;
+  fixture.order.orderItems[0].returnPolicy = { returnsEnabled: true, returnDuration: 30, refundType: 'full_refund' };
+  await fixture.order.save();
+  const input = {
+    orderId: fixture.order._id, buyerId: fixture.buyer, sellerId: fixture.seller,
+    items: [{ orderItemId: fixture.order.orderItems[0]._id, quantity: 1 }],
+    reasonCategory: 'defective', reasonDetails: 'The first unit arrived defective.',
+    requestKey: 'active-return-first-000001',
+  };
+  const first = await createReturnRequest(input);
+  expect(first.status).toBe('requested');
+  const beforeOrder = await Order.findById(fixture.order._id).lean();
+  const beforeEvents = await NotificationOutbox.find({}).sort({ _id: 1 }).lean();
+  expect(beforeEvents.length).toBeGreaterThan(0);
+  await expect(createReturnRequest({ ...input, requestKey: 'active-return-second-000002',
+    reasonDetails: 'The remaining unit also arrived defective.' })).rejects.toMatchObject({
+    code: 'RETURN_REQUEST_ALREADY_OPEN', statusCode: 409,
+    message: `Finish return ${first.returnNumber} before opening another return for this seller.`,
+  });
+  expect(await ReturnRequest.countDocuments({ order: fixture.order._id })).toBe(1);
+  expect((await Order.findById(fixture.order._id).lean()).returnVersion).toBe(beforeOrder.returnVersion);
+  expect((await NotificationOutbox.find({}).sort({ _id: 1 }).lean()).map(row => String(row._id)))
+    .toEqual(beforeEvents.map(row => String(row._id)));
+  expect(await WalletTransaction.countDocuments({})).toBe(0);
+  expect(await SellerBalanceTransaction.countDocuments({})).toBe(0);
 });
 
 describe('Safepay card-funded return settlement', () => {
