@@ -69,7 +69,7 @@ const localDateTimeValue = (date = new Date()) => {
 
 const withdrawalEdit = request => ({
     status: request.status || 'pending',
-    adminNote: request.adminNote || '',
+    adminNote: '',
     payoutProvider: '',
     attemptId: request.activePayoutAttemptId || '',
     transferReference: '',
@@ -640,6 +640,10 @@ const AdminPayments = () => {
                                             <p className="text-xs mt-1 break-words" style={{ color: 'hsl(var(--muted-foreground))' }}>
                                                 {request.seller?.email || ''}{request.sellerNote ? ` - Seller note: ${request.sellerNote}` : ''}
                                             </p>
+                                            {request.adminNote && <div className="text-xs mt-3 space-y-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                                                <p className="font-semibold">Last admin note</p>
+                                                <p className="whitespace-pre-wrap break-words">{request.adminNote}</p>
+                                            </div>}
                                         </div>
                                         <div className="text-xs leading-relaxed min-w-0 break-words" style={{ color: 'hsl(var(--muted-foreground))' }}>
                                             <p className="font-semibold text-sm mb-1" style={{ color: 'hsl(var(--foreground))' }}>
@@ -738,7 +742,8 @@ const AdminPayments = () => {
                                                 className="w-full min-w-0 glass-inner rounded-xl px-3 py-2.5 text-sm outline-none"
                                                 value={edit.adminNote}
                                                 onChange={(e) => updateEdit(request._id, 'adminNote', e.target.value)}
-                                                placeholder="Seller-visible admin note (optional)"
+                                                aria-label="Note for this action"
+                                                placeholder="Seller-visible note for this action (optional)"
                                             />
                                             {edit.status === 'processing' && (
                                                 <input

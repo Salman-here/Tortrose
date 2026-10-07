@@ -8,14 +8,14 @@ import { selectAdminWithdrawalPresentationMoney } from '../src/utils/adminPaymen
 const source = readFileSync(new URL('../src/components/layout/AdminPayments.jsx', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 const helpersStart = source.indexOf('const statusTransitions =');
 const helpersEnd = source.indexOf('const StatCard =');
-const actionsStart = source.indexOf('const closeWithdrawalConfirmation =');
+const actionsStart = source.indexOf('const updateEdit =');
 const actionsEnd = source.indexOf('const pendingRequests =', actionsStart);
 assert.ok(helpersStart >= 0 && helpersEnd > helpersStart && actionsEnd > actionsStart);
 const helpers = transformSync(source.slice(helpersStart, helpersEnd), {
   loader: 'jsx', jsxFactory: 'React.createElement', jsxFragment: 'React.Fragment',
 }).code;
 const actions = source.slice(actionsStart, actionsEnd);
-const extracted = `${helpers}\n${actions}\n({ update: updateWithdrawal, confirm: confirmWithdrawal, cancel: closeWithdrawalConfirmation, Modal: WithdrawalConfirmation });`;
+const extracted = `${helpers}\n${actions}\n({ update: updateWithdrawal, confirm: confirmWithdrawal, cancel: closeWithdrawalConfirmation, change: updateEdit, createEdit: withdrawalEdit, Modal: WithdrawalConfirmation });`;
 
 function request(status = 'approved') {
   const active = ['processing', 'manual_review'].includes(status);
@@ -51,6 +51,7 @@ function fixture(target = 'processing', current = target === 'processing' ? 'app
     confirmation: null, savingId: '', API: '/api/payments', WITHDRAWAL_OPERATION_STORAGE_KEY: 'operation-ledger',
     setConfirmation(value) { context.confirmation = value; },
     setSavingId(value) { context.savingId = value; },
+    setEdits(update) { context.edits = update(context.edits); },
     selectAdminWithdrawalPresentationMoney,
     useCallback: fn => fn, useRef: () => ({ current: null }), useEffect: effect => effects.push(effect),
     React: { createElement: (type, props, ...children) => ({ type,
@@ -111,6 +112,24 @@ function renderModal(f, busy = false) {
   const cleanup = f.effects.pop()?.();
   return { tree, all, section, buttons, panel, document, previousFocus, listeners, cleanup,
     backdrop: all.find(node => node.props.onMouseDown) };
+}
+
+function renderCard(f) {
+  const start = source.indexOf('return (\n                                <div key={request._id}');
+  const end = source.indexOf('\n                            );', start);
+  assert.ok(start >= 0 && end > start);
+  const render = transformSync(`const renderRow = () => { ${source.slice(start, end)}\n); }; renderRow;`,
+    { loader: 'jsx', jsxFactory: 'React.createElement' }).code;
+  const presentationMoney = selectAdminWithdrawalPresentationMoney(f.row);
+  Object.assign(f.context, {
+    request: f.row, edit: f.context.edits[f.row._id] || f.createEdit(f.row), presentationMoney,
+    payoutDestination: f.row.paymentAccountSnapshot, payoutBlocked: false, attempts: f.row.payoutAttempts,
+    activeAttempt: f.row.payoutAttempts[0], legacyProcessing: false, nextStatuses: ['paid', 'failed', 'manual_review'],
+    isTerminal: false, canSubmit: true, StatusPill: 'StatusPill', CheckCircle: 'CheckCircle',
+    formatAmount: (amount, { targetCurrency }) => `${targetCurrency} ${amount.toFixed(2)}`,
+    formatLedgerAmount: amount => String(amount), updateEdit: f.change, updateWithdrawal: f.update,
+  });
+  return vm.runInNewContext(render, f.context)();
 }
 
 const warnings = {
@@ -286,21 +305,7 @@ test('approved actions still submit directly and terminal requests cannot advanc
 
 test('responsive withdrawal cards keep Update inside the bounded actions column and stack it before wide desktops', () => {
   const f = fixture('paid');
-  const start = source.indexOf('return (\n                                <div key={request._id}');
-  const end = source.indexOf('\n                            );', start);
-  assert.ok(start >= 0 && end > start);
-  const render = transformSync(`const renderRow = () => { ${source.slice(start, end)}\n); }; renderRow;`,
-    { loader: 'jsx', jsxFactory: 'React.createElement' }).code;
-  const presentationMoney = selectAdminWithdrawalPresentationMoney(f.row);
-  Object.assign(f.context, {
-    request: f.row, edit: f.context.edits[f.row._id], presentationMoney,
-    payoutDestination: f.row.paymentAccountSnapshot, payoutBlocked: false, attempts: f.row.payoutAttempts,
-    activeAttempt: f.row.payoutAttempts[0], legacyProcessing: false, nextStatuses: ['paid', 'failed', 'manual_review'],
-    isTerminal: false, canSubmit: true, StatusPill: 'StatusPill', CheckCircle: 'CheckCircle',
-    formatAmount: (amount, { targetCurrency }) => `${targetCurrency} ${amount.toFixed(2)}`,
-    formatLedgerAmount: amount => String(amount), updateEdit() {}, updateWithdrawal: f.update,
-  });
-  const card = vm.runInNewContext(render, f.context)();
+  const card = renderCard(f);
   const grid = nodes(card).find(node => node.props.className?.includes('2xl:grid-cols-'));
   assert.equal(grid.props.children.length, 3);
   assert.match(grid.props.className, /grid-cols-1 md:grid-cols-2/);
@@ -319,4 +324,45 @@ test('responsive withdrawal cards keep Update inside the bounded actions column 
   assert.doesNotMatch(actionsColumn.props.className, /hidden|overflow-hidden/);
   assert.match(source, /className="w-full min-w-0 px-3[^"\n]*" style=\{\{ contain: 'inline-size' \}\}/);
   assert.match(source, /className="w-full min-w-0 max-w-full overflow-x-auto"/);
+});
+
+test('previous status note is read-only and is never automatically resent with the next action', async () => {
+  const f = fixture('failed', 'manual_review');
+  const previousNote = 'The entire amount is still reserved while the provider outcome is reviewed.';
+  f.row.adminNote = previousNote;
+  f.context.edits[f.row._id] = f.createEdit(f.row);
+  assert.equal(f.context.edits[f.row._id].adminNote, '');
+  f.change(f.row._id, 'status', 'failed');
+  f.change(f.row._id, 'failureCertainty', 'definitively_not_sent');
+  f.change(f.row._id, 'failureReason', 'Provider verified no completed transfer.');
+  const card = renderCard(f);
+  const all = nodes(card);
+  assert.ok(all.some(node => node.type === 'p' && textOf(node) === 'Last admin note'));
+  assert.ok(all.some(node => node.type === 'p' && textOf(node) === previousNote));
+  const noteInput = all.find(node => node.type === 'input' && node.props['aria-label'] === 'Note for this action');
+  assert.equal(noteInput.props.value, '');
+  assert.ok(!all.some(node => ['input', 'textarea'].includes(node.type) && node.props.value === previousNote));
+  await f.update(f.row); await f.confirm();
+  assert.equal(f.calls.patches[0].payload.adminNote, '');
+  assert.equal(f.row.adminNote, previousNote);
+});
+
+test('a newly typed note survives status selection and is captured for the confirmed action', async () => {
+  const f = fixture('failed', 'manual_review');
+  f.row.adminNote = 'Old review note: reservation is still held.';
+  f.context.edits[f.row._id] = f.createEdit(f.row);
+  const currentNote = 'Provider verified no transfer; the reservation is released.';
+  const input = nodes(renderCard(f)).find(node => node.props['aria-label'] === 'Note for this action');
+  input.props.onChange({ target: { value: currentNote } });
+  f.change(f.row._id, 'status', 'paid');
+  assert.equal(f.context.edits[f.row._id].adminNote, currentNote);
+  f.change(f.row._id, 'status', 'failed');
+  f.change(f.row._id, 'failureCertainty', 'definitively_not_sent');
+  f.change(f.row._id, 'failureReason', 'Provider verified no completed transfer.');
+  await f.update(f.row);
+  assert.equal(f.context.confirmation.payload.adminNote, currentNote);
+  f.change(f.row._id, 'adminNote', 'A later background edit');
+  await f.confirm();
+  assert.equal(f.calls.patches[0].payload.adminNote, currentNote);
+  assert.equal(f.row.adminNote, 'Old review note: reservation is still held.');
 });
