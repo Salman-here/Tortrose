@@ -347,7 +347,7 @@ export default function SellerPaymentsScreen({ navigation }) {
       return;
     }
     if (toCurrencyMinorUnits(availableInCurrentCurrency) < toCurrencyMinorUnits(minimumWithdrawalInCurrentCurrency)) {
-      Alert.alert('Minimum withdrawal', `Minimum withdrawal amount is ${formatBalanceMoney(minimumWithdrawalInCurrentCurrency)}`);
+      Alert.alert('Balance below minimum', `Your available balance is ${formatBalanceMoney(availableInCurrentCurrency)}. The minimum withdrawal is ${formatBalanceMoney(minimumWithdrawalInCurrentCurrency)}. Pending and reserved funds are not withdrawable.`);
       return;
     }
     if (!withdrawalInput) {

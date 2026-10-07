@@ -94,6 +94,34 @@ test('selects an old PKR balance, shows Rs2000 minimum and submits PKR without c
   await waitFor(()=>expect(api.post).toHaveBeenCalledWith('/withdrawals',{amount:2000,currency:'PKR'},expect.objectContaining({headers:expect.objectContaining({'Idempotency-Key':expect.any(String)})})));
   expect(api.put).not.toHaveBeenCalled();
 },15000);
+
+test.each([
+  ['PKR', 1999.90, '2000.00', 2784, 'Balance below minimum', 'Your available balance is PKR 1999.90. The minimum withdrawal is PKR 2000.00. Pending and reserved funds are not withdrawable.'],
+  ['USD', 96.75, '4.99', 0, 'Minimum withdrawal', 'Minimum withdrawal amount is USD 5.00'],
+  ['USD', 96.75, '96.76', 0, 'Too high', 'You can withdraw up to USD 96.75'],
+])('native %s available %s and input %s explains the actual rejection before any write', async (currency, available, amount, pending, title, message) => {
+  const summary = nativeResponse();
+  const balance = summary.balanceByCurrency[currency];
+  Object.assign(balance, { withdrawableBalance: available, onlineDeliveredRevenue: available, stripeDeliveredRevenue: available,
+    totalDeliveredRevenue: available, estimatedRevenue: Number((available + pending).toFixed(2)),
+    onlinePendingRevenue: pending, stripePendingRevenue: pending });
+  summary.paymentAccount.currency = currency;
+  if (currency === 'USD') {
+    summary.displayRevenue = { ...balance };
+    summary.withdrawalLimits.availableDisplayAmount = available;
+  }
+  api.get.mockImplementation(async url => ({ data: url === '/currency' ? { productCurrency: currencyState } : summary }));
+  const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+  const screen = render(<SellerPaymentsScreen navigation={{ navigate: jest.fn() }} />);
+  const picker = await screen.findByLabelText('Withdrawal balance currency');
+  fireEvent(picker, 'valueChange', currency);
+  fireEvent.changeText(await screen.findByLabelText(`Withdrawal amount in ${currency}`), amount);
+  fireEvent.press(screen.getByText('Send withdrawal request'));
+  await waitFor(() => expect(alert).toHaveBeenCalledWith(title, message));
+  expect(api.post).not.toHaveBeenCalled();
+  expect(api.put).not.toHaveBeenCalled();
+}, 15000);
+
 test('does not show a response belonging to another account',async()=>{
   api.get.mockImplementation(async url=>({data:url==='/currency'?{productCurrency:currencyState}:nativeResponse('64b000000000000000000002')}));
   const screen=render(<SellerPaymentsScreen navigation={{navigate:jest.fn()}}/>);

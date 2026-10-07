@@ -357,7 +357,7 @@ const SellerPayments = () => {
             return;
         }
         if (toCurrencyMinorUnits(availableInCurrentCurrency) < toCurrencyMinorUnits(minimumWithdrawalInCurrentCurrency)) {
-            toast.error(`Minimum withdrawal amount is ${formatAmount(minimumWithdrawalInCurrentCurrency, { targetCurrency: balanceCurrency })}`);
+            toast.error(`Balance below minimum. Your available balance is ${formatBalanceMoney(availableInCurrentCurrency)}. The minimum withdrawal is ${formatBalanceMoney(minimumWithdrawalInCurrentCurrency)}. Pending and reserved funds are not withdrawable.`);
             return;
         }
         if (!withdrawalInput) {
