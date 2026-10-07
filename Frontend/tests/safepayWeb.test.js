@@ -10,6 +10,17 @@ test('web checkout accepts an exact Safepay sandbox host and safe integer money'
   assert.equal(validateSafepayCheckout(payment()).status, 'pending');
   assert.equal(validateSafepayCheckout({ data: payment() }).amountMinor, 120000);
 });
+
+test('saved-card verification accepts only the fixed backend screen for this payment with a fragment ticket', () => {
+  const checkoutUrl = `https://rozare.up.railway.app/api/safepay/saved-checkout/${payment().paymentId}#ticket=fixture.signed.ticket`;
+  assert.equal(validateSafepayCheckout(payment({ checkoutUrl, checkoutPresentation: 'saved-card', checkoutSessionGrant: 'fixture.signed.grant' })).status, 'pending');
+  for (const url of [checkoutUrl.replace('rozare.up.railway.app', 'evil.example'), checkoutUrl.replace(payment().paymentId, 'a'.repeat(24)),
+    checkoutUrl.replace('#ticket=', '?ticket='), checkoutUrl.replace('https:', 'http:'), checkoutUrl.replace('/saved-checkout/', '/other/')]) {
+    assert.throws(() => validateSafepayCheckout(payment({ checkoutUrl: url, checkoutPresentation: 'saved-card', checkoutSessionGrant: 'fixture.signed.grant' })));
+  }
+  assert.throws(() => validateSafepayCheckout(payment({ checkoutUrl, checkoutPresentation: 'saved-card' })));
+  assert.throws(() => validateSafepayCheckout(payment({ checkoutUrl })));
+});
 test('web checkout rejects lookalike, credential, non-https and cross-environment URLs', () => {
   for (const checkoutUrl of ['https://sandbox.api.getsafepay.com.evil.test/embedded/?environment=sandbox',
     'https://user:secret@sandbox.api.getsafepay.com/embedded/?environment=sandbox',

@@ -11,6 +11,17 @@ test('accepts only the exact configured provider host and HTTPS checkout path', 
     expect(() => validateSafepayCheckout({ ...payment, checkoutUrl })).toThrow();
   }
 });
+
+test('saved-card bank verification is restricted to the original payment and fixed backend path', () => {
+  const checkoutUrl = `https://rozare.up.railway.app/api/safepay/saved-checkout/${paymentId}#ticket=fixture.signed.ticket`;
+  expect(validateSafepayCheckout({ ...payment, checkoutUrl, checkoutPresentation: 'saved-card', checkoutSessionGrant: 'fixture.signed.grant' }).paymentId).toBe(paymentId);
+  for (const url of [checkoutUrl.replace('rozare.up.railway.app', 'evil.example'), checkoutUrl.replace(paymentId, 'b'.repeat(24)),
+    checkoutUrl.replace('#ticket=', '?ticket='), checkoutUrl.replace('https:', 'http:'), checkoutUrl.replace('/saved-checkout/', '/other/')]) {
+    expect(() => validateSafepayCheckout({ ...payment, checkoutUrl: url, checkoutPresentation: 'saved-card', checkoutSessionGrant: 'fixture.signed.grant' })).toThrow();
+  }
+  expect(() => validateSafepayCheckout({ ...payment, checkoutUrl, checkoutPresentation: 'saved-card' })).toThrow();
+  expect(() => validateSafepayCheckout({ ...payment, checkoutUrl })).toThrow();
+});
 test('return URLs and a lone paid flag cannot grant a payment', () => {
   expect(normalizeSafepayStatus({ ...payment, status: 'paid', isPaid: true }, paymentId).status).toBe('pending');
   expect(() => normalizeSafepayStatus({ ...payment, paymentId: 'b'.repeat(24) }, paymentId)).toThrow();

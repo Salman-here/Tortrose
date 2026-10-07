@@ -36,7 +36,8 @@ beforeEach(async () => {
     await mongoose.connection.collection('safepay_test_effects').insertOne({ _id: payment._id, amount: payment.amountMinor }, { session });
   });
   quarantine = jest.fn(async () => {});
-  service = createSafepayPaymentService({ configFor: () => config, clientFor: () => client, settle, quarantine, close: async () => {}, now: () => clock });
+  service = createSafepayPaymentService({ configFor: () => config, clientFor: () => client, settle, quarantine, close: async () => {}, now: () => clock,
+    savedCheckoutFor: payment => `https://rozare.up.railway.app/api/safepay/saved-checkout/${payment._id}#ticket=test-checkout-ticket` });
 });
 
 test('same attempt is reused and any amount or currency change is rejected', async () => {

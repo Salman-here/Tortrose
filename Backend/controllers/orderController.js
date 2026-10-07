@@ -1689,6 +1689,7 @@ exports.placeOrder = async (req, res) => {
                     const payment = await safepayPayments.ensurePayment({ user: userId, purpose: 'order',
                         requestKey: checkoutIdempotencyKey, reference: `order:${newOrder._id}`, order: newOrder._id,
                         amountMinor: getExpectedStripeTotalMinor(newOrder), currency: newOrder.currency,
+                        cardId: order.savedCardId || null,
                         terms: { settlementPolicy: 'revalidate-on-payment-v1' },
                     }, { session });
                     await Order.updateOne({ _id: newOrder._id }, { $set: { safepayPaymentId: payment._id } }, { session });

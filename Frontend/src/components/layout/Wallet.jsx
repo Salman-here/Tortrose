@@ -337,7 +337,9 @@ export default function Wallet() {
       return;
     }
     setSubmitting(true);
-    const fingerprint = `safepay:${currentUser?._id || currentUser?.id || 'guest'}:${String(currency).toUpperCase()}:${normalizedAmount.toFixed(2)}${savedCardId ? `:${savedCardId}` : ''}`;
+    // Changing a card must not silently create a second payable top-up. The
+    // backend rejects a changed choice on an already-frozen attempt.
+    const fingerprint = `safepay:${currentUser?._id || currentUser?.id || 'guest'}:${String(currency).toUpperCase()}:${normalizedAmount.toFixed(2)}`;
     let attemptKey = '';
     try {
       const attempt = await getOrCreatePersistedMutationAttemptInLedger({

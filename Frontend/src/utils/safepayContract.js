@@ -18,6 +18,13 @@ export const validateSafepayCheckout = response => {
   if (payment.status !== 'pending') return payment;
   let url;
   try { url = new URL(payment.checkoutUrl || payment.url); } catch { throw fail(); }
+  if (payment.checkoutPresentation === 'saved-card') {
+    if (url.protocol !== 'https:' || url.hostname !== 'rozare.up.railway.app' || url.port || url.username || url.password
+      || url.pathname !== `/api/safepay/saved-checkout/${payment.paymentId}` || url.search
+      || !/^#ticket=[A-Za-z0-9_.%-]+$/.test(url.hash) || payment.purpose === 'card_setup'
+      || typeof payment.checkoutSessionGrant !== 'string' || !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(payment.checkoutSessionGrant)) throw fail();
+    return { ...payment, checkoutUrl: url.toString() };
+  }
   if (url.protocol !== 'https:' || url.hostname !== HOSTS[payment.environment] || url.port || url.username || url.password
     || url.pathname !== '/embedded/' || url.searchParams.get('environment') !== payment.environment) throw fail();
   return { ...payment, checkoutUrl: url.toString() };

@@ -203,6 +203,29 @@ function createSafepayClient({ config = readSafepayConfig(), fetchImpl = fetch }
       try { return requireTracker(data, trackerExpectation(expected, trackerId), config); }
       catch (error) { error.outcomeUnknown = true; throw error; }
     },
+    async setupSavedCardAuthentication(trackerId, expected, cardId) {
+      if (expected.providerMode !== 'payment' || expected.providerEntryMode !== 'tms' || !expected.customerId) {
+        throw providerError('Invalid saved-card authentication binding.', 'SAFEPAY_SAVED_CARD_BINDING_INVALID', 409);
+      }
+      const tracker = await this.getTracker(trackerId, expected);
+      if (tracker.state !== 'TRACKER_STARTED' || tracker.next_actions?.CYBERSOURCE?.kind !== 'PAYER_AUTH_SETUP') {
+        throw providerError('This payment already advanced. Check its status before retrying.', 'SAFEPAY_AUTHENTICATION_IN_PROGRESS', 409);
+      }
+      const card = await this.getCard(expected.customerId, cardId);
+      requireReusableCard(card);
+      // CIT setup only: never capture silently or substitute recurring MIT.
+      const data = await request('POST', `/order/payments/v3/${trackerId}`, { payload: {
+        payment_method: { tokenized_card: { token: card.token } },
+      }, use_action_chaining: false });
+      try {
+        requireTracker(data, trackerExpectation(expected, trackerId), config);
+        const setup = data?.action?.payer_authentication_setup;
+        if (!setup || typeof setup.access_token !== 'string' || setup.access_token.length < 16) throw providerError('Bank verification details are unavailable.', 'SAFEPAY_AUTHENTICATION_INVALID');
+        const collectionUrl = new URL(setup.device_data_collection_url);
+        if (collectionUrl.protocol !== 'https:' || collectionUrl.username || collectionUrl.password || collectionUrl.port) throw providerError('Bank verification details are unavailable.', 'SAFEPAY_AUTHENTICATION_INVALID');
+        return { deviceDataCollectionJWT: setup.access_token, deviceDataCollectionURL: collectionUrl.toString() };
+      } catch (error) { error.outcomeUnknown = true; throw error; }
+    },
     async getSubscription(subscriptionId) {
       requireId(subscriptionId, 'sub');
       return request('GET', `/client/subscriptions/v1/${encodeURIComponent(subscriptionId)}`);

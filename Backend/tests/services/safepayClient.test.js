@@ -152,6 +152,23 @@ test('a recurring payment uses a freshly ownership-checked reusable token and no
   expect(JSON.parse(fetchImpl.mock.calls[2][1].body)).toEqual({ payload: { authorization: { do_capture: true }, payment_method: { tokenized_card: { token: card.token } } }, use_action_chaining: true });
 });
 
+test('saved-card CIT setup initializes 3DS without any capture or recurring authorization', async () => {
+  const saved = { ...tracker, mode: 'payment', entry_mode: 'tms', customer: 'cus_owned-fixture',
+    next_actions: { CYBERSOURCE: { kind: 'PAYER_AUTH_SETUP' } } };
+  const card = { token: 'pm_owned-fixture', customer: 'cus_owned-fixture', merchant_api_key: config.publicKey, is_deleted: false,
+    max_usage: -1, expires_at: { seconds: 2200000000 }, cybersource: { token: 'tms_owned-fixture', last_four: '1111' } };
+  const fetchImpl = jest.fn()
+    .mockResolvedValueOnce({ ok: true, json: async () => ({ data: saved }) })
+    .mockResolvedValueOnce({ ok: true, json: async () => ({ data: card }) })
+    .mockResolvedValueOnce({ ok: true, json: async () => ({ data: { tracker: saved, action: { payer_authentication_setup: {
+      access_token: 'private-ddc-test-fixture', device_data_collection_url: 'https://centinelapistag.cardinalcommerce.com/V1/Cruise/Collect',
+    } } } }) });
+  const result = await createSafepayClient({ config, fetchImpl }).setupSavedCardAuthentication(tracker.token,
+    { amountMinor: 10000, currency: 'PKR', reference: 'order:fixture123', customerId: 'cus_owned-fixture', providerMode: 'payment', providerEntryMode: 'tms' }, card.token);
+  expect(result.deviceDataCollectionJWT).toBe('private-ddc-test-fixture');
+  expect(JSON.parse(fetchImpl.mock.calls[2][1].body)).toEqual({ payload: { payment_method: { tokenized_card: { token: card.token } } }, use_action_chaining: false });
+});
+
 test('single-use tokens and expired tokens cannot be used for automatic renewals', () => {
   const card = { max_usage: 1, expires_at: { seconds: 2200000000 }, cybersource: { token: 'tms_owned-fixture', last_four: '1111' } };
   expect(() => requireReusableCard(card)).toThrow();

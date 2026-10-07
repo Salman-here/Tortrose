@@ -12,6 +12,21 @@ export default function SafepayCheckoutProvider({ children }) {
   const checkingRef = useRef(false);
   const retryNotBefore = useRef(0);
   const panel = useRef(null);
+  const savedCardFrame = useRef(null);
+  const deliverSession = useCallback(() => {
+    if (payment?.checkoutPresentation !== 'saved-card') return;
+    savedCardFrame.current?.contentWindow?.postMessage({ type: 'rozare-saved-card-session',
+      paymentId: payment.paymentId, grant: payment.checkoutSessionGrant }, 'https://rozare.up.railway.app');
+  }, [payment]);
+  useEffect(() => {
+    if (payment?.checkoutPresentation !== 'saved-card') return undefined;
+    const ready = event => {
+      if (event.origin === 'https://rozare.up.railway.app' && event.source === savedCardFrame.current?.contentWindow
+        && event.data?.type === 'rozare-saved-card-ready' && event.data.paymentId === payment.paymentId) deliverSession();
+    };
+    window.addEventListener('message', ready);
+    return () => window.removeEventListener('message', ready);
+  }, [payment, deliverSession]);
   const finish = useCallback(result => {
     const current = active.current;
     active.current = null;
@@ -89,13 +104,13 @@ export default function SafepayCheckoutProvider({ children }) {
         </header>
         <p className="text-xs p-3 bg-slate-50">Closing this screen does not cancel a payment. Rozare verifies the result securely.</p>
         {payment.purpose === 'card_setup' && <p className="text-xs px-3 pb-3 bg-slate-50">Select “Securely save this card” in the Safepay form to keep it for future payments. Card verification alone does not start a subscription.</p>}
-        <iframe title="Safepay secure card checkout" src={payment.checkoutUrl} className="w-full flex-1 min-h-0 border-0"
+        <iframe ref={savedCardFrame} onLoad={deliverSession} title="Safepay secure card checkout" src={payment.checkoutUrl} className="w-full flex-1 min-h-0 border-0"
           referrerPolicy="no-referrer" allow="payment *" sandbox="allow-forms allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox" />
         <footer className="p-3 border-t text-xs space-y-2">
           {notice && <p role="status">{notice}</p>}
           <div className="flex items-center justify-between gap-3">
             <button type="button" onClick={() => check()} disabled={checking} className="font-semibold flex gap-1 items-center">{checking && <Loader2 size={14} className="animate-spin" />} Check payment status</button>
-            <a href={payment.checkoutUrl} target="_blank" rel="noopener noreferrer" className="underline">Open secure form in a new tab</a>
+            {payment.checkoutPresentation !== 'saved-card' && <a href={payment.checkoutUrl} target="_blank" rel="noopener noreferrer" className="underline">Open secure form in a new tab</a>}
           </div>
         </footer>
       </section>

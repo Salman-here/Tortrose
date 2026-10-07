@@ -14,6 +14,11 @@ const schema = new mongoose.Schema({
   currency: { type: String, enum: ['PKR', 'USD', 'EUR', 'GBP'], required: true, immutable: true },
   providerMode: { type: String, enum: ['payment', 'instrument', 'subscription'], default: 'payment', immutable: true },
   providerEntryMode: { type: String, enum: ['', 'tms'], default: '', immutable: true },
+  savedCardAuthentication: {
+    setupStartedAt: { type: Date, default: null },
+    encryptedContext: { type: String, default: '', select: false },
+    expiresAt: { type: Date, default: null },
+  },
   customerId: { type: String, default: null, match: /^cus_[a-zA-Z0-9-]+$/, immutable: true },
   cardId: { type: String, default: null, match: /^pm_[a-zA-Z0-9-]+$/, select: false, immutable: true },
   chargeStartedAt: { type: Date, default: null },

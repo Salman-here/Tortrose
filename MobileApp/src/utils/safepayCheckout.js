@@ -15,6 +15,15 @@ export function validateSafepayCheckout(response) {
     || (payment.purpose === 'card_setup' && payment.completed === true && payment.status === 'authorized')) return payment;
   let url;
   try { url = new URL(payment.checkoutUrl || payment.url); } catch (_) { throw failure('The secure payment link is unavailable.'); }
+  if (payment.checkoutPresentation === 'saved-card') {
+    if (url.protocol !== 'https:' || url.hostname !== 'rozare.up.railway.app' || url.port || url.username || url.password
+      || url.pathname !== `/api/safepay/saved-checkout/${payment.paymentId}` || url.search
+      || !/^#ticket=[A-Za-z0-9_.%-]+$/.test(url.hash) || payment.purpose === 'card_setup'
+      || typeof payment.checkoutSessionGrant !== 'string' || !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(payment.checkoutSessionGrant)) {
+      throw failure('The saved-card verification screen does not belong to this payment.');
+    }
+    return { ...payment, checkoutUrl: url.toString() };
+  }
   if (url.protocol !== 'https:' || url.hostname !== HOSTS[payment.environment] || url.port
     || url.username || url.password || !['/embedded/', '/checkout/subscribe'].includes(url.pathname)) {
     throw failure('The payment link does not belong to the configured Safepay environment.');

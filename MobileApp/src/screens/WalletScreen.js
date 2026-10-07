@@ -40,6 +40,8 @@ import {
   getOrCreatePersistedMutationAttemptInLedger,
 } from '../utils/persistedMutationAttempt';
 import { inspectWalletSummaryPresentation } from '../utils/walletPresentationSafety';
+import SavedSafepayCardPicker from '../components/common/SavedSafepayCardPicker';
+import useSavedSafepayCards from '../hooks/useSavedSafepayCards';
 
 const WALLET_CURRENCIES = ['USD', 'PKR', 'EUR', 'GBP'];
 const TOP_UP_ATTEMPT_STORAGE_KEY = 'rozare_wallet_topup_attempt_v1';
@@ -126,6 +128,7 @@ export default function WalletScreen({ navigation, route }) {
   const { palette, isDark } = useTheme();
   const styles = buildStyles(palette);
   const { currentUser } = useAuth();
+  const savedCards = useSavedSafepayCards();
   const topUpAttemptStorageKey = createScopedMutationStorageKey(
     TOP_UP_ATTEMPT_STORAGE_KEY,
     currentUser?._id || currentUser?.id || 'guest'
@@ -340,6 +343,7 @@ export default function WalletScreen({ navigation, route }) {
       const response = await api.post('/api/wallet/top-ups', {
         amount: normalizedAmount, currency: topUpCurrency, platform: 'mobile',
         paymentFlow: 'safepay_hosted', clientSurface: 'mobile', requestKey: attempt.key,
+        ...(savedCards.selectedCardId ? { savedCardId: savedCards.selectedCardId } : {}),
       }, { headers: { 'X-Idempotency-Key': attempt.key } });
       topUpReference = { paymentId: response.data?.paymentId, safepay: true };
       const verification = await openSafepayCheckout({ apiClient: api, response });
@@ -638,6 +642,7 @@ export default function WalletScreen({ navigation, route }) {
                     </View>
                   )}
 
+                  <SavedSafepayCardPicker {...savedCards} disabled={submitting} />
                   <TouchableOpacity
                     style={[styles.topUpButton, (submitting || !canTopUpSelectedCurrency) && styles.disabled]}
                     onPress={topUp}

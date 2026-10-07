@@ -11,6 +11,7 @@ import { toast } from "react-toastify";
 import { useNavigate } from "react-router-dom";
 import Loader from "../common/Loader";
 import CheckoutPolicyLinks from '../common/CheckoutPolicyLinks';
+import useSavedSafepayCards from '../../hooks/useSavedSafepayCards';
 import PhoneField, { isValidPhone } from "../common/PhoneField";
 import LocationAutocomplete from "../common/LocationAutocomplete";
 import { getAuthToken } from "../../utils/cookieHelper";
@@ -165,6 +166,7 @@ export default function Checkout() {
   const [isProcessing, setIsProcessing] = useState(false);
   const navigate = useNavigate();
   const { currentUser } = useAuth();
+  const savedCards = useSavedSafepayCards();
   const checkoutAttemptStorageKey = createScopedMutationStorageKey(
     CHECKOUT_ATTEMPT_STORAGE_KEY,
     currentUser?._id || currentUser?.id || 'guest'
@@ -1093,6 +1095,7 @@ export default function Checkout() {
           : data.paymentMethod === "safepay"
             ? "safepay"
             : "cash_on_delivery",
+      ...(data.paymentMethod === 'safepay' && savedCards.selectedCardId ? { savedCardId: savedCards.selectedCardId } : {}),
 
       tracking: {
         ...getTikTokTrackingContext(),
@@ -2093,6 +2096,13 @@ export default function Checkout() {
                             </button>
                           )}
                         </div>
+                        {savedCards.cards.length > 0 && <label className="block text-sm mt-4">Payment card
+                          <select aria-label="Payment card" value={savedCards.selectedCardId} disabled={isProcessing}
+                            onChange={event => savedCards.setSelectedCardId(event.target.value)} className="glass-input w-full mt-2">
+                            <option value="">Use a new card</option>
+                            {savedCards.cards.map(card => <option key={card.id} value={card.id}>{String(card.brand || 'Card').toUpperCase()} ending {card.last4}</option>)}
+                          </select>
+                        </label>}
                       </motion.div>
                     )}
 

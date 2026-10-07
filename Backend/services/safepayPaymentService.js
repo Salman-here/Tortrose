@@ -32,6 +32,7 @@ function createSafepayPaymentService({
   close = (payment, session) => require('./safepaySettlementService').closeSafepayPayment(payment, session),
   quarantine = (payment, tracker, session) => require('./safepaySettlementService').quarantineSafepayPayment(payment, tracker, session),
   claimRecurring = paymentId => require('./safepayBillingService').claimRecurringCharge(paymentId),
+  savedCheckoutFor = (payment, surface) => require('./safepaySavedCardCheckoutService').buildCheckoutContext(payment, surface),
   now = () => new Date(),
 } = {}) {
   const ownedConfig = payment => {
@@ -170,6 +171,11 @@ function createSafepayPaymentService({
       await mongoose.connection.transaction(session => require('./safepayOrderAvailabilityService').assertOrderAvailable(payment, session));
     }
 
+    if (payment.providerEntryMode === 'tms') {
+      const saved = savedCheckoutFor(payment, clientSurface);
+      const checkoutUrl = typeof saved === 'string' ? saved : saved.checkoutUrl;
+      return { ...paymentResponse(payment), ...(typeof saved === 'object' ? saved : {}), checkoutPresentation: 'saved-card', checkoutUrl, url: checkoutUrl };
+    }
     const authToken = await client.createAuthToken();
     const returnContext = { backendOrigin: process.env.PUBLIC_BACKEND_URL || 'https://rozare.up.railway.app',
       attempt: String(payment._id), purpose: payment.purpose, surface: clientSurface };

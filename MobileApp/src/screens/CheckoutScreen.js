@@ -64,6 +64,8 @@ import {
 import { createScopedMutationStorageKey } from '../utils/persistedMutationAttempt';
 import { inspectWalletSummaryPresentation } from '../utils/walletPresentationSafety';
 import StoreAvatar from '../components/common/StoreAvatar';
+import SavedSafepayCardPicker from '../components/common/SavedSafepayCardPicker';
+import useSavedSafepayCards from '../hooks/useSavedSafepayCards';
 
 const CHECKOUT_ATTEMPT_STORAGE_KEY = 'rozare_checkout_attempt_v1';
 
@@ -72,6 +74,7 @@ export default function CheckoutScreen({ navigation }) {
   const styles = buildStyles(palette);
 
   const { currentUser } = useAuth();
+  const savedCards = useSavedSafepayCards();
   const checkoutAttemptStorageKey = createScopedMutationStorageKey(
     CHECKOUT_ATTEMPT_STORAGE_KEY,
     currentUser?._id || currentUser?.id || 'guest'
@@ -797,6 +800,7 @@ export default function CheckoutScreen({ navigation }) {
     let paymentAttempt = null;
     try {
       const draftOrder = buildOrder('');
+      if (paymentMethod === 'card' && savedCards.selectedCardId) draftOrder.savedCardId = savedCards.selectedCardId;
       const actorId = String(currentUser?._id || currentUser?.id || 'guest');
       const fingerprint = `${actorId}:${createCheckoutFingerprint(draftOrder)}`;
       const checkoutAttempt = await getOrCreateCheckoutAttempt({
@@ -1385,6 +1389,7 @@ export default function CheckoutScreen({ navigation }) {
               </View>
               <Ionicons name="shield-checkmark-outline" size={16} color={palette.colors.success} />
             </TouchableOpacity>
+            {paymentMethod === 'card' && <SavedSafepayCardPicker {...savedCards} disabled={isProcessing} />}
             <View style={{ height: 10 }} />
             <TouchableOpacity
               style={[

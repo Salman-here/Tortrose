@@ -70,7 +70,8 @@ export default function SafepayCheckoutProvider({ children }) {
       {blockedLink && !failed && <Text accessibilityRole="alert" style={[styles.notice, { color: palette.colors.textSecondary }]}>An unsupported link was blocked. You can continue with the card form below or close this screen to check payment status.</Text>}
       {!!checkout && !failed && <View style={styles.container}>
         {/* Our navigation policy handles every scheme; unapproved links must not be handed to the OS. */}
-        <WebView key={checkout.paymentId} source={{ uri: checkout.checkoutUrl }} testID="safepay-webview"
+        <WebView key={checkout.paymentId} source={{ uri: checkout.checkoutUrl,
+          ...(checkout.checkoutPresentation === 'saved-card' ? { headers: { 'X-Rozare-Checkout-Grant': checkout.checkoutSessionGrant } } : {}) }} testID="safepay-webview"
           originWhitelist={['*']}
           onShouldStartLoadWithRequest={allowNavigation}
           onNavigationStateChange={state => { if (safepayNavigationAction(state.url, checkout.environment) === 'complete') finish('return'); }}

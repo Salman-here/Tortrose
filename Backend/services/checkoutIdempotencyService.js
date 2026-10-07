@@ -71,6 +71,7 @@ const checkoutRequestFingerprint = (
     },
     sellerShipping,
     paymentMethod: order?.paymentMethod || '',
+    ...(order?.paymentMethod === 'safepay' && order?.savedCardId ? { savedCardId: order.savedCardId } : {}),
     instructions: order?.instructions || '',
     paymentFlow,
     clientSurface,

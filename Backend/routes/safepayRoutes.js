@@ -4,6 +4,12 @@ const auth = require('../middleware/authMiddleware');
 const { paymentStatusPollingLimiter, orderPaymentCreationLimiter, cardSetupCreationLimiter } = require('../middleware/paymentCreationLimiter');
 const controller = require('../controllers/safepayController');
 const billing = require('../controllers/safepayBillingController');
+const savedCheckout = require('../controllers/safepaySavedCardCheckoutController');
+router.get('/assets/atoms-0.3.7.js', savedCheckout.asset);
+router.get('/saved-checkout/:paymentId', savedCheckout.page);
+// The short-lived ticket authorizes only this owned payment, not an account session.
+router.post('/saved-checkout/:paymentId/context', paymentStatusPollingLimiter, savedCheckout.context);
+router.post('/saved-checkout/:paymentId/authenticate', orderPaymentCreationLimiter, savedCheckout.authenticate);
 router.get('/return', controller.returnToApp);
 router.get('/return/:surface/:purpose/:attempt/:outcome', controller.returnToApp);
 router.get('/config', auth, controller.getConfig);
