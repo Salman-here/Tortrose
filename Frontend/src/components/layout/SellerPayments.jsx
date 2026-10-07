@@ -37,6 +37,7 @@ import {
     withdrawalNeedsLiveFx,
 } from '../../utils/sellerMoneySafety';
 import { inspectSellerProductCurrencyState } from '../../utils/productFormCurrency';
+import { selectSellerWithdrawalProof } from '../../utils/sellerWithdrawalProof';
 
 const API = `${import.meta.env.VITE_API_URL}api/payments`;
 const WITHDRAWAL_ATTEMPT_STORAGE_KEY = 'rozare_seller_withdrawal_attempt_v1';
@@ -722,6 +723,7 @@ const SellerPayments = () => {
                             <tbody>
                                 {withdrawals.map((request) => {
                                     const money = selectWithdrawalHistoryMoney(request);
+                                    const payoutProof = selectSellerWithdrawalProof(request);
                                     return (
                                         <tr key={request._id} style={{ borderTop: '1px solid var(--glass-border)' }}>
                                             <td className="py-3 pr-4 whitespace-nowrap" style={{ color: 'hsl(var(--foreground))' }}>{new Date(request.createdAt).toLocaleDateString()}</td>
@@ -752,6 +754,17 @@ const SellerPayments = () => {
                                                     <p className="mt-1.5 max-w-[15rem] text-xs leading-relaxed" style={{ color: 'hsl(var(--muted-foreground))' }}>
                                                         {statusDescriptions[request.status]}
                                                     </p>
+                                                )}
+                                                {request.status === 'paid' && (
+                                                    <div className="glass-inner mt-2 max-w-[19rem] rounded-lg p-2.5 text-xs leading-relaxed" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                                                        {payoutProof ? (
+                                                            <>
+                                                                <p className="font-semibold" style={{ color: 'hsl(var(--foreground))' }}>Recorded payout details</p>
+                                                                <p className="mt-1 break-words">Provider: {payoutProof.provider}</p>
+                                                                <p className="mt-1 break-all">Transfer reference: {payoutProof.transferReference}</p>
+                                                            </>
+                                                        ) : <p>Recorded payout details unavailable.</p>}
+                                                    </div>
                                                 )}
                                             </td>
                                             <td className="py-3 pr-4 max-w-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>{request.adminNote || '-'}</td>

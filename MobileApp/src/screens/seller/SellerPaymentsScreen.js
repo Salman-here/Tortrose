@@ -49,6 +49,7 @@ import {
   withdrawalNeedsLiveFx,
 } from '../../utils/sellerMoneySafety';
 import { inspectSellerProductCurrencyState } from '../../utils/productCurrencyState';
+import { selectSellerWithdrawalProof } from '../../utils/sellerWithdrawalProof';
 
 const WITHDRAWAL_ATTEMPT_STORAGE_KEY = 'rozare_seller_withdrawal_attempt_v1';
 
@@ -619,6 +620,7 @@ export default function SellerPaymentsScreen({ navigation }) {
           ) : (
             withdrawals.map((request) => {
               const money = selectWithdrawalHistoryMoney(request);
+              const payoutProof = selectSellerWithdrawalProof(request);
               return (
                 <View key={request._id} style={styles.withdrawalRow}>
                   <View style={{ flex: 1 }}>
@@ -644,6 +646,17 @@ export default function SellerPaymentsScreen({ navigation }) {
                     )}
                     {!!statusDescriptions[request.status] && (
                       <Text style={styles.withdrawalStatusDescription}>{statusDescriptions[request.status]}</Text>
+                    )}
+                    {request.status === 'paid' && (
+                      <View style={styles.payoutProof}>
+                        {payoutProof ? (
+                          <>
+                            <Text style={styles.payoutProofTitle}>Recorded payout details</Text>
+                            <Text selectable style={styles.payoutProofText}>Provider: {payoutProof.provider}</Text>
+                            <Text selectable style={styles.payoutProofText}>Transfer reference: {payoutProof.transferReference}</Text>
+                          </>
+                        ) : <Text style={styles.payoutProofText}>Recorded payout details unavailable.</Text>}
+                      </View>
                     )}
                     {!!request.adminNote && <Text style={styles.adminNote}>Admin note: {request.adminNote}</Text>}
                   </View>
@@ -734,6 +747,9 @@ const makeStyles = (p) => StyleSheet.create({
   requestedAmount: { ...typography.caption, color: p.colors.primary, marginTop: 3 },
   unavailableAmount: { color: p.colors.error },
   withdrawalStatusDescription: { ...typography.caption, color: p.colors.textSecondary, marginTop: spacing.xs, lineHeight: 17 },
+  payoutProof: { marginTop: spacing.sm, padding: spacing.sm, borderRadius: borderRadius.md, backgroundColor: p.glass.bgSubtle, borderWidth: 1, borderColor: p.glass.borderSubtle },
+  payoutProofTitle: { ...typography.caption, color: p.colors.text, fontWeight: fontWeight.semibold },
+  payoutProofText: { ...typography.caption, color: p.colors.textSecondary, marginTop: spacing.xs, lineHeight: 17, flexShrink: 1 },
   adminNote: { ...typography.caption, color: p.colors.text, marginTop: spacing.xs },
   statusPill: { paddingHorizontal: spacing.sm, paddingVertical: spacing.xs, borderRadius: borderRadius.full },
   statusText: { ...typography.caption, fontWeight: fontWeight.bold, textTransform: 'capitalize' },
