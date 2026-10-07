@@ -40,10 +40,11 @@ const COMPACT_MONEY_FIELDS = Object.freeze([
 ]);
 
 function parseArguments(args) {
-  const options = { summary: false, requestId: null, sellerEmail: null, help: false };
+  const options = { summary: false, notifications: false, requestId: null, sellerEmail: null, help: false };
   for (let index = 0; index < args.length; index++) {
     const argument = args[index];
     if (argument === '--summary') options.summary = true;
+    else if (argument === '--notifications') options.notifications = true;
     else if (argument === '--help' || argument === '-h') options.help = true;
     else if (argument === '--request') {
       const value = args[++index];
@@ -164,6 +165,14 @@ async function auditSeller(seller, options) {
   }
   const visibleWithdrawals = options.requestId
     ? withdrawals.filter(row => id(row) === options.requestId) : withdrawals;
+  const notificationEvidence = options.notifications && visibleWithdrawals.length
+    ? await require('../models/NotificationOutbox').find({
+      aggregateType: 'SellerWithdrawalRequest',
+      aggregateId: { $in: visibleWithdrawals.map(id) },
+      'recipient.user': seller._id,
+    }).select('aggregateId eventType channel status attempts lastErrorCode occurredAt deliveredAt skippedAt '
+      + 'payload.title payload.subject payload.data.status').sort({ occurredAt: 1, channel: 1 }).lean()
+    : [];
   return {
     email: seller.email, sellerId: id(seller), reportingCurrency,
     paymentRiskPending: native.paymentRiskPending, legacyWithdrawalHold: native.legacyWithdrawalHold,
@@ -191,13 +200,20 @@ async function auditSeller(seller, options) {
       recognizedGrossRevenueByCurrency: grossByCurrency,
     },
     withdrawals: visibleWithdrawals.map(withdrawalEvidence),
+    ...(options.notifications ? { notifications: notificationEvidence.map(row => ({
+      withdrawalId: row.aggregateId, eventType: row.eventType, channel: row.channel,
+      deliveryStatus: row.status, attempts: row.attempts, errorCode: row.lastErrorCode || null,
+      title: row.payload?.title || row.payload?.subject || null,
+      withdrawalStatus: row.payload?.data?.status || null,
+      occurredAt: row.occurredAt, deliveredAt: row.deliveredAt, skippedAt: row.skippedAt,
+    })) } : {}),
   };
 }
 
 async function main() {
   const options = parseArguments(process.argv.slice(2));
   if (options.help) {
-    console.log('Usage: node auditQaWithdrawals.js [--summary] [--seller <approved QA email>] [--request <withdrawal ObjectId>]');
+    console.log('Usage: node auditQaWithdrawals.js [--summary] [--notifications] [--seller <approved QA email>] [--request <withdrawal ObjectId>]');
     return;
   }
   if (!process.env.MONGO_URI) throw fail('QA_DATABASE_NOT_CONFIGURED');
