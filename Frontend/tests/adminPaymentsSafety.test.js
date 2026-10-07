@@ -114,3 +114,27 @@ test('legacy withdrawals never invent a bank payout amount', () => {
     payoutBlocked: true,
   });
 });
+
+test('an imported legacy review row leaves the admin overview usable with payout terms explicitly unavailable', () => {
+  const value = overview();
+  const request = value.withdrawals[0];
+  Object.assign(request, {
+    status: 'manual_review', balanceVersion: 0, requestedAmount: 0, payoutAmount: 0,
+    payoutWorkflow: { version: 1, attemptCount: 1, legacyImported: true },
+    payoutAttempts: [{ attemptId: 'legacy-attempt', status: 'manual_review', legacyImported: true }],
+    activePayoutAttemptId: 'legacy-attempt', paymentAccountSnapshotVersion: 0,
+    paymentAccountSnapshot: { snapshotStatus: 'missing', payoutBlocked: true },
+  });
+  assert.equal(adminPaymentsOverviewIsValid(value), true);
+  assert.deepEqual(selectAdminWithdrawalPresentationMoney(request), {
+    ledger: { amount: 5, currency: 'USD' }, requested: { amount: 5, currency: 'USD' },
+    payout: null, showPayout: false, legacy: true, payoutBlocked: true,
+  });
+  for (const override of [
+    { balanceVersion: 2, minimumAmount: 5 },
+    { paymentAccountSnapshotVersion: 1 },
+    { payoutAttempts: [{ attemptId: 'legacy-attempt', status: 'manual_review', legacyImported: false }] },
+    { payoutWorkflow: { version: 1, attemptCount: 1, legacyImported: false } },
+    { requestedAmount: '5' }, { payoutAmount: 0.001 },
+  ]) assert.equal(selectAdminWithdrawalPresentationMoney({ ...request, ...override }), null);
+});

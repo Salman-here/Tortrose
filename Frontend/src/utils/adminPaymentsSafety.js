@@ -97,9 +97,15 @@ export const selectAdminWithdrawalPresentationMoney = request => {
 
   if (request.balanceVersion === 2 && (request.amount !== request.requestedAmount || request.amount !== request.payoutAmount
     || request.currency !== request.requestedCurrency || request.currency !== request.payoutCurrency)) return null;
+  const legacyImported = request.payoutWorkflow?.legacyImported === true;
+  if (legacyImported && (workflowVersion !== 1 || (request.balanceVersion ?? 0) !== 0
+    || request.paymentAccountSnapshotVersion !== 0
+    || !['manual_review', 'failed', 'paid', 'cancelled'].includes(request.status)
+    || !Array.isArray(request.payoutAttempts)
+    || !request.payoutAttempts.some(attempt => attempt?.legacyImported === true))) return null;
   const money = selectWithdrawalHistoryMoney(request);
   if (money.status === 'unavailable' || !money.requested) return null;
-  if (workflowVersion === 1 && (money.status !== 'complete' || !money.payout)) return null;
+  if (workflowVersion === 1 && !legacyImported && (money.status !== 'complete' || !money.payout)) return null;
 
   const snapshotVersion = request.paymentAccountSnapshotVersion;
   const snapshot = request.paymentAccountSnapshot;
@@ -125,7 +131,7 @@ export const selectAdminWithdrawalPresentationMoney = request => {
     requested: money.requested,
     payout: money.payout,
     showPayout: money.showPayout,
-    legacy: workflowVersion === 0,
+    legacy: workflowVersion === 0 || legacyImported,
     payoutBlocked: snapshot.payoutBlocked,
   };
 };

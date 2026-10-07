@@ -816,8 +816,13 @@ const serializeWithdrawalRequest = (request, { includeSensitivePayout = false } 
         attempt => attempt.attemptId === doc.activePayoutAttemptId
     );
     const legacyProcessingQuarantined = isLegacyProcessingWithdrawal(doc);
+    const legacyImported = (doc.balanceVersion ?? 0) === 0
+        && snapshotVersion === 0
+        && payoutWorkflowVersion === 1
+        && attempts.some(attempt => attempt.legacyImported === true);
     doc.payoutWorkflow = {
         version: payoutWorkflowVersion,
+        legacyImported,
         attemptCount: attempts.length,
         state: doc.status,
         requiresManualReview: doc.status === 'manual_review' || legacyProcessingQuarantined,

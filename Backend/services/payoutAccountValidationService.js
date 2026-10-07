@@ -235,7 +235,23 @@ const mergeAndValidatePayoutAccountUpdate = ({ input, existing, defaultCurrency 
     throw payoutAccountInputError('Payout account details are required.');
   }
   const previous = existing || {};
-  const preserveSecretWhenBlank = field => {
+  const clearFlags = {};
+  for (const flag of ['clearAccountNumber', 'clearIban']) {
+    if (Object.prototype.hasOwnProperty.call(input, flag) && typeof input[flag] !== 'boolean') {
+      throw payoutAccountInputError(`${flag} must be a boolean.`);
+    }
+    clearFlags[flag] = input[flag] === true;
+  }
+  const mergeIdentifier = (field, clearFlag) => {
+    if (clearFlags[clearFlag]) {
+      if (input[field] !== undefined && input[field] !== null && typeof input[field] !== 'string') {
+        throw payoutAccountInputError(`${field === 'iban' ? 'IBAN' : 'Bank account number'} must be text.`);
+      }
+      if (typeof input[field] === 'string' && input[field].trim()) {
+        throw payoutAccountInputError(`Do not replace and clear ${field === 'iban' ? 'IBAN' : 'bank account number'} in the same update.`);
+      }
+      return '';
+    }
     if (input[field] === undefined || input[field] === null) return previous[field] || '';
     if (typeof input[field] !== 'string') {
       throw payoutAccountInputError(`${field === 'iban' ? 'IBAN' : 'Bank account number'} must be text.`);
@@ -245,8 +261,8 @@ const mergeAndValidatePayoutAccountUpdate = ({ input, existing, defaultCurrency 
   return validatePayoutAccountDestination({
     accountHolderName: input.accountHolderName,
     bankName: input.bankName,
-    accountNumber: preserveSecretWhenBlank('accountNumber'),
-    iban: preserveSecretWhenBlank('iban'),
+    accountNumber: mergeIdentifier('accountNumber', 'clearAccountNumber'),
+    iban: mergeIdentifier('iban', 'clearIban'),
     swiftCode: input.swiftCode === undefined ? previous.swiftCode : input.swiftCode,
     country: input.country === undefined && input.countryCode === undefined
       ? (previous.countryCode || previous.country)

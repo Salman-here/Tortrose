@@ -122,6 +122,52 @@ describe('payout account destination validation', () => {
     });
   });
 
+  test('explicitly removes a saved GB IBAN when replacing it with a Pakistan account-only destination', () => {
+    const existing = validatePayoutAccountDestination({ ...validAccount,
+      iban: 'GB82WEST12345698765432', swiftCode: 'WESTGB2L', country: 'United Kingdom', currency: 'GBP' });
+    const before = { ...existing };
+    const input = { accountHolderName: 'Durable Seller', bankName: 'Pakistan Bank',
+      accountNumber: '000012345678', iban: '', clearIban: true, clearAccountNumber: false,
+      swiftCode: '', country: 'Pakistan', currency: 'PKR' };
+    expect(() => mergeAndValidatePayoutAccountUpdate({ existing, input: { ...input, clearIban: false } }))
+      .toThrow(/IBAN country does not match/i);
+    expect(mergeAndValidatePayoutAccountUpdate({ existing, input })).toMatchObject({
+      accountNumber: '000012345678', accountNumberLast4: '5678', iban: '', ibanLast4: '',
+      country: 'Pakistan', countryCode: 'PK', currency: 'PKR', swiftCode: '',
+    });
+    expect(existing).toEqual(before);
+  });
+
+  test('can clear an account number while keeping its valid saved IBAN', () => {
+    const existing = validatePayoutAccountDestination(validAccount);
+    expect(mergeAndValidatePayoutAccountUpdate({ existing,
+      input: { ...validAccount, accountNumber: '', iban: '', clearAccountNumber: true } })).toMatchObject({
+      accountNumber: '', accountNumberLast4: '', iban: existing.iban, ibanLast4: existing.ibanLast4,
+    });
+  });
+
+  test('cannot clear all destination identifiers or the sole saved identifier', () => {
+    const existing = validatePayoutAccountDestination(validAccount);
+    const input = { ...validAccount, accountNumber: '', iban: '', clearAccountNumber: true, clearIban: true };
+    expect(() => mergeAndValidatePayoutAccountUpdate({ existing, input })).toThrow(/account number or IBAN/i);
+    expect(() => mergeAndValidatePayoutAccountUpdate({ existing: { ...existing, iban: '' },
+      input: { ...input, clearIban: false } })).toThrow(/account number or IBAN/i);
+  });
+
+  test.each(['true', 'false', 1, 0, null])('does not coerce a nonboolean clear flag %p', value => {
+    for (const flag of ['clearAccountNumber', 'clearIban']) {
+      expect(() => mergeAndValidatePayoutAccountUpdate({ existing: validAccount,
+        input: { ...validAccount, [flag]: value } })).toThrow(/must be a boolean/i);
+    }
+  });
+
+  test.each([['accountNumber', 'clearAccountNumber'], ['iban', 'clearIban']])(
+    'rejects replacing and clearing %s in the same update', (field, clearFlag) => {
+      expect(() => mergeAndValidatePayoutAccountUpdate({ existing: validAccount,
+        input: { ...validAccount, [clearFlag]: true } })).toThrow(/replace and clear/i);
+    },
+  );
+
   test('last-four masking ignores separators and never exposes more than four characters', () => {
     expect(lastFourDestinationCharacters('12-34/56')).toBe('3456');
     expect(lastFourDestinationCharacters('')).toBe('');

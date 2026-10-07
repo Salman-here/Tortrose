@@ -57,6 +57,8 @@ const defaultAccountForm = {
   bankName: '',
   accountNumber: '',
   iban: '',
+  clearAccountNumber: false,
+  clearIban: false,
   swiftCode: '',
   country: '',
   currency: 'USD',
@@ -207,6 +209,7 @@ export default function SellerPaymentsScreen({ navigation }) {
       )) && isExactNonNegativeJsonMoney(limits.availableDisplayAmount)
         && isExactNonNegativeJsonMoney(limits.minimumDisplayAmount)
         && nativeBalancesAreValid(next)
+        && next.balances.every(balance => isExactNonNegativeJsonMoney(balance.returnWindowHeldAmount))
         && exactCurrencyCode(limits.displayCurrency) === requestCurrency
         && exactCurrencyCode(limits.baseCurrency) === requestCurrency
         && next.exchangeRateStatus?.fallback === false
@@ -281,7 +284,12 @@ export default function SellerPaymentsScreen({ navigation }) {
     : '';
 
   const updateAccountField = (field, value) => {
-    setAccountForm((previous) => ({ ...previous, [field]: value }));
+    setAccountForm((previous) => ({
+      ...previous,
+      [field]: value,
+      ...(field === 'clearAccountNumber' && value === true ? { accountNumber: '' } : {}),
+      ...(field === 'clearIban' && value === true ? { iban: '' } : {}),
+    }));
   };
 
   const saveAccount = async () => {
@@ -297,8 +305,12 @@ export default function SellerPaymentsScreen({ navigation }) {
       Alert.alert('Missing info', 'Payout bank country is required');
       return;
     }
-    if (!paymentAccount && !accountForm.accountNumber.trim() && !accountForm.iban.trim()) {
-      Alert.alert('Missing info', 'Enter a bank account number or IBAN');
+    const hasAccountNumber = accountForm.accountNumber.trim()
+      || (paymentAccount?.maskedAccountNumber && !accountForm.clearAccountNumber);
+    const hasIban = accountForm.iban.trim()
+      || (paymentAccount?.maskedIban && !accountForm.clearIban);
+    if (!hasAccountNumber && !hasIban) {
+      Alert.alert('Missing info', 'Keep or enter at least one bank account number or IBAN.');
       return;
     }
 
@@ -488,10 +500,19 @@ export default function SellerPaymentsScreen({ navigation }) {
 
           {showAccountForm && (
             <View style={styles.form}>
+              {paymentAccount && <Text style={styles.sectionSubtitle}>Leave an identifier blank to keep it. Select Remove to clear saved details.</Text>}
               <Field styles={styles} label="Account holder name" value={accountForm.accountHolderName} onChangeText={(value) => updateAccountField('accountHolderName', value)} maxLength={120} accessibilityLabel="Account holder name" />
               <Field styles={styles} label="Bank name" value={accountForm.bankName} onChangeText={(value) => updateAccountField('bankName', value)} maxLength={120} accessibilityLabel="Bank name" />
-              <Field styles={styles} label="Account number" value={accountForm.accountNumber} onChangeText={(value) => updateAccountField('accountNumber', value)} placeholder={paymentAccount?.maskedAccountNumber || 'Enter account number'} maxLength={80} accessibilityLabel="Bank account number" />
-              <Field styles={styles} label="IBAN" value={accountForm.iban} onChangeText={(value) => updateAccountField('iban', value.toUpperCase())} placeholder={paymentAccount?.maskedIban || 'Optional IBAN'} maxLength={80} autoCapitalize="characters" accessibilityLabel="IBAN" />
+              <Field styles={styles} label="Account number" value={accountForm.accountNumber} onChangeText={(value) => updateAccountField('accountNumber', value)} editable={!savingAccount && !accountForm.clearAccountNumber} placeholder={paymentAccount?.maskedAccountNumber || 'Enter account number'} maxLength={80} accessibilityLabel="Bank account number" />
+              {!!paymentAccount?.maskedAccountNumber && <TouchableOpacity style={styles.secondaryButton} accessibilityRole="checkbox" accessibilityLabel="Remove saved account number" accessibilityState={{ checked: accountForm.clearAccountNumber, disabled: savingAccount }} disabled={savingAccount} onPress={() => updateAccountField('clearAccountNumber', !accountForm.clearAccountNumber)}>
+                <Ionicons name={accountForm.clearAccountNumber ? 'checkbox-outline' : 'square-outline'} size={18} color={palette.colors.primary} />
+                <Text style={styles.secondaryButtonText}>Remove saved account number</Text>
+              </TouchableOpacity>}
+              <Field styles={styles} label="IBAN" value={accountForm.iban} onChangeText={(value) => updateAccountField('iban', value.toUpperCase())} editable={!savingAccount && !accountForm.clearIban} placeholder={paymentAccount?.maskedIban || 'Optional IBAN'} maxLength={80} autoCapitalize="characters" accessibilityLabel="IBAN" />
+              {!!paymentAccount?.maskedIban && <TouchableOpacity style={styles.secondaryButton} accessibilityRole="checkbox" accessibilityLabel="Remove saved IBAN" accessibilityState={{ checked: accountForm.clearIban, disabled: savingAccount }} disabled={savingAccount} onPress={() => updateAccountField('clearIban', !accountForm.clearIban)}>
+                <Ionicons name={accountForm.clearIban ? 'checkbox-outline' : 'square-outline'} size={18} color={palette.colors.primary} />
+                <Text style={styles.secondaryButtonText}>Remove saved IBAN</Text>
+              </TouchableOpacity>}
               <Field styles={styles} label="SWIFT / BIC" value={accountForm.swiftCode} onChangeText={(value) => updateAccountField('swiftCode', value.toUpperCase())} placeholder="Optional 8 or 11 character code" maxLength={20} autoCapitalize="characters" accessibilityLabel="SWIFT or BIC code" />
               <Field styles={styles} label="Payout bank country" value={accountForm.country} onChangeText={(value) => updateAccountField('country', value)} placeholder="Pakistan" maxLength={80} accessibilityLabel="Payout bank country" />
               <Text style={styles.inputLabel}>Payout currency</Text>
@@ -567,6 +588,7 @@ export default function SellerPaymentsScreen({ navigation }) {
             ['Wallet delivered revenue', selectedBalance?.walletDeliveredRevenue ?? 0, 'wallet-outline'],
             ['Pending online estimate', selectedBalance?.onlinePendingRevenue ?? 0, 'hourglass-outline'],
             ['Pending withdrawals', selectedBalance?.pendingWithdrawalAmount ?? 0, 'paper-plane-outline'],
+            ['Held for returns', selectedBalance.returnWindowHeldAmount, 'lock-closed-outline'],
             ['Processing withdrawals', selectedBalance?.processingWithdrawalAmount ?? 0, 'sync-outline'],
             ['Paid out', selectedBalance?.totalWithdrawn ?? 0, 'checkmark-done-outline'],
             ['Return-refund reserve', selectedBalance?.returnRefundDebits ?? 0, 'return-down-back-outline'],

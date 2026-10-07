@@ -24,6 +24,24 @@ test('native admin data accepts historical USD reporting beside an original PKR 
   assert.equal(overview.summaryByCurrency.USD.paymentRiskHeldAmount,0);
 });
 
+test('native admin overview retains an imported legacy manual review without estimating its original payout', () => {
+  const request = {
+    ...legacy(), status: 'manual_review', payoutWorkflowVersion: 1,
+    payoutWorkflow: { version: 1, attemptCount: 1, legacyImported: true },
+    activePayoutAttemptId: 'legacy-attempt',
+    payoutAttempts: [{ attemptId: 'legacy-attempt', status: 'manual_review', legacyImported: true }],
+  };
+  const overview = {
+    success: true, accountingVersion: 2, sellers: [], errors: [], withdrawals: [request],
+    summaryByCurrency: Object.fromEntries(codes.map(code => [code, empty(code)])),
+  };
+  assert.equal(adminPaymentsOverviewIsValid(overview), true);
+  assert.deepEqual(selectAdminWithdrawalPresentationMoney(request).requested, { amount: 55636, currency: 'PKR' });
+  assert.equal(selectAdminWithdrawalPresentationMoney(request).payout, null);
+  assert.equal(selectAdminWithdrawalPresentationMoney(request).payoutBlocked, true);
+  assert.equal(adminPaymentsOverviewIsValid({ ...overview, withdrawals: [{ ...request, balanceVersion: 2 }] }), false);
+});
+
 test('admin screen selects native totals and labels each hold/deficit in its actual currency',()=>{
   const source=readFileSync(new URL('../src/components/layout/AdminPayments.jsx',import.meta.url),'utf8');
   assert.match(source,/res\.data\?\.accountingVersion !== 2/);

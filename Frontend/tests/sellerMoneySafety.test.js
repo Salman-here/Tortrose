@@ -118,3 +118,23 @@ test('versioned withdrawal history fails closed and only shows a materially diff
     status: 'legacy',
   });
 });
+
+test('imported legacy review shows verified original request or ledger terms without estimating a bank payout', () => {
+  const request = {
+    amount: 25, currency: 'USD', balanceVersion: 0,
+    requestedAmount: 0, requestedCurrency: 'USD', payoutAmount: 0, payoutCurrency: 'USD',
+    payoutWorkflowVersion: 1, paymentAccountSnapshotVersion: 0,
+    payoutWorkflow: { version: 1, legacyImported: true }, status: 'manual_review',
+  };
+  assert.deepEqual(selectWithdrawalHistoryMoney(request), {
+    requested: { amount: 25, currency: 'USD' }, payout: null, showPayout: false, status: 'legacy',
+  });
+  assert.deepEqual(selectWithdrawalHistoryMoney({ ...request, requestedAmount: 7000, requestedCurrency: 'PKR' }).requested,
+    { amount: 7000, currency: 'PKR' });
+  for (const override of [
+    { balanceVersion: 2 }, { paymentAccountSnapshotVersion: 1 }, { status: 'processing' },
+    { payoutWorkflow: { version: 1, legacyImported: false } },
+    { requestedAmount: '25' }, { requestedAmount: 25.001 }, { payoutAmount: '0' }, { payoutAmount: 0.001 },
+    { currency: 'PKR' }, { requestedCurrency: 'pkr' }, { payoutCurrency: 'JPY' },
+  ]) assert.equal(selectWithdrawalHistoryMoney({ ...request, ...override }).status, 'unavailable');
+});

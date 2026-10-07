@@ -92,6 +92,8 @@ const defaultAccountForm = {
     bankName: '',
     accountNumber: '',
     iban: '',
+    clearAccountNumber: false,
+    clearIban: false,
     swiftCode: '',
     country: '',
     currency: 'USD',
@@ -301,11 +303,24 @@ const SellerPayments = () => {
         : '';
 
     const handleAccountChange = (field, value) => {
-        setAccountForm((prev) => ({ ...prev, [field]: value }));
+        setAccountForm((prev) => ({
+            ...prev,
+            [field]: value,
+            ...(field === 'clearAccountNumber' && value === true ? { accountNumber: '' } : {}),
+            ...(field === 'clearIban' && value === true ? { iban: '' } : {}),
+        }));
     };
 
     const saveAccount = async (event) => {
         event.preventDefault();
+        const hasAccountNumber = accountForm.accountNumber.trim()
+            || (paymentAccount?.maskedAccountNumber && !accountForm.clearAccountNumber);
+        const hasIban = accountForm.iban.trim()
+            || (paymentAccount?.maskedIban && !accountForm.clearIban);
+        if (!hasAccountNumber && !hasIban) {
+            toast.error('Keep or enter at least one bank account number or IBAN.');
+            return;
+        }
         setSavingAccount(true);
         try {
             const token = getAuthToken();
@@ -553,6 +568,7 @@ const SellerPayments = () => {
 
                     {showAccountForm && (
                         <form className="space-y-4" onSubmit={saveAccount}>
+                            {paymentAccount && <p className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>Leave an identifier blank to keep it. Select Remove to clear saved details.</p>}
                             <div className="grid sm:grid-cols-2 gap-4">
                                 <label className="space-y-1.5">
                                     <span className="text-xs font-semibold" style={{ color: 'hsl(var(--muted-foreground))' }}>Account holder name</span>
@@ -562,14 +578,20 @@ const SellerPayments = () => {
                                     <span className="text-xs font-semibold" style={{ color: 'hsl(var(--muted-foreground))' }}>Bank name</span>
                                     <input className="w-full min-w-0 glass-inner rounded-xl px-3 py-2.5 text-sm outline-none" value={accountForm.bankName} onChange={(e) => handleAccountChange('bankName', e.target.value)} required />
                                 </label>
-                                <label className="space-y-1.5">
-                                    <span className="text-xs font-semibold" style={{ color: 'hsl(var(--muted-foreground))' }}>Account number</span>
-                                    <input maxLength={80} className="w-full min-w-0 glass-inner rounded-xl px-3 py-2.5 text-sm outline-none" value={accountForm.accountNumber} onChange={(e) => handleAccountChange('accountNumber', e.target.value)} placeholder={paymentAccount?.maskedAccountNumber || 'Enter account number'} />
-                                </label>
-                                <label className="space-y-1.5">
-                                    <span className="text-xs font-semibold" style={{ color: 'hsl(var(--muted-foreground))' }}>IBAN</span>
-                                    <input maxLength={80} className="w-full min-w-0 glass-inner rounded-xl px-3 py-2.5 text-sm uppercase outline-none" value={accountForm.iban} onChange={(e) => handleAccountChange('iban', e.target.value.toUpperCase())} placeholder={paymentAccount?.maskedIban || 'Optional IBAN'} autoComplete="off" />
-                                </label>
+                                <div className="space-y-1.5">
+                                    <label htmlFor="seller-payout-account-number" className="text-xs font-semibold" style={{ color: 'hsl(var(--muted-foreground))' }}>Account number</label>
+                                    <input id="seller-payout-account-number" maxLength={80} disabled={savingAccount || accountForm.clearAccountNumber} className="w-full min-w-0 glass-inner rounded-xl px-3 py-2.5 text-sm outline-none disabled:opacity-60" value={accountForm.accountNumber} onChange={(e) => handleAccountChange('accountNumber', e.target.value)} placeholder={paymentAccount?.maskedAccountNumber || 'Enter account number'} />
+                                    {paymentAccount?.maskedAccountNumber && <label className="flex items-center gap-2 text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                                        <input type="checkbox" checked={accountForm.clearAccountNumber} disabled={savingAccount} onChange={(e) => handleAccountChange('clearAccountNumber', e.target.checked)} /> Remove saved account number
+                                    </label>}
+                                </div>
+                                <div className="space-y-1.5">
+                                    <label htmlFor="seller-payout-iban" className="text-xs font-semibold" style={{ color: 'hsl(var(--muted-foreground))' }}>IBAN</label>
+                                    <input id="seller-payout-iban" maxLength={80} disabled={savingAccount || accountForm.clearIban} className="w-full min-w-0 glass-inner rounded-xl px-3 py-2.5 text-sm uppercase outline-none disabled:opacity-60" value={accountForm.iban} onChange={(e) => handleAccountChange('iban', e.target.value.toUpperCase())} placeholder={paymentAccount?.maskedIban || 'Optional IBAN'} autoComplete="off" />
+                                    {paymentAccount?.maskedIban && <label className="flex items-center gap-2 text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                                        <input type="checkbox" checked={accountForm.clearIban} disabled={savingAccount} onChange={(e) => handleAccountChange('clearIban', e.target.checked)} /> Remove saved IBAN
+                                    </label>}
+                                </div>
                                 <label className="space-y-1.5">
                                     <span className="text-xs font-semibold" style={{ color: 'hsl(var(--muted-foreground))' }}>SWIFT / BIC</span>
                                     <input maxLength={20} className="w-full min-w-0 glass-inner rounded-xl px-3 py-2.5 text-sm uppercase outline-none" value={accountForm.swiftCode} onChange={(e) => handleAccountChange('swiftCode', e.target.value.toUpperCase())} placeholder="Optional 8 or 11 character code" autoComplete="off" />

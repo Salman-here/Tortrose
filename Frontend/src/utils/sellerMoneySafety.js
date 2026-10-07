@@ -94,7 +94,14 @@ export const selectWithdrawalHistoryMoney = (request = {}) => {
   const requestedValid = validMoneyPair(request.requestedAmount, requestedCurrency);
   const payoutValid = validMoneyPair(request.payoutAmount, payoutCurrency);
 
-  if (rawVersion >= 1) {
+  const importedLegacy = rawVersion === 1
+    && request.payoutWorkflowVersion === 1
+    && request.payoutWorkflow?.legacyImported === true
+    && (request.balanceVersion ?? 0) === 0
+    && request.paymentAccountSnapshotVersion === 0
+    && ['manual_review', 'failed', 'paid', 'cancelled'].includes(request.status);
+
+  if (rawVersion >= 1 && !importedLegacy) {
     if (!requestedValid || !payoutValid) {
       return { requested: null, payout: null, showPayout: false, status: 'unavailable' };
     }
@@ -109,6 +116,19 @@ export const selectWithdrawalHistoryMoney = (request = {}) => {
   }
 
   const legacyCurrency = exactCurrencyCode(request.currency);
+  if (importedLegacy) {
+    // Importing an old transfer attempt does not create original payout terms.
+    // Missing legacy terms remain unavailable; malformed terms never fall back.
+    const absentAmount = amount => amount === undefined || amount === null || amount === 0;
+    const validOptionalCurrency = currency => currency === undefined || currency === null || exactCurrencyCode(currency) !== null;
+    if (legacyCurrency !== 'USD' || !validMoneyPair(request.amount, legacyCurrency)
+      || (!requestedValid && !absentAmount(request.requestedAmount))
+      || (!payoutValid && !absentAmount(request.payoutAmount))
+      || !validOptionalCurrency(request.requestedCurrency)
+      || !validOptionalCurrency(request.payoutCurrency)) {
+      return { requested: null, payout: null, showPayout: false, status: 'unavailable' };
+    }
+  }
   const legacyRequested = requestedValid
     ? { amount: request.requestedAmount, currency: requestedCurrency }
     : (validMoneyPair(request.amount, legacyCurrency)

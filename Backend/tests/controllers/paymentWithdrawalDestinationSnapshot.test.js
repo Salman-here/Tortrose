@@ -219,6 +219,67 @@ beforeEach(async () => {
 });
 
 describe('withdrawal payout destination snapshots', () => {
+    test('explicit country-change removal updates the current account and preserves the old encrypted withdrawal', async () => {
+        const seller = await seedSellerRevenue();
+        await seedPayoutAccount(seller, {
+            bankName: 'Original GB Bank', iban: 'GB82WEST12345698765432', ibanLast4: '5432',
+            swiftCode: 'WESTGB2L', country: 'United Kingdom', countryCode: 'GB',
+        });
+        const created = responseRecorder();
+        await createWithdrawalRequest(sellerRequest(seller, {
+            requestedAmount: 10, requestedCurrency: 'USD',
+        }), created.res);
+        expect(created.statusCode).toBe(201);
+        const withdrawalId = created.body.withdrawal._id;
+        const before = await SellerWithdrawalRequest.findById(withdrawalId)
+            .select('+paymentAccountSnapshotEnvelope').lean();
+
+        const updated = responseRecorder();
+        await upsertSellerPaymentAccount(sellerRequest(seller, {
+            accountHolderName: 'New Account Holder', bankName: 'New Pakistan Bank',
+            accountNumber: '000012345678', iban: '', clearIban: true, clearAccountNumber: false,
+            swiftCode: '', country: 'Pakistan', currency: 'PKR',
+            paymentAccountSnapshotEnvelope: 'must-not-replace-a-withdrawal-envelope',
+        }), updated.res);
+        expect(updated.statusCode).toBe(200);
+        const currentAccount = await SellerPaymentAccount.findOne({ seller: seller._id })
+            .select('+accountNumber +iban').lean();
+        expect(currentAccount).toMatchObject({
+            accountNumber: '000012345678', accountNumberLast4: '5678', iban: '', ibanLast4: '',
+            country: 'Pakistan', countryCode: 'PK', currency: 'PKR', swiftCode: '',
+        });
+        expect(currentAccount).not.toHaveProperty('clearIban');
+        expect(currentAccount).not.toHaveProperty('paymentAccountSnapshotEnvelope');
+        expect(updated.body.paymentAccount).not.toHaveProperty('accountNumber');
+        expect(updated.body.paymentAccount).not.toHaveProperty('iban');
+
+        const after = await SellerWithdrawalRequest.findById(withdrawalId)
+            .select('+paymentAccountSnapshotEnvelope').lean();
+        expect(after.paymentAccountSnapshotEnvelope).toEqual(before.paymentAccountSnapshotEnvelope);
+        expect(after.paymentAccountSnapshot).toEqual(before.paymentAccountSnapshot);
+        expect(after).toMatchObject({ amount: before.amount, requestedAmount: before.requestedAmount,
+            payoutAmount: before.payoutAmount, currency: before.currency, payoutCurrency: before.payoutCurrency });
+        const originalList = responseRecorder();
+        await getSellerWithdrawals({ user: { id: seller._id.toString(), role: 'admin' },
+            query: { sellerId: seller._id.toString() } }, originalList.res);
+        expect(originalList.body.withdrawals[0].paymentAccountSnapshot).toMatchObject({
+            bankName: 'Original GB Bank', iban: 'GB82WEST12345698765432',
+            country: 'United Kingdom', snapshotStatus: 'complete', payoutBlocked: false,
+        });
+
+        const invalidUpdate = responseRecorder();
+        await upsertSellerPaymentAccount(sellerRequest(seller, {
+            accountHolderName: 'New Account Holder', bankName: 'New Pakistan Bank',
+            accountNumber: '', iban: '', clearIban: true, clearAccountNumber: true,
+            swiftCode: '', country: 'Pakistan', currency: 'PKR',
+        }), invalidUpdate.res);
+        expect(invalidUpdate.statusCode).toBe(400);
+        expect(invalidUpdate.body.code).toBe('PAYOUT_DESTINATION_REQUIRED');
+        const preservedAccount = await SellerPaymentAccount.findById(currentAccount._id)
+            .select('+accountNumber +iban').lean();
+        expect(preservedAccount).toEqual(currentAccount);
+    });
+
     test('requires an encrypted envelope whenever a request claims the secure snapshot version', async () => {
         const request = new SellerWithdrawalRequest({
             seller: new mongoose.Types.ObjectId(),
