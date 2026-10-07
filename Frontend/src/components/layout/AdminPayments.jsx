@@ -143,6 +143,18 @@ const transitionInputsComplete = (request, edit) => {
     return true;
 };
 
+const selectRecordedEvidenceUrl = value => {
+    if (typeof value !== 'string' || !value || value.length > 1000
+        || !/^https:\/\//i.test(value) || /\s/u.test(value)
+        || [...value].some(character => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127)) return null;
+    try {
+        const parsed = new URL(value);
+        return parsed.protocol === 'https:' && !parsed.username && !parsed.password ? value : null;
+    } catch {
+        return null;
+    }
+};
+
 const availableWithdrawalStatuses = (request, payoutBlocked) => {
     const activeAttempt = request.payoutAttempts.find(attempt => attempt.attemptId === request.activePayoutAttemptId);
     const candidates = request.payoutWorkflow?.legacyProcessingQuarantined === true
@@ -609,6 +621,7 @@ const AdminPayments = () => {
                             const paidAttempt = attempts.find(
                                 attempt => attempt.attemptId === request.paidPayoutAttemptId && attempt.status === 'paid'
                             );
+                            const paidEvidenceUrl = selectRecordedEvidenceUrl(paidAttempt?.evidence?.url);
                             const legacyProcessing = request.payoutWorkflow?.legacyProcessingQuarantined === true;
                             const nextStatuses = availableWithdrawalStatuses(request, payoutBlocked);
                             const isTerminal = nextStatuses.length === 0;
@@ -693,7 +706,9 @@ const AdminPayments = () => {
                                                         Payout attempt history ({attempts.length})
                                                     </summary>
                                                     <div className="mt-2 space-y-2">
-                                                        {[...attempts].reverse().map((attempt) => (
+                                                        {[...attempts].reverse().map((attempt) => {
+                                                            const evidenceUrl = selectRecordedEvidenceUrl(attempt.evidence?.url);
+                                                            return (
                                                             <div key={attempt.attemptId} className="glass-inner rounded-lg p-2 break-words">
                                                                 <p className="font-semibold">
                                                                     #{attempt.sequence} · {String(attempt.status).replaceAll('_', ' ')} · {attempt.provider}
@@ -705,9 +720,9 @@ const AdminPayments = () => {
                                                                 {attempt.reconciliationNote && <p>Review: {attempt.reconciliationNote}</p>}
                                                                 {attempt.evidence?.type && <p>Evidence: {attempt.evidence.type.replaceAll('_', ' ')}</p>}
                                                                 {attempt.evidence?.note && <p>Evidence note: {attempt.evidence.note}</p>}
-                                                                {attempt.evidence?.url && (
+                                                                {evidenceUrl && (
                                                                     <a
-                                                                        href={attempt.evidence.url}
+                                                                        href={evidenceUrl}
                                                                         target="_blank"
                                                                         rel="noreferrer noopener"
                                                                         className="underline break-all"
@@ -716,7 +731,8 @@ const AdminPayments = () => {
                                                                     </a>
                                                                 )}
                                                             </div>
-                                                        ))}
+                                                            );
+                                                        })}
                                                     </div>
                                                 </details>
                                             )}
@@ -729,7 +745,7 @@ const AdminPayments = () => {
                                                     {paidAttempt?.transferredAt && <p>Transferred: {new Date(paidAttempt.transferredAt).toLocaleString()}</p>}
                                                     {paidAttempt?.evidence?.type && <p>Evidence: {paidAttempt.evidence.type.replaceAll('_', ' ')}</p>}
                                                     {paidAttempt?.evidence?.note && <p>Evidence note: {paidAttempt.evidence.note}</p>}
-                                                    {paidAttempt?.evidence?.url && <a href={paidAttempt.evidence.url} target="_blank" rel="noreferrer noopener" className="underline break-all">Open recorded proof</a>}
+                                                    {paidEvidenceUrl && <a href={paidEvidenceUrl} target="_blank" rel="noreferrer noopener" className="underline break-all">Open recorded proof</a>}
                                                 </section>
                                             )}
                                         </div>

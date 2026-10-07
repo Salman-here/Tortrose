@@ -15,7 +15,7 @@ const helpers = transformSync(source.slice(helpersStart, helpersEnd), {
   loader: 'jsx', jsxFactory: 'React.createElement', jsxFragment: 'React.Fragment',
 }).code;
 const actions = source.slice(actionsStart, actionsEnd);
-const extracted = `${helpers}\n${actions}\n({ update: updateWithdrawal, confirm: confirmWithdrawal, cancel: closeWithdrawalConfirmation, change: updateEdit, createEdit: withdrawalEdit, availableStatuses: availableWithdrawalStatuses, Modal: WithdrawalConfirmation });`;
+const extracted = `${helpers}\n${actions}\n({ update: updateWithdrawal, confirm: confirmWithdrawal, cancel: closeWithdrawalConfirmation, change: updateEdit, createEdit: withdrawalEdit, availableStatuses: availableWithdrawalStatuses, evidenceUrl: selectRecordedEvidenceUrl, Modal: WithdrawalConfirmation });`;
 
 function request(status = 'approved') {
   const active = ['processing', 'manual_review'].includes(status);
@@ -52,7 +52,7 @@ function fixture(target = 'processing', current = target === 'processing' ? 'app
     setConfirmation(value) { context.confirmation = value; },
     setSavingId(value) { context.savingId = value; },
     setEdits(update) { context.edits = update(context.edits); },
-    selectAdminWithdrawalPresentationMoney,
+    selectAdminWithdrawalPresentationMoney, URL,
     useCallback: fn => fn, useRef: () => ({ current: null }), useEffect: effect => effects.push(effect),
     React: { createElement: (type, props, ...children) => ({ type,
       props: { ...props, children: children.flat(Infinity).filter(value => value !== false && value !== null && value !== undefined) } }) },
@@ -122,11 +122,12 @@ function renderCard(f) {
     { loader: 'jsx', jsxFactory: 'React.createElement' }).code;
   const presentationMoney = selectAdminWithdrawalPresentationMoney(f.row);
   const nextStatuses = f.availableStatuses(f.row, presentationMoney.payoutBlocked);
+  const paidAttempt = f.row.payoutAttempts.find(attempt => attempt.attemptId === f.row.paidPayoutAttemptId && attempt.status === 'paid');
   Object.assign(f.context, {
     request: f.row, edit: f.context.edits[f.row._id] || f.createEdit(f.row), presentationMoney,
     payoutDestination: f.row.paymentAccountSnapshot, payoutBlocked: false, attempts: f.row.payoutAttempts,
     activeAttempt: f.row.payoutAttempts.find(attempt => attempt.attemptId === f.row.activePayoutAttemptId),
-    paidAttempt: f.row.payoutAttempts.find(attempt => attempt.attemptId === f.row.paidPayoutAttemptId && attempt.status === 'paid'),
+    paidAttempt, paidEvidenceUrl: f.evidenceUrl(paidAttempt?.evidence?.url), selectRecordedEvidenceUrl: f.evidenceUrl,
     legacyProcessing: false, nextStatuses, isTerminal: nextStatuses.length === 0,
     canSubmit: true, StatusPill: 'StatusPill', CheckCircle: 'CheckCircle',
     formatAmount: (amount, { targetCurrency }) => `${targetCurrency} ${amount.toFixed(2)}`,
@@ -417,5 +418,52 @@ for (const status of ['pending', 'approved', 'processing', 'manual_review', 'fai
     assert.ok(all.some(node => node.type === 'select'));
     assert.ok(all.some(node => node.type === 'input' && node.props['aria-label'] === 'Note for this action'));
     assert.ok(all.some(node => node.type === 'button' && textOf(node).trim() === 'Update'));
+  });
+}
+
+function paidProofFixture(url) {
+  const f = fixture('paid', 'paid');
+  Object.assign(f.row, {
+    paidPayoutProvider: 'Recorded Bank Rail', paidTransferReference: 'RECORDED-TRANSFER',
+    paidPayoutAttemptId: 'paid-attempt', payoutWorkflow: { version: 1, attemptCount: 1 },
+    payoutAttempts: [{ attemptId: 'paid-attempt', status: 'paid', provider: 'Recorded Bank Rail',
+      transferReference: 'RECORDED-TRANSFER', transferredAt: '2026-10-07T06:30:00.000Z',
+      startedAt: '2026-10-07T06:00:00.000Z', sequence: 1,
+      evidence: { type: 'manual_confirmation', note: 'Verified recorded transfer proof.', url } }],
+  });
+  return f;
+}
+
+for (const unsafeUrl of [
+  'javascript:alert(1)', 'data:text/html,test', 'http://example.com/proof', '//example.com/proof',
+  'https://user:password@example.com/proof', 'https://user@example.com/proof',
+  'https://%75ser:%70ass@example.com/proof', 'https://example.com/\nproof',
+  'https://example.com/\tproof', 'https://example.com/\u0000proof', ' https://example.com/proof',
+  'https://', 'https://example.com/' + 'x'.repeat(1000), '', null, 42,
+]) {
+  test(`recorded proof rejects unsafe URL ${JSON.stringify(unsafeUrl).slice(0, 55)}`, () => {
+    const f = paidProofFixture(unsafeUrl);
+    assert.equal(f.evidenceUrl(unsafeUrl), null);
+    const card = renderCard(f);
+    assert.equal(nodes(card).filter(node => node.type === 'a').length, 0);
+    assert.match(textOf(card), /Transfer reference: RECORDED-TRANSFER/);
+    assert.match(textOf(card), /Evidence: manual confirmation/);
+    assert.equal(f.calls.patches.length, 0);
+  });
+}
+
+for (const validUrl of [
+  'https://example.com/proofs/receipt%20one.pdf?version=01&signature=a%2Bb#page=2',
+  'HTTPS://EXAMPLE.com:443/proof?signature=a%2Bb',
+]) {
+  test('both read-only proof links preserve the exact valid HTTPS record', () => {
+    const f = paidProofFixture(validUrl);
+    const links = nodes(renderCard(f)).filter(node => node.type === 'a');
+    assert.equal(links.length, 2);
+    for (const link of links) {
+      assert.equal(link.props.href, validUrl);
+      assert.equal(link.props.rel, 'noreferrer noopener');
+    }
+    assert.equal(f.calls.patches.length, 0);
   });
 }
