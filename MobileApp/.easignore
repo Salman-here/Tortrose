@@ -5,8 +5,9 @@ node_modules/
 .DS_Store
 .vscode/
 dist/
-/dist-*/
-/*-tests.json
+dist-*/
+*-tests.json
+test-artifacts/
 build/
 *.key
 *.pem

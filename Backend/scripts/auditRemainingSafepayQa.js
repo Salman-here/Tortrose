@@ -73,6 +73,7 @@ async function main() {
     paymentEvidence.push({ id: p._id, order: p.order, store: p.store, purpose: p.purpose, reference: p.reference,
       tracker: p.tracker, status: p.status, currency: p.currency, amountMinor: p.amountMinor, capturedMinor: p.capturedMinor,
       refundedMinor: p.refundedMinor, walletRefundMinor: p.walletRefundMinor, providerEntryMode: p.providerEntryMode,
+      hasMerchantCustomer: !!p.customerId,
       createdAt: p.createdAt, appliedAt: p.appliedAt, paidAt: p.paidAt, chargeOutcome: p.chargeOutcome,
       authentication: { setupStartedAt: p.savedCardAuthentication?.setupStartedAt, expiresAt: p.savedCardAuthentication?.expiresAt, resetStartedAt: p.savedCardAuthentication?.resetStartedAt },
       lastErrorCode: p.lastErrorCode, riskPending: p.riskPending, provider, refundEvents });
@@ -82,8 +83,12 @@ async function main() {
     .select('_id name stock price discountedPrice currency optionGroups returnPolicy isApproved').lean();
   const wallet = await require('../models/Wallet').findOne({ user: buyer._id }).select('balances status').lean();
   const buyerWallets = await require('../models/Wallet').find({ user: { $in: buyerIds } }).select('user balances status').lean();
+  const profiles = await require('../models/SafepayCustomer').find({ user: { $in: actors.map(a => a._id) }, environment: 'sandbox' })
+    .select('user status createdForCardConsentAt').lean();
+  const cardProfileEvidence = actors.map(actor => ({ account: actor.email,
+    readyConsentedProfile: profiles.some(p => String(p.user) === String(actor._id) && p.status === 'ready' && !!p.createdForCardConsentAt) }));
   console.log(JSON.stringify({ readOnly: true, sandbox: true, cutoff: START, wallet, products,
-    buyerWallets, sellers: balances, orders, payments: paymentEvidence }, null, 2));
+    buyerWallets, cardProfileEvidence, sellers: balances, orders, payments: paymentEvidence }, null, 2));
 }
 if (require.main === module) main().catch(error => { console.error(error.code || error.message || 'QA_AUDIT_FAILED'); process.exitCode = 1; })
   .finally(() => mongoose.disconnect());
