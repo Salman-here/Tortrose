@@ -11,6 +11,7 @@ async function main() {
   const seller = await require('../models/User').findOne({ email: EMAIL, role: 'seller' }).select('_id').lean();
   if (!seller) throw new Error('QA_SELLER_REQUIRED');
   const sub = await require('../models/SellerSubscription').findOne({ seller: seller._id }).select('+safepayBilling.cardId').lean();
+  if (!sub) throw new Error('QA_SUBSCRIPTION_REQUIRED');
   const store = await require('../models/Store').findOne({ seller: seller._id }).select('isActive productCurrency').lean();
   const operations = await require('../models/SafepayBillingOperation').find({ seller: seller._id, environment: 'sandbox' })
     .sort({ createdAt: -1 }).limit(30).lean();
@@ -42,6 +43,17 @@ async function main() {
     const c = await client.getCard(sub.safepayBilling.customerId, sub.safepayBilling.cardId);
     card = { last4: c.cybersource?.last_four, reusable: c.max_usage === -1 };
   }
+  const notificationScope = { aggregateId: { $in: [String(sub._id), ...operations.map(op => String(op._id))] }, 'recipient.user': seller._id,
+    occurredAt: { $gte: new Date('2026-10-08T00:00:00Z') } };
+  const deliveryGroups = await require('../models/NotificationOutbox').aggregate([
+    { $match: notificationScope },
+    { $group: { _id: { eventType: '$eventType', channel: '$channel', status: '$status', errorCode: '$lastErrorCode' }, count: { $sum: 1 } } },
+    { $sort: { '_id.eventType': 1, '_id.channel': 1, '_id.status': 1 } },
+  ]);
+  const virtualWhatsAppCopies = await require('../models/WhatsAppTestMessage').countDocuments({
+    number: { $in: ['12025550120', '+12025550120'] }, direction: 'outbound',
+    createdAt: { $gte: new Date('2026-10-08T00:00:00Z') }, text: /subscription|Starter|Elite/i,
+  });
   console.log(JSON.stringify({ sandbox: true, email: EMAIL, store, subscription: sub ? {
     id: String(sub._id), status: sub.status, plan: sub.plan, planName: sub.planName, metaAdsIncluded: sub.metaAdsIncluded,
     currentPeriodStart: sub.currentPeriodStart, currentPeriodEnd: sub.currentPeriodEnd, freePeriodEndDate: sub.freePeriodEndDate,
@@ -50,7 +62,8 @@ async function main() {
       creditMinor: sub.safepayBilling.creditMinor, cycle: sub.safepayBilling.cycle, anchorAt: sub.safepayBilling.anchorAt,
       autoRenew: sub.safepayBilling.autoRenew, nextChargeAt: sub.safepayBilling.nextChargeAt,
       pendingOperation: sub.safepayBilling.pendingOperation, lastFailedOperation: sub.safepayBilling.lastFailedOperation,
-      lastFailureCode: sub.safepayBilling.lastFailureCode, version: sub.safepayBilling.version, card } } : null, operations: rows }, null, 2));
+      lastFailureCode: sub.safepayBilling.lastFailureCode, version: sub.safepayBilling.version, card } } : null,
+    notificationEvidence: { deliveryGroups, virtualWhatsAppCopies, physicalWhatsAppReceiptClaimed: false }, operations: rows }, null, 2));
 }
 if (require.main === module) main().catch(error => { console.error(error.code || error.message || 'QA_AUDIT_FAILED'); process.exitCode = 1; })
   .finally(() => mongoose.disconnect());
