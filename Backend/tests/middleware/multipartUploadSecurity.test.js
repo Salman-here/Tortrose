@@ -77,6 +77,16 @@ test('missing multipart boundaries produce a controlled 400 and no parser detail
   expect(res.body.msg).not.toMatch(/Boundary not found/);
 });
 
+test('oversized text fields remain bounded and cannot pollute shared object prototypes', async () => {
+  const res = await request(app).post('/chat').field('message', 'x'.repeat(1024 * 1024 + 1)).expect(413);
+  expect(res.body.code).toBe('LIMIT_FIELD_VALUE');
+  const structured = await request(app).post('/chat').field('message', 'Safe field parsing')
+    .field('__proto__[uploadSecurityMarker]', 'bad').field('constructor[prototype][uploadSecurityMarker]', 'bad');
+  expect([200, 400, 413]).toContain(structured.status);
+  expect({}.uploadSecurityMarker).toBeUndefined();
+  await request(app).get('/health').expect(200, { ok: true });
+});
+
 test('unknown internal errors are delegated and headers already sent are not overwritten', () => {
   const next = jest.fn(), error = new Error('Internal operation failed');
   uploadErrors(error, { is: () => false }, { headersSent: false }, next);

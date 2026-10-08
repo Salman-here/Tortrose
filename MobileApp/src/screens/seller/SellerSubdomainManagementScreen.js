@@ -236,7 +236,8 @@ export default function SellerSubdomainManagementScreen({ navigation, route }) {
       Alert.alert('Purchase processing', 'Rozare is verifying the payment. Ownership changes only after backend confirmation.');
       refreshAfterCheckout();
     } else if (purchaseResult === 'cancelled') {
-      Alert.alert('Checkout cancelled', 'No charge was made and your current subdomain remains unchanged.');
+      Alert.alert('Payment window closed', 'Closing checkout does not confirm cancellation or prove that no charge occurred. Check the existing payment and current ownership before paying again.');
+      refreshAfterCheckout();
     }
     navigation?.setParams?.({ purchase: undefined });
   }, [navigation, refreshAfterCheckout, route?.params?.purchase]);
@@ -406,11 +407,15 @@ export default function SellerSubdomainManagementScreen({ navigation, route }) {
               if (['paid', 'cancelled', 'failed', 'refunded'].includes(result.status)) {
                 await clearPersistedMutationAttemptFromLedger(AsyncStorage, storageKey, fingerprint, attempt.key);
               }
-              Alert.alert(result.status === 'paid' ? 'Ownership updated' : 'Payment status', result.status === 'paid'
+              const closed = ['cancelled', 'failed', 'refunded'].includes(result.status);
+              const title = result.status === 'paid' ? 'Ownership updated'
+                : result.status === 'manual_review' ? 'Ownership payment review'
+                  : closed ? 'Ownership payment closed' : 'Ownership payment pending';
+              Alert.alert(title, result.status === 'paid'
                 ? 'Rozare verified your payment and updated the subdomain ownership.'
                 : result.status === 'manual_review' ? 'This payment needs support review. Do not pay again.'
-                  : ['cancelled', 'failed', 'refunded'].includes(result.status) ? 'This payment is closed. No ownership was granted by this attempt.'
-                    : 'Your payment is still being checked. Use the purchase button again to resume the same checkout.');
+                  : closed ? 'This payment is closed. Refresh ownership and review its payment or refund status before starting another attempt.'
+                    : 'Payment has not been confirmed. Closing the secure form does not cancel it. Use the purchase button again to resume the same checkout before starting another payment.');
               refreshAfterCheckout();
             } catch (requestError) {
               checkoutOpenRef.current = false;

@@ -44,6 +44,22 @@ const {
   subdomainOwnershipResponseIsValid,
 } = require('../../../src/screens/seller/SellerSubdomainManagementScreen');
 const { subdomainAnalyticsResponseIsValid } = require('../../../src/utils/subdomainAnalyticsSafety');
+const subdomainScreenSource = require('node:fs').readFileSync(require('node:path').resolve(__dirname,
+  '../../../src/screens/seller/SellerSubdomainManagementScreen.js'), 'utf8');
+
+test('a legacy cancelled navigation return never promises an uncharged payment', () => {
+  const branch = subdomainScreenSource.slice(subdomainScreenSource.indexOf("purchaseResult === 'cancelled'"),
+    subdomainScreenSource.indexOf('navigation?.setParams?.({ purchase: undefined })'));
+  expect(branch).toContain('Payment window closed');
+  expect(branch).toContain('does not confirm cancellation');
+  expect(branch).toContain('refreshAfterCheckout()');
+  expect(branch).not.toContain('No charge was made');
+});
+
+test('an uncertain native subdomain payment explicitly retains its same-checkout recovery', () => {
+  expect(subdomainScreenSource).toContain('Ownership payment pending');
+  expect(subdomainScreenSource).toContain('resume the same checkout before starting another payment');
+});
 
 describe('seller subscription presentation', () => {
   const pricing = {
