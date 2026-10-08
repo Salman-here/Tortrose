@@ -60,7 +60,7 @@
   },
   "devDependencies": {
     "fast-check": "^4.3.0",
-    "jest": "^30.5.2",
+    "jest": "30.2.0",
     "jszip": "^3.10.1",
     "mongodb-memory-server": "^10.3.0",
     "supertest": "^7.1.4"
