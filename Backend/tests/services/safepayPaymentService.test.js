@@ -4,7 +4,7 @@ const { MongoMemoryReplSet } = require('mongodb-memory-server');
 const Payment = require('../../models/SafepayPayment');
 const Customer = require('../../models/SafepayCustomer');
 const { createSafepayClient } = require('../../services/safepayClient');
-const { createSafepayPaymentService } = require('../../services/safepayPaymentService');
+const { createSafepayPaymentService, fingerprint } = require('../../services/safepayPaymentService');
 let replica;
 let clock;
 let client;
@@ -49,13 +49,13 @@ test('same attempt is reused and any amount or currency change is rejected', asy
   expect(await Payment.countDocuments()).toBe(1);
 });
 
-test.each(['order', 'wallet_top_up', 'subdomain', 'return_settlement'])('authenticated %s checkout attaches only its own consented saved-card profile', async purpose => {
+test.each(['order', 'wallet_top_up', 'subdomain', 'return_settlement'])('authenticated new-card %s checkout does not auto-attach a saved-card profile', async purpose => {
   await Customer.create({ user: buyer, environment: 'sandbox', customerId: 'cus_owned-fixture',
     status: 'ready', createdForCardConsentAt: clock });
   await Customer.create({ user: new mongoose.Types.ObjectId(), environment: 'sandbox', customerId: 'cus_other-fixture',
     status: 'ready', createdForCardConsentAt: clock });
   const payment = await service.ensurePayment({ ...input(), purpose });
-  expect(payment.customerId).toBe('cus_owned-fixture');
+  expect(payment.customerId).toBeNull();
   // This unit fixture has no catalog order; test its binding separately from
   // the real-order inventory/settlement suites.
   const orderUpdate = purpose === 'order' ? jest.spyOn(require('../../models/Order'), 'updateOne')
@@ -63,8 +63,9 @@ test.each(['order', 'wallet_top_up', 'subdomain', 'return_settlement'])('authent
   let checkout;
   try { checkout = await service.prepareCheckout(payment._id); }
   finally { orderUpdate?.mockRestore(); }
-  expect(client.createTracker.mock.calls[0][0].customerId).toBe('cus_owned-fixture');
-  expect(new URL(checkout.checkoutUrl).searchParams.get('user_id')).toBe('cus_owned-fixture');
+  expect(client.createTracker.mock.calls[0][0].customerId).toBeNull();
+  expect(new URL(checkout.checkoutUrl).searchParams.has('user_id')).toBe(false);
+  expect(payment.providerEntryMode).toBe('');
   expect(payment.providerMode).toBe('payment');
   expect(payment.chargeStartedAt).toBeNull();
 });
@@ -84,7 +85,13 @@ test('guest, unconsented and other-environment profiles never expose stored card
 
 test('an existing checkout retains its profile after profile changes and cannot be rebound to another customer', async () => {
   await Customer.create({ user: buyer, environment: 'sandbox', customerId: 'cus_owned-fixture', status: 'ready', createdForCardConsentAt: clock });
-  const payment = await service.ensurePayment(input());
+  // Existing pre-fix hosted attempts keep their immutable identity. This
+  // local fixture deliberately models that old binding, not a new purchase.
+  const legacy = input();
+  const payment = await Payment.create({ ...legacy, environment: 'sandbox', providerMode: 'payment',
+    customerId: 'cus_owned-fixture', fingerprint: fingerprint({ user: String(buyer), purpose: legacy.purpose,
+      reference: legacy.reference, amountMinor: legacy.amountMinor, currency: legacy.currency,
+      order: '', store: '', returnRequest: '', terms: {}, customerId: 'cus_owned-fixture' }) });
   await Customer.updateOne({ user: buyer }, { $set: { customerId: 'cus_replacement-fixture' } });
   expect(String((await service.ensurePayment(input()))._id)).toBe(String(payment._id));
   await expect(service.ensurePayment({ ...input(), customerId: 'cus_replacement-fixture' })).rejects.toMatchObject({ code: 'SAFEPAY_CUSTOMER_MISMATCH' });
@@ -92,17 +99,28 @@ test('an existing checkout retains its profile after profile changes and cannot 
   await expect(service.ensurePayment({ ...input(), cardId: 'pm_unapproved-fixture' })).rejects.toMatchObject({ code: 'SAFEPAY_CARD_SELECTION_INVALID' });
 });
 
-test('an explicitly selected reusable owned card creates a CIT tracker and not a subscription charge', async () => {
+test.each(['order', 'wallet_top_up', 'subdomain', 'return_settlement'])('an explicitly selected reusable owned card creates a CIT %s tracker, not a subscription charge', async purpose => {
   await Customer.create({ user: buyer, environment: 'sandbox', customerId: 'cus_owned-fixture', status: 'ready', createdForCardConsentAt: clock });
   client.getCard = jest.fn().mockResolvedValue({ max_usage: -1, cybersource: { token: 'tms_test-fixture', last_four: '1111' }, expires_at: { seconds: 2100000000 } });
-  const payment = await service.ensurePayment({ ...input(), cardId: 'pm_owned-fixture' });
+  const payment = await service.ensurePayment({ ...input(), purpose, cardId: 'pm_owned-fixture' });
   expect(payment.providerMode).toBe('payment');
   expect(payment.providerEntryMode).toBe('tms');
   expect(payment.cardId).toBe('pm_owned-fixture');
   expect(client.getCard).toHaveBeenCalledWith('cus_owned-fixture', 'pm_owned-fixture');
-  await service.prepareCheckout(payment._id);
+  const orderUpdate = purpose === 'order' ? jest.spyOn(require('../../models/Order'), 'updateOne')
+    .mockResolvedValue({ matchedCount: 1 }) : null;
+  try { await service.prepareCheckout(payment._id); }
+  finally { orderUpdate?.mockRestore(); }
   expect(client.createTracker.mock.calls[0][0].providerEntryMode).toBe('tms');
   expect(payment.chargeStartedAt).toBeNull();
+});
+
+test('a new-card purchase cannot inject either an owned or another customer profile without selecting a card', async () => {
+  await Customer.create({ user: buyer, environment: 'sandbox', customerId: 'cus_owned-fixture', status: 'ready', createdForCardConsentAt: clock });
+  for (const customerId of ['cus_owned-fixture', 'cus_other-fixture']) {
+    await expect(service.ensurePayment({ ...input(), customerId })).rejects.toMatchObject({ code: 'SAFEPAY_CUSTOMER_MISMATCH' });
+  }
+  expect(await Payment.countDocuments()).toBe(0);
 });
 
 test('adding a saved-card profile does not alter an older guest-style payment binding', async () => {

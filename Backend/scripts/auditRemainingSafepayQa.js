@@ -10,6 +10,11 @@ const EMAILS = [
   'rozare.seller.82901@mailinator.com',
 ];
 const START = new Date('2026-10-08T09:00:00Z');
+const summaryFields = ['currency', 'onlineGrossEarnings', 'processingFeeAndTax', 'pendingOnlineBalance',
+  'pendingOnlineNetBalance', 'withdrawableBalance', 'safepayDeliveredRevenue', 'safepayPendingRevenue',
+  'walletDeliveredRevenue', 'walletPendingRevenue', 'returnWindowHeldAmount', 'totalWithdrawn',
+  'returnRefundDebits', 'paymentReversalDebits', 'totalDeliveredRevenue', 'estimatedRevenue', 'totalRelevantOrders'];
+const moneySummary = row => Object.fromEntries(summaryFields.filter(k => row[k] !== undefined).map(k => [k, row[k]]));
 async function main() {
   const config = require('../config/safepay').readSafepayConfig(process.env, { requireWebhook: true });
   if (config.environment !== 'sandbox') throw new Error('SANDBOX_REQUIRED');
@@ -31,7 +36,8 @@ async function main() {
     let accounting;
     try {
       const summary = await require('../services/sellerNativeAccountingService').buildNativeSellerPaymentSummary(seller._id, { displayCurrency: store.productCurrency });
-      accounting = { balances: summary.balances, revenue: summary.revenue, displayRevenue: summary.displayRevenue,
+      accounting = { balances: summary.balances.filter(row => row.currency === store.productCurrency || row.onlineGrossEarnings || row.withdrawableBalance).map(moneySummary),
+        revenue: moneySummary(summary.revenue), displayRevenue: moneySummary(summary.displayRevenue),
         paymentRiskPending: summary.paymentRiskPending, historicalSnapshot: summary.exchangeRateStatus };
     } catch (error) { accounting = { error: error.code || 'ACCOUNTING_READ_FAILED' }; }
     const grants = await require('../models/SafepaySubdomainGrant').find({ seller: seller._id, environment: 'sandbox' })

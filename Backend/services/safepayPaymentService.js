@@ -62,13 +62,14 @@ function createSafepayPaymentService({
     let existing = await Payment.findOne(identity).session(session);
     let customerId = input.customerId || null;
     if (providerMode === 'payment') {
-      // Hosted checkout, not a background/MIT charge, collects the shopper's
-      // selection and any bank authentication. Only attach a profile that the
-      // same signed-in account created with card-storage consent. Guests and
-      // accounts without a ready profile continue to use the new-card form.
+      // Attach a merchant-owned profile only for an explicitly selected saved
+      // card. A normal new-card purchase must use the hosted guest flow, even
+      // when this account already has saved cards. Passing user_id without a
+      // selected card makes hosted checkout request card-on-file enrollment
+      // with a shopper JWT, which the provider rejects as merchant-only.
       // Reopening retains the original binding, including a guest/null binding:
       // creating a profile later must never change an existing payment attempt.
-      const link = !existing && input.user ? await Customer.findOne({ user: input.user,
+      const link = !existing && input.user && input.cardId ? await Customer.findOne({ user: input.user,
         environment: config.environment, status: 'ready', createdForCardConsentAt: { $ne: null } })
         .select('customerId').session(session) : null;
       const ownedId = existing ? existing.customerId : link?.customerId || null;
