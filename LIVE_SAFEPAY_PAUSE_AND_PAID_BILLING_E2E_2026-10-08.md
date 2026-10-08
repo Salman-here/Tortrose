@@ -65,7 +65,7 @@ The Android Refresh showed **Ending ·31 days remaining**, establishing cross-ch
 
 Android's **Resume subscription** action then returned **Subscription renewal resumed**. The native page became Active; a read-only provider/database audit showed auto-renewal true, the same paid period and monthly 999, and still only one paid renewal operation. It did not restart a free trial or enroll/charge again.
 
-OTA: group `12318048-a5bf-4fd8-a7e5-7451d93296bf`, Android update `01a119b9-8c89-7e73-830a-ce8fae18bcdd`, runtime 1.0.13, installed APK 1.0.13/code 17. [Published update](https://expo.dev/accounts/rozare/projects/rozare/updates/12318048-a 5 bf-4 fd 8-a 7 e 5-7451 d 93296 bf). The app was closed/reopened through Android SDK commands without wiping account/data. The corrected visible behavior establishes activation; a target-update log identifier was not independently obtained, so no such log proof is claimed. No new APK was needed.
+OTA: group `12318048-a5bf-4fd8-a7e5-7451d93296bf`, Android update `01a119b9-8c89-7e73-830a-ce8fae18bcdd`, runtime 1.0.13, installed APK 1.0.13/code 17. [Published update](https://expo.dev/accounts/rozare/projects/rozare/updates/12318048-a5bf-4fd8-a7e5-7451d93296bf). The app was closed/reopened through Android SDK commands without wiping account/data. The corrected visible behavior establishes activation; a target-update log identifier was not independently obtained, so no such log proof is claimed. No new APK was needed.
 
 **Result: PASS after fixing and live-retesting the date sentence.** Evidence: `test-artifacts/billing-paused-web-cancel-preserves-paid-period.png`, `billing-native-paid-period-date-corrected.png`.
 
