@@ -635,7 +635,11 @@ export default function SellerSubscriptionScreen({ navigation, route }) {
     : model.isTrial
       ? 'Rozare Free Trial'
       : 'No active plan';
-  const planEndDate = formatDate(subscription?.freePeriodEndDate || subscription?.currentPeriodEnd);
+  // The introductory end remains historical after the first paid renewal.
+  // Only an actual free-period state may use it as the access boundary.
+  const planEndDate = formatDate(subscription?.status === 'free_period'
+    ? subscription?.freePeriodEndDate || subscription?.currentPeriodEnd
+    : subscription?.currentPeriodEnd);
   const trialEndDate = formatDate(subscription?.trialEndDate);
   const starterBonusDays = daysUntil(subscription?.bonusExpiryDate);
   const bonusExpiryDate = formatDate(subscription?.bonusExpiryDate);

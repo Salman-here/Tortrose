@@ -90,3 +90,39 @@ test('acceptance still requires the user consent action and sends the owned quot
     consentVersion: 'rozare-safepay-recurring-v1',
   }));
 });
+
+test.each([false, true])('paid access ignores the expired introductory date, including cancellation scheduled %s', async cancelled => {
+  const paid = { ...subscription, status: 'active', plan: 'starter', planName: 'Rozare Starter', billingProvider: 'safepay',
+    hasUsedFreePeriod: true, currentMonthlyAmountCents: 999, currentPeriodStart: '2026-10-08T03:53:39Z',
+    currentPeriodEnd: '2026-11-08T03:53:39Z', freePeriodEndDate: '2026-10-08T03:53:39Z',
+    ...(cancelled ? { cancelledAt: '2026-10-08T04:00:00Z' } : {}) };
+  api.get.mockResolvedValue({ data: { subscription: paid } });
+  const screen = render(<SellerSubscriptionScreen navigation={navigation} route={{ params: {} }} />);
+  await waitFor(() => expect(screen.getByText(cancelled
+    ? 'Your plan remains active until Nov 8, 2026.'
+    : 'Your seller workspace and public store are active through Nov 8, 2026.')).toBeTruthy());
+  expect(screen.queryByText(/active (?:until|through) Oct 8, 2026/)).toBeNull();
+});
+
+test('an actual introductory period still displays its own end, not a later paid projection', async () => {
+  api.get.mockResolvedValue({ data: { subscription: { ...subscription, status: 'free_period', plan: 'starter',
+    currentPeriodEnd: '2026-11-08T03:53:39Z', freePeriodEndDate: '2026-10-26T03:53:39Z' } } });
+  const screen = render(<SellerSubscriptionScreen navigation={navigation} route={{ params: {} }} />);
+  await waitFor(() => expect(screen.getByText('Your introductory period runs until Oct 26, 2026.')).toBeTruthy());
+});
+
+test('scheduled downgrade retains the paid Elite boundary instead of the earlier introductory date', async () => {
+  api.get.mockResolvedValue({ data: { subscription: { ...subscription, status: 'active', plan: 'elite',
+    pendingDowngrade: 'starter', currentPeriodEnd: '2026-11-08T03:53:39Z',
+    freePeriodEndDate: '2026-10-08T03:53:39Z' } } });
+  const screen = render(<SellerSubscriptionScreen navigation={navigation} route={{ params: {} }} />);
+  await waitFor(() => expect(screen.getByText('Elite remains active until Nov 8, 2026, then Starter begins.')).toBeTruthy());
+});
+
+test('missing paid-period date does not substitute an expired introductory date', async () => {
+  api.get.mockResolvedValue({ data: { subscription: { ...subscription, status: 'active', plan: 'starter',
+    currentPeriodEnd: null, freePeriodEndDate: '2026-10-08T03:53:39Z' } } });
+  const screen = render(<SellerSubscriptionScreen navigation={navigation} route={{ params: {} }} />);
+  await waitFor(() => expect(screen.getByText('Your seller workspace and public store are active.')).toBeTruthy());
+  expect(screen.queryByText(/active through Oct 8/)).toBeNull();
+});
