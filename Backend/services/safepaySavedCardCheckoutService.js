@@ -5,7 +5,7 @@ const mongoose = require('mongoose');
 const Payment = require('../models/SafepayPayment');
 const User = require('../models/User');
 const { readSafepayConfig } = require('../config/safepay');
-const { createSafepayClient } = require('./safepayClient');
+const { createSafepayClient, canResetSavedCardAuthentication } = require('./safepayClient');
 const { buildReturnUrl } = require('./safepayReturnNavigation');
 
 const AUDIENCE = 'rozare-safepay-saved-card-v1';
@@ -91,8 +91,9 @@ async function viewContext(paymentId, authorization, grant) {
   return { paymentId: String(payment._id), amountMinor: payment.amountMinor, currency: payment.currency,
     environment: config.environment, providerState: tracker.state,
     canAuthenticate: payment.status === 'ready' && !payment.localCancelledAt && !payment.appliedAt,
-    canRestartAuthentication: tracker.state === 'TRACKER_ENROLLED' && tracker.next_actions?.CYBERSOURCE?.kind === 'PAYER_AUTH_VALIDATION'
-      && !tracker.charge && !!payment.savedCardAuthentication?.encryptedContext,
+    // An interrupted device-collection page can stall before enrollment too.
+    // Explicit retry resets only that uncaptured setup, never the payment.
+    canRestartAuthentication: canResetSavedCardAuthentication(tracker) && !!payment.savedCardAuthentication?.encryptedContext,
     returnUrl: buildReturnUrl({ backendOrigin: origin(), attempt: String(payment._id), purpose: payment.purpose, surface: claims.surface, outcome: 'return' }),
     card: { brand: card.cybersource?.scheme === 1 ? 'Visa' : card.cybersource?.scheme === 2 ? 'Mastercard' : 'Card', last4: card.cybersource.last_four },
     billing: { street_1: address.address || '', city: address.city || '', country: address.countryCode || '', state: address.state || '', postal_code: address.postalCode || '' } };

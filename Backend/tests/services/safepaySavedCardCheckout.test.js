@@ -86,10 +86,11 @@ test('unknown setup response remains claimed instead of being silently retried',
   expect(mockClient.setupSavedCardAuthentication).toHaveBeenCalledTimes(1);
 });
 
-test('explicit retry resets only a completed bank journey, preserves identity and performs a new 3DS setup', async () => {
+test.each([['TRACKER_ENROLLED', 'PAYER_AUTH_VALIDATION'], ['TRACKER_STARTED', 'PAYER_AUTH_ENROLLMENT']])('explicit retry recovers the incomplete %s/%s bank journey, preserves identity and performs a new 3DS setup', async (state, kind) => {
   const billing = { street_1: '1 Test Lane', city: 'Lahore', country: 'PK' };
   await service.authenticate(String(payment._id), `Bearer ${token}`, billing, grant);
-  mockClient.getTracker.mockResolvedValue({ state: 'TRACKER_ENROLLED', next_actions: { CYBERSOURCE: { kind: 'PAYER_AUTH_VALIDATION' } } });
+  mockClient.getTracker.mockResolvedValue({ state, next_actions: { CYBERSOURCE: { kind } } });
+  await Payment.updateOne({ _id: payment._id }, { $set: { 'savedCardAuthentication.expiresAt': new Date(0) } });
   expect((await service.viewContext(String(payment._id), `Bearer ${token}`, grant)).canRestartAuthentication).toBe(true);
   await service.authenticate(String(payment._id), `Bearer ${token}`, billing, grant, { restartAuthentication: true });
   expect(mockClient.resetSavedCardAuthentication).toHaveBeenCalledTimes(1);

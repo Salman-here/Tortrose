@@ -42,6 +42,11 @@ const trackerExpectation = (expected, tracker) => ({ tracker, amountMinor: expec
   currency: expected.currency, reference: expected.reference, providerMode: expected.providerMode,
   providerEntryMode: expected.providerEntryMode, customerId: expected.customerId });
 
+const canResetSavedCardAuthentication = tracker => !tracker?.charge && (
+  (tracker?.state === 'TRACKER_ENROLLED' && tracker?.next_actions?.CYBERSOURCE?.kind === 'PAYER_AUTH_VALIDATION')
+  || (tracker?.state === 'TRACKER_STARTED' && tracker?.next_actions?.CYBERSOURCE?.kind === 'PAYER_AUTH_ENROLLMENT')
+);
+
 function requireTracker(data, expected, config) {
   const tracker = data?.tracker || data;
   requireId(tracker?.token, 'track');
@@ -229,8 +234,7 @@ function createSafepayClient({ config = readSafepayConfig(), fetchImpl = fetch }
     async resetSavedCardAuthentication(trackerId, expected) {
       if (expected.providerMode !== 'payment' || expected.providerEntryMode !== 'tms' || !expected.customerId) throw providerError('Invalid saved-card recovery binding.', 'SAFEPAY_SAVED_CARD_BINDING_INVALID', 409);
       const tracker = await this.getTracker(trackerId, expected);
-      if (tracker.state !== 'TRACKER_ENROLLED' || tracker.next_actions?.CYBERSOURCE?.kind !== 'PAYER_AUTH_VALIDATION'
-        || tracker.charge) throw providerError('This payment cannot restart bank verification. Check its status first.', 'SAFEPAY_AUTHENTICATION_IN_PROGRESS', 409);
+      if (!canResetSavedCardAuthentication(tracker)) throw providerError('This payment cannot restart bank verification. Check its status first.', 'SAFEPAY_AUTHENTICATION_IN_PROGRESS', 409);
       // Official node-core Order.Configure.reset: PUT the existing tracker.
       // No new tracker, price, customer, capture or MIT authorization is supplied.
       const data = await request('PUT', `/order/payments/v3/${trackerId}`, {});
@@ -300,4 +304,4 @@ function requireReusableCard(card, at = new Date()) {
   }
   return card;
 }
-module.exports = { createSafepayClient, requireTracker, requireMoney, readMinor, requireId, requireOwnedCard, requireReusableCard };
+module.exports = { createSafepayClient, requireTracker, requireMoney, readMinor, requireId, requireOwnedCard, requireReusableCard, canResetSavedCardAuthentication };
