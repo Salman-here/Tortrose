@@ -299,6 +299,7 @@ const SellerSubscription = () => {
     const isPastDue = subscription?.status === 'past_due';
     const isSubscribed = ['active', 'free_period'].includes(subscription?.status);
     const isElite = subscription?.plan === 'elite';
+    const hasPendingDowngrade = isSubscribed && isElite && subscription?.pendingDowngrade === 'starter';
     const bonusExpiredPermanently = subscription?.bonusFeaturesExpiredPermanently && !isElite;
     const hasGracePeriod = isBlocked && subscription?.bonusGraceDeadline && subscription?.bonusGraceDaysRemaining > 0 && !bonusExpiredPermanently;
     const bonusAboutToExpire = isSubscribed && subscription?.plan === 'starter' && subscription?.bonusFeaturesActive && subscription?.bonusExpiryDate && (() => {
@@ -653,6 +654,26 @@ const SellerSubscription = () => {
                 {getStatusBadge()}
             </div>
 
+            {hasPendingDowngrade && (
+                <section className="glass-panel-strong p-4 mb-6 flex flex-wrap items-center justify-between gap-3"
+                    aria-label="Scheduled plan change">
+                    <div>
+                        <h2 className="text-sm font-bold" style={{ color: 'hsl(30, 80%, 45%)' }}>
+                            Switch to Starter scheduled
+                        </h2>
+                        <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                            Keep Elite benefits until {subscription.currentPeriodEnd && Number.isFinite(Date.parse(subscription.currentPeriodEnd))
+                                ? new Date(subscription.currentPeriodEnd).toLocaleDateString() : 'the current period ends'},
+                            then Starter begins. You can undo the switch before that period ends.
+                        </p>
+                    </div>
+                    <button type="button" onClick={handleCancelDowngrade} disabled={cancelDowngradeLoading}
+                        className="glass-button px-4 py-2 text-xs font-semibold disabled:opacity-60">
+                        {cancelDowngradeLoading ? 'Keeping Elite...' : 'Keep Elite'}
+                    </button>
+                </section>
+            )}
+
             {/* Current Plan Card — hidden once subscribed */}
             {!isSubscribed && (
             <div className="glass-panel-strong p-6 mb-6">
@@ -716,19 +737,6 @@ const SellerSubscription = () => {
                                 className="text-xs px-3 py-1.5 rounded-lg transition-colors"
                                 style={{ color: 'hsl(0, 72%, 55%)', background: 'rgba(239, 68, 68, 0.08)' }}>
                                 Cancel
-                            </button>
-                        </div>
-                    )}
-                    {/* Pending downgrade banner */}
-                    {isSubscribed && subscription?.pendingDowngrade === 'starter' && (
-                        <div className="flex items-center gap-2">
-                            <span className="text-[10px] font-semibold px-2 py-1 rounded-lg" style={{ background: 'rgba(249, 115, 22, 0.1)', color: 'hsl(30, 80%, 45%)' }}>
-                                Switching to Starter
-                            </span>
-                            <button onClick={handleCancelDowngrade} disabled={cancelDowngradeLoading}
-                                className="text-[10px] px-2 py-1 rounded-lg font-semibold"
-                                style={{ color: 'hsl(270, 60%, 55%)', background: 'rgba(139, 92, 246, 0.08)' }}>
-                                {cancelDowngradeLoading ? '...' : 'Keep Elite'}
                             </button>
                         </div>
                     )}
@@ -1093,12 +1101,14 @@ const SellerSubscription = () => {
                             whileHover={{ scale: 1.02 }}
                             whileTap={{ scale: 0.98 }}
                             onClick={() => isElite ? setShowDowngradeConfirm(true) : handleSubscribe('starter')}
-                            disabled={checkoutLoading === 'starter'}
+                            disabled={checkoutLoading === 'starter' || hasPendingDowngrade}
                             className="w-full py-3 rounded-xl font-bold text-sm text-white flex items-center justify-center gap-2 transition-all disabled:opacity-60"
                             style={{ background: 'linear-gradient(135deg, hsl(220, 70%, 55%), hsl(250, 60%, 55%))' }}
                         >
                             {checkoutLoading === 'starter' ? (
                                 <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                            ) : hasPendingDowngrade ? (
+                                <><Clock size={15} /> Starter scheduled</>
                             ) : isElite ? (
                                 <><ArrowRight size={15} style={{ transform: 'rotate(180deg)' }} /> Downgrade to Starter</>
                             ) : (
@@ -1224,7 +1234,7 @@ const SellerSubscription = () => {
                                         )}
                                     </motion.button>
                                 )}
-                                {!subscription?.cancelledAt && (
+                                {(!subscription?.cancelledAt || hasPendingDowngrade) && (
                                     <motion.button
                                         whileHover={{ scale: 1.02 }}
                                         whileTap={{ scale: 0.98 }}
