@@ -13,7 +13,7 @@ const billing = require('../../services/safepayBillingService'); const lifecycle
 const recovery = require('../../services/safepayBillingRecoveryService'); const payments = require('../../services/safepayPaymentService');
 const { createSafepayClient } = require('../../services/safepayClient');
 const { readSafepayConfig } = require('../../config/safepay');
-let replica, seller, sub, customer, submit, http, mode, trackers, captures, beforeCharge;
+let replica, seller, sub, customer, submit, http, mode, trackers, captures, beforeCharge, declineHttpStatus;
 const previous = { ...process.env };
 beforeAll(async () => {
   Object.assign(process.env, { SAFEPAY_ENV: 'sandbox', SAFEPAY_WEB_ENABLED: 'true', SAFEPAY_MOBILE_ENABLED: 'true',
@@ -27,7 +27,7 @@ beforeAll(async () => {
 afterAll(async () => { submit.mockRestore(); process.env = previous; await mongoose.disconnect(); await replica?.stop(); });
 beforeEach(async () => {
   for (const model of Object.values(mongoose.models)) await model.deleteMany({});
-  mode = 'success'; trackers = new Map(); captures = []; beforeCharge = null; submit.mockClear();
+  mode = 'success'; declineHttpStatus = 403; trackers = new Map(); captures = []; beforeCharge = null; submit.mockClear();
   seller = await User.create({ username: 'Paid Billing Engine QA', email: 'paid-billing-engine@example.com', role: 'seller', status: 'active' });
   await Store.create({ seller: seller._id, storeName: 'Paid Billing Engine QA', storeSlug: 'paid-billing-engine-qa',
     productCurrency: 'PKR', productCurrencyStatus: 'active', isActive: true, moderationStatus: 'approved' });
@@ -50,7 +50,7 @@ beforeEach(async () => {
       expires_at: { seconds: Math.floor(Date.now() / 1000) + 86400000 }, cybersource: { token: 'qa-network-token', last_four: '1111' } });
     if (path.startsWith('/order/payments/v3/') && options.method === 'POST') {
       if (beforeCharge) await beforeCharge();
-      if (mode === 'declined') return { ok: false, status: 402, json: async () => ({ status: { errors: ['Declined'] } }) };
+      if (mode === 'declined') return { ok: false, status: declineHttpStatus, json: async () => ({ status: { errors: ['Declined'] } }) };
       if (mode === 'unknown_pending') throw new Error('Lost provider response');
       const tracker = trackers.get(path.split('/').pop());
       tracker.state = 'TRACKER_ENDED';
@@ -90,7 +90,8 @@ test('accepted recurring work and a due renewal drain once during a two-surface 
     expect((await Sub.findById(sub._id)).status).toBe('active');
   } finally { process.env.SAFEPAY_WEB_ENABLED = 'true'; process.env.SAFEPAY_MOBILE_ENABLED = 'true'; }
 });
-test('processor-declined renewal blocks access and only a fresh consented exact-invoice retry restores the original period', async () => {
+test.each([400, 402, 403, 422])('processor-declined renewal HTTP%s blocks access and only a fresh consented exact-invoice retry restores the original period', async httpStatus => {
+  declineHttpStatus = httpStatus;
   await accept((await quote()).quoteId); await makeDue(); mode = 'declined';
   await lifecycle.runBillingWorker();
   const failed = await Operation.findOne({ kind: 'renewal' });
@@ -148,4 +149,52 @@ test('cancellation during an already claimed capture preserves funded access but
   const current = await Sub.findById(sub._id);
   expect(current.status).toBe('active'); expect(current.safepayBilling.autoRenew).toBe(false);
   expect(current.safepayBilling.nextChargeAt).toBeNull(); expect(captures).toHaveLength(1);
+});
+
+test('an unaccepted prepatch credit quote expires atomically, releases its claim and never rewrites accepted history', async () => {
+  await accept((await quote()).quoteId);
+  await accept((await quote({ kind: 'upgrade', includeMetaAds: true })).quoteId);
+  const requestKey = 'legacy-unbounded-meta-credit';
+  const old = await quote({ kind: 'upgrade', includeMetaAds: false, requestKey });
+  const original = await Operation.findById(old.quoteId);
+  // Emulate the old immutable quote format, not a payment or balance mutation.
+  await Operation.collection.updateOne({ _id: original._id }, { $unset: { 'terms.proration.metaCreditFunding': '' } });
+  const captureCount = captures.length;
+  await expect(accept(old.quoteId)).rejects.toMatchObject({ code: 'SUBSCRIPTION_QUOTE_STALE' });
+  const retired = await quote({ kind: 'upgrade', includeMetaAds: false, requestKey });
+  expect(retired.status).toBe('expired');
+  expect(await Claim.countDocuments({ token: original.terms.checkoutClaimToken })).toBe(0);
+  expect((await Sub.findById(sub._id)).safepayBilling.creditMinor).toBe(0);
+  const fresh = await quote({ kind: 'upgrade', includeMetaAds: false, requestKey: 'fresh-bounded-meta-credit' });
+  await accept(fresh.quoteId); const credited = (await Sub.findById(sub._id)).safepayBilling.creditMinor;
+  const applied = await Operation.findById(fresh.quoteId);
+  await Operation.collection.updateOne({ _id: applied._id }, { $unset: { 'terms.proration.metaCreditFunding': '' } });
+  expect((await quote({ kind: 'upgrade', includeMetaAds: false, requestKey: 'fresh-bounded-meta-credit' })).status).toBe('applied');
+  await accept(fresh.quoteId);
+  expect((await Sub.findById(sub._id)).safepayBilling.creditMinor).toBe(credited);
+  expect(captures).toHaveLength(captureCount);
+});
+
+test('using an add-on credit to re-add and remove Meta cannot replenish or grow the funded credit', async () => {
+  await accept((await quote()).quoteId);
+  await accept((await quote({ kind: 'upgrade', includeMetaAds: true })).quoteId);
+  const removal = await quote({ kind: 'upgrade', includeMetaAds: false }); await accept(removal.quoteId);
+  const firstCredit = (await Sub.findById(sub._id)).safepayBilling.creditMinor;
+  const count = captures.length;
+  const readd = await quote({ kind: 'upgrade', includeMetaAds: true }); await accept(readd.quoteId);
+  expect(readd.dueNowMinor).toBe(0);
+  const again = await quote({ kind: 'upgrade', includeMetaAds: false }); await accept(again.quoteId); await accept(again.quoteId);
+  expect((await Sub.findById(sub._id)).safepayBilling.creditMinor).toBeLessThanOrEqual(firstCredit);
+  expect(captures).toHaveLength(count);
+});
+
+test('a new Meta-inclusive monthly invoice starts a fresh full-month funded allowance rather than reusing an old partial slice', async () => {
+  await accept((await quote()).quoteId);
+  await accept((await quote({ kind: 'upgrade', includeMetaAds: true })).quoteId);
+  await makeDue(); await lifecycle.runBillingWorker();
+  const renewal = await Operation.findOne({ kind: 'renewal' });
+  expect(renewal.status).toBe('applied'); expect(renewal.terms.metaAddonMinor).toBe(400);
+  const current = await Sub.findById(sub._id);
+  expect(await require('../../services/safepayMetaCreditService').currentMetaFunding(current, 'sandbox')).toMatchObject({
+    operationId: String(renewal._id), allowanceMinor: 400 });
 });

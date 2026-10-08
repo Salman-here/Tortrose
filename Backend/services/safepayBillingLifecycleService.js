@@ -149,7 +149,10 @@ async function queueRenewal(subscriptionId, at = new Date()) {
     const monthlyMinor = downgrade ? minor(sub.pendingDowngrade.targetUnitAmountMinor) : minor(sub.safepayBilling.monthlyMinor);
     const credit = applyBillingCredit(monthlyMinor, minor(sub.safepayBilling.creditMinor));
     const requestKey = `renewal:${sub.safepayBilling.contractId}:${sub.safepayBilling.cycle}`;
+    const metaAddonMinor = !downgrade && sub.metaAdsIncluded
+      ? (await require('./safepayMetaCreditService').currentMetaFunding(sub, config.environment, session)).addonMonthlyMinor : 0;
     const terms = { plan: downgrade ? 'starter' : sub.plan, planName: downgrade ? sub.pendingDowngrade.targetPlanName : sub.planName,
+      metaAddonMinor,
       includeMetaAds: downgrade ? false : sub.metaAdsIncluded, monthlyMinor, currency: 'USD', trialDays: 0,
       founderRate: sub.founderOffer?.active === true, sourceContractId: sub.safepayBilling.contractId,
       periodStart: period.start, periodEnd: period.end, cycle: sub.safepayBilling.cycle,

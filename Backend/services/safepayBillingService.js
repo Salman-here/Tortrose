@@ -10,7 +10,8 @@ const CheckoutClaim = require('../models/SellerCheckoutClaim');
 const Store = require('../models/Store');
 const User = require('../models/User');
 const { readSafepayConfig } = require('../config/safepay');
-const { buildPlanPricing } = require('./subscriptionPricingService');
+const { buildPlanPricing, META_ADS_ADDON_CENTS } = require('./subscriptionPricingService');
+const metaCredit = require('./safepayMetaCreditService');
 const { monthlyBoundary, proratedPlanChange, applyBillingCredit, renewalPeriod } = require('./safepayBillingMath');
 const { requireOwnedReusableCard } = require('./safepayCustomerService');
 const payments = require('./safepayPaymentService');
@@ -80,6 +81,20 @@ async function createQuote(sellerId, body) {
   const existing = await Operation.findOne({ seller: sellerId, environment: config.environment, requestKey });
   if (existing) {
     if (existing.fingerprint !== requestFingerprint) throw fail('This billing attempt has different terms.', 'IDEMPOTENCY_CONFLICT');
+    if (['quoted', 'expired'].includes(existing.status) && metaCredit.unboundedMetaQuote(existing)) {
+      // An old, unaccepted over-credit quote is not a funded obligation. Retire
+      // its exact claim so either client can deliberately request a safe quote.
+      return presentQuote(await transaction(async session => {
+        const current = await Operation.findOne({ _id: existing._id, seller: sellerId, environment: config.environment }).session(session);
+        if (!current) throw fail('Review a fresh billing quote.', 'SUBSCRIPTION_QUOTE_STALE');
+        if (['quoted', 'expired'].includes(current.status)) {
+          current.status = 'expired'; await current.save({ session });
+          await CheckoutClaim.deleteOne({ seller: sellerId, flow: 'subscription', provider: 'safepay',
+            token: current.terms.checkoutClaimToken }).session(session);
+        }
+        return current;
+      }));
+    }
     return presentQuote(existing);
   }
   const sub = await sellerSubscription(sellerId);
@@ -130,15 +145,19 @@ async function createQuote(sellerId, body) {
     const price = buildPlanPricing(plan, includeMetaAds, founderRate);
     const trialDays = kind === 'enrollment' && !sub.hasUsedFreePeriod ? price.freePeriodDays : 0;
     const at = new Date();
-    const proration = kind === 'upgrade' && sub.status !== 'free_period'
+    let proration = kind === 'upgrade' && sub.status !== 'free_period'
       ? proratedPlanChange({ sourceMinor: sub.safepayBilling.monthlyMinor, targetMinor: price.unitAmount,
         periodStart: sub.currentPeriodStart, periodEnd: sub.currentPeriodEnd, at }) : null;
+    if (isRemoval && proration?.creditMinor > 0) {
+      proration = metaCredit.capMetaCredit(proration, await metaCredit.currentMetaFunding(sub, config.environment));
+    }
     const gross = kind === 'enrollment' ? (trialDays ? 0 : price.unitAmount) : proration?.dueMinor || 0;
     const credit = applyBillingCredit(gross, minor(sub.safepayBilling?.creditMinor || 0));
     const [operation] = await Operation.create([{ _id: operationId, seller: sellerId, subscription: sub._id,
       environment: config.environment, requestKey, fingerprint: requestFingerprint, sourceVersion: sub.safepayBilling?.version || 0,
       kind: isRemoval ? 'meta_removal' : kind, expiresAt: claim.claim.expiresAt,
-      terms: { plan, planName: price.planName, includeMetaAds, monthlyMinor: price.unitAmount, currency: 'USD', trialDays,
+      terms: { plan, planName: price.planName, includeMetaAds, metaAddonMinor: includeMetaAds ? META_ADS_ADDON_CENTS : 0,
+        monthlyMinor: price.unitAmount, currency: 'USD', trialDays,
         founderRate, founderReservationToken: reservation?.token || '', checkoutClaimToken: claim.claim.token,
         sourceContractId: sub.safepayBilling?.contractId || '', sourceMonthlyMinor: sub.safepayBilling?.monthlyMinor || 0,
         sourcePlan: sub.plan, sourceMetaAds: sub.metaAdsIncluded, grossMinor: gross, dueMinor: credit.chargeMinor,
@@ -260,11 +279,13 @@ async function acceptQuote(sellerId, body) {
       return op;
     }
     if (op.status !== 'quoted' || date(op.expiresAt) <= new Date()) throw fail('This quote expired. Please review a fresh quote.', 'SUBSCRIPTION_QUOTE_EXPIRED');
+    if (metaCredit.unboundedMetaQuote(op)) throw fail('Review a fresh quote to verify the funded add-on credit.', 'SUBSCRIPTION_QUOTE_STALE');
     if (op.terms.proration?.periodEnd && date(op.terms.proration.periodEnd) <= new Date()) throw fail('The quoted billing period ended. Review a new quote.', 'SUBSCRIPTION_QUOTE_STALE');
     const sub = await Subscription.findById(op.subscription).select('+safepayBilling.cardId').session(session);
     if (!sub || sub.paymentRisk?.suspended || (sub.safepayBilling?.version || 0) !== op.sourceVersion || sub.safepayBilling?.pendingOperation) {
       throw fail('Subscription details changed. Review a fresh quote.', 'SUBSCRIPTION_QUOTE_STALE');
     }
+    await metaCredit.verifyMetaCreditQuote(op, sub, config.environment, session);
     if (op.terms.retryOf && (id(sub.safepayBilling.lastFailedOperation) !== op.terms.retryOf
       || !sub.safepayBilling.autoRenew || sub.cancelledAt && !sub.pendingDowngrade?.toPlan)) {
       throw fail('This renewal is no longer authorized. Review the current subscription.', 'SUBSCRIPTION_QUOTE_STALE');
