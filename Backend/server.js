@@ -836,6 +836,7 @@ setInterval(() => {
 setTimeout(() => processDueBroadcasts().catch(() => {}), 15000);
 
 // ── Centralized error handler ──
+app.use(require('./middleware/multipartUploadErrors'));
 app.use((err, req, res, next) => {
   console.error('Unhandled server error:', err);
   if (res.headersSent) return next(err);
