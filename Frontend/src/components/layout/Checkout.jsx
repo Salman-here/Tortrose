@@ -62,6 +62,7 @@ import { requireWalletSummaryResponse } from '../../utils/walletPaymentRisk';
 import { getCartPresentationProductCurrency } from '../../utils/cartPresentation';
 import StoreAvatar from '../common/StoreAvatar';
 import { openSafepayCheckout } from '../../utils/safepay';
+import { checkoutDraftStorageKey, markGuestCheckoutHandoff, readCheckoutDraft } from '../../utils/checkoutDraft';
 
 const CHECKOUT_ATTEMPT_STORAGE_KEY = 'rozare_checkout_attempt_v1';
 const ORDER_SUCCESS_STORAGE_KEY = 'rozare_order_success_v1';
@@ -149,15 +150,21 @@ const rememberStripeCheckoutReturn = (
 };
 
 export default function Checkout() {
+  const { currentUser } = useAuth();
+  const owner = String(currentUser?._id || currentUser?.id || 'guest');
+  // Remount form state as well as storage when the signed-in actor changes.
+  return <OwnedCheckout key={owner} owner={owner} />;
+}
+
+function OwnedCheckout({ owner }) {
 
   const steps = ["Cart", "Shipping", "Payment"];
-  const CHECKOUT_STORAGE_KEY = 'checkoutProgress_v1';
+  const CHECKOUT_STORAGE_KEY = checkoutDraftStorageKey(owner);
   const [currentStep, setCurrentStep] = useState(() => {
     try {
-      const saved = sessionStorage.getItem(CHECKOUT_STORAGE_KEY);
+      const saved = readCheckoutDraft(sessionStorage, owner);
       if (saved) {
-        const parsed = JSON.parse(saved);
-        if (typeof parsed.currentStep === 'number') return parsed.currentStep;
+        if (typeof saved.currentStep === 'number') return saved.currentStep;
       }
     } catch (_) {}
     return 0;
@@ -194,7 +201,7 @@ export default function Checkout() {
   const [appliedCoupons, setAppliedCoupons] = useState({}); // { key: { coupon, applicableProductIds } }
   const restoredCouponCandidatesRef = useRef((() => {
     try {
-      const saved = JSON.parse(sessionStorage.getItem(CHECKOUT_STORAGE_KEY) || 'null');
+      const saved = readCheckoutDraft(sessionStorage, owner);
       return saved?.appliedCoupons && typeof saved.appliedCoupons === 'object' && !Array.isArray(saved.appliedCoupons)
         ? saved.appliedCoupons
         : null;
@@ -671,9 +678,8 @@ export default function Checkout() {
 
   useEffect(() => {
     try {
-      const saved = sessionStorage.getItem(CHECKOUT_STORAGE_KEY);
-      if (!saved) return;
-      const parsed = JSON.parse(saved);
+      const parsed = readCheckoutDraft(sessionStorage, owner);
+      if (!parsed) return;
       if (parsed.formValues) {
         Object.entries(parsed.formValues).forEach(([key, value]) => {
           if (value !== undefined && value !== null) setValue(key, key === 'paymentMethod' && value === 'stripe' ? 'safepay' : value);
@@ -685,7 +691,7 @@ export default function Checkout() {
       // Persisted coupons remain only as inert candidates. The cart-identity
       // effect activates them after the availability endpoint confirms terms.
     } catch (_) {}
-  }, [setValue]);
+  }, [owner, CHECKOUT_STORAGE_KEY, setValue]);
 
   useEffect(() => {
     try {
@@ -699,7 +705,7 @@ export default function Checkout() {
         })
       );
     } catch (_) {}
-  }, [currentStep, allFormValues, selectedShippingPerSeller, appliedCoupons]);
+  }, [CHECKOUT_STORAGE_KEY, currentStep, allFormValues, selectedShippingPerSeller, appliedCoupons]);
 
   // Subtotal
   const subtotal = cartItems?.cart
@@ -938,6 +944,7 @@ export default function Checkout() {
             appliedCoupons,
           })
         );
+        markGuestCheckoutHandoff(sessionStorage, owner);
       } catch (_) {}
       rememberPostAuthRedirect('/checkout');
       toast.info('Sign in to place your order. Your checkout details have been saved.');
