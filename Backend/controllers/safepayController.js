@@ -2,7 +2,7 @@
 const mongoose = require('mongoose');
 const Payment = require('../models/SafepayPayment');
 const { readSafepayConfig } = require('../config/safepay');
-const { reconcilePayment, prepareCheckout, paymentResponse, requireMobileSafepay } = require('../services/safepayPaymentService');
+const { reconcilePayment, prepareCheckout, paymentResponse, requireMobileSafepay, requireSafepayConfiguration } = require('../services/safepayPaymentService');
 const cards = require('../services/safepayCustomerService');
 const { parseReturnNavigation } = require('../services/safepayReturnNavigation');
 
@@ -61,7 +61,8 @@ exports.reopenPayment = async (req, res) => {
     const owned = await ownedPayment(req);
     if (!owned) return res.status(404).json({ msg: 'Payment not found.' });
     const clientSurface = req.body?.clientSurface || 'mobile';
-    requireMobileSafepay(clientSurface);
+    // This resumes an owned, frozen attempt; it cannot create a new purchase.
+    requireSafepayConfiguration(clientSurface);
     return res.json(await prepareCheckout(owned._id, { clientSurface }));
   } catch (error) { return reportError(res, error); }
 };
@@ -87,13 +88,13 @@ exports.startCardSetup = async (req, res) => {
 };
 exports.setDefaultCard = async (req, res) => {
   try {
-    requireMobileSafepay(req.body?.clientSurface);
+    requireSafepayConfiguration(req.body?.clientSurface);
     return res.json(await cards.setDefaultCard(req.user.id, req.params.cardId));
   } catch (error) { return reportError(res, error); }
 };
 exports.deleteCard = async (req, res) => {
   try {
-    requireMobileSafepay(req.body?.clientSurface);
+    requireSafepayConfiguration(req.body?.clientSurface);
     return res.json(await cards.deleteCard(req.user.id, req.params.cardId));
   } catch (error) { return reportError(res, error); }
 };

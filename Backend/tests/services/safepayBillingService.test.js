@@ -272,3 +272,49 @@ test('a declined first invoice allows a new explicit enrollment without a free-p
   const fresh = await quote({ requestKey: 'new-paid-enrollment-fixture' });
   expect(fresh.dueNowMinor).toBe(999); expect(fresh.freePeriodDays).toBe(0);
 });
+
+test('checkout pause does not strand an accepted invoice or create a second payment', async () => {
+  sub.hasUsedFreePeriod = true; await sub.save();
+  const result = await accept((await quote()).quoteId);
+  const oldFlags = [process.env.SAFEPAY_WEB_ENABLED, process.env.SAFEPAY_MOBILE_ENABLED];
+  try {
+    process.env.SAFEPAY_WEB_ENABLED = 'false'; process.env.SAFEPAY_MOBILE_ENABLED = 'false';
+    submit.mockClear();
+    await lifecycle.runBillingWorker(); await lifecycle.runBillingWorker();
+    expect(submit).toHaveBeenCalledTimes(2);
+    expect(submit.mock.calls.every(([paymentId]) => String(paymentId) === String(result.paymentId))).toBe(true);
+    expect(await Payment.countDocuments()).toBe(1);
+    expect((await Subscription.findById(sub._id)).status).not.toBe('active');
+    await lifecycle.cancel(seller._id);
+    expect((await Subscription.findById(sub._id)).safepayBilling.autoRenew).toBe(false);
+  } finally {
+    for (const [i, key] of ['SAFEPAY_WEB_ENABLED', 'SAFEPAY_MOBILE_ENABLED'].entries()) {
+      if (oldFlags[i] === undefined) delete process.env[key]; else process.env[key] = oldFlags[i];
+    }
+  }
+});
+
+test('checkout pause continues a due consented renewal exactly once and cancellation still prevents renewal', async () => {
+  await accept((await quote()).quoteId);
+  const anchor = new Date(Date.now() - 60000);
+  await Subscription.updateOne({ _id: sub._id }, { $set: { 'safepayBilling.anchorAt': anchor,
+    'safepayBilling.nextChargeAt': anchor, currentPeriodEnd: anchor } });
+  const oldFlags = [process.env.SAFEPAY_WEB_ENABLED, process.env.SAFEPAY_MOBILE_ENABLED];
+  try {
+    process.env.SAFEPAY_WEB_ENABLED = 'false'; process.env.SAFEPAY_MOBILE_ENABLED = 'false';
+    await lifecycle.runBillingWorker(); await lifecycle.runBillingWorker();
+    expect(await Operation.countDocuments({ kind: 'renewal' })).toBe(1);
+    expect(await Payment.countDocuments()).toBe(1);
+    expect(submit).toHaveBeenCalled();
+    const current = await Subscription.findById(sub._id);
+    expect(current.status).toBe('past_due');
+    await lifecycle.cancel(seller._id);
+    submit.mockClear(); await lifecycle.runBillingWorker();
+    expect(submit).not.toHaveBeenCalled();
+    expect((await Subscription.findById(sub._id)).safepayBilling.autoRenew).toBe(false);
+  } finally {
+    for (const [i, key] of ['SAFEPAY_WEB_ENABLED', 'SAFEPAY_MOBILE_ENABLED'].entries()) {
+      if (oldFlags[i] === undefined) delete process.env[key]; else process.env[key] = oldFlags[i];
+    }
+  }
+});

@@ -1,6 +1,15 @@
 'use strict';
-// Web and mobile share reconciliation and recurring billing. Turning off one
-// checkout surface must not stop financial work for the other active surface.
-const safepayWorkersEnabled = (env = process.env) => env.SAFEPAY_MOBILE_ENABLED === 'true'
-  || env.SAFEPAY_WEB_ENABLED === 'true';
+const { readSafepayConfig } = require('../config/safepay');
+
+// Checkout switches control NEW payment agreements, not already accepted
+// liabilities. Signed callbacks, refunds and consented renewals must drain even
+// when both storefronts are paused. Never fall back to another environment.
+const safepayWorkersEnabled = (env = process.env) => {
+  try {
+    readSafepayConfig(env, { requireWebhook: true });
+    return true;
+  } catch (_) {
+    return false;
+  }
+};
 module.exports = { safepayWorkersEnabled };

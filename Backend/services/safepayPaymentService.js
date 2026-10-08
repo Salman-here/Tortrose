@@ -18,11 +18,16 @@ const fingerprint = value => crypto.createHash('sha256').update(JSON.stringify(s
 const PAID_PURPOSES = new Set(['order', 'wallet_top_up', 'subdomain', 'return_settlement']);
 const SETUP_PURPOSES = new Set([...PAID_PURPOSES, 'card_setup', 'subscription']);
 
+function requireSafepayConfiguration(surface) {
+  if (!['mobile', 'web'].includes(surface)) throw fail('Choose a supported checkout surface.', 'SAFEPAY_SURFACE_INVALID', 400);
+  return readSafepayConfig(process.env, { requireWebhook: true });
+}
+
 function requireMobileSafepay(surface) {
   if (!['mobile', 'web'].includes(surface)) throw fail('Choose a supported checkout surface.', 'SAFEPAY_SURFACE_INVALID', 400);
   const enabled = surface === 'web' ? process.env.SAFEPAY_WEB_ENABLED : process.env.SAFEPAY_MOBILE_ENABLED;
   if (enabled !== 'true') throw fail('Card payments are temporarily unavailable on this surface.', 'SAFEPAY_NOT_ENABLED', 503);
-  return readSafepayConfig(process.env, { requireWebhook: true });
+  return requireSafepayConfiguration(surface);
 }
 
 function createSafepayPaymentService({
@@ -328,5 +333,5 @@ function paymentResponse(payment) {
     isPaid: paid, completed: paid || cardSaved, cardSaved, webhookProcessed: paid || cardSaved, providerState: payment.providerState, failureCode: payment.lastErrorCode || '' };
 }
 
-module.exports = { createSafepayPaymentService, requireMobileSafepay, paymentResponse, fingerprint,
+module.exports = { createSafepayPaymentService, requireMobileSafepay, requireSafepayConfiguration, paymentResponse, fingerprint,
   ...createSafepayPaymentService() };

@@ -29,7 +29,9 @@ exports.status = async (req, res) => {
   } catch (error) { return fail(res, error); }
 };
 const action = name => async (req, res) => {
-  try { payments.requireMobileSafepay(req.body?.clientSurface); return res.json(await lifecycle[name](req.user.id)); }
+  // Sellers retain control of their existing agreement during a checkout pause,
+  // especially cancellation. New quotes/acceptances remain separately gated.
+  try { payments.requireSafepayConfiguration(req.body?.clientSurface); return res.json(await lifecycle[name](req.user.id)); }
   catch (error) { return fail(res, error); }
 };
 exports.cancel = action('cancel');
@@ -41,6 +43,6 @@ exports.retryQuote = async (req, res) => {
   catch (error) { return fail(res, error); }
 };
 exports.changeCard = async (req, res) => {
-  try { payments.requireMobileSafepay(req.body?.clientSurface); return res.json(await require('../services/safepayBillingRecoveryService').changeCard(req.user.id, req.body)); }
+  try { payments.requireSafepayConfiguration(req.body?.clientSurface); return res.json(await require('../services/safepayBillingRecoveryService').changeCard(req.user.id, req.body)); }
   catch (error) { return fail(res, error); }
 };

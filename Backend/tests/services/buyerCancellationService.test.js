@@ -181,6 +181,35 @@ test('an ambiguous refund response is recovered read-only and never POSTed twice
   } finally { config.mockRestore(); factory.mockRestore(); }
 });
 
+test('the shared financial worker completes an existing card refund while both checkout surfaces are paused', async () => {
+  const f = await fixture('safepay'), payment = await cardPayment(f);
+  await cancelBuyerOrder({ orderId: f.order._id, buyerId: f.buyer, sellerIds: [String(f.sellers[0])] });
+  const oldFlags = [process.env.SAFEPAY_WEB_ENABLED, process.env.SAFEPAY_MOBILE_ENABLED];
+  const config = jest.spyOn(require('../../config/safepay'), 'readSafepayConfig').mockReturnValue({ environment: 'sandbox' });
+  let refunded = false;
+  const refund = jest.fn(async () => { refunded = true; });
+  const client = { getTracker: jest.fn(async () => refunded ? trackerRefund(payment)
+    : { token: payment.tracker, state: 'TRACKER_ENDED', charge: { cybersource_refunds: [] } }), refundPaymentAmount: refund };
+  const factory = jest.spyOn(require('../../services/safepayClient'), 'createSafepayClient').mockReturnValue(client);
+  try {
+    process.env.SAFEPAY_WEB_ENABLED = 'false'; process.env.SAFEPAY_MOBILE_ENABLED = 'false';
+    const worker = require('../../services/safepayWebhookWorker');
+    await worker.runSafepayWebhookWorker();
+    expect(refund).toHaveBeenCalledTimes(1);
+    await Cancellation.updateMany({}, { $set: { nextAttemptAt: new Date(0) } });
+    await worker.runSafepayWebhookWorker(); await worker.runSafepayWebhookWorker();
+    expect((await Cancellation.findOne({})).refundStatus).toBe('refunded');
+    expect((await Payment.findById(payment._id)).refundedMinor).toBe(1200);
+    expect(refund).toHaveBeenCalledTimes(1); expect(await WalletTransaction.countDocuments()).toBe(0);
+    expect((await Product.findById(f.products[0]._id)).stock).toBe(5);
+  } finally {
+    config.mockRestore(); factory.mockRestore();
+    for (const [i, key] of ['SAFEPAY_WEB_ENABLED', 'SAFEPAY_MOBILE_ENABLED'].entries()) {
+      if (oldFlags[i] === undefined) delete process.env[key]; else process.env[key] = oldFlags[i];
+    }
+  }
+});
+
 test('new card cancellation requires a destination, fresh quote and explicit fee consent', async () => {
   const f = await fixture('safepay', 'shipped', true);
   const args = { orderId:f.order._id, buyerId:f.buyer, sellerIds:[String(f.sellers[0])] };
