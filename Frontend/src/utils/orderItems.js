@@ -416,6 +416,23 @@ export const getSellerCurrencyMoney = (order = {}) => {
   };
 };
 
+export const getSellerOnlineDeduction = (order = {}, sellerMoney = getSellerCurrencyMoney(order)) => {
+  const raw = order.sellerOnlineDeduction;
+  if (raw === null || raw === undefined) return null;
+  if (!sellerMoney || !['wallet','safepay'].includes(order.paymentMethod) || raw.version !== 1
+      || raw.basis !== 'original_order' || raw.currency !== sellerMoney.currency) {
+    throw orderPresentationIntegrityError('seller payment deduction');
+  }
+  const grossAmount = requireExactStoredMoney(raw.grossAmount,'seller original gross');
+  const processingFeeAndTax = requireExactStoredMoney(raw.processingFeeAndTax,'seller processing fee and tax');
+  const netAmount = requireExactStoredMoney(raw.netAmount,'seller net order amount');
+  if (grossAmount !== sellerMoney.summary.totalAmount || processingFeeAndTax > grossAmount
+      || addCurrencyAmounts(grossAmount,-processingFeeAndTax) !== netAmount) {
+    throw orderPresentationIntegrityError('seller net order amount');
+  }
+  return { ...raw, grossAmount, processingFeeAndTax, netAmount };
+};
+
 export const inspectSellerOrderListMoney = (order) => {
   try {
     const sellerMoney = getSellerCurrencyMoney(order);

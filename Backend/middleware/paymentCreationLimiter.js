@@ -14,6 +14,11 @@ const createPaymentLimiter = ({ max, message }) => rateLimit({
 });
 
 module.exports = {
+  checkoutQuoteLimiter: rateLimit({
+    windowMs:60 * 1000, max:90, standardHeaders:true, legacyHeaders:false,
+    validate:false, keyGenerator:authenticatedAccountOrIpKey,
+    message:{ msg:'Checkout is being refreshed too often. Please wait a moment.', code:'CHECKOUT_QUOTE_RATE_LIMITED' },
+  }),
   orderPaymentCreationLimiter: createPaymentLimiter({
     max: 30,
     message: 'Too many checkout attempts. Please wait before trying again.',

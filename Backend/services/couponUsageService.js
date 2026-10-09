@@ -163,6 +163,28 @@ const assertPersistedPricingMatches = (order, repriced) => {
   const current = [...(repriced?.appliedCoupons || [])]
     .sort((left, right) => toId(left?.couponId).localeCompare(toId(right?.couponId)))
     .map(canonicalAppliedCoupon);
+  if (order.sellerCurrencyMoneyVersion === 2) {
+    // Buyer invoice cents are allocated after native coupon terms have been
+    // applied. Recheck the REAL source discount and terms, not a percentage of
+    // a buyer line that received a checkout rounding cent. Keep the frozen
+    // buyer allocation when writing/reusing redemption records.
+    require('./orderMoneyService').getFrozenSellerCurrencyMoney(order);
+    const nativeTerms = (canonical, raw) => {
+      const { appliedDiscountAmount, ...terms } = canonical;
+      return { ...terms, sourceAppliedDiscountAmount:requireExactCouponMoney(raw.sourceAppliedDiscountAmount, 'native applied coupon discount', { positive:true }) };
+    };
+    const persistedRaw = sortedAppliedCoupons(order);
+    const currentRaw = [...repriced.appliedCoupons].sort((a,b) => toId(a.couponId).localeCompare(toId(b.couponId)));
+    if (JSON.stringify(persisted.map((row,index) => nativeTerms(row,persistedRaw[index])))
+        !== JSON.stringify(current.map((row,index) => nativeTerms(row,currentRaw[index])))) {
+      throw usageError('A coupon changed while checkout was being prepared. Refresh checkout and apply it again.', 'COUPON_TERMS_CHANGED');
+    }
+    const frozen = new Map(persistedRaw.map(row => [toId(row.couponId),row]));
+    repriced.appliedCoupons = repriced.appliedCoupons.map(row => ({ ...row,
+      appliedDiscountAmount:frozen.get(toId(row.couponId)).appliedDiscountAmount }));
+    repriced.couponDiscount = order.orderSummary.couponDiscount;
+    return;
+  }
   if (
     JSON.stringify(persisted) !== JSON.stringify(current)
     || requireExactCouponMoney(order?.orderSummary?.couponDiscount, 'order coupon discount')

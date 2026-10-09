@@ -18,6 +18,10 @@ const {
 } = require('../../services/couponUsageService');
 const { payOrderWithWallet } = require('../../services/walletService');
 const { commitOrderInventoryAndCoupons } = require('../../services/orderInventoryService');
+const { priceOrderItemLines } = require('../../services/orderLinePricingService');
+const { validateAndPriceCoupons } = require('../../services/checkoutPricingService');
+const { priceSellerNativeCheckout } = require('../../services/sellerCheckoutRoundingService');
+const { buildOrderSellerSettlement } = require('../../services/orderMoneyService');
 
 let replicaSet;
 
@@ -127,6 +131,35 @@ beforeEach(async () => {
 });
 
 describe('atomic order coupon lifecycle', () => {
+  test('a 99% native coupon keeps its frozen buyer cents when seller round-up adds an item cent', async () => {
+    const identity = ids();
+    const coupon = await makeCoupon({ seller:identity.seller,discountValue:99 });
+    coupon.currency = 'PKR'; await coupon.save();
+    const rates = { USD:1,PKR:300,EUR:0.9,GBP:0.8 };
+    const items = priceOrderItemLines({ items:[{ productId:identity.product,seller:identity.seller,name:'Native coupon item',
+      sourcePrice:301.2,sourceCurrency:'PKR',quantity:1 }],targetCurrency:'USD',exchangeRates:rates });
+    const couponPricing = await validateAndPriceCoupons({ requestedCoupons:[{ couponId:coupon._id }],orderItems:items,
+      userId:identity.buyer,orderCurrency:'USD',exchangeRates:rates });
+    const original = await makeOrder({ coupon,...identity,persist:false,paymentMethod:'wallet' });
+    original.orderItems = items;
+    original.appliedCoupons = couponPricing.appliedCoupons;
+    original.sellerPolicies = [{ seller:identity.seller,productCurrency:'PKR' }];
+    original.sellerShipping = [{ seller:identity.seller,shippingMethod:{ name:'free',price:0,sourceCost:0,sourceCurrency:'PKR',estimatedDays:1 } }];
+    original.orderSummary = { subtotal:1,shippingCost:0,tax:0,couponDiscount:0.99,totalAmount:0.01 };
+    original.exchangeRateSnapshot = { base:'USD',rates,capturedAt:new Date(),source:'test',fallback:false };
+    Object.assign(original,priceSellerNativeCheckout(original));
+    original.sellerCurrencyMoneyVersion = 2;
+    original.sellerSettlement = buildOrderSellerSettlement(original,{ requireOrderTotal:true });
+    await original.save();
+    expect(original.orderSummary).toMatchObject({ subtotal:1.01,couponDiscount:0.99,totalAmount:0.02 });
+    expect(original.sellerCurrencyMoney[0]).toMatchObject({ discountMinor:29819,totalMinor:301,adjustmentMinor:0 });
+    await reserveOrderCoupons({ orderId:original._id,userId:identity.buyer });
+    await consumeOrderCoupons({ orderId:original._id });
+    await consumeOrderCoupons({ orderId:original._id });
+    expect((await Coupon.findById(coupon._id)).usedCount).toBe(1);
+    expect((await CouponRedemption.findOne({ order:original._id })).appliedDiscountAmount).toBe(0.99);
+    expect((await Order.findById(original._id)).orderSummary.totalAmount).toBe(0.02);
+  });
   test('allows only one concurrent reservation for the final global use', async () => {
     const first = ids();
     const secondBuyer = new mongoose.Types.ObjectId();

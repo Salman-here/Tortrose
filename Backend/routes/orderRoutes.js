@@ -2,6 +2,7 @@
 const express = require('express')
 const {
     placeOrder,
+    quoteCheckout,
     getPaymentStatus,
     getOrders,
     updateStatus,
@@ -18,9 +19,12 @@ const {
 const verifyToken = require('../middleware/authMiddleware')
 const {
   orderPaymentCreationLimiter,
+  checkoutQuoteLimiter,
   paymentStatusPollingLimiter,
 } = require('../middleware/paymentCreationLimiter')
 const router = express.Router()
+
+router.post('/quote', verifyToken.optionalAuth, checkoutQuoteLimiter, quoteCheckout)
 
 router.post('/place', verifyToken, orderPaymentCreationLimiter, placeOrder)
 router.get('/track', trackGuestOrder)

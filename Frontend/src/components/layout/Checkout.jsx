@@ -63,6 +63,8 @@ import { getCartPresentationProductCurrency } from '../../utils/cartPresentation
 import StoreAvatar from '../common/StoreAvatar';
 import { openSafepayCheckout } from '../../utils/safepay';
 import { checkoutDraftStorageKey, markGuestCheckoutHandoff, readCheckoutDraft } from '../../utils/checkoutDraft';
+import useCheckoutQuote from '../../hooks/useCheckoutQuote';
+import { createCheckoutQuoteInput } from '../../utils/checkoutQuote';
 
 const CHECKOUT_ATTEMPT_STORAGE_KEY = 'rozare_checkout_attempt_v1';
 const ORDER_SUCCESS_STORAGE_KEY = 'rozare_order_success_v1';
@@ -254,7 +256,7 @@ function OwnedCheckout({ owner }) {
   const cartLineTotalsByItem = new Map((cartItems?.cart || []).map((item, index) => (
     [item, cartLineTotals[index]]
   )));
-  const getCartLineTotal = (item) => cartLineTotalsByItem.get(item);
+  const getBaseCartLineTotal = (item) => cartLineTotalsByItem.get(item);
   const shippingMethodCurrency = (method, sellerInfo = null) => (
     method?.currency
     || sellerInfo?.methods?.find((candidate) => candidate?.type === method?.type)?.currency
@@ -546,7 +548,7 @@ function OwnedCheckout({ owner }) {
   const couponPricing = calculateCheckoutCouponPricing({
     appliedCoupons,
     cartItems: cartItems?.cart || [],
-    getItemLineTotal: (item) => getCartLineTotal(item),
+    getItemLineTotal: (item) => getBaseCartLineTotal(item),
     getItemKey: (item) => cartLineKey(item),
     convertCouponAmount: couponAmountInCheckoutCurrency,
     getCouponCurrency: couponCurrency,
@@ -554,10 +556,7 @@ function OwnedCheckout({ owner }) {
     exchangeRates,
   });
 
-  const getProductCouponDiscount = (item) => (
-    couponPricing.lineDiscounts.get(cartLineKey(item)) || 0
-  );
-  const totalCouponDiscount = couponPricing.totalDiscount;
+  const baseCouponDiscount = couponPricing.totalDiscount;
 
   const handleAutoFill = () => {
     if (!savedShippingInfo) return;
@@ -707,10 +706,31 @@ function OwnedCheckout({ owner }) {
     } catch (_) {}
   }, [CHECKOUT_STORAGE_KEY, currentStep, allFormValues, selectedShippingPerSeller, appliedCoupons]);
 
-  // Subtotal
-  const subtotal = cartItems?.cart
+  const quoteInput = createCheckoutQuoteInput({
+    actor:checkoutUserId || 'guest', currency, cart:cartItems?.cart || [],
+    selections:selectedShippingPerSeller, shippingMethods:sellerShippingMethods,
+    coupons:appliedCoupons, paymentMethod,
+    location:currentStep === 0 ? buyerLocation : { country:allFormValues.country || buyerLocation.country, countryCode:allFormValues.countryCode || buyerLocation.countryCode,
+      city:allFormValues.city || buyerLocation.city, state:allFormValues.state || buyerLocation.region,
+      town:buyerLocation.countryCode === allFormValues.countryCode && String(buyerLocation.city || '').toLowerCase() === String(allFormValues.city || '').toLowerCase() ? buyerLocation.town || '' : '' },
+    pricingSignature:JSON.stringify(exchangeRates),
+  });
+  const checkoutQuote = useCheckoutQuote({ input:quoteInput,
+    enabled:isCartReady && shippingStatus === 'ready' && taxStatus === 'ready' && !exchangeRatesLoading && !exchangeRatesFallback,
+    requestQuote:(request,signal) => {
+      const token = getAuthToken();
+      return axios.post(`${import.meta.env.VITE_API_URL}api/order/quote`,{ ...request,clientSurface:'web' },
+        { signal,headers:token ? { Authorization:`Bearer ${token}` } : {} });
+    },
+  });
+  const quoteLines = new Map((cartItems?.cart || []).map((item,index) => [item,checkoutQuote.quote?.orderItems[index]]));
+  const getCartLineTotal = item => quoteLines.get(item)?.lineSubtotal ?? getBaseCartLineTotal(item);
+  const getProductCouponDiscount = item => quoteLines.get(item)?.discountAmount ?? (couponPricing.lineDiscounts.get(cartLineKey(item)) || 0);
+  const totalCouponDiscount = checkoutQuote.quote?.orderSummary.couponDiscount ?? baseCouponDiscount;
+  const baseSubtotal = cartItems?.cart
     ? addCurrencyAmounts(...cartLineTotals)
     : 0;
+  const subtotal = checkoutQuote.quote?.orderSummary.subtotal ?? baseSubtotal;
 
   // Keep seller order aligned with the cart/server. This order is also the
   // deterministic tie-breaker when a globally converted shipping total has a
@@ -729,7 +749,7 @@ function OwnedCheckout({ owner }) {
   }, [cartItems]);
 
   // Calculate tax and shipping
-  const tax = calculateTax(subtotal);
+  const tax = checkoutQuote.quote?.orderSummary.tax ?? calculateTax(baseSubtotal);
 
   // The backend converts all foreign shipping fees as one exact amount and
   // then allocates target cents to sellers. Mirroring that allocation avoids
@@ -745,17 +765,20 @@ function OwnedCheckout({ owner }) {
       return method ? { sellerId, method } : null;
     })
     .filter(Boolean);
-  const shippingLineAmounts = convertLineAmounts(selectedShippingEntries.map(({ sellerId, method }) => ({
+  const baseShippingLineAmounts = convertLineAmounts(selectedShippingEntries.map(({ sellerId, method }) => ({
     unitAmount: method.cost,
     quantity: 1,
     sourceCurrency: shippingMethodCurrency(method, sellerShippingMethods[sellerId]),
   })), currency);
+  const shippingLineAmounts = selectedShippingEntries.map((entry,index) =>
+    checkoutQuote.quote?.sellerShipping.find(row => String(row.seller) === entry.sellerId)?.shippingMethod.price ?? baseShippingLineAmounts[index]);
   const shippingAmountBySeller = new Map(selectedShippingEntries.map((entry, index) => (
     [entry.sellerId, shippingLineAmounts[index]]
   )));
   const shippingCost = addCurrencyAmounts(...shippingLineAmounts);
+  const quotedCartLineTotals = (cartItems?.cart || []).map(item => getCartLineTotal(item));
 
-  const totalAmount = Math.max(0, addCurrencyAmounts(subtotal, tax, shippingCost, -totalCouponDiscount));
+  const totalAmount = checkoutQuote.quote?.orderSummary.totalAmount ?? Math.max(0, addCurrencyAmounts(subtotal, tax, shippingCost, -totalCouponDiscount));
   const checkoutSourceCurrencies = [
     ...(cartItems?.cart || []).map((item) => (
       hasCurrencyAmount(getEffectiveProductSourcePrice(item?.product))
@@ -794,11 +817,12 @@ function OwnedCheckout({ owner }) {
   const shippingReady = shippingStatus === 'ready'
     && cartSellerIds.length > 0
     && selectedShippingEntries.length === cartSellerIds.length;
-  const checkoutBlocked = !isCartReady || taxUnavailable || !shippingReady || checkoutRatesUnavailable;
+  const checkoutBlocked = !isCartReady || taxUnavailable || !shippingReady || checkoutRatesUnavailable || !checkoutQuote.ready;
   const formatShippingOptionPrice = (method, sellerInfo = null) => {
     const sourceAmount = method.cost;
     const sourceCurrency = shippingMethodCurrency(method, sellerInfo);
-    const targetAmount = shippingCostInCheckoutCurrency(method, sellerInfo);
+    const quotedShipping = checkoutQuote.quote?.sellerShipping.find(row => String(row.seller) === String(sellerInfo?.seller?._id || sellerInfo?.seller || '') && row.shippingMethod.name === method.type);
+    const targetAmount = quotedShipping?.shippingMethod.price ?? shippingCostInCheckoutCurrency(method, sellerInfo);
     if (
       !checkoutHasUnsupportedCurrency([sourceCurrency])
       && isPositiveSourceAmountRoundedToZero(sourceAmount, targetAmount)
@@ -986,6 +1010,10 @@ function OwnedCheckout({ owner }) {
       return;
     }
 
+    if (!checkoutQuote.ready) {
+      toast.info(checkoutQuote.error || 'Wait while the checkout total is confirmed.');
+      return;
+    }
     if (data.paymentMethod === 'cash_on_delivery' && !isCashOnDeliveryAvailable) {
       toast.error(`${codRestrictionText} Please pay by card or Rozare Wallet, or remove those items.`);
       return;
@@ -1073,6 +1101,7 @@ function OwnedCheckout({ owner }) {
       },
 
       sellerShipping: sellerShipping, // Multi-seller shipping details
+      pricingPolicyVersion:1,
 
       orderSummary: {
         subtotal,
@@ -1180,7 +1209,7 @@ function OwnedCheckout({ owner }) {
         trackPlaceAnOrder({
           orderId: res.data.order?.orderId || res.data.order?._id,
           cartItems: cartItems?.cart || [],
-          lineTotals: cartLineTotals,
+          lineTotals: quotedCartLineTotals,
           totalAmount: authoritativeEventTotal,
           currency: authoritativeEventCurrency,
           eventId: tiktokPlaceOrderEventId,
@@ -1217,7 +1246,7 @@ function OwnedCheckout({ owner }) {
       if (res.data?.noPaymentRequired !== true) {
         trackAddPaymentInfo({
           cartItems: cartItems?.cart || [],
-          lineTotals: cartLineTotals,
+          lineTotals: quotedCartLineTotals,
           totalAmount: authoritativeEventTotal,
           currency: authoritativeEventCurrency,
         });
@@ -1225,7 +1254,7 @@ function OwnedCheckout({ owner }) {
       trackPlaceAnOrder({
         orderId: res.data.order?.orderId,
         cartItems: cartItems?.cart || [],
-        lineTotals: cartLineTotals,
+        lineTotals: quotedCartLineTotals,
         totalAmount: authoritativeEventTotal,
         currency: authoritativeEventCurrency,
         eventId: tiktokPlaceOrderEventId,
@@ -1254,6 +1283,7 @@ function OwnedCheckout({ owner }) {
 
     } catch (error) {
       if (isCheckoutRepriceRequired(error)) {
+        checkoutQuote.refresh();
         if (fingerprint && attemptKey) {
           await clearPersistedMutationAttemptFromLedger(
             localStorage,
@@ -1425,6 +1455,14 @@ function OwnedCheckout({ owner }) {
               </div>
             )}
 
+            {quoteInput.ready && !checkoutQuote.ready && taxStatus === 'ready' && shippingStatus === 'ready' && (
+              <div className="mb-6 glass-inner rounded-2xl p-4 flex items-center gap-3" role="status" aria-live="polite">
+                <Loader2 size={18} className={checkoutQuote.status === 'loading' ? 'animate-spin' : ''} />
+                <p className="text-sm flex-1">{checkoutQuote.error || 'Confirming checkout total…'}</p>
+                {checkoutQuote.error && <button type="button" className="glass-inner px-3 py-2 rounded-xl text-xs font-semibold"
+                  onClick={() => { checkoutQuote.refresh(); fetchCart(); fetchShippingMethods(); fetchTaxConfig(); fetchAvailableCoupons(); }}>Refresh total</button>}
+              </div>
+            )}
             {!!couponPricing.error && (
               <div className="mb-6 rounded-2xl p-4" role="alert" aria-live="polite"
                 style={{ background: 'rgba(239,68,68,0.09)', border: '1px solid rgba(239,68,68,0.24)' }}>
@@ -2377,7 +2415,7 @@ function OwnedCheckout({ owner }) {
 
                 {tax > 0 && (
                   <div className="flex justify-between text-sm" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                    <span>Tax {taxConfig?.type === 'percentage' && `(${taxConfig.value}%)`}</span>
+                    <span>{checkoutQuote.quote?.taxLabel || `Tax${taxConfig?.type === 'percentage' ? ` (${taxConfig.value}%)` : ''}`}</span>
                     <span className="font-medium" style={{ color: 'hsl(var(--foreground))' }}>{checkoutMoney(tax)}</span>
                   </div>
                 )}

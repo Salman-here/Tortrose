@@ -90,14 +90,14 @@ const {
     validateAndPriceShipping,
 } = require('../services/checkoutPricingService');
 const {
-    SELLER_CURRENCY_MONEY_VERSION,
+    NATIVE_SELLER_CURRENCY_MONEY_VERSION,
     SELLER_SETTLEMENT_VERSION,
-    buildOrderSellerCurrencyMoney,
     buildOrderSellerSettlement,
     getAccountingOrderCurrency,
     sellerCurrencyMoneyPresentation,
     sellerOrderSummaryForItems,
 } = require('../services/orderMoneyService');
+const { priceSellerNativeCheckout } = require('../services/sellerCheckoutRoundingService');
 const {
     getOrderItemLineSubtotal,
     priceOrderItemLines,
@@ -1018,6 +1018,11 @@ const buildSellerOrderView = (order, sellerProductIds, sellerId) => {
     const obj = order.toObject ? order.toObject() : { ...order };
     // The fee snapshot contains ALL seller allocations and stays server-only.
     delete obj.onlineFeeSnapshot;
+    delete obj.checkoutRoundingSnapshot;
+    const ownedFee = require('../services/onlineOrderFeeService').sellerOnlineFee(order,sellerId);
+    const sellerOnlineDeduction = ownedFee ? { version:1, basis:'original_order', currency:ownedFee.currency,
+        grossAmount:fromMinorUnits(ownedFee.grossMinor), processingFeeAndTax:fromMinorUnits(ownedFee.feeMinor),
+        netAmount:fromMinorUnits(ownedFee.grossMinor - ownedFee.feeMinor) } : null;
     const ownedProductIds = new Set(sellerOrderItems.map(item => toId(item.productId)));
     const ownsWholeOrder = sellerOrderItems.length > 0 && sellerOrderItems.length === (order.orderItems || []).length;
     const visibleCoupons = (obj.appliedCoupons || []).filter(coupon => {
@@ -1049,6 +1054,7 @@ const buildSellerOrderView = (order, sellerProductIds, sellerId) => {
         sellerFulfillment: sellerFulfillment ? [sellerFulfillment] : [],
         sellerPolicies: sellerPolicy ? [sellerPolicy] : [],
         sellerCurrencyMoney,
+        sellerOnlineDeduction,
         orderSummary: {
             subtotal: sellerMoney.subtotal,
             shippingCost: sellerMoney.shippingCost,
@@ -1099,12 +1105,33 @@ const getSellerScopedOrders = async (query, sellerId, sort = null, { lean = fals
     return orders.map(order => buildSellerOrderView(order, sellerProductIds, sellerId));
 };
 
+const READ_ONLY_CHECKOUT_QUOTE = Symbol('read-only-checkout-quote');
+
+exports.quoteCheckout = async (req, res) => {
+    const input = req.body?.order || {};
+    const quoteRequest = Object.create(req);
+    quoteRequest[READ_ONLY_CHECKOUT_QUOTE] = true;
+    const paymentMethod = input.paymentMethod || 'wallet';
+    quoteRequest.body = {
+        order: {
+            ...input, paymentMethod,
+            shippingInfo: input.shippingInfo || input.buyerLocation || {},
+            shippingMethod: input.shippingMethod || input.sellerShipping?.[0]?.shippingMethod || {},
+            orderSummary: { subtotal:0, shippingCost:0, tax:0, couponDiscount:0, totalAmount:0 },
+        },
+        paymentFlow: paymentMethod === 'safepay' ? 'safepay_hosted' : 'checkout_session',
+        clientSurface: req.body?.clientSurface || 'web',
+    };
+    return exports.placeOrder(quoteRequest, res);
+};
+
 exports.placeOrder = async (req, res) => {
     const { order } = req.body;
+    const quoteOnly = req[READ_ONLY_CHECKOUT_QUOTE] === true;
     // console.log(order);
 
     const userId = req.user?.id || null;
-    const rawIdempotencyKey = req.headers['idempotency-key']
+    const rawIdempotencyKey = quoteOnly ? null : req.headers['idempotency-key']
         || req.headers['x-idempotency-key']
         || order?.idempotencyKey;
     const clientCheckoutIdempotencyKey = normalizeCheckoutIdempotencyKey(rawIdempotencyKey);
@@ -1208,7 +1235,9 @@ exports.placeOrder = async (req, res) => {
         // Freeze one authoritative international destination at checkout. A
         // domestic number is resolved only from the selected shipping country;
         // there is deliberately no Pakistan (or any other) default guess.
-        const shippingPhoneSnapshot = canonicalizeShippingPhone(order.shippingInfo);
+        const shippingPhoneSnapshot = quoteOnly
+            ? { e164:'', countryCode:order.shippingInfo.countryCode || '' }
+            : canonicalizeShippingPhone(order.shippingInfo);
         const normalizedPaymentMethod = ['stripe', 'cash_on_delivery', 'wallet', 'safepay'].includes(order.paymentMethod)
             ? order.paymentMethod
             : null;
@@ -1221,7 +1250,7 @@ exports.placeOrder = async (req, res) => {
         if ((rawPaymentFlow === 'safepay_hosted') !== (normalizedPaymentMethod === 'safepay')) {
             return res.status(400).json({ msg: 'Choose the matching secure payment flow.', code: 'PAYMENT_FLOW_METHOD_MISMATCH' });
         }
-        if (safepayConfig) await SafepayPayment.init();
+        if (safepayConfig && !quoteOnly) await SafepayPayment.init();
         const isNativeStripePayment = normalizedPaymentMethod === 'stripe' && rawPaymentFlow === 'payment_sheet';
         if (rawPaymentFlow === 'payment_sheet' && !isNativeStripePayment) {
             return res.status(400).json({
@@ -1235,19 +1264,19 @@ exports.placeOrder = async (req, res) => {
                 code: 'PAYMENT_SHEET_MOBILE_ONLY',
             });
         }
-        if (!checkoutIdempotencyKey) {
+        if (!checkoutIdempotencyKey && !quoteOnly) {
             return res.status(400).json({
                 msg: 'A checkout attempt key is required for every order.',
                 code: 'IDEMPOTENCY_KEY_REQUIRED',
             });
         }
-        if (normalizedPaymentMethod === 'wallet' && !userId) {
+        if (normalizedPaymentMethod === 'wallet' && !userId && !quoteOnly) {
             return res.status(401).json({
                 msg: 'Log in to pay with Rozare Wallet.',
                 code: 'WALLET_LOGIN_REQUIRED',
             });
         }
-        if (normalizedPaymentMethod === 'safepay' && !userId) {
+        if (normalizedPaymentMethod === 'safepay' && !userId && !quoteOnly) {
             return res.status(401).json({ msg: 'Log in to pay securely with Safepay.', code: 'SAFEPAY_LOGIN_REQUIRED' });
         }
 
@@ -1289,7 +1318,7 @@ exports.placeOrder = async (req, res) => {
             storeBySeller = new Map(stores.map(store => [toId(store.seller), store]));
             for (const sellerId of sellerIdsInOrder) {
                 const store = storeBySeller.get(sellerId);
-                if (!store || !isStoreAvailableForDelivery(store, deliveryLocation)) {
+                if (!store || ((!quoteOnly || deliveryLocation.country || deliveryLocation.countryCode) && !isStoreAvailableForDelivery(store, deliveryLocation))) {
                     return res.status(400).json({
                         msg: 'One or more products in this order are not available in your selected delivery area.',
                     });
@@ -1353,7 +1382,7 @@ exports.placeOrder = async (req, res) => {
                 returnPolicy: effectiveReturnPolicy,
             };
         });
-        const normalizedOrderItems = priceOrderItemLines({
+        let normalizedOrderItems = priceOrderItemLines({
             items: nativeOrderItems,
             targetCurrency: orderCurrency,
             exchangeRates: checkoutRates,
@@ -1475,7 +1504,7 @@ exports.placeOrder = async (req, res) => {
             error.code = 'ORDER_TOTAL_MISMATCH';
             throw error;
         }
-        const totalAmount = sumMoney([
+        let totalAmount = sumMoney([
             subtotalRounded,
             shippingCostRounded,
             taxRounded,
@@ -1487,13 +1516,44 @@ exports.placeOrder = async (req, res) => {
             error.code = 'ORDER_TOTAL_MISMATCH';
             throw error;
         }
-        const authoritativeOrderSummary = {
+        let authoritativeOrderSummary = {
             subtotal: subtotalRounded,
             shippingCost: shippingCostRounded,
             tax: taxRounded,
             couponDiscount: couponDiscountRounded,
             totalAmount,
         };
+        const nativePricing = priceSellerNativeCheckout({
+            currency:orderCurrency, paymentMethod:normalizedPaymentMethod,
+            orderItems:normalizedOrderItems, sellerShipping:shippingPricing.sellerShipping,
+            appliedCoupons:couponPricing.appliedCoupons, orderSummary:authoritativeOrderSummary,
+            sellerPolicies:sellerIdsInOrder.map(seller => ({ seller, productCurrency:storeBySeller.get(seller)?.productCurrency || 'USD' })),
+            exchangeRateSnapshot:{ base:'USD', rates:checkoutRates, capturedAt:new Date(exchangeRateSnapshot.capturedAt), source:exchangeRateSnapshot.source, fallback:false },
+        });
+        normalizedOrderItems = nativePricing.orderItems;
+        shippingPricing.sellerShipping = nativePricing.sellerShipping;
+        shippingPricing.primaryShipping = nativePricing.sellerShipping[0];
+        couponPricing.appliedCoupons = nativePricing.appliedCoupons;
+        authoritativeOrderSummary = nativePricing.orderSummary;
+        totalAmount = authoritativeOrderSummary.totalAmount;
+        if (quoteOnly) {
+            if (typeof res.set === 'function') res.set('Cache-Control','no-store');
+            const invoice = { ...nativePricing, currency:orderCurrency, sellerCurrencyMoneyVersion:NATIVE_SELLER_CURRENCY_MONEY_VERSION,
+                orderItems:normalizedOrderItems, sellerPolicies:[], appliedCoupons:nativePricing.appliedCoupons };
+            const { buildOrderItemMoneyAllocations } = require('../services/orderMoneyService');
+            const allocations = buildOrderItemMoneyAllocations(invoice);
+            return res.status(200).json({
+                success:true, pricingPolicyVersion:1, currency:orderCurrency,
+                orderSummary:authoritativeOrderSummary,
+                orderItems:normalizedOrderItems.map((item,index) => ({ productId:item.productId, quantity:item.quantity,
+                    selectedColor:item.selectedColor, selectedOptions:item.selectedOptions, price:item.price, lineSubtotal:item.lineSubtotal,
+                    discountAmount:allocations.discount.get(allocations.itemKeys[index]) || 0 })),
+                sellerShipping:shippingPricing.sellerShipping,
+                appliedCoupons:nativePricing.appliedCoupons,
+                taxLabel:taxConfig?.type === 'percentage' ? `Tax (${taxConfig.value}%)` : taxConfig?.type === 'fixed' ? 'Tax (Fixed)' : 'Tax',
+                capturedAt:exchangeRateSnapshot.capturedAt,
+            });
+        }
         // `orderSummary` is the exact amount the buyer reviewed. Product,
         // delivery, coupon, tax, or FX state can change between render and the
         // click. Never debit Wallet, commit COD, reserve stock/coupons, or
@@ -1623,12 +1683,13 @@ exports.placeOrder = async (req, res) => {
                     : new Date(Date.now() + 35 * 60 * 1000),
             } : {}),
         });
+        newOrder.checkoutRoundingSnapshot = nativePricing.checkoutRoundingSnapshot;
+        newOrder.sellerCurrencyMoneyVersion = NATIVE_SELLER_CURRENCY_MONEY_VERSION;
+        newOrder.sellerCurrencyMoney = nativePricing.sellerCurrencyMoney;
         newOrder.sellerSettlementVersion = SELLER_SETTLEMENT_VERSION;
         newOrder.sellerSettlement = buildOrderSellerSettlement(newOrder, {
             requireOrderTotal: true,
         });
-        newOrder.sellerCurrencyMoneyVersion = SELLER_CURRENCY_MONEY_VERSION;
-        newOrder.sellerCurrencyMoney = buildOrderSellerCurrencyMoney(newOrder);
         newOrder.onlineFeeSnapshot = require('../services/onlineOrderFeeService').buildOnlineOrderFee(newOrder);
         // Enforce Stripe's documented eight-digit charge ceiling before this
         // order, coupon reservation, inventory reservation, Stripe customer,
@@ -2560,6 +2621,7 @@ if (process.env.NODE_ENV === 'test') {
     exports._buildOrderExportMoney = buildOrderExportMoney;
     exports._sumExportMinorUnits = sumExportMinorUnits;
     exports._snapshotIsTrustedForConversion = snapshotIsTrustedForConversion;
+    exports._buildSellerOrderView = buildSellerOrderView;
 }
 
 /**

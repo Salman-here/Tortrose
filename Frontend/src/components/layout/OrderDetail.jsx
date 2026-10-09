@@ -13,6 +13,7 @@ import {
     getExactOrderItemUnitAmount,
     getOrderCurrency,
     getSellerCurrencyMoney,
+    getSellerOnlineDeduction,
     getOrderItemLineSubtotal,
     getOrderItemOptionPairs,
     getOrderSellerShippingBreakdown,
@@ -165,6 +166,7 @@ const OrderDetail = () => {
         targetCurrency: sellerCurrencyMoney?.currency || getOrderCurrency(order),
         showCode: true,
     });
+    const onlineDeduction = sellerCurrencyMoney ? getSellerOnlineDeduction(order,sellerCurrencyMoney) : null;
     const summarySubtotal = sellerCurrencyMoney?.summary.subtotal
         ?? getOrderSummaryAmount(order, ['subtotal'], 'order subtotal');
     const summaryTax = sellerCurrencyMoney?.summary.tax
@@ -492,14 +494,19 @@ const OrderDetail = () => {
                             {sellerCurrencyMoney && sellerCurrencyMoney.buyerCurrency !== sellerCurrencyMoney.currency && (
                                 <div className="mt-4 p-3 rounded-xl" style={{ background: 'rgba(99, 102, 241, 0.08)', border: '1px solid rgba(99, 102, 241, 0.18)' }}>
                                     <div className="flex justify-between gap-4">
-                                        <span className="text-sm font-medium" style={{ color: 'hsl(var(--muted-foreground))' }}>Buyer checkout equivalent</span>
+                                        <span className="text-sm font-medium" style={{ color: 'hsl(var(--muted-foreground))' }}>{order.paymentMethod === 'cash_on_delivery' && sellerCurrencyMoney.pricingPolicyVersion === 1 ? `COD amount to collect (${sellerCurrencyMoney.buyerCurrency})` : `Buyer ordered in ${sellerCurrencyMoney.buyerCurrency}`}</span>
                                         <span className="text-sm font-bold" style={{ color: 'hsl(var(--foreground))' }}>{orderMoney(sellerCurrencyMoney.buyerSummary.totalAmount)}</span>
                                     </div>
-                                    <p className="text-[10px] mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                                    {sellerCurrencyMoney.pricingPolicyVersion !== 1 && <p className="text-[10px] mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
                                         Frozen rate: 1 {sellerCurrencyMoney.currency} = {sellerCurrencyMoney.exchangeRate.rate.toLocaleString(undefined, { maximumFractionDigits: 6 })} {sellerCurrencyMoney.buyerCurrency}. Buyer and seller values will not change with live FX.
-                                    </p>
+                                    </p>}
                                 </div>
                             )}
+                            {onlineDeduction && <div className="mt-4 glass-inner rounded-xl p-3 space-y-2">
+                                <p className="text-xs" style={{ color:'hsl(var(--muted-foreground))' }}>Original payment calculation</p>
+                                <div className="flex justify-between gap-3 text-sm"><span>Processing fee + tax</span><span>-{primaryMoney(onlineDeduction.processingFeeAndTax)}</span></div>
+                                <div className="flex justify-between gap-3 text-sm font-semibold"><span>Net order amount</span><span>{primaryMoney(onlineDeduction.netAmount)}</span></div>
+                            </div>}
                         </div>
                     </div>
 

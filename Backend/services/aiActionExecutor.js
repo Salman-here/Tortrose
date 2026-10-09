@@ -77,8 +77,6 @@ const {
   sumCurrencyAmountsInCurrency,
   sumOrderAmountsInCurrency,
   SELLER_SETTLEMENT_VERSION,
-  SELLER_CURRENCY_MONEY_VERSION,
-  buildOrderSellerCurrencyMoney,
   buildOrderSellerSettlement,
   getAccountingOrderCurrency,
   requireStoredOrderMoney,
@@ -3136,7 +3134,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
           exchangeRates: orderRates,
           exchangeRatesFallback: orderExchangeRateSnapshot.fallback,
         });
-        const sellerShipping = allocatedSellerShipping.map(entry => ({
+        let sellerShipping = allocatedSellerShipping.map(entry => ({
           seller: entry.seller,
           shippingMethod: {
             name: entry.name,
@@ -3153,14 +3151,14 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
             { allowMissing: false },
           )
         )));
-        const shippingMethod = sellerShipping[0]?.shippingMethod || { name: 'Standard', price: 0, estimatedDays: 5 };
+        let shippingMethod = sellerShipping[0]?.shippingMethod || { name: 'Standard', price: 0, estimatedDays: 5 };
         if (sellerIds[0]) shippingMethod.seller = sellerIds[0];
 
-        const subtotalRounded = roundMoney(subtotal);
-        const shippingCostRounded = roundMoney(shippingCost);
-        const taxRounded = roundMoney(tax);
-        const totalAmount = sumMoney([subtotalRounded, shippingCostRounded, taxRounded]);
-        const persistedOrderItems = orderItems.map(item => {
+        let subtotalRounded = roundMoney(subtotal);
+        let shippingCostRounded = roundMoney(shippingCost);
+        let taxRounded = roundMoney(tax);
+        let totalAmount = sumMoney([subtotalRounded, shippingCostRounded, taxRounded]);
+        let persistedOrderItems = orderItems.map(item => {
           const product = productItems.find(
             candidate => normalizeObjectIdString(candidate._id) === normalizeObjectIdString(item.productId || item.id)
           );
@@ -3190,6 +3188,17 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
           };
         });
 
+        const nativePricing = require('./sellerCheckoutRoundingService').priceSellerNativeCheckout({
+          currency:preferredCurrency, paymentMethod:normalizedPaymentMethod,
+          orderItems:persistedOrderItems, sellerShipping, appliedCoupons:[],
+          sellerPolicies:sellerIds.map(seller => ({ seller,productCurrency:sellerStoreById.get(seller)?.productCurrency || 'USD' })),
+          orderSummary:{ subtotal:subtotalRounded,shippingCost:shippingCostRounded,tax:taxRounded,couponDiscount:0,totalAmount },
+          exchangeRateSnapshot:{ base:'USD',rates:orderRates,capturedAt:orderExchangeRateSnapshot.capturedAt,source:orderExchangeRateSnapshot.source,fallback:false },
+        });
+        persistedOrderItems = nativePricing.orderItems;
+        sellerShipping = nativePricing.sellerShipping;
+        shippingMethod = { ...sellerShipping[0].shippingMethod,seller:sellerShipping[0].seller };
+        ({ subtotal:subtotalRounded,shippingCost:shippingCostRounded,tax:taxRounded,totalAmount } = nativePricing.orderSummary);
         const previewShipping = {
           fullName: shipping.fullName, email: shipping.email,
           phone: shippingPhoneSnapshot.e164, address: shipping.address,
@@ -3292,13 +3301,14 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
         // Freeze the exact seller USD conservation plan before the order ever
         // becomes visible. Later FX changes and rounding cannot alter how this
         // mixed-currency checkout settles across sellers.
+        newOrder.checkoutRoundingSnapshot = nativePricing.checkoutRoundingSnapshot;
+        newOrder.sellerCurrencyMoneyVersion = 2;
+        newOrder.sellerCurrencyMoney = nativePricing.sellerCurrencyMoney;
         newOrder.sellerSettlementVersion = SELLER_SETTLEMENT_VERSION;
         newOrder.sellerSettlement = buildOrderSellerSettlement(newOrder, {
           requireOrderTotal: true,
         });
 
-        newOrder.sellerCurrencyMoneyVersion = SELLER_CURRENCY_MONEY_VERSION;
-        newOrder.sellerCurrencyMoney = buildOrderSellerCurrencyMoney(newOrder);
         newOrder.onlineFeeSnapshot = require('./onlineOrderFeeService').buildOnlineOrderFee(newOrder);
 
         newOrder.confirmation = {
@@ -4979,7 +4989,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
             { awaitingPayment: { $ne: true } },
           ],
         })
-          .select('orderSummary appliedCoupons orderStatus sellerFulfillment sellerPolicies isPaid isDelivered paymentMethod createdAt orderItems sellerShipping shippingMethod currency exchangeRateSnapshot sellerSettlementVersion sellerSettlement sellerCurrencyMoneyVersion sellerCurrencyMoney')
+          .select('orderSummary appliedCoupons orderStatus sellerFulfillment sellerPolicies isPaid isDelivered paymentMethod createdAt orderItems sellerShipping shippingMethod currency exchangeRateSnapshot sellerSettlementVersion sellerSettlement sellerCurrencyMoneyVersion sellerCurrencyMoney checkoutRoundingSnapshot')
           .lean();
         const sellerOrders = orders
           .map(order => ({
@@ -6367,7 +6377,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
           awaitingPayment: { $ne: true },
           orderStatus: { $ne: 'cancelled' },
         })
-          .select('orderItems orderSummary appliedCoupons sellerShipping shippingMethod sellerFulfillment paymentMethod isPaid isDelivered orderStatus currency')
+          .select('orderItems orderSummary appliedCoupons sellerShipping shippingMethod sellerFulfillment paymentMethod isPaid isDelivered orderStatus currency sellerCurrencyMoneyVersion checkoutRoundingSnapshot')
           .lean();
         const legacyProductIds = [...new Set(revenueOrders.flatMap(order => (
           (order.orderItems || [])

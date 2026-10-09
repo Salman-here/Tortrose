@@ -65,6 +65,20 @@ function nativeLiabilityMinor(sourceMinor, buyerEntitlementMinor, nativeEntitlem
   return toMinorUnits(convertMoneyByRates(fromMinorUnits(sourceMinor), fromMinorUnits(buyerEntitlementMinor), fromMinorUnits(nativeEntitlementMinor)));
 }
 
+// COD collection belongs to the seller, including the buyer rounding remainder.
+// Funding a Wallet return therefore costs the ACTUAL collected buyer amount,
+// converted directly at the frozen checkout rate. Online returns instead
+// reverse the original native credit; the platform's remainder is not earnings.
+function nativeReturnFundingMinor(order, sourceMinor, buyerEntitlementMinor, nativeEntitlementMinor, nativeCurrency) {
+  const original = nativeLiabilityMinor(sourceMinor, buyerEntitlementMinor, nativeEntitlementMinor);
+  if (order.paymentMethod !== 'cash_on_delivery' || order.sellerCurrencyMoneyVersion !== 2) return original;
+  const rates = getOrderExchangeRates(order);
+  if (!rates || !isSupportedCurrency(nativeCurrency) || !isSupportedCurrency(order.currency)) {
+    throw fault('COD return funding requires the original currency and exchange rates.');
+  }
+  return toMinorUnits(convertMoneyByRates(fromMinorUnits(sourceMinor), rates[order.currency], rates[nativeCurrency]));
+}
+
 function computeNativeSellerAccounting({ sellerId, orders, productIds = new Set(), transactions = [], withdrawals = [], pendingRiskHolds = [], returns = [], reportingCurrency = 'USD', at = new Date() }) {
   if (!isSupportedCurrency(reportingCurrency)) throw fault('Unsupported reporting currency.');
   const buckets = Object.fromEntries(Object.keys(CURRENCIES).map(currency => [currency, empty(currency)]));
@@ -146,7 +160,9 @@ function computeNativeSellerAccounting({ sellerId, orders, productIds = new Set(
   }
   for (const { entitlement: e, source, kind } of liabilities.values()) {
     if (source < 0) throw fault('A credit exceeds the original native liability.');
-    const native = nativeLiabilityMinor(source, e.buyerTotal, e.total);
+    const native = kind === 'returnRefundDebits'
+      ? nativeReturnFundingMinor(e.order, source, e.buyerTotal, e.total, e.currency)
+      : nativeLiabilityMinor(source, e.buyerTotal, e.total);
     buckets[e.currency][kind] = add(buckets[e.currency][kind], native);
   }
   for (const e of deliveredOnline) {
@@ -239,4 +255,4 @@ async function buildNativeSellerPaymentSummary(sellerId, { session = null, displ
 }
 
 module.exports = { WITHDRAWAL_MINIMUMS, computeNativeSellerAccounting, buildNativeSellerPaymentSummary,
-  nativeSellerEntitlement, nativeLiabilityMinor };
+  nativeSellerEntitlement, nativeLiabilityMinor, nativeReturnFundingMinor };

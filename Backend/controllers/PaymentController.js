@@ -1354,7 +1354,7 @@ const buildLegacySellerPaymentSummary = async (sellerId, {
             orderStatus: { $ne: 'cancelled' },
             $or: orderScopes,
         })
-            .select('orderId orderItems sellerShipping sellerFulfillment shippingMethod orderSummary appliedCoupons paymentMethod isPaid paidAt orderStatus isDelivered deliveredAt createdAt currency exchangeRateSnapshot sellerSettlementVersion sellerSettlement')
+            .select('orderId orderItems sellerShipping sellerFulfillment shippingMethod orderSummary appliedCoupons paymentMethod isPaid paidAt orderStatus isDelivered deliveredAt createdAt currency exchangeRateSnapshot sellerSettlementVersion sellerSettlement sellerCurrencyMoneyVersion checkoutRoundingSnapshot')
             .sort({ createdAt: -1 }), session)
             .lean();
 
@@ -1949,7 +1949,7 @@ const buildLegacyAdminPaymentsOverviewData = async () => {
             orderStatus: { $ne: 'cancelled' },
             $or: orderScopes,
         })
-            .select('orderId orderItems sellerShipping sellerFulfillment shippingMethod orderSummary appliedCoupons paymentMethod isPaid paidAt orderStatus isDelivered deliveredAt createdAt currency exchangeRateSnapshot sellerSettlementVersion sellerSettlement')
+            .select('orderId orderItems sellerShipping sellerFulfillment shippingMethod orderSummary appliedCoupons paymentMethod isPaid paidAt orderStatus isDelivered deliveredAt createdAt currency exchangeRateSnapshot sellerSettlementVersion sellerSettlement sellerCurrencyMoneyVersion checkoutRoundingSnapshot')
             .sort({ createdAt: -1 })
             .lean();
 

@@ -18,6 +18,7 @@ const RefundEvent = require('../../models/SafepayRefundEvent');
 const payments = require('../../services/safepayPaymentService');
 const { buildOrderSellerSettlement, buildOrderSellerCurrencyMoney } = require('../../services/orderMoneyService');
 const { buildOnlineOrderFee } = require('../../services/onlineOrderFeeService');
+const { priceSellerNativeCheckout } = require('../../services/sellerCheckoutRoundingService');
 const { buildSellerPaymentSummary, createWithdrawalRequest } = require('../../controllers/PaymentController');
 const { settleFromSellerBalance, createSafepayReturnSettlement, completeSafepayReturnSettlement } = require('../../services/returnService');
 const { debitWalletInSession } = require('../../services/walletService');
@@ -43,7 +44,7 @@ beforeEach(async () => {
 afterEach(() => prepare.mockRestore());
 
 async function order({ seller = new mongoose.Types.ObjectId(), buyer = new mongoose.Types.ObjectId(),
-  native = 'PKR', currency = native, total = 1000, method = 'cash_on_delivery' } = {}) {
+  native = 'PKR', currency = native, total = 1000, method = 'cash_on_delivery', nativePricing = false } = {}) {
   const buyerTotal = Math.round(total / rates[native] * rates[currency] * 100) / 100;
   const returnable = method === 'cash_on_delivery';
   const policy = { returnsEnabled: returnable, returnDuration: returnable ? 7 : 0, refundType: returnable ? 'full_refund' : 'none' };
@@ -61,8 +62,10 @@ async function order({ seller = new mongoose.Types.ObjectId(), buyer = new mongo
     exchangeRateSnapshot: { base: 'USD', rates, capturedAt: new Date(), source: 'qa-frozen', fallback: false },
     paymentMethod: method, isPaid: method !== 'cash_on_delivery', orderStatus: 'delivered', isDelivered: true,
     deliveredAt: new Date(), awaitingPayment: false, inventoryCommitted: true });
+  if (nativePricing) Object.assign(stored,priceSellerNativeCheckout(stored));
   stored.sellerSettlementVersion = 1; stored.sellerSettlement = buildOrderSellerSettlement(stored, { requireOrderTotal: true });
-  stored.sellerCurrencyMoneyVersion = 1; stored.sellerCurrencyMoney = buildOrderSellerCurrencyMoney(stored);
+  stored.sellerCurrencyMoneyVersion = nativePricing ? 2 : 1;
+  if (!nativePricing) stored.sellerCurrencyMoney = buildOrderSellerCurrencyMoney(stored);
   if (method === 'wallet') stored.onlineFeeSnapshot = buildOnlineOrderFee(stored);
   await stored.save();
   return stored;
@@ -91,6 +94,34 @@ async function cardAttempt(original) {
     clientFor: () => ({ getTracker: async () => ({ state }) }) });
   return { returned, payment, service, setState: next => { state = next; } };
 }
+
+test('new COD rounding debits the actual Rs303 collected for the $1.01 Wallet refund, exactly once', async () => {
+  const earning = await order({ method:'wallet',nativePricing:true,total:1000 });
+  const seller = earning.orderItems[0].seller;
+  const original = await order({ seller,nativePricing:true,currency:'USD',total:301.2 });
+  const returned = await request(original);
+  const before = await buildSellerPaymentSummary(seller,{ displayCurrency:'PKR' });
+  expect(before.balanceByCurrency.PKR.withdrawableBalance).toBe(908);
+  await settleFromSellerBalance({ returnRequestId:returned._id,sellerId:seller });
+  await settleFromSellerBalance({ returnRequestId:returned._id,sellerId:seller });
+  const after = await buildSellerPaymentSummary(seller,{ displayCurrency:'PKR' });
+  expect(after.balanceByCurrency.PKR).toMatchObject({ withdrawableBalance:605,returnRefundDebits:303,processingFeeAndTax:92,deficit:0 });
+  expect((await Wallet.findOne({ user:original.user })).balances.USD).toBe(1.01);
+  expect(await SellerBalanceTransaction.countDocuments({ type:'return_refund' })).toBe(1);
+  expect((await SellerBalanceTransaction.findOne({ type:'return_refund' })).metadata).toMatchObject({ nativeFundingVersion:2,nativeCurrency:'PKR',nativeDebitMinor:30300 });
+  expect(original.sellerCurrencyMoney[0].totalMinor).toBe(30120);
+});
+
+test('new COD card-funded return pays the full frozen buyer $1.01 without adding a seller balance debit', async () => {
+  const original = await order({ nativePricing:true,currency:'USD',total:301.2 });
+  const attempt = await cardAttempt(original);
+  expect(attempt.payment.amountMinor).toBe(101);
+  await attempt.service.reconcilePayment(attempt.payment._id);
+  await attempt.service.reconcilePayment(attempt.payment._id);
+  expect((await Wallet.findOne({ user:original.user })).balances.USD).toBe(1.01);
+  expect(await SellerBalanceTransaction.countDocuments({ type:'return_refund' })).toBe(0);
+  expect(await WalletTransaction.countDocuments({ type:'return_refund' })).toBe(1);
+});
 
 test.each([['PKR', 'PKR'], ['PKR', 'USD'], ['USD', 'USD'], ['USD', 'PKR']])(
   'delivered COD %s seller / %s buyer can fund the exact NET available boundary without a withdrawal minimum', async (native, currency) => {

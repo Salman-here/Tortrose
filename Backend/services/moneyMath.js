@@ -509,6 +509,75 @@ const allocateConvertedMinorUnitsByRates = (
   };
 };
 
+// Native-checkout primitive: keep signed components as rational values and
+// round one complete supplied portion upward once. The pricing-policy caller
+// invokes this per seller, then adds the seller budgets into the checkout.
+// A native-cent component has no fractional remainder and stays unchanged.
+// This must not replace the historical nearest-rounding helpers used by old
+// orders, fees, reports, or refund allocations.
+const allocateCheckoutMinorUnitsByRates = (entries = [], targetRate, scale = 2, { targetTotalMinor = null } = {}) => {
+  const parsedScale = requireMoneyScale(scale);
+  const target = decimalToFraction(targetRate);
+  if (!Array.isArray(entries) || !target || target.numerator <= 0n) {
+    throw invalidMoneyInput('Checkout conversion requires entries and a positive target rate.');
+  }
+  const scaleFactor = 10n ** BigInt(parsedScale);
+  const keys = new Set();
+  let exactTotal = { numerator: 0n, denominator: 1n };
+  const rows = entries.map((entry, index) => {
+    const amount = decimalToFraction(entry.amount);
+    const source = decimalToFraction(entry.sourceRate);
+    if (keys.has(entry.key) || !amount || !source || source.numerator <= 0n) {
+      throw invalidMoneyInput('Checkout components require unique keys, finite amounts, and positive rates.');
+    }
+    keys.add(entry.key);
+    const numerator = amount.numerator * source.denominator * target.numerator * scaleFactor;
+    const denominator = amount.denominator * source.numerator * target.denominator;
+    const divisor = greatestCommonDivisor(numerator, denominator) || 1n;
+    const exact = { numerator: numerator / divisor, denominator: denominator / divisor };
+    exactTotal = addFractions(exactTotal, exact);
+    const floor = exact.numerator >= 0n
+      ? exact.numerator / exact.denominator
+      : -((-exact.numerator + exact.denominator - 1n) / exact.denominator);
+    assertReversibleMinorUnits(floor, parsedScale);
+    return { key: entry.key, index, exact, minor: floor,
+      remainder: exact.numerator - floor * exact.denominator };
+  });
+  if (exactTotal.numerator < 0n) throw invalidMoneyInput('The complete checkout cannot be negative.');
+  const ceiling = (exactTotal.numerator + exactTotal.denominator - 1n) / exactTotal.denominator;
+  const floor = exactTotal.numerator / exactTotal.denominator;
+  if (targetTotalMinor !== null && (
+    typeof targetTotalMinor !== 'number' || !Number.isSafeInteger(targetTotalMinor)
+    || (BigInt(targetTotalMinor) !== floor && BigInt(targetTotalMinor) !== ceiling)
+  )) throw invalidMoneyInput('A seller component budget must be its allocated floor or ceiling.');
+  // Once a seller portion is rounded, its components receive a conserved
+  // floor/ceiling share. Apportion that budget without rounding it again.
+  const total = targetTotalMinor === null ? ceiling : BigInt(targetTotalMinor);
+  assertReversibleMinorUnits(total, parsedScale);
+  let remaining = total - rows.reduce((sum, row) => sum + row.minor, 0n);
+  const ranked = rows.filter(row => row.remainder > 0n).sort((left, right) => {
+    const a = left.remainder * right.exact.denominator;
+    const b = right.remainder * left.exact.denominator;
+    return a === b ? left.index - right.index : a > b ? -1 : 1;
+  });
+  if (remaining < 0n || remaining > BigInt(ranked.length)) {
+    throw invalidMoneyInput('Checkout component allocation does not conserve cents.');
+  }
+  for (const row of ranked) {
+    if (remaining === 0n) break;
+    row.minor += 1n;
+    remaining -= 1n;
+  }
+  const surplus = addFractions({ numerator: total, denominator: 1n },
+    { numerator: -exactTotal.numerator, denominator: exactTotal.denominator });
+  return {
+    totalMinor: Number(total),
+    allocations: new Map(rows.map(row => [row.key, Number(row.minor)])),
+    exactTotalMinor: { numerator: String(exactTotal.numerator), denominator: String(exactTotal.denominator) },
+    remainderMinor: { numerator: String(surplus.numerator), denominator: String(surplus.denominator) },
+  };
+};
+
 // Deterministic highest-averages (D'Hondt) apportionment for cumulative money
 // targets. Unlike largest remainder, this method is house-monotone: increasing
 // `totalMinorUnits` can never take a previously allocated cent from any key.
@@ -671,5 +740,6 @@ module.exports = {
   percentagePlusConvertedMoney,
   allocateMinorUnitsByWeights,
   allocateConvertedMinorUnitsByRates,
+  allocateCheckoutMinorUnitsByRates,
   allocateHouseMonotoneMinorUnits,
 };

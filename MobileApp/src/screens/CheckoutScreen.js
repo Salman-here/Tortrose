@@ -66,6 +66,8 @@ import { inspectWalletSummaryPresentation } from '../utils/walletPresentationSaf
 import StoreAvatar from '../components/common/StoreAvatar';
 import SavedSafepayCardPicker from '../components/common/SavedSafepayCardPicker';
 import useSavedSafepayCards from '../hooks/useSavedSafepayCards';
+import useCheckoutQuote from '../hooks/useCheckoutQuote';
+import { createCheckoutQuoteInput } from '../utils/checkoutQuote';
 
 const CHECKOUT_ATTEMPT_STORAGE_KEY = 'rozare_checkout_attempt_v1';
 
@@ -114,7 +116,7 @@ export default function CheckoutScreen({ navigation }) {
   const [sellerShippingMethods, setSellerShippingMethods] = useState({});
   const [selectedShippingPerSeller, setSelectedShippingPerSeller] = useState({});
   const [shippingError, setShippingError] = useState('');
-  const [tax, setTax] = useState(0);
+  const [baseTax, setTax] = useState(0);
   const [taxStatus, setTaxStatus] = useState('loading');
   const [taxError, setTaxError] = useState('');
   const [taxCurrency, setTaxCurrency] = useState(null);
@@ -173,12 +175,12 @@ export default function CheckoutScreen({ navigation }) {
     fast: 'Fast Shipping',
   }[method?.type] || `${method?.type || 'Shipping'} Shipping`);
 
-  const checkoutLineTotals = convertLineAmounts((cartItems?.cart || []).map((item) => ({
+  const baseCheckoutLineTotals = convertLineAmounts((cartItems?.cart || []).map((item) => ({
     unitAmount: getEffectiveProductSourcePrice(item?.product),
     quantity: getCartItemQuantity(item),
     sourceCurrency: getProductCurrency(item?.product),
   })), currency);
-  const subtotal = addCurrencyAmounts(...checkoutLineTotals);
+  const baseSubtotal = addCurrencyAmounts(...baseCheckoutLineTotals);
 
   const cartItemsBySeller = useMemo(() => {
     const grouped = {};
@@ -202,8 +204,6 @@ export default function CheckoutScreen({ navigation }) {
       sourceCurrency: shippingMethodCurrency(method, sellerData),
     })), currency),
   });
-  const shippingCost = shippingPricing.shippingCost;
-  const sellerShipping = shippingPricing.sellerShipping;
   const selectedAuthoritativeShippingMethods = Object.keys(cartItemsBySeller).map((sellerId) => {
     const selectedType = selectedShippingPerSeller[sellerId]?.type
       || selectedShippingPerSeller[sellerId]?.name;
@@ -223,14 +223,30 @@ export default function CheckoutScreen({ navigation }) {
   const couponPricing = calculateCouponPricing({
     appliedCoupons,
     cartItems: cartItems?.cart || [],
-    getItemLineTotal: (_item, index) => checkoutLineTotals[index] || 0,
+    getItemLineTotal: (_item, index) => baseCheckoutLineTotals[index] || 0,
     convertCouponAmount: couponAmountInCheckoutCurrency,
     getCouponCurrency: couponCurrency,
     targetCurrency: currency,
     exchangeRates,
   });
-  const couponDiscount = couponPricing.totalDiscount;
-  const totalAmount = Math.max(0, addCurrencyAmounts(subtotal, shippingCost, tax, -couponDiscount));
+  const quoteShoppingLocation = getCachedBuyerLocation();
+  const quoteTown = quoteShoppingLocation?.mode === 'country' && quoteShoppingLocation.countryCode === formData.countryCode
+    && String(quoteShoppingLocation.city || '').trim().toLowerCase() === String(formData.city || '').trim().toLowerCase()
+    ? quoteShoppingLocation.town || '' : '';
+  const quoteInput = createCheckoutQuoteInput({ actor:currentUser?._id || currentUser?.id || 'guest', currency,
+    cart:cartItems?.cart || [], selections:selectedShippingPerSeller, shippingMethods:sellerShippingMethods,
+    coupons:appliedCoupons, paymentMethod, location:{ ...formData,town:quoteTown }, pricingSignature:JSON.stringify(exchangeRates) });
+  const checkoutQuote = useCheckoutQuote({ input:quoteInput,
+    enabled:isCartReady && !summaryLoading && shippingPricing.valid && taxStatus === 'ready' && !exchangeRatesLoading && !exchangeRatesFallback,
+    requestQuote:(request,signal) => api.post('/api/order/quote',{ ...request,clientSurface:'mobile' },{ signal }),
+  });
+  const checkoutLineTotals = checkoutQuote.quote?.orderItems.map(item => item.lineSubtotal) || baseCheckoutLineTotals;
+  const subtotal = checkoutQuote.quote?.orderSummary.subtotal ?? baseSubtotal;
+  const shippingCost = checkoutQuote.quote?.orderSummary.shippingCost ?? shippingPricing.shippingCost;
+  const sellerShipping = checkoutQuote.quote?.sellerShipping || shippingPricing.sellerShipping;
+  const tax = checkoutQuote.quote?.orderSummary.tax ?? baseTax;
+  const couponDiscount = checkoutQuote.quote?.orderSummary.couponDiscount ?? couponPricing.totalDiscount;
+  const totalAmount = checkoutQuote.quote?.orderSummary.totalAmount ?? Math.max(0, addCurrencyAmounts(subtotal, shippingCost, tax, -couponDiscount));
   const checkoutSourceCurrencies = [
     ...(cartItems?.cart || []).map((item) => (
       hasCurrencyAmount(getEffectiveProductSourcePrice(item?.product))
@@ -263,12 +279,13 @@ export default function CheckoutScreen({ navigation }) {
     return `${sourceRatesUnavailable ? '≈' : ''}${formatAmount(amount)}`;
   };
   const taxUnavailable = taxStatus !== 'ready';
-  const checkoutBlocked = !isCartReady || taxUnavailable || checkoutRatesUnavailable;
+  const checkoutBlocked = !isCartReady || taxUnavailable || checkoutRatesUnavailable || !checkoutQuote.ready;
   const formatShippingOptionPrice = (method, sellerInfo = null) => {
     if (method?.type === 'free') return 'Free';
     const sourceAmount = method?.cost ?? 0;
     const sourceCurrency = shippingMethodCurrency(method, sellerInfo);
-    const targetAmount = shippingCostInCheckoutCurrency(method, sellerInfo);
+    const quotedShipping = checkoutQuote.quote?.sellerShipping.find(row => String(row.seller) === String(sellerInfo?.seller?._id || sellerInfo?.seller || '') && row.shippingMethod.name === method.type);
+    const targetAmount = quotedShipping?.shippingMethod.price ?? shippingCostInCheckoutCurrency(method, sellerInfo);
     if (
       !checkoutHasUnsupportedCurrency([sourceCurrency])
       && isPositiveSourceAmountRoundedToZero(sourceAmount, targetAmount)
@@ -391,7 +408,7 @@ export default function CheckoutScreen({ navigation }) {
       const taxConfig = parseCheckoutTaxConfigResponse(taxRes.data);
       if (taxConfig.type !== 'none') {
         const computedTax = taxConfig.type === 'percentage'
-          ? percentageCurrencyAmount(subtotal, taxConfig.value)
+          ? percentageCurrencyAmount(baseSubtotal, taxConfig.value)
           : convertAmount(taxConfig.value, taxConfig.currency, currency);
         setTax(computedTax);
         setTaxCurrency(taxConfig.type === 'fixed' ? taxConfig.currency : null);
@@ -498,6 +515,10 @@ export default function CheckoutScreen({ navigation }) {
   };
 
   const handleApplyCoupon = async (suggestedCoupon = null) => {
+    if (!checkoutQuote.ready) {
+      Feedback.show({ type:'info', text1:'Confirming checkout total', text2:checkoutQuote.error || 'Please wait while your total is confirmed.' });
+      return;
+    }
     if (summaryLoading) {
       Feedback.show({ type: 'info', text1: 'Confirming coupons', text2: 'Wait for current coupon availability to finish loading.' });
       return;
@@ -646,6 +667,7 @@ export default function CheckoutScreen({ navigation }) {
       shippingMethod: { ...primaryShipping, seller: sellerShipping[0]?.seller },
       sellerShipping,
       orderSummary: { subtotal, shippingCost, tax, couponDiscount, totalAmount },
+      pricingPolicyVersion:1,
       currency,
       appliedCoupons: appliedCoupons.map((coupon) => ({
         couponId: coupon._id,
@@ -710,6 +732,10 @@ export default function CheckoutScreen({ navigation }) {
     if (!currentUser) {
       Feedback.show({ type: 'info', text1: 'Sign in to checkout', text2: 'Your cart will be kept while you sign in.' });
       navigation.navigate('Login', { returnTo: 'Cart', intent: 'checkout' });
+      return;
+    }
+    if (!checkoutQuote.ready) {
+      Feedback.show({ type:'info',text1:'Confirming checkout total',text2:checkoutQuote.error || 'Please wait while your total is confirmed.' });
       return;
     }
     if (summaryLoading) {
@@ -875,6 +901,7 @@ export default function CheckoutScreen({ navigation }) {
     } catch (error) {
       trackError('checkout', error, { step: 'place_order', paymentMethod });
       if (isCheckoutRepriceRequired(error)) {
+        checkoutQuote.refresh();
         await resetCheckoutAttempt();
         setPaymentNotice({
           type: 'error',
@@ -1444,7 +1471,9 @@ export default function CheckoutScreen({ navigation }) {
             </View>
             <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Subtotal</Text><Text style={styles.summaryValue}>{checkoutMoney(subtotal)}</Text></View>
             <View style={styles.summaryRow}><Text style={styles.summaryLabel}>{shippingLabel}</Text><Text style={[styles.summaryValue, shippingCost === 0 && !selectedShippingHasPaidSource && { color: palette.colors.success }]}>{shippingCost === 0 && !selectedShippingHasPaidSource ? 'Free' : checkoutMoney(shippingCost)}</Text></View>
-            {tax > 0 && <View style={styles.summaryRow}><Text style={styles.summaryLabel}>{taxLabel}</Text><Text style={styles.summaryValue}>{checkoutMoney(tax)}</Text></View>}
+            {tax > 0 && <View style={styles.summaryRow}><Text style={styles.summaryLabel}>{checkoutQuote.quote?.taxLabel || taxLabel}</Text><Text style={styles.summaryValue}>{checkoutMoney(tax)}</Text></View>}
+            {!!checkoutQuote.error && <View style={styles.summaryRow}><Text style={[styles.summaryLabel,{ color:palette.colors.error }]}>{checkoutQuote.error}</Text><TouchableOpacity onPress={() => { checkoutQuote.refresh(); fetchCart(); fetchSummary(); }}><Text style={{ color:palette.colors.primary }}>Refresh total</Text></TouchableOpacity></View>}
+            {quoteInput.ready && checkoutQuote.status === 'loading' && <View style={styles.summaryRow}><InlineLoader size="small" /><Text style={styles.summaryLabel}>Confirming checkout total…</Text></View>}
             {couponDiscount > 0 && <View style={styles.summaryRow}><Text style={[styles.summaryLabel, { color: palette.colors.success }]}>Coupon Discount</Text><Text style={[styles.summaryValue, { color: palette.colors.success }]}>-{checkoutMoney(couponDiscount)}</Text></View>}
             <View style={styles.divider} />
             <View style={styles.summaryRow}><Text style={styles.totalLabel}>Total</Text><Text style={styles.totalValue}>{checkoutMoney(totalAmount)}</Text></View>

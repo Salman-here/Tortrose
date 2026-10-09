@@ -1158,7 +1158,7 @@ const settleFromSellerBalance = async ({ returnRequestId, sellerId }) => runInTr
 
   const order = await queryWithSession(
     Order.findById(request.order).select(
-      'orderId user shippingInfo currency exchangeRateSnapshot orderItems sellerShipping shippingMethod orderSummary appliedCoupons sellerSettlementVersion sellerSettlement sellerCurrencyMoneyVersion sellerCurrencyMoney sellerPolicies sellerFulfillment deliveredAt paymentMethod isPaid orderStatus'
+      'orderId user shippingInfo currency exchangeRateSnapshot orderItems sellerShipping shippingMethod orderSummary appliedCoupons sellerSettlementVersion sellerSettlement sellerCurrencyMoneyVersion sellerCurrencyMoney checkoutRoundingSnapshot sellerPolicies sellerFulfillment deliveredAt paymentMethod isPaid orderStatus'
     ),
     session
   );
@@ -1272,14 +1272,14 @@ const settleFromSellerBalance = async ({ returnRequestId, sellerId }) => runInTr
   const amountUsdMinor = cumulativeUsdMinor - priorDebitedUsdMinor;
   const amountUSD = fromMinorUnits(amountUsdMinor);
   const { buildSellerPaymentSummary } = require('../controllers/PaymentController');
-  const { nativeSellerEntitlement, nativeLiabilityMinor } = require('./sellerNativeAccountingService');
+  const { nativeSellerEntitlement, nativeReturnFundingMinor } = require('./sellerNativeAccountingService');
   const nativeMoney = nativeSellerEntitlement(order, sellerId);
   if (!nativeMoney) throw returnFinancialDataError('The original seller currency cannot be verified.');
   const nativeTotalMinor = toMinorUnits(nativeMoney.summary.totalAmount);
   const buyerTotalMinor = toMinorUnits(nativeMoney.buyerSummary.totalAmount);
   const beforeSourceMinor = cumulativeSourceMinor - toMinorUnits(request.refund.totalAmount);
-  const nativeDebitMinor = nativeLiabilityMinor(cumulativeSourceMinor, buyerTotalMinor, nativeTotalMinor)
-    - nativeLiabilityMinor(beforeSourceMinor, buyerTotalMinor, nativeTotalMinor);
+  const nativeDebitMinor = nativeReturnFundingMinor(order, cumulativeSourceMinor, buyerTotalMinor, nativeTotalMinor, nativeMoney.currency)
+    - nativeReturnFundingMinor(order, beforeSourceMinor, buyerTotalMinor, nativeTotalMinor, nativeMoney.currency);
   const heldOrder = ['wallet', 'safepay'].includes(order.paymentMethod) && order.isPaid === true;
   const summary = heldOrder ? null : await buildSellerPaymentSummary(sellerId, { session, displayCurrency: nativeMoney.currency });
   const available = heldOrder ? 0 : requireExactReturnMoney(summary.balanceByCurrency?.[nativeMoney.currency]?.withdrawableBalance, 'native seller balance');
@@ -1307,6 +1307,7 @@ const settleFromSellerBalance = async ({ returnRequestId, sellerId }) => runInTr
         sellerSettlementVersion: SELLER_SETTLEMENT_VERSION,
         cumulativeSourceMinor,
         cumulativeUsdMinor,
+        ...(order.sellerCurrencyMoneyVersion === 2 ? { nativeFundingVersion:2, nativeCurrency:nativeMoney.currency, nativeDebitMinor } : {}),
       },
     }], { session }))[0];
 
@@ -1445,7 +1446,7 @@ const assertReturnRequestFinancialIdentity = async (request, { session = null } 
   }
 
   const orderQuery = Order.findById(request.order).select(
-    'currency orderId user orderItems sellerShipping shippingMethod orderSummary appliedCoupons couponUsageVersion exchangeRateSnapshot sellerSettlementVersion sellerSettlement',
+    'currency orderId user orderItems sellerShipping shippingMethod orderSummary appliedCoupons couponUsageVersion exchangeRateSnapshot sellerSettlementVersion sellerSettlement sellerCurrencyMoneyVersion checkoutRoundingSnapshot',
   );
   const order = await queryWithSession(orderQuery, session);
   if (!order) {

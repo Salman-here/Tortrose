@@ -37,6 +37,7 @@ import {
   getOrderCurrency,
   getOrderItemOptionPairs,
   getSellerCurrencyMoney,
+  getSellerOnlineDeduction,
   getOrderItemQuantity,
   getOrderItemLineSubtotal,
   getOrderSummaryAmount,
@@ -175,6 +176,7 @@ export default function OrderDetailManagementScreen({ route, navigation }) {
   const shippingInfo = order.shippingInfo || order.shippingAddress || {};
   const orderCurrency = getOrderCurrency(order);
   const sellerCurrencyMoney = getSellerCurrencyMoney(order);
+  const onlineDeduction = sellerCurrencyMoney ? getSellerOnlineDeduction(order,sellerCurrencyMoney) : null;
   const primaryCurrency = sellerCurrencyMoney?.currency || orderCurrency;
   const money = (amount) => formatPrice(amount, {
     sourceCurrency: primaryCurrency,
@@ -458,14 +460,19 @@ export default function OrderDetailManagementScreen({ route, navigation }) {
           {hasCurrencyConversion && (
             <View style={styles.buyerEquivalentBox}>
               <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>Buyer checkout equivalent</Text>
+                <Text style={styles.summaryLabel}>{order.paymentMethod === 'cash_on_delivery' && sellerCurrencyMoney.pricingPolicyVersion === 1 ? `COD amount to collect (${sellerCurrencyMoney.buyerCurrency})` : `Buyer ordered in ${sellerCurrencyMoney.buyerCurrency}`}</Text>
                 <Text style={styles.summaryValue}>{buyerMoney(sellerCurrencyMoney.buyerSummary.totalAmount)}</Text>
               </View>
-              <Text style={styles.frozenMoneyNote}>
+              {sellerCurrencyMoney.pricingPolicyVersion !== 1 && <Text style={styles.frozenMoneyNote}>
                 Frozen rate: 1 {sellerCurrencyMoney.currency} = {sellerCurrencyMoney.exchangeRate.rate.toLocaleString(undefined, { maximumFractionDigits: 6 })} {sellerCurrencyMoney.buyerCurrency}. Buyer and seller values will not change with live FX.
-              </Text>
+              </Text>}
             </View>
           )}
+          {onlineDeduction && <View style={styles.buyerEquivalentBox}>
+            <Text style={styles.frozenMoneyNote}>Original payment calculation</Text>
+            <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Processing fee + tax</Text><Text style={styles.summaryValue}>-{money(onlineDeduction.processingFeeAndTax)}</Text></View>
+            <View style={styles.summaryRow}><Text style={styles.totalLabel}>Net order amount</Text><Text style={styles.summaryValue}>{money(onlineDeduction.netAmount)}</Text></View>
+          </View>}
         </GlassPanel>
 
         {orderStatus !== 'delivered' && orderStatus !== 'cancelled' && (

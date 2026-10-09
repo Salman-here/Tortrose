@@ -82,6 +82,9 @@ const orderSchema = mongoose.Schema(
         guestEmail: { type: String, default: null },
         currency: { type: String, enum: ["USD", "PKR", "EUR", "GBP"], default: "USD" },
         onlineFeeSnapshot: { type: mongoose.Schema.Types.Mixed, default: null, immutable: true },
+        // Internal-only collector remainder. Never a seller sales amount or
+        // separate buyer fee. Legacy orders have no snapshot and stay intact.
+        checkoutRoundingSnapshot: { type: mongoose.Schema.Types.Mixed, default: null, immutable: true },
         // Immutable checkout-time USD rate table. Transaction accounting uses
         // this snapshot so historical revenue and a later full refund cancel
         // exactly even when live FX rates have changed. Catalog/display
@@ -685,6 +688,7 @@ orderSchema.path('sellerCurrencyMoney').immutable(true);
 
 orderSchema.pre('validate', function validateOnlineDeduction(next) {
     try {
+        if (this.sellerCurrencyMoneyVersion === 2) require('../services/orderMoneyService').getFrozenSellerCurrencyMoney(this);
         if (this.onlineFeeSnapshot !== null && this.onlineFeeSnapshot !== undefined) require('../services/onlineOrderFeeService').getOnlineOrderFee(this);
         next();
     } catch (error) { next(error); }
@@ -714,6 +718,9 @@ orderSchema.pre('validate', function freezeBuyerPhoneDestination(next) {
 });
 
 orderSchema.pre('save', function rejectFrozenSettlementMutation(next) {
+    if (!this.isNew && this.isModified('checkoutRoundingSnapshot')) {
+        return next(Object.assign(new Error('The frozen checkout rounding cannot be changed.'), { code: 'CHECKOUT_ROUNDING_IMMUTABLE' }));
+    }
     if (!this.isNew && this.isModified('onlineFeeSnapshot')) {
         return next(Object.assign(new Error('The frozen online deduction cannot be changed.'), { code: 'ONLINE_FEE_SNAPSHOT_IMMUTABLE' }));
     }

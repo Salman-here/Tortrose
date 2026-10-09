@@ -92,7 +92,7 @@ const Store = require('../../models/Store');
 const TaxConfig = require('../../models/TaxConfig');
 const User = require('../../models/User');
 const WalletTransaction = require('../../models/WalletTransaction');
-const { placeOrder } = require('../../controllers/orderController');
+const { placeOrder, quoteCheckout } = require('../../controllers/orderController');
 
 let replicaSet;
 
@@ -238,6 +238,25 @@ afterEach(() => {
 });
 
 describe('initial zero-value and provider-minimum checkout boundaries', () => {
+  test('read-only quote shares checkout pricing without reserving inventory, coupons, money or an order id', async () => {
+    const fixture = await makeCheckout('cash_on_delivery');
+    const res = response();
+    await quoteCheckout({ body:{ order:fixture.order,clientSurface:'web' },headers:{},user:{ id:fixture.buyer._id.toString(),role:'user' } },res);
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success:true,pricingPolicyVersion:1,currency:'USD',
+      orderSummary:{ subtotal:100,shippingCost:0,tax:0,couponDiscount:100,totalAmount:0 } }));
+    const reply = res.json.mock.calls[0][0];
+    expect(reply.checkoutRoundingSnapshot).toBeUndefined();
+    expect(reply.sellerCurrencyMoney).toBeUndefined();
+    expect(await Order.countDocuments({})).toBe(0);
+    expect(await CouponRedemption.countDocuments({})).toBe(0);
+    expect(await WalletTransaction.countDocuments({})).toBe(0);
+    expect((await Product.findById(fixture.product._id)).stock).toBe(5);
+    expect((await Coupon.findById(fixture.coupon._id)).usedCount).toBe(0);
+    expect(mockPaymentIntentCreate).not.toHaveBeenCalled();
+    expect(mockCheckoutSessionCreate).not.toHaveBeenCalled();
+    expect(mockRemoveFulfilledOrderItemsFromCart).not.toHaveBeenCalled();
+  });
   test('blocks checkout when a configurable product has no explicit selection', async () => {
     const fixture = await makeCheckout('cash_on_delivery');
     await Product.updateOne(

@@ -62,6 +62,7 @@ const buildBuyerOrderView = (order, { storeLogosBySeller = new Map() } = {}) => 
   delete result.sellerCurrencyMoneyVersion;
   delete result.sellerCurrencyMoney;
   delete result.onlineFeeSnapshot;
+  delete result.checkoutRoundingSnapshot;
   const items = Array.isArray(order?.orderItems) ? order.orderItems : [];
   const grouped = new Map();
 
