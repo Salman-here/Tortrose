@@ -1038,8 +1038,17 @@ const buildSellerOrderView = (order, sellerProductIds, sellerId) => {
     const sellerPolicy = (order.sellerPolicies || []).find(
         entry => toId(entry.seller) === toId(sellerId)
     );
-    return {
+    // Partial cancellations leave the whole order's confirmation unchanged.
+    // A durable buyer-cancellation reference supplies this seller's actual
+    // account cancellation; the scoped status must not invent an email source.
+    const ownedBuyerCancellation = sellerFulfillment?.status === 'cancelled'
+        && sellerFulfillment.cancellation?.reference;
+    const sellerView = {
         ...obj,
+        ...(ownedBuyerCancellation ? { confirmation: {
+            ...obj.confirmation, cancelledByRole:'buyer', cancelledVia:'dashboard',
+            cancelledAt:sellerFulfillment.cancellation.requestedAt || sellerFulfillment.updatedAt,
+        } } : {}),
         orderStatus: sellerFulfillment?.status || obj.orderStatus,
         isDelivered: sellerFulfillment ? sellerFulfillment.status === 'delivered' : obj.isDelivered,
         deliveredAt: sellerFulfillment?.deliveredAt || obj.deliveredAt,
@@ -1064,6 +1073,8 @@ const buildSellerOrderView = (order, sellerProductIds, sellerId) => {
             totalAmount: sellerMoney.totalAmount,
         }
     };
+    if (ownedBuyerCancellation) sellerView.confirmationSourceLabel = Order.schema.virtualpath('confirmationSourceLabel').applyGetters(undefined,sellerView);
+    return sellerView;
 };
 
 const getSellerScopedOrders = async (query, sellerId, sort = null, { lean = false } = {}) => {

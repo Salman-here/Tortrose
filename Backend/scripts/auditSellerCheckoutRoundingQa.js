@@ -43,6 +43,7 @@ async function main() {
     const products = await require('../models/Product').find({ _id:{ $in:order.orderItems.map(item => item.productId) } }).select('_id name stock totalSales').lean();
     rows.push({ orderId:order.orderId,id:order._id,currency:order.currency,paymentMethod:order.paymentMethod,
       isPaid:order.isPaid,awaitingPayment:order.awaitingPayment,orderStatus:order.orderStatus,summary:order.orderSummary,
+      rates:order.exchangeRateSnapshot?.rates,capturedAt:order.exchangeRateSnapshot?.capturedAt,
       items:order.orderItems.map(item => ({ productId:item.productId,seller:item.seller,quantity:item.quantity,lineSubtotal:item.lineSubtotal,
         sourceLineSubtotal:item.sourceLineSubtotal,sourceCurrency:item.sourceCurrency,selectedOptions:item.selectedOptions })),
       native,sellerFulfillment:order.sellerFulfillment,rounding:order.checkoutRoundingSnapshot,
@@ -51,10 +52,14 @@ async function main() {
         refundedMinor:payment.refundedMinor,walletRefundMinor:payment.walletRefundMinor,riskPending:payment.riskPending,lastErrorCode:payment.lastErrorCode } : null,provider });
   }
   const sellerSummaries = [];
+  const balanceFields = ['currency','onlineGrossEarnings','processingFeeAndTax','pendingOnlineNetBalance','returnWindowHeldAmount',
+    'withdrawableBalance','totalWithdrawn','returnRefundDebits','codDeliveredRevenue','codPendingRevenue','paymentReversalDebits','paymentRiskHeldAmount'];
+  const presentBalance = balance => Object.fromEntries(balanceFields.map(field => [field,balance[field]]));
   for (const seller of sellers) {
     const store = await require('../models/Store').findOne({ seller:seller._id }).select('storeName productCurrency').lean();
     const summary = await require('../services/sellerNativeAccountingService').buildNativeSellerPaymentSummary(seller._id,{ displayCurrency:store.productCurrency });
-    sellerSummaries.push({ seller:id(seller),store:store.storeName,currency:store.productCurrency,revenue:summary.revenue,balances:summary.balances });
+    sellerSummaries.push({ seller:id(seller),store:store.storeName,currency:store.productCurrency,revenue:presentBalance(summary.revenue),
+      balances:summary.balances.filter(balance => balance.currency === store.productCurrency || balance.onlineGrossEarnings || balance.withdrawableBalance).map(presentBalance) });
   }
   const wallet = await require('../models/Wallet').findOne({ user:buyer._id }).select('balances status').lean();
   console.log(JSON.stringify({ settings,rows,wallet,sellerSummaries },null,2));

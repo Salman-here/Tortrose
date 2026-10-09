@@ -132,6 +132,23 @@ test('buyer view exposes actual paid seller portions, without native reconciliat
   expect(buyer.sellerGroups.map(group => group.summary.totalAmount)).toEqual([1.01,1.01]);
 });
 
+test('a partial account cancellation has an accurate seller label without cancelling or rewriting the other seller', () => {
+  const at = new Date('2026-10-09T11:24:46Z');
+  const order = freeze({ ...fixture({ method:'wallet' }),orderStatus:'confirmed',
+    confirmation:{ confirmedAt:at,confirmedVia:'wallet_payment' },
+    sellerFulfillment:[{ seller:seller(1),status:'cancelled',updatedAt:at,cancellation:{ reference:'300000000000000000000001',requestedAt:at } },
+      { seller:seller(2),status:'confirmed' }] });
+  const build = require('../../controllers/orderController')._buildSellerOrderView;
+  const cancelled = build(order,new Set(),seller(1));
+  expect(cancelled.confirmation).toMatchObject({ cancelledByRole:'buyer',cancelledVia:'dashboard',cancelledAt:at });
+  expect(cancelled.confirmationSourceLabel).toContain('Cancelled by buyer from account');
+  expect(cancelled.confirmationSourceLabel).not.toContain('via email');
+  const other = build(order,new Set(),seller(2));
+  expect(other.orderStatus).toBe('confirmed');
+  expect(other.confirmation.cancelledAt).toBeUndefined();
+  expect(order.confirmation.cancelledAt).toBeUndefined();
+});
+
 test('admin tax cents are preserved instead of being converted out and back through the native seller currency', () => {
   const input = fixture({ prices:[0],currencies:['PKR'],shipping:[0],buyerCurrency:'USD',fx:{ USD:1,PKR:277.08,EUR:0.893,GBP:0.757 } });
   input.orderSummary.tax = 0.11; input.orderSummary.totalAmount = 0.11;
