@@ -143,7 +143,7 @@ const OrderDetail = () => {
 
     const handleStatusUpdate = async () => {
         try { const token = getAuthToken(); const res = await axios.patch(`${import.meta.env.VITE_API_URL}api/order/update-status/${order?._id}`, { newStatus }, { headers: { Authorization: `Bearer ${token}` } }); toast.success(res.data.msg || 'Updated'); fetchOrderDetail(); }
-        catch (error) { toast.error(error.response?.msg || 'Error updating status'); }
+        catch (error) { const message = error?.response?.data?.msg; toast.error(typeof message === 'string' && message.trim() ? message.trim() : 'Error updating status'); }
         setIsUpdating(false);
     };
 
