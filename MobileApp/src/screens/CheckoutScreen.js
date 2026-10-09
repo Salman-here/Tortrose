@@ -357,7 +357,7 @@ export default function CheckoutScreen({ navigation }) {
       summaryRequestRef.current.id += 1;
       summaryRequestRef.current.controller?.abort();
     };
-  }, [cartItems?.cart, subtotal, currency, convertAmount]);
+  }, [cartItems?.cart, baseSubtotal, currency, convertAmount]);
 
   useEffect(() => {
     const fetchWallet = async () => {

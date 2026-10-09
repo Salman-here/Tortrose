@@ -49,6 +49,12 @@ test('web and mobile use identical quote input/validation code', () => {
   assert.equal(web,mobile);
 });
 
+test('mobile shipping and tax preparation use base prices, so receiving a rounded quote cannot restart preparation', () => {
+  const screen = readFileSync(new URL('../../MobileApp/src/screens/CheckoutScreen.js',import.meta.url),'utf8');
+  assert.match(screen,/\[cartItems\?\.cart, baseSubtotal, currency, convertAmount\]/);
+  assert.doesNotMatch(screen,/\[cartItems\?\.cart, subtotal, currency, convertAmount\]/);
+});
+
 test('seller order deduction is in original native currency, reconciles exactly and is not a withdrawable balance', () => {
   const native = { currency:'PKR',summary:{ totalAmount:1200 } };
   const order = { paymentMethod:'wallet',sellerOnlineDeduction:{ version:1,basis:'original_order',currency:'PKR',grossAmount:1200,processingFeeAndTax:105.43,netAmount:1094.57 } };
