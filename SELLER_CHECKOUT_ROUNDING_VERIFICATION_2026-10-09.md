@@ -49,6 +49,8 @@ No new rounding fields were added to buyer, admin or seller analytics screens. E
 
 These commits were pushed to both GitHub main remotes. Railway and Vercel commit checks are successful for c0e2ceeb. Safepay web and mobile flags are enabled for Sandbox; Stripe is disabled. Dormant Stripe implementation remains preserved.
 
+Final evidence and QA helpers were pushed in29c51417. Its Railway deployment13594016-4284-4733-9df9-4fcde38565a7 is SUCCESS. Vercel deployment dpl_2VXKzSJAtZwiGZ59eKN63QXXpLvi is READY in production with rozare.com aliases. Both GitHub commit checks are successful. The primary main checkout and both main remotes were synchronized while preserving unrelated local edits.
+
 Android code17, version/runtime1.0.13 was installed in the QA emulator. The latest published Android update is group 442c14fe-6be3-4f49-8447-0525e9ba464e, update 01a1205e-0e0b-79f5-ab82-3eab00e304fc, containing the 8784cf7a app source. The later cancellation-label repair is served by the backend and does not require another native build.
 
 ## Verified hosted orders
@@ -90,6 +92,8 @@ Nova's seller order view contained only its bottle and standard shipping. It dis
 Verification exposed an existing partial-cancellation presentation defect: a seller-scoped cancelled status could be described as via email even though the cancellation came from the buyer's app. The seller view now uses the durable cancellation reference to identify the account cancellation, without altering the whole order or other sellers. The deployed website now shows Cancelled by buyer from account.
 
 The Android seller account was also signed in through the installed app. Its seller order management and detail screen for the two-variant order displayed PKR1100 per product, PKR2200 original total, Buyer ordered in USD / USD7.95, original Processing fee plus tax PKR166.04 and original Net order amount PKR2033.96. No new FX adjustment row appeared. These values stayed frozen after the product price was restored and both items were returned.
+
+After all the new returns, the Android Payments screen independently matched the native ledger: available PKR283.67, total online earnings PKR8098.45, processing fee plus tax PKR463.00, and pending online net funds PKR5351.78. Delivered COD revenue was PKR6200.76. This screen was read-only; no new withdrawal or bank transfer was submitted.
 
 ### Android saved card and original-card partial cancellation
 
@@ -186,5 +190,7 @@ The APK installation succeeded after the user's explicit retry instruction. The 
 Screenshot evidence is saved in the primary project at test-artifacts/seller-rounding-20261009. Existing unrelated account/email/WhatsApp/template edits in the primary worktree remain uncommitted and were not included in these releases.
 
 Useful screenshot files include buyer-cod-three-sellers.jpg, buyer-card-three-sellers.jpg, android-wallet-checkout.png, android-card-payment-confirmed.png, android-card-refund-choice.png, android-card-partial-refund.png, web-held-return-completed.jpg, web-cod-balance-return-completed.jpg, web-cod-card-return-completed.jpg, android-two-lines-stable-wallet-checkout.png, web-partial-return-final.jpg and android-seller-native-fee-net.png. Intermediate loading/debug captures are not payment proofs.
+
+The final Android balance proof is android-seller-final-balances.png. The task-owned headless emulator was shut down through the Android SDK after its checks, without wiping its data or changing Android Studio's settings. Railway's saved profile was restored to EYEKONIT after the Rozare checks.
 
 Sandbox dummy card data came from [Safepay's official test-card instructions](https://safepay.helpscoutdocs.com/article/41-dummy-card-information). The report and committed helpers contain no passwords, session tokens, payment checkout authentication URLs or bank challenge codes.
