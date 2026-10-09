@@ -281,9 +281,10 @@ test('checkout pause does not strand an accepted invoice or create a second paym
     process.env.SAFEPAY_WEB_ENABLED = 'false'; process.env.SAFEPAY_MOBILE_ENABLED = 'false';
     submit.mockClear();
     await lifecycle.runBillingWorker(); await lifecycle.runBillingWorker();
-    expect(submit).toHaveBeenCalledTimes(2);
+    expect(submit).toHaveBeenCalledTimes(1);
     expect(submit.mock.calls.every(([paymentId]) => String(paymentId) === String(result.paymentId))).toBe(true);
     expect(await Payment.countDocuments()).toBe(1);
+    expect((await Operation.findOne({ payment: result.paymentId })).workerNextAttemptAt.getTime()).toBeGreaterThan(Date.now());
     expect((await Subscription.findById(sub._id)).status).not.toBe('active');
     await lifecycle.cancel(seller._id);
     expect((await Subscription.findById(sub._id)).safepayBilling.autoRenew).toBe(false);

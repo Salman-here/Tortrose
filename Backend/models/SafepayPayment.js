@@ -19,6 +19,13 @@ const schema = new mongoose.Schema({
     encryptedContext: { type: String, default: '', select: false },
     expiresAt: { type: Date, default: null },
     resetStartedAt: { type: Date, default: null },
+    resetLeaseUntil: { type: Date, default: null },
+    resetFromState: { type: String, enum: ['', 'TRACKER_STARTED', 'TRACKER_ENROLLED'], default: '' },
+    resetFromAction: { type: String, enum: ['', 'PAYER_AUTH_ENROLLMENT', 'PAYER_AUTH_VALIDATION'], default: '' },
+    // Serializes setup/recovery across tabs and processes. Mutation intent is
+    // retained after a lost response; expiry alone never resubmits that intent.
+    operationToken: { type: String, default: '', select: false },
+    operationLeaseUntil: { type: Date, default: null },
   },
   customerId: { type: String, default: null, match: /^cus_[a-zA-Z0-9-]+$/, immutable: true },
   cardId: { type: String, default: null, match: /^pm_[a-zA-Z0-9-]+$/, select: false, immutable: true },

@@ -122,7 +122,7 @@ async function auditSeller(seller, options) {
     Store.findOne({ seller: seller._id }).select('productCurrency').lean(),
     Order.find(orderScope).select('_id currency displayCurrency orderCurrency exchangeRateSnapshot '
       + 'orderItems sellerSettlementVersion sellerSettlement sellerCurrencyMoneyVersion sellerCurrencyMoney '
-      + 'sellerPolicies sellerShipping shippingMethod orderSummary appliedCoupons sellerFulfillment deliveredAt '
+      + 'checkoutRoundingSnapshot sellerPolicies sellerShipping shippingMethod orderSummary appliedCoupons sellerFulfillment deliveredAt '
       + 'orderStatus awaitingPayment isPaid paymentMethod isDelivered onlineFeeSnapshot createdAt').sort({ createdAt: -1 }).lean(),
     Withdrawal.aggregate([
       { $match: { seller: seller._id } },

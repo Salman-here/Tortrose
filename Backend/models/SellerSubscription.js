@@ -184,6 +184,12 @@ const sellerSubscriptionSchema = new mongoose.Schema({
         currency: { type: String, enum: ['USD'], default: 'USD' },
         creditMinor: { type: Number, default: 0, min: 0, validate: Number.isSafeInteger },
         nextChargeAt: { type: Date, default: null, index: true },
+        // Fair worker scheduling is not a change to the billing due date.
+        workerNextAttemptAt: { type: Date, default: null },
+        workerLastAttemptAt: { type: Date, default: null },
+        workerAttempts: { type: Number, default: 0, min: 0, validate: Number.isSafeInteger },
+        workerLeaseToken: { type: String, default: null, select: false },
+        workerLeaseUntil: { type: Date, default: null },
         pendingOperation: { type: mongoose.Schema.Types.ObjectId, ref: 'SafepayBillingOperation', default: null },
         lastFailedOperation: { type: mongoose.Schema.Types.ObjectId, ref: 'SafepayBillingOperation', default: null },
         consentVersion: { type: String, default: '' },
@@ -626,5 +632,7 @@ sellerSubscriptionSchema.set('toObject', { virtuals: true });
 
 sellerSubscriptionSchema.index({ status: 1 });
 sellerSubscriptionSchema.index({ trialEndDate: 1 });
+sellerSubscriptionSchema.index({ billingProvider: 1, 'safepayBilling.environment': 1,
+    'safepayBilling.workerNextAttemptAt': 1, 'safepayBilling.nextChargeAt': 1, _id: 1 });
 
 module.exports = mongoose.model('SellerSubscription', sellerSubscriptionSchema);

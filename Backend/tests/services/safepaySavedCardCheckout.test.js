@@ -38,7 +38,11 @@ beforeEach(async () => {
   mockClient.getTracker.mockResolvedValue({ state: 'TRACKER_STARTED', next_actions: { CYBERSOURCE: { kind: 'PAYER_AUTH_SETUP' } } });
   mockClient.setupSavedCardAuthentication.mockResolvedValue({ deviceDataCollectionJWT: 'private-ddc-fixture-token', deviceDataCollectionURL: 'https://centinelapistag.cardinalcommerce.com/V1/Cruise/Collect' });
   mockClient.createAuthToken.mockResolvedValue('temporary-provider-auth-fixture');
-  mockClient.resetSavedCardAuthentication.mockResolvedValue({ state: 'TRACKER_STARTED', next_actions: { CYBERSOURCE: { kind: 'PAYER_AUTH_SETUP' } } });
+  mockClient.resetSavedCardAuthentication.mockImplementation(async () => {
+    const reset = { state: 'TRACKER_STARTED', next_actions: { CYBERSOURCE: { kind: 'PAYER_AUTH_SETUP' } } };
+    mockClient.getTracker.mockResolvedValue(reset);
+    return reset;
+  });
 });
 test('ticket is short-lived, fragment-only and restricted to its exact account, payment and environment', async () => {
   const url = new URL(service.buildCheckoutUrl(payment, 'web'));

@@ -332,7 +332,11 @@ async function claimRecurringCharge(paymentId) {
     if (!payment || payment.purpose !== 'subscription' || payment.status !== 'ready' || payment.chargeStartedAt || payment.appliedAt) return null;
     const op = await Operation.findOne({ _id: payment.terms.billingOperationId, payment: payment._id,
       seller: payment.user, environment: payment.environment, status: 'awaiting_payment' }).session(session);
-    const sub = op && await Subscription.findById(op.subscription).select('+safepayBilling.cardId').session(session);
+    // This transaction marks the whole billing subdocument as modified to
+    // fence cancellation. Preserve its hidden scheduler token in that write;
+    // it remains excluded from normal reads and all public billing DTOs.
+    const sub = op && await Subscription.findById(op.subscription)
+      .select('+safepayBilling.cardId +safepayBilling.workerLeaseToken').session(session);
     if (!op || !sub || id(sub.safepayBilling.pendingOperation) !== id(op) || sub.paymentRisk?.suspended
       || op.consentVersion !== CONSENT_VERSION || !op.acceptedAt || minor(op.terms.dueMinor) !== payment.amountMinor
       || payment.currency !== 'USD' || sub.safepayBilling.customerId !== payment.customerId) {

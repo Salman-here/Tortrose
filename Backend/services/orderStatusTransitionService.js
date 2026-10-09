@@ -3,6 +3,7 @@
 const mongoose = require('mongoose');
 const Order = require('../models/Order');
 const Product = require('../models/Product');
+const SellerSettlementLock = require('../models/SellerSettlementLock');
 const {
   sellerFulfillmentFor,
   setAllSellerFulfillmentStatus,
@@ -11,6 +12,7 @@ const {
 } = require('./orderFulfillmentService');
 const { commitOrderInventory } = require('./orderInventoryService');
 const { reconfirmCancelledCodOrder } = require('./orderCancellationService');
+const { assertOrderFulfillmentFunding } = require('./orderFulfillmentFundingService');
 const {
   COUPON_USAGE_VERSION,
   consumeOrderCoupons,
@@ -148,6 +150,9 @@ const transitionOrderFulfillment = async ({
 
   let transitionedOrder;
   let transition;
+  // Ensure the unique seller fence exists before entering the transaction;
+  // collection/index creation must not race the first fulfillment operation.
+  await SellerSettlementLock.init();
   await mongoose.connection.transaction(async session => {
     const order = await Order.findById(orderId).session(session);
     if (!order) {
@@ -219,6 +224,14 @@ const transitionOrderFulfillment = async ({
         'ORDER_INVENTORY_NOT_COMMITTED',
         actorCurrentStatus,
       );
+    }
+
+    try {
+      await assertOrderFulfillmentFunding({ order, session,
+        sellerIds: actorRole === 'seller' ? [actorId] : authoritativeSellerIds });
+    } catch (error) {
+      error.currentStatus = actorCurrentStatus;
+      throw error;
     }
 
     if (actorRole === 'seller') {

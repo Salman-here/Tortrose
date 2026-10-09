@@ -5,6 +5,7 @@ const { MongoMemoryReplSet } = require('mongodb-memory-server');
 const Order = require('../../models/Order');
 const NotificationOutbox = require('../../models/NotificationOutbox');
 const Product = require('../../models/Product');
+const WalletTransaction = require('../../models/WalletTransaction');
 const { cancelOrderSafely } = require('../../services/orderCancellationService');
 const {
   confirmCodOrderByBuyer,
@@ -107,6 +108,7 @@ afterEach(async () => {
     NotificationOutbox.deleteMany({}),
     Order.deleteMany({}),
     Product.deleteMany({}),
+    WalletTransaction.deleteMany({}),
   ]);
 });
 
@@ -253,6 +255,14 @@ describe('transactional order fulfillment transitions', () => {
       isPaid: true,
     });
     await Order.updateOne({ _id: order._id }, { $set: { paidAt } });
+    // A historical paid flag alone is not fulfillment authority. This fixture
+    // represents the immutable debit produced by successful Wallet payment.
+    const debit = await WalletTransaction.create({ user: order.user, type: 'order_payment',
+      direction: 'debit', status: 'completed', amount: order.orderSummary.totalAmount,
+      currency: order.currency, referenceType: 'order', referenceId: String(order._id),
+      idempotencyKey: `wallet-order:${order._id}`, completedAt: paidAt,
+      metadata: { untrackedFundingMinor: Math.round(order.orderSummary.totalAmount * 100) } });
+    await Order.updateOne({ _id: order._id }, { $set: { 'paymentResult.walletTransactionId': debit._id } });
 
     await transitionOrderFulfillment({
       orderId: order._id,

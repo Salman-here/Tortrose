@@ -7491,6 +7491,24 @@ async function executeToolCall(toolName, args = {}, user) {
   } catch (error) {
     if (!claimed) return aiActionExecutionFailure(toolName, error);
 
+    // The fulfillment funding guard runs before any status mutation and its
+    // database transaction has aborted. Record that precise rejection rather
+    // than claiming that this blocked shipment may have happened. Other tools
+    // and ambiguous commit/provider failures keep the no-replay recovery fence.
+    if (toolName === 'update_order_status' && error?.definitiveNoMutation === true
+        && ['ORDER_FUNDING_UNVERIFIED', 'ORDER_FUNDING_REVERSED'].includes(error.code)) {
+      const result = jsonSafeAIActionResult(aiActionExecutionFailure(toolName, error));
+      try {
+        const rejected = await AIActionReceipt.updateOne({ user: receipt.user, requestKey: receipt.requestKey,
+          toolOrdinal: receipt.toolOrdinal, requestFingerprint: receipt.requestFingerprint, status: 'processing' },
+        { $set: { status: 'completed', result } });
+        if (Number(rejected.matchedCount ?? rejected.n ?? 0) === 1) return result;
+      } catch (_) {
+        // Retain the durable claim on datastore uncertainty; it must never
+        // turn into an unhandled retry or replay another order mutation.
+      }
+    }
+
     // The mutation and receipt completion are not necessarily in one database
     // transaction for these heterogeneous tools. Once execution starts, any
     // exception is ambiguous: retain the processing claim so a retry cannot

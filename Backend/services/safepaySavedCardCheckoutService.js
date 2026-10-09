@@ -9,7 +9,27 @@ const { createSafepayClient, canResetSavedCardAuthentication } = require('./safe
 const { buildReturnUrl } = require('./safepayReturnNavigation');
 
 const AUDIENCE = 'rozare-safepay-saved-card-v1';
+// The provider client times out each request after 20 seconds. Recovery uses
+// reads plus reset/setup/token creation; a crashed process is recoverable after
+// this lease, but never by blindly replaying a non-idempotent provider request.
+const AUTHENTICATION_LEASE_MS = 5 * 60 * 1000;
 const fail = (message, code = 'SAFEPAY_SAVED_CARD_UNAVAILABLE', statusCode = 409) => Object.assign(new Error(message), { code, statusCode });
+const inProgress = () => fail('Bank verification is already being checked. Keep this same payment and check its status.', 'SAFEPAY_AUTHENTICATION_IN_PROGRESS');
+const openPaymentFilter = paymentId => ({ _id: paymentId, status: 'ready', appliedAt: null, localCancelledAt: null,
+  riskPending: false, capturedMinor: 0, refundedMinor: 0, walletRefundMinor: 0 });
+const isOpenPayment = payment => payment.status === 'ready' && !payment.appliedAt && !payment.localCancelledAt
+  && !payment.riskPending && payment.capturedMinor === 0 && payment.refundedMinor === 0 && payment.walletRefundMinor === 0;
+const hasAuthenticationIntent = authentication => !!(authentication?.setupStartedAt || authentication?.encryptedContext || authentication?.resetStartedAt);
+const isFreshAuthenticationSetup = tracker => tracker?.state === 'TRACKER_STARTED'
+  && tracker?.next_actions?.CYBERSOURCE?.kind === 'PAYER_AUTH_SETUP' && !tracker.charge;
+const canExplicitlyRetryReset = (authentication, tracker, at = new Date()) => {
+  if (!authentication?.resetStartedAt || !canResetSavedCardAuthentication(tracker)) return false;
+  const retryAt = authentication.resetLeaseUntil
+    || new Date(new Date(authentication.resetStartedAt).getTime() + AUTHENTICATION_LEASE_MS);
+  return retryAt <= at
+    && (!authentication.resetFromState || authentication.resetFromState === tracker.state)
+    && (!authentication.resetFromAction || authentication.resetFromAction === tracker.next_actions?.CYBERSOURCE?.kind);
+};
 const origin = () => {
   const url = new URL(process.env.PUBLIC_BACKEND_URL || 'https://rozare.up.railway.app');
   if (url.protocol !== 'https:' || url.username || url.password || url.port || url.pathname !== '/') throw fail('Secure payment service is unavailable.');
@@ -88,12 +108,21 @@ async function viewContext(paymentId, authorization, grant) {
   const user = await User.findById(payment.user).select('savedShippingInfo sellerInfo').lean();
   const order = payment.purpose === 'order' ? await require('../models/Order').findById(payment.order).select('shippingInfo').lean() : null;
   const address = order?.shippingInfo || user?.savedShippingInfo || user?.sellerInfo || {};
+  const authentication = payment.savedCardAuthentication;
+  const operationBusy = authentication?.operationLeaseUntil > new Date();
+  const freshSetup = isFreshAuthenticationSetup(tracker);
+  const resetRecoverable = !authentication?.resetStartedAt || freshSetup || canExplicitlyRetryReset(authentication, tracker);
+  const canAuthenticate = isOpenPayment(payment) && !operationBusy
+    && resetRecoverable && (freshSetup || canResetSavedCardAuthentication(tracker));
   return { paymentId: String(payment._id), amountMinor: payment.amountMinor, currency: payment.currency,
     environment: config.environment, providerState: tracker.state,
-    canAuthenticate: payment.status === 'ready' && !payment.localCancelledAt && !payment.appliedAt,
-    // An interrupted device-collection page can stall before enrollment too.
-    // Explicit retry resets only that uncaptured setup, never the payment.
-    canRestartAuthentication: canResetSavedCardAuthentication(tracker) && !!payment.savedCardAuthentication?.encryptedContext,
+    canAuthenticate,
+    // Lost setup responses have an intent but no encrypted context. A fresh,
+    // strictly bound provider read is enough to offer an explicit recovery;
+    // the authentication endpoint rechecks that state while holding its lease.
+    canRestartAuthentication: canAuthenticate && hasAuthenticationIntent(authentication)
+      && (freshSetup || canResetSavedCardAuthentication(tracker)),
+    authenticationInProgress: operationBusy || !resetRecoverable,
     returnUrl: buildReturnUrl({ backendOrigin: origin(), attempt: String(payment._id), purpose: payment.purpose, surface: claims.surface, outcome: 'return' }),
     card: { brand: card.cybersource?.scheme === 1 ? 'Visa' : card.cybersource?.scheme === 2 ? 'Mastercard' : 'Card', last4: card.cybersource.last_four },
     billing: { street_1: address.address || '', city: address.city || '', country: address.countryCode || '', state: address.state || '', postal_code: address.postalCode || '' } };
@@ -103,60 +132,88 @@ async function authenticate(paymentId, authorization, suppliedBilling, grant, { 
   const billing = validateBilling(suppliedBilling);
   await require('./safepayCustomerService').requireOwnedReusableCard(payment.user, payment.cardId);
   payment = await require('./safepayPaymentService').reconcilePayment(payment._id);
-  if (payment.appliedAt || payment.status !== 'ready' || payment.localCancelledAt) throw fail('This payment has advanced. Close this screen to verify its current status.', 'SAFEPAY_CHECKOUT_CLOSED');
-  payment = await Payment.findById(paymentId).select('+cardId +savedCardAuthentication.encryptedContext');
-  if (payment.purpose === 'order' && payment.terms?.settlementPolicy === 'revalidate-on-payment-v1') {
-    await mongoose.connection.transaction(session => require('./safepayOrderAvailabilityService').assertOrderAvailable(payment, session));
-  }
-  if (restartAuthentication) {
+  if (!isOpenPayment(payment)) throw fail('This payment has advanced. Close this screen to verify its current status.', 'SAFEPAY_CHECKOUT_CLOSED');
+  const operationToken = crypto.randomUUID();
+  const at = new Date();
+  payment = await Payment.findOneAndUpdate({ ...openPaymentFilter(paymentId),
+    $or: [{ 'savedCardAuthentication.operationLeaseUntil': null }, { 'savedCardAuthentication.operationLeaseUntil': { $lte: at } }] },
+  { $set: { 'savedCardAuthentication.operationToken': operationToken,
+    'savedCardAuthentication.operationLeaseUntil': new Date(at.getTime() + AUTHENTICATION_LEASE_MS) } },
+  { new: true }).select('+cardId +savedCardAuthentication.encryptedContext');
+  if (!payment) throw inProgress();
+  const claimedFilter = () => ({ ...openPaymentFilter(paymentId), 'savedCardAuthentication.operationToken': operationToken,
+    'savedCardAuthentication.operationLeaseUntil': { $gt: new Date() } });
+  const assertClaim = async () => { if (!await Payment.exists(claimedFilter())) throw inProgress(); };
+  const updateClaim = async changes => {
+    if ((await Payment.updateOne(claimedFilter(), { $set: changes })).matchedCount !== 1) throw inProgress();
+  };
+  try {
+    if (payment.purpose === 'order' && payment.terms?.settlementPolicy === 'revalidate-on-payment-v1') {
+      await mongoose.connection.transaction(session => require('./safepayOrderAvailabilityService').assertOrderAvailable(payment, session));
+    }
     const tracker = await client.getTracker(payment.tracker, payment);
-    const prior = payment.savedCardAuthentication;
-    if (!prior?.encryptedContext) throw fail('The previous bank setup is still being reconciled. Keep this same payment.', 'SAFEPAY_AUTHENTICATION_IN_PROGRESS');
-    const alreadyReset = prior.resetStartedAt && tracker.state === 'TRACKER_STARTED'
-      && tracker.next_actions?.CYBERSOURCE?.kind === 'PAYER_AUTH_SETUP' && !tracker.charge;
-    if (!alreadyReset) {
-      const claim = await Payment.findOneAndUpdate({ _id: payment._id, status: 'ready', appliedAt: null, localCancelledAt: null,
-        'savedCardAuthentication.resetStartedAt': null, 'savedCardAuthentication.encryptedContext': prior.encryptedContext },
-      { $set: { 'savedCardAuthentication.resetStartedAt': new Date() } }, { new: true });
-      if (!claim) throw fail('Bank verification recovery is already being checked. Keep this same payment.', 'SAFEPAY_AUTHENTICATION_IN_PROGRESS');
-      try { await client.resetSavedCardAuthentication(payment.tracker, payment); }
+    await assertClaim();
+    if (!isFreshAuthenticationSetup(tracker) && !canResetSavedCardAuthentication(tracker)) throw inProgress();
+    if (restartAuthentication) {
+      const prior = payment.savedCardAuthentication;
+      if (!hasAuthenticationIntent(prior)) throw inProgress();
+      // GET validates merchant, environment, owner, tracker, mode, currency and
+      // exact frozen amount. Neither the browser nor a stale local state is proof.
+      if (!isFreshAuthenticationSetup(tracker)) {
+        // An ambiguous reset is never automatically repeated. After the prior
+        // request lease expires, a new explicit approval can reset only the same
+        // owned, unchanged, uncaptured bank-setup state. Reset never captures.
+        if (!canResetSavedCardAuthentication(tracker)
+          || (prior.resetStartedAt && !canExplicitlyRetryReset(prior, tracker))) throw inProgress();
+        const resetAt = new Date();
+        await updateClaim({ 'savedCardAuthentication.resetStartedAt': resetAt,
+          'savedCardAuthentication.resetLeaseUntil': new Date(resetAt.getTime() + AUTHENTICATION_LEASE_MS),
+          'savedCardAuthentication.resetFromState': tracker.state,
+          'savedCardAuthentication.resetFromAction': tracker.next_actions.CYBERSOURCE.kind });
+        try { await client.resetSavedCardAuthentication(payment.tracker, payment); }
+        catch (error) {
+          if (!error.outcomeUnknown) await updateClaim({ 'savedCardAuthentication.resetStartedAt': null,
+            'savedCardAuthentication.resetLeaseUntil': null, 'savedCardAuthentication.resetFromState': '',
+            'savedCardAuthentication.resetFromAction': '' });
+          throw error;
+        }
+        // A fresh validated read also recovers a lost reset response/server
+        // crash. The provider must be uncharged and at its initial setup action.
+        if (!isFreshAuthenticationSetup(await client.getTracker(payment.tracker, payment))) throw inProgress();
+      }
+      await updateClaim({ 'savedCardAuthentication.setupStartedAt': null,
+        'savedCardAuthentication.encryptedContext': '', 'savedCardAuthentication.expiresAt': null,
+        'savedCardAuthentication.resetStartedAt': null, 'savedCardAuthentication.resetLeaseUntil': null,
+        'savedCardAuthentication.resetFromState': '', 'savedCardAuthentication.resetFromAction': '' });
+      payment = await Payment.findById(paymentId).select('+cardId +savedCardAuthentication.encryptedContext');
+    }
+    let setup;
+    if (payment.savedCardAuthentication?.resetStartedAt) throw inProgress();
+    if (payment.savedCardAuthentication?.encryptedContext && payment.savedCardAuthentication.expiresAt > new Date()) {
+      setup = unsealContext(payment.savedCardAuthentication.encryptedContext, config, payment._id);
+    } else {
+      // Unknown setup intent is never retried automatically. Explicit recovery
+      // above must first establish safely resettable/unstarted provider state.
+      if (payment.savedCardAuthentication?.setupStartedAt || payment.savedCardAuthentication?.resetStartedAt) throw inProgress();
+      await updateClaim({ 'savedCardAuthentication.setupStartedAt': new Date() });
+      try { setup = await client.setupSavedCardAuthentication(payment.tracker, payment, payment.cardId); }
       catch (error) {
-        if (!error.outcomeUnknown) await Payment.updateOne({ _id: payment._id,
-          'savedCardAuthentication.resetStartedAt': claim.savedCardAuthentication.resetStartedAt },
-        { $set: { 'savedCardAuthentication.resetStartedAt': null } });
+        if (!error.outcomeUnknown) await updateClaim({ 'savedCardAuthentication.setupStartedAt': null });
         throw error;
       }
+      await updateClaim({ 'savedCardAuthentication.encryptedContext': sealContext(setup, config, payment._id),
+        'savedCardAuthentication.expiresAt': new Date(Date.now() + 10 * 60 * 1000) });
     }
-    await Payment.updateOne({ _id: payment._id, status: 'ready', appliedAt: null, localCancelledAt: null },
-    { $set: { 'savedCardAuthentication.setupStartedAt': null, 'savedCardAuthentication.encryptedContext': '',
-      'savedCardAuthentication.expiresAt': null, 'savedCardAuthentication.resetStartedAt': null } });
-    payment = await Payment.findById(payment._id).select('+cardId +savedCardAuthentication.encryptedContext');
+    await assertClaim();
+    const authToken = await client.createAuthToken();
+    await assertClaim();
+    return { ...setup, authToken, tracker: payment.tracker,
+      user: payment.customerId, environment: payment.environment, billing,
+      returnUrl: buildReturnUrl({ backendOrigin: origin(), attempt: String(payment._id), purpose: payment.purpose, surface: claims.surface, outcome: 'return' }) };
+  } finally {
+    // A late old process cannot clear a new owner's lease or overwrite context.
+    await Payment.updateOne({ _id: paymentId, 'savedCardAuthentication.operationToken': operationToken },
+    { $set: { 'savedCardAuthentication.operationToken': '', 'savedCardAuthentication.operationLeaseUntil': null } });
   }
-  let setup;
-  if (payment.savedCardAuthentication?.encryptedContext && payment.savedCardAuthentication.expiresAt > new Date()) {
-    setup = unsealContext(payment.savedCardAuthentication.encryptedContext, config, payment._id);
-  } else {
-    // Setup is not a capture, but claim it once so concurrent screens and lost
-    // responses cannot race separate authentication journeys on one tracker.
-    const claim = await Payment.findOneAndUpdate({ _id: payment._id, status: 'ready',
-      'savedCardAuthentication.setupStartedAt': null },
-    { $set: { 'savedCardAuthentication.setupStartedAt': new Date() } }, { new: true }).select('+cardId');
-    if (!claim) throw fail('Bank verification is already in progress. Keep this payment and check its status.', 'SAFEPAY_AUTHENTICATION_IN_PROGRESS');
-    try { setup = await client.setupSavedCardAuthentication(payment.tracker, payment, payment.cardId); }
-    catch (error) {
-      if (!error.outcomeUnknown) await Payment.updateOne({ _id: payment._id, status: 'ready',
-        'savedCardAuthentication.setupStartedAt': claim.savedCardAuthentication.setupStartedAt },
-      { $set: { 'savedCardAuthentication.setupStartedAt': null } });
-      throw error;
-    }
-    await Payment.updateOne({ _id: payment._id, status: 'ready' }, { $set: {
-      'savedCardAuthentication.encryptedContext': sealContext(setup, config, payment._id),
-      'savedCardAuthentication.expiresAt': new Date(Date.now() + 10 * 60 * 1000),
-    } });
-  }
-  const backendOrigin = origin();
-  return { ...setup, authToken: await client.createAuthToken(), tracker: payment.tracker,
-    user: payment.customerId, environment: payment.environment, billing,
-    returnUrl: buildReturnUrl({ backendOrigin, attempt: String(payment._id), purpose: payment.purpose, surface: claims.surface, outcome: 'return' }) };
 }
 module.exports = { buildCheckoutUrl, buildCheckoutContext, verifySessionGrant, ownedContext, viewContext, authenticate, validateBilling, sealContext, unsealContext };

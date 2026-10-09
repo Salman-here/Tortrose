@@ -18,7 +18,38 @@ const { snapshotMinorMoney } = require('./notificationMoneySnapshotService');
 const { enqueueNotificationEvent } = require('./notificationOutboxService');
 const { id, fail, minor, date, transaction } = billing;
 let workerTimer = null;
-let running = false;
+const WORKER_LEASE_MS = 180000;
+const WORKER_RETRY_BASE_MS = 30000;
+const WORKER_RETRY_MAX_MS = 15 * 60000;
+
+const eligibleAt = (nextPath, leasePath, at) => ({ $and: [
+  { $or: [{ [nextPath]: null }, { [nextPath]: { $lte: at } }] },
+  { $or: [{ [leasePath]: null }, { [leasePath]: { $lte: at } }] },
+] });
+const retryDelay = attempts => Math.min(WORKER_RETRY_MAX_MS,
+  WORKER_RETRY_BASE_MS * 2 ** Math.min(10, Math.max(0, (attempts || 1) - 1)));
+
+async function submitQueuedOperation(operationId, environment) {
+  const at = new Date(), token = crypto.randomUUID();
+  const op = await Operation.findOneAndUpdate({ _id: operationId, environment,
+    status: 'awaiting_payment', payment: { $ne: null },
+    ...eligibleAt('workerNextAttemptAt', 'workerLeaseUntil', at) }, {
+    $set: { workerLeaseToken: token, workerLeaseUntil: new Date(at.getTime() + WORKER_LEASE_MS),
+      workerLastAttemptAt: at, workerNextAttemptAt: new Date(at.getTime() + WORKER_LEASE_MS) },
+    $inc: { workerAttempts: 1 },
+  }, { new: true });
+  if (!op) return;
+  try {
+    // Unknown provider outcomes are reconciled by the payment service, never
+    // blindly replayed. This scheduling lease cannot authorize a new invoice.
+    await payments.submitRecurringPayment(op.payment);
+  } finally {
+    await Operation.updateOne({ _id: op._id, workerLeaseToken: token }, { $set: {
+      workerNextAttemptAt: new Date(Date.now() + retryDelay(op.workerAttempts)),
+      workerLeaseToken: null, workerLeaseUntil: null,
+    } });
+  }
+}
 
 async function notify(sub, kind, at, title, message, session) {
   const value = minor(sub.safepayBilling.monthlyMinor);
@@ -218,34 +249,82 @@ async function refreshStatus(subscriptionId) {
   });
 }
 
-async function runBillingWorker() {
-  if (running || !safepayWorkersEnabled() || mongoose.connection.readyState !== 1) return;
-  running = true;
-  try {
-    const config = readSafepayConfig(process.env, { requireWebhook: true });
-    await Promise.all([Operation.init(), Payment.init()]);
-    // Accepted enrollment/upgrade invoices are durable work as well, including
-    // a server crash before the first provider request was dispatched.
-    const accepted = await Operation.find({ environment: config.environment, status: 'awaiting_payment', payment: { $ne: null } })
-      .sort({ acceptedAt: 1 }).limit(20).select('payment');
-    for (const op of accepted) {
-      try { await payments.submitRecurringPayment(op.payment); }
-      catch (error) { console.error('[safepay-billing] pending invoice:', error.code || 'BILLING_UNAVAILABLE'); }
-    }
-    const due = await Subscription.find({ billingProvider: 'safepay', 'safepayBilling.environment': config.environment,
-      'paymentRisk.suspended': { $ne: true }, $or: [
-        { 'safepayBilling.autoRenew': true, 'safepayBilling.nextChargeAt': { $ne: null, $lte: new Date() } },
-        { 'safepayBilling.autoRenew': false, cancelledAt: { $ne: null }, currentPeriodEnd: { $lte: new Date() }, 'safepayBilling.endedAt': null },
-      ] }).sort({ 'safepayBilling.nextChargeAt': 1 }).limit(25).select('_id');
-    for (const row of due) {
-      try {
-        await closeEndedSubscription(row._id);
-        const op = await queueRenewal(row._id);
-        if (op?.payment && op.status === 'awaiting_payment') await payments.submitRecurringPayment(op.payment);
-      } catch (error) { console.error('[safepay-billing] deferred:', error.code || 'BILLING_UNAVAILABLE'); }
-    }
-  } finally { running = false; }
+// A local re-entry fence avoids overlapping timers. Database claims also fence
+// independent processes and survive a restart without resetting retry history.
+function createBillingWorker() {
+  let running = false;
+  return async function runBillingWorker() {
+    if (running || !safepayWorkersEnabled() || mongoose.connection.readyState !== 1) return;
+    running = true;
+    try {
+      const config = readSafepayConfig(process.env, { requireWebhook: true });
+      await Promise.all([Operation.init(), Payment.init(), Subscription.init()]);
+      const at = new Date();
+      // A pending invoice owns its renewal; it must not permanently consume
+      // BOTH batches while later sellers wait for their first billing attempt.
+      const acceptedFilter = { environment: config.environment,
+        status: 'awaiting_payment', payment: { $ne: null },
+        ...eligibleAt('workerNextAttemptAt', 'workerLeaseUntil', at) };
+      const accepted = await Operation.aggregate([
+        { $match: acceptedFilter },
+        // Missing scheduling fields use the original durable acceptance time,
+        // not "always first" null sorting that could starve overdue retries.
+        { $set: { workerQueueAt: { $ifNull: ['$workerNextAttemptAt', { $ifNull: ['$acceptedAt', '$createdAt'] }] } } },
+        { $sort: { workerQueueAt: 1, workerLastAttemptAt: 1, acceptedAt: 1, _id: 1 } },
+        { $limit: 20 }, { $project: { _id: 1 } },
+      ]);
+      for (const op of accepted) {
+        try { await submitQueuedOperation(op._id, config.environment); }
+        catch (error) { console.error('[safepay-billing] pending invoice:', error.code || 'BILLING_UNAVAILABLE'); }
+      }
+      const dueFilter = { billingProvider: 'safepay', 'safepayBilling.environment': config.environment,
+        'paymentRisk.suspended': { $ne: true }, 'safepayBilling.pendingOperation': null,
+        $and: [...eligibleAt('safepayBilling.workerNextAttemptAt', 'safepayBilling.workerLeaseUntil', at).$and,
+          { $or: [
+            { 'safepayBilling.autoRenew': true, 'safepayBilling.nextChargeAt': { $ne: null, $lte: at } },
+            { 'safepayBilling.autoRenew': false, cancelledAt: { $ne: null }, currentPeriodEnd: { $lte: at }, 'safepayBilling.endedAt': null },
+          ] }],
+      };
+      const due = await Subscription.aggregate([
+        { $match: dueFilter },
+        { $set: { workerQueueAt: { $ifNull: ['$safepayBilling.workerNextAttemptAt', {
+          $ifNull: ['$safepayBilling.nextChargeAt', '$currentPeriodEnd'],
+        }] } } },
+        { $sort: { workerQueueAt: 1, 'safepayBilling.workerLastAttemptAt': 1, _id: 1 } },
+        { $limit: 25 }, { $project: { _id: 1 } },
+      ]);
+      for (const row of due) {
+        const token = crypto.randomUUID(), claimedAt = new Date();
+        const sub = await Subscription.findOneAndUpdate({ ...dueFilter, _id: row._id,
+          $and: [...eligibleAt('safepayBilling.workerNextAttemptAt', 'safepayBilling.workerLeaseUntil', claimedAt).$and,
+            dueFilter.$and.at(-1)] }, { $set: {
+            'safepayBilling.workerLeaseToken': token,
+            'safepayBilling.workerLeaseUntil': new Date(claimedAt.getTime() + WORKER_LEASE_MS),
+            'safepayBilling.workerNextAttemptAt': new Date(claimedAt.getTime() + WORKER_LEASE_MS),
+            'safepayBilling.workerLastAttemptAt': claimedAt,
+          }, $inc: { 'safepayBilling.workerAttempts': 1 } }, { new: true });
+        if (!sub) continue;
+        let completed = false;
+        try {
+          completed = await closeEndedSubscription(row._id);
+          if (!completed) {
+            const op = await queueRenewal(row._id);
+            if (op?.payment && op.status === 'awaiting_payment') await submitQueuedOperation(op._id, config.environment);
+            completed = !!op;
+          }
+        } catch (error) { console.error('[safepay-billing] deferred:', error.code || 'BILLING_UNAVAILABLE'); }
+        finally {
+          await Subscription.updateOne({ _id: row._id, 'safepayBilling.workerLeaseToken': token }, { $set: {
+            'safepayBilling.workerNextAttemptAt': completed ? null : new Date(Date.now() + retryDelay(sub.safepayBilling.workerAttempts)),
+            'safepayBilling.workerAttempts': completed ? 0 : sub.safepayBilling.workerAttempts,
+            'safepayBilling.workerLeaseToken': null, 'safepayBilling.workerLeaseUntil': null,
+          } });
+        }
+      }
+    } finally { running = false; }
+  };
 }
+const runBillingWorker = createBillingWorker();
 function startBillingWorker() {
   if (workerTimer || !safepayWorkersEnabled()) return;
   workerTimer = setInterval(() => runBillingWorker().catch(error => console.error('[safepay-billing] deferred:', error.code || 'BILLING_UNAVAILABLE')), 30000);
@@ -255,4 +334,4 @@ function startBillingWorker() {
 function stopBillingWorker() { if (workerTimer) clearInterval(workerTimer); workerTimer = null; }
 
 module.exports = { cancel, resume, scheduleDowngrade, cancelDowngrade, queueRenewal, closeEndedSubscription,
-  refreshStatus, runBillingWorker, startBillingWorker, stopBillingWorker };
+  refreshStatus, createBillingWorker, runBillingWorker, startBillingWorker, stopBillingWorker };
