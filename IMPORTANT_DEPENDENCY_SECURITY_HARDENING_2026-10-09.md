@@ -52,6 +52,18 @@ Run the checks with npm run test:dependency-security in Backend or MobileApp. Th
 
 The checks cover valid signing, malformed nested signature structures, PSS compatibility, Expo certificate generation and verification, normal glob behavior, deep strings, direct ASTs, cycles, oversized ASTs, idempotence, altered source, altered assets, unreviewed versions, traversing lock paths and check-only operation.
 
+## Release verification
+
+The tested source commit is `23f485c7c8c39efc62880a22412f6090c340e94e`, pushed to both repository remotes. The release excludes the separate notification, email, WhatsApp and account drafts.
+
+- Railway deployment `f0732493-e357-4f9c-b657-782914fedcf7` succeeded for Rozare's existing backend service. Its build log confirms the dependency postinstall step ran and verified the braces protection.
+- The public backend `/health` endpoint returned `status: ok`, the exact tested commit and `mongoConnected: true`.
+- Vercel deployment `dpl_5jNf7kzrbUw589pXzMSHeD4hGiZc` is ready in production with `rozare.com` among its aliases and the exact tested commit. A scoped runtime-log query returned no error/fatal groups in the preceding 30-minute verification window; this is not an all-time monitoring guarantee.
+- The backend configuration readback confirms Safepay is still `sandbox`, enabled for web and mobile, with Stripe disabled. No live payment configuration was enabled.
+- Railway CLI was restored to the user's EYEKONIT account after the read-only deployment checks.
+
+These are source, installation, build, regression and release checks. No exploit traffic was sent to the hosted service, and no real payment or bank transfer was performed.
+
 ## Remaining warnings and scope
 
 The sprintf-js moderate advisory remains. Backend reaches it through the legacy Mammoth/argparse CLI dependency chain; normal DOCX extraction does not load argparse or sprintf-js, as checked by the existing compatibility test. Testing/coverage dependencies also retain that CLI chain. It is not silently removed along with Word-document support.
