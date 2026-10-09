@@ -3,6 +3,8 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
+    "postinstall": "node scripts/ensure-dependency-security.js",
+    "test:dependency-security": "node scripts/tests/dependency-security-regressions.cjs",
     "test": "jest --runInBand --detectOpenHandles",
     "test:watch": "jest --watch",
     "start": "node server.js",
