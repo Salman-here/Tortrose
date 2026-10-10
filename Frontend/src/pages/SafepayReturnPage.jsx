@@ -63,7 +63,10 @@ export default function SafepayReturnPage() {
     } finally { setResuming(false); setRetry(value => value + 1); }
   };
   const complete = ['paid', 'authorized'].includes(payment?.status);
-  const destination = ({ wallet_top_up: '/user-dashboard/wallet', card_setup: '/user-dashboard/payment-methods', subdomain: '/seller-dashboard/subdomain' })[payment?.purpose] || '/user-dashboard/orders';
+  const confirmedOrder = !error && payment?.paymentId === paymentId && payment.purpose === 'order'
+    && payment.status === 'paid' && /^[a-f\d]{24}$/i.test(String(payment.mongoOrderId || ''));
+  const destination = confirmedOrder ? `/success?orderId=${encodeURIComponent(String(payment.mongoOrderId))}`
+    : ({ wallet_top_up: '/user-dashboard/wallet', card_setup: '/user-dashboard/payment-methods', subdomain: '/seller-dashboard/subdomain' })[payment?.purpose] || '/user-dashboard/orders';
   if (embedded) return <main className="max-w-lg mx-auto p-6 my-12 glass-card space-y-5 text-center">
     <ShieldCheck className="mx-auto text-primary" size={40} /><h1 className="text-2xl font-bold">Returning to checkout</h1>
     <p role="status">Rozare is checking this payment on your original screen. Returning here does not confirm payment.</p>
@@ -84,6 +87,6 @@ export default function SafepayReturnPage() {
       className="glass-button-primary px-5 py-3 block w-full disabled:opacity-50">
       {resuming ? 'Opening secure payment…' : 'Resume secure payment'}
     </button>}
-    <Link className="glass-button-primary px-5 py-3 inline-block" to={currentUser ? destination : '/login'}>{currentUser ? 'Return to Rozare' : 'Sign in'}</Link>
+    <Link className="glass-button-primary px-5 py-3 inline-block" replace={!!confirmedOrder} to={currentUser ? destination : '/login'}>{currentUser ? confirmedOrder ? 'View order confirmation' : 'Return to Rozare' : 'Sign in'}</Link>
   </main>;
 }

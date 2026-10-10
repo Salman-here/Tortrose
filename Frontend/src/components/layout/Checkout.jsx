@@ -68,52 +68,12 @@ import { createCheckoutQuoteInput } from '../../utils/checkoutQuote';
 import { getSafepayCheckoutLabel } from '../../utils/paymentPresentation';
 
 const CHECKOUT_ATTEMPT_STORAGE_KEY = 'rozare_checkout_attempt_v1';
-const ORDER_SUCCESS_STORAGE_KEY = 'rozare_order_success_v1';
 const STRIPE_RETURN_STORAGE_KEY = 'rozare_stripe_return_v1';
 
 const cartLineKey = (item) => String(
   item?._id
   || `${item?.product?._id || 'product'}:${item?.selectedColor || ''}:${JSON.stringify(item?.selectedOptions || item?.options || {})}`
 );
-
-const rememberConfirmedOrder = (orderId, paymentMethod, {
-  noPaymentRequired = false,
-  attemptStorageKey = '',
-  attemptFingerprint = '',
-  attemptKey = '',
-} = {}) => {
-  const locallyConfirmed = ['cash_on_delivery', 'wallet'].includes(paymentMethod)
-    || (paymentMethod === 'stripe' && noPaymentRequired === true);
-  if (
-    !orderId
-    || !locallyConfirmed
-    || !attemptStorageKey
-    || !attemptFingerprint
-    || !attemptKey
-  ) return false;
-  try {
-    const record = {
-      orderId,
-      paymentMethod,
-      noPaymentRequired: noPaymentRequired === true,
-      attemptStorageKey,
-      attemptFingerprint,
-      attemptKey,
-      receivedAt: Date.now(),
-    };
-    sessionStorage.setItem(ORDER_SUCCESS_STORAGE_KEY, JSON.stringify(record));
-    const confirmed = JSON.parse(sessionStorage.getItem(ORDER_SUCCESS_STORAGE_KEY) || 'null');
-    return confirmed?.orderId === record.orderId
-      && confirmed?.paymentMethod === record.paymentMethod
-      && confirmed?.noPaymentRequired === record.noPaymentRequired
-      && confirmed?.attemptStorageKey === record.attemptStorageKey
-      && confirmed?.attemptFingerprint === record.attemptFingerprint
-      && confirmed?.attemptKey === record.attemptKey
-      && confirmed?.receivedAt === record.receivedAt;
-  } catch (_) {
-    return false;
-  }
-};
 
 const rememberStripeCheckoutReturn = (
   orderId,
@@ -952,8 +912,21 @@ function OwnedCheckout({ owner }) {
     if (currentStep > 0) setCurrentStep((p) => p - 1);
   };
 
+  const finishConfirmedOrder = async ({ orderReference, attemptFingerprint, attemptKey }) => {
+    // Clear only the generation that this placement actually completed. The
+    // receipt itself re-reads the owned order and never clears a revisited cart.
+    if (attemptFingerprint && attemptKey) {
+      try {
+        await clearPersistedMutationAttemptFromLedger(localStorage, checkoutAttemptStorageKey, attemptFingerprint, attemptKey);
+      } catch { /* A retry still replays the completed server-owned attempt. */ }
+    }
+    await fetchCart().catch(error => console.error('Error refreshing completed order cart:', error));
+    navigate(orderReference ? `/success?orderId=${encodeURIComponent(orderReference)}` : '/user-dashboard/orders', { replace: true });
+  };
+
   // Final form submit
   const onPlaceOrder = async (data) => {
+    if (isProcessing) return;
     if (!isCartReady) {
       toast.error(cartHydrationStatus === 'error'
         ? 'Your cart could not be verified. Retry synchronization before placing the order.'
@@ -1199,18 +1172,7 @@ function OwnedCheckout({ owner }) {
       }
 
       if (['cash_on_delivery', 'wallet'].includes(order.paymentMethod)) {
-        const confirmedOrderId = res.data.orderId || res.data.order?.orderId;
-        const successAuthenticated = rememberConfirmedOrder(
-          confirmedOrderId,
-          order.paymentMethod,
-          {
-            noPaymentRequired: res.data?.noPaymentRequired === true,
-            attemptStorageKey: checkoutAttemptStorageKey,
-            attemptFingerprint: fingerprint,
-            attemptKey,
-          },
-        );
-        setIsProcessing(false);
+        const confirmedOrderId = res.data.orderId || res.data.order?.orderId || res.data.order?._id;
         trackPlaceAnOrder({
           orderId: res.data.order?.orderId || res.data.order?._id,
           cartItems: cartItems?.cart || [],
@@ -1220,31 +1182,14 @@ function OwnedCheckout({ owner }) {
           eventId: tiktokPlaceOrderEventId,
         });
 
-        if (!successAuthenticated) {
-          // The order already reached the server, so its durable retry key must
-          // remain replayable. Never trust query parameters as proof of COD or
-          // Wallet success when the same-tab confirmation record was not
-          // durably written and read back.
-          toast.warning(
-            'Your order was placed, but this tab could not save its secure confirmation. Open My Orders to view it safely.',
-            { autoClose: 9000 },
-          );
-          if (token) await fetchCart().catch(error => console.error('Error refreshing cart:', error));
-          navigate('/user-dashboard/orders', { replace: true });
-          return;
-        }
-
         if (hasChanged && currentUser) {
-          setPendingOrderData({ order, data: res.data, currentShipping });
+          setPendingOrderData({ order, data: res.data, currentShipping, confirmedOrderId,
+            attemptFingerprint: fingerprint, attemptKey });
           setShowUpdatePrompt(true);
           return;
         }
 
-        setTimeout(async () => {
-          if (token) await fetchCart().catch(error => console.error('Error refreshing cart:', error));
-          try { sessionStorage.removeItem(CHECKOUT_STORAGE_KEY); } catch (_) {}
-          navigate(`/success?payment=${order.paymentMethod}&orderId=${encodeURIComponent(confirmedOrderId || '')}`);
-        }, 1500);
+        await finishConfirmedOrder({ orderReference: confirmedOrderId, attemptFingerprint: fingerprint, attemptKey });
         return;
       }
 
@@ -1268,15 +1213,12 @@ function OwnedCheckout({ owner }) {
       const result = res.data?.noPaymentRequired === true && res.data?.isPaid === true
         ? { status: 'paid', mongoOrderId: res.data.order?._id }
         : await openSafepayCheckout(res);
-      setIsProcessing(false);
       if (result.status === 'paid') {
-        await clearPersistedMutationAttemptFromLedger(localStorage, checkoutAttemptStorageKey, fingerprint, attemptKey);
-        await fetchCart();
-        try { sessionStorage.removeItem(CHECKOUT_STORAGE_KEY); } catch { /* confirmation remains on server */ }
         toast.success('Payment verified. Your order is confirmed.');
-        const mongoId = result.mongoOrderId || res.data.order?._id;
-        navigate(mongoId ? `/user-dashboard/order/detail/${mongoId}` : '/user-dashboard/orders', { replace: true });
+        const confirmedOrderId = res.data.orderId || res.data.order?.orderId || result.mongoOrderId || res.data.order?._id;
+        await finishConfirmedOrder({ orderReference: confirmedOrderId, attemptFingerprint: fingerprint, attemptKey });
       } else {
+        setIsProcessing(false);
         if (['failed', 'cancelled', 'refunded'].includes(result.status)) {
           await clearPersistedMutationAttemptFromLedger(localStorage, checkoutAttemptStorageKey, fingerprint, attemptKey);
         }
@@ -2455,14 +2397,13 @@ function OwnedCheckout({ owner }) {
               </p>
               <div className="flex justify-end gap-3">
                 <motion.button whileTap={{ scale: 0.97 }}
-                  onClick={() => {
+                  onClick={async () => {
                     setShowUpdatePrompt(false);
                     // Continue with order flow
                     if (pendingOrderData?.data) {
                       if (['cash_on_delivery', 'wallet'].includes(pendingOrderData.order?.paymentMethod)) {
-                        fetchCart().catch(() => {});
-                        try { sessionStorage.removeItem(CHECKOUT_STORAGE_KEY); } catch (_) {}
-                        navigate(`/success?payment=${pendingOrderData.order.paymentMethod}&orderId=${encodeURIComponent(pendingOrderData.data?.orderId || '')}`);
+                        await finishConfirmedOrder({ orderReference: pendingOrderData.confirmedOrderId,
+                          attemptFingerprint: pendingOrderData.attemptFingerprint, attemptKey: pendingOrderData.attemptKey });
                       }
                     }
                   }}
@@ -2482,9 +2423,8 @@ function OwnedCheckout({ owner }) {
                     } catch (e) { console.error(e); }
                     setShowUpdatePrompt(false);
                     if (['cash_on_delivery', 'wallet'].includes(pendingOrderData?.order?.paymentMethod)) {
-                      fetchCart().catch(() => {});
-                      try { sessionStorage.removeItem(CHECKOUT_STORAGE_KEY); } catch (_) {}
-                      navigate(`/success?payment=${pendingOrderData.order.paymentMethod}&orderId=${encodeURIComponent(pendingOrderData.data?.orderId || '')}`);
+                      await finishConfirmedOrder({ orderReference: pendingOrderData.confirmedOrderId,
+                        attemptFingerprint: pendingOrderData.attemptFingerprint, attemptKey: pendingOrderData.attemptKey });
                     }
                   }}
                   className="px-4 py-2 rounded-xl text-white font-semibold text-sm"

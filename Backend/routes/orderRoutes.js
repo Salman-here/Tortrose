@@ -17,6 +17,7 @@ const {
     cancelStripePaymentAttempt,
 } = require('../controllers/orderController')
 const verifyToken = require('../middleware/authMiddleware')
+const { getOrderReceipt } = require('../controllers/orderReceiptController')
 const {
   orderPaymentCreationLimiter,
   checkoutQuoteLimiter,
@@ -31,6 +32,7 @@ router.get('/track', trackGuestOrder)
 router.get('/get', verifyToken, getOrders)
 router.get('/export', verifyToken, exportOrders)
 router.get('/user-orders', verifyToken, getUserOrders)
+router.get('/receipt/:reference', verifyToken, paymentStatusPollingLimiter, getOrderReceipt)
 router.get('/payment-status/:orderId', verifyToken, paymentStatusPollingLimiter, getPaymentStatus)
 router.post('/payment/:orderId/cancel', verifyToken, cancelStripePaymentAttempt)
 router.post('/reorder/:id', verifyToken, reorder)
