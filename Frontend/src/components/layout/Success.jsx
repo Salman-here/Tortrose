@@ -72,8 +72,9 @@ export default function Success() {
       <p role={checking || receipt ? 'status' : 'alert'} className="text-sm leading-relaxed mb-7" style={{ color: 'hsl(var(--muted-foreground))' }}>{presentation.message}</p>
       {receipt && <div className="glass-inner p-4 rounded-xl text-left space-y-3">
         <div className="flex items-center gap-3"><ShoppingBag className="w-5 h-5 shrink-0" style={{ color: accent }} />
-          <div className="min-w-0"><p className="text-[11px] uppercase tracking-wide" style={{ color: 'hsl(var(--muted-foreground))' }}>Order reference</p>
-            <p className="text-sm font-semibold break-all" style={{ color: 'hsl(var(--foreground))' }}>{receipt.orderId}</p></div></div>
+          <div className="min-w-0 flex-1"><p className="text-[11px] uppercase tracking-wide" style={{ color: 'hsl(var(--muted-foreground))' }}>Order reference</p>
+            <p className="text-sm font-semibold break-all" style={{ color: 'hsl(var(--foreground))' }}>{receipt.orderId}</p></div>
+          <Link className="shrink-0 text-xs font-semibold text-primary underline" to={presentation.detailsHref}>View Order</Link></div>
         <div className="flex justify-between gap-3 text-sm"><span className="text-muted-foreground">Payment method</span><span className="font-semibold">{presentation.methodLabel}</span></div>
         <div className="flex justify-between gap-3 text-sm"><span className="text-muted-foreground">{presentation.originalTotal ? 'Original order total' : 'Order total'}</span>
           <span className="font-semibold">{formatOrderReceiptTotal(receipt)}</span></div>
@@ -83,7 +84,6 @@ export default function Success() {
           {(view.status === 'unavailable' || receipt && !positive) && <button type="button" disabled={checking} onClick={() => setRetry(value => value + 1)}
             className="glass-button px-6 py-3 rounded-xl font-semibold inline-flex items-center gap-2"><RefreshCw className="w-4 h-4" /> Check again</button>}
           {receipt && <Link className="glass-button-primary px-6 py-3 rounded-xl font-semibold" to="/">Continue Shopping</Link>}
-          {receipt && <Link className="glass-button px-6 py-3 rounded-xl font-semibold" to={presentation.detailsHref}>View Order</Link>}
           <Link className="glass-button px-6 py-3 rounded-xl font-semibold" to="/user-dashboard/orders">My Orders</Link>
         </>}
       </div>

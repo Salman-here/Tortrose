@@ -137,5 +137,6 @@ test('Success is owner scoped, abortable and entirely read-only, including BFCac
   assert.match(source, /scope: requestScope/);
   assert.match(source, /pageshow/); assert.match(source, /event\.persisted/); assert.match(source, /setVerification\(\{ scope: ''/);
   assert.match(source, /axios\.get/); assert.match(source, /Authorization: `Bearer/);
+  assert.match(source, /shrink-0 text-xs font-semibold text-primary underline[\s\S]*?>View Order<\/Link>/);
   assert.doesNotMatch(source, /sessionStorage|localStorage|removeItem|fetchCart|clearPersisted|axios\.(post|patch|delete)/);
 });
