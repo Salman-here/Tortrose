@@ -13,11 +13,19 @@ const { buildOrderSellerSettlement, buildOrderSellerCurrencyMoney } = require('.
 const { cancelBuyerOrder, chooseCancellationSellers } = require('../../services/buyerCancellationService');
 const { enqueueNotificationEvent } = require('../../services/notificationOutboxService');
 let replica;
+beforeEach(() => {
+  jest.spyOn(require('../../config/safepay'), 'readSafepayConfig').mockReturnValue({ environment: 'sandbox' });
+  jest.spyOn(require('../../services/safepayClient'), 'createSafepayClient').mockReturnValue({
+    getTracker: jest.fn(async (_tracker, payment) => payment.refundedMinor > 0 ? trackerRefund(payment, payment.refundedMinor)
+      : { token: payment.tracker, state: 'TRACKER_ENDED', intent: payment.providerIntent,
+        mode: 'payment', purchase_totals: { quote_amount: { currency: payment.currency, amount: payment.amountMinor } } }),
+  });
+});
 beforeAll(async () => { replica = await MongoMemoryReplSet.create({ replSet: { count: 1 } }); await mongoose.connect(replica.getUri());
   await Promise.all([Order, Product, Cancellation, Payment, Wallet, WalletTransaction, require('../../models/SellerSettlementLock')].map(model => model.init())); }, 60000);
 afterAll(async () => { await mongoose.disconnect(); if (replica) await replica.stop(); }, 60000);
-afterEach(async () => { await Promise.all(Object.values(mongoose.models).map(model => model.deleteMany({}))); jest.clearAllMocks(); });
-async function fixture(method = 'wallet', statusB = 'confirmed', fees = false, { currency = 'USD', prices = [10, 20], shipping = 2 } = {}) {
+afterEach(async () => { await Promise.all(Object.values(mongoose.models).map(model => model.deleteMany({}))); jest.restoreAllMocks(); jest.clearAllMocks(); });
+async function fixture(method = 'wallet', statusB = 'confirmed', fees = false, { currency = 'USD', prices = [10, 20], shipping = 2, paymentRail = 'card' } = {}) {
   const buyer = new mongoose.Types.ObjectId(), sellers = [new mongoose.Types.ObjectId(), new mongoose.Types.ObjectId()];
   const products = await Product.create(sellers.map((seller, index) => ({ seller, name: `Cup ${index}`, description: 'Reusable cup',
     price: prices[index], currency, priceCurrency: currency, stock: 4, totalSales: 1,
@@ -40,7 +48,7 @@ async function fixture(method = 'wallet', statusB = 'confirmed', fees = false, {
   raw.sellerSettlementVersion = 1; raw.sellerSettlement = buildOrderSellerSettlement(raw, { requireOrderTotal: true });
   raw.sellerCurrencyMoneyVersion = 1; raw.sellerCurrencyMoney = buildOrderSellerCurrencyMoney(raw);
   if (fees) raw.onlineFeeSnapshot = require('../../services/onlineOrderFeeService').buildOnlineOrderFee(raw);
-  if (method === 'safepay') { raw.safepayPaymentId = new mongoose.Types.ObjectId(); raw.safepayEnvironment = 'sandbox'; }
+  if (method === 'safepay') { raw.safepayPaymentId = new mongoose.Types.ObjectId(); raw.safepayEnvironment = 'sandbox'; raw.safepayPaymentRail = paymentRail; }
   const order = await Order.create(raw);
   const result = { buyer, sellers, products, order };
   if (method === 'safepay') await cardPayment(result);
@@ -124,10 +132,75 @@ async function cardPayment(f) {
   return Payment.create({ _id: f.order.safepayPaymentId, user: f.buyer, order: f.order._id, environment: 'sandbox', purpose: 'order',
     reference: `order:${f.order._id}`, requestKey: 'qa-cancellation-key', fingerprint: 'a'.repeat(64),
     amountMinor: Math.round(f.order.orderSummary.totalAmount * 100), currency: f.order.currency, tracker: `track_${new mongoose.Types.ObjectId()}`, status: 'paid',
-    capturedMinor: Math.round(f.order.orderSummary.totalAmount * 100), appliedAt: new Date(), paidAt: new Date() });
+    capturedMinor: Math.round(f.order.orderSummary.totalAmount * 100), appliedAt: new Date(), paidAt: new Date(), paymentRail: f.order.safepayPaymentRail,
+    providerIntent: f.order.safepayPaymentRail === 'raast' ? 'RAAST' : f.order.safepayPaymentRail === 'card' ? 'CYBERSOURCE' : '' });
 }
+test('Raast cancellation quotes keep full Wallet principal and disable the unsupported original-account route', async () => {
+  const f = await fixture('safepay', 'shipped', true, { currency: 'PKR', prices: [100, 200], shipping: 30, paymentRail: 'raast' });
+  const args = { orderId: f.order._id, buyerId: f.buyer, sellerIds: [String(f.sellers[0])] };
+  const quote = await require('../../services/buyerCancellationService').previewBuyerCancellation(args);
+  expect(quote.paymentRail).toBe('raast');
+  expect(quote.options[0]).toMatchObject({ destination: 'wallet', amountMinor: 13000, deductionMinor: 0, available: true });
+  expect(quote.options[1]).toMatchObject({ destination: 'original_card', label: 'Original Raast account', available: false, reason: expect.stringContaining('not enabled') });
+  await expect(cancelBuyerOrder({ ...args, refundDestination: 'original_card', quoteId: quote.quoteId, acceptDeduction: true }))
+    .rejects.toMatchObject({ code: 'REFUND_DESTINATION_INVALID' });
+  expect(await Cancellation.countDocuments()).toBe(0);
+  expect((await Product.findById(f.products[0]._id)).stock).toBe(4);
+  const cancelled = await cancelBuyerOrder({ ...args, refundDestination: 'wallet', quoteId: quote.quoteId });
+  await cancelBuyerOrder({ ...args, refundDestination: 'wallet', quoteId: quote.quoteId });
+  expect(cancelled.sellerFulfillment.map(row => row.status)).toEqual(['cancelled', 'shipped']);
+  expect((await Wallet.findOne({ user: f.buyer })).balances.PKR).toBe(130);
+  expect((await Payment.findById(f.order.safepayPaymentId))).toMatchObject({ paymentRail: 'raast', walletRefundMinor: 13000, refundedMinor: 0 });
+  expect(await WalletTransaction.countDocuments()).toBe(1);
+  expect((await Product.findById(f.products[0]._id)).stock).toBe(5);
+  expect((await Product.findById(f.products[1]._id)).stock).toBe(4);
+  expect((await Order.findById(f.order._id)).onlineFeeSnapshot).toEqual(f.order.onlineFeeSnapshot);
+  expect((await Cancellation.findOne({}))).toMatchObject({ paymentRail: 'raast', refundDestination: 'wallet', refundStatus: 'refunded', deductionMinor: 0 });
+});
+
+test('whole multi-seller Raast cancellation credits exactly the frozen paid total once', async () => {
+  const f = await fixture('safepay', 'confirmed', true, { currency: 'PKR', prices: [100, 200], shipping: 30, paymentRail: 'raast' });
+  const args = { orderId: f.order._id, buyerId: f.buyer };
+  const quote = await require('../../services/buyerCancellationService').previewBuyerCancellation(args);
+  await cancelBuyerOrder({ ...args, refundDestination: 'wallet', quoteId: quote.quoteId });
+  expect((await Wallet.findOne({ user: f.buyer })).balances.PKR).toBe(360);
+  expect((await Payment.findById(f.order.safepayPaymentId))).toMatchObject({ walletRefundMinor: 36000, refundedMinor: 0 });
+  expect((await Order.findById(f.order._id)).orderStatus).toBe('cancelled');
+  expect(await WalletTransaction.countDocuments()).toBe(2);
+});
+
+test('unverified rail does not become a card refund from a caller-supplied destination', async () => {
+  const f = await fixture('safepay', 'confirmed', true, { currency: 'PKR', paymentRail: 'unknown' });
+  const args = { orderId: f.order._id, buyerId: f.buyer, sellerIds: [String(f.sellers[0])] };
+  await expect(require('../../services/buyerCancellationService').previewBuyerCancellation(args))
+    .rejects.toMatchObject({ code: 'SAFEPAY_PAYMENT_NEEDS_RECONCILIATION' });
+  await expect(cancelBuyerOrder({ ...args, refundDestination: 'original_card', quoteId: 'untrusted-quote', acceptDeduction: true }))
+    .rejects.toMatchObject({ code: 'SAFEPAY_PAYMENT_NEEDS_RECONCILIATION' });
+  expect(await Cancellation.countDocuments()).toBe(0);
+  expect(await WalletTransaction.countDocuments()).toBe(0);
+});
+
+test('legacy Raast original-card requests require review before any refund submission marker or POST', async () => {
+  const f = await fixture('safepay', 'confirmed', true, { currency: 'PKR', prices: [100, 200], shipping: 30, paymentRail: 'raast' });
+  const payment = await cardPayment(f);
+  const row = await Cancellation.create({ order: f.order._id, buyer: f.buyer, seller: f.sellers[0], paymentMethod: 'safepay',
+    payment: payment._id, environment: 'sandbox', currency: 'PKR', amountMinor: 13000, refundAmountMinor: 11000, deductionMinor: 2000,
+    policyVersion: 1, sellerCurrency: 'PKR', sellerAmountMinor: 13000, refundDestination: 'original_card', refundStatus: 'pending', requestedAt: new Date() });
+  await Order.updateOne({ _id: f.order._id }, { $set: { 'sellerFulfillment.0.status': 'cancelled',
+    'sellerFulfillment.0.cancellation': require('../../services/buyerCancellationService').cancellationView(row) } });
+  const post = jest.fn();
+  require('../../services/safepayClient').createSafepayClient.mockReturnValue({ getTracker: jest.fn(async () => ({
+    token: payment.tracker, intent: 'RAAST', state: 'TRACKER_ENDED', mode: 'payment', purchase_totals: { quote_amount: { currency: 'PKR', amount: 36000 } },
+  })), refundPaymentAmount: post });
+  await require('../../services/cancellationRefundService').processCancellationRefund(payment._id);
+  expect(post).not.toHaveBeenCalled();
+  expect((await Cancellation.findById(row._id))).toMatchObject({ refundStatus: 'manual_review', submitStartedAt: null, lastErrorCode: 'SAFEPAY_RAAST_REFUND_UNAVAILABLE' });
+  expect((await Payment.findById(payment._id))).toMatchObject({ refundedMinor: 0, walletRefundMinor: 0 });
+  expect(await WalletTransaction.countDocuments()).toBe(0);
+});
+
 function trackerRefund(payment, amount = 1200) {
-  return { token: payment.tracker, state: amount === payment.amountMinor ? 'TRACKER_REFUNDED' : 'TRACKER_PARTIAL_REFUND',
+  return { token: payment.tracker, intent: 'CYBERSOURCE', state: amount === payment.amountMinor ? 'TRACKER_REFUNDED' : 'TRACKER_PARTIAL_REFUND',
     charge: { token: 'charge_qa', tracker: payment.tracker, amount: { currency: payment.currency, amount: payment.amountMinor },
       capture: { totals: { currency: payment.currency, amount: payment.amountMinor } }, balance: { currency: payment.currency, amount: payment.amountMinor - amount },
       cybersource_refunds: [{ token: 'refund_qa-cancellation', tracker: payment.tracker, totals: { currency: payment.currency, amount }, created_at: { seconds: Math.floor(Date.now() / 1000) } }] } };
@@ -169,7 +242,7 @@ test('an ambiguous refund response is recovered read-only and never POSTed twice
   await cancelBuyerOrder({ orderId: f.order._id, buyerId: f.buyer, sellerIds: [String(f.sellers[0])] });
   const config = jest.spyOn(require('../../config/safepay'), 'readSafepayConfig').mockReturnValue({ environment: 'sandbox' });
   const refund = jest.fn(async () => { throw Object.assign(new Error('Response lost'), { outcomeUnknown: true }); });
-  const tracker = { token: payment.tracker, state: 'TRACKER_ENDED', charge: { cybersource_refunds: [] } };
+  const tracker = { token: payment.tracker, state: 'TRACKER_ENDED', intent: 'CYBERSOURCE', charge: { cybersource_refunds: [] } };
   const client = { getTracker: jest.fn().mockResolvedValueOnce(tracker).mockResolvedValue(trackerRefund(payment)), refundPaymentAmount: refund };
   const factory = jest.spyOn(require('../../services/safepayClient'), 'createSafepayClient').mockReturnValue(client);
   try {
@@ -189,7 +262,7 @@ test('the shared financial worker completes an existing card refund while both c
   let refunded = false;
   const refund = jest.fn(async () => { refunded = true; });
   const client = { getTracker: jest.fn(async () => refunded ? trackerRefund(payment)
-    : { token: payment.tracker, state: 'TRACKER_ENDED', charge: { cybersource_refunds: [] } }), refundPaymentAmount: refund };
+    : { token: payment.tracker, state: 'TRACKER_ENDED', intent: 'CYBERSOURCE', charge: { cybersource_refunds: [] } }), refundPaymentAmount: refund };
   const factory = jest.spyOn(require('../../services/safepayClient'), 'createSafepayClient').mockReturnValue(client);
   try {
     process.env.SAFEPAY_WEB_ENABLED = 'false'; process.env.SAFEPAY_MOBILE_ENABLED = 'false';
@@ -344,7 +417,7 @@ test.each(['new', 'queued'])('a %s zero-net seller finishes locally while the po
   const config = jest.spyOn(require('../../config/safepay'), 'readSafepayConfig').mockReturnValue({ environment: 'sandbox' });
   const refund = jest.fn(async () => {});
   const client = { getTracker: jest.fn()
-    .mockResolvedValueOnce({ token: payment.tracker, state: 'TRACKER_ENDED', charge: { cybersource_refunds: [] } })
+    .mockResolvedValueOnce({ token: payment.tracker, state: 'TRACKER_ENDED', intent: 'CYBERSOURCE', charge: { cybersource_refunds: [] } })
     .mockResolvedValue(trackerRefund(payment, 2)), refundPaymentAmount: refund };
   const factory = jest.spyOn(require('../../services/safepayClient'), 'createSafepayClient').mockReturnValue(client);
   try {

@@ -4,9 +4,23 @@ const HOSTS = { sandbox: 'sandbox.api.getsafepay.com', production: 'getsafepay.c
 const ID = /^[a-f0-9]{24}$/i;
 const unwrap = response => response?.data || response || {};
 const failure = message => Object.assign(new Error(message), { code: 'SAFEPAY_CHECKOUT_INVALID' });
+const hasConfirmedRail = payment => payment?.status === 'paid' && payment.isPaid === true && payment.webhookProcessed === true
+  || payment?.purpose === 'card_setup' && payment.status === 'authorized' && payment.cardSaved === true && payment.completed === true
+  || ['refund_pending', 'refunded', 'manual_review'].includes(payment?.status) && (
+    Number.isSafeInteger(payment.capturedMinor) && payment.capturedMinor > 0 && payment.capturedMinor <= payment.amountMinor
+    || ['TRACKER_ENDED', 'TRACKER_REFUNDED', 'TRACKER_PARTIAL_REFUND', 'TRACKER_DISPUTED'].includes(payment.providerState));
+const requirePaymentRail = (payment, expected) => {
+  const rail = payment.paymentRail ?? 'unknown';
+  if (!['unknown', 'card', 'raast'].includes(rail) || rail === 'raast' && (payment.currency !== 'PKR'
+      || payment.purpose === 'card_setup' || payment.checkoutPresentation === 'saved-card' || expected?.checkoutPresentation === 'saved-card')
+    || hasConfirmedRail(expected) && expected.paymentRail && expected.paymentRail !== 'unknown' && rail !== expected.paymentRail) {
+    throw failure('The verified payment method is invalid. Check this same payment again.');
+  }
+  return { ...payment, paymentRail: rail };
+};
 
 export function validateSafepayCheckout(response) {
-  const payment = unwrap(response);
+  const payment = requirePaymentRail(unwrap(response));
   if (payment.paymentMethod !== 'safepay' || payment.paymentFlow !== 'safepay_hosted'
     || !ID.test(String(payment.paymentId || '')) || !HOSTS[payment.environment]) {
     throw failure('Secure Safepay checkout did not return a valid payment reference.');
@@ -16,7 +30,7 @@ export function validateSafepayCheckout(response) {
   let url;
   try { url = new URL(payment.checkoutUrl || payment.url); } catch (_) { throw failure('The secure payment link is unavailable.'); }
   if (payment.checkoutPresentation === 'saved-card') {
-    if (url.protocol !== 'https:' || url.hostname !== 'rozare.up.railway.app' || url.port || url.username || url.password
+    if (payment.paymentRail === 'raast' || url.protocol !== 'https:' || url.hostname !== 'rozare.up.railway.app' || url.port || url.username || url.password
       || url.pathname !== `/api/safepay/saved-checkout/${payment.paymentId}` || url.search
       || !/^#ticket=[A-Za-z0-9_.%-]+$/.test(url.hash) || payment.purpose === 'card_setup'
       || typeof payment.checkoutSessionGrant !== 'string' || !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(payment.checkoutSessionGrant)) {
@@ -31,11 +45,14 @@ export function validateSafepayCheckout(response) {
   return { ...payment, checkoutUrl: url.toString() };
 }
 
-export function normalizeSafepayStatus(response, expectedPaymentId) {
-  const payment = unwrap(response);
+export function normalizeSafepayStatus(response, expectedPaymentId, expected) {
+  const payment = requirePaymentRail(unwrap(response), expected);
   if (payment.paymentMethod !== 'safepay' || String(payment.paymentId) !== String(expectedPaymentId)
     || !ID.test(String(expectedPaymentId || '')) || !HOSTS[payment.environment]) {
     throw failure('Payment verification returned a different payment reference.');
+  }
+  if (expected && ['environment', 'purpose', 'currency', 'amountMinor'].some(key => expected[key] !== undefined && payment[key] !== expected[key])) {
+    throw failure('Payment verification returned different checkout details.');
   }
   const status = payment.purpose === 'card_setup' && payment.status === 'authorized' && payment.cardSaved === true && payment.completed === true
     ? 'authorized' : payment.status === 'paid' && payment.isPaid === true && payment.webhookProcessed === true
@@ -43,13 +60,13 @@ export function normalizeSafepayStatus(response, expectedPaymentId) {
   return { ...payment, status, isPaid: status === 'paid' };
 }
 
-export async function verifySafepayPayment({ apiClient, paymentId, attempts = 4, delayMs = 1200,
+export async function verifySafepayPayment({ apiClient, paymentId, expectedPayment, attempts = 4, delayMs = 1200,
   sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) }) {
   if (!ID.test(String(paymentId || ''))) throw failure('A valid payment reference is required.');
   let last = { status: 'pending', paymentId, isPaid: false };
   for (let index = 0; index < Math.max(1, Math.min(attempts, 10)); index++) {
     try {
-      last = normalizeSafepayStatus(await apiClient.get(`/api/safepay/payments/${paymentId}`), paymentId);
+      last = normalizeSafepayStatus(await apiClient.get(`/api/safepay/payments/${paymentId}`), paymentId, expectedPayment || last);
       if (last.status !== 'pending') return last;
     } catch (error) {
       if (error.code === 'SAFEPAY_CHECKOUT_INVALID' || [401, 403, 404].includes(error.response?.status)) throw error;
@@ -70,6 +87,6 @@ export async function openSafepayCheckout({ apiClient, response, openSheet = pre
     try { returned = await (openBrowser ? openBrowser(payment.checkoutUrl) : openSheet(payment)); }
     catch (_) { /* Keep the same attempt and verify; never silently start again. */ }
   }
-  const verified = await verifySafepayPayment({ apiClient, paymentId: payment.paymentId });
+  const verified = await verifySafepayPayment({ apiClient, paymentId: payment.paymentId, expectedPayment: payment });
   return { ...verified, browserDismissed: returned?.type === 'cancel' || returned?.type === 'dismiss' };
 }

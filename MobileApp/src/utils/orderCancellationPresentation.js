@@ -1,3 +1,5 @@
+import { getOriginalPaymentLabel, getOriginalPaymentRefundCopy } from './paymentPresentation.js';
+
 export function cancellationSuccessCopy(sellerId = null) {
   return sellerId
     ? { title: 'Store items cancelled', message: 'Only this store’s unshipped items were cancelled. Other store shipments are unchanged.' }
@@ -23,8 +25,19 @@ export function startCancellationRefundRefresh(request, isActive, interval = 500
   return () => { stopped = true; timers.clearTimeout(timer); };
 }
 
-export function cancellationRefundPresentation(value, currency, totalAmount) {
+export function cancellationRefundPresentation(value, currency, totalAmount, order) {
   if (!value?.reference) return null;
+  const storedRail = value.paymentRail ?? 'unknown';
+  const orderRail = order?.safepayPaymentRail ?? 'unknown';
+  const rails = ['unknown', 'card', 'raast'];
+  if (!rails.includes(storedRail) || !rails.includes(orderRail)
+    || storedRail !== 'unknown' && orderRail !== 'unknown' && storedRail !== orderRail
+    || order?.currency !== undefined && order.currency !== currency) return { label: 'Refund status unavailable', valid: false };
+  // Old cancellation snapshots may predate rail detection. The same order's
+  // verified rail fills that display gap without changing saved refund money.
+  const rail = storedRail === 'unknown' ? orderRail : storedRail;
+  if (rail === 'raast' && currency !== 'PKR') return { label: 'Refund status unavailable', valid: false };
+  const source = { ...value, paymentRail: rail };
   if (!['not_required', 'pending', 'processing', 'refunded', 'manual_review'].includes(value.refundStatus)
     || !['none', 'wallet', 'original_card'].includes(value.destination) || value.currency !== currency
     || !Number.isSafeInteger(value.amountMinor) || value.amountMinor < 0 || value.amountMinor > Math.round(totalAmount * 100))
@@ -34,9 +47,9 @@ export function cancellationRefundPresentation(value, currency, totalAmount) {
     || value.grossAmountMinor > Math.round(totalAmount * 100)
     || value.destination !== 'none' && value.amountMinor + value.deductionMinor !== value.grossAmountMinor
     || value.destination !== 'original_card' && value.deductionMinor !== 0)) return { label: 'Refund status unavailable', valid: false };
-  return { valid: true, amount: value.amountMinor / 100, deduction: (value.deductionMinor || 0) / 100,
-    destination: value.destination === 'wallet' ? 'Rozare Wallet' : value.destination === 'original_card' ? 'original card' : null,
+  return { valid: true, paymentRail: rail, amount: value.amountMinor / 100, deduction: (value.deductionMinor || 0) / 100,
+    destination: value.destination === 'wallet' ? 'Rozare Wallet' : value.destination === 'original_card' ? getOriginalPaymentLabel(source).toLowerCase() : null,
     label: value.refundStatus === 'not_required' ? 'No refund required' : value.refundStatus === 'refunded' ? 'Refund completed'
       : value.refundStatus === 'manual_review' ? 'Refund under review' : 'Refund in progress',
-    message: value.destination === 'original_card' && value.refundStatus === 'refunded' ? 'Your bank may take additional time to display the refund.' : '' };
+    message: value.destination === 'original_card' ? getOriginalPaymentRefundCopy(source, value.refundStatus) : '' };
 }

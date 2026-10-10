@@ -2,6 +2,8 @@
 const Payment = require('../models/SafepayPayment');
 const RefundEvent = require('../models/SafepayRefundEvent');
 const { getExpectedStripeTotalMinor } = require('./stripeOrderPaymentService');
+const { normalizeSafepayPaymentRail } = require('./safepayPaymentRailService');
+const { externalRefundCapability } = require('./safepayRefundCapabilityService');
 const id = value => String(value?._id || value || '');
 const positiveMinor = value => Number.isSafeInteger(value) && value > 0;
 const validDate = value => (value instanceof Date || typeof value === 'string') && value && Number.isFinite(new Date(value).getTime());
@@ -52,7 +54,9 @@ function buildSafetyRefundView(order, payment, events = []) {
       currency: payment.currency, capturedMinor: amountMinor, refundedMinor: cumulative,
       capturedAt: new Date(payment.paidAt).toISOString(),
       refundedAt: refunded ? new Date(sorted[sorted.length - 1].occurredAt).toISOString() : null,
-      destination: 'original_card' };
+      destination: 'original_card', paymentRail: normalizeSafepayPaymentRail(payment.paymentRail),
+      automaticRefundSupported: externalRefundCapability(payment.paymentRail).available,
+      supportRequired: !refunded && (payment.status === 'manual_review' || !externalRefundCapability(payment.paymentRail).available) };
   } catch (_) { return unavailable(); }
 }
 
@@ -61,7 +65,7 @@ async function attachSafetyRefundViews(orders) {
   if (!candidates.length) return orders;
   const paymentIds = candidates.map(order => id(order.safepayPaymentId)).filter(value => /^[a-f0-9]{24}$/i.test(value));
   const payments = paymentIds.length ? await Payment.find({ _id: { $in: paymentIds } })
-    .select('_id purpose user order environment currency amountMinor capturedMinor refundedMinor appliedAt paidAt status providerState safetyRefund.requestedAt safetyRefund.outcome').lean() : [];
+    .select('_id purpose user order environment currency amountMinor capturedMinor refundedMinor appliedAt paidAt status providerState paymentRail safetyRefund.requestedAt safetyRefund.outcome').lean() : [];
   const events = paymentIds.length ? await RefundEvent.find({ payment: { $in: paymentIds } })
     .select('payment environment currency cumulativeMinor deltaMinor occurredAt').lean() : [];
   const byId = new Map(payments.map(payment => [id(payment._id), payment]));

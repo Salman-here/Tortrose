@@ -247,8 +247,8 @@ export default function Wallet() {
       setTopUpStatus({
         type: 'pending',
         message: result === 'success'
-          ? 'Card checkout returned successfully. Rozare is verifying the signed payment event…'
-          : 'Card checkout was closed. Rozare is verifying the exact top-up before deciding its final status…',
+          ? 'Safepay checkout returned. Rozare is verifying the signed payment event…'
+          : 'Safepay checkout was closed. Rozare is verifying the exact top-up before deciding its final status…',
       });
       for (let attempt = 0; attempt < 8; attempt += 1) {
         try {
@@ -474,7 +474,7 @@ export default function Wallet() {
           <h2 className="font-semibold flex items-center gap-2" style={{ color: 'hsl(var(--foreground))' }}><CreditCard size={17} style={{ color: 'hsl(var(--primary))' }} /> {isRiskSettlement ? 'Settle liability' : 'Add balance'}</h2>
           <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>{isRiskSettlement
             ? `${formatAmount(selectedRisk.outstanding, currency)} is outstanding. Any valid top-up reduces it first; a partial payment leaves the Wallet locked, while surplus after full clearance becomes available.`
-            : 'Safepay payment is verified before any balance is credited. Enter your card details in the secure payment form.'}</p>
+            : `Safepay payment is verified before any balance is credited. ${currency === 'PKR' ? 'Choose card or Raast in the secure payment form.' : 'Enter your card details in the secure payment form.'}`}</p>
           <Link to="/user-dashboard/payment-methods" className="mt-3 inline-flex items-center gap-2 text-xs font-semibold" style={{ color: 'hsl(var(--primary))' }}>
             <CreditCard size={13} /> Manage saved cards
           </Link>
@@ -487,9 +487,9 @@ export default function Wallet() {
           </div>
           <label className="block text-xs font-semibold mt-4 mb-2" style={{ color: 'hsl(var(--muted-foreground))' }}>Amount</label>
           <input type="number" min="0.01" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} className="glass-input w-full" placeholder={`Amount in ${currency}`} />
-          {savedCards.length > 0 && <label className="block text-xs font-semibold mt-4">Payment card
+          {savedCards.length > 0 && <label className="block text-xs font-semibold mt-4">Saved card or secure checkout
             <select aria-label="Payment card" className="glass-input w-full mt-2" value={savedCardId} disabled={submitting} onChange={event => setSavedCardId(event.target.value)}>
-              <option value="">Use a new card</option>
+              <option value="">{currency === 'PKR' ? 'Choose card or Raast in Safepay' : 'Use a new card'}</option>
               {savedCards.map(card => <option key={card.id} value={card.id}>{card.brand.toUpperCase()} ending {card.last4}</option>)}
             </select>
           </label>}

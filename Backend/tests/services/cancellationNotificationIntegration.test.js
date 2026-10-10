@@ -13,15 +13,46 @@ const WalletTransaction = require('../../models/WalletTransaction');
 const { buildOrderSellerSettlement, buildOrderSellerCurrencyMoney } = require('../../services/orderMoneyService');
 const { cancelBuyerOrder, notifyCancellation } = require('../../services/buyerCancellationService');
 const { deliverNotificationRecord } = require('../../services/notificationOutboxDeliveryService');
+const sandboxFixtureEnv = {
+  SAFEPAY_ENV: 'sandbox',
+  SAFEPAY_SANDBOX_PUBLIC_KEY: 'sec_cancellation-notification-fixture',
+  SAFEPAY_SANDBOX_SECRET_KEY: 'cancellation-notification-fixture-secret-only',
+  SAFEPAY_SANDBOX_WEBHOOK_SECRET: 'cancellation-notification-fixture-webhook-only',
+  SAFEPAY_SANDBOX_WEBHOOK_SCHEME: 'sha512-data',
+};
+const previousSafepayEnv = Object.fromEntries(Object.keys(sandboxFixtureEnv).map(key => [key, process.env[key]]));
+const reporterFixtures = new Map();
 let replica;
 beforeAll(async () => {
+  Object.assign(process.env, sandboxFixtureEnv);
   replica = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
   await mongoose.connect(replica.getUri());
   await Promise.all([User, Order, Product, Cancellation, Payment, Outbox, Notification, Wallet, WalletTransaction,
     require('../../models/SellerSettlementLock')].map(model => model.init()));
 }, 60000);
-afterAll(async () => { await mongoose.disconnect(); if (replica) await replica.stop(); }, 60000);
-afterEach(async () => { await Promise.all(Object.values(mongoose.models).map(model => model.deleteMany({}))); });
+beforeEach(() => {
+  reporterFixtures.clear();
+  const { requireTracker } = require('../../services/safepayClient');
+  // Validate the original owned payment fixture with the real identity/money
+  // guard. This authenticated rail read never uses actual provider HTTP.
+  jest.spyOn(require('../../services/safepayClient'), 'createSafepayClient').mockImplementation(({ config }) => ({
+    getTracker: jest.fn(async (trackerId, expected) => {
+      const tracker = reporterFixtures.get(trackerId);
+      if (!tracker) throw new Error('Unexpected provider tracker read in the cancellation notification fixture.');
+      return requireTracker(tracker, expected, config);
+    }),
+  }));
+});
+afterAll(async () => {
+  await mongoose.disconnect(); if (replica) await replica.stop();
+  for (const [key, value] of Object.entries(previousSafepayEnv)) {
+    if (value === undefined) delete process.env[key]; else process.env[key] = value;
+  }
+}, 60000);
+afterEach(async () => {
+  await Promise.all(Object.values(mongoose.models).map(model => model.deleteMany({})));
+  jest.restoreAllMocks();
+});
 
 async function fixture(method, longNames = false, currency = 'USD') {
   const users = await User.create(['user', 'seller', 'seller'].map((role, index) => ({
@@ -54,11 +85,19 @@ async function fixture(method, longNames = false, currency = 'USD') {
   raw.sellerCurrencyMoneyVersion = 1; raw.sellerCurrencyMoney = buildOrderSellerCurrencyMoney(raw);
   if (method === 'safepay') { raw.safepayPaymentId = new mongoose.Types.ObjectId(); raw.safepayEnvironment = 'sandbox'; }
   const order = await Order.create(raw);
-  if (method === 'safepay') await Payment.create({ _id: order.safepayPaymentId, user: buyer._id, order: order._id,
-    purpose: 'order', environment: 'sandbox', status: 'paid', providerState: 'TRACKER_ENDED',
-    amountMinor: 3400, capturedMinor: 3400, currency, appliedAt: new Date(), paidAt: new Date(),
-    tracker: `track_${new mongoose.Types.ObjectId()}`, reference: `order:${order._id}`, requestKey: `test:${order._id}`,
-    fingerprint: 'a'.repeat(64), termsHash: 'test-notification', terms: {}, riskPending: false } );
+  if (method === 'safepay') {
+    const payment = await Payment.create({ _id: order.safepayPaymentId, user: buyer._id, order: order._id,
+      purpose: 'order', environment: 'sandbox', status: 'paid', providerState: 'TRACKER_ENDED',
+      amountMinor: 3400, capturedMinor: 3400, currency, appliedAt: new Date(), paidAt: new Date(),
+      tracker: `track_${new mongoose.Types.ObjectId()}`, reference: `order:${order._id}`, requestKey: `test:${order._id}`,
+      fingerprint: 'a'.repeat(64), termsHash: 'test-notification', terms: {}, riskPending: false });
+    reporterFixtures.set(payment.tracker, {
+      token: payment.tracker, environment: payment.environment, client: sandboxFixtureEnv.SAFEPAY_SANDBOX_PUBLIC_KEY,
+      intent: 'CYBERSOURCE', mode: payment.providerMode, state: 'TRACKER_ENDED',
+      metadata: { order_id: payment.reference },
+      purchase_totals: { quote_amount: { amount: payment.amountMinor, currency: payment.currency } },
+    });
+  }
   return { buyer, sellers, products, order };
 }
 

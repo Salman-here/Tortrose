@@ -42,7 +42,7 @@ beforeEach(async () => {
   providerCharge = undefined;
   refundRequest = jest.fn(async () => {});
   service = createSafepayPaymentService({ configFor: () => config, now: () => clock,
-    clientFor: () => ({ getTracker: async () => ({ state: providerState, charge: providerCharge }), refundRemainingPayment: refundRequest }) });
+    clientFor: () => ({ getTracker: async () => ({ intent: 'CYBERSOURCE', state: providerState, charge: providerCharge }), refundRemainingPayment: refundRequest }) });
 });
 
 async function makeOrder({ deferred = false } = {}) {

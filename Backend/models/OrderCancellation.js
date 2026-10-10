@@ -6,6 +6,7 @@ const schema = new mongoose.Schema({
   buyer: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, immutable: true },
   seller: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, immutable: true },
   paymentMethod: { type: String, enum: ['wallet', 'safepay', 'cash_on_delivery'], required: true, immutable: true },
+  paymentRail: { type: String, enum: ['unknown', 'card', 'raast'], default: 'unknown', immutable: true },
   payment: { type: mongoose.Schema.Types.ObjectId, ref: 'SafepayPayment', default: null, immutable: true },
   environment: { type: String, enum: ['sandbox', 'production', null], default: null, immutable: true },
   currency: { type: String, enum: ['PKR', 'USD', 'EUR', 'GBP'], required: true, immutable: true },

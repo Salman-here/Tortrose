@@ -23,6 +23,7 @@ import BuyerCancellationDialog from '../order/BuyerCancellationDialog';
 import { getConfirmationSourceLabel } from "../../utils/whatsapp";
 import { getBuyerConfirmationMessage, getCancellationPaymentMessage, getConfirmationViaLabel } from "../../utils/orderConfirmationPresentation";
 import { getSafetyRefundPresentation } from '../../utils/safepaySafetyRefundPresentation';
+import { getOrderPaymentLabel } from '../../utils/paymentPresentation';
 import { hasPendingCancellationRefund, startCancellationRefundRefresh } from '../../utils/orderCancellationPresentation';
 
 const OrderItemMoney = ({ item, formatMoney, amountClassName }) => {
@@ -356,7 +357,7 @@ const OrderDetail = () => {
                             <CreditCard className="w-4 h-4" style={{ color: 'hsl(var(--primary))' }} /> Payment Details
                         </h2>
                         <div className="space-y-3 text-sm">
-                            <div className="flex justify-between"><span style={{ color: 'hsl(var(--muted-foreground))' }}>Method:</span><span className="font-medium" style={{ color: 'hsl(var(--foreground))' }}>{order.paymentMethod === 'cash_on_delivery' ? 'Cash on Delivery' : order.paymentMethod === 'wallet' ? 'Rozare Wallet' : order.paymentMethod === 'safepay' ? 'Card (Safepay)' : 'Card'}</span></div>
+                            <div className="flex justify-between"><span style={{ color: 'hsl(var(--muted-foreground))' }}>Method:</span><span className="font-medium" style={{ color: 'hsl(var(--foreground))' }}>{getOrderPaymentLabel(order)}</span></div>
                             <div className="flex justify-between items-center">
                                 <span style={{ color: 'hsl(var(--muted-foreground))' }}>Status:</span>
                                 {safetyRefund
@@ -370,9 +371,9 @@ const OrderDetail = () => {
                                 <div className="glass-inner rounded-xl p-3 space-y-2">
                                     <p className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>{safetyRefund.message}</p>
                                     {safetyRefund.available && <>
-                                        <div className="flex justify-between"><span>Original card payment</span><span>{orderMoney(safetyRefund.capturedMinor / 100)}</span></div>
+                                        <div className="flex justify-between"><span>Original payment</span><span>{orderMoney(safetyRefund.capturedMinor / 100)}</span></div>
                                         <div className="flex justify-between"><span>Confirmed refund</span><span>{orderMoney(safetyRefund.refundedMinor / 100)}</span></div>
-                                        <div className="flex justify-between"><span>Refund destination</span><span>Original card</span></div>
+                                        <div className="flex justify-between"><span>{safetyRefund.supportRequired ? 'Original payment source' : 'Refund destination'}</span><span>{safetyRefund.destinationLabel}</span></div>
                                     </>}
                                 </div>
                             )}

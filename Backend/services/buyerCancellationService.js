@@ -18,6 +18,8 @@ const { snapshotMinorMoney } = require('./notificationMoneySnapshotService');
 const { tryOrderBuyerPhoneE164 } = require('./orderBuyerContactService');
 const { escapeHtml, formatItemOptionsText } = require('../utils/orderPresentation');
 const { getOnlineOrderFee } = require('./onlineOrderFeeService');
+const { normalizeSafepayPaymentRail, refreshOwnedSafepayOrderRail } = require('./safepayPaymentRailService');
+const { externalRefundCapability, originalPaymentLabel } = require('./safepayRefundCapabilityService');
 const id = value => String(value?._id || value || '');
 const fail = (message, code = 'ORDER_CANCELLATION_CONFLICT', statusCode = 409) => Object.assign(new Error(message), { code, statusCode });
 const eligible = status => ['pending', 'confirmed', 'processing'].includes(status);
@@ -36,6 +38,7 @@ function chooseCancellationSellers(order, selection) {
 }
 function cancellationView(row) {
   return { reference: row._id, refundStatus: row.refundStatus, destination: row.refundDestination,
+    paymentRail: normalizeSafepayPaymentRail(row.paymentRail),
     amountMinor: row.paymentMethod === 'cash_on_delivery' ? 0 : (row.refundAmountMinor ?? row.amountMinor), currency: row.currency,
     ...(row.policyVersion ? { policyVersion: row.policyVersion, grossAmountMinor: row.amountMinor, deductionMinor: row.deductionMinor } : {}),
     requestedAt: row.requestedAt, refundedAt: row.refundedAt };
@@ -55,9 +58,12 @@ async function notifyCancellation(row, order, { completed = false, session } = {
     // The shared money renderer already includes non-USD currency codes.
     const refundAmount = `{{money.refund}}${row.currency === 'USD' ? ' USD' : ''}`;
     const deduction = row.deductionMinor > 0 ? ' Processing fee: {{money.deduction}}.' : '';
+    const externalDestination = originalPaymentLabel(normalizeSafepayPaymentRail(row.paymentRail)).toLowerCase();
     const refund = (row.refundDestination === 'none' || row.refundStatus === 'not_required' ? 'No payment refund is required.'
-      : completed ? `${refundAmount} was refunded to ${row.refundDestination === 'wallet' ? 'the buyer’s Rozare Wallet' : 'the original card'}.`
-        : `An automatic refund of ${refundAmount} to the original card is being verified.`) + deduction;
+      : completed ? `${refundAmount} was refunded to ${row.refundDestination === 'wallet' ? 'the buyer’s Rozare Wallet' : `the ${externalDestination}`}.`
+        : externalRefundCapability(row.paymentRail).available
+          ? `An automatic refund of ${refundAmount} to the ${externalDestination} is being verified.`
+          : `Refund of ${refundAmount} requires support review. No refund to the ${externalDestination} has been confirmed.`) + deduction;
     const message = `Order ${order.orderId} · ${name}\n${description}\n${completed ? '' : 'The buyer cancelled these items before shipment. '}${refund}${seller ? ' No seller action is required. Other seller portions are unchanged.' : ''}`;
     // In-app/push previews have a smaller limit than email/WhatsApp. Keep the
     // refund sentence intact even when an order contains many product options.
@@ -82,11 +88,14 @@ async function notifyCancellation(row, order, { completed = false, session } = {
   }
 }
 
-function buildCancellationQuote(order, sellerIds) {
+function buildCancellationQuote(order, sellerIds, refundContext = null) {
   if (order.awaitingPayment || !['wallet', 'safepay', 'cash_on_delivery'].includes(order.paymentMethod)
     || order.paymentMethod !== 'cash_on_delivery' && !order.isPaid) throw fail('Payment must be verified before cancellation.', 'ORDER_PAYMENT_STILL_PENDING');
   const selected = chooseCancellationSellers(order, sellerIds);
   const snapshot = getOnlineOrderFee(order);
+  const paymentRail = order.paymentMethod === 'safepay'
+    ? normalizeSafepayPaymentRail(refundContext?.paymentRail ?? order.safepayPaymentRail) : 'unknown';
+  const external = externalRefundCapability(paymentRail);
   const active = selected.filter(seller => order.sellerFulfillment.find(row => id(row.seller) === seller).status !== 'cancelled');
   let grossMinor = 0, deductionMinor = 0;
   for (const seller of active) {
@@ -97,11 +106,12 @@ function buildCancellationQuote(order, sellerIds) {
   const options = grossMinor === 0 ? [{ destination: 'none', label: 'No refund required', amountMinor: 0, deductionMinor: 0, available: active.length > 0 }]
     : order.paymentMethod === 'safepay' ? [
     { destination: 'wallet', label: 'Rozare Wallet', amountMinor: grossMinor, deductionMinor: 0, available: grossMinor > 0 },
-    { destination: 'original_card', label: 'Original card', amountMinor: grossMinor - deductionMinor, deductionMinor, available: grossMinor > deductionMinor },
+    { destination: 'original_card', label: external.label, amountMinor: grossMinor - deductionMinor, deductionMinor,
+      available: external.available && grossMinor > deductionMinor, ...(external.available ? {} : { reason: external.reason }) },
   ] : [{ destination: order.paymentMethod === 'wallet' && grossMinor > 0 ? 'wallet' : 'none',
     label: order.paymentMethod === 'wallet' ? 'Rozare Wallet' : 'No refund required',
     amountMinor: order.paymentMethod === 'wallet' ? grossMinor : 0, deductionMinor: 0, available: active.length > 0 }];
-  const quote = { version: 1, orderId: id(order), currency: order.currency, paymentMethod: order.paymentMethod,
+  const quote = { version: 1, orderId: id(order), currency: order.currency, paymentMethod: order.paymentMethod, paymentRail,
     sellerIds: selected, activeSellerIds: active, grossMinor, policyVersion: snapshot?.version || 0,
     defaultDestination: grossMinor > 0 && (order.paymentMethod === 'safepay' || order.paymentMethod === 'wallet') ? 'wallet' : 'none', options };
   return { ...quote, quoteId: crypto.createHash('sha256').update(JSON.stringify(quote)).digest('hex') };
@@ -112,11 +122,22 @@ async function previewBuyerCancellation({ orderId, buyerId, sellerIds }) {
   if (!order) throw fail('Order not found or it does not belong to you.', 'ORDER_NOT_FOUND', 404);
   await assertWalletOrderFundingReturnable({ orderId: order._id });
   await ensureOrderSellerFulfillment(order);
-  return buildCancellationQuote(order, sellerIds);
+  const refundContext = order.paymentMethod === 'safepay' && order.orderSummary.totalAmount > 0
+    ? await refreshOwnedSafepayOrderRail(order) : null;
+  return buildCancellationQuote(order, sellerIds, refundContext);
 }
 
 async function cancelBuyerOrder({ orderId, buyerId, sellerIds, refundDestination, quoteId, acceptDeduction = false }) {
   await Cancellation.init();
+  const initialOrder = await Order.findOne({ _id: orderId, user: buyerId });
+  if (!initialOrder) throw fail('Order not found or it does not belong to you.', 'ORDER_NOT_FOUND', 404);
+  await ensureOrderSellerFulfillment(initialOrder);
+  // Completed repeat taps are read-only. Do not require a provider request or
+  // change the previously accepted destination to recover a duplicate request.
+  const initialSelected = chooseCancellationSellers(initialOrder, sellerIds);
+  const initialPrior = await Cancellation.find({ order: initialOrder._id, seller: { $in: initialSelected } });
+  const refundContext = initialPrior.length !== initialSelected.length && initialOrder.paymentMethod === 'safepay'
+    && initialOrder.orderSummary.totalAmount > 0 ? await refreshOwnedSafepayOrderRail(initialOrder) : null;
   const result = await mongoose.connection.transaction(async session => {
     const order = await Order.findOne({ _id: orderId, user: buyerId }).session(session);
     if (!order) throw fail('Order not found or it does not belong to you.', 'ORDER_NOT_FOUND', 404);
@@ -128,12 +149,13 @@ async function cancelBuyerOrder({ orderId, buyerId, sellerIds, refundDestination
     const prior = await Cancellation.find({ order: order._id, seller: { $in: selected } }).session(session);
     if (prior.length === selected.length && prior.some(row => refundDestination !== undefined && row.refundDestination !== refundDestination)) throw fail('These items were already cancelled with a different refund destination.', 'REFUND_DESTINATION_ALREADY_CHOSEN');
     if (prior.length === selected.length) return order;
-    const quote = buildCancellationQuote(order, selected);
-    if (order.paymentMethod === 'safepay' && quote.grossMinor > 0 && quote.policyVersion && refundDestination === undefined) {
-      const error = fail('Choose a full Wallet refund or a refund to the original card.', 'REFUND_CHOICE_REQUIRED', 400);
+    const quote = buildCancellationQuote(order, selected, refundContext);
+    if (order.paymentMethod === 'safepay' && quote.grossMinor > 0 && (quote.policyVersion || quote.paymentRail !== 'card') && refundDestination === undefined) {
+      const error = fail(quote.paymentRail === 'card' ? 'Choose a full Wallet refund or a refund to the original card.'
+        : 'Choose a full Rozare Wallet refund. Automatic refunds to the original account are not available.', 'REFUND_CHOICE_REQUIRED', 400);
       error.quote = quote; throw error;
     }
-    const chosenDestination = refundDestination ?? (order.paymentMethod === 'safepay' && quote.grossMinor > 0 ? 'original_card' : quote.defaultDestination);
+    const chosenDestination = refundDestination ?? (order.paymentMethod === 'safepay' && quote.grossMinor > 0 && quote.paymentRail === 'card' ? 'original_card' : quote.defaultDestination);
     const option = quote.options.find(row => row.destination === chosenDestination);
     if (!option?.available) throw fail('This refund destination is unavailable. Choose a full Wallet refund.', 'REFUND_DESTINATION_INVALID', 400);
     if (order.paymentMethod === 'safepay' && quote.grossMinor > 0 && quote.policyVersion && quoteId !== quote.quoteId) throw fail('Refresh the cancellation refund amounts before confirming.', 'CANCELLATION_QUOTE_CHANGED');
@@ -149,7 +171,8 @@ async function cancelBuyerOrder({ orderId, buyerId, sellerIds, refundDestination
         const payment = await Payment.findOne({ _id: order.safepayPaymentId, order: order._id, user: order.user,
           purpose: 'order', environment: order.safepayEnvironment, currency: order.currency, appliedAt: { $ne: null }, riskPending: false }).session(session);
         if (!payment || payment.amountMinor !== toMinorUnits(order.orderSummary.totalAmount)
-          || payment.status !== 'paid') throw fail('The original card payment requires reconciliation before cancellation.', 'ORDER_PAYMENT_BINDING_INVALID');
+          || payment.status !== 'paid' || !refundContext || id(payment) !== refundContext.paymentId
+          || normalizeSafepayPaymentRail(payment.paymentRail) !== quote.paymentRail) throw fail('The original Safepay payment requires reconciliation before cancellation.', 'ORDER_PAYMENT_BINDING_INVALID');
       }
     }
     for (const seller of selected) {
@@ -167,6 +190,7 @@ async function cancelBuyerOrder({ orderId, buyerId, sellerIds, refundDestination
       const deductionMinor = destination === 'original_card' ? getOnlineOrderFee(order)?.sellers.find(entry => entry.seller === seller)?.buyerFeeMinor || 0 : 0;
       const refundMinor = destination === 'none' ? 0 : grossMinor - deductionMinor;
       const [row] = await Cancellation.create([{ order: order._id, buyer: order.user, seller, paymentMethod: order.paymentMethod,
+        paymentRail: quote.paymentRail,
         payment: order.safepayPaymentId || null, environment: order.safepayEnvironment || null, currency: order.currency, amountMinor: grossMinor,
         ...(quote.policyVersion || destination === 'wallet' && order.paymentMethod === 'safepay' ? { policyVersion: 1, refundAmountMinor: refundMinor, deductionMinor, quoteId: quote.quoteId } : {}),
         sellerCurrency: nativeMoney.currency, sellerAmountMinor: toMinorUnits(nativeMoney.summary.totalAmount),

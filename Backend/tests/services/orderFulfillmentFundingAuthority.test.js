@@ -37,30 +37,62 @@ const oid = () => new mongoose.Types.ObjectId();
 const rates = { USD: 1, PKR: 300, EUR: 0.9, GBP: 0.8 };
 const models = [Order, Product, User, Store, Payment, Wallet, WalletTransaction, SellerLock,
   RiskHold, SellerBalanceTransaction, Cancellation, RefundEvent, NotificationOutbox, AIActionReceipt];
+const sandboxFixtureEnv = {
+  SAFEPAY_ENV: 'sandbox',
+  SAFEPAY_SANDBOX_PUBLIC_KEY: 'sec_funding-authority-fixture',
+  SAFEPAY_SANDBOX_SECRET_KEY: 'funding-authority-fixture-secret-only',
+  SAFEPAY_SANDBOX_WEBHOOK_SECRET: 'funding-authority-fixture-webhook-only',
+  SAFEPAY_SANDBOX_WEBHOOK_SCHEME: 'sha512-data',
+};
+const previousSafepayEnv = Object.fromEntries(Object.keys(sandboxFixtureEnv).map(key => [key, process.env[key]]));
+const reporterFixtures = new Map();
 let replica;
 
 beforeAll(async () => {
+  Object.assign(process.env, sandboxFixtureEnv);
   replica = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
   await mongoose.connect(replica.getUri());
   await Promise.all(models.map(model => model.init()));
 }, 120000);
+
+beforeEach(() => {
+  reporterFixtures.clear();
+  // Cancellation preview now re-reads the owned provider tracker. That read
+  // uses the same fixture as capture/refund reconciliation, never real HTTP.
+  jest.spyOn(require('../../services/safepayClient'), 'createSafepayClient').mockReturnValue({
+    getTracker: jest.fn(async trackerId => {
+      const read = reporterFixtures.get(trackerId);
+      if (!read) throw new Error('Unexpected provider tracker read in the funding fixture.');
+      return read();
+    }),
+  });
+});
 afterEach(async () => {
   await Promise.all(models.map(model => model.deleteMany({})));
   jest.restoreAllMocks();
 });
-afterAll(async () => { await mongoose.disconnect(); await replica?.stop(); }, 60000);
+afterAll(async () => {
+  await mongoose.disconnect(); await replica?.stop();
+  for (const [key, value] of Object.entries(previousSafepayEnv)) {
+    if (value === undefined) delete process.env[key]; else process.env[key] = value;
+  }
+}, 60000);
 
 function provider() {
-  let tracker = { state: 'TRACKER_ENDED' };
+  let tracker = { state: 'TRACKER_ENDED', intent: 'CYBERSOURCE', mode: 'payment' };
   const service = createSafepayPaymentService({
     configFor: () => ({ environment: 'sandbox' }),
-    clientFor: () => ({ getTracker: async () => tracker }),
+    clientFor: () => ({ getTracker: async trackerId => {
+      reporterFixtures.set(trackerId, () => tracker);
+      return tracker;
+    } }),
   });
-  return { service, getTracker: () => tracker, setState: state => { tracker = { state }; },
+  return { service, getTracker: () => tracker, setState: state => { tracker = { state, intent: 'CYBERSOURCE', mode: 'payment' }; },
     refund(payment, amounts) {
       const total = amounts.reduce((sum, value) => sum + value, 0);
       tracker = {
         state: total === payment.amountMinor ? 'TRACKER_REFUNDED' : 'TRACKER_PARTIAL_REFUND',
+        intent: 'CYBERSOURCE', mode: 'payment',
         charge: {
           token: `ch_funding-${payment._id}`, tracker: payment.tracker,
           amount: { currency: payment.currency, amount: payment.amountMinor },

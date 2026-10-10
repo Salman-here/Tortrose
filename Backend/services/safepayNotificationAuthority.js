@@ -113,12 +113,24 @@ async function refundReceipt(record) {
 async function refundReview(record) {
   const payment = await Payment.findById(record.aggregateId).lean();
   const r = record.recipient || {}, data = record.payload?.data;
-  if (!payment || payment.purpose !== 'order' || payment.appliedAt || payment.status !== 'refund_pending'
+  const unsubmittedReview = payment?.status === 'manual_review' && payment.safetyRefund?.outcome === 'failed'
+    && payment.safetyRefund?.submitStartedAt == null && payment.safetyRefund?.requestedAt
+    // Only missing refund capability establishes this no-submit owed-money
+    // notice. A mismatched owner/tracker must not turn into a refund claim.
+    && ['SAFEPAY_RAAST_REFUND_UNAVAILABLE', 'SAFEPAY_REFUND_RAIL_UNVERIFIED'].includes(payment.lastErrorCode)
+    && minor(payment.amountMinor) && payment.amountMinor > 0 && payment.capturedMinor === payment.amountMinor
+    && minor(payment.refundedMinor) && minor(payment.walletRefundMinor)
+    && payment.refundedMinor + payment.walletRefundMinor < payment.amountMinor
+    && Boolean(payment.paidAt && Number.isFinite(new Date(payment.paidAt).getTime()));
+  // A preflight rejection has no POST timestamp. Its exact durable review
+  // marker is the original request time, while post-POST notices retain theirs.
+  const reviewTime = unsubmittedReview ? payment.safetyRefund.requestedAt : payment?.safetyRefund?.submitStartedAt;
+  if (!payment || payment.purpose !== 'order' || payment.appliedAt || (payment.status !== 'refund_pending' && !unsubmittedReview)
     || !['failed', 'unknown'].includes(payment.safetyRefund?.outcome) || !payment.safetyRefund?.requestedAt
     || record.eventType !== 'payment.refund_review_required' || !['inapp', 'email'].includes(record.channel)
     || r.kind !== 'user' || r.audienceRole !== 'admin' || r.destinationPolicy !== 'current_user' || !id(r.user)
     || record.eventKey !== `safepay:${payment._id}:refund-review:${id(r.user)}:v1`
-    || !sameTime(record.occurredAt, payment.safetyRefund.submitStartedAt)
+    || !sameTime(record.occurredAt, reviewTime)
     || data?.type !== 'payment_review' || id(data.paymentId) !== id(payment)
     || !moneyMatches(record, 'amount', payment.amountMinor, payment.currency, 'SafepayPayment', payment, 'amountMinor')) return rejected();
   return null;

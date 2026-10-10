@@ -1,5 +1,6 @@
 'use strict';
 const mongoose = require('mongoose');
+const { PAYMENT_RAILS, RAAST_ATTEMPT_STATUSES } = require('../services/safepayPaymentRailService');
 const strictInteger = value => typeof value === 'number' && Number.isSafeInteger(value) ? value : Number.NaN;
 const schema = new mongoose.Schema({
   // Guest order ownership remains on the order's existing email-scoped key.
@@ -45,6 +46,14 @@ const schema = new mongoose.Schema({
   checkoutExpiresAt: { type: Date, default: null },
   creationStartedAt: { type: Date, default: null },
   providerState: { type: String, default: '' },
+  // The hosted checkout can change intent before payment. Only a validated
+  // provider GET observes the rail; creation/browser hints do not pin it.
+  paymentRail: { type: String, enum: PAYMENT_RAILS, default: 'unknown' },
+  providerIntent: { type: String, enum: ['', 'CYBERSOURCE', 'RAAST'], default: '' },
+  paymentRailObservedAt: { type: Date, default: null },
+  // Written from a validated ended tracker before fulfillment can roll back.
+  paymentRailCapturedAt: { type: Date, default: null },
+  raastAttemptStatus: { type: String, enum: [null, ...RAAST_ATTEMPT_STATUSES], default: null },
   paidAt: { type: Date, default: null },
   appliedAt: { type: Date, default: null },
   cancelledAt: { type: Date, default: null },

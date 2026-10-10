@@ -740,7 +740,7 @@ test('web money surfaces are wired to the per-fingerprint ledger and exact termi
   }
   assert.match(walletSource, /shouldRetainWalletTopUpAttempt/);
   assert.match(walletSource, /\/top-ups\/\$\{encodeURIComponent\(transactionId\)\}\/status/);
-  assert.match(walletSource, /Card checkout was closed\. Rozare is verifying the exact top-up/);
+  assert.match(walletSource, /Safepay checkout was closed\. Rozare is verifying the exact top-up/);
   assert.match(checkoutSource, /if \(!successAuthenticated\) \{[\s\S]*?navigate\('\/user-dashboard\/orders'/);
   assert.match(checkoutSource, /attemptFingerprint: fingerprint/);
   assert.match(checkoutSource, /attemptKey,/);

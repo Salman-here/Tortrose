@@ -20,6 +20,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import api from '../config/api';
 import { getSafetyRefundPresentation } from '../utils/safepaySafetyRefundPresentation';
+import { getOrderPaymentLabel } from '../utils/paymentPresentation';
 import { cancellationRefundPresentation, cancellationSuccessCopy, hasPendingCancellationRefund, startCancellationRefundRefresh } from '../utils/orderCancellationPresentation';
 import { useIsFocused } from '@react-navigation/native';
 import { useCurrency } from '../contexts/CurrencyContext';
@@ -71,13 +72,6 @@ const formatDate = (value, includeTime = false) => {
     ...(includeTime ? { hour: 'numeric', minute: '2-digit' } : {}),
   });
 };
-
-const paymentMethodLabel = (method) => ({
-  cash_on_delivery: 'Cash on Delivery',
-  wallet: 'Rozare Wallet',
-  stripe: 'Online Card Payment',
-  safepay: 'Card (Safepay)',
-}[method] || 'Payment');
 
 const getConfirmationNotice = (order) => {
   const confirmation = order?.confirmation || {};
@@ -414,6 +408,7 @@ export default function OrderDetailScreen({ route, navigation }) {
                   styles={styles}
                   last={index === sellerGroups.length - 1}
                   currency={getOrderCurrency(order)}
+                  order={order}
                   onCancel={() => handleCancelOrder(group.sellerId)}
                   cancelling={cancelling}
                 />
@@ -466,7 +461,7 @@ export default function OrderDetailScreen({ route, navigation }) {
                 <Ionicons name={order.paymentMethod === 'cash_on_delivery' ? 'cash-outline' : order.paymentMethod === 'wallet' ? 'wallet-outline' : 'card-outline'} size={22} color={palette.colors.primary} />
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={styles.paymentTitle}>{paymentMethodLabel(order.paymentMethod)}</Text>
+                <Text style={styles.paymentTitle}>{getOrderPaymentLabel(order)}</Text>
                 <Text style={styles.paymentSub}>
                   {safetyRefund ? safetyRefund.message : order.isPaid ? `Paid${order.paidAt ? ` on ${formatDate(order.paidAt)}` : ''}` : order.paymentMethod === 'cash_on_delivery' ? 'Payment is collected at delivery' : 'Payment has not completed'}
                 </Text>
@@ -477,9 +472,9 @@ export default function OrderDetailScreen({ route, navigation }) {
               </View>
             </View>
             {safetyRefund?.available && <GlassPanel variant="inner" style={{ padding: spacing.md, marginTop: spacing.sm }}>
-              <Text style={styles.paymentSub}>Original card payment: {orderMoney(safetyRefund.capturedMinor / 100)}</Text>
+              <Text style={styles.paymentSub}>Original payment: {orderMoney(safetyRefund.capturedMinor / 100)}</Text>
               <Text style={styles.paymentSub}>Confirmed refund: {orderMoney(safetyRefund.refundedMinor / 100)}</Text>
-              <Text style={styles.paymentSub}>Refund destination: Original card</Text>
+              <Text style={styles.paymentSub}>{safetyRefund.supportRequired ? 'Original payment source' : 'Refund destination'}: {safetyRefund.destinationLabel}</Text>
             </GlassPanel>}
             {order.paymentResult?.paymentIntentId && (
               <Text style={styles.referenceText}>Payment reference: ••••{String(order.paymentResult.paymentIntentId).slice(-8)}</Text>
@@ -589,14 +584,14 @@ function Section({ title, subtitle, icon, children, styles }) {
   );
 }
 
-function SellerShipmentGroup({ group, formatMoney, palette, styles, last, currency, onCancel, cancelling }) {
+function SellerShipmentGroup({ group, formatMoney, palette, styles, last, currency, order, onCancel, cancelling }) {
   const meta = STATUS_META[group.status] || STATUS_META.pending;
   const tone = group.status === 'confirmed'
     ? { solid: palette.colors.info, bg: palette.colors.infoLight }
     : (statusColors[group.status] || statusColors.pending);
   const activeIndex = Math.max(0, ORDER_STAGES.indexOf(group.status));
   const summary = group.summary;
-  const refund = cancellationRefundPresentation(group.cancellation, currency, summary.totalAmount);
+  const refund = cancellationRefundPresentation(group.cancellation, currency, summary.totalAmount, order);
 
   return (
     <View style={[styles.sellerShipment, last && { marginBottom: 0 }]}>

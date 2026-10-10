@@ -1,6 +1,6 @@
 import { readFileSync } from 'fs';
 import { getSafetyRefundPresentation } from '../../src/utils/safepaySafetyRefundPresentation';
-const order = () => ({ paymentMethod: 'safepay', orderStatus: 'cancelled', awaitingPayment: true, currency: 'PKR',
+const order = () => ({ paymentMethod: 'safepay', safepayPaymentRail: 'card', orderStatus: 'cancelled', awaitingPayment: true, currency: 'PKR',
   paymentResult: { failureCode: 'SAFEPAY_SAFETY_REFUND_PENDING' }, orderSummary: { totalAmount: 1000 },
   safepaySafetyRefund: { available: true, status: 'refunded', currency: 'PKR', capturedMinor: 100000, refundedMinor: 100000,
     capturedAt: '2026-10-03T06:58:25.000Z', refundedAt: '2026-10-03T06:58:27.000Z', destination: 'original_card' } });
@@ -21,4 +21,14 @@ test('native buyer detail/card wire refund presentation without fetching inappli
   expect(detail).toMatch(/order\.awaitingPayment !== true && <BuyerReturnsSection/);
   expect(detail).toContain('Confirmed refund:');
   expect(card).toContain('sellerView ? null : getSafetyRefundPresentation(order)');
+});
+
+test('native Raast safety refund cannot promise an unsupported automatic bank refund', () => {
+  const value = order(); value.safepayPaymentRail = 'raast';
+  Object.assign(value.safepaySafetyRefund, { paymentRail: 'raast', status: 'manual_review', refundedMinor: 0,
+    refundedAt: null, automaticRefundSupported: false, supportRequired: true });
+  const result = getSafetyRefundPresentation(value);
+  expect(result).toMatchObject({ destinationLabel: 'Original Raast payment', capturedMinor: 100000, refundedMinor: 0 });
+  expect(result.message).toContain('no bank refund has been confirmed');
+  expect(result.message).not.toContain('original card');
 });

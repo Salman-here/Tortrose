@@ -433,7 +433,7 @@ function DocsPage() {
                   'Pick variants (size, color) and click "Add to Cart".',
                   'Open the cart, review items, then go to checkout.',
                   'Confirm or edit the shipping address. Apply a coupon if you have one.',
-                  'Choose Cash on Delivery, Safepay card, or Rozare Wallet. The full order uses one payment method.',
+                  'Choose Cash on Delivery, an available Safepay card or eligible PKR Raast method, or Rozare Wallet. The full order uses one payment method.',
                   'Place the order. You will receive a confirmation email and notification.',
                 ]} />
 
@@ -690,21 +690,21 @@ function DocsPage() {
               <DocSection id="payments" title="Payments & Checkout" icon={CreditCard}>
                 <h3>Payment methods</h3>
                 <ul>
-                  <li><strong>Safepay</strong> — Secure card payments via Safepay. The secure form shows supported cards.</li>
+                  <li><strong>Safepay</strong> — Secure card payments and Raast when offered for an eligible PKR checkout. Raast requires a supported Pakistani banking or wallet app. The secure form shows available methods; saved-card setup and seller subscriptions remain card-only.</li>
                   <li><strong>Rozare Wallet</strong> — Pay instantly from a sufficient Wallet balance in the same currency as the order. Wallet balances are never converted automatically.</li>
                   <li><strong>Cash on Delivery (COD)</strong> — Pay when your order arrives, only when every seller in your cart allows COD.</li>
                 </ul>
                 <p>Sellers control COD from Seller Dashboard → Store Settings → Payment Options. Stores default to both online payment and COD. A seller can switch to online payment only, which means COD is unavailable for that seller's products.</p>
                 <InfoBox type="info" title="Mixed-seller carts">
-                  A checkout has one payment method for the full order. If your cart contains even one seller that accepts online payment only, Cash on Delivery is disabled for the whole checkout. Pay by Safepay card or with a sufficient same-currency Rozare Wallet balance, or remove the online-only seller items to use COD for the remaining sellers.
+                  A checkout has one payment method for the full order. If your cart contains even one seller that accepts online payment only, Cash on Delivery is disabled for the whole checkout. Pay by an available Safepay method or with a sufficient same-currency Rozare Wallet balance, or remove the online-only seller items to use COD for the remaining sellers.
                 </InfoBox>
 
                 <h3>Rozare Wallet</h3>
                 <ul>
-                  <li>Open User Dashboard → Wallet to view balances and transaction history or add balance securely by card.</li>
+                  <li>Open User Dashboard → Wallet to view balances and transaction history or add balance through Safepay card or Raast when offered for an eligible PKR top-up.</li>
                   <li>USD, PKR, EUR, and GBP balances are kept separately. An order can use only the balance matching its checkout currency.</li>
                   <li>Wallet payment is atomic: the order is confirmed and stock is committed only when the full amount is successfully debited.</li>
-                  <li>Approved return refunds are credited to the Wallet only after the seller's refund funding is verified.</li>
+                  <li>Approved online-order return refunds use the original held order funds; COD returns require verified seller funding. Refunds credit the Wallet in the saved order currency.</li>
                 </ul>
 
                 <h3>Two checkout experiences</h3>
@@ -717,9 +717,9 @@ function DocsPage() {
                 <p>Tax is calculated at checkout based on platform settings. Shipping costs come from the seller's chosen shipping method. Both are clearly displayed before you confirm.</p>
 
                 <h3>For sellers: receiving payments</h3>
-                <p>Sellers do not need to configure online payments for their stores. Rozare provides Safepay card and Wallet checkout. Sellers only choose whether COD is also allowed. Paid order revenue is tracked in Seller Dashboard - Payments.</p>
+                <p>Sellers do not need to configure online payments for their stores. Rozare provides Safepay card, eligible PKR Raast, and Wallet checkout. Sellers only choose whether COD is also allowed. Paid order revenue is tracked in Seller Dashboard - Payments.</p>
                 <ul>
-                  <li><strong>Online balances</strong> - Delivered Safepay- and Wallet-paid earnings remain separately withdrawable in the seller currency frozen on each order. Changing store currency does not convert existing balances. Refunds, payment-risk holds and withdrawal reservations affect availability.</li>
+                  <li><strong>Online balances</strong> - Safepay- and Wallet-paid earnings remain held after delivery until the saved return window ends; timely unresolved returns retain their affected funds. Released earnings remain separately withdrawable in the seller currency frozen on each order. Changing store currency does not convert existing balances. Refunds, payment-risk holds and withdrawal reservations affect availability.</li>
                   <li><strong>COD revenue</strong> - Cash on Delivery payments and shipping are handled by the seller directly. Rozare shows delivered COD revenue for reporting, but it is not withdrawn through Rozare.</li>
                   <li><strong>Estimated revenue</strong> - Delivered revenue plus pending Safepay and COD order revenue, so sellers can see what may be coming next.</li>
                   <li><strong>Withdrawals</strong> - Choose a native balance and a bank account accepting the same currency. Minimums are USD 5, PKR 2,000, EUR 5 and GBP 5. No balance conversion is offered. Requests reserve funds once; admins approve, transfer manually, then record payment evidence. An uncertain transfer stays reserved for review.</li>
@@ -770,8 +770,8 @@ function DocsPage() {
                 <ul>
                   <li><strong>Via AI</strong> — "Cancel my order ORD-1234".</li>
                   <li><strong>Via dashboard</strong> — Open the order and click "Cancel" while still cancellable.</li>
-                  <li>Cancel before shipment, including paid orders. Cancel each unshipped store portion independently if another store already shipped. COD moves no money and Wallet-paid orders refund fully to Wallet. Card-paid orders offer a full Wallet refund or an original-card refund less the displayed processing fee. New orders use 6.2% + PKR30 once per checkout, shared proportionally across sellers. Seller approval is not required. See the <a href="https://rozare.com/cancellation-policy">Cancellation Policy</a>.</li>
-                  <li>Seller online earnings from card and Wallet orders use the fixed processing fee + tax rule once per checkout. Payments separates gross earnings, combined deductions, pending net funds and net withdrawable balance. Sales analytics remain gross; withdrawing does not charge the fee again.</li>
+                  <li>Cancel before shipment, including paid orders. Cancel each unshipped store portion independently if another store already shipped. COD moves no money. Wallet-paid and Raast-paid cancellations refund fully to Rozare Wallet without a buyer processing deduction; Raast cancellations do not offer an automatic refund to the original bank account. Card-paid cancellations offer a full Wallet refund or an original-card refund less the displayed processing fee. New original-card cancellation refunds use 6.2% + PKR30 once per checkout, shared proportionally across sellers. Seller approval is not required. See the <a href="https://rozare.com/cancellation-policy">Cancellation Policy</a>.</li>
+                  <li>Seller online earnings from Safepay card, Raast and Wallet orders use the fixed processing fee + tax rule once per checkout. Payments separates gross earnings, combined deductions, pending net funds and net withdrawable balance. Sales analytics remain gross; withdrawing does not charge the fee again.</li>
                 </ul>
 
                 <h3>Seller-specific returns</h3>
@@ -893,7 +893,7 @@ function DocsPage() {
                 <ul>
                   <li><strong>Multi-currency</strong> — Pick USD, EUR, GBP, or PKR as your display currency from the navbar. Prices convert automatically across the site.</li>
                   <li><strong>Conversational AI in your language</strong> — The AI understands English, modern Roman Urdu, and common product slang.</li>
-                  <li><strong>Local checkout</strong> — Prices are shown in your selected currency, while secure card payments are processed through Rozare's Safepay checkout.</li>
+                  <li><strong>Local checkout</strong> — Prices are shown in your selected currency. Safepay checkout offers supported cards and Raast for eligible PKR payments.</li>
                 </ul>
               </DocSection>
 
@@ -921,9 +921,9 @@ function DocsPage() {
                 <FAQItem q="Does Rozare have a mobile app?" a="Rozare includes a React Native / Expo mobile app experience for iOS and Android with shopping, selling, AI chat, push notifications, voice search, and the same core marketplace workflows." />
                 <FAQItem q="How does the AI know about my store?" a="The AI calls secure server-side tools that read and write only your store's data. Other sellers cannot see your data, and you cannot see theirs." />
                 <FAQItem q="Is my data safe?" a="Yes. All traffic is encrypted (HTTPS). Authentication uses JWT tokens. Personal data is never sold or shared with third parties outside what's required to fulfil your order." />
-                <FAQItem q="What payment methods are available?" a="Checkout supports Safepay card, Rozare Wallet, and Cash on Delivery. One order uses one payment method. COD is available only when every seller allows it; otherwise use card or a sufficient same-currency Wallet balance." />
-                <FAQItem q="How do returns and refunds work?" a="Return eligibility is seller- and item-specific and opens after that seller portion is delivered. Request it from order details within the saved policy window. The seller tracks pickup and review, then funds an approved refund from seller balance or card. Only verified funding credits your Rozare Wallet and completes the return." />
-                <FAQItem q="How do sellers receive Safepay payments?" a="Sellers add their bank details in Seller Dashboard - Payments. Delivered Safepay-paid order revenue becomes withdrawable, then the seller sends a withdrawal request for admin review. COD payments are handled by the seller directly." />
+                <FAQItem q="What payment methods are available?" a="Checkout supports Safepay card, Raast when offered for eligible PKR checkout, Rozare Wallet, and Cash on Delivery. One order uses one payment method. COD is available only when every seller allows it; otherwise use an available Safepay method or a sufficient same-currency Wallet balance." />
+                <FAQItem q="How do returns and refunds work?" a="Return eligibility is seller- and item-specific and opens after that seller portion is delivered. Request it from order details within the saved policy window. The seller tracks pickup and review. Approved Safepay and Wallet order returns credit your Rozare Wallet from the original held order funds; COD returns require verified funding from seller earnings or Safepay." />
+                <FAQItem q="How do sellers receive Safepay payments?" a="Sellers add their bank details in Seller Dashboard - Payments. Safepay-paid order revenue is held after delivery until the saved return window ends, and a timely unresolved return retains its affected funds. Released earnings can be requested for withdrawal and admin review. COD payments are handled by the seller directly." />
                 <FAQItem q="What's the difference between Starter and Elite?" a={`Both paid plans include unlimited listings, unlimited seller AI chat, a custom subdomain, WhatsApp store management and core marketplace features. Starter supports ${starterFeaturedLimit} featured products and includes the growth-tool bundle for ${starterBonusMonths} months. Elite supports ${eliteFeaturedLimit} featured products, keeps those growth tools permanently while active, and adds custom themes plus Rozare-run TikTok ads. Meta ads can be added to Elite for ${formatUsdCents(pricing.metaAdsAddonCents)}/month.`} />
                 <FAQItem q={`What happens after my ${trialDays}-day free trial ends?`} a="If you don't subscribe, your store and products are temporarily hidden until you subscribe — your data is preserved. Subscribe to Starter or Elite to reactivate everything, with the account's one-time introductory period applied only if it is still eligible." />
                 <FAQItem q="Can I cancel anytime?" a="Yes. Cancel from Seller Dashboard → Subscription. Your store stays active until the end of your current billing period." />

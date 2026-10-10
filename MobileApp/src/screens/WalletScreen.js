@@ -221,8 +221,8 @@ export default function WalletScreen({ navigation, route }) {
       type: 'pending',
       title: 'Checking top-up status',
       message: route.params.top_up === 'success'
-        ? 'Card checkout returned successfully. Rozare is verifying the exact Wallet transaction.'
-        : 'Card checkout was closed. Rozare is checking the exact Wallet transaction before showing a final result.',
+        ? 'Safepay checkout returned. Rozare is verifying the exact Wallet transaction.'
+        : 'Safepay checkout was closed. Rozare is checking the exact Wallet transaction before showing a final result.',
     });
     let cancelled = false;
     const transactionId = String(route.params?.transactionId || '');
@@ -607,7 +607,7 @@ export default function WalletScreen({ navigation, route }) {
                       <Text style={styles.topUpTitle}>{isRiskSettlement ? `Settle ${topUpCurrency} liability` : `Add ${topUpCurrency} balance`}</Text>
                       <Text style={styles.topUpSubtitle}>{isRiskSettlement
                         ? `${formatAmount(selectedRisk.outstanding, { targetCurrency: topUpCurrency })} is outstanding. Any valid top-up reduces it first; a partial payment leaves the Wallet locked, while surplus after full clearance becomes available.`
-                        : 'Complete a secure Safepay card payment.'}</Text>
+                        : `Complete a secure Safepay payment.${topUpCurrency === 'PKR' ? ' Choose card or Raast in the secure form.' : ''}`}</Text>
                     </View>
                     <Ionicons name="card-outline" size={20} color={palette.colors.textSecondary} />
                   </View>
@@ -642,7 +642,7 @@ export default function WalletScreen({ navigation, route }) {
                     </View>
                   )}
 
-                  <SavedSafepayCardPicker {...savedCards} disabled={submitting} />
+                  <SavedSafepayCardPicker {...savedCards} currency={topUpCurrency} disabled={submitting} />
                   <TouchableOpacity
                     style={[styles.topUpButton, (submitting || !canTopUpSelectedCurrency) && styles.disabled]}
                     onPress={topUp}

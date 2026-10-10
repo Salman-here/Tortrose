@@ -35,8 +35,8 @@ const faqCategories = [
     category: 'Payments',
     icon: 'card-outline',
     questions: [
-      { q: 'What payment methods are accepted?', a: 'Checkout supports Safepay card, Rozare Wallet, and Cash on Delivery. One order uses one payment method. COD is available only when every seller allows it; if any seller accepts online payment only, use card or a sufficient Wallet balance in the checkout currency.' },
-      { q: 'How does Rozare Wallet work?', a: 'Open Wallet from your account to add balance securely by card and view transactions. USD, PKR, EUR, and GBP balances stay separate, so Wallet checkout requires enough balance in the exact order currency.' },
+      { q: 'What payment methods are accepted?', a: 'Checkout supports Safepay card, Raast when offered for an eligible PKR checkout, Rozare Wallet, and Cash on Delivery. Raast requires a supported Pakistani banking or wallet app. One order uses one payment method. COD is available only when every seller allows it; if any seller accepts online payment only, use an available Safepay method or a sufficient Wallet balance in the checkout currency.' },
+      { q: 'How does Rozare Wallet work?', a: 'Open Wallet from your account to add balance through Safepay card or Raast when offered for an eligible PKR top-up, and view transactions. USD, PKR, EUR, and GBP balances stay separate, so Wallet checkout requires enough balance in the exact order currency.' },
       { q: 'Is my payment information secure?', a: 'Payments are processed through Safepay, and Rozare does not store your card details on its servers.' },
       { q: 'Are there any hidden fees?', a: 'No hidden fees. The price you see includes all applicable taxes (calculated at checkout). Shipping costs are shown before you confirm your order.' },
     ],
@@ -57,6 +57,7 @@ const faqCategories = [
       { q: 'What is the return policy?', a: 'Return eligibility is set per seller and can be overridden per product. The policy saved when you order controls the deadline. In a multi-seller order, only items from sellers who allow returns become eligible after their portion is delivered.' },
       { q: 'How do I initiate a return?', a: 'Open the delivered order, select Request Return for an eligible seller, choose item quantities, and provide the reason. The seller then updates pickup, transit, receipt, and review statuses.' },
       { q: 'When do I receive a return refund?', a: 'After the seller accepts an eligible product return, Rozare credits your Wallet in the saved order currency. Safepay and Wallet orders use held original-order funds; COD returns require verified funding from seller earnings or Safepay. An open return keeps its funds held after the return deadline.' },
+      { q: 'Can I cancel a paid order before shipment?', a: 'Yes. Cancel an unshipped seller portion from Order Details without seller approval. Wallet-paid and Raast-paid cancellations refund fully to Rozare Wallet without a buyer processing deduction; Raast cancellations do not offer an automatic refund to the original bank account. Card-paid cancellations offer a full Wallet refund or an original-card refund less the displayed deduction. New original-card cancellation refunds use 6.2% + PKR30 once per checkout, shared proportionally across sellers. Shipped items use the eligible return process instead.' },
     ],
   },
   {

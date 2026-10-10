@@ -55,6 +55,32 @@ test('refund, failure and review states never enable a paid purchase', () => {
     assert.equal(result.status, status); assert.equal(result.isPaid, false);
   }
 });
+
+test('verified payment rail permits unknown to PKR Raast but rejects invented or changed known rails', () => {
+  const original = payment();
+  assert.equal(validateSafepayPayment(original).paymentRail, 'unknown');
+  assert.equal(validateSafepayPayment(payment({ paymentRail: 'raast' }), original).paymentRail, 'raast');
+  for (const extra of [{ paymentRail: 'other' }, { paymentRail: 'raast', currency: 'USD' },
+    { paymentRail: 'raast', purpose: 'card_setup', amountMinor: 0 }]) assert.throws(() => validateSafepayPayment(payment(extra)));
+  assert.throws(() => validateSafepayPayment(payment({ paymentRail: 'raast' }), payment({ paymentRail: 'card', status: 'paid', isPaid: true, webhookProcessed: true })));
+});
+
+test('pending hosted card selection may switch to Raast while captured or saved-card identity cannot', () => {
+  const paidRaast = payment({ paymentRail: 'raast', status: 'paid', isPaid: true, webhookProcessed: true });
+  const pendingCard = payment({ paymentRail: 'card' });
+  assert.equal(validateSafepayPayment(paidRaast, pendingCard).status, 'paid');
+  assert.equal(validateSafepayPayment(paidRaast, payment({ ...pendingCard, status: 'paid', isPaid: true })).status, 'paid');
+  for (const expected of [
+    payment({ paymentRail: 'card', status: 'paid', isPaid: true, webhookProcessed: true }),
+    ...['refund_pending', 'refunded', 'manual_review'].map(status => payment({ paymentRail: 'card', status, providerState: 'TRACKER_ENDED' })),
+    payment({ paymentRail: 'card', status: 'manual_review', capturedMinor: 120000 }),
+    payment({ paymentRail: 'card', checkoutPresentation: 'saved-card' }),
+  ]) assert.throws(() => validateSafepayPayment(paidRaast, expected), { code: 'SAFEPAY_CHECKOUT_INVALID' });
+  // A raw review/status marker without captured evidence does not freeze a pre-payment selection.
+  assert.equal(validateSafepayPayment(paidRaast, payment({ paymentRail: 'card', status: 'manual_review' })).paymentRail, 'raast');
+  assert.throws(() => validateSafepayPayment({ ...paidRaast, checkoutPresentation: 'saved-card' }));
+  assert.equal(validateSafepayPayment({ ...paidRaast, webhookProcessed: false }, pendingCard).status, 'pending');
+});
 test('policy pages are public and payment return is private/noindex', () => {
   for (const path of ['/terms', '/privacy', '/shipping-policy', '/refund-policy', '/cancellation-policy']) {
     assert.equal(isKnownAppPath(path), true); assert.equal(isPrivatePath(path), false);

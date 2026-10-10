@@ -90,6 +90,30 @@ describe('website and mobile information parity', () => {
     mobileSections.forEach((section) => expect(section.body.trim().length).toBeGreaterThan(80));
   });
 
+  it('documents eligible Raast checkout and full Wallet cancellations on both surfaces', () => {
+    const mobileSections = readStaticConstant(mobileDocs, 'SECTIONS');
+    const payments = mobileSections.find(section => section.id === 'payments').body;
+    const returns = mobileSections.find(section => section.id === 'orders-returns').body;
+    const faqItems = readStaticConstant(mobileFaq, 'faqCategories').flatMap(({ questions }) => questions);
+    expect(payments).toContain('Raast when offered for an eligible PKR checkout');
+    expect(payments).toContain('saved-card setup and seller subscriptions remain card-only');
+    for (const source of [websiteDocs, returns]) {
+      expect(source).toContain('Raast-paid cancellations refund fully to Rozare Wallet without a buyer processing deduction');
+      expect(source).toContain('Raast cancellations do not offer an automatic refund to the original bank account');
+    }
+    expect(returns).toContain('original held order');
+    expect(faqItems.find(({ q }) => q === 'What payment methods are accepted?').a)
+      .toContain('supported Pakistani banking or wallet app');
+    expect(faqItems.find(({ q }) => q === 'How does Rozare Wallet work?').a)
+      .toContain('Raast when offered for an eligible PKR top-up');
+    expect(faqItems.find(({ q }) => q === 'Can I cancel a paid order before shipment?').a)
+      .toContain('6.2% + PKR30 once per checkout');
+    for (const privacy of [websitePrivacy, mobilePrivacy]) {
+      expect(privacy).toContain('Online card and eligible PKR Raast payments use Safepay');
+      expect(privacy).toContain('Recurring subscription consent is separate from permission to save a card');
+    }
+  });
+
   it('keeps factual AI, tags, tracking, and verification guidance explicit', () => {
     const docsText = readStaticConstant(mobileDocs, 'SECTIONS')
       .map(({ body }) => body)

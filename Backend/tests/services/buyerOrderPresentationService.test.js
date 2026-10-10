@@ -110,6 +110,14 @@ describe('buyer seller-group order presentation', () => {
     expect(serialized.sellerGroups[0].itemIndexes).toEqual([0]);
   });
 
+  test.each(['unknown', 'card', 'raast'])('preserves the verified %s Safepay rail in serialized buyer orders', rail => {
+    const order = new Order({ ...mixedSellerOrder(), paymentMethod: 'safepay', safepayPaymentRail: rail });
+    const serialized = JSON.parse(JSON.stringify(buildBuyerOrderView(order)));
+    expect(serialized.paymentMethod).toBe('safepay');
+    expect(serialized.safepayPaymentRail).toBe(rail);
+    expect(serialized.currency).toBe('PKR');
+  });
+
   test('prefers the current store logo and keeps the checkout snapshot as its fallback', () => {
     const order = mixedSellerOrder();
     const view = buildBuyerOrderView(order, {

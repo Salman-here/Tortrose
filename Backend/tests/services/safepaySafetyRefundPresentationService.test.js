@@ -39,6 +39,13 @@ test('a requested refund is not described as completed', () => {
   payment.refundedMinor = 0; payment.status = 'refund_pending'; payment.providerState = 'TRACKER_ENDED'; payment.safetyRefund.outcome = 'unknown';
   expect(buildSafetyRefundView(order, payment, [])).toMatchObject({ available: true, status: 'refund_pending', refundedMinor: 0, refundedAt: null });
 });
+test('a card safety refund under manual review requires support without claiming bank delivery', () => {
+  const { order, payment } = fixture();
+  Object.assign(payment, { paymentRail: 'card', refundedMinor: 0, status: 'manual_review', providerState: 'TRACKER_ENDED' });
+  payment.safetyRefund.outcome = 'failed';
+  expect(buildSafetyRefundView(order, payment, [])).toMatchObject({ available: true, status: 'manual_review', supportRequired: true,
+    automaticRefundSupported: true, refundedAt: null });
+});
 test('buyer visibility adds only cancelled safety-refund checkouts, not ordinary abandoned payments', () => {
   const { order } = fixture();
   expect(isSafetyRefundCheckout(order)).toBe(true);

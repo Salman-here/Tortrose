@@ -14,6 +14,7 @@ import {
   hasExactOrderItemUnitEquation,
 } from "../utils/orderItems";
 import BuyerSellerFulfillmentGroups from "../components/order/BuyerSellerFulfillmentGroups";
+import { getOrderPaymentLabel } from '../utils/paymentPresentation';
 
 const statusSteps = ["pending", "confirmed", "processing", "shipped", "delivered"];
 const statusConfig = {
@@ -286,7 +287,7 @@ function TrackOrderContent() {
                       ? "Cash on Delivery"
                       : order.paymentMethod === "wallet"
                         ? "Rozare Wallet"
-                        : order.paymentMethod === 'safepay' ? 'Card (Safepay)' : 'Card'} •{" "}
+                        : getOrderPaymentLabel(order)} •{" "}
                     <span style={{ color: order.isPaid ? "#22c55e" : "#f59e0b" }}>
                       {order.isPaid ? "Paid" : "Unpaid"}
                     </span>

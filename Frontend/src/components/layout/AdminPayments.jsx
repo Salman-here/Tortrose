@@ -514,7 +514,7 @@ const AdminPayments = () => {
                     <div className="min-w-0">
                         <h2 className="text-lg font-bold" style={{ color: 'hsl(var(--foreground))' }}>Seller Payment Accounts</h2>
                         <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                            Delivered card and Wallet revenue is withdrawable here. COD revenue is shown for reporting only.
+                            Delivered Safepay and Wallet revenue is withdrawable here. COD revenue is shown for reporting only.
                         </p>
                     </div>
                     <Users size={20} style={{ color: 'hsl(var(--muted-foreground))' }} />

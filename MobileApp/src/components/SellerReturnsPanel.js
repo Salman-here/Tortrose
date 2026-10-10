@@ -401,7 +401,7 @@ export default function SellerReturnsPanel({ header, route, navigation }) {
       [
         { text: 'Cancel', style: 'cancel' },
         { text: 'Seller Balance', onPress: () => accept(request, 'seller_balance') },
-        { text: 'Card via Safepay', onPress: () => accept(request, 'card') },
+        { text: 'Pay through Safepay', onPress: () => accept(request, 'card') },
       ]
     );
   };

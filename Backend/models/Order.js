@@ -262,6 +262,7 @@ const orderSchema = mongoose.Schema(
                     reference: { type: mongoose.Schema.Types.ObjectId, ref: 'OrderCancellation', default: null },
                     refundStatus: { type: String, enum: ['not_required', 'pending', 'processing', 'refunded', 'manual_review'], default: undefined },
                     destination: { type: String, enum: ['none', 'wallet', 'original_card'], default: undefined },
+                    paymentRail: { type: String, enum: ['unknown', 'card', 'raast'], default: 'unknown' },
                     amountMinor: { type: Number, min: 0, validate: Number.isSafeInteger, default: undefined },
                     grossAmountMinor: { type: Number, min: 0, validate: Number.isSafeInteger, default: undefined },
                     deductionMinor: { type: Number, min: 0, validate: Number.isSafeInteger, default: undefined },
@@ -597,6 +598,7 @@ const orderSchema = mongoose.Schema(
         safepayEnvironment: { type: String, enum: ['sandbox', 'production'], default: null, immutable: true },
         safepayPaymentId: { type: mongoose.Schema.Types.ObjectId, ref: 'SafepayPayment', default: null },
         safepayTrackerId: { type: String, default: null },
+        safepayPaymentRail: { type: String, enum: ['unknown', 'card', 'raast'], default: 'unknown' },
         stripeCustomerId: { type: String, default: null, index: true },
         stripePaymentIntentId: { type: String, default: null },
         // Freeze every hosted-create parameter that can otherwise change

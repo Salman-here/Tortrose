@@ -143,10 +143,16 @@ const orderItemOptionsHtml = (item = {}) => {
   return `<br/><span style="color:#64748b;font-size:12px;">${escapeHtml(text)}</span>`;
 };
 
-const paymentMethodLabel = (method) => {
+const paymentMethodLabel = (method, orderContext) => {
   if (method === 'cash_on_delivery') return 'Cash on Delivery';
   if (method === 'stripe') return 'Card (Stripe)';
-  if (method === 'safepay') return 'Card (Safepay)';
+  if (method === 'safepay') {
+    // Only a server-owned order snapshot carries the verified provider rail.
+    // The gateway name alone cannot distinguish a card from Raast.
+    if (orderContext?.safepayPaymentRail === 'card') return 'Card (Safepay)';
+    if (orderContext?.safepayPaymentRail === 'raast' && orderContext.currency === 'PKR') return 'Raast (Safepay)';
+    return 'Safepay';
+  }
   if (method === 'wallet') return 'Rozare Wallet';
   return method || 'Unknown';
 };

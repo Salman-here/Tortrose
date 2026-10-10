@@ -6,6 +6,7 @@ import GlassPanel from './common/GlassPanel';
 import { useTheme } from '../contexts/ThemeContext';
 import { getOrderSellerGroups, getOrderCurrency, assertOrderDetailPresentation } from '../utils/orderPresentation';
 import { assertCancellationQuote } from '../utils/cancellationQuote';
+import { getOriginalPaymentLabel } from '../utils/paymentPresentation';
 
 export default function BuyerCancellationModal({ order, sellerIds, formatMoney, onClose, onCancelled, onBusyChange }) {
   const { palette } = useTheme();
@@ -25,7 +26,7 @@ export default function BuyerCancellationModal({ order, sellerIds, formatMoney, 
           .reduce((n, row) => n + Math.round(row.summary.totalAmount * 100), 0);
         const res = await api.post(`/api/order/cancel/${order._id}/preview`, { sellerIds: selected });
         const value = assertCancellationQuote(res.data?.quote, { orderId: order._id, currency: getOrderCurrency(order),
-          paymentMethod: order.paymentMethod, sellerIds: selected, grossMinor });
+          paymentMethod: order.paymentMethod, paymentRail: order.safepayPaymentRail, sellerIds: selected, grossMinor });
         if (active) { setQuote(value); setDestination(value.defaultDestination); }
       } catch (err) { if (active) setError(err.response?.data?.msg || err.message); }
       finally { if (active) setLoading(false); }
@@ -65,9 +66,10 @@ export default function BuyerCancellationModal({ order, sellerIds, formatMoney, 
             style={[styles.option, { borderColor: destination === option.destination ? palette.colors.primary : palette.colors.border,
               backgroundColor: destination === option.destination ? `${palette.colors.primary}12` : 'rgba(255,255,255,0.12)', opacity: option.available ? 1 : 0.5 }]}>
             <View style={styles.row}><Ionicons name={option.destination === 'original_card' ? 'card-outline' : 'wallet-outline'} size={21} color={palette.colors.primary} />
-              <Text style={[styles.heading, text, { flex: 1 }]}>{option.label}</Text>{destination === option.destination && <Ionicons name="checkmark-circle" size={19} color={palette.colors.primary} />}</View>
+              <Text style={[styles.heading, text, { flex: 1 }]}>{option.destination === 'original_card' ? getOriginalPaymentLabel(quote) : option.label}</Text>{destination === option.destination && <Ionicons name="checkmark-circle" size={19} color={palette.colors.primary} />}</View>
             {option.destination === 'wallet' && quote.options.length > 1 && <Text style={[styles.copy, { color: palette.colors.success }]}>Full refund</Text>}
-            {option.destination !== 'none' && <>
+            {!option.available && <Text style={[styles.copy, muted]}>{option.reason || 'This refund option is unavailable. Choose the full Wallet refund.'}</Text>}
+            {option.destination !== 'none' && option.available && <>
               <View style={styles.row}><Text style={[styles.copy, muted]}>Cancelled amount</Text><Text style={[styles.copy, text]}>{formatMoney(quote.grossMinor / 100)}</Text></View>
               {option.destination === 'original_card' && <View style={styles.row}><Text style={[styles.copy, muted]}>Processing fee</Text><Text style={[styles.copy, text]}>{formatMoney(option.deductionMinor / 100)}</Text></View>}
               <View style={styles.row}><Text style={[styles.heading, text]}>You receive</Text><Text style={[styles.heading, text]}>{formatMoney(option.amountMinor / 100)}</Text></View>

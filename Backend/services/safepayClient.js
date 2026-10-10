@@ -1,5 +1,6 @@
 'use strict';
 const { readSafepayConfig } = require('../config/safepay');
+const { safepayPaymentRailFacts } = require('./safepayPaymentRailService');
 
 const CURRENCIES = new Set(['USD', 'PKR', 'EUR', 'GBP']);
 const providerError = (message, code, statusCode = 502, extra = {}) => Object.assign(new Error(message), { code, statusCode, ...extra });
@@ -40,7 +41,7 @@ const trackerReference = tracker => {
 // Select the immutable contract explicitly instead of spreading a document.
 const trackerExpectation = (expected, tracker) => ({ tracker, amountMinor: expected.amountMinor,
   currency: expected.currency, reference: expected.reference, providerMode: expected.providerMode,
-  providerEntryMode: expected.providerEntryMode, customerId: expected.customerId });
+  providerEntryMode: expected.providerEntryMode, customerId: expected.customerId, purpose: expected.purpose });
 
 const canResetSavedCardAuthentication = tracker => !tracker?.charge && (
   (tracker?.state === 'TRACKER_ENROLLED' && tracker?.next_actions?.CYBERSOURCE?.kind === 'PAYER_AUTH_VALIDATION')
@@ -64,6 +65,9 @@ function requireTracker(data, expected, config) {
     || quote?.currency !== expected.currency || readMinor(quote?.amount) !== expected.amountMinor) {
     throw providerError('Safepay payment identity or amount does not match this checkout.', 'SAFEPAY_PAYMENT_MISMATCH', 409);
   }
+  // An intent switch is permitted only for a PKR hosted purchase. Raast must
+  // never replace card storage, a selected saved card, or merchant renewals.
+  safepayPaymentRailFacts(tracker, expected);
   return tracker;
 }
 
@@ -250,6 +254,7 @@ function createSafepayClient({ config = readSafepayConfig(), fetchImpl = fetch }
     },
     async refundRemainingPayment(trackerId, expected) {
       const tracker = await this.getTracker(trackerId, expected);
+      require('./safepayRefundCapabilityService').requireExternalRefundRail(tracker, expected);
       if (tracker.state === 'TRACKER_REFUNDED') return tracker;
       const charge = tracker.charge;
       if (!['TRACKER_ENDED', 'TRACKER_PARTIAL_REFUND'].includes(tracker.state)
@@ -270,6 +275,7 @@ function createSafepayClient({ config = readSafepayConfig(), fetchImpl = fetch }
     async refundPaymentAmount(trackerId, expected, amountMinor) {
       requireMoney(amountMinor, expected.currency);
       const tracker = await this.getTracker(trackerId, expected);
+      require('./safepayRefundCapabilityService').requireExternalRefundRail(tracker, expected);
       if (!['TRACKER_ENDED', 'TRACKER_PARTIAL_REFUND'].includes(tracker.state)
           || tracker.charge?.balance?.currency !== expected.currency
           || readMinor(tracker.charge.balance.amount) < amountMinor) {

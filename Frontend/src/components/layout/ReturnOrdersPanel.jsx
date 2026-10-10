@@ -292,9 +292,9 @@ export default function ReturnOrdersPanel({ formatPrice }) {
               )}
               {snapshot.valid && request.status === 'accepted_pending_payment' && (
                 <>
-                  <span className="text-xs px-3 py-2 rounded-lg" style={{ color: 'hsl(38, 85%, 42%)', background: 'rgba(245,158,11,0.1)' }}>Waiting for verified card payment</span>
+                  <span className="text-xs px-3 py-2 rounded-lg" style={{ color: 'hsl(38, 85%, 42%)', background: 'rgba(245,158,11,0.1)' }}>Waiting for verified Safepay payment</span>
                   <button type="button" onClick={() => acceptReturn(request, 'card')} disabled={submitting} className="glass-button px-3 py-2 rounded-lg text-xs font-semibold inline-flex items-center gap-2 disabled:opacity-50">
-                    <CreditCard size={13} /> Resume card payment
+                    <CreditCard size={13} /> Resume Safepay payment
                   </button>
                 </>
               )}
@@ -370,7 +370,7 @@ export default function ReturnOrdersPanel({ formatPrice }) {
                     </button>
                     <button type="button" onClick={() => acceptReturn(dialog.request, 'card')} disabled={submitting} className="glass-button p-4 rounded-xl text-left inline-flex items-start gap-3 disabled:opacity-50">
                       <CreditCard size={19} className="mt-0.5 shrink-0" style={{ color: 'hsl(220, 70%, 55%)' }} />
-                      <span><strong className="block text-sm" style={{ color: 'hsl(var(--foreground))' }}>Pay by card</strong><span className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>Safepay verifies the exact amount before wallet credit.</span></span>
+                      <span><strong className="block text-sm" style={{ color: 'hsl(var(--foreground))' }}>Pay through Safepay</strong><span className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>Safepay verifies the exact amount before wallet credit.</span></span>
                     </button>
                   </div>
                 </>

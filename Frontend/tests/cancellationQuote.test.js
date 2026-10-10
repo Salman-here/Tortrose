@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { assertCancellationQuote } from '../src/utils/cancellationQuote.js';
 const args = { orderId:'o1',currency:'PKR',paymentMethod:'safepay',sellerIds:['s1'],grossMinor:1000000 };
-const quote = () => ({ version:1,quoteId:'a'.repeat(64),orderId:'o1',currency:'PKR',paymentMethod:'safepay',sellerIds:['s1'],activeSellerIds:['s1'],
+const quote = () => ({ version:1,quoteId:'a'.repeat(64),orderId:'o1',currency:'PKR',paymentMethod:'safepay',paymentRail:'card',sellerIds:['s1'],activeSellerIds:['s1'],
   grossMinor:1000000,policyVersion:1,defaultDestination:'wallet',options:[
     {destination:'wallet',label:'Rozare Wallet',amountMinor:1000000,deductionMinor:0,available:true},
     {destination:'original_card',label:'Original card',amountMinor:935000,deductionMinor:65000,available:true}] });
@@ -15,15 +15,34 @@ test('rejects altered order/currency/scope/refund money and missing options',()=
   }
 });
 test('Wallet cancellation accepts only ONE full-Wallet option',()=>{
-  const q=quote();q.paymentMethod='wallet';q.options.pop();
+  const q=quote();q.paymentMethod='wallet';q.paymentRail='unknown';q.options.pop();
   assert.equal(assertCancellationQuote(q,{...args,paymentMethod:'wallet'}).options.length,1);
   q.options.push(quote().options[1]);assert.throws(()=>assertCancellationQuote(q,{...args,paymentMethod:'wallet'}));
 });
 test('COD and zero orders need no money refund',()=>{
-  const q={...quote(),paymentMethod:'cash_on_delivery',defaultDestination:'none',options:[{destination:'none',label:'No refund required',amountMinor:0,deductionMinor:0,available:true}]};
+  const q={...quote(),paymentMethod:'cash_on_delivery',paymentRail:'unknown',defaultDestination:'none',options:[{destination:'none',label:'No refund required',amountMinor:0,deductionMinor:0,available:true}]};
   assert.equal(assertCancellationQuote(q,{...args,paymentMethod:'cash_on_delivery'}).options[0].amountMinor,0);
   q.paymentMethod='safepay';q.grossMinor=0;assert.equal(assertCancellationQuote(q,{...args,grossMinor:0}).options.length,1);
 });
 test('web and mobile enforce the same refund quote contract',()=>assert.equal(
   readFileSync(new URL('../src/utils/cancellationQuote.js',import.meta.url),'utf8'),
   readFileSync(new URL('../../MobileApp/src/utils/cancellationQuote.js',import.meta.url),'utf8')));
+
+test('Raast and unknown rail keep full Wallet default and require a disabled external option with a reason', () => {
+  for (const paymentRail of ['raast', 'unknown', undefined]) {
+    const q = quote(); q.paymentRail = paymentRail;
+    q.options[1] = { ...q.options[1], available: false, reason: 'Choose the full Wallet refund or contact support.' };
+    assert.equal(assertCancellationQuote(q, args).options[0].amountMinor, args.grossMinor);
+    assert.equal(assertCancellationQuote(q, args).options[1].available, false);
+    q.options[1].available = true; assert.throws(() => assertCancellationQuote(q, args));
+    q.options[1].available = false; delete q.options[1].reason; assert.throws(() => assertCancellationQuote(q, args));
+  }
+});
+
+test('quote rail cannot conflict with the known order or declare Raast outside PKR', () => {
+  assert.throws(() => assertCancellationQuote(quote(), { ...args, paymentRail: 'raast' }));
+  const q = quote(); q.paymentRail = 'raast'; q.currency = 'USD';
+  q.options[1] = { ...q.options[1], available: false, reason: 'Contact support.' };
+  assert.throws(() => assertCancellationQuote(q, { ...args, currency: 'USD' }));
+  q.paymentRail = 'other'; assert.throws(() => assertCancellationQuote(q, { ...args, currency: 'USD' }));
+});

@@ -7,7 +7,8 @@ const Customer = require('../models/SafepayCustomer');
 const Order = require('../models/Order');
 const { readSafepayConfig } = require('../config/safepay');
 const { createSafepayClient, requireMoney, requireReusableCard } = require('./safepayClient');
-const { safepayPaymentFacts } = require('./safepayPaymentFacts');
+const { safepayPaymentFacts, assertSafepayOrderBinding } = require('./safepayPaymentFacts');
+const { normalizeSafepayPaymentRail, normalizeRaastAttemptStatus, safepayPaymentRailObservation } = require('./safepayPaymentRailService');
 const { buildReturnUrl } = require('./safepayReturnNavigation');
 
 const fail = (message, code, statusCode = 409) => Object.assign(new Error(message), { code, statusCode });
@@ -35,7 +36,7 @@ function createSafepayPaymentService({
   clientFor = config => createSafepayClient({ config }),
   settle = (payment, tracker, session) => require('./safepaySettlementService').settleSafepayPayment(payment, tracker, session),
   close = (payment, session) => require('./safepaySettlementService').closeSafepayPayment(payment, session),
-  quarantine = (payment, tracker, session) => require('./safepaySettlementService').quarantineSafepayPayment(payment, tracker, session),
+  quarantine = (payment, tracker, session, options) => require('./safepaySettlementService').quarantineSafepayPayment(payment, tracker, session, options),
   claimRecurring = paymentId => require('./safepayBillingService').claimRecurringCharge(paymentId),
   savedCheckoutFor = (payment, surface) => require('./safepaySavedCardCheckoutService').buildCheckoutContext(payment, surface),
   now = () => new Date(),
@@ -247,13 +248,44 @@ function createSafepayPaymentService({
         payment = await recoverTracker(payment, client);
       }
       tracker = await client.getTracker(payment.tracker, payment);
+      let observation;
+      try { observation = safepayPaymentRailObservation(payment, tracker, at); }
+      catch (error) {
+        if (error.code !== 'SAFEPAY_PAYMENT_RAIL_CHANGED') throw error;
+        await mongoose.connection.transaction(async session => {
+          const current = await Payment.findOne({ _id: payment._id, processingToken: lease }).session(session);
+          if (!current) throw fail('Payment reconciliation lease changed.', 'SAFEPAY_RECONCILE_CONFLICT');
+          await quarantine(current, tracker, session, { skipRefundReconciliation: true });
+          current.status = 'manual_review'; current.riskPending = true;
+          current.lastErrorCode = error.code; current.lastReconciledAt = at;
+          current.nextReconcileAt = new Date(at.getTime() + 60000);
+          await current.save({ session });
+        });
+        return await Payment.findById(payment._id);
+      }
+      // Keep trusted evidence even if the following financial transaction rolls
+      // back because stock, price or local cancellation prevented fulfillment.
+      const observed = await Payment.updateOne({ _id: payment._id, processingToken: lease }, { $set: observation });
+      if (observed.matchedCount !== 1) throw fail('Payment reconciliation lease changed.', 'SAFEPAY_RECONCILE_CONFLICT');
       const facts = safepayPaymentFacts(tracker);
       await mongoose.connection.transaction(async session => {
         const current = await Payment.findOne({ _id: payment._id, processingToken: lease }).session(session);
         if (!current) throw fail('Payment reconciliation lease changed.', 'SAFEPAY_RECONCILE_CONFLICT');
+        const previousErrorCode = current.lastErrorCode;
         current.providerState = facts.state;
         current.lastReconciledAt = at;
         current.lastErrorCode = '';
+        if (current.appliedAt && current.purpose === 'order') {
+          const order = await Order.findById(current.order).session(session);
+          const orderMinor = require('./stripeOrderPaymentService').getExpectedStripeTotalMinor(order);
+          assertSafepayOrderBinding(order, current, orderMinor);
+          if (normalizeSafepayPaymentRail(order.safepayPaymentRail) !== normalizeSafepayPaymentRail(current.paymentRail)) {
+            const updated = await Order.updateOne({ _id: order._id, user: current.user, paymentMethod: 'safepay',
+              safepayPaymentId: current._id, safepayEnvironment: current.environment, currency: current.currency },
+            { $set: { safepayPaymentRail: normalizeSafepayPaymentRail(current.paymentRail) } }, { session });
+            if (updated.matchedCount !== 1) throw fail('The order payment binding changed.', 'SAFEPAY_ORDER_BINDING_INVALID');
+          }
+        }
         if (facts.outcome === 'risk') {
           const result = await quarantine(current, tracker, session);
           current.riskPending = result?.resolved !== true;
@@ -261,9 +293,10 @@ function createSafepayPaymentService({
           if (Number.isSafeInteger(result?.refundedMinor)) current.refundedMinor = result.refundedMinor;
         } else if (facts.outcome === 'paid') {
           if (!current.appliedAt) {
-            if (current.status === 'refund_pending' && current.safetyRefund?.requestedAt) {
+            if (['refund_pending', 'manual_review'].includes(current.status) && current.safetyRefund?.requestedAt) {
               current.nextReconcileAt = new Date(at.getTime() + 60000);
-              current.lastErrorCode = current.safetyRefund.outcome === 'failed' ? 'SAFEPAY_REFUND_NEEDS_REVIEW' : 'SAFEPAY_SAFETY_REFUND_PENDING';
+              current.lastErrorCode = current.status === 'manual_review' ? previousErrorCode || 'SAFEPAY_REFUND_NEEDS_REVIEW'
+                : current.safetyRefund.outcome === 'failed' ? 'SAFEPAY_REFUND_NEEDS_REVIEW' : 'SAFEPAY_SAFETY_REFUND_PENDING';
               await current.save({ session });
               return;
             }
@@ -330,6 +363,8 @@ function paymentResponse(payment) {
     purpose: payment.purpose, environment: payment.environment, currency: payment.currency,
     amountMinor: payment.amountMinor, mongoOrderId: payment.order || null,
     refundedMinor: payment.refundedMinor,
+    paymentRail: normalizeSafepayPaymentRail(payment.paymentRail),
+    raastAttemptStatus: normalizeSafepayPaymentRail(payment.paymentRail) === 'raast' ? normalizeRaastAttemptStatus(payment.raastAttemptStatus) : null,
     status: cardSaved ? 'authorized' : paid ? 'paid' : ['cancelled', 'failed', 'refunded', 'refund_pending', 'manual_review'].includes(payment.status) ? payment.status : 'pending',
     isPaid: paid, completed: paid || cardSaved, cardSaved, webhookProcessed: paid || cardSaved, providerState: payment.providerState, failureCode: payment.lastErrorCode || '' };
 }

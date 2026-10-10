@@ -7,6 +7,7 @@ const SellerPaymentRiskHold = require('../models/SellerPaymentRiskHold');
 const SellerSettlementLock = require('../models/SellerSettlementLock');
 const { fromMinorUnits } = require('./moneyMath');
 const { assertSafepayOrderBinding } = require('./safepayPaymentFacts');
+const { normalizeSafepayPaymentRail } = require('./safepayPaymentRailService');
 // This existing pure validator reconciles immutable lines, coupons, shipping
 // and tax in exact minor units. It does not call or create a Stripe payment.
 const { getExpectedStripeTotalMinor: getExpectedOrderTotalMinor } = require('./stripeOrderPaymentService');
@@ -45,6 +46,7 @@ async function settleOrder(payment, session) {
   order.paymentProcessingStartedAt = null;
   order.paymentExpiresAt = null;
   order.safepayTrackerId = payment.tracker;
+  order.safepayPaymentRail = normalizeSafepayPaymentRail(payment.paymentRail);
   order.confirmation = order.confirmation || {};
   order.confirmation.confirmedAt = at;
   order.confirmation.confirmedVia = 'safepay_payment';

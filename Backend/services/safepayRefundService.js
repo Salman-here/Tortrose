@@ -15,6 +15,7 @@ const fail = () => Object.assign(new Error('Safepay refund evidence does not rec
 
 function refundEvidence(tracker, payment) {
   if (!['TRACKER_REFUNDED', 'TRACKER_PARTIAL_REFUND'].includes(tracker.state)) return null;
+  require('./safepayRefundCapabilityService').requireExternalRefundRail(tracker, payment);
   const charge = tracker.charge;
   if (!charge || charge.tracker !== payment.tracker || charge.amount?.currency !== payment.currency
     || readMinor(charge.amount?.amount) !== payment.amountMinor || charge.capture?.totals?.currency !== payment.currency

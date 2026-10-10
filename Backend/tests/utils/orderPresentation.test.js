@@ -12,6 +12,7 @@ const {
 const {
   buyerOrderConfirmationRequestEmail,
   newOrderSellerEmail,
+  orderConfirmationEmail,
 } = require('../../utils/emailTemplates');
 
 const sampleOrder = {
@@ -112,6 +113,28 @@ describe('order presentation helpers', () => {
     expect(paymentMethodLabel('cash_on_delivery')).toBe('Cash on Delivery');
     expect(paymentMethodLabel('stripe')).toBe('Card (Stripe)');
     expect(paymentMethodLabel('wallet')).toBe('Rozare Wallet');
+    expect(paymentMethodLabel('safepay')).toBe('Safepay');
+  });
+
+  test('uses the verified order rail for Safepay and never guesses Raast for a non-PKR order', () => {
+    expect(paymentMethodLabel('safepay', { safepayPaymentRail: 'card', currency: 'USD' })).toBe('Card (Safepay)');
+    expect(paymentMethodLabel('safepay', { safepayPaymentRail: 'raast', currency: 'PKR' })).toBe('Raast (Safepay)');
+    for (const context of [
+      { safepayPaymentRail: 'unknown', currency: 'PKR' },
+      { safepayPaymentRail: 'raast', currency: 'USD' },
+      { safepayPaymentRail: 'raast' },
+      { paymentRail: 'raast', currency: 'PKR' },
+      { intent: 'RAAST', currency: 'PKR' },
+    ]) {
+      expect(paymentMethodLabel('safepay', context)).toBe('Safepay');
+    }
+    expect(paymentMethodLabel('stripe', { safepayPaymentRail: 'raast', currency: 'PKR' })).toBe('Card (Stripe)');
+  });
+
+  test('method-only order confirmation email callers do not mislabel Safepay as card', () => {
+    const email = orderConfirmationEmail({ ...sampleOrder, paymentMethod: 'safepay' });
+    expect(email.html).toContain('Payment Method: <strong>Safepay</strong>');
+    expect(email.html).not.toContain('Card (Safepay)');
   });
 
   test('WhatsApp buyer message includes variants and PKR total', () => {

@@ -13,6 +13,7 @@ import { spacing, fontSize, fontWeight, borderRadius, statusColors } from '../..
 import { useTheme } from '../../contexts/ThemeContext';
 import { useCurrency } from '../../contexts/CurrencyContext';
 import { getSafetyRefundPresentation } from '../../utils/safepaySafetyRefundPresentation';
+import { getOrderPaymentLabel } from '../../utils/paymentPresentation';
 import {
   ORDER_STAGES,
   formatOrderItemOptions,
@@ -43,13 +44,6 @@ const formatDate = (value, options = {}) => {
     month: 'short', day: 'numeric', year: 'numeric', ...options,
   });
 };
-
-const paymentLabel = (method) => ({
-  stripe: 'Paid online',
-  safepay: 'Card (Safepay)',
-  wallet: 'Rozare Wallet',
-  cash_on_delivery: 'Cash on delivery',
-}[method] || 'Payment');
 
 const OrderCard = ({
   order,
@@ -231,7 +225,7 @@ const OrderCard = ({
                 size={14}
                 color={palette.colors.textSecondary}
               />
-              <Text style={styles.paymentMethod}>{paymentLabel(order.paymentMethod)}</Text>
+              <Text style={styles.paymentMethod}>{getOrderPaymentLabel(order)}</Text>
             </View>
             <Text style={[styles.paymentState, { color: order.isPaid ? palette.colors.success : palette.colors.warning }]}>
               {safetyRefund?.label || (order.isPaid ? 'Payment complete' : order.paymentMethod === 'cash_on_delivery' ? 'Pay on delivery' : 'Payment pending')}

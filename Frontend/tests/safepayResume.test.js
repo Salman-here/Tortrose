@@ -28,6 +28,14 @@ test('provider-complete reopen skips the form and rechecks the same reference', 
   assert.equal(presented, false); assert.equal(result.status, 'paid');
 });
 
+test('reopened pending card checkout can complete on Raast without trusting the presenter result', async () => {
+  const pending = fixture({ paymentRail: 'card' });
+  const paid = fixture({ paymentRail: 'raast', status: 'paid', isPaid: true, webhookProcessed: true });
+  const result = await resumeOwnedSafepayPayment(pending, { reopen: async () => pending,
+    present: async () => ({ status: 'paid', isPaid: true, paymentRail: 'card' }), verify: async () => paid });
+  assert.equal(result.status, 'paid'); assert.equal(result.paymentRail, 'raast');
+});
+
 test('card verification resumes without pretending a zero-value authorization is a purchase', async () => {
   const pending = fixture({ purpose: 'card_setup', amountMinor: 0 });
   const authorized = { ...pending, status: 'authorized', cardSaved: true, completed: true };

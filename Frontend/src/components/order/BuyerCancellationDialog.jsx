@@ -4,6 +4,7 @@ import { CreditCard, LoaderCircle, Wallet, X } from 'lucide-react';
 import { getAuthToken } from '../../utils/cookieHelper';
 import { getOrderSellerGroups, getOrderCurrency } from '../../utils/orderItems';
 import { assertCancellationQuote } from '../../utils/cancellationQuote';
+import { getOriginalPaymentLabel } from '../../utils/paymentPresentation';
 
 export default function BuyerCancellationDialog({ order, sellerIds, formatMoney, onClose, onCancelled, onBusyChange }) {
   const [quote, setQuote] = useState(null);
@@ -27,7 +28,7 @@ export default function BuyerCancellationDialog({ order, sellerIds, formatMoney,
         const res = await axios.post(`${import.meta.env.VITE_API_URL}api/order/cancel/${order._id}/preview`, { sellerIds: selected },
           { headers: { Authorization: `Bearer ${getAuthToken()}` } });
         const value = assertCancellationQuote(res.data?.quote, { orderId: order._id, currency: getOrderCurrency(order),
-          paymentMethod: order.paymentMethod, sellerIds: selected, grossMinor });
+          paymentMethod: order.paymentMethod, paymentRail: order.safepayPaymentRail, sellerIds: selected, grossMinor });
         if (active) { setQuote(value); setDestination(value.defaultDestination); }
       } catch (err) { if (active) setError(err.response?.data?.msg || err.message); }
       finally { if (active) setLoading(false); }
@@ -70,9 +71,10 @@ export default function BuyerCancellationDialog({ order, sellerIds, formatMoney,
             aria-checked={quote.options.length > 1 ? destination === option.destination : undefined}
             disabled={busy || !option.available} onClick={() => { setDestination(option.destination); setAccepted(false); }}
             className={`w-full text-left rounded-2xl p-4 border transition-colors ${destination === option.destination ? 'border-indigo-400 bg-indigo-500/10' : 'border-[var(--glass-border)] bg-white/5'} disabled:opacity-50`}>
-            <div className="flex items-center gap-2 font-semibold text-sm"><Icon size={18} /> {option.label}
+            <div className="flex items-center gap-2 font-semibold text-sm"><Icon size={18} /> {option.destination === 'original_card' ? getOriginalPaymentLabel(quote) : option.label}
               {option.destination === 'wallet' && quote.options.length > 1 && <span className="ml-auto text-[10px] rounded-full bg-emerald-500/10 text-emerald-600 px-2 py-1">Full refund</span>}</div>
-            {option.destination !== 'none' && <>
+            {!option.available && <p className="text-xs text-muted-foreground mt-2">{option.reason || 'This refund option is unavailable. Choose the full Wallet refund.'}</p>}
+            {option.destination !== 'none' && option.available && <>
               <div className="flex justify-between gap-3 text-xs text-muted-foreground mt-3"><span>Cancelled amount</span><span>{formatMoney(quote.grossMinor / 100)}</span></div>
               {option.destination === 'original_card' && <div className="flex justify-between gap-3 text-xs text-muted-foreground mt-2"><span>Processing fee</span><span>{formatMoney(option.deductionMinor / 100)}</span></div>}
               <div className="flex justify-between gap-3 font-bold text-sm mt-3"><span>You receive</span><span>{formatMoney(option.amountMinor / 100)}</span></div>

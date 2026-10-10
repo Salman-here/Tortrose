@@ -7,6 +7,7 @@ import { validateSafepayPayment } from '../utils/safepayContract';
 import { canResumeSafepayPayment, resumeOwnedSafepayPayment } from '../utils/safepayResume';
 import { safepayPollingDelay, safepayRetryAfterMs } from '../utils/safepayPolling';
 import { notifySafepayParent, SAFEPAY_STATUS_TIMEOUT_MS, safepayVerificationError } from '../utils/safepayPopupReturn';
+import { getOriginalPaymentRefundCopy } from '../utils/paymentPresentation';
 
 export default function SafepayReturnPage() {
   const [params] = useSearchParams();
@@ -74,7 +75,10 @@ export default function SafepayReturnPage() {
       : !/^[a-f\d]{24}$/i.test(paymentId || '') ? <p role="alert">The payment reference is invalid.</p>
         : error ? <p role="alert">{error}</p>
           : complete ? <p>Your payment outcome has been verified by Rozare. You can close this payment window and return to your previous screen.</p>
-            : <p role="status">{payment?.status === 'pending' || !payment ? 'Checking your payment. Please do not start another payment while this attempt is being verified.' : `Payment status: ${payment.status.replace(/_/g, ' ')}. Return to your account for details.`}</p>}
+            : <p role="status">{['refund_pending', 'refunded'].includes(payment?.status) ? getOriginalPaymentRefundCopy(payment, payment.status)
+              : payment?.status === 'pending' || !payment ? 'Checking your payment. Please do not start another payment while this attempt is being verified.'
+                : payment.status === 'manual_review' ? 'This payment needs support review. Contact support with your payment reference; do not pay again while it is being reviewed.'
+                  : `Payment status: ${payment.status.replace(/_/g, ' ')}. Return to your account for details.`}</p>}
     {error && <button disabled={coolingDown} className="glass-button px-4 py-2 inline-flex gap-2 disabled:opacity-50" onClick={() => setRetry(value => value + 1)}><RefreshCw size={16} />{coolingDown ? 'Waiting to recheck…' : 'Check again'}</button>}
     {currentUser && canResumeSafepayPayment(payment) && <button type="button" disabled={resuming || coolingDown} onClick={resume}
       className="glass-button-primary px-5 py-3 block w-full disabled:opacity-50">

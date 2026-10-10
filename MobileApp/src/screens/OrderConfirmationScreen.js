@@ -18,6 +18,7 @@ import GlassPanel from '../components/common/GlassPanel';
 import { borderRadius, fontSize, fontWeight, shadows, spacing } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 import { useCurrency } from '../contexts/CurrencyContext';
+import { getOrderPaymentLabel } from '../utils/paymentPresentation';
 import {
   getOrderCurrency,
   getOrderItemQuantity,
@@ -212,7 +213,7 @@ export default function OrderConfirmationScreen({ navigation, route }) {
                   ? 'Rozare Wallet'
                   : order.paymentMethod === 'stripe'
                     ? 'Card'
-                    : order.paymentMethod === 'safepay' ? 'Card (Safepay)'
+                    : order.paymentMethod === 'safepay' ? getOrderPaymentLabel(order)
                     : 'Cash on Delivery'}
               </Text>
             </GlassPanel>

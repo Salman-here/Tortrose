@@ -46,7 +46,7 @@ const SECTIONS = [
     id: 'shopping-guide',
     title: 'Shopping Guide',
     icon: 'bag-handle-outline',
-    body: 'Find products through AI search, categories, store pages, or direct catalog search. Open a product, swipe through its images, choose required variants, add it to Cart, confirm the shipping address and one shipping method per seller, apply a coupon, then pay for the full order with one method: Safepay card, Rozare Wallet, or Cash on Delivery when every seller allows COD. Track orders from Track My Order, your account, or the AI.',
+    body: 'Find products through AI search, categories, store pages, or direct catalog search. Open a product, swipe through its images, choose required variants, add it to Cart, confirm the shipping address and one shipping method per seller, apply a coupon, then pay for the full order with one method: Safepay card, eligible PKR Raast, Rozare Wallet, or Cash on Delivery when every seller allows COD. Track orders from Track My Order, your account, or the AI.',
   },
   {
     id: 'cart-and-wishlist',
@@ -94,7 +94,7 @@ const SECTIONS = [
     id: 'payments',
     title: 'Payments & Checkout',
     icon: 'card-outline',
-    body: 'Checkout supports Safepay card, Rozare Wallet, and Cash on Delivery. One order uses one payment method. COD is available only when every seller allows it; otherwise use card or enough Wallet balance in the exact checkout currency. USD, PKR, EUR, and GBP Wallet balances stay separate and are never converted automatically. Delivered online-card and Wallet-paid seller revenue becomes withdrawable after existing withdrawals and completed return-refund debits are reserved. Delivered COD revenue is reported, but cash and shipping payment are handled directly by the seller. Withdrawal requests require saved bank details and admin review.',
+    body: 'Checkout supports Safepay card, Raast when offered for an eligible PKR checkout, Rozare Wallet, and Cash on Delivery. Raast requires a supported Pakistani banking or wallet app; saved-card setup and seller subscriptions remain card-only. One order uses one payment method. COD is available only when every seller allows it; otherwise use an available Safepay method or enough Wallet balance in the exact checkout currency. USD, PKR, EUR, and GBP Wallet balances stay separate and are never converted automatically. Add balance through Safepay card or Raast when offered for an eligible PKR top-up. Safepay and Wallet seller earnings remain held after delivery until the saved return window ends; timely unresolved returns retain their affected funds. Released earnings become withdrawable after payment-risk holds, refunds and withdrawal reservations are accounted for. Delivered COD revenue is reported, but cash and shipping payment are handled directly by the seller. Withdrawal requests require saved bank details and admin review.',
   },
   {
     id: 'shipping',
@@ -106,7 +106,7 @@ const SECTIONS = [
     id: 'orders-returns',
     title: 'Orders, Returns & Refunds',
     icon: 'refresh-outline',
-    body: 'Buyers may cancel each unshipped store portion without seller approval. COD cancellation moves no money. Wallet-paid cancellations refund fully to Wallet. Card-paid cancellations offer a full Wallet refund or an original-card refund less the displayed processing deduction. New orders use 6.2% + PKR30 per checkout, shared proportionally across sellers. Seller earnings on both card and Wallet orders use the same fixed processing fee + tax rule once; Payments shows gross earnings, deductions and net pending/withdrawable balances. Sales analytics remain gross and withdrawals do not charge it again. Shipped portions stay unchanged. Return eligibility is frozen at checkout and starts at seller delivery. Timely unresolved returns keep their funds pending. Approved online returns credit the eligible full amount to buyer Wallet from the original held order; COD funding is unchanged. Replacement-only returns do not create a money refund.',
+    body: 'Buyers may cancel each unshipped store portion without seller approval. COD cancellation moves no money. Wallet-paid and Raast-paid cancellations refund fully to Rozare Wallet without a buyer processing deduction; Raast cancellations do not offer an automatic refund to the original bank account. Card-paid cancellations offer a full Wallet refund or an original-card refund less the displayed processing deduction. New original-card cancellation refunds use 6.2% + PKR30 per checkout, shared proportionally across sellers. Seller earnings on Safepay card, Raast and Wallet orders use the same fixed processing fee + tax rule once; Payments shows gross earnings, deductions and net pending/withdrawable balances. Sales analytics remain gross and withdrawals do not charge it again. Shipped portions stay unchanged. Return eligibility is frozen at checkout and starts at seller delivery. Timely unresolved returns keep their funds pending. Approved online returns credit the eligible full amount to buyer Wallet from the original held order; COD returns require verified funding from seller earnings or Safepay. Replacement-only returns do not create a money refund.',
   },
   {
     id: 'coupons-discounts',

@@ -68,6 +68,7 @@ import SavedSafepayCardPicker from '../components/common/SavedSafepayCardPicker'
 import useSavedSafepayCards from '../hooks/useSavedSafepayCards';
 import useCheckoutQuote from '../hooks/useCheckoutQuote';
 import { createCheckoutQuoteInput } from '../utils/checkoutQuote';
+import { getOriginalPaymentRefundCopy, getSafepayCheckoutLabel } from '../utils/paymentPresentation';
 
 const CHECKOUT_ATTEMPT_STORAGE_KEY = 'rozare_checkout_attempt_v1';
 
@@ -884,7 +885,7 @@ export default function CheckoutScreen({ navigation }) {
         setPaymentNotice({ type: 'pending', title: verified.status === 'refund_pending' ? 'Refund being verified' : verified.status === 'manual_review' ? 'Payment needs review' : 'Check your payment',
           orderId, paymentId: payment.paymentId, safepay: true,
           checkoutAttemptStorageKey, checkoutAttemptFingerprint: fingerprint, checkoutAttemptKey: checkoutAttempt.key,
-          text: verified.status === 'refund_pending' ? 'This order could no longer be fulfilled. Rozare is verifying a full refund to your original card. Use Check for its status.' : verified.status === 'manual_review'
+          text: verified.status === 'refund_pending' ? `This order could no longer be fulfilled. ${getOriginalPaymentRefundCopy(verified, verified.status)} Use Check for its status.` : verified.status === 'manual_review'
             ? 'Please contact support with this order reference. Do not pay again while it is being reviewed.'
             : 'Payment is not confirmed yet. Use Check or resume this same checkout; do not start another payment.' });
         return;
@@ -1389,7 +1390,7 @@ export default function CheckoutScreen({ navigation }) {
               ]}
               onPress={() => {
                 if (codRestrictedSellers.length > 0) {
-                  Feedback.show({ type: 'info', text1: 'Advance payment required', text2: 'Please pay with card or Rozare Wallet for this cart.' });
+                  Feedback.show({ type: 'info', text1: 'Advance payment required', text2: 'Please pay through Safepay or Rozare Wallet for this cart.' });
                   return;
                 }
                 setPaymentMethod('cash_on_delivery');
@@ -1411,12 +1412,12 @@ export default function CheckoutScreen({ navigation }) {
               </View>
               <Ionicons name="card-outline" size={22} color={palette.colors.primary} />
               <View style={{ flex: 1 }}>
-                <Text style={styles.paymentTitle}>Credit / Debit Card</Text>
+                <Text style={styles.paymentTitle}>{getSafepayCheckoutLabel(currency)}</Text>
                 <Text style={styles.paymentSub}>Secure payment via Safepay</Text>
               </View>
               <Ionicons name="shield-checkmark-outline" size={16} color={palette.colors.success} />
             </TouchableOpacity>
-            {paymentMethod === 'card' && <SavedSafepayCardPicker {...savedCards} disabled={isProcessing} />}
+            {paymentMethod === 'card' && <SavedSafepayCardPicker {...savedCards} currency={currency} disabled={isProcessing} />}
             <View style={{ height: 10 }} />
             <TouchableOpacity
               style={[
@@ -1479,8 +1480,8 @@ export default function CheckoutScreen({ navigation }) {
             <View style={styles.summaryRow}><Text style={styles.totalLabel}>Total</Text><Text style={styles.totalValue}>{checkoutMoney(totalAmount)}</Text></View>
           </GlassPanel>
           <GlassPanel variant="card" style={styles.section}>
-            <Text style={styles.summaryLabel}>Before placing your order, review our policies. Standard approved product returns are credited to your Rozare Wallet after funding is verified, not automatically to your original card. Review each item’s return eligibility before purchase.</Text>
-            <Text style={[styles.summaryLabel, { marginTop: 10 }]}>For a buyer-requested cancellation before shipment, card-paid orders offer a full Wallet refund or an original-card refund less a processing fee of 6.2% + PKR30 per checkout. Partial cancellations use their allocated share. Wallet-paid cancellations refund fully to Wallet.</Text>
+            <Text style={styles.summaryLabel}>Before placing your order, review our policies. Standard approved product returns are credited to your Rozare Wallet after funding is verified, not automatically to your original payment method. Review each item’s return eligibility before purchase.</Text>
+            <Text style={[styles.summaryLabel, { marginTop: 10 }]}>For a buyer-requested cancellation before shipment, Safepay orders offer a full Wallet refund. Verified card payments may instead refund to the original card less a processing fee of 6.2% + PKR30 per checkout; partial cancellations use their allocated share. Original-payment refunds for Raast require support review and are not currently available in checkout. Wallet-paid cancellations refund fully to Wallet.</Text>
             {[
               ['Terms and Conditions', 'TermsOfService'], ['Shipping and Delivery', 'ShippingPolicy'],
               ['Return and Refund', 'RefundPolicy'], ['Cancellation', 'CancellationPolicy'], ['Privacy Policy', 'PrivacyPolicy'],

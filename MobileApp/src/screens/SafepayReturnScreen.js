@@ -7,6 +7,7 @@ import { useGlobal } from '../contexts/GlobalContext';
 import GlassBackground from '../components/common/GlassBackground';
 import GlassPanel from '../components/common/GlassPanel';
 import { verifySafepayPayment } from '../utils/safepayCheckout';
+import { getOriginalPaymentRefundCopy } from '../utils/paymentPresentation';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { clearCheckoutAttempt } from '../utils/checkout';
 
@@ -42,8 +43,8 @@ export default function SafepayReturnScreen({ route, navigation }) {
   const closed = ['cancelled', 'failed', 'refunded'].includes(result.status);
   const title = result.status === 'refund_pending' ? 'Refund being verified' : result.status === 'refunded' ? 'Payment refunded' : authorized ? 'Card verification complete' : paid ? 'Payment confirmed' : result.status === 'manual_review' ? 'Payment needs review'
     : closed ? 'Payment not completed' : 'Checking your payment';
-  const message = result.status === 'refund_pending' ? 'This payment could not complete the purchase. Rozare is verifying a refund to your original card. Do not pay again for this attempt.'
-    : result.status === 'refunded' ? 'Safepay confirmed the refund to your original card. Your bank may take additional time to display it.'
+  const message = result.status === 'refund_pending' ? `This payment could not complete the purchase. ${getOriginalPaymentRefundCopy(result, result.status)} Do not pay again for this attempt.`
+    : result.status === 'refunded' ? getOriginalPaymentRefundCopy(result, result.status)
     : authorized ? 'Return to Saved Cards to review your card. Adding a card does not start a paid subscription.'
     : paid ? 'Rozare has verified your payment and updated your account.'
     : result.status === 'manual_review' ? 'Please contact support with your payment reference. Do not pay again while this is being reviewed.'

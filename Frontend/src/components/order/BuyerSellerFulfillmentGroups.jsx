@@ -85,9 +85,9 @@ export const BuyerSellerStatusChips = ({ order }) => {
   );
 };
 
-const SellerGroup = ({ group, formatMoney, index, onCancel, currency }) => {
+const SellerGroup = ({ group, formatMoney, index, onCancel, currency, order }) => {
   const summary = group.summary;
-  const refund = cancellationRefundPresentation(group.cancellation, currency, summary.totalAmount);
+  const refund = cancellationRefundPresentation(group.cancellation, currency, summary.totalAmount, order);
   return (
     <motion.section initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: index * 0.06 }} className="glass-inner rounded-2xl overflow-hidden" data-seller-id={group.sellerId}>
       <div className="p-4 sm:p-5" style={{ borderBottom: '1px solid var(--glass-border-subtle)' }}>
@@ -182,7 +182,7 @@ const BuyerSellerFulfillmentGroups = ({ order, formatMoney, showHeading = true, 
           <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>This is one order split into {groups.length} seller shipment{groups.length === 1 ? '' : 's'}. Each store controls only its own status, shipping, and products.</p>
         </div>
       )}
-      {groups.map((group, index) => <SellerGroup key={group.sellerId} group={group} formatMoney={formatMoney} index={index} currency={order.currency} onCancel={onCancel} />)}
+      {groups.map((group, index) => <SellerGroup key={group.sellerId} group={group} formatMoney={formatMoney} index={index} currency={order.currency} order={order} onCancel={onCancel} />)}
     </div>
   );
 };

@@ -35,6 +35,24 @@ test('terms include legal entity, governing law, complaints and no unsupported p
   expect(all).toContain(supportTimeline); expect(all).toContain('Safepay');
   expect(all).not.toContain('Stripe');
 });
+
+test('Raast policies preserve full Wallet cancellations and restrict original-card deductions to cards', () => {
+  const terms = commercePolicies.terms.sections.find(row => row.title === '5. Payments and currency').content;
+  const subscriptions = commercePolicies.terms.sections.find(row => row.title === '6. Seller subscriptions and saved cards').content;
+  const cancellation = commercePolicies.cancellation.sections.find(row => row.title === 'Cancelling before shipment').content;
+  const refundCancellation = commercePolicies.refunds.sections.find(row => row.title === 'Before-shipment cancellations').content;
+  const fee = commercePolicies.cancellation.sections.find(row => row.title === 'Buyer-requested card cancellation processing fee').content;
+  expect(terms).toContain('eligible PKR Raast payments');
+  expect(terms).toContain('requires a supported Pakistani banking or wallet app');
+  expect(subscriptions).toContain('Raast is not available for these flows');
+  expect(cancellation).toContain('Wallet-paid or Raast-paid cancellation receives a full Rozare Wallet refund, without a buyer deduction or original-card option');
+  for (const content of [cancellation, refundCancellation]) {
+    expect(content).toContain('Raast cancellations do not offer an automatic refund to the original bank account');
+    expect(content).toContain('original-card refund less the processing');
+  }
+  expect(refundCancellation).toContain('the original-card deduction is 6.2%');
+  expect(fee).toContain('plus PKR30 once per checkout');
+});
 test('confirmed legal details and service commitments are complete and the draft notice is removed', () => {
   expect(policyPublicationReady).toBe(true);
   expect(policyConfig.registeredAddress).toBe('House/Plot No. 143, Street 8, Jinnah Block, Bahria Town, Lahore, Punjab 54000, Pakistan');

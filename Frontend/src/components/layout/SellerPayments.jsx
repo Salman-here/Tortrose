@@ -433,7 +433,7 @@ const SellerPayments = () => {
                         Payments & Revenue
                     </h1>
                     <p className="text-sm mt-1 max-w-2xl" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                        Track card and Wallet balance, COD revenue, and withdrawal requests.
+                        Track Safepay and Wallet balance, COD revenue, and withdrawal requests.
                     </p>
                 </div>
                 <div className="glass-panel p-6 text-center space-y-4" role="alert" aria-live="polite">
@@ -459,7 +459,7 @@ const SellerPayments = () => {
                         Payments & Revenue
                     </h1>
                     <p className="text-sm mt-1 max-w-2xl" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                        Track card and Wallet balance, COD revenue, and withdrawal requests. COD payments are collected and managed by you directly.
+                        Track Safepay and Wallet balance, COD revenue, and withdrawal requests. COD payments are collected and managed by you directly.
                     </p>
                 </div>
                 <motion.button
@@ -476,11 +476,11 @@ const SellerPayments = () => {
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
                 <PaymentStat label={`Total Online Earnings (${balanceCurrency})`}
                     value={formatBalanceMoney(selectedBalance?.onlineGrossEarnings ?? 0)}
-                    description="Gross card and Wallet earnings before deductions and withdrawals; refunded amounts are removed."
+                    description="Gross online and Wallet earnings before deductions and withdrawals; refunded amounts are removed."
                     icon={<TrendingUp size={22} />} color="hsl(220,70%,55%)" bg="rgba(99,102,241,0.12)" />
                 <PaymentStat label="Processing fee + tax"
                     value={formatBalanceMoney(selectedBalance?.processingFeeAndTax ?? 0)}
-                    description="One combined deduction for card and Wallet orders. Pending portions remain held."
+                    description="One combined deduction for Safepay and Wallet orders. Pending portions remain held."
                     icon={<CreditCard size={22} />} color="hsl(30,90%,50%)" bg="rgba(249,115,22,0.12)" />
                 <PaymentStat
                     label={`Withdrawable Online Balance (${balanceCurrency})`}
@@ -502,7 +502,7 @@ const SellerPayments = () => {
                 <PaymentStat
                     label="Total Delivered Revenue"
                     value={formatDisplayMoney(displayValue('totalDeliveredRevenue'))}
-                    description="Delivered card, Wallet, and COD revenue."
+                    description="Delivered Safepay, Wallet, and COD revenue."
                     icon={<TrendingUp size={22} />}
                     color="hsl(220,70%,55%)"
                     bg="rgba(99,102,241,0.12)"
@@ -511,7 +511,7 @@ const SellerPayments = () => {
                 <PaymentStat
                     label="Estimated Revenue"
                     value={formatDisplayMoney(displayValue('estimatedRevenue'))}
-                    description="Delivered revenue plus pending card, Wallet, and COD orders."
+                    description="Delivered revenue plus pending Safepay, Wallet, and COD orders."
                     icon={<Clock size={22} />}
                     color="hsl(200,80%,50%)"
                     bg="rgba(14,165,233,0.12)"
@@ -523,7 +523,7 @@ const SellerPayments = () => {
               <div><p className="font-semibold text-sm">Pending online funds</p><p className="text-xs text-muted-foreground mt-1">Awaiting delivery, the saved return deadline or resolution of an open return.</p></div>
               <span className="font-bold shrink-0">{formatBalanceMoney(selectedBalance?.pendingOnlineNetBalance ?? selectedBalance?.pendingOnlineBalance ?? 0)}</span>
             </div>
-            <p className="text-xs text-muted-foreground">Card and Wallet orders: 6.2% + PKR30 per checkout. Multi-seller orders share the fixed amount proportionally. Other currencies use the saved checkout rate. Withdrawals do not charge this deduction again.</p>
+            <p className="text-xs text-muted-foreground">Safepay card, Raast and Wallet orders: 6.2% + PKR30 per checkout. Multi-seller orders share the fixed amount proportionally. Other currencies use the saved checkout rate. Withdrawals do not charge this deduction again.</p>
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
                 <motion.section
                     initial={{ opacity: 0, y: 18 }}
@@ -534,7 +534,7 @@ const SellerPayments = () => {
                         <div className="min-w-0">
                             <h2 className="text-lg font-bold" style={{ color: 'hsl(var(--foreground))' }}>Bank Account</h2>
                             <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                                Used for payouts of delivered card and Rozare Wallet orders.
+                                Used for payouts of delivered Safepay and Rozare Wallet orders.
                             </p>
                         </div>
                         <button

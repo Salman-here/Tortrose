@@ -65,6 +65,7 @@ import { openSafepayCheckout } from '../../utils/safepay';
 import { checkoutDraftStorageKey, createCheckoutCartIdentity, markGuestCheckoutHandoff, readCheckoutDraft, reconcileCheckoutProgress } from '../../utils/checkoutDraft';
 import useCheckoutQuote from '../../hooks/useCheckoutQuote';
 import { createCheckoutQuoteInput } from '../../utils/checkoutQuote';
+import { getSafepayCheckoutLabel } from '../../utils/paymentPresentation';
 
 const CHECKOUT_ATTEMPT_STORAGE_KEY = 'rozare_checkout_attempt_v1';
 const ORDER_SUCCESS_STORAGE_KEY = 'rozare_order_success_v1';
@@ -2079,7 +2080,7 @@ function OwnedCheckout({ owner }) {
                       <div className="rounded-xl p-4 mb-5" style={{ background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.22)' }}>
                         <p className="text-sm font-semibold" style={{ color: 'hsl(220, 70%, 45%)' }}>Advance payment required</p>
                         <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                          {codRestrictionText} This checkout must be paid by card or Rozare Wallet.
+                          {codRestrictionText} This checkout must be paid through Safepay or Rozare Wallet.
                         </p>
                       </div>
                     )}
@@ -2087,7 +2088,7 @@ function OwnedCheckout({ owner }) {
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
                       <PaymentOption
                         value="safepay"
-                        title="Credit/Debit Card"
+                        title={getSafepayCheckoutLabel(currency)}
                         description="Pay securely with Safepay"
                         icon={<CreditCardIcon className="w-6 h-6" />}
                         selected={paymentMethod === "safepay"}
@@ -2133,7 +2134,7 @@ function OwnedCheckout({ owner }) {
                               Continue to Safepay's secure checkout.
                             </p>
                             <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                              Choose a saved card or securely save a new card for purchases and wallet top-ups you initiate.
+                              {currency === 'PKR' ? 'Choose Safepay checkout for card or Raast. Selecting a saved card pays by card.' : 'Choose a saved card or securely enter a new card in Safepay.'}
                             </p>
                           </div>
                           {currentUser && (
@@ -2146,10 +2147,10 @@ function OwnedCheckout({ owner }) {
                             </button>
                           )}
                         </div>
-                        {savedCards.cards.length > 0 && <label className="block text-sm mt-4">Payment card
+                        {savedCards.cards.length > 0 && <label className="block text-sm mt-4">Saved card or secure checkout
                           <select aria-label="Payment card" value={savedCards.selectedCardId} disabled={isProcessing}
                             onChange={event => savedCards.setSelectedCardId(event.target.value)} className="glass-input w-full mt-2">
-                            <option value="">Use a new card</option>
+                            <option value="">{currency === 'PKR' ? 'Choose card or Raast in Safepay' : 'Use a new card'}</option>
                             {savedCards.cards.map(card => <option key={card.id} value={card.id}>{String(card.brand || 'Card').toUpperCase()} ending {card.last4}</option>)}
                           </select>
                         </label>}

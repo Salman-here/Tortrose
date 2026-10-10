@@ -27,6 +27,7 @@ import {
 import { spacing, fontSize, borderRadius, fontWeight, typography } from '../../styles/theme';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useCurrency } from '../../contexts/CurrencyContext';
+import { getOrderPaymentLabel } from '../../utils/paymentPresentation';
 import {
   getConfirmationSourceLabel,
   hasWhatsAppPhone,
@@ -225,12 +226,7 @@ export default function OrderDetailManagementScreen({ route, navigation }) {
   const confirmationLabel = getConfirmationSourceLabel(order);
   const confirmation = order.confirmation || {};
   const canVerifyOnWhatsApp = hasWhatsAppPhone(order) && !isOrderConfirmedByBuyer(order);
-  const paymentMethodLabel = {
-    cash_on_delivery: 'Cash on delivery',
-    stripe: 'Card',
-    safepay: 'Card / Safepay',
-    wallet: 'Rozare Wallet',
-  }[order.paymentMethod] || order.paymentMethod || 'Payment method unavailable';
+  const paymentMethodLabel = getOrderPaymentLabel(order);
   const displayOrderId = order.orderId || `#${String(order._id || '').slice(-8).toUpperCase()}`;
   const hasCurrencyConversion = sellerCurrencyMoney
     && sellerCurrencyMoney.buyerCurrency !== sellerCurrencyMoney.currency;

@@ -95,6 +95,9 @@ async function processCancellationRefund(paymentId) {
     await Cancellation.updateMany({ payment: payment._id, refundStatus: { $in: ['pending', 'processing'] } },
       { $set: { nextAttemptAt: new Date(Date.now() + 30000) } });
     const tracker = await client.getTracker(payment.tracker, payment);
+    // Validate the actual provider rail before any external submission marker.
+    // A paid Raast receipt is not a Cybersource card charge/refund contract.
+    require('./safepayRefundCapabilityService').requireExternalRefundRail(tracker, payment);
     const { refundEvidence } = require('./safepayRefundService');
     const evidence = refundEvidence(tracker, payment);
     const baseline = evidence?.amountMinor || 0;

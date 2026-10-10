@@ -27,6 +27,33 @@ test('return URLs and a lone paid flag cannot grant a payment', () => {
   expect(() => normalizeSafepayStatus({ ...payment, paymentId: 'b'.repeat(24) }, paymentId)).toThrow();
   expect(normalizeSafepayStatus({ ...payment, status: 'paid', isPaid: true, webhookProcessed: true }, paymentId).status).toBe('paid');
 });
+
+test('native rail validation accepts unknown and verified PKR Raast without trusting an invalid declaration', () => {
+  expect(normalizeSafepayStatus(payment, paymentId).paymentRail).toBe('unknown');
+  expect(normalizeSafepayStatus({ ...payment, paymentRail: 'raast', currency: 'PKR' }, paymentId).paymentRail).toBe('raast');
+  for (const extra of [{ paymentRail: 'other' }, { paymentRail: 'raast', currency: 'USD' },
+    { paymentRail: 'raast', currency: 'PKR', purpose: 'card_setup' }]) {
+    expect(() => normalizeSafepayStatus({ ...payment, ...extra }, paymentId)).toThrow();
+  }
+});
+
+test('native pending card selection may switch to Raast, but captured and saved-card evidence remains bound', async () => {
+  const pending = { ...payment, currency: 'PKR', amountMinor: 10000, purpose: 'order', paymentRail: 'card' };
+  const paid = { ...pending, paymentRail: 'raast', status: 'paid', isPaid: true, webhookProcessed: true };
+  expect(normalizeSafepayStatus(paid, paymentId, pending).status).toBe('paid');
+  expect(normalizeSafepayStatus(paid, paymentId, { ...pending, status: 'paid', isPaid: true }).status).toBe('paid');
+  for (const expected of [{ ...pending, status: 'paid', isPaid: true, webhookProcessed: true },
+    ...['refund_pending', 'refunded', 'manual_review'].map(status => ({ ...pending, status, providerState: 'TRACKER_ENDED' })),
+    { ...pending, status: 'manual_review', capturedMinor: 10000 }, { ...pending, checkoutPresentation: 'saved-card' }]) {
+    expect(() => normalizeSafepayStatus(paid, paymentId, expected)).toThrow();
+  }
+  expect(normalizeSafepayStatus({ ...paid, webhookProcessed: false }, paymentId, pending).status).toBe('pending');
+  expect(() => validateSafepayCheckout({ ...paid, checkoutPresentation: 'saved-card' })).toThrow();
+  const apiClient = { get: jest.fn(async () => ({ data: paid })) };
+  const result = await openSafepayCheckout({ apiClient, response: pending, openBrowser: async () => ({ type: 'dismiss' }) });
+  expect(result.status).toBe('paid'); expect(result.paymentRail).toBe('raast');
+  await expect(verifySafepayPayment({ apiClient, paymentId, expectedPayment: { ...pending, checkoutPresentation: 'saved-card' } })).rejects.toMatchObject({ code: 'SAFEPAY_CHECKOUT_INVALID' });
+});
 test('browser cancellation can race success: trust only authenticated backend verification', async () => {
   const apiClient = { get: jest.fn(async () => ({ data: { ...payment, status: 'paid', isPaid: true, webhookProcessed: true } })) };
   const openBrowser = jest.fn(async () => ({ type: 'cancel' }));
