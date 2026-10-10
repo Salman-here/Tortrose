@@ -128,6 +128,15 @@ test('COD cancellation moves no refund money and cannot cancel shipped goods', a
   expect((await confirm(f.buyer, 'cancel_order', input, preview)).success).toBe(true);
   expect(await Wallet.countDocuments()).toBe(0);
 });
+
+test('single-option COD and Wallet cancellation previews cannot invent an unavailable money destination', async () => {
+  const cod = await fixture({ method: 'cash_on_delivery', statuses: ['confirmed', 'confirmed'] });
+  const codReview = await run('cancel_order', { orderId: cod.order.orderId, refundDestination: 'wallet', ...ctx('cod-no-refund') }, cod.buyer);
+  expect(codReview.data.request.refundDestination).toBe('none');
+  const paid = await fixture({ statuses: ['confirmed', 'confirmed'] });
+  const walletReview = await run('cancel_order', { orderId: paid.order.orderId, refundDestination: 'original_card', ...ctx('wallet-only') }, paid.buyer);
+  expect(walletReview.data.request.refundDestination).toBe('wallet');
+});
 test('returns expose frozen eligibility and require a real reason and exact owned item', async () => {
   const f = await fixture({ statuses: ['delivered', 'delivered'], returnsEnabled: true });
   const eligibility = await run('get_return_eligibility', { orderId: f.order.orderId }, f.buyer);
