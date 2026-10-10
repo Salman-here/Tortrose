@@ -1680,6 +1680,10 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
   const userId = user?._id || user?.id || null;
   const role = user?.role || 'guest';
 
+  if (args._requireCommercePreview === true && role === 'user' && ['get_my_orders', 'get_order_detail'].includes(toolName)) {
+    return executeCommerceTool(toolName === 'get_my_orders' ? 'get_purchase_orders' : 'get_purchase_order_detail', args, user);
+  }
+
   if (NEW_COMMERCE_TOOL_NAMES.has(toolName)
     || args._requireCommercePreview === true && role !== 'admin' && REVIEWED_COMMERCE_ACTIONS.has(toolName)) {
     return executeCommerceTool(toolName, args, user);

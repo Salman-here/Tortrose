@@ -84,6 +84,11 @@ async function verifiedReturn(request) {
       result.settlement.remainingLiability = facts.remainingLiability;
     }
   }
+  if (result.status === 'returned' && !result.settlement.walletCredited) {
+    result.statusLabel = result.refundType === 'replacement_only'
+      ? 'Return completed for replacement; no money refund'
+      : 'Return completed; Wallet refund not yet verified';
+  }
   return result;
 }
 function basicOrder(order) {

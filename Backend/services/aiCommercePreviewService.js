@@ -30,6 +30,24 @@ function confirmationMatchesPreview(text, preview) {
   const expectedReference = preview.contract.publicOrderId || preview.contract.returnNumber;
   if (references.length && (!expectedReference || references.some(reference => reference.toLowerCase() !== String(expectedReference).toLowerCase()))) return false;
   if (/\b(?:only|just)\s+(?:\d+|one|two|three|four|five|this item|that item|one seller)\b/i.test(value)) return false;
+  if (preview.action === 'cancel_order') {
+    if (/\bwallet\b|والٹ/iu.test(value) && preview.input.refundDestination !== 'wallet') return false;
+    if (/\b(?:card|bank refund|original payment)\b|کارڈ/iu.test(value) && preview.input.refundDestination !== 'original_card') return false;
+  }
+  if (preview.action === 'accept_return') {
+    if (/\bsafepay\b/iu.test(value) && preview.input.fundingSource !== 'safepay') return false;
+    if (/\b(?:held|pending)\b/iu.test(value) && preview.input.fundingSource !== 'held_order') return false;
+    if (/\b(?:earnings|seller balance|available balance)\b/iu.test(value) && preview.input.fundingSource !== 'seller_balance') return false;
+  }
+  if (preview.action === 'request_return') {
+    // Broader item selection is a new review, never an implied change to the
+    // saved quote if the model forgets to pass the changed item arguments.
+    if (/\b(?:all|both|every|entire)\b.{0,25}\b(?:items?|products?|order)\b/iu.test(value)) return false;
+    const quantities = [...value.matchAll(/\b(\d+|one|two|three|four|five)\s+(?:units?|items?|products?)\b/giu)]
+      .map(match => ({ one: 1, two: 2, three: 3, four: 4, five: 5 }[match[1].toLowerCase()] || Number(match[1])));
+    const expectedQuantity = (preview.input.items || []).reduce((sum, item) => sum + item.quantity, 0);
+    if (quantities.some(quantity => quantity !== expectedQuantity)) return false;
+  }
   if (preview.action === 'request_withdrawal') {
     if (preview.contract.similarRequestIds?.length && !/\b(?:another|new|additional|second|naya|dobara)\b|ایک اور/iu.test(value)) return false;
     const amounts = (value.replace(/\b(?:ORD|RET)-[a-z0-9-]+\b/gi, '').match(/\d[\d,]*(?:\.\d+)?/g) || []).map(number => Number(number.replace(/,/g, '')));

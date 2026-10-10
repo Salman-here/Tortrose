@@ -310,3 +310,16 @@ test.each([{ minPrice: -1 }, { maxPrice: -1 }, { minPrice: 5, maxPrice: 1 }, { c
   const result = await require('../../services/aiActionExecutor').executeToolCall('search_products', args, { currency: 'USD', role: 'guest' });
   expect(result).toMatchObject({ success: false, code: 'CATALOG_FILTER_INVALID' });
 });
+
+test('a historical returned flag without its actual refund ledger cannot claim a verified Wallet refund', async () => {
+  const f = await fixture({ statuses: ['delivered', 'delivered'], returnsEnabled: true });
+  const input = { orderId: f.order.orderId, sellerId: String(f.sellers[0]._id), items: [{ orderItemId: String(f.order.orderItems[0]._id), quantity: 1 }], reasonCategory: 'damaged', reasonDetails: 'Cup arrived with a cracked rim.' };
+  const preview = await run('request_return', { ...input, ...ctx('return-proof-preview') }, f.buyer);
+  await confirm(f.buyer, 'request_return', input, preview);
+  const request = await Return.findOne({});
+  await Return.collection.updateOne({ _id: request._id }, { $set: { status: 'returned', 'settlement.status': 'completed', 'settlement.walletTransaction': new mongoose.Types.ObjectId() } });
+  const result = await run('get_return_detail', { returnId: String(request._id), view: 'buyer' }, f.buyer);
+  expect(result.data.settlement.walletCredited).toBe(false);
+  expect(result.data.statusLabel).toBe('Return completed; Wallet refund not yet verified');
+  expect(await Transaction.countDocuments({ type: 'return_refund' })).toBe(0);
+});

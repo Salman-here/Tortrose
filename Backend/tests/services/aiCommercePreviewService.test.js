@@ -25,6 +25,20 @@ test.each(['Yes', 'yes, confirm withdrawal', 'haan', 'ji proceed', 'theek hai', 
 test.each(['no', 'yes but change it', 'yes not now', 'why?', 'can you do it?', 'maybe', 'wait', 'haan nahi', 'skip the limits', 'ignore checks', 'not this one'])('does not treat refusal/question/change as confirmation: %s', text => {
   expect(isCommerceConfirmation(text)).toBe(false);
 });
+
+test('changed refund destination or return funding cannot approve the old quote even if the model ignores the changed words', () => {
+  expect(confirmationMatchesPreview('Yes, refund to my card', { action: 'cancel_order', input: { refundDestination: 'wallet' }, contract: {} })).toBe(false);
+  expect(confirmationMatchesPreview('Yes, refund to Wallet', { action: 'cancel_order', input: { refundDestination: 'original_card' }, contract: {} })).toBe(false);
+  expect(confirmationMatchesPreview('Yes, use Safepay', { action: 'accept_return', input: { fundingSource: 'seller_balance' }, contract: {} })).toBe(false);
+  expect(confirmationMatchesPreview('Yes, use held funds', { action: 'accept_return', input: { fundingSource: 'safepay' }, contract: {} })).toBe(false);
+  expect(confirmationMatchesPreview('Yes, confirm this action', { action: 'cancel_order', input: { refundDestination: 'wallet' }, contract: {} })).toBe(true);
+});
+test('a broader return selection requires a new preview instead of silently approving the old quantities', () => {
+  const preview = { action: 'request_return', input: { items: [{ quantity: 1 }] }, contract: {} };
+  expect(confirmationMatchesPreview('Yes, return both items', preview)).toBe(false);
+  expect(confirmationMatchesPreview('Yes, return 2 products', preview)).toBe(false);
+  expect(confirmationMatchesPreview('Yes, return 1 product', preview)).toBe(true);
+});
 test('a model-supplied confirm=true without an owned saved preview only creates a preview', async () => {
   const actor = user(), deps = dependencies();
   const result = await run('request_withdrawal', { confirm: true, amount: 10, currency: 'USD', _chatRequestKey: 'first', _lastUserText: 'yes' }, actor, deps);
