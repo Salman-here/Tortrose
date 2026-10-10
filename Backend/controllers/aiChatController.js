@@ -2144,12 +2144,13 @@ function retryNaturalCatalogLookup(state, draft, lastUserText, role, completedTo
 }
 
 function explicitReviewTool(lastUserText, role) {
+  lastUserText = String(lastUserText || '').replace(/_/g, ' ');
   if (!/\b(?:review|preview)\b/i.test(lastUserText) || /[?？؟]|\b(?:can|could|would|why|how|whether)\b/i.test(lastUserText)) return '';
   let tool = '';
   if (/\bwithdraw/i.test(lastUserText)) tool = 'request_withdrawal';
   else if (/\breturn\b/i.test(lastUserText) && /\bcancel/i.test(lastUserText)) tool = 'cancel_return';
-  else if (/\breturn\b/i.test(lastUserText) && /\b(?:accept|refund)\b/i.test(lastUserText) && role === 'seller') tool = 'accept_return';
-  else if (/\breturn\b/i.test(lastUserText) && /\b(?:status|approve|reject|pickup|picked|transit|received|under review)\b/i.test(lastUserText) && role === 'seller') tool = 'update_return_status';
+  else if (/\breturn\b/i.test(lastUserText) && /\b(?:status|approv(?:e|ed)|reject|pickup|picked|transit|received|under review)\b/i.test(lastUserText) && role === 'seller') tool = 'update_return_status';
+  else if (/\breturn\b/i.test(lastUserText) && /\b(?:accept|acceptance|refund)\b/i.test(lastUserText) && role === 'seller') tool = 'accept_return';
   else if (/\bcancel/i.test(lastUserText)) tool = 'cancel_order';
   else if (/\b(?:shipped|delivered|processing|confirmed)\b/i.test(lastUserText) && /\bORD-[a-z0-9-]+\b/i.test(lastUserText) && role === 'seller') tool = 'update_order_status';
   else if (/\b(?:COD|cash on delivery)\b/i.test(lastUserText) && /\border\b/i.test(lastUserText)) tool = 'preview_order';
@@ -2160,8 +2161,8 @@ function completeActionDraft(state, draft, completedTools, conversationMessages,
   if (asksReview && /\bconfirm(?:ation)?\b|\b(?:proceed|go ahead|would you like)\b/i.test(draft) && !completedTools.some(entry => entry.result?.previewOnly || entry.result?.requiresConfirmation)) {
     let expected = '';
     if (/\bwithdraw/i.test(lastUserText)) expected = 'request_withdrawal';
-    else if (/\breturn\b/i.test(lastUserText) && /\b(?:accept|refund)\b/i.test(lastUserText) && role === 'seller') expected = 'accept_return';
-    else if (/\breturn\b/i.test(lastUserText) && /\b(?:status|approve|reject|pickup|picked|transit|received|under review)\b/i.test(lastUserText) && role === 'seller') expected = 'update_return_status';
+    else if (/\breturn\b/i.test(lastUserText) && /\b(?:status|approv(?:e|ed)|reject|pickup|picked|transit|received|under review)\b/i.test(lastUserText.replace(/_/g, ' ')) && role === 'seller') expected = 'update_return_status';
+    else if (/\breturn\b/i.test(lastUserText) && /\b(?:accept|acceptance|refund)\b/i.test(lastUserText) && role === 'seller') expected = 'accept_return';
     else if (/\breturn\b/i.test(lastUserText)) expected = 'request_return';
     else if (/\bcancel/i.test(lastUserText)) expected = 'cancel_order';
     else if (/\b(?:shipped|delivered|processing|confirmed)\b/i.test(lastUserText) && role === 'seller') expected = 'update_order_status';

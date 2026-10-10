@@ -26,6 +26,9 @@ describe('AI role tool surface contract', () => {
     expect(__private.explicitReviewTool('Review changing my own store portion of ORD-QA to delivered and wait for my confirmation.', 'seller')).toBe('update_order_status');
     expect(__private.explicitReviewTool('Can I mark ORD-QA delivered?', 'seller')).toBe('');
     expect(__private.explicitReviewTool('Review a withdrawal for 5 USD', 'user')).toBe('');
+    expect(__private.explicitReviewTool('Review changing my return RET-QA to approved; do not issue a refund during this step.', 'seller')).toBe('update_return_status');
+    expect(__private.explicitReviewTool('Review my return RET-QA to pickup_scheduled.', 'seller')).toBe('update_return_status');
+    expect(__private.explicitReviewTool('Review final acceptance of return RET-QA using held funds.', 'seller')).toBe('accept_return');
   });
   test('only current payment configuration is public; private financial actions require authentication and seller ownership', () => {
     expect(toolNamesFor('guest')).toContain('get_payment_options');
