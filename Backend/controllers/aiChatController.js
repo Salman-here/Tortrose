@@ -386,7 +386,7 @@ const userTools = [
         properties: { orderId: { type: 'string', description: 'Public ORD- number or internal order ID' },
           confirm: { type: 'boolean', description: 'True only after the person reviewed this cancellation preview and confirms in a subsequent message.' },
           storeName: { type: 'string', description: 'Exact store name from the owned purchase detail, when cancelling only that store portion.' },
-          sellerIds: { type: 'array', items: { type: 'string' }, description: 'Optional seller portions resolved from order details, never ask the buyer to remember internal IDs' },
+          sellerIds: { type: 'array', items: { type: 'string' }, description: 'Optional seller._id values from the owned order shipment or return groups, NOT store._id. Prefer exact storeName for a named store. Resolve the owned order first; never ask the buyer to remember database IDs.' },
           refundDestination: { type: 'string', enum: ['wallet', 'original_card', 'none'] },
           quoteId: { type: 'string', description: 'Exact quoteId returned by the preceding cancellationQuote' },
           acceptDeduction: { type: 'boolean', description: 'True only after the buyer explicitly accepts the displayed processing fee' } },

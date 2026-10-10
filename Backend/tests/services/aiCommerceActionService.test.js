@@ -323,3 +323,14 @@ test('a historical returned flag without its actual refund ledger cannot claim a
   expect(result.data.statusLabel).toBe('Return completed; Wallet refund not yet verified');
   expect(await Transaction.countDocuments({ type: 'return_refund' })).toBe(0);
 });
+
+test('friendly cancellation selectors resolve store and seller references only inside the owned order', () => {
+  const groups = [{ seller: { _id: '111111111111111111111111' }, store: { _id: 'aaaaaaaaaaaaaaaaaaaaaaaa', storeName: 'Atlas Aura Goods' } },
+    { seller: { _id: '222222222222222222222222' }, store: { _id: 'bbbbbbbbbbbbbbbbbbbbbbbb', storeName: 'QA Store' } }];
+  const { requestedSellers, resolveOwnedStoreGroup } = require('../../services/aiCommerceActionService');
+  expect(requestedSellers({ storeName: 'Atlas Aura Goods', sellerIds: ['aaaaaaaaaaaaaaaaaaaaaaaa'] }, groups)).toEqual(['111111111111111111111111']);
+  expect(requestedSellers({ sellerIds: ['atlas aura goods'] }, groups)).toEqual(['111111111111111111111111']);
+  expect(resolveOwnedStoreGroup('bbbbbbbbbbbbbbbbbbbbbbbb', groups)).toBe(groups[1]);
+  expect(() => requestedSellers({ sellerIds: ['cccccccccccccccccccccccc'] }, groups)).toThrow('Choose the store from this order');
+  expect(() => requestedSellers({ storeName: 'Atlas Aura Goods', sellerIds: ['bbbbbbbbbbbbbbbbbbbbbbbb'] }, groups)).toThrow('disagree');
+});

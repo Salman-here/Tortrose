@@ -182,15 +182,22 @@ async function readCommerceTool(name, args, user) {
   return { success: true, data: await verifiedReturn(request), message: `Return ${request.returnNumber}: ${RETURN_STATUS_LABELS[request.status] || request.status}. Check the verified settlement outcome before claiming a Wallet refund.` };
 }
 
+function resolveOwnedStoreGroup(selector, groups) {
+  const value = clean(selector, 160).toLowerCase();
+  const candidates = value ? groups.filter(group => [id(group.seller), id(group.store?._id),
+    String(group.store?.storeName || '').trim()].some(reference => reference.toLowerCase() === value)) : [];
+  if (candidates.length !== 1) throw fail('Choose the store from this order: ' + groups.map(group => group.store?.storeName || 'Unnamed store').join(', ') + '. No portion was cancelled.', 'AI_COMMERCE_STORE_AMBIGUOUS');
+  return candidates[0];
+}
 function requestedSellers(args, groups) {
-  if (args.sellerIds !== undefined) return args.sellerIds;
-  if (args.storeName) {
-    const name = clean(args.storeName).toLowerCase();
-    const candidates = groups.filter(group => String(group.store?.storeName || '').toLowerCase() === name);
-    if (candidates.length !== 1) throw fail('Please choose the store from this order before cancelling its portion.', 'AI_COMMERCE_STORE_AMBIGUOUS');
-    return [id(candidates[0].seller)];
+  const named = args.storeName ? resolveOwnedStoreGroup(args.storeName, groups) : null;
+  if (args.sellerIds !== undefined) {
+    if (!Array.isArray(args.sellerIds) || !args.sellerIds.length) throw fail('Choose a store portion from this order.', 'AI_COMMERCE_STORE_AMBIGUOUS');
+    const resolved = args.sellerIds.map(selector => id(resolveOwnedStoreGroup(selector, groups).seller));
+    if (named && resolved.some(seller => seller !== id(named.seller))) throw fail('The store name and selected portions disagree. Review the exact store again.', 'AI_COMMERCE_STORE_AMBIGUOUS');
+    return resolved;
   }
-  return undefined;
+  return named ? [id(named.seller)] : undefined;
 }
 async function prepare(action, args, user) {
   const owner = actor(user, ['update_return_status', 'accept_return', 'request_withdrawal', 'update_order_status'].includes(action));
@@ -226,7 +233,7 @@ async function prepare(action, args, user) {
   if (action === 'request_return') {
     const order = await purchase(args.orderId, user);
     const groups = await returns().buildOrderReturnEligibility(order);
-    let group = args.sellerId ? groups.find(row => id(row.seller) === String(args.sellerId)) : null;
+    let group = args.sellerId ? resolveOwnedStoreGroup(args.sellerId, groups) : null;
     if (!group && args.storeName) {
       const matches = groups.filter(row => String(row.store?.storeName || '').toLowerCase() === clean(args.storeName).toLowerCase());
       if (matches.length === 1) group = matches[0];
@@ -433,4 +440,4 @@ async function executeCommerceTool(name, args = {}, user) {
     return { success: false, code: error.code || 'AI_COMMERCE_UNAVAILABLE', error: error.statusCode ? error.message : 'This action could not be verified. Refresh the relevant order, return or Payments page and try again.' };
   }
 }
-module.exports = { executeCommerceTool, prepare, execute, presentReturn, basicOrder, actor, controllerCall };
+module.exports = { executeCommerceTool, prepare, execute, presentReturn, basicOrder, actor, controllerCall, resolveOwnedStoreGroup, requestedSellers };

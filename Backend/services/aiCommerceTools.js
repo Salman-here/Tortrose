@@ -19,7 +19,7 @@ const BUYER_COMMERCE_TOOLS = [
   tool('get_my_returns', 'List this account\'s own return requests as a buyer, their real statuses, frozen refund and funding outcomes.', { status, orderId: reference, limit: { type: 'integer', minimum: 1, maximum: 40 } }),
   tool('get_return_detail', 'Inspect one owned return by its public return number or reference. Seller view is only for the actor\'s own store requests; buyer view is only their own purchases. Includes allowed next steps and funding source.', returnReference, ['returnId']),
   tool('request_return', 'Preview a return for selected quantities from ONE seller using frozen policies, then wait for the buyer\'s next explicit confirmation before calling again with confirm=true. Get eligibility first; resolve friendly names/options to returned orderItemId. A request is not a completed refund. Ask for an actual reason (at least 10 characters); never invent it.', {
-    orderId: reference, sellerId: { type: 'string' }, storeName: { type: 'string' },
+    orderId: reference, sellerId: { type: 'string', description: 'seller._id from owned return eligibility, not store._id. Prefer storeName when the buyer names the store.' }, storeName: { type: 'string' },
     items: { type: 'array', minItems: 1, items: { type: 'object', properties: { orderItemId: { type: 'string' }, itemName: { type: 'string' }, quantity: { type: 'integer', minimum: 1 } }, required: ['quantity'] } },
     reasonCategory: { type: 'string', enum: ['damaged', 'defective', 'wrong_item', 'not_as_described', 'size_or_fit', 'changed_mind', 'other'] },
     reasonDetails: { type: 'string' }, confirm,
