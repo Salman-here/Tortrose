@@ -3,15 +3,36 @@ const crypto = require('node:crypto');
 const { readSafepayConfig } = require('../config/safepay');
 const { verifySafepayWebhook } = require('../services/safepayWebhookVerification');
 
+function rejectionSignatureDiagnostics(raw, signature, incoming, config) {
+  const matches = [];
+  if (typeof config.webhookSecret === 'string' && config.webhookSecret.length >= 16
+    && typeof signature === 'string' && /^(?:[a-f0-9]{64}|[a-f0-9]{128})$/i.test(signature)) {
+    const received = Buffer.from(signature, 'hex');
+    for (const scheme of ['sha512-data', 'sha512-raw', 'sha256-raw']) {
+      const bytes = scheme === 'sha512-data' ? Buffer.from(JSON.stringify(incoming?.data ?? null)) : raw;
+      const computed = crypto.createHmac(scheme.startsWith('sha512') ? 'sha512' : 'sha256', config.webhookSecret).update(bytes).digest();
+      if (computed.length === received.length && crypto.timingSafeEqual(computed, received)) matches.push(scheme);
+    }
+  }
+  // Diagnostic metadata is deliberately booleans/names/length only. Never log
+  // payload, signature, credentials, contacts, event token or tracker identity.
+  return { matches, signatureLength: typeof signature === 'string' ? signature.length : 0,
+    merchantMatches: incoming?.merchant_api_key === config.publicKey, versionMatches: incoming?.version === '2.0.0',
+    typeFormat: typeof incoming?.type === 'string' && /^[a-z][a-z0-9_.]{2,100}$/.test(incoming.type),
+    tokenFormat: typeof incoming?.token === 'string' && /^evt_[a-zA-Z0-9-]{8,150}$/.test(incoming.token) };
+}
+
 function createSafepayWebhookHandler({
   configFor = options => readSafepayConfig(process.env, options),
   probeId = () => process.env.SAFEPAY_SIGNATURE_PROBE_ID || '',
   connect = () => require('../config/db')(),
   model = () => require('../models/SafepayWebhookEvent'),
   log = message => console.info(message),
+  diagnosticsEnabled = () => process.env.SAFEPAY_WEBHOOK_DIAGNOSTICS === 'true',
 } = {}) {
   return async (req, res) => {
     res.set('Cache-Control', 'no-store');
+    let diagnosticContext;
     try {
       const config = configFor({ requireWebhook: false });
       const raw = req.body;
@@ -38,6 +59,7 @@ function createSafepayWebhookHandler({
         return matches.length ? res.status(200).json({ received: true, probe: true }) : res.sendStatus(401);
       }
       const verifiedConfig = configFor({ requireWebhook: true });
+      diagnosticContext = { raw, signature, incoming, config: verifiedConfig };
       const { event, fingerprint } = verifySafepayWebhook(raw, signature, verifiedConfig);
       await connect();
       const Event = model();
@@ -56,7 +78,17 @@ function createSafepayWebhookHandler({
       // leased worker so crashes cannot lose an already acknowledged event.
       return res.status(200).json({ received: true });
     } catch (error) {
-      if (error.code === 'SAFEPAY_WEBHOOK_INVALID') return res.sendStatus(401);
+      if (error.code === 'SAFEPAY_WEBHOOK_INVALID') {
+        // This never changes verification or ACK behavior. It is default-off
+        // incident diagnostics for rejected events, NOT signature auto-detection.
+        try {
+          if (diagnosticsEnabled() === true && diagnosticContext) {
+            const { raw, signature, incoming, config } = diagnosticContext;
+            log('[safepay-webhook-rejection-diagnostics] ' + JSON.stringify(rejectionSignatureDiagnostics(raw, signature, incoming, config)));
+          }
+        } catch (_) { /* Logging must not turn an invalid event into an ACK/retry. */ }
+        return res.sendStatus(401);
+      }
       console.error('[safepay-webhook] receipt deferred:', error.code || 'WEBHOOK_RECEIPT_FAILED');
       return res.sendStatus(503);
     }
