@@ -16,7 +16,7 @@ const fail = (code, error) => ({ success: false, code, error });
 
 function isCommerceConfirmation(text = '') {
   const value = String(text).trim();
-  if (!value || value.length > 1200 || /[?？؟]|\b(?:no|not|don't|dont|do not|never|stop|wait|later|instead|unless|but|maybe|explain|what|why|how|when|which|show|view|find|search|list|read|check|get|tell|see|look|help|browse|recommend|suggest|can|could|would|dikhao|batao|ignore|bypass|skip|force|nahi|nahin|mat|ruk)\b|(?:نہیں|رکو|مت کریں|نہ کریں|کیوں|کیا|دکھا|بتا|دیکھ|नहीं|मत करो|रुको|क्यों|दिखा|बताओ|देख)/i.test(value)) return false;
+  if (!value || value.length > 1200 || /[?？؟]|\b(?:no|not|don't|dont|do not|never|stop|wait|later|instead|unless|but|maybe|review|preview|explain|what|why|how|when|which|show|view|find|search|list|read|check|get|tell|see|look|help|browse|recommend|suggest|can|could|would|dikhao|batao|ignore|bypass|skip|force|nahi|nahin|mat|ruk)\b|(?:نہیں|رکو|مت کریں|نہ کریں|کیوں|کیا|دکھا|بتا|دیکھ|नहीं|मत करो|रुको|क्यों|दिखा|बताओ|देख)/i.test(value)) return false;
   return /^(?:yes|yep|yeah|confirm(?:ed)?|approve(?:d)?|go ahead|proceed|do it|sure|ok(?:ay)?|haan|han|ji|theek hai)\b/i.test(value)
     || /^(?:ہاں|جی|ٹھیک ہے|تصدیق|हाँ|हां|जी)(?:\s|$|[،,.!])/u.test(value)
     || /^(?:please\s+)?(?:confirm|submit|request|accept|cancel|withdraw|approve|mark|update)\b/i.test(value);

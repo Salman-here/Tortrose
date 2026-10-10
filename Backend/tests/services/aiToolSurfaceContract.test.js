@@ -9,6 +9,14 @@ const { __private } = require('../../controllers/aiChatController');
 const toolNamesFor = role => __private.getTools(role).map(tool => tool.function.name);
 
 describe('AI role tool surface contract', () => {
+  test('asking to confirm a shipment review without producing its server quote forces the actual review tool, not a prose approval question', () => {
+    const state = {}, messages = [];
+    const result = __private.completeActionDraft(state, 'If you want the portion marked delivered, please confirm.',
+      [{ tool: 'get_order_detail', result: { success: true } }], messages, true,
+      'Review changing my own store portion of ORD-QA to delivered and wait for my confirmation.', 'seller');
+    expect(result.retry).toBe(true); expect(state.tool).toBe('update_order_status');
+    expect(messages[0].content).toContain('confirm=false');
+  });
   test('only current payment configuration is public; private financial actions require authentication and seller ownership', () => {
     expect(toolNamesFor('guest')).toContain('get_payment_options');
     expect(toolNamesFor('guest')).not.toContain('get_wallet_balance');

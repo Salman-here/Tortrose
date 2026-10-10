@@ -1927,6 +1927,7 @@ function isPlaceholderStoreValue(value) {
 
 async function executeToolCallForChat(toolName, args, userObj, lastUserText = '', turnContext = {}) {
   let normalizedArgs = normalizeAIChatToolArgs(toolName, toolName === 'add_product' ? bindNamedProductImage(args, turnContext._imageContextMessages) : args, lastUserText);
+  if (REVIEWED_COMMERCE_ACTIONS.has(toolName) && !isCommerceConfirmation(lastUserText)) normalizedArgs = { ...normalizedArgs, confirm: false };
   if (toolName === 'place_order') normalizedArgs = bindOrderPreviewToken(normalizedArgs, turnContext._imageContextMessages, { userId: userObj?._id || userObj?.id, requestKey: turnContext._chatRequestKey });
   if (toolName === 'preview_order' && normalizedArgs.reusePreviousPreview === true) {
     const previous = reuseOrderPreviewRequest(turnContext._imageContextMessages, { userId: userObj?._id || userObj?.id, requestKey: turnContext._chatRequestKey });
@@ -2142,7 +2143,26 @@ function retryNaturalCatalogLookup(state, draft, lastUserText, role, completedTo
   return true;
 }
 
-function completeActionDraft(state, draft, completedTools, conversationMessages, canRetry) {
+function completeActionDraft(state, draft, completedTools, conversationMessages, canRetry, lastUserText = '', role = 'guest') {
+  const asksReview = /\b(?:review|preview)\b/i.test(lastUserText) && !/[?？؟]|\b(?:can|could|would|why|how|whether)\b/i.test(lastUserText);
+  if (asksReview && /\bconfirm(?:ation)?\b/i.test(draft) && !completedTools.some(entry => entry.result?.previewOnly || entry.result?.requiresConfirmation)) {
+    let expected = '';
+    if (/\bwithdraw/i.test(lastUserText)) expected = 'request_withdrawal';
+    else if (/\breturn\b/i.test(lastUserText) && /\b(?:accept|refund)\b/i.test(lastUserText) && role === 'seller') expected = 'accept_return';
+    else if (/\breturn\b/i.test(lastUserText) && /\b(?:status|approve|reject|pickup|picked|transit|received|under review)\b/i.test(lastUserText) && role === 'seller') expected = 'update_return_status';
+    else if (/\breturn\b/i.test(lastUserText)) expected = 'request_return';
+    else if (/\bcancel/i.test(lastUserText)) expected = 'cancel_order';
+    else if (/\b(?:shipped|delivered|processing|confirmed)\b/i.test(lastUserText) && role === 'seller') expected = 'update_order_status';
+    else if (/\b(?:COD|cash on delivery)\b/i.test(lastUserText) && /\border\b/i.test(lastUserText)) expected = 'preview_order';
+    if (expected && isToolAllowedForRole(expected, role)) {
+      if (canRetry && !state.reviewRetried) {
+        state.reviewRetried = true; state.tool = expected;
+        conversationMessages.push({ role: 'system', content: `The person requested a REVIEW, not an executed change. Call ${expected} now to build the authoritative preview before asking them to confirm. For reviewed commerce actions use confirm=false. A lookup or prose question is not a server preview. Do not perform the mutation yet.` });
+        return { retry: true };
+      }
+      return { text: 'No verified action preview was prepared. Nothing was changed. Please ask for a fresh review of the exact order, return or withdrawal.' };
+    }
+  }
   if (!hasUnfinishedActionPromise(draft)) return { text: draft };
   if (canRetry && (state.promiseRetries || 0) < 2) {
     state.promiseRetries = (state.promiseRetries || 0) + 1;
@@ -2779,7 +2799,7 @@ async function processAIChatMessage(userObj, incomingMessages, options = {}) {
         ...toolResults,
         ...clientActions.map(action => ({ tool: action.action, result: { success: true } })),
       ];
-      const actionDraft = completeActionDraft(naturalLookupState, draftText, completedToolResults, conversationMessages, !isLast);
+      const actionDraft = completeActionDraft(naturalLookupState, draftText, completedToolResults, conversationMessages, !isLast, lastUserText, effectiveRole);
       if (actionDraft.retry) continue;
       draftText = actionDraft.text;
       message.content = draftText;
@@ -3160,7 +3180,7 @@ exports.streamChat = async (req, res) => {
           .map(event => event.type === 'tool_result'
             ? { tool: event.tool, result: event.result }
             : { tool: event.action, result: { success: true } });
-        const actionDraft = completeActionDraft(naturalLookupState, visibleText, streamToolResults, conversationMessages, !isLastChance);
+        const actionDraft = completeActionDraft(naturalLookupState, visibleText, streamToolResults, conversationMessages, !isLastChance, lastUserText, effectiveRole);
         if (actionDraft.retry) continue;
         visibleText = actionDraft.text;
         if (!isLastChance && !explicitlyRequestedTools.length && retryNaturalCatalogLookup(naturalLookupState, assistantContent, lastUserText, effectiveRole, streamToolResults, conversationMessages)) continue;
@@ -3477,7 +3497,7 @@ exports.chatOnce = async (req, res) => {
           ...toolResults,
           ...clientActions.map(action => ({ tool: action.action, result: { success: true } })),
         ];
-        const actionDraft = completeActionDraft(naturalLookupState, draftText, completedToolResults, conversationMessages, !isLast);
+        const actionDraft = completeActionDraft(naturalLookupState, draftText, completedToolResults, conversationMessages, !isLast, lastUserText, effectiveRole);
         if (actionDraft.retry) continue;
         draftText = actionDraft.text;
         message.content = draftText;
@@ -3978,6 +3998,7 @@ exports.__private = {
   failedExplicitToolMessage,
   normalizeAIClientRoute,
   executeRetainedCommerceApproval,
+  completeActionDraft,
   normalizeAIClientActionArgs,
   normalizeAIChatToolArgs,
   groundedAssistantResponseText,

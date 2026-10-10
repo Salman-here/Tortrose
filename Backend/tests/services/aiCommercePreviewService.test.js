@@ -41,6 +41,7 @@ test('a broader return selection requires a new preview instead of silently appr
 });
 
 test('changed refund amounts, spoken withdrawal amounts and return statuses cannot approve an old quote', () => {
+  expect(isCommerceConfirmation('Please request a withdrawal preview')).toBe(false);
   const cancel = { action: 'cancel_order', input: { refundDestination: 'wallet' }, contract: { currency: 'USD', options: [{ destination: 'wallet', amountMinor: 1000 }] } };
   expect(confirmationMatchesPreview('Yes refund 50 USD to Wallet', cancel)).toBe(false);
   expect(confirmationMatchesPreview('Yes refund 10 USD to Wallet', cancel)).toBe(true);
