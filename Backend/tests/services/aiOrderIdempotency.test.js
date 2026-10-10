@@ -33,6 +33,7 @@ const ShippingMethod = require('../../models/ShippingMethod');
 const Store = require('../../models/Store');
 const TaxConfig = require('../../models/TaxConfig');
 const User = require('../../models/User');
+const History = require('../../models/ChatHistory');
 const { getExchangeRateSnapshot } = require('../../services/currencyService');
 const checkoutPricingService = require('../../services/checkoutPricingService');
 const allocateCheckoutAmountsBySourceActual = checkoutPricingService.allocateCheckoutAmountsBySource;
@@ -82,6 +83,7 @@ afterEach(async () => {
     Store.deleteMany({}),
     TaxConfig.deleteMany({}),
     User.deleteMany({}),
+    History.deleteMany({}),
   ]);
 });
 
@@ -131,6 +133,19 @@ const placeArgs = (product, overrides = {}) => ({
 });
 
 describe('AI COD order idempotency', () => {
+  test('the chat confirmation adapter places the retained signed COD quote without a model completion claim', async () => {
+    const { buyer, product } = await createCatalog();
+    const preview = await executeToolCall('preview_order', placeArgs(product, { _requireOrderPreview: true }), buyer);
+    expect(preview).toMatchObject({ success: true, previewOnly: true, requiresConfirmation: true });
+    const history = await History.create({ user: buyer._id, conversations: [{ messages: [{ role: 'assistant', content: preview.message,
+      toolEvents: [{ tool: 'preview_order', result: preview }] }] }] });
+    const finish = require('../../controllers/aiChatController').__private.executeRetainedCommerceApproval;
+    const result = await finish(buyer, 'Yes, confirm this order.', { _chatRequestKey: 'once:retained-cod-confirm',
+      _chatConversationId: String(history.conversations[0]._id), _imageContextMessages: [] });
+    expect(result).toMatchObject({ tool: 'place_order', result: { success: true } });
+    expect(await Order.countDocuments({ user: buyer._id })).toBe(1);
+    expect((await Product.findById(product._id)).stock).toBe(3);
+  });
   test.each(['safepay', 'wallet', 'stripe'])('%s requests go to secure checkout without creating a chat order', async paymentMethod => {
     const { buyer, product } = await createCatalog();
     const result = await executeToolCall('place_order', placeArgs(product, { paymentMethod }), buyer);

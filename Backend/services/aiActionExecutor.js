@@ -3280,6 +3280,8 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
           };
           return {
             success: true,
+            previewOnly: true,
+            requiresConfirmation: true,
             data: {
               preview: true, ...preview, orderRequest, currency: preferredCurrency,
               items: persistedOrderItems, shippingInfo: previewShipping, summary: previewSummary,
