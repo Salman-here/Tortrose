@@ -57,6 +57,7 @@ describe('WhatsApp AI typing integration', () => {
             status: 'active',
             username: 'Buyer',
             whatsappInfo: { number: '+923001112222', verified: true },
+            savedAddresses: [{ country: 'Pakistan', isDefault: true }],
         }));
         WhatsAppAIChatRateLimit.findOneAndUpdate.mockResolvedValue({
             messageCount: 1,
@@ -88,6 +89,9 @@ describe('WhatsApp AI typing integration', () => {
         });
         expect(mockStopTyping).toHaveBeenCalledTimes(1);
         expect(mockBuyerSendText).toHaveBeenCalledWith(recipient, 'Fast AI reply');
+        expect(processAIChatMessage).toHaveBeenCalledWith(expect.objectContaining({
+            _buyerLocation: expect.objectContaining({ mode: 'country', countryCode: 'PK' }),
+        }), expect.any(Array), expect.any(Object));
         expect(mockStopTyping.mock.invocationCallOrder[0])
             .toBeLessThan(mockBuyerSendText.mock.invocationCallOrder[0]);
     });

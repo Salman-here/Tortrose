@@ -1734,6 +1734,17 @@ exports.createWithdrawalRequest = async (req, res) => {
                 error.statusCode = 400;
                 throw error;
             }
+            // AI withdrawals bind the approved masked destination to the
+            // exact account read INSIDE this reservation transaction. A bank
+            // edit between chat review and commit requires a new preview.
+            if (req.body?.expectedPaymentAccountId !== undefined
+                && (String(frozenAccount._id) !== req.body.expectedPaymentAccountId
+                    || new Date(frozenAccount.updatedAt).toISOString() !== req.body.expectedPaymentAccountUpdatedAt)) {
+                const error = new Error('Your bank account changed after the withdrawal preview. Review the new destination before confirming.');
+                error.statusCode = 409;
+                error.code = 'WITHDRAWAL_BANK_PREVIEW_CHANGED';
+                throw error;
+            }
             const fullPayoutAccountSnapshot = completePayoutAccountSnapshot(frozenAccount);
             if (fullPayoutAccountSnapshot.currency !== requestedCurrency) throw withdrawalActionError(
                 'The bank account must accept this balance currency. No balance conversion is available.',
@@ -1746,7 +1757,7 @@ exports.createWithdrawalRequest = async (req, res) => {
             });
             if (summary.paymentRiskPending) {
                 const error = new Error(
-                    'A Stripe refund or dispute is still being reconciled. Withdrawals are temporarily unavailable.'
+                    'A payment refund or dispute is still being reconciled. Withdrawals are temporarily unavailable.'
                 );
                 error.statusCode = 423;
                 error.code = 'SELLER_PAYMENT_RISK_PENDING';

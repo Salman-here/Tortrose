@@ -1,6 +1,12 @@
 import { resolveAIClientRoute } from '../../src/utils/aiClientRoutes';
+const { buyerFlows, sellerFlows } = require('../../../Backend/services/aiSecureFlowService');
 
 describe('AI client routes', () => {
+  test('every secure feature handoff reaches an existing native screen', () => {
+    for (const flow of Object.values({ ...buyerFlows, ...sellerFlows })) expect(resolveAIClientRoute(flow[0])).not.toBeNull();
+    expect(resolveAIClientRoute('/account-deletion')).toEqual({ type: 'stack', name: 'Settings' });
+    expect(resolveAIClientRoute('/settings/blocked-accounts')).toEqual({ type: 'stack', name: 'BlockedAccounts' });
+  });
   test.each([
     ['/seller-dashboard/products', 'SellerProductManagement'],
     ['/seller-dashboard/product-management', 'SellerProductManagement'],

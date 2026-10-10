@@ -5,6 +5,8 @@ const STATIC_CLIENT_ROUTES = {
   orders: stack('Orders'),
   checkout: stack('Checkout'),
   settings: stack('Settings'),
+  'account-deletion': stack('Settings'),
+  'settings/blocked-accounts': stack('BlockedAccounts'),
   'track-order': stack('TrackOrder'),
   'become-seller': stack('BecomeSeller'),
   about: stack('About'),

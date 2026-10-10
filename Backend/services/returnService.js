@@ -1032,6 +1032,44 @@ const createReturnRequest = async (input) => {
   }
 };
 
+// Read-only quotation for chat. Uses the same frozen allocations and consumed
+// quantity ledger as creation; creation still rechecks everything atomically.
+const previewReturnRequest = async (input) => {
+  const prepared = normalizeReturnCreationInput(input);
+  const order = await Order.findOne({ _id: prepared.orderId, user: prepared.buyerId, awaitingPayment: { $ne: true } });
+  if (!order) throw Object.assign(new Error('Order not found or it does not belong to you.'), { statusCode: 404, code: 'RETURN_ORDER_NOT_FOUND' });
+  await assertWalletOrderFundingReturnable({ orderId: order._id });
+  const groups = await buildOrderReturnEligibility(order);
+  const group = groups.find(entry => toId(entry.seller?._id) === prepared.sellerId);
+  if (!group?.eligible) throw Object.assign(new Error(group?.reason || 'This seller portion is not eligible for return.'), { statusCode: 409, code: 'RETURN_NOT_ELIGIBLE' });
+  if (await ReturnRequest.exists({ order: order._id, seller: prepared.sellerId, status: { $in: UNRESOLVED_RETURN_STATUSES } })) {
+    throw Object.assign(new Error('Finish the current return for this seller before requesting another.'), { statusCode: 409, code: 'RETURN_REQUEST_ALREADY_OPEN' });
+  }
+  const selected = prepared.items.map(selection => {
+    const item = group.items.find(row => toId(row.orderItemId) === selection.orderItemId);
+    if (!item?.eligible || selection.quantity > item.remainingReturnableQuantity) throw Object.assign(
+      new Error(item?.reason || 'The selected item or quantity cannot be returned.'), { statusCode: 409, code: 'RETURN_ITEM_NOT_ELIGIBLE' });
+    return { ...item, quantity: selection.quantity };
+  });
+  const policyTypes = new Set(selected.map(item => item.returnPolicy.refundType));
+  if (policyTypes.size !== 1) throw Object.assign(new Error('Request items with different return resolutions separately.'), { statusCode: 409, code: 'MIXED_RETURN_RESOLUTIONS' });
+  const quantities = await getConsumedQuantities(order._id);
+  const refund = selectedReturnMoney({ order, sellerId: prepared.sellerId, sellerItems: group.items, selected,
+    consumed: quantities.consumed, settledQuantities: quantities.settledQuantities,
+    shippingAlreadyRefunded: quantities.shippingRefundedBySeller.has(prepared.sellerId),
+    sellerRefundedAmount: quantities.refundedAmountBySeller.get(prepared.sellerId) || 0 });
+  const policy = selected[0].returnPolicy;
+  if (policy.refundType !== 'replacement_only' && refund.totalAmount <= 0) throw Object.assign(
+    new Error('The calculated refund is zero. Please contact support.'), { statusCode: 409, code: 'RETURN_AMOUNT_INVALID' });
+  return { orderId: String(order._id), publicOrderId: order.orderId, sellerId: prepared.sellerId,
+    storeName: group.store?.storeName || 'This store', currency: getAccountingOrderCurrency(order),
+    items: selected.map(item => ({ orderItemId: toId(item.orderItemId), name: item.name, quantity: item.quantity,
+      selectedColor: item.selectedColor, selectedOptions: item.selectedOptions })),
+    refund, policy, reasonCategory: prepared.reasonCategory, reasonDetails: prepared.reasonDetails,
+    returnVersion: order.returnVersion || 0,
+    eligibilityDeadline: new Date(Math.min(...selected.map(item => new Date(item.eligibilityDeadline).getTime()))) };
+};
+
 const getReturnDetail = async ({ returnRequestId, actor }) => {
   const request = await ReturnRequest.findById(returnRequestId)
     .populate('buyer', 'username email avatar')
@@ -1049,7 +1087,7 @@ const getReturnDetail = async ({ returnRequestId, actor }) => {
   return request;
 };
 
-const updateReturnStatus = async ({ returnRequestId, actor, nextStatus, note }) => {
+const updateReturnStatus = async ({ returnRequestId, actor, nextStatus, note, expectedUpdatedAt }) => {
   if (['accepted_pending_payment', 'returned', 'replacement_approved'].includes(nextStatus)) {
     const error = new Error('Use the Accept Return action to finalize a return.');
     error.statusCode = 400;
@@ -1066,6 +1104,9 @@ const updateReturnStatus = async ({ returnRequestId, actor, nextStatus, note }) 
       const error = new Error('Only this order seller can update the return.');
       error.statusCode = 403;
       throw error;
+    }
+    if (expectedUpdatedAt !== undefined && new Date(request.updatedAt).toISOString() !== expectedUpdatedAt) {
+      throw Object.assign(new Error('The return changed after its preview. Review its latest status before confirming.'), { statusCode: 409, code: 'RETURN_PREVIEW_CHANGED' });
     }
     if (!canTransitionReturnStatus(request.status, nextStatus)) {
       const error = new Error(`Return cannot move from ${request.status} to ${nextStatus}.`);
@@ -1135,7 +1176,7 @@ const cancelReturnRequest = async ({ returnRequestId, buyerId, note }) => runInT
   return request;
 });
 
-const settleFromSellerBalance = async ({ returnRequestId, sellerId }) => runInTransaction(async (session) => {
+const settleFromSellerBalance = async ({ returnRequestId, sellerId, expectedRefundAmount, expectedRefundCurrency, expectedUpdatedAt }) => runInTransaction(async (session) => {
   await SellerSettlementLock.findOneAndUpdate(
     { seller: sellerId },
     { $setOnInsert: { seller: sellerId }, $inc: { version: 1 } },
@@ -1211,6 +1252,12 @@ const settleFromSellerBalance = async ({ returnRequestId, sellerId }) => runInTr
     session,
   });
   applySettlementShippingAllocation(request, shippingAllocation);
+  if (expectedUpdatedAt !== undefined && new Date(request.updatedAt).toISOString() !== expectedUpdatedAt
+    || expectedRefundAmount !== undefined && (typeof expectedRefundAmount !== 'number'
+      || !Number.isFinite(expectedRefundAmount) || toMinorUnits(expectedRefundAmount) !== toMinorUnits(request.refund.totalAmount)
+      || expectedRefundCurrency !== sourceCurrency)) {
+    throw Object.assign(new Error('The return refund changed after review. Review the current exact amount and confirm again.'), { statusCode: 409, code: 'RETURN_PREVIEW_CHANGED' });
+  }
   // Debit the seller's monotonic cumulative share of their exact frozen USD
   // entitlement. Partial returns cannot create independent FX rounding drift,
   // and a full seller refund always cancels the exact credited cents.
@@ -2661,6 +2708,7 @@ module.exports = {
   buildOrderItemDiscountAllocations,
   buildOrderReturnEligibility,
   selectedReturnMoney,
+  previewReturnRequest,
   createReturnRequest,
   getReturnDetail,
   updateReturnStatus,

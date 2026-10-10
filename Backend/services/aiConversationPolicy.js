@@ -31,6 +31,7 @@ function sanitizeCommerceReply(text = '') {
     .replace(/(?<![\w-])[a-f\d]{24}(?![\w-])/gi, '')
     .replace(/\baip1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, '')
     .replace(/\baic1\.[a-f0-9]{64}\b/g, '')
+    .replace(/\baif1\.[a-f0-9]{64}\b/g, '')
     .replace(/\b(?:please\s+)?provide\s+(?:a\s+|the\s+)?(?:product\s*Id|cart\s*Item\s*Id)\b\.?/gi, 'Please tell me which item you mean.')
     .split(/\r?\n/)
     .filter(line => !/^\s*(?:[-*•]|\d+[.)])\s*[*`]*\s*$/.test(line))

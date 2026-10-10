@@ -15,7 +15,9 @@ const AdminWhatsAppNumber = require('../../models/AdminWhatsAppNumber');
 const WhatsAppAIChatRateLimit = require('../../models/WhatsAppAIChatRateLimit');
 const ChatHistory = require('../../models/ChatHistory');
 const { processAIChatMessage } = require('../../controllers/aiChatController');
+const { buyerLocationFromRequest } = require('../storeVisibilityService');
 const { processChatAttachments } = require('../aiAttachmentService');
+const { trustedVoiceIntentText } = require('../aiUserIntentEvidenceService');
 const evolution = require('./evolutionClient');           // unified/buyer outbound client
 const sellerEvolution = require('./sellerEvolutionClient'); // seller instance (rozare-seller)
 const { resolveOutboundRecipient } = require('./jidRoutingStore');
@@ -151,6 +153,11 @@ function summarizeToolEventsForMemory(toolEvents = []) {
         const tool = event.tool;
         const result = event.result || {};
         const data = result.data || {};
+        if (result.previewOnly && data.commercePreview) {
+            lines.push(`[Tool memory: ${tool} is ONLY a server-reviewed preview; nothing was submitted, withdrawn or refunded. Reviewed request: ${JSON.stringify(data.request || {})}. Wait for a subsequent explicit confirmation, then call the same action with confirm=true. Approval stays on the server.]`);
+            if (lines.length >= 6) break;
+            continue;
+        }
 
         if (tool === 'add_product' && result.success && result.blocked && data.productId) {
             lines.push(`[Tool memory: add_product saved but blocked. productId=${data.productId}; name="${data.name || ''}"; reason="${data.moderationReason || result.message || ''}". Tell the seller it is blocked and ask them to edit the real product details; do not add it again.]`);
@@ -249,7 +256,7 @@ async function identifyUserByPhone(phone, instanceType) {
                 { 'sellerInfo.whatsappDigits': digits },
                 { 'sellerInfo.whatsappNumber': { $in: phoneVariants } },
             ],
-        }).select('_id role status username sellerInfo.whatsappNumber sellerInfo.whatsappDigits');
+        }).select('_id role status username sellerInfo.whatsappNumber sellerInfo.whatsappDigits sellerInfo.country sellerInfo.countryCode savedShippingInfo.country savedShippingInfo.city savedAddresses');
 
         if (seller) {
             return { user: seller, role: 'seller' };
@@ -266,7 +273,7 @@ async function identifyUserByPhone(phone, instanceType) {
         status: 'active',
         'whatsappInfo.number': { $in: phoneVariants },
         'whatsappInfo.verified': true,
-    }).select('_id role username whatsappInfo.number');
+    }).select('_id role username whatsappInfo.number savedShippingInfo.country savedShippingInfo.city savedAddresses sellerInfo.country sellerInfo.countryCode');
 
     if (user) {
         // Force role to 'user' on the buyer route.
@@ -382,6 +389,7 @@ async function loadWhatsAppConversation(userId) {
             });
         }
     });
+    Object.defineProperty(messages, 'conversationId', { value: convo._id?.toString?.() || null });
     return messages;
 }
 
@@ -612,7 +620,9 @@ async function processIncomingWhatsAppMessageNow(phone, messageText, instanceTyp
             ];
 
             // 6. Process through AI pipeline
-            const userObj = { _id: user._id, id: user._id.toString(), role };
+            const userObj = { _id: user._id, id: user._id.toString(), role,
+                ...(role !== 'admin' ? { _buyerLocation: buyerLocationFromRequest({ user }) } : {}),
+            };
 
             // Evolution's inbound message id remains stable across durable retries,
             // so server-side tools (especially COD order creation) can be replayed
@@ -620,6 +630,8 @@ async function processIncomingWhatsAppMessageNow(phone, messageText, instanceTyp
             aiOptions = {
                 mode: 'whatsapp',
                 requestKey: options.messageId || null,
+                conversationId: conversationHistory.conversationId || null,
+                _trustedUserIntentText: trustedVoiceIntentText(trimmedText, attachmentResult.processed),
             };
             aiStartedAt = Date.now();
             const result = await processAIChatMessage(userObj, messages, aiOptions);

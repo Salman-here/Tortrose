@@ -53,12 +53,38 @@ import {
   getOrCreatePersistedMutationAttemptForFingerprint,
 } from '../utils/persistedMutationAttempt';
 import { resolveAIClientRoute } from '../utils/aiClientRoutes';
+import { aiCommercePreviewPresentation } from '../utils/aiCommercePresentation';
+
+const CommerceReviewCard = ({ result, current, busy, onConfirm, c, styles }) => {
+  const preview = aiCommercePreviewPresentation(result);
+  if (!preview) return null;
+  const disabled = !current || busy;
+  return <View style={[styles.productResults, { marginTop: 8, borderWidth: 1, borderColor: c.primary, borderRadius: 16 }]}>
+    <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center', marginBottom: 10 }}>
+      <Ionicons name="shield-checkmark-outline" size={18} color={c.primary} />
+      <Text style={[styles.productName, { flex: 1 }]}>{preview.title}</Text>
+    </View>
+    <Text style={[styles.actionResultText, { lineHeight: 19 }]}>{preview.notice}</Text>
+    <Text style={[styles.actionResultText, { fontSize: 11, marginTop: 10, marginBottom: 8 }]}>
+      {current && busy ? 'Finishing this preview…' : disabled ? 'Earlier or ambiguous preview. Ask for a fresh review before confirming.' : preview.reminder}
+    </Text>
+    {preview.controls.map(control => <TouchableOpacity key={control.label} disabled={disabled}
+      accessibilityRole="button" accessibilityLabel={control.label} accessibilityState={{ disabled }}
+      onPress={() => onConfirm(control.message)} style={{ marginTop: 6, opacity: disabled ? .4 : 1 }}>
+      <LinearGradient colors={['#14b8a6', '#0ea5e9', '#6366f1']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+        style={{ borderRadius: 12, paddingHorizontal: 12, paddingVertical: 12 }}>
+        <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700', textAlign: 'center' }}>{control.label}</Text>
+      </LinearGradient>
+    </TouchableOpacity>)}
+  </View>;
+};
 
 // Uses our own backend (no Supabase) - the /api/ai-chat/once endpoint handles
 // non-streaming tool execution loop server-side and returns the final response.
 const AI_CHAT_ONCE_URL = null; // Set dynamically from api.defaults.baseURL below
 const CHAT_ATTEMPT_STORAGE_KEY = 'rozare_ai_chat_attempt_v1';
 const UNRESOLVED_AI_ACTION_CODES = new Set([
+  'AI_COMMERCE_ACTION_PENDING',
   'AI_ACTION_PENDING',
   'AI_ACTION_IDEMPOTENCY_CONFLICT',
   'AI_ACTION_RECEIPT_COMMIT_AMBIGUOUS',
@@ -202,7 +228,9 @@ const summarizeToolResultsForPrompt = (toolResults = []) => {
   for (const event of toolResults || []) {
     const result = event.result || {};
     const data = result.data || {};
-    if (event.name === 'add_product' && result.success && (result.pending || data.pending) && data.productId) {
+    if (result.previewOnly && data.commercePreview) {
+      lines.push(`[Tool memory: ${event.name} is ONLY a server-reviewed preview; nothing was submitted, withdrawn or refunded. Reviewed request: ${JSON.stringify(data.request || {})}. Await a subsequent explicit confirmation and call the same action with confirm=true. Approval is retained by the server, not supplied by the model.]`);
+    } else if (event.name === 'add_product' && result.success && (result.pending || data.pending) && data.productId) {
       lines.push(`[Tool memory: productId=${data.productId} was saved and awaits automatic content checks. Do not claim it is live or create a duplicate. Query current status for later questions.]`);
     } else if (event.name === 'add_product' && result.success && (result.blocked || data.blocked) && data.productId) {
       lines.push(`[Tool memory: productId=${data.productId} was saved but blocked for content changes. Explain the saved moderation reason; edit this listing instead of creating a duplicate.]`);
@@ -1260,6 +1288,10 @@ export default function ChatBot({
           {/* Tool results */}
           {item.toolResults?.map((tr, i) => (
             <View key={i}>
+              <CommerceReviewCard result={tr.result} c={c} styles={styles}
+                current={item === messages[messages.length - 1] && new Set((item.toolResults || []).filter(entry => entry.result?.previewOnly && entry.result?.data?.quoteToken).map(entry => entry.result.data.quoteToken)).size === 1}
+                busy={loading || conversationLoading || recorderState.isRecording}
+                onConfirm={text => sendMessage(text, [])} />
               {['search_products', 'list_my_products', 'get_wishlist'].includes(tr.name) && (tr.result?.data?.products || tr.result?.data?.items || tr.result?.products)?.length > 0 && (
                 <View style={styles.productResults}>
                   {(tr.result?.data?.products || tr.result?.data?.items || tr.result?.products).map((p, pi) => (
@@ -1418,13 +1450,13 @@ export default function ChatBot({
                   )}
                 </View>
               )}
-              {!['search_products', 'list_my_products', 'get_wishlist', 'get_product_detail', 'view_cart', 'send_product_image', 'navigate', 'show_style_advice', 'suggest_outfit'].includes(tr.name) && (tr.result?.msg || tr.result?.message || tr.result?.error) && (
+              {!aiCommercePreviewPresentation(tr.result) && !['search_products', 'list_my_products', 'get_wishlist', 'get_product_detail', 'view_cart', 'send_product_image', 'navigate', 'show_style_advice', 'suggest_outfit'].includes(tr.name) && (tr.result?.msg || tr.result?.message || tr.result?.error) && (
                 <View style={[styles.actionResult, {
-                  backgroundColor: tr.result?.success === false ? c.errorSubtle : c.successSubtle,
-                  borderColor: tr.result?.success === false ? c.error : c.successLighter,
+                  backgroundColor: tr.result?.success === false ? c.errorSubtle : tr.result?.requiresPayment || tr.result?.requiresConfirmation || tr.result?.requiresSecureAction ? 'rgba(14,165,233,.08)' : c.successSubtle,
+                  borderColor: tr.result?.success === false ? c.error : tr.result?.requiresPayment || tr.result?.requiresConfirmation || tr.result?.requiresSecureAction ? c.primary : c.successLighter,
                 }]}>
-                  <Ionicons name={tr.result?.success === false ? 'alert-circle' : 'checkmark-circle'} size={14} color={tr.result?.success === false ? c.error : c.success} />
-                  <Text style={[styles.actionResultText, { color: tr.result?.success === false ? c.error : c.success }]}>
+                  <Ionicons name={tr.result?.success === false ? 'alert-circle' : tr.result?.requiresPayment || tr.result?.requiresConfirmation || tr.result?.requiresSecureAction ? 'time-outline' : 'checkmark-circle'} size={14} color={tr.result?.success === false ? c.error : tr.result?.requiresPayment || tr.result?.requiresConfirmation || tr.result?.requiresSecureAction ? c.primary : c.success} />
+                  <Text style={[styles.actionResultText, { color: tr.result?.success === false ? c.error : tr.result?.requiresPayment || tr.result?.requiresConfirmation || tr.result?.requiresSecureAction ? c.primary : c.success }]}>
                     {tr.result.msg || tr.result.message || tr.result.error}
                   </Text>
                 </View>

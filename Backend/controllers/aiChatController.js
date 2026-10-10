@@ -43,6 +43,8 @@ const { getStoreCurrencyCooldownReply } = require('../services/aiStoreCurrencySe
 
 // ─── OpenRouter Config ───────────────────────────────────────────────
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
+const { BUYER_COMMERCE_TOOLS, SELLER_COMMERCE_TOOLS, NEW_COMMERCE_TOOL_NAMES } = require('../services/aiCommerceTools');
+const { trustedVoiceIntentText } = require('../services/aiUserIntentEvidenceService');
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const AI_MODEL = process.env.AI_MODEL || 'google/gemini-2.5-flash';
 const AI_FALLBACK_MODEL = process.env.AI_FALLBACK_MODEL || 'google/gemini-flash-1.5';
@@ -211,6 +213,8 @@ async function getIncomingMessagesFromRequest(req) {
 
   if (uploadAttachments.length || explicitAttachments.length) {
     const attachmentResult = await processChatAttachments([...uploadAttachments, ...explicitAttachments]);
+    const caption = incoming.filter(message => message?.role === 'user').pop()?.content || '';
+    req.aiCommerceUserText = trustedVoiceIntentText(caption, attachmentResult.processed);
     incoming = appendAttachmentContextToMessages(incoming, attachmentResult);
     req.aiUploadContext = { attachments: attachmentResult.attachments || [], context: attachmentResult.context || '' };
   }
@@ -266,6 +270,7 @@ const SUBSCRIPTION_CATALOG_TOOL = {
 };
 
 const userTools = [
+  ...BUYER_COMMERCE_TOOLS,
   {
     type: 'function',
     function: {
@@ -278,7 +283,9 @@ const userTools = [
           category: { type: 'string', description: 'Category filter (optional)' },
           maxPrice: { type: 'number', description: 'Maximum price (optional)' },
           minPrice: { type: 'number', description: 'Minimum price (optional)' },
-          brand: { type: 'string', description: 'Brand filter (optional)' },
+          brand: { type: 'string', description: 'Product brand text filter (optional). Product metadata is NOT proof of a verified badge; use verifiedBrandStoreId for a verified brand storefront.' },
+          currency: { type: 'string', enum: ['USD', 'PKR', 'EUR', 'GBP'], description: 'Currency of the price bounds and comparable results. Does not change stored prices, store currency or Wallet balances.' },
+          verifiedBrandStoreId: { type: 'string', description: 'Store ID from get_verified_stores with brandOnly=true; filters by actual verified brand ownership, never a copied product.brand label.' },
           storeId: { type: 'string', description: 'Internal store ID to scope results to a store (optional)' },
           storeSlug: { type: 'string', description: 'Store slug/subdomain to scope results to a store (optional)' },
           storeName: { type: 'string', description: 'Store or brand/storefront name to scope results to a store (optional)' },
@@ -373,10 +380,12 @@ const userTools = [
     type: 'function',
     function: {
       name: 'cancel_order',
-      description: "Cancel the buyer's own unshipped order or store portions. For card-paid orders call first without refundDestination to obtain a cancellationQuote, explain full Wallet vs net original-card refund and its processing fee, and ask the buyer to choose. Submit quoteId and acceptDeduction=true only after explicit agreement to the quoted card deduction. Wallet-paid cancellations refund fully to Wallet; COD needs no refund. Never invent a quote or refund amount.",
+      description: "Preview cancellation of the buyer's own unshipped order or selected store portions. Show the complete server preview and wait for a subsequent explicit confirmation before calling again with confirm=true. Card-paid orders offer full Wallet vs net original-card refund; Raast offers full Wallet only. Wallet-paid orders have one full Wallet option and COD needs no refund. The server retains the approved quote and checks the choice; never invent tokens, approval, refund amounts or fees. Get personal purchase details to resolve sellerIds/storeName, including when the buyer is also a seller.",
       parameters: {
         type: 'object',
         properties: { orderId: { type: 'string', description: 'Public ORD- number or internal order ID' },
+          confirm: { type: 'boolean', description: 'True only after the person reviewed this cancellation preview and confirms in a subsequent message.' },
+          storeName: { type: 'string', description: 'Exact store name from the owned purchase detail, when cancelling only that store portion.' },
           sellerIds: { type: 'array', items: { type: 'string' }, description: 'Optional seller portions resolved from order details, never ask the buyer to remember internal IDs' },
           refundDestination: { type: 'string', enum: ['wallet', 'original_card', 'none'] },
           quoteId: { type: 'string', description: 'Exact quoteId returned by the preceding cancellationQuote' },
@@ -555,8 +564,8 @@ const userTools = [
     type: 'function',
     function: {
       name: 'get_verified_stores',
-      description: 'List verified public stores that shoppers can browse.',
-      parameters: { type: 'object', properties: {} },
+      description: 'List verified active public stores in the shopper\'s selected location. Set brandOnly=true to find verified brand storefronts; Global includes global stores plus the shopper\'s selected home country.',
+      parameters: { type: 'object', properties: { brandOnly: { type: 'boolean' }, limit: { type: 'integer', minimum: 1, maximum: 50 } } },
     },
   },
   {
@@ -755,6 +764,7 @@ userTools.push({
 
 const sellerTools = [
   ...userTools,
+  ...SELLER_COMMERCE_TOOLS,
   {
     type: 'function',
     function: {
@@ -1046,7 +1056,7 @@ const sellerTools = [
     type: 'function',
     function: {
       name: 'get_seller_payments',
-      description: "Get exact native Stripe/Wallet balances separately for USD, PKR, EUR and GBP, pending funds, historical sales reporting, bank details and withdrawals. Never merge or convert withdrawable balances. Store currency changes affect future orders only; existing balances retain their earned currencies. Withdrawals go to admin for manual same-currency bank transfer; approval is not payment. Static minimums: USD 5, PKR 2000, EUR 5, GBP 5. Quote only the returned authoritative amounts.",
+      description: "Get exact native Safepay/Wallet online balances separately for USD, PKR, EUR and GBP, gross earnings, processing fee + tax, return-held/pending funds, net withdrawable money and withdrawal history. Never merge or convert balances. Store currency changes affect future orders only. COD money is collected directly by sellers. Withdrawals go to admin for manual same-currency transfer; approval is not payment. Quote only returned authoritative amounts and limits.",
       parameters: { type: 'object', properties: {} },
     },
   },
@@ -1068,12 +1078,13 @@ const sellerTools = [
     type: 'function',
     function: {
       name: 'update_order_status',
-      description: "Update status of an order containing the seller's product (confirmed/processing/shipped/delivered; sellers can't cancel). Use orderId from get_seller_orders results.",
+      description: "Preview an update only to this seller's owned shipment (confirmed/processing/shipped/delivered; sellers cannot cancel). Show the before/after status and wait for a subsequent explicit confirmation, then call again with confirm=true. Use the public order number from get_seller_orders. Do not mark shipped/delivered merely because the buyer confirmed payment or an order.",
       parameters: {
         type: 'object',
         properties: {
           orderId: { type: 'string' },
           newStatus: { type: 'string', enum: ['confirmed', 'processing', 'shipped', 'delivered'] },
+          confirm: { type: 'boolean', description: 'True only after the seller reviews the status preview and subsequently confirms that it reflects actual fulfilment.' },
         },
         required: ['orderId', 'newStatus'],
       },
@@ -1097,7 +1108,7 @@ const sellerTools = [
         properties: {
           updates: {
             type: 'object',
-            description: 'Fields: storeName, storeSlug, description, logo, banner, socialLinks, returnPolicy, address, sellerType, paymentPolicy, confirmSubdomainChange. paymentPolicy values: online_and_cod for online payment plus Cash on Delivery, advance_only for Stripe card or Rozare Wallet only. returnPolicy is an object with returnsEnabled, returnDuration (1-365 days when enabled), refundType (full_refund, store_credit, or replacement_only), policyDescription, warrantyEnabled, warrantyDuration, and warrantyDescription. full_refund and store_credit both credit the approved refund to Rozare Wallet after seller funding. Store text fields must be clean plain values only: no markdown stars, headings, labels, copied form labels, or placeholders.',
+            description: 'Fields: storeName, storeSlug, description, logo, banner, socialLinks, returnPolicy, address, sellerType, paymentPolicy, confirmSubdomainChange. paymentPolicy values: online_and_cod for online payment plus Cash on Delivery, advance_only for Safepay or Rozare Wallet only. returnPolicy is an object with returnsEnabled, returnDuration (1-365 days when enabled), refundType (full_refund, store_credit, or replacement_only), policyDescription, warrantyEnabled, warrantyDuration, and warrantyDescription. Paid online return refunds use held order funds; COD refunds need seller balance or secure Safepay funding. Existing orders keep their frozen policy. Store text fields must be clean plain values only: no markdown stars, headings, labels, copied form labels, or placeholders.',
             properties: {
               storeName: { type: 'string' },
               storeSlug: { type: 'string' },
@@ -1129,6 +1140,15 @@ const sellerTools = [
               },
               sellerType: { type: 'string' },
               paymentPolicy: { type: 'string', enum: ['online_and_cod', 'advance_only'] },
+              visibility: {
+                type: 'object', description: 'Store catalog visibility, not buyer location. Global only if the seller can ship globally. Country defaults to the seller country. Existing orders keep their own frozen terms.',
+                properties: {
+                  mode: { type: 'string', enum: ['global', 'country', 'region', 'city', 'town'] },
+                  country: { type: 'string' }, countryCode: { type: 'string' },
+                  region: { type: 'string' }, regionCode: { type: 'string' },
+                  city: { type: 'string' }, town: { type: 'string' },
+                }, required: ['mode'],
+              },
               confirmSubdomainChange: { type: 'boolean' },
             },
           },
@@ -1321,7 +1341,7 @@ const sellerTools = [
 ];
 
 const adminTools = [
-  ...sellerTools.filter(tool => tool.function.name !== 'get_subscription_status'),
+  ...sellerTools.filter(tool => tool.function.name !== 'get_subscription_status' && (!NEW_COMMERCE_TOOL_NAMES.has(tool.function.name) || tool.function.name === 'get_payment_options')),
   {
     type: 'function',
     function: {
@@ -1711,7 +1731,7 @@ function prepareIncomingChatMessages(incomingMessages = []) {
       ? message.content
       : JSON.stringify(message.content ?? '');
     const { visible, internal } = splitInternalAssistantContent(rawContent);
-    if (internal) internalBlocks.push(internal.replace(/\baip1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, '[order preview retained by server]').replace(/\baic1\.[a-f0-9]{64}\b/g, '[store currency preview retained by server]'));
+    if (internal) internalBlocks.push(internal.replace(/\baip1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, '[order preview retained by server]').replace(/\baic1\.[a-f0-9]{64}\b/g, '[store currency preview retained by server]').replace(/\baif1\.[a-f0-9]{64}\b/g, '[commerce approval retained by server]'));
 
     const nextMessage = {
       role: message.role,
@@ -1781,6 +1801,7 @@ async function getSystemPrompt(role, channel = 'web') {
 }
 
 const GUEST_TOOL_NAMES = new Set([
+  'get_payment_options',
   'search_products',
   'navigate',
   'get_subscription_catalog',
@@ -1911,8 +1932,8 @@ async function executeToolCallForChat(toolName, args, userObj, lastUserText = ''
     normalizedArgs = previous;
   }
   const argsWithContext = normalizedArgs && typeof normalizedArgs === 'object' && !Array.isArray(normalizedArgs)
-    ? { ...normalizedArgs, _lastUserText: lastUserText, ...turnContext, _requireOrderPreview: true }
-    : { _lastUserText: lastUserText, ...turnContext, _requireOrderPreview: true };
+    ? { ...normalizedArgs, _lastUserText: lastUserText, ...turnContext, _requireOrderPreview: true, _requireCommercePreview: true }
+    : { _lastUserText: lastUserText, ...turnContext, _requireOrderPreview: true, _requireCommercePreview: true };
   if (['add_product', 'bulk_add_products'].includes(toolName)) argsWithContext._requireExplicitSellerInputs = true;
   // Never accept a model-supplied conversation or approval context.
   argsWithContext._chatConversationId = turnContext._chatConversationId || null;
@@ -1959,6 +1980,7 @@ function toolResultForModel(result) {
 }
 
 const TERMINAL_AI_ACTION_CODES = new Set([
+  'AI_COMMERCE_ACTION_PENDING',
   'AI_ACTION_PENDING',
   'AI_ACTION_IDEMPOTENCY_CONFLICT',
   'AI_ACTION_RECEIPT_COMMIT_AMBIGUOUS',
@@ -2009,6 +2031,9 @@ function hasSuccessfulDurableMutation(toolResults = []) {
   return toolResults.some(entry => (
     isDurableMutatingAITool?.(entry?.tool)
     && entry?.result?.success === true
+    && entry?.result?.previewOnly !== true
+    && entry?.result?.requiresConfirmation !== true
+    && entry?.result?.requiresPayment !== true
   ));
 }
 
@@ -2215,7 +2240,7 @@ const AI_COMMON_ROUTES = new Set([
   '/faq', '/contact', '/docs', '/track-order', '/become-seller', '/terms',
   '/privacy', '/ai-chat', '/login', '/signup', '/cart', '/checkout',
   '/shipping-policy', '/refund-policy', '/cancellation-policy',
-  '/products', '/stores', '/settings/blocked-accounts',
+  '/products', '/stores', '/settings/blocked-accounts', '/account-deletion',
 ]);
 const AI_ROLE_ROUTES = {
   user: new Set([
@@ -2224,6 +2249,9 @@ const AI_ROLE_ROUTES = {
     '/user-dashboard/notifications', '/user-dashboard/payment-methods',
   ]),
   seller: new Set([
+    '/user-dashboard', '/user-dashboard/account-overview', '/user-dashboard/profile',
+    '/user-dashboard/orders', '/user-dashboard/whatsapp', '/user-dashboard/wallet',
+    '/user-dashboard/notifications', '/user-dashboard/payment-methods',
     '/seller-dashboard', '/seller-dashboard/seller-home', '/seller-dashboard/store-overview',
     '/seller-dashboard/product-management', '/seller-dashboard/order-management',
     '/seller-dashboard/store-settings', '/seller-dashboard/shipping-configuration',
@@ -2277,7 +2305,7 @@ function normalizeAIClientRoute(route, role = 'guest') {
     /^\/store\/[^/]+$/,
     /^\/orders\/confirm\/[^/]+$/,
     ...(role === 'seller' ? [/^\/seller-dashboard\/order\/[^/]+$/] : []),
-    ...(role === 'user' ? [/^\/user-dashboard\/order(?:\/detail)?\/[^/]+$/] : []),
+    ...(['user', 'seller'].includes(role) ? [/^\/user-dashboard\/order(?:\/detail)?\/[^/]+$/] : []),
     ...(role === 'admin' ? [/^\/admin-dashboard\/order\/[^/]+$/] : []),
   ].some(pattern => pattern.test(normalized));
   if (dynamicAllowed) return normalized;
@@ -2619,7 +2647,7 @@ async function processAIChatMessage(userObj, incomingMessages, options = {}) {
   const tools = getTools(effectiveRole);
   const toolResults = [];
   const clientActions = [];
-  const lastUserText = cleanMessages.filter(m => m.role === 'user').pop()?.content || '';
+  const lastUserText = options._trustedUserIntentText ?? (cleanMessages.filter(m => m.role === 'user').pop()?.content || '');
   const explicitlyRequestedTools = explicitlyRequestedAITools(lastUserText, tools);
   const naturalLookupState = { retried: false, tool: '' };
   const currencyCooldownReply = await getStoreCurrencyCooldownReply(userId, effectiveRole, lastUserText);
@@ -2971,7 +2999,7 @@ exports.streamChat = async (req, res) => {
 
     // Collect tool events from this turn so we can persist them with the assistant message
     const turnToolEvents = [];
-    const lastUserText = cleanMessages.filter(m => m.role === 'user').pop()?.content || '';
+    const lastUserText = req.aiCommerceUserText ?? (cleanMessages.filter(m => m.role === 'user').pop()?.content || '');
     const explicitlyRequestedTools = explicitlyRequestedAITools(lastUserText, tools);
     const naturalLookupState = { retried: false, tool: '' };
     const toolTurnContext = {
@@ -3318,7 +3346,7 @@ exports.chatOnce = async (req, res) => {
     const tools = getTools(effectiveRole);
     const toolResults = []; // Collect tool results for client
     const clientActions = []; // Collect client-side actions
-    const lastUserText = cleanMessages.filter(m => m.role === 'user').pop()?.content || '';
+    const lastUserText = req.aiCommerceUserText ?? (cleanMessages.filter(m => m.role === 'user').pop()?.content || '');
     const explicitlyRequestedTools = explicitlyRequestedAITools(lastUserText, tools);
     const naturalLookupState = { retried: false, tool: '' };
     const toolTurnContext = {

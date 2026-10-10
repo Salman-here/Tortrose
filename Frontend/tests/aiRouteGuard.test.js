@@ -2,8 +2,15 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { normalizeAIRoute } from '../src/utils/aiRouteGuard.js';
+import secureFlows from '../../Backend/services/aiSecureFlowService.js';
 
 globalThis.window = { location: { origin: 'https://rozare.com' } };
+
+test('every buyer and seller secure feature handoff is a real web route', () => {
+  for (const flow of Object.values({ ...secureFlows.buyerFlows, ...secureFlows.sellerFlows })) {
+    assert.equal(normalizeAIRoute(flow[0]), flow[0]);
+  }
+});
 
 test('normalizes common AI seller route aliases to real dashboard pages', () => {
   assert.equal(

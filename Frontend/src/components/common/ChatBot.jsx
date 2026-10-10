@@ -35,6 +35,7 @@ import {
 } from '../../utils/persistedMutationAttempt';
 import { OPEN_AI_CHAT_EVENT } from '../../utils/aiChatLauncher';
 import SafetyActionsDialog from './SafetyActionsDialog';
+import { aiCommercePreviewPresentation } from '../../utils/aiCommercePresentation';
 
 // ─── Endpoint (our own backend — no Supabase) ───
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000/';
@@ -42,6 +43,7 @@ const AI_CHAT_URL = `${API_BASE}api/ai-chat/stream`;
 const PRODUCT_IMAGE_ATTACHMENT_RE = /\n?\[Attached product image: (https?:\/\/[^\]\s]+)\]/gi;
 const CHAT_ATTEMPT_STORAGE_KEY = 'rozare_ai_chat_attempt_v1';
 const UNRESOLVED_AI_ACTION_CODES = new Set([
+  'AI_COMMERCE_ACTION_PENDING',
   'AI_ACTION_PENDING',
   'AI_ACTION_IDEMPOTENCY_CONFLICT',
   'AI_ACTION_RECEIPT_COMMIT_AMBIGUOUS',
@@ -177,7 +179,9 @@ const summarizeToolEventsForPrompt = (toolEvents = []) => {
     if (event?.type !== 'tool_result') continue;
     const result = event.result || {};
     const data = result.data || {};
-    if (event.tool === 'add_product' && result.success && (result.pending || data.pending) && data.productId) {
+    if (result.previewOnly && data.commercePreview) {
+      lines.push(`[Tool memory: ${event.tool} is ONLY a server-reviewed preview; nothing was submitted, withdrawn or refunded. Reviewed request: ${JSON.stringify(data.request || {})}. Await a subsequent explicit confirmation and call the same action with confirm=true. Approval is retained by the server, not supplied by the model.]`);
+    } else if (event.tool === 'add_product' && result.success && (result.pending || data.pending) && data.productId) {
       lines.push(`[Tool memory: productId=${data.productId} was saved and awaits automatic content checks. Do not claim it is live or ask for duplicate creation. Query current status for later questions.]`);
     } else if (event.tool === 'add_product' && result.success && result.blocked && data.productId) {
       lines.push(`[Tool memory: add_product saved but blocked. productId=${data.productId}; name="${data.name || ''}"; reason="${data.moderationReason || result.message || ''}". Tell the seller it is blocked and ask them to edit the real product details; do not add it again.]`);
@@ -1312,6 +1316,26 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
             if (event.type === 'tool_result') {
               const result = event.result;
               const toolName = event.tool;
+              const commercePreview = aiCommercePreviewPresentation(result);
+              if (commercePreview) {
+                const current = idx === messages.length - 1 && !chatBusy && !msg.isStreaming;
+                const uniquePreviews = new Set((msg.toolEvents || []).filter(entry => entry.result?.previewOnly && entry.result?.data?.quoteToken).map(entry => entry.result.data.quoteToken));
+                const disabled = !current || uniquePreviews.size !== 1;
+                return (
+                  <div key={i} className="mt-3 p-4 rounded-2xl text-left space-y-3"
+                    style={{ background: 'linear-gradient(125deg, rgba(20,184,166,.10), rgba(99,102,241,.10))', border: '1px solid var(--glass-border)' }}>
+                    <div className="flex items-center gap-2 text-sm font-bold" style={{ color: 'hsl(var(--foreground))' }}><Shield size={17} />{commercePreview.title}</div>
+                    <p className="text-xs whitespace-pre-wrap leading-relaxed" style={{ color: 'hsl(var(--foreground))' }}>{commercePreview.notice}</p>
+                    <p className="text-[11px]" style={{ color: 'hsl(var(--muted-foreground))' }}>{idx === messages.length - 1 && chatBusy ? 'Finishing this preview…' : disabled ? 'Earlier or ambiguous preview. Ask for a fresh review before confirming.' : commercePreview.reminder}</p>
+                    <div className="flex flex-col gap-2">
+                      {commercePreview.controls.map(control => <button key={control.label} type="button" disabled={disabled}
+                        onClick={() => sendMessage(control.message, [])} aria-label={control.label}
+                        className="px-3 py-2.5 rounded-xl text-xs font-semibold text-white disabled:opacity-40"
+                        style={{ background: 'linear-gradient(110deg,#14b8a6,#0ea5e9,#6366f1)' }}>{control.label}</button>)}
+                    </div>
+                  </div>
+                );
+              }
 
               // ── Product cards for search_products, list_my_products, get_wishlist ──
               const products = result?.data?.products || result?.data?.items;
@@ -1432,7 +1456,7 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
 
               // ── Default: action result card ──
               const ToolIcon = TOOL_ICONS[toolName] || Package;
-              const isBlocked = result?.blocked || result?.requiresConfirmation;
+              const isBlocked = result?.blocked || result?.requiresConfirmation || result?.requiresPayment || result?.requiresSecureAction;
               const isSuccess = result?.success !== false && !isBlocked;
               const color = isSuccess
                 ? 'hsl(150, 60%, 45%)'

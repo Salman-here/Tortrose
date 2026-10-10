@@ -205,7 +205,9 @@ exports.acceptReturn = async (req, res) => {
         const originalOrder = await Order.findById(existing.order).select('paymentMethod isPaid');
         const heldOrder = ['wallet', 'safepay'].includes(originalOrder?.paymentMethod) && originalOrder.isPaid === true;
         if (heldOrder || fundingSource === 'seller_balance') {
-            const returnRequest = await settleFromSellerBalance({ returnRequestId: existing._id, sellerId: req.user.id });
+            const returnRequest = await settleFromSellerBalance({ returnRequestId: existing._id, sellerId: req.user.id,
+                expectedRefundAmount: req.body?.expectedRefundAmount, expectedRefundCurrency: req.body?.expectedRefundCurrency,
+                expectedUpdatedAt: req.body?.expectedReturnUpdatedAt });
             const order = await Order.findById(returnRequest.order).lean();
             await notifyReturnSettlementCompleted(returnRequest, order);
             return res.status(200).json({

@@ -3,11 +3,20 @@ process.env.OPENROUTER_API_KEY = 'tool-surface-contract-test';
 const fs = require('fs');
 const path = require('path');
 const { CLIENT_SIDE_TOOLS } = require('../../services/aiActionExecutor');
+const { NEW_COMMERCE_TOOL_NAMES } = require('../../services/aiCommerceTools');
 const { __private } = require('../../controllers/aiChatController');
 
 const toolNamesFor = role => __private.getTools(role).map(tool => tool.function.name);
 
 describe('AI role tool surface contract', () => {
+  test('only current payment configuration is public; private financial actions require authentication and seller ownership', () => {
+    expect(toolNamesFor('guest')).toContain('get_payment_options');
+    expect(toolNamesFor('guest')).not.toContain('get_wallet_balance');
+    expect(toolNamesFor('guest')).not.toContain('request_return');
+    expect(toolNamesFor('user')).not.toContain('request_withdrawal');
+    expect(toolNamesFor('seller')).toContain('request_withdrawal');
+    expect(toolNamesFor('seller')).toContain('get_purchase_orders');
+  });
   test('store currency tools are seller-only and context separates store currency from account display currency', () => {
     expect(toolNamesFor('seller')).toEqual(expect.arrayContaining(['preview_store_currency_change', 'change_store_currency']));
     expect(toolNamesFor('user')).not.toEqual(expect.arrayContaining(['change_store_currency']));
@@ -30,9 +39,11 @@ describe('AI role tool surface contract', () => {
     expect(toolNames).not.toHaveLength(0);
 
     const missingExecutors = toolNames.filter(toolName => (
-      !CLIENT_SIDE_TOOLS.has(toolName) && !serverExecutors.has(toolName)
+      !CLIENT_SIDE_TOOLS.has(toolName) && !serverExecutors.has(toolName) && !NEW_COMMERCE_TOOL_NAMES.has(toolName)
     ));
     expect(missingExecutors).toEqual([]);
+    expect(executorSource).toContain('NEW_COMMERCE_TOOL_NAMES.has(toolName)');
+    expect(executorSource).toContain('return executeCommerceTool(toolName, args, user)');
   });
 
   test('seller access is a strict superset of the buyer tool surface', () => {

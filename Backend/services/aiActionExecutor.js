@@ -135,8 +135,8 @@ const {
   storeMatchesBuyerCatalogScope,
 } = require('./publicCatalogService');
 const { storeAllowsCashOnDelivery } = require('./storePaymentPolicyService');
-const { isStoreAvailableForDelivery } = require('./storeVisibilityService');
-const { multiplyMoney, percentageOfMoney, sumMoney, toMinorUnits } = require('./moneyMath');
+const { isStoreAvailableForDelivery, normalizeStoreVisibility } = require('./storeVisibilityService');
+const { multiplyMoney, percentageOfMoney, sumMoney, toMinorUnits, fromMinorUnits } = require('./moneyMath');
 const { commitOrderInventory } = require('./orderInventoryService');
 const { cancelOrderSafely } = require('./orderCancellationService');
 const { transitionOrderFulfillment } = require('./orderStatusTransitionService');
@@ -167,6 +167,8 @@ const {
   enqueueCodOrderSellerNotifications,
 } = require('./financialNotificationOutboxService');
 const { META_ADS_ADDON_CENTS } = require('./subscriptionPricingService');
+const { NEW_COMMERCE_TOOL_NAMES, REVIEWED_COMMERCE_ACTIONS } = require('./aiCommerceTools');
+const { executeCommerceTool } = require('./aiCommerceActionService');
 
 // ─── Client-side tools: rendered by frontend, not executed here ───
 const CLIENT_SIDE_TOOLS = new Set([
@@ -179,6 +181,7 @@ const CLIENT_SIDE_TOOLS = new Set([
 // stronger transaction-coupled idempotency contracts and are intentionally
 // handled inside their implementations instead.
 const AI_MUTATING_TOOLS_WITH_OUTER_RECEIPT = new Set([
+  'request_return', 'cancel_return', 'update_return_status', 'accept_return', 'request_withdrawal',
   'cancel_order',
   'submit_complaint',
   'add_to_wishlist',
@@ -1669,13 +1672,18 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
   // just discovery tools directly selected by the model. Keep private history,
   // mutation receipts and settlement outside this read-only catalog scope.
   if (!catalogScoped && user?._buyerLocation && user.role !== 'admin'
-      && ['search_products', 'get_product_detail', 'search_stores', 'get_store_details', 'get_available_coupons'].includes(toolName)) {
+      && ['search_products', 'get_product_detail', 'search_stores', 'get_verified_stores', 'get_store_details', 'get_available_coupons'].includes(toolName)) {
     return withBuyerCatalogLocation(user._buyerLocation, () => executeToolCallUnprotected(
       toolName, args, user, { propagateErrors, catalogScoped: true }
     ));
   }
   const userId = user?._id || user?.id || null;
   const role = user?.role || 'guest';
+
+  if (NEW_COMMERCE_TOOL_NAMES.has(toolName)
+    || args._requireCommercePreview === true && role !== 'admin' && REVIEWED_COMMERCE_ACTIONS.has(toolName)) {
+    return executeCommerceTool(toolName, args, user);
+  }
 
   try {
     let preferredCurrency = normalizeCurrency(user?.currency || 'USD');
@@ -1722,19 +1730,26 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
         const { query, category, minPrice, maxPrice, sortBy, brand, limit } = args;
         const hasMinPrice = minPrice !== undefined && minPrice !== null && minPrice !== '';
         const hasMaxPrice = maxPrice !== undefined && maxPrice !== null && maxPrice !== '';
+        if (args.currency !== undefined && !isSupportedCurrency(args.currency)) return { success: false, code: 'CATALOG_FILTER_INVALID', error: 'Choose USD, PKR, EUR or GBP for search prices.' };
         const requestedCurrency = normalizeCurrency(args.currency || preferredCurrency);
         const priceBounds = { min: null, max: null };
         if (hasMinPrice) {
           const parsed = parseMoneyInput(minPrice, requestedCurrency);
-          if (Number.isFinite(parsed.amount)) priceBounds.min = await convertAmount(parsed.amount, parsed.currency, requestedCurrency);
+          if (!Number.isFinite(parsed.amount) || parsed.amount < 0) return { success: false, code: 'CATALOG_FILTER_INVALID', error: 'Minimum price must be a non-negative number.' };
+          priceBounds.min = await convertAmount(parsed.amount, parsed.currency, requestedCurrency);
         }
         if (hasMaxPrice) {
           const parsed = parseMoneyInput(maxPrice, requestedCurrency);
-          if (Number.isFinite(parsed.amount)) priceBounds.max = await convertAmount(parsed.amount, parsed.currency, requestedCurrency);
+          if (!Number.isFinite(parsed.amount) || parsed.amount < 0) return { success: false, code: 'CATALOG_FILTER_INVALID', error: 'Maximum price must be a non-negative number.' };
+          priceBounds.max = await convertAmount(parsed.amount, parsed.currency, requestedCurrency);
         }
+        if (priceBounds.min !== null && priceBounds.max !== null && priceBounds.min > priceBounds.max) return { success: false, code: 'CATALOG_FILTER_INVALID', error: 'Minimum price cannot exceed maximum price.' };
         const needsComparablePrices = hasMinPrice || hasMaxPrice || ['price_low', 'price_high'].includes(sortBy);
         const fetchLimit = needsComparablePrices ? 300 : safeLimit(limit, 20, 50);
-        const applyPriceBounds = async () => {};
+        let verifiedBrandSeller = null;
+        const applyPriceBounds = async filter => {
+          if (verifiedBrandSeller) filter.$and = [...(filter.$and || []), { seller: verifiedBrandSeller }];
+        };
         const finalizeProductSearch = async (items) => {
           let next = await attachAIComparablePrices(items, requestedCurrency);
           next = filterAIProductsByPriceBounds(next, priceBounds);
@@ -1743,6 +1758,14 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
         };
 
         const activeSellerIds = await getActiveSellerIds();
+
+        if (args.verifiedBrandStoreId !== undefined) {
+          if (!mongoose.isValidObjectId(args.verifiedBrandStoreId)) return { success: false, code: 'CATALOG_FILTER_INVALID', error: 'Choose a verified brand from the store results.' };
+          const verified = await Store.findOne(activeStoreQuery({ _id: args.verifiedBrandStoreId,
+            seller: { $in: activeSellerIds }, sellerType: 'brand', 'verification.isVerified': true })).select('seller').lean();
+          if (!verified) return { success: false, code: 'CATALOG_FILTER_INVALID', error: 'This verified brand is not available in your selected shopping location.' };
+          verifiedBrandSeller = verified.seller;
+        }
 
         // Use smart search with synonym expansion
         let filter = applyActiveSellerProductFilter(
@@ -1981,6 +2004,8 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
         let items = order.orderItems || [];
         let summary = order.orderSummary;
         let sellerMoney = null;
+        let originalOnlineDeduction = null;
+        let returnHold = null;
         if (role === 'seller') {
           items = filterSellerOrderItems(order, userId, sellerProductIds);
           if (!items.length) return { success: false, error: 'Order not found or access denied.' };
@@ -1989,6 +2014,16 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
             ...sellerMoney.money,
             note: 'Shows only your exact allocated share of this order in your frozen store currency',
           };
+          const fee = require('./onlineOrderFeeService').sellerOnlineFee(order, userId);
+          if (fee) originalOnlineDeduction = { currency: fee.currency, gross: fromMinorUnits(fee.grossMinor),
+            processingFeeAndTax: fromMinorUnits(fee.feeMinor), originalNet: fromMinorUnits(fee.grossMinor - fee.feeMinor),
+            note: 'Original frozen online deduction, not current withdrawal availability. Returns/cancellations and reservations can change availability; use get_seller_payments.' };
+          if (['safepay', 'wallet'].includes(order.paymentMethod) && order.isPaid === true) {
+            const requests = await require('../models/ReturnRequest').find({ order: order._id, seller: userId }).lean();
+            returnHold = { ...require('./sellerReturnHoldService').sellerReturnHold(order, userId, { returns: requests }),
+              deliveryPending: sellerOrderStatus(order, userId) !== 'delivered',
+              note: 'Return-window holds are not the same as withdrawal availability. Undelivered orders and reservations stay pending separately.' };
+          }
         }
 
         return {
@@ -2004,6 +2039,8 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
               sellerItemIndex: role === 'seller' ? sellerItemIndex : -1,
             })),
             summary,
+            originalOnlineDeduction,
+            returnHold,
             buyerSummary: role === 'seller' ? {
               currency: sellerMoney.buyerCurrency,
               ...sellerMoney.buyerMoney,
@@ -2015,7 +2052,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
             isDelivered: order.isDelivered,
             date: order.createdAt,
           },
-          message: `Order #${order.orderId} — ${order.orderStatus}${role === 'seller' ? ' (your products only)' : ''}`,
+          message: `Order #${order.orderId} — ${role === 'seller' ? sellerOrderStatus(order, userId) : order.orderStatus}${role === 'seller' ? ' (your products only)' : ''}`,
         };
       }
 
@@ -2065,7 +2102,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
           return {
             success: false,
             code: 'PAYMENT_ALREADY_SUCCEEDED',
-            error: 'Stripe already received this payment. Waiting for secure confirmation.',
+            error: 'The payment provider already received this payment. Waiting for secure confirmation.',
           };
         }
 
@@ -5214,7 +5251,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
           if (cancellation.status === 'payment_succeeded') {
             return {
               success: false,
-              error: 'Stripe already received this payment. Waiting for secure webhook confirmation.',
+              error: 'The payment provider already received this payment. Waiting for secure confirmation.',
               code: 'PAYMENT_ALREADY_SUCCEEDED',
             };
           }
@@ -5281,6 +5318,8 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
             verification: store.verification,
             socialLinks: store.socialLinks,
             returnPolicy: store.returnPolicy,
+            visibility: store.visibility,
+            address: store.address,
             paymentPolicy: store.paymentPolicy || 'online_and_cod',
             productCurrency: productCurrencySettings.activeCurrency,
             productCurrencySettings,
@@ -5309,7 +5348,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
         if (['currency', 'productCurrency', 'pendingProductCurrency'].some(field => normalizedRaw[field] !== undefined)) {
           return { success: false, code: 'AI_CURRENCY_PREVIEW_REQUIRED', error: 'Store currency requires a separate reviewed conversion and confirmation. Use the store-currency preview; no store settings were changed.' };
         }
-        const allowedStoreFields = ['storeName', 'storeSlug', 'description', 'logo', 'banner', 'socialLinks', 'address', 'returnPolicy', 'sellerType', 'paymentPolicy'];
+        const allowedStoreFields = ['storeName', 'storeSlug', 'description', 'logo', 'banner', 'socialLinks', 'address', 'returnPolicy', 'sellerType', 'paymentPolicy', 'visibility'];
         const normalizedUpdates = {};
         let pendingSlugChange = null;
         for (const field of allowedStoreFields) {
@@ -5372,7 +5411,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
           if (existingStore.subdomainPurchase?.paymentRiskState === 'open') {
             return {
               success: false,
-              error: 'Your purchased subdomain has an unresolved Stripe payment dispute. It cannot be changed until the dispute is resolved.',
+              error: 'Your purchased subdomain has an unresolved payment dispute. It cannot be changed until the dispute is resolved.',
               code: 'SUBDOMAIN_PAYMENT_RISK_OPEN',
             };
           }
@@ -5461,6 +5500,15 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
           normalizedUpdates.socialLinks = normalizeSocialLinks(normalizedUpdates.socialLinks);
         }
 
+        if (normalizedUpdates.visibility !== undefined) {
+          try {
+            const seller = await User.findById(userId).select('sellerInfo savedShippingInfo country').lean();
+            normalizedUpdates.visibility = normalizeStoreVisibility(normalizedUpdates.visibility, { store: existingStore, seller });
+          } catch (error) {
+            return { success: false, code: 'STORE_VISIBILITY_INVALID', error: error.message || 'Choose a valid store visibility area.' };
+          }
+        }
+
         if (Object.keys(normalizedUpdates).length === 0 && !pendingSlugChange) {
           return { success: false, error: 'No changes to apply.' };
         }
@@ -5494,7 +5542,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
             { seller: userId, ...catalogWriteGuard(existingStore) },
             { $set: normalizedUpdates, $inc: { __v: 1 } },
             { new: true, runValidators: true }
-          ).select('seller storeName storeSlug description paymentPolicy moderationStatus moderationReason moderationFields lastNameChangeAt lastSlugChangeAt lastTypeChangeAt lastProductCurrencyChangeAt').lean();
+          ).select('seller storeName storeSlug description paymentPolicy visibility moderationStatus moderationReason moderationFields lastNameChangeAt lastSlugChangeAt lastTypeChangeAt lastProductCurrencyChangeAt').lean();
         }
         if (!updatedStore) return { success: false, code: 'STORE_CONTENT_CONFLICT', error: 'Store content changed while this edit was prepared. Refresh and try again.' };
         await ensureCatalogModerationNotification('store', updatedStore).catch(error => console.error('[catalog-moderation] notice deferred:', error.code || 'OUTBOX_ERROR'));
@@ -5507,13 +5555,15 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
         return {
           success: true,
           message: moderationMessage('store', updatedStore),
-          requiredDisclosure: moderationMessage('store', updatedStore),
+          requiredDisclosure: moderationMessage('store', updatedStore)
+            + (normalizedUpdates.visibility?.mode === 'global' ? ' Global visibility is suitable only if you can ship your products globally. Visibility does not guarantee delivery to every destination.' : ''),
           data: {
             storeName: updatedStore.storeName,
             moderationStatus: updatedStore.moderationStatus,
             moderationReason: updatedStore.moderationReason || '',
             slug: updatedStore.storeSlug,
             paymentPolicy: updatedStore.paymentPolicy || 'online_and_cod',
+            visibility: updatedStore.visibility,
             updatedFields,
             ...(forfeitedPurchasedOwnership ? { purchasedOwnershipForfeited: true } : {}),
             changeLimits: storeChangeLimits(updatedStore),
@@ -6858,9 +6908,12 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
       }
 
       case 'get_verified_stores': {
-        const stores = await Store.find(activeStoreQuery({ 'verification.isVerified': true }))
+        const activeSellerIds = await getActiveSellerIds();
+        const stores = await Store.find(activeStoreQuery({ 'verification.isVerified': true,
+          seller: { $in: activeSellerIds }, ...(args.brandOnly === true ? { sellerType: 'brand' } : {}) }))
           .populate('seller', 'username')
-          .select('storeName storeSlug description views trustCount verification')
+          .select('storeName storeSlug description views trustCount verification sellerType')
+          .limit(safeLimit(args.limit, 20, 50))
           .lean();
 
         return {
@@ -6875,6 +6928,8 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
               seller: s.seller?.username || 'Unknown',
               views: s.views,
               trustCount: s.trustCount,
+              sellerType: s.sellerType,
+              isVerified: true,
             })),
             count: stores.length,
           },
