@@ -69,7 +69,7 @@ test('terminal, missing and unsupported attempts do not offer resume or call the
 test('return UI uses owner-scoped web reopen and pauses its polling while the secure presenter is active', () => {
   const source = readFileSync(new URL('../src/pages/SafepayReturnPage.jsx', import.meta.url), 'utf8');
   assert.match(source, /safepayApi\.post\(`\/payments\/\$\{id\}\/reopen`, \{ clientSurface: 'web' \}\)/);
-  assert.match(source, /if \(resuming \|\| !currentUser/);
+  assert.match(source, /if \(embedded \|\| resuming \|\| !currentUser/);
   assert.match(source, /Resume secure payment/);
   assert.doesNotMatch(source, /\/create|ensurePayment|tracker=/);
 });

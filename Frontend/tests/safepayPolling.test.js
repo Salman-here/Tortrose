@@ -28,9 +28,10 @@ test('both web verification surfaces back off and preserve pending outcomes', ()
   const provider = readFileSync(new URL('../src/components/common/SafepayCheckoutProvider.jsx', import.meta.url), 'utf8');
   const page = readFileSync(new URL('../src/pages/SafepayReturnPage.jsx', import.meta.url), 'utf8');
   assert.match(provider, /await check\(\)/);
-  assert.match(provider, /retryNotBefore\.current - Date\.now\(\)/);
+  assert.match(provider, /active\.current\.retryNotBefore - Date\.now\(\)/);
   assert.doesNotMatch(provider, /setInterval/);
-  assert.match(provider, /status: 'pending'.*isPaid: false/);
+  const session = readFileSync(new URL('../src/utils/safepayPopupReturn.js', import.meta.url), 'utf8');
+  assert.match(session, /status: 'pending'.*isPaid: false/);
   assert.match(page, /setTimeout\(check, retryAfter\)/);
   assert.match(page, /disabled=\{coolingDown\}/);
   assert.match(page, /resuming \|\| coolingDown/);

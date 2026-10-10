@@ -62,7 +62,7 @@ import { requireWalletSummaryResponse } from '../../utils/walletPaymentRisk';
 import { getCartPresentationProductCurrency } from '../../utils/cartPresentation';
 import StoreAvatar from '../common/StoreAvatar';
 import { openSafepayCheckout } from '../../utils/safepay';
-import { checkoutDraftStorageKey, markGuestCheckoutHandoff, readCheckoutDraft } from '../../utils/checkoutDraft';
+import { checkoutDraftStorageKey, createCheckoutCartIdentity, markGuestCheckoutHandoff, readCheckoutDraft, reconcileCheckoutProgress } from '../../utils/checkoutDraft';
 import useCheckoutQuote from '../../hooks/useCheckoutQuote';
 import { createCheckoutQuoteInput } from '../../utils/checkoutQuote';
 
@@ -162,15 +162,13 @@ function OwnedCheckout({ owner }) {
 
   const steps = ["Cart", "Shipping", "Payment"];
   const CHECKOUT_STORAGE_KEY = checkoutDraftStorageKey(owner);
-  const [currentStep, setCurrentStep] = useState(() => {
-    try {
-      const saved = readCheckoutDraft(sessionStorage, owner);
-      if (saved) {
-        if (typeof saved.currentStep === 'number') return saved.currentStep;
-      }
-    } catch (_) {}
-    return 0;
+  const [restoredCheckoutDraft] = useState(() => {
+    try { return readCheckoutDraft(sessionStorage, owner); } catch { return null; }
   });
+  const [checkoutProgress, setCheckoutProgress] = useState(() => ({
+    currentStep: restoredCheckoutDraft?.currentStep || 0,
+    cartIdentity: restoredCheckoutDraft?.cartIdentity || null,
+  }));
 
   const [isProcessing, setIsProcessing] = useState(false);
   const navigate = useNavigate();
@@ -201,16 +199,9 @@ function OwnedCheckout({ owner }) {
   const [sellerCoupons, setSellerCoupons] = useState({}); // { sellerId: [coupon, ...] }
   const [couponInputs, setCouponInputs] = useState({}); // { key: 'CODE' }
   const [appliedCoupons, setAppliedCoupons] = useState({}); // { key: { coupon, applicableProductIds } }
-  const restoredCouponCandidatesRef = useRef((() => {
-    try {
-      const saved = readCheckoutDraft(sessionStorage, owner);
-      return saved?.appliedCoupons && typeof saved.appliedCoupons === 'object' && !Array.isArray(saved.appliedCoupons)
-        ? saved.appliedCoupons
-        : null;
-    } catch (_) {
-      return null;
-    }
-  })());
+  const restoredCouponCandidatesRef = useRef(restoredCheckoutDraft?.appliedCoupons
+    && typeof restoredCheckoutDraft.appliedCoupons === 'object' && !Array.isArray(restoredCheckoutDraft.appliedCoupons)
+    ? restoredCheckoutDraft.appliedCoupons : null);
   const [couponLoading, setCouponLoading] = useState({});
   const [wallet, setWallet] = useState(null);
   const [walletLoading, setWalletLoading] = useState(false);
@@ -238,6 +229,16 @@ function OwnedCheckout({ owner }) {
   } = useGlobal();
   const cartMoneySignature = createCheckoutMoneyCartSignature(cartItems?.cart || []);
   const checkoutUserId = currentUser?._id || currentUser?.id || '';
+  const checkoutCartIdentity = isCartReady ? createCheckoutCartIdentity(cartItems?.cart || [], currency) : null;
+  const { currentStep } = reconcileCheckoutProgress(checkoutProgress, checkoutCartIdentity);
+  const setCurrentStep = update => setCheckoutProgress(previous => {
+    const reviewed = reconcileCheckoutProgress(previous, checkoutCartIdentity);
+    return { ...reviewed, currentStep: typeof update === 'function' ? update(reviewed.currentStep) : update };
+  });
+  useEffect(() => {
+    if (!checkoutCartIdentity) return;
+    setCheckoutProgress(previous => reconcileCheckoutProgress(previous, checkoutCartIdentity));
+  }, [checkoutCartIdentity]);
 
   const productCurrency = getCartPresentationProductCurrency;
   const couponCurrency = (coupon) => coupon?.currency || '';
@@ -677,7 +678,7 @@ function OwnedCheckout({ owner }) {
 
   useEffect(() => {
     try {
-      const parsed = readCheckoutDraft(sessionStorage, owner);
+      const parsed = restoredCheckoutDraft;
       if (!parsed) return;
       if (parsed.formValues) {
         Object.entries(parsed.formValues).forEach(([key, value]) => {
@@ -690,21 +691,23 @@ function OwnedCheckout({ owner }) {
       // Persisted coupons remain only as inert candidates. The cart-identity
       // effect activates them after the availability endpoint confirms terms.
     } catch (_) {}
-  }, [owner, CHECKOUT_STORAGE_KEY, setValue]);
+  }, [restoredCheckoutDraft, setValue]);
 
   useEffect(() => {
+    if (!isCartReady) return;
     try {
       sessionStorage.setItem(
         CHECKOUT_STORAGE_KEY,
         JSON.stringify({
           currentStep,
+          cartIdentity: checkoutCartIdentity,
           formValues: allFormValues,
           selectedShippingPerSeller,
           appliedCoupons,
         })
       );
     } catch (_) {}
-  }, [CHECKOUT_STORAGE_KEY, currentStep, allFormValues, selectedShippingPerSeller, appliedCoupons]);
+  }, [CHECKOUT_STORAGE_KEY, isCartReady, checkoutCartIdentity, currentStep, allFormValues, selectedShippingPerSeller, appliedCoupons]);
 
   const quoteInput = createCheckoutQuoteInput({
     actor:checkoutUserId || 'guest', currency, cart:cartItems?.cart || [],
@@ -963,6 +966,7 @@ function OwnedCheckout({ owner }) {
           CHECKOUT_STORAGE_KEY,
           JSON.stringify({
             currentStep,
+            cartIdentity: checkoutCartIdentity,
             formValues: data,
             selectedShippingPerSeller,
             appliedCoupons,
@@ -1324,6 +1328,7 @@ function OwnedCheckout({ owner }) {
             CHECKOUT_STORAGE_KEY,
             JSON.stringify({
               currentStep,
+              cartIdentity: checkoutCartIdentity,
               formValues: data,
               selectedShippingPerSeller,
               appliedCoupons,

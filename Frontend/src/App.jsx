@@ -13,6 +13,7 @@ import SafepayCheckoutProvider from './components/common/SafepayCheckoutProvider
  
 function App() {  
   const { pathname } = useLocation();
+  const paymentReturn = pathname === '/safepay/return';
   const { locationQueryString, selectionRequired } = useBuyerLocation();
   const catalogRoute = pathname === '/' || /^\/(products|stores|store|single-product|marketplace|trusted-stores)(\/|$)/.test(pathname);
   const catalogKey = catalogRoute ? locationQueryString + ':' + selectionRequired : 'non-catalog';
@@ -24,7 +25,7 @@ function App() {
 
   return (
     <HelmetProvider><SafepayCheckoutProvider>
-      <Analytics />
+      {!paymentReturn && <Analytics />}
       <ToastContainer
         position='bottom-right'
         autoClose={3500}
@@ -46,8 +47,8 @@ function App() {
           boxShadow: '0 8px 32px rgba(0,0,0,0.12)',
         }}
       />
-      <TestPhaseNotice />
-      {!onDocs && <ShoppingLocationPrompt />}
+      {!paymentReturn && <TestPhaseNotice />}
+      {!onDocs && !paymentReturn && <ShoppingLocationPrompt />}
       {onDocs ? <DocsPage /> : <AppRoutes key={catalogKey} subdomainSlug={subdomainSlug} />}
     </SafepayCheckoutProvider></HelmetProvider>
   )

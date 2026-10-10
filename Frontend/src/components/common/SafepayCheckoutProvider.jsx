@@ -3,14 +3,14 @@ import { createPortal } from 'react-dom';
 import { Loader2, ShieldCheck, X } from 'lucide-react';
 import { registerSafepayPresenter, verifySafepayPayment } from '../../utils/safepay';
 import { safepayPollingDelay, safepayRetryAfterMs } from '../../utils/safepayPolling';
+import { checkSafepayPopupSession, isSafepayPopupReturn } from '../../utils/safepayPopupReturn';
 
 export default function SafepayCheckoutProvider({ children }) {
   const [payment, setPayment] = useState(null);
   const [checking, setChecking] = useState(false);
   const [notice, setNotice] = useState('');
   const active = useRef(null);
-  const checkingRef = useRef(false);
-  const retryNotBefore = useRef(0);
+  const presentationGeneration = useRef(0);
   const panel = useRef(null);
   const savedCardFrame = useRef(null);
   const deliverSession = useCallback(() => {
@@ -32,36 +32,30 @@ export default function SafepayCheckoutProvider({ children }) {
     active.current = null;
     setPayment(null);
     setNotice('');
+    setChecking(false);
     current?.resolve(result);
   }, []);
   const check = useCallback(async (closing = false) => {
-    if (!active.current || checkingRef.current) return;
     const current = active.current;
-    if (Date.now() < retryNotBefore.current) {
-      if (closing) finish({ status: 'pending', paymentId: current.payment.paymentId, isPaid: false });
-      else setNotice('Verification is temporarily paused. Rozare will check this same payment again automatically; do not pay twice.');
-      return;
-    }
-    checkingRef.current = true; setChecking(true);
-    try {
-      const result = await verifySafepayPayment(current.payment);
-      if (active.current !== current) return;
-      if (result.status !== 'pending' || closing) finish(result);
-      else setNotice('Payment is not confirmed yet. Complete the secure form or close and resume this same attempt later.');
-    } catch (error) {
-      if (active.current !== current) return;
-      const retryAfter = safepayRetryAfterMs(error);
-      if (retryAfter) retryNotBefore.current = Date.now() + retryAfter;
-      if (closing) finish({ status: 'pending', paymentId: current.payment.paymentId, isPaid: false });
-      else setNotice(retryAfter
-        ? 'Verification is temporarily paused. Rozare will check this same payment again automatically; do not pay twice.'
-        : 'We could not verify payment yet. Do not start a second payment; check this attempt again.');
-    } finally { checkingRef.current = false; setChecking(false); }
+    await checkSafepayPopupSession(current, { closing, verify: verifySafepayPayment, finish,
+      notice: setNotice, checking: setChecking, isCurrent: session => active.current === session,
+      retryAfter: safepayRetryAfterMs });
   }, [finish]);
+  useEffect(() => {
+    if (!payment) return undefined;
+    const returned = event => {
+      if (active.current?.payment !== payment) return;
+      if (isSafepayPopupReturn(event, { paymentId: payment.paymentId,
+        frameWindow: savedCardFrame.current?.contentWindow, appOrigin: window.location.origin })) check(true);
+    };
+    window.addEventListener('message', returned);
+    return () => window.removeEventListener('message', returned);
+  }, [payment, check]);
   useEffect(() => registerSafepayPresenter(next => new Promise((resolve, reject) => {
     if (active.current) { reject(new Error('Finish or close the current payment first.')); return; }
-    active.current = { payment: next, resolve };
-    setNotice(''); setPayment(next);
+    const presented = { ...next, popupGeneration: ++presentationGeneration.current };
+    active.current = { payment: presented, resolve, checking: false, closeRequested: false, retryNotBefore: 0 };
+    setNotice(''); setChecking(false); setPayment(presented);
   })), []);
   useEffect(() => {
     if (!payment) return undefined;
@@ -86,9 +80,9 @@ export default function SafepayCheckoutProvider({ children }) {
       if (disposed || !active.current) return;
       await check();
       if (!disposed && active.current) timer = setTimeout(poll,
-        Math.max(safepayPollingDelay(Date.now() - startedAt), retryNotBefore.current - Date.now()));
+        Math.max(safepayPollingDelay(Date.now() - startedAt), active.current.retryNotBefore - Date.now()));
     };
-    timer = setTimeout(poll, Math.max(safepayPollingDelay(0), retryNotBefore.current - Date.now()));
+    timer = setTimeout(poll, Math.max(safepayPollingDelay(0), active.current.retryNotBefore - Date.now()));
     return () => { disposed = true; clearTimeout(timer); document.removeEventListener('keydown', keyboard); document.body.style.overflow = overflow; previous?.focus?.(); };
   }, [payment, check]);
   useEffect(() => () => { active.current?.resolve({ status: 'pending', isPaid: false }); active.current = null; }, []);
@@ -100,11 +94,11 @@ export default function SafepayCheckoutProvider({ children }) {
         <header className="flex items-center justify-between p-4 border-b">
           <div><h2 id="safepay-title" className="font-bold flex items-center gap-2"><ShieldCheck size={18} /> Secure payment</h2>
             <p className="text-xs text-slate-600">Safepay {payment.environment === 'sandbox' ? 'sandbox — test payment' : 'secure checkout'}</p></div>
-          <button type="button" aria-label="Close payment and check status" onClick={() => check(true)} disabled={checking} className="p-2"><X /></button>
+          <button type="button" aria-label="Close payment and check status" onClick={() => check(true)} className="p-2"><X /></button>
         </header>
         <p className="text-xs p-3 bg-slate-50">Closing this screen does not cancel a payment. Rozare verifies the result securely.</p>
         {payment.purpose === 'card_setup' && <p className="text-xs px-3 pb-3 bg-slate-50">Select “Securely save this card” in the Safepay form to keep it for future payments. Card verification alone does not start a subscription.</p>}
-        <iframe ref={savedCardFrame} onLoad={deliverSession} title="Safepay secure card checkout" src={payment.checkoutUrl} className="w-full flex-1 min-h-0 border-0"
+        <iframe key={`${payment.paymentId}:${payment.popupGeneration}`} ref={savedCardFrame} onLoad={deliverSession} title="Safepay secure card checkout" src={payment.checkoutUrl} className="w-full flex-1 min-h-0 border-0"
           referrerPolicy="no-referrer" allow="payment *" sandbox="allow-forms allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox" />
         <footer className="p-3 border-t text-xs space-y-2">
           {notice && <p role="status">{notice}</p>}

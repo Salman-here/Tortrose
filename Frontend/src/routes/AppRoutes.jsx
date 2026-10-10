@@ -147,7 +147,6 @@ function AppRoutes({ subdomainSlug = null }) {
                     {/* INFO & LEGAL PAGES */}
                     <Route path='/terms' element={<TermsOfService />} />
                     <Route path='/privacy' element={<PrivacyPolicy />} />
-                    <Route path='/safepay/return' element={<SafepayReturnPage />} />
                     <Route path='/shipping-policy' element={<CommercePolicyPage policy="shipping" />} />
                     <Route path='/refund-policy' element={<CommercePolicyPage policy="refunds" />} />
                     <Route path='/cancellation-policy' element={<CommercePolicyPage policy="cancellation" />} />
@@ -165,6 +164,7 @@ function AppRoutes({ subdomainSlug = null }) {
                     <Route path={'/unauthorized'} element={<Unauthorized onBack={() => { navigate(-1) }} />} />
                 </Route>
                 <Route path='/login' element={<Login />} />
+                <Route path='/safepay/return' element={<SafepayReturnPage />} />
                 <Route path='/signup' element={<SignUp />} />
                 <Route path='/seller-signup' element={<Navigate to='/become-seller' replace />} />
                 <Route path='/auth/google/success' element={<GoogleAuthSuccess />} />

@@ -63,6 +63,45 @@ test('web return ignores forged success and redirect URLs and does not mark paid
   expect(Payment.findOne).not.toHaveBeenCalled();
   expect(service.prepareCheckout).not.toHaveBeenCalled();
 });
+
+test.each(['return', 'cancel'])('embedded web %s serves a fixed navigation bridge without asserting a payment outcome', async outcome => {
+  const result = await request(app).get(`/return/web/order/${id}/${outcome}`)
+    .set('Sec-Fetch-Dest', 'iframe')
+    .set('Origin', 'https://evil.test')
+    .set('Referer', 'https://evil.test/forged')
+    .query({ outcome: 'paid', redirect: 'https://evil.test/', paymentId: 'a'.repeat(24), tracker: 'forged' });
+  expect(result.status).toBe(200);
+  expect(result.headers.location).toBeUndefined();
+  expect(result.headers['cache-control']).toBe('no-store');
+  expect(result.headers['referrer-policy']).toBe('no-referrer');
+  expect(result.headers['x-content-type-options']).toBe('nosniff');
+  expect(result.headers['x-robots-tag']).toBe('noindex, nofollow');
+  const nonce = result.text.match(/<script nonce="([^"]+)">/)[1];
+  expect(nonce).toMatch(/^[A-Za-z0-9+/]{24}$/);
+  expect(result.headers['content-security-policy']).toBe(`default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors https://rozare.com https://www.rozare.com`);
+  expect(result.text).toContain(`{"type":"rozare-safepay-return","paymentId":"${id}"}`);
+  expect(result.text).toContain(`https://rozare.com/safepay/return?paymentId=${id}`);
+  expect(result.text).not.toMatch(/evil\.test|forged|isPaid|cancelled|outcome/);
+  expect(Payment.findOne).not.toHaveBeenCalled();
+  expect(service.prepareCheckout).not.toHaveBeenCalled();
+  expect(cards.startCardSetup).not.toHaveBeenCalled();
+});
+
+test.each(['document', 'empty', 'object', 'IFRAME', 'iframe, document'])('non-iframe fetch destination %s preserves the standalone redirect', async destination => {
+  const result = await request(app).get(`/return/web/order/${id}/cancel`).set('Sec-Fetch-Dest', destination);
+  expect(result.status).toBe(303);
+  expect(result.headers.location).toBe(`https://rozare.com/safepay/return?paymentId=${id}`);
+  expect(Payment.findOne).not.toHaveBeenCalled();
+});
+
+test.each(['order', 'wallet_top_up', 'subdomain', 'subscription', 'card_setup', 'return_settlement'])('embedded %s callback tolerates provider metadata without changing its reference', async purpose => {
+  const result = await request(app).get(`/return/web/${purpose}/${id}/return?order_id=fixture&tracker=forged&surface=mobile`)
+    .set('Sec-Fetch-Dest', 'iframe');
+  expect(result.status).toBe(200);
+  expect(result.text).toContain(`{"type":"rozare-safepay-return","paymentId":"${id}"}`);
+  expect(result.text).not.toContain('rozare://');
+  expect(Payment.findOne).not.toHaveBeenCalled();
+});
 test('bad return references fail; mobile bridge remains an app return', async () => {
   expect((await request(app).get('/return').query({ surface: 'web', attempt: 'bad', purpose: 'order' })).status).toBe(400);
   expect((await request(app).get('/return').query({ surface: 'web', attempt: id, purpose: 'bad' })).status).toBe(400);
@@ -112,4 +151,13 @@ test.each([
 ])('invalid callback fails closed: %s', async url => {
   expect((await request(app).get(url)).status).toBe(400);
   expect(Payment.findOne).not.toHaveBeenCalled();
+});
+
+test.each([
+  `/return/web/order/bad/return`, `/return/web/order/${id}/paid`,
+  `/return?attempt=${id}&purpose=order&surface=web&surface=mobile`,
+])('iframe presentation cannot rescue invalid callback: %s', async url => {
+  expect((await request(app).get(url).set('Sec-Fetch-Dest', 'iframe')).status).toBe(400);
+  expect(Payment.findOne).not.toHaveBeenCalled();
+  expect(service.prepareCheckout).not.toHaveBeenCalled();
 });

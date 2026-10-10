@@ -1,5 +1,6 @@
 'use strict';
 const mongoose = require('mongoose');
+const crypto = require('node:crypto');
 const Payment = require('../models/SafepayPayment');
 const { readSafepayConfig } = require('../config/safepay');
 const { reconcilePayment, prepareCheckout, paymentResponse, requireMobileSafepay, requireSafepayConfiguration } = require('../services/safepayPaymentService');
@@ -110,6 +111,15 @@ exports.returnToApp = (req, res) => {
     const webUrl = new URL('/safepay/return', 'https://rozare.com');
     webUrl.searchParams.set('paymentId', attempt);
     res.set({ 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' });
+    // Returning inside the secure payment iframe must notify its existing
+    // Rozare parent. The full website return page cannot be framed here.
+    // Fetch metadata chooses presentation only; neither branch verifies money.
+    if (req.get('Sec-Fetch-Dest') === 'iframe') {
+      const nonce = crypto.randomBytes(18).toString('base64');
+      res.set({ 'X-Content-Type-Options': 'nosniff', 'X-Robots-Tag': 'noindex, nofollow',
+        'Content-Security-Policy': `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors https://rozare.com https://www.rozare.com` });
+      return res.status(200).type('html').send(require('../services/safepayWebReturnHtml').renderSafepayWebReturnHtml({ paymentId: attempt, nonce }));
+    }
     return res.redirect(303, webUrl.toString());
   }
   const query = new URLSearchParams({ paymentId: attempt, purpose, outcome });
