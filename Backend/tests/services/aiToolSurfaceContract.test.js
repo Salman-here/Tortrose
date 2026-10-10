@@ -3,12 +3,19 @@ process.env.OPENROUTER_API_KEY = 'tool-surface-contract-test';
 const fs = require('fs');
 const path = require('path');
 const { CLIENT_SIDE_TOOLS } = require('../../services/aiActionExecutor');
+const { collectAIPriceCandidates } = require('../../services/aiActionExecutor').__private;
 const { NEW_COMMERCE_TOOL_NAMES } = require('../../services/aiCommerceTools');
 const { __private } = require('../../controllers/aiChatController');
 
 const toolNamesFor = role => __private.getTools(role).map(tool => tool.function.name);
 
 describe('AI role tool surface contract', () => {
+  test('price ordering considers matches after the former 300-product cutoff with bounded retained candidates', async () => {
+    const rows = Array.from({ length: 321 }, (_, index) => ({ id: index, price: index === 320 ? 1 : 100 + index }));
+    const cursor = { async *[Symbol.asyncIterator]() { yield* rows; }, close: jest.fn() };
+    const selected = await collectAIPriceCandidates(cursor, async batch => batch.sort((a, b) => a.price - b.price).slice(0, 5));
+    expect(selected).toHaveLength(5); expect(selected[0].id).toBe(320); expect(cursor.close).toHaveBeenCalledTimes(1);
+  });
   test('asking to confirm a shipment review without producing its server quote forces the actual review tool, not a prose approval question', () => {
     const state = {}, messages = [];
     const result = __private.completeActionDraft(state, 'If you want the portion marked delivered, please confirm.',
@@ -16,6 +23,9 @@ describe('AI role tool surface contract', () => {
       'Review changing my own store portion of ORD-QA to delivered and wait for my confirmation.', 'seller');
     expect(result.retry).toBe(true); expect(state.tool).toBe('update_order_status');
     expect(messages[0].content).toContain('confirm=false');
+    expect(__private.explicitReviewTool('Review changing my own store portion of ORD-QA to delivered and wait for my confirmation.', 'seller')).toBe('update_order_status');
+    expect(__private.explicitReviewTool('Can I mark ORD-QA delivered?', 'seller')).toBe('');
+    expect(__private.explicitReviewTool('Review a withdrawal for 5 USD', 'user')).toBe('');
   });
   test('only current payment configuration is public; private financial actions require authentication and seller ownership', () => {
     expect(toolNamesFor('guest')).toContain('get_payment_options');

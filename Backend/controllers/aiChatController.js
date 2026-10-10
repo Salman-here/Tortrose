@@ -2143,9 +2143,21 @@ function retryNaturalCatalogLookup(state, draft, lastUserText, role, completedTo
   return true;
 }
 
+function explicitReviewTool(lastUserText, role) {
+  if (!/\b(?:review|preview)\b/i.test(lastUserText) || /[?？؟]|\b(?:can|could|would|why|how|whether)\b/i.test(lastUserText)) return '';
+  let tool = '';
+  if (/\bwithdraw/i.test(lastUserText)) tool = 'request_withdrawal';
+  else if (/\breturn\b/i.test(lastUserText) && /\bcancel/i.test(lastUserText)) tool = 'cancel_return';
+  else if (/\breturn\b/i.test(lastUserText) && /\b(?:accept|refund)\b/i.test(lastUserText) && role === 'seller') tool = 'accept_return';
+  else if (/\breturn\b/i.test(lastUserText) && /\b(?:status|approve|reject|pickup|picked|transit|received|under review)\b/i.test(lastUserText) && role === 'seller') tool = 'update_return_status';
+  else if (/\bcancel/i.test(lastUserText)) tool = 'cancel_order';
+  else if (/\b(?:shipped|delivered|processing|confirmed)\b/i.test(lastUserText) && /\bORD-[a-z0-9-]+\b/i.test(lastUserText) && role === 'seller') tool = 'update_order_status';
+  else if (/\b(?:COD|cash on delivery)\b/i.test(lastUserText) && /\border\b/i.test(lastUserText)) tool = 'preview_order';
+  return tool && isToolAllowedForRole(tool, role) ? tool : '';
+}
 function completeActionDraft(state, draft, completedTools, conversationMessages, canRetry, lastUserText = '', role = 'guest') {
   const asksReview = /\b(?:review|preview)\b/i.test(lastUserText) && !/[?？؟]|\b(?:can|could|would|why|how|whether)\b/i.test(lastUserText);
-  if (asksReview && /\bconfirm(?:ation)?\b/i.test(draft) && !completedTools.some(entry => entry.result?.previewOnly || entry.result?.requiresConfirmation)) {
+  if (asksReview && /\bconfirm(?:ation)?\b|\b(?:proceed|go ahead|would you like)\b/i.test(draft) && !completedTools.some(entry => entry.result?.previewOnly || entry.result?.requiresConfirmation)) {
     let expected = '';
     if (/\bwithdraw/i.test(lastUserText)) expected = 'request_withdrawal';
     else if (/\breturn\b/i.test(lastUserText) && /\b(?:accept|refund)\b/i.test(lastUserText) && role === 'seller') expected = 'accept_return';
@@ -2697,7 +2709,7 @@ async function processAIChatMessage(userObj, incomingMessages, options = {}) {
   const clientActions = [];
   const lastUserText = options._trustedUserIntentText ?? (cleanMessages.filter(m => m.role === 'user').pop()?.content || '');
   const explicitlyRequestedTools = explicitlyRequestedAITools(lastUserText, tools);
-  const naturalLookupState = { retried: false, tool: '' };
+  const naturalLookupState = { retried: false, tool: explicitReviewTool(lastUserText, effectiveRole) };
   const retainedApproval = await executeRetainedCommerceApproval(executorUser, lastUserText, toolTurnContext);
   if (retainedApproval) toolResults.push(retainedApproval);
   const currencyCooldownReply = retainedApproval?.result?.message || retainedApproval?.result?.error
@@ -3052,7 +3064,7 @@ exports.streamChat = async (req, res) => {
     const turnToolEvents = [];
     const lastUserText = req.aiCommerceUserText ?? (cleanMessages.filter(m => m.role === 'user').pop()?.content || '');
     const explicitlyRequestedTools = explicitlyRequestedAITools(lastUserText, tools);
-    const naturalLookupState = { retried: false, tool: '' };
+    const naturalLookupState = { retried: false, tool: explicitReviewTool(lastUserText, effectiveRole) };
     const toolTurnContext = {
       _chatRequestKey: getHttpChatToolRequestKey(req, 'stream', userId),
       _imageContextMessages: incoming,
@@ -3405,7 +3417,7 @@ exports.chatOnce = async (req, res) => {
     const clientActions = []; // Collect client-side actions
     const lastUserText = req.aiCommerceUserText ?? (cleanMessages.filter(m => m.role === 'user').pop()?.content || '');
     const explicitlyRequestedTools = explicitlyRequestedAITools(lastUserText, tools);
-    const naturalLookupState = { retried: false, tool: '' };
+    const naturalLookupState = { retried: false, tool: explicitReviewTool(lastUserText, effectiveRole) };
     const toolTurnContext = {
       _chatRequestKey: getHttpChatToolRequestKey(req, 'once', userId),
       _imageContextMessages: incoming,
@@ -3999,6 +4011,7 @@ exports.__private = {
   normalizeAIClientRoute,
   executeRetainedCommerceApproval,
   completeActionDraft,
+  explicitReviewTool,
   normalizeAIClientActionArgs,
   normalizeAIChatToolArgs,
   groundedAssistantResponseText,

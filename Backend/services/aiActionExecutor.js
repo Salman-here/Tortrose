@@ -925,11 +925,23 @@ function filterAIProductsByPriceBounds(products = [], bounds = {}) {
   if (min === null && max === null) return products;
   return products.filter(product => {
     const price = Number(product._comparablePrice);
-    if (!Number.isFinite(price)) return true;
+    if (!Number.isFinite(price)) return false;
     if (min !== null && price < min) return false;
     if (max !== null && price > max) return false;
     return true;
   });
+}
+
+async function collectAIPriceCandidates(cursor, finalize, batchSize = 200) {
+  let selected = [], batch = [];
+  try {
+    for await (const product of cursor) {
+      batch.push(product);
+      if (batch.length >= batchSize) { selected = await finalize([...selected, ...batch]); batch = []; }
+    }
+    if (batch.length) selected = await finalize([...selected, ...batch]);
+    return selected;
+  } finally { await cursor.close?.(); }
 }
 
 // ─── Smart Search: Synonym/Multilingual Expansion ───
@@ -1810,11 +1822,13 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
         else if (sortBy === 'best_rated') sort = { rating: -1, numReviews: -1 };
         else if (sortBy === 'trending') sort = { numReviews: -1, rating: -1 };
 
-        let products = await Product.find(filter)
+        const primaryQuery = Product.find(filter)
           .sort(sort)
-          .limit(fetchLimit)
           .select('name price discountedPrice currency priceCurrency category brand image rating numReviews stock colors optionGroups seller isFeatured tags createdAt')
           .lean();
+        let products = needsComparablePrices
+          ? await collectAIPriceCandidates(primaryQuery.cursor({ batchSize: 200 }), finalizeProductSearch)
+          : await primaryQuery.limit(fetchLimit);
         products = await hydrateStoresForProducts(products);
         products = await finalizeProductSearch(products);
 
@@ -1828,12 +1842,13 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
           if (isTruthy(args.inStockOnly) || isTruthy(args.availableOnly)) fuzzyFilter.stock = { $gt: 0 };
           await applyPriceBounds(fuzzyFilter);
 
-          const fuzzyPool = await Product.find(fuzzyFilter)
+          const fuzzyQuery = Product.find(fuzzyFilter)
             .sort({ rating: -1, numReviews: -1, createdAt: -1 })
-            .limit(300)
             .select('name price discountedPrice currency priceCurrency category brand image rating numReviews stock colors optionGroups seller isFeatured tags description createdAt')
             .lean();
-          products = fuzzyProductMatches(fuzzyPool, query, safeLimit(limit, 20, 50));
+          products = needsComparablePrices
+            ? await collectAIPriceCandidates(fuzzyQuery.cursor({ batchSize: 200 }), async batch => finalizeProductSearch(fuzzyProductMatches(batch, query, batch.length)))
+            : fuzzyProductMatches(await fuzzyQuery.limit(300), query, safeLimit(limit, 20, 50));
           products = await hydrateStoresForProducts(products);
           products = await finalizeProductSearch(products);
         }
@@ -1849,11 +1864,13 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
           if (brand) fallbackFilter.brand = { $regex: escapeRegExp(brand), $options: 'i' };
           if (isTruthy(args.inStockOnly) || isTruthy(args.availableOnly)) fallbackFilter.stock = { $gt: 0 };
           await applyPriceBounds(fallbackFilter);
-          products = await Product.find(fallbackFilter)
+          const fallbackQuery = Product.find(fallbackFilter)
             .sort({ rating: -1, numReviews: -1, createdAt: -1 })
-            .limit(300)
             .select('name price discountedPrice currency priceCurrency category brand image rating numReviews stock colors optionGroups seller isFeatured tags createdAt')
             .lean();
+          products = needsComparablePrices
+            ? await collectAIPriceCandidates(fallbackQuery.cursor({ batchSize: 200 }), finalizeProductSearch)
+            : await fallbackQuery.limit(300);
           products = await hydrateStoresForProducts(products);
           products = await finalizeProductSearch(products).then(items => items.slice(0, 12));
 
@@ -7589,6 +7606,7 @@ module.exports = {
   CLIENT_SIDE_TOOLS,
   storeChangeLimits,
   __private: {
+    collectAIPriceCandidates,
     buildSellerOrderScope,
     buildSellerOrderStatusScope,
     filterSellerOrderItems,
