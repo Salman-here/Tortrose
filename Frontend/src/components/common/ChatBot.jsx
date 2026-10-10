@@ -35,7 +35,7 @@ import {
 } from '../../utils/persistedMutationAttempt';
 import { OPEN_AI_CHAT_EVENT } from '../../utils/aiChatLauncher';
 import SafetyActionsDialog from './SafetyActionsDialog';
-import { aiCommercePreviewPresentation } from '../../utils/aiCommercePresentation';
+import { aiCommercePreviewPresentation, aiCommerceMessageText } from '../../utils/aiCommercePresentation';
 
 // ─── Endpoint (our own backend — no Supabase) ───
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000/';
@@ -1219,7 +1219,7 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
       : [];
     const visibleUserContent = isUser
       ? (stripAttachmentMetadata(msg.content) || (imageAttachments.length ? 'Image attached' : ''))
-      : sanitizeAssistantContent(msg.content);
+      : aiCommerceMessageText(sanitizeAssistantContent(msg.content), msg.toolEvents || []);
 
     return (
       <motion.div

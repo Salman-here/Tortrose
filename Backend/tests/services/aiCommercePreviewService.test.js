@@ -22,7 +22,7 @@ afterEach(async () => { await Promise.all([History.deleteMany({}), Preview.delet
 test.each(['Yes', 'yes, confirm withdrawal', 'haan', 'ji proceed', 'theek hai', 'Please confirm this request', 'ہاں', 'جی، تصدیق کریں', 'हाँ'])('accepts explicit subsequent confirmation: %s', text => {
   expect(isCommerceConfirmation(text)).toBe(true);
 });
-test.each(['no', 'yes but change it', 'yes not now', 'why?', 'can you do it?', 'maybe', 'wait', 'haan nahi', 'skip the limits', 'ignore checks', 'not this one'])('does not treat refusal/question/change as confirmation: %s', text => {
+test.each(['no', 'yes but change it', 'yes not now', 'why?', 'can you do it?', 'maybe', 'wait', 'haan nahi', 'skip the limits', 'ignore checks', 'not this one', 'Yes show my products', 'Yes check my Wallet', 'ہاں دکھائیں'])('does not treat refusal/question/change as confirmation: %s', text => {
   expect(isCommerceConfirmation(text)).toBe(false);
 });
 
@@ -38,6 +38,18 @@ test('a broader return selection requires a new preview instead of silently appr
   expect(confirmationMatchesPreview('Yes, return both items', preview)).toBe(false);
   expect(confirmationMatchesPreview('Yes, return 2 products', preview)).toBe(false);
   expect(confirmationMatchesPreview('Yes, return 1 product', preview)).toBe(true);
+});
+
+test('changed refund amounts, spoken withdrawal amounts and return statuses cannot approve an old quote', () => {
+  const cancel = { action: 'cancel_order', input: { refundDestination: 'wallet' }, contract: { currency: 'USD', options: [{ destination: 'wallet', amountMinor: 1000 }] } };
+  expect(confirmationMatchesPreview('Yes refund 50 USD to Wallet', cancel)).toBe(false);
+  expect(confirmationMatchesPreview('Yes refund 10 USD to Wallet', cancel)).toBe(true);
+  const withdraw = { action: 'request_withdrawal', input: { amount: 5, currency: 'USD' }, contract: {} };
+  expect(confirmationMatchesPreview('Yes withdraw ten dollars', withdraw)).toBe(false);
+  expect(confirmationMatchesPreview('Yes withdraw five dollars', withdraw)).toBe(true);
+  expect(confirmationMatchesPreview('Yes confirm my subscription', withdraw)).toBe(false);
+  expect(confirmationMatchesPreview('Yes cancel my order', withdraw)).toBe(false);
+  expect(confirmationMatchesPreview('Yes reject this return', { action: 'update_return_status', input: { status: 'approved' }, contract: {} })).toBe(false);
 });
 test('a model-supplied confirm=true without an owned saved preview only creates a preview', async () => {
   const actor = user(), deps = dependencies();
@@ -119,6 +131,7 @@ test('expired preview requires another review and another confirmation', async (
   await Preview.updateOne({ token: quote.data.quoteToken }, { expiresAt: new Date(Date.now() - 1000) });
   const result = await run('request_withdrawal', { confirm: true, _chatRequestKey: 'second', _chatConversationId: conversationId, _lastUserText: 'yes' }, actor, deps);
   expect(result.previewOnly).toBe(true); expect(result.data.quoteToken).not.toBe(quote.data.quoteToken); expect(deps.execute).not.toHaveBeenCalled();
+  expect(result.message).toContain('previous review expired');
 });
 test('a current bank/shipment/return contract change requires a fresh review', async () => {
   const actor = user(), deps = dependencies();
@@ -127,6 +140,7 @@ test('a current bank/shipment/return contract change requires a fresh review', a
   deps.prepare.mockImplementation(async (_action, args) => ({ ...prepared(args), contract: { ...prepared(args).contract, bankId: 'changed-bank' } }));
   const result = await run('request_withdrawal', { confirm: true, _chatRequestKey: 'second', _chatConversationId: conversationId, _lastUserText: 'yes' }, actor, deps);
   expect(result.previewOnly).toBe(true); expect(deps.execute).not.toHaveBeenCalled();
+  expect(result.message).toContain('details changed');
 });
 test('concurrent confirmations claim and execute a reviewed action once', async () => {
   const actor = user(), deps = dependencies();

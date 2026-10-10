@@ -44,6 +44,8 @@ const { getStoreCurrencyCooldownReply } = require('../services/aiStoreCurrencySe
 // ─── OpenRouter Config ───────────────────────────────────────────────
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const { BUYER_COMMERCE_TOOLS, SELLER_COMMERCE_TOOLS, NEW_COMMERCE_TOOL_NAMES } = require('../services/aiCommerceTools');
+const { REVIEWED_COMMERCE_ACTIONS } = require('../services/aiCommerceTools');
+const { previousCommercePreview, retainedServerReviewEvent, isCommerceConfirmation } = require('../services/aiCommercePreviewService');
 const { trustedVoiceIntentText } = require('../services/aiUserIntentEvidenceService');
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const AI_MODEL = process.env.AI_MODEL || 'google/gemini-2.5-flash';
@@ -1932,8 +1934,8 @@ async function executeToolCallForChat(toolName, args, userObj, lastUserText = ''
     normalizedArgs = previous;
   }
   const argsWithContext = normalizedArgs && typeof normalizedArgs === 'object' && !Array.isArray(normalizedArgs)
-    ? { ...normalizedArgs, _lastUserText: lastUserText, ...turnContext, _requireOrderPreview: true, _requireCommercePreview: true }
-    : { _lastUserText: lastUserText, ...turnContext, _requireOrderPreview: true, _requireCommercePreview: true };
+    ? { ...normalizedArgs, ...turnContext, _lastUserText: lastUserText, _requireOrderPreview: true, _requireCommercePreview: true }
+    : { ...turnContext, _lastUserText: lastUserText, _requireOrderPreview: true, _requireCommercePreview: true };
   if (['add_product', 'bulk_add_products'].includes(toolName)) argsWithContext._requireExplicitSellerInputs = true;
   // Never accept a model-supplied conversation or approval context.
   argsWithContext._chatConversationId = turnContext._chatConversationId || null;
@@ -1972,6 +1974,32 @@ async function executeToolCallForChat(toolName, args, userObj, lastUserText = ''
   }
 
   return executeToolCall(toolName, argsWithContext, userObj);
+}
+
+async function executeRetainedCommerceApproval(userObj, lastUserText, turnContext) {
+  if (!['user', 'seller'].includes(userObj?.role) || !isCommerceConfirmation(lastUserText)) return null;
+  const retained = await retainedServerReviewEvent(userObj, turnContext);
+  if (!retained) return null;
+  if (retained.tool === 'preview_order' && /^aip1\./.test(retained.result.data.quoteToken)
+      && retained.result.data.orderRequest && isToolAllowedForRole('place_order', userObj.role)) {
+    // Legacy signed COD quotes remain usable, but a changed item/address/
+    // amount is not silently inferred from a generic confirmation.
+    const simple = /^(?:yes|yep|yeah|confirm|go ahead|proceed|do it|sure|ok(?:ay)?|haan|han|ji|theek hai)(?:[,.! ]*(?:(?:please )?(?:confirm|place|submit)(?: this| the| my)?(?: COD| cash on delivery)? order(?: placement)?))?[.! ]*$/i.test(String(lastUserText).trim())
+      || /^(?:ہاں|جی|ٹھیک ہے|हाँ|हां|जी)[،,.! ]*$/u.test(String(lastUserText).trim());
+    if (!simple) return { tool: 'place_order', result: { success: false, code: 'AI_ORDER_CONFIRMATION_CHANGED',
+      error: 'Please review any changed items, quantities, delivery details or total first. To accept the exact reviewed order, say Yes, confirm this order. No order was placed.' } };
+    const result = await executeToolCallForChat('place_order', { ...retained.result.data.orderRequest,
+      quoteToken: retained.result.data.quoteToken }, userObj, lastUserText, { ...turnContext, _chatToolOrdinal: 0 });
+    return { tool: 'place_order', result };
+  }
+  const preview = await previousCommercePreview(userObj, turnContext);
+  if (!preview || !REVIEWED_COMMERCE_ACTIONS.has(preview.action) || !isToolAllowedForRole(preview.action, userObj.role)) return null;
+  // A clear approval acts on the retained server request, not invented model
+  // arguments. All quote, ownership, bank, balance, shipment and funding checks
+  // still run at the canonical execution boundary. No model prose can replace
+  // this transaction or its receipt.
+  const result = await executeToolCallForChat(preview.action, { ...preview.input, confirm: true }, userObj, lastUserText, turnContext);
+  return { tool: preview.action, result };
 }
 
 function toolResultForModel(result) {
@@ -2650,7 +2678,10 @@ async function processAIChatMessage(userObj, incomingMessages, options = {}) {
   const lastUserText = options._trustedUserIntentText ?? (cleanMessages.filter(m => m.role === 'user').pop()?.content || '');
   const explicitlyRequestedTools = explicitlyRequestedAITools(lastUserText, tools);
   const naturalLookupState = { retried: false, tool: '' };
-  const currencyCooldownReply = await getStoreCurrencyCooldownReply(userId, effectiveRole, lastUserText);
+  const retainedApproval = await executeRetainedCommerceApproval(executorUser, lastUserText, toolTurnContext);
+  if (retainedApproval) toolResults.push(retainedApproval);
+  const currencyCooldownReply = retainedApproval?.result?.message || retainedApproval?.result?.error
+    || await getStoreCurrencyCooldownReply(userId, effectiveRole, lastUserText);
 
   const MAX_ITERATIONS = Math.min(20, Math.max(6, explicitlyRequestedTools.length + 3));
   let lastMessage = currencyCooldownReply ? { role: 'assistant', content: currencyCooldownReply } : null;
@@ -3017,7 +3048,13 @@ exports.streamChat = async (req, res) => {
     let iteration = 0;
     let finalTextSent = false;
     let terminalToolFailure = null;
-    const currencyCooldownReply = await getStoreCurrencyCooldownReply(userId, effectiveRole, lastUserText);
+    const retainedApproval = await executeRetainedCommerceApproval(userObj, lastUserText, toolTurnContext);
+    if (retainedApproval) {
+      send({ type: 'tool_result', ...retainedApproval });
+      turnToolEvents.push({ type: 'tool_result', ...retainedApproval });
+    }
+    const currencyCooldownReply = retainedApproval?.result?.message || retainedApproval?.result?.error
+      || await getStoreCurrencyCooldownReply(userId, effectiveRole, lastUserText);
     if (currencyCooldownReply) {
       send({ choices: [{ delta: { content: currencyCooldownReply } }] });
       conversationMessages.push({ role: 'assistant', content: currencyCooldownReply });
@@ -3358,7 +3395,10 @@ exports.chatOnce = async (req, res) => {
 
     // Tool execution loop (non-streaming)
     const MAX_ITERATIONS = Math.min(20, Math.max(6, explicitlyRequestedTools.length + 3));
-    const currencyCooldownReply = await getStoreCurrencyCooldownReply(userId, effectiveRole, lastUserText);
+    const retainedApproval = await executeRetainedCommerceApproval(userObj, lastUserText, toolTurnContext);
+    if (retainedApproval) toolResults.push(retainedApproval);
+    const currencyCooldownReply = retainedApproval?.result?.message || retainedApproval?.result?.error
+      || await getStoreCurrencyCooldownReply(userId, effectiveRole, lastUserText);
     let lastMessage = currencyCooldownReply ? { role: 'assistant', content: currencyCooldownReply } : null;
 
     for (let i = 0; !currencyCooldownReply && i < MAX_ITERATIONS; i++) {
@@ -3937,6 +3977,7 @@ exports.__private = {
   failedMutationMessage,
   failedExplicitToolMessage,
   normalizeAIClientRoute,
+  executeRetainedCommerceApproval,
   normalizeAIClientActionArgs,
   normalizeAIChatToolArgs,
   groundedAssistantResponseText,

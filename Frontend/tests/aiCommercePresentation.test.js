@@ -1,11 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { aiCommercePreviewPresentation as present } from '../src/utils/aiCommercePresentation.js';
+import { aiCommercePreviewPresentation as present, aiCommerceMessageText } from '../src/utils/aiCommercePresentation.js';
 const fixture = () => ({ success: true, previewOnly: true, requiresConfirmation: true, data: {
   quoteToken: 'aif1.' + 'a'.repeat(64), action: 'request_withdrawal', request: { amount: 5, currency: 'USD' },
   commercePreview: { action: 'request_withdrawal', title: 'Review withdrawal', notice: '5 USD to the reviewed bank; not a transfer.', expiresAt: '2026-10-11T12:00:00.000Z' },
 } });
+
+test('review text removes only a duplicate disclosure while retaining other requested information', () => {
+  const result = fixture(); result.message = result.data.commercePreview.notice + '\nReview and confirm next.';
+  assert.equal(aiCommerceMessageText(result.message, [{ result }]), 'Please review the details below before confirming.');
+  assert.equal(aiCommerceMessageText('Your balance is 100 USD. ' + result.message, [{ result }]), 'Your balance is 100 USD. ' + result.message);
+  result.previewOnly = false;
+  assert.equal(aiCommerceMessageText(result.message, [{ result }]), result.message);
+});
 test('web and mobile use exactly the same reviewed-action presentation contract', () => {
   assert.equal(fs.readFileSync(new URL('../src/utils/aiCommercePresentation.js', import.meta.url), 'utf8'),
     fs.readFileSync(new URL('../../MobileApp/src/utils/aiCommercePresentation.js', import.meta.url), 'utf8'));

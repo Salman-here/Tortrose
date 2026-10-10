@@ -334,3 +334,64 @@ test('friendly cancellation selectors resolve store and seller references only i
   expect(() => requestedSellers({ sellerIds: ['cccccccccccccccccccccccc'] }, groups)).toThrow('Choose the store from this order');
   expect(() => requestedSellers({ storeName: 'Atlas Aura Goods', sellerIds: ['bbbbbbbbbbbbbbbbbbbbbbbb'] }, groups)).toThrow('disagree');
 });
+
+async function reviewedReturnFixture(f) {
+  const input = { orderId: f.order.orderId, sellerId: String(f.sellers[0]._id), items: [{ orderItemId: String(f.order.orderItems[0]._id), quantity: 1 }], reasonCategory: 'damaged', reasonDetails: 'Cup arrived with a cracked rim.' };
+  const preview = await run('request_return', { ...input, ...ctx('return-request-' + f.order._id) }, f.buyer);
+  expect(preview.previewOnly).toBe(true);
+  await confirm(f.buyer, 'request_return', input, preview);
+  let request = await Return.findOne({ order: f.order._id });
+  for (const status of ['approved', 'pickup_scheduled', 'picked_up', 'in_transit_to_seller', 'received_by_seller', 'under_review']) {
+    const review = await run('update_return_status', { returnId: String(request._id), status, ...ctx(status) }, f.sellers[0]);
+    expect(review.previewOnly).toBe(true);
+    const result = await confirm(f.sellers[0], 'update_return_status', { returnId: String(request._id), status }, review);
+    expect(result.success).toBe(true);
+    request = await Return.findById(request._id);
+  }
+  return request;
+}
+test('COD final acceptance supports secure Safepay handoff without charging, then a separately reviewed seller-balance refund', async () => {
+  const f = await fixture({ method: 'cash_on_delivery', statuses: ['delivered', 'delivered'], returnsEnabled: true });
+  await require('../../models/SellerBalanceTransaction').create({ seller: f.sellers[0]._id, type: 'admin_adjustment', direction: 'credit', status: 'completed',
+    amountUSD: 50, sourceAmount: 50, sourceCurrency: 'USD', referenceType: 'admin', referenceId: 'isolated-return-funding-fixture' });
+  const request = await reviewedReturnFixture(f);
+  const input = { returnId: String(request._id), fundingSource: 'safepay' };
+  const paymentPreview = await run('accept_return', { ...input, ...ctx('cod-payment-preview') }, f.sellers[0]);
+  const handoff = await confirm(f.sellers[0], 'accept_return', input, paymentPreview);
+  expect(handoff).toMatchObject({ success: true, requiresPayment: true, data: { secureCheckoutRequired: true } });
+  expect(await Payment.countDocuments()).toBe(0);
+  expect(await Transaction.countDocuments({ type: 'return_refund' })).toBe(0);
+  const balanceInput = { ...input, fundingSource: 'seller_balance' };
+  const balancePreview = await run('accept_return', { ...balanceInput, ...ctx('cod-balance-preview') }, f.sellers[0]);
+  const settled = await confirm(f.sellers[0], 'accept_return', balanceInput, balancePreview);
+  expect(settled).toMatchObject({ success: true, data: { status: 'returned', settlement: { walletCredited: true, fundingSource: 'seller_balance' } } });
+  expect((await Wallet.findOne({ user: f.buyer._id })).balances.USD).toBe(12);
+  expect(await Payment.countDocuments()).toBe(0);
+});
+test('replacement-only acceptance completes its actual return flow without refund money', async () => {
+  const f = await fixture({ statuses: ['delivered', 'delivered'], returnsEnabled: true });
+  await Order.collection.updateOne({ _id: f.order._id }, { $set: { 'orderItems.0.returnPolicy.refundType': 'replacement_only', 'sellerPolicies.0.returnPolicy.refundType': 'replacement_only' } });
+  f.order = await Order.findById(f.order._id);
+  const request = await reviewedReturnFixture(f);
+  const input = { returnId: String(request._id) };
+  const preview = await run('accept_return', { ...input, ...ctx('replacement-preview') }, f.sellers[0]);
+  const result = await confirm(f.sellers[0], 'accept_return', input, preview);
+  expect(result.success).toBe(true);
+  expect(result.data.settlement.walletCredited).toBe(false);
+  expect(await Transaction.countDocuments({ type: 'return_refund' })).toBe(0);
+  expect(await Payment.countDocuments()).toBe(0);
+});
+
+test('a retained chat confirmation executes the actual owned shipment action without relying on a model completion claim', async () => {
+  const f = await fixture({ statuses: ['processing', 'confirmed'] });
+  const input = { orderId: f.order.orderId, newStatus: 'shipped' };
+  const preview = await run('update_order_status', { ...input, ...ctx('ship-preview') }, f.sellers[0]);
+  const conversationId = await savePreview(f.sellers[0], 'update_order_status', preview);
+  const finish = require('../../controllers/aiChatController').__private.executeRetainedCommerceApproval;
+  expect(await finish(f.sellers[0], 'Yes show my orders', ctx('read-only', conversationId))).toBeNull();
+  const result = await finish(f.sellers[0], 'Yes, confirm this shipment update.', ctx('ship-confirm', conversationId));
+  expect(result).toMatchObject({ tool: 'update_order_status', result: { success: true, data: { status: 'shipped' } } });
+  const saved = await Order.findById(f.order._id);
+  expect(saved.sellerFulfillment.map(row => row.status)).toEqual(['shipped', 'confirmed']);
+  expect((await finish(f.sellers[0], 'Yes, confirm this shipment update.', ctx('retry-confirm', conversationId))).result.replayed).toBe(true);
+});

@@ -47,3 +47,12 @@ export function aiCommercePreviewPresentation(result) {
   return { title: preview.title, notice: preview.notice, controls,
     reminder: 'Nothing submitted yet. The server checks these details again when you confirm.' };
 }
+
+export function aiCommerceMessageText(content, toolEvents = []) {
+  const previews = toolEvents.filter(event => aiCommercePreviewPresentation(event?.result));
+  const normalize = value => String(value || '').replace(/\s+/g, ' ').trim();
+  // The full disclosure remains in the card and saved history. Only remove
+  // an identical duplicate paragraph; never hide other requested information.
+  return previews.length === 1 && normalize(content) === normalize(previews[0].result.message)
+    ? 'Please review the details below before confirming.' : content;
+}

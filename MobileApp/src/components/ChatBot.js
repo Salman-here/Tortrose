@@ -53,26 +53,26 @@ import {
   getOrCreatePersistedMutationAttemptForFingerprint,
 } from '../utils/persistedMutationAttempt';
 import { resolveAIClientRoute } from '../utils/aiClientRoutes';
-import { aiCommercePreviewPresentation } from '../utils/aiCommercePresentation';
+import { aiCommercePreviewPresentation, aiCommerceMessageText } from '../utils/aiCommercePresentation';
 
 const CommerceReviewCard = ({ result, current, busy, onConfirm, c, styles }) => {
   const preview = aiCommercePreviewPresentation(result);
   if (!preview) return null;
   const disabled = !current || busy;
-  return <View style={[styles.productResults, { marginTop: 8, borderWidth: 1, borderColor: c.primary, borderRadius: 16 }]}>
+  return <View style={{ marginTop: 8, padding: 14, borderWidth: 1, borderColor: c.primary, borderRadius: 18, backgroundColor: 'rgba(99,102,241,.045)' }}>
     <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center', marginBottom: 10 }}>
       <Ionicons name="shield-checkmark-outline" size={18} color={c.primary} />
       <Text style={[styles.productName, { flex: 1 }]}>{preview.title}</Text>
     </View>
-    <Text style={[styles.actionResultText, { lineHeight: 19 }]}>{preview.notice}</Text>
-    <Text style={[styles.actionResultText, { fontSize: 11, marginTop: 10, marginBottom: 8 }]}>
+    <Text style={{ color: c.textPrimary, fontSize: 13, lineHeight: 20, fontWeight: '400' }}>{preview.notice}</Text>
+    <Text style={{ color: c.textSecondary, fontSize: 11, lineHeight: 17, marginTop: 10, marginBottom: 8 }}>
       {current && busy ? 'Finishing this preview…' : disabled ? 'Earlier or ambiguous preview. Ask for a fresh review before confirming.' : preview.reminder}
     </Text>
     {preview.controls.map(control => <TouchableOpacity key={control.label} disabled={disabled}
       accessibilityRole="button" accessibilityLabel={control.label} accessibilityState={{ disabled }}
       onPress={() => onConfirm(control.message)} style={{ marginTop: 6, opacity: disabled ? .4 : 1 }}>
       <LinearGradient colors={['#14b8a6', '#0ea5e9', '#6366f1']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
-        style={{ borderRadius: 12, paddingHorizontal: 12, paddingVertical: 12 }}>
+        style={{ borderRadius: 12, paddingHorizontal: 12, paddingVertical: 12, minHeight: 46, justifyContent: 'center' }}>
         <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700', textAlign: 'center' }}>{control.label}</Text>
       </LinearGradient>
     </TouchableOpacity>)}
@@ -1275,7 +1275,7 @@ export default function ChatBot({
           </LinearGradient>
         )}
         <View style={[styles.msgBubble, isUser ? styles.userBubble : styles.botBubble]}>
-          <Text style={[styles.msgText, isUser && { color: '#fff' }]}>{isUser ? visibleAIUserMessage(item.content) : sanitizeAssistantText(item.content)}</Text>
+          <Text style={[styles.msgText, isUser && { color: '#fff' }]}>{isUser ? visibleAIUserMessage(item.content) : aiCommerceMessageText(sanitizeAssistantText(item.content), item.toolResults || [])}</Text>
           {!!item.attachments?.length && (
             <View style={styles.messageAttachments}>
               {item.attachments.map((attachment, index) => (
@@ -1823,7 +1823,7 @@ export default function ChatBot({
             style={styles.input}
             value={input}
             onChangeText={setInput}
-            placeholder={recorderState.isRecording ? 'Recording voice note...' : effectiveRole === 'seller' ? 'Ask your business assistant...' : 'Ask your stylist...'}
+            placeholder={recorderState.isRecording ? 'Recording voice note...' : effectiveRole === 'seller' ? 'Ask your business assistant...' : 'Ask Rozare anything...'}
             placeholderTextColor={c.textLight}
             returnKeyType="send"
             onSubmitEditing={() => sendMessage()}

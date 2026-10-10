@@ -16,7 +16,7 @@ const fail = (code, error) => ({ success: false, code, error });
 
 function isCommerceConfirmation(text = '') {
   const value = String(text).trim();
-  if (!value || value.length > 1200 || /[?？؟]|\b(?:no|not|don't|dont|do not|never|stop|wait|later|instead|unless|but|maybe|explain|what|why|how|when|which|tell me|show me|ignore|bypass|skip|force|nahi|nahin|mat|ruk)\b|(?:نہیں|رکو|مت کریں|نہ کریں|کیوں|کیا|नहीं|मत करो|रुको|क्यों)/i.test(value)) return false;
+  if (!value || value.length > 1200 || /[?？؟]|\b(?:no|not|don't|dont|do not|never|stop|wait|later|instead|unless|but|maybe|explain|what|why|how|when|which|show|view|find|search|list|read|check|get|tell|see|look|help|browse|recommend|suggest|can|could|would|dikhao|batao|ignore|bypass|skip|force|nahi|nahin|mat|ruk)\b|(?:نہیں|رکو|مت کریں|نہ کریں|کیوں|کیا|دکھا|بتا|دیکھ|नहीं|मत करो|रुको|क्यों|दिखा|बताओ|देख)/i.test(value)) return false;
   return /^(?:yes|yep|yeah|confirm(?:ed)?|approve(?:d)?|go ahead|proceed|do it|sure|ok(?:ay)?|haan|han|ji|theek hai)\b/i.test(value)
     || /^(?:ہاں|جی|ٹھیک ہے|تصدیق|हाँ|हां|जी)(?:\s|$|[،,.!])/u.test(value)
     || /^(?:please\s+)?(?:confirm|submit|request|accept|cancel|withdraw|approve|mark|update)\b/i.test(value);
@@ -30,6 +30,11 @@ function confirmationMatchesPreview(text, preview) {
   const expectedReference = preview.contract.publicOrderId || preview.contract.returnNumber;
   if (references.length && (!expectedReference || references.some(reference => reference.toLowerCase() !== String(expectedReference).toLowerCase()))) return false;
   if (/\b(?:only|just)\s+(?:\d+|one|two|three|four|five|this item|that item|one seller)\b/i.test(value)) return false;
+  if (/\b(?:withdraw|withdrawal|payout)\b/i.test(value) && preview.action !== 'request_withdrawal') return false;
+  if (/\bcancel(?:lation)?\b/i.test(value) && !['cancel_order', 'cancel_return'].includes(preview.action)) return false;
+  if (/\brefund\b/i.test(value) && !['cancel_order', 'request_return', 'accept_return'].includes(preview.action)) return false;
+  if (/\b(?:subscription|subdomain|coupon|profile|wishlist|cart|password|address)\b/i.test(value)) return false;
+  if (/\breturn[ -]request\b/i.test(value) && !['request_return', 'cancel_return', 'update_return_status', 'accept_return'].includes(preview.action)) return false;
   if (preview.action === 'cancel_order') {
     if (/\bwallet\b|والٹ/iu.test(value) && preview.input.refundDestination !== 'wallet') return false;
     if (/\b(?:card|bank refund|original payment)\b|کارڈ/iu.test(value) && preview.input.refundDestination !== 'original_card') return false;
@@ -50,25 +55,43 @@ function confirmationMatchesPreview(text, preview) {
   }
   if (preview.action === 'request_withdrawal') {
     if (preview.contract.similarRequestIds?.length && !/\b(?:another|new|additional|second|naya|dobara)\b|ایک اور/iu.test(value)) return false;
+  }
+  if (preview.action === 'request_withdrawal' || preview.action === 'cancel_order' && preview.input.refundDestination !== 'none'
+      || preview.action === 'accept_return' && preview.input.fundingSource !== 'none') {
+    const option = preview.contract.options?.find(row => row.destination === preview.input.refundDestination);
+    const amount = preview.action === 'request_withdrawal' ? preview.input.amount
+      : preview.action === 'accept_return' ? preview.contract.refund?.totalAmount : option?.amountMinor / 100;
+    const currency = preview.action === 'request_withdrawal' ? preview.input.currency : preview.contract.currency;
     const amounts = (value.replace(/\b(?:ORD|RET)-[a-z0-9-]+\b/gi, '').match(/\d[\d,]*(?:\.\d+)?/g) || []).map(number => Number(number.replace(/,/g, '')));
-    if (amounts.some(amount => amount !== preview.input.amount)) return false;
+    if (amounts.some(given => given !== amount)) return false;
+    const numberWords = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+      eleven: 11, twelve: 12, twenty: 20, thirty: 30, forty: 40, fifty: 50, hundred: 100, thousand: 1000 };
+    if ([...value.matchAll(/\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|twenty|thirty|forty|fifty|hundred|thousand)\b/gi)]
+      .some(match => numberWords[match[1].toLowerCase()] !== amount)) return false;
     const currencies = value.match(/\b(?:USD|PKR|EUR|GBP)\b/gi) || [];
-    if (currencies.some(currency => currency.toUpperCase() !== preview.input.currency)) return false;
+    if (currencies.some(given => given.toUpperCase() !== currency)) return false;
     const aliases = [['USD', /\$|\b(?:US dollars?|dollars?)\b|ڈالر/i], ['PKR', /\b(?:Rs|rupees?)\b|روپے/i],
       ['EUR', /€|\beuros?\b|یورو/i], ['GBP', /£|\bpounds?\b|پاؤنڈ/i]];
-    if (aliases.some(([currency, pattern]) => pattern.test(value) && currency !== preview.input.currency)
+    if (aliases.some(([given, pattern]) => pattern.test(value) && given !== currency)
       || /\b(?:CAD|AUD|INR|AED|JPY|SAR|Canadian|Australian|Indian rupees?|dirhams?|yen)\b|₹/i.test(value)) return false;
   }
   if (preview.action === 'update_order_status') {
     const statuses = value.match(/\b(?:confirmed|processing|shipped|delivered|cancelled|canceled)\b/gi) || [];
     if (statuses.some(status => status.toLowerCase() !== preview.input.newStatus)) return false;
   }
+  if (preview.action === 'update_return_status') {
+    const statuses = [['approved', /\bapprov(?:e|ed)\b/i], ['rejected', /\breject(?:ed)?\b/i],
+      ['pickup_scheduled', /\b(?:pickup scheduled|schedule pickup|pickup_scheduled)\b/i], ['picked_up', /\b(?:picked up|picked_up)\b/i],
+      ['in_transit_to_seller', /\b(?:in transit|in_transit_to_seller)\b/i], ['received_by_seller', /\b(?:received|received_by_seller)\b/i],
+      ['under_review', /\b(?:under review|under_review)\b/i]];
+    if (statuses.some(([status, pattern]) => pattern.test(value) && status !== preview.input.status)) return false;
+  }
   return true;
 }
 
 // Approval context comes ONLY from this actor's last persisted assistant
 // turn, never a client/model-supplied tool memory or an old unrelated quote.
-async function previousCommercePreview(user, args, action) {
+async function retainedServerReviewEvent(user, args) {
   const userId = String(user?._id || user?.id || '');
   const conversationId = String(args._chatConversationId || '');
   if (!mongoose.isValidObjectId(conversationId)) return null;
@@ -76,10 +99,18 @@ async function previousCommercePreview(user, args, action) {
   const conversation = history?.conversations?.find(item => String(item._id) === conversationId);
   const last = [...(conversation?.messages || [])].reverse().find(message => message.role === 'assistant');
   const candidates = (last?.toolEvents || []).filter(event => event.result?.previewOnly === true
-    && /^aif1\.[a-f0-9]{64}$/.test(event.result?.data?.quoteToken || ''));
+    && typeof event.result?.data?.quoteToken === 'string' && event.result.data.quoteToken.length > 0);
   const tokens = [...new Set(candidates.map(event => event.result.data.quoteToken))];
   if (tokens.length !== 1) return null;
-  return Preview.findOne({ token: tokens[0], user: userId, role: user.role, action,
+  return candidates.find(event => event.result.data.quoteToken === tokens[0]);
+}
+async function previousCommercePreview(user, args, action = null) {
+  const retained = await retainedServerReviewEvent(user, args);
+  if (!/^aif1\.[a-f0-9]{64}$/.test(retained?.result?.data?.quoteToken || '')) return null;
+  const userId = String(user?._id || user?.id || '');
+  const conversationId = String(args._chatConversationId || '');
+  const tokens = [retained.result.data.quoteToken];
+  return Preview.findOne({ token: tokens[0], user: userId, role: user.role, ...(action ? { action } : {}),
     $or: [{ conversation: conversationId }, { conversation: null }] });
 }
 
@@ -134,9 +165,14 @@ async function executeReviewedCommerceAction(action, args, user, { prepare, exec
   if (preview.requestKey === args._chatRequestKey) return fail('AI_COMMERCE_CONFIRMATION_REQUIRED', 'Review the preview first and confirm in a subsequent message. No action was performed.');
   if (preview.status === 'completed') return { ...preview.result, replayed: true, originallyCompletedAt: preview.completedAt };
   if (preview.status !== 'quoted') return fail('AI_COMMERCE_ACTION_PENDING', 'This reviewed action is already being processed or needs recovery. Check its current status; do not submit another action.');
-  if (preview.expiresAt.getTime() <= Date.now()) return createCommercePreview(action, await prepare(action, { ...preview.input, ...args }, user), user, args);
+  if (preview.expiresAt.getTime() <= Date.now()) {
+    const refreshed = await prepare(action, { ...preview.input, ...args }, user);
+    refreshed.notice = 'Your previous review expired. Nothing was submitted. Review these refreshed details and confirm again.\n' + refreshed.notice;
+    return createCommercePreview(action, refreshed, user, args);
+  }
   const current = await prepare(action, { ...preview.input, ...args }, user);
   if (digest(current.contract) !== digest(preview.contract) || digest(current.input) !== digest(preview.input)) {
+    current.notice = 'The details changed since your previous review. Nothing was submitted. Review these updated details and confirm again.\n' + current.notice;
     return createCommercePreview(action, current, user, args);
   }
   const claimed = await Preview.findOneAndUpdate({ _id: preview._id, user: user._id || user.id, status: 'quoted',
@@ -163,5 +199,5 @@ async function executeReviewedCommerceAction(action, args, user, { prepare, exec
   }
 }
 
-module.exports = { TTL, canonical, digest, isCommerceConfirmation, previousCommercePreview,
+module.exports = { TTL, canonical, digest, isCommerceConfirmation, previousCommercePreview, retainedServerReviewEvent,
   confirmationMatchesPreview, createCommercePreview, executeReviewedCommerceAction };
