@@ -242,17 +242,12 @@ async function prepare(action, args, user) {
     if (!group && groups.length === 1 && !args.sellerId && !args.storeName) group = groups[0];
     if (!group) throw fail('Choose which store portion to return. Requests are seller-specific.', 'AI_COMMERCE_STORE_AMBIGUOUS');
     if (!Array.isArray(args.items) || !args.items.length) throw fail('Choose the exact items and quantities to return.');
-    const items = args.items.map(selection => {
-      if (selection.orderItemId) return { orderItemId: String(selection.orderItemId), quantity: selection.quantity };
-      const candidates = group.items.filter(item => clean(item.name).toLowerCase() === clean(selection.itemName).toLowerCase());
-      if (candidates.length !== 1) throw fail('Choose the exact order item and its variant from the eligibility list.', 'AI_COMMERCE_ITEM_AMBIGUOUS');
-      return { orderItemId: id(candidates[0].orderItemId), quantity: selection.quantity };
-    });
+    const items = args.items.map(selection => require('./aiOwnedReturnSelectionService').resolveOwnedReturnSelection(selection, group.items));
     const input = { orderId: id(order), sellerId: id(group.seller), items, reasonCategory: args.reasonCategory, reasonDetails: clean(args.reasonDetails) };
     const quote = await returns().previewReturnRequest({ ...input, buyerId: owner.id, requestKey: 'ai-preview-request' });
     return { title: 'Review return request', input,
       contract: quote, data: { returnPreview: quote },
-      notice: `Request a return from ${quote.storeName} for ${order.orderId}: ${quote.items.map(item => `${item.quantity} × ${item.name}`).join(', ')}.\nReason: ${quote.reasonDetails}.\n`
+      notice: `Request a return from ${quote.storeName} for ${order.orderId}: ${quote.items.map(item => `${item.quantity} × ${item.name}${Object.keys(item.selectedOptions || {}).length ? ' (' + Object.entries(item.selectedOptions).map(([key,value]) => `${key}: ${value}`).join(', ') + ')' : item.selectedColor ? ' (' + item.selectedColor + ')' : ''}`).join(', ')}.\nReason: ${quote.reasonDetails}.\n`
         + (quote.policy.refundType === 'replacement_only' ? 'Resolution: replacement only; no money refund.'
           : `Frozen potential Wallet refund: ${money(quote.refund.totalAmount, quote.currency)} after the return is reviewed and accepted. A request alone does not refund money.`) };
   }
