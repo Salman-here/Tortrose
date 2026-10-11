@@ -144,13 +144,21 @@ async function listCards(userId) {
   const { config, link, client } = await ownedCustomer(userId);
   if (!link) {
     const user = await User.findById(userId).select('username savedShippingInfo sellerInfo').lean();
-    return { cards: [], defaultPaymentMethodId: null, provider: 'safepay', environment: config.environment,
+    return { cards: [], defaultPaymentMethodId: null, billingPaymentMethodId: null, provider: 'safepay', environment: config.environment,
       billingProfileReady: false, billingContact: billingContactDraft(user || {}) };
   }
   const all = await client.listCards(link.customerId);
   const cards = all.filter(card => card.max_usage === -1 && card.cybersource && /^\d{4}$/.test(card.cybersource.last_four || '')).map(cardPresentation);
   const selected = cards.some(card => card.id === link.defaultCardId && card.usable) ? link.defaultCardId : null;
-  return { cards, defaultPaymentMethodId: selected, provider: 'safepay', environment: config.environment, billingProfileReady: true };
+  const subscription = await SellerSubscription.findOne({ seller: userId, billingProvider: 'safepay',
+    'safepayBilling.environment': config.environment, 'safepayBilling.customerId': link.customerId,
+    status: { $in: ['active', 'free_period', 'past_due'] } }).select('+safepayBilling.cardId').lean();
+  // Return only the same opaque reference already in this owner's card list,
+  // never an underlying card credential or a foreign/environment-mismatched id.
+  const billingCard = cards.find(card => card.id === subscription?.safepayBilling?.cardId
+    && card.usable && card.id !== link.deletingCardId);
+  return { cards, defaultPaymentMethodId: selected, billingPaymentMethodId: billingCard?.id || null,
+    provider: 'safepay', environment: config.environment, billingProfileReady: true };
 }
 async function requireOwnedReusableCard(userId, cardId) {
   const { link, client, config } = await ownedCustomer(userId);

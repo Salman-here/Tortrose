@@ -91,6 +91,30 @@ test('acceptance still requires the user consent action and sends the owned quot
   }));
 });
 
+test('past-due recovery changes the card and retry selects that refreshed billing card, not shopping default', async () => {
+  let currentBillingCard = 'pm_shopping';
+  let version = 7;
+  const due = { ...subscription, status: 'past_due', plan: 'starter', planName: 'Rozare Starter', billingProvider: 'safepay',
+    hasUsedFreePeriod: true, currentMonthlyAmountCents: 999, automaticRenewal: true, failedBillingOperation: 'failed-invoice' };
+  cards = [{ id: 'pm_shopping', brand: 'visa', last4: '1111', usable: true }, { id: 'pm_replacement', brand: 'mastercard', last4: '1005', usable: true }];
+  api.get.mockImplementation(async route => ({ data: route === '/api/subscription/status' ? { subscription: { ...due, billingVersion: version } }
+    : route === '/api/safepay/cards' ? { cards, defaultPaymentMethodId: 'pm_shopping', billingPaymentMethodId: currentBillingCard } : { completed: true } }));
+  api.patch.mockImplementation(async (_route, body) => { currentBillingCard = body.cardId; version += 1; return { data: { success: true } }; });
+  const screen = render(<SellerSubscriptionScreen navigation={navigation} route={{ params: {} }} />);
+  await waitFor(() => expect(screen.getByLabelText('Change subscription card')).toBeTruthy());
+  fireEvent.press(screen.getByLabelText('Change subscription card'));
+  await waitFor(() => expect(screen.getByLabelText('Subscription payment card').props.selectedValue).toBe('pm_shopping'));
+  fireEvent(screen.getByLabelText('Subscription payment card'), 'valueChange', 'pm_replacement');
+  fireEvent(screen.getByLabelText('Agree to the displayed subscription price and automatic renewal terms'), 'valueChange', true);
+  fireEvent.press(screen.getByLabelText('Confirm card change'));
+  await waitFor(() => expect(api.patch).toHaveBeenCalledWith('/api/safepay/subscription/card', expect.objectContaining({ cardId: 'pm_replacement', billingVersion: 7 })));
+  await waitFor(() => expect(screen.queryByTestId('subscription-billing-dialog')).toBeNull());
+  fireEvent.press(screen.getByLabelText('Review and retry renewal'));
+  await waitFor(() => expect(screen.getByTestId('subscription-billing-dialog')).toBeTruthy());
+  expect(screen.getByLabelText('Subscription payment card').props.selectedValue).toBe('pm_replacement');
+  expect(api.post).toHaveBeenCalledWith('/api/safepay/subscription/retry-quote', expect.objectContaining({ failedOperation: 'failed-invoice', clientSurface: 'mobile' }));
+});
+
 test.each([false, true])('paid access ignores the expired introductory date, including cancellation scheduled %s', async cancelled => {
   const paid = { ...subscription, status: 'active', plan: 'starter', planName: 'Rozare Starter', billingProvider: 'safepay',
     hasUsedFreePeriod: true, currentMonthlyAmountCents: 999, currentPeriodStart: '2026-10-08T03:53:39Z',

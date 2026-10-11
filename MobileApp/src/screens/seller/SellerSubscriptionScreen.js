@@ -28,6 +28,7 @@ import {
   SellerSectionHeader,
 } from '../../components/seller/SellerUI';
 import { useAuth } from '../../contexts/AuthContext';
+import { selectSubscriptionBillingCard } from '../../utils/subscriptionBillingCard';
 import { createScopedMutationStorageKey, getOrCreatePersistedMutationAttemptInLedger, clearPersistedMutationAttemptFromLedger } from '../../utils/persistedMutationAttempt';
 import { useTheme } from '../../contexts/ThemeContext';
 import { borderRadius, fontSize, fontWeight, spacing } from '../../styles/theme';
@@ -452,7 +453,7 @@ export default function SellerSubscriptionScreen({ navigation, route }) {
         throw new Error('This quote expired. Tap the plan again to review a fresh quote.');
       }
       setBillingCards(cards);
-      setBillingCardId(cards.some(card => card.id === cardResponse.data.defaultPaymentMethodId) ? cardResponse.data.defaultPaymentMethodId : cards[0].id);
+      setBillingCardId(selectSubscriptionBillingCard(cardResponse.data, { preferBilling: kind !== 'enrollment' }));
       setBillingConsent(false);
       setBillingQuote(quote);
     } catch (requestError) {
@@ -475,7 +476,7 @@ export default function SellerSubscriptionScreen({ navigation, route }) {
         return;
       }
       if (!isSafeMinor(subscription?.currentMonthlyAmountCents)) throw new Error('Refresh your subscription to verify its billing price.');
-      setBillingCards(cards); setBillingCardId(cards[0].id); setBillingConsent(false);
+      setBillingCards(cards); setBillingCardId(selectSubscriptionBillingCard(response.data, { preferBilling: true })); setBillingConsent(false);
       setBillingQuote({ kind: 'card_change', planName: subscription.planName, dueNowMinor: 0,
         monthlyAmountMinor: subscription.currentMonthlyAmountCents, billingVersion: subscription.billingVersion,
         consentVersion: 'rozare-safepay-recurring-v1',

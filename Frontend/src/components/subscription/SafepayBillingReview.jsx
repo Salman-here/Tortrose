@@ -6,6 +6,7 @@ import { X } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { safepayApi } from '../../utils/safepay';
 import { formatUsdCents } from '../../utils/subscriptionPricing';
+import { selectSubscriptionBillingCard } from '../../utils/subscriptionBillingCard';
 import { createScopedMutationStorageKey, getOrCreatePersistedMutationAttemptForFingerprint, clearPersistedMutationAttemptForFingerprint } from '../../utils/persistedMutationAttempt';
 
 export const isValidBillingQuote = quote => Boolean(quote && /^[a-f\d]{24}$/i.test(quote.quoteId)
@@ -37,14 +38,14 @@ export function useSafepaySubscriptionBilling(subscription, refresh) {
     await refresh();
     return data;
   };
-  const getCards = async () => {
+  const getCards = async (kind = 'enrollment') => {
     const { data } = await safepayApi.get('/cards');
     const available = Array.isArray(data.cards) ? data.cards.filter(card => card.usable !== false) : [];
     if (!available.length) {
       toast.info('Add a card with Safepay first, then return here to review and approve your subscription. No Safepay account is needed.');
       navigate('/seller-dashboard/payment-methods'); return null;
     }
-    setCards(available); setCardId(available.some(card => card.id === data.defaultPaymentMethodId) ? data.defaultPaymentMethodId : available[0].id);
+    setCards(available); setCardId(selectSubscriptionBillingCard(data, { preferBilling: kind !== 'enrollment' }));
     setConsent(false);
     return available;
   };
@@ -56,7 +57,7 @@ export function useSafepaySubscriptionBilling(subscription, refresh) {
     busyRef.current = true; setBusy(true);
     try {
       if (subscription?.pendingBillingOperation) { await check(subscription.pendingBillingOperation); return; }
-      if (!await getCards()) return;
+      if (!await getCards(kind)) return;
       const storageKey = createScopedMutationStorageKey('rozare_safepay_billing_web_v1', currentUser?._id || currentUser?.id);
       const fingerprint = JSON.stringify({ kind, plan, includeMetaAds, couponCode, version: subscription?.billingVersion || 0 });
       const attempt = await getOrCreatePersistedMutationAttemptForFingerprint({ storage: localStorage, storageKey, fingerprint, keyPrefix: 'web-billing' });
@@ -79,7 +80,7 @@ export function useSafepaySubscriptionBilling(subscription, refresh) {
     if (busyRef.current) return;
     busyRef.current = true; setBusy(true);
     try {
-      if (!await getCards()) return;
+      if (!await getCards('card_change')) return;
       if (!Number.isSafeInteger(subscription?.currentMonthlyAmountCents) || subscription.currentMonthlyAmountCents <= 0) throw new Error('Refresh your subscription to verify its price.');
       setQuote({ kind: 'card_change', planName: subscription.planName, dueNowMinor: 0,
         monthlyAmountMinor: subscription.currentMonthlyAmountCents, billingVersion: subscription.billingVersion,
@@ -136,7 +137,7 @@ function SafepayBillingReview({ quote, cards, cardId, onCardChange, consent, onC
       <header className="flex items-center justify-between gap-3"><h2 id="safepay-billing-title" className="font-bold text-lg">Review your subscription</h2><button type="button" aria-label="Close subscription review" disabled={busy} onClick={onClose}><X /></button></header>
       <h3 className="font-semibold">{quote.planName}</h3>
       <div className="glass-card p-4 space-y-2"><p>Due now: <strong>{formatUsdCents(quote.dueNowMinor)} USD</strong></p><p>Recurring price: <strong>{formatUsdCents(quote.monthlyAmountMinor)} USD/month</strong></p>{quote.freePeriodDays > 0 && <p>First {quote.freePeriodDays} days free.</p>}{quote.creditMinor > 0 && <p>Credit toward future billing: {formatUsdCents(quote.creditMinor)} USD</p>}</div>
-      <label className="block text-sm">Safepay payment card<select value={cardId} onChange={event => onCardChange(event.target.value)} disabled={busy} className="glass-input block w-full mt-2">{cards.map(card => <option key={card.id} value={card.id}>{String(card.brand || 'Card').toUpperCase()} •••• {card.last4}</option>)}</select></label>
+      <label className="block text-sm">Safepay payment card<select value={cardId} onChange={event => onCardChange(event.target.value)} disabled={busy} className="glass-input block w-full mt-2"><option value="" disabled>Choose a saved card</option>{cards.map(card => <option key={card.id} value={card.id}>{String(card.brand || 'Card').toUpperCase()} •••• {card.last4}</option>)}</select></label>
       <p className="text-sm text-muted-foreground">{quote.terms}</p>
       <label className="flex items-start gap-3 text-sm"><input type="checkbox" className="mt-1" checked={consent} disabled={busy} onChange={event => onConsentChange(event.target.checked)} /><span>I agree to this price and the displayed automatic renewal terms.</span></label>
       <div className="flex flex-wrap justify-end gap-3"><button className="glass-button px-4 py-3" disabled={busy} onClick={onClose}>Not now</button><button className="glass-button-primary px-4 py-3 disabled:opacity-50" disabled={busy || !consent || !cardId} onClick={onConfirm}>{busy ? 'Verifying…' : quote.kind === 'card_change' ? 'Confirm card change' : 'Confirm subscription'}</button></div>

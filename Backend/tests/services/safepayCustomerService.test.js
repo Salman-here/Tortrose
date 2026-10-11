@@ -10,6 +10,7 @@ const { MongoMemoryServer } = require('mongodb-memory-server');
 const User = require('../../models/User');
 const Customer = require('../../models/SafepayCustomer');
 const Payment = require('../../models/SafepayPayment');
+const Subscription = require('../../models/SellerSubscription');
 const { billingContact, ensureCustomer, startCardSetup, listCards } = require('../../services/safepayCustomerService');
 let mongo, user;
 const validContact = { fullName: 'Test Seller', phone: '+923001234567', country: 'Pakistan', countryCode: 'PK' };
@@ -24,11 +25,11 @@ beforeAll(async () => {
     SAFEPAY_SANDBOX_WEBHOOK_SCHEME: 'sha512-raw' });
   mongo = await MongoMemoryServer.create();
   await mongoose.connect(mongo.getUri());
-  await Promise.all([User, Customer, Payment].map(model => model.init()));
+  await Promise.all([User, Customer, Payment, Subscription].map(model => model.init()));
 }, 120000);
 afterAll(async () => { await mongoose.disconnect(); await mongo?.stop(); });
 beforeEach(async () => {
-  await Promise.all([User, Customer, Payment].map(model => model.deleteMany({})));
+  await Promise.all([User, Customer, Payment, Subscription].map(model => model.deleteMany({})));
   mockCreateCustomer.mockReset().mockResolvedValue(providerCustomer);
   mockListCards.mockReset().mockResolvedValue([]);
   user = await User.create({ username: 'Seller', email: 'customer-fixture@example.com', status: 'active', role: 'seller',
@@ -161,4 +162,31 @@ test('existing closed profiles and missing consent cannot initiate provider work
   await expect(ensureCustomer(user._id, validContact)).rejects.toMatchObject({ code: 'SAFEPAY_CUSTOMER_CLOSED' });
   await expect(startCardSetup(user._id, { consentToSave: false })).rejects.toMatchObject({ code: 'CARD_STORAGE_CONSENT_REQUIRED' });
   expect(mockCreateCustomer).not.toHaveBeenCalled();
+});
+
+const reusableCard = (id, last4 = '1111', expiry = '2030') => ({ token: id, max_usage: -1,
+  expires_at: { seconds: Date.parse(`${expiry}-12-31T23:59:59Z`) / 1000 },
+  cybersource: { token: 'private-network-credential', scheme: 1, last_four: last4, expiry_month: '12', expiry_year: expiry } });
+test('owned current billing selection stays distinct from the shopping default, including past-due recovery', async () => {
+  await ensureCustomer(user._id, validContact);
+  await Customer.updateOne({ user: user._id }, { $set: { defaultCardId: 'pm_shopping-fixture' } });
+  mockListCards.mockResolvedValue([reusableCard('pm_shopping-fixture'), reusableCard('pm_billing-fixture')]);
+  await Subscription.create({ seller: user._id, plan: 'elite', status: 'past_due', billingProvider: 'safepay',
+    safepayBilling: { environment: 'sandbox', customerId: providerCustomer.token, cardId: 'pm_billing-fixture' } });
+  const result = await listCards(user._id);
+  expect(result).toMatchObject({ defaultPaymentMethodId: 'pm_shopping-fixture', billingPaymentMethodId: 'pm_billing-fixture' });
+  expect(JSON.stringify(result)).not.toContain('private-network-credential');
+  await Subscription.updateOne({ seller: user._id }, { $set: { 'safepayBilling.cardId': 'pm_shopping-fixture' } });
+  expect((await listCards(user._id)).billingPaymentMethodId).toBe('pm_shopping-fixture');
+});
+test.each(['other-owner', 'other-environment', 'other-customer', 'unowned-card', 'expired-card', 'deleting-card'])('never presents %s as the current subscription card', async mismatch => {
+  await ensureCustomer(user._id, validContact);
+  mockListCards.mockResolvedValue([reusableCard('pm_billing-fixture', '1111', mismatch === 'expired-card' ? '2020' : '2030')]);
+  if (mismatch === 'deleting-card') await Customer.updateOne({ user: user._id }, { $set: { deletingCardId: 'pm_billing-fixture' } });
+  await Subscription.create({ seller: mismatch === 'other-owner' ? new mongoose.Types.ObjectId() : user._id,
+    plan: 'elite', status: 'active', billingProvider: 'safepay', safepayBilling: {
+      environment: mismatch === 'other-environment' ? 'production' : 'sandbox',
+      customerId: mismatch === 'other-customer' ? 'cus_unowned-fixture' : providerCustomer.token,
+      cardId: mismatch === 'unowned-card' ? 'pm_unowned-fixture' : 'pm_billing-fixture' } });
+  expect((await listCards(user._id)).billingPaymentMethodId).toBeNull();
 });

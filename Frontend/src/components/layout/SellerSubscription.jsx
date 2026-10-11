@@ -480,12 +480,12 @@ const SellerSubscription = () => {
                             <AlertTriangle size={20} style={{ color: 'hsl(25, 90%, 50%)' }} />
                         </div>
                         <div className="flex-1">
-                            <h3 className="text-sm font-bold" style={{ color: 'hsl(25, 90%, 45%)' }}>Payment Failed — Update Payment Method</h3>
+                            <h3 className="text-sm font-bold" style={{ color: 'hsl(25, 90%, 45%)' }}>Payment needs attention</h3>
                             <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                                Your last payment could not be processed. Update your payment method to avoid store suspension.
+                                Your renewal is not confirmed. Review your billing card and payment status before starting another attempt.
                             </p>
                             <p className="text-[11px] mt-2" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                                Check your billing card and retry the outstanding payment. Access may be restricted if payment remains unpaid.
+                                Use the billing controls above to check a pending payment or retry a declined renewal. Store visibility is paused until the outstanding payment is verified.
                             </p>
                         </div>
                     </div>
@@ -684,7 +684,7 @@ const SellerSubscription = () => {
                         </div>
                          <div>
                             <h2 className="text-base font-bold" style={{ color: 'hsl(var(--foreground))' }}>
-                                {isSubscribed ? (isElite ? 'Rozare Elite' : 'Rozare Starter') : isTrial ? 'Free Trial' : 'No Active Plan'}
+                                {isPastDue ? `${subscription.planName || (isElite ? 'Rozare Elite' : 'Rozare Starter')} — Renewal unpaid` : isSubscribed ? (isElite ? 'Rozare Elite' : 'Rozare Starter') : isTrial ? 'Free Trial' : 'No Active Plan'}
                             </h2>
                             <p className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>
                                 {isSubscribed
@@ -693,7 +693,7 @@ const SellerSubscription = () => {
                                         : `${isElite ? activeEliteMonthlyPriceLabel : starterMonthlyPriceLabel}/month - Cancel anytime`
                                     : isTrial
                                         ? `${subscription?.trialDaysRemaining} day${subscription?.trialDaysRemaining !== 1 ? 's' : ''} remaining`
-                                        : 'Subscribe to activate your store'
+                                          : isPastDue ? 'Your existing billing agreement is retained. Resolve the outstanding renewal to reactivate your store.' : 'Subscribe to activate your store'
                                 }
                             </p>
                             {isSubscribed && subscription?.bonusFeaturesActive && (
@@ -1101,12 +1101,14 @@ const SellerSubscription = () => {
                             whileHover={{ scale: 1.02 }}
                             whileTap={{ scale: 0.98 }}
                             onClick={() => isElite ? setShowDowngradeConfirm(true) : handleSubscribe('starter')}
-                            disabled={checkoutLoading === 'starter' || hasPendingDowngrade}
+                            disabled={isPastDue || checkoutLoading === 'starter' || hasPendingDowngrade}
                             className="w-full py-3 rounded-xl font-bold text-sm text-white flex items-center justify-center gap-2 transition-all disabled:opacity-60"
                             style={{ background: 'linear-gradient(135deg, hsl(220, 70%, 55%), hsl(250, 60%, 55%))' }}
                         >
                             {checkoutLoading === 'starter' ? (
                                 <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                            ) : isPastDue ? (
+                                <>Resolve unpaid renewal above</>
                             ) : hasPendingDowngrade ? (
                                 <><Clock size={15} /> Starter scheduled</>
                             ) : isElite ? (
@@ -1251,12 +1253,14 @@ const SellerSubscription = () => {
                             whileHover={{ scale: 1.02 }}
                             whileTap={{ scale: 0.98 }}
                             onClick={() => isStarterSubscribed ? setShowUpgradeConfirm(true) : handleSubscribe('elite')}
-                            disabled={checkoutLoading === 'elite'}
+                            disabled={isPastDue || checkoutLoading === 'elite'}
                             className="w-full py-3 rounded-xl font-bold text-sm text-white flex items-center justify-center gap-2 transition-all disabled:opacity-60"
                             style={{ background: 'linear-gradient(135deg, hsl(270, 60%, 55%), hsl(290, 50%, 50%))' }}
                         >
                             {checkoutLoading === 'elite' ? (
                                 <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                            ) : isPastDue ? (
+                                <>Resolve unpaid renewal above</>
                             ) : isStarterSubscribed ? (
                                 <><Gem size={15} /> Upgrade to Elite <ArrowRight size={15} /></>
                             ) : (
