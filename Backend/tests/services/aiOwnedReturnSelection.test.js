@@ -10,3 +10,5 @@ test('stale model ids recover only from unique owned friendly selectors',()=>exp
 test('unknown ids without owned friendly selectors cannot target another order',()=>expect(()=>resolve({orderItemId:'foreign-line',quantity:1},rows)).toThrow('exact item and variant'));
 test('known line ids cannot override conflicting selected variants',()=>expect(()=>resolve({orderItemId:'line-a5',selectedOptions:{Size:'A6'},quantity:1},rows)).toThrow('exact item and variant'));
 test('friendly names and variants resolve without exposing ids',()=>expect(resolve({itemName:'qa notebook',selectedColor:'blue',selectedOptions:{size:'a6'},quantity:1},rows)).toEqual({orderItemId:'line-a6',quantity:1}));
+test('known variant suffixes in friendly names select the correct owned line',()=>expect(resolve({itemName:'QA Notebook (Blue, A6)',quantity:1},rows)).toEqual({orderItemId:'line-a6',quantity:1}));
+test('unknown or conflicting qualifiers never silently select a variant',()=>expect(()=>resolve({itemName:'QA Notebook (Red, A6)',quantity:1},rows)).toThrow('exact item and variant'));

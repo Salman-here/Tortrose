@@ -433,7 +433,8 @@ async function executeCommerceTool(name, args = {}, user) {
     // prose. The existing cross-channel renderer gives this wording priority.
     return { ...result, requiredDisclosure: result.message || result.error };
   } catch (error) {
-    return { success: false, code: error.code || 'AI_COMMERCE_UNAVAILABLE', error: error.statusCode ? error.message : 'This action could not be verified. Refresh the relevant order, return or Payments page and try again.' };
+    return { success: false, code: error.code || 'AI_COMMERCE_UNAVAILABLE', error: error.statusCode ? error.message : 'This action could not be verified. Refresh the relevant order, return or Payments page and try again.',
+      ...(error.code === 'AI_COMMERCE_ITEM_AMBIGUOUS' && error.safeReturnSelectionRecovery ? { data: { returnSelectionRecovery: error.safeReturnSelectionRecovery } } : {}) };
   }
 }
 module.exports = { executeCommerceTool, prepare, execute, presentReturn, basicOrder, actor, controllerCall, resolveOwnedStoreGroup, requestedSellers };
