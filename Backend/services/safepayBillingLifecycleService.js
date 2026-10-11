@@ -84,7 +84,7 @@ async function cancel(sellerId) {
     const sub = await scopedSubscription(sellerId, session);
     if (sub.cancelledAt && !sub.safepayBilling.autoRenew && !sub.pendingDowngrade?.toPlan) return { msg: 'Renewal is already cancelled.', reused: true };
     const at = new Date();
-    sub.cancelledAt = at; sub.pendingDowngrade = { toPlan: null };
+    sub.cancelledAt = at; sub.pendingDowngrade = { toPlan: null }; sub.warningEmailSent = false;
     sub.safepayBilling.autoRenew = false; sub.safepayBilling.nextChargeAt = null; sub.safepayBilling.version += 1;
     let currentPaymentMayComplete = false;
     if (sub.safepayBilling.pendingOperation) {
@@ -116,7 +116,8 @@ async function resume(sellerId) {
       throw fail('This subscription already ended. Review a new subscription quote.', 'SUBSCRIPTION_ENDED');
     }
     if (sub.safepayBilling.autoRenew && !sub.cancelledAt) return { msg: 'Automatic renewal is already active.', reused: true };
-    sub.cancelledAt = null; sub.safepayBilling.autoRenew = true; sub.safepayBilling.nextChargeAt = sub.currentPeriodEnd;
+    sub.cancelledAt = null; sub.warningEmailSent = false;
+    sub.safepayBilling.autoRenew = true; sub.safepayBilling.nextChargeAt = sub.currentPeriodEnd;
     sub.safepayBilling.version += 1;
     await sub.save({ session });
     await notify(sub, 'resumed', new Date(), 'Subscription renewal resumed', 'Automatic renewal of your {{money.monthly}}/month plan is active again.', session);

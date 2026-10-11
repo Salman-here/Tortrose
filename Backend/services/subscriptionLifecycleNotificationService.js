@@ -192,22 +192,49 @@ async function enqueueTrialBlockedNotification(subscription, {
 async function enqueueSubscriptionEndingNotification(subscription, {
   channels = ['inapp', 'push', 'email', 'whatsapp'],
   session = null,
+  now = new Date(),
 } = {}) {
   if (
     !['active', 'free_period'].includes(subscription?.status)
     || !subscription?.cancelledAt
     || subscription?.pendingDowngrade?.toPlan
+    || subscription?.pendingDowngrade?.scheduledAt
   ) throw outboxError('Ending warning requires one ordinary scheduled subscription cancellation.');
   const id = stringId(subscription?._id);
   const periodEnd = requireDate(subscription?.currentPeriodEnd, 'Subscription period end');
-  const stripeSubscriptionId = safeText(subscription?.stripeSubscriptionId, 255);
+  const cancelledAt = requireDate(subscription.cancelledAt, 'Subscription cancellation');
+  if (periodEnd <= requireDate(now, 'Subscription warning time')) {
+    throw outboxError('Ending warning requires a future subscription period boundary.');
+  }
+  const safepay = subscription.billingProvider === 'safepay';
+  let identity;
+  let providerData;
+  if (safepay) {
+    const contractId = safeText(subscription.safepayBilling?.contractId, 255);
+    const environment = subscription.safepayBilling?.environment;
+    if (
+      !['sandbox', 'production'].includes(environment)
+      || subscription.safepayBilling?.autoRenew !== false
+      || subscription.safepayBilling?.endedAt
+    ) throw outboxError('Ending warning requires a current cancelled Safepay renewal.');
+    // Unrelated card changes increment the billing version. This warning owns
+    // the cancellation and funded period, not the current payment method.
+    identity = eventHash('safepay', environment, contractId, cancelledAt.toISOString(), periodEnd.toISOString());
+    providerData = { billingProvider: 'safepay', safepayContractId: contractId,
+      safepayEnvironment: environment, cancelledAtAt: cancelledAt.toISOString() };
+  } else {
+    // Retain the original event identity for dormant Stripe rows and retries.
+    const stripeSubscriptionId = safeText(subscription?.stripeSubscriptionId, 255);
+    identity = eventHash(stripeSubscriptionId, periodEnd.toISOString());
+    providerData = { stripeSubscriptionId };
+  }
   const founderText = subscription?.founderOffer?.active
     ? ' The FIRST100 founder rate is forfeited only when this subscription actually ends.'
     : '';
   const stateText = `Your subscription is scheduled to end on ${dateLabel(periodEnd)}. Your store will be hidden after the current access period ends.${founderText}`;
   const title = 'Subscription ending soon';
   return enqueueNotificationEvent({
-    eventKey: `subscription:${id}:ending:${eventHash(stripeSubscriptionId, periodEnd.toISOString())}:seller:v2`,
+    eventKey: `subscription:${id}:ending:${identity}:seller:v2`,
     eventType: 'subscription.ending_soon',
     aggregateType: 'SellerSubscription',
     aggregateId: id,
@@ -233,7 +260,7 @@ async function enqueueSubscriptionEndingNotification(subscription, {
       data: {
         type: 'subscription_ending_soon',
         subscriptionId: id,
-        stripeSubscriptionId,
+        ...providerData,
         currentPeriodEndAt: periodEnd.toISOString(),
       },
     },

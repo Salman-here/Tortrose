@@ -4880,6 +4880,83 @@ describe('subscription billing idempotency', () => {
     expect(notifySeller).not.toHaveBeenCalled();
   });
 
+  test.each(['active', 'free_period'])('Safepay %s ending warning needs no Stripe ID and repeated cron scans enqueue once', async status => {
+    const seller = await User.create({ username: `safepay-ending-${status}`,
+      email: `safepay-ending-${status}@example.com`, role: 'seller', isVerified: true });
+    const subscription = await SellerSubscription.create({ seller: seller._id, status,
+      plan: 'elite', planName: 'Rozare Elite', billingProvider: 'safepay', cancelledAt: new Date(),
+      currentPeriodEnd: new Date(Date.now() + 86400000), warningEmailSent: false,
+      safepayBilling: { contractId: `contract-ending-${status}`, environment: 'sandbox', autoRenew: false } });
+    await processTrialExpirations();
+    await processTrialExpirations();
+    // Reconstruct an interrupted receipt write: the event itself still dedupes.
+    await SellerSubscription.updateOne({ _id: subscription._id }, { $set: { warningEmailSent: false } });
+    await processTrialExpirations();
+    const rows = await NotificationOutbox.find({ aggregateId: String(subscription._id), eventType: 'subscription.ending_soon' }).lean();
+    expect(rows.map(row => row.channel).sort()).toEqual(['email', 'inapp', 'push', 'whatsapp']);
+    expect(rows.every(row => row.payload.data.billingProvider === 'safepay'
+      && !Object.hasOwn(row.payload.data, 'stripeSubscriptionId'))).toBe(true);
+    expect((await SellerSubscription.findById(subscription._id)).warningEmailSent).toBe(true);
+    expect(sendEmail).not.toHaveBeenCalled();
+    expect(notifySeller).not.toHaveBeenCalled();
+  });
+
+  test('Safepay ending warning retries a partial handoff without blocking the next seller or bonus alerts', async () => {
+    const subscriptions = [];
+    for (const suffix of ['interrupted', 'next', 'bonus']) {
+      const seller = await User.create({ username: `safepay-warning-${suffix}`,
+        email: `safepay-warning-${suffix}@example.com`, role: 'seller', isVerified: true });
+      subscriptions.push(await SellerSubscription.create({ seller: seller._id, status: 'active',
+        plan: 'starter', planName: 'Rozare Starter', billingProvider: 'safepay',
+        cancelledAt: suffix === 'bonus' ? null : new Date(), currentPeriodEnd: new Date(Date.now() + 86400000),
+        warningEmailSent: false, bonusFeaturesActive: suffix === 'bonus',
+        bonusExpiryDate: suffix === 'bonus' ? new Date(Date.now() + 86400000) : null,
+        safepayBilling: { contractId: `contract-warning-${suffix}`, environment: 'sandbox', autoRenew: suffix === 'bonus' } }));
+    }
+    const originalWrite = NotificationOutbox.findOneAndUpdate.bind(NotificationOutbox);
+    let endingWrites = 0;
+    const outage = jest.spyOn(NotificationOutbox, 'findOneAndUpdate').mockImplementation((...args) => {
+      if (args[1]?.$setOnInsert?.eventType === 'subscription.ending_soon' && ++endingWrites === 2) {
+        return { select: () => Promise.reject(new Error('simulated ending second-channel outage')) };
+      }
+      return originalWrite(...args);
+    });
+    const errorLog = jest.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await processTrialExpirations();
+      expect((await SellerSubscription.findById(subscriptions[0]._id)).warningEmailSent).toBe(false);
+      expect(await NotificationOutbox.countDocuments({ aggregateId: String(subscriptions[0]._id), eventType: 'subscription.ending_soon' })).toBe(1);
+      expect((await SellerSubscription.findById(subscriptions[1]._id)).warningEmailSent).toBe(true);
+      expect(await NotificationOutbox.countDocuments({ aggregateId: String(subscriptions[1]._id), eventType: 'subscription.ending_soon' })).toBe(4);
+      expect(await NotificationOutbox.countDocuments({ aggregateId: String(subscriptions[2]._id), eventType: 'subscription.bonus_expiring' })).toBe(4);
+      expect(errorLog).toHaveBeenCalledWith('Subscription ending warning enqueue failed', {
+        subscriptionId: String(subscriptions[0]._id), code: 'SUBSCRIPTION_ENDING_NOTIFICATION_FAILED' });
+    } finally {
+      outage.mockRestore(); errorLog.mockRestore();
+    }
+    await processTrialExpirations();
+    await processTrialExpirations();
+    expect((await SellerSubscription.findById(subscriptions[0]._id)).warningEmailSent).toBe(true);
+    expect(await NotificationOutbox.countDocuments({ eventType: 'subscription.ending_soon' })).toBe(8);
+    expect(await NotificationOutbox.countDocuments({ eventType: 'subscription.bonus_expiring' })).toBe(4);
+  });
+
+  test('invalid Safepay ending candidates are not marked sent and do not block valid sellers', async () => {
+    for (const valid of [false, true]) {
+      const seller = await User.create({ username: `safepay-warning-valid-${valid}`,
+        email: `safepay-warning-valid-${valid}@example.com`, role: 'seller', isVerified: true });
+      await SellerSubscription.create({ seller: seller._id, status: 'active', plan: 'elite', billingProvider: 'safepay',
+        cancelledAt: new Date(), currentPeriodEnd: new Date(Date.now() + 86400000),
+        safepayBilling: { contractId: valid ? 'contract-valid-warning' : null, environment: 'sandbox', autoRenew: false } });
+    }
+    const errorLog = jest.spyOn(console, 'error').mockImplementation(() => {});
+    try { await processTrialExpirations(); } finally { errorLog.mockRestore(); }
+    const rows = await SellerSubscription.find().sort({ _id: 1 });
+    expect(rows[0].warningEmailSent).toBe(false);
+    expect(rows[1].warningEmailSent).toBe(true);
+    expect(await NotificationOutbox.countDocuments({ eventType: 'subscription.ending_soon' })).toBe(4);
+  });
+
   test('expired seller trial blocks once and outboxes four channels without a false free-period offer', async () => {
     const seller = await User.create({
       username: 'trial-block-outbox',

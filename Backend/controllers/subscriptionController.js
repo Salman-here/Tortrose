@@ -5896,16 +5896,35 @@ exports.processTrialExpirations = async () => {
                 { $or: [{ 'pendingDowngrade.scheduledAt': { $exists: false } }, { 'pendingDowngrade.scheduledAt': null }] },
             ],
         });
+        let endingWarningsOutboxed = 0;
         for (const subscription of subscriptionsEndingSoon) {
-            await enqueueSubscriptionEndingNotification(subscription);
-            await SellerSubscription.updateOne({
-                _id: subscription._id,
-                status: subscription.status,
-                cancelledAt: subscription.cancelledAt,
-                currentPeriodEnd: subscription.currentPeriodEnd,
-                warningEmailSent: { $ne: true },
-                'pendingDowngrade.toPlan': null,
-            }, { $set: { warningEmailSent: true } });
+            try {
+                await enqueueSubscriptionEndingNotification(subscription);
+                const providerOwner = subscription.billingProvider === 'safepay'
+                    ? { billingProvider: 'safepay',
+                        'safepayBilling.contractId': subscription.safepayBilling.contractId,
+                        'safepayBilling.environment': subscription.safepayBilling.environment,
+                        'safepayBilling.autoRenew': false, 'safepayBilling.endedAt': null }
+                    : { stripeSubscriptionId: subscription.stripeSubscriptionId };
+                const marked = await SellerSubscription.updateOne({
+                    _id: subscription._id,
+                    ...providerOwner,
+                    status: subscription.status,
+                    cancelledAt: subscription.cancelledAt,
+                    currentPeriodEnd: subscription.currentPeriodEnd,
+                    warningEmailSent: { $ne: true },
+                    'pendingDowngrade.toPlan': null,
+                    'pendingDowngrade.scheduledAt': null,
+                }, { $set: { warningEmailSent: true } });
+                if (Number(marked.matchedCount ?? marked.n ?? 0) === 1) endingWarningsOutboxed += 1;
+            } catch (error) {
+                // Keep the receipt unset so partial hand-offs retry safely,
+                // without blocking other sellers or later bonus notifications.
+                console.error('Subscription ending warning enqueue failed', {
+                    subscriptionId: String(subscription._id),
+                    code: error.code || 'SUBSCRIPTION_ENDING_NOTIFICATION_FAILED',
+                });
+            }
         }
 
         const bonusExpiringSoon = await SellerSubscription.find({
@@ -6052,7 +6071,7 @@ exports.processTrialExpirations = async () => {
 
         console.log(
             `Subscription lifecycle check: ${expiringSoon.length} trial warnings, ${trialBlocksOutboxed} trial blocks, `
-            + `${subscriptionsEndingSoon.length} ending warnings, ${bonusExpiringSoon.length} bonus warnings, `
+            + `${endingWarningsOutboxed} ending warnings, ${bonusExpiringSoon.length} bonus warnings, `
             + `${bonusExpiredOutboxed} bonus expiries, ${graceExpiredOutboxed} grace expiries outboxed`,
         );
     } catch (error) {

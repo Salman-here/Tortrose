@@ -879,15 +879,34 @@ const verifySubscriptionNotificationAuthority = async record => {
         || !sameInstant(subscription.trialEndDate, data.trialEndAt)
       ) return notificationNoLongerActionable('The seller is no longer blocked by this trial expiry.');
       return null;
-    case 'subscription.ending_soon':
+    case 'subscription.ending_soon': {
+      const safepay = data.billingProvider === 'safepay';
+      const providerMatches = safepay
+        ? subscription.billingProvider === 'safepay'
+          && Boolean(data.safepayContractId)
+          && String(subscription.safepayBilling?.contractId || '') === data.safepayContractId
+          && ['sandbox', 'production'].includes(data.safepayEnvironment)
+          && subscription.safepayBilling?.environment === data.safepayEnvironment
+          && subscription.safepayBilling?.autoRenew === false
+          && !subscription.safepayBilling?.endedAt
+          && sameInstant(subscription.cancelledAt, data.cancelledAtAt)
+        : subscription.billingProvider !== 'safepay'
+          && Boolean(data.stripeSubscriptionId)
+          && String(subscription.stripeSubscriptionId || '') === String(data.stripeSubscriptionId);
       if (
         !['active', 'free_period'].includes(subscription.status)
+        || data.type !== 'subscription_ending_soon'
+        || String(data.subscriptionId || '') !== String(subscription._id)
         || !subscription.cancelledAt
         || subscription.pendingDowngrade?.toPlan
-        || String(subscription.stripeSubscriptionId || '') !== String(data.stripeSubscriptionId || '')
+        || subscription.pendingDowngrade?.scheduledAt
+        || !providerMatches
         || !sameInstant(subscription.currentPeriodEnd, data.currentPeriodEndAt)
+        || !sameInstant(record.occurredAt, data.currentPeriodEndAt)
+        || new Date(subscription.currentPeriodEnd).getTime() <= Date.now()
       ) return notificationNoLongerActionable('The subscription is no longer scheduled to end at this period boundary.');
       return null;
+    }
     case 'subscription.bonus_expiring':
       if (
         subscription.plan === 'elite'
