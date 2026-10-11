@@ -212,7 +212,8 @@ async function prepare(action, args, user) {
     const sellerIds = requestedSellers(args, groups);
     const quote = await cancellation().previewBuyerCancellation({ orderId: order._id, buyerId: owner.id, sellerIds });
     const enabledOptions = quote.options.filter(option => option.available);
-    const selected = enabledOptions.length === 1 ? enabledOptions[0].destination : args.refundDestination || null;
+    const selected = ['cash_on_delivery', 'wallet'].includes(order.paymentMethod) && enabledOptions.length === 1
+      ? enabledOptions[0].destination : args.refundDestination || (enabledOptions.length === 1 ? enabledOptions[0].destination : null);
     if (selected && !quote.options.some(option => option.destination === selected && option.available)) throw fail('That refund destination is unavailable. Choose the full Wallet option.', 'REFUND_DESTINATION_INVALID');
     const options = quote.options.filter(option => option.available).map(option => ({ destination: option.destination,
       label: option.label, amount: fromMinorUnits(option.amountMinor), currency: quote.currency,
