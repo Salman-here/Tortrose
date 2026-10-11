@@ -31,4 +31,9 @@ describe('seller AI chat screen parity', () => {
     expect(sharedChatBotSource).toContain('? getProductCurrency(p)');
     expect(sharedChatBotSource).toContain(': currency');
   });
+
+  test('shared chat offers a safe native secure-action button', () => {
+    expect(sharedChatBotSource).toContain('accessibilityLabel="Continue securely"');
+    expect(sharedChatBotSource).toContain('openAIClientRoute(navigation, aiSecureHandoffRoute(tr.result))');
+  });
 });

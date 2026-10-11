@@ -1,7 +1,27 @@
-import { resolveAIClientRoute } from '../../src/utils/aiClientRoutes';
+import { resolveAIClientRoute, openAIClientRoute } from '../../src/utils/aiClientRoutes';
 const { buyerFlows, sellerFlows } = require('../../../Backend/services/aiSecureFlowService');
 
 describe('AI client routes', () => {
+  test('secure handoff navigation preserves native stack parameters', () => {
+    const navigation = { navigate: jest.fn() };
+    expect(openAIClientRoute(navigation, '/seller-dashboard/order-management?tab=returns')).toBe(true);
+    expect(navigation.navigate).toHaveBeenCalledWith('SellerOrderManagement', { tab: 'returns' });
+  });
+  test('tab handoffs select the existing navigator or its MainTabs parent', () => {
+    const direct = { navigate: jest.fn(), getState: () => ({ routeNames: ['Account'] }) };
+    expect(openAIClientRoute(direct, '/user-dashboard/profile')).toBe(true);
+    expect(direct.navigate).toHaveBeenCalledWith('Account', undefined);
+    const nested = { navigate: jest.fn() };
+    expect(openAIClientRoute(nested, '/user-dashboard/profile')).toBe(true);
+    expect(nested.navigate).toHaveBeenCalledWith('MainTabs', { screen: 'Account', params: undefined });
+  });
+  test('failed or unavailable native navigation never reports success', () => {
+    expect(openAIClientRoute(null, '/checkout')).toBe(false);
+    const navigation = { navigate: jest.fn(() => { throw new Error('Unavailable navigator'); }) };
+    expect(openAIClientRoute(navigation, '/unknown')).toBe(false);
+    expect(navigation.navigate).not.toHaveBeenCalled();
+    expect(openAIClientRoute(navigation, '/checkout')).toBe(false);
+  });
   test('every secure feature handoff reaches an existing native screen', () => {
     for (const flow of Object.values({ ...buyerFlows, ...sellerFlows })) expect(resolveAIClientRoute(flow[0])).not.toBeNull();
     expect(resolveAIClientRoute('/account-deletion')).toEqual({ type: 'stack', name: 'Settings' });

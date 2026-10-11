@@ -35,7 +35,7 @@ import {
 } from '../../utils/persistedMutationAttempt';
 import { OPEN_AI_CHAT_EVENT } from '../../utils/aiChatLauncher';
 import SafetyActionsDialog from './SafetyActionsDialog';
-import { aiCommercePreviewPresentation, aiCommerceMessageText } from '../../utils/aiCommercePresentation';
+import { aiCommercePreviewPresentation, aiCommerceMessageText, aiSecureHandoffRoute } from '../../utils/aiCommercePresentation';
 
 // ─── Endpoint (our own backend — no Supabase) ───
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000/';
@@ -313,13 +313,15 @@ const NavigationCard = ({ label }) => (
 );
 
 // ─── Action Result Card ───
-const ActionResultCard = ({ result, actionName, icon: Icon = Package, color = 'hsl(150, 60%, 45%)' }) => {
+const ActionResultCard = ({ result, actionName, onContinue, icon: Icon = Package, color = 'hsl(150, 60%, 45%)' }) => {
   const bgColor = color.replace('hsl(', 'hsla(').replace(')', ', 0.1)');
   const borderColor = color.replace('hsl(', 'hsla(').replace(')', ', 0.2)');
-  const isBlocked = result?.blocked || result?.requiresConfirmation;
+  const isBlocked = result?.success !== false && (result?.blocked || result?.requiresConfirmation || result?.requiresPayment || result?.requiresSecureAction);
+  const secureRoute = aiSecureHandoffRoute(result);
+  const handoffRoute = secureRoute && normalizeAIRoute(secureRoute) !== '/' ? normalizeAIRoute(secureRoute) : null;
   const isSuccess = result?.success !== false && !isBlocked;
   const StatusIcon = isSuccess ? CheckCircle : isBlocked ? AlertCircle : XCircle;
-  const statusLabel = result?.previewOnly && result?.success ? 'Ready to review' : isSuccess ? (actionName === 'preview_order' ? 'Ready to review' : 'Action completed') : isBlocked ? 'Action needs review' : 'Action failed';
+  const statusLabel = result?.previewOnly && result?.success ? 'Ready to review' : handoffRoute ? 'Continue securely' : isSuccess ? (actionName === 'preview_order' ? 'Ready to review' : 'Action completed') : isBlocked ? 'Action needs review' : 'Action failed';
   const detail = result?.message || result?.error || `${formatToolDisplayName(actionName)} completed`;
   return (
     <motion.div initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }}
@@ -334,6 +336,11 @@ const ActionResultCard = ({ result, actionName, icon: Icon = Package, color = 'h
         <span className="text-[11px] font-medium block mt-0.5" style={{ color: 'hsl(var(--foreground))' }}>
           {detail}
         </span>
+        {handoffRoute && onContinue && <button type="button" onClick={() => onContinue(handoffRoute)}
+          className="glass-button mt-2 inline-flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold"
+          aria-label="Continue securely">
+          Continue securely <ArrowRight size={13} />
+        </button>}
       </div>
     </motion.div>
   );
@@ -1467,7 +1474,8 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
                 <ActionResultCard
                   key={i}
                   result={result}
-                  actionName={toolName}
+                    actionName={toolName}
+                    onContinue={route => navigate(route)}
                   icon={ToolIcon}
                   color={color}
                 />

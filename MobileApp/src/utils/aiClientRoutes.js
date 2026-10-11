@@ -116,3 +116,15 @@ export const resolveAIClientRoute = (rawRoute) => {
   }
   return null;
 };
+
+export const openAIClientRoute = (navigation, route) => {
+  const target = resolveAIClientRoute(route);
+  if (!navigation || !target) return false;
+  try {
+    if (target.type === 'tab') {
+      if ((navigation.getState?.()?.routeNames || []).includes(target.screen)) navigation.navigate(target.screen, target.params);
+      else navigation.navigate('MainTabs', { screen: target.screen, params: target.params });
+    } else navigation.navigate(target.name, target.params);
+    return true;
+  } catch { return false; }
+};

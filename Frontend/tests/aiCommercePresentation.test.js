@@ -1,11 +1,24 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { aiCommercePreviewPresentation as present, aiCommerceMessageText } from '../src/utils/aiCommercePresentation.js';
+import { aiCommercePreviewPresentation as present, aiCommerceMessageText, aiSecureHandoffRoute } from '../src/utils/aiCommercePresentation.js';
 const fixture = () => ({ success: true, previewOnly: true, requiresConfirmation: true, data: {
   quoteToken: 'aif1.' + 'a'.repeat(64), action: 'request_withdrawal', request: { amount: 5, currency: 'USD' },
   commercePreview: { action: 'request_withdrawal', title: 'Review withdrawal', notice: '5 USD to the reviewed bank; not a transfer.', expiresAt: '2026-10-11T12:00:00.000Z' },
 } });
+
+test('secure handoff controls open only successful reviewed local destinations', () => {
+  const route = '/seller-dashboard/order-management?tab=returns';
+  const ready = { success: true, requiresPayment: true, data: { route } };
+  assert.equal(aiSecureHandoffRoute(ready), route);
+  assert.equal(aiSecureHandoffRoute({ success: true, requiresSecureAction: true, data: { route } }), route);
+  for (const changes of [{ success: false }, { previewOnly: true }, { requiresConfirmation: true }, { requiresPayment: false }]) {
+    assert.equal(aiSecureHandoffRoute({ ...ready, ...changes }), null);
+  }
+  for (const invalid of ['https://outside.example/checkout', '//outside.example/checkout', '/\\outside.example', 'javascript:alert(1)', '/checkout with spaces', null]) {
+    assert.equal(aiSecureHandoffRoute({ ...ready, data: { route: invalid } }), null);
+  }
+});
 
 test('review text removes only a duplicate disclosure while retaining other requested information', () => {
   const result = fixture(); result.message = result.data.commercePreview.notice + '\nReview and confirm next.';

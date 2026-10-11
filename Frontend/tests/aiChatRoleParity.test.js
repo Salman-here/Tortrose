@@ -66,3 +66,9 @@ test('seller-owned AI product cards stay in the store product currency', () => {
   assert.match(chatBot, /preserveSourceCurrency=\{toolName === 'list_my_products'\}/);
   assert.match(chatBot, /targetCurrency: preserveSourceCurrency \? productCurrency : undefined/);
 });
+
+test('secure action cards offer guarded navigation instead of claiming payment completion', () => {
+  assert.match(chatBot, /const isBlocked = result\?\.success !== false && \(result\?\.blocked \|\| result\?\.requiresConfirmation \|\| result\?\.requiresPayment \|\| result\?\.requiresSecureAction\)/);
+  assert.match(chatBot, /handoffRoute \? 'Continue securely'/);
+  assert.match(chatBot, /onContinue=\{route => navigate\(route\)\}/);
+});

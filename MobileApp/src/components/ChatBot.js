@@ -52,8 +52,8 @@ import {
   createScopedMutationStorageKey,
   getOrCreatePersistedMutationAttemptForFingerprint,
 } from '../utils/persistedMutationAttempt';
-import { resolveAIClientRoute } from '../utils/aiClientRoutes';
-import { aiCommercePreviewPresentation, aiCommerceMessageText } from '../utils/aiCommercePresentation';
+import { resolveAIClientRoute, openAIClientRoute } from '../utils/aiClientRoutes';
+import { aiCommercePreviewPresentation, aiCommerceMessageText, aiSecureHandoffRoute } from '../utils/aiCommercePresentation';
 
 const CommerceReviewCard = ({ result, current, busy, onConfirm, c, styles }) => {
   const preview = aiCommercePreviewPresentation(result);
@@ -1460,6 +1460,16 @@ export default function ChatBot({
                     {tr.result.msg || tr.result.message || tr.result.error}
                   </Text>
                 </View>
+              )}
+              {aiSecureHandoffRoute(tr.result) && resolveAIClientRoute(aiSecureHandoffRoute(tr.result)) && (
+                <TouchableOpacity accessibilityRole="button" accessibilityLabel="Continue securely" activeOpacity={0.8}
+                  onPress={() => {
+                    if (!openAIClientRoute(navigation, aiSecureHandoffRoute(tr.result))) Alert.alert('Unable to open page', 'Please try again or open this section from your dashboard.');
+                  }}
+                  style={{ marginTop: 8, padding: 12, borderRadius: 14, backgroundColor: c.primary, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                  <Text style={{ color: '#fff', fontSize: 13, fontWeight: '700' }}>Continue securely</Text>
+                  <Ionicons name="arrow-forward" size={16} color="#fff" />
+                </TouchableOpacity>
               )}
             </View>
           ))}

@@ -1,4 +1,10 @@
 const CURRENCIES = new Set(['USD', 'PKR', 'EUR', 'GBP']);
+export function aiSecureHandoffRoute(result) {
+  const route = result?.data?.route;
+  return result?.success === true && !result.previewOnly && !result.requiresConfirmation
+    && (result.requiresPayment === true || result.requiresSecureAction === true)
+    && typeof route === 'string' && /^\/(?!\/)[^\\\s]*$/.test(route) ? route : null;
+}
 const TITLES = {
   cancel_order: 'cancellation', request_return: 'return request', cancel_return: 'return-request cancellation',
   update_return_status: 'return status update', accept_return: 'return acceptance',
