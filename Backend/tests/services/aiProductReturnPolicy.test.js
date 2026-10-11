@@ -26,3 +26,16 @@ test('invalid custom windows and string inheritance flags are rejected', () => {
 test('empty policy edits preserve existing custom choices instead of disabling returns', () => {
   expect(normalizeAIProductReturnPolicy({}, { previousPolicy: custom })).toMatchObject(custom);
 });
+test('an explicit keep-warranty instruction overrides unrequested model warranty defaults', () => {
+  const result = normalizeAIProductReturnPolicy({ returnDuration: 7, warrantyEnabled: true, warrantyDuration: 0 }, {
+    previousPolicy: { ...custom, returnDuration: 14, warrantyEnabled: false, warrantyDuration: 0, warrantyDescription: '' },
+    userText: 'Change only the product return period to 7 days. Keep returns enabled, full-refund resolution, warranty, price, stock and options unchanged.',
+  });
+  expect(result).toMatchObject({ useStorePolicy: false, returnsEnabled: true, returnDuration: 7, warrantyEnabled: false, warrantyDuration: 0 });
+});
+test('an actual warranty change is not mistaken for a preservation instruction', () => {
+  const result = normalizeAIProductReturnPolicy({ warrantyEnabled: true, warrantyDuration: 12 }, {
+    previousPolicy: custom, userText: 'Keep return terms the same and extend warranty to 12 months.',
+  });
+  expect(result.warrantyDuration).toBe(12);
+});

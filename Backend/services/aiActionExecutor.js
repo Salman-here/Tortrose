@@ -3910,7 +3910,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
         if (Object.keys(pickObject(p.returnPolicy)).length) {
           try {
             const policyStore = await Store.findOne({ seller: targetSellerId }).select('returnPolicy').lean();
-            productReturnPolicy = normalizeAIProductReturnPolicy(p.returnPolicy, { storePolicy: policyStore?.returnPolicy });
+            productReturnPolicy = normalizeAIProductReturnPolicy(p.returnPolicy, { storePolicy: policyStore?.returnPolicy, userText: args._lastUserText });
           } catch (error) {
             return { success: false, error: error.message || 'The product return policy is invalid.' };
           }
@@ -4285,6 +4285,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
             const policyStore = await Store.findOne({ seller: existingForModeration.seller }).select('returnPolicy').lean();
             updates.returnPolicy = normalizeAIProductReturnPolicy(updates.returnPolicy, {
               previousPolicy: existingForModeration.returnPolicy, storePolicy: policyStore?.returnPolicy,
+              userText: args._lastUserText,
             });
           } catch (error) {
             return { success: false, error: error.message || 'The product return policy is invalid.' };
