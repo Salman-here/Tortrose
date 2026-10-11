@@ -10,6 +10,15 @@ const { __private } = require('../../controllers/aiChatController');
 const toolNamesFor = role => __private.getTools(role).map(tool => tool.function.name);
 
 describe('AI role tool surface contract', () => {
+  test('seller return navigation preserves only the supported view and never widens role access', () => {
+    const canonical = '/seller-dashboard/order-management?tab=returns';
+    expect(__private.normalizeAIClientRoute(canonical, 'seller')).toBe(canonical);
+    expect(__private.normalizeAIClientRoute('/seller-dashboard/orders?tab=returns&redirect_url=https://outside.example', 'seller')).toBe(canonical);
+    expect(__private.normalizeAIClientRoute('/seller-dashboard/order-management?tab=other', 'seller')).toBe('/seller-dashboard/order-management');
+    expect(__private.normalizeAIClientRoute('/seller-dashboard/order-management?tab=returns&tab=orders', 'seller')).toBe('/seller-dashboard/order-management');
+    expect(__private.normalizeAIClientRoute(canonical, 'user')).toBe('/');
+    expect(__private.getTools('seller').find(t => t.function.name === 'navigate').function.description).toContain(canonical);
+  });
   test('cart store selectors are explicit ownership filters, not invented variant groups', () => {
     const add = __private.getTools('user').find(t => t.function.name === 'add_to_cart').function;
     expect(add.parameters.properties.storeName).toBeDefined();

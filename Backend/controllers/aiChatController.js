@@ -250,7 +250,7 @@ const SHARED_NAVIGATION_TOOL = {
   type: 'function',
   function: {
     name: 'navigate',
-    description: 'Navigate the user to a real page in the application. Use canonical routes: seller products /seller-dashboard/product-management, seller orders /seller-dashboard/order-management, seller shipping /seller-dashboard/shipping-configuration, seller settings /seller-dashboard/store-settings, buyer orders /user-dashboard/orders, buyer profile /user-dashboard/profile, cart /cart, checkout /checkout, marketplace /marketplace. The server validates and normalizes every route.',
+  description: 'Navigate the user to a real page in the application. Use canonical routes: seller products /seller-dashboard/product-management, seller orders /seller-dashboard/order-management, seller Return Orders /seller-dashboard/order-management?tab=returns, seller shipping /seller-dashboard/shipping-configuration, seller settings /seller-dashboard/store-settings, buyer orders /user-dashboard/orders, buyer profile /user-dashboard/profile, cart /cart, checkout /checkout, marketplace /marketplace. Return Orders and COD return funding controls are in the returns tab, not an order-detail page. The server validates and normalizes every route.',
     parameters: {
       type: 'object',
       properties: {
@@ -2372,11 +2372,19 @@ function normalizeAIClientRoute(route, role = 'guest') {
   if (!raw) return role === 'seller' ? '/seller-dashboard' : role === 'admin' ? '/admin-dashboard' : '/';
 
   let pathname = raw.startsWith('/') ? raw : `/${raw}`;
+  let requestedTabs = [];
   try {
-    pathname = new URL(raw, SITE_URL).pathname;
+    const parsed = new URL(raw, SITE_URL);
+    pathname = parsed.pathname;
+    requestedTabs = parsed.searchParams.getAll('tab');
   } catch {}
   const normalized = (AI_ROUTE_ALIASES[pathname] || pathname).replace(/\/+$/, '') || '/';
-  if (AI_COMMON_ROUTES.has(normalized) || AI_ROLE_ROUTES[role]?.has(normalized)) return normalized;
+  if (AI_COMMON_ROUTES.has(normalized) || AI_ROLE_ROUTES[role]?.has(normalized)) {
+    // Retain only the supported seller view, not arbitrary redirect/payment params.
+    return role === 'seller' && normalized === '/seller-dashboard/order-management'
+      && requestedTabs.length === 1 && requestedTabs[0] === 'returns'
+      ? normalized + '?tab=returns' : normalized;
+  }
 
   const dynamicAllowed = [
     /^\/single-product\/[^/]+$/,
