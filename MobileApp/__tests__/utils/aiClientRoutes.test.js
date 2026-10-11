@@ -39,6 +39,16 @@ describe('AI client routes', () => {
     });
   });
 
+  test.each(['/seller-dashboard/order-management?tab=returns', 'https://rozare.com/seller-dashboard/order-management?tab=returns', '/seller-dashboard/orders?tab=returns'])('opens the native Return Orders tab from %s', route => {
+    expect(resolveAIClientRoute(route)).toEqual({ type: 'stack', name: 'SellerOrderManagement', params: { tab: 'returns' } });
+  });
+
+  test('unknown and fragment-only tab hints do not change seller navigation', () => {
+    for (const route of ['/seller-dashboard/order-management?tab=unknown', '/seller-dashboard/order-management#?tab=returns']) {
+      expect(resolveAIClientRoute(route)).toEqual({ type: 'stack', name: 'SellerOrderManagement' });
+    }
+  });
+
   test('rejects unknown screens instead of navigating to a dead page', () => {
     expect(resolveAIClientRoute('/seller-dashboard/not-a-page')).toBeNull();
     expect(resolveAIClientRoute('https://outside.example/not-a-page')).toBeNull();

@@ -397,9 +397,9 @@ async function execute(action, input, user, preview) {
   }
   if (input.fundingSource === 'safepay') {
     const request = await ownedReturn(input.returnId, user, 'seller');
-    const route = `/seller-dashboard/order/${id(request.order)}`;
+    const route = '/seller-dashboard/order-management?tab=returns';
     return { success: true, requiresPayment: true, data: { ...presentReturn(request), route, secureCheckoutRequired: true },
-      message: `Continue in your order's Return Orders section to fund ${money(request.refund.totalAmount, request.currency)} through secure Safepay checkout: https://rozare.com${route}. No payment or Wallet credit has occurred in chat.` };
+      message: `Open Orders → Return Orders and select ${request.returnNumber} to fund ${money(request.refund.totalAmount, request.currency)} through secure Safepay checkout: https://rozare.com${route}. No payment or Wallet credit has occurred in chat.` };
   }
   const result = await controllerCall(require('../controllers/returnController').acceptReturn, user,
     { fundingSource: input.fundingSource === 'held_order' ? 'seller_balance' : input.fundingSource,

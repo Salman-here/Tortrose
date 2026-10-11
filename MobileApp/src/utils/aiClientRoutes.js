@@ -88,6 +88,10 @@ export const resolveAIClientRoute = (rawRoute) => {
 
   const rawKey = path.toLowerCase();
   const routeKey = ROUTE_ALIASES[rawKey] || rawKey;
+  const query = raw.split('#')[0].split('?')[1] || '';
+  if (routeKey === 'seller-dashboard/order-management' && new URLSearchParams(query).get('tab') === 'returns') {
+    return stack('SellerOrderManagement', { tab: 'returns' });
+  }
   if (TAB_CLIENT_ROUTES[routeKey]) return tab(TAB_CLIENT_ROUTES[routeKey]);
   if (STATIC_CLIENT_ROUTES[routeKey]) return STATIC_CLIENT_ROUTES[routeKey];
   if (routeKey === 'marketplace/trusted') return tab('Wishlist', { tab: 'stores' });

@@ -35,7 +35,7 @@ function resolveOwnedReturnSelection(selection,ownedItems){
  if(candidates.length!==1){
   const error=fail();
   error.safeReturnSelectionRecovery={nextTool:'get_return_eligibility',receivedSelector:{orderItemId:selection.orderItemId,itemName:selection.itemName,selectedColor:selection.selectedColor,selectedOptions:selection.selectedOptions},
-   ownedChoices:ownedItems.map(i=>({orderItemId:id(i.orderItemId),productId:id(i.productId),name:i.name,selectedColor:i.selectedColor,selectedOptions:i.selectedOptions,eligible:i.eligible}))};
+   ownedChoices:ownedItems.map(i=>({orderItemId:id(i.orderItemId),productId:id(i.productId),name:i.name,selectedColor:i.selectedColor,selectedOptions:plainOptions(i.selectedOptions),eligible:i.eligible}))};
   throw error;
  }
  return {orderItemId:id(candidates[0].orderItemId),quantity:selection.quantity};

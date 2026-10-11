@@ -367,7 +367,9 @@ test('COD final acceptance supports secure Safepay handoff without charging, the
   const input = { returnId: String(request._id), fundingSource: 'safepay' };
   const paymentPreview = await run('accept_return', { ...input, ...ctx('cod-payment-preview') }, f.sellers[0]);
   const handoff = await confirm(f.sellers[0], 'accept_return', input, paymentPreview);
-  expect(handoff).toMatchObject({ success: true, requiresPayment: true, data: { secureCheckoutRequired: true } });
+    expect(handoff).toMatchObject({ success: true, requiresPayment: true, data: { secureCheckoutRequired: true } });
+    expect(handoff.data.route).toBe('/seller-dashboard/order-management?tab=returns');
+    expect(handoff.message).toContain(request.returnNumber);
   expect(await Payment.countDocuments()).toBe(0);
   expect(await Transaction.countDocuments({ type: 'return_refund' })).toBe(0);
   const balanceInput = { ...input, fundingSource: 'seller_balance' };
