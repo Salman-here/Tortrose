@@ -2589,6 +2589,20 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
         if (!(await isProductSellerPubliclyActive(product.seller))) {
           return { success: false, error: 'Product not found.' };
         }
+        if (args.storeName || args.storeSlug) {
+          const readScope = () => resolveStoreScope({ storeName: args.storeName, storeSlug: args.storeSlug });
+          const scope = user?._buyerLocation ? await withBuyerCatalogLocation(user._buyerLocation, readScope) : await readScope();
+          if (scope.notFound || scope.ambiguous || !scope.store) return {
+            success: false, needsStoreSelection: true,
+            error: scope.ambiguous ? 'Which of these stores did you mean?' : 'That store is not available in your selected shopping location.',
+            data: { stores: scope.matches || [], nextTool: 'search_stores' },
+          };
+          if (normalizeObjectIdString(product.seller) !== normalizeObjectIdString(scope.store.seller)) return {
+            success: false, code: 'CART_STORE_MISMATCH', needsProductSelection: true,
+            error: `This product is not sold by ${scope.store.storeName}. Find the product in that store before adding it.`,
+            data: { nextTool: 'search_products', storeName: scope.store.storeName, storeSlug: scope.store.storeSlug },
+          };
+        }
         const availableStock = requireStoredAIProductStock(product.stock);
         if (availableStock <= 0) return { success: false, error: `"${product.name}" is out of stock.` };
         if (quantity > availableStock) return { success: false, error: `Only ${availableStock} unit${availableStock !== 1 ? 's' : ''} of "${product.name}" are available.` };

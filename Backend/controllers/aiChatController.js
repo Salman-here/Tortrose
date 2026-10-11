@@ -624,17 +624,19 @@ const userTools = [
     type: 'function',
     function: {
       name: 'add_to_cart',
-      description: 'Add an additional product/quantity to the shopping cart. For changing an existing item color, size or absolute quantity, use update_cart_item instead. Resolve names internally; never ask for a product ID.',
+      description: 'Add an additional product/quantity to the shopping cart. Pass a named seller/store as storeName or storeSlug, never as a selectedOptions field. For changing an existing item color, size or absolute quantity, use update_cart_item instead. Resolve names internally; never ask for a product ID.',
       parameters: {
         type: 'object',
         properties: {
           productId: { type: 'string', description: 'Product ID to add' },
           productName: { type: 'string', description: 'Product name or partial name if an internal ID is not known. Ambiguous matches will be returned for choice.' },
+          storeName: { type: 'string', description: 'The named store selling this product, e.g. Atlas Aura Goods. A store is a seller filter, not a product option.' },
+          storeSlug: { type: 'string', description: 'Store slug from a verified product/store lookup. Preserve the buyer\'s selected store.' },
           quantity: { type: 'number', description: 'Quantity to add. Default 1.' },
           selectedColor: { type: 'string', description: 'Optional color choice' },
           selectedOptions: {
             type: 'object',
-            description: 'Required product options, e.g. {"Size":"M","Color":"Red"}. Ask the user before choosing options.',
+            description: 'Only declared product option groups and values from get_product_detail, e.g. {"Size":"M","Color":"Red"}. Never put a seller/store name, brand filter or payment method here. Ask for genuinely missing required choices.',
             additionalProperties: { type: 'string' },
           },
         },

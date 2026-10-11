@@ -10,6 +10,14 @@ const { __private } = require('../../controllers/aiChatController');
 const toolNamesFor = role => __private.getTools(role).map(tool => tool.function.name);
 
 describe('AI role tool surface contract', () => {
+  test('cart store selectors are explicit ownership filters, not invented variant groups', () => {
+    const add = __private.getTools('user').find(t => t.function.name === 'add_to_cart').function;
+    expect(add.parameters.properties.storeName).toBeDefined();
+    expect(add.parameters.properties.storeSlug).toBeDefined();
+    expect(add.parameters.properties.selectedOptions.description).toContain('Only declared product option groups');
+    expect(add.description).toContain('never as a selectedOptions field');
+    expect(require('../../services/aiConversationPolicy').NATURAL_COMMERCE_ADDENDUM).toContain('catalog ownership filter, not a product variant');
+  });
   test('price ordering considers matches after the former 300-product cutoff with bounded retained candidates', async () => {
     const rows = Array.from({ length: 321 }, (_, index) => ({ id: index, price: index === 320 ? 1 : 100 + index }));
     const cursor = { async *[Symbol.asyncIterator]() { yield* rows; }, close: jest.fn() };
