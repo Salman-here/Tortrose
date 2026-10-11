@@ -823,7 +823,12 @@ const sellerTools = [
               required: ['name', 'values'],
             },
           },
-          returnPolicy: { type: 'object', description: 'Optional product-specific return/warranty policy. If omitted, product inherits the store policy.' },
+          returnPolicy: { type: 'object', description: 'Optional product-specific return/warranty policy. If omitted, product inherits the store. For custom terms set useStorePolicy=false; use true only when explicitly inheriting store policy.', properties: {
+            useStorePolicy: { type: 'boolean' }, returnsEnabled: { type: 'boolean' }, returnDuration: { type: 'integer', minimum: 0, maximum: 365 },
+            refundType: { type: 'string', enum: ['none', 'full_refund', 'replacement_only', 'store_credit'] },
+            warrantyEnabled: { type: 'boolean' }, warrantyDuration: { type: 'integer', minimum: 0, maximum: 120 },
+            policyDescription: { type: 'string' }, warrantyDescription: { type: 'string' },
+          } },
           isFeatured: { type: 'boolean', description: 'Whether to feature this product immediately, subject to seller plan limits.' },
           confirmDuplicate: { type: 'boolean', description: 'Only true when the seller explicitly confirms they intentionally want to create a duplicate listing.' },
           sellerId: { type: 'string', description: 'Admin only: seller user id to create this product under' },
@@ -875,7 +880,9 @@ const sellerTools = [
               },
               returnPolicy: {
                 type: 'object',
+                description: 'Only include the requested policy changes. Other policy fields remain unchanged. Custom terms use useStorePolicy=false; explicit inheritance uses true. Historical order policies never change.',
                 properties: {
+                  useStorePolicy: { type: 'boolean' },
                   returnsEnabled: { type: 'boolean' },
                   returnDuration: { type: 'number' },
                   refundType: { type: 'string', enum: ['full_refund', 'store_credit', 'replacement_only'] },

@@ -148,7 +148,8 @@ const {
 } = require('./broadcastJobService');
 const { resolveOrderReference } = require('./orderReferenceService');
 const { canonicalizeShippingPhone } = require('./orderBuyerContactService');
-const { normalizeReturnPolicy, normalizeProductReturnPolicy } = require('./returnPolicyService');
+const { normalizeReturnPolicy } = require('./returnPolicyService');
+const { normalizeAIProductReturnPolicy, effectiveAIProductReturnPolicy } = require('./aiProductReturnPolicyService');
 const {
   parseMoneyLikeNumber,
   parseNonNegativeSafeInteger,
@@ -2488,7 +2489,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
           return { success: false, error: 'Product not found.' };
         }
 
-        const store = await Store.findOne(activeStoreQuery({ seller: product.seller?._id })).select('storeName storeSlug verification.isVerified').lean();
+        const store = await Store.findOne(activeStoreQuery({ seller: product.seller?._id })).select('storeName storeSlug verification.isVerified returnPolicy').lean();
 
         return {
           success: true,
@@ -2515,6 +2516,7 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
             storeSlug: store?.storeSlug,
             isVerifiedStore: store?.verification?.isVerified || false,
             returnPolicy: product.returnPolicy,
+            effectiveReturnPolicy: effectiveAIProductReturnPolicy(product.returnPolicy, store?.returnPolicy),
           },
           message: `${product.name} — ${await productMoney(product)} | ${product.stock > 0 ? `${product.stock} in stock` : 'Out of stock'} | ⭐ ${product.rating?.toFixed(1) || 'N/A'} (${product.numReviews} reviews)`,
         };
@@ -3907,7 +3909,8 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
         let productReturnPolicy;
         if (Object.keys(pickObject(p.returnPolicy)).length) {
           try {
-            productReturnPolicy = normalizeProductReturnPolicy(p.returnPolicy, { strict: true });
+            const policyStore = await Store.findOne({ seller: targetSellerId }).select('returnPolicy').lean();
+            productReturnPolicy = normalizeAIProductReturnPolicy(p.returnPolicy, { storePolicy: policyStore?.returnPolicy });
           } catch (error) {
             return { success: false, error: error.message || 'The product return policy is invalid.' };
           }
@@ -4215,14 +4218,6 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
         if (updates.tags !== undefined) updates.tags = normalizeTags(updates.tags);
         if (updates.colors !== undefined) updates.colors = normalizeStringArray(updates.colors, { splitSpacesForColors: true });
         if (updates.optionGroups !== undefined) updates.optionGroups = normalizeOptionGroups(updates.optionGroups);
-        if (updates.returnPolicy !== undefined) {
-          try {
-            updates.returnPolicy = normalizeProductReturnPolicy(updates.returnPolicy, { strict: true });
-          } catch (error) {
-            return { success: false, error: error.message || 'The product return policy is invalid.' };
-          }
-        }
-
         let safeProductId = toId(productId);
         if (!safeProductId && productName) {
           const candidates = await resolveProductCandidates({ role, userId, args, productName });
@@ -4285,6 +4280,16 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
           .sort({ updatedAt: -1, createdAt: -1 })
           .lean();
         if (!existingForModeration) return { success: false, error: 'Product not found or you don\'t own it.' };
+        if (updates.returnPolicy !== undefined) {
+          try {
+            const policyStore = await Store.findOne({ seller: existingForModeration.seller }).select('returnPolicy').lean();
+            updates.returnPolicy = normalizeAIProductReturnPolicy(updates.returnPolicy, {
+              previousPolicy: existingForModeration.returnPolicy, storePolicy: policyStore?.returnPolicy,
+            });
+          } catch (error) {
+            return { success: false, error: error.message || 'The product return policy is invalid.' };
+          }
+        }
         const ownerCurrencyState = existingForModeration.seller
           ? await getSellerProductCurrencyState(existingForModeration.seller)
           : null;
