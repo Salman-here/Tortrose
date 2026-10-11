@@ -2166,6 +2166,14 @@ function explicitReviewTool(lastUserText, role) {
   return tool && isToolAllowedForRole(tool, role) ? tool : '';
 }
 function completeActionDraft(state, draft, completedTools, conversationMessages, canRetry, lastUserText = '', role = 'guest') {
+  const unresolvedReturn = completedTools.some(entry => entry.tool === 'request_return'
+    && entry.result?.success === false && entry.result?.code === 'AI_COMMERCE_ITEM_AMBIGUOUS')
+    && !completedTools.some(entry => entry.tool === 'request_return' && entry.result?.success === true);
+  if (unresolvedReturn && canRetry && !state.returnEligibilityRetried && isToolAllowedForRole('get_return_eligibility', role)) {
+    state.returnEligibilityRetried = true; state.tool = 'get_return_eligibility';
+    conversationMessages.push({ role: 'system', content: 'The person already supplied the product and variant. A selector error is NOT proof of ineligibility. Call get_return_eligibility for this exact owned order now. Use its current orderItemId and variant fields to prepare request_return with confirm=false. Do not ask the buyer for database IDs or to inspect a technical list; ask only if the fresh owned results are genuinely ambiguous. Never repeat a successfully submitted return.' });
+    return { retry: true };
+  }
   const asksReview = /\b(?:review|preview)\b/i.test(lastUserText) && !/[?？؟]|\b(?:can|could|would|why|how|whether)\b/i.test(lastUserText);
   if (asksReview && /\bconfirm(?:ation)?\b|\b(?:proceed|go ahead|would you like)\b/i.test(draft) && !completedTools.some(entry => entry.result?.previewOnly || entry.result?.requiresConfirmation)) {
     let expected = '';

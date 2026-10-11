@@ -18,6 +18,21 @@ describe('AI role tool surface contract', () => {
     expect(add.description).toContain('never as a selectedOptions field');
     expect(require('../../services/aiConversationPolicy').NATURAL_COMMERCE_ADDENDUM).toContain('catalog ownership filter, not a product variant');
   });
+  test('a failed return selector refreshes owned eligibility before asking the buyer to resolve technical ids', () => {
+    const state = {}, messages = [];
+    expect(__private.completeActionDraft(state, 'Tell me the exact item from your eligibility list.',
+      [{ tool: 'request_return', result: { success: false, code: 'AI_COMMERCE_ITEM_AMBIGUOUS' } }], messages,
+      true, 'Review returning my Blue A6 notebook from ORD-QA.', 'user')).toEqual({ retry: true });
+    expect(state.tool).toBe('get_return_eligibility');
+    expect(messages[0].content).toContain('selector error is NOT proof of ineligibility');
+    expect(__private.completeActionDraft(state, 'A real choice is still needed.',
+      [{ tool: 'request_return', result: { success: false, code: 'AI_COMMERCE_ITEM_AMBIGUOUS' } }], messages,
+      true, 'Review returning my Blue A6 notebook from ORD-QA.', 'user')).toEqual({ text: 'A real choice is still needed.' });
+    expect(__private.completeActionDraft({}, 'The verified review is ready.',
+      [{ tool: 'request_return', result: { success: false, code: 'AI_COMMERCE_ITEM_AMBIGUOUS' } },
+        { tool: 'request_return', result: { success: true, previewOnly: true } }], [],
+      true, 'Review returning my Blue A6 notebook from ORD-QA.', 'user')).toEqual({ text: 'The verified review is ready.' });
+  });
   test('price ordering considers matches after the former 300-product cutoff with bounded retained candidates', async () => {
     const rows = Array.from({ length: 321 }, (_, index) => ({ id: index, price: index === 320 ? 1 : 100 + index }));
     const cursor = { async *[Symbol.asyncIterator]() { yield* rows; }, close: jest.fn() };
