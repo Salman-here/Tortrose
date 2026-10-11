@@ -247,7 +247,7 @@ async function prepare(action, args, user) {
     const quote = await returns().previewReturnRequest({ ...input, buyerId: owner.id, requestKey: 'ai-preview-request' });
     return { title: 'Review return request', input,
       contract: quote, data: { returnPreview: quote },
-      notice: `Request a return from ${quote.storeName} for ${order.orderId}: ${quote.items.map(item => `${item.quantity} × ${item.name}${Object.keys(item.selectedOptions || {}).length ? ' (' + Object.entries(item.selectedOptions).map(([key,value]) => `${key}: ${value}`).join(', ') + ')' : item.selectedColor ? ' (' + item.selectedColor + ')' : ''}`).join(', ')}.\nReason: ${quote.reasonDetails}.\n`
+      notice: `Request a return from ${quote.storeName} for ${order.orderId}: ${quote.items.map(require('./aiOwnedReturnSelectionService').formatOwnedReturnItem).join(', ')}.\nReason: ${quote.reasonDetails}.\n`
         + (quote.policy.refundType === 'replacement_only' ? 'Resolution: replacement only; no money refund.'
           : `Frozen potential Wallet refund: ${money(quote.refund.totalAmount, quote.currency)} after the return is reviewed and accepted. A request alone does not refund money.`) };
   }
