@@ -392,10 +392,10 @@ const NotificationsPage = () => {
                         </motion.button>
                     ))}
                 </div>
-                <div className="relative flex-1 max-w-xs">
-                    <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'hsl(var(--muted-foreground))' }} />
+                <div className="search-input-wrapper flex-1 max-w-xs">
+                    <span className="search-input-icon" aria-hidden="true"><Search size={14} /></span>
                     <input aria-label="Search notifications" value={searchTerm} onChange={event => setSearchTerm(event.target.value)}
-                        className="glass-input pl-9 text-xs" placeholder="Search notifications..." />
+                        className="glass-input glass-input-search text-xs" placeholder="Search notifications..." />
                 </div>
             </div>
 

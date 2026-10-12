@@ -456,3 +456,13 @@ test('buyer notification route is accessible and all web surfaces use the guarde
   assert.match(bellHook, /params:\s*\{ surface: inboxSurface \}/);
   assert.match(bellHook, /mergeNotificationStreams\(\{ durableItems, analyticsItems \}\)/);
 });
+
+test('notification search reserves space for its decorative icon using shared glass-input styles', () => {
+  const page = readFileSync(new URL('../src/components/layout/NotificationsPage.jsx', import.meta.url), 'utf8');
+  const css = readFileSync(new URL('../src/index.css', import.meta.url), 'utf8');
+  assert.match(page, /className="search-input-wrapper flex-1 max-w-xs"/);
+  assert.match(page, /className="search-input-icon" aria-hidden="true"><Search size=\{14\}/);
+  assert.match(page, /aria-label="Search notifications"[\s\S]*?className="glass-input glass-input-search text-xs"/);
+  assert.match(css, /\.glass-input-search\s*\{\s*padding-left:\s*2\.75rem\s*!important;/);
+  assert.match(css, /\.search-input-icon\s*\{[^}]*pointer-events:\s*none;/);
+});
